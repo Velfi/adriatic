@@ -1,5 +1,6 @@
 package main
 
+import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import particles "../packages/particles"
 import render_graph "../packages/render_graph"
@@ -371,6 +372,104 @@ world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, ro
     world_quad(p[0], p[1], p[5], p[4], color)
 }
 
+world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
+    eave_y := structure.base_y + structure.height
+    rise := landmark ? structure.width * .72 : structure.width * .34
+    depth := structure.depth * .58
+    left_x, left_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        -structure.width * .54,
+        0,
+        structure.rotation,
+    )
+    right_x, right_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        structure.width * .54,
+        0,
+        structure.rotation,
+    )
+    front_x, front_z := world_rotate_xz(structure.center_x, structure.center_z, 0, depth, structure.rotation)
+    back_x, back_z := world_rotate_xz(structure.center_x, structure.center_z, 0, -depth, structure.rotation)
+    ridge_left_x, ridge_left_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        -structure.width * .30,
+        0,
+        structure.rotation,
+    )
+    ridge_right_x, ridge_right_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        structure.width * .30,
+        0,
+        structure.rotation,
+    )
+    left := third_person.Vec3{left_x, eave_y, left_z}
+    right := third_person.Vec3{right_x, eave_y, right_z}
+    front := third_person.Vec3{front_x, eave_y, front_z}
+    back := third_person.Vec3{back_x, eave_y, back_z}
+    ridge := third_person.Vec3{structure.center_x, eave_y + rise, structure.center_z}
+    terracotta := landmark ? rl.Color{177, 92, 63, 255} : rl.Color{184, 93, 61, 255}
+    world_triangle(left, front, ridge, terracotta)
+    world_triangle(front, right, ridge, formation_face_color(terracotta, .3, 0))
+    world_triangle(right, back, ridge, formation_face_color(terracotta, 1.4, 0))
+    world_triangle(back, left, ridge, formation_face_color(terracotta, 2.5, 0))
+    if landmark {
+        world_box_rotated(
+            {structure.center_x, eave_y + rise + 3.5, structure.center_z},
+            {3.5, 7, 3.5},
+            structure.rotation,
+            {224, 219, 196, 255},
+        )
+    }
+}
+
+world_architecture :: proc(structure: terrain.Structure) {
+    landmark := structure.height > 60
+    stone := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
+    world_box_rotated(
+        {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
+        {structure.width, structure.height, structure.depth},
+        structure.rotation,
+        stone,
+    )
+    world_architecture_roof(structure, landmark)
+    // Dark inset windows and red shutters give the generated blocks a readable
+    // Adriatic façade even at the editor's wide camera distance.
+    window := rl.Color{48, 62, 64, 255}
+    shutter := rl.Color{167, 61, 53, 255}
+    rows := landmark ? 4 : 2
+    columns := landmark ? 1 : 2
+    for row in 0 ..< rows {
+        for column in 0 ..< columns {
+            x := columns == 1 ? 0 : (f32(column) - .5) * structure.width * .42
+            y := structure.base_y + structure.height * (.30 + f32(row) * .16)
+            local_z := structure.depth * .5 + .16
+            wx, wz := world_rotate_xz(structure.center_x, structure.center_z, x, local_z, structure.rotation)
+            world_box_rotated(
+                {wx, y, wz},
+                {structure.width * (columns == 1 ? .16 : .13), structure.height * .10, .22},
+                structure.rotation,
+                window,
+            )
+            if !landmark {
+                for side in -1 ..= 1 {
+                    if side == 0 do continue
+                    sx, sz := world_rotate_xz(wx, wz, f32(side) * structure.width * .085, 0, structure.rotation)
+                    world_box_rotated(
+                        {sx, y, sz},
+                        {structure.width * .035, structure.height * .11, .28},
+                        structure.rotation,
+                        shutter,
+                    )
+                }
+            }
+        }
+    }
+}
+
 world_structure_frame :: proc(structure: terrain.Structure, y: f32, color: rl.Color) {
     thickness := max(f32(.08), min(structure.width, structure.depth) * .035)
     left_x, left_z := world_rotate_xz(
@@ -511,6 +610,8 @@ world_formation :: proc(structure: terrain.Structure) {
         stone.color = world_limestone_color(.Cliff)
         world_cliff_formation(stone)
         world_foliage_tufts(stone)
+    case .Architecture:
+        world_architecture(structure)
     }
 }
 
@@ -748,6 +849,20 @@ world_structures :: proc(editor: ^Editor) {
         world_structure_preview_cluster(editor)
     }
     world_curve_preview(editor)
+    if editor.architecture_painting {
+        min_x := min(editor.architecture_paint_start_x, editor.architecture_paint_end_x)
+        max_x := max(editor.architecture_paint_start_x, editor.architecture_paint_end_x)
+        min_z := min(editor.architecture_paint_start_z, editor.architecture_paint_end_z)
+        max_z := max(editor.architecture_paint_start_z, editor.architecture_paint_end_z)
+        samples := architecture.poisson_samples(min_x, min_z, max_x, max_z, editor.architecture_sample_radius, 0xA71D3)
+        for point in samples.points[:samples.count] {
+            base := terrain.sample_height(&editor.project, 0, point.x, point.z)
+            preview := terrain.structure_make(point.x, point.z, 8, 8, base, editor.architecture_building_height)
+            preview.kind = .Architecture
+            preview.color = {168, 239, 220, 255}
+            world_formation(preview)
+        }
+    }
 }
 
 world_aircraft :: proc(editor: ^Editor) {

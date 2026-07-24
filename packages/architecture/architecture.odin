@@ -22,6 +22,14 @@ Graph :: struct {
     seed:  u32,
 }
 
+Sample_Point :: struct {
+    x, z: f32,
+}
+Poisson_Result :: struct {
+    points: [96]Sample_Point,
+    count:  int,
+}
+
 node_add :: proc(graph: ^Graph, kind: Node_Kind, x, z, width, depth, height, rotation: f32) {
     if graph == nil || graph.count >= len(graph.nodes) do return
     index := graph.count
@@ -50,11 +58,80 @@ adriatic_graph :: proc(center_x, center_z: f32, seed: u32 = 0xA71D3) -> Graph {
     return graph
 }
 
-generate :: proc(project: ^terrain.Project, center_x, center_z: f32, seed: u32 = 0xA71D3) -> int {
-    if project == nil do return 0
+random01 :: proc(state: ^u32) -> f32 {
+    state^ = state^ * 1664525 + 1013904223
+    return f32(state^ & 0x00ffffff) / f32(0x01000000)
+}
+
+// Dart-throwing Poisson disk sampling is a good fit for a live paint tool:
+// it has no grid artifacts, is deterministic per seed, and can stop quickly
+// while the user is still dragging.
+poisson_samples :: proc(min_x, min_z, max_x, max_z, radius: f32, seed: u32 = 0xA71D3) -> Poisson_Result {
+    result: Poisson_Result
+    if radius <= 0 || max_x <= min_x || max_z <= min_z do return result
+    state := seed
+    for attempt in 0 ..< 1800 {
+        if result.count >= len(result.points) do break
+        x := min_x + random01(&state) * (max_x - min_x)
+        z := min_z + random01(&state) * (max_z - min_z)
+        accepted := true
+        for point in result.points[:result.count] {
+            dx, dz := x - point.x, z - point.z
+            if dx * dx + dz * dz < radius * radius {
+                accepted = false
+                break
+            }
+        }
+        if accepted {
+            result.points[result.count] = {x, z}
+            result.count += 1
+        }
+    }
+    return result
+}
+
+clear_architecture :: proc(project: ^terrain.Project) {
+    if project == nil do return
     for index := project.structure_count - 1; index >= 0; index -= 1 {
         if project.structures[index].kind == .Architecture do terrain.remove_structure(project, index)
     }
+}
+
+generate_poisson :: proc(
+    project: ^terrain.Project,
+    min_x, min_z, max_x, max_z, radius, height: f32,
+    seed: u32 = 0xA71D3,
+) -> int {
+    if project == nil do return 0
+    clear_architecture(project)
+    samples := poisson_samples(min_x, min_z, max_x, max_z, radius, seed)
+    state := seed + 0x9e3779b9
+    created := 0
+    for point in samples.points[:samples.count] {
+        width := 16 + random01(&state) * 18
+        depth := 14 + random01(&state) * 16
+        building_height := max(height * (.62 + random01(&state) * .76), terrain.BASE_CELL_SIZE)
+        rotation := (random01(&state) - .5) * .28
+        structure := terrain.structure_make(
+            point.x,
+            point.z,
+            width,
+            depth,
+            terrain.sample_height(project, 0, point.x, point.z),
+            building_height,
+        )
+        structure.kind = .Architecture
+        structure.rotation = rotation
+        structure.seed = u32(random01(&state) * f32(0xffffffff))
+        structure.color = {214, 199, 170, 255}
+        if terrain.add_structure(project, structure) >= 0 do created += 1
+    }
+    return created
+}
+
+generate :: proc(project: ^terrain.Project, center_x, center_z: f32, seed: u32 = 0xA71D3) -> int {
+    if project == nil do return 0
+    clear_architecture(project)
     graph := adriatic_graph(center_x, center_z, seed)
     created := 0
     for node in graph.nodes[:graph.count] {

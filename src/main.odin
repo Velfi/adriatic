@@ -33,63 +33,69 @@ Curve_Point :: struct {
 }
 
 Editor :: struct {
-    project:                 terrain.Project,
-    tool:                    terrain.Tool,
-    radius:                  f32,
-    strength:                f32,
-    structure_selected:      int,
-    structure_placing:       bool,
-    structure_moving:        bool,
-    structure_anchor_x:      f32,
-    structure_anchor_z:      f32,
-    structure_preview_end_x: f32,
-    structure_preview_end_z: f32,
-    structure_grab_offset_x: f32,
-    structure_grab_offset_z: f32,
-    structure_preview:       terrain.Structure,
-    structure_kind:          terrain.Formation_Kind,
-    structure_auto_kind:     bool,
-    structure_force_box:     bool,
-    structure_cliff_mode:    bool,
-    structure_scatter_mode:  bool,
-    structure_scatter_count: int,
-    architecture_node_mode:  bool,
-    curve_points:            [CURVE_POINT_CAPACITY]Curve_Point,
-    curve_point_count:       int,
-    curve_drawing:           bool,
-    curve_mode:              bool,
-    curve_cliff_mode:        bool,
-    curve_width:             f32,
-    curve_height:            f32,
-    structure_undo:          [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
-    structure_redo:          [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
-    structure_undo_count:    int,
-    structure_redo_count:    int,
-    in_map:                  bool,
-    player:                  third_person.State,
-    camera:                  third_person.Camera,
-    camera_pose:             third_person.Camera_Pose,
-    cameras:                 third_person.Camera_System,
-    flight_camera:           chase_camera.State,
-    editor_camera:           third_person.Camera,
-    editor_focus:            third_person.Vec3,
-    map_time:                f32,
-    pilot:                   vehicles.Character,
-    car:                     vehicles.Vehicle,
-    car_drive:               vehicles.Car_Drive_State,
-    postale:                 postale_game.Runtime,
-    libellula:               vehicles.Vehicle,
-    postale_visible:         bool,
-    libellula_visible:       bool,
-    libellula_active:        bool,
-    attendant_dialogue:      dialogue.Conversation,
-    attendant_dialogue_open: bool,
-    camera_target_lock:      bool,
-    flight_control:          postale_game.Control,
-    atmosphere:              atmosphere.Atmosphere,
-    particles:               particle_systems.Cpu_System,
-    vehicle_effects:         particle_systems.Vehicle_Effects,
-    wing_trails:             particle_systems.Wing_Trails,
+    project:                                                terrain.Project,
+    tool:                                                   terrain.Tool,
+    radius:                                                 f32,
+    strength:                                               f32,
+    structure_selected:                                     int,
+    structure_placing:                                      bool,
+    structure_moving:                                       bool,
+    structure_anchor_x:                                     f32,
+    structure_anchor_z:                                     f32,
+    structure_preview_end_x:                                f32,
+    structure_preview_end_z:                                f32,
+    structure_grab_offset_x:                                f32,
+    structure_grab_offset_z:                                f32,
+    structure_preview:                                      terrain.Structure,
+    structure_kind:                                         terrain.Formation_Kind,
+    structure_auto_kind:                                    bool,
+    structure_force_box:                                    bool,
+    structure_cliff_mode:                                   bool,
+    structure_scatter_mode:                                 bool,
+    structure_scatter_count:                                int,
+    architecture_node_mode:                                 bool,
+    architecture_paint_mode:                                bool,
+    architecture_painting:                                  bool,
+    architecture_paint_start_x, architecture_paint_start_z: f32,
+    architecture_paint_end_x, architecture_paint_end_z:     f32,
+    architecture_sample_radius:                             f32,
+    architecture_building_height:                           f32,
+    curve_points:                                           [CURVE_POINT_CAPACITY]Curve_Point,
+    curve_point_count:                                      int,
+    curve_drawing:                                          bool,
+    curve_mode:                                             bool,
+    curve_cliff_mode:                                       bool,
+    curve_width:                                            f32,
+    curve_height:                                           f32,
+    structure_undo:                                         [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
+    structure_redo:                                         [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
+    structure_undo_count:                                   int,
+    structure_redo_count:                                   int,
+    in_map:                                                 bool,
+    player:                                                 third_person.State,
+    camera:                                                 third_person.Camera,
+    camera_pose:                                            third_person.Camera_Pose,
+    cameras:                                                third_person.Camera_System,
+    flight_camera:                                          chase_camera.State,
+    editor_camera:                                          third_person.Camera,
+    editor_focus:                                           third_person.Vec3,
+    map_time:                                               f32,
+    pilot:                                                  vehicles.Character,
+    car:                                                    vehicles.Vehicle,
+    car_drive:                                              vehicles.Car_Drive_State,
+    postale:                                                postale_game.Runtime,
+    libellula:                                              vehicles.Vehicle,
+    postale_visible:                                        bool,
+    libellula_visible:                                      bool,
+    libellula_active:                                       bool,
+    attendant_dialogue:                                     dialogue.Conversation,
+    attendant_dialogue_open:                                bool,
+    camera_target_lock:                                     bool,
+    flight_control:                                         postale_game.Control,
+    atmosphere:                                             atmosphere.Atmosphere,
+    particles:                                              particle_systems.Cpu_System,
+    vehicle_effects:                                        particle_systems.Vehicle_Effects,
+    wing_trails:                                            particle_systems.Wing_Trails,
 }
 
 structure_history_capture :: proc(editor: ^Editor) -> Structure_History_State {
@@ -343,33 +349,67 @@ curve_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: 
 seed_formation_capture :: proc(editor: ^Editor) {
     if editor == nil do return
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-    architecture.generate(&editor.project, center, center, 0xA71D3)
-    capture_add_formation(editor, center - 125, center + 55, 78, 66, 24, .Rock)
-    capture_add_formation(editor, center - 28, center + 108, 74, 74, 74, .Mountain)
-    capture_add_formation(editor, center + 92, center + 58, 42, 42, 112, .Spire)
-    ridge := capture_add_formation(editor, center + 105, center - 78, 155, 42, 34, .Ridge)
-    cliff := capture_add_formation(editor, center - 110, center - 92, 96, 50, 52, .Cliff)
-    if ridge >= 0 do editor.project.structures[ridge].rotation = .28
-    if cliff >= 0 do editor.project.structures[cliff].rotation = -.32
-    // Capture the live Alt-cluster preview as well as committed formations.
-    editor.structure_placing = true
-    editor.structure_scatter_mode = true
-    editor.structure_anchor_x = center - 180
-    editor.structure_anchor_z = center - 30
-    editor.structure_preview_end_x = center - 40
-    editor.structure_preview_end_z = center + 5
-    editor.structure_preview = terrain.structure_make(center - 110, center - 12, 140, 40, 0, 28)
-    editor.structure_preview.kind = .Ridge
-    editor.structure_preview.base_y = terrain.sample_height(
+    architecture.generate_poisson(
         &editor.project,
-        0,
-        editor.structure_preview.center_x,
-        editor.structure_preview.center_z,
+        center - 105,
+        center - 78,
+        center + 105,
+        center + 78,
+        28,
+        30,
+        0xA71D3,
     )
     editor.tool = .Structure
-    editor.structure_selected = ridge >= 0 ? ridge : 2
-    editor.structure_auto_kind = true
+    editor.structure_selected = -1
+    editor.structure_placing = false
+    editor.structure_scatter_mode = false
+    editor.structure_auto_kind = false
     editor.architecture_node_mode = true
+    editor.architecture_paint_mode = true
+    editor.architecture_sample_radius = 28
+    editor.architecture_building_height = 30
+    editor.architecture_paint_start_x = center - 105
+    editor.architecture_paint_start_z = center - 78
+    editor.architecture_paint_end_x = center + 105
+    editor.architecture_paint_end_z = center + 78
+}
+
+architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
+    if editor == nil || editor.in_map || !editor.architecture_paint_mode do return
+    if !cursor_hit {
+        if rl.IsMouseButtonReleased(.LEFT) do editor.architecture_painting = false
+        return
+    }
+    if rl.IsMouseButtonPressed(.LEFT) {
+        editor.architecture_painting = true
+        editor.architecture_paint_start_x = structure_editor_snap(world_x, editor)
+        editor.architecture_paint_start_z = structure_editor_snap(world_z, editor)
+        editor.architecture_paint_end_x = editor.architecture_paint_start_x
+        editor.architecture_paint_end_z = editor.architecture_paint_start_z
+    }
+    if editor.architecture_painting {
+        editor.architecture_paint_end_x = structure_editor_snap(world_x, editor)
+        editor.architecture_paint_end_z = structure_editor_snap(world_z, editor)
+        if rl.IsMouseButtonReleased(.LEFT) {
+            min_x, max_x :=
+                min(editor.architecture_paint_start_x, editor.architecture_paint_end_x),
+                max(editor.architecture_paint_start_x, editor.architecture_paint_end_x)
+            min_z, max_z :=
+                min(editor.architecture_paint_start_z, editor.architecture_paint_end_z),
+                max(editor.architecture_paint_start_z, editor.architecture_paint_end_z)
+            architecture.generate_poisson(
+                &editor.project,
+                min_x,
+                min_z,
+                max_x,
+                max_z,
+                editor.architecture_sample_radius,
+                editor.architecture_building_height,
+                u32(editor.project.revision + 0xA71D3),
+            )
+            editor.architecture_painting = false
+        }
+    }
 }
 
 structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
@@ -1654,13 +1694,13 @@ draw_infinite_ocean :: proc(width, height: i32, time: f32) {
 }
 
 editor_palette_bounds :: proc() -> rl.Rectangle {
-    return {x = 20, y = 116, width = 740, height = 38}
+    return {x = 20, y = 116, width = 830, height = 38}
 }
 
 editor_palette_button_bounds :: proc(index: int) -> rl.Rectangle {
     palette := editor_palette_bounds()
     gap := f32(5)
-    button_width := (palette.width - gap * 5) / 6
+    button_width := (palette.width - gap * 6) / 7
     return {
         x = palette.x + f32(index) * (button_width + gap),
         y = palette.y,
@@ -1677,7 +1717,7 @@ editor_palette_tool :: proc(index: int) -> terrain.Tool {
         return .Smooth
     case 2:
         return .Paint
-    case 3, 4, 5:
+    case 3, 4, 5, 6:
         return .Structure
     }
     return .Raise
@@ -1687,8 +1727,10 @@ editor_palette_curve_mode :: proc(index: int) -> bool {
     return index == 4 || index == 5
 }
 
+editor_palette_architecture_mode :: proc(index: int) -> bool { return index == 6 }
+
 editor_palette_index :: proc(position: rl.Vector2) -> int {
-    for index in 0 ..< 6 {
+    for index in 0 ..< 7 {
         if rl.CheckCollisionPointRec(position, editor_palette_button_bounds(index)) do return index
     }
     return -1
@@ -1701,12 +1743,14 @@ editor_palette_hit :: proc() -> bool {
 draw_editor_palette :: proc(editor: ^Editor) {
     palette := editor_palette_bounds()
     rl.DrawRectangleRounded(palette, .16, 8, {r = 8, g = 28, b = 45, a = 242})
-    labels := [?]cstring{"SCULPT", "SMOOTH", "PAINT", "FORMATIONS", "RIDGE CURVE", "CLIFF CURVE"}
-    for index in 0 ..< 6 {
+    labels := [?]cstring{"SCULPT", "SMOOTH", "PAINT", "FORMATIONS", "RIDGE CURVE", "CLIFF CURVE", "BUILDING PAINT"}
+    for index in 0 ..< 7 {
         button := editor_palette_button_bounds(index)
         selected :=
             editor.tool == editor_palette_tool(index) &&
-            (!editor_palette_curve_mode(index) && !editor.curve_mode ||
+            (!editor_palette_curve_mode(index) &&
+                        !editor.curve_mode &&
+                        (!editor_palette_architecture_mode(index) || editor.architecture_paint_mode) ||
                     editor_palette_curve_mode(index) && editor.curve_mode && (index == 5) == editor.curve_cliff_mode)
         hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), button)
         fill: rl.Color = {
@@ -2101,11 +2145,11 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
             {226, 248, 244, 255},
         )
         tool_name: cstring =
-            editor.tool == .Raise ? "SCULPT" : editor.tool == .Smooth ? "SMOOTH" : editor.tool == .Paint ? "PAINT" : "STRUCTURES"
+            editor.architecture_paint_mode ? "BUILDING PAINT" : editor.tool == .Raise ? "SCULPT" : editor.tool == .Smooth ? "SMOOTH" : editor.tool == .Paint ? "PAINT" : "STRUCTURES"
         formation_profile :=
             editor.architecture_node_mode ? "ADRIATIC NODES" : (editor.structure_auto_kind ? "AUTO" : formation_kind_name(editor.structure_kind))
         editor_status :=
-            editor.tool == .Structure ? fmt.tprintf("%s/%s  %d placed  |  G regenerate node graph  Select RIDGE/CLIFF CURVE  Ctrl+Z/Y undo/redo", tool_name, formation_profile, editor.project.structure_count) : fmt.tprintf("%s  radius %.0f m  strength %.2f  |  4.0 km × 4.0 km  |  %.1f m cells", tool_name, editor.radius, editor.strength, terrain.BASE_CELL_SIZE)
+            editor.architecture_paint_mode ? fmt.tprintf("%s  %d buildings  |  drag paint area  wheel height %.0f m  Shift+wheel spacing %.0f m", tool_name, editor.project.structure_count, editor.architecture_building_height, editor.architecture_sample_radius) : editor.tool == .Structure ? fmt.tprintf("%s/%s  %d placed  |  G regenerate node graph  Select RIDGE/CLIFF CURVE  Ctrl+Z/Y undo/redo", tool_name, formation_profile, editor.project.structure_count) : fmt.tprintf("%s  radius %.0f m  strength %.2f  |  4.0 km × 4.0 km  |  %.1f m cells", tool_name, editor.radius, editor.strength, terrain.BASE_CELL_SIZE)
         ui_draw_text(.Data, fmt.ctprintf("%s", editor_status), {26, 78}, 1, {255, 244, 190, 255})
         draw_editor_palette(editor)
         draw_spawn_button()
@@ -2193,7 +2237,7 @@ main :: proc() {
     editor.pilot.position = runway_spawn_position(editor)
     if capture_mode && !capture_map_mode {
         seed_formation_capture(editor)
-        editor.editor_camera.distance = 520
+        editor.editor_camera.distance = 260
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     }
     if capture_sky_mode {
@@ -2340,6 +2384,8 @@ main :: proc() {
             palette_index := editor_palette_index(rl.GetMousePosition())
             if rl.IsMouseButtonPressed(.LEFT) && palette_index >= 0 {
                 editor.tool = editor_palette_tool(palette_index)
+                editor.architecture_paint_mode = editor_palette_architecture_mode(palette_index)
+                editor.architecture_node_mode = false
                 editor.curve_mode = editor_palette_curve_mode(palette_index)
                 if editor.curve_mode do editor.curve_cliff_mode = palette_index == 5
                 curve_reset(editor)
@@ -2348,21 +2394,25 @@ main :: proc() {
             }
             if rl.IsKeyPressed(.Q) {
                 editor.tool = .Raise
+                editor.architecture_paint_mode = false
                 editor.curve_mode = false
                 curve_reset(editor)
             }
             if rl.IsKeyPressed(.E) {
                 editor.tool = .Smooth
+                editor.architecture_paint_mode = false
                 editor.curve_mode = false
                 curve_reset(editor)
             }
             if rl.IsKeyPressed(.T) {
                 editor.tool = .Paint
+                editor.architecture_paint_mode = false
                 editor.curve_mode = false
                 curve_reset(editor)
             }
             if rl.IsKeyPressed(.B) {
                 editor.tool = .Structure
+                editor.architecture_paint_mode = false
                 editor.curve_mode = false
                 curve_reset(editor)
                 editor.structure_placing = false
@@ -2376,6 +2426,7 @@ main :: proc() {
                 curve_reset(editor)
                 editor.structure_selected = -1
                 editor.architecture_node_mode = true
+                editor.architecture_paint_mode = false
             }
             if editor.tool == .Structure && rl.IsKeyPressed(.V) do structure_cycle_kind(editor)
             if editor.tool == .Structure && rl.IsKeyPressed(.X) {
@@ -2387,6 +2438,21 @@ main :: proc() {
                 wheel := rl.GetMouseWheelMove()
                 editor.curve_width = max(cell, editor.curve_width + wheel * cell)
                 editor.curve_height = max(cell, editor.curve_height + wheel * cell)
+            } else if editor.tool == .Structure && editor.architecture_paint_mode {
+                wheel := rl.GetMouseWheelMove()
+                if shift_key_down() {
+                    editor.architecture_sample_radius = clamp(
+                        editor.architecture_sample_radius + wheel * terrain.BASE_CELL_SIZE,
+                        terrain.BASE_CELL_SIZE * 2,
+                        terrain.BASE_CELL_SIZE * 12,
+                    )
+                } else {
+                    editor.architecture_building_height = clamp(
+                        editor.architecture_building_height + wheel * terrain.BASE_CELL_SIZE,
+                        terrain.BASE_CELL_SIZE * 3,
+                        terrain.BASE_CELL_SIZE * 18,
+                    )
+                }
             } else if editor.tool == .Structure {
                 structure_adjust_with_wheel(editor, rl.GetMouseWheelMove())
             } else if !shift_key_down() {
@@ -2412,8 +2478,12 @@ main :: proc() {
         )
         cursor_hit = cursor_hit && world_mouse_inside
         ui_hit := editor_palette_hit() || rl.CheckCollisionPointRec(rl.GetMousePosition(), spawn_button_bounds())
+        architecture_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         curve_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        if !editor.curve_mode && !editor.curve_drawing && editor.curve_point_count == 0 {
+        if !editor.architecture_paint_mode &&
+           !editor.curve_mode &&
+           !editor.curve_drawing &&
+           editor.curve_point_count == 0 {
             structure_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         }
         if editor.in_map && !capture_car_mode {
