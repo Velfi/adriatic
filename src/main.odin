@@ -1,9 +1,8 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import chase_camera "../packages/chase_camera"
+import back "../packages/back"
 import flight "../packages/flight"
-import particle_systems "../packages/particles"
 import postale_game "../packages/postale"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -14,31 +13,28 @@ import "core:os"
 import sdl "vendor:sdl3"
 import rl "zelda_engine:canvas2d"
 
+TRACK_ALLOC :: #config(TRACK_ALLOC, ODIN_DEBUG)
+TRACK_ALLOC_LOG_ERRORS :: #config(TRACK_ALLOC_LOG_ERRORS, true)
+
 ADRIATIC_WORLD_WIDTH :: 1280
 ADRIATIC_WORLD_HEIGHT :: 720
 
 Editor :: struct {
-    project:         terrain.Project,
-    tool:            terrain.Tool,
-    radius:          f32,
-    strength:        f32,
-    in_map:          bool,
-    player:          third_person.State,
-    camera:          third_person.Camera,
-    camera_pose:     third_person.Camera_Pose,
-    flight_camera:   chase_camera.State,
-    editor_camera:   third_person.Camera,
-    editor_focus:    third_person.Vec3,
-    map_time:        f32,
-    pilot:           vehicles.Character,
-    car:             vehicles.Vehicle,
-    car_drive:       vehicles.Car_Drive_State,
-    postale:         postale_game.Runtime,
-    flight_control:  postale_game.Control,
-    atmosphere:      atmosphere.Atmosphere,
-    particles:       particle_systems.Cpu_System,
-    vehicle_effects: particle_systems.Vehicle_Effects,
-    wing_trails:     particle_systems.Wing_Trails,
+    project:        terrain.Project,
+    tool:           terrain.Tool,
+    radius:         f32,
+    strength:       f32,
+    in_map:         bool,
+    player:         third_person.State,
+    camera:         third_person.Camera,
+    camera_pose:    third_person.Camera_Pose,
+    editor_camera:  third_person.Camera,
+    editor_focus:   third_person.Vec3,
+    map_time:       f32,
+    pilot:          vehicles.Character,
+    postale:        postale_game.Runtime,
+    flight_control: postale_game.Control,
+    atmosphere:     atmosphere.Atmosphere,
 }
 
 set_pointer_locked :: proc(locked: bool) {
@@ -62,7 +58,7 @@ Screen_Point :: struct {
     visible:  bool,
 }
 
-vec_sub :: proc(a, b: third_person.Vec3) -> third_person.Vec3 { return {a.x - b.x, a.y - b.y, a.z - b.z} }
+vec_sub :: proc(a, b: third_person.Vec3) -> third_person.Vec3 {return {a.x - b.x, a.y - b.y, a.z - b.z}}
 vec_dot :: proc(a, b: third_person.Vec3) -> f32 { return a.x * b.x + a.y * b.y + a.z * b.z }
 vec_cross :: proc(a, b: third_person.Vec3) -> third_person.Vec3 {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}
@@ -99,10 +95,7 @@ postale_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {
     half_extent := f32(terrain.RING_RESOLUTION - 1) * editor.project.levels[0].cell_size * .5
     x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
     z := half_extent * terrain.DEFAULT_ISLAND_OFFSET
-    ground := postale_game.drivable_surface_height(
-        terrain.sample_height(&editor.project, 0, x, z),
-        editor.project.sea_level,
-    )
+    ground := terrain.sample_height(&editor.project, 0, x, z)
     return {x = x, y = ground + postale_game.GROUND_CLEARANCE, z = z}
 }
 
@@ -125,16 +118,6 @@ postale_vertex_world :: proc(runtime: ^postale_game.Runtime, position: [3]f32, s
         body.basis.right.z * position[0] * scale +
         body.basis.up.z * position[1] * scale -
         body.basis.forward.z * position[2] * scale,
-    }
-}
-
-postale_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
-    return {
-        position = editor.postale.body.position,
-        basis = editor.postale.body.basis,
-        airspeed = editor.postale.telemetry.airspeed,
-        roll_input = editor.flight_control.roll,
-        grounded = editor.postale.grounded,
     }
 }
 
@@ -203,16 +186,8 @@ aircraft_part_color :: proc(part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
         return {r = 63, g = 145, b = 160, a = 255}
     case .Carriage:
         return {r = 190, g = 78, b = 48, a = 255}
-    case .Wheel:
-        return {r = 25, g = 31, b = 36, a = 255}
-    case .Bumper:
-        return {r = 174, g = 184, b = 188, a = 255}
-    case .Headlight:
-        return {r = 255, g = 239, b = 164, a = 255}
-    case .Tail_Light:
-        return {r = 211, g = 43, b = 42, a = 255}
     case:
-        return {r = 34, g = 166, b = 204, a = 255}
+        return {r = 207, g = 68, b = 45, a = 255}
     }
 }
 
@@ -334,17 +309,9 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
     draw_attitude_indicator({panel_left + 200, y}, pitch, bank)
     draw_instrument_dial({panel_left + 333, y}, "ALTITUDE", altitude, 0, 500, fmt.ctprintf("%.0f m", altitude))
     readout := fmt.tprintf(
-        "HDG %03.0f°     VSI %+4.1f m/s     WIND %2.1f m/s     POWER %3.0f%%",
+        "HDG %03.0f°     VSI %+4.1f m/s     POWER %3.0f%%",
         heading,
         vertical_speed,
-        f32(
-            math.sqrt(
-                f64(
-                    editor.atmosphere.weather.wind[0] * editor.atmosphere.weather.wind[0] +
-                    editor.atmosphere.weather.wind[1] * editor.atmosphere.weather.wind[1],
-                ),
-            ),
-        ),
         editor.postale.throttle * 100,
     )
     readout_size := rl.MeasureTextEx(rl.Font{}, fmt.ctprintf("%s", readout), 11, 1)
@@ -358,7 +325,7 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
     )
 }
 
-perspective_camera :: proc(pose: third_person.Camera_Pose, focal_length: f32 = 1.35) -> Perspective_Camera {
+perspective_camera :: proc(pose: third_person.Camera_Pose) -> Perspective_Camera {
     forward := vec_normalize(vec_sub(pose.target, pose.position))
     right := vec_normalize(vec_cross(forward, {y = 1}))
     return {
@@ -366,7 +333,7 @@ perspective_camera :: proc(pose: third_person.Camera_Pose, focal_length: f32 = 1
         forward = forward,
         right = right,
         up = vec_cross(right, forward),
-        focal_length = focal_length,
+        focal_length = 1.35,
     }
 }
 
@@ -776,9 +743,9 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
 
     if editor.in_map {
         driving := editor.pilot.mode == .Driving
-        panel_width := driving ? i32(650) : i32(430)
+        panel_width := driving ? i32(520) : i32(430)
         help_text: cstring = "WASD move  Mouse look  Wheel zoom  Space jump  Esc editor"
-        if driving do help_text = "W/S pitch  A/D roll  Q/E yaw  Mouse orbit  C camera  Shift/Ctrl power  F exit  R reset"
+        if driving do help_text = "W/S pitch  A/D roll  Q/E yaw  Shift/Ctrl power  F exit  R reset"
         rl.DrawRectangle(14, 14, panel_width, 72, {r = 8, g = 28, b = 45, a = 210})
         rl.DrawTextEx(
             rl.Font{},
@@ -790,14 +757,11 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
         )
         rl.DrawTextEx(rl.Font{}, help_text, {26, 49}, 13, 1, {r = 183, g = 219, b = 221, a = 255})
         if driving {
-            ground := postale_game.drivable_surface_height(
-                terrain.sample_height(
-                    &editor.project,
-                    0,
-                    editor.postale.body.position.x,
-                    editor.postale.body.position.z,
-                ),
-                editor.project.sea_level,
+            ground := terrain.sample_height(
+                &editor.project,
+                0,
+                editor.postale.body.position.x,
+                editor.postale.body.position.z,
             )
             altitude := max(f32(0), editor.postale.body.position.y - ground - postale_game.GROUND_CLEARANCE)
             hud := fmt.tprintf(
@@ -1002,39 +966,6 @@ runway_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     return {x = x, y = terrain.sample_height(&editor.project, 0, x, z), z = z}
 }
 
-car_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
-    spawn := vehicles.car_spawn_near(runway_spawn_position(editor))
-    spawn.y = terrain.sample_height(&editor.project, 0, spawn.x, spawn.z)
-    return spawn
-}
-
-driving_postale :: proc(editor: ^Editor) -> bool {
-    return editor != nil && editor.pilot.mode == .Driving && editor.pilot.vehicle == &editor.postale.vehicle
-}
-
-driving_car :: proc(editor: ^Editor) -> bool {
-    return editor != nil && editor.pilot.mode == .Driving && editor.pilot.vehicle == &editor.car
-}
-
-vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
-    if editor == nil || editor.pilot.mode != .On_Foot do return nil
-    car_delta := vec_sub(editor.player.position, editor.car.position)
-    car_distance := vec_dot(car_delta, car_delta)
-    car_radius := editor.car.interaction_radius
-    if car_radius <= 0 do car_radius = 2.5
-    postale_delta := vec_sub(editor.player.position, editor.postale.vehicle.position)
-    postale_distance := vec_dot(postale_delta, postale_delta)
-    postale_radius := editor.postale.vehicle.interaction_radius
-    if postale_radius <= 0 do postale_radius = 2.5
-    car_near := car_distance <= car_radius * car_radius
-    postale_near := postale_distance <= postale_radius * postale_radius
-    if car_near && (!postale_near || car_distance <= postale_distance) {
-        return "PRESS F TO ENTER CAR"
-    }
-    if postale_near do return "PRESS F TO ENTER POSTALE"
-    return nil
-}
-
 editor_camera_pose :: proc() -> third_person.Camera_Pose {
     island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
     return {
@@ -1229,32 +1160,19 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     // Canvas commands from here onward are deliberately UI-only.
     rl.ClearBackground({r = 104, g = 154, b = 181, a = 255})
     if editor.in_map {
-        flying := driving_postale(editor)
-        in_car := driving_car(editor)
-        driving := flying || in_car
-        panel_width := driving ? i32(650) : i32(430)
+        driving := editor.pilot.mode == .Driving
+        panel_width := driving ? i32(520) : i32(430)
         help_text: cstring = "WASD move  Mouse look  Wheel zoom  Space jump  Esc editor"
-        if flying do help_text = "W/S pitch  A/D roll  Q/E yaw  Mouse orbit  C camera  Shift/Ctrl power  F exit  R reset"
-        if in_car do help_text = "W/S drive  A/D steer  Space handbrake  F exit  Esc editor"
+        if driving do help_text = "W/S pitch  A/D roll  Q/E yaw  Shift/Ctrl power  F exit  R reset"
         rl.DrawRectangle(14, 14, panel_width, 72, {r = 8, g = 28, b = 45, a = 210})
-        rl.DrawTextEx(
-            rl.Font{},
-            flying ? "POSTALE FLIGHT" : (in_car ? "CAR DRIVE" : "THIRD-PERSON 3D"),
-            {26, 25},
-            19,
-            1,
-            {211, 250, 242, 255},
-        )
+        rl.DrawTextEx(rl.Font{}, driving ? "POSTALE FLIGHT" : "THIRD-PERSON 3D", {26, 25}, 19, 1, {211, 250, 242, 255})
         rl.DrawTextEx(rl.Font{}, help_text, {26, 49}, 13, 1, {183, 219, 221, 255})
-        if flying {
-            ground := postale_game.drivable_surface_height(
-                terrain.sample_height(
-                    &editor.project,
-                    0,
-                    editor.postale.body.position.x,
-                    editor.postale.body.position.z,
-                ),
-                editor.project.sea_level,
+        if driving {
+            ground := terrain.sample_height(
+                &editor.project,
+                0,
+                editor.postale.body.position.x,
+                editor.postale.body.position.z,
             )
             altitude := max(f32(0), editor.postale.body.position.y - ground - postale_game.GROUND_CLEARANCE)
             hud := fmt.tprintf(
@@ -1265,9 +1183,20 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
             )
             rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", hud), {26, 68}, 13, 1, {236, 239, 190, 255})
             draw_flight_instruments(editor, width, height, altitude)
-        } else if prompt := vehicle_entry_prompt(editor); prompt != nil {
-            rl.DrawRectangle(width / 2 - 116, height - 92, 232, 42, {8, 28, 45, 220})
-            rl.DrawTextEx(rl.Font{}, prompt, {f32(width / 2 - 99), f32(height - 77)}, 15, 1, {245, 239, 192, 255})
+        } else {
+            delta := vec_sub(editor.player.position, editor.postale.vehicle.position)
+            if vec_dot(delta, delta) <=
+               editor.postale.vehicle.interaction_radius * editor.postale.vehicle.interaction_radius {
+                rl.DrawRectangle(width / 2 - 116, height - 92, 232, 42, {8, 28, 45, 220})
+                rl.DrawTextEx(
+                    rl.Font{},
+                    "PRESS F TO ENTER POSTALE",
+                    {f32(width / 2 - 99), f32(height - 77)},
+                    15,
+                    1,
+                    {245, 239, 192, 255},
+                )
+            }
         }
     } else {
         rl.DrawRectangle(14, 14, 760, 76, {8, 28, 45, 210})
@@ -1304,6 +1233,18 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
 }
 
 main :: proc() {
+    back.register_segfault_handler()
+    context.assertion_failure_proc = back.assertion_failure_proc
+    when TRACK_ALLOC {
+        default_allocator := context.allocator
+        tracking_allocator: back.Tracking_Allocator
+        back.tracking_allocator_init(&tracking_allocator, default_allocator)
+        context.allocator = back.tracking_allocator(&tracking_allocator)
+        defer {
+            when TRACK_ALLOC_LOG_ERRORS do back.tracking_allocator_print_results(&tracking_allocator)
+            back.tracking_allocator_destroy(&tracking_allocator)
+        }
+    }
     assert(rl.SetRendererDescriptor(ADRIATIC_RENDERER_DESCRIPTOR))
     flags := rl.ConfigFlags{.WINDOW_RESIZABLE, .VSYNC_HINT}
     capture_mode :=
@@ -1311,7 +1252,6 @@ main :: proc() {
         (os.args[1] == "--capture" ||
                 os.args[1] == "--capture-map" ||
                 os.args[1] == "--capture-flight" ||
-                os.args[1] == "--capture-car" ||
                 os.args[1] == "--capture-sky-noon" ||
                 os.args[1] == "--capture-sky-sunset" ||
                 os.args[1] == "--capture-sky-storm" ||
@@ -1324,40 +1264,31 @@ main :: proc() {
                 os.args[1] == "--capture-sky-night")
     capture_map_mode := capture_mode && (os.args[1] == "--capture-map" || capture_sky_mode)
     capture_flight_mode := capture_mode && os.args[1] == "--capture-flight"
-    capture_car_mode := capture_mode && os.args[1] == "--capture-car"
     if capture_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     rl.SetConfigFlags(flags)
     rl.SetWorldRenderSize(ADRIATIC_WORLD_WIDTH, ADRIATIC_WORLD_HEIGHT)
     rl.InitWindow(1280, 720, "Adriatic — Clipmap Terrain Authoring")
     defer rl.CloseWindow()
-    editor := new(Editor)
-    defer free(editor)
-    terrain.init_project(&editor.project)
-    editor.tool = .Raise
-    editor.radius = 48
-    editor.strength = .10
-    editor.atmosphere = atmosphere.new(0x41c10)
-    editor.particles = particle_systems.new_cpu(0x9e3779b9)
-    editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
-    editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
+    editor := Editor {
+        project    = terrain.new_project(),
+        tool       = .Raise,
+        radius     = 48,
+        strength   = .10,
+        atmosphere = atmosphere.new(0x41c10),
+    }
     island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
     editor.editor_focus = {
         x = island_center,
         z = island_center,
     }
-    particle_systems.step(&editor.particles, 2.4, particle_systems.Vec3{x = island_center, y = 6.0, z = island_center})
     editor.editor_camera = {
         yaw_radians   = math.PI * .25,
         pitch_radians = .58,
         distance      = 900,
     }
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
-    editor.postale = postale_game.new_runtime(postale_spawn_position(editor))
-    editor.car = vehicles.default_vehicle(car_spawn_position(editor))
-    editor.car.interaction_radius = 3
-    editor.car.exit_distance = 1.45
-    editor.car.yaw_radians = -math.PI * .5
-    editor.pilot.position = runway_spawn_position(editor)
+    editor.postale = postale_game.new_runtime(postale_spawn_position(&editor))
+    editor.pilot.position = runway_spawn_position(&editor)
     if capture_sky_mode {
         preset := atmosphere.Weather_Preset.Clear
         minutes := f32(12 * 60)
@@ -1375,11 +1306,11 @@ main :: proc() {
         editor.atmosphere.weather = atmosphere.weather_for(preset)
         editor.atmosphere.paused = true
     }
-    world_renderer_attach(editor)
+    world_renderer_attach(&editor)
     defer world_renderer_destroy()
-    if capture_map_mode || capture_flight_mode || capture_car_mode {
+    if capture_map_mode || capture_flight_mode {
         editor.player = {
-            position = runway_spawn_position(editor),
+            position = runway_spawn_position(&editor),
             grounded = true,
         }
         editor.camera = third_person.default_camera()
@@ -1390,31 +1321,10 @@ main :: proc() {
         if capture_flight_mode {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
             if entered {
-                // Give the flight capture a reproducible airborne state so visual
-                // verification exercises the wing-trail and wind-response systems.
-                editor.postale.body.position.y += 85
-                editor.postale.body.velocity = flight.scale(editor.postale.body.basis.forward, 38)
-                editor.postale.grounded = false
-                editor.postale.was_grounded = false
-                editor.postale.throttle = .82
-                atmosphere.set_weather_override(&editor.atmosphere, .Windy)
-                editor.atmosphere.weather = atmosphere.weather_for(.Windy)
-                editor.atmosphere.paused = true
-                chase_camera.reset(&editor.flight_camera, postale_camera_target(editor))
-                editor.camera_pose = editor.flight_camera.pose
-            }
-        }
-        if capture_car_mode {
-            car := car_spawn_position(editor)
-            editor.player.position = {
-                x = car.x + 100,
-                y = car.y,
-                z = car.z + 100,
-            }
-            editor.pilot.position = editor.player.position
-            editor.camera_pose = {
-                position = {x = car.x - 7.5, y = car.y + 4.6, z = car.z + 7.5},
-                target = {x = car.x, y = car.y + .65, z = car.z},
+                editor.camera.yaw_radians = editor.postale.vehicle.yaw_radians
+                editor.camera.pitch_radians = .28
+                editor.camera.distance = 8
+                editor.camera_pose = third_person.camera_pose(editor.postale.vehicle.position, editor.camera)
             }
         }
     }
@@ -1422,14 +1332,8 @@ main :: proc() {
     for !rl.WindowShouldClose() {
         frame_now := f32(rl.GetTime())
         frame_delta := frame == 0 ? f32(0) : min(frame_now - editor.map_time, f32(.1))
-        driving := editor.pilot.mode == .Driving
         if !editor.in_map do editor.map_time = frame_now
         atmosphere.step(&editor.atmosphere, frame_delta)
-        particle_systems.step(
-            &editor.particles,
-            frame_delta,
-            particle_systems.Vec3{x = island_center, y = 6.0, z = island_center},
-        )
         if rl.IsKeyPressed(.P) do editor.atmosphere.paused = !editor.atmosphere.paused
         if rl.IsKeyDown(.LEFT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes - frame_delta * 180)
         if rl.IsKeyDown(.RIGHT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes + frame_delta * 180)
@@ -1455,7 +1359,7 @@ main :: proc() {
             }
             editor.camera = third_person.default_camera()
             camera_target := editor.player.position
-            if editor.pilot.mode == .Driving do camera_target = editor.pilot.vehicle.position
+            if editor.pilot.mode == .Driving do camera_target = editor.postale.vehicle.position
             editor.camera_pose = third_person.camera_pose(camera_target, editor.camera)
             editor.in_map = true
             editor.map_time = f32(rl.GetTime())
@@ -1465,7 +1369,7 @@ main :: proc() {
             if rl.IsKeyPressed(.Q) do editor.tool = .Raise
             if rl.IsKeyPressed(.E) do editor.tool = .Smooth
             if rl.IsKeyPressed(.T) do editor.tool = .Paint
-            update_editor_camera(editor, min(frame_delta, f32(.05)))
+            update_editor_camera(&editor, min(frame_delta, f32(.05)))
             if !shift_key_down() {
                 editor.radius = clamp(
                     editor.radius + rl.GetMouseWheelMove() * terrain.BASE_CELL_SIZE,
@@ -1474,41 +1378,31 @@ main :: proc() {
                 )
             }
         }
-        focal_length := f32(1.35)
-        if editor.in_map && driving_postale(editor) {
-            focal_length = editor.flight_camera.focal_length
-        }
-        editor_view_camera := perspective_camera(editor.camera_pose, focal_length)
+        editor_view_camera := perspective_camera(editor.camera_pose)
         world_mouse, world_mouse_inside := rl.GetWorldMousePosition()
         world_x, world_z, cursor_hit := terrain_under_cursor_3d(
-            editor,
+            &editor,
             editor_view_camera,
             world_mouse,
             ADRIATIC_WORLD_WIDTH,
             ADRIATIC_WORLD_HEIGHT,
         )
         cursor_hit = cursor_hit && world_mouse_inside
-        if editor.in_map && !capture_car_mode {
+        if editor.in_map {
             now := f32(rl.GetTime())
             delta_seconds := now - editor.map_time
             editor.map_time = now
             mouse_delta := rl.GetMouseDelta()
-            flying := driving_postale(editor)
-            in_car := driving_car(editor)
-            if flying {
-                chase_camera.look(&editor.flight_camera, mouse_delta.x, mouse_delta.y)
-                if rl.IsKeyPressed(.C) {
-                    chase_camera.reset(&editor.flight_camera, postale_camera_target(editor))
-                }
+            driving := editor.pilot.mode == .Driving
+            third_person.look(&editor.camera, mouse_delta.x, -mouse_delta.y, .012)
+            editor.camera.distance = clamp(editor.camera.distance - rl.GetMouseWheelMove() * .5, 3, 12)
+            if driving {
                 if rl.IsKeyPressed(.R) {
-                    ground := postale_game.drivable_surface_height(
-                        terrain.sample_height(
-                            &editor.project,
-                            0,
-                            editor.postale.spawn_position.x,
-                            editor.postale.spawn_position.z,
-                        ),
-                        editor.project.sea_level,
+                    ground := terrain.sample_height(
+                        &editor.project,
+                        0,
+                        editor.postale.spawn_position.x,
+                        editor.postale.spawn_position.z,
                     )
                     postale_game.reset(&editor.postale, ground)
                     vehicles.sync_driver(&editor.pilot)
@@ -1535,42 +1429,13 @@ main :: proc() {
                 control.roll = clamp(control.roll, -1, 1)
                 control.yaw = clamp(control.yaw, -1, 1)
                 editor.flight_control = control
-                ground := postale_game.drivable_surface_height(
-                    terrain.sample_height(
-                        &editor.project,
-                        0,
-                        editor.postale.body.position.x,
-                        editor.postale.body.position.z,
-                    ),
-                    editor.project.sea_level,
+                ground := terrain.sample_height(
+                    &editor.project,
+                    0,
+                    editor.postale.body.position.x,
+                    editor.postale.body.position.z,
                 )
-                postale_game.step(
-                    &editor.postale,
-                    control,
-                    ground,
-                    min(delta_seconds, .05),
-                    flight.Vec3{editor.atmosphere.weather.wind[0], 0, editor.atmosphere.weather.wind[1]},
-                )
-                left_tip := postale_vertex_world(&editor.postale, {-5.35, -1.12, .2}, 1)
-                right_tip := postale_vertex_world(&editor.postale, {5.35, -1.12, .2}, 1)
-                particle_systems.step_wing_trails(
-                    &editor.wing_trails,
-                    min(delta_seconds, .05),
-                    particle_systems.Vec3{left_tip.x, left_tip.y, left_tip.z},
-                    particle_systems.Vec3{right_tip.x, right_tip.y, right_tip.z},
-                    particle_systems.Vec3 {
-                        editor.postale.body.basis.forward.x,
-                        editor.postale.body.basis.forward.y,
-                        editor.postale.body.basis.forward.z,
-                    },
-                    particle_systems.Vec3 {
-                        editor.postale.body.basis.up.x,
-                        editor.postale.body.basis.up.y,
-                        editor.postale.body.basis.up.z,
-                    },
-                    particle_systems.Vec3{editor.atmosphere.weather.wind[0], 0, editor.atmosphere.weather.wind[1]},
-                    editor.postale.telemetry.airspeed,
-                )
+                postale_game.step(&editor.postale, control, ground, min(delta_seconds, .05))
                 vehicles.sync_driver(&editor.pilot)
                 if rl.IsKeyPressed(.F) && postale_game.can_exit(&editor.postale) {
                     if vehicles.try_exit(&editor.pilot, true) {
@@ -1581,98 +1446,19 @@ main :: proc() {
                         editor.camera = third_person.default_camera()
                     }
                 }
-                chase_camera.step(&editor.flight_camera, postale_camera_target(editor), min(delta_seconds, .05))
-                editor.camera_pose = editor.flight_camera.pose
+                target := editor.postale.vehicle.position
+                target.x += editor.postale.body.basis.forward.x * 2.5
+                target.y += editor.postale.body.basis.forward.y * 2.5
+                target.z += editor.postale.body.basis.forward.z * 2.5
+                desired_camera := third_person.camera_pose(target, editor.camera)
+                editor.camera_pose = third_person.follow_camera(
+                    editor.camera_pose,
+                    desired_camera,
+                    7,
+                    min(delta_seconds, .05),
+                )
             }
-            if in_car {
-                if rl.IsKeyPressed(.F) {
-                    if vehicles.try_exit(&editor.pilot, true) {
-                        editor.player.position = editor.pilot.position
-                        editor.player.velocity = {}
-                        editor.player.grounded = true
-                        editor.camera = third_person.default_camera()
-                    }
-                } else {
-                    throttle, steering := f32(0), f32(0)
-                    if rl.IsKeyDown(.W) || rl.IsKeyDown(.UP) do throttle += 1
-                    if rl.IsKeyDown(.S) || rl.IsKeyDown(.DOWN) do throttle -= 1
-                    if rl.IsKeyDown(.A) || rl.IsKeyDown(.LEFT) do steering -= 1
-                    if rl.IsKeyDown(.D) || rl.IsKeyDown(.RIGHT) do steering += 1
-                    if rl.GamepadAvailable() {
-                        throttle += max(rl.GetGamepadAxis(.Right_Trigger), f32(0))
-                        throttle -= max(rl.GetGamepadAxis(.Left_Trigger), f32(0))
-                        steering = stronger_axis(steering, shape_flight_axis(rl.GetGamepadAxis(.Left_X)))
-                    }
-                    ground := terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
-                    handbrake :=
-                        rl.IsKeyDown(.SPACE) || (rl.GamepadAvailable() && rl.IsGamepadButtonDown(.Right_Shoulder))
-                    vehicles.car_drive_step(&editor.car_drive, &editor.car, {
-                            throttle  = clamp(throttle, -1, 1),
-                            steering  = clamp(steering, -1, 1),
-                            handbrake = handbrake,
-                        }, ground, min(delta_seconds, .05))
-                    forward_x, forward_z := math.cos(editor.car.yaw_radians), math.sin(editor.car.yaw_radians)
-                    right_x, right_z := -forward_z, forward_x
-                    contacts := [4]particle_systems.Vehicle_Contact{}
-                    wheel_x := [2]f32{-1, 1}
-                    wheel_z := [2]f32{-1.12, 1.12}
-                    contact_index := 0
-                    for x in wheel_x {
-                        for z in wheel_z {
-                            contact_x := editor.car.position.x + right_x * x - forward_x * z
-                            contact_z := editor.car.position.z + right_z * x - forward_z * z
-                            contacts[contact_index] = {
-                                position = {
-                                    x = contact_x,
-                                    y = terrain.sample_height(&editor.project, 0, contact_x, contact_z),
-                                    z = contact_z,
-                                },
-                                grounded = true,
-                            }
-                            contact_index += 1
-                        }
-                    }
-                    particle_systems.step_vehicle_effects(
-                        &editor.vehicle_effects,
-                        min(delta_seconds, .05),
-                        particle_systems.Vec3{editor.car.position.x, editor.car.position.y, editor.car.position.z},
-                        editor.car.yaw_radians,
-                        vehicles.car_drive_speed(editor.car_drive),
-                        editor.car_drive.steering,
-                        throttle,
-                        handbrake,
-                        contacts,
-                    )
-                    vehicles.sync_driver(&editor.pilot)
-                    speed_ratio := clamp(
-                        vehicles.car_drive_speed(editor.car_drive) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward,
-                        0,
-                        1,
-                    )
-                    target_yaw := -math.PI * .5 - editor.car.yaw_radians
-                    editor.camera.yaw_radians = vehicles.car_drive_angle_step(
-                        editor.camera.yaw_radians,
-                        target_yaw,
-                        clamp((3.8 + speed_ratio * 2.2) * min(delta_seconds, .05), 0, 1),
-                    )
-                    editor.camera.pitch_radians = .24
-                    editor.camera.distance = 5.2 + speed_ratio * 1.8
-                    editor.camera.height = 1.15 + speed_ratio * .32
-                    desired_camera := third_person.camera_pose(editor.car.position, editor.camera)
-                    editor.camera_pose = third_person.follow_camera(
-                        editor.camera_pose,
-                        desired_camera,
-                        8,
-                        min(delta_seconds, .05),
-                    )
-                }
-            }
-            // `driving` is the mode captured at the start of this frame. After
-            // an exit, defer on-foot input until the next frame so the same F
-            // press cannot immediately enter the nearby vehicle again.
-            if editor.pilot.mode == .On_Foot && !driving {
-                third_person.look(&editor.camera, mouse_delta.x, -mouse_delta.y, .012)
-                editor.camera.distance = clamp(editor.camera.distance - rl.GetMouseWheelMove() * .5, 3, 12)
+            if !driving {
                 move_x, move_y := f32(0), f32(0)
                 if rl.IsKeyDown(.D) do move_x += 1
                 if rl.IsKeyDown(.A) do move_x -= 1
@@ -1707,13 +1493,13 @@ main :: proc() {
                 if rl.IsKeyPressed(.F) {
                     _, entered := vehicles.try_enter_nearest(
                         &editor.pilot,
-                        []^vehicles.Vehicle{&editor.car, &editor.postale.vehicle},
+                        []^vehicles.Vehicle{&editor.postale.vehicle},
                     )
                     if entered {
                         editor.flight_control = {}
-                        if driving_postale(editor) {
-                            chase_camera.reset(&editor.flight_camera, postale_camera_target(editor))
-                        }
+                        editor.camera.yaw_radians = editor.postale.vehicle.yaw_radians
+                        editor.camera.pitch_radians = .28
+                        editor.camera.distance = 8
                     }
                 }
                 desired_camera := third_person.camera_pose(editor.player.position, editor.camera)
@@ -1731,10 +1517,9 @@ main :: proc() {
             if rl.IsMouseButtonDown(.RIGHT) do terrain.apply_stroke(&editor.project, editor.tool, world_x, world_z, editor.radius, stroke_strength, -1)
         }
         rl.BeginDrawing()
-        draw_terrain(editor, width, height, f32(rl.GetTime()))
+        draw_terrain(&editor, width, height, f32(rl.GetTime()))
         rl.EndDrawing()
-        capture_frame := capture_flight_mode ? 20 : 2
-        if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", os.args[2]))
+        if capture_mode && frame == 2 do rl.TakeScreenshot(fmt.ctprintf("%s", os.args[2]))
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.
         if capture_mode && frame >= 32 do break
