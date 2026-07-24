@@ -6,7 +6,7 @@ import "core:math"
 // intentionally unbounded so simulation can accumulate it without wrapping.
 // Fixed-wing flap input is normalized: 0 retracted, 1 fully deployed.
 
-clamp_unit :: proc(value: f32) -> f32 {if value < 0 do return 0; if value > 1 do return 1; return value}
+clamp_unit :: proc(value: f32) -> f32 { if value < 0 do return 0; if value > 1 do return 1; return value }
 
 set_vertical_propeller :: proc(
     model: ^Aircraft_Wireframe,

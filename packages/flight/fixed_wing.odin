@@ -153,24 +153,24 @@ pelican_airframe :: proc() -> Airframe {
     }
 }
 
-default_runtime :: proc() -> Runtime { return{
+default_runtime :: proc() -> Runtime {return{
         engine_output = 1,
         control_authority = 1,
         drag_multiplier = 1,
         stall_speed_modifier = 1,
-    } }
-effective_stall_speed :: proc(mass: f32, airframe: Airframe) -> f32 { return(
+    }}
+effective_stall_speed :: proc(mass: f32, airframe: Airframe) -> f32 {return(
         airframe.stall_speed *
         math.sqrt(clamp(mass / max_f32(airframe.maximum_gross_mass_kg, 1), .55, 1.1)) \
-    ) }
-drag_force_at_speed :: proc(speed: f32, airframe: Airframe) -> f32 { return(
+    )}
+drag_force_at_speed :: proc(speed: f32, airframe: Airframe) -> f32 {return(
         speed *
         speed *
         (airframe.static_thrust_per_engine *
                 airframe.engine_count /
                 (airframe.maximum_speed * airframe.maximum_speed)) *
         airframe.drag_scale \
-    ) }
+    )}
 max_f32 :: proc(a, b: f32) -> f32 { if a > b do return a; return b }
 
 lift_coefficient :: proc(angle: f32, airframe: Airframe) -> f32 {
@@ -233,10 +233,10 @@ calculate_forces :: proc(
     }
 }
 
-assistance_scale :: proc(control: f32) -> f32 { t := clamp((math.abs(control) - .35) / .45, 0, 1); return(
+assistance_scale :: proc(control: f32) -> f32 {t := clamp((math.abs(control) - .35) / .45, 0, 1); return(
         1 -
         t * t * (3 - 2 * t) \
-    ) }
+    )}
 
 step :: proc(
     state: ^Body_State,

@@ -85,7 +85,7 @@ try_exit :: proc(character: ^Character, exit_position_clear: bool) -> (exited: b
     return true
 }
 
-subtract :: proc(a, b: third_person.Vec3) -> third_person.Vec3 {return {a.x - b.x, a.y - b.y, a.z - b.z}}
+subtract :: proc(a, b: third_person.Vec3) -> third_person.Vec3 { return {a.x - b.x, a.y - b.y, a.z - b.z} }
 add :: proc(a, b: third_person.Vec3) -> third_person.Vec3 { return {a.x + b.x, a.y + b.y, a.z + b.z} }
 scale :: proc(value: third_person.Vec3, amount: f32) -> third_person.Vec3 {return{
         value.x * amount,

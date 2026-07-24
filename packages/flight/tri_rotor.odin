@@ -44,13 +44,13 @@ libellula_airframe :: proc() -> Tri_Rotor_Airframe {
     }
 }
 
-default_tri_rotor_runtime :: proc() -> Tri_Rotor_Runtime { return{
+default_tri_rotor_runtime :: proc() -> Tri_Rotor_Runtime {return{
         left_engine_output = 1,
         right_engine_output = 1,
         rear_engine_output = 1,
         auto_level = true,
         ground_distance = 999999,
-    } }
+    }}
 
 solve_tri_rotor :: proc(
     total_thrust, pitch_moment, roll_moment: f32,
@@ -84,10 +84,10 @@ solve_tri_rotor :: proc(
     }
 }
 
-vtol_yaw_reaction :: proc(yaw_input, local_yaw_rate, damping_scale, authority, yaw_torque: f32) -> f32 { return(
+vtol_yaw_reaction :: proc(yaw_input, local_yaw_rate, damping_scale, authority, yaw_torque: f32) -> f32 {return(
         (-yaw_input * yaw_torque - local_yaw_rate * damping_scale) *
         authority \
-    ) }
+    )}
 
 step_tri_rotor :: proc(
     state: ^Body_State,

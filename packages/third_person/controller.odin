@@ -132,5 +132,5 @@ approach :: proc(current, target, maximum_delta: f32) -> f32 {if current < targe
 min_f32 :: proc(a, b: f32) -> f32 { if a < b do return a; return b }
 max_f32 :: proc(a, b: f32) -> f32 { if a > b do return a; return b }
 add :: proc(a, b: Vec3) -> Vec3 { return {a.x + b.x, a.y + b.y, a.z + b.z} }
-scale :: proc(value: Vec3, amount: f32) -> Vec3 {return {value.x * amount, value.y * amount, value.z * amount}}
-lerp :: proc(a, b: Vec3, t: f32) -> Vec3 {return add(a, scale(Vec3{b.x - a.x, b.y - a.y, b.z - a.z}, t))}
+scale :: proc(value: Vec3, amount: f32) -> Vec3 { return {value.x * amount, value.y * amount, value.z * amount} }
+lerp :: proc(a, b: Vec3, t: f32) -> Vec3 { return add(a, scale(Vec3{b.x - a.x, b.y - a.y, b.z - a.z}, t)) }

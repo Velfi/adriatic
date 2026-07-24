@@ -31,29 +31,29 @@ Screen_Vertex :: struct {
     valid:       bool,
 }
 
-clamp_f32 :: proc(value, low, high: f32) -> f32 { if value < low do return low; if value > high do return high; return(
+clamp_f32 :: proc(value, low, high: f32) -> f32 {if value < low do return low; if value > high do return high; return(
         value \
-    ) }
+    )}
 lerp :: proc(a, b, t: f32) -> f32 { return a + (b - a) * clamp_f32(t, 0, 1) }
 dot :: proc(a, b: [3]f32) -> f32 { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
 sub :: proc(a, b: [3]f32) -> [3]f32 { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]} }
 abs_f32 :: proc(value: f32) -> f32 { if value < 0 do return -value; return value }
 round_i32 :: proc(value: f32) -> int { if value >= 0 do return int(value + .5); return int(value - .5) }
 
-default_camera :: proc() -> Camera { return{
+default_camera :: proc() -> Camera {return{
         right = {1, 0, 0},
         up = {0, 1, 0},
         forward = {0, 0, -1},
         focal_length = 1,
         near_plane = .05,
-    } }
+    }}
 
-target_valid :: proc(target: Target) -> bool { return(
+target_valid :: proc(target: Target) -> bool {return(
         target.width > 0 &&
         target.height > 0 &&
         len(target.pixels) >= target.width * target.height &&
         len(target.depth) >= target.width * target.height \
-    ) }
+    )}
 
 clear :: proc(target: ^Target, color: Color) {
     if target == nil || !target_valid(target^) do return
