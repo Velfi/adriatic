@@ -10,11 +10,13 @@ ZELDA_ENGINE_COLLECTION := -collection:zelda_engine=$(ZELDA_ENGINE_PACKAGES)
 LOCAL_ODIN := $(TOOLS_DIR)/odin/$(ODIN_VERSION)/odin
 LOCAL_SLANGC := $(TOOLS_DIR)/slang/$(SLANG_VERSION)/slangc
 PATH_ODIN := $(shell command -v odin 2>/dev/null)
+PATH_SLANGC := $(shell command -v slangc 2>/dev/null)
 ODIN ?= $(if $(PATH_ODIN),$(PATH_ODIN),$(LOCAL_ODIN))
-SLANGC ?= $(LOCAL_SLANGC)
+SLANGC ?= $(if $(PATH_SLANGC),$(PATH_SLANGC),$(LOCAL_SLANGC))
 ODINFMT ?= odinfmt
 CC ?= cc
 AR ?= ar
+PYTHON ?= python3
 
 ifeq ($(shell uname -s),Darwin)
 HOMEBREW_LLVM_PREFIX := $(shell brew --prefix $(LLVM_HOMEBREW_FORMULA) 2>/dev/null)
@@ -33,10 +35,36 @@ DEV_DIR := $(BUILD_DIR)/dev
 RELEASE_DIR := $(BUILD_DIR)/release
 DEV_APP := $(DEV_DIR)/$(APP)
 RELEASE_APP := $(RELEASE_DIR)/$(APP)
+ifeq ($(shell uname -s),Darwin)
+SHARED_EXT := dylib
+else ifeq ($(shell uname -s),Linux)
+SHARED_EXT := so
+else
+SHARED_EXT := dll
+endif
+HOT_DIR := $(BUILD_DIR)/hot
+HOT_APP := $(HOT_DIR)/$(APP).$(SHARED_EXT)
+HOT_HOST := $(HOT_DIR)/$(APP)-hot
+HOT_SHADER_DIR := $(HOT_DIR)/shaders
+HOT_PHYSICS_STAMP := $(HOT_DIR)/physics.stamp
+HOT_APP_STAMP := $(HOT_DIR)/app.stamp
+HOT_SHADER_STAMP := $(HOT_DIR)/shader.stamp
 CAPTURE_PATH ?= $(abspath $(BUILD_DIR)/captures/$(APP).png)
 ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/null)
+HOT_ODIN_SOURCES := $(shell find src packages "$(ZELDA_ENGINE_PACKAGES)" -type f -name '*.odin' 2>/dev/null)
+HOT_SHADER_OUTPUTS := \
+	$(HOT_SHADER_DIR)/world.vert.spv \
+	$(HOT_SHADER_DIR)/world.frag.spv \
+	$(HOT_SHADER_DIR)/world-sky.vert.spv \
+	$(HOT_SHADER_DIR)/world-sky.frag.spv \
+	$(HOT_SHADER_DIR)/wireframe.vert.spv \
+	$(HOT_SHADER_DIR)/wireframe.frag.spv \
+	$(HOT_SHADER_DIR)/canvas.vert.spv \
+	$(HOT_SHADER_DIR)/canvas.frag.spv \
+	$(HOT_SHADER_DIR)/canvas-post.vert.spv \
+	$(HOT_SHADER_DIR)/canvas-post.frag.spv
 
-.PHONY: all bootstrap doctor physics-deps physics-build shaders build release run capture capture-car fmt check test clean
+.PHONY: all bootstrap doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run capture capture-car fmt check test clean
 
 all: build
 
@@ -236,6 +264,83 @@ $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf: assets/fonts/MomoTrust
 	cp $< $@
 
 release: doctor $(RELEASE_APP)
+
+$(HOT_PHYSICS_STAMP): Makefile
+	@mkdir -p $(@D)
+	$(MAKE) -C "$(ZELDA_ENGINE_ROOT)" physics-build
+	touch $@
+
+$(HOT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c Makefile
+	@mkdir -p $(@D)
+	$(CC) -O2 -c $< -o $(HOT_DIR)/gfx_signposts.o
+	$(AR) rcs $@ $(HOT_DIR)/gfx_signposts.o
+
+$(HOT_SHADER_DIR)/world.vert.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/world.frag.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/world-sky.vert.spv: assets/shaders/sky.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry sky_vertex -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/world-sky.frag.spv: assets/shaders/sky.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry sky_fragment -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/wireframe.vert.spv: assets/shaders/wireframe.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/wireframe.frag.spv: assets/shaders/wireframe.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/canvas.vert.spv: assets/shaders/canvas.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/canvas.frag.spv: assets/shaders/canvas.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/canvas-post.vert.spv: assets/shaders/canvas.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry post_vertex -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/canvas-post.frag.spv: assets/shaders/canvas.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry post_fragment -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
+	@mkdir -p $(@D)
+	touch $@
+
+$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a
+	@mkdir -p $(@D)
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -debug -o:minimal -build-mode:shared -define:HOT_RELOAD=true -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
+
+$(HOT_APP_STAMP): $(HOT_APP)
+	@mkdir -p $(@D)
+	touch $@
+
+$(HOT_HOST): hot/main.odin Makefile toolchain.mk
+	@mkdir -p $(@D)
+	$(ODIN) build hot/main.odin -file -debug -o:minimal -out:$@
+
+hot-app: $(HOT_APP_STAMP)
+
+hot-host: $(HOT_HOST)
+
+hot-shaders: $(HOT_SHADER_STAMP)
+
+hot-build: doctor $(HOT_PHYSICS_STAMP) hot-app hot-shaders hot-host
+
+hot: hot-build
+	$(PYTHON) tools/hot_watch.py --root "$(CURDIR)" --engine-root "$(ZELDA_ENGINE_ROOT)" --host "$(abspath $(HOT_HOST))" --make "$(MAKE)"
 
 # The Zelda Engine physics package is backed by its pinned Jolt checkout. Keep
 # the native build in the engine repository, but provision it before producing
