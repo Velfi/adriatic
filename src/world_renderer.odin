@@ -136,15 +136,16 @@ world_ocean :: proc(editor: ^Editor) {
         editor.camera_pose,
         editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
     )
-    extent := editor.in_map ? f32(3000) : f32(15000)
-    divisions := 32
+    world := &editor.tweak.world
+    extent := editor.in_map ? world.map_ocean_extent : world.editor_ocean_extent
+    divisions := editor.in_map ? max(world.map_ocean_divisions, 1) : max(world.editor_ocean_divisions, 1)
     cell := extent * 2 / f32(divisions)
     // A snapped tiled field surrounds the camera in every direction. Unlike the
     // former forward slab, it has no near edge for a high, downward-looking
     // camera to expose at the bottom of the viewport.
     center_x := f32(math.floor(f64(camera.position.x / cell))) * cell
     center_z := f32(math.floor(f64(camera.position.z / cell))) * cell
-    ocean_y := editor.project.sea_level - (editor.in_map ? f32(.08) : f32(2))
+    ocean_y := editor.project.sea_level - (editor.in_map ? world.map_ocean_depth : world.editor_ocean_depth)
     color := rl.Color{48, 112, 142, 255}
     for z_index in 0 ..< divisions {
         z0 := center_z - extent + f32(z_index) * cell
@@ -184,12 +185,18 @@ clipmap_vertex_color :: proc(editor: ^Editor, level: int, x, z, height: f32) -> 
     back := terrain.sample_height(&editor.project, level, x, z - cell)
     front := terrain.sample_height(&editor.project, level, x, z + cell)
     normal := vec_normalize(vec_cross({y = front - back, z = cell * 2}, {x = cell * 2, y = right - left}))
-    light := vec_normalize(third_person.Vec3{x = -.45, y = .85, z = -.3})
-    shade := clamp(.48 + max(vec_dot(normal, light), 0) * .52, .42, 1.05)
+    light := vec_normalize(third_person.Vec3 {
+        x = editor.tweak.presentation.light_direction[0],
+        y = editor.tweak.presentation.light_direction[1],
+        z = editor.tweak.presentation.light_direction[2],
+    })
+    p := editor.tweak.presentation
+    shade := clamp(p.shade_base + max(vec_dot(normal, light), 0) * p.shade_strength, p.shade_min, p.shade_max)
     base := terrain_color(
         max(height, editor.project.sea_level + .12),
         terrain.sample_material(&editor.project, level, x, z),
         editor.project.sea_level,
+        editor.tweak.presentation,
     )
     return {
         u8(clamp(f32(base.r) * shade, 0, 255)),
@@ -654,14 +661,14 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             camera.position.z,
             editor.in_map ? f32(.08) : f32(100),
         },
-        camera_right    = {camera.right.x, camera.right.y, camera.right.z, editor.in_map ? f32(800) : f32(10000)},
+        camera_right    = {camera.right.x, camera.right.y, camera.right.z, editor.tweak.world.far_clip},
         camera_up       = {camera.up.x, camera.up.y, camera.up.z, 0},
         camera_forward  = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
         projection      = {
             camera.focal_length,
             f32(pass.framebuffer_extent.width) / f32(max(pass.framebuffer_extent.height, 1)),
-            f32(terrain.WORLD_SIZE_METERS * .55),
-            f32(terrain.WORLD_SIZE_METERS * 1.5),
+            editor.tweak.world.fog_start,
+            editor.tweak.world.fog_end,
         },
         fog_color       = world_color(fog),
         water           = {sky.cloud_time_seconds, sky.weather.severity, sky.weather.wind[0], sky.weather.wind[1]},
@@ -727,7 +734,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             )
         }
     }
-    if imgui_active do imgui_render(pass)
+    if imgui_active do imgui_render(pass, world_renderer.editor)
 }
 
 world_renderer_attach :: proc(editor: ^Editor) {

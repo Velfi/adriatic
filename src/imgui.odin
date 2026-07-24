@@ -96,7 +96,7 @@ imgui_init :: proc(pass: ^rl.World_Pass_Context) -> bool {
         imgui = {}
         return false
     }
-    imgui.show_demo = true
+    imgui.show_demo = false
     imgui.last_time = rl.GetTime()
     imgui.initialized = true
     return true
@@ -150,20 +150,13 @@ imgui_begin_frame :: proc(pass: ^rl.World_Pass_Context) -> bool {
     return true
 }
 
-imgui_draw :: proc() {
-    im.SetNextWindowPos({24, 96}, im.Cond.FirstUseEver)
-    im.SetNextWindowSize({310, 170}, im.Cond.FirstUseEver)
-    if im.Begin("Adriatic ImGui") {
-        im.TextUnformatted("Dear ImGui Vulkan backend is live.")
-        im.Text("Display: %d x %d", int(imgui.io.DisplaySize.x), int(imgui.io.DisplaySize.y))
-        if im.Button("Show demo") do imgui.show_demo = true
-    }
-    im.End()
+imgui_draw :: proc(editor: ^Editor) {
+    imgui_draw_tweaks(editor)
     if imgui.show_demo do im.ShowDemoWindow(&imgui.show_demo)
 }
 
-imgui_render :: proc(pass: ^rl.World_Pass_Context) {
-    imgui_draw()
+imgui_render :: proc(pass: ^rl.World_Pass_Context, editor: ^Editor) {
+    imgui_draw(editor)
     im.Render()
     imgui_vk.RenderDrawData(im.GetDrawData(), pass.frame.command_buffer)
 }

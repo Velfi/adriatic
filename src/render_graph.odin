@@ -63,29 +63,10 @@ render_graph_geometry :: proc(user_data: rawptr) {
     render_graph_stage_end(ctx)
 }
 
-render_graph_particles :: proc(user_data: rawptr) {
-    ctx := cast(^Render_Graph_Context)user_data
-    cmd := ctx.pass.frame.command_buffer
-    render_graph_stage_label(ctx, "Adriatic / Particles")
-    vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.particle_pipelines[ctx.pipeline_index])
-    vk.CmdPushConstants(
-        cmd,
-        world_renderer.layout,
-        {.VERTEX, .FRAGMENT},
-        0,
-        u32(size_of(ctx.world_push)),
-        &ctx.world_push,
-    )
-    vk.CmdDraw(cmd, 6 * 512, 1, 0, 0)
-    render_graph_stage_end(ctx)
-}
-
 render_graph_terrain :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / Terrain Clipmap")
-    // Particles use a vertex-id-only pipeline. Restore the terrain pipeline
-    // before submitting indexed clipmap vertices.
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.pipelines[ctx.pipeline_index])
     vk.CmdPushConstants(
         cmd,
@@ -113,11 +94,9 @@ adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
     render_graph.reset(graph)
     sky := render_graph.add_pass(graph, "sky", render_graph_sky)
     geometry := render_graph.add_pass(graph, "geometry", render_graph_geometry)
-    particles := render_graph.add_pass(graph, "particles", render_graph_particles)
     terrain := render_graph.add_pass(graph, "terrain", render_graph_terrain)
     return(
         render_graph.depends_on(graph, geometry, sky) &&
-        render_graph.depends_on(graph, particles, geometry) &&
-        render_graph.depends_on(graph, terrain, particles) \
+        render_graph.depends_on(graph, terrain, geometry) \
     )
 }

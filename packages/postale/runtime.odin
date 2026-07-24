@@ -14,6 +14,64 @@ SAFE_BANK_RADIANS :: f32(.4363323)
 SAFE_EXIT_SPEED :: f32(1)
 TAKEOFF_STALL_SPEED_SCALE :: f32(.68)
 
+Tuning :: struct {
+    ground_clearance:          f32,
+    safe_touchdown_speed:      f32,
+    safe_bank_radians:         f32,
+    safe_exit_speed:           f32,
+    takeoff_stall_speed_scale: f32,
+    throttle_up_rate:          f32,
+    throttle_down_rate:        f32,
+    pitch_rate_increase:       f32,
+    pitch_rate_decrease:       f32,
+    roll_rate_increase:        f32,
+    roll_rate_decrease:        f32,
+    yaw_rate_increase:         f32,
+    yaw_rate_decrease:         f32,
+    flap_response:             f32,
+    flap_auto_throttle:        f32,
+    flap_auto_speed:           f32,
+    ground_brake:              f32,
+    ground_coast:              f32,
+    ground_steer_fast:         f32,
+    ground_steer_slow:         f32,
+    takeoff_throttle:          f32,
+    takeoff_speed_scale:       f32,
+    takeoff_vertical_assist:   f32,
+    propeller_base_rate:       f32,
+    propeller_throttle_rate:   f32,
+}
+
+default_tuning :: proc() -> Tuning {
+    return {
+        ground_clearance = GROUND_CLEARANCE,
+        safe_touchdown_speed = SAFE_TOUCHDOWN_SPEED,
+        safe_bank_radians = SAFE_BANK_RADIANS,
+        safe_exit_speed = SAFE_EXIT_SPEED,
+        takeoff_stall_speed_scale = TAKEOFF_STALL_SPEED_SCALE,
+        throttle_up_rate = .45,
+        throttle_down_rate = .65,
+        pitch_rate_increase = 5.5,
+        pitch_rate_decrease = 3.8,
+        roll_rate_increase = 6.5,
+        roll_rate_decrease = 4.8,
+        yaw_rate_increase = 4.2,
+        yaw_rate_decrease = 6.8,
+        flap_response = 1.5,
+        flap_auto_throttle = .35,
+        flap_auto_speed = 28,
+        ground_brake = 3.2,
+        ground_coast = .55,
+        ground_steer_fast = .8,
+        ground_steer_slow = .22,
+        takeoff_throttle = .8,
+        takeoff_speed_scale = .72,
+        takeoff_vertical_assist = 2.4,
+        propeller_base_rate = 1.5,
+        propeller_throttle_rate = 18,
+    }
+}
+
 // For the current prototype, the ocean is a solid taxi/takeoff surface. Keep
 // this product policy here rather than teaching the shared flight model about
 // water.
@@ -38,6 +96,7 @@ Runtime :: struct {
     was_grounded:    bool,
     spawn_position:  flight.Vec3,
     spawn_basis:     flight.Basis,
+    tuning:          Tuning,
 }
 
 Control :: struct {
@@ -53,11 +112,12 @@ new_runtime :: proc(spawn_position: flight.Vec3) -> Runtime {
     result := Runtime {
         airframe = flight.postale_airframe(),
         flight_runtime = flight.default_runtime(),
+        tuning = default_tuning(),
         spawn_position = spawn_position,
         spawn_basis = {forward = {-1, 0, 0}, up = {0, 1, 0}, right = {0, 0, -1}},
     }
-    result.flight_runtime.stall_speed_modifier = TAKEOFF_STALL_SPEED_SCALE
-    reset(&result, spawn_position.y - GROUND_CLEARANCE)
+    result.flight_runtime.stall_speed_modifier = result.tuning.takeoff_stall_speed_scale
+    reset(&result, spawn_position.y - result.tuning.ground_clearance)
     return result
 }
 
@@ -67,7 +127,7 @@ reset :: proc(runtime: ^Runtime, ground_height: f32) {
         position = runtime.spawn_position,
         basis    = runtime.spawn_basis,
     }
-    runtime.body.position.y = ground_height + GROUND_CLEARANCE
+    runtime.body.position.y = ground_height + runtime.tuning.ground_clearance
     runtime.vehicle.position = to_third_person(runtime.body.position)
     runtime.vehicle.yaw_radians = yaw_radians(runtime.body.basis)
     runtime.vehicle.interaction_radius = 2.5
@@ -84,12 +144,7 @@ reset :: proc(runtime: ^Runtime, ground_height: f32) {
     runtime.crashed = false
 }
 
-step :: proc(
-    runtime: ^Runtime,
-    control: Control,
-    ground_height, delta_seconds: f32,
-    wind := flight.Vec3{},
-) -> Ground_Result {
+step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: f32) -> Ground_Result {
     if runtime == nil || delta_seconds <= 0 do return {}
     dt := min_f32(delta_seconds, .05)
     if runtime.crashed {
@@ -99,19 +154,30 @@ step :: proc(
     }
 
     throttle_target := runtime.throttle
-    if control.throttle_up do throttle_target += dt * .45
-    if control.throttle_down do throttle_target -= dt * .65
+    if control.throttle_up do throttle_target += dt * runtime.tuning.throttle_up_rate
+    if control.throttle_down do throttle_target -= dt * runtime.tuning.throttle_down_rate
     runtime.throttle = clamp(throttle_target, 0, 1)
 
     speed := flight.length(runtime.body.velocity)
-    pitch_rate := math.abs(control.pitch) < math.abs(runtime.pitch) ? f32(5.5) : f32(3.8)
-    roll_rate := math.abs(control.roll) < math.abs(runtime.roll) ? f32(6.5) : f32(4.8)
+    pitch_rate := runtime.tuning.pitch_rate_decrease
+    if math.abs(control.pitch) < math.abs(runtime.pitch) do pitch_rate = runtime.tuning.pitch_rate_increase
+    roll_rate := runtime.tuning.roll_rate_decrease
+    if math.abs(control.roll) < math.abs(runtime.roll) do roll_rate = runtime.tuning.roll_rate_increase
     runtime.pitch = approach(runtime.pitch, clamp(control.pitch, -1, 1), pitch_rate * dt)
     runtime.roll = approach(runtime.roll, clamp(control.roll, -1, 1), roll_rate * dt)
-    runtime.yaw = slew_control(runtime.yaw, clamp(control.yaw, -1, 1), 4.2, 6.8, dt)
+    runtime.yaw = slew_control(
+        runtime.yaw,
+        clamp(control.yaw, -1, 1),
+        runtime.tuning.yaw_rate_increase,
+        runtime.tuning.yaw_rate_decrease,
+        dt,
+    )
     flap_target: f32
-    if runtime.grounded || (runtime.throttle < .35 && speed < 28) do flap_target = 1
-    runtime.flap_fraction = approach(runtime.flap_fraction, flap_target, dt * 1.5)
+    if runtime.grounded ||
+       (runtime.throttle < runtime.tuning.flap_auto_throttle && speed < runtime.tuning.flap_auto_speed) {
+        flap_target = 1
+    }
+    runtime.flap_fraction = approach(runtime.flap_fraction, flap_target, dt * runtime.tuning.flap_response)
 
     command := flight.Control_Command {
         pitch        = runtime.pitch,
@@ -122,26 +188,34 @@ step :: proc(
     }
     runtime.was_grounded = runtime.grounded
     vertical_before := runtime.body.velocity.y
-    runtime.telemetry = flight.step(&runtime.body, command, runtime.airframe, runtime.flight_runtime, wind, dt)
+    runtime.telemetry = flight.step(&runtime.body, command, runtime.airframe, runtime.flight_runtime, {}, dt)
 
     result := resolve_ground_contact(runtime, ground_height, vertical_before)
     if runtime.grounded {
         // Wheels remove lateral slip and make low-speed runway steering forgiving.
         forward_speed := flight.dot(runtime.body.velocity, runtime.body.basis.forward)
-        forward_speed *= max_f32(0, 1 - dt * (control.throttle_down ? 3.2 : .55))
+        forward_speed *= max_f32(
+            0,
+            1 - dt * (control.throttle_down ? runtime.tuning.ground_brake : runtime.tuning.ground_coast),
+        )
         runtime.body.velocity = flight.scale(runtime.body.basis.forward, max_f32(0, forward_speed))
         runtime.body.angular_velocity.x = 0
         runtime.body.angular_velocity.z = 0
-        steer := runtime.yaw * dt * lerp(.8, .22, clamp(forward_speed / 20, 0, 1))
+        steer :=
+            runtime.yaw *
+            dt *
+            lerp(runtime.tuning.ground_steer_fast, runtime.tuning.ground_steer_slow, clamp(forward_speed / 20, 0, 1))
         rotate_ground_heading(&runtime.body.basis, steer)
         // Short-field assistance lets the authored runway reach flying speed.
-        if runtime.throttle > .8 && forward_speed > runtime.telemetry.effective_stall_speed * .72 {
-            runtime.body.velocity.y = max_f32(runtime.body.velocity.y, 2.4)
+        if runtime.throttle > runtime.tuning.takeoff_throttle &&
+           forward_speed > runtime.telemetry.effective_stall_speed * runtime.tuning.takeoff_speed_scale {
+            runtime.body.velocity.y = max_f32(runtime.body.velocity.y, runtime.tuning.takeoff_vertical_assist)
             runtime.grounded = false
             result.grounded = false
         }
     }
-    runtime.propeller_turns += dt * (1.5 + runtime.throttle * 18)
+    runtime.propeller_turns +=
+        dt * (runtime.tuning.propeller_base_rate + runtime.throttle * runtime.tuning.propeller_throttle_rate)
     sync_vehicle(runtime)
     result.crashed = runtime.crashed
     return result
@@ -149,11 +223,13 @@ step :: proc(
 
 resolve_ground_contact :: proc(runtime: ^Runtime, ground_height, vertical_speed_before: f32) -> Ground_Result {
     if runtime == nil do return {}
-    floor := ground_height + GROUND_CLEARANCE
+    floor := ground_height + runtime.tuning.ground_clearance
     if runtime.body.position.y > floor do return {}
     touched_down := !runtime.was_grounded
     bank := bank_radians(runtime.body.basis)
-    if touched_down && (-vertical_speed_before > SAFE_TOUCHDOWN_SPEED || math.abs(bank) > SAFE_BANK_RADIANS) {
+    if touched_down &&
+       (-vertical_speed_before > runtime.tuning.safe_touchdown_speed ||
+               math.abs(bank) > runtime.tuning.safe_bank_radians) {
         runtime.crashed = true
     }
     runtime.body.position.y = floor
@@ -170,7 +246,7 @@ can_exit :: proc(runtime: ^Runtime) -> bool {
         runtime != nil &&
         runtime.grounded &&
         !runtime.crashed &&
-        flight.length(runtime.body.velocity) < SAFE_EXIT_SPEED \
+        flight.length(runtime.body.velocity) < runtime.tuning.safe_exit_speed \
     )
 }
 

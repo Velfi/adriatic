@@ -233,10 +233,8 @@ calculate_forces :: proc(
     }
 }
 
-assistance_scale :: proc(control: f32) -> f32 {t := clamp((math.abs(control) - .35) / .45, 0, 1); return(
-        1 -
-        t * t * (3 - 2 * t) \
-    )}
+assistance_scale :: proc(control: f32) -> f32 {t := clamp((math.abs(control) - .35) / .45, 0, 1)
+    return 1 - t * t * (3 - 2 * t)}
 
 step :: proc(
     state: ^Body_State,

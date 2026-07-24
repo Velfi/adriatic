@@ -14,9 +14,8 @@ dot :: proc(a, b: Vec3) -> f32 { return a.x * b.x + a.y * b.y + a.z * b.z }
 cross :: proc(a, b: Vec3) -> Vec3 { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x} }
 length :: proc(v: Vec3) -> f32 { return math.sqrt(dot(v, v)) }
 normalize :: proc(v: Vec3) -> Vec3 { n := length(v); if n < 0.00001 do return {}; return scale(v, 1 / n) }
-clamp :: proc(value, low, high: f32) -> f32 {if value < low do return low; if value > high do return high; return(
-        value \
-    )}
+clamp :: proc(value, low, high: f32) -> f32 {if value < low do return low; if value > high do return high
+    return value}
 lerp :: proc(a, b, t: f32) -> f32 { return a + (b - a) * clamp(t, 0, 1) }
 sign :: proc(value: f32) -> f32 { if value < 0 do return -1; if value > 0 do return 1; return 0 }
 degrees :: proc(radians: f32) -> f32 { return radians * 57.2957795 }

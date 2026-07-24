@@ -55,7 +55,7 @@ load :: proc(path: string, version: i64, root: ^$T, label: string, after_load: p
         append(&res.notes, fmt.tprintf("%s: %s not found, using defaults", label, path))
         return res
     }
-    if read_err != .None {
+    if read_err != nil {
         append(&res.notes, fmt.tprintf("%s: read %s failed: %v", label, path, read_err))
         return res
     }

@@ -95,6 +95,8 @@ Editor :: struct {
     postale:        postale_game.Runtime,
     flight_control: postale_game.Control,
     atmosphere:     atmosphere.Atmosphere,
+    tweak:          Tweak_State,
+    tweak_status:   Tweak_Status,
 }
 
 set_pointer_locked :: proc(locked: bool) {
@@ -433,42 +435,31 @@ world_under_cursor :: proc(mouse, center: rl.Vector2, scale: f32) -> (f32, f32) 
     return (a + b) * .5, (b - a) * .5
 }
 
-terrain_color :: proc(height, painted, sea_level: f32) -> rl.Color {
-    water := rl.Color {
-        r = 26,
-        g = 80,
-        b = 104,
-        a = 255,
+presentation_color :: proc(value: [4]f32) -> rl.Color {
+    return {
+        u8(clamp(value[0] * 255, 0, 255)),
+        u8(clamp(value[1] * 255, 0, 255)),
+        u8(clamp(value[2] * 255, 0, 255)),
+        u8(clamp(value[3] * 255, 0, 255)),
     }
-    sand := rl.Color {
-        r = 205,
-        g = 183,
-        b = 126,
-        a = 255,
-    }
-    soil := rl.Color {
-        r = 145,
-        g = 101,
-        b = 61,
-        a = 255,
-    }
-    grass := rl.Color {
-        r = 70,
-        g = 133,
-        b = 80,
-        a = 255,
-    }
+}
+
+terrain_color :: proc(height, painted, sea_level: f32, presentation: Presentation_Tweak) -> rl.Color {
+    water := presentation_color(presentation.terrain_water)
+    sand := presentation_color(presentation.terrain_sand)
+    soil := presentation_color(presentation.terrain_soil)
+    grass := presentation_color(presentation.terrain_grass)
     if height <= sea_level do return water
-    if painted > .5 do return soil
+    if painted > presentation.painted_threshold do return soil
 
     elevation := height - sea_level
     // Broad blends keep the elevation bands from turning the heightfield cells
     // into hard material rings. The normal-based light applied by each renderer
     // then provides the small-scale shape and slope definition.
-    if elevation < .9 {
-        return color_lerp(sand, soil, clamp((elevation - .18) / .72, 0, 1))
+    if elevation < presentation.grass_start {
+        return color_lerp(sand, soil, clamp((elevation - presentation.sand_start) / presentation.land_blend, 0, 1))
     }
-    return color_lerp(soil, grass, clamp((elevation - .9) / 3.1, 0, 1))
+    return color_lerp(soil, grass, clamp((elevation - presentation.grass_start) / presentation.grass_blend, 0, 1))
 }
 
 draw_line_3d :: proc(
@@ -714,7 +705,11 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
     near_rows := 48
     far_rows := 176
     side_rows := 180
-    light_direction := vec_normalize(third_person.Vec3{x = -.45, y = .85, z = -.3})
+    light_direction := vec_normalize(third_person.Vec3 {
+        x = editor.tweak.presentation.light_direction[0],
+        y = editor.tweak.presentation.light_direction[1],
+        z = editor.tweak.presentation.light_direction[2],
+    })
     fog_start := f32(terrain.WORLD_SIZE_METERS * .55)
     fog_end := f32(terrain.WORLD_SIZE_METERS * 1.5)
     for depth_order in 0 ..< near_rows + far_rows {
@@ -752,11 +747,17 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             }
             surface_normal := vec_normalize(vec_cross(surface_right, surface_forward))
             diffuse := max(vec_dot(surface_normal, light_direction), 0)
-            shade := clamp(.52 + diffuse * .48 + average_height * .012, .42, 1.05)
+            p := editor.tweak.presentation
+            shade := clamp(
+                p.shade_base + diffuse * p.shade_strength + average_height * p.height_shade,
+                p.shade_min,
+                p.shade_max,
+            )
             base_color := terrain_color(
                 average_height,
                 terrain.sample_material(&editor.project, 0, base_x, base_z),
                 editor.project.sea_level,
+                editor.tweak.presentation,
             )
             color := rl.Color {
                 r = u8(f32(base_color.r) * shade),
@@ -847,7 +848,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                 ),
                 editor.project.sea_level,
             )
-            altitude := max(f32(0), editor.postale.body.position.y - ground - postale_game.GROUND_CLEARANCE)
+            altitude := max(f32(0), editor.postale.body.position.y - ground - editor.postale.tuning.ground_clearance)
             hud := fmt.tprintf(
                 "THR %3.0f%%   AIR %3.0f m/s   ALT %3.0f m",
                 editor.postale.throttle * 100,
@@ -1121,6 +1122,7 @@ draw_terrain_isometric_legacy :: proc(editor: ^Editor, width, height: i32, time:
                 (h00 + h10 + h11 + h01) * .25,
                 terrain.sample_material(&editor.project, level, x0, z0),
                 editor.project.sea_level,
+                editor.tweak.presentation,
             )
             rl.DrawQuadHatched(
                 project_point(x0, z0, h00, center, scale),
@@ -1304,7 +1306,7 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
                 ),
                 editor.project.sea_level,
             )
-            altitude := max(f32(0), editor.postale.body.position.y - ground - postale_game.GROUND_CLEARANCE)
+            altitude := max(f32(0), editor.postale.body.position.y - ground - editor.postale.tuning.ground_clearance)
             hud := fmt.tprintf(
                 "THR %3.0f%%   AIR %3.0f m/s   ALT %3.0f m",
                 editor.postale.throttle * 100,
@@ -1393,26 +1395,13 @@ adriatic_run :: proc() -> bool {
     editor := new(Editor)
     defer free(editor)
     terrain.init_project(&editor.project)
-    editor.tool = .Raise
-    editor.radius = 48
-    editor.strength = .10
-    editor.atmosphere = atmosphere.new(0x41c10)
-    island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-    editor.editor_focus = {
-        x = island_center,
-        z = island_center,
-    }
-    editor.editor_camera = {
-        yaw_radians   = math.PI * .25,
-        pitch_radians = .58,
-        distance      = 900,
-    }
-    editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+    editor.tweak = tweak_default_state()
     editor.postale = postale_game.new_runtime(postale_spawn_position(editor))
     editor.car = vehicles.default_vehicle(car_spawn_position(editor))
-    editor.car.interaction_radius = 3
-    editor.car.exit_distance = 1.45
     editor.car.yaw_radians = -math.PI * .5
+    tweak_apply_to_editor(editor)
+    tweak_load_editor(editor)
+    editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     editor.pilot.position = runway_spawn_position(editor)
     if capture_sky_mode {
         preset := atmosphere.Weather_Preset.Clear
@@ -1630,10 +1619,10 @@ adriatic_run :: proc() -> bool {
                             handbrake = rl.IsKeyDown(
                                 .SPACE,
                             ) || (rl.GamepadAvailable() && rl.IsGamepadButtonDown(.Right_Shoulder)),
-                        }, ground, min(delta_seconds, .05))
+                        }, ground, min(delta_seconds, .05), editor.tweak.car)
                     vehicles.sync_driver(&editor.pilot)
                     speed_ratio := clamp(
-                        vehicles.car_drive_speed(editor.car_drive) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward,
+                        vehicles.car_drive_speed(editor.car_drive) / max(editor.tweak.car.max_forward, f32(.001)),
                         0,
                         1,
                     )
@@ -1679,7 +1668,7 @@ adriatic_run :: proc() -> bool {
                     grounded           = editor.player.position.y <= ground_height + .01,
                     camera_yaw_radians = editor.camera.yaw_radians,
                 }
-                third_person.step(&editor.player, input, third_person.default_config(), min(delta_seconds, .05))
+                third_person.step(&editor.player, input, editor.tweak.player, min(delta_seconds, .05))
                 ground_height = terrain.sample_height(
                     &editor.project,
                     0,

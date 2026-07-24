@@ -31,9 +31,8 @@ Screen_Vertex :: struct {
     valid:       bool,
 }
 
-clamp_f32 :: proc(value, low, high: f32) -> f32 {if value < low do return low; if value > high do return high; return(
-        value \
-    )}
+clamp_f32 :: proc(value, low, high: f32) -> f32 {if value < low do return low; if value > high do return high
+    return value}
 lerp :: proc(a, b, t: f32) -> f32 { return a + (b - a) * clamp_f32(t, 0, 1) }
 dot :: proc(a, b: [3]f32) -> f32 { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
 sub :: proc(a, b: [3]f32) -> [3]f32 { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]} }
