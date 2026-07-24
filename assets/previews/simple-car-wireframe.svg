@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <rect width="1200" height="720" fill="#07121d"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#2ebfff" stroke-width="5">
+      <path d="M180 470 720 555 1030 380 555 325Z M180 470V315L555 170 1030 230V380 M180 315 720 395 1030 230 M555 325V170 M720 555V395"/>
+      <path d="M385 315 535 210 730 242 858 340 M385 315 465 452 858 340 730 242 M535 210 610 330 730 242"/>
+    </g>
+    <g stroke="#d1f2ff" stroke-width="4">
+      <path d="M465 452 610 330 810 362 720 555 M610 330 730 242 858 340 810 362"/>
+    </g>
+    <g stroke="#ffad29" stroke-width="6">
+      <path d="M270 418 345 430 335 555 250 540Z M270 418 250 540 335 555 345 430"/>
+      <path d="M855 448 938 405 980 520 888 550Z M855 448 888 550 980 520 938 405"/>
+      <path d="M430 385 492 395 485 500 415 487Z M770 420 840 387 875 478 798 502Z"/>
+    </g>
+  </g>
+  <text x="72" y="92" fill="#dcefff" font-family="monospace" font-size="30" letter-spacing="4">ADRIATIC // SIMPLE CAR WIREFRAME</text>
+  <text x="74" y="132" fill="#7794ad" font-family="monospace" font-size="20">BODY  ·  CABIN  ·  FOUR WHEELS</text>
+</svg>
