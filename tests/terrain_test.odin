@@ -1,6 +1,7 @@
 package tests
 
 import terrain "../packages/terrain"
+import "core:math"
 import "core:testing"
 
 @(test)
@@ -84,4 +85,81 @@ finest_terrain_level_is_four_kilometers_square :: proc(t: ^testing.T) {
     project := terrain.new_project()
     span := f32(terrain.RING_RESOLUTION - 1) * project.levels[0].cell_size
     testing.expect(t, span == terrain.WORLD_SIZE_METERS)
+}
+
+@(test)
+structure_placement_snaps_and_follows_terrain :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    cell := project.levels[0].cell_size
+    structure := terrain.structure_make(13.2, -8.7, 1, 1, 999, 24)
+    structure.center_x = terrain.snap_to_grid(structure.center_x, cell)
+    structure.center_z = terrain.snap_to_grid(structure.center_z, cell)
+    structure.base_y = terrain.sample_height(&project, 0, structure.center_x, structure.center_z)
+    index := terrain.add_structure(&project, structure)
+    testing.expect(t, index == 0)
+    testing.expect(t, project.structures[index].center_x == terrain.snap_to_grid(13.2, cell))
+    testing.expect(
+        t,
+        project.structures[index].base_y == terrain.sample_height(&project, 0, structure.center_x, structure.center_z),
+    )
+}
+
+@(test)
+structure_hit_testing_prefers_the_topmost_structure :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    first := terrain.add_structure(&project, terrain.structure_make(0, 0, 20, 20, 0, 10))
+    second := terrain.add_structure(&project, terrain.structure_make(0, 0, 8, 8, 0, 10))
+    testing.expect(t, first == 0)
+    testing.expect(t, second == 1)
+    testing.expect(t, terrain.structure_index_at(&project, 0, 0) == second)
+    testing.expect(t, terrain.structure_index_at(&project, 9, 0) == first)
+    testing.expect(t, terrain.structure_index_at(&project, 20, 20) == -1)
+}
+
+@(test)
+structure_duplicate_and_remove_preserve_ids :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    original := terrain.add_structure(&project, terrain.structure_make(0, 0, 10, 10, 0, 10))
+    duplicate := terrain.duplicate_structure(&project, original, 20, 0)
+    original_id := project.structures[original].id
+    duplicate_id := project.structures[duplicate].id
+    testing.expect(t, original_id != duplicate_id)
+    testing.expect(t, project.structures[duplicate].center_x == 20)
+    testing.expect(t, terrain.remove_structure(&project, original))
+    testing.expect(t, project.structure_count == 1)
+    testing.expect(t, project.structures[0].id == duplicate_id)
+}
+
+@(test)
+formation_kinds_cycle_without_skipping :: proc(t: ^testing.T) {
+    kind := terrain.Formation_Kind.Box
+    kind = terrain.formation_kind_next(kind)
+    testing.expect(t, kind == .Rock)
+    kind = terrain.formation_kind_next(kind)
+    testing.expect(t, kind == .Spire)
+    kind = terrain.formation_kind_next(kind)
+    testing.expect(t, kind == .Mountain)
+    kind = terrain.formation_kind_next(kind)
+    testing.expect(t, kind == .Ridge)
+    kind = terrain.formation_kind_next(kind)
+    testing.expect(t, kind == .Cliff)
+    kind = terrain.formation_kind_next(kind)
+    testing.expect(t, kind == .Box)
+}
+
+@(test)
+formation_gesture_selects_useful_profiles :: proc(t: ^testing.T) {
+    cell := terrain.BASE_CELL_SIZE
+    testing.expect(t, terrain.formation_kind_for_gesture(cell * 8, cell * 2, cell * 3) == .Ridge)
+    testing.expect(t, terrain.formation_kind_for_gesture(cell * 2, cell * 2, cell * 5) == .Spire)
+    testing.expect(t, terrain.formation_kind_for_gesture(cell * 4, cell * 4, cell * 5) == .Mountain)
+    testing.expect(t, terrain.formation_kind_for_gesture(cell * 4, cell * 4, cell * 2) == .Rock)
+}
+
+@(test)
+rotated_structure_hit_testing_uses_local_bounds :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(0, 0, 20, 4, 0, 10)
+    structure.rotation = math.PI * .25
+    testing.expect(t, terrain.structure_contains_point(structure, 0, 6))
+    testing.expect(t, !terrain.structure_contains_point(structure, 0, 16))
 }

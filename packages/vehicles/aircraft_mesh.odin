@@ -219,6 +219,16 @@ rotate_new_vertices_z :: proc(mesh: ^Aircraft_Mesh, first: int, pivot: [3]f32, a
     }
 }
 
+rotate_new_vertices_y :: proc(mesh: ^Aircraft_Mesh, first: int, pivot: [3]f32, angle: f32) {
+    c := math.cos(angle); s := math.sin(angle)
+    for index in first ..< mesh.vertex_count {
+        x := mesh.vertices[index].position[0] - pivot[0]
+        z := mesh.vertices[index].position[2] - pivot[2]
+        mesh.vertices[index].position[0] = pivot[0] + x * c + z * s
+        mesh.vertices[index].position[2] = pivot[2] - x * s + z * c
+    }
+}
+
 add_propeller :: proc(mesh: ^Aircraft_Mesh, pivot: [3]f32, radius, chord, thickness: f32, part: Aircraft_Mesh_Part) {
     for blade in 0 ..< 3 {
         first := mesh.vertex_count
@@ -245,6 +255,40 @@ add_horizontal_beam :: proc(mesh: ^Aircraft_Mesh, a, b: [3]f32, width: f32, part
     mesh_quad(mesh, p[0], p[1], p[2], p[3], part); mesh_quad(mesh, p[5], p[4], p[7], p[6], part)
     mesh_quad(mesh, p[4], p[0], p[3], p[7], part); mesh_quad(mesh, p[1], p[5], p[6], p[2], part)
     mesh_quad(mesh, p[3], p[2], p[6], p[7], part); mesh_quad(mesh, p[4], p[5], p[1], p[0], part)
+}
+
+// Postale's source model uses three exposed gravel wheels: two main wheels
+// and a smaller tail wheel. Build them as low-poly rubber cylinders with
+// visible hubs and tread blocks so they remain readable in the world mesh.
+add_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32, radius, thickness: f32) {
+    tire := [2]Mesh_Ring{{-.5 * thickness, radius, 0, radius}, {.5 * thickness, radius, 0, radius}}
+    first := mesh.vertex_count
+    add_ring_mesh(mesh, tire[:], 12, .Wheel)
+    rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
+    for index in first ..< mesh.vertex_count {
+        mesh.vertices[index].position += center
+    }
+
+    hub := [2]Mesh_Ring {
+        {-.56 * thickness, radius * .28, 0, radius * .28},
+        {.56 * thickness, radius * .28, 0, radius * .28},
+    }
+    first = mesh.vertex_count
+    add_ring_mesh(mesh, hub[:], 10, .Engine)
+    rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
+    for index in first ..< mesh.vertex_count {
+        mesh.vertices[index].position += center
+    }
+
+    for tread in 0 ..< 12 {
+        angle := f32(tread) * 2 * math.PI / 12
+        add_box(
+            mesh,
+            {center[0], center[1] + math.cos(angle) * radius * .91, center[2] + math.sin(angle) * radius * .91},
+            {thickness * 1.12, radius * .12, radius * .18},
+            .Wheel,
+        )
+    }
 }
 
 postale_mesh :: proc() -> Aircraft_Mesh {
@@ -305,6 +349,18 @@ postale_mesh :: proc() -> Aircraft_Mesh {
     ); add_box(&mesh, {1.12, .56, 3.05}, {1.72, .055, .24}, .Elevator)
     rudder := [5]Mesh_Profile_Point{{2.96, .48}, {2.94, 1.72}, {3.02, 2.22}, {3.16, 2.3}, {3.18, .5}}
     add_profile_prism(&mesh, rudder[:], .073, .Rudder)
+    // Positions and radii match AmbientMailPlane.cs: two main gravel wheels
+    // under the wing and a smaller tail wheel under the rear fuselage.
+    add_wheel(&mesh, {-1.45, -1.18, -.48}, .47, .24)
+    add_wheel(&mesh, {1.45, -1.18, -.48}, .47, .24)
+    add_wheel(&mesh, {0, -.91, 2.96}, .24, .18)
+    // Main struts run from the lower wing skin (about y=.9) to each axle;
+    // keeping the full span here prevents the tires from appearing detached.
+    add_box(&mesh, {-1.45, -.14, -.48}, {.13, 2.08, .13}, .Frame)
+    add_box(&mesh, {1.45, -.14, -.48}, {.13, 2.08, .13}, .Frame)
+    // The tail strut reaches up into the rear fuselage instead of stopping
+    // halfway between the tail wheel and the airframe.
+    add_box(&mesh, {0, -.28, 2.72}, {.11, 1.26, .11}, .Frame)
     add_propeller(&mesh, {0, .12, -3.42}, 1.58, .2, .08, .Propeller)
     return mesh
 }
@@ -436,12 +492,50 @@ libellula_mesh :: proc() -> Aircraft_Mesh {
     for segment in segments {
         add_horizontal_beam(&mesh, segment[0], segment[1], .16, .Frame)
     }
+    // Lower spaceframe chord and Warren-style web, matching the source visual's
+    // separated lift frame instead of leaving the rotor triangle as a flat plate.
+    lower := [3][3]f32{{-3.05, .55, -.75}, {3.05, .55, -.75}, {0, .55, 2.72}}
+    for index in 0 ..< 3 {
+        next := (index + 1) % 3
+        add_horizontal_beam(&mesh, lower[index], lower[next], .11, .Frame)
+        add_horizontal_beam(&mesh, segments[index][0], lower[next], .075, .Frame)
+        add_horizontal_beam(&mesh, segments[index][0], lower[index], .075, .Frame)
+    }
     add_box(&mesh, {0, -.55, .55}, {1.65, 1.15, 3.35}, .Carriage)
+    // Pressure-carriage roof, cockpit glazing, service spine and rear bumper.
+    add_box(&mesh, {0, .16, .18}, {1.25, .12, 3.2}, .Carriage)
+    add_box(&mesh, {0, .02, -1.35}, {1.42, .52, .12}, .Glass)
+    add_box(&mesh, {0, -.10, -1.52}, {1.18, .14, .08}, .Frame)
+    add_box(&mesh, {0, .28, .18}, {.55, .22, .42}, .Engine)
+    add_box(&mesh, {0, -.98, 2.20}, {1.3, .08, .30}, .Frame)
+    add_box(&mesh, {0, -.70, 2.34}, {.34, .07, .05}, .Frame)
+    // Suspension straps and kingpost are intentionally non-collinear so the
+    // carriage reads as hanging from the lift frame in side and rear views.
+    strap_x := [2]f32{-.72, .72}
+    for x in strap_x {
+        add_box(&mesh, {x, .05, .30}, {.055, .72, .06}, .Frame)
+        add_box(&mesh, {x, -.18, 1.15}, {.055, .48, .06}, .Frame)
+    }
+    add_box(&mesh, {0, .43, 1.55}, {.16, .68, .16}, .Frame)
+    add_box(&mesh, {0, .08, .18}, {.24, .12, .24}, .Engine)
+    // Four splayed landing legs, two longitudinal skids, and cross-braces.
+    leg_x := [2]f32{-1.02, 1.02}
+    for x in leg_x {
+        add_box(&mesh, {x, -1.18, -.78}, {.13, .95, .13}, .Wheel)
+        add_box(&mesh, {x, -1.18, 1.55}, {.13, .95, .13}, .Wheel)
+        add_box(&mesh, {x, -1.56, .15}, {.18, .10, 3.65}, .Wheel)
+    }
+    add_horizontal_beam(&mesh, {-1.02, -1.46, -.92}, {1.02, -1.46, .95}, .06, .Wheel)
+    add_horizontal_beam(&mesh, {1.02, -1.46, -.92}, {-1.02, -1.46, .95}, .06, .Wheel)
+    // Nacelle housings, cooling bands, exhaust blocks, and mast collars.
     rotors := [3][3]f32{{-3.65, 1.58, -.75}, {3.65, 1.58, -.75}, {0, 1.58, 3.05}}
     rotor_parts := [3]Aircraft_Mesh_Part{.Left_Rotor, .Right_Rotor, .Rear_Rotor}
     for rotor, rotor_index in rotors {
         nacelle := [2]Mesh_Ring{{rotor[2] - .29, .5, rotor[1], .5}, {rotor[2] + .29, .42, rotor[1], .42}}
         add_ring_mesh_at_x(&mesh, nacelle[:], 16, rotor[0], .Engine)
+        add_box(&mesh, {rotor[0], rotor[1] - .28, rotor[2]}, {.75, .16, .58}, .Engine)
+        add_box(&mesh, {rotor[0], rotor[1] + .34, rotor[2]}, {.32, .12, .32}, .Frame)
+        add_box(&mesh, {rotor[0], rotor[1] - .42, rotor[2]}, {.16, .10, .24}, .Carriage)
         for blade in 0 ..< 3 {
             angle := f32(blade) * 2 * math.PI / 3; c := math.cos(angle); s := math.sin(angle)
             root_left := [3]f32 {

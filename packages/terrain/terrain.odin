@@ -23,6 +23,33 @@ Tool :: enum {
     Raise,
     Smooth,
     Paint,
+    Structure,
+}
+
+Formation_Kind :: enum {
+    Box,
+    Rock,
+    Spire,
+    Mountain,
+    Ridge,
+    Cliff,
+    Architecture,
+}
+
+STRUCTURE_CAPACITY :: 256
+
+Structure :: struct {
+    id:       u64,
+    center_x: f32,
+    center_z: f32,
+    width:    f32,
+    depth:    f32,
+    base_y:   f32,
+    height:   f32,
+    rotation: f32,
+    color:    [4]u8,
+    kind:     Formation_Kind,
+    seed:     u32,
 }
 
 Clipmap_Level :: struct {
@@ -32,9 +59,12 @@ Clipmap_Level :: struct {
 }
 
 Project :: struct {
-    levels:    [CLIPMAP_LEVELS]Clipmap_Level,
-    sea_level: f32,
-    revision:  u64,
+    levels:            [CLIPMAP_LEVELS]Clipmap_Level,
+    sea_level:         f32,
+    revision:          u64,
+    structures:        [STRUCTURE_CAPACITY]Structure,
+    structure_count:   int,
+    next_structure_id: u64,
 }
 
 init_project :: proc(result: ^Project) {
@@ -42,6 +72,7 @@ init_project :: proc(result: ^Project) {
     result^ = {}
     result.sea_level = 0
     result.revision = 1
+    result.next_structure_id = 1
     authored_half_extent := f32(WORLD_SIZE_METERS * .5)
     for level in 0 ..< CLIPMAP_LEVELS {
         data := &result.levels[level]
@@ -54,6 +85,105 @@ init_project :: proc(result: ^Project) {
             }
         }
     }
+}
+
+snap_to_grid :: proc(value, grid: f32) -> f32 {
+    if grid <= 0 do return value
+    return f32(math.round(f64(value / grid))) * grid
+}
+
+structure_default_color :: proc() -> [4]u8 {
+    return {112, 169, 181, 220}
+}
+
+structure_make :: proc(center_x, center_z, width, depth, base_y, height: f32) -> Structure {
+    return {
+        center_x = center_x,
+        center_z = center_z,
+        width = max(width, BASE_CELL_SIZE),
+        depth = max(depth, BASE_CELL_SIZE),
+        base_y = base_y,
+        height = max(height, BASE_CELL_SIZE),
+        color = structure_default_color(),
+        kind = .Box,
+    }
+}
+
+formation_kind_next :: proc(kind: Formation_Kind) -> Formation_Kind {
+    switch kind {
+    case .Box:
+        return .Rock
+    case .Rock:
+        return .Spire
+    case .Spire:
+        return .Mountain
+    case .Mountain:
+        return .Ridge
+    case .Ridge:
+        return .Cliff
+    case .Cliff:
+        return .Box
+    case .Architecture:
+        return .Box
+    }
+    return .Box
+}
+
+formation_kind_for_gesture :: proc(width, depth, height: f32) -> Formation_Kind {
+    wide := max(width, depth)
+    narrow := max(min(width, depth), BASE_CELL_SIZE)
+    aspect := wide / narrow
+    if aspect >= 2.4 do return .Ridge
+    if height >= wide * 1.65 do return .Spire
+    if height >= narrow * 1.15 do return .Mountain
+    return .Rock
+}
+
+structure_contains_point :: proc(structure: Structure, x, z: f32) -> bool {
+    dx, dz := x - structure.center_x, z - structure.center_z
+    cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
+    local_x := dx * cosine + dz * sine
+    local_z := -dx * sine + dz * cosine
+    return math.abs(local_x) <= structure.width * .5 && math.abs(local_z) <= structure.depth * .5
+}
+
+structure_index_at :: proc(project: ^Project, x, z: f32) -> int {
+    if project == nil do return -1
+    for index := project.structure_count - 1; index >= 0; index -= 1 {
+        if structure_contains_point(project.structures[index], x, z) do return index
+    }
+    return -1
+}
+
+add_structure :: proc(project: ^Project, structure: Structure) -> int {
+    if project == nil || project.structure_count >= STRUCTURE_CAPACITY do return -1
+    value := structure
+    value.id = project.next_structure_id
+    project.next_structure_id += 1
+    value.seed = u32(value.id * 747796405)
+    project.structures[project.structure_count] = value
+    index := project.structure_count
+    project.structure_count += 1
+    project.revision += 1
+    return index
+}
+
+remove_structure :: proc(project: ^Project, index: int) -> bool {
+    if project == nil || index < 0 || index >= project.structure_count do return false
+    last := project.structure_count - 1
+    if index != last do project.structures[index] = project.structures[last]
+    project.structures[last] = {}
+    project.structure_count -= 1
+    project.revision += 1
+    return true
+}
+
+duplicate_structure :: proc(project: ^Project, index: int, offset_x, offset_z: f32) -> int {
+    if project == nil || index < 0 || index >= project.structure_count do return -1
+    copy := project.structures[index]
+    copy.center_x += offset_x
+    copy.center_z += offset_z
+    return add_structure(project, copy)
 }
 
 new_project :: proc() -> Project {
@@ -136,6 +266,9 @@ apply_stroke :: proc(project: ^Project, tool: Tool, world_x, world_z, radius, st
                     down := data.heights[sample_index(x, min(z + 1, RING_RESOLUTION - 1))]
                     average := (left + right + up + down) * .25
                     data.heights[index] += (average - data.heights[index]) * clamp(strength * falloff, 0, 1)
+                case .Structure:
+                // Structure authoring is handled by the editor and never mutates
+                // the heightfield.
                 }
             }
         }

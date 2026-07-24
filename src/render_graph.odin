@@ -95,8 +95,5 @@ adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
     sky := render_graph.add_pass(graph, "sky", render_graph_sky)
     geometry := render_graph.add_pass(graph, "geometry", render_graph_geometry)
     terrain := render_graph.add_pass(graph, "terrain", render_graph_terrain)
-    return(
-        render_graph.depends_on(graph, geometry, sky) &&
-        render_graph.depends_on(graph, terrain, geometry) \
-    )
+    return render_graph.depends_on(graph, geometry, sky) && render_graph.depends_on(graph, terrain, geometry)
 }

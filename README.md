@@ -45,6 +45,14 @@ and the current aircraft and land-vehicle procedure catalog. It has no scene,
 input, or UI dependencies; game code supplies tool identifiers and translates
 its events into animation, clock advancement, repair effects, and feedback.
 
+## Dialogue
+
+`packages/dialogue` ports the reusable branching conversation runtime from
+ArchipelagoGame. A `Definition` contains authored nodes and choices;
+conditions filter choices against the caller's `Context`, and effects update
+the owning game's state. The package is deliberately presentation-neutral, so
+the game can render `current` and `available_at` with its own canvas/UI layer.
+
 ## Wireframe renderer
 
 `packages/wireframe` defines the Vulkan vertex/push-constant contract for the

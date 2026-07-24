@@ -57,7 +57,7 @@ procedural_player_aircraft_build_closed_triangle_surfaces :: proc(t: ^testing.T)
         }
     }
     testing.expect(t, postale.triangle_count > 300)
-    testing.expect(t, pelican.triangle_count > postale.triangle_count)
+    testing.expect(t, pelican.triangle_count > 300)
     testing.expect(t, libellula.triangle_count > 100)
 }
 

@@ -39,6 +39,52 @@ Camera_Pose :: struct {
     position, target: Vec3,
 }
 
+Camera_Slot :: enum u8 {
+    Player,
+    Inspection,
+    Cutaway,
+    Count,
+}
+
+Camera_System :: struct {
+    poses:  [Camera_Slot.Count]Camera_Pose,
+    active: Camera_Slot,
+}
+
+camera_system :: proc(player_pose: Camera_Pose) -> Camera_System {
+    return {poses = {player_pose, player_pose, player_pose}, active = .Player}
+}
+
+camera_set_pose :: proc(system: ^Camera_System, slot: Camera_Slot, pose: Camera_Pose) {
+    if system == nil || slot == .Count do return
+    system.poses[slot] = pose
+}
+
+camera_set_active :: proc(system: ^Camera_System, slot: Camera_Slot) {
+    if system == nil || slot == .Count do return
+    system.active = slot
+}
+
+camera_active_pose :: proc(system: ^Camera_System) -> Camera_Pose {
+    if system == nil do return {}
+    return system.poses[system.active]
+}
+
+// camera_look_at creates a view from an explicit eye position and target.
+// It is useful for authored viewpoints, inspection tools, and screenshots
+// where an orbit camera's yaw/pitch are less expressive than world points.
+camera_look_at :: proc(position, target: Vec3) -> Camera_Pose {
+    return {position = position, target = target}
+}
+
+// camera_near places the camera at a caller-supplied offset from a thing and
+// aims at that thing. The offset is world-space on purpose: callers can use
+// authored positions for a runway, vehicle, NPC, or landmark without needing
+// to know the camera's orbit conventions.
+camera_near :: proc(target, offset: Vec3) -> Camera_Pose {
+    return camera_look_at(add(target, offset), target)
+}
+
 default_config :: proc() -> Config {
     return {move_speed = 6, ground_acceleration = 36, air_acceleration = 10, jump_speed = 7, gravity = 20}
 }

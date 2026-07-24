@@ -5,10 +5,11 @@ import third_person "../third_person"
 import vehicles "../vehicles"
 import "core:math"
 
-// The generated Postale mesh extends roughly .55 world units below its body
-// origin at the presentation scale. Keep a small runway gap so its belly and
-// propeller do not start inside uneven terrain.
-GROUND_CLEARANCE :: f32(.62)
+// The generated Postale mesh includes exposed main wheels. Their tire bottoms
+// sit roughly 1.12 world units below the body origin at presentation scale,
+// so ground contact must lift the airframe enough to keep the wheels above the
+// runway rather than burying them in it.
+GROUND_CLEARANCE :: f32(1.14)
 SAFE_TOUCHDOWN_SPEED :: f32(5)
 SAFE_BANK_RADIANS :: f32(.4363323)
 SAFE_EXIT_SPEED :: f32(1)

@@ -40,3 +40,29 @@ third_person_look_clamps_pitch_and_camera_follow_eases :: proc(t: ^testing.T) {
     next := third_person.follow_camera(current, desired, 5, .1)
     testing.expect(t, next.target.x > 0 && next.target.x < desired.target.x)
 }
+
+@(test)
+third_person_authored_camera_can_move_near_and_look_at_target :: proc(t: ^testing.T) {
+    target := third_person.Vec3 {
+        x = 4,
+        y = 2,
+        z = -3,
+    }
+    pose := third_person.camera_near(target, {y = 3, z = 8})
+    testing.expect(t, pose.position.x == target.x && pose.position.y == 5 && pose.position.z == 5)
+    testing.expect(t, pose.target.x == 4 && pose.target.y == 2 && pose.target.z == -3)
+    pose = third_person.camera_look_at({x = -2, y = 7, z = 1}, target)
+    testing.expect(t, pose.position.x == -2 && pose.position.y == 7 && pose.position.z == 1)
+}
+
+@(test)
+third_person_camera_system_switches_named_slots :: proc(t: ^testing.T) {
+    player := third_person.camera_look_at({x = 0, y = 2, z = 5}, {y = 1})
+    system := third_person.camera_system(player)
+    inspection := third_person.camera_near({x = 8, y = 1, z = -2}, {x = 4, y = 3, z = 4})
+    third_person.camera_set_pose(&system, .Inspection, inspection)
+    third_person.camera_set_active(&system, .Inspection)
+    testing.expect(t, system.active == .Inspection && third_person.camera_active_pose(&system).position.x == 12)
+    third_person.camera_set_active(&system, .Player)
+    testing.expect(t, third_person.camera_active_pose(&system).position.z == 5)
+}
