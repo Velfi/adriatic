@@ -9,7 +9,8 @@ ZELDA_ENGINE_COLLECTION := -collection:zelda_engine=$(ZELDA_ENGINE_PACKAGES)
 
 LOCAL_ODIN := $(TOOLS_DIR)/odin/$(ODIN_VERSION)/odin
 LOCAL_SLANGC := $(TOOLS_DIR)/slang/$(SLANG_VERSION)/slangc
-ODIN ?= $(LOCAL_ODIN)
+PATH_ODIN := $(shell command -v odin 2>/dev/null)
+ODIN ?= $(if $(PATH_ODIN),$(PATH_ODIN),$(LOCAL_ODIN))
 SLANGC ?= $(LOCAL_SLANGC)
 ODINFMT ?= odinfmt
 CC ?= cc
