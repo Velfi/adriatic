@@ -56,7 +56,15 @@ doctor:
 
 build: doctor $(DEV_APP)
 
-shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv
+shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv
+
+build/generated/shaders/particles.vert.spv: assets/shaders/particles.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+build/generated/shaders/particles.frag.spv: assets/shaders/particles.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
 
 build/generated/shaders/world.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
@@ -138,6 +146,14 @@ $(DEV_DIR)/shaders/canvas-post.frag.spv: build/generated/shaders/canvas-post.fra
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(DEV_DIR)/shaders/particles.vert.spv: build/generated/shaders/particles.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(DEV_DIR)/shaders/particles.frag.spv: build/generated/shaders/particles.frag.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
 	@mkdir -p $(@D)
 	cp $< $@
@@ -194,6 +210,14 @@ $(RELEASE_DIR)/shaders/canvas-post.frag.spv: build/generated/shaders/canvas-post
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(RELEASE_DIR)/shaders/particles.vert.spv: build/generated/shaders/particles.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(RELEASE_DIR)/shaders/particles.frag.spv: build/generated/shaders/particles.frag.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
 	@mkdir -p $(@D)
 	cp $< $@
@@ -231,11 +255,11 @@ $(RELEASE_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signpos
 	$(CC) -O2 -c $< -o $(RELEASE_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(RELEASE_DIR)/gfx_signposts.o
 
-$(DEV_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv
+$(DEV_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -debug -o:minimal -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
-$(RELEASE_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv
+$(RELEASE_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -o:speed -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 

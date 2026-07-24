@@ -1,6 +1,8 @@
 package main
 
 import atmosphere "../packages/atmosphere"
+import particles "../packages/particles"
+import render_graph "../packages/render_graph"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
@@ -15,6 +17,13 @@ WORLD_VERTEX_CAPACITY :: 32_000
 CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
 CLIPMAP_VERTEX_COUNT :: CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLUTION - 1) * 6
+
+// Keep the world pass useful beyond the immediate flight envelope. The
+// clipmap already provides this coverage; these values prevent the camera
+// projection, fog, and ocean fallback from hiding it prematurely.
+WORLD_FAR_CLIP :: f32(12000)
+WORLD_FOG_START :: f32(4500)
+WORLD_FOG_END :: f32(11000)
 
 World_Vertex :: struct {
 	position: [3]f32,
@@ -48,6 +57,7 @@ World_Renderer :: struct {
 	ctx:                  ^engine.Vk_Context,
 	pipelines:            [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
 	sky_pipelines:        [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+	particle_pipelines:   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
 	layout:               vk.PipelineLayout,
 	sky_layout:           vk.PipelineLayout,
 	vertex:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
@@ -149,8 +159,8 @@ world_ocean :: proc(editor: ^Editor) {
 		editor.camera_pose,
 		editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
 	)
-	extent := editor.in_map ? f32(3000) : f32(15000)
-	divisions := 32
+	extent := editor.in_map ? f32(12000) : f32(15000)
+	divisions := editor.in_map ? 48 : 32
 	cell := extent * 2 / f32(divisions)
 	// A snapped tiled field surrounds the camera in every direction. Unlike the
 	// former forward slab, it has no near edge for a high, downward-looking
@@ -472,6 +482,161 @@ world_build :: proc(editor: ^Editor) {
 	world_car(editor)
 	world_character(editor)
 	world_brush(editor)
+	world_particles_cpu(editor)
+	world_vehicle_particles(editor)
+	world_wing_trails(editor)
+}
+
+world_particles_cpu :: proc(editor: ^Editor) {
+	camera := perspective_camera(
+		editor.camera_pose,
+		editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+	)
+	for particle in editor.particles.particles[:editor.particles.count] {
+		fade := clamp(particle.life / particle.max_life, 0, 1)
+		color := rl.Color {
+			u8(220 + 35 * fade),
+			u8(120 + 90 * fade),
+			u8(36 + 100 * fade),
+			u8(110 + 145 * fade),
+		}
+		right := third_person.Vec3 {
+			x = camera.right.x * particle.size,
+			y = camera.right.y * particle.size,
+			z = camera.right.z * particle.size,
+		}
+		up := third_person.Vec3 {
+			x = camera.up.x * particle.size,
+			y = camera.up.y * particle.size,
+			z = camera.up.z * particle.size,
+		}
+		p := third_person.Vec3{particle.position.x, particle.position.y, particle.position.z}
+		world_quad(
+			{p.x - right.x - up.x, p.y - right.y - up.y, p.z - right.z - up.z},
+			{p.x + right.x - up.x, p.y + right.y - up.y, p.z + right.z - up.z},
+			{p.x + right.x + up.x, p.y + right.y + up.y, p.z + right.z + up.z},
+			{p.x - right.x + up.x, p.y - right.y + up.y, p.z - right.z + up.z},
+			color,
+		)
+	}
+}
+
+world_vehicle_particle :: proc(
+	camera: Perspective_Camera,
+	particle: particles.Vehicle_Particle,
+	color: rl.Color,
+) {
+	fade := clamp(particle.life / particle.max_life, 0, 1)
+	right := third_person.Vec3 {
+		x = camera.right.x * particle.size,
+		y = camera.right.y * particle.size,
+		z = camera.right.z * particle.size,
+	}
+	up := third_person.Vec3 {
+		x = camera.up.x * particle.size,
+		y = camera.up.y * particle.size,
+		z = camera.up.z * particle.size,
+	}
+	p := third_person.Vec3{particle.position.x, particle.position.y, particle.position.z}
+	alpha := u8(f32(color.a) * fade)
+	shade := rl.Color{color.r, color.g, color.b, alpha}
+	world_quad(
+		{p.x - right.x - up.x, p.y - right.y - up.y, p.z - right.z - up.z},
+		{p.x + right.x - up.x, p.y + right.y - up.y, p.z + right.z - up.z},
+		{p.x + right.x + up.x, p.y + right.y + up.y, p.z + right.z + up.z},
+		{p.x - right.x + up.x, p.y - right.y + up.y, p.z - right.z + up.z},
+		shade,
+	)
+}
+
+world_vehicle_particles :: proc(editor: ^Editor) {
+	camera := perspective_camera(
+		editor.camera_pose,
+		editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+	)
+	for particle in editor.vehicle_effects.dust[:editor.vehicle_effects.dust_count] {
+		world_vehicle_particle(camera, particle, {148, 105, 68, 155})
+	}
+	for particle in editor.vehicle_effects.exhaust[:editor.vehicle_effects.exhaust_count] {
+		world_vehicle_particle(camera, particle, {112, 119, 116, 120})
+	}
+}
+
+world_wing_trail_segment :: proc(
+	camera: Perspective_Camera,
+	a, b: particles.Vec3,
+	width: f32,
+	color: rl.Color,
+) {
+	offset := third_person.Vec3 {
+		x = camera.right.x * width,
+		y = camera.right.y * width,
+		z = camera.right.z * width,
+	}
+	world_quad(
+		{a.x - offset.x, a.y - offset.y, a.z - offset.z},
+		{a.x + offset.x, a.y + offset.y, a.z + offset.z},
+		{b.x + offset.x, b.y + offset.y, b.z + offset.z},
+		{b.x - offset.x, b.y - offset.y, b.z - offset.z},
+		color,
+	)
+}
+
+world_wing_trail_cap :: proc(
+	camera: Perspective_Camera,
+	center: particles.Vec3,
+	radius: f32,
+	color: rl.Color,
+) {
+	p := third_person.Vec3{center.x, center.y, center.z}
+	for side in 0 ..< 8 {
+		a0 := f32(side) * math.PI * 2 / 8
+		a1 := f32(side + 1) * math.PI * 2 / 8
+		p0 := third_person.Vec3 {
+			x = p.x + (camera.right.x * math.cos(a0) + camera.up.x * math.sin(a0)) * radius,
+			y = p.y + (camera.right.y * math.cos(a0) + camera.up.y * math.sin(a0)) * radius,
+			z = p.z + (camera.right.z * math.cos(a0) + camera.up.z * math.sin(a0)) * radius,
+		}
+		p1 := third_person.Vec3 {
+			x = p.x + (camera.right.x * math.cos(a1) + camera.up.x * math.sin(a1)) * radius,
+			y = p.y + (camera.right.y * math.cos(a1) + camera.up.y * math.sin(a1)) * radius,
+			z = p.z + (camera.right.z * math.cos(a1) + camera.up.z * math.sin(a1)) * radius,
+		}
+		world_triangle(p, p0, p1, color)
+	}
+}
+
+world_wing_trails :: proc(editor: ^Editor) {
+	if editor.wing_trails.count <= 0 do return
+	camera := perspective_camera(
+		editor.camera_pose,
+		editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+	)
+	for side in 0 ..< 2 {
+		previous: particles.Vec3
+		has_previous := false
+		for particle in editor.wing_trails.particles[:editor.wing_trails.count] {
+			if int(particle.side) != side do continue
+			fade := clamp(particle.life / particle.max_life, 0, 1)
+			if has_previous {
+				world_wing_trail_segment(
+					camera,
+					previous,
+					particle.position,
+					particle.size * (.8 + fade * .35),
+					{205, 239, 236, 255},
+				)
+			}
+			world_wing_trail_cap(
+				camera,
+				particle.position,
+				particle.size * (.8 + fade * .35),
+				{205, 239, 236, 255},
+			)
+			previous = particle.position
+			has_previous = true
+		}
+	}
 }
 
 world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
@@ -594,6 +759,25 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
 		layout              = world_renderer.layout,
 	}
 	if !render3d.create_color_pipeline_variants(ctx, &info, .D32_SFLOAT, &world_renderer.pipelines) do return false
+	particle_vert, particle_frag: engine.Vk_Shader_Module
+	if !engine.vk_load_shader_module_with_fallback(ctx, "assets/shaders/particles.slang", "shaders/particles.vert", .Vertex, "vertex_main", &particle_vert) do return false
+	defer engine.vk_destroy_shader_module(ctx, &particle_vert)
+	if !engine.vk_load_shader_module_with_fallback(ctx, "assets/shaders/particles.slang", "shaders/particles.frag", .Fragment, "fragment_main", &particle_frag) do return false
+	defer engine.vk_destroy_shader_module(ctx, &particle_frag)
+	particle_stages := stages
+	particle_stages[0].module = particle_vert.handle
+	particle_stages[1].module = particle_frag.handle
+	particle_info := info
+	particle_info.pStages = raw_data(particle_stages[:])
+	particle_vi := vk.PipelineVertexInputStateCreateInfo {
+		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+	}
+	particle_info.pVertexInputState = &particle_vi
+	particle_info.pInputAssemblyState = &ia
+	particle_info.pInputAssemblyState.topology = .TRIANGLE_LIST
+	particle_info.pDepthStencilState = &depth
+	particle_info.layout = world_renderer.layout
+	if !render3d.create_color_pipeline_variants(ctx, &particle_info, .D32_SFLOAT, &world_renderer.particle_pipelines) do return false
 	sky_vert, sky_frag: engine.Vk_Shader_Module
 	if !engine.vk_load_shader_module_with_fallback(ctx, "assets/shaders/sky.slang", "shaders/world-sky.vert", .Vertex, "sky_vertex", &sky_vert) do return false
 	defer engine.vk_destroy_shader_module(ctx, &sky_vert)
@@ -635,7 +819,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
 	return true
 }
 
-world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
+world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
 	if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
 	editor := world_renderer.editor
 	if editor == nil do return
@@ -674,19 +858,14 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
 			camera.position.z,
 			editor.in_map ? f32(.08) : f32(100),
 		},
-		camera_right    = {
-			camera.right.x,
-			camera.right.y,
-			camera.right.z,
-			editor.in_map ? f32(800) : f32(10000),
-		},
+		camera_right    = {camera.right.x, camera.right.y, camera.right.z, WORLD_FAR_CLIP},
 		camera_up       = {camera.up.x, camera.up.y, camera.up.z, 0},
 		camera_forward  = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
 		projection      = {
 			camera.focal_length,
 			f32(pass.framebuffer_extent.width) / f32(max(pass.framebuffer_extent.height, 1)),
-			f32(terrain.WORLD_SIZE_METERS * .55),
-			f32(terrain.WORLD_SIZE_METERS * 1.5),
+			WORLD_FOG_START,
+			WORLD_FOG_END,
 		},
 		fog_color       = world_color(fog),
 		water           = {
@@ -758,6 +937,35 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
 		vk.CmdBindVertexBuffers(pass.frame.command_buffer, 0, 1, &buffer.handle, &offset)
 		vk.CmdDraw(pass.frame.command_buffer, u32(len(world_renderer.vertices)), 1, 0, 0)
 	}
+	vk.CmdBindPipeline(
+		pass.frame.command_buffer,
+		.GRAPHICS,
+		world_renderer.particle_pipelines[pipeline_index],
+	)
+	vk.CmdPushConstants(
+		pass.frame.command_buffer,
+		world_renderer.layout,
+		{.VERTEX, .FRAGMENT},
+		0,
+		u32(size_of(world_push)),
+		&world_push,
+	)
+	vk.CmdDraw(pass.frame.command_buffer, 6 * 512, 1, 0, 0)
+	// The particle pass uses a vertex-id-only pipeline. Rebind the terrain
+	// pipeline before submitting indexed clipmap vertices.
+	vk.CmdBindPipeline(
+		pass.frame.command_buffer,
+		.GRAPHICS,
+		world_renderer.pipelines[pipeline_index],
+	)
+	vk.CmdPushConstants(
+		pass.frame.command_buffer,
+		world_renderer.layout,
+		{.VERTEX, .FRAGMENT},
+		0,
+		u32(size_of(world_push)),
+		&world_push,
+	)
 	vk.CmdBindIndexBuffer(
 		pass.frame.command_buffer,
 		world_renderer.clipmap_index.handle,
@@ -789,6 +997,70 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
 	}
 }
 
+world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
+	if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
+	editor := world_renderer.editor
+	if editor == nil do return
+	world_build(editor)
+	clipmap_update(editor, int(pass.frame.frame_index))
+	buffer := &world_renderer.vertex[pass.frame.frame_index]
+	if len(world_renderer.vertices) > 0 {
+		mem.copy_non_overlapping(
+			buffer.mapped,
+			raw_data(world_renderer.vertices[:]),
+			len(world_renderer.vertices) * size_of(World_Vertex),
+		)
+	}
+	viewport := vk.Viewport {
+		width = f32(pass.framebuffer_extent.width),
+		height = f32(pass.framebuffer_extent.height),
+		minDepth = 0,
+		maxDepth = 1,
+	}
+	scissor := vk.Rect2D{extent = pass.framebuffer_extent}
+	vk.CmdSetViewport(pass.frame.command_buffer, 0, 1, &viewport)
+	vk.CmdSetScissor(pass.frame.command_buffer, 0, 1, &scissor)
+	pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
+	camera := perspective_camera(
+		editor.camera_pose,
+		editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+	)
+	sky := atmosphere.sample(&editor.atmosphere)
+	fog := world_sky_horizon_color(sky)
+	world_push := World_Push {
+		camera_position = {camera.position.x, camera.position.y, camera.position.z, editor.in_map ? f32(.08) : f32(100)},
+		camera_right = {camera.right.x, camera.right.y, camera.right.z, WORLD_FAR_CLIP},
+		camera_up = {camera.up.x, camera.up.y, camera.up.z, 0},
+		camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
+		projection = {camera.focal_length, f32(pass.framebuffer_extent.width) / f32(max(pass.framebuffer_extent.height, 1)), WORLD_FOG_START, WORLD_FOG_END},
+		fog_color = world_color(fog),
+		water = {sky.cloud_time_seconds, sky.weather.severity, sky.weather.wind[0], sky.weather.wind[1]},
+		sun = {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], sky.daylight},
+	}
+	sky_push := Sky_Push {
+		camera_right = {camera.right.x, camera.right.y, camera.right.z, f32(pass.framebuffer_extent.width) / f32(max(pass.framebuffer_extent.height, 1))},
+		camera_up = {camera.up.x, camera.up.y, camera.up.z, camera.focal_length},
+		camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
+		sun_direction = {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], f32(sky.cloud_seed)},
+		time_light = {sky.world_minutes, sky.cloud_time_seconds, sky.daylight, sky.twilight},
+		wind_cloud = {sky.weather.wind[0], sky.weather.wind[1], sky.weather.cloud_cover, sky.weather.precipitation},
+		haze_severity = {sky.weather.haze, sky.weather.severity, 0, 0},
+	}
+	offset := vk.DeviceSize(0)
+	graph_context := Render_Graph_Context {
+		pass = pass,
+		buffer = buffer,
+		offset = offset,
+		pipeline_index = pipeline_index,
+		world_push = world_push,
+		sky_push = sky_push,
+	}
+	if !world_render_graph_ready {
+		world_render_graph_ready = adriatic_render_graph(&world_render_graph)
+	}
+	if world_render_graph_ready do _ = render_graph.execute(&world_render_graph, &graph_context)
+}
+
 world_renderer_attach :: proc(editor: ^Editor) {
 	world_renderer.editor = editor
 	rl.SetWorldPass(world_pass)
@@ -809,6 +1081,10 @@ world_renderer_destroy :: proc() {
 	engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_index)
 	render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.pipelines)
 	render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.sky_pipelines)
+	render3d.destroy_color_pipeline_variants(
+		world_renderer.ctx,
+		&world_renderer.particle_pipelines,
+	)
 	if world_renderer.layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.layout, nil)
 	if world_renderer.sky_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.sky_layout, nil)
 	delete(world_renderer.vertices)

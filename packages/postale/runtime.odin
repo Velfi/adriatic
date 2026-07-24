@@ -88,6 +88,7 @@ step :: proc(
 	runtime: ^Runtime,
 	control: Control,
 	ground_height, delta_seconds: f32,
+	wind := flight.Vec3{},
 ) -> Ground_Result {
 	if runtime == nil || delta_seconds <= 0 do return {}
 	dt := min_f32(delta_seconds, .05)
@@ -126,7 +127,7 @@ step :: proc(
 		command,
 		runtime.airframe,
 		runtime.flight_runtime,
-		{},
+		wind,
 		dt,
 	)
 

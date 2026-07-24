@@ -3,6 +3,7 @@ package main
 import atmosphere "../packages/atmosphere"
 import chase_camera "../packages/chase_camera"
 import flight "../packages/flight"
+import particle_systems "../packages/particles"
 import postale_game "../packages/postale"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -17,24 +18,27 @@ ADRIATIC_WORLD_WIDTH :: 1280
 ADRIATIC_WORLD_HEIGHT :: 720
 
 Editor :: struct {
-	project:        terrain.Project,
-	tool:           terrain.Tool,
-	radius:         f32,
-	strength:       f32,
-	in_map:         bool,
-	player:         third_person.State,
-	camera:         third_person.Camera,
-	camera_pose:    third_person.Camera_Pose,
-	flight_camera:  chase_camera.State,
-	editor_camera:  third_person.Camera,
-	editor_focus:   third_person.Vec3,
-	map_time:       f32,
-	pilot:          vehicles.Character,
-	car:            vehicles.Vehicle,
-	car_drive:      vehicles.Car_Drive_State,
-	postale:        postale_game.Runtime,
-	flight_control: postale_game.Control,
-	atmosphere:     atmosphere.Atmosphere,
+	project:         terrain.Project,
+	tool:            terrain.Tool,
+	radius:          f32,
+	strength:        f32,
+	in_map:          bool,
+	player:          third_person.State,
+	camera:          third_person.Camera,
+	camera_pose:     third_person.Camera_Pose,
+	flight_camera:   chase_camera.State,
+	editor_camera:   third_person.Camera,
+	editor_focus:    third_person.Vec3,
+	map_time:        f32,
+	pilot:           vehicles.Character,
+	car:             vehicles.Vehicle,
+	car_drive:       vehicles.Car_Drive_State,
+	postale:         postale_game.Runtime,
+	flight_control:  postale_game.Control,
+	atmosphere:      atmosphere.Atmosphere,
+	particles:       particle_systems.Cpu_System,
+	vehicle_effects: particle_systems.Vehicle_Effects,
+	wing_trails:     particle_systems.Wing_Trails,
 }
 
 set_pointer_locked :: proc(locked: bool) {
@@ -390,9 +394,17 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
 		fmt.ctprintf("%.0f m", altitude),
 	)
 	readout := fmt.tprintf(
-		"HDG %03.0f°     VSI %+4.1f m/s     POWER %3.0f%%",
+		"HDG %03.0f°     VSI %+4.1f m/s     WIND %2.1f m/s     POWER %3.0f%%",
 		heading,
 		vertical_speed,
+		f32(
+			math.sqrt(
+				f64(
+					editor.atmosphere.weather.wind[0] * editor.atmosphere.weather.wind[0] +
+					editor.atmosphere.weather.wind[1] * editor.atmosphere.weather.wind[1],
+				),
+			),
+		),
 		editor.postale.throttle * 100,
 	)
 	readout_size := rl.MeasureTextEx(rl.Font{}, fmt.ctprintf("%s", readout), 11, 1)
@@ -1635,11 +1647,19 @@ main :: proc() {
 	editor.radius = 48
 	editor.strength = .10
 	editor.atmosphere = atmosphere.new(0x41c10)
+	editor.particles = particle_systems.new_cpu(0x9e3779b9)
+	editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
+	editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
 	island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
 	editor.editor_focus = {
 		x = island_center,
 		z = island_center,
 	}
+	particle_systems.step(
+		&editor.particles,
+		2.4,
+		particle_systems.Vec3{x = island_center, y = 6.0, z = island_center},
+	)
 	editor.editor_camera = {
 		yaw_radians   = math.PI * .25,
 		pitch_radians = .58,
@@ -1687,6 +1707,16 @@ main :: proc() {
 				[]^vehicles.Vehicle{&editor.postale.vehicle},
 			)
 			if entered {
+				// Give the flight capture a reproducible airborne state so visual
+				// verification exercises the wing-trail and wind-response systems.
+				editor.postale.body.position.y += 85
+				editor.postale.body.velocity = flight.scale(editor.postale.body.basis.forward, 38)
+				editor.postale.grounded = false
+				editor.postale.was_grounded = false
+				editor.postale.throttle = .82
+				atmosphere.set_weather_override(&editor.atmosphere, .Windy)
+				editor.atmosphere.weather = atmosphere.weather_for(.Windy)
+				editor.atmosphere.paused = true
 				chase_camera.reset(&editor.flight_camera, postale_camera_target(editor))
 				editor.camera_pose = editor.flight_camera.pose
 			}
@@ -1712,6 +1742,11 @@ main :: proc() {
 		driving := editor.pilot.mode == .Driving
 		if !editor.in_map do editor.map_time = frame_now
 		atmosphere.step(&editor.atmosphere, frame_delta)
+		particle_systems.step(
+			&editor.particles,
+			frame_delta,
+			particle_systems.Vec3{x = island_center, y = 6.0, z = island_center},
+		)
 		if rl.IsKeyPressed(.P) do editor.atmosphere.paused = !editor.atmosphere.paused
 		if rl.IsKeyDown(.LEFT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes - frame_delta * 180)
 		if rl.IsKeyDown(.RIGHT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes + frame_delta * 180)
@@ -1837,7 +1872,41 @@ main :: proc() {
 					),
 					editor.project.sea_level,
 				)
-				postale_game.step(&editor.postale, control, ground, min(delta_seconds, .05))
+				postale_game.step(
+					&editor.postale,
+					control,
+					ground,
+					min(delta_seconds, .05),
+					flight.Vec3 {
+						editor.atmosphere.weather.wind[0],
+						0,
+						editor.atmosphere.weather.wind[1],
+					},
+				)
+				left_tip := postale_vertex_world(&editor.postale, {-5.35, -1.12, .2}, 1)
+				right_tip := postale_vertex_world(&editor.postale, {5.35, -1.12, .2}, 1)
+				particle_systems.step_wing_trails(
+					&editor.wing_trails,
+					min(delta_seconds, .05),
+					particle_systems.Vec3{left_tip.x, left_tip.y, left_tip.z},
+					particle_systems.Vec3{right_tip.x, right_tip.y, right_tip.z},
+					particle_systems.Vec3 {
+						editor.postale.body.basis.forward.x,
+						editor.postale.body.basis.forward.y,
+						editor.postale.body.basis.forward.z,
+					},
+					particle_systems.Vec3 {
+						editor.postale.body.basis.up.x,
+						editor.postale.body.basis.up.y,
+						editor.postale.body.basis.up.z,
+					},
+					particle_systems.Vec3 {
+						editor.atmosphere.weather.wind[0],
+						0,
+						editor.atmosphere.weather.wind[1],
+					},
+					editor.postale.telemetry.airspeed,
+				)
 				vehicles.sync_driver(&editor.pilot)
 				if rl.IsKeyPressed(.F) && postale_game.can_exit(&editor.postale) {
 					if vehicles.try_exit(&editor.pilot, true) {
@@ -1883,17 +1952,61 @@ main :: proc() {
 						editor.car.position.x,
 						editor.car.position.z,
 					)
+					handbrake :=
+						rl.IsKeyDown(.SPACE) ||
+						(rl.GamepadAvailable() && rl.IsGamepadButtonDown(.Right_Shoulder))
 					vehicles.car_drive_step(
 						&editor.car_drive,
 						&editor.car,
 						{
 							throttle = clamp(throttle, -1, 1),
 							steering = clamp(steering, -1, 1),
-							handbrake = rl.IsKeyDown(.SPACE) ||
-							(rl.GamepadAvailable() && rl.IsGamepadButtonDown(.Right_Shoulder)),
+							handbrake = handbrake,
 						},
 						ground,
 						min(delta_seconds, .05),
+					)
+					forward_x, forward_z :=
+						math.cos(editor.car.yaw_radians), math.sin(editor.car.yaw_radians)
+					right_x, right_z := -forward_z, forward_x
+					contacts := [4]particle_systems.Vehicle_Contact{}
+					wheel_x := [2]f32{-1, 1}
+					wheel_z := [2]f32{-1.12, 1.12}
+					contact_index := 0
+					for x in wheel_x {
+						for z in wheel_z {
+							contact_x := editor.car.position.x + right_x * x - forward_x * z
+							contact_z := editor.car.position.z + right_z * x - forward_z * z
+							contacts[contact_index] = {
+								position = {
+									x = contact_x,
+									y = terrain.sample_height(
+										&editor.project,
+										0,
+										contact_x,
+										contact_z,
+									),
+									z = contact_z,
+								},
+								grounded = true,
+							}
+							contact_index += 1
+						}
+					}
+					particle_systems.step_vehicle_effects(
+						&editor.vehicle_effects,
+						min(delta_seconds, .05),
+						particle_systems.Vec3 {
+							editor.car.position.x,
+							editor.car.position.y,
+							editor.car.position.z,
+						},
+						editor.car.yaw_radians,
+						vehicles.car_drive_speed(editor.car_drive),
+						editor.car_drive.steering,
+						throttle,
+						handbrake,
+						contacts,
 					)
 					vehicles.sync_driver(&editor.pilot)
 					speed_ratio := clamp(
@@ -2000,7 +2113,8 @@ main :: proc() {
 		rl.BeginDrawing()
 		draw_terrain(editor, width, height, f32(rl.GetTime()))
 		rl.EndDrawing()
-		if capture_mode && frame == 2 do rl.TakeScreenshot(fmt.ctprintf("%s", os.args[2]))
+		capture_frame := capture_flight_mode ? 20 : 2
+		if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", os.args[2]))
 		// Vulkan screenshot readback completes asynchronously; retain several
 		// presented frames after the request so capture mode always writes its PNG.
 		if capture_mode && frame >= 32 do break
