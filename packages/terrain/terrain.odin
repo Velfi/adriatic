@@ -8,8 +8,8 @@ RING_RESOLUTION :: 256
 SAMPLES_PER_LEVEL :: RING_RESOLUTION * RING_RESOLUTION
 BASE_CELL_SIZE :: WORLD_SIZE_METERS / f32(RING_RESOLUTION - 1)
 
-// These are expressed as a fraction of a clipmap level's half extent, so the
-// starting scene always reads as two islands in opposite corners of the map.
+// These are expressed as a fraction of the authored world's half extent. Every
+// clipmap level samples the same world-space features at a different density.
 DEFAULT_ISLAND_OFFSET :: 0.65
 DEFAULT_ISLAND_RADIUS :: 0.14
 DEFAULT_ISLAND_HEIGHT :: 4.5
@@ -34,23 +34,35 @@ Clipmap_Level :: struct {
 Project :: struct {
 	levels:    [CLIPMAP_LEVELS]Clipmap_Level,
 	sea_level: f32,
+	revision:  u64,
 }
 
-new_project :: proc() -> Project {
-	result: Project
+init_project :: proc(result: ^Project) {
+	if result == nil do return
+	result^ = {}
 	result.sea_level = 0
+	result.revision = 1
+	authored_half_extent := f32(WORLD_SIZE_METERS * .5)
 	for level in 0 ..< CLIPMAP_LEVELS {
 		data := &result.levels[level]
 		data.cell_size = BASE_CELL_SIZE * f32(math.pow(2, f64(level)))
-		half_extent := f32(RING_RESOLUTION - 1) * data.cell_size * .5
 		for z in 0 ..< RING_RESOLUTION {
 			for x in 0 ..< RING_RESOLUTION {
 				world_x := (f32(x) - f32(RING_RESOLUTION - 1) * .5) * data.cell_size
 				world_z := (f32(z) - f32(RING_RESOLUTION - 1) * .5) * data.cell_size
-				data.heights[sample_index(x, z)] = default_height(world_x, world_z, half_extent)
+				data.heights[sample_index(x, z)] = default_height(
+					world_x,
+					world_z,
+					authored_half_extent,
+				)
 			}
 		}
 	}
+}
+
+new_project :: proc() -> Project {
+	result: Project
+	init_project(&result)
 	return result
 }
 
@@ -149,4 +161,5 @@ apply_stroke :: proc(
 			}
 		}
 	}
+	project.revision += 1
 }

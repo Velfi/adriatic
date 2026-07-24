@@ -14,6 +14,13 @@ SAFE_BANK_RADIANS :: f32(.4363323)
 SAFE_EXIT_SPEED :: f32(1)
 TAKEOFF_STALL_SPEED_SCALE :: f32(.68)
 
+// For the current prototype, the ocean is a solid taxi/takeoff surface. Keep
+// this product policy here rather than teaching the shared flight model about
+// water.
+drivable_surface_height :: proc(terrain_height, sea_level: f32) -> f32 {
+	return max_f32(terrain_height, sea_level)
+}
+
 Runtime :: struct {
 	body:            flight.Body_State,
 	vehicle:         vehicles.Vehicle,

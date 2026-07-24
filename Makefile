@@ -35,7 +35,7 @@ RELEASE_APP := $(RELEASE_DIR)/$(APP)
 CAPTURE_PATH ?= $(abspath $(BUILD_DIR)/captures/$(APP).png)
 ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/null)
 
-.PHONY: all bootstrap doctor physics-deps physics-build shaders build release run capture fmt check test clean
+.PHONY: all bootstrap doctor physics-deps physics-build shaders build release run capture capture-car fmt check test clean
 
 all: build
 
@@ -245,6 +245,12 @@ run: build
 capture: build
 	@mkdir -p "$(dir $(CAPTURE_PATH))"
 	$(DEV_APP) --capture "$(CAPTURE_PATH)"
+	@test -s "$(CAPTURE_PATH)" || { echo "error: screenshot was not written to $(CAPTURE_PATH)" >&2; exit 1; }
+	@echo "Screenshot: $(CAPTURE_PATH)"
+
+capture-car: build
+	@mkdir -p "$(dir $(CAPTURE_PATH))"
+	$(DEV_APP) --capture-car "$(CAPTURE_PATH)"
 	@test -s "$(CAPTURE_PATH)" || { echo "error: screenshot was not written to $(CAPTURE_PATH)" >&2; exit 1; }
 	@echo "Screenshot: $(CAPTURE_PATH)"
 

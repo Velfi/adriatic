@@ -27,6 +27,10 @@ Aircraft_Mesh_Part :: enum u8 {
 	Float,
 	Frame,
 	Carriage,
+	Wheel,
+	Bumper,
+	Headlight,
+	Tail_Light,
 }
 
 Mesh_Vertex :: struct {
@@ -219,9 +223,9 @@ add_profile_prism :: proc(
 		mesh_quad(
 			mesh,
 			{-half_width, profile[index].y, profile[index].z},
-			{-half_width, profile[next].y, profile[next].z},
-			{half_width, profile[next].y, profile[next].z},
 			{half_width, profile[index].y, profile[index].z},
+			{half_width, profile[next].y, profile[next].z},
+			{-half_width, profile[next].y, profile[next].z},
 			part,
 		)
 	}

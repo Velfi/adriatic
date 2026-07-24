@@ -6,7 +6,9 @@ import "core:testing"
 @(test)
 terrain_strokes_propagate_through_every_clipmap_level :: proc(t: ^testing.T) {
 	project := terrain.new_project()
+	revision := project.revision
 	terrain.apply_stroke(&project, .Raise, 0, 0, 8, 1, 1)
+	testing.expect(t, project.revision == revision + 1)
 	for level in 0 ..< terrain.CLIPMAP_LEVELS do testing.expect(t, terrain.sample_height(&project, level, 0, 0) > 0)
 }
 
@@ -26,6 +28,31 @@ default_terrain_has_two_opposite_corner_islands :: proc(t: ^testing.T) {
 	testing.expect(t, terrain.sample_height(&project, 0, offset, offset) > project.sea_level)
 	testing.expect(t, terrain.sample_height(&project, 0, -offset, offset) == project.sea_level)
 	testing.expect(t, terrain.sample_height(&project, 0, offset, -offset) == project.sea_level)
+}
+
+@(test)
+coarse_clipmap_levels_do_not_repeat_scaled_islands :: proc(t: ^testing.T) {
+	project := terrain.new_project()
+	authored_half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+	for level in 1 ..< terrain.CLIPMAP_LEVELS {
+		level_half_extent :=
+			f32(terrain.RING_RESOLUTION - 1) * project.levels[level].cell_size * .5
+		echo_center := level_half_extent * terrain.DEFAULT_ISLAND_OFFSET
+		testing.expect(
+			t,
+			terrain.sample_height(&project, level, echo_center, echo_center) == project.sea_level,
+		)
+	}
+	testing.expect(
+		t,
+		terrain.sample_height(
+			&project,
+			0,
+			authored_half_extent * terrain.DEFAULT_ISLAND_OFFSET,
+			authored_half_extent * terrain.DEFAULT_ISLAND_OFFSET,
+		) >
+		project.sea_level,
+	)
 }
 
 @(test)

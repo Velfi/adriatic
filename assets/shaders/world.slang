@@ -133,8 +133,14 @@ float3 shade_water(VertexOutput input) {
 
 [shader("fragment")]
 float4 fragment_main(VertexOutput input) : SV_Target {
+    // Indexed clipmap grids retain sea-level vertices so their topology stays
+    // reusable. Do not let those terrain fragments cover the ocean pass.
+    if (input.kind > 1.5 && input.world_position.y <= .001) {
+        discard;
+    }
     float fog = saturate((input.depth - push.projection.z) /
                          max(push.projection.w - push.projection.z, .001));
-    float3 base = input.kind > .5 ? shade_water(input) : input.color.rgb;
+    float3 base = input.kind > .5 && input.kind < 1.5 ?
+                  shade_water(input) : input.color.rgb;
     return float4(lerp(base, push.fog_color.rgb, fog), input.color.a);
 }

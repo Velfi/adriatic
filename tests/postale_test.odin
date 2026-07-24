@@ -6,6 +6,12 @@ import "core:math"
 import "core:testing"
 
 @(test)
+postale_ocean_is_a_drivable_surface_for_now :: proc(t: ^testing.T) {
+	testing.expect(t, postale.drivable_surface_height(-12, 0) == 0)
+	testing.expect(t, postale.drivable_surface_height(4.5, 0) == 4.5)
+}
+
+@(test)
 postale_throttle_and_automatic_flaps_are_smoothed :: proc(t: ^testing.T) {
 	runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
 	postale.step(&runtime, {throttle_up = true}, 0, .5)
