@@ -75,8 +75,9 @@ make run
 ```
 
 `ZELDA_ENGINE_ROOT` overrides the default sibling-engine location. The project
-uses the same pinned Odin toolchain contract as Last Best Hope; run
-`make bootstrap` on macOS when the local toolchain is not already installed.
+uses a pinned commit of the `catermujo/Odin` fork; run `make bootstrap-fork` on
+macOS when the local fork compiler is not already installed. `make bootstrap`
+provisions the fork plus the other project toolchain dependencies.
 Jolt Physics is provisioned automatically from Zelda Engine's pinned source
 checkout when building, releasing, or testing Adriatic.
 

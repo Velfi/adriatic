@@ -96,6 +96,8 @@ Editor :: struct {
     particles:                                              particle_systems.Cpu_System,
     vehicle_effects:                                        particle_systems.Vehicle_Effects,
     wing_trails:                                            particle_systems.Wing_Trails,
+    tweak:                                                  Tweak_State,
+    tweak_status:                                           Tweak_Status,
 }
 
 structure_history_capture :: proc(editor: ^Editor) -> Structure_History_State {
@@ -2212,6 +2214,8 @@ main :: proc() {
     editor.particles = particle_systems.new_cpu(0x9e3779b9)
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
     editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
+    editor.tweak = tweak_default_state()
+    editor.tweak_status = .Defaults
     island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
     editor.editor_focus = {
         x = island_center,
@@ -2547,7 +2551,6 @@ main :: proc() {
                     control,
                     ground,
                     min(delta_seconds, .05),
-                    flight.Vec3{editor.atmosphere.weather.wind[0], 0, editor.atmosphere.weather.wind[1]},
                 )
                 if editor.libellula_active {
                     editor.libellula.position = third_person.Vec3 {

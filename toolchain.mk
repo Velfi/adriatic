@@ -1,6 +1,9 @@
-# Pinned compiler contract, shared with the reference Zelda Engine application.
-ODIN_VERSION=dev-2026-07a
-ODIN_VERSION_OUTPUT=dev-2026-07-nightly:819fdc7
+# Pinned compiler contract for this project.
+ODIN_FORK_REPOSITORY=https://github.com/catermujo/Odin.git
+ODIN_FORK_COMMIT=6e16b34747f18fd1d1091cca197783dc6099489e
+ODIN_FORK_VERSION=catermujo-6e16b34747f1
+ODIN_VERSION=dev-2026-07
+ODIN_VERSION_OUTPUT=dev-2026-07:6e16b3474
 LLVM_HOMEBREW_FORMULA=llvm@22
 SLANG_VERSION=v2026.8.1
 SLANG_VERSION_OUTPUT=2026.8.1

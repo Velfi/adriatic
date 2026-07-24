@@ -7,11 +7,11 @@ ZELDA_ENGINE_ROOT ?= ../zelda-engine
 ZELDA_ENGINE_PACKAGES := $(abspath $(ZELDA_ENGINE_ROOT))/packages
 ZELDA_ENGINE_COLLECTION := -collection:zelda_engine=$(ZELDA_ENGINE_PACKAGES)
 
-LOCAL_ODIN := $(TOOLS_DIR)/odin/$(ODIN_VERSION)/odin
+LOCAL_ODIN := $(TOOLS_DIR)/odin/$(ODIN_FORK_VERSION)/odin
 LOCAL_SLANGC := $(TOOLS_DIR)/slang/$(SLANG_VERSION)/slangc
 PATH_ODIN := $(shell command -v odin 2>/dev/null)
 PATH_SLANGC := $(shell command -v slangc 2>/dev/null)
-ODIN ?= $(if $(PATH_ODIN),$(PATH_ODIN),$(LOCAL_ODIN))
+ODIN ?= $(if $(wildcard $(LOCAL_ODIN)),$(LOCAL_ODIN),$(PATH_ODIN))
 SLANGC ?= $(if $(PATH_SLANGC),$(PATH_SLANGC),$(LOCAL_SLANGC))
 ODINFMT ?= odinfmt
 CC ?= cc
@@ -64,12 +64,16 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/canvas-post.vert.spv \
 	$(HOT_SHADER_DIR)/canvas-post.frag.spv
 
-.PHONY: all bootstrap doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run capture capture-car fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run capture capture-car fmt check test clean
 
 all: build
 
 bootstrap:
 	./tools/bootstrap-macos.sh
+	./tools/bootstrap-odin-fork-macos.sh
+
+bootstrap-fork:
+	./tools/bootstrap-odin-fork-macos.sh
 
 doctor:
 	@set -eu; \
