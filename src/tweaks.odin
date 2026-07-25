@@ -843,10 +843,8 @@ tweak_draw_presentation :: proc(editor: ^Editor) {
 imgui_draw_tweaks :: proc(editor: ^Editor) {
     if editor == nil || !editor.tweak_panel_visible do return
     tweak_sync_from_editor(editor)
-    // Keep the inspector clear of the custom tool palette and spawn control.
-    // The fixed editor canvas is 1280 px wide, so this leaves a small gutter
-    // between the palette column and the inspector without clipping it.
-    im.SetNextWindowPos({874, 150}, im.Cond.Always)
+    // Keep the panel between the tool palette and the custom inspector.
+    im.SetNextWindowPos({570, 150}, im.Cond.Always)
     im.SetNextWindowSize({390, 540}, im.Cond.Always)
     if im.Begin("Adriatic Tweaks") {
         if im.Button("Save tweaks") do tweak_save_editor(editor)

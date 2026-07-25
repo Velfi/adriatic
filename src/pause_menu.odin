@@ -351,13 +351,15 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
     if editor == nil || !editor.in_map do return
 
     if editor.pause_screen == .Closed {
-        if rl.IsKeyPressed(.ESCAPE) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Start)) {
+        if (!shift_key_down() && rl.IsKeyPressed(.ESCAPE)) ||
+           (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Start)) {
             pause_menu_open(editor)
         }
         return
     }
 
-    if rl.IsKeyPressed(.ESCAPE) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.East)) {
+    if (!shift_key_down() && rl.IsKeyPressed(.ESCAPE)) ||
+       (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.East)) {
         if editor.pause_screen == .Options {
             editor.pause_screen = .Pause
         } else {

@@ -1584,7 +1584,8 @@ alt_key_down :: proc() -> bool {
 editor_debug_toggle_pressed :: proc(editor: ^Editor) -> bool {
     if editor == nil do return false
     keys := sdl.GetKeyboardState(nil)
-    down := keys[int(sdl.Scancode.F10)]
+    shift := keys[int(sdl.Scancode.LSHIFT)] || keys[int(sdl.Scancode.RSHIFT)]
+    down := shift && keys[int(sdl.Scancode.ESCAPE)]
     pressed := down && !editor.editor_ui.debug_key_down
     editor.editor_ui.debug_key_down = down
     return pressed
@@ -2308,7 +2309,7 @@ update_editor_camera :: proc(editor: ^Editor, delta_seconds: f32) {
     if editor_ui_hit(editor, rl.GetMousePosition(), rl.GetScreenWidth(), rl.GetScreenHeight()) do return
     if rl.IsMouseButtonDown(.MIDDLE) {
         mouse_delta := rl.GetMouseDelta()
-        third_person.look(&editor.editor_camera, mouse_delta.x, -mouse_delta.y, .006)
+        third_person.look(&editor.editor_camera, -mouse_delta.x, mouse_delta.y, .006)
     }
     wheel := rl.GetMouseWheelMove()
     if shift_key_down() && wheel != 0 {

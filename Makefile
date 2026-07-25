@@ -63,6 +63,8 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/canvas.frag.spv \
 	$(HOT_SHADER_DIR)/canvas-post.vert.spv \
 	$(HOT_SHADER_DIR)/canvas-post.frag.spv \
+	$(HOT_SHADER_DIR)/particles.vert.spv \
+	$(HOT_SHADER_DIR)/particles.frag.spv \
 	$(HOT_SHADER_DIR)/foliage.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
@@ -372,6 +374,14 @@ $(HOT_SHADER_DIR)/canvas-post.vert.spv: assets/shaders/canvas.slang
 $(HOT_SHADER_DIR)/canvas-post.frag.spv: assets/shaders/canvas.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry post_fragment -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/particles.vert.spv: assets/shaders/particles.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/particles.frag.spv: assets/shaders/particles.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
 
 $(HOT_SHADER_DIR)/foliage.vert.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)

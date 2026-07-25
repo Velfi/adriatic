@@ -576,7 +576,7 @@ editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
     rl.DrawLineEx({0, EDITOR_UI_TOP_HEIGHT - 1}, {f32(width), EDITOR_UI_TOP_HEIGHT - 1}, 1, {65, 72, 81, 255})
     ui_draw_text(.Heading, "ADRIATIC  /  TERRAIN EDITOR", {16, 16}, .4, {238, 241, 244, 255})
     project_state: cstring = editor.project.revision == editor.terrain_saved_revision ? "SAVED" : "UNSAVED"
-    status := fmt.ctprintf("%s  |  F10 TUNING", project_state)
+    status := fmt.ctprintf("%s  |  SHIFT+ESC TUNING", project_state)
     status_size := ui_measure_text(.Data, status, .4)
     ui_draw_text(.Data, status, {f32(width) - status_size.x - 16, 18}, .4, {151, 161, 172, 255})
     editor_ui_draw_left(editor, layout)
