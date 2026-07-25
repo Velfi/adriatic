@@ -49,6 +49,14 @@ Player_Animation_Tweak :: struct {
     locomotion_blend_rate:    f32 `tweak:"range=.1..30;.1"`,
     airborne_blend_rate:      f32 `tweak:"range=.1..30;.1"`,
     vertical_blend_rate:      f32 `tweak:"range=.1..30;.1"`,
+    turn_blend_rate:          f32 `tweak:"range=.1..30;.1"`,
+    brake_blend_rate:         f32 `tweak:"range=.1..30;.1"`,
+    turn_lean_radians:        f32 `tweak:"range=0..0.5;.005"`,
+    turn_spine_offset:        f32 `tweak:"range=0..0.3;.005"`,
+    turn_paw_offset:          f32 `tweak:"range=0..0.3;.005"`,
+    brake_compression:        f32 `tweak:"range=0..0.3;.005"`,
+    tail_counterbalance:      f32 `tweak:"range=0..0.5;.005"`,
+    slope_alignment:          f32 `tweak:"range=0..1;.01"`,
 }
 
 World_Tweak :: struct {
@@ -336,6 +344,14 @@ tweak_default_state :: proc() -> Tweak_State {
             locomotion_blend_rate = 8,
             airborne_blend_rate = 12,
             vertical_blend_rate = 8,
+            turn_blend_rate = 10,
+            brake_blend_rate = 12,
+            turn_lean_radians = .21,
+            turn_spine_offset = .08,
+            turn_paw_offset = .075,
+            brake_compression = .11,
+            tail_counterbalance = .22,
+            slope_alignment = .55,
         },
         camera = {
             editor_camera = {yaw_radians = math.PI * .25, pitch_radians = .58, distance = 900},
@@ -606,9 +622,15 @@ tweak_draw_player :: proc(editor: ^Editor) {
     im.SeparatorText("Controller")
     tweak_drag_f32("Move speed", &c.move_speed, 0, 100, .1)
     tweak_drag_f32("Ground acceleration", &c.ground_acceleration, 0, 200, .5)
+    tweak_drag_f32("Ground deceleration", &c.ground_deceleration, 0, 200, .5)
+    tweak_drag_f32("Reversal braking", &c.reversal_braking, 0, 200, .5)
+    tweak_drag_f32("Reversal speed", &c.reversal_speed, 0, 20, .05)
+    tweak_drag_f32("Facing turn speed", &c.facing_turn_speed, 0, 40, .1)
     tweak_drag_f32("Air acceleration", &c.air_acceleration, 0, 200, .5)
     tweak_drag_f32("Jump speed", &c.jump_speed, 0, 50, .1)
     tweak_drag_f32("Gravity", &c.gravity, 0, 100, .1)
+    tweak_drag_f32("Slope gravity scale", &c.slope_gravity_scale, 0, 2, .01)
+    tweak_drag_f32("Max slope acceleration", &c.max_slope_acceleration, 0, 50, .1)
     im.SeparatorText("Animation")
     tweak_drag_f32("Stride radians / meter", &a.stride_radians_per_meter, .1, 12, .05)
     tweak_drag_f32("Full walk speed", &a.walk_full_speed, .1, 20, .05)
@@ -616,6 +638,14 @@ tweak_draw_player :: proc(editor: ^Editor) {
     tweak_drag_f32("Locomotion blend rate", &a.locomotion_blend_rate, .1, 30, .1)
     tweak_drag_f32("Airborne blend rate", &a.airborne_blend_rate, .1, 30, .1)
     tweak_drag_f32("Jump / fall blend rate", &a.vertical_blend_rate, .1, 30, .1)
+    tweak_drag_f32("Turn blend rate", &a.turn_blend_rate, .1, 30, .1)
+    tweak_drag_f32("Brake blend rate", &a.brake_blend_rate, .1, 30, .1)
+    tweak_drag_f32("Turn lean radians", &a.turn_lean_radians, 0, .5, .005)
+    tweak_drag_f32("Turn spine offset", &a.turn_spine_offset, 0, .3, .005)
+    tweak_drag_f32("Turn paw offset", &a.turn_paw_offset, 0, .3, .005)
+    tweak_drag_f32("Brake compression", &a.brake_compression, 0, .3, .005)
+    tweak_drag_f32("Tail counterbalance", &a.tail_counterbalance, 0, .5, .005)
+    tweak_drag_f32("Slope alignment", &a.slope_alignment, 0, 1, .01)
     im.SeparatorText("Runtime")
     im.Text("Position: %.2f %.2f %.2f", editor.player.position.x, editor.player.position.y, editor.player.position.z)
     im.Text("Grounded: %s", editor.player.grounded ? "yes" : "no")
@@ -624,6 +654,14 @@ tweak_draw_player :: proc(editor: ^Editor) {
         editor.player_gait_weight,
         editor.player_airborne_weight,
         editor.player_vertical_pose,
+    )
+    im.Text(
+        "Weight: turn %+.2f  brake %.2f  slope %.2f %.2f %.2f",
+        editor.player_turn_pose,
+        editor.player_brake_pose,
+        editor.player.ground_normal.x,
+        editor.player.ground_normal.y,
+        editor.player.ground_normal.z,
     )
 }
 

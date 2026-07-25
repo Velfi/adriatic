@@ -111,6 +111,9 @@ Editor :: struct {
     capture_world_only:                       bool,
     capture_player_walk_pose:                 bool,
     capture_player_run_compress_pose:         bool,
+    capture_player_turn_left_pose:            bool,
+    capture_player_turn_right_pose:           bool,
+    capture_player_brake_pose:                bool,
     capture_player_jump_pose:                 bool,
     capture_player_fall_pose:                 bool,
     capture_player_blink_pose:                bool,
@@ -131,6 +134,8 @@ Editor :: struct {
     player_gait_weight:                       f32,
     player_airborne_weight:                   f32,
     player_vertical_pose:                     f32,
+    player_turn_pose:                         f32,
+    player_brake_pose:                        f32,
     camera:                                   third_person.Camera,
     camera_pose:                              third_person.Camera_Pose,
     cameras:                                  third_person.Camera_System,
@@ -1569,6 +1574,22 @@ vec_normalize :: proc(v: third_person.Vec3) -> third_person.Vec3 {
     length := f32(math.sqrt(f64(vec_dot(v, v))))
     if length < .0001 do return {}
     return {v.x / length, v.y / length, v.z / length}
+}
+
+player_ground_normal :: proc(editor: ^Editor, position: third_person.Vec3) -> third_person.Vec3 {
+    if editor == nil do return {y = 1}
+    SAMPLE_DISTANCE :: f32(.35)
+    height_left := terrain.sample_height(&editor.project, 0, position.x - SAMPLE_DISTANCE, position.z)
+    height_right := terrain.sample_height(&editor.project, 0, position.x + SAMPLE_DISTANCE, position.z)
+    height_back := terrain.sample_height(&editor.project, 0, position.x, position.z - SAMPLE_DISTANCE)
+    height_front := terrain.sample_height(&editor.project, 0, position.x, position.z + SAMPLE_DISTANCE)
+    return vec_normalize(
+        {
+            x = height_left - height_right,
+            y = SAMPLE_DISTANCE * 2,
+            z = height_back - height_front,
+        },
+    )
 }
 
 shape_flight_axis :: proc(value: f32) -> f32 {
@@ -4019,6 +4040,9 @@ adriatic_run :: proc() -> bool {
         if capture_target == "player" ||
            capture_target == "player-walk" ||
            capture_target == "player-run-compress" ||
+           capture_target == "player-turn-left" ||
+           capture_target == "player-turn-right" ||
+           capture_target == "player-brake" ||
            capture_target == "player-jump" ||
            capture_target == "player-fall" ||
            capture_target == "player-blink" {
@@ -4038,6 +4062,9 @@ adriatic_run :: proc() -> bool {
             editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
             editor.capture_player_walk_pose = capture_target == "player-walk"
             editor.capture_player_run_compress_pose = capture_target == "player-run-compress"
+            editor.capture_player_turn_left_pose = capture_target == "player-turn-left"
+            editor.capture_player_turn_right_pose = capture_target == "player-turn-right"
+            editor.capture_player_brake_pose = capture_target == "player-brake"
             editor.capture_player_jump_pose = capture_target == "player-jump"
             editor.capture_player_fall_pose = capture_target == "player-fall"
             editor.capture_player_blink_pose = capture_target == "player-blink"
@@ -4621,6 +4648,7 @@ adriatic_run :: proc() -> bool {
                     jump_pressed       = rl.IsKeyPressed(.SPACE),
                     grounded           = editor.player.position.y <= ground_height + .01,
                     camera_yaw_radians = editor.camera.yaw_radians,
+                    ground_normal      = player_ground_normal(editor, editor.player.position),
                 }
                 frame_seconds := min(delta_seconds, .05)
                 third_person.step(&editor.player, input, editor.tweak.player, frame_seconds)

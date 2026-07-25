@@ -3874,6 +3874,196 @@ player_animation_approach :: proc(current, target, rate, delta_seconds: f32) -> 
     return max(current - maximum_delta, target)
 }
 
+Mouse_Bone :: enum u8 {
+    Pelvis,
+    Spine,
+    Chest,
+    Neck,
+    Head,
+}
+
+Mouse_Bone_Pose :: struct {
+    parent:        i8,
+    bind_position: third_person.Vec3,
+    position:      third_person.Vec3,
+    pitch:         f32,
+    roll:          f32,
+}
+
+Mouse_Vertex_Group :: struct {
+    bone:   Mouse_Bone,
+    weight: f32,
+}
+
+Mouse_Skin_Vertex :: struct {
+    bind_position: third_person.Vec3,
+    groups:        [2]Mouse_Vertex_Group,
+    color:         rl.Color,
+}
+
+mouse_skin_vertex :: proc(vertex: Mouse_Skin_Vertex, skeleton: ^[5]Mouse_Bone_Pose) -> third_person.Vec3 {
+    skinned: third_person.Vec3
+    weight_sum: f32
+    for group in vertex.groups {
+        if group.weight <= 0 do continue
+        bone := skeleton[int(group.bone)]
+        relative := third_person.Vec3 {
+            vertex.bind_position.x - bone.bind_position.x,
+            vertex.bind_position.y - bone.bind_position.y,
+            vertex.bind_position.z - bone.bind_position.z,
+        }
+        pitch_cosine, pitch_sine := math.cos(bone.pitch), math.sin(bone.pitch)
+        pitched_y := relative.y * pitch_cosine - relative.z * pitch_sine
+        pitched_z := relative.y * pitch_sine + relative.z * pitch_cosine
+        roll_cosine, roll_sine := math.cos(bone.roll), math.sin(bone.roll)
+        transformed := third_person.Vec3 {
+            bone.position.x + relative.x * roll_cosine - pitched_y * roll_sine,
+            bone.position.y + relative.x * roll_sine + pitched_y * roll_cosine,
+            bone.position.z + pitched_z,
+        }
+        skinned.x += transformed.x * group.weight
+        skinned.y += transformed.y * group.weight
+        skinned.z += transformed.z * group.weight
+        weight_sum += group.weight
+    }
+    if weight_sum <= .0001 do return vertex.bind_position
+    inverse_weight := 1 / weight_sum
+    return {skinned.x * inverse_weight, skinned.y * inverse_weight, skinned.z * inverse_weight}
+}
+
+world_mouse_skinned_hull :: proc(
+    origin: third_person.Vec3,
+    rotation: f32,
+    skeleton: ^[5]Mouse_Bone_Pose,
+    fur, fur_light: rl.Color,
+    breath: f32,
+) {
+    RINGS :: 8
+    SEGMENTS :: 12
+    ring_z := [RINGS]f32{-.65, -.53, -.28, -.04, .10, .20, .39, .56}
+    ring_y := [RINGS]f32{.34, .39, .43, .50, .58, .68, .64, .64}
+    radius_x := [RINGS]f32{.12, .29, .30, .255, .205, .20, .14, .032}
+    radius_y := [RINGS]f32{.16, .29, .31, .27, .22, .185, .11, .026}
+    primary := [RINGS]Mouse_Bone{.Pelvis, .Pelvis, .Spine, .Chest, .Neck, .Head, .Head, .Head}
+    secondary := [RINGS]Mouse_Bone{.Spine, .Spine, .Pelvis, .Spine, .Chest, .Neck, .Neck, .Neck}
+    primary_weight := [RINGS]f32{.95, .82, .76, .68, .66, .78, .92, 1}
+
+    vertices: [RINGS][SEGMENTS]Mouse_Skin_Vertex
+    posed: [RINGS][SEGMENTS]third_person.Vec3
+    rib_weights := [RINGS]f32{0, .10, .55, 1, .45, 0, 0, 0}
+    for ring in 0 ..< RINGS {
+        breath_scale := 1 + breath * rib_weights[ring]
+        for segment in 0 ..< SEGMENTS {
+            angle := f32(segment) * math.PI * 2 / f32(SEGMENTS)
+            cosine, sine := math.cos(angle), math.sin(angle)
+            belly_weight := clamp((-sine - .05) * .72, 0, .62)
+            if ring >= 6 do belly_weight = max(belly_weight, f32(.48))
+            vertices[ring][segment] = {
+                bind_position = {
+                    cosine * radius_x[ring] * breath_scale,
+                    ring_y[ring] + sine * radius_y[ring] * breath_scale,
+                    ring_z[ring],
+                },
+                groups        = {{primary[ring], primary_weight[ring]}, {secondary[ring], 1 - primary_weight[ring]}},
+                color         = color_lerp(fur, fur_light, belly_weight),
+            }
+            local := mouse_skin_vertex(vertices[ring][segment], skeleton)
+            world_x, world_z := world_rotate_xz(origin.x, origin.z, local.x, local.z, rotation)
+            posed[ring][segment] = {world_x, origin.y + local.y, world_z}
+        }
+    }
+
+    for ring in 0 ..< RINGS - 1 {
+        for segment in 0 ..< SEGMENTS {
+            next := (segment + 1) % SEGMENTS
+            a, b := posed[ring][segment], posed[ring][next]
+            c, d := posed[ring + 1][next], posed[ring + 1][segment]
+            world_triangle_colored(
+                a,
+                b,
+                c,
+                vertices[ring][segment].color,
+                vertices[ring][next].color,
+                vertices[ring + 1][next].color,
+            )
+            world_triangle_colored(
+                a,
+                c,
+                d,
+                vertices[ring][segment].color,
+                vertices[ring + 1][next].color,
+                vertices[ring + 1][segment].color,
+            )
+        }
+    }
+
+    rear_center_local := mouse_skin_vertex(
+        {bind_position = {0, ring_y[0], ring_z[0]}, groups = {{.Pelvis, 1}, {.Spine, 0}}, color = fur},
+        skeleton,
+    )
+    nose_center_local := mouse_skin_vertex(
+        {
+            bind_position = {0, ring_y[RINGS - 1], ring_z[RINGS - 1]},
+            groups = {{.Head, 1}, {.Neck, 0}},
+            color = fur_light,
+        },
+        skeleton,
+    )
+    rear_x, rear_z := world_rotate_xz(origin.x, origin.z, rear_center_local.x, rear_center_local.z, rotation)
+    nose_x, nose_z := world_rotate_xz(origin.x, origin.z, nose_center_local.x, nose_center_local.z, rotation)
+    rear_center := third_person.Vec3{rear_x, origin.y + rear_center_local.y, rear_z}
+    nose_center := third_person.Vec3{nose_x, origin.y + nose_center_local.y, nose_z}
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        world_triangle(rear_center, posed[0][next], posed[0][segment], fur)
+        world_triangle(nose_center, posed[RINGS - 1][segment], posed[RINGS - 1][next], fur_light)
+    }
+}
+
+mouse_ear_world_point :: proc(origin, center: third_person.Vec3, rotation, yaw, x, y, z: f32) -> third_person.Vec3 {
+    cosine, sine := math.cos(yaw), math.sin(yaw)
+    local_x := center.x + x * cosine + z * sine
+    local_z := center.z - x * sine + z * cosine - y * .20
+    world_x, world_z := world_rotate_xz(origin.x, origin.z, local_x, local_z, rotation)
+    return {world_x, origin.y + center.y + y, world_z}
+}
+
+world_mouse_ear :: proc(
+    origin: third_person.Vec3,
+    rotation: f32,
+    center: third_person.Vec3,
+    side, twitch: f32,
+    rim_color, inner_color: rl.Color,
+) {
+    SEGMENTS :: 16
+    yaw := side * (.31 + twitch * 5)
+    outer_back, outer_front, inner_rim: [SEGMENTS]third_person.Vec3
+    for segment in 0 ..< SEGMENTS {
+        angle := f32(segment) * math.PI * 2 / f32(SEGMENTS)
+        cosine, sine := math.cos(angle), math.sin(angle)
+        root_taper := .70 + .30 * clamp((sine + .55) / 1.55, 0, 1)
+        outer_x := cosine * .112 * root_taper
+        outer_y := sine * .116
+        inner_x := cosine * .078 * root_taper
+        inner_y := .006 + sine * .079
+        outer_back[segment] = mouse_ear_world_point(origin, center, rotation, yaw, outer_x, outer_y, -.026)
+        outer_front[segment] = mouse_ear_world_point(origin, center, rotation, yaw, outer_x, outer_y, .024)
+        inner_rim[segment] = mouse_ear_world_point(origin, center, rotation, yaw, inner_x, inner_y, .030)
+    }
+
+    back_center := mouse_ear_world_point(origin, center, rotation, yaw, 0, 0, -.026)
+    // Recessing the pink center behind its inner rim gives the pinna a shallow
+    // bowl instead of reading as a sticker laid over a flat disc.
+    cup_center := mouse_ear_world_point(origin, center, rotation, yaw, 0, .008, .002)
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        world_triangle(back_center, outer_back[next], outer_back[segment], rim_color)
+        world_quad(outer_back[segment], outer_back[next], outer_front[next], outer_front[segment], rim_color)
+        world_quad(outer_front[segment], outer_front[next], inner_rim[next], inner_rim[segment], rim_color)
+        world_triangle(cup_center, inner_rim[segment], inner_rim[next], inner_color)
+    }
+}
+
 player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
     if editor == nil || delta_seconds <= 0 do return
     animation := &editor.tweak.player_animation
@@ -3909,6 +4099,18 @@ player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
         animation.vertical_blend_rate,
         delta_seconds,
     )
+    editor.player_turn_pose = player_animation_approach(
+        editor.player_turn_pose,
+        editor.player.turn_amount,
+        animation.turn_blend_rate,
+        delta_seconds,
+    )
+    editor.player_brake_pose = player_animation_approach(
+        editor.player_brake_pose,
+        editor.player.brake_amount,
+        animation.brake_blend_rate,
+        delta_seconds,
+    )
     if editor.player.grounded {
         editor.player_stride_phase +=
             horizontal_speed * delta_seconds * max(animation.stride_radians_per_meter, f32(.1))
@@ -3931,11 +4133,32 @@ world_character :: proc(editor: ^Editor) {
     ear: rl.Color = {188, 126, 123, 255}
     paw: rl.Color = {201, 146, 139, 255}
     features: rl.Color = {35, 32, 30, 255}
+    nose: rl.Color = {161, 102, 101, 255}
     tooth: rl.Color = {232, 222, 189, 255}
+    leather: rl.Color = {91, 55, 38, 255}
+    leather_dark: rl.Color = {58, 38, 31, 255}
+    brass: rl.Color = {204, 157, 72, 255}
+    goggle_glass: rl.Color = {76, 128, 135, 255}
     model_forward := third_person.Vec3 {
         x = -math.sin(rotation),
         z = math.cos(rotation),
     }
+    animation := &editor.tweak.player_animation
+    turn_pose := clamp(editor.player_turn_pose, -1, 1)
+    brake_pose := clamp(editor.player_brake_pose, 0, 1)
+    if editor.capture_player_turn_left_pose do turn_pose = -1
+    if editor.capture_player_turn_right_pose do turn_pose = 1
+    if editor.capture_player_brake_pose do brake_pose = 1
+    ground_normal := editor.player.ground_normal
+    if ground_normal.y <= .1 do ground_normal = {y = 1}
+    model_right := third_person.Vec3{x = math.cos(rotation), z = math.sin(rotation)}
+    normal_forward := ground_normal.x * model_forward.x + ground_normal.z * model_forward.z
+    normal_right := ground_normal.x * model_right.x + ground_normal.z * model_right.z
+    slope_pitch := math.atan2(normal_forward, ground_normal.y) * animation.slope_alignment
+    slope_roll := math.atan2(-normal_right, ground_normal.y) * animation.slope_alignment
+    body_roll := slope_roll - turn_pose * animation.turn_lean_radians
+    spine_side := turn_pose * animation.turn_spine_offset
+    brake_compression := brake_pose * animation.brake_compression
 
     airborne_weight := editor.player_airborne_weight
     run_weight := editor.player_gait_weight * (1 - airborne_weight) + .88 * airborne_weight
@@ -3944,6 +4167,12 @@ world_character :: proc(editor: ^Editor) {
         run_weight = 1
         stride_phase = math.PI * 1.75
     } else if editor.capture_player_run_compress_pose {
+        run_weight = 1
+        stride_phase = math.PI * .50
+    } else if editor.capture_player_turn_left_pose || editor.capture_player_turn_right_pose {
+        run_weight = 1
+        stride_phase = math.PI * 1.75
+    } else if editor.capture_player_brake_pose {
         run_weight = 1
         stride_phase = math.PI * .50
     }
@@ -3964,152 +4193,241 @@ world_character :: proc(editor: ^Editor) {
     bound := math.sin(stride_phase) * run_weight
     spine_extension := -bound
     body_bob :=
-        math.abs(math.sin(stride_phase * 2)) * .025 * run_weight + math.sin(idle_phase) * .006 * (1 - run_weight)
+        (-bound * .018 + math.abs(math.sin(stride_phase * 2)) * .014) * run_weight +
+        math.sin(idle_phase) * .006 * (1 - run_weight)
     blink_period := f32(4.6)
     blink_time := editor.map_time - f32(math.floor(f64(editor.map_time / blink_period))) * blink_period
     blink_weight := clamp(1 - math.abs(blink_time - .10) / .10, 0, 1)
     if editor.capture_player_blink_pose do blink_weight = 1
     sniff := math.sin(editor.map_time * 5.4) * .008 * (1 - run_weight)
+    breathing := math.sin(editor.map_time * 1.65) * .018 * (1 - run_weight) * (1 - airborne_weight)
     head_sway := math.sin(stride_phase) * .012 * run_weight
     ear_twitch := math.sin(idle_phase * 1.7) * .006 * (1 - run_weight) + math.abs(bound) * .008 + blink_weight * .009
 
-    // At rest the mouse sits tall on its haunches. Speed lowers and lengthens
-    // the spine continuously into a quadrupedal running profile.
-    body_center_y := .40 - run_weight * .095 + body_bob
-    body_center_z := -.29 - run_weight * .025
-    body_radius_x := .29 - run_weight * .018
-    body_radius_y := .33 - run_weight * .080 - spine_extension * .018 * run_weight
-    body_depth := .62 + run_weight * .22 + spine_extension * .10 * run_weight
-    haunch_color := color_lerp(fur_dark, fur, run_weight)
-    belly_color := color_lerp(fur_light, fur, run_weight * .72)
-    world_tapered_disc_depth_rotated(
-        local_point(p, rotation, 0, body_center_y, body_center_z),
-        body_radius_x,
-        body_radius_y,
-        .22,
-        .23 - run_weight * .025,
-        body_depth,
-        rotation,
-        fur,
-    )
-    world_vertical_disc_rotated(
-        local_point(
-            p,
-            rotation,
-            0,
-            .31 - run_weight * .015 - spine_extension * .010 * run_weight + body_bob,
-            -.47 - spine_extension * .045 * run_weight,
-        ),
-        .30,
-        .28 - run_weight * .025,
-        .38,
-        rotation,
-        haunch_color,
-    )
-    world_vertical_disc_rotated(
-        local_point(
-            p,
-            rotation,
-            0,
-            .39 - run_weight * .11 - spine_extension * .008 * run_weight + body_bob,
-            -.015 + spine_extension * .035 * run_weight,
-        ),
-        .18,
-        .20 - run_weight * .045,
-        .34,
-        rotation,
-        belly_color,
-    )
-
-    head_y := .69 - run_weight * .285 - spine_extension * .010 * run_weight + body_bob + airborne_weight * .015
-    head_z := .02 + run_weight * .18 + spine_extension * .055 * run_weight
-    neck_a := local_point(p, rotation, 0, body_center_y + .14, -.05)
-    neck_b := local_point(p, rotation, head_sway * .25, head_y - .13, head_z - .09)
-    world_tube_between(neck_a, neck_b, model_forward, .10, .10, fur_dark)
-    world_vertical_disc_rotated(local_point(p, rotation, head_sway, head_y, head_z), .205, .185, .29, rotation, fur)
+    // One connected hull runs from rump to nose. Its rings carry named,
+    // normalized vertex groups and are skinned by this five-bone mouse rig.
+    head_y :=
+        .69 - run_weight * .285 - spine_extension * .010 * run_weight + body_bob + airborne_weight * .015 -
+        brake_compression * .72
+    head_z := .02 + run_weight * .18 + spine_extension * .055 * run_weight - brake_pose * .025
+    head_turn_x := spine_side * .24
+    skeleton := [5]Mouse_Bone_Pose {
+        {
+            parent = -1,
+            bind_position = {0, .40, -.48},
+            position = {
+                spine_side * .18,
+                .40 - run_weight * .075 + body_bob - brake_compression * .48,
+                -.48 - spine_extension * .035 * run_weight + brake_pose * .035,
+            },
+            pitch = bound * .035 + slope_pitch * .65,
+            roll = body_roll * .82,
+        },
+        {
+            parent = 0,
+            bind_position = {0, .43, -.25},
+            position = {
+                spine_side * .48,
+                .43 - run_weight * .12 + body_bob - brake_compression * .64,
+                -.25 + spine_extension * .018 * run_weight + brake_pose * .025,
+            },
+            pitch = run_weight * .055 + bound * .045 + slope_pitch * .82,
+            roll = body_roll,
+        },
+        {
+            parent = 1,
+            bind_position = {0, .50, -.04},
+            position = {
+                spine_side,
+                .50 - run_weight * .18 + body_bob - brake_compression,
+                -.04 + run_weight * .06 + spine_extension * .040 * run_weight - brake_pose * .015,
+            },
+            pitch = run_weight * .075 + bound * .055 + slope_pitch,
+            roll = body_roll,
+        },
+        {
+            parent = 2,
+            bind_position = {0, .58, .10},
+            position = {
+                head_sway * .25 + spine_side * .62,
+                .58 - run_weight * .22 + body_bob - brake_compression * .82,
+                .10 + run_weight * .10 + spine_extension * .050 * run_weight - brake_pose * .02,
+            },
+            pitch = run_weight * .085 + bound * .035 + slope_pitch * .72,
+            roll = body_roll * .58,
+        },
+        {
+            parent = 3,
+            bind_position = {0, .69, .20},
+            position = {head_sway + head_turn_x, head_y, head_z + .20},
+            pitch = run_weight * .055 - bound * .025 + slope_pitch * .42,
+            roll = body_roll * .22,
+        },
+    }
+    world_mouse_skinned_hull(p, rotation, &skeleton, fur, fur_light, breathing)
 
     ear_offsets := [2]f32{-.135, .135}
     for ear_x in ear_offsets {
-        side_motion := ear_twitch * (ear_x / .135)
-        ear_y := head_y + .17 + side_motion - airborne_weight * .018
-        ear_z := head_z - .09 - airborne_weight * .018
-        world_vertical_disc_rotated(
-            local_point(p, rotation, ear_x + head_sway, ear_y, ear_z),
-            .108,
-            .118 + side_motion * .08,
-            .072,
+        side := ear_x / .135
+        side_motion := ear_twitch * side
+        world_mouse_ear(
+            p,
             rotation,
+            {
+                ear_x + head_sway + head_turn_x,
+                head_y + .145 + side_motion - airborne_weight * .018 + ear_x * math.sin(body_roll) * .65,
+                head_z + .045 - airborne_weight * .018,
+            },
+            side,
+            side_motion,
             fur_dark,
-        )
-        world_vertical_disc_rotated(
-            local_point(p, rotation, ear_x + head_sway, ear_y, ear_z + .043),
-            .073,
-            .081 + side_motion * .055,
-            .015,
-            rotation,
             ear,
         )
     }
 
     muzzle_y := head_y - .045
-    muzzle_z := head_z + .205 + sniff
+    muzzle_z := head_z + .39 + sniff
     world_tapered_disc_depth_rotated(
-        local_point(p, rotation, head_sway, muzzle_y, muzzle_z),
-        .145,
-        .115,
-        .030,
-        .025,
-        .36,
+        local_point(p, rotation, head_sway + head_turn_x, muzzle_y, muzzle_z + .19),
+        .028,
+        .022,
+        .018,
+        .015,
+        .040,
         rotation,
-        fur_light,
+        nose,
     )
-    world_vertical_disc_rotated(
-        local_point(p, rotation, head_sway, muzzle_y, muzzle_z + .195),
-        .032,
-        .025,
-        .030,
-        rotation,
-        features,
-    )
+    nostril_offsets := [2]f32{-.011, .011}
+    for nostril_x in nostril_offsets {
+        world_vertical_disc_rotated(
+            local_point(p, rotation, nostril_x + head_sway + head_turn_x, muzzle_y + .003, muzzle_z + .213),
+            .0045,
+            .0035,
+            .004,
+            rotation,
+            features,
+        )
+    }
 
     eye_offsets := [2]f32{-.135, .135}
-    eye_radius_y := .004 + (1 - blink_weight) * .033
+    eye_radius_y := .0035 + (1 - blink_weight) * .028
     for eye_x in eye_offsets {
         world_vertical_disc_rotated(
-            local_point(p, rotation, eye_x + head_sway, head_y + .035, head_z + .135),
-            .030,
+            local_point(
+                p,
+                rotation,
+                eye_x + head_sway + head_turn_x,
+                head_y + .035 + eye_x * math.sin(body_roll) * .32,
+                head_z + .35,
+            ),
+            .026,
             eye_radius_y,
-            .022,
+            .019,
             rotation,
             features,
         )
         if blink_weight < .55 {
             world_vertical_disc_rotated(
-                local_point(p, rotation, eye_x - .007 + head_sway, head_y + .048, head_z + .149),
-                .007,
-                .009 * (1 - blink_weight),
-                .007,
+                local_point(
+                    p,
+                    rotation,
+                    eye_x - .007 + head_sway + head_turn_x,
+                    head_y + .048 + eye_x * math.sin(body_roll) * .32,
+                    head_z + .364,
+                ),
+                .006,
+                .0075 * (1 - blink_weight),
+                .006,
                 rotation,
                 tooth,
             )
         }
     }
+
+    // The goggles rest above the eyes so the face stays expressive. Every
+    // component follows head sway and the spine-driven running reach.
+    goggle_y := head_y + .112
+    goggle_z := head_z + .35
     world_box_rotated(
-        local_point(p, rotation, -.018 + head_sway, muzzle_y - .068, muzzle_z + .145),
-        {.025, .048, .018},
+        local_point(p, rotation, head_sway + head_turn_x, goggle_y, head_z + .325),
+        {.44, .032, .022},
+        rotation,
+        leather_dark,
+    )
+    goggle_offsets := [2]f32{-.12, .12}
+    for goggle_x in goggle_offsets {
+        world_vertical_disc_rotated(
+            local_point(
+                p,
+                rotation,
+                goggle_x + head_sway + head_turn_x,
+                goggle_y + goggle_x * math.sin(body_roll) * .32,
+                goggle_z,
+            ),
+            .057,
+            .047,
+            .026,
+            rotation,
+            leather,
+        )
+        world_vertical_disc_rotated(
+            local_point(
+                p,
+                rotation,
+                goggle_x + head_sway + head_turn_x,
+                goggle_y + goggle_x * math.sin(body_roll) * .32,
+                goggle_z + .019,
+            ),
+            .040,
+            .031,
+            .012,
+            rotation,
+            goggle_glass,
+        )
+        world_vertical_disc_rotated(
+            local_point(
+                p,
+                rotation,
+                goggle_x - .012 + head_sway + head_turn_x,
+                goggle_y + .010 + goggle_x * math.sin(body_roll) * .32,
+                goggle_z + .027,
+            ),
+            .008,
+            .008,
+            .005,
+            rotation,
+            tooth,
+        )
+    }
+    world_box_rotated(
+        local_point(p, rotation, head_sway + head_turn_x, goggle_y, goggle_z + .015),
+        {.128, .018, .018},
+        rotation,
+        brass,
+    )
+
+    world_box_rotated(
+        local_point(p, rotation, -.008 + head_sway + head_turn_x, muzzle_y - .066, muzzle_z + .150),
+        {.011, .022, .010},
         rotation,
         tooth,
     )
     world_box_rotated(
-        local_point(p, rotation, .018 + head_sway, muzzle_y - .068, muzzle_z + .145),
-        {.025, .048, .018},
+        local_point(p, rotation, .008 + head_sway + head_turn_x, muzzle_y - .066, muzzle_z + .150),
+        {.011, .022, .010},
         rotation,
         tooth,
     )
 
     sides := [2]f32{-1, 1}
     for side_f in sides {
-        whisker_root := local_point(p, rotation, side_f * .035 + head_sway, muzzle_y, muzzle_z + .165)
+        whisker_root := local_point(
+            p,
+            rotation,
+            side_f * .035 + head_sway + head_turn_x,
+            muzzle_y,
+            muzzle_z + .165,
+        )
         for whisker_index in 0 ..< 3 {
             whisker_phase := editor.map_time * 4.2 + f32(whisker_index) * .82 + side_f * .38 + stride_phase * .18
             whisker_flex := math.sin(whisker_phase) * (.010 + .005 * run_weight)
@@ -4117,14 +4435,14 @@ world_character :: proc(editor: ^Editor) {
             whisker_mid := local_point(
                 p,
                 rotation,
-                side_f * (.19 + f32(whisker_index) * .012) + head_sway,
+                side_f * (.19 + f32(whisker_index) * .012) + head_sway + head_turn_x,
                 (muzzle_y + whisker_y) * .5 + whisker_flex,
                 muzzle_z + .13,
             )
             whisker_tip := local_point(
                 p,
                 rotation,
-                side_f * (.36 + f32(whisker_index) * .022 + whisker_flex) + head_sway,
+                side_f * (.36 + f32(whisker_index) * .022 + whisker_flex) + head_sway + head_turn_x,
                 whisker_y + whisker_flex,
                 muzzle_z + .07 - f32(whisker_index) * .012,
             )
@@ -4137,57 +4455,117 @@ world_character :: proc(editor: ^Editor) {
     // pair compresses and releases half a cycle later.
     front_cycle := -bound
     rear_cycle := bound
-    front_lift := max(front_cycle, f32(0)) * .070 * run_weight
-    rear_lift := max(rear_cycle, f32(0)) * .085 * run_weight
+    front_lift := max(front_cycle, f32(0)) * .078 * run_weight
+    rear_lift := max(rear_cycle, f32(0)) * .092 * run_weight
     air_tuck := airborne_weight * (.13 + ascent_weight * .05 - descent_weight * .085)
     for side_f in sides {
-        idle_fore_shoulder := third_person.Vec3{side_f * .17, .52, -.03}
-        run_fore_shoulder := third_person.Vec3{side_f * .17, .32, .035}
+        inside_turn := max(side_f * turn_pose, f32(0))
+        outside_turn := max(-side_f * turn_pose, f32(0))
+        paw_turn_reach := animation.turn_paw_offset * (outside_turn - inside_turn * .45)
+        idle_fore_shoulder := third_person.Vec3{side_f * .125, .51, .025}
+        run_fore_shoulder := third_person.Vec3{side_f * .13, .31, .075}
         fore_shoulder := local_point(
             p,
             rotation,
-            idle_fore_shoulder.x * (1 - run_weight) + run_fore_shoulder.x * run_weight,
-            idle_fore_shoulder.y * (1 - run_weight) + run_fore_shoulder.y * run_weight + body_bob,
+            idle_fore_shoulder.x * (1 - run_weight) + run_fore_shoulder.x * run_weight +
+                side_f * paw_turn_reach * .35,
+            idle_fore_shoulder.y * (1 - run_weight) + run_fore_shoulder.y * run_weight + body_bob -
+                brake_compression * .72 - inside_turn * .025,
             idle_fore_shoulder.z * (1 - run_weight) + run_fore_shoulder.z * run_weight,
         )
         fore_elbow := local_point(
             p,
             rotation,
-            side_f * (.16 + run_weight * .015),
-            .43 * (1 - run_weight) + .17 * run_weight + front_lift * .35 + air_tuck * .55,
-            .08 * (1 - run_weight) + (.10 + front_cycle * .055) * run_weight,
+            side_f * (.095 * (1 - run_weight) + .125 * run_weight + paw_turn_reach * .6),
+            .445 * (1 - run_weight) + .155 * run_weight + front_lift * .35 + air_tuck * .55 -
+                brake_compression * .55 - inside_turn * .02,
+            .14 * (1 - run_weight) + (.145 + front_cycle * .060) * run_weight + brake_pose * .055,
         )
-        fore_paw := local_point(
-            p,
-            rotation,
-            side_f * (.12 * (1 - run_weight) + .16 * run_weight + descent_weight * .025),
-            .37 * (1 - run_weight) + .050 * run_weight + front_lift + air_tuck,
-            .18 + front_cycle * .15 * run_weight,
-        )
-        world_tube_between(fore_shoulder, fore_elbow, model_forward, .055, .065, fur_dark)
-        world_tube_between(fore_elbow, fore_paw, model_forward, .036, .042, paw)
-        world_vertical_disc_rotated(fore_paw, .060, .035, .12, rotation, paw)
+        idle_groom := math.sin(idle_phase * .78 + side_f * .9) * .009 * (1 - run_weight)
+        fore_paw_x :=
+            side_f *
+            (.055 * (1 - run_weight) + .105 * run_weight + descent_weight * .018 + paw_turn_reach)
+        fore_paw_y :=
+            .39 * (1 - run_weight) + .042 * run_weight + front_lift + air_tuck + idle_groom -
+            inside_turn * .018
+        fore_paw_z :=
+            .205 * (1 - run_weight) + (.235 + front_cycle * .17) * run_weight + idle_groom * side_f * .55 +
+            brake_pose * .12
+        fore_paw := local_point(p, rotation, fore_paw_x, fore_paw_y, fore_paw_z)
+        fore_planted := editor.player.grounded && front_lift < .025
+        if fore_planted {
+            fore_paw.y = terrain.sample_height(&editor.project, 0, fore_paw.x, fore_paw.z) + .026
+        }
+        fore_wrist := third_person.Vec3 {
+            fore_elbow.x * .30 + fore_paw.x * .70,
+            fore_elbow.y * .30 + fore_paw.y * .70,
+            fore_elbow.z * .30 + fore_paw.z * .70,
+        }
+        world_tube_between(fore_shoulder, fore_elbow, model_forward, .040, .045, fur_dark)
+        world_tube_between(fore_elbow, fore_wrist, model_forward, .025, .029, fur_dark)
+        world_tube_between(fore_wrist, fore_paw, model_forward, .017, .020, paw)
+        world_vertical_disc_rotated(fore_paw, .044, .024, .082, rotation, paw)
+        for digit in 0 ..< 3 {
+            digit_x := fore_paw_x + side_f * (f32(digit) - 1) * .013
+            digit_tip := local_point(
+                p,
+                rotation,
+                digit_x,
+                fore_paw_y - .036 * (1 - run_weight) - .006 * run_weight,
+                fore_paw_z + .018 * (1 - run_weight) + .064 * run_weight,
+            )
+            if fore_planted {
+                digit_tip.y = terrain.sample_height(&editor.project, 0, digit_tip.x, digit_tip.z) + .010
+            }
+            world_tube_between(fore_paw, digit_tip, model_forward, .008, .008, paw)
+        }
 
         hind_cycle := rear_cycle + side_f * math.cos(stride_phase) * .06 * run_weight
-        hind_lift := max(hind_cycle, f32(0)) * .085 * run_weight
-        hind_hip := local_point(p, rotation, side_f * .235, .34 + body_bob, -.43)
+        hind_lift := max(hind_cycle, f32(0)) * .092 * run_weight
+        hind_hip := local_point(
+            p,
+            rotation,
+            side_f * (.205 + paw_turn_reach * .25),
+            .33 + body_bob - brake_compression * .48 - inside_turn * .025,
+            -.45 + brake_pose * .035,
+        )
         hind_hock := local_point(
             p,
             rotation,
-            side_f * (.27 + descent_weight * .025),
-            .16 + hind_lift * .45 + air_tuck * .45,
-            -.31 + hind_cycle * .055 * run_weight,
+            side_f * (.215 + descent_weight * .018 + paw_turn_reach * .65),
+            .135 + hind_lift * .42 + air_tuck * .45 - brake_compression * .32,
+            -.35 + hind_cycle * .075 * run_weight + brake_pose * .09,
         )
-        hind_paw := local_point(
-            p,
-            rotation,
-            side_f * (.22 + descent_weight * .040),
-            .055 + hind_lift + air_tuck,
-            -.10 + hind_cycle * .19 * run_weight,
-        )
-        world_tube_between(hind_hip, hind_hock, model_forward, .075, .085, fur_dark)
-        world_tube_between(hind_hock, hind_paw, model_forward, .045, .050, paw)
-        world_vertical_disc_rotated(hind_paw, .080, .038, .15, rotation, paw)
+        hind_paw_x := side_f * (.17 + descent_weight * .025 + paw_turn_reach)
+        hind_paw_y := .042 + hind_lift + air_tuck - inside_turn * .014
+        hind_paw_z := -.15 + hind_cycle * .22 * run_weight + brake_pose * .15
+        hind_paw := local_point(p, rotation, hind_paw_x, hind_paw_y, hind_paw_z)
+        hind_planted := editor.player.grounded && hind_lift < .025
+        if hind_planted {
+            hind_paw.y = terrain.sample_height(&editor.project, 0, hind_paw.x, hind_paw.z) + .026
+        }
+        hind_ankle := third_person.Vec3 {
+            hind_hock.x * .28 + hind_paw.x * .72,
+            hind_hock.y * .28 + hind_paw.y * .72,
+            hind_hock.z * .28 + hind_paw.z * .72,
+        }
+        world_tube_between(hind_hip, hind_hock, model_forward, .062, .070, fur_dark)
+        world_tube_between(hind_hock, hind_ankle, model_forward, .033, .038, fur_dark)
+        world_tube_between(hind_ankle, hind_paw, model_forward, .023, .026, paw)
+        world_vertical_disc_rotated(hind_paw, .066, .028, .13, rotation, paw)
+        for digit in 0 ..< 3 {
+            digit_tip := local_point(
+                p,
+                rotation,
+                hind_paw_x + side_f * (f32(digit) - 1) * .017,
+                hind_paw_y - .008,
+                hind_paw_z + .092,
+            )
+            if hind_planted {
+                digit_tip.y = terrain.sample_height(&editor.project, 0, digit_tip.x, digit_tip.z) + .010
+            }
+            world_tube_between(hind_paw, digit_tip, model_forward, .009, .009, paw)
+        }
     }
 
     tail_phase := idle_phase * .65 + stride_phase * .40 + descent_weight
@@ -4203,13 +4581,15 @@ world_character :: proc(editor: ^Editor) {
         tail_points[tail_index] = local_point(
             p,
             rotation,
-            tail_base_x[tail_index] + math.sin(delayed_phase) * tail_amplitude * weight,
-            tail_base_y[tail_index] + math.cos(delayed_phase * 1.07) * tail_lift_amplitude * weight,
-            tail_base_z[tail_index],
+            tail_base_x[tail_index] + math.sin(delayed_phase) * tail_amplitude * weight -
+                turn_pose * animation.tail_counterbalance * weight * weight,
+            tail_base_y[tail_index] + math.cos(delayed_phase * 1.07) * tail_lift_amplitude * weight +
+                brake_pose * .045 * weight,
+            tail_base_z[tail_index] + brake_pose * .035 * weight,
         )
     }
     for tail_index in 0 ..< len(tail_points) - 1 {
-        radius := .043 - f32(tail_index) * .0048
+        radius := .034 - f32(tail_index) * .0035
         world_tube_between(tail_points[tail_index], tail_points[tail_index + 1], model_forward, radius, radius, paw)
     }
 }

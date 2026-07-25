@@ -14,20 +14,30 @@ Input :: struct {
     jump_pressed:       bool,
     grounded:           bool,
     camera_yaw_radians: f32,
+    ground_normal:      Vec3,
 }
 
 Config :: struct {
     move_speed:          f32,
     ground_acceleration: f32,
+    ground_deceleration: f32,
+    reversal_braking:    f32,
+    reversal_speed:      f32,
+    facing_turn_speed:   f32,
     air_acceleration:    f32,
     jump_speed:          f32,
     gravity:             f32,
+    slope_gravity_scale: f32,
+    max_slope_acceleration: f32,
 }
 
 State :: struct {
     position, velocity: Vec3,
     facing_yaw_radians: f32,
     grounded:           bool,
+    turn_amount:        f32,
+    brake_amount:       f32,
+    ground_normal:      Vec3,
 }
 
 Camera :: struct {
@@ -86,7 +96,19 @@ camera_near :: proc(target, offset: Vec3) -> Camera_Pose {
 }
 
 default_config :: proc() -> Config {
-    return {move_speed = 6, ground_acceleration = 36, air_acceleration = 10, jump_speed = 7, gravity = 20}
+    return {
+        move_speed = 6,
+        ground_acceleration = 20,
+        ground_deceleration = 14,
+        reversal_braking = 36,
+        reversal_speed = 1.25,
+        facing_turn_speed = 12,
+        air_acceleration = 10,
+        jump_speed = 7,
+        gravity = 20,
+        slope_gravity_scale = .35,
+        max_slope_acceleration = 8,
+    }
 }
 
 default_camera :: proc() -> Camera { return {pitch_radians = .35, distance = 5, height = 1.5} }
@@ -107,26 +129,89 @@ step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32) {
     move_x := clamp(input.move_x, -1, 1)
     move_y := clamp(input.move_y, -1, 1)
     length_squared := move_x * move_x + move_y * move_y
+    move_amount := math.sqrt(length_squared)
     if length_squared > 1 {
         inverse_length := 1 / math.sqrt(length_squared)
         move_x *= inverse_length
         move_y *= inverse_length
+        move_amount = 1
     }
 
     // Rotate local stick/WASD input by the orbit camera's yaw.
     forward := Vec3{-math.sin(input.camera_yaw_radians), 0, -math.cos(input.camera_yaw_radians)}
     right := Vec3{math.cos(input.camera_yaw_radians), 0, -math.sin(input.camera_yaw_radians)}
     direction := Vec3{forward.x * move_y + right.x * move_x, 0, forward.z * move_y + right.z * move_x}
-    state.velocity.x = approach(
-        state.velocity.x,
-        direction.x * config.move_speed,
-        acceleration(input.grounded, config) * delta_seconds,
+    desired_direction := horizontal_normalize(direction)
+    old_velocity := Vec3{x = state.velocity.x, z = state.velocity.z}
+    old_speed := horizontal_length(old_velocity)
+    old_direction := horizontal_normalize(old_velocity)
+    state.ground_normal = valid_ground_normal(input.ground_normal)
+
+    braking_target: f32
+    if input.grounded {
+        has_input := move_amount > .0001
+        reversing := false
+        if has_input && old_speed > max_f32(config.reversal_speed, .01) {
+            reversing = horizontal_dot(old_direction, desired_direction) < -.5
+        }
+
+        if reversing {
+            state.velocity = horizontal_move_towards(
+                state.velocity,
+                {},
+                max_f32(config.reversal_braking, 0) * delta_seconds,
+            )
+            braking_target = 1
+        } else if has_input {
+            target_velocity := scale(desired_direction, max_f32(config.move_speed, 0) * move_amount)
+            state.velocity = horizontal_move_towards(
+                state.velocity,
+                target_velocity,
+                max_f32(config.ground_acceleration, 0) * delta_seconds,
+            )
+        } else {
+            state.velocity = horizontal_move_towards(
+                state.velocity,
+                {},
+                max_f32(config.ground_deceleration, 0) * delta_seconds,
+            )
+            if old_speed > .01 {
+                braking_target = clamp(old_speed / max_f32(config.move_speed, f32(.1)), 0, 1)
+            }
+        }
+
+        slope_acceleration := grounded_slope_acceleration(state.ground_normal, config)
+        state.velocity.x += slope_acceleration.x * delta_seconds
+        state.velocity.z += slope_acceleration.z * delta_seconds
+        state.velocity = horizontal_limit(state.velocity, max_f32(config.move_speed, 0))
+    } else {
+        target_velocity := scale(desired_direction, max_f32(config.move_speed, 0) * move_amount)
+        state.velocity = horizontal_move_towards(
+            state.velocity,
+            target_velocity,
+            max_f32(config.air_acceleration, 0) * delta_seconds,
+        )
+    }
+
+    new_horizontal_velocity := Vec3{x = state.velocity.x, z = state.velocity.z}
+    new_speed := horizontal_length(new_horizontal_velocity)
+    acceleration_delta := scale(
+        Vec3{x = new_horizontal_velocity.x - old_velocity.x, z = new_horizontal_velocity.z - old_velocity.z},
+        1 / delta_seconds,
     )
-    state.velocity.z = approach(
-        state.velocity.z,
-        direction.z * config.move_speed,
-        acceleration(input.grounded, config) * delta_seconds,
-    )
+    turn_target: f32
+    if input.grounded && old_speed > .1 {
+        motion_right := Vec3{x = -old_direction.z, z = old_direction.x}
+        turn_target = clamp(
+            horizontal_dot(acceleration_delta, motion_right) /
+                max_f32(config.ground_acceleration, f32(.1)),
+            -1,
+            1,
+        )
+    }
+    signal_rate := f32(10) * delta_seconds
+    state.turn_amount = approach(state.turn_amount, turn_target, signal_rate)
+    state.brake_amount = approach(state.brake_amount, braking_target, signal_rate)
 
     if input.grounded {
         state.grounded = true
@@ -140,7 +225,20 @@ step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32) {
         state.velocity.y -= config.gravity * delta_seconds
     }
 
-    if length_squared > .0001 do state.facing_yaw_radians = math.atan2(-direction.x, -direction.z)
+    facing_direction: Vec3
+    if new_speed > max_f32(config.reversal_speed, .01) {
+        facing_direction = horizontal_normalize(new_horizontal_velocity)
+    } else if move_amount > .0001 {
+        facing_direction = desired_direction
+    }
+    if horizontal_length(facing_direction) > .0001 {
+        target_yaw := math.atan2(-facing_direction.x, -facing_direction.z)
+        state.facing_yaw_radians = angle_move_towards(
+            state.facing_yaw_radians,
+            target_yaw,
+            max_f32(config.facing_turn_speed, 0) * delta_seconds,
+        )
+    }
     state.position = add(state.position, scale(state.velocity, delta_seconds))
 }
 
@@ -169,12 +267,59 @@ follow_camera :: proc(current: Camera_Pose, desired: Camera_Pose, sharpness, del
     return {position = lerp(current.position, desired.position, t), target = lerp(current.target, desired.target, t)}
 }
 
-acceleration :: proc(grounded: bool, config: Config) -> f32 {if grounded do return config.ground_acceleration
-    return config.air_acceleration}
 clamp :: proc(value, lower, upper: f32) -> f32 {if value < lower do return lower; if value > upper do return upper
     return value}
 approach :: proc(current, target, maximum_delta: f32) -> f32 {if current < target do return min_f32(current + maximum_delta, target)
     return max_f32(current - maximum_delta, target)}
+horizontal_length :: proc(value: Vec3) -> f32 {
+    return math.sqrt(value.x * value.x + value.z * value.z)
+}
+horizontal_dot :: proc(a, b: Vec3) -> f32 { return a.x * b.x + a.z * b.z }
+horizontal_normalize :: proc(value: Vec3) -> Vec3 {
+    length := horizontal_length(value)
+    if length <= .0001 do return {}
+    return {x = value.x / length, z = value.z / length}
+}
+horizontal_move_towards :: proc(current, target: Vec3, maximum_delta: f32) -> Vec3 {
+    delta := Vec3{x = target.x - current.x, z = target.z - current.z}
+    distance := horizontal_length(delta)
+    if distance <= maximum_delta || distance <= .0001 {
+        return {x = target.x, y = current.y, z = target.z}
+    }
+    amount := maximum_delta / distance
+    return {
+        x = current.x + delta.x * amount,
+        y = current.y,
+        z = current.z + delta.z * amount,
+    }
+}
+horizontal_limit :: proc(value: Vec3, maximum: f32) -> Vec3 {
+    speed := horizontal_length(value)
+    if speed <= maximum || speed <= .0001 do return value
+    amount := maximum / speed
+    return {x = value.x * amount, y = value.y, z = value.z * amount}
+}
+valid_ground_normal :: proc(value: Vec3) -> Vec3 {
+    length_squared := value.x * value.x + value.y * value.y + value.z * value.z
+    if length_squared <= .0001 || value.y <= .1 do return {y = 1}
+    inverse_length := 1 / math.sqrt(length_squared)
+    result := scale(value, inverse_length)
+    if result.y <= .1 do return {y = 1}
+    return result
+}
+grounded_slope_acceleration :: proc(normal: Vec3, config: Config) -> Vec3 {
+    amount := max_f32(config.gravity, 0) * max_f32(config.slope_gravity_scale, 0) * normal.y
+    result := Vec3{x = normal.x * amount, z = normal.z * amount}
+    return horizontal_limit(result, max_f32(config.max_slope_acceleration, 0))
+}
+angle_move_towards :: proc(current, target, maximum_delta: f32) -> f32 {
+    difference := target - current
+    for difference > math.PI do difference -= math.PI * 2
+    for difference < -math.PI do difference += math.PI * 2
+    if math.abs(difference) <= maximum_delta do return target
+    if difference > 0 do return current + maximum_delta
+    return current - maximum_delta
+}
 min_f32 :: proc(a, b: f32) -> f32 { if a < b do return a; return b }
 max_f32 :: proc(a, b: f32) -> f32 { if a > b do return a; return b }
 add :: proc(a, b: Vec3) -> Vec3 { return {a.x + b.x, a.y + b.y, a.z + b.z} }
