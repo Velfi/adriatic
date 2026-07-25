@@ -756,7 +756,12 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         if pressed {
             asset_list_y := layout.inspector.y + 132
             for index in 0 ..< GREEK_ASSET_CAPACITY {
-                asset_bounds := rl.Rectangle{layout.inspector.x + 14, asset_list_y + f32(index) * 34, layout.inspector.width - 28, 28}
+                asset_bounds := rl.Rectangle {
+                    layout.inspector.x + 14,
+                    asset_list_y + f32(index) * 34,
+                    layout.inspector.width - 28,
+                    28,
+                }
                 if rl.CheckCollisionPointRec(mouse, asset_bounds) && editor.greek_assets[index].ready {
                     editor.greek_asset_selected = index
                     editor.greek_asset_rotation = 0

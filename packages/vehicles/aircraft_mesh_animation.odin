@@ -54,11 +54,7 @@ libellula_carriage_point :: proc(local: [3]f32, pitch, roll, heave: f32) -> [3]f
     pitch_angle := clamp_unit(pitch) * degrees(15)
     roll_c, roll_s := math.cos(roll_angle), math.sin(roll_angle)
     pitch_c, pitch_s := math.cos(pitch_angle), math.sin(pitch_angle)
-    rolled := [3]f32 {
-        local[0] * roll_c - local[1] * roll_s,
-        local[0] * roll_s + local[1] * roll_c,
-        local[2],
-    }
+    rolled := [3]f32{local[0] * roll_c - local[1] * roll_s, local[0] * roll_s + local[1] * roll_c, local[2]}
     cradle_local := [3]f32{rolled[0], rolled[1] - .78 + heave, rolled[2]}
     pitched := [3]f32 {
         cradle_local[0],
@@ -171,9 +167,24 @@ animate_libellula_mesh_pose :: proc(
     mesh: ^Libellula_Mesh,
     left_turns, right_turns, rear_turns, pitch, roll, heave: f32,
 ) {
-    rotate_mesh_group_y(mesh, .Libellula_Left_Rotor, lib_vadd(LIBELLULA_LEFT_HUB, {0, .38, 0}), left_turns * 2 * math.PI)
-    rotate_mesh_group_y(mesh, .Libellula_Right_Rotor, lib_vadd(LIBELLULA_RIGHT_HUB, {0, .38, 0}), -right_turns * 2 * math.PI)
-    rotate_mesh_group_y(mesh, .Libellula_Rear_Rotor, lib_vadd(LIBELLULA_REAR_HUB, {0, .38, 0}), rear_turns * 2 * math.PI)
+    rotate_mesh_group_y(
+        mesh,
+        .Libellula_Left_Rotor,
+        lib_vadd(LIBELLULA_LEFT_HUB, {0, .38, 0}),
+        left_turns * 2 * math.PI,
+    )
+    rotate_mesh_group_y(
+        mesh,
+        .Libellula_Right_Rotor,
+        lib_vadd(LIBELLULA_RIGHT_HUB, {0, .38, 0}),
+        -right_turns * 2 * math.PI,
+    )
+    rotate_mesh_group_y(
+        mesh,
+        .Libellula_Rear_Rotor,
+        lib_vadd(LIBELLULA_REAR_HUB, {0, .38, 0}),
+        rear_turns * 2 * math.PI,
+    )
     pose_libellula_carriage(mesh, pitch, roll, heave)
 
     frame_anchors := [3][3]f32{{-1.16, .86, .65}, {1.16, .86, .65}, {0, .86, 3.05}}
@@ -190,9 +201,30 @@ animate_libellula_mesh_pose :: proc(
     target_lower := libellula_carriage_point({0, .36, .12}, pitch, roll, heave)
     source_span := lib_vsub(source_lower, kingpost_upper)
     target_span := lib_vsub(target_lower, kingpost_upper)
-    realign_mesh_group(mesh, .Libellula_Kingpost_Outer, kingpost_upper, lib_vadd(kingpost_upper, lib_vscale(source_span, .62)), kingpost_upper, lib_vadd(kingpost_upper, lib_vscale(target_span, .62)))
-    realign_mesh_group(mesh, .Libellula_Kingpost_Inner, lib_vadd(kingpost_upper, lib_vscale(source_span, .42)), source_lower, lib_vadd(kingpost_upper, lib_vscale(target_span, .42)), target_lower)
-    realign_mesh_group(mesh, .Libellula_Kingpost_Stop, lib_vadd(kingpost_upper, lib_vscale(source_span, .58)), lib_vadd(kingpost_upper, lib_vscale(source_span, .7)), lib_vadd(kingpost_upper, lib_vscale(target_span, .58)), lib_vadd(kingpost_upper, lib_vscale(target_span, .7)))
+    realign_mesh_group(
+        mesh,
+        .Libellula_Kingpost_Outer,
+        kingpost_upper,
+        lib_vadd(kingpost_upper, lib_vscale(source_span, .62)),
+        kingpost_upper,
+        lib_vadd(kingpost_upper, lib_vscale(target_span, .62)),
+    )
+    realign_mesh_group(
+        mesh,
+        .Libellula_Kingpost_Inner,
+        lib_vadd(kingpost_upper, lib_vscale(source_span, .42)),
+        source_lower,
+        lib_vadd(kingpost_upper, lib_vscale(target_span, .42)),
+        target_lower,
+    )
+    realign_mesh_group(
+        mesh,
+        .Libellula_Kingpost_Stop,
+        lib_vadd(kingpost_upper, lib_vscale(source_span, .58)),
+        lib_vadd(kingpost_upper, lib_vscale(source_span, .7)),
+        lib_vadd(kingpost_upper, lib_vscale(target_span, .58)),
+        lib_vadd(kingpost_upper, lib_vscale(target_span, .7)),
+    )
 
     cable_groups := [2][2]Mesh_Animation_Group {
         {.Libellula_Umbilical_1_Upper, .Libellula_Umbilical_1_Lower},

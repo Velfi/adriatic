@@ -163,9 +163,7 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
     // Version 5 used the current wire layout, but its two default runways were
     // presentation-only quads. Promote them into ordinary editable road paths
     // exactly once while loading that version.
-    if header.version == 5 &&
-       header.payload_size == size_of(Project) &&
-        len(data) >= header_size + size_of(Project) {
+    if header.version == 5 && header.payload_size == size_of(Project) && len(data) >= header_size + size_of(Project) {
         runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
         if add_default_runways(project) do project.revision += 1
         return true
@@ -238,11 +236,7 @@ add_default_runways :: proc(project: ^Project) -> bool {
             {x = center - runway_half_length, y = runway_height, z = center},
             0,
         )
-        to := roads.add_node(
-            &project.road_graph,
-            {x = center + runway_half_length, y = runway_height, z = center},
-            0,
-        )
+        to := roads.add_node(&project.road_graph, {x = center + runway_half_length, y = runway_height, z = center}, 0)
         if from < 0 ||
            to < 0 ||
            roads.add_straight_edge(&project.road_graph, from, to, runway_width, 2, .Asphalt) < 0 {

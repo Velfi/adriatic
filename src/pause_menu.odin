@@ -427,10 +427,7 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     panel := pause_menu_panel(width, height, false)
     mouse := rl.GetMousePosition()
     mouse_delta := rl.GetMouseDelta()
-    mouse_active :=
-        rl.IsMouseButtonPressed(.LEFT) ||
-        math.abs(mouse_delta.x) > .01 ||
-        math.abs(mouse_delta.y) > .01
+    mouse_active := rl.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
     focus_direction := 0
     _, stick_y := game_input.menu_steps(
         &editor.runtime_input,

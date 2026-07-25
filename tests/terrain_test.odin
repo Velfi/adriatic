@@ -139,15 +139,11 @@ terrain_project_file_migrates_v5_special_runways_to_regular_paths :: proc(t: ^te
     defer delete(data)
     header := cast(^terrain.Project_File_Header)raw_data(data)
     header^ = {
-        magic = terrain.PROJECT_FILE_MAGIC,
-        version = 5,
+        magic        = terrain.PROJECT_FILE_MAGIC,
+        version      = 5,
         payload_size = size_of(terrain.Project),
     }
-    runtime.mem_copy_non_overlapping(
-        raw_data(data[header_size:]),
-        cast(rawptr)source,
-        size_of(terrain.Project),
-    )
+    runtime.mem_copy_non_overlapping(raw_data(data[header_size:]), cast(rawptr)source, size_of(terrain.Project))
     testing.expect(t, os.write_entire_file(path, data) == nil)
     testing.expect(t, terrain.load_project(loaded, path))
     testing.expect(t, loaded.road_graph.node_count == 4)

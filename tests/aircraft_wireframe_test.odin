@@ -119,11 +119,7 @@ first_mesh_part_position :: proc(mesh: ^$Mesh, part: vehicles.Aircraft_Mesh_Part
     return {}
 }
 
-furthest_mesh_part_position :: proc(
-    mesh: ^$Mesh,
-    part: vehicles.Aircraft_Mesh_Part,
-    pivot: [3]f32,
-) -> [3]f32 {
+furthest_mesh_part_position :: proc(mesh: ^$Mesh, part: vehicles.Aircraft_Mesh_Part, pivot: [3]f32) -> [3]f32 {
     result: [3]f32
     greatest_radius_squared := f32(-1)
     for vertex in vehicles.mesh_vertices(mesh) {
@@ -248,10 +244,16 @@ position_less :: proc(a, b: [3]i64) -> bool {
 record_mesh_edge :: proc(edges: ^map[Mesh_Edge_Key]Mesh_Edge_State, a, b: [3]f32) {
     qa, qb := quantized_position(a), quantized_position(b)
     if qa == qb do return
-    key := Mesh_Edge_Key{low = qa, high = qb}
+    key := Mesh_Edge_Key {
+        low  = qa,
+        high = qb,
+    }
     direction := 1
     if position_less(qb, qa) {
-        key = {low = qb, high = qa}
+        key = {
+            low  = qb,
+            high = qa,
+        }
         direction = -1
     }
     state := edges[key]
@@ -272,11 +274,7 @@ full_libellula_mesh_is_non_degenerate_and_consistently_wound :: proc(t: ^testing
         c := mesh.vertices[triangle.c].position
         ab := b - a
         ac := c - a
-        normal := [3]f32 {
-            ab[1] * ac[2] - ab[2] * ac[1],
-            ab[2] * ac[0] - ab[0] * ac[2],
-            ab[0] * ac[1] - ab[1] * ac[0],
-        }
+        normal := [3]f32{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
         testing.expect(t, normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2] > 1e-12)
         if mesh.vertices[triangle.a].part == .Marking do continue
         record_mesh_edge(&edges, a, b)

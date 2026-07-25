@@ -4049,30 +4049,8 @@ world_mouse_skinned_hull :: proc(
     ring_y := [RINGS]f32{.33, .37, .42, .47, .52, .59, .68, .64, .61, .62}
     radius_x := [RINGS]f32{.07, .19, .29, .30, .255, .205, .20, .17, .095, .025}
     radius_y := [RINGS]f32{.09, .22, .32, .35, .28, .21, .185, .125, .070, .022}
-    primary := [RINGS]Mouse_Bone{
-        .Pelvis,
-        .Pelvis,
-        .Pelvis,
-        .Spine,
-        .Chest,
-        .Neck,
-        .Head,
-        .Head,
-        .Head,
-        .Head,
-    }
-    secondary := [RINGS]Mouse_Bone{
-        .Spine,
-        .Spine,
-        .Spine,
-        .Pelvis,
-        .Spine,
-        .Chest,
-        .Neck,
-        .Neck,
-        .Neck,
-        .Neck,
-    }
+    primary := [RINGS]Mouse_Bone{.Pelvis, .Pelvis, .Pelvis, .Spine, .Chest, .Neck, .Head, .Head, .Head, .Head}
+    secondary := [RINGS]Mouse_Bone{.Spine, .Spine, .Spine, .Pelvis, .Spine, .Chest, .Neck, .Neck, .Neck, .Neck}
     primary_weight := [RINGS]f32{.98, .92, .82, .76, .68, .66, .78, .88, .96, 1}
 
     vertices: [RINGS][SEGMENTS]Mouse_Skin_Vertex
@@ -4481,10 +4459,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // A small fore/aft stagger exposes the far pinna in profile, while the
         // low-frequency swivel keeps an alert posted mouse listening rather
         // than freezing both ears into a mirrored emblem.
-        ear_swivel :=
-            math.sin(idle_phase * 1.18 + side * 1.05) *
-            .010 *
-            (1 - run_weight)
+        ear_swivel := math.sin(idle_phase * 1.18 + side * 1.05) * .010 * (1 - run_weight)
         ear_depth_stagger := side * .060 + ear_swivel
         ear_height_stagger := side < 0 ? f32(.045) : f32(-.005)
         world_mouse_ear(
@@ -4565,11 +4540,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                     head_y + .034 + eye_x * math.sin(body_roll) * .32,
                     head_z + .318,
                 ),
-                {
-                    .012 * (1 - blink_weight),
-                    .013 * (1 - blink_weight),
-                    .012 * (1 - blink_weight),
-                },
+                {.012 * (1 - blink_weight), .013 * (1 - blink_weight), .012 * (1 - blink_weight)},
                 rotation,
                 tooth,
             )
@@ -4639,11 +4610,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 local_point(
                     p,
                     rotation,
-                    goggle_x +
-                    goggle_normal_x * .030 -
-                    goggle_side * .009 +
-                    head_sway +
-                    head_turn_x,
+                    goggle_x + goggle_normal_x * .030 - goggle_side * .009 + head_sway + head_turn_x,
                     goggle_y + .010 + goggle_x * goggle_roll_slope,
                     goggle_z + goggle_normal_z * .030,
                 ),
@@ -4658,11 +4625,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             // camera reaches a true profile. They share the cup's material and
             // glass, so this reads as wraparound goggles rather than a badge.
             side_window_rotation := rotation - goggle_side * (math.PI * .5)
-            side_window_x :=
-                goggle_x +
-                goggle_side * .045 +
-                head_sway +
-                head_turn_x
+            side_window_x := goggle_x + goggle_side * .045 + head_sway + head_turn_x
             side_window_y := goggle_y + goggle_x * goggle_roll_slope
             side_window_z := goggle_z - .008
             world_vertical_disc_rotated(
@@ -4674,13 +4637,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 leather,
             )
             world_vertical_disc_rotated(
-                local_point(
-                    p,
-                    rotation,
-                    side_window_x + goggle_side * .010,
-                    side_window_y,
-                    side_window_z,
-                ),
+                local_point(p, rotation, side_window_x + goggle_side * .010, side_window_y, side_window_z),
                 .021,
                 .017,
                 .006,
@@ -4949,11 +4906,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // this exposes the toes and supports the raised torso instead of
         // balancing it on two vertical hocks.
         hind_paw_z :=
-            -.16 +
-            hind_cycle * .17 * run_weight +
-            side_f * .018 * run_weight +
-            brake_pose * .15 -
-            posted_weight * .10
+            -.16 + hind_cycle * .17 * run_weight + side_f * .018 * run_weight + brake_pose * .15 - posted_weight * .10
         hind_paw := local_point(p, rotation, hind_paw_x, hind_paw_y, hind_paw_z)
         hind_planted := model.grounded && hind_lift < .025
         if model.grounded {

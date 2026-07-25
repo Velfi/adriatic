@@ -127,9 +127,7 @@ mesh_triangles :: proc(mesh: ^$Mesh) -> []Mesh_Triangle {
 }
 
 mesh_triangle :: proc(mesh: ^$Mesh, a, b, c: [3]f32, part: Aircraft_Mesh_Part) {
-    if mesh == nil ||
-       mesh.vertex_count + 3 > len(mesh.vertices) ||
-       mesh.triangle_count >= len(mesh.triangles) {
+    if mesh == nil || mesh.vertex_count + 3 > len(mesh.vertices) || mesh.triangle_count >= len(mesh.triangles) {
         return
     }
     first := mesh.vertex_count

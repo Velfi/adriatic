@@ -178,10 +178,7 @@ step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32) {
     // Shift-run + Space is a kart-style drift gesture: the initial press hops,
     // holding charges a mini-turbo, and releasing converts that charge into a
     // short boost. Turning charges faster, but a straight hold still works.
-    if input.jump_pressed &&
-       state.running &&
-       move_amount > .0001 &&
-       old_speed >= max_f32(config.drift_min_speed, 0) {
+    if input.jump_pressed && state.running && move_amount > .0001 && old_speed >= max_f32(config.drift_min_speed, 0) {
         state.drifting = true
         state.drift_charge = 0
     }
@@ -189,8 +186,7 @@ step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32) {
         if input.jump_held && state.running {
             charge_rate := f32(.35) + math.abs(move_x) * .65
             state.drift_charge = clamp(
-                state.drift_charge +
-                    charge_rate * delta_seconds / max_f32(config.drift_charge_seconds, f32(.01)),
+                state.drift_charge + charge_rate * delta_seconds / max_f32(config.drift_charge_seconds, f32(.01)),
                 0,
                 1,
             )
@@ -198,10 +194,7 @@ step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32) {
             if state.drift_charge >= .25 {
                 charge_strength := clamp((state.drift_charge - .25) / .75, 0, 1)
                 duration_scale := f32(.55) + charge_strength * .45
-                state.boost_seconds = max_f32(
-                    state.boost_seconds,
-                    max_f32(config.boost_duration, 0) * duration_scale,
-                )
+                state.boost_seconds = max_f32(state.boost_seconds, max_f32(config.boost_duration, 0) * duration_scale)
             }
             state.drifting = false
             state.drift_charge = 0
@@ -293,11 +286,7 @@ step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32) {
             x = -old_direction.z,
             z = old_direction.x,
         }
-        turn_target = clamp(
-            horizontal_dot(acceleration_delta, motion_right) / turn_acceleration_scale,
-            -1,
-            1,
-        )
+        turn_target = clamp(horizontal_dot(acceleration_delta, motion_right) / turn_acceleration_scale, -1, 1)
     }
     signal_rate := f32(10) * delta_seconds
     state.turn_amount = approach(state.turn_amount, turn_target, signal_rate)
@@ -365,6 +354,14 @@ follow_camera :: proc(current: Camera_Pose, desired: Camera_Pose, sharpness, del
     if delta_seconds <= 0 do return current
     t := clamp(sharpness * delta_seconds, 0, 1)
     return {position = lerp(current.position, desired.position, t), target = lerp(current.target, desired.target, t)}
+}
+
+// camera_above_height applies a caller-supplied collision floor while
+// preserving the authored look target. Terrain sampling remains product code.
+camera_above_height :: proc(pose: Camera_Pose, ground_height, clearance: f32) -> Camera_Pose {
+    result := pose
+    result.position.y = max_f32(result.position.y, ground_height + max_f32(clearance, 0))
+    return result
 }
 
 clamp :: proc(value, lower, upper: f32) -> f32 {if value < lower do return lower; if value > upper do return upper

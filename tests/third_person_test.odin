@@ -60,12 +60,7 @@ third_person_shift_run_builds_speed_and_drifts_through_turns :: proc(t: ^testing
     accelerating := third_person.State{}
     for _ in 0 ..< 20 {
         accelerating.running = true
-        third_person.step(
-            &accelerating,
-            {move_y = 1, grounded = true, ground_normal = {y = 1}},
-            config,
-            .05,
-        )
+        third_person.step(&accelerating, {move_y = 1, grounded = true, ground_normal = {y = 1}}, config, .05)
     }
     testing.expect(t, horizontal_speed(accelerating) > config.move_speed)
     testing.expect(t, horizontal_speed(accelerating) <= config.run_speed + .001)
@@ -109,12 +104,7 @@ third_person_run_release_has_a_long_but_bounded_glide :: proc(t: ^testing.T) {
     start_z := state.position.z
     elapsed: f32
     for horizontal_speed(state) > .1 && elapsed < 5 {
-        third_person.step(
-            &state,
-            {grounded = true, ground_normal = {y = 1}},
-            config,
-            1.0 / 60.0,
-        )
+        third_person.step(&state, {grounded = true, ground_normal = {y = 1}}, config, 1.0 / 60.0)
         elapsed += 1.0 / 60.0
     }
     glide_distance := start_z - state.position.z
@@ -131,14 +121,7 @@ third_person_speed_hop_charges_drift_and_releases_a_boost :: proc(t: ^testing.T)
     }
     third_person.step(
         &state,
-        {
-            move_x = .5,
-            move_y = 1,
-            jump_pressed = true,
-            jump_held = true,
-            grounded = true,
-            ground_normal = {y = 1},
-        },
+        {move_x = .5, move_y = 1, jump_pressed = true, jump_held = true, grounded = true, ground_normal = {y = 1}},
         config,
         .05,
     )
@@ -148,33 +131,17 @@ third_person_speed_hop_charges_drift_and_releases_a_boost :: proc(t: ^testing.T)
     for _ in 0 ..< 20 {
         third_person.step(
             &state,
-            {
-                move_x = .5,
-                move_y = 1,
-                jump_held = true,
-                grounded = true,
-                ground_normal = {y = 1},
-            },
+            {move_x = .5, move_y = 1, jump_held = true, grounded = true, ground_normal = {y = 1}},
             config,
             .05,
         )
     }
     testing.expect(t, state.drift_charge >= .25)
 
-    third_person.step(
-        &state,
-        {move_y = 1, grounded = true, ground_normal = {y = 1}},
-        config,
-        .05,
-    )
+    third_person.step(&state, {move_y = 1, grounded = true, ground_normal = {y = 1}}, config, .05)
     testing.expect(t, !state.drifting && state.boost_seconds > 0)
     for _ in 0 ..< 8 {
-        third_person.step(
-            &state,
-            {move_y = 1, grounded = true, ground_normal = {y = 1}},
-            config,
-            .05,
-        )
+        third_person.step(&state, {move_y = 1, grounded = true, ground_normal = {y = 1}}, config, .05)
     }
     testing.expect(t, horizontal_speed(state) > config.run_speed)
 }
@@ -183,12 +150,7 @@ third_person_speed_hop_charges_drift_and_releases_a_boost :: proc(t: ^testing.T)
 third_person_normal_jump_does_not_start_a_drift :: proc(t: ^testing.T) {
     state := third_person.State{}
     config := third_person.default_config()
-    third_person.step(
-        &state,
-        {move_y = 1, jump_pressed = true, jump_held = true, grounded = true},
-        config,
-        .05,
-    )
+    third_person.step(&state, {move_y = 1, jump_pressed = true, jump_held = true, grounded = true}, config, .05)
     testing.expect(t, !state.drifting && state.boost_seconds == 0)
     testing.expect(t, state.velocity.y == config.jump_speed)
 }
@@ -205,12 +167,7 @@ third_person_run_toggle_latches_and_clears_after_stopping :: proc(t: ^testing.T)
     )
     testing.expect(t, state.running)
 
-    third_person.step(
-        &state,
-        {move_y = 1, grounded = true, ground_normal = {y = 1}},
-        config,
-        .1,
-    )
+    third_person.step(&state, {move_y = 1, grounded = true, ground_normal = {y = 1}}, config, .1)
     testing.expect(t, state.running)
 
     for state.running {
@@ -277,6 +234,24 @@ third_person_fixed_steps_are_consistent_across_frame_rates :: proc(t: ^testing.T
     }
     testing.expect(t, absolute(sixty.velocity.z - one_twenty.velocity.z) < .01)
     testing.expect(t, absolute(sixty.position.z - one_twenty.position.z) < .06)
+}
+
+@(test)
+third_person_camera_stays_above_the_collision_floor :: proc(t: ^testing.T) {
+    buried := third_person.Camera_Pose {
+        position = {x = 4, y = -3, z = 7},
+        target = {x = 1, y = 2, z = 3},
+    }
+    constrained := third_person.camera_above_height(buried, 5, .35)
+    testing.expect(t, absolute(constrained.position.y - 5.35) < .001)
+    testing.expect(t, constrained.position.x == buried.position.x && constrained.position.z == buried.position.z)
+    testing.expect(t, constrained.target == buried.target)
+
+    clear := third_person.Camera_Pose {
+        position = {y = 12},
+        target = {y = 2},
+    }
+    testing.expect(t, third_person.camera_above_height(clear, 5, .35) == clear)
 }
 
 @(test)
