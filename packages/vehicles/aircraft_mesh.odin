@@ -168,9 +168,9 @@ add_ring_mesh :: proc(mesh: ^Aircraft_Mesh, rings: []Mesh_Ring, sides: int, part
             mesh_quad(
                 mesh,
                 ring_point(rings[ring_index], side, sides),
-                ring_point(rings[ring_index], next, sides),
-                ring_point(rings[ring_index + 1], next, sides),
                 ring_point(rings[ring_index + 1], side, sides),
+                ring_point(rings[ring_index + 1], next, sides),
+                ring_point(rings[ring_index], next, sides),
                 part,
             )
         }

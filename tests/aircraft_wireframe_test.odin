@@ -52,6 +52,50 @@ valid_triangle_mesh :: proc(t: ^testing.T, mesh: ^$Mesh) {
     }
 }
 
+triangle_normal :: proc(a, b, c: [3]f32) -> [3]f32 {
+    ab := b - a
+    ac := c - a
+    return {ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
+}
+
+@(test)
+ring_mesh_winds_sides_and_caps_outward :: proc(t: ^testing.T) {
+    mesh: vehicles.Aircraft_Mesh
+    rings := [2]vehicles.Mesh_Ring{{-1, 1, 0, 1}, {1, 1, 0, 1}}
+    sides := 12
+    vehicles.add_ring_mesh(&mesh, rings[:], sides, .Engine)
+
+    // Side normals must point away from the ring axis. This is the shared
+    // construction used by the Postale cowling, tires, and wheel hubs.
+    for triangle_index in 0 ..< sides * 2 {
+        triangle := mesh.triangles[triangle_index]
+        a := mesh.vertices[triangle.a].position
+        b := mesh.vertices[triangle.b].position
+        c := mesh.vertices[triangle.c].position
+        normal := triangle_normal(a, b, c)
+        center := (a + b + c) / 3
+        testing.expect(t, normal[0] * center[0] + normal[1] * center[1] > 0)
+    }
+
+    for side in 0 ..< sides {
+        front_triangle := mesh.triangles[sides * 2 + side * 2]
+        front_normal := triangle_normal(
+            mesh.vertices[front_triangle.a].position,
+            mesh.vertices[front_triangle.b].position,
+            mesh.vertices[front_triangle.c].position,
+        )
+        testing.expect(t, front_normal[2] < 0)
+
+        rear_triangle := mesh.triangles[sides * 2 + side * 2 + 1]
+        rear_normal := triangle_normal(
+            mesh.vertices[rear_triangle.a].position,
+            mesh.vertices[rear_triangle.b].position,
+            mesh.vertices[rear_triangle.c].position,
+        )
+        testing.expect(t, rear_normal[2] > 0)
+    }
+}
+
 @(test)
 procedural_player_aircraft_build_closed_triangle_surfaces :: proc(t: ^testing.T) {
     postale := vehicles.postale_mesh()
