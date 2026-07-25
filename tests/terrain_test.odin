@@ -2,6 +2,7 @@ package tests
 
 import roads "../packages/roads"
 import terrain "../packages/terrain"
+import "base:runtime"
 import "core:math"
 import "core:os"
 import "core:testing"
@@ -104,7 +105,7 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
     source.city_density[terrain.RING_RESOLUTION / 2 * terrain.RING_RESOLUTION + terrain.RING_RESOLUTION / 2] = 203
     road_a := roads.add_node(&source.road_graph, {0, 2, 0})
     road_b := roads.add_node(&source.road_graph, {40, 3, 20})
-    roads.add_straight_edge(&source.road_graph, road_a, road_b, 7, 1, .Cobblestone)
+    road_edge := roads.add_straight_edge(&source.road_graph, road_a, road_b, 7, 1, .Cobblestone)
     testing.expect(t, terrain.save_project(source, path))
     testing.expect(t, terrain.load_project(loaded, path))
     testing.expect(t, terrain.sample_height(loaded, 0, 0, 0) == terrain.sample_height(source, 0, 0, 0))
@@ -118,10 +119,39 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
         loaded.city_density[terrain.RING_RESOLUTION / 2 * terrain.RING_RESOLUTION + terrain.RING_RESOLUTION / 2] ==
         203,
     )
-    testing.expect(t, loaded.road_graph.node_count == 2)
-    testing.expect(t, loaded.road_graph.edge_count == 1)
-    testing.expect(t, loaded.road_graph.nodes[1].position == source.road_graph.nodes[1].position)
-    testing.expect(t, loaded.road_graph.edges[0].pavement == .Cobblestone)
+    testing.expect(t, loaded.road_graph.node_count == source.road_graph.node_count)
+    testing.expect(t, loaded.road_graph.edge_count == source.road_graph.edge_count)
+    testing.expect(t, loaded.road_graph.nodes[road_b].position == source.road_graph.nodes[road_b].position)
+    testing.expect(t, loaded.road_graph.edges[road_edge].pavement == .Cobblestone)
+}
+
+@(test)
+terrain_project_file_migrates_v5_special_runways_to_regular_paths :: proc(t: ^testing.T) {
+    path := "build/terrain_project_v5_test.bin"
+    defer os.remove(path)
+    source := terrain.new_project()
+    loaded := terrain.new_project()
+    defer free(source)
+    defer free(loaded)
+    source.road_graph = {}
+    header_size := size_of(terrain.Project_File_Header)
+    data := make([]byte, header_size + size_of(terrain.Project))
+    defer delete(data)
+    header := cast(^terrain.Project_File_Header)raw_data(data)
+    header^ = {
+        magic = terrain.PROJECT_FILE_MAGIC,
+        version = 5,
+        payload_size = size_of(terrain.Project),
+    }
+    runtime.mem_copy_non_overlapping(
+        raw_data(data[header_size:]),
+        cast(rawptr)source,
+        size_of(terrain.Project),
+    )
+    testing.expect(t, os.write_entire_file(path, data) == nil)
+    testing.expect(t, terrain.load_project(loaded, path))
+    testing.expect(t, loaded.road_graph.node_count == 4)
+    testing.expect(t, loaded.road_graph.edge_count == 2)
 }
 
 @(test)
@@ -162,7 +192,7 @@ terrain_project_file_migrates_v4_architecture_and_zeroes_city_density :: proc(t:
     }
     testing.expect(t, os.write_entire_file(path, data) == nil)
     testing.expect(t, terrain.load_project(loaded, path))
-    testing.expect(t, loaded.revision == 41)
+    testing.expect(t, loaded.revision == 42)
     testing.expect(t, loaded.structure_count == 1)
     testing.expect(t, loaded.structures[0].kind == .Architecture)
     testing.expect(t, loaded.structures[0].seed == 99)
@@ -227,6 +257,16 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
                 testing.expect(t, terrain.sample_height(project, 0, x, z) > project.sea_level)
             }
         }
+    }
+    testing.expect(t, project.road_graph.node_count == 4)
+    testing.expect(t, project.road_graph.edge_count == 2)
+    for edge in project.road_graph.edges[:project.road_graph.edge_count] {
+        testing.expect(t, edge.pavement == .Asphalt)
+        testing.expect(t, edge.half_width == half_extent * terrain.DEFAULT_RUNWAY_HALF_WIDTH)
+        from := project.road_graph.nodes[edge.from].position
+        to := project.road_graph.nodes[edge.to].position
+        testing.expect(t, from.z == to.z)
+        testing.expect(t, to.x - from.x == half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH * 2)
     }
 }
 

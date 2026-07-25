@@ -31,7 +31,27 @@ both holds a hover while its cyclic assist levels the airframe and damps drift.
 controller. Give `step` the collision system's grounded result each frame, then
 apply its position and velocity to the game's physics body. `camera_pose`
 supplies a basic orbit-camera position; collision avoidance and input binding
-remain presentation policy in `src/`.
+remain presentation policy in `src/`. On foot, tap Shift while moving to toggle running:
+running builds extra speed, steers momentum in a broad arc, and lets the mouse
+face into a turn before its velocity catches up for a drifting-car feel. At
+speed, press and hold Space to hop and charge a drift, steer to charge faster,
+then release Space for a short mini-turbo. Running switches itself off after
+the mouse releases movement and coasts to a stop.
+
+The game runtime supports standard SDL game controllers throughout (the editor
+remains keyboard-and-mouse only). On foot, the left stick moves, the right
+stick looks, the triggers zoom, the south face button jumps or drifts, the
+north face button toggles running, and the west face button interacts. Cars
+use the triggers for throttle/brake, left-stick steering, right-stick camera,
+right shoulder for the handbrake, and west to exit. Aircraft use the left
+stick for pitch/roll, right stick for the camera, shoulders for yaw, triggers
+for power, south to recenter, west to exit, and north to reset.
+
+The runtime switches prompts and cursor policy according to the device most
+recently used, with Xbox, PlayStation, and Nintendo face-button labels. Start
+opens or closes pause menus; D-pad, left stick, accept, and cancel provide menu
+navigation. Disconnecting the controller in active use pauses the game and
+offers keyboard/mouse fallback.
 
 ## Vehicle occupancy
 

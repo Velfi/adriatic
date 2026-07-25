@@ -3,6 +3,7 @@ package main
 import atmosphere "../packages/atmosphere"
 import flight "../packages/flight"
 import im "../packages/imgui"
+import mouse_tail "../packages/mouse_tail"
 import postale_game "../packages/postale"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -54,6 +55,7 @@ Player_Animation_Tweak :: struct {
     turn_lean_radians:        f32 `tweak:"range=0..0.5;.005"`,
     turn_spine_offset:        f32 `tweak:"range=0..0.3;.005"`,
     turn_paw_offset:          f32 `tweak:"range=0..0.3;.005"`,
+    run_body_lift:            f32 `tweak:"range=0..0.2;.005"`,
     brake_compression:        f32 `tweak:"range=0..0.3;.005"`,
     tail_counterbalance:      f32 `tweak:"range=0..0.5;.005"`,
     slope_alignment:          f32 `tweak:"range=0..1;.01"`,
@@ -193,6 +195,7 @@ Tweak_State :: struct {
     atmosphere:       atmosphere.Atmosphere,
     player:           third_person.Config,
     player_animation: Player_Animation_Tweak,
+    player_tail:      mouse_tail.Config,
     camera:           Camera_Tweak,
     world:            World_Tweak,
     particles:        Particle_Tweak,
@@ -337,6 +340,7 @@ tweak_default_state :: proc() -> Tweak_State {
         terrain = {tool = .Raise, radius = 48, strength = .10, hardness = .5, sea_level = 0},
         atmosphere = atmosphere.new(0x41c10),
         player = third_person.default_config(),
+        player_tail = mouse_tail.default_config(),
         player_animation = {
             stride_radians_per_meter = 3.25,
             walk_full_speed = 3.5,
@@ -349,7 +353,8 @@ tweak_default_state :: proc() -> Tweak_State {
             turn_lean_radians = .21,
             turn_spine_offset = .08,
             turn_paw_offset = .075,
-            brake_compression = .11,
+            run_body_lift = .065,
+            brake_compression = .075,
             tail_counterbalance = .22,
             slope_alignment = .55,
         },
@@ -621,8 +626,17 @@ tweak_draw_player :: proc(editor: ^Editor) {
     a := &editor.tweak.player_animation
     im.SeparatorText("Controller")
     tweak_drag_f32("Move speed", &c.move_speed, 0, 100, .1)
+    tweak_drag_f32("Run speed", &c.run_speed, 0, 100, .1)
     tweak_drag_f32("Ground acceleration", &c.ground_acceleration, 0, 200, .5)
     tweak_drag_f32("Ground deceleration", &c.ground_deceleration, 0, 200, .5)
+    tweak_drag_f32("Run acceleration", &c.run_acceleration, 0, 200, .5)
+    tweak_drag_f32("Run deceleration", &c.run_deceleration, 0, 200, .5)
+    tweak_drag_f32("Run steering speed", &c.run_steering_speed, 0, 20, .05)
+    tweak_drag_f32("Drift minimum speed", &c.drift_min_speed, 0, 100, .1)
+    tweak_drag_f32("Drift charge seconds", &c.drift_charge_seconds, .05, 5, .05)
+    tweak_drag_f32("Boost speed", &c.boost_speed, 0, 100, .1)
+    tweak_drag_f32("Boost acceleration", &c.boost_acceleration, 0, 200, .5)
+    tweak_drag_f32("Boost duration", &c.boost_duration, 0, 5, .05)
     tweak_drag_f32("Reversal braking", &c.reversal_braking, 0, 200, .5)
     tweak_drag_f32("Reversal speed", &c.reversal_speed, 0, 20, .05)
     tweak_drag_f32("Facing turn speed", &c.facing_turn_speed, 0, 40, .1)
@@ -643,12 +657,29 @@ tweak_draw_player :: proc(editor: ^Editor) {
     tweak_drag_f32("Turn lean radians", &a.turn_lean_radians, 0, .5, .005)
     tweak_drag_f32("Turn spine offset", &a.turn_spine_offset, 0, .3, .005)
     tweak_drag_f32("Turn paw offset", &a.turn_paw_offset, 0, .3, .005)
+    tweak_drag_f32("Running body lift", &a.run_body_lift, 0, .2, .005)
     tweak_drag_f32("Brake compression", &a.brake_compression, 0, .3, .005)
     tweak_drag_f32("Tail counterbalance", &a.tail_counterbalance, 0, .5, .005)
     tweak_drag_f32("Slope alignment", &a.slope_alignment, 0, 1, .01)
+    tail := &editor.tweak.player_tail
+    im.SeparatorText("Tail physics")
+    tweak_drag_f32("Tail segment length", &tail.segment_length, .05, .5, .005)
+    tweak_drag_f32("Tail collision radius", &tail.radius, .005, .1, .001)
+    tweak_drag_f32("Tail gravity", &tail.gravity, 0, 40, .1)
+    tweak_drag_f32("Tail damping", &tail.damping, 0, 1, .005)
+    tweak_drag_f32("Tail root stiffness", &tail.root_stiffness, 0, 1, .01)
+    tweak_drag_f32("Tail bend stiffness", &tail.bend_stiffness, 0, 1, .01)
+    tweak_drag_f32("Tail surface friction", &tail.surface_friction, 0, 1, .01)
     im.SeparatorText("Runtime")
     im.Text("Position: %.2f %.2f %.2f", editor.player.position.x, editor.player.position.y, editor.player.position.z)
     im.Text("Grounded: %s", editor.player.grounded ? "yes" : "no")
+    im.Text("Running: %s", editor.player.running ? "yes" : "no")
+    im.Text(
+        "Drift: %s  charge %.2f  boost %.2fs",
+        editor.player.drifting ? "yes" : "no",
+        editor.player.drift_charge,
+        editor.player.boost_seconds,
+    )
     im.Text(
         "Blend: walk %.2f  air %.2f  vertical %+.2f",
         editor.player_gait_weight,

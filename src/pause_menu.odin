@@ -1,7 +1,10 @@
 package main
 
+import game_input "../packages/game_input"
 import third_person "../packages/third_person"
 import "core:fmt"
+import "core:math"
+import sdl "vendor:sdl3"
 import rl "zelda_engine:canvas2d"
 
 Pause_Screen :: enum {
@@ -10,11 +13,15 @@ Pause_Screen :: enum {
     Options,
 }
 
+pause_menu_pointer_enabled := true
+
 Gameplay_Options :: struct {
-    look_sensitivity: f32,
-    invert_look_y:    bool,
-    show_hud:         bool,
-    crunchiness:      Crunchiness,
+    look_sensitivity:    f32,
+    invert_look_x:       bool,
+    invert_look_y:       bool,
+    invert_flight_pitch: bool,
+    show_hud:            bool,
+    crunchiness:         Crunchiness,
 }
 
 Crunchiness :: enum {
@@ -25,7 +32,14 @@ Crunchiness :: enum {
 }
 
 gameplay_options_default :: proc() -> Gameplay_Options {
-    return {look_sensitivity = .012, invert_look_y = false, show_hud = true, crunchiness = .P480}
+    return {
+        look_sensitivity = .012,
+        invert_look_x = true,
+        invert_look_y = false,
+        invert_flight_pitch = false,
+        show_hud = true,
+        crunchiness = .P480,
+    }
 }
 
 crunchiness_label :: proc(value: Crunchiness) -> cstring {
@@ -70,7 +84,10 @@ pause_menu_button_bounds :: proc(panel: rl.Rectangle, row: int) -> rl.Rectangle 
     return {panel.x + 44, panel.y + 126 + f32(row) * 58, panel.width - 88, 46}
 }
 
-OPTIONS_CONTENT_HEIGHT :: f32(354)
+OPTIONS_ROW_COUNT :: 6
+OPTIONS_RESTORE_FOCUS :: OPTIONS_ROW_COUNT
+OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
+OPTIONS_CONTENT_HEIGHT :: f32(498)
 
 options_menu_viewport :: proc(panel: rl.Rectangle) -> rl.Rectangle {
     return {panel.x + 30, panel.y + 108, panel.width - 54, max(panel.height - 178, f32(80))}
@@ -87,7 +104,7 @@ options_menu_row_bounds :: proc(panel: rl.Rectangle, row: int, scroll_y: f32 = 0
 
 options_menu_restore_bounds :: proc(panel: rl.Rectangle, scroll_y: f32 = 0) -> rl.Rectangle {
     viewport := options_menu_viewport(panel)
-    return {panel.x + 44, viewport.y + 298 - scroll_y, panel.width - 88, 46}
+    return {panel.x + 44, viewport.y + 442 - scroll_y, panel.width - 88, 46}
 }
 
 options_menu_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
@@ -114,7 +131,7 @@ options_menu_slider_track :: proc(bounds: rl.Rectangle) -> rl.Rectangle {
 }
 
 pause_menu_button :: proc(bounds: rl.Rectangle, label: cstring, accent: bool = false, focused: bool = false) {
-    hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
+    hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
     fill := rl.Color{31, 36, 43, 255}
     border := rl.Color{73, 82, 94, 255}
     text := rl.Color{230, 235, 240, 255}
@@ -146,6 +163,7 @@ pause_menu_button :: proc(bounds: rl.Rectangle, label: cstring, accent: bool = f
 pause_menu_open :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map do return
     editor.pause_screen = .Pause
+    editor.pause_focus = 0
     editor.map_time = f32(rl.GetTime())
     set_pointer_locked(false)
 }
@@ -153,6 +171,7 @@ pause_menu_open :: proc(editor: ^Editor) {
 pause_menu_resume :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.pause_screen = .Closed
+    editor.controller_disconnect_notice = false
     editor.map_time = f32(rl.GetTime())
     set_pointer_locked(editor.in_map)
 }
@@ -165,16 +184,17 @@ pause_menu_return_to_editor :: proc(editor: ^Editor) {
     editor.map_time = f32(rl.GetTime())
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     set_pointer_locked(false)
+    _ = sdl.ShowCursor()
 }
 
 options_menu_focus_bounds :: proc(panel: rl.Rectangle, focus: int, scroll_y: f32) -> rl.Rectangle {
-    if focus >= 0 && focus <= 3 do return options_menu_row_bounds(panel, focus, scroll_y)
-    if focus == 4 do return options_menu_restore_bounds(panel, scroll_y)
+    if focus >= 0 && focus < OPTIONS_ROW_COUNT do return options_menu_row_bounds(panel, focus, scroll_y)
+    if focus == OPTIONS_RESTORE_FOCUS do return options_menu_restore_bounds(panel, scroll_y)
     return options_menu_back_bounds(panel)
 }
 
 options_menu_reveal_focus :: proc(editor: ^Editor, panel: rl.Rectangle) {
-    if editor == nil || editor.options_focus < 0 || editor.options_focus > 4 do return
+    if editor == nil || editor.options_focus < 0 || editor.options_focus > OPTIONS_RESTORE_FOCUS do return
     viewport := options_menu_viewport(panel)
     bounds := options_menu_focus_bounds(panel, editor.options_focus, editor.options_scroll_y)
     top := viewport.y + 6
@@ -197,23 +217,35 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
             .024,
         )
     case 1:
-        editor.gameplay_options.invert_look_y = direction > 0
+        editor.gameplay_options.invert_look_x = direction > 0
     case 2:
-        editor.gameplay_options.show_hud = direction > 0
+        editor.gameplay_options.invert_look_y = direction > 0
     case 3:
+        editor.gameplay_options.invert_flight_pitch = direction > 0
+    case 4:
+        editor.gameplay_options.show_hud = direction > 0
+    case 5:
         selected := clamp(int(editor.gameplay_options.crunchiness) + direction, 0, 3)
         editor.gameplay_options.crunchiness = Crunchiness(selected)
         crunchiness_apply(editor.gameplay_options.crunchiness)
     }
 }
 
-options_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
+options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     panel := pause_menu_panel(width, height, true)
     mouse := rl.GetMousePosition()
     pressed := rl.IsMouseButtonPressed(.LEFT)
+    mouse_delta := rl.GetMouseDelta()
+    mouse_active := pressed || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
     viewport := options_menu_viewport(panel)
     maximum_scroll := options_menu_max_scroll(panel)
     editor.options_scroll_y = clamp(editor.options_scroll_y, 0, maximum_scroll)
+    stick_x, stick_y := game_input.menu_steps(
+        &editor.runtime_input,
+        gamepad_axis(.Left_X),
+        gamepad_axis(.Left_Y),
+        delta_seconds,
+    )
 
     focus_direction := 0
     if rl.IsKeyPressed(.UP) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Dpad_Up)) {
@@ -222,8 +254,9 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
     if rl.IsKeyPressed(.DOWN) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Dpad_Down)) {
         focus_direction += 1
     }
+    if focus_direction == 0 do focus_direction = stick_y
     if focus_direction != 0 {
-        editor.options_focus = clamp(editor.options_focus + focus_direction, 0, 5)
+        editor.options_focus = clamp(editor.options_focus + focus_direction, 0, OPTIONS_BACK_FOCUS)
         options_menu_reveal_focus(editor, panel)
     }
 
@@ -234,23 +267,28 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
     if rl.IsKeyPressed(.RIGHT) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Dpad_Right)) {
         adjust_direction += 1
     }
+    if adjust_direction == 0 do adjust_direction = stick_x
     if adjust_direction != 0 do options_menu_adjust_focused(editor, adjust_direction)
 
-    confirm := rl.IsKeyPressed(.ENTER) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.South))
+    confirm := input_action_pressed(.Menu_Accept)
     if confirm {
         switch editor.options_focus {
         case 1:
-            editor.gameplay_options.invert_look_y = !editor.gameplay_options.invert_look_y
+            editor.gameplay_options.invert_look_x = !editor.gameplay_options.invert_look_x
         case 2:
-            editor.gameplay_options.show_hud = !editor.gameplay_options.show_hud
+            editor.gameplay_options.invert_look_y = !editor.gameplay_options.invert_look_y
+        case 3:
+            editor.gameplay_options.invert_flight_pitch = !editor.gameplay_options.invert_flight_pitch
         case 4:
+            editor.gameplay_options.show_hud = !editor.gameplay_options.show_hud
+        case OPTIONS_RESTORE_FOCUS:
             editor.gameplay_options = gameplay_options_default()
             crunchiness_apply(editor.gameplay_options.crunchiness)
-        case 5:
+        case OPTIONS_BACK_FOCUS:
             editor.pause_screen = .Pause
             editor.options_scroll_dragging = false
         }
-        if editor.options_focus != 0 && editor.options_focus != 3 do return
+        if editor.options_focus != 0 && editor.options_focus != 5 do return
     }
 
     if rl.CheckCollisionPointRec(mouse, viewport) {
@@ -286,15 +324,19 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
 
     content_hovered := rl.CheckCollisionPointRec(mouse, viewport)
     scroll_y := editor.options_scroll_y
-    if content_hovered {
-        for index in 0 ..< 4 {
+    if content_hovered && mouse_active {
+        for index in 0 ..< OPTIONS_ROW_COUNT {
             if rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, index, scroll_y)) {
                 editor.options_focus = index
             }
         }
-        if rl.CheckCollisionPointRec(mouse, options_menu_restore_bounds(panel, scroll_y)) do editor.options_focus = 4
+        if rl.CheckCollisionPointRec(mouse, options_menu_restore_bounds(panel, scroll_y)) {
+            editor.options_focus = OPTIONS_RESTORE_FOCUS
+        }
     }
-    if rl.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) do editor.options_focus = 5
+    if mouse_active && rl.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
+        editor.options_focus = OPTIONS_BACK_FOCUS
+    }
 
     sensitivity := options_menu_row_bounds(panel, 0, scroll_y)
     track := options_menu_slider_track(sensitivity)
@@ -307,15 +349,25 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
     }
     if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 1, scroll_y)) {
         editor.options_focus = 1
-        editor.gameplay_options.invert_look_y = !editor.gameplay_options.invert_look_y
+        editor.gameplay_options.invert_look_x = !editor.gameplay_options.invert_look_x
         return
     }
     if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 2, scroll_y)) {
         editor.options_focus = 2
+        editor.gameplay_options.invert_look_y = !editor.gameplay_options.invert_look_y
+        return
+    }
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 3, scroll_y)) {
+        editor.options_focus = 3
+        editor.gameplay_options.invert_flight_pitch = !editor.gameplay_options.invert_flight_pitch
+        return
+    }
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 4, scroll_y)) {
+        editor.options_focus = 4
         editor.gameplay_options.show_hud = !editor.gameplay_options.show_hud
         return
     }
-    crunchiness := options_menu_row_bounds(panel, 3, scroll_y)
+    crunchiness := options_menu_row_bounds(panel, 5, scroll_y)
     segment_gap := f32(6)
     segment_width := (crunchiness.width - segment_gap * 3) / 4
     if content_hovered && pressed {
@@ -327,7 +379,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
                 30,
             }
             if rl.CheckCollisionPointRec(mouse, segment) {
-                editor.options_focus = 3
+                editor.options_focus = 5
                 editor.gameplay_options.crunchiness = Crunchiness(index)
                 crunchiness_apply(editor.gameplay_options.crunchiness)
                 return
@@ -335,31 +387,30 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
         }
     }
     if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_restore_bounds(panel, scroll_y)) {
-        editor.options_focus = 4
+        editor.options_focus = OPTIONS_RESTORE_FOCUS
         editor.gameplay_options = gameplay_options_default()
         crunchiness_apply(editor.gameplay_options.crunchiness)
         return
     }
     if pressed && rl.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
-        editor.options_focus = 5
+        editor.options_focus = OPTIONS_BACK_FOCUS
         editor.pause_screen = .Pause
         editor.options_scroll_dragging = false
     }
 }
 
-pause_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
+pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     if editor == nil || !editor.in_map do return
+    if rl.GamepadAvailable() do editor.controller_disconnect_notice = false
 
     if editor.pause_screen == .Closed {
-        if (!shift_key_down() && rl.IsKeyPressed(.ESCAPE)) ||
-           (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Start)) {
+        if input_action_pressed(.Pause) {
             pause_menu_open(editor)
         }
         return
     }
 
-    if (!shift_key_down() && rl.IsKeyPressed(.ESCAPE)) ||
-       (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.East)) {
+    if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
         if editor.pause_screen == .Options {
             editor.pause_screen = .Pause
         } else {
@@ -369,27 +420,53 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32) {
     }
 
     if editor.pause_screen == .Options {
-        options_menu_process_input(editor, width, height)
+        options_menu_process_input(editor, width, height, delta_seconds)
         return
     }
 
     panel := pause_menu_panel(width, height, false)
     mouse := rl.GetMousePosition()
-    if rl.IsKeyPressed(.ENTER) ||
-       (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.South)) ||
-       (rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, 0))) {
+    mouse_delta := rl.GetMouseDelta()
+    mouse_active :=
+        rl.IsMouseButtonPressed(.LEFT) ||
+        math.abs(mouse_delta.x) > .01 ||
+        math.abs(mouse_delta.y) > .01
+    focus_direction := 0
+    _, stick_y := game_input.menu_steps(
+        &editor.runtime_input,
+        gamepad_axis(.Left_X),
+        gamepad_axis(.Left_Y),
+        delta_seconds,
+    )
+    if rl.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do focus_direction -= 1
+    if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do focus_direction += 1
+    if focus_direction == 0 do focus_direction = stick_y
+    if focus_direction != 0 {
+        editor.pause_focus = clamp(editor.pause_focus + focus_direction, 0, 3)
+    }
+    if mouse_active {
+        for index in 0 ..< 4 {
+            if rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) {
+                editor.pause_focus = index
+            }
+        }
+    }
+    activated := -1
+    if input_action_pressed(.Menu_Accept) do activated = editor.pause_focus
+    if rl.IsMouseButtonPressed(.LEFT) {
+        for index in 0 ..< 4 {
+            if rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) do activated = index
+        }
+    }
+    switch activated {
+    case 0:
         pause_menu_resume(editor)
-        return
-    }
-    if rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, 1)) {
+    case 1:
         editor.pause_screen = .Options
-        return
-    }
-    if rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, 2)) {
+        editor.options_focus = 0
+    case 2:
         pause_menu_return_to_editor(editor)
-        return
-    }
-    if rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, 3)) {
+    case 3:
         editor.quit_requested = true
     }
 }
@@ -401,7 +478,7 @@ pause_menu_draw_header :: proc(panel: rl.Rectangle, eyebrow, title: cstring) {
 }
 
 options_menu_draw_toggle :: proc(bounds: rl.Rectangle, label: cstring, enabled: bool, focused: bool = false) {
-    hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
+    hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
     fill := hovered ? rl.Color{39, 47, 55, 255} : rl.Color{29, 34, 41, 255}
     border := hovered ? rl.Color{85, 99, 112, 255} : rl.Color{48, 56, 65, 255}
     if focused {
@@ -448,6 +525,7 @@ options_menu_draw_scrollbar :: proc(panel: rl.Rectangle, scroll_y: f32) {
 options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     pause_menu_draw_header(panel, "PAUSED  /  SETTINGS", "OPTIONS")
     navigation_hint: cstring = "ARROWS MOVE + CHANGE"
+    if controller_prompt_active(editor) do navigation_hint = "D-PAD / LS MOVE + CHANGE"
     navigation_size := ui_measure_text(.Data, navigation_hint, .2)
     ui_draw_text(
         .Data,
@@ -461,7 +539,7 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     rl.BeginScissorMode(viewport)
 
     sensitivity := options_menu_row_bounds(panel, 0, scroll_y)
-    sensitivity_hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), sensitivity)
+    sensitivity_hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), sensitivity)
     sensitivity_fill := sensitivity_hovered ? rl.Color{36, 44, 52, 255} : rl.Color{27, 32, 39, 255}
     sensitivity_border := sensitivity_hovered ? rl.Color{78, 93, 106, 255} : rl.Color{45, 53, 62, 255}
     if editor.options_focus == 0 {
@@ -496,19 +574,31 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
 
     options_menu_draw_toggle(
         options_menu_row_bounds(panel, 1, scroll_y),
-        "INVERT VERTICAL LOOK",
-        editor.gameplay_options.invert_look_y,
+        "INVERT HORIZONTAL LOOK",
+        editor.gameplay_options.invert_look_x,
         editor.options_focus == 1,
     )
     options_menu_draw_toggle(
         options_menu_row_bounds(panel, 2, scroll_y),
-        "SHOW ON-SCREEN INFO",
-        editor.gameplay_options.show_hud,
+        "INVERT VERTICAL LOOK",
+        editor.gameplay_options.invert_look_y,
         editor.options_focus == 2,
     )
+    options_menu_draw_toggle(
+        options_menu_row_bounds(panel, 3, scroll_y),
+        "INVERT FLIGHT PITCH",
+        editor.gameplay_options.invert_flight_pitch,
+        editor.options_focus == 3,
+    )
+    options_menu_draw_toggle(
+        options_menu_row_bounds(panel, 4, scroll_y),
+        "SHOW ON-SCREEN INFO",
+        editor.gameplay_options.show_hud,
+        editor.options_focus == 4,
+    )
 
-    crunchiness := options_menu_row_bounds(panel, 3, scroll_y)
-    if editor.options_focus == 3 {
+    crunchiness := options_menu_row_bounds(panel, 5, scroll_y)
+    if editor.options_focus == 5 {
         rl.DrawRectangleRounded(
             {crunchiness.x - 4, crunchiness.y - 4, crunchiness.width + 8, crunchiness.height + 8},
             .08,
@@ -539,7 +629,7 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         options_menu_restore_bounds(panel, scroll_y),
         "RESTORE DEFAULTS",
         false,
-        editor.options_focus == 4,
+        editor.options_focus == OPTIONS_RESTORE_FOCUS,
     )
     rl.EndScissorMode()
     options_menu_draw_scrollbar(panel, scroll_y)
@@ -549,11 +639,12 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         1,
         {55, 64, 73, 255},
     )
-    pause_menu_button(options_menu_back_bounds(panel), "BACK", true, editor.options_focus == 5)
+    pause_menu_button(options_menu_back_bounds(panel), "BACK", true, editor.options_focus == OPTIONS_BACK_FOCUS)
 }
 
 pause_menu_draw :: proc(editor: ^Editor, width, height: i32) {
     if !pause_menu_is_open(editor) do return
+    pause_menu_pointer_enabled = !controller_prompt_active(editor)
     rl.DrawRectangle(0, 0, width, height, {7, 11, 15, 190})
 
     options := editor.pause_screen == .Options
@@ -566,12 +657,27 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32) {
         return
     }
 
-    pause_menu_draw_header(panel, "ADRIATIC  /  FLIGHT", "PAUSED")
-    pause_menu_button(pause_menu_button_bounds(panel, 0), "RESUME", true)
-    pause_menu_button(pause_menu_button_bounds(panel, 1), "OPTIONS")
-    pause_menu_button(pause_menu_button_bounds(panel, 2), "RETURN TO EDITOR")
-    pause_menu_button(pause_menu_button_bounds(panel, 3), "QUIT TO DESKTOP")
-    hint: cstring = "ESC resumes  |  ENTER confirms"
+    if editor.controller_disconnect_notice {
+        pause_menu_draw_header(panel, "INPUT DEVICE LOST", "CONTROLLER DISCONNECTED")
+    } else {
+        pause_menu_draw_header(panel, "ADRIATIC  /  FLIGHT", "PAUSED")
+    }
+    pause_menu_button(pause_menu_button_bounds(panel, 0), "RESUME", true, editor.pause_focus == 0)
+    pause_menu_button(pause_menu_button_bounds(panel, 1), "OPTIONS", false, editor.pause_focus == 1)
+    pause_menu_button(pause_menu_button_bounds(panel, 2), "RETURN TO EDITOR", false, editor.pause_focus == 2)
+    pause_menu_button(pause_menu_button_bounds(panel, 3), "QUIT TO DESKTOP", false, editor.pause_focus == 3)
+    hint: cstring
+    if editor.controller_disconnect_notice {
+        hint = "Reconnect the controller or continue with keyboard and mouse"
+    } else if controller_prompt_active(editor) {
+        hint = fmt.ctprintf(
+            "D-PAD / LS selects  |  %s confirms  |  %s resumes",
+            controller_face_label(editor, .South),
+            controller_face_label(editor, .East),
+        )
+    } else {
+        hint = "ESC resumes  |  ENTER confirms"
+    }
     hint_size := ui_measure_text(.Data, hint, .3)
     ui_draw_text(
         .Data,

@@ -5,14 +5,17 @@ import atmosphere "../packages/atmosphere"
 import chase_camera "../packages/chase_camera"
 import dialogue "../packages/dialogue"
 import flight "../packages/flight"
+import game_input "../packages/game_input"
 import hot_abi "../packages/hot_abi"
 import libellula_game "../packages/libellula"
+import mouse_tail "../packages/mouse_tail"
 import particle_systems "../packages/particles"
 import postale_game "../packages/postale"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
+import "core:c"
 import "core:fmt"
 import "core:math"
 import "core:os"
@@ -117,6 +120,7 @@ Editor :: struct {
     capture_player_jump_pose:                 bool,
     capture_player_fall_pose:                 bool,
     capture_player_blink_pose:                bool,
+    capture_player_posted_pose:               bool,
     structure_undo:                           [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
     structure_redo:                           [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
     structure_undo_count:                     int,
@@ -136,6 +140,9 @@ Editor :: struct {
     player_vertical_pose:                     f32,
     player_turn_pose:                         f32,
     player_brake_pose:                        f32,
+    player_posted_idle_seconds:                f32,
+    player_posted_weight:                     f32,
+    player_tail:                              mouse_tail.State,
     camera:                                   third_person.Camera,
     camera_pose:                              third_person.Camera_Pose,
     cameras:                                  third_person.Camera_System,
@@ -170,6 +177,9 @@ Editor :: struct {
     tweak_panel_visible:                      bool,
     pause_screen:                             Pause_Screen,
     gameplay_options:                         Gameplay_Options,
+    runtime_input:                            game_input.State,
+    controller_disconnect_notice:             bool,
+    pause_focus:                              int,
     options_focus:                            int,
     options_scroll_y:                         f32,
     options_scroll_dragging:                  bool,
@@ -1599,6 +1609,170 @@ shape_flight_axis :: proc(value: f32) -> f32 {
     return math.sign(value) * clamp((magnitude - dead_zone) / (1 - dead_zone), 0, 1)
 }
 
+gamepad_axis :: proc(axis: rl.Gamepad_Axis) -> f32 {
+    if !rl.GamepadAvailable() do return 0
+    return shape_flight_axis(rl.GetGamepadAxis(axis))
+}
+
+gamepad_pressed :: proc(button: rl.Gamepad_Button) -> bool {
+    return rl.GamepadAvailable() && rl.IsGamepadButtonPressed(button)
+}
+
+gamepad_down :: proc(button: rl.Gamepad_Button) -> bool {
+    return rl.GamepadAvailable() && rl.IsGamepadButtonDown(button)
+}
+
+Input_Action :: enum {
+    Pause,
+    Jump,
+    Run,
+    Interact,
+    Camera_Reset,
+    Vehicle_Reset,
+    Handbrake,
+    Dialogue_Accept,
+    Dialogue_Cancel,
+    Menu_Accept,
+    Menu_Cancel,
+}
+
+input_action_pressed :: proc(action: Input_Action) -> bool {
+    switch action {
+    case .Pause:
+        return (!shift_key_down() && rl.IsKeyPressed(.ESCAPE)) || gamepad_pressed(.Start)
+    case .Jump:
+        return rl.IsKeyPressed(.SPACE) || gamepad_pressed(.South)
+    case .Run:
+        return rl.IsKeyPressed(.LEFT_SHIFT) || rl.IsKeyPressed(.RIGHT_SHIFT) || gamepad_pressed(.North)
+    case .Interact:
+        return rl.IsKeyPressed(.F) || gamepad_pressed(.West)
+    case .Camera_Reset:
+        return rl.IsKeyPressed(.C) || gamepad_pressed(.South)
+    case .Vehicle_Reset:
+        return rl.IsKeyPressed(.R) || gamepad_pressed(.North)
+    case .Dialogue_Accept:
+        return rl.IsKeyPressed(.Y) || gamepad_pressed(.South)
+    case .Dialogue_Cancel:
+        return rl.IsKeyPressed(.N) || gamepad_pressed(.East)
+    case .Menu_Accept:
+        return rl.IsKeyPressed(.ENTER) || gamepad_pressed(.South)
+    case .Menu_Cancel:
+        return (!shift_key_down() && rl.IsKeyPressed(.ESCAPE)) || gamepad_pressed(.East)
+    case .Handbrake:
+        return rl.IsKeyPressed(.SPACE) || gamepad_pressed(.Right_Shoulder)
+    }
+    return false
+}
+
+input_action_down :: proc(action: Input_Action) -> bool {
+    #partial switch action {
+    case .Jump:
+        return rl.IsKeyDown(.SPACE) || gamepad_down(.South)
+    case .Handbrake:
+        return rl.IsKeyDown(.SPACE) || gamepad_down(.Right_Shoulder)
+    case .Run:
+        return shift_key_down() || gamepad_down(.North)
+    }
+    return input_action_pressed(action)
+}
+
+controller_prompt_active :: proc(editor: ^Editor) -> bool {
+    return editor != nil && game_input.controller_active(&editor.runtime_input)
+}
+
+controller_face_label :: proc(editor: ^Editor, button: game_input.Face_Button) -> cstring {
+    if editor == nil do return "BUTTON"
+    return game_input.face_button_label(editor.runtime_input.controller_style, button)
+}
+
+controller_style_detect :: proc() -> game_input.Controller_Style {
+    count: c.int
+    ids := sdl.GetGamepads(&count)
+    if ids == nil || count <= 0 do return .Generic
+    defer sdl.free(ids)
+    controller_type := sdl.GetRealGamepadTypeForID(ids[0])
+    if controller_type == .UNKNOWN || controller_type == .STANDARD {
+        controller_type = sdl.GetGamepadTypeForID(ids[0])
+    }
+    switch controller_type {
+    case .XBOX360, .XBOXONE:
+        return .Xbox
+    case .PS3, .PS4, .PS5:
+        return .PlayStation
+    case .NINTENDO_SWITCH_PRO,
+         .NINTENDO_SWITCH_JOYCON_LEFT,
+         .NINTENDO_SWITCH_JOYCON_RIGHT,
+         .NINTENDO_SWITCH_JOYCON_PAIR:
+        return .Nintendo
+    case .UNKNOWN, .STANDARD:
+        return .Generic
+    }
+    return .Generic
+}
+
+runtime_input_sample :: proc() -> game_input.Sample {
+    sample := game_input.Sample {
+        now_seconds = rl.GetTime(),
+        controller_found = rl.GamepadAvailable(),
+    }
+    mouse_delta := rl.GetMouseDelta()
+    sample.mouse_activity =
+        math.abs(mouse_delta.x) > 1.5 ||
+        math.abs(mouse_delta.y) > 1.5 ||
+        math.abs(rl.GetMouseWheelMove()) > .01 ||
+        rl.IsMouseButtonPressed(.LEFT) ||
+        rl.IsMouseButtonPressed(.RIGHT) ||
+        rl.IsMouseButtonPressed(.MIDDLE)
+    for key in rl.KeyboardKey {
+        if key == .COUNT do continue
+        if rl.IsKeyPressed(key) {
+            sample.keyboard_activity = true
+            break
+        }
+    }
+    if sample.controller_found {
+        for button in rl.Gamepad_Button {
+            if button == .Count do continue
+            if rl.IsGamepadButtonDown(button) {
+                sample.button_activity = true
+                break
+            }
+        }
+        sample.axes = {
+            rl.GetGamepadAxis(.Left_X),
+            rl.GetGamepadAxis(.Left_Y),
+            rl.GetGamepadAxis(.Right_X),
+            rl.GetGamepadAxis(.Right_Y),
+            rl.GetGamepadAxis(.Left_Trigger),
+            rl.GetGamepadAxis(.Right_Trigger),
+        }
+    }
+    return sample
+}
+
+runtime_input_update :: proc(editor: ^Editor) -> game_input.Update_Result {
+    if editor == nil || !editor.in_map do return {}
+    result := game_input.update(&editor.runtime_input, runtime_input_sample())
+    if result.controller_connected {
+        editor.runtime_input.controller_style = controller_style_detect()
+    }
+    return result
+}
+
+runtime_pointer_sync :: proc(editor: ^Editor) {
+    if editor == nil || !editor.in_map do return
+    if pause_menu_is_open(editor) {
+        set_pointer_locked(false)
+        if controller_prompt_active(editor) {
+            _ = sdl.HideCursor()
+        } else {
+            _ = sdl.ShowCursor()
+        }
+    } else {
+        _ = sdl.HideCursor()
+    }
+}
+
 stronger_axis :: proc(first, second: f32) -> f32 {
     if math.abs(second) > math.abs(first) do return second
     return first
@@ -1758,7 +1932,10 @@ libellula_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
 
 attendant_spawn_position :: proc(editor: ^Editor, aircraft_position: third_person.Vec3) -> third_person.Vec3 {
     x := aircraft_position.x - 3.3
-    z := aircraft_position.z + 2.2
+    // Give the full mouse silhouette room beside the apron. The old
+    // stick-figure placeholder could share this space with the parked car,
+    // but Marta's body and tail need a clear standing spot.
+    z := aircraft_position.z + 4.8
     return {x = x, y = terrain.sample_height(&editor.project, 0, x, z), z = z}
 }
 
@@ -1890,52 +2067,6 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
         height,
     )
     if label.visible do rl.DrawTextEx(rl.Font{}, "LIBELLULA", {label.position.x - 35, label.position.y - 12}, 13, 1, {r = 255, g = 239, b = 192, a = 255})
-}
-
-draw_attendant_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
-    // Marta stands just off the Libellula's left side, where the interaction
-    // prompt is already active. The simple high-contrast silhouette keeps her
-    // readable at the map camera's wide zoom.
-    base := editor.attendant_position
-    head := third_person.Vec3 {
-        x = base.x,
-        y = base.y + 1.62,
-        z = base.z,
-    }
-    shoulders := third_person.Vec3 {
-        x = base.x,
-        y = base.y + 1.18,
-        z = base.z,
-    }
-    left_hand := third_person.Vec3 {
-        x = shoulders.x - .32,
-        y = shoulders.y - .38,
-        z = shoulders.z,
-    }
-    right_hand := third_person.Vec3 {
-        x = shoulders.x + .32,
-        y = shoulders.y - .38,
-        z = shoulders.z,
-    }
-    left_foot := third_person.Vec3 {
-        x = base.x - .22,
-        y = base.y + .02,
-        z = base.z,
-    }
-    right_foot := third_person.Vec3 {
-        x = base.x + .22,
-        y = base.y + .02,
-        z = base.z,
-    }
-    head_screen := project_3d(camera, head, width, height)
-    if head_screen.visible do rl.DrawCircleV(head_screen.position, 7, {r = 226, g = 184, b = 112, a = 255})
-    draw_line_3d(camera, shoulders, left_hand, width, height, 4, {r = 35, g = 77, b = 84, a = 255})
-    draw_line_3d(camera, shoulders, right_hand, width, height, 4, {r = 35, g = 77, b = 84, a = 255})
-    draw_line_3d(camera, shoulders, base, width, height, 7, {r = 211, g = 80, b = 57, a = 255})
-    draw_line_3d(camera, base, left_foot, width, height, 4, {r = 35, g = 48, b = 54, a = 255})
-    draw_line_3d(camera, base, right_foot, width, height, 4, {r = 35, g = 48, b = 54, a = 255})
-    label := project_3d(camera, {x = head.x, y = head.y + .28, z = head.z}, width, height)
-    if label.visible do rl.DrawTextEx(rl.Font{}, "MARTA", {label.position.x - 22, label.position.y - 12}, 11, 1, {r = 255, g = 239, b = 192, a = 255})
 }
 
 draw_postale_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
@@ -2683,28 +2814,6 @@ draw_infrastructure_3d :: proc(editor: ^Editor, camera: Perspective_Camera, widt
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_x := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
         island_z := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        runway_half_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH
-        runway_half_width := half_extent * terrain.DEFAULT_RUNWAY_HALF_WIDTH
-        runway_height := terrain.sample_height(&editor.project, level, island_x, island_z) + .04
-        draw_quad_3d(
-            camera,
-            {x = island_x - runway_half_length, y = runway_height, z = island_z - runway_half_width},
-            {x = island_x + runway_half_length, y = runway_height, z = island_z - runway_half_width},
-            {x = island_x + runway_half_length, y = runway_height, z = island_z + runway_half_width},
-            {x = island_x - runway_half_length, y = runway_height, z = island_z + runway_half_width},
-            width,
-            height,
-            {r = 60, g = 66, b = 67, a = 255},
-        )
-        draw_line_3d(
-            camera,
-            {x = island_x - runway_half_length * .82, y = runway_height + .02, z = island_z},
-            {x = island_x + runway_half_length * .82, y = runway_height + .02, z = island_z},
-            width,
-            height,
-            2,
-            {r = 238, g = 232, b = 186, a = 255},
-        )
 
         pier_inner_x := island_x + sign * half_extent * terrain.DEFAULT_PIER_INNER_OFFSET
         pier_inner_z := island_z - sign * half_extent * .08
@@ -2729,7 +2838,6 @@ draw_infrastructure_3d :: proc(editor: ^Editor, camera: Perspective_Camera, widt
     // The spawned inspection craft is a world object; keep it in the
     // infrastructure pass even when the parked-vehicle presentation toggles.
     draw_libellula_3d(editor, camera, width, height)
-    if editor.libellula_visible do draw_attendant_3d(editor, camera, width, height)
 }
 
 draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
@@ -2904,14 +3012,50 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
         driving := flying || in_car
         panel_width := driving ? i32(650) : i32(430)
         if flying && editor.aircraft.active == .Libellula do panel_width = 800
-        help_text: cstring = "WASD move  Mouse look  Wheel zoom  Space jump  Esc editor"
+        help_text: cstring = "WASD move  Mouse look  Wheel zoom  Space jump  Esc pause"
+        if controller_prompt_active(editor) {
+            panel_width = 790
+            help_text = fmt.ctprintf(
+                "LS move  RS look  LT/RT zoom  %s jump/drift  %s run  %s interact  Start pause",
+                controller_face_label(editor, .South),
+                controller_face_label(editor, .North),
+                controller_face_label(editor, .West),
+            )
+        }
         if flying {
             help_text = "W/S pitch  A/D roll  Q/E yaw  Mouse orbit  C camera  Shift/Ctrl power  F exit  R reset"
+            if controller_prompt_active(editor) {
+                panel_width = 940
+                help_text = fmt.ctprintf(
+                    "LS fly  RS camera  LB/RB yaw  LT/RT power  %s recenter  %s exit  %s reset",
+                    controller_face_label(editor, .South),
+                    controller_face_label(editor, .West),
+                    controller_face_label(editor, .North),
+                )
+            }
             if editor.aircraft.active == .Libellula {
                 help_text = "W/S pitch  A/D roll  Q/E yaw  Shift climb  Ctrl descend  Release to hover  F exit  R reset"
+                if controller_prompt_active(editor) {
+                    help_text = fmt.ctprintf(
+                        "LS fly  RS camera  LB/RB yaw  LT/RT altitude  %s recenter  %s exit  %s reset",
+                        controller_face_label(editor, .South),
+                        controller_face_label(editor, .West),
+                        controller_face_label(editor, .North),
+                    )
+                }
             }
         }
-        if in_car do help_text = "W/S drive  A/D steer  Space handbrake  F exit  Esc editor"
+        if in_car {
+            help_text = "W/S drive  A/D steer  Space handbrake  F exit  Esc pause"
+            if controller_prompt_active(editor) {
+                panel_width = 760
+                help_text = fmt.ctprintf(
+                    "LT/RT drive  LS steer  RS look  RB handbrake  %s exit  Start pause",
+                    controller_face_label(editor, .West),
+                )
+            }
+        }
+        panel_width = min(panel_width, width - 28)
         rl.DrawRectangle(14, 14, panel_width, 72, {r = 8, g = 28, b = 45, a = 210})
         rl.DrawTextEx(
             rl.Font{},
@@ -2940,11 +3084,14 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             crashed := editor.aircraft.active == .Libellula ? editor.libellula.crashed : editor.postale.crashed
             if crashed {
                 rl.DrawRectangle(width / 2 - 155, height / 2 - 35, 310, 70, {r = 71, g = 18, b = 20, a = 225})
+                reset_key: cstring =
+                    controller_prompt_active(editor) ? controller_face_label(editor, .North) : "R"
                 rl.DrawTextEx(
                     rl.Font{},
                     fmt.ctprintf(
-                        "%s CRASHED — PRESS R TO RESET",
+                        "%s CRASHED — PRESS %s TO RESET",
                         vehicles.aircraft_kind_name(editor.aircraft.active),
+                        reset_key,
                     ),
                     {f32(width / 2 - 139), f32(height / 2 - 8)},
                     16,
@@ -2966,9 +3113,16 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             if vec_dot(delta, delta) <=
                editor.postale.vehicle.interaction_radius * editor.postale.vehicle.interaction_radius {
                 rl.DrawRectangle(width / 2 - 116, height - 92, 232, 42, {r = 8, g = 28, b = 45, a = 220})
+                entry_prompt: cstring = "PRESS F TO ENTER POSTALE"
+                if controller_prompt_active(editor) {
+                    entry_prompt = fmt.ctprintf(
+                        "PRESS %s TO ENTER POSTALE",
+                        controller_face_label(editor, .West),
+                    )
+                }
                 rl.DrawTextEx(
                     rl.Font{},
-                    "PRESS F TO ENTER POSTALE",
+                    entry_prompt,
                     {f32(width / 2 - 99), f32(height - 77)},
                     15,
                     1,
@@ -3044,22 +3198,6 @@ draw_default_infrastructure :: proc(editor: ^Editor, center: rl.Vector2, scale: 
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_x := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
         island_z := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        runway_half_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH
-        runway_half_width := half_extent * terrain.DEFAULT_RUNWAY_HALF_WIDTH
-        height := terrain.sample_height(&editor.project, level, island_x, island_z) + .03
-        // The runway runs along the island's diagonal and remains clearly legible
-        // on the simple grass island beneath it.
-        a := project_point(island_x - runway_half_length, island_z - runway_half_width, height, center, scale)
-        b := project_point(island_x + runway_half_length, island_z - runway_half_width, height, center, scale)
-        c := project_point(island_x + runway_half_length, island_z + runway_half_width, height, center, scale)
-        d := project_point(island_x - runway_half_length, island_z + runway_half_width, height, center, scale)
-        rl.DrawQuadHatched(a, b, c, d, {r = 60, g = 66, b = 67, a = 255}, rl.HATCH_DISABLED)
-        rl.DrawLineEx(
-            project_point(island_x - runway_half_length * .82, island_z, height + .02, center, scale),
-            project_point(island_x + runway_half_length * .82, island_z, height + .02, center, scale),
-            1.5,
-            {r = 238, g = 232, b = 186, a = 255},
-        )
 
         // A short wooden pier points from the island toward its nearby map edge.
         pier_inner_x := island_x + sign * half_extent * terrain.DEFAULT_PIER_INNER_OFFSET
@@ -3351,10 +3489,27 @@ vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
     car_near := car_distance <= car_radius * car_radius
     aircraft_near := aircraft_distance <= aircraft_radius * aircraft_radius
     if car_near && (!aircraft_near || car_distance <= aircraft_distance) {
+        if controller_prompt_active(editor) {
+            return fmt.ctprintf("PRESS %s TO ENTER CAR", controller_face_label(editor, .West))
+        }
         return "PRESS F TO ENTER CAR"
     }
-    if aircraft_near do return fmt.ctprintf("PRESS F TO ENTER %s", vehicles.aircraft_kind_name(editor.aircraft.active))
-    if attendant_near do return "PRESS F TO TALK TO MARTA"
+    if aircraft_near {
+        if controller_prompt_active(editor) {
+            return fmt.ctprintf(
+                "PRESS %s TO ENTER %s",
+                controller_face_label(editor, .West),
+                vehicles.aircraft_kind_name(editor.aircraft.active),
+            )
+        }
+        return fmt.ctprintf("PRESS F TO ENTER %s", vehicles.aircraft_kind_name(editor.aircraft.active))
+    }
+    if attendant_near {
+        if controller_prompt_active(editor) {
+            return fmt.ctprintf("PRESS %s TO TALK TO MARTA", controller_face_label(editor, .West))
+        }
+        return "PRESS F TO TALK TO MARTA"
+    }
     return nil
 }
 
@@ -3582,9 +3737,17 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
                     1,
                     {245, 239, 192, 255},
                 )
+                choice_prompt: cstring = "[Y] Switch aircraft     [N] Keep current"
+                if controller_prompt_active(editor) {
+                    choice_prompt = fmt.ctprintf(
+                        "[%s] Switch aircraft     [%s] Keep current",
+                        controller_face_label(editor, .South),
+                        controller_face_label(editor, .East),
+                    )
+                }
                 rl.DrawTextEx(
                     rl.Font{},
-                    "[Y] Switch aircraft     [N] Keep current",
+                    choice_prompt,
                     {f32(width / 2 - 286), f32(height - 100)},
                     14,
                     1,
@@ -3773,6 +3936,7 @@ adriatic_run :: proc() -> bool {
     capture_foliage_understory_mode := capture_kind == .Foliage_Understory
     capture_foliage_stress_mode := capture_kind == .Foliage_Stress
     capture_target := capture_mode && len(os.args) >= 4 ? os.args[3] : ""
+    capture_player_mode := capture_kind == .Map && capture_target != ""
     if capture_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     if benchmark_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     rl.SetConfigFlags(flags)
@@ -3827,6 +3991,7 @@ adriatic_run :: proc() -> bool {
     editor.tweak_status = .Defaults
     editor.tweak_panel_visible = false
     editor.gameplay_options = gameplay_options_default()
+    editor.runtime_input = game_input.default_state()
     island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
     editor.editor_focus = {
         x = island_center,
@@ -4037,6 +4202,28 @@ adriatic_run :: proc() -> bool {
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
         }
+        if capture_target == "marta" {
+            editor.camera_target_lock = false
+            editor.postale_visible = false
+            editor.player.position = {
+                x = editor.attendant_position.x + 20,
+                y = terrain.sample_height(
+                    &editor.project,
+                    0,
+                    editor.attendant_position.x + 20,
+                    editor.attendant_position.z,
+                ),
+                z = editor.attendant_position.z,
+            }
+            editor.pilot.position = editor.player.position
+            inspection_pose := third_person.camera_near(
+                {x = editor.attendant_position.x, y = editor.attendant_position.y + .48, z = editor.attendant_position.z},
+                {x = 1.35, y = .62, z = 1.35},
+            )
+            third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
+            third_person.camera_set_active(&editor.cameras, .Inspection)
+            editor.camera_pose = inspection_pose
+        }
         if capture_target == "player" ||
            capture_target == "player-walk" ||
            capture_target == "player-run-compress" ||
@@ -4045,7 +4232,8 @@ adriatic_run :: proc() -> bool {
            capture_target == "player-brake" ||
            capture_target == "player-jump" ||
            capture_target == "player-fall" ||
-           capture_target == "player-blink" {
+           capture_target == "player-blink" ||
+           capture_target == "player-posted" {
             editor.camera_target_lock = false
             editor.postale_visible = false
             editor.libellula_visible = false
@@ -4068,6 +4256,7 @@ adriatic_run :: proc() -> bool {
             editor.capture_player_jump_pose = capture_target == "player-jump"
             editor.capture_player_fall_pose = capture_target == "player-fall"
             editor.capture_player_blink_pose = capture_target == "player-blink"
+            editor.capture_player_posted_pose = capture_target == "player-posted"
             if editor.capture_player_jump_pose || editor.capture_player_fall_pose {
                 editor.player.position.y += .42
                 editor.player.velocity.y = editor.capture_player_jump_pose ? f32(3.2) : f32(-3.2)
@@ -4079,9 +4268,12 @@ adriatic_run :: proc() -> bool {
                 z = -math.cos(editor.player.facing_yaw_radians),
             }
             capture_run_pose := capture_target == "player-walk" || capture_target == "player-run-compress"
-            capture_front_distance := capture_run_pose ? f32(.72) : f32(1.95)
-            capture_side_distance := capture_run_pose ? f32(1.72) : f32(.40)
-            capture_height := capture_run_pose ? f32(.62) : f32(.78)
+            capture_posted_pose := capture_target == "player-posted"
+            // Track the moving profile from its longitudinal center so the
+            // body and body-length tail share one depth plane in the capture.
+            capture_front_distance := capture_run_pose ? f32(-.45) : (capture_posted_pose ? f32(1.32) : f32(1.95))
+            capture_side_distance := capture_run_pose ? f32(2.45) : (capture_posted_pose ? f32(1.20) : f32(.40))
+            capture_height := capture_run_pose ? f32(.62) : (capture_posted_pose ? f32(.90) : f32(.78))
             inspection_pose := third_person.Camera_Pose {
                 position = {
                     x = editor.player.position.x +
@@ -4093,9 +4285,9 @@ adriatic_run :: proc() -> bool {
                     capture_forward.x * capture_side_distance,
                 },
                 target = {
-                    x = editor.player.position.x - capture_forward.x * .18,
-                    y = editor.player.position.y + .34,
-                    z = editor.player.position.z - capture_forward.z * .18,
+                    x = editor.player.position.x - capture_forward.x * (capture_run_pose ? f32(.52) : f32(.18)),
+                    y = editor.player.position.y + (capture_posted_pose ? f32(.48) : f32(.34)),
+                    z = editor.player.position.z - capture_forward.z * (capture_run_pose ? f32(.52) : f32(.18)),
                 },
             }
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
@@ -4178,8 +4370,15 @@ adriatic_run :: proc() -> bool {
         driving := editor.pilot.mode == .Driving
         if !editor.in_map do editor.map_time = frame_now
         width, height := rl.GetScreenWidth(), rl.GetScreenHeight()
+        input_result := runtime_input_update(editor)
+        if input_result.pause_for_disconnect {
+            editor.controller_disconnect_notice = true
+            if !pause_menu_is_open(editor) do pause_menu_open(editor)
+        }
+        if !pause_menu_is_open(editor) do game_input.reset_menu_repeat(&editor.runtime_input)
         was_paused := pause_menu_is_open(editor)
-        pause_menu_process_input(editor, width, height)
+        pause_menu_process_input(editor, width, height, frame_delta)
+        runtime_pointer_sync(editor)
         simulation_delta := was_paused || pause_menu_is_open(editor) ? f32(0) : frame_delta
         atmosphere.step(&editor.atmosphere, simulation_delta)
         particle_systems.step(
@@ -4348,16 +4547,23 @@ adriatic_run :: proc() -> bool {
             editor.map_time = now
             mouse_delta := rl.GetMouseDelta()
             look_scale := editor.gameplay_options.look_sensitivity / .012
+            look_x := editor.gameplay_options.invert_look_x ? -mouse_delta.x : mouse_delta.x
             look_y := editor.gameplay_options.invert_look_y ? -mouse_delta.y : mouse_delta.y
             flying := driving_aircraft(editor)
             in_car := driving_car(editor)
             driving := flying || in_car
             if flying {
-                chase_camera.look(&editor.flight_camera, mouse_delta.x * look_scale, look_y * look_scale)
-                if rl.IsKeyPressed(.C) {
+                flight_stick_x := gamepad_axis(.Right_X) * 700 * delta_seconds
+                if editor.gameplay_options.invert_look_x do flight_stick_x = -flight_stick_x
+                flight_stick_y := gamepad_axis(.Right_Y) * 700 * delta_seconds
+                if editor.gameplay_options.invert_look_y do flight_stick_y = -flight_stick_y
+                flight_look_x := look_x * look_scale + flight_stick_x
+                flight_look_y := look_y * look_scale + flight_stick_y
+                chase_camera.look(&editor.flight_camera, flight_look_x, flight_look_y)
+                if input_action_pressed(.Camera_Reset) {
                     chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
                 }
-                if rl.IsKeyPressed(.R) {
+                if input_action_pressed(.Vehicle_Reset) {
                     if editor.aircraft.active == .Libellula {
                         ground := terrain.sample_height(
                             &editor.project,
@@ -4391,13 +4597,14 @@ adriatic_run :: proc() -> bool {
                 if rl.IsKeyDown(.E) do control.yaw += 1
                 if rl.IsKeyDown(.Q) do control.yaw -= 1
                 if rl.GamepadAvailable() {
-                    control.pitch = stronger_axis(control.pitch, shape_flight_axis(rl.GetGamepadAxis(.Left_Y)))
-                    control.roll = stronger_axis(control.roll, shape_flight_axis(rl.GetGamepadAxis(.Left_X)))
-                    if rl.IsGamepadButtonDown(.Right_Shoulder) do control.yaw += 1
-                    if rl.IsGamepadButtonDown(.Left_Shoulder) do control.yaw -= 1
-                    control.throttle_up = control.throttle_up || rl.GetGamepadAxis(.Right_Trigger) > .1
-                    control.throttle_down = control.throttle_down || rl.GetGamepadAxis(.Left_Trigger) > .1
+                    control.pitch = stronger_axis(control.pitch, gamepad_axis(.Left_Y))
+                    control.roll = stronger_axis(control.roll, gamepad_axis(.Left_X))
+                    if gamepad_down(.Right_Shoulder) do control.yaw += 1
+                    if gamepad_down(.Left_Shoulder) do control.yaw -= 1
+                    control.throttle_up = control.throttle_up || gamepad_axis(.Right_Trigger) > 0
+                    control.throttle_down = control.throttle_down || gamepad_axis(.Left_Trigger) > 0
                 }
+                if editor.gameplay_options.invert_flight_pitch do control.pitch = -control.pitch
                 control.pitch = clamp(control.pitch, -1, 1)
                 control.roll = clamp(control.roll, -1, 1)
                 control.yaw = clamp(control.yaw, -1, 1)
@@ -4456,7 +4663,7 @@ adriatic_run :: proc() -> bool {
                 if editor.aircraft.active == .Libellula {
                     can_exit = libellula_game.can_exit(&editor.libellula)
                 }
-                if rl.IsKeyPressed(.F) && can_exit {
+                if input_action_pressed(.Interact) && can_exit {
                     if vehicles.try_exit(&editor.pilot, true) {
                         editor.flight_control = {}
                         editor.player.position = editor.pilot.position
@@ -4474,7 +4681,7 @@ adriatic_run :: proc() -> bool {
                 editor.camera_pose = editor.flight_camera.pose
             }
             if in_car {
-                if rl.IsKeyPressed(.F) {
+                if input_action_pressed(.Interact) {
                     if vehicles.try_exit(&editor.pilot, true) {
                         editor.player.position = editor.pilot.position
                         editor.player.velocity = {}
@@ -4488,17 +4695,16 @@ adriatic_run :: proc() -> bool {
                     if rl.IsKeyDown(.A) || rl.IsKeyDown(.LEFT) do steering -= 1
                     if rl.IsKeyDown(.D) || rl.IsKeyDown(.RIGHT) do steering += 1
                     if rl.GamepadAvailable() {
-                        throttle += max(rl.GetGamepadAxis(.Right_Trigger), f32(0))
-                        throttle -= max(rl.GetGamepadAxis(.Left_Trigger), f32(0))
-                        steering = stronger_axis(steering, shape_flight_axis(rl.GetGamepadAxis(.Left_X)))
+                        throttle += max(gamepad_axis(.Right_Trigger), f32(0))
+                        throttle -= max(gamepad_axis(.Left_Trigger), f32(0))
+                        steering = stronger_axis(steering, gamepad_axis(.Left_X))
                     }
                     if benchmark_mode && (benchmark_scenario == "road_grip" || benchmark_scenario == "terrain_grip") {
                         throttle = 1
                         steering = math.sin(f32(frame) * .032) * .72
                     }
                     ground := terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
-                    handbrake :=
-                        rl.IsKeyDown(.SPACE) || (rl.GamepadAvailable() && rl.IsGamepadButtonDown(.Right_Shoulder))
+                    handbrake := input_action_down(.Handbrake)
                     dust_surface, drive_surface := road_car_surface(
                         editor,
                         {editor.car.position.x, editor.car.position.y, editor.car.position.z},
@@ -4551,13 +4757,20 @@ adriatic_run :: proc() -> bool {
                         0,
                         1,
                     )
-                    target_yaw := -math.PI * .5 - editor.car.yaw_radians
+                    // The chase still recenters behind the car, while the right
+                    // stick gives the player a temporary look around it.
+                    car_look_x := gamepad_axis(.Right_X)
+                    if editor.gameplay_options.invert_look_x do car_look_x = -car_look_x
+                    target_yaw :=
+                        -math.PI * .5 -
+                        editor.car.yaw_radians +
+                        car_look_x * .85
                     editor.camera.yaw_radians = vehicles.car_drive_angle_step(
                         editor.camera.yaw_radians,
                         target_yaw,
                         clamp((3.8 + speed_ratio * 2.2) * min(delta_seconds, .05), 0, 1),
                     )
-                    editor.camera.pitch_radians = .24
+                    editor.camera.pitch_radians = clamp(.24 - gamepad_axis(.Right_Y) * .38, -.2, .75)
                     editor.camera.distance = 5.2 + speed_ratio * 1.8
                     editor.camera.height = 1.15 + speed_ratio * .32
                     desired_camera := third_person.camera_pose(editor.car.position, editor.camera)
@@ -4574,7 +4787,7 @@ adriatic_run :: proc() -> bool {
             // press cannot immediately enter the nearby vehicle again.
             if editor.pilot.mode == .On_Foot && !driving {
                 if editor.attendant_dialogue_open {
-                    if rl.IsKeyPressed(.Y) {
+                    if input_action_pressed(.Dialogue_Accept) {
                         if dialogue.choose(&editor.attendant_dialogue, 0) {
                             target := vehicles.Aircraft_Kind.Libellula
                             if editor.aircraft.active == .Libellula do target = .Postale
@@ -4624,18 +4837,31 @@ adriatic_run :: proc() -> bool {
                         }
                         editor.attendant_dialogue_open = false
                     }
-                    if rl.IsKeyPressed(.N) {
+                    if input_action_pressed(.Dialogue_Cancel) {
                         dialogue.choose(&editor.attendant_dialogue, 1)
                         editor.attendant_dialogue_open = false
                     }
                 }
-                third_person.look(&editor.camera, mouse_delta.x, -look_y, editor.gameplay_options.look_sensitivity)
-                editor.camera.distance = clamp(editor.camera.distance - rl.GetMouseWheelMove() * .5, 3, 12)
+                stick_look_x := gamepad_axis(.Right_X) * 180 * delta_seconds
+                stick_look_y := gamepad_axis(.Right_Y) * 180 * delta_seconds
+                if editor.gameplay_options.invert_look_x do stick_look_x = -stick_look_x
+                if editor.gameplay_options.invert_look_y do stick_look_y = -stick_look_y
+                third_person.look(
+                    &editor.camera,
+                    look_x + stick_look_x,
+                    -look_y - stick_look_y,
+                    editor.gameplay_options.look_sensitivity,
+                )
+                controller_zoom := (gamepad_axis(.Left_Trigger) - gamepad_axis(.Right_Trigger)) * 4 * delta_seconds
+                editor.camera.distance =
+                    clamp(editor.camera.distance - rl.GetMouseWheelMove() * .5 + controller_zoom, 3, 12)
                 move_x, move_y := f32(0), f32(0)
                 if rl.IsKeyDown(.D) do move_x += 1
                 if rl.IsKeyDown(.A) do move_x -= 1
                 if rl.IsKeyDown(.W) do move_y += 1
                 if rl.IsKeyDown(.S) do move_y -= 1
+                move_x = stronger_axis(move_x, gamepad_axis(.Left_X))
+                move_y = stronger_axis(move_y, -gamepad_axis(.Left_Y))
                 ground_height := terrain.sample_height(
                     &editor.project,
                     0,
@@ -4645,7 +4871,10 @@ adriatic_run :: proc() -> bool {
                 input := third_person.Input {
                     move_x             = move_x,
                     move_y             = move_y,
-                    jump_pressed       = rl.IsKeyPressed(.SPACE),
+                    run_toggle_pressed =
+                        input_action_pressed(.Run),
+                    jump_pressed       = input_action_pressed(.Jump),
+                    jump_held          = input_action_down(.Jump),
                     grounded           = editor.player.position.y <= ground_height + .01,
                     camera_yaw_radians = editor.camera.yaw_radians,
                     ground_normal      = player_ground_normal(editor, editor.player.position),
@@ -4663,14 +4892,16 @@ adriatic_run :: proc() -> bool {
                     editor.player.position.y = ground_height
                     editor.player.grounded = true
                 }
+                player_tail_update(editor, frame_seconds)
                 editor.pilot.position = editor.player.position
                 editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
-                if rl.IsKeyPressed(.F) {
+                if input_action_pressed(.Interact) {
                     _, entered := vehicles.try_enter_nearest(
                         &editor.pilot,
                         []^vehicles.Vehicle{&editor.car, active_aircraft_vehicle(editor)},
                     )
                     if entered {
+                        editor.player.running = false
                         editor.flight_control = {}
                         if driving_aircraft(editor) {
                             chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
@@ -4725,7 +4956,9 @@ adriatic_run :: proc() -> bool {
                 break
             }
         }
-        capture_frame := capture_flight_mode ? 20 : 2
+        // Player captures wait long enough for the Verlet tail and pose blends
+        // to settle; frame two only showed the first few links as a short nub.
+        capture_frame := capture_flight_mode || capture_player_mode ? 20 : 2
         if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", os.args[2]))
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.

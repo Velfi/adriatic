@@ -42,7 +42,7 @@ Formation_Kind :: enum {
 
 STRUCTURE_CAPACITY :: 256
 CITY_DENSITY_SAMPLES :: SAMPLES_PER_LEVEL
-PROJECT_FILE_VERSION :: u32(5)
+PROJECT_FILE_VERSION :: u32(6)
 PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '1'}
 
 Project_File_Header :: struct {
@@ -160,6 +160,16 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
         runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
         return true
     }
+    // Version 5 used the current wire layout, but its two default runways were
+    // presentation-only quads. Promote them into ordinary editable road paths
+    // exactly once while loading that version.
+    if header.version == 5 &&
+       header.payload_size == size_of(Project) &&
+        len(data) >= header_size + size_of(Project) {
+        runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
+        if add_default_runways(project) do project.revision += 1
+        return true
+    }
     if header.version != 4 ||
        header.payload_size != size_of(Legacy_Project_V4) ||
        len(data) < header_size + size_of(Legacy_Project_V4) {
@@ -207,6 +217,38 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
             seed     = old.seed,
         }
     }
+    if add_default_runways(project) do project.revision += 1
+    return true
+}
+
+add_default_runways :: proc(project: ^Project) -> bool {
+    if project == nil ||
+       project.road_graph.node_count + len(DEFAULT_ISLAND_SIGNS) * 2 > roads.MAX_NODES ||
+       project.road_graph.edge_count + len(DEFAULT_ISLAND_SIGNS) > roads.MAX_EDGES {
+        return false
+    }
+    half_extent := f32(WORLD_SIZE_METERS * .5)
+    runway_half_length := half_extent * DEFAULT_RUNWAY_HALF_LENGTH
+    runway_width := half_extent * DEFAULT_RUNWAY_HALF_WIDTH * 2
+    for sign in DEFAULT_ISLAND_SIGNS {
+        center := sign * half_extent * DEFAULT_ISLAND_OFFSET
+        runway_height := sample_height(project, 0, center, center)
+        from := roads.add_node(
+            &project.road_graph,
+            {x = center - runway_half_length, y = runway_height, z = center},
+            0,
+        )
+        to := roads.add_node(
+            &project.road_graph,
+            {x = center + runway_half_length, y = runway_height, z = center},
+            0,
+        )
+        if from < 0 ||
+           to < 0 ||
+           roads.add_straight_edge(&project.road_graph, from, to, runway_width, 2, .Asphalt) < 0 {
+            return false
+        }
+    }
     return true
 }
 
@@ -228,6 +270,7 @@ init_project :: proc(result: ^Project) {
             }
         }
     }
+    _ = add_default_runways(result)
 }
 
 snap_to_grid :: proc(value, grid: f32) -> f32 {
