@@ -401,6 +401,7 @@ check: doctor
 	$(ODIN) check packages/machines $(ZELDA_ENGINE_COLLECTION) -no-entry-point
 	$(ODIN) check packages/terrain $(ZELDA_ENGINE_COLLECTION) -no-entry-point
 	$(ODIN) check packages/postale $(ZELDA_ENGINE_COLLECTION) -no-entry-point
+	$(ODIN) check packages/libellula $(ZELDA_ENGINE_COLLECTION) -no-entry-point
 	$(ODIN) check packages/atmosphere $(ZELDA_ENGINE_COLLECTION) -no-entry-point
 
 test: doctor

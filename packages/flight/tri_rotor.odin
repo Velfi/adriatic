@@ -111,7 +111,12 @@ step_tri_rotor :: proc(
         state.basis.up,
         {y = 1},
     ); local_level := world_to_local(state.basis, level_axis); damping := airframe.angular_damping; pitch_moment := command.pitch * airframe.attitude_torque - local_rate.x * damping; roll_moment := command.roll * airframe.attitude_torque - local_rate.z * damping
-    if runtime.auto_level { pitch_moment = local_level.x * airframe.leveling_strength * 2.5 - local_rate.x * damping * 1.4; roll_moment = local_level.z * airframe.leveling_strength * 2.5 - local_rate.z * damping * 1.4 }
+    if runtime.auto_level {
+        // Preserve commanded cyclic authority while returning released axes to
+        // level. Previously auto-level replaced both pilot inputs entirely.
+        pitch_moment += local_level.x * airframe.leveling_strength * 2.5 * (1 - math.abs(command.pitch))
+        roll_moment += local_level.z * airframe.leveling_strength * 2.5 * (1 - math.abs(command.roll))
+    }
     solution := solve_tri_rotor(
         collective,
         pitch_moment * authority,

@@ -42,7 +42,7 @@ imgui_create_descriptor_pool :: proc(ctx: ^engine.Vk_Context) -> vk.DescriptorPo
     return pool
 }
 
-imgui_init :: proc(pass: ^rl.World_Pass_Context) -> bool {
+imgui_init :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
     if imgui.initialized do return true
     imgui.ctx = im.CreateContext()
     if imgui.ctx == nil do return false
@@ -106,7 +106,7 @@ imgui_add_key :: proc(key: im.Key, canvas_key: rl.KeyboardKey) {
     im.IO_AddKeyEvent(imgui.io, key, rl.IsKeyDown(canvas_key))
 }
 
-imgui_begin_frame :: proc(pass: ^rl.World_Pass_Context) -> bool {
+imgui_begin_frame :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
     if !imgui_init(pass) do return false
 
     now := rl.GetTime()
@@ -163,10 +163,15 @@ imgui_draw :: proc(editor: ^Editor) {
     if imgui.show_demo do im.ShowDemoWindow(&imgui.show_demo)
 }
 
-imgui_render :: proc(pass: ^rl.World_Pass_Context, editor: ^Editor) {
-    imgui_draw(editor)
-    im.Render()
-    imgui_vk.RenderDrawData(im.GetDrawData(), pass.frame.command_buffer)
+imgui_render :: proc(pass: ^rl.Ui_Pass_Context, editor: ^Editor) {
+	imgui_draw(editor)
+	im.Render()
+	imgui_vk.RenderDrawData(im.GetDrawData(), pass.frame.command_buffer)
+}
+
+imgui_ui_pass :: proc(pass: ^rl.Ui_Pass_Context, _: rawptr) {
+	if !imgui_begin_frame(pass) do return
+	imgui_render(pass, world_renderer.editor)
 }
 
 imgui_destroy :: proc() {

@@ -1,8 +1,9 @@
 package terrain
 
+import roads "../roads"
+import "base:runtime"
 import "core:math"
 import "core:os"
-import "base:runtime"
 
 CLIPMAP_LEVELS :: 5
 WORLD_SIZE_METERS :: 4000.0
@@ -39,7 +40,7 @@ Formation_Kind :: enum {
 }
 
 STRUCTURE_CAPACITY :: 256
-PROJECT_FILE_VERSION :: u32(1)
+PROJECT_FILE_VERSION :: u32(4)
 PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '1'}
 
 Project_File_Header :: struct {
@@ -50,6 +51,7 @@ Project_File_Header :: struct {
 
 Structure :: struct {
     id:       u64,
+    group_id: u64,
     center_x: f32,
     center_z: f32,
     width:    f32,
@@ -75,6 +77,7 @@ Project :: struct {
     structures:        [STRUCTURE_CAPACITY]Structure,
     structure_count:   int,
     next_structure_id: u64,
+    road_graph:        roads.Graph,
 }
 
 project_file_header_valid :: proc(header: ^Project_File_Header) -> bool {
@@ -186,6 +189,17 @@ formation_kind_for_gesture :: proc(width, depth, height: f32) -> Formation_Kind 
     return .Rock
 }
 
+formation_segments_can_merge :: proc(start_x, start_z, joint_x, joint_z, end_x, end_z, minimum_cosine: f32) -> bool {
+    first_x, first_z := joint_x - start_x, joint_z - start_z
+    second_x, second_z := end_x - joint_x, end_z - joint_z
+    first_length_squared := first_x * first_x + first_z * first_z
+    second_length_squared := second_x * second_x + second_z * second_z
+    if first_length_squared <= 0 || second_length_squared <= 0 do return false
+    inverse_lengths := 1 / f32(math.sqrt(f64(first_length_squared * second_length_squared)))
+    cosine := (first_x * second_x + first_z * second_z) * inverse_lengths
+    return cosine >= minimum_cosine
+}
+
 structure_contains_point :: proc(structure: Structure, x, z: f32) -> bool {
     dx, dz := x - structure.center_x, z - structure.center_z
     cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
@@ -207,6 +221,7 @@ add_structure :: proc(project: ^Project, structure: Structure) -> int {
     value := structure
     value.id = project.next_structure_id
     project.next_structure_id += 1
+    if value.group_id == 0 do value.group_id = value.id
     value.seed = u32(value.id * 747796405)
     project.structures[project.structure_count] = value
     index := project.structure_count
@@ -228,6 +243,7 @@ remove_structure :: proc(project: ^Project, index: int) -> bool {
 duplicate_structure :: proc(project: ^Project, index: int, offset_x, offset_z: f32) -> int {
     if project == nil || index < 0 || index >= project.structure_count do return -1
     copy := project.structures[index]
+    copy.group_id = 0
     copy.center_x += offset_x
     copy.center_z += offset_z
     return add_structure(project, copy)

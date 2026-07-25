@@ -98,7 +98,9 @@ postale_airframe :: proc() -> Airframe {
         post_stall_angle_degrees = 32,
         post_stall_lift_coefficient = .55,
         induced_drag_factor = .045,
-        trim_angle_of_attack_degrees = 8,
+        // Keep neutral cruise lift near level flight; the wing incidence and
+        // Postale lift multiplier already provide ample takeoff authority.
+        trim_angle_of_attack_degrees = 1.5,
         pitch_stability = 145000,
         pitch_damping = 27500,
         roll_stability = 24000,

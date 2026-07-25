@@ -13,7 +13,8 @@ aircraft_fleet_switches_only_to_available_slots :: proc(t: ^testing.T) {
 	testing.expect(t, !vehicles.aircraft_fleet_switch(&fleet, .Libellula))
 	testing.expect(t, fleet.active == .Postale)
 	libellula_slot := vehicles.aircraft_fleet_slot(&fleet, .Libellula)
-	libellula_slot.available = true
+	testing.expect(t, vehicles.aircraft_fleet_unlock(&fleet, .Libellula))
+	testing.expect(t, libellula_slot.available)
 	testing.expect(t, vehicles.aircraft_fleet_switch(&fleet, .Libellula))
 	testing.expect(t, vehicles.aircraft_fleet_active(&fleet).vehicle == &libellula)
 }

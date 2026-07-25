@@ -1,5 +1,6 @@
 package tests
 
+import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
 import "core:os"
@@ -32,7 +33,10 @@ terrain_brush_hardness_controls_edge_falloff :: proc(t: ^testing.T) {
     center := terrain.BASE_CELL_SIZE * .5
     terrain.apply_stroke_with_hardness(soft, .Raise, center, center, 100, 1, 1, 0)
     terrain.apply_stroke_with_hardness(hard, .Raise, center, center, 100, 1, 1, 1)
-    testing.expect(t, terrain.sample_height(hard, 0, center + 50, center) > terrain.sample_height(soft, 0, center + 50, center))
+    testing.expect(
+        t,
+        terrain.sample_height(hard, 0, center + 50, center) > terrain.sample_height(soft, 0, center + 50, center),
+    )
     testing.expect(t, terrain.sample_height(soft, 0, center, center) == terrain.sample_height(hard, 0, center, center))
 }
 
@@ -47,12 +51,20 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
     terrain.apply_stroke_with_hardness(source, .Raise, 0, 0, 100, 1, 1, .8)
     terrain.apply_stroke_with_hardness(source, .Paint, 0, 0, 100, 1, 1, .8)
     terrain.add_structure(source, terrain.structure_make(20, -30, 40, 50, 0, 60))
+    road_a := roads.add_node(&source.road_graph, {0, 2, 0})
+    road_b := roads.add_node(&source.road_graph, {40, 3, 20})
+    roads.add_straight_edge(&source.road_graph, road_a, road_b, 7, 1, .Cobblestone)
     testing.expect(t, terrain.save_project(source, path))
     testing.expect(t, terrain.load_project(loaded, path))
     testing.expect(t, terrain.sample_height(loaded, 0, 0, 0) == terrain.sample_height(source, 0, 0, 0))
     testing.expect(t, terrain.sample_material(loaded, 0, 0, 0) == terrain.sample_material(source, 0, 0, 0))
     testing.expect(t, loaded.structure_count == 1)
     testing.expect(t, loaded.structures[0].height == source.structures[0].height)
+    testing.expect(t, loaded.structures[0].group_id == source.structures[0].group_id)
+    testing.expect(t, loaded.road_graph.node_count == 2)
+    testing.expect(t, loaded.road_graph.edge_count == 1)
+    testing.expect(t, loaded.road_graph.nodes[1].position == source.road_graph.nodes[1].position)
+    testing.expect(t, loaded.road_graph.edges[0].pavement == .Cobblestone)
 }
 
 @(test)
@@ -197,6 +209,16 @@ formation_gesture_selects_useful_profiles :: proc(t: ^testing.T) {
     testing.expect(t, terrain.formation_kind_for_gesture(cell * 2, cell * 2, cell * 5) == .Spire)
     testing.expect(t, terrain.formation_kind_for_gesture(cell * 4, cell * 4, cell * 5) == .Mountain)
     testing.expect(t, terrain.formation_kind_for_gesture(cell * 4, cell * 4, cell * 2) == .Rock)
+}
+
+@(test)
+formation_segments_merge_only_across_similar_angles :: proc(t: ^testing.T) {
+    minimum_cosine := f32(0.9961947)
+    testing.expect(t, terrain.formation_segments_can_merge(0, 0, 10, 0, 20, 0, minimum_cosine))
+    testing.expect(t, terrain.formation_segments_can_merge(0, 0, 10, 0, 20, .5, minimum_cosine))
+    testing.expect(t, !terrain.formation_segments_can_merge(0, 0, 10, 0, 20, 2, minimum_cosine))
+    testing.expect(t, !terrain.formation_segments_can_merge(0, 0, 10, 0, 10, 10, minimum_cosine))
+    testing.expect(t, !terrain.formation_segments_can_merge(0, 0, 0, 0, 10, 0, minimum_cosine))
 }
 
 @(test)

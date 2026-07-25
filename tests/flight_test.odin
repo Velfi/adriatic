@@ -1,6 +1,7 @@
 package tests
 
 import flight "../packages/flight"
+import libellula "../packages/libellula"
 import "core:testing"
 
 @(test)
@@ -66,4 +67,41 @@ libellula_rotors_allocate_collective :: proc(t: ^testing.T) {
         1.0 / 60.0,
     )
     testing.expect(t, telemetry.total_thrust > airframe.mass_kg * 9.81 && state.velocity.y > 0)
+}
+
+@(test)
+libellula_runtime_takes_off_and_syncs_occupancy_vehicle :: proc(t: ^testing.T) {
+    ground := f32(10)
+    runtime := libellula.new_runtime({x = 4, y = ground + libellula.GROUND_CLEARANCE, z = 7})
+    for _ in 0 ..< 240 {
+        libellula.step(&runtime, {throttle_up = true}, ground, 1.0 / 60.0)
+    }
+    testing.expect(t, !runtime.grounded)
+    testing.expect(t, runtime.body.position.y > ground + libellula.GROUND_CLEARANCE + 1)
+    testing.expect(t, runtime.vehicle.position == libellula.to_third_person(runtime.body.position))
+    testing.expect(t, runtime.telemetry.total_thrust > runtime.airframe.mass_kg * 9.7)
+    testing.expect(t, runtime.rotor_turns.x > 0 && runtime.rotor_turns.y > 0 && runtime.rotor_turns.z > 0)
+}
+
+@(test)
+libellula_runtime_resolves_ground_and_allows_safe_exit :: proc(t: ^testing.T) {
+    ground := f32(3)
+    runtime := libellula.new_runtime({y = ground + libellula.GROUND_CLEARANCE})
+    libellula.step(&runtime, {}, ground, 1.0 / 60.0)
+    testing.expect(t, runtime.grounded)
+    testing.expect(t, runtime.body.position.y == ground + libellula.GROUND_CLEARANCE)
+    testing.expect(t, libellula.can_exit(&runtime))
+}
+
+@(test)
+libellula_auto_level_preserves_pilot_cyclic_input :: proc(t: ^testing.T) {
+    state := flight.Body_State {
+        position = {y = 50},
+        basis = flight.identity_basis(),
+    }
+    runtime := flight.default_tri_rotor_runtime()
+    for _ in 0 ..< 30 {
+        flight.step_tri_rotor(&state, {throttle = .7, pitch = 1}, flight.libellula_airframe(), runtime, 1.0 / 60.0)
+    }
+    testing.expect(t, state.basis.forward.y != 0)
 }

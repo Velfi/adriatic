@@ -41,6 +41,16 @@ aircraft_fleet_active :: proc(fleet: ^Aircraft_Fleet) -> ^Aircraft_Slot {
 	return aircraft_fleet_slot(fleet, fleet.active)
 }
 
+// Unlocking is explicit so product interactions such as talking to an
+// attendant can grant access without weakening aircraft_fleet_switch's
+// availability check.
+aircraft_fleet_unlock :: proc(fleet: ^Aircraft_Fleet, kind: Aircraft_Kind) -> bool {
+	slot := aircraft_fleet_slot(fleet, kind)
+	if slot == nil do return false
+	slot.available = true
+	return true
+}
+
 // Selection is deliberately separate from entering. Marta can unlock a slot
 // while the pilot is on foot; the caller then performs the actual occupancy
 // transition and camera reset.

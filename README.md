@@ -16,11 +16,14 @@ dependency and is imported through the `zelda_engine` collection.
 
 ## Flight model
 
-`packages/flight` contains the deterministic fixed-wing model ported from
-ArchipelagoGame. It owns vector and orientation math, aerodynamic forces,
-propeller thrust, stall behavior, airflow-scaled control surfaces, and passive
-airframe stability. The calling game owns collision, water interaction, input,
-audio, visuals, damage, and AI policy.
+`packages/flight` contains the deterministic fixed-wing and Libellula tri-rotor
+models. It owns vector and orientation math, aerodynamic forces, propeller and
+rotor thrust, stall behavior, control authority, and passive stability.
+`packages/postale` and `packages/libellula` add the product-facing terrain
+contact, occupancy synchronization, control smoothing, and presentation state.
+The calling game still owns input, audio, visuals, damage, and AI policy.
+Libellula's assisted collective maps Shift to climb and Ctrl to descend; releasing
+both holds a hover while its cyclic assist levels the airframe and damps drift.
 
 ## Third-person controller
 
@@ -66,6 +69,34 @@ stages with `make shaders`.
 The executable is now a clipmap terrain lab. It edits a five-level height and
 material hierarchy over an infinite ocean plane: sculpt, smooth, and paint the
 island with the mouse while the colored rings show the nested terrain levels.
+
+## Spline road networks
+
+`packages/roads` defines a renderer-independent 3D road graph. Nodes carry
+position, up direction, and junction radius; cubic Bézier edges carry their two
+control points, road width, and shoulder width. `roads.bake` adaptively sweeps
+the edge profiles, trims them at shared nodes, and emits one angle-sorted cap
+per junction, producing a single indexed mesh with road, shoulder, and junction
+surface tags. The result owns dynamic vertex and index arrays and should be
+released with `roads.mesh_destroy`.
+
+The terrain lab exposes this as **ROADS [M]**. Click empty terrain to start or
+extend a chain, click an existing node to connect or branch, and drag the cyan
+control handles to shape each Bézier edge. The wheel changes new-road width;
+Shift+wheel changes the selected junction radius, right-click ends the current
+chain, and Backspace removes the selected junction. Press K to cycle asphalt,
+gravel, cobblestone, and dirt for new roads or every edge attached to the
+selected junction. Different surfaces can meet inside one welded network.
+Road graphs participate in project save/load and formation undo/redo.
+
+```odin
+graph: roads.Graph
+a := roads.add_node(&graph, {0, 2, 0})
+b := roads.add_node(&graph, {40, 6, 20})
+roads.add_edge(&graph, a, b, {12, 3, 0}, {28, 5, 20}, 7)
+mesh := roads.bake(&graph)
+defer roads.mesh_destroy(&mesh)
+```
 
 ## Quick start
 

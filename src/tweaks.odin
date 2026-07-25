@@ -376,6 +376,7 @@ tweak_apply_to_editor :: proc(editor: ^Editor) {
     if editor.tool != .Structure {
         editor.architecture_node_mode = false
         editor.architecture_paint_mode = false
+        editor.road_mode = false
         editor.curve_mode = false
         curve_reset(editor)
         editor.structure_placing = false
@@ -430,14 +431,16 @@ tweak_drag_f32 :: proc(label: cstring, value: ^f32, lower, upper, speed: f32) ->
 
 terrain_panel_select_brush :: proc(editor: ^Editor, tool: terrain.Tool) {
     if editor == nil do return
-    editor.tool = tool
-    editor.tweak.terrain.tool = tool
-    editor.architecture_node_mode = false
-    editor.architecture_paint_mode = false
-    editor.curve_mode = false
-    curve_reset(editor)
-    editor.structure_placing = false
-    editor.structure_moving = false
+    switch tool {
+    case .Raise:
+        authoring_select_tool(editor, .Sculpt)
+    case .Smooth:
+        authoring_select_tool(editor, .Smooth)
+    case .Paint:
+        authoring_select_tool(editor, .Paint)
+    case .Structure:
+        authoring_select_tool(editor, .Formations)
+    }
 }
 
 terrain_panel_undo :: proc(editor: ^Editor) {
@@ -471,10 +474,35 @@ tweak_draw_terrain :: proc(editor: ^Editor) {
     im.SameLine()
     if im.RadioButton("Paint", state.tool == .Paint) do terrain_panel_select_brush(editor, .Paint)
     im.SameLine()
-    if im.RadioButton("Formations", state.tool == .Structure) do terrain_panel_select_brush(editor, .Structure)
+    if im.RadioButton("Formations", state.tool == .Structure && !editor.road_mode) do terrain_panel_select_brush(editor, .Structure)
+    im.SameLine()
+    if im.RadioButton("Roads", editor.road_mode) {
+        authoring_select_tool(editor, .Roads)
+    }
     if state.tool == .Structure {
-        im.TextDisabled("LMB places/selects; RMB makes cliffs; Esc cancels")
-        im.TextDisabled("Wheel height; Shift+wheel size; R rotates; Ctrl+D duplicates")
+        if editor.road_mode {
+            im.TextDisabled("LMB adds/connects nodes; drag handles curves; RMB ends chain")
+            im.TextDisabled("K cycles surface; wheel width; Shift+wheel radius; Backspace deletes")
+            im.TextUnformatted("Surface")
+            if im.RadioButton("Asphalt", editor.road_pavement == .Asphalt) {
+                road_set_pavement(editor, .Asphalt)
+            }
+            im.SameLine()
+            if im.RadioButton("Gravel", editor.road_pavement == .Gravel) {
+                road_set_pavement(editor, .Gravel)
+            }
+            im.SameLine()
+            if im.RadioButton("Cobblestone", editor.road_pavement == .Cobblestone) {
+                road_set_pavement(editor, .Cobblestone)
+            }
+            im.SameLine()
+            if im.RadioButton("Dirt", editor.road_pavement == .Dirt) {
+                road_set_pavement(editor, .Dirt)
+            }
+        } else {
+            im.TextDisabled("LMB places/selects; RMB makes cliffs; Esc cancels")
+            im.TextDisabled("Wheel height; Shift+wheel size; R rotates; Ctrl+D duplicates")
+        }
         im.TextDisabled("Ctrl+Z/Y undoes or redoes formation edits")
     } else {
         tweak_drag_f32("Radius", &state.radius, terrain.BASE_CELL_SIZE, 400, 1)

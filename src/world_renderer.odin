@@ -4,6 +4,7 @@ import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import particles "../packages/particles"
 import render_graph "../packages/render_graph"
+import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
@@ -14,7 +15,7 @@ import rl "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
 import render3d "zelda_engine:render3d"
 
-WORLD_VERTEX_CAPACITY :: 32_000
+WORLD_VERTEX_CAPACITY :: 320_000
 CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
 CLIPMAP_VERTEX_COUNT :: CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLUTION - 1) * 6
@@ -23,6 +24,9 @@ CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLU
 // clipmap already provides this coverage; these values prevent the camera
 // projection, fog, and ocean fallback from hiding it prematurely.
 WORLD_FAR_CLIP :: f32(12000)
+WORLD_PLAY_NEAR_CLIP :: f32(.08)
+WORLD_FLIGHT_NEAR_CLIP :: f32(.5)
+WORLD_EDITOR_NEAR_CLIP :: f32(100)
 WORLD_FOG_START :: f32(4500)
 WORLD_FOG_END :: f32(11000)
 
@@ -57,12 +61,15 @@ World_Renderer :: struct {
     editor:               ^Editor,
     ctx:                  ^engine.Vk_Context,
     pipelines:            [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    road_pipelines:       [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     sky_pipelines:        [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     particle_pipelines:   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     layout:               vk.PipelineLayout,
     sky_layout:           vk.PipelineLayout,
     vertex:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    road_vertex:          [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vertices:             [dynamic]World_Vertex,
+    road_vertices:        [dynamic]World_Vertex,
     clipmap_vertex:       [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
     clipmap_index:        engine.Vk_Buffer,
     clipmap_full_indices: u32,
@@ -71,6 +78,8 @@ World_Renderer :: struct {
     clipmap_revision:     [engine.MAX_FRAMES_IN_FLIGHT]u64,
     clipmap_center:       [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
     clipmap_valid:        [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
+    road_mesh:            roads.Mesh,
+    road_revision:        u64,
     initialized:          bool,
 }
 
@@ -142,10 +151,109 @@ world_water_quad :: proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
     )
 }
 
+road_world_point :: proc(editor: ^Editor, vertex: roads.Vertex) -> third_person.Vec3 {
+    clearance := vertex.surface == .Shoulder ? f32(.05) : f32(.12)
+    terrain_y := terrain.sample_height(&editor.project, 0, vertex.position.x, vertex.position.z)
+    return {vertex.position.x, max(vertex.position.y, terrain_y + clearance), vertex.position.z}
+}
+
+road_surface_color :: proc(surface: roads.Surface, pavement: roads.Pavement) -> rl.Color {
+    if surface == .Shoulder {
+        switch pavement {
+        case .Asphalt:
+            return {145, 137, 117, 255}
+        case .Gravel:
+            return {174, 158, 128, 255}
+        case .Cobblestone:
+            return {143, 143, 134, 255}
+        case .Dirt:
+            return {113, 82, 57, 255}
+        }
+    }
+    switch pavement {
+    case .Asphalt:
+        return surface == .Junction ? rl.Color{70, 75, 73, 255} : rl.Color{75, 79, 77, 255}
+    case .Gravel:
+        return {145, 132, 107, 255}
+    case .Cobblestone:
+        return {105, 116, 116, 255}
+    case .Dirt:
+        return {143, 94, 58, 255}
+    }
+    return {75, 79, 77, 255}
+}
+
+world_road_editor_link :: proc(a, b: roads.Vec3, width: f32, color: rl.Color) {
+    dx, dz := b.x - a.x, b.z - a.z
+    length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    if length <= .001 do return
+    side_x, side_z := -dz / length * width * .5, dx / length * width * .5
+    lift := f32(.12)
+    world_quad(
+        {a.x - side_x, a.y + lift, a.z - side_z},
+        {b.x - side_x, b.y + lift, b.z - side_z},
+        {b.x + side_x, b.y + lift, b.z + side_z},
+        {a.x + side_x, a.y + lift, a.z + side_z},
+        color,
+    )
+}
+
+world_road_triangle_colored :: proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
+    if len(world_renderer.road_vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    append(&world_renderer.road_vertices, world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c))
+}
+
+world_roads :: proc(editor: ^Editor) {
+    if editor == nil do return
+    graph := &editor.project.road_graph
+    if world_renderer.road_revision != editor.project.revision {
+        roads.mesh_destroy(&world_renderer.road_mesh)
+        if graph.edge_count > 0 do world_renderer.road_mesh = roads.bake(graph)
+        world_renderer.road_revision = editor.project.revision
+    }
+    mesh := &world_renderer.road_mesh
+    if len(mesh.indices) > 0 {
+        for triangle in 0 ..< len(mesh.indices) / 3 {
+            a := mesh.vertices[mesh.indices[triangle * 3]]
+            b := mesh.vertices[mesh.indices[triangle * 3 + 1]]
+            c := mesh.vertices[mesh.indices[triangle * 3 + 2]]
+            world_road_triangle_colored(
+                road_world_point(editor, a),
+                road_world_point(editor, b),
+                road_world_point(editor, c),
+                road_surface_color(a.surface, a.pavement),
+                road_surface_color(b.surface, b.pavement),
+                road_surface_color(c.surface, c.pavement),
+            )
+        }
+    }
+    if editor.in_map || !editor.road_mode do return
+    for node, index in graph.nodes[:graph.node_count] {
+        selected := index == editor.road_selected_node
+        color: rl.Color = selected ? {244, 216, 103, 255} : {101, 226, 203, 255}
+        size := selected ? f32(4.5) : f32(3.2)
+        world_box({node.position.x, node.position.y + 1.3, node.position.z}, {size, 2.6, size}, color)
+    }
+    if editor.road_selected_node < 0 || editor.road_selected_node >= graph.node_count do return
+    for edge in graph.edges[:graph.edge_count] {
+        if edge.from != editor.road_selected_node && edge.to != editor.road_selected_node do continue
+        start := graph.nodes[edge.from].position
+        end := graph.nodes[edge.to].position
+        world_road_editor_link(start, edge.control_from, .75, {76, 196, 191, 230})
+        world_road_editor_link(end, edge.control_to, .75, {76, 196, 191, 230})
+        world_box(
+            {edge.control_from.x, edge.control_from.y + 1.1, edge.control_from.z},
+            {3, 2.2, 3},
+            {83, 232, 225, 255},
+        )
+        world_box({edge.control_to.x, edge.control_to.y + 1.1, edge.control_to.z}, {3, 2.2, 3}, {83, 232, 225, 255})
+    }
+}
+
 world_ocean :: proc(editor: ^Editor) {
     camera := perspective_camera(
         editor.camera_pose,
-        editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     extent := editor.in_map ? f32(12000) : f32(15000)
     divisions := editor.in_map ? 48 : 32
@@ -373,18 +481,14 @@ world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, ro
 }
 
 world_shadow_fade :: proc(color: rl.Color, factor: f32) -> rl.Color {
-    return {
-        color.r,
-        color.g,
-        color.b,
-        u8(clamp(f32(color.a) * factor, 0, 255)),
-    }
+    return {color.r, color.g, color.b, u8(clamp(f32(color.a) * factor, 0, 255))}
 }
 
 world_structure_shadow_layer :: proc(
     structure: terrain.Structure,
     project: ^terrain.Project,
     offset_x, offset_z, footprint_scale: f32,
+    lift: f32,
     shadow: rl.Color,
 ) {
     local_corners := [4][2]f32 {
@@ -405,10 +509,10 @@ world_structure_shadow_layer :: proc(
             local_corners[index][1],
             structure.rotation,
         )
-        base[index] = {x, terrain.sample_height(project, 0, x, z) + .035, z}
+        base[index] = {x, terrain.sample_height(project, 0, x, z) + lift, z}
         projected[index] = {
             x + offset_x,
-            terrain.sample_height(project, 0, x + offset_x, z + offset_z) + .035,
+            terrain.sample_height(project, 0, x + offset_x, z + offset_z) + lift,
             z + offset_z,
         }
         if projected[index].y > land_threshold do projected_land = true
@@ -433,21 +537,10 @@ world_structure_shadow_layer :: proc(
     if projected_land {
         center_x := (projected[0].x + projected[1].x + projected[2].x + projected[3].x) * .25
         center_z := (projected[0].z + projected[1].z + projected[2].z + projected[3].z) * .25
-        center := third_person.Vec3 {
-            center_x,
-            terrain.sample_height(project, 0, center_x, center_z) + .035,
-            center_z,
-        }
+        center := third_person.Vec3{center_x, terrain.sample_height(project, 0, center_x, center_z) + lift, center_z}
         for index in 0 ..< 4 {
             next := (index + 1) % 4
-            world_triangle_colored(
-                projected[index],
-                projected[next],
-                center,
-                far_shadow,
-                far_shadow,
-                shadow,
-            )
+            world_triangle_colored(projected[index], projected[next], center, far_shadow, far_shadow, shadow)
         }
     }
 }
@@ -461,9 +554,7 @@ world_structure_shadow :: proc(
     daylight := clamp(sun_direction[1], 0, 1)
     if daylight <= .08 do return
 
-    horizontal_length := f32(math.sqrt(f64(
-        sun_direction[0] * sun_direction[0] + sun_direction[2] * sun_direction[2],
-    )))
+    horizontal_length := f32(math.sqrt(f64(sun_direction[0] * sun_direction[0] + sun_direction[2] * sun_direction[2])))
     if horizontal_length <= .01 do return
     shadow_height := structure.height
     if structure.kind == .Architecture {
@@ -485,38 +576,24 @@ world_structure_shadow :: proc(
     shadow_visibility := 1 - cloud * .72
     outer_alpha := u8(clamp((24 + daylight * 24) * (1 + cloud * .65), 24, 62))
     inner_alpha := u8(clamp((64 + daylight * 46) * shadow_visibility, 18, 110))
-    world_structure_shadow_layer(
-        structure,
-        project,
-        0,
-        0,
-        1.02,
-        {30, 47, 44, inner_alpha},
-    )
+    // Draw the broad penumbra first. Each layer gets a small, increasing lift
+    // above the terrain so the translucent passes never fight for the same
+    // depth value on flat ground or at the cap of a shadow.
     world_structure_shadow_layer(
         structure,
         project,
         offset_x * 1.08,
         offset_z * 1.08,
         1.16,
-        {38, 56, 53, outer_alpha},
+        .035,
+        {50, 45, 40, outer_alpha},
     )
-    world_structure_shadow_layer(
-        structure,
-        project,
-        offset_x,
-        offset_z,
-        1,
-        {35, 53, 50, inner_alpha},
-    )
+    world_structure_shadow_layer(structure, project, offset_x, offset_z, 1, .055, {45, 40, 36, inner_alpha})
+    world_structure_shadow_layer(structure, project, 0, 0, 1.02, .075, {40, 36, 33, inner_alpha})
 }
 
 world_roof_lerp :: proc(a, b: third_person.Vec3, fraction: f32) -> third_person.Vec3 {
-    return {
-        a.x + (b.x - a.x) * fraction,
-        a.y + (b.y - a.y) * fraction,
-        a.z + (b.z - a.z) * fraction,
-    }
+    return {a.x + (b.x - a.x) * fraction, a.y + (b.y - a.y) * fraction, a.z + (b.z - a.z) * fraction}
 }
 
 world_roof_raise :: proc(point: third_person.Vec3, amount: f32) -> third_person.Vec3 {
@@ -561,11 +638,7 @@ world_architecture_tile_slope :: proc(
     }
 }
 
-world_architecture_tile_face :: proc(
-    edge_a, edge_b, ridge: third_person.Vec3,
-    courses, segments: int,
-    seed: u32,
-) {
+world_architecture_tile_face :: proc(edge_a, edge_b, ridge: third_person.Vec3, courses, segments: int, seed: u32) {
     world_architecture_tile_slope(edge_a, edge_b, ridge, ridge, courses, segments, seed)
 }
 
@@ -701,12 +774,12 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
     wall_front_right := third_person.Vec3{wall_right_front_x, eave_y, wall_right_front_z}
     wall_back_left := third_person.Vec3{wall_left_back_x, eave_y, wall_left_back_z}
     wall_back_right := third_person.Vec3{wall_right_back_x, eave_y, wall_right_back_z}
-    wall_front_apex := third_person.Vec3{
+    wall_front_apex := third_person.Vec3 {
         wall_left_front_x + (wall_right_front_x - wall_left_front_x) * .5,
         eave_y + rise,
         wall_left_front_z + (wall_right_front_z - wall_left_front_z) * .5,
     }
-    wall_back_apex := third_person.Vec3{
+    wall_back_apex := third_person.Vec3 {
         wall_left_back_x + (wall_right_back_x - wall_left_back_x) * .5,
         eave_y + rise,
         wall_left_back_z + (wall_right_back_z - wall_left_back_z) * .5,
@@ -756,12 +829,44 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
 
     courses := clamp(int(structure.width / 5.5), 4, 7)
     segments := clamp(int(structure.depth / 7), 3, 6)
-    world_architecture_tile_slope(left_front, left_back, ridge_front, ridge_back, courses, segments, structure.seed + 3)
-    world_architecture_tile_slope(right_back, right_front, ridge_back, ridge_front, courses, segments, structure.seed + 17)
+    world_architecture_tile_slope(
+        left_front,
+        left_back,
+        ridge_front,
+        ridge_back,
+        courses,
+        segments,
+        structure.seed + 3,
+    )
+    world_architecture_tile_slope(
+        right_back,
+        right_front,
+        ridge_back,
+        ridge_front,
+        courses,
+        segments,
+        structure.seed + 17,
+    )
     if roof_style == .Hip {
         side_courses := clamp(int(structure.depth / 5), 3, 5)
-        world_architecture_tile_slope(left_front, right_front, ridge_front, ridge_front, side_courses, 2, structure.seed + 29)
-        world_architecture_tile_slope(right_back, left_back, ridge_back, ridge_back, side_courses, 2, structure.seed + 41)
+        world_architecture_tile_slope(
+            left_front,
+            right_front,
+            ridge_front,
+            ridge_front,
+            side_courses,
+            2,
+            structure.seed + 29,
+        )
+        world_architecture_tile_slope(
+            right_back,
+            left_back,
+            ridge_back,
+            ridge_back,
+            side_courses,
+            2,
+            structure.seed + 41,
+        )
     }
     if !landmark && roof_style != .Parapet && architecture.architecture_has_chimney(structure.seed) {
         chimney_local_x := roof_style == .Hip ? structure.width * .12 : structure.width * .22
@@ -843,8 +948,8 @@ world_architecture :: proc(structure: terrain.Structure) {
     // Dark inset windows and red shutters give the generated blocks a readable
     // Adriatic façade even at the editor's wide camera distance.
     window := facade_style == 2 ? rl.Color{42, 74, 82, 255} : rl.Color{48, 62, 64, 255}
-    shutter := facade_style == 2 ? rl.Color{43, 102, 126, 255} :
-        facade_style == 3 ? rl.Color{236, 218, 179, 255} : rl.Color{167, 61, 53, 255}
+    shutter :=
+        facade_style == 2 ? rl.Color{43, 102, 126, 255} : facade_style == 3 ? rl.Color{236, 218, 179, 255} : rl.Color{167, 61, 53, 255}
     rows := landmark ? 4 : architecture.facade_floor_count(structure.height)
     columns := landmark ? 1 : 2
     if !landmark {
@@ -855,8 +960,8 @@ world_architecture :: proc(structure: terrain.Structure) {
             structure.depth * .5 + .18,
             structure.rotation,
         )
-        door := facade_style == 2 ? rl.Color{54, 91, 99, 255} :
-            facade_style == 3 ? rl.Color{109, 75, 57, 255} : rl.Color{92, 66, 57, 255}
+        door :=
+            facade_style == 2 ? rl.Color{54, 91, 99, 255} : facade_style == 3 ? rl.Color{109, 75, 57, 255} : rl.Color{92, 66, 57, 255}
         world_box_rotated(
             {door_x, structure.base_y + structure.height * .14, door_z},
             {structure.width * .18, structure.height * .24, .24},
@@ -870,9 +975,8 @@ world_architecture :: proc(structure: terrain.Structure) {
             structure.depth * .5 + .28,
             structure.rotation,
         )
-        step_color := facade_style == 2 ? rl.Color{103, 130, 125, 255} :
-            facade_style == 3 ? rl.Color{178, 127, 88, 255} :
-            rl.Color{178, 127, 88, 255}
+        step_color :=
+            facade_style == 2 ? rl.Color{103, 130, 125, 255} : facade_style == 3 ? rl.Color{178, 127, 88, 255} : rl.Color{178, 127, 88, 255}
         world_box_rotated(
             {step_x, structure.base_y + structure.height * .035, step_z},
             {structure.width * .24, .20, .42},
@@ -1380,12 +1484,7 @@ world_architecture_cypress :: proc(x, z, base_y: f32, seed: u32) {
     tree := terrain.structure_make(x, z, 6.5, 6.5, base_y, 21)
     tree.seed = seed
     tree.color = {45, 93, 59, 255}
-    world_box_rotated(
-        {x, base_y + 2.0, z},
-        {1.0, 4.0, 1.0},
-        0,
-        {108, 78, 48, 255},
-    )
+    world_box_rotated({x, base_y + 2.0, z}, {1.0, 4.0, 1.0}, 0, {108, 78, 48, 255})
     world_radial_formation(tree, {1, .68, .36, .08}, {0, .28, .58, .92}, .90, 1)
 }
 
@@ -1411,28 +1510,13 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     shoulder := rl.Color{177, 164, 135, 255}
     for lane in 1 ..= 2 {
         lane_z := min_z + (max_z - min_z) * f32(lane) / 3
-        world_box_rotated(
-            {center_x, base_y + .06, lane_z},
-            {road_span, .12, 5.5},
-            0,
-            road,
-        )
+        world_box_rotated({center_x, base_y + .06, lane_z}, {road_span, .12, 5.5}, 0, road)
         for side in -1 ..= 1 {
             if side == 0 do continue
-            world_box_rotated(
-                {center_x, base_y + .13, lane_z + f32(side) * 3.05},
-                {road_span, .05, .35},
-                0,
-                shoulder,
-            )
+            world_box_rotated({center_x, base_y + .13, lane_z + f32(side) * 3.05}, {road_span, .05, .35}, 0, shoulder)
         }
     }
-    world_box_rotated(
-        {center_x, base_y + .08, center_z},
-        {28, .16, 18},
-        0,
-        {151, 144, 126, 255},
-    )
+    world_box_rotated({center_x, base_y + .08, center_z}, {28, .16, 18}, 0, {151, 144, 126, 255})
     // Connect each frontage to the nearer lane so the generated streets read
     // as a walkable town rather than two unrelated strips of pavement.
     path_color := rl.Color{194, 184, 157, 255}
@@ -1507,17 +1591,17 @@ world_structures :: proc(editor: ^Editor) {
     sky := atmosphere.sample(&editor.atmosphere)
     world_architecture_streets(editor, sky.sun_direction, sky.weather.cloud_cover)
     hovered_index := -1
-    if editor.tool == .Structure && editor.cursor_hit && !editor.structure_placing && !editor.structure_moving {
-        hovered_index = terrain.structure_index_at(
-            &editor.project,
-            editor.cursor_world_x,
-            editor.cursor_world_z,
-        )
+    if editor.tool == .Structure &&
+       !editor.road_mode &&
+       editor.cursor_hit &&
+       !editor.structure_placing &&
+       !editor.structure_moving {
+        hovered_index = terrain.structure_index_at(&editor.project, editor.cursor_world_x, editor.cursor_world_z)
     }
     for index in 0 ..< editor.project.structure_count {
         structure := editor.project.structures[index]
         world_formation(structure)
-        if index == editor.structure_selected && !editor.in_map {
+        if index == editor.structure_selected && !editor.in_map && !editor.road_mode {
             world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
         } else if index == hovered_index && !editor.in_map {
             world_structure_frame(structure, structure.base_y + structure.height + .02, {168, 239, 220, 255})
@@ -1544,44 +1628,48 @@ world_structures :: proc(editor: ^Editor) {
 }
 
 world_aircraft :: proc(editor: ^Editor) {
-    mesh := vehicles.postale_mesh()
-    vehicles.animate_postale_mesh(
-        &mesh,
-        editor.postale.flap_fraction,
-        editor.flight_control.pitch,
-        editor.flight_control.roll,
-        editor.flight_control.yaw,
-        editor.postale.propeller_turns,
-    )
-    for triangle in vehicles.mesh_triangles(&mesh) {
-        a := mesh.vertices[triangle.a]
-        b := mesh.vertices[triangle.b]
-        c := mesh.vertices[triangle.c]
-        world_triangle(
-            postale_vertex_world(&editor.postale, a.position, .68),
-            postale_vertex_world(&editor.postale, b.position, .68),
-            postale_vertex_world(&editor.postale, c.position, .68),
-            aircraft_part_color(a.part),
+    if editor.postale_visible {
+        mesh := vehicles.postale_mesh()
+        vehicles.animate_postale_mesh(
+            &mesh,
+            editor.postale.flap_fraction,
+            editor.flight_control.pitch,
+            editor.flight_control.roll,
+            editor.flight_control.yaw,
+            editor.postale.propeller_turns,
         )
+        for triangle in vehicles.mesh_triangles(&mesh) {
+            a := mesh.vertices[triangle.a]
+            b := mesh.vertices[triangle.b]
+            c := mesh.vertices[triangle.c]
+            world_triangle(
+                postale_vertex_world(&editor.postale, a.position, .68),
+                postale_vertex_world(&editor.postale, b.position, .68),
+                postale_vertex_world(&editor.postale, c.position, .68),
+                aircraft_part_color(a.part),
+            )
+        }
     }
-    libellula := vehicles.libellula_mesh()
-    turns := f32(rl.GetTime()) * .35
-    vehicles.animate_libellula_mesh(&libellula, turns, turns + .333, turns + .667)
-    for triangle in vehicles.mesh_triangles(&libellula) {
-        a := libellula.vertices[triangle.a]
-        b := libellula.vertices[triangle.b]
-        c := libellula.vertices[triangle.c]
-        world_triangle(
-            libellula_vertex_world(editor.libellula.position, a.position, .72),
-            libellula_vertex_world(editor.libellula.position, b.position, .72),
-            libellula_vertex_world(editor.libellula.position, c.position, .72),
-            aircraft_part_color(a.part),
+    if editor.libellula_visible {
+        libellula := vehicles.libellula_mesh()
+        vehicles.animate_libellula_mesh(
+            &libellula,
+            editor.libellula.rotor_turns.x,
+            editor.libellula.rotor_turns.y,
+            editor.libellula.rotor_turns.z,
         )
+        for triangle in vehicles.mesh_triangles(&libellula) {
+            a := libellula.vertices[triangle.a]
+            b := libellula.vertices[triangle.b]
+            c := libellula.vertices[triangle.c]
+            world_triangle(
+                libellula_vertex_world(&editor.libellula, a.position, .72),
+                libellula_vertex_world(&editor.libellula, b.position, .72),
+                libellula_vertex_world(&editor.libellula, c.position, .72),
+                aircraft_part_color(a.part),
+            )
+        }
     }
-}
-
-libellula_vertex_world :: proc(origin: third_person.Vec3, position: [3]f32, scale: f32) -> third_person.Vec3 {
-    return {x = origin.x + position[0] * scale, y = origin.y + position[1] * scale, z = origin.z - position[2] * scale}
 }
 
 car_vertex_world :: proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3 {
@@ -1658,7 +1746,7 @@ world_brush :: proc(editor: ^Editor) {
     if editor.in_map || editor.tool == .Structure do return
     camera := perspective_camera(
         editor.camera_pose,
-        editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     mouse, inside := rl.GetWorldMousePosition()
     if !inside do return
@@ -1688,63 +1776,67 @@ world_brush :: proc(editor: ^Editor) {
 
 world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.vertices)
+    clear(&world_renderer.road_vertices)
     // Depth testing makes submission order independent. Put authored gameplay
     // meshes first so dense terrain can consume only the remaining capacity
     // instead of silently dropping vehicles at the end of the frame.
     world_ocean(editor)
     world_infrastructure(editor)
+    world_roads(editor)
     sky := atmosphere.sample(&editor.atmosphere)
     for structure in editor.project.structures[:editor.project.structure_count] {
         world_structure_shadow(structure, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
     }
     car_ground := terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
-    car_shadow := terrain.structure_make(
-        editor.car.position.x,
-        editor.car.position.z,
-        3.8,
-        6.2,
-        car_ground,
-        1.8,
-    )
+    car_shadow := terrain.structure_make(editor.car.position.x, editor.car.position.z, 3.8, 6.2, car_ground, 1.8)
     car_shadow.rotation = editor.car.yaw_radians
     world_structure_shadow(car_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
 
-    postale_ground := terrain.sample_height(
-        &editor.project,
-        0,
-        editor.postale.body.position.x,
-        editor.postale.body.position.z,
-    )
-    postale_shadow := terrain.structure_make(
-        editor.postale.body.position.x,
-        editor.postale.body.position.z,
-        10,
-        6,
-        postale_ground,
-        max(editor.postale.body.position.y - postale_ground, f32(2)),
-    )
-    postale_shadow.rotation = editor.postale.vehicle.yaw_radians
-    world_structure_shadow(postale_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+    if editor.postale_visible {
+        postale_ground := terrain.sample_height(
+            &editor.project,
+            0,
+            editor.postale.body.position.x,
+            editor.postale.body.position.z,
+        )
+        postale_shadow := terrain.structure_make(
+            editor.postale.body.position.x,
+            editor.postale.body.position.z,
+            10,
+            6,
+            postale_ground,
+            max(editor.postale.body.position.y - postale_ground, f32(2)),
+        )
+        postale_shadow.rotation = editor.postale.vehicle.yaw_radians
+        world_structure_shadow(postale_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+    }
 
-    libellula_ground := terrain.sample_height(
-        &editor.project,
-        0,
-        editor.libellula.position.x,
-        editor.libellula.position.z,
-    )
-    libellula_shadow := terrain.structure_make(
-        editor.libellula.position.x,
-        editor.libellula.position.z,
-        7,
-        4,
-        libellula_ground,
-        max(editor.libellula.position.y - libellula_ground, f32(1.5)),
-    )
-    libellula_shadow.rotation = editor.libellula.yaw_radians
-    world_structure_shadow(libellula_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+    if editor.libellula_visible {
+        libellula_ground := terrain.sample_height(
+            &editor.project,
+            0,
+            editor.libellula.body.position.x,
+            editor.libellula.body.position.z,
+        )
+        libellula_shadow := terrain.structure_make(
+            editor.libellula.body.position.x,
+            editor.libellula.body.position.z,
+            7,
+            4,
+            libellula_ground,
+            max(editor.libellula.body.position.y - libellula_ground, f32(1.5)),
+        )
+        libellula_shadow.rotation = editor.libellula.vehicle.yaw_radians
+        world_structure_shadow(libellula_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+    }
 
     if editor.in_map && editor.pilot.mode == .On_Foot {
-        character_ground := terrain.sample_height(&editor.project, 0, editor.player.position.x, editor.player.position.z)
+        character_ground := terrain.sample_height(
+            &editor.project,
+            0,
+            editor.player.position.x,
+            editor.player.position.z,
+        )
         character_shadow := terrain.structure_make(
             editor.player.position.x,
             editor.player.position.z,
@@ -1768,7 +1860,7 @@ world_build :: proc(editor: ^Editor) {
 world_particles_cpu :: proc(editor: ^Editor) {
     camera := perspective_camera(
         editor.camera_pose,
-        editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     for particle in editor.particles.particles[:editor.particles.count] {
         fade := clamp(particle.life / particle.max_life, 0, 1)
@@ -1821,7 +1913,7 @@ world_vehicle_particle :: proc(camera: Perspective_Camera, particle: particles.V
 world_vehicle_particles :: proc(editor: ^Editor) {
     camera := perspective_camera(
         editor.camera_pose,
-        editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     for particle in editor.vehicle_effects.dust[:editor.vehicle_effects.dust_count] {
         world_vehicle_particle(camera, particle, {148, 105, 68, 155})
@@ -1869,7 +1961,7 @@ world_wing_trails :: proc(editor: ^Editor) {
     if editor.wing_trails.count <= 0 do return
     camera := perspective_camera(
         editor.camera_pose,
-        editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     for side in 0 ..< 2 {
         previous: particles.Vec3
@@ -1966,8 +2058,17 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         depthCompareOp   = .LESS,
     }
     ca := vk.PipelineColorBlendAttachmentState {
-        blendEnable    = false,
-        colorWriteMask = {.R, .G, .B, .A},
+        // World vertices are mostly opaque, but authored shadows use their
+        // alpha for a soft penumbra. Keep alpha-one geometry unchanged while
+        // allowing those shadow layers to composite over the terrain.
+        blendEnable         = true,
+        srcColorBlendFactor = .SRC_ALPHA,
+        dstColorBlendFactor = .ONE_MINUS_SRC_ALPHA,
+        colorBlendOp        = .ADD,
+        srcAlphaBlendFactor = .ONE,
+        dstAlphaBlendFactor = .ONE_MINUS_SRC_ALPHA,
+        alphaBlendOp        = .ADD,
+        colorWriteMask      = {.R, .G, .B, .A},
     }
     cb := vk.PipelineColorBlendStateCreateInfo {
         sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
@@ -1995,6 +2096,20 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         layout              = world_renderer.layout,
     }
     if !render3d.create_color_pipeline_variants(ctx, &info, .D32_SFLOAT, &world_renderer.pipelines) do return false
+    // Roads are submitted after the terrain. A small negative polygon offset
+    // pulls only their fragments toward the camera under the conventional
+    // LESS depth convention, preventing coplanar flicker at grazing angles
+    // without making unrelated world geometry bleed through terrain.
+    road_rs := rs
+    road_rs.depthBiasEnable = true
+    road_rs.depthBiasConstantFactor = -1
+    road_rs.depthBiasSlopeFactor = -1
+    road_depth := depth
+    road_depth.depthCompareOp = .LESS_OR_EQUAL
+    road_info := info
+    road_info.pRasterizationState = &road_rs
+    road_info.pDepthStencilState = &road_depth
+    if !render3d.create_color_pipeline_variants(ctx, &road_info, .D32_SFLOAT, &world_renderer.road_pipelines) do return false
     particle_vert, particle_frag: engine.Vk_Shader_Module
     if !engine.vk_load_shader_module_with_fallback(ctx, "assets/shaders/particles.slang", "shaders/particles.vert", .Vertex, "vertex_main", &particle_vert) do return false
     defer engine.vk_destroy_shader_module(ctx, &particle_vert)
@@ -2036,6 +2151,9 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     for &buffer in world_renderer.vertex {
         if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
     }
+    for &buffer in world_renderer.road_vertex {
+        if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
+    }
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
             if !engine.vk_create_host_buffer(
@@ -2050,6 +2168,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     }
     if !clipmap_create_indices(ctx) do return false
     world_renderer.vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
+    world_renderer.road_vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
     world_renderer.ctx = ctx
     world_renderer.initialized = true
     return true
@@ -2062,11 +2181,19 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     world_build(editor)
     clipmap_update(editor, int(pass.frame.frame_index))
     buffer := &world_renderer.vertex[pass.frame.frame_index]
+    road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
     if len(world_renderer.vertices) > 0 {
         mem.copy_non_overlapping(
             buffer.mapped,
             raw_data(world_renderer.vertices[:]),
             len(world_renderer.vertices) * size_of(World_Vertex),
+        )
+    }
+    if len(world_renderer.road_vertices) > 0 {
+        mem.copy_non_overlapping(
+            road_buffer.mapped,
+            raw_data(world_renderer.road_vertices[:]),
+            len(world_renderer.road_vertices) * size_of(World_Vertex),
         )
     }
     viewport := vk.Viewport {
@@ -2083,7 +2210,7 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
     camera := perspective_camera(
         editor.camera_pose,
-        editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     sky := atmosphere.sample(&editor.atmosphere)
     fog := world_sky_horizon_color(sky)
@@ -2092,7 +2219,7 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             camera.position.x,
             camera.position.y,
             camera.position.z,
-            editor.in_map ? f32(.08) : f32(100),
+            editor.in_map ? (driving_aircraft(editor) ? WORLD_FLIGHT_NEAR_CLIP : WORLD_PLAY_NEAR_CLIP) : WORLD_EDITOR_NEAR_CLIP,
         },
         camera_right    = {camera.right.x, camera.right.y, camera.right.z, WORLD_FAR_CLIP},
         camera_up       = {camera.up.x, camera.up.y, camera.up.z, 0},
@@ -2194,15 +2321,22 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
     editor := world_renderer.editor
     if editor == nil do return
-    imgui_frame := imgui_begin_frame(pass)
     world_build(editor)
     clipmap_update(editor, int(pass.frame.frame_index))
     buffer := &world_renderer.vertex[pass.frame.frame_index]
+    road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
     if len(world_renderer.vertices) > 0 {
         mem.copy_non_overlapping(
             buffer.mapped,
             raw_data(world_renderer.vertices[:]),
             len(world_renderer.vertices) * size_of(World_Vertex),
+        )
+    }
+    if len(world_renderer.road_vertices) > 0 {
+        mem.copy_non_overlapping(
+            road_buffer.mapped,
+            raw_data(world_renderer.road_vertices[:]),
+            len(world_renderer.road_vertices) * size_of(World_Vertex),
         )
     }
     viewport := vk.Viewport {
@@ -2219,7 +2353,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
     camera := perspective_camera(
         editor.camera_pose,
-        editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     sky := atmosphere.sample(&editor.atmosphere)
     fog := world_sky_horizon_color(sky)
@@ -2228,7 +2362,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             camera.position.x,
             camera.position.y,
             camera.position.z,
-            editor.in_map ? f32(.08) : f32(100),
+            editor.in_map ? (driving_aircraft(editor) ? WORLD_FLIGHT_NEAR_CLIP : WORLD_PLAY_NEAR_CLIP) : WORLD_EDITOR_NEAR_CLIP,
         },
         camera_right    = {camera.right.x, camera.right.y, camera.right.z, WORLD_FAR_CLIP},
         camera_up       = {camera.up.x, camera.up.y, camera.up.z, 0},
@@ -2266,6 +2400,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     graph_context := Render_Graph_Context {
         pass           = pass,
         buffer         = buffer,
+        road_buffer    = road_buffer,
         offset         = offset,
         pipeline_index = pipeline_index,
         world_push     = world_push,
@@ -2275,12 +2410,12 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         world_render_graph_ready = adriatic_render_graph(&world_render_graph)
     }
     if world_render_graph_ready do _ = render_graph.execute(&world_render_graph, &graph_context)
-    if imgui_frame do imgui_render(pass, editor)
 }
 
 world_renderer_attach :: proc(editor: ^Editor) {
     world_renderer.editor = editor
     rl.SetWorldPass(world_pass)
+    rl.SetUIPass(imgui_ui_pass)
 }
 
 world_renderer_destroy :: proc() {
@@ -2288,17 +2423,21 @@ world_renderer_destroy :: proc() {
     _ = vk.DeviceWaitIdle(world_renderer.ctx.device)
     imgui_destroy()
     for &buffer in world_renderer.vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.road_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
             engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_vertex[frame][level])
         }
     }
     engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_index)
+    roads.mesh_destroy(&world_renderer.road_mesh)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.pipelines)
+    render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.road_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.sky_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.particle_pipelines)
     if world_renderer.layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.layout, nil)
     if world_renderer.sky_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.sky_layout, nil)
     delete(world_renderer.vertices)
+    delete(world_renderer.road_vertices)
     world_renderer = {}
 }
