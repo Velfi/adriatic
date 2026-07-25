@@ -55,6 +55,7 @@ imgui_create_descriptor_pool :: proc(ctx: ^engine.Vk_Context) -> vk.DescriptorPo
     }
     pool: vk.DescriptorPool
     if vk.CreateDescriptorPool(ctx.device, &info, nil, &pool) != .SUCCESS do return {}
+    engine.vk_set_debug_name(ctx, .DESCRIPTOR_POOL, auto_cast pool, "ImGui descriptor pool")
     return pool
 }
 

@@ -3,6 +3,9 @@
 - `zelda-engine` is a sibling dependency and must remain product-neutral.
 - Keep product rules, assets, and presentation policy in this repository.
 - Use the `zelda_engine` Odin collection instead of relative imports into the engine.
+- When modifying Vulkan code, name every created or acquired Vulkan object immediately
+  with `vk.SetDebugUtilsObjectNameEXT` (through the shared helper when available); for
+  objects created before device-level function loading, name them at the first possible point.
 
 ## Screenshot capture
 

@@ -945,13 +945,11 @@ world_ellipsoid_rotated :: proc(
             local_z := math.sin(longitude_angle) * latitude_radius * radius_z
             world_x, world_z := world_rotate_xz(center.x, center.z, local_x, local_z, rotation)
             points[latitude][longitude] = {world_x, center.y + local_y, world_z}
-            local_normal := vec_normalize(
-                {
-                    x = local_x / max(radius_x * radius_x, f32(.000001)),
-                    y = local_y / max(radius_y * radius_y, f32(.000001)),
-                    z = local_z / max(radius_z * radius_z, f32(.000001)),
-                },
-            )
+            local_normal := vec_normalize({
+                x = local_x / max(radius_x * radius_x, f32(.000001)),
+                y = local_y / max(radius_y * radius_y, f32(.000001)),
+                z = local_z / max(radius_z * radius_z, f32(.000001)),
+            })
             normal_x, normal_z := world_rotate_xz(0, 0, local_normal.x, local_normal.z, rotation)
             normals[latitude][longitude] = {normal_x, local_normal.y, normal_z}
         }
@@ -6978,22 +6976,18 @@ world_showcase_aircraft_pilot :: proc(editor: ^Editor, position: flight.Vec3, ba
         position.y + basis.up.y * .55,
         position.z + basis.up.z * .55,
     }
-    world_mouse_model_parented(
-        editor,
-        {
-            position = seat_position,
-            rotation = rotation,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
-            grounded = false,
-            hide_tail = true,
+    world_mouse_model_parented(editor, {
+            position       = seat_position,
+            rotation       = rotation,
+            accessory      = editor.mouse_headgear,
+            fur            = editor.mouse_fur,
+            pattern        = editor.mouse_pattern,
+            scarf_enabled  = editor.mouse_scarf_enabled,
+            scarf_color    = editor.mouse_scarf_color,
+            grounded       = false,
+            hide_tail      = true,
             hide_hind_feet = true,
-        },
-        basis,
-    )
+        }, basis)
 }
 
 world_showcase_car_pilot :: proc(editor: ^Editor) {
@@ -7407,14 +7401,11 @@ world_mouse_skinned_hull :: proc(
         {bind_position = {0, ring_y[0], ring_z[0]}, groups = {{.Pelvis, 1}, {.Spine, 0}}, color = fur},
         skeleton,
     )
-    nose_center_local := mouse_skin_vertex(
-        {
+    nose_center_local := mouse_skin_vertex({
             bind_position = {0, ring_y[RINGS - 1], ring_z[RINGS - 1]},
-            groups = {{.Head, 1}, {.Neck, 0}},
-            color = fur_light,
-        },
-        skeleton,
-    )
+            groups        = {{.Head, 1}, {.Neck, 0}},
+            color         = fur_light,
+        }, skeleton)
     rear_x, rear_z := world_rotate_xz(origin.x, origin.z, rear_center_local.x, rear_center_local.z, rotation)
     nose_x, nose_z := world_rotate_xz(origin.x, origin.z, nose_center_local.x, nose_center_local.z, rotation)
     rear_center := third_person.Vec3{rear_x, origin.y + rear_center_local.y, rear_z}
@@ -8567,9 +8558,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             grip_radius := CAR_STEERING_WHEEL_RADIUS / CAR_PILOT_SCALE
             neutral_grip_x := side_f * grip_radius * f32(.8660254)
             neutral_grip_y := grip_radius * .5
-            grip_x :=
-                neutral_grip_x * math.cos(wheel_rotation) -
-                neutral_grip_y * math.sin(wheel_rotation)
+            grip_x := neutral_grip_x * math.cos(wheel_rotation) - neutral_grip_y * math.sin(wheel_rotation)
             grip_y :=
                 (CAR_STEERING_WHEEL_Y - CAR_PILOT_SEAT_Y) / CAR_PILOT_SCALE +
                 neutral_grip_y * math.cos(wheel_rotation) +
@@ -8752,20 +8741,17 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
 
 world_character :: proc(editor: ^Editor) {
     if !editor.in_map || editor.pilot.mode != .On_Foot do return
-    world_mouse_model(
-        editor,
-        {
-            position = editor.player.position,
-            rotation = math.PI - editor.player.facing_yaw_radians,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
-            player_controlled = true,
-            grounded = editor.player.grounded,
-        },
-    )
+    world_mouse_model(editor, {
+        position          = editor.player.position,
+        rotation          = math.PI - editor.player.facing_yaw_radians,
+        accessory         = editor.mouse_headgear,
+        fur               = editor.mouse_fur,
+        pattern           = editor.mouse_pattern,
+        scarf_enabled     = editor.mouse_scarf_enabled,
+        scarf_color       = editor.mouse_scarf_color,
+        player_controlled = true,
+        grounded          = editor.player.grounded,
+    })
 }
 
 world_postale_pilot :: proc(editor: ^Editor) {
@@ -8779,22 +8765,18 @@ world_postale_pilot :: proc(editor: ^Editor) {
     seat_local := [3]f32{0, -.37, -.20}
     position := postale_vertex_world(&editor.postale, seat_local, POSTALE_PRESENTATION_SCALE)
     rotation := math.atan2(-body.basis.forward.x, -body.basis.forward.z)
-    world_mouse_model_parented(
-        editor,
-        {
-            position = position,
-            rotation = rotation,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
-            grounded = false,
-            hide_tail = true,
+    world_mouse_model_parented(editor, {
+            position       = position,
+            rotation       = rotation,
+            accessory      = editor.mouse_headgear,
+            fur            = editor.mouse_fur,
+            pattern        = editor.mouse_pattern,
+            scarf_enabled  = editor.mouse_scarf_enabled,
+            scarf_color    = editor.mouse_scarf_color,
+            grounded       = false,
+            hide_tail      = true,
             hide_hind_feet = true,
-        },
-        body.basis,
-    )
+        }, body.basis)
 }
 
 MARTA_STOOL_HEIGHT :: f32(.49)
@@ -8998,20 +8980,17 @@ world_build :: proc(editor: ^Editor) {
         // a second approximation of the mouse in the UI layer.
         world_ellipsoid_rotated({0, -.08, 0}, .72, .08, .72, 0, {40, 58, 61, 255})
         world_ellipsoid_rotated({0, -.025, 0}, .60, .035, .60, 0, {77, 112, 111, 255})
-        world_mouse_model(
-            editor,
-            {
-                position = {0, 0, 0},
-                rotation = f32(rl.GetTime()) * .32,
-                accessory = editor.mouse_headgear,
-                fur = editor.mouse_fur,
-                pattern = editor.mouse_pattern,
-                scarf_enabled = editor.mouse_scarf_enabled,
-                scarf_color = editor.mouse_scarf_color,
-                preview = true,
-                grounded = false,
-            },
-        )
+        world_mouse_model(editor, {
+            position      = {0, 0, 0},
+            rotation      = f32(rl.GetTime()) * .32,
+            accessory     = editor.mouse_headgear,
+            fur           = editor.mouse_fur,
+            pattern       = editor.mouse_pattern,
+            scarf_enabled = editor.mouse_scarf_enabled,
+            scarf_color   = editor.mouse_scarf_color,
+            preview       = true,
+            grounded      = false,
+        })
         return
     }
     if editor.vehicle_showcase_scene {
@@ -9358,6 +9337,7 @@ vehicle_paint_atlas_create :: proc(ctx: ^engine.Vk_Context, out: ^resources.Imag
         resources.image_destroy(out, ctx)
         return false
     }
+    engine.vk_set_debug_name(ctx, .SAMPLER, auto_cast out.sampler, "vehicle paint sampler")
     return true
 }
 
@@ -9448,6 +9428,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         pBindings    = raw_data(paint_bindings[:]),
     }
     if vk.CreateDescriptorSetLayout(ctx.device, &paint_layout_info, nil, &world_renderer.vehicle_paint_descriptor_layout) != .SUCCESS do return false
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_SET_LAYOUT,
+        auto_cast world_renderer.vehicle_paint_descriptor_layout,
+        "vehicle paint descriptor set layout",
+    )
     paint_pool_sizes := [2]vk.DescriptorPoolSize {
         {type = .SAMPLED_IMAGE, descriptorCount = 1},
         {type = .SAMPLER, descriptorCount = 1},
@@ -9459,6 +9445,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         pPoolSizes    = raw_data(paint_pool_sizes[:]),
     }
     if vk.CreateDescriptorPool(ctx.device, &paint_pool_info, nil, &world_renderer.vehicle_paint_descriptor_pool) != .SUCCESS do return false
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_POOL,
+        auto_cast world_renderer.vehicle_paint_descriptor_pool,
+        "vehicle paint descriptor pool",
+    )
     paint_allocate := vk.DescriptorSetAllocateInfo {
         sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
         descriptorPool     = world_renderer.vehicle_paint_descriptor_pool,
@@ -9466,6 +9458,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         pSetLayouts        = &world_renderer.vehicle_paint_descriptor_layout,
     }
     if vk.AllocateDescriptorSets(ctx.device, &paint_allocate, &world_renderer.vehicle_paint_descriptor) != .SUCCESS do return false
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_SET,
+        auto_cast world_renderer.vehicle_paint_descriptor,
+        "vehicle paint descriptor set",
+    )
     if !vehicle_paint_atlas_create(ctx, &world_renderer.vehicle_paint_atlas) do return false
     paint_image_info := vk.DescriptorImageInfo {
         imageView   = world_renderer.vehicle_paint_atlas.view,
@@ -9505,6 +9503,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         pSetLayouts            = &world_renderer.vehicle_paint_descriptor_layout,
     }
     if vk.CreatePipelineLayout(ctx.device, &li, nil, &world_renderer.layout) != .SUCCESS do return false
+    engine.vk_set_debug_name(ctx, .PIPELINE_LAYOUT, auto_cast world_renderer.layout, "world pipeline layout")
     foliage_bindings := [2]vk.DescriptorSetLayoutBinding {
         {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
@@ -9523,6 +9522,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
        .SUCCESS {
         return false
     }
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_SET_LAYOUT,
+        auto_cast world_renderer.foliage_descriptor_layout,
+        "foliage descriptor set layout",
+    )
     foliage_pool_sizes := [2]vk.DescriptorPoolSize {
         {type = .SAMPLED_IMAGE, descriptorCount = 3},
         {type = .SAMPLER, descriptorCount = 3},
@@ -9537,6 +9542,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
        .SUCCESS {
         return false
     }
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_POOL,
+        auto_cast world_renderer.foliage_descriptor_pool,
+        "foliage descriptor pool",
+    )
     foliage_layouts := [3]vk.DescriptorSetLayout {
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
@@ -9555,6 +9566,19 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.foliage_descriptor = foliage_descriptors[0]
     world_renderer.bougainvillea_descriptor = foliage_descriptors[1]
     world_renderer.grass_descriptor = foliage_descriptors[2]
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_SET,
+        auto_cast world_renderer.foliage_descriptor,
+        "foliage descriptor set",
+    )
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_SET,
+        auto_cast world_renderer.bougainvillea_descriptor,
+        "bougainvillea descriptor set",
+    )
+    engine.vk_set_debug_name(ctx, .DESCRIPTOR_SET, auto_cast world_renderer.grass_descriptor, "grass descriptor set")
     if !resources.texture_load_file(
         ctx,
         "assets/textures/foliage/leaf-branches-atlas.png",
@@ -9657,6 +9681,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     if vk.CreatePipelineLayout(ctx.device, &foliage_layout_info, nil, &world_renderer.foliage_layout) != .SUCCESS {
         return false
     }
+    engine.vk_set_debug_name(ctx, .PIPELINE_LAYOUT, auto_cast world_renderer.foliage_layout, "foliage pipeline layout")
     sky_pr := vk.PushConstantRange {
         stageFlags = {.VERTEX, .FRAGMENT},
         size       = u32(size_of(Sky_Push)),
@@ -9667,6 +9692,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         pPushConstantRanges    = &sky_pr,
     }
     if vk.CreatePipelineLayout(ctx.device, &sky_li, nil, &world_renderer.sky_layout) != .SUCCESS do return false
+    engine.vk_set_debug_name(ctx, .PIPELINE_LAYOUT, auto_cast world_renderer.sky_layout, "sky pipeline layout")
     vert, frag: engine.Vk_Shader_Module
     if !engine.vk_load_shader_module_with_fallback(ctx, "assets/shaders/world.slang", "shaders/world.vert", .Vertex, "vertex_main", &vert) do return false
     defer engine.vk_destroy_shader_module(ctx, &vert)
