@@ -24,6 +24,7 @@ Terrain_Tweak :: struct {
     tool:      terrain.Tool,
     radius:    f32 `tweak:"range=0..400;1"`,
     strength:  f32 `tweak:"range=0..1;.01"`,
+    hardness:  f32 `tweak:"range=0..1;.01"`,
     sea_level: f32 `tweak:"range=-50..50;.1"`,
 }
 
@@ -315,7 +316,7 @@ tweak_default_particles :: proc() -> Particle_Tweak {
 
 tweak_default_state :: proc() -> Tweak_State {
     return {
-        terrain = {tool = .Raise, radius = 48, strength = .10, sea_level = 0},
+        terrain = {tool = .Raise, radius = 48, strength = .10, hardness = .5, sea_level = 0},
         atmosphere = atmosphere.new(0x41c10),
         player = third_person.default_config(),
         camera = {
@@ -344,6 +345,7 @@ tweak_sync_from_editor :: proc(editor: ^Editor) {
         tool      = editor.tool,
         radius    = editor.radius,
         strength  = editor.strength,
+        hardness  = editor.hardness,
         sea_level = editor.project.sea_level,
     }
     editor.tweak.atmosphere = editor.atmosphere
@@ -371,9 +373,20 @@ tweak_apply_to_editor :: proc(editor: ^Editor) {
     if editor == nil do return
     state := &editor.tweak
     editor.tool = state.terrain.tool
+    if editor.tool != .Structure {
+        editor.architecture_node_mode = false
+        editor.architecture_paint_mode = false
+        editor.curve_mode = false
+        curve_reset(editor)
+        editor.structure_placing = false
+        editor.structure_moving = false
+    }
     editor.radius = clamp(state.terrain.radius, terrain.BASE_CELL_SIZE, 400)
     editor.strength = clamp(state.terrain.strength, 0, 1)
+    editor.hardness = clamp(state.terrain.hardness, 0, 1)
+    old_sea_level := editor.project.sea_level
     editor.project.sea_level = state.terrain.sea_level
+    if editor.project.sea_level != old_sea_level do editor.project.revision += 1
     editor.atmosphere = state.atmosphere
     editor.camera = state.camera.player_camera
     editor.editor_camera = state.camera.editor_camera
@@ -415,17 +428,105 @@ tweak_drag_f32 :: proc(label: cstring, value: ^f32, lower, upper, speed: f32) ->
     return im.DragFloat(label, value, speed, lower, upper, "%.3f", im.SliderFlags_AlwaysClamp)
 }
 
+terrain_panel_select_brush :: proc(editor: ^Editor, tool: terrain.Tool) {
+    if editor == nil do return
+    editor.tool = tool
+    editor.tweak.terrain.tool = tool
+    editor.architecture_node_mode = false
+    editor.architecture_paint_mode = false
+    editor.curve_mode = false
+    curve_reset(editor)
+    editor.structure_placing = false
+    editor.structure_moving = false
+}
+
+terrain_panel_undo :: proc(editor: ^Editor) {
+    if editor == nil do return
+    if editor.tool == .Structure {
+        structure_undo(editor)
+        editor.structure_placing = false
+        editor.structure_moving = false
+    } else {
+        terrain_undo(editor)
+    }
+}
+
+terrain_panel_redo :: proc(editor: ^Editor) {
+    if editor == nil do return
+    if editor.tool == .Structure {
+        structure_redo(editor)
+        editor.structure_placing = false
+        editor.structure_moving = false
+    } else {
+        terrain_redo(editor)
+    }
+}
+
 tweak_draw_terrain :: proc(editor: ^Editor) {
     state := &editor.tweak.terrain
     im.TextUnformatted("Brush")
-    if im.RadioButton("Raise", state.tool == .Raise) do state.tool = .Raise
+    if im.RadioButton("Raise", state.tool == .Raise) do terrain_panel_select_brush(editor, .Raise)
     im.SameLine()
-    if im.RadioButton("Smooth", state.tool == .Smooth) do state.tool = .Smooth
+    if im.RadioButton("Smooth", state.tool == .Smooth) do terrain_panel_select_brush(editor, .Smooth)
     im.SameLine()
-    if im.RadioButton("Paint", state.tool == .Paint) do state.tool = .Paint
-    tweak_drag_f32("Radius", &state.radius, terrain.BASE_CELL_SIZE, 400, 1)
-    tweak_drag_f32("Strength", &state.strength, 0, 1, .01)
+    if im.RadioButton("Paint", state.tool == .Paint) do terrain_panel_select_brush(editor, .Paint)
+    im.SameLine()
+    if im.RadioButton("Formations", state.tool == .Structure) do terrain_panel_select_brush(editor, .Structure)
+    if state.tool == .Structure {
+        im.TextDisabled("LMB places/selects; RMB makes cliffs; Esc cancels")
+        im.TextDisabled("Wheel height; Shift+wheel size; R rotates; Ctrl+D duplicates")
+        im.TextDisabled("Ctrl+Z/Y undoes or redoes formation edits")
+    } else {
+        tweak_drag_f32("Radius", &state.radius, terrain.BASE_CELL_SIZE, 400, 1)
+        tweak_drag_f32("Strength", &state.strength, 0, 1, .01)
+        tweak_drag_f32("Hardness", &state.hardness, 0, 1, .01)
+        im.TextDisabled("Viewport: wheel size; Shift+wheel strength; Alt+wheel hardness")
+        im.TextDisabled("LMB raises/paints, RMB lowers/erases")
+        im.TextDisabled("Ctrl+Z/Y undoes or redoes the last terrain stroke")
+    }
+    im.TextDisabled("Ctrl+S saves the project; Ctrl+O loads it")
+    history_kind: cstring = editor.tool == .Structure ? "formation" : "terrain"
+    undo_count := editor.tool == .Structure ? editor.structure_undo_count : editor.terrain_undo_count
+    redo_count := editor.tool == .Structure ? editor.structure_redo_count : editor.terrain_redo_count
+    undo_label: cstring = editor.tool == .Structure ? "Undo formation" : "Undo terrain"
+    redo_label: cstring = editor.tool == .Structure ? "Redo formation" : "Redo terrain"
+    im.BeginDisabled(undo_count <= 0)
+    if im.Button(undo_label) do terrain_panel_undo(editor)
+    im.EndDisabled()
+    im.SameLine()
+    im.BeginDisabled(redo_count <= 0)
+    if im.Button(redo_label) do terrain_panel_redo(editor)
+    im.EndDisabled()
+    im.TextDisabled("History: %d undo / %d redo %s steps", undo_count, redo_count, history_kind)
     tweak_drag_f32("Sea level", &state.sea_level, -50, 50, .1)
+    im.SeparatorText("Navigation")
+    if im.Button("Focus terrain") {
+        editor_focus_terrain(editor)
+        // Preserve the button's camera change when the inspector applies its
+        // synchronized state at the end of this frame.
+        tweak_sync_from_editor(editor)
+    }
+    if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
+        im.SameLine()
+        im.TextDisabled("Selected formation")
+    } else {
+        im.TextDisabled("Frames the selected formation, or the default island")
+    }
+    im.SeparatorText("Project file")
+    im.Text("File: %s", TERRAIN_PROJECT_PATH)
+    if im.Button("Save project") do terrain_project_save(editor)
+    im.SameLine()
+    if im.Button("Load project") {
+        terrain_project_load(editor)
+        // Keep the end-of-frame tweak application from restoring the old sea
+        // level over the project we just loaded.
+        tweak_sync_from_editor(editor)
+    }
+    project_state: cstring = editor.project.revision == editor.terrain_saved_revision ? "Saved" : "Unsaved"
+    im.Text("State: %s", project_state)
+    if editor.terrain_file_status != nil {
+        im.TextDisabled("%s", editor.terrain_file_status)
+    }
     im.SeparatorText("Project")
     im.Text("Revision: %d", editor.project.revision)
     im.Text("Clipmap levels: %d", terrain.CLIPMAP_LEVELS)
@@ -712,10 +813,13 @@ tweak_draw_presentation :: proc(editor: ^Editor) {
 }
 
 imgui_draw_tweaks :: proc(editor: ^Editor) {
-    if editor == nil do return
+    if editor == nil || !editor.tweak_panel_visible do return
     tweak_sync_from_editor(editor)
-    im.SetNextWindowPos({24, 150}, im.Cond.Always)
-    im.SetNextWindowSize({460, 650}, im.Cond.Always)
+    // Keep the inspector clear of the custom tool palette and spawn control.
+    // The fixed editor canvas is 1280 px wide, so this leaves a small gutter
+    // between the palette column and the inspector without clipping it.
+    im.SetNextWindowPos({874, 150}, im.Cond.Always)
+    im.SetNextWindowSize({390, 540}, im.Cond.Always)
     if im.Begin("Adriatic Tweaks") {
         if im.Button("Save tweaks") do tweak_save_editor(editor)
         im.SameLine()

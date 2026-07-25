@@ -372,50 +372,421 @@ world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, ro
     world_quad(p[0], p[1], p[5], p[4], color)
 }
 
+world_shadow_fade :: proc(color: rl.Color, factor: f32) -> rl.Color {
+    return {
+        color.r,
+        color.g,
+        color.b,
+        u8(clamp(f32(color.a) * factor, 0, 255)),
+    }
+}
+
+world_structure_shadow_layer :: proc(
+    structure: terrain.Structure,
+    project: ^terrain.Project,
+    offset_x, offset_z, footprint_scale: f32,
+    shadow: rl.Color,
+) {
+    local_corners := [4][2]f32 {
+        {-structure.width * footprint_scale * .5, -structure.depth * footprint_scale * .5},
+        {structure.width * footprint_scale * .5, -structure.depth * footprint_scale * .5},
+        {structure.width * footprint_scale * .5, structure.depth * footprint_scale * .5},
+        {-structure.width * footprint_scale * .5, structure.depth * footprint_scale * .5},
+    }
+    base: [4]third_person.Vec3
+    projected: [4]third_person.Vec3
+    land_threshold := project.sea_level + .04
+    projected_land := false
+    for index in 0 ..< 4 {
+        x, z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            local_corners[index][0],
+            local_corners[index][1],
+            structure.rotation,
+        )
+        base[index] = {x, terrain.sample_height(project, 0, x, z) + .035, z}
+        projected[index] = {
+            x + offset_x,
+            terrain.sample_height(project, 0, x + offset_x, z + offset_z) + .035,
+            z + offset_z,
+        }
+        if projected[index].y > land_threshold do projected_land = true
+    }
+    far_shadow := world_shadow_fade(shadow, f32(.48))
+    for index in 0 ..< 4 {
+        next := (index + 1) % 4
+        base_on_land := base[index].y > land_threshold || base[next].y > land_threshold
+        projected_on_land := projected[index].y > land_threshold || projected[next].y > land_threshold
+        if !base_on_land && !projected_on_land do continue
+        world_quad_colored(
+            base[index],
+            base[next],
+            projected[next],
+            projected[index],
+            shadow,
+            shadow,
+            far_shadow,
+            far_shadow,
+        )
+    }
+    if projected_land {
+        center_x := (projected[0].x + projected[1].x + projected[2].x + projected[3].x) * .25
+        center_z := (projected[0].z + projected[1].z + projected[2].z + projected[3].z) * .25
+        center := third_person.Vec3 {
+            center_x,
+            terrain.sample_height(project, 0, center_x, center_z) + .035,
+            center_z,
+        }
+        for index in 0 ..< 4 {
+            next := (index + 1) % 4
+            world_triangle_colored(
+                projected[index],
+                projected[next],
+                center,
+                far_shadow,
+                far_shadow,
+                shadow,
+            )
+        }
+    }
+}
+
+world_structure_shadow :: proc(
+    structure: terrain.Structure,
+    sun_direction: [3]f32,
+    cloud_cover: f32,
+    project: ^terrain.Project,
+) {
+    daylight := clamp(sun_direction[1], 0, 1)
+    if daylight <= .08 do return
+
+    horizontal_length := f32(math.sqrt(f64(
+        sun_direction[0] * sun_direction[0] + sun_direction[2] * sun_direction[2],
+    )))
+    if horizontal_length <= .01 do return
+    shadow_height := structure.height
+    if structure.kind == .Architecture {
+        roof_rise := structure.width * .34
+        if structure.height > 60 {
+            roof_rise = structure.width * .72
+        } else if architecture.roof_style_for_seed(structure.seed) == .Low_Gable {
+            roof_rise = structure.width * .24
+        }
+        shadow_height += roof_rise
+    }
+    shadow_length := min(shadow_height / max(sun_direction[1], f32(.18)), max(structure.width, structure.depth) * 3.5)
+    offset_x := -sun_direction[0] / horizontal_length * shadow_length
+    offset_z := -sun_direction[2] / horizontal_length * shadow_length
+
+    // A translucent penumbra around a denser core keeps the shadow from
+    // reading as a hard rectangular decal at the editor's wide camera range.
+    cloud := clamp(cloud_cover, 0, 1)
+    shadow_visibility := 1 - cloud * .72
+    outer_alpha := u8(clamp((24 + daylight * 24) * (1 + cloud * .65), 24, 62))
+    inner_alpha := u8(clamp((64 + daylight * 46) * shadow_visibility, 18, 110))
+    world_structure_shadow_layer(
+        structure,
+        project,
+        0,
+        0,
+        1.02,
+        {30, 47, 44, inner_alpha},
+    )
+    world_structure_shadow_layer(
+        structure,
+        project,
+        offset_x * 1.08,
+        offset_z * 1.08,
+        1.16,
+        {38, 56, 53, outer_alpha},
+    )
+    world_structure_shadow_layer(
+        structure,
+        project,
+        offset_x,
+        offset_z,
+        1,
+        {35, 53, 50, inner_alpha},
+    )
+}
+
+world_roof_lerp :: proc(a, b: third_person.Vec3, fraction: f32) -> third_person.Vec3 {
+    return {
+        a.x + (b.x - a.x) * fraction,
+        a.y + (b.y - a.y) * fraction,
+        a.z + (b.z - a.z) * fraction,
+    }
+}
+
+world_roof_raise :: proc(point: third_person.Vec3, amount: f32) -> third_person.Vec3 {
+    return {point.x, point.y + amount, point.z}
+}
+
+// A Greek tile roof reads through its repeated courses: each course runs from
+// the lower edge toward the ridge, with small gaps that catch the light.
+world_architecture_tile_slope :: proc(
+    edge_a, edge_b, ridge_a, ridge_b: third_person.Vec3,
+    courses, segments: int,
+    seed: u32,
+) {
+    for course in 0 ..< courses {
+        course_start := f32(course) / f32(courses)
+        course_end := min(course_start + .78 / f32(courses), 1)
+        relief := .035 + f32(course % 2) * .012
+        for segment in 0 ..< segments {
+            segment_start := f32(segment) / f32(segments)
+            segment_end := f32(segment + 1) / f32(segments)
+            // Offset alternate courses so the vertical joins do not line up.
+            offset := course % 2 == 0 ? 0 : .035 / f32(segments)
+            segment_start = clamp(segment_start + offset, 0, 1)
+            segment_end = clamp(segment_end + offset, 0, 1)
+
+            outer_a := world_roof_lerp(edge_a, edge_b, segment_start)
+            outer_b := world_roof_lerp(edge_a, edge_b, segment_end)
+            inner_a := world_roof_lerp(outer_a, ridge_a, course_start)
+            inner_b := world_roof_lerp(outer_b, ridge_b, course_start)
+            next_a := world_roof_lerp(outer_a, ridge_a, course_end)
+            next_b := world_roof_lerp(outer_b, ridge_b, course_end)
+            inner_a = world_roof_raise(inner_a, relief)
+            inner_b = world_roof_raise(inner_b, relief)
+            next_a = world_roof_raise(next_a, relief)
+            next_b = world_roof_raise(next_b, relief)
+
+            tone := int((seed + u32(course * 11 + segment * 3)) % 5)
+            tile_bytes := architecture.architecture_roof_tile_color(seed, tone)
+            tile := rl.Color{tile_bytes[0], tile_bytes[1], tile_bytes[2], tile_bytes[3]}
+            world_quad(inner_a, inner_b, next_b, next_a, tile)
+        }
+    }
+}
+
+world_architecture_tile_face :: proc(
+    edge_a, edge_b, ridge: third_person.Vec3,
+    courses, segments: int,
+    seed: u32,
+) {
+    world_architecture_tile_slope(edge_a, edge_b, ridge, ridge, courses, segments, seed)
+}
+
 world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
     eave_y := structure.base_y + structure.height
+    roof_style := architecture.roof_style_for_seed(structure.seed)
+    if !landmark && roof_style == .Parapet {
+        roof_bytes := architecture.architecture_roof_color(structure.seed)
+        terracotta := rl.Color{roof_bytes[0], roof_bytes[1], roof_bytes[2], roof_bytes[3]}
+        world_box_rotated(
+            {structure.center_x, eave_y + .25, structure.center_z},
+            {structure.width + .8, .50, structure.depth + .8},
+            structure.rotation,
+            terracotta,
+        )
+        chimney_x, chimney_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            structure.width * .22,
+            -structure.depth * .16,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {chimney_x, eave_y + 1.25, chimney_z},
+            {2.4, 2.0, 2.4},
+            structure.rotation,
+            {157, 112, 86, 255},
+        )
+        return
+    }
     rise := landmark ? structure.width * .72 : structure.width * .34
+    if !landmark && roof_style == .Low_Gable do rise = structure.width * .24
     depth := structure.depth * .58
-    left_x, left_z := world_rotate_xz(
+    left_front_x, left_front_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        -structure.width * .54,
+        -depth,
+        structure.rotation,
+    )
+    right_front_x, right_front_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        structure.width * .54,
+        -depth,
+        structure.rotation,
+    )
+    left_back_x, left_back_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        -structure.width * .54,
+        depth,
+        structure.rotation,
+    )
+    right_back_x, right_back_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        structure.width * .54,
+        depth,
+        structure.rotation,
+    )
+    left_front := third_person.Vec3{left_front_x, eave_y, left_front_z}
+    right_front := third_person.Vec3{right_front_x, eave_y, right_front_z}
+    left_back := third_person.Vec3{left_back_x, eave_y, left_back_z}
+    right_back := third_person.Vec3{right_back_x, eave_y, right_back_z}
+    ridge_half_depth := depth
+    if roof_style == .Hip do ridge_half_depth = depth * .50
+    ridge_front_x, ridge_front_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        0,
+        -ridge_half_depth,
+        structure.rotation,
+    )
+    ridge_back_x, ridge_back_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        0,
+        ridge_half_depth,
+        structure.rotation,
+    )
+    ridge_front := third_person.Vec3{ridge_front_x, eave_y + rise, ridge_front_z}
+    ridge_back := third_person.Vec3{ridge_back_x, eave_y + rise, ridge_back_z}
+    left_apex_x, left_apex_z := world_rotate_xz(
         structure.center_x,
         structure.center_z,
         -structure.width * .54,
         0,
         structure.rotation,
     )
-    right_x, right_z := world_rotate_xz(
+    right_apex_x, right_apex_z := world_rotate_xz(
         structure.center_x,
         structure.center_z,
         structure.width * .54,
         0,
         structure.rotation,
     )
-    front_x, front_z := world_rotate_xz(structure.center_x, structure.center_z, 0, depth, structure.rotation)
-    back_x, back_z := world_rotate_xz(structure.center_x, structure.center_z, 0, -depth, structure.rotation)
-    ridge_left_x, ridge_left_z := world_rotate_xz(
+    left_apex := third_person.Vec3{left_apex_x, eave_y + rise, left_apex_z}
+    right_apex := third_person.Vec3{right_apex_x, eave_y + rise, right_apex_z}
+    wall_left_front_x, wall_left_front_z := world_rotate_xz(
         structure.center_x,
         structure.center_z,
-        -structure.width * .30,
-        0,
+        -structure.width * .5,
+        -structure.depth * .5,
         structure.rotation,
     )
-    ridge_right_x, ridge_right_z := world_rotate_xz(
+    wall_left_back_x, wall_left_back_z := world_rotate_xz(
         structure.center_x,
         structure.center_z,
-        structure.width * .30,
-        0,
+        -structure.width * .5,
+        structure.depth * .5,
         structure.rotation,
     )
-    left := third_person.Vec3{left_x, eave_y, left_z}
-    right := third_person.Vec3{right_x, eave_y, right_z}
-    front := third_person.Vec3{front_x, eave_y, front_z}
-    back := third_person.Vec3{back_x, eave_y, back_z}
-    ridge := third_person.Vec3{structure.center_x, eave_y + rise, structure.center_z}
-    terracotta := landmark ? rl.Color{177, 92, 63, 255} : rl.Color{184, 93, 61, 255}
-    world_triangle(left, front, ridge, terracotta)
-    world_triangle(front, right, ridge, formation_face_color(terracotta, .3, 0))
-    world_triangle(right, back, ridge, formation_face_color(terracotta, 1.4, 0))
-    world_triangle(back, left, ridge, formation_face_color(terracotta, 2.5, 0))
+    wall_right_front_x, wall_right_front_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        structure.width * .5,
+        -structure.depth * .5,
+        structure.rotation,
+    )
+    wall_right_back_x, wall_right_back_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        structure.width * .5,
+        structure.depth * .5,
+        structure.rotation,
+    )
+    wall_left_front := third_person.Vec3{wall_left_front_x, eave_y, wall_left_front_z}
+    wall_left_back := third_person.Vec3{wall_left_back_x, eave_y, wall_left_back_z}
+    wall_right_front := third_person.Vec3{wall_right_front_x, eave_y, wall_right_front_z}
+    wall_right_back := third_person.Vec3{wall_right_back_x, eave_y, wall_right_back_z}
+    wall_front_left := third_person.Vec3{wall_left_front_x, eave_y, wall_left_front_z}
+    wall_front_right := third_person.Vec3{wall_right_front_x, eave_y, wall_right_front_z}
+    wall_back_left := third_person.Vec3{wall_left_back_x, eave_y, wall_left_back_z}
+    wall_back_right := third_person.Vec3{wall_right_back_x, eave_y, wall_right_back_z}
+    wall_front_apex := third_person.Vec3{
+        wall_left_front_x + (wall_right_front_x - wall_left_front_x) * .5,
+        eave_y + rise,
+        wall_left_front_z + (wall_right_front_z - wall_left_front_z) * .5,
+    }
+    wall_back_apex := third_person.Vec3{
+        wall_left_back_x + (wall_right_back_x - wall_left_back_x) * .5,
+        eave_y + rise,
+        wall_left_back_z + (wall_right_back_z - wall_left_back_z) * .5,
+    }
+    roof_bytes := architecture.architecture_roof_color(structure.seed, landmark)
+    terracotta := rl.Color{roof_bytes[0], roof_bytes[1], roof_bytes[2], roof_bytes[3]}
+    // The ridge follows the building depth. Gable roofs continue the left and
+    // right walls to their ridge apexes; hip roofs close the front and rear
+    // ends against the shortened ridge.
+    wall := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
+    if roof_style == .Gable || roof_style == .Low_Gable {
+        world_triangle(wall_front_left, wall_front_right, wall_front_apex, wall)
+        world_triangle(wall_back_right, wall_back_left, wall_back_apex, wall)
+    } else if roof_style == .Hip || landmark {
+        world_triangle(left_front, right_front, ridge_front, terracotta)
+        world_triangle(right_back, left_back, ridge_back, formation_face_color(terracotta, 1.4, 0))
+    }
+    world_quad(left_front, left_back, ridge_back, ridge_front, terracotta)
+    world_quad(right_back, right_front, ridge_front, ridge_back, formation_face_color(terracotta, 1.4, 0))
+    fascia := formation_face_color(terracotta, math.PI, 0)
+    front_fascia_x, front_fascia_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        0,
+        -depth,
+        structure.rotation,
+    )
+    back_fascia_x, back_fascia_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        0,
+        depth,
+        structure.rotation,
+    )
+    world_box_rotated(
+        {front_fascia_x, eave_y + .05, front_fascia_z},
+        {structure.width * 1.10, .24, .18},
+        structure.rotation,
+        fascia,
+    )
+    world_box_rotated(
+        {back_fascia_x, eave_y + .05, back_fascia_z},
+        {structure.width * 1.10, .24, .18},
+        structure.rotation,
+        fascia,
+    )
+
+    courses := clamp(int(structure.width / 5.5), 4, 7)
+    segments := clamp(int(structure.depth / 7), 3, 6)
+    world_architecture_tile_slope(left_front, left_back, ridge_front, ridge_back, courses, segments, structure.seed + 3)
+    world_architecture_tile_slope(right_back, right_front, ridge_back, ridge_front, courses, segments, structure.seed + 17)
+    if roof_style == .Hip {
+        side_courses := clamp(int(structure.depth / 5), 3, 5)
+        world_architecture_tile_slope(left_front, right_front, ridge_front, ridge_front, side_courses, 2, structure.seed + 29)
+        world_architecture_tile_slope(right_back, left_back, ridge_back, ridge_back, side_courses, 2, structure.seed + 41)
+    }
+    if !landmark && roof_style != .Parapet && architecture.architecture_has_chimney(structure.seed) {
+        chimney_local_x := roof_style == .Hip ? structure.width * .12 : structure.width * .22
+        chimney_local_z := -structure.depth * .12
+        chimney_x, chimney_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            chimney_local_x,
+            chimney_local_z,
+            structure.rotation,
+        )
+        chimney_base := eave_y + rise * .74
+        world_box_rotated(
+            {chimney_x, chimney_base + 1.45, chimney_z},
+            {1.8, 2.9, 1.8},
+            structure.rotation,
+            {157, 112, 86, 255},
+        )
+        world_box_rotated(
+            {chimney_x, chimney_base + 3.0, chimney_z},
+            {2.1, .22, 2.1},
+            structure.rotation,
+            {184, 93, 61, 255},
+        )
+    }
     if landmark {
         world_box_rotated(
             {structure.center_x, eave_y + rise + 3.5, structure.center_z},
@@ -428,6 +799,8 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
 
 world_architecture :: proc(structure: terrain.Structure) {
     landmark := structure.height > 60
+    facade_style := architecture.facade_style_for_seed(structure.seed)
+    roof_style := architecture.roof_style_for_seed(structure.seed)
     stone := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     world_box_rotated(
         {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
@@ -435,17 +808,82 @@ world_architecture :: proc(structure: terrain.Structure) {
         structure.rotation,
         stone,
     )
+    // A shallow overhanging limestone plinth separates each façade from the
+    // terrain and gives the compact blocks a believable masonry foundation.
+    plinth := formation_face_color(stone, math.PI, 0)
+    world_box_rotated(
+        {structure.center_x, structure.base_y + .30, structure.center_z},
+        {structure.width + .46, .60, structure.depth + .46},
+        structure.rotation,
+        plinth,
+    )
+    if !landmark && facade_style == 3 {
+        wing_x, wing_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            structure.width * .28,
+            -structure.depth * .05,
+            structure.rotation,
+        )
+        wing_height := structure.height * .44
+        world_box_rotated(
+            {wing_x, structure.base_y + wing_height * .5, wing_z},
+            {structure.width * .38, wing_height, structure.depth * .72},
+            structure.rotation,
+            stone,
+        )
+        world_box_rotated(
+            {wing_x, structure.base_y + wing_height + .18, wing_z},
+            {structure.width * .42, .36, structure.depth * .78},
+            structure.rotation,
+            {184, 93, 61, 255},
+        )
+    }
     world_architecture_roof(structure, landmark)
     // Dark inset windows and red shutters give the generated blocks a readable
     // Adriatic façade even at the editor's wide camera distance.
-    window := rl.Color{48, 62, 64, 255}
-    shutter := rl.Color{167, 61, 53, 255}
-    rows := landmark ? 4 : 2
+    window := facade_style == 2 ? rl.Color{42, 74, 82, 255} : rl.Color{48, 62, 64, 255}
+    shutter := facade_style == 2 ? rl.Color{43, 102, 126, 255} :
+        facade_style == 3 ? rl.Color{236, 218, 179, 255} : rl.Color{167, 61, 53, 255}
+    rows := landmark ? 4 : architecture.facade_floor_count(structure.height)
     columns := landmark ? 1 : 2
+    if !landmark {
+        door_x, door_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + .18,
+            structure.rotation,
+        )
+        door := facade_style == 2 ? rl.Color{54, 91, 99, 255} :
+            facade_style == 3 ? rl.Color{109, 75, 57, 255} : rl.Color{92, 66, 57, 255}
+        world_box_rotated(
+            {door_x, structure.base_y + structure.height * .14, door_z},
+            {structure.width * .18, structure.height * .24, .24},
+            structure.rotation,
+            door,
+        )
+        step_x, step_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + .28,
+            structure.rotation,
+        )
+        step_color := facade_style == 2 ? rl.Color{103, 130, 125, 255} :
+            facade_style == 3 ? rl.Color{178, 127, 88, 255} :
+            rl.Color{178, 127, 88, 255}
+        world_box_rotated(
+            {step_x, structure.base_y + structure.height * .035, step_z},
+            {structure.width * .24, .20, .42},
+            structure.rotation,
+            step_color,
+        )
+    }
     for row in 0 ..< rows {
         for column in 0 ..< columns {
             x := columns == 1 ? 0 : (f32(column) - .5) * structure.width * .42
-            y := structure.base_y + structure.height * (.30 + f32(row) * .16)
+            y := structure.base_y + structure.height * (.24 + f32(row) * .16)
             local_z := structure.depth * .5 + .16
             wx, wz := world_rotate_xz(structure.center_x, structure.center_z, x, local_z, structure.rotation)
             world_box_rotated(
@@ -455,16 +893,118 @@ world_architecture :: proc(structure: terrain.Structure) {
                 window,
             )
             if !landmark {
-                for side in -1 ..= 1 {
-                    if side == 0 do continue
-                    sx, sz := world_rotate_xz(wx, wz, f32(side) * structure.width * .085, 0, structure.rotation)
+                if facade_style == 1 {
+                    // A shallow balcony is a small silhouette break that reads
+                    // clearly from the wide editor camera without needing a
+                    // separate mesh asset.
+                    balcony_x, balcony_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        local_z + .08,
+                        structure.rotation,
+                    )
+                    railing_x, railing_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        local_z + .28,
+                        structure.rotation,
+                    )
                     world_box_rotated(
-                        {sx, y, sz},
-                        {structure.width * .035, structure.height * .11, .28},
+                        {balcony_x, y - structure.height * .065, balcony_z},
+                        {structure.width * .34, .28, .48},
+                        structure.rotation,
+                        {178, 127, 88, 255},
+                    )
+                    world_box_rotated(
+                        {railing_x, y + structure.height * .025, railing_z},
+                        {structure.width * .28, structure.height * .09, .08},
+                        structure.rotation,
+                        {102, 76, 63, 255},
+                    )
+                } else if facade_style == 2 {
+                    // Blue façades use small fabric awnings rather than
+                    // balconies, giving this seed variant a distinct profile.
+                    awning_x, awning_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        local_z + .12,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {awning_x, y + structure.height * .075, awning_z},
+                        {structure.width * .20, .12, .34},
                         structure.rotation,
                         shutter,
                     )
+                } else {
+                    for side in -1 ..= 1 {
+                        if side == 0 do continue
+                        sx, sz := world_rotate_xz(wx, wz, f32(side) * structure.width * .085, 0, structure.rotation)
+                        world_box_rotated(
+                            {sx, y, sz},
+                            {structure.width * .035, structure.height * .11, .28},
+                            structure.rotation,
+                            shutter,
+                        )
+                    }
                 }
+            }
+        }
+    }
+    if !landmark && (roof_style == .Gable || roof_style == .Low_Gable) {
+        // A single attic opening keeps the gable end from reading as an empty
+        // triangle while staying small enough to preserve the roof silhouette.
+        rise := roof_style == .Low_Gable ? structure.width * .24 : structure.width * .34
+        attic_x, attic_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .58 + .18,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {attic_x, structure.base_y + structure.height + rise * .40, attic_z},
+            {structure.width * .16, structure.height * .12, .20},
+            structure.rotation,
+            window,
+        )
+        if facade_style != 1 {
+            shutter_color := facade_style == 2 ? rl.Color{43, 102, 126, 255} : rl.Color{167, 61, 53, 255}
+            for side in -1 ..= 1 {
+                if side == 0 do continue
+                shutter_x, shutter_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    f32(side) * structure.width * .075,
+                    structure.depth * .58 + .18,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {shutter_x, structure.base_y + structure.height + rise * .40, shutter_z},
+                    {structure.width * .025, structure.height * .13, .23},
+                    structure.rotation,
+                    shutter_color,
+                )
+            }
+        }
+    }
+    if !landmark {
+        for row in 0 ..< rows {
+            y := structure.base_y + structure.height * (.24 + f32(row) * .16)
+            side_z := row % 2 == 0 ? -structure.depth * .16 : structure.depth * .16
+            for side in -1 ..= 1 {
+                if side == 0 do continue
+                side_x := f32(side) * (structure.width * .5 + .14)
+                wx, wz := world_rotate_xz(structure.center_x, structure.center_z, side_x, side_z, structure.rotation)
+                world_box_rotated(
+                    {wx, y, wz},
+                    {.22, structure.height * .10, structure.depth * .14},
+                    structure.rotation,
+                    window,
+                )
             }
         }
     }
@@ -836,13 +1376,151 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
     }
 }
 
+world_architecture_cypress :: proc(x, z, base_y: f32, seed: u32) {
+    tree := terrain.structure_make(x, z, 6.5, 6.5, base_y, 21)
+    tree.seed = seed
+    tree.color = {45, 93, 59, 255}
+    world_box_rotated(
+        {x, base_y + 2.0, z},
+        {1.0, 4.0, 1.0},
+        0,
+        {108, 78, 48, 255},
+    )
+    world_radial_formation(tree, {1, .68, .36, .08}, {0, .28, .58, .92}, .90, 1)
+}
+
+world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud_cover: f32) {
+    if editor == nil || !editor.architecture_node_mode do return
+    min_x, max_x := f32(1e9), f32(-1e9)
+    min_z, max_z := f32(1e9), f32(-1e9)
+    buildings := 0
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if structure.kind != .Architecture || structure.height > 60 do continue
+        min_x = min(min_x, structure.center_x)
+        max_x = max(max_x, structure.center_x)
+        min_z = min(min_z, structure.center_z)
+        max_z = max(max_z, structure.center_z)
+        buildings += 1
+    }
+    if buildings < 4 || max_z <= min_z do return
+    center_x := (min_x + max_x) * .5
+    center_z := (min_z + max_z) * .5
+    road_span := max(max_x - min_x + 36, 160)
+    base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
+    road := rl.Color{117, 119, 110, 255}
+    shoulder := rl.Color{177, 164, 135, 255}
+    for lane in 1 ..= 2 {
+        lane_z := min_z + (max_z - min_z) * f32(lane) / 3
+        world_box_rotated(
+            {center_x, base_y + .06, lane_z},
+            {road_span, .12, 5.5},
+            0,
+            road,
+        )
+        for side in -1 ..= 1 {
+            if side == 0 do continue
+            world_box_rotated(
+                {center_x, base_y + .13, lane_z + f32(side) * 3.05},
+                {road_span, .05, .35},
+                0,
+                shoulder,
+            )
+        }
+    }
+    world_box_rotated(
+        {center_x, base_y + .08, center_z},
+        {28, .16, 18},
+        0,
+        {151, 144, 126, 255},
+    )
+    // Connect each frontage to the nearer lane so the generated streets read
+    // as a walkable town rather than two unrelated strips of pavement.
+    path_color := rl.Color{194, 184, 157, 255}
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if structure.kind != .Architecture || structure.height > 60 do continue
+        lane_a := min_z + (max_z - min_z) / 3
+        lane_b := min_z + (max_z - min_z) * 2 / 3
+        door_x, door_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + .22,
+            structure.rotation,
+        )
+        front_x := -math.sin(structure.rotation)
+        front_z := math.cos(structure.rotation)
+        target_lane := f32(1e9)
+        target_distance := f32(1e9)
+        lanes := [2]f32{lane_a, lane_b}
+        for candidate in lanes {
+            candidate_dx := center_x - door_x
+            candidate_dz := candidate - door_z
+            // Only choose a lane in front of the actual entrance; a path to
+            // the opposite side would tunnel through the generated building.
+            if candidate_dx * front_x + candidate_dz * front_z < 0 do continue
+            candidate_distance := candidate_dx * candidate_dx + candidate_dz * candidate_dz
+            if candidate_distance < target_distance {
+                target_lane = candidate
+                target_distance = candidate_distance
+            }
+        }
+        if target_distance >= 1e9 do continue
+        lane_direction := target_lane >= door_z ? f32(1) : f32(-1)
+        target_z := target_lane - lane_direction * 3.0
+        path_dx := center_x - door_x
+        path_dz := target_z - door_z
+        path_length := f32(math.sqrt(f64(path_dx * path_dx + path_dz * path_dz)))
+        if path_length <= 1.5 do continue
+        path_center_x := (door_x + center_x) * .5
+        path_center_z := (door_z + target_z) * .5
+        path_y := terrain.sample_height(&editor.project, 0, path_center_x, path_center_z)
+        world_box_rotated(
+            {path_center_x, path_y + .08, path_center_z},
+            {3.2, .12, path_length},
+            math.atan2(path_dx, path_dz),
+            path_color,
+        )
+    }
+    // Cypress accents mark the two lane intersections and give the graph town
+    // a readable Mediterranean scale cue without changing terrain data.
+    for x_side in -1 ..= 1 {
+        if x_side == 0 do continue
+        for z_side in -1 ..= 1 {
+            if z_side == 0 do continue
+            tree_x := center_x + f32(x_side) * road_span * .42
+            tree_z := center_z + f32(z_side) * ((max_z - min_z) * .5 + 7)
+            tree_base := terrain.sample_height(&editor.project, 0, tree_x, tree_z)
+            world_architecture_cypress(
+                tree_x,
+                tree_z,
+                tree_base,
+                u32((x_side + 2) * 37 + (z_side + 2) * 11 + buildings * 5),
+            )
+            tree := terrain.structure_make(tree_x, tree_z, 6.5, 6.5, tree_base, 21)
+            world_structure_shadow(tree, sun_direction, cloud_cover, &editor.project)
+        }
+    }
+}
+
 world_structures :: proc(editor: ^Editor) {
     if editor == nil do return
+    sky := atmosphere.sample(&editor.atmosphere)
+    world_architecture_streets(editor, sky.sun_direction, sky.weather.cloud_cover)
+    hovered_index := -1
+    if editor.tool == .Structure && editor.cursor_hit && !editor.structure_placing && !editor.structure_moving {
+        hovered_index = terrain.structure_index_at(
+            &editor.project,
+            editor.cursor_world_x,
+            editor.cursor_world_z,
+        )
+    }
     for index in 0 ..< editor.project.structure_count {
         structure := editor.project.structures[index]
         world_formation(structure)
         if index == editor.structure_selected && !editor.in_map {
             world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
+        } else if index == hovered_index && !editor.in_map {
+            world_structure_frame(structure, structure.base_y + structure.height + .02, {168, 239, 220, 255})
         }
     }
     if editor.structure_placing {
@@ -951,8 +1629,33 @@ world_character :: proc(editor: ^Editor) {
     world_box({p.x + forward.x * .25, p.y + 1.16, p.z + forward.z * .25}, {.16, .16, .55}, {247, 221, 167, 255})
 }
 
+world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: rl.Color) {
+    if editor == nil do return
+    segments := 48
+    center := third_person.Vec3 {
+        x = x,
+        y = terrain.sample_height(&editor.project, 0, x, z) + height_offset,
+        z = z,
+    }
+    for i in 0 ..< segments {
+        a0 := f32(i) * 2 * math.PI / f32(segments)
+        a1 := f32(i + 1) * 2 * math.PI / f32(segments)
+        p0 := third_person.Vec3 {
+            x = x + math.cos(a0) * radius,
+            z = z + math.sin(a0) * radius,
+        }
+        p1 := third_person.Vec3 {
+            x = x + math.cos(a1) * radius,
+            z = z + math.sin(a1) * radius,
+        }
+        p0.y = terrain.sample_height(&editor.project, 0, p0.x, p0.z) + height_offset
+        p1.y = terrain.sample_height(&editor.project, 0, p1.x, p1.z) + height_offset
+        world_triangle(center, p0, p1, color)
+    }
+}
+
 world_brush :: proc(editor: ^Editor) {
-    if editor.in_map do return
+    if editor.in_map || editor.tool == .Structure do return
     camera := perspective_camera(
         editor.camera_pose,
         editor.in_map && driving_postale(editor) ? editor.flight_camera.focal_length : 1.35,
@@ -961,28 +1664,26 @@ world_brush :: proc(editor: ^Editor) {
     if !inside do return
     x, z, hit := terrain_under_cursor_3d(editor, camera, mouse, ADRIATIC_WORLD_WIDTH, ADRIATIC_WORLD_HEIGHT)
     if !hit do return
-    segments := 48
-    color := rl.Color{230, 244, 218, 230}
-    for i in 0 ..< segments {
-        a0 := f32(i) * 2 * math.PI / f32(segments)
-        a1 := f32(i + 1) * 2 * math.PI / f32(segments)
-        p0 := third_person.Vec3 {
-            x = x + math.cos(a0) * editor.radius,
-            z = z + math.sin(a0) * editor.radius,
-        }
-        p1 := third_person.Vec3 {
-            x = x + math.cos(a1) * editor.radius,
-            z = z + math.sin(a1) * editor.radius,
-        }
-        p0.y = terrain.sample_height(&editor.project, 0, p0.x, p0.z) + .10
-        p1.y = terrain.sample_height(&editor.project, 0, p1.x, p1.z) + .10
-        center := third_person.Vec3 {
-            x = x,
-            y = terrain.sample_height(&editor.project, 0, x, z) + .09,
-            z = z,
-        }
-        world_triangle(center, p0, p1, color)
+    color: rl.Color = {230, 244, 218, 76}
+    switch editor.tool {
+    case .Raise:
+        color = {244, 214, 122, 88}
+    case .Smooth:
+        color = {176, 225, 236, 88}
+    case .Paint:
+        color = {168, 239, 220, 88}
+    case .Structure:
+        return
     }
+    if rl.IsMouseButtonDown(.RIGHT) do color = {245, 126, 112, 108}
+    world_brush_disc(editor, x, z, editor.radius, .09, color)
+    // A denser inner disc makes the hardness setting legible at the cursor:
+    // harder brushes have a larger, more opaque core while the outer disc
+    // continues to show the full affected radius.
+    inner_radius := editor.radius * (.25 + editor.hardness * .65)
+    core := color
+    core.a = u8(min(int(color.a) + 34, 180))
+    world_brush_disc(editor, x, z, inner_radius, .105, core)
 }
 
 world_build :: proc(editor: ^Editor) {
@@ -992,6 +1693,68 @@ world_build :: proc(editor: ^Editor) {
     // instead of silently dropping vehicles at the end of the frame.
     world_ocean(editor)
     world_infrastructure(editor)
+    sky := atmosphere.sample(&editor.atmosphere)
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        world_structure_shadow(structure, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+    }
+    car_ground := terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
+    car_shadow := terrain.structure_make(
+        editor.car.position.x,
+        editor.car.position.z,
+        3.8,
+        6.2,
+        car_ground,
+        1.8,
+    )
+    car_shadow.rotation = editor.car.yaw_radians
+    world_structure_shadow(car_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+
+    postale_ground := terrain.sample_height(
+        &editor.project,
+        0,
+        editor.postale.body.position.x,
+        editor.postale.body.position.z,
+    )
+    postale_shadow := terrain.structure_make(
+        editor.postale.body.position.x,
+        editor.postale.body.position.z,
+        10,
+        6,
+        postale_ground,
+        max(editor.postale.body.position.y - postale_ground, f32(2)),
+    )
+    postale_shadow.rotation = editor.postale.vehicle.yaw_radians
+    world_structure_shadow(postale_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+
+    libellula_ground := terrain.sample_height(
+        &editor.project,
+        0,
+        editor.libellula.position.x,
+        editor.libellula.position.z,
+    )
+    libellula_shadow := terrain.structure_make(
+        editor.libellula.position.x,
+        editor.libellula.position.z,
+        7,
+        4,
+        libellula_ground,
+        max(editor.libellula.position.y - libellula_ground, f32(1.5)),
+    )
+    libellula_shadow.rotation = editor.libellula.yaw_radians
+    world_structure_shadow(libellula_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+
+    if editor.in_map && editor.pilot.mode == .On_Foot {
+        character_ground := terrain.sample_height(&editor.project, 0, editor.player.position.x, editor.player.position.z)
+        character_shadow := terrain.structure_make(
+            editor.player.position.x,
+            editor.player.position.z,
+            .55,
+            .42,
+            character_ground,
+            1.8,
+        )
+        world_structure_shadow(character_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+    }
     world_structures(editor)
     world_aircraft(editor)
     world_car(editor)
@@ -1431,6 +2194,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
     editor := world_renderer.editor
     if editor == nil do return
+    imgui_frame := imgui_begin_frame(pass)
     world_build(editor)
     clipmap_update(editor, int(pass.frame.frame_index))
     buffer := &world_renderer.vertex[pass.frame.frame_index]
@@ -1511,6 +2275,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         world_render_graph_ready = adriatic_render_graph(&world_render_graph)
     }
     if world_render_graph_ready do _ = render_graph.execute(&world_render_graph, &graph_context)
+    if imgui_frame do imgui_render(pass, editor)
 }
 
 world_renderer_attach :: proc(editor: ^Editor) {
@@ -1521,6 +2286,7 @@ world_renderer_attach :: proc(editor: ^Editor) {
 world_renderer_destroy :: proc() {
     if !world_renderer.initialized do return
     _ = vk.DeviceWaitIdle(world_renderer.ctx.device)
+    imgui_destroy()
     for &buffer in world_renderer.vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {

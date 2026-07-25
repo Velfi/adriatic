@@ -1,6 +1,8 @@
 package terrain
 
 import "core:math"
+import "core:os"
+import "base:runtime"
 
 CLIPMAP_LEVELS :: 5
 WORLD_SIZE_METERS :: 4000.0
@@ -37,6 +39,14 @@ Formation_Kind :: enum {
 }
 
 STRUCTURE_CAPACITY :: 256
+PROJECT_FILE_VERSION :: u32(1)
+PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '1'}
+
+Project_File_Header :: struct {
+    magic:        [8]u8,
+    version:      u32,
+    payload_size: u64,
+}
 
 Structure :: struct {
     id:       u64,
@@ -65,6 +75,43 @@ Project :: struct {
     structures:        [STRUCTURE_CAPACITY]Structure,
     structure_count:   int,
     next_structure_id: u64,
+}
+
+project_file_header_valid :: proc(header: ^Project_File_Header) -> bool {
+    if header == nil || header.version != PROJECT_FILE_VERSION || header.payload_size != size_of(Project) do return false
+    magic := PROJECT_FILE_MAGIC
+    for index in 0 ..< len(PROJECT_FILE_MAGIC) {
+        if header.magic[index] != magic[index] do return false
+    }
+    return true
+}
+
+save_project :: proc(project: ^Project, filename: string) -> bool {
+    if project == nil || filename == "" do return false
+    header_size := size_of(Project_File_Header)
+    data := make([]byte, header_size + size_of(Project))
+    defer delete(data)
+    header := cast(^Project_File_Header)raw_data(data)
+    header^ = {
+        magic        = PROJECT_FILE_MAGIC,
+        version      = PROJECT_FILE_VERSION,
+        payload_size = size_of(Project),
+    }
+    runtime.mem_copy_non_overlapping(raw_data(data[header_size:]), cast(rawptr)project, size_of(Project))
+    return os.write_entire_file(filename, data) == nil
+}
+
+load_project :: proc(project: ^Project, filename: string) -> bool {
+    if project == nil || filename == "" do return false
+    data, err := os.read_entire_file_from_path(filename, context.allocator)
+    if err != nil do return false
+    defer delete(data)
+    header_size := size_of(Project_File_Header)
+    if len(data) < header_size + size_of(Project) do return false
+    header := cast(^Project_File_Header)raw_data(data)
+    if !project_file_header_valid(header) do return false
+    runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
+    return true
 }
 
 init_project :: proc(result: ^Project) {
@@ -186,9 +233,9 @@ duplicate_structure :: proc(project: ^Project, index: int, offset_x, offset_z: f
     return add_structure(project, copy)
 }
 
-new_project :: proc() -> Project {
-    result: Project
-    init_project(&result)
+new_project :: proc() -> ^Project {
+    result := new(Project)
+    init_project(result)
     return result
 }
 
@@ -238,8 +285,19 @@ sample_material :: proc(project: ^Project, level: int, x, z: f32) -> f32 {
     return data.material[sample_index(grid_x, grid_z)]
 }
 
+// apply_stroke keeps the original soft brush behavior for callers that do not
+// need to expose falloff tuning. The editor uses apply_stroke_with_hardness.
 apply_stroke :: proc(project: ^Project, tool: Tool, world_x, world_z, radius, strength, direction: f32) {
+    apply_stroke_with_hardness(project, tool, world_x, world_z, radius, strength, direction, .5)
+}
+
+apply_stroke_with_hardness :: proc(
+    project: ^Project,
+    tool: Tool,
+    world_x, world_z, radius, strength, direction, hardness: f32,
+) {
     if project == nil || radius <= 0 || strength <= 0 do return
+    falloff_exponent := 1 + (1 - clamp(hardness, 0, 1)) * 2
     for level in 0 ..< CLIPMAP_LEVELS {
         data := &project.levels[level]
         // Coarse levels receive a footprint no smaller than their sampling cell so
@@ -252,7 +310,7 @@ apply_stroke :: proc(project: ^Project, tool: Tool, world_x, world_z, radius, st
                 dx, dz := world_sample_x - world_x, world_sample_z - world_z
                 distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
                 if distance > effective_radius do continue
-                falloff := 1 - distance / effective_radius
+                falloff := f32(math.pow(f64(1 - distance / effective_radius), f64(falloff_exponent)))
                 index := sample_index(x, z)
                 switch tool {
                 case .Raise:
