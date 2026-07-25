@@ -1,13 +1,14 @@
 package main
 
+import hot_abi "../packages/hot_abi"
 import "core:dynlib"
 import "core:fmt"
 import "core:os"
 import "core:time"
 
-HOT_ABI_VERSION :: 1
 HOT_LOAD_ATTEMPTS :: 12
 HOT_LOAD_RETRY_DELAY :: 25 * time.Millisecond
+HOT_LIBRARY_ENV :: "ADRIATIC_HOT_LIBRARY"
 
 Hot_API :: struct {
     lib:         dynlib.Library,
@@ -22,12 +23,22 @@ hot_path :: proc(directory, name: string) -> string {
 hot_load :: proc(source_path, copy_path: string) -> (api: Hot_API, ok: bool) {
     for attempt in 0 ..< HOT_LOAD_ATTEMPTS {
         if copy_error := os.copy_file(copy_path, source_path); copy_error == nil {
-            _, symbols_ok := dynlib.initialize_symbols(&api, copy_path, "_", "lib")
+            count, symbols_ok := dynlib.initialize_symbols(&api, copy_path, "", "lib")
             if symbols_ok && api.run != nil && api.abi_version != nil {
-                if api.abi_version() == HOT_ABI_VERSION {
+                actual_abi := api.abi_version()
+                expected_abi := hot_abi.type_hash(hot_abi.Contract)
+                if actual_abi == expected_abi {
                     return api, true
                 }
-                fmt.eprintln("adriatic hot reload rejected: ABI changed")
+                fmt.eprintln(
+                    "adriatic hot reload rejected: ABI changed (",
+                    actual_abi,
+                    " != ",
+                    expected_abi,
+                    ", symbols=",
+                    count,
+                    ")",
+                )
             }
             if api.lib != nil {
                 dynlib.unload_library(api.lib)
@@ -55,6 +66,7 @@ main :: proc() {
 
     dll_name := "adriatic." + dynlib.LIBRARY_FILE_EXTENSION
     source_path := hot_path(executable_directory, dll_name)
+    _ = os.set_env(HOT_LIBRARY_ENV, source_path)
     for api_version := 0;; api_version += 1 {
         copy_path := hot_path(
             executable_directory,

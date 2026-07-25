@@ -5,6 +5,7 @@ import atmosphere "../packages/atmosphere"
 import chase_camera "../packages/chase_camera"
 import dialogue "../packages/dialogue"
 import flight "../packages/flight"
+import hot_abi "../packages/hot_abi"
 import libellula_game "../packages/libellula"
 import particle_systems "../packages/particles"
 import postale_game "../packages/postale"
@@ -16,8 +17,12 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:strconv"
+import "core:time"
 import sdl "vendor:sdl3"
 import rl "zelda_engine:canvas2d"
+
+HOT_RELOAD :: #config(HOT_RELOAD, false)
+HOT_LIBRARY_ENV :: "ADRIATIC_HOT_LIBRARY"
 
 ADRIATIC_WORLD_WIDTH :: 854
 ADRIATIC_WORLD_HEIGHT :: 480
@@ -3439,14 +3444,22 @@ capture_kind_from_arg :: proc(arg: string) -> Capture_Kind {
     return .None
 }
 
-main :: proc() {
+hot_reload_requested :: proc(library_path: string, loaded_mtime: i64) -> bool {
+    if library_path == "" do return false
+    modified, err := os.modification_time_by_path(library_path)
+    if err != nil do return false
+    modified_mtime := time.time_to_unix_nano(modified)
+    return modified_mtime > loaded_mtime
+}
+
+adriatic_run :: proc() -> bool {
     assert(rl.SetRendererDescriptor(ADRIATIC_RENDERER_DESCRIPTOR))
     benchmark_requested := len(os.args) >= 2 && os.args[1] == "--benchmark"
     if benchmark_requested && len(os.args) < 9 {
         fmt.eprintln(
             "usage: adriatic --benchmark <scenario> <warmup_frames> <sample_frames> <window_width> <window_height> <world_width> <world_height>",
         )
-        return
+        return false
     }
     benchmark_mode := benchmark_requested && len(os.args) >= 9
     benchmark_scenario := benchmark_mode ? os.args[2] : ""
@@ -3651,12 +3664,21 @@ main :: proc() {
     if benchmark_mode {
         if !benchmark_seed_scene(editor, benchmark_scenario) {
             fmt.eprintf("unknown benchmark scenario: %s\n", benchmark_scenario)
-            return
+            return false
         }
         atmosphere.set_world_minutes(&editor.atmosphere, 9 * 60 + 30)
         atmosphere.set_weather_override(&editor.atmosphere, .Clear)
         editor.atmosphere.weather = atmosphere.weather_for(.Clear)
         editor.atmosphere.paused = true
+    }
+    hot_library_path := ""
+    hot_library_mtime: i64
+    when HOT_RELOAD {
+        hot_library_path = os.get_env(HOT_LIBRARY_ENV, context.temp_allocator)
+        if hot_library_path != "" {
+            modified, err := os.modification_time_by_path(hot_library_path)
+            if err == nil do hot_library_mtime = time.time_to_unix_nano(modified)
+        }
     }
     world_renderer_attach(editor)
     defer world_renderer_destroy()
@@ -4392,6 +4414,24 @@ main :: proc() {
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.
         if capture_mode && frame >= 32 do break
+        if HOT_RELOAD && hot_reload_requested(hot_library_path, hot_library_mtime) do break
         frame += 1
+    }
+    return HOT_RELOAD && hot_reload_requested(hot_library_path, hot_library_mtime)
+}
+
+@(export)
+abi_version :: proc() -> u64 {
+    return hot_abi.type_hash(hot_abi.Contract)
+}
+
+@(export)
+run :: proc() -> bool {
+    return adriatic_run()
+}
+
+when !HOT_RELOAD {
+    main :: proc() {
+        _ = adriatic_run()
     }
 }

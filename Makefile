@@ -317,6 +317,22 @@ $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/foli
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf: assets/fonts/ZeldaSans-Regular-v1.otf
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf: assets/fonts/ZeldaSerif-Regular-v0_1.otf
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf: assets/fonts/MomoTrustDisplay-Regular.ttf
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(HOT_SHADER_DIR)/world.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
@@ -369,7 +385,7 @@ $(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
 	@mkdir -p $(@D)
 	touch $@
 
-$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png
+$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png $(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -debug -o:minimal -build-mode:shared -define:HOT_RELOAD=true -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
 
