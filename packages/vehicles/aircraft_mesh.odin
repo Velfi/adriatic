@@ -20,6 +20,7 @@ Aircraft_Mesh_Part :: enum u8 {
     Left_Rotor,
     Right_Rotor,
     Rear_Rotor,
+    Mk2_Rear_Rotor,
     Left_Flap,
     Right_Flap,
     Left_Aileron,
@@ -61,6 +62,7 @@ Mesh_Animation_Group :: enum u8 {
     Libellula_Left_Rotor,
     Libellula_Right_Rotor,
     Libellula_Rear_Rotor,
+    Libellula_Mk2_Rear_Rotor,
 }
 
 Mesh_Vertex :: struct {

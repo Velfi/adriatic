@@ -4977,17 +4977,29 @@ world_aircraft :: proc(editor: ^Editor) {
         }
     }
     if editor.libellula_visible {
-        vehicles.libellula_mesh_build(&editor.libellula_visual_mesh)
         libellula := &editor.libellula_visual_mesh
-        vehicles.animate_libellula_mesh_pose(
-            libellula,
-            editor.libellula.rotor_turns.x,
-            editor.libellula.rotor_turns.y,
-            editor.libellula.rotor_turns.z,
-            editor.libellula.pitch,
-            editor.libellula.roll,
-            0,
-        )
+        if editor.aircraft.active == .Libellula_Mk2 {
+            vehicles.libellula_mk2_mesh_build(&editor.libellula_mk2_visual_mesh)
+            libellula = &editor.libellula_mk2_visual_mesh
+            vehicles.animate_libellula_mk2_mesh(
+                libellula,
+                editor.libellula.rotor_turns.x,
+                editor.libellula.rotor_turns.y,
+                editor.libellula.rotor_turns.z,
+                editor.libellula.rotor_turns.z,
+            )
+        } else {
+            vehicles.libellula_mesh_build(libellula)
+            vehicles.animate_libellula_mesh_pose(
+                libellula,
+                editor.libellula.rotor_turns.x,
+                editor.libellula.rotor_turns.y,
+                editor.libellula.rotor_turns.z,
+                editor.libellula.pitch,
+                editor.libellula.roll,
+                0,
+            )
+        }
         for triangle in vehicles.mesh_triangles(libellula) {
             world_vehicle_shadow_triangle(
                 libellula_vertex_world(&editor.libellula, libellula.vertices[triangle.a].position, .72),
@@ -5018,7 +5030,7 @@ world_vehicle_showcase :: proc(editor: ^Editor) {
     if editor.vehicle_showcase_target == "postale" {
         world_aircraft(editor)
         world_postale_pilot(editor)
-    } else if editor.vehicle_showcase_target == "libellula" {
+    } else if editor.vehicle_showcase_target == "libellula" || editor.vehicle_showcase_target == "libellula-mk2" {
         world_aircraft(editor)
         world_showcase_aircraft_pilot(editor, editor.libellula.body.position, editor.libellula.body.basis)
     } else {
@@ -5086,8 +5098,42 @@ car_vertex_world :: proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3
     }
 }
 
+trailer_vertex_world :: proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3 {
+    origin := editor.car_trailer_position
+    yaw := editor.car_trailer_yaw
+    right, up, forward := position[0], position[1], -position[2]
+    pitch_cos, pitch_sin := math.cos(editor.car_trailer.body_pitch), math.sin(editor.car_trailer.body_pitch)
+    forward, up = forward * pitch_cos - up * pitch_sin, forward * pitch_sin + up * pitch_cos
+    roll_cos, roll_sin := math.cos(editor.car_trailer.body_roll), math.sin(editor.car_trailer.body_roll)
+    right, up = right * roll_cos - up * roll_sin, right * roll_sin + up * roll_cos
+    heading_cos, heading_sin := math.cos(yaw), math.sin(yaw)
+    return {
+        x = origin.x + forward * heading_cos - right * heading_sin,
+        y = origin.y + up,
+        z = origin.z + forward * heading_sin + right * heading_cos,
+    }
+}
+
+trailer_part_color :: proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
+    color := aircraft_part_color(part)
+    if part == .Tail_Light {
+        braking := editor.car_drive.handbrake_amount > .15 || editor.car_drive.acceleration_feedback < -.12
+        if braking do color = {255, 76, 62, 255}
+    }
+    return color
+}
+
 world_car :: proc(editor: ^Editor) {
     mesh := vehicles.simple_car_mesh()
+    trailer_speed_squared :=
+        editor.car_trailer.velocity.x * editor.car_trailer.velocity.x +
+        editor.car_trailer.velocity.z * editor.car_trailer.velocity.z
+    trailer := vehicles.simple_car_trailer_mesh(
+        !editor.car_trailer_attached,
+        editor.car_trailer_attached,
+        !editor.car_trailer_attached && trailer_speed_squared < .25,
+    )
+    vehicles.animate_trailer_wheels(&trailer, editor.car_trailer.wheel_rotation)
     sky := atmosphere.sample(&editor.atmosphere)
     for triangle in vehicles.mesh_triangles(&mesh) {
         world_vehicle_shadow_triangle(
@@ -5108,6 +5154,27 @@ world_car :: proc(editor: ^Editor) {
             car_vertex_world(editor, b.position),
             car_vertex_world(editor, c.position),
             aircraft_part_color(a.part),
+        )
+    }
+    for triangle in vehicles.mesh_triangles(&trailer) {
+        world_vehicle_shadow_triangle(
+            trailer_vertex_world(editor, trailer.vertices[triangle.a].position),
+            trailer_vertex_world(editor, trailer.vertices[triangle.b].position),
+            trailer_vertex_world(editor, trailer.vertices[triangle.c].position),
+            sky.sun_direction,
+            sky.weather.cloud_cover,
+            &editor.project,
+        )
+    }
+    for triangle in vehicles.mesh_triangles(&trailer) {
+        a := trailer.vertices[triangle.a]
+        b := trailer.vertices[triangle.b]
+        c := trailer.vertices[triangle.c]
+        world_triangle(
+            trailer_vertex_world(editor, a.position),
+            trailer_vertex_world(editor, b.position),
+            trailer_vertex_world(editor, c.position),
+            trailer_part_color(editor, a.part),
         )
     }
 }
@@ -6655,6 +6722,28 @@ world_postale_pilot :: proc(editor: ^Editor) {
     )
 }
 
+world_attendant_kiosk :: proc(editor: ^Editor) {
+    if !editor.in_map || !editor.libellula_visible do return
+    p := editor.attendant_position
+    ground := terrain.sample_height(&editor.project, 0, p.x, p.z)
+    timber := rl.Color{92, 61, 38, 255}
+    painted := rl.Color{188, 58, 48, 255}
+    cream := rl.Color{232, 218, 181, 255}
+    roof := rl.Color{55, 72, 76, 255}
+
+    // Open-front runway kiosk: a raised deck, sheltered counter, rear wall,
+    // and striped sign. The opening faces the runway along -Z.
+    world_box_rotated({p.x, ground + .08, p.z + .42}, {3.2, .16, 2.6}, 0, timber)
+    world_box_rotated({p.x, ground + 1.35, p.z + 1.58}, {3.2, 2.7, .16}, 0, painted)
+    world_box_rotated({p.x - 1.52, ground + 1.30, p.z + .42}, {.16, 2.6, 2.35}, 0, painted)
+    world_box_rotated({p.x + 1.52, ground + 1.30, p.z + .42}, {.16, 2.6, 2.35}, 0, painted)
+    world_box_rotated({p.x, ground + 2.78, p.z + .38}, {3.65, .18, 3.0}, 0, roof)
+    world_box_rotated({p.x, ground + 1.02, p.z - .54}, {3.0, .16, .48}, 0, cream)
+    world_box_rotated({p.x, ground + .62, p.z - .36}, {2.85, .72, .14}, 0, timber)
+    world_box_rotated({p.x, ground + 2.28, p.z + 1.47}, {2.25, .48, .08}, 0, cream)
+    world_box_rotated({p.x, ground + 2.28, p.z + 1.40}, {1.55, .14, .06}, 0, painted)
+}
+
 world_marta :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
     delta := third_person.Vec3 {
@@ -7128,6 +7217,7 @@ world_build :: proc(editor: ^Editor) {
     world_climbing_leaves(editor)
     world_aircraft(editor)
     world_car(editor)
+    world_attendant_kiosk(editor)
     world_marta(editor)
     world_renderer.player_vertex_first = len(world_renderer.vertices)
     world_character(editor)

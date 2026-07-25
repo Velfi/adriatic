@@ -251,7 +251,7 @@ control_hint_draw_gameplay_hud :: proc(editor: ^Editor, width: i32) {
         entries[5] = {.Recenter, "CENTER"}
         entries[6] = {.Exit, "EXIT"}
         entries[7] = {.Reset, "RESET"}
-        if editor.aircraft.active == .Libellula {
+        if editor.aircraft.active != .Postale {
             entries[4] = {.Altitude, "ALTITUDE"}
         }
     } else if in_car {

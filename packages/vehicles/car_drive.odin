@@ -39,6 +39,17 @@ Car_Drive_Surface :: struct {
     rolling_resistance: f32,
 }
 
+// Car_Trailer_State is the small rigid-body state needed by the product-local
+// trailer. The car solver is intentionally arcade-oriented, so the trailer is
+// solved as a planar body with a spring-damper hitch and a passive axle.
+Car_Trailer_State :: struct {
+    velocity:              third_person.Vec3,
+    yaw_rate:              f32,
+    reaction_force:        third_person.Vec3,
+    body_roll, body_pitch: f32,
+    wheel_rotation:        f32,
+}
+
 CAR_DRIVE_DEFAULT_SURFACE :: Car_Drive_Surface {
     longitudinal_grip  = 1,
     lateral_grip       = 1,
@@ -215,4 +226,108 @@ car_drive_step :: proc(
     pitch_target := state.acceleration_feedback * .045
     state.body_roll += (roll_target - state.body_roll) * clamp(7 * dt, 0, 1)
     state.body_pitch += (pitch_target - state.body_pitch) * clamp(6 * dt, 0, 1)
+}
+
+car_trailer_angle_delta :: proc(current, target: f32) -> f32 {
+    delta := target - current
+    for delta > math.PI do delta -= math.PI * 2
+    for delta < -math.PI do delta += math.PI * 2
+    return delta
+}
+
+// car_trailer_step advances a lightweight planar rigid body. While coupled,
+// the hitch behaves as a compliant distance constraint: acceleration transfers
+// through the tongue, braking makes the trailer push forward, and steering
+// produces a delayed articulation angle. Once detached, the same body keeps
+// its velocity and coasts with axle drag instead of snapping to a parked pose.
+car_trailer_step :: proc(
+    state: ^Car_Trailer_State,
+    position: ^third_person.Vec3,
+    yaw: ^f32,
+    car_position: third_person.Vec3,
+    car_yaw, car_yaw_rate: f32,
+    car_velocity: third_person.Vec3,
+    attached: bool,
+    ground_height, delta_seconds: f32,
+) {
+    if state == nil || position == nil || yaw == nil || delta_seconds <= 0 do return
+    dt := min(delta_seconds, f32(.05))
+    velocity_before := state.velocity
+    if attached {
+        car_cos, car_sin := math.cos(car_yaw), math.sin(car_yaw)
+        // Solve the target from both coupler positions. This keeps the tongue
+        // connected while the trailer articulates instead of assuming it is
+        // always aligned with the car's yaw.
+        trailer_cos, trailer_sin := math.cos(yaw^), math.sin(yaw^)
+        desired_x := car_position.x - car_cos * 1.48 + trailer_cos * 1.36
+        desired_z := car_position.z - car_sin * 1.48 + trailer_sin * 1.36
+        error_x := desired_x - position.x
+        error_z := desired_z - position.z
+
+        // A stiff but damped constraint prevents visible stretching while
+        // retaining believable lag when the car accelerates or turns.
+        acceleration_x := error_x * 42 + (car_velocity.x - state.velocity.x) * 11
+        acceleration_z := error_z * 42 + (car_velocity.z - state.velocity.z) * 11
+        state.reaction_force = {-acceleration_x * .24, 0, -acceleration_z * .24}
+        acceleration_limit := f32(55)
+        acceleration_length := math.sqrt(acceleration_x * acceleration_x + acceleration_z * acceleration_z)
+        if acceleration_length > acceleration_limit {
+            scale := acceleration_limit / acceleration_length
+            acceleration_x *= scale
+            acceleration_z *= scale
+        }
+        state.velocity.x += acceleration_x * dt
+        state.velocity.z += acceleration_z * dt
+
+        // The axle carries its own rolling and lateral resistance while
+        // coupled; the hitch then has to overcome that resistance naturally.
+        forward_x, forward_z := math.cos(yaw^), math.sin(yaw^)
+        right_x, right_z := -forward_z, forward_x
+        longitudinal := state.velocity.x * forward_x + state.velocity.z * forward_z
+        lateral := state.velocity.x * right_x + state.velocity.z * right_z
+        longitudinal *= 1 - clamp(.65 * dt, 0, .35)
+        lateral *= 1 - clamp(5.0 * dt, 0, .8)
+        state.velocity.x = forward_x * longitudinal + right_x * lateral
+        state.velocity.z = forward_z * longitudinal + right_z * lateral
+
+        yaw_error := car_trailer_angle_delta(yaw^, car_yaw)
+        // Keep the tongue from folding through the car during tight reverse
+        // maneuvers while still letting the body build a visible sway.
+        limited_yaw_error := clamp(yaw_error, f32(-1.15), f32(1.15))
+        state.yaw_rate += (limited_yaw_error * 30 + (car_yaw_rate - state.yaw_rate) * 8) * dt
+        state.yaw_rate *= 1 - clamp(3.5 * dt, 0, .8)
+        yaw^ += state.yaw_rate * dt
+    } else {
+        state.reaction_force = {}
+        // Passive axle friction: retain forward roll, scrub lateral motion.
+        forward_x, forward_z := math.cos(yaw^), math.sin(yaw^)
+        right_x, right_z := -forward_z, forward_x
+        longitudinal := state.velocity.x * forward_x + state.velocity.z * forward_z
+        lateral := state.velocity.x * right_x + state.velocity.z * right_z
+        longitudinal *= 1 - clamp(1.15 * dt, 0, .8)
+        lateral *= 1 - clamp(5.5 * dt, 0, .9)
+        state.velocity.x = forward_x * longitudinal + right_x * lateral
+        state.velocity.z = forward_z * longitudinal + right_z * lateral
+        state.yaw_rate *= 1 - clamp(1.8 * dt, 0, .8)
+        yaw^ += state.yaw_rate * dt
+    }
+
+    acceleration_x := (state.velocity.x - velocity_before.x) / max(dt, f32(.001))
+    acceleration_z := (state.velocity.z - velocity_before.z) / max(dt, f32(.001))
+    forward_x, forward_z := math.cos(yaw^), math.sin(yaw^)
+    longitudinal_speed := state.velocity.x * forward_x + state.velocity.z * forward_z
+    state.wheel_rotation += longitudinal_speed * dt / .25
+    longitudinal_acceleration := acceleration_x * forward_x + acceleration_z * forward_z
+    if attached {
+        state.reaction_force = {-acceleration_x * .24, 0, -acceleration_z * .24}
+    }
+    pitch_target := attached ? clamp(-longitudinal_acceleration * .012, -.12, .12) : f32(0)
+    roll_target := attached ? clamp(-state.yaw_rate * longitudinal_speed * .018, -.14, .14) : f32(0)
+    state.body_pitch += (pitch_target - state.body_pitch) * clamp(8 * dt, 0, 1)
+    state.body_roll += (roll_target - state.body_roll) * clamp(9 * dt, 0, 1)
+
+    position.x += state.velocity.x * dt
+    position.z += state.velocity.z * dt
+    position.y = ground_height
+    state.velocity.y = 0
 }

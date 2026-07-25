@@ -171,9 +171,14 @@ Editor :: struct {
     pilot:                                    vehicles.Character,
     car:                                      vehicles.Vehicle,
     car_drive:                                vehicles.Car_Drive_State,
+    car_trailer:                              vehicles.Car_Trailer_State,
+    car_trailer_attached:                     bool,
+    car_trailer_position:                     third_person.Vec3,
+    car_trailer_yaw:                          f32,
     postale:                                  postale_game.Runtime,
     libellula:                                libellula_game.Runtime,
     libellula_visual_mesh:                    vehicles.Libellula_Mesh,
+    libellula_mk2_visual_mesh:                vehicles.Libellula_Mesh,
     libellula_projected_faces:                [dynamic]Projected_Aircraft_Face,
     aircraft:                                 vehicles.Aircraft_Fleet,
     postale_visible:                          bool,
@@ -2174,7 +2179,7 @@ postale_vertex_world :: proc(runtime: ^postale_game.Runtime, position: [3]f32, s
 }
 
 aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
-    if editor.aircraft.active == .Libellula {
+    if editor.aircraft.active != .Postale {
         return {
             position = editor.libellula.body.position,
             basis = editor.libellula.body.basis,
@@ -2193,7 +2198,7 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
 }
 
 active_aircraft_body :: proc(editor: ^Editor) -> ^flight.Body_State {
-    if editor != nil && editor.aircraft.active == .Libellula do return &editor.libellula.body
+    if editor != nil && editor.aircraft.active != .Postale do return &editor.libellula.body
     if editor == nil do return nil
     return &editor.postale.body
 }
@@ -2206,13 +2211,13 @@ active_aircraft_vehicle :: proc(editor: ^Editor) -> ^vehicles.Vehicle {
 }
 
 active_aircraft_throttle :: proc(editor: ^Editor) -> f32 {
-    if editor != nil && editor.aircraft.active == .Libellula do return editor.libellula.throttle
+    if editor != nil && editor.aircraft.active != .Postale do return editor.libellula.throttle
     if editor == nil do return 0
     return editor.postale.throttle
 }
 
 active_aircraft_airspeed :: proc(editor: ^Editor) -> f32 {
-    if editor != nil && editor.aircraft.active == .Libellula do return flight.length(editor.libellula.body.velocity)
+    if editor != nil && editor.aircraft.active != .Postale do return flight.length(editor.libellula.body.velocity)
     if editor == nil do return 0
     return editor.postale.telemetry.airspeed
 }
@@ -2247,7 +2252,7 @@ postale_flyby_shake :: proc(editor: ^Editor) -> f32 {
 }
 
 active_aircraft_ground_clearance :: proc(editor: ^Editor) -> f32 {
-    if editor != nil && editor.aircraft.active == .Libellula do return editor.libellula.tuning.ground_clearance
+    if editor != nil && editor.aircraft.active != .Postale do return editor.libellula.tuning.ground_clearance
     return postale_game.GROUND_CLEARANCE
 }
 
@@ -2258,12 +2263,12 @@ libellula_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     return {x = x, y = terrain.sample_height(&editor.project, 0, x, z) + 2.1, z = z}
 }
 
-attendant_spawn_position :: proc(editor: ^Editor, aircraft_position: third_person.Vec3) -> third_person.Vec3 {
-    x := aircraft_position.x - 3.3
-    // Give the full mouse silhouette room beside the apron. The old
-    // stick-figure placeholder could share this space with the parked car,
-    // but Marta's body and tail need a clear standing spot.
-    z := aircraft_position.z + 4.8
+attendant_spawn_position :: proc(editor: ^Editor, _: third_person.Vec3) -> third_person.Vec3 {
+    runway := runway_spawn_position(editor)
+    // Keep the kiosk off the active strip, but close enough to be visible from
+    // the arrival point. The attendant stands at its open service counter.
+    x := runway.x + 5.5
+    z := runway.z + 10.5
     return {x = x, y = terrain.sample_height(&editor.project, 0, x, z), z = z}
 }
 
@@ -2295,9 +2300,12 @@ open_attendant_dialogue :: proc(editor: ^Editor) {
     if editor.aircraft.active == .Postale {
         choices[0] = dialogue.choice("Switch to the Libellula", dialogue.no_next_node)
         choices[1] = dialogue.choice("Keep the Postale", dialogue.no_next_node)
+    } else if editor.aircraft.active == .Libellula {
+        choices[0] = dialogue.choice("Switch to the Libellula Mk2", dialogue.no_next_node)
+        choices[1] = dialogue.choice("Keep the Libellula", dialogue.no_next_node)
     } else {
         choices[0] = dialogue.choice("Switch to the Postale", dialogue.no_next_node)
-        choices[1] = dialogue.choice("Keep the Libellula", dialogue.no_next_node)
+        choices[1] = dialogue.choice("Keep the Libellula Mk2", dialogue.no_next_node)
     }
     nodes := make([]dialogue.Node, 1)
     nodes[0] = dialogue.node("vehicle_swap", attendant_text, choices, attendant_speaker)
@@ -2348,16 +2356,20 @@ attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
     if editor == nil || !editor.attendant_dialogue_open do return
     if choice_index == 0 && dialogue.choose(&editor.attendant_dialogue, 0) {
         target := vehicles.Aircraft_Kind.Libellula
-        if editor.aircraft.active == .Libellula do target = .Postale
+        if editor.aircraft.active == .Libellula {
+            target = .Libellula_Mk2
+        } else if editor.aircraft.active == .Libellula_Mk2 {
+            target = .Postale
+        }
         if vehicles.aircraft_fleet_unlock(&editor.aircraft, target) &&
            vehicles.aircraft_fleet_switch(&editor.aircraft, target) {
             line_position := libellula_spawn_position(editor)
             editor.postale_visible = target == .Postale
             editor.libellula_visible = true
             editor.postale.vehicle.locked = target != .Postale
-            editor.libellula.vehicle.locked = target != .Libellula
+            editor.libellula.vehicle.locked = target == .Postale
             line_ground := terrain.sample_height(&editor.project, 0, line_position.x, line_position.z)
-            if target == .Libellula {
+            if target != .Postale {
                 editor.libellula.spawn_position = {
                     x = line_position.x,
                     y = line_position.y,
@@ -2437,17 +2449,29 @@ libellula_attendant_near :: proc(editor: ^Editor) -> bool {
 }
 
 draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
-    vehicles.libellula_mesh_build(&editor.libellula_visual_mesh)
     mesh := &editor.libellula_visual_mesh
-    vehicles.animate_libellula_mesh_pose(
-        mesh,
-        editor.libellula.rotor_turns.x,
-        editor.libellula.rotor_turns.y,
-        editor.libellula.rotor_turns.z,
-        editor.libellula.pitch,
-        editor.libellula.roll,
-        0,
-    )
+    if editor.aircraft.active == .Libellula_Mk2 {
+        vehicles.libellula_mk2_mesh_build(&editor.libellula_mk2_visual_mesh)
+        mesh = &editor.libellula_mk2_visual_mesh
+        vehicles.animate_libellula_mk2_mesh(
+            mesh,
+            editor.libellula.rotor_turns.x,
+            editor.libellula.rotor_turns.y,
+            editor.libellula.rotor_turns.z,
+            editor.libellula.rotor_turns.z,
+        )
+    } else {
+        vehicles.libellula_mesh_build(mesh)
+        vehicles.animate_libellula_mesh_pose(
+            mesh,
+            editor.libellula.rotor_turns.x,
+            editor.libellula.rotor_turns.y,
+            editor.libellula.rotor_turns.z,
+            editor.libellula.pitch,
+            editor.libellula.roll,
+            0,
+        )
+    }
     clear(&editor.libellula_projected_faces)
     for triangle in vehicles.mesh_triangles(mesh) {
         a := mesh.vertices[triangle.a]
@@ -3484,7 +3508,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
         in_car := driving_car(editor)
         driving := flying || in_car
         panel_width := driving ? i32(650) : i32(430)
-        if flying && editor.aircraft.active == .Libellula do panel_width = 800
+        if flying && editor.aircraft.active != .Postale do panel_width = 800
         help_text: cstring = "WASD move  Mouse look  Wheel zoom  Space jump  Esc pause"
         if controller_prompt_active(editor) {
             panel_width = 790
@@ -3506,7 +3530,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                     controller_face_label(editor, .North),
                 )
             }
-            if editor.aircraft.active == .Libellula {
+            if editor.aircraft.active != .Postale {
                 help_text = "W/S pitch  A/D roll  Q/E yaw  Shift climb  Ctrl descend  Release to hover  F exit  R reset"
                 if controller_prompt_active(editor) {
                     help_text = fmt.ctprintf(
@@ -3554,7 +3578,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             )
             rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", hud), {26, 68}, 13, 1, {r = 236, g = 239, b = 190, a = 255})
             draw_flight_instruments(editor, width, height, altitude)
-            crashed := editor.aircraft.active == .Libellula ? editor.libellula.crashed : editor.postale.crashed
+            crashed := editor.aircraft.active != .Postale ? editor.libellula.crashed : editor.postale.crashed
             if crashed {
                 rl.DrawRectangle(width / 2 - 155, height / 2 - 35, 310, 70, {r = 71, g = 18, b = 20, a = 225})
                 reset_key: cstring = controller_prompt_active(editor) ? controller_face_label(editor, .North) : "R"
@@ -3951,6 +3975,54 @@ driving_car :: proc(editor: ^Editor) -> bool {
     return editor != nil && editor.pilot.mode == .Driving && editor.pilot.vehicle == &editor.car
 }
 
+car_trailer_hitch_position :: proc(editor: ^Editor, trailer: bool = false) -> third_person.Vec3 {
+    if editor == nil do return {}
+    origin := editor.car.position
+    yaw := editor.car.yaw_radians
+    if trailer && !editor.car_trailer_attached {
+        origin = editor.car_trailer_position
+        yaw = editor.car_trailer_yaw
+    }
+    hitch_z := trailer ? f32(1.36) : f32(1.48)
+    return {x = origin.x - math.cos(yaw) * hitch_z, y = origin.y, z = origin.z - math.sin(yaw) * hitch_z}
+}
+
+car_trailer_can_attach :: proc(editor: ^Editor) -> bool {
+    if editor == nil || editor.car_trailer_attached do return false
+    delta := vec_sub(car_trailer_hitch_position(editor), car_trailer_hitch_position(editor, true))
+    close := delta.x * delta.x + delta.z * delta.z <= .72 * .72
+    yaw_delta := editor.car.yaw_radians - editor.car_trailer_yaw
+    for yaw_delta > math.PI do yaw_delta -= math.PI * 2
+    for yaw_delta < -math.PI do yaw_delta += math.PI * 2
+    return close && math.abs(yaw_delta) <= .48
+}
+
+car_trailer_interaction_near :: proc(editor: ^Editor) -> bool {
+    if editor == nil || editor.pilot.mode != .On_Foot do return false
+    hitch := car_trailer_hitch_position(editor, !editor.car_trailer_attached)
+    delta := vec_sub(editor.player.position, hitch)
+    return delta.x * delta.x + delta.z * delta.z <= 1.45 * 1.45
+}
+
+car_trailer_interact :: proc(editor: ^Editor) -> bool {
+    if editor == nil || !car_trailer_interaction_near(editor) do return false
+    if editor.car_trailer_attached {
+        editor.car_trailer_position = editor.car.position
+        editor.car_trailer_yaw = editor.car.yaw_radians
+        editor.car_trailer.velocity = editor.car_drive.velocity
+        editor.car_trailer.yaw_rate = editor.car_drive.yaw_rate
+        editor.car_trailer_attached = false
+        return true
+    }
+    if !car_trailer_can_attach(editor) do return false
+    editor.car_trailer_position = editor.car.position
+    editor.car_trailer_yaw = editor.car.yaw_radians
+    editor.car_trailer.velocity = editor.car_drive.velocity
+    editor.car_trailer.yaw_rate = editor.car_drive.yaw_rate
+    editor.car_trailer_attached = true
+    return true
+}
+
 vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
     if editor == nil || editor.pilot.mode != .On_Foot do return nil
     car_delta := vec_sub(editor.player.position, editor.car.position)
@@ -3965,8 +4037,14 @@ vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
     attendant_delta := vec_sub(editor.player.position, editor.attendant_position)
     attendant_distance := vec_dot(attendant_delta, attendant_delta)
     attendant_near := editor.libellula_visible && attendant_distance <= 2.25 * 2.25
+    trailer_near := car_trailer_interaction_near(editor)
     car_near := car_distance <= car_radius * car_radius
     aircraft_near := aircraft_distance <= aircraft_radius * aircraft_radius
+    if trailer_near {
+        if editor.car_trailer_attached do return "PRESS F TO DETACH TRAILER"
+        if car_trailer_can_attach(editor) do return "PRESS F TO ATTACH TRAILER"
+        return "ALIGN CAR TO ATTACH TRAILER"
+    }
     if car_near && (!aircraft_near || car_distance <= aircraft_distance) {
         if controller_prompt_active(editor) {
             return fmt.ctprintf("PRESS %s TO ENTER CAR", controller_face_label(editor, .West))
@@ -4476,6 +4554,8 @@ adriatic_run :: proc() -> bool {
     defer free(editor)
     vehicles.libellula_mesh_init(&editor.libellula_visual_mesh)
     defer vehicles.libellula_mesh_destroy(&editor.libellula_visual_mesh)
+    vehicles.libellula_mesh_init(&editor.libellula_mk2_visual_mesh)
+    defer vehicles.libellula_mesh_destroy(&editor.libellula_mk2_visual_mesh)
     editor.libellula_projected_faces = make(
         [dynamic]Projected_Aircraft_Face,
         0,
@@ -4558,13 +4638,17 @@ adriatic_run :: proc() -> bool {
     editor.attendant_position = attendant_spawn_position(editor, editor.libellula.vehicle.position)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
+    vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula_Mk2, "Libellula Mk2", &editor.libellula.vehicle, false)
     editor.postale_visible = true
     editor.libellula_visible = true
     editor.libellula.vehicle.locked = true
     editor.car = vehicles.default_vehicle(car_spawn_position(editor))
-                editor.car.interaction_radius = 2.2
-                editor.car.exit_distance = 1.1
+    editor.car.interaction_radius = 2.2
+    editor.car.exit_distance = 1.1
     editor.car.yaw_radians = -math.PI * .5
+    editor.car_trailer_attached = true
+    editor.car_trailer_position = editor.car.position
+    editor.car_trailer_yaw = editor.car.yaw_radians
     editor.pilot.position = runway_spawn_position(editor)
     if capture_mode && !capture_map_mode {
         if capture_foliage_stress_mode {
@@ -4897,16 +4981,17 @@ adriatic_run :: proc() -> bool {
     if vehicle_showcase_mode {
         target := showcase_target
         if target == "" do target = "postale"
-        if target != "postale" && target != "libellula" && target != "car" {
-            fmt.eprintf("vehicle showcase target must be postale, libellula, or car\n")
+        if target != "postale" && target != "libellula" && target != "libellula-mk2" && target != "car" {
+            fmt.eprintf("vehicle showcase target must be postale, libellula, libellula-mk2, or car\n")
             return false
         }
         editor.vehicle_showcase_scene = true
         editor.vehicle_showcase_target = target
         editor.in_map = true
         editor.map_time = 0
+        if target == "libellula-mk2" do editor.aircraft.active = .Libellula_Mk2
         editor.postale_visible = target == "postale"
-        editor.libellula_visible = target == "libellula"
+        editor.libellula_visible = target == "libellula" || target == "libellula-mk2"
         editor.libellula.vehicle.locked = false
         editor.postale.body.position = {y = postale_game.GROUND_CLEARANCE}
         editor.postale.vehicle.position = {y = postale_game.GROUND_CLEARANCE}
@@ -4919,14 +5004,14 @@ adriatic_run :: proc() -> bool {
             editor.camera = {yaw_radians = -math.PI * .38, pitch_radians = .18, distance = 6.2, height = 1}
         editor.pilot.position = {}
         if target == "postale" do editor.pilot.position.y = postale_game.GROUND_CLEARANCE
-        if target == "libellula" do editor.pilot.position.y = libellula_game.GROUND_CLEARANCE
+        if target == "libellula" || target == "libellula-mk2" do editor.pilot.position.y = libellula_game.GROUND_CLEARANCE
         editor.pilot.mode = .On_Foot
         editor.pilot.vehicle = nil
         if target == "postale" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
             if !entered do return false
             editor.camera_pose = third_person.camera_look_at({x = 6, y = 5.5, z = 10}, {y = 1})
-        } else if target == "libellula" {
+        } else if target == "libellula" || target == "libellula-mk2" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.libellula.vehicle})
             if !entered do return false
             editor.camera_pose = third_person.camera_look_at({x = 6, y = 5.8, z = 10}, {y = 1.2})
@@ -5230,7 +5315,7 @@ adriatic_run :: proc() -> bool {
                     chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
                 }
                 if input_action_pressed(.Vehicle_Reset) {
-                    if editor.aircraft.active == .Libellula {
+                    if editor.aircraft.active != .Postale {
                         ground := terrain.sample_height(
                             &editor.project,
                             0,
@@ -5280,7 +5365,7 @@ adriatic_run :: proc() -> bool {
                     terrain.sample_height(&editor.project, 0, body.position.x, body.position.z),
                     editor.project.sea_level,
                 )
-                if editor.aircraft.active == .Libellula {
+                if editor.aircraft.active != .Postale {
                     libellula_game.step(
                         &editor.libellula,
                         {
@@ -5326,7 +5411,7 @@ adriatic_run :: proc() -> bool {
                 }
                 vehicles.sync_driver(&editor.pilot)
                 can_exit := postale_game.can_exit(&editor.postale)
-                if editor.aircraft.active == .Libellula {
+                if editor.aircraft.active != .Postale {
                     can_exit = libellula_game.can_exit(&editor.libellula)
                 }
                 if input_action_pressed(.Interact) && can_exit {
@@ -5506,17 +5591,21 @@ adriatic_run :: proc() -> bool {
                     editor.pilot.position = editor.player.position
                     editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
                     if input_action_pressed(.Interact) {
-                        _, entered := vehicles.try_enter_nearest(
-                            &editor.pilot,
-                            []^vehicles.Vehicle{&editor.car, active_aircraft_vehicle(editor)},
-                        )
+                        trailer_interacted := car_trailer_interact(editor)
+                        entered := false
+                        if !trailer_interacted {
+                            _, entered = vehicles.try_enter_nearest(
+                                &editor.pilot,
+                                []^vehicles.Vehicle{&editor.car, active_aircraft_vehicle(editor)},
+                            )
+                        }
                         if entered {
                             editor.player.running = false
                             editor.flight_control = {}
                             if driving_aircraft(editor) {
                                 chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
                             }
-                        } else if libellula_attendant_near(editor) {
+                        } else if !trailer_interacted && libellula_attendant_near(editor) {
                             open_attendant_dialogue(editor)
                         }
                     }
@@ -5536,6 +5625,30 @@ adriatic_run :: proc() -> bool {
                     }
                 }
             }
+            }
+        }
+        if editor.in_map && !editor.vehicle_showcase_scene {
+            trailer_ground := terrain.sample_height(
+                &editor.project,
+                0,
+                editor.car_trailer_position.x,
+                editor.car_trailer_position.z,
+            )
+            vehicles.car_trailer_step(
+                &editor.car_trailer,
+                &editor.car_trailer_position,
+                &editor.car_trailer_yaw,
+                editor.car.position,
+                editor.car.yaw_radians,
+                editor.car_drive.yaw_rate,
+                editor.car_drive.velocity,
+                editor.car_trailer_attached,
+                trailer_ground,
+                min(frame_delta, .05),
+            )
+            if editor.car_trailer_attached {
+                editor.car_drive.velocity.x += editor.car_trailer.reaction_force.x * min(frame_delta, .05)
+                editor.car_drive.velocity.z += editor.car_trailer.reaction_force.z * min(frame_delta, .05)
             }
         }
         if editor.cameras.active != .Player {
