@@ -11,13 +11,14 @@ Authoring_Tool :: enum {
     Smooth,
     Paint,
     Formations,
+    Foliage,
     Ridge,
     Cliff,
     Building,
     Roads,
 }
 
-AUTHORING_TOOL_COUNT :: 8
+AUTHORING_TOOL_COUNT :: 9
 EDITOR_UI_TOP_HEIGHT :: f32(54)
 EDITOR_UI_RAIL_WIDTH :: f32(184)
 EDITOR_UI_INSPECTOR_WIDTH :: f32(292)
@@ -32,14 +33,14 @@ Editor_UI_State :: struct {
 }
 
 Editor_UI_Layout :: struct {
-    top:                  rl.Rectangle,
-    left:                 rl.Rectangle,
-    inspector:            rl.Rectangle,
-    hint:                 rl.Rectangle,
-    left_toggle:          rl.Rectangle,
-    inspector_toggle:     rl.Rectangle,
-    left_visible:         bool,
-    inspector_visible:    bool,
+    top:               rl.Rectangle,
+    left:              rl.Rectangle,
+    inspector:         rl.Rectangle,
+    hint:              rl.Rectangle,
+    left_toggle:       rl.Rectangle,
+    inspector_toggle:  rl.Rectangle,
+    left_visible:      bool,
+    inspector_visible: bool,
 }
 
 authoring_tool_name :: proc(tool: Authoring_Tool) -> cstring {
@@ -52,12 +53,14 @@ authoring_tool_name :: proc(tool: Authoring_Tool) -> cstring {
         return "PAINT"
     case .Formations:
         return "FORMATIONS"
+    case .Foliage:
+        return "FOLIAGE"
     case .Ridge:
         return "RIDGE"
     case .Cliff:
         return "CLIFF"
     case .Building:
-        return "BUILDING"
+        return "CITY BRUSH"
     case .Roads:
         return "ROADS"
     }
@@ -74,6 +77,8 @@ authoring_tool_shortcut :: proc(tool: Authoring_Tool) -> cstring {
         return "T"
     case .Formations:
         return "B"
+    case .Foliage:
+        return "H"
     case .Ridge:
         return "Z"
     case .Cliff:
@@ -89,6 +94,9 @@ authoring_tool_shortcut :: proc(tool: Authoring_Tool) -> cstring {
 authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     if editor == nil do return
     editor.authoring_tool = selected
+    editor.architecture_painting = false
+    editor.architecture_preview_plan = {}
+    editor.architecture_dirty_bounds = {}
     editor.architecture_node_mode = false
     editor.architecture_paint_mode = false
     editor.road_mode = false
@@ -101,6 +109,8 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     case .Paint:
         editor.tool = .Paint
     case .Formations:
+        editor.tool = .Structure
+    case .Foliage:
         editor.tool = .Structure
     case .Ridge:
         editor.tool = .Structure
@@ -131,66 +141,40 @@ editor_ui_layout :: proc(editor: ^Editor, width, height: i32) -> Editor_UI_Layou
     left_visible := left_allowed && (editor == nil || !editor.editor_ui.left_collapsed)
     inspector_visible := inspector_allowed && (editor == nil || !editor.editor_ui.inspector_collapsed)
     result := Editor_UI_Layout {
-        top = {0, 0, w, EDITOR_UI_TOP_HEIGHT},
-        left = {
+        top               = {0, 0, w, EDITOR_UI_TOP_HEIGHT},
+        left              = {
             EDITOR_UI_GUTTER,
             EDITOR_UI_TOP_HEIGHT + EDITOR_UI_GUTTER,
             EDITOR_UI_RAIL_WIDTH,
             max(h - EDITOR_UI_TOP_HEIGHT - EDITOR_UI_GUTTER * 2, f32(0)),
         },
-        inspector = {
+        inspector         = {
             w - EDITOR_UI_INSPECTOR_WIDTH - EDITOR_UI_GUTTER,
             EDITOR_UI_TOP_HEIGHT + EDITOR_UI_GUTTER,
             EDITOR_UI_INSPECTOR_WIDTH,
             max(h - EDITOR_UI_TOP_HEIGHT - EDITOR_UI_GUTTER * 2, f32(0)),
         },
-        left_toggle = {EDITOR_UI_GUTTER, EDITOR_UI_TOP_HEIGHT + EDITOR_UI_GUTTER, 42, 34},
-        inspector_toggle = {
-            w - EDITOR_UI_GUTTER - 42,
-            EDITOR_UI_TOP_HEIGHT + EDITOR_UI_GUTTER,
-            42,
-            34,
-        },
-        left_visible = left_visible,
+        left_toggle       = {EDITOR_UI_GUTTER, EDITOR_UI_TOP_HEIGHT + EDITOR_UI_GUTTER, 42, 34},
+        inspector_toggle  = {w - EDITOR_UI_GUTTER - 42, EDITOR_UI_TOP_HEIGHT + EDITOR_UI_GUTTER, 42, 34},
+        left_visible      = left_visible,
         inspector_visible = inspector_visible,
     }
     hint_left := left_visible ? result.left.x + result.left.width + EDITOR_UI_GUTTER : EDITOR_UI_GUTTER
-    hint_right :=
-        inspector_visible ? result.inspector.x - EDITOR_UI_GUTTER : w - EDITOR_UI_GUTTER
-    result.hint = {
-        hint_left,
-        h - 42,
-        max(hint_right - hint_left, f32(0)),
-        30,
-    }
+    hint_right := inspector_visible ? result.inspector.x - EDITOR_UI_GUTTER : w - EDITOR_UI_GUTTER
+    result.hint = {hint_left, h - 42, max(hint_right - hint_left, f32(0)), 30}
     return result
 }
 
 editor_ui_tool_bounds :: proc(layout: Editor_UI_Layout, index: int) -> rl.Rectangle {
-    return {
-        layout.left.x + 10,
-        layout.left.y + 50 + f32(index) * 47,
-        layout.left.width - 20,
-        41,
-    }
+    return {layout.left.x + 10, layout.left.y + 50 + f32(index) * 47, layout.left.width - 20, 41}
 }
 
 editor_ui_focus_bounds :: proc(layout: Editor_UI_Layout) -> rl.Rectangle {
-    return {
-        layout.left.x + 10,
-        layout.left.y + layout.left.height - 88,
-        layout.left.width - 20,
-        32,
-    }
+    return {layout.left.x + 10, layout.left.y + layout.left.height - 88, layout.left.width - 20, 32}
 }
 
 editor_ui_spawn_bounds :: proc(layout: Editor_UI_Layout) -> rl.Rectangle {
-    return {
-        layout.left.x + 10,
-        layout.left.y + layout.left.height - 46,
-        layout.left.width - 20,
-        36,
-    }
+    return {layout.left.x + 10, layout.left.y + layout.left.height - 46, layout.left.width - 20, 36}
 }
 
 editor_ui_panel_button :: proc(bounds: rl.Rectangle, label: cstring, selected: bool = false, enabled: bool = true) {
@@ -233,12 +217,7 @@ editor_ui_section_title :: proc(label: cstring, x, y, width: f32) {
 }
 
 editor_ui_slider_bounds :: proc(layout: Editor_UI_Layout, row: int) -> rl.Rectangle {
-    return {
-        layout.inspector.x + 14,
-        layout.inspector.y + 82 + f32(row) * 48,
-        layout.inspector.width - 28,
-        42,
-    }
+    return {layout.inspector.x + 14, layout.inspector.y + 82 + f32(row) * 48, layout.inspector.width - 28, 42}
 }
 
 editor_ui_slider_draw :: proc(bounds: rl.Rectangle, label: cstring, value, minimum, maximum: f32, decimals: int = 1) {
@@ -253,13 +232,7 @@ editor_ui_slider_draw :: proc(bounds: rl.Rectangle, label: cstring, value, minim
     }
     ui_draw_text(.Label, label, {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
     value_size := ui_measure_text(.Data, value_text, .5)
-    ui_draw_text(
-        .Data,
-        value_text,
-        {bounds.x + bounds.width - value_size.x, bounds.y},
-        .5,
-        {134, 224, 216, 255},
-    )
+    ui_draw_text(.Data, value_text, {bounds.x + bounds.width - value_size.x, bounds.y}, .5, {134, 224, 216, 255})
     track := rl.Rectangle{bounds.x, bounds.y + 27, bounds.width, 6}
     rl.DrawRectangleRounded(track, 1, 4, {50, 56, 64, 255})
     rl.DrawRectangleRounded({track.x, track.y, track.width * normalized, track.height}, 1, 4, {60, 164, 157, 255})
@@ -320,7 +293,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         if editor.road_selected_node >= 0 do return "Extend or connect the selected node; right-click to end the chain."
         return "Click terrain to start a road; click a node to connect or branch."
     }
-    if editor.architecture_painting do return "Drag an area for buildings; release to generate the block."
+    if editor.architecture_painting do return "Paint city density; release to commit the preview."
     if editor.curve_drawing do return editor.curve_cliff_mode ? "Draw the cliff path; release to commit." : "Draw the ridge path; release to commit."
     if editor.structure_placing do return "Drag the footprint; wheel changes height; release to place."
     if editor.structure_moving do return "Move the selected formation; release to commit."
@@ -333,12 +306,14 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         return "Left paints material; right erases it. Wheel adjusts radius."
     case .Formations:
         return "Drag to place or click to select. V cycles profile; X enables automatic."
+    case .Foliage:
+        return "Drag a canopy footprint. Wheel adjusts height; Shift+wheel broadens it."
     case .Ridge:
         return "Draw a freehand ridge. Wheel adjusts width and height."
     case .Cliff:
         return "Draw a freehand cliff. Wheel adjusts width and height."
     case .Building:
-        return "Drag a building area. Wheel adjusts height; Shift+wheel spacing."
+        return "Left darkens density; right lightens. Wheel radius; Shift flow; Alt hardness."
     case .Roads:
         return "Click terrain to add nodes and drag handles to curve edges."
     }
@@ -367,7 +342,13 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         ui_draw_text(.Label, authoring_tool_name(tool), {bounds.x + 12, bounds.y + 12}, .2, {235, 239, 243, 255})
         shortcut := authoring_tool_shortcut(tool)
         shortcut_size := ui_measure_text(.Data, shortcut, 0)
-        ui_draw_text(.Data, shortcut, {bounds.x + bounds.width - shortcut_size.x - 10, bounds.y + 12}, 0, {139, 149, 160, 255})
+        ui_draw_text(
+            .Data,
+            shortcut,
+            {bounds.x + bounds.width - shortcut_size.x - 10, bounds.y + 12},
+            0,
+            {139, 149, 160, 255},
+        )
     }
     editor_ui_panel_button(editor_ui_focus_bounds(layout), "FOCUS  [F]")
     editor_ui_panel_button(editor_ui_spawn_bounds(layout), "SPAWN INTO WORLD")
@@ -381,14 +362,27 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     panel := layout.inspector
     rl.DrawRectangleRounded(panel, .025, 6, {25, 28, 33, 248})
     rl.DrawRectangleRoundedLinesEx(panel, .025, 6, 1, {62, 69, 78, 255})
-    ui_draw_text(.Heading, authoring_tool_name(editor.authoring_tool), {panel.x + 14, panel.y + 14}, .5, {235, 239, 243, 255})
+    ui_draw_text(
+        .Heading,
+        authoring_tool_name(editor.authoring_tool),
+        {panel.x + 14, panel.y + 14},
+        .5,
+        {235, 239, 243, 255},
+    )
     editor_ui_panel_button({panel.x + panel.width - 39, panel.y + 10, 29, 28}, ">>")
     editor_ui_section_title("TOOL SETTINGS", panel.x + 14, panel.y + 50, panel.width - 28)
 
     row := 0
     switch editor.authoring_tool {
     case .Sculpt, .Smooth, .Paint:
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "RADIUS (m)", editor.radius, terrain.BASE_CELL_SIZE, 400, 0)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "RADIUS (m)",
+            editor.radius,
+            terrain.BASE_CELL_SIZE,
+            400,
+            0,
+        )
         row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "STRENGTH", editor.strength, 0, 1, 2)
         row += 1
@@ -402,7 +396,11 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         ui_draw_text(.Data, profile, {bounds.x + bounds.width - profile_size.x, bounds.y}, .5, {134, 224, 216, 255})
         half := (bounds.width - 6) * .5
         editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "AUTO", editor.structure_auto_kind)
-        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 24, half, 30}, "CYCLE  [V]", !editor.structure_auto_kind)
+        editor_ui_panel_button(
+            {bounds.x + half + 6, bounds.y + 24, half, 30},
+            "CYCLE  [V]",
+            !editor.structure_auto_kind,
+        )
         row += 2
         if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
             structure := editor.project.structures[editor.structure_selected]
@@ -414,22 +412,95 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
                 {134, 224, 216, 255},
             )
         } else {
-            ui_draw_text(.Data, "DRAG TO DEFINE A FOOTPRINT", {panel.x + 14, panel.y + 82 + f32(row) * 48}, .4, {139, 149, 160, 255})
+            ui_draw_text(
+                .Data,
+                "DRAG TO DEFINE A FOOTPRINT",
+                {panel.x + 14, panel.y + 82 + f32(row) * 48},
+                .4,
+                {139, 149, 160, 255},
+            )
+        }
+    case .Foliage:
+        bounds := editor_ui_slider_bounds(layout, row)
+        ui_draw_text(.Label, "CANOPY PROFILE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        ui_draw_text(.Data, "SHADED BLOBS", {bounds.x, bounds.y + 25}, .5, {143, 190, 91, 255})
+        row += 1
+        if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
+            structure := editor.project.structures[editor.structure_selected]
+            ui_draw_text(
+                .Data,
+                fmt.ctprintf("SELECTED  %.0f x %.0f x %.0f m", structure.width, structure.depth, structure.height),
+                {panel.x + 14, panel.y + 82 + f32(row) * 48},
+                .4,
+                {143, 190, 91, 255},
+            )
+        } else {
+            ui_draw_text(
+                .Data,
+                "DRAG ONE LARGE FOLIAGE MASS",
+                {panel.x + 14, panel.y + 82 + f32(row) * 48},
+                .4,
+                {139, 149, 160, 255},
+            )
         }
     case .Ridge, .Cliff:
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "WIDTH (m)", editor.curve_width, terrain.BASE_CELL_SIZE, terrain.BASE_CELL_SIZE * 16, 1)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "WIDTH (m)",
+            editor.curve_width,
+            terrain.BASE_CELL_SIZE,
+            terrain.BASE_CELL_SIZE * 16,
+            1,
+        )
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HEIGHT (m)", editor.curve_height, terrain.BASE_CELL_SIZE, terrain.BASE_CELL_SIZE * 24, 1)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "HEIGHT (m)",
+            editor.curve_height,
+            terrain.BASE_CELL_SIZE,
+            terrain.BASE_CELL_SIZE * 24,
+            1,
+        )
         row += 1
     case .Building:
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HEIGHT (m)", editor.architecture_building_height, terrain.BASE_CELL_SIZE * 3, terrain.BASE_CELL_SIZE * 18, 1)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "RADIUS (m)",
+            editor.architecture_brush_radius,
+            terrain.BASE_CELL_SIZE,
+            400,
+            1,
+        )
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "SPACING (m)", editor.architecture_sample_radius, terrain.BASE_CELL_SIZE * 2, terrain.BASE_CELL_SIZE * 12, 1)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "FLOW",
+            editor.architecture_brush_strength,
+            .02,
+            1,
+            2,
+        )
+        row += 1
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "HARDNESS",
+            editor.architecture_brush_hardness,
+            0,
+            1,
+            2,
+        )
         row += 1
     case .Roads:
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "ROAD WIDTH (m)", editor.road_width, 2.5, 24, 1)
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "SHOULDER (m)", editor.road_shoulder_width, 0, 8, 1)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "SHOULDER (m)",
+            editor.road_shoulder_width,
+            0,
+            8,
+            1,
+        )
         row += 1
         if editor.road_selected_node >= 0 && editor.road_selected_node < editor.project.road_graph.node_count {
             radius := editor.project.road_graph.nodes[editor.road_selected_node].junction_radius
@@ -442,7 +513,8 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     editor_ui_section_title("WORLD", panel.x + 14, world_y, panel.width - 28)
     data_y := world_y + 32
     project_state: cstring = editor.project.revision == editor.terrain_saved_revision ? "SAVED" : "UNSAVED"
-    state_color := editor.project.revision == editor.terrain_saved_revision ? rl.Color{134, 224, 216, 255} : rl.Color{245, 189, 97, 255}
+    state_color :=
+        editor.project.revision == editor.terrain_saved_revision ? rl.Color{134, 224, 216, 255} : rl.Color{245, 189, 97, 255}
     ui_draw_text(.Data, fmt.ctprintf("PROJECT  %s", project_state), {panel.x + 14, data_y}, .4, state_color)
     if editor.cursor_hit {
         ui_draw_text(
@@ -504,7 +576,7 @@ editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
     rl.DrawLineEx({0, EDITOR_UI_TOP_HEIGHT - 1}, {f32(width), EDITOR_UI_TOP_HEIGHT - 1}, 1, {65, 72, 81, 255})
     ui_draw_text(.Heading, "ADRIATIC  /  TERRAIN EDITOR", {16, 16}, .4, {238, 241, 244, 255})
     project_state: cstring = editor.project.revision == editor.terrain_saved_revision ? "SAVED" : "UNSAVED"
-    status := fmt.ctprintf("%s  |  F10 DEBUG", project_state)
+    status := fmt.ctprintf("%s  |  F10 TUNING", project_state)
     status_size := ui_measure_text(.Data, status, .4)
     ui_draw_text(.Data, status, {f32(width) - status_size.x - 16, 18}, .4, {151, 161, 172, 255})
     editor_ui_draw_left(editor, layout)
@@ -560,12 +632,7 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             return
         }
         if layout.inspector_visible {
-            collapse := rl.Rectangle{
-                layout.inspector.x + layout.inspector.width - 39,
-                layout.inspector.y + 10,
-                29,
-                28,
-            }
+            collapse := rl.Rectangle{layout.inspector.x + layout.inspector.width - 39, layout.inspector.y + 10, 29, 28}
             if rl.CheckCollisionPointRec(mouse, collapse) {
                 editor.editor_ui.inspector_collapsed = true
                 return
@@ -595,6 +662,10 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             structure_cycle_kind(editor)
         }
         row += 2
+    case .Foliage:
+        // Foliage uses the standard structure gesture and wheel controls. Its
+        // profile is intentionally fixed so every stroke reads as one canopy.
+        row += 1
     case .Ridge, .Cliff:
         _ = editor_ui_slider_input(
             editor,
@@ -624,25 +695,28 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             layout,
             6,
             row,
-            &editor.architecture_building_height,
-            terrain.BASE_CELL_SIZE * 3,
-            terrain.BASE_CELL_SIZE * 18,
+            &editor.architecture_brush_radius,
+            terrain.BASE_CELL_SIZE,
+            400,
             terrain.BASE_CELL_SIZE,
         )
         row += 1
-        _ = editor_ui_slider_input(
-            editor,
-            layout,
-            7,
-            row,
-            &editor.architecture_sample_radius,
-            terrain.BASE_CELL_SIZE * 2,
-            terrain.BASE_CELL_SIZE * 12,
-            terrain.BASE_CELL_SIZE,
-        )
+        _ = editor_ui_slider_input(editor, layout, 7, row, &editor.architecture_brush_strength, .02, 1, .01)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 10, row, &editor.architecture_brush_hardness, 0, 1, .01)
         row += 1
     case .Roads:
-        road_changed := editor_ui_slider_input(editor, layout, 8, row, &editor.road_width, 2.5, 24, .5, editor.road_selected_node >= 0 ? 2 : 0)
+        road_changed := editor_ui_slider_input(
+            editor,
+            layout,
+            8,
+            row,
+            &editor.road_width,
+            2.5,
+            24,
+            .5,
+            editor.road_selected_node >= 0 ? 2 : 0,
+        )
         if road_changed && editor.road_selected_node >= 0 {
             for &edge in editor.project.road_graph.edges[:editor.project.road_graph.edge_count] {
                 if edge.from == editor.road_selected_node || edge.to == editor.road_selected_node {
@@ -652,7 +726,17 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             editor.project.revision += 1
         }
         row += 1
-        shoulder_changed := editor_ui_slider_input(editor, layout, 9, row, &editor.road_shoulder_width, 0, 8, .25, editor.road_selected_node >= 0 ? 2 : 0)
+        shoulder_changed := editor_ui_slider_input(
+            editor,
+            layout,
+            9,
+            row,
+            &editor.road_shoulder_width,
+            0,
+            8,
+            .25,
+            editor.road_selected_node >= 0 ? 2 : 0,
+        )
         if shoulder_changed && editor.road_selected_node >= 0 {
             for &edge in editor.project.road_graph.edges[:editor.project.road_graph.edge_count] {
                 if edge.from == editor.road_selected_node || edge.to == editor.road_selected_node {
@@ -671,13 +755,11 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         }
     }
 
-    world_y := min(layout.inspector.y + 82 + f32(max(row, 3)) * 48 + 12, layout.inspector.y + layout.inspector.height - 276)
-    sea_bounds := rl.Rectangle{
-        layout.inspector.x + 14,
-        world_y + 32 + 122,
-        layout.inspector.width - 28,
-        42,
-    }
+    world_y := min(
+        layout.inspector.y + 82 + f32(max(row, 3)) * 48 + 12,
+        layout.inspector.y + layout.inspector.height - 276,
+    )
+    sea_bounds := rl.Rectangle{layout.inspector.x + 14, world_y + 32 + 122, layout.inspector.width - 28, 42}
     if pressed && rl.CheckCollisionPointRec(mouse, sea_bounds) {
         editor.editor_ui.active_slider = 11
         terrain_history_push_undo(editor)

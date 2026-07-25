@@ -26,6 +26,21 @@ struct VertexOutput {
     float4 color : COLOR0;
 };
 
+// Canvas colors originate as ordinary 8-bit sRGB palette values. Decode them
+// before interpolation, texture modulation, and blending. Sampled UI textures
+// already arrive in linear light from their sRGB image format.
+float srgb_channel_to_linear(float color) {
+    return color <= 0.04045
+        ? color / 12.92
+        : pow((color + 0.055) / 1.055, 2.4);
+}
+
+float3 srgb_to_linear(float3 color) {
+    return float3(srgb_channel_to_linear(color.r),
+                  srgb_channel_to_linear(color.g),
+                  srgb_channel_to_linear(color.b));
+}
+
 [shader("vertex")]
 VertexOutput vertex_main(VertexInput input) {
     VertexOutput output;
@@ -33,7 +48,7 @@ VertexOutput vertex_main(VertexInput input) {
     float2 ndc = pixel / push.viewport.zw * 2.0 - 1.0;
     output.position = float4(ndc, 0, 1);
     output.uv = input.uv;
-    output.color = input.color;
+    output.color = float4(srgb_to_linear(input.color.rgb), input.color.a);
     return output;
 }
 
@@ -59,5 +74,7 @@ PostOutput post_vertex(uint vertex_id : SV_VertexID) {
 
 [shader("fragment")]
 float4 post_fragment(PostOutput input) : SV_Target {
+    // Both the HDR intermediate and an sRGB fixed-resolution scene sample as
+    // linear values. Return that value unchanged and let the swapchain encode.
     return ui_texture.Sample(ui_sampler, input.uv);
 }

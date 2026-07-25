@@ -3,6 +3,7 @@ package main
 import im "../packages/imgui"
 import imgui_vk "../packages/imgui/impl_vulkan"
 import "core:c"
+import "core:math"
 import vk "vendor:vulkan"
 import rl "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
@@ -21,6 +22,21 @@ Imgui_State :: struct {
 }
 
 imgui: Imgui_State
+
+imgui_srgb_channel_to_linear :: proc(channel: f32) -> f32 {
+    if channel <= 0.04045 do return channel / 12.92
+    return math.pow((channel + 0.055) / 1.055, 2.4)
+}
+
+imgui_linearize_style_colors :: proc() {
+    style := im.GetStyle()
+    if style == nil do return
+    for &color in style.Colors {
+        color.x = imgui_srgb_channel_to_linear(color.x)
+        color.y = imgui_srgb_channel_to_linear(color.y)
+        color.z = imgui_srgb_channel_to_linear(color.z)
+    }
+}
 
 imgui_vk_loader :: proc "c" (name: cstring, user_data: rawptr) -> vk.ProcVoidFunction {
     ctx := cast(^engine.Vk_Context)user_data
@@ -49,9 +65,12 @@ imgui_init :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
     im.SetCurrentContext(imgui.ctx)
     im.CHECKVERSION()
     imgui.io = im.GetIO()
-    imgui.io.ConfigFlags += {.NavEnableKeyboard}
+    imgui.io.ConfigFlags += {.NavEnableKeyboard, .IsSRGB}
     imgui.io.BackendRendererName = "imgui_impl_vulkan"
     im.StyleColorsDark()
+    // The stock Vulkan backend forwards packed vertex colors unchanged. Store
+    // the style palette in linear light so the sRGB attachment encodes it once.
+    imgui_linearize_style_colors()
 
     imgui.descriptor_pool = imgui_create_descriptor_pool(pass.ctx)
     if imgui.descriptor_pool == vk.DescriptorPool(0) {
@@ -164,14 +183,14 @@ imgui_draw :: proc(editor: ^Editor) {
 }
 
 imgui_render :: proc(pass: ^rl.Ui_Pass_Context, editor: ^Editor) {
-	imgui_draw(editor)
-	im.Render()
-	imgui_vk.RenderDrawData(im.GetDrawData(), pass.frame.command_buffer)
+    imgui_draw(editor)
+    im.Render()
+    imgui_vk.RenderDrawData(im.GetDrawData(), pass.frame.command_buffer)
 }
 
 imgui_ui_pass :: proc(pass: ^rl.Ui_Pass_Context, _: rawptr) {
-	if !imgui_begin_frame(pass) do return
-	imgui_render(pass, world_renderer.editor)
+    if !imgui_begin_frame(pass) do return
+    imgui_render(pass, world_renderer.editor)
 }
 
 imgui_destroy :: proc() {

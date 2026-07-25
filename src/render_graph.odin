@@ -10,6 +10,7 @@ Render_Graph_Context :: struct {
     pass:           ^rl.World_Pass_Context,
     buffer:         ^engine.Vk_Buffer,
     road_buffer:    ^engine.Vk_Buffer,
+    foliage_buffer: ^engine.Vk_Buffer,
     offset:         vk.DeviceSize,
     pipeline_index: int,
     world_push:     World_Push,
@@ -64,6 +65,35 @@ render_graph_geometry :: proc(user_data: rawptr) {
     render_graph_stage_end(ctx)
 }
 
+render_graph_foliage :: proc(user_data: rawptr) {
+    ctx := cast(^Render_Graph_Context)user_data
+    if len(world_renderer.foliage_vertices) <= 0 do return
+    cmd := ctx.pass.frame.command_buffer
+    render_graph_stage_label(ctx, "Adriatic / Foliage Atlas")
+    vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.foliage_pipelines[ctx.pipeline_index])
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.foliage_layout,
+        0,
+        1,
+        &world_renderer.foliage_descriptor,
+        0,
+        nil,
+    )
+    vk.CmdPushConstants(
+        cmd,
+        world_renderer.foliage_layout,
+        {.VERTEX, .FRAGMENT},
+        0,
+        u32(size_of(ctx.world_push)),
+        &ctx.world_push,
+    )
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.foliage_buffer.handle, &ctx.offset)
+    vk.CmdDraw(cmd, u32(len(world_renderer.foliage_vertices)), 1, 0, 0)
+    render_graph_stage_end(ctx)
+}
+
 render_graph_terrain :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
     cmd := ctx.pass.frame.command_buffer
@@ -114,11 +144,13 @@ adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
     render_graph.reset(graph)
     sky := render_graph.add_pass(graph, "sky", render_graph_sky)
     geometry := render_graph.add_pass(graph, "geometry", render_graph_geometry)
+    foliage := render_graph.add_pass(graph, "foliage", render_graph_foliage)
     terrain := render_graph.add_pass(graph, "terrain", render_graph_terrain)
     roads := render_graph.add_pass(graph, "roads", render_graph_roads)
     return(
         render_graph.depends_on(graph, terrain, sky) &&
         render_graph.depends_on(graph, geometry, terrain) &&
-        render_graph.depends_on(graph, roads, geometry) \
+        render_graph.depends_on(graph, foliage, geometry) &&
+        render_graph.depends_on(graph, roads, foliage) \
     )
 }

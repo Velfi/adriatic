@@ -1,6 +1,7 @@
 package vehicles
 
 import "core:math"
+import "core:mem"
 
 // Product-local triangle meshes ported from Archipelago's procedural player
 // aircraft. They contain geometry and presentation groups only: Godot nodes,
@@ -31,11 +32,40 @@ Aircraft_Mesh_Part :: enum u8 {
     Bumper,
     Headlight,
     Tail_Light,
+    Ivory,
+    Red_Paint,
+    Dark_Metal,
+    Steel,
+    Brass,
+    Strap,
+    Rotor_Blade,
+    Rotor_Tip,
+    Marking,
+    Lift_Frame,
+}
+
+Mesh_Animation_Group :: enum u8 {
+    None,
+    Libellula_Carriage,
+    Libellula_Strap_Left,
+    Libellula_Strap_Right,
+    Libellula_Strap_Rear,
+    Libellula_Kingpost_Outer,
+    Libellula_Kingpost_Inner,
+    Libellula_Kingpost_Stop,
+    Libellula_Umbilical_1_Upper,
+    Libellula_Umbilical_1_Lower,
+    Libellula_Umbilical_2_Upper,
+    Libellula_Umbilical_2_Lower,
+    Libellula_Left_Rotor,
+    Libellula_Right_Rotor,
+    Libellula_Rear_Rotor,
 }
 
 Mesh_Vertex :: struct {
-    position: [3]f32,
-    part:     Aircraft_Mesh_Part,
+    position:        [3]f32,
+    part:            Aircraft_Mesh_Part,
+    animation_group: Mesh_Animation_Group,
 }
 
 Mesh_Triangle :: struct {
@@ -44,12 +74,36 @@ Mesh_Triangle :: struct {
 
 AIRCRAFT_MESH_VERTEX_CAPACITY :: 4096
 AIRCRAFT_MESH_TRIANGLE_CAPACITY :: 2048
+LIBELLULA_MESH_VERTEX_CAPACITY :: 57344
+LIBELLULA_MESH_TRIANGLE_CAPACITY :: 19114
 
 Aircraft_Mesh :: struct {
     vertices:       [AIRCRAFT_MESH_VERTEX_CAPACITY]Mesh_Vertex,
     triangles:      [AIRCRAFT_MESH_TRIANGLE_CAPACITY]Mesh_Triangle,
     vertex_count:   int,
     triangle_count: int,
+}
+
+Libellula_Mesh :: struct {
+    vertices:       []Mesh_Vertex,
+    triangles:      []Mesh_Triangle,
+    vertex_count:   int,
+    triangle_count: int,
+    allocator:      mem.Allocator,
+}
+
+libellula_mesh_init :: proc(mesh: ^Libellula_Mesh, allocator := context.allocator) {
+    if mesh == nil || mesh.vertices != nil do return
+    mesh.vertices = make([]Mesh_Vertex, LIBELLULA_MESH_VERTEX_CAPACITY, allocator)
+    mesh.triangles = make([]Mesh_Triangle, LIBELLULA_MESH_TRIANGLE_CAPACITY, allocator)
+    mesh.allocator = allocator
+}
+
+libellula_mesh_destroy :: proc(mesh: ^Libellula_Mesh) {
+    if mesh == nil do return
+    if mesh.vertices != nil do delete(mesh.vertices, mesh.allocator)
+    if mesh.triangles != nil do delete(mesh.triangles, mesh.allocator)
+    mesh^ = {}
 }
 
 Mesh_Ring :: struct {
@@ -62,20 +116,20 @@ Mesh_Profile_Point :: struct {
     z, y: f32,
 }
 
-mesh_vertices :: proc(mesh: ^Aircraft_Mesh) -> []Mesh_Vertex {
+mesh_vertices :: proc(mesh: ^$Mesh) -> []Mesh_Vertex {
     if mesh == nil do return nil
     return mesh.vertices[:mesh.vertex_count]
 }
 
-mesh_triangles :: proc(mesh: ^Aircraft_Mesh) -> []Mesh_Triangle {
+mesh_triangles :: proc(mesh: ^$Mesh) -> []Mesh_Triangle {
     if mesh == nil do return nil
     return mesh.triangles[:mesh.triangle_count]
 }
 
-mesh_triangle :: proc(mesh: ^Aircraft_Mesh, a, b, c: [3]f32, part: Aircraft_Mesh_Part) {
+mesh_triangle :: proc(mesh: ^$Mesh, a, b, c: [3]f32, part: Aircraft_Mesh_Part) {
     if mesh == nil ||
-       mesh.vertex_count + 3 > AIRCRAFT_MESH_VERTEX_CAPACITY ||
-       mesh.triangle_count >= AIRCRAFT_MESH_TRIANGLE_CAPACITY {
+       mesh.vertex_count + 3 > len(mesh.vertices) ||
+       mesh.triangle_count >= len(mesh.triangles) {
         return
     }
     first := mesh.vertex_count
@@ -96,7 +150,7 @@ mesh_triangle :: proc(mesh: ^Aircraft_Mesh, a, b, c: [3]f32, part: Aircraft_Mesh
     mesh.triangle_count += 1
 }
 
-mesh_quad :: proc(mesh: ^Aircraft_Mesh, a, b, c, d: [3]f32, part: Aircraft_Mesh_Part) {
+mesh_quad :: proc(mesh: ^$Mesh, a, b, c, d: [3]f32, part: Aircraft_Mesh_Part) {
     mesh_triangle(mesh, a, c, b, part)
     mesh_triangle(mesh, a, d, c, part)
 }
@@ -193,7 +247,7 @@ add_profile_prism :: proc(
     }
 }
 
-add_box :: proc(mesh: ^Aircraft_Mesh, center, size: [3]f32, part: Aircraft_Mesh_Part) {
+add_box :: proc(mesh: ^$Mesh, center, size: [3]f32, part: Aircraft_Mesh_Part) {
     x := size[0] * .5; y := size[1] * .5; z := size[2] * .5
     p := [8][3]f32 {
         {center[0] - x, center[1] - y, center[2] - z},
@@ -210,7 +264,32 @@ add_box :: proc(mesh: ^Aircraft_Mesh, center, size: [3]f32, part: Aircraft_Mesh_
     mesh_quad(mesh, p[3], p[2], p[6], p[7], part); mesh_quad(mesh, p[4], p[5], p[1], p[0], part)
 }
 
-rotate_new_vertices_z :: proc(mesh: ^Aircraft_Mesh, first: int, pivot: [3]f32, angle: f32) {
+mark_new_vertices :: proc(mesh: ^$Mesh, first: int, group: Mesh_Animation_Group) {
+    if mesh == nil do return
+    for index in first ..< mesh.vertex_count {
+        mesh.vertices[index].animation_group = group
+    }
+}
+
+translate_new_vertices :: proc(mesh: ^$Mesh, first: int, offset: [3]f32) {
+    if mesh == nil do return
+    for index in first ..< mesh.vertex_count {
+        mesh.vertices[index].position += offset
+    }
+}
+
+rotate_new_vertices_x :: proc(mesh: ^$Mesh, first: int, pivot: [3]f32, angle: f32) {
+    c := math.cos(angle)
+    s := math.sin(angle)
+    for index in first ..< mesh.vertex_count {
+        y := mesh.vertices[index].position[1] - pivot[1]
+        z := mesh.vertices[index].position[2] - pivot[2]
+        mesh.vertices[index].position[1] = pivot[1] + y * c - z * s
+        mesh.vertices[index].position[2] = pivot[2] + y * s + z * c
+    }
+}
+
+rotate_new_vertices_z :: proc(mesh: ^$Mesh, first: int, pivot: [3]f32, angle: f32) {
     c := math.cos(angle); s := math.sin(angle)
     for index in first ..< mesh.vertex_count {
         x := mesh.vertices[index].position[0] - pivot[0]; y := mesh.vertices[index].position[1] - pivot[1]
@@ -219,7 +298,7 @@ rotate_new_vertices_z :: proc(mesh: ^Aircraft_Mesh, first: int, pivot: [3]f32, a
     }
 }
 
-rotate_new_vertices_y :: proc(mesh: ^Aircraft_Mesh, first: int, pivot: [3]f32, angle: f32) {
+rotate_new_vertices_y :: proc(mesh: ^$Mesh, first: int, pivot: [3]f32, angle: f32) {
     c := math.cos(angle); s := math.sin(angle)
     for index in first ..< mesh.vertex_count {
         x := mesh.vertices[index].position[0] - pivot[0]
@@ -475,109 +554,6 @@ pelican_mesh :: proc() -> Aircraft_Mesh {
             {.72, .18, -.58, .16},
         }
         add_ring_mesh_at_x(&mesh, floats[:], 8, x, .Float)
-    }
-    return mesh
-}
-
-libellula_mesh :: proc() -> Aircraft_Mesh {
-    mesh: Aircraft_Mesh
-    // The hero mesh's structural plan: triangular rotor frame over a suspended
-    // carriage. Boxes retain the authored dimensions while rotor blades use the
-    // exact tapered-prism construction from TriRotorVisual.
-    segments := [3][2][3]f32 {
-        {{-3.65, 1.2, -.75}, {3.65, 1.2, -.75}},
-        {{3.65, 1.2, -.75}, {0, 1.2, 3.05}},
-        {{0, 1.2, 3.05}, {-3.65, 1.2, -.75}},
-    }
-    for segment in segments {
-        add_horizontal_beam(&mesh, segment[0], segment[1], .16, .Frame)
-    }
-    // Lower spaceframe chord and Warren-style web, matching the source visual's
-    // separated lift frame instead of leaving the rotor triangle as a flat plate.
-    lower := [3][3]f32{{-3.05, .55, -.75}, {3.05, .55, -.75}, {0, .55, 2.72}}
-    for index in 0 ..< 3 {
-        next := (index + 1) % 3
-        add_horizontal_beam(&mesh, lower[index], lower[next], .11, .Frame)
-        add_horizontal_beam(&mesh, segments[index][0], lower[next], .075, .Frame)
-        add_horizontal_beam(&mesh, segments[index][0], lower[index], .075, .Frame)
-    }
-    add_box(&mesh, {0, -.55, .55}, {1.65, 1.15, 3.35}, .Carriage)
-    // Pressure-carriage roof, cockpit glazing, service spine and rear bumper.
-    add_box(&mesh, {0, .16, .18}, {1.25, .12, 3.2}, .Carriage)
-    add_box(&mesh, {0, .02, -1.35}, {1.42, .52, .12}, .Glass)
-    add_box(&mesh, {0, -.10, -1.52}, {1.18, .14, .08}, .Frame)
-    add_box(&mesh, {0, .28, .18}, {.55, .22, .42}, .Engine)
-    add_box(&mesh, {0, -.98, 2.20}, {1.3, .08, .30}, .Frame)
-    add_box(&mesh, {0, -.70, 2.34}, {.34, .07, .05}, .Frame)
-    // Suspension straps and kingpost are intentionally non-collinear so the
-    // carriage reads as hanging from the lift frame in side and rear views.
-    strap_x := [2]f32{-.72, .72}
-    for x in strap_x {
-        add_box(&mesh, {x, .05, .30}, {.055, .72, .06}, .Frame)
-        add_box(&mesh, {x, -.18, 1.15}, {.055, .48, .06}, .Frame)
-    }
-    add_box(&mesh, {0, .43, 1.55}, {.16, .68, .16}, .Frame)
-    add_box(&mesh, {0, .08, .18}, {.24, .12, .24}, .Engine)
-    // Four splayed landing legs, two longitudinal skids, and cross-braces.
-    leg_x := [2]f32{-1.02, 1.02}
-    for x in leg_x {
-        add_box(&mesh, {x, -1.18, -.78}, {.13, .95, .13}, .Wheel)
-        add_box(&mesh, {x, -1.18, 1.55}, {.13, .95, .13}, .Wheel)
-        add_box(&mesh, {x, -1.56, .15}, {.18, .10, 3.65}, .Wheel)
-    }
-    add_horizontal_beam(&mesh, {-1.02, -1.46, -.92}, {1.02, -1.46, .95}, .06, .Wheel)
-    add_horizontal_beam(&mesh, {1.02, -1.46, -.92}, {-1.02, -1.46, .95}, .06, .Wheel)
-    // Nacelle housings, cooling bands, exhaust blocks, and mast collars.
-    rotors := [3][3]f32{{-3.65, 1.58, -.75}, {3.65, 1.58, -.75}, {0, 1.58, 3.05}}
-    rotor_parts := [3]Aircraft_Mesh_Part{.Left_Rotor, .Right_Rotor, .Rear_Rotor}
-    for rotor, rotor_index in rotors {
-        nacelle := [2]Mesh_Ring{{rotor[2] - .29, .5, rotor[1], .5}, {rotor[2] + .29, .42, rotor[1], .42}}
-        add_ring_mesh_at_x(&mesh, nacelle[:], 16, rotor[0], .Engine)
-        add_box(&mesh, {rotor[0], rotor[1] - .28, rotor[2]}, {.75, .16, .58}, .Engine)
-        add_box(&mesh, {rotor[0], rotor[1] + .34, rotor[2]}, {.32, .12, .32}, .Frame)
-        add_box(&mesh, {rotor[0], rotor[1] - .42, rotor[2]}, {.16, .10, .24}, .Carriage)
-        for blade in 0 ..< 3 {
-            angle := f32(blade) * 2 * math.PI / 3; c := math.cos(angle); s := math.sin(angle)
-            root_left := [3]f32 {
-                -.155,
-                .039,
-                -.52,
-            }; root_right := [3]f32{.155, .039, -.52}; tip_right := [3]f32{.165, .023, -2.3}; tip_left := [3]f32{.015, .023, -2.3}
-            top := [4][3]f32{root_left, root_right, tip_right, tip_left}
-            bottom := top
-            for &p in bottom { p[1] = -p[1] }
-            for &p in top {x := p[0]; z := p[2]; p[0] = rotor[0] + x * c - z * s
-                p[1] += rotor[1] + .38
-                p[2] = rotor[2] + x * s + z * c}
-            for &p in bottom {x := p[0]; z := p[2]; p[0] = rotor[0] + x * c - z * s
-                p[1] += rotor[1] + .38
-                p[2] = rotor[2] + x * s + z * c}
-            part := rotor_parts[rotor_index]
-            mesh_quad(
-                &mesh,
-                top[0],
-                top[1],
-                top[2],
-                top[3],
-                part,
-            ); mesh_quad(&mesh, bottom[3], bottom[2], bottom[1], bottom[0], part)
-            mesh_quad(
-                &mesh,
-                top[0],
-                bottom[0],
-                bottom[1],
-                top[1],
-                part,
-            ); mesh_quad(&mesh, top[1], bottom[1], bottom[2], top[2], part)
-            mesh_quad(
-                &mesh,
-                top[2],
-                bottom[2],
-                bottom[3],
-                top[3],
-                part,
-            ); mesh_quad(&mesh, top[3], bottom[3], bottom[0], top[0], part)
-        }
     }
     return mesh
 }

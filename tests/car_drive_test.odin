@@ -38,6 +38,35 @@ car_drive_steers_with_travel_and_handbrake_releases_lateral_grip :: proc(t: ^tes
 }
 
 @(test)
+car_drive_arcade_input_has_precise_center_and_full_lock :: proc(t: ^testing.T) {
+    testing.expect(t, vehicles.car_drive_arcade_steering(.25) > 0)
+    testing.expect(t, vehicles.car_drive_arcade_steering(.25) < .25)
+    testing.expect(t, vehicles.car_drive_arcade_steering(1) == 1)
+    testing.expect(t, vehicles.car_drive_arcade_steering(-1) == -1)
+}
+
+@(test)
+car_drive_arcade_turning_is_quick_in_town_and_stable_at_speed :: proc(t: ^testing.T) {
+    tune := vehicles.CAR_DRIVE_SEDAN_TUNE
+    crawl_rate := math.abs(vehicles.car_drive_target_yaw_rate(1, 2, 0, tune))
+    town_rate := math.abs(vehicles.car_drive_target_yaw_rate(1, 7, 0, tune))
+    high_speed_rate := math.abs(vehicles.car_drive_target_yaw_rate(1, tune.max_forward, 0, tune))
+    testing.expect(t, town_rate > crawl_rate)
+    testing.expect(t, high_speed_rate < town_rate)
+    testing.expect(t, high_speed_rate <= tune.max_yaw_rate * tune.high_speed_steering + .001)
+}
+
+@(test)
+car_drive_cannot_pivot_and_reverse_steering_is_tamer :: proc(t: ^testing.T) {
+    forward_rate := vehicles.car_drive_target_yaw_rate(1, 5, 0)
+    reverse_rate := vehicles.car_drive_target_yaw_rate(1, -5, 0)
+    testing.expect(t, vehicles.car_drive_target_yaw_rate(1, 0, 0) == 0)
+    testing.expect(t, forward_rate > 0)
+    testing.expect(t, reverse_rate < 0)
+    testing.expect(t, math.abs(reverse_rate) < forward_rate)
+}
+
+@(test)
 car_drive_body_feedback_is_bounded :: proc(t: ^testing.T) {
     car := vehicles.default_vehicle({})
     state: vehicles.Car_Drive_State
@@ -46,4 +75,58 @@ car_drive_body_feedback_is_bounded :: proc(t: ^testing.T) {
     }
     testing.expect(t, math.abs(state.body_roll) <= .106)
     testing.expect(t, math.abs(state.body_pitch) <= .046)
+}
+
+@(test)
+car_drive_surface_grip_changes_acceleration_and_lateral_slip :: proc(t: ^testing.T) {
+    asphalt_car := vehicles.default_vehicle({})
+    loose_car := vehicles.default_vehicle({})
+    asphalt: vehicles.Car_Drive_State
+    loose: vehicles.Car_Drive_State
+    asphalt_surface := vehicles.CAR_DRIVE_DEFAULT_SURFACE
+    loose_surface := vehicles.Car_Drive_Surface {
+        longitudinal_grip  = .54,
+        lateral_grip       = .46,
+        rolling_resistance = 1.4,
+    }
+
+    for _ in 0 ..< 90 {
+        vehicles.car_drive_step(&asphalt, &asphalt_car, {throttle = 1}, 0, 1.0 / 60, asphalt_surface)
+        vehicles.car_drive_step(&loose, &loose_car, {throttle = 1}, 0, 1.0 / 60, loose_surface)
+    }
+
+    testing.expect(t, vehicles.car_drive_speed(asphalt) > vehicles.car_drive_speed(loose))
+    testing.expect(t, loose.slip_amount > asphalt.slip_amount)
+    testing.expect(t, loose.surface_lateral_grip < asphalt.surface_lateral_grip)
+
+    asphalt_slide_car := vehicles.default_vehicle({})
+    loose_slide_car := vehicles.default_vehicle({})
+    asphalt_slide := vehicles.Car_Drive_State {
+        velocity = {x = 8, z = 4},
+        wheel_speed = 8,
+    }
+    loose_slide := asphalt_slide
+    for _ in 0 ..< 30 {
+        vehicles.car_drive_step(&asphalt_slide, &asphalt_slide_car, {}, 0, 1.0 / 60, asphalt_surface)
+        vehicles.car_drive_step(&loose_slide, &loose_slide_car, {}, 0, 1.0 / 60, loose_surface)
+    }
+    testing.expect(t, math.abs(loose_slide.velocity.z) > math.abs(asphalt_slide.velocity.z))
+}
+
+@(test)
+car_drive_smooths_surface_transitions :: proc(t: ^testing.T) {
+    car := vehicles.default_vehicle({})
+    state: vehicles.Car_Drive_State
+    for _ in 0 ..< 30 {
+        vehicles.car_drive_step(&state, &car, {throttle = 1}, 0, 1.0 / 60)
+    }
+    before := state.surface_lateral_grip
+    dirt := vehicles.Car_Drive_Surface {
+        longitudinal_grip  = .62,
+        lateral_grip       = .54,
+        rolling_resistance = 1.3,
+    }
+    vehicles.car_drive_step(&state, &car, {throttle = 1}, 0, 1.0 / 60, dirt)
+    testing.expect(t, state.surface_lateral_grip < before)
+    testing.expect(t, state.surface_lateral_grip > dirt.lateral_grip)
 }

@@ -1,6 +1,7 @@
 package tests
 
 import architecture "../packages/architecture"
+import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
 import "core:testing"
@@ -64,10 +65,22 @@ architecture_roof_palette_has_seed_variants :: proc(t: ^testing.T) {
 
 @(test)
 architecture_roof_tiles_vary_by_seed_and_tone :: proc(t: ^testing.T) {
-    testing.expect(t, architecture.architecture_roof_tile_color(0, 0) != architecture.architecture_roof_tile_color(1, 0))
-    testing.expect(t, architecture.architecture_roof_tile_color(0, 0) != architecture.architecture_roof_tile_color(0, 1))
-    testing.expect(t, architecture.architecture_roof_tile_color(8, 0) == architecture.architecture_roof_tile_color(0, 0))
-    testing.expect(t, architecture.architecture_roof_tile_color(0, 7) == architecture.architecture_roof_tile_color(0, 2))
+    testing.expect(
+        t,
+        architecture.architecture_roof_tile_color(0, 0) != architecture.architecture_roof_tile_color(1, 0),
+    )
+    testing.expect(
+        t,
+        architecture.architecture_roof_tile_color(0, 0) != architecture.architecture_roof_tile_color(0, 1),
+    )
+    testing.expect(
+        t,
+        architecture.architecture_roof_tile_color(8, 0) == architecture.architecture_roof_tile_color(0, 0),
+    )
+    testing.expect(
+        t,
+        architecture.architecture_roof_tile_color(0, 7) == architecture.architecture_roof_tile_color(0, 2),
+    )
 }
 
 @(test)
@@ -129,8 +142,8 @@ architecture_chimney_variation_is_sparse_and_seed_stable :: proc(t: ^testing.T) 
 architecture_facade_floor_count_tracks_height :: proc(t: ^testing.T) {
     testing.expect(t, architecture.facade_floor_count(18) == 2)
     testing.expect(t, architecture.facade_floor_count(33) == 3)
-    testing.expect(t, architecture.facade_floor_count(50) == 4)
-    testing.expect(t, architecture.facade_floor_count(80) == 4)
+    testing.expect(t, architecture.facade_floor_count(50) == 5)
+    testing.expect(t, architecture.facade_floor_count(80) == 7)
 }
 
 @(test)
@@ -166,4 +179,117 @@ adriatic_graph_builds_a_rear_row_skyline :: proc(t: ^testing.T) {
     }
     testing.expect(t, front_count > 0 && rear_count > 0)
     testing.expect(t, rear_total / f32(rear_count) > front_total / f32(front_count) + 1)
+}
+
+@(test)
+city_density_stamp_paints_erases_and_falls_off :: proc(t: ^testing.T) {
+    field: [terrain.CITY_DENSITY_SAMPLES]u8
+    radius := terrain.BASE_CELL_SIZE * 3
+    _ = architecture.city_density_stamp(&field, 1300, 1300, radius, .6, .35)
+    center := architecture.city_density_sample(&field, 1300, 1300)
+    edge := architecture.city_density_sample(&field, 1300 + radius * .8, 1300)
+    outside := architecture.city_density_sample(&field, 1300 + radius * 1.6, 1300)
+    testing.expect(t, center > .45)
+    testing.expect(t, edge > 0 && edge < center)
+    testing.expect(t, outside == 0)
+    _ = architecture.city_density_stamp(&field, 1300, 1300, radius, .2, .35, true)
+    testing.expect(t, architecture.city_density_sample(&field, 1300, 1300) < center)
+}
+
+@(test)
+city_density_clamps_after_repeated_strokes :: proc(t: ^testing.T) {
+    field: [terrain.CITY_DENSITY_SAMPLES]u8
+    for _ in 0 ..< 8 {
+        _ = architecture.city_density_stamp(&field, 1300, 1300, 80, 1, 1)
+    }
+    testing.expect(t, architecture.city_density_sample(&field, 1300, 1300) == 1)
+    for _ in 0 ..< 8 {
+        _ = architecture.city_density_stamp(&field, 1300, 1300, 80, 1, 1, true)
+    }
+    testing.expect(t, architecture.city_density_sample(&field, 1300, 1300) == 0)
+}
+
+@(test)
+city_plan_is_deterministic_and_density_controls_massing :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    low, high: [terrain.CITY_DENSITY_SAMPLES]u8
+    bounds := architecture.City_Bounds{1120, 1120, 1480, 1480, true}
+    _ = architecture.city_density_stamp(&low, 1300, 1300, 175, .34, .8)
+    _ = architecture.city_density_stamp(&high, 1300, 1300, 175, 1, .8)
+    low_plan := architecture.city_plan_density(project, &low, bounds)
+    high_plan := architecture.city_plan_density(project, &high, bounds)
+    repeat := architecture.city_plan_density(project, &high, bounds)
+    testing.expect(t, low_plan.count > 0)
+    testing.expect(t, high_plan.count >= low_plan.count)
+    testing.expect(t, repeat.count == high_plan.count)
+    low_height, high_height: f32
+    for structure in low_plan.structures[:low_plan.count] do low_height += structure.height
+    for index in 0 ..< high_plan.count {
+        high_height += high_plan.structures[index].height
+        testing.expect(t, high_plan.structures[index].seed == repeat.structures[index].seed)
+        testing.expect(t, high_plan.structures[index].center_x == repeat.structures[index].center_x)
+    }
+    testing.expect(t, high_height / f32(high_plan.count) > low_height / f32(low_plan.count))
+}
+
+@(test)
+city_planner_queries_curved_road_clearance_and_tangent :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    a := roads.add_node(&graph, {1200, 4, 1200}, 8)
+    b := roads.add_node(&graph, {1400, 4, 1200}, 8)
+    _ = roads.add_edge(&graph, a, b, {1260, 4, 1280}, {1340, 4, 1280}, 10, 2)
+    found, distance, tangent_x, tangent_z, clearance := architecture.city_nearest_road(&graph, 1300, 1260)
+    testing.expect(t, found)
+    testing.expect(t, distance < 30)
+    testing.expect(t, clearance == 9)
+    testing.expect(t, math.abs(tangent_x) > .8)
+    testing.expect(t, math.abs(tangent_z) < .4)
+}
+
+@(test)
+city_site_validation_rejects_water_and_uses_high_foundation :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    water := terrain.structure_make(0, 0, 20, 20, 0, 12)
+    testing.expect(t, !architecture.city_structure_site_valid(project, &water))
+    land := terrain.structure_make(1300, 1300, 20, 20, 0, 12)
+    testing.expect(t, architecture.city_structure_site_valid(project, &land))
+    testing.expect(t, land.base_y > project.sea_level)
+}
+
+@(test)
+city_commit_replaces_architecture_but_preserves_other_formations :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    building := terrain.structure_make(1300, 1300, 20, 20, 4.5, 20)
+    building.kind = .Architecture
+    _ = terrain.add_structure(project, building)
+    rock := terrain.structure_make(1320, 1300, 16, 16, 4.5, 10)
+    rock.kind = .Rock
+    _ = terrain.add_structure(project, rock)
+    field: [terrain.CITY_DENSITY_SAMPLES]u8
+    bounds := architecture.City_Bounds{1260, 1260, 1340, 1340, true}
+    plan: architecture.City_Plan
+    _ = architecture.city_commit_plan(project, &field, bounds, &plan)
+    testing.expect(t, project.structure_count == 1)
+    testing.expect(t, project.structures[0].kind == .Rock)
+}
+
+@(test)
+city_preview_plan_matches_committed_structures :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    field: [terrain.CITY_DENSITY_SAMPLES]u8
+    bounds := architecture.City_Bounds{1160, 1160, 1440, 1440, true}
+    _ = architecture.city_density_stamp(&field, 1300, 1300, 130, .8, .7)
+    plan := architecture.city_plan_density(project, &field, bounds)
+    created := architecture.city_commit_plan(project, &field, bounds, &plan)
+    testing.expect(t, created == plan.count)
+    testing.expect(t, project.structure_count == plan.count)
+    for index in 0 ..< plan.count {
+        testing.expect(t, project.structures[index].seed == plan.structures[index].seed)
+        testing.expect(t, project.structures[index].height == plan.structures[index].height)
+        testing.expect(t, project.structures[index].rotation == plan.structures[index].rotation)
+    }
 }

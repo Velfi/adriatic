@@ -1,5 +1,6 @@
 package libellula
 
+import flight "../flight"
 import "core:math"
 import "core:testing"
 
@@ -41,4 +42,29 @@ assisted_cyclic_is_gentle_near_center :: proc(t: ^testing.T) {
     testing.expect(t, half_input > 0)
     testing.expect(t, half_input < .25)
     testing.expect(t, assisted_axis(1, .64, .55) == .64)
+}
+
+@(test)
+holding_forward_commands_a_bounded_tilt_instead_of_tipping_over :: proc(t: ^testing.T) {
+    runtime := new_runtime({y = GROUND_CLEARANCE})
+    runtime.body.position.y = 30
+    runtime.grounded = false
+    runtime.was_grounded = false
+    runtime.lift_active = true
+    for _ in 0 ..< 600 {
+        step(&runtime, {pitch = -1}, 0, 1.0 / 60.0)
+    }
+
+    pitch := math.asin(clamp(runtime.body.basis.forward.y, -1, 1))
+    forward_speed := flight.dot(runtime.body.velocity, runtime.spawn_basis.forward)
+    testing.expect(t, pitch < -.1)
+    testing.expect(t, math.abs(pitch) < runtime.tuning.maximum_tilt_radians + .08)
+    testing.expect(t, flight.dot(runtime.body.basis.up, {y = 1}) > .9)
+    testing.expect(t, forward_speed > 1)
+
+    for _ in 0 ..< 240 {
+        step(&runtime, {}, 0, 1.0 / 60.0)
+    }
+    released_pitch := math.asin(clamp(runtime.body.basis.forward.y, -1, 1))
+    testing.expect(t, math.abs(released_pitch) < .05)
 }

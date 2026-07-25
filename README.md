@@ -98,6 +98,17 @@ mesh := roads.bake(&graph)
 defer roads.mesh_destroy(&mesh)
 ```
 
+## City density brush
+
+**CITY BRUSH [N]** paints a persistent settlement-density field instead of a
+one-shot rectangle. Left-drag increases density and right-drag reduces it;
+wheel adjusts radius, Shift+wheel adjusts flow, and Alt+wheel adjusts hardness.
+The editor shows the density overlay and an exact staged building preview while
+the tool is active. Density controls both packing and height, while generated
+buildings avoid water, steep foundations, existing formations, road shoulders,
+and junctions and align to nearby road curves. City density is saved with the
+project and participates in formation undo/redo.
+
 ## Quick start
 
 ```sh
@@ -116,7 +127,7 @@ checkout when building, releasing, or testing Adriatic.
 
 | Command | Purpose |
 | --- | --- |
-| `make fmt` | Format Odin sources. |
+| `make fmt` | Format all project Odin sources. |
 | `make check` | Type-check the application. |
 | `make test` | Run starter tests. |
 | `make run` | Build and run the development executable. |

@@ -5,7 +5,9 @@ import third_person "../third_person"
 import vehicles "../vehicles"
 import "core:math"
 
-GROUND_CLEARANCE :: f32(1.35)
+// Full TriRotorVisual geometry reaches 2.725 local metres below the frame
+// origin. At Adriatic's .72 presentation scale, 1.98 keeps its skid pads clear.
+GROUND_CLEARANCE :: f32(1.98)
 
 Control :: struct {
     throttle_up, throttle_down: bool,
@@ -18,6 +20,8 @@ Tuning :: struct {
     vertical_speed_gain:                   f32,
     control_response, control_release:     f32,
     cyclic_scale, cyclic_expo, yaw_scale:  f32,
+    maximum_tilt_radians:                  f32,
+    attitude_gain, attitude_rate_gain:     f32,
     horizontal_damping:                    f32,
     ground_clearance, ground_friction:     f32,
     safe_touchdown_speed, safe_exit_speed: f32,
@@ -53,6 +57,9 @@ default_tuning :: proc() -> Tuning {
         cyclic_scale = .64,
         cyclic_expo = .55,
         yaw_scale = .7,
+        maximum_tilt_radians = .28,
+        attitude_gain = 1.5,
+        attitude_rate_gain = .55,
         horizontal_damping = .55,
         ground_clearance = GROUND_CLEARANCE,
         ground_friction = 4.5,
@@ -71,6 +78,9 @@ new_runtime :: proc(spawn_position: flight.Vec3) -> Runtime {
         spawn_position = spawn_position,
         spawn_basis = {forward = {-1, 0, 0}, up = {0, 1, 0}, right = {0, 0, -1}},
     }
+    // Product assistance owns pitch and roll attitude hold. The force model
+    // still allocates the requested moments physically across all three rotors.
+    result.flight_runtime.auto_level = false
     reset(&result, spawn_position.y - result.tuning.ground_clearance)
     return result
 }
@@ -141,8 +151,27 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
     }
     runtime.throttle = approach(runtime.throttle, clamp(throttle_target, 0, 1), runtime.tuning.throttle_response * dt)
 
-    pitch_target := assisted_axis(control.pitch, runtime.tuning.cyclic_scale, runtime.tuning.cyclic_expo)
-    roll_target := assisted_axis(control.roll, runtime.tuning.cyclic_scale, runtime.tuning.cyclic_expo)
+    pitch_input := assisted_axis(control.pitch, 1, runtime.tuning.cyclic_expo)
+    roll_input := assisted_axis(control.roll, 1, runtime.tuning.cyclic_expo)
+    desired_pitch := pitch_input * runtime.tuning.maximum_tilt_radians
+    desired_bank := -roll_input * runtime.tuning.maximum_tilt_radians
+    current_pitch := math.asin(clamp(runtime.body.basis.forward.y, -1, 1))
+    current_bank := bank_radians(runtime.body.basis)
+    local_rate := flight.world_to_local(runtime.body.basis, runtime.body.angular_velocity)
+    pitch_target := clamp(
+        (desired_pitch - current_pitch) * runtime.tuning.attitude_gain -
+        local_rate.x * runtime.tuning.attitude_rate_gain,
+        -runtime.tuning.cyclic_scale,
+        runtime.tuning.cyclic_scale,
+    )
+    // Positive local roll torque produces negative bank in this coordinate
+    // system, hence the reversed attitude error.
+    roll_target := clamp(
+        (current_bank - desired_bank) * runtime.tuning.attitude_gain -
+        local_rate.z * runtime.tuning.attitude_rate_gain,
+        -runtime.tuning.cyclic_scale,
+        runtime.tuning.cyclic_scale,
+    )
     yaw_target := clamp(control.yaw, -1, 1) * runtime.tuning.yaw_scale
     runtime.pitch = slew(runtime.pitch, pitch_target, runtime.tuning, dt)
     runtime.roll = slew(runtime.roll, roll_target, runtime.tuning, dt)
@@ -158,7 +187,7 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
         dt,
     )
 
-    cyclic_release := 1 - max_f32(math.abs(pitch_target), math.abs(roll_target))
+    cyclic_release := 1 - max_f32(math.abs(pitch_input), math.abs(roll_input))
     horizontal_damping := clamp(runtime.tuning.horizontal_damping * cyclic_release * dt, 0, 1)
     runtime.body.velocity.x *= 1 - horizontal_damping
     runtime.body.velocity.z *= 1 - horizontal_damping

@@ -41,6 +41,54 @@ terrain_brush_hardness_controls_edge_falloff :: proc(t: ^testing.T) {
 }
 
 @(test)
+terrain_ground_classifier_mirrors_renderer_bands :: proc(t: ^testing.T) {
+    // Ground at or below sea level is beach edge, never open water.
+    testing.expect(t, terrain.classify_ground(0, 0, 0) == .Sand)
+    testing.expect(t, terrain.classify_ground(0, -2, 0) == .Sand)
+    // Painted material dominates regardless of elevation, matching the
+    // renderer's `painted > .5` soil short-circuit.
+    testing.expect(t, terrain.classify_ground(.8, 3.5, 0) == .Dirt)
+    testing.expect(t, terrain.classify_ground(1, .3, 0) == .Dirt)
+    // Unpainted low shelf reads as sand; its soil-dominated upper half as dirt.
+    testing.expect(t, terrain.classify_ground(0, .3, 0) == .Sand)
+    testing.expect(t, terrain.classify_ground(0, .8, 0) == .Dirt)
+    // Unpainted upland reads as dirt near the transition, grass once it climbs.
+    testing.expect(t, terrain.classify_ground(0, 1.4, 0) == .Dirt)
+    testing.expect(t, terrain.classify_ground(0, 4, 0) == .Grass)
+    // Sea level offsets shift the bands with the water plane.
+    testing.expect(t, terrain.classify_ground(0, 10.3, 10) == .Sand)
+    testing.expect(t, terrain.classify_ground(0, 14, 10) == .Grass)
+}
+
+@(test)
+terrain_ground_surface_at_tracks_painted_material :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    // A default island top is unpainted upland: it should read as grass.
+    half_extent := f32(terrain.RING_RESOLUTION - 1) * project.levels[0].cell_size * .5
+    offset := half_extent * terrain.DEFAULT_ISLAND_OFFSET
+    testing.expect(t, terrain.ground_surface_at(project, 0, -offset, -offset) == .Grass)
+    // Painting the same spot flips it to bare soil.
+    terrain.apply_stroke(project, .Paint, -offset, -offset, 100, 1, 1)
+    testing.expect(t, terrain.ground_surface_at(project, 0, -offset, -offset) == .Dirt)
+    // A nil project falls back to the neutral grass surface.
+    testing.expect(t, terrain.ground_surface_at(nil, 0, 0, 0) == .Grass)
+}
+
+@(test)
+terrain_ground_grip_distinguishes_sand_dirt_and_grass :: proc(t: ^testing.T) {
+    sand := terrain.ground_grip(.Sand)
+    dirt := terrain.ground_grip(.Dirt)
+    grass := terrain.ground_grip(.Grass)
+    testing.expect(t, dirt.lateral > grass.lateral)
+    testing.expect(t, grass.lateral > sand.lateral)
+    testing.expect(t, dirt.longitudinal > grass.longitudinal)
+    testing.expect(t, grass.longitudinal > sand.longitudinal)
+    testing.expect(t, sand.rolling_resistance > grass.rolling_resistance)
+    testing.expect(t, grass.rolling_resistance > dirt.rolling_resistance)
+}
+
+@(test)
 terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^testing.T) {
     path := "build/terrain_project_test.bin"
     defer os.remove(path)
@@ -50,7 +98,10 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
     defer free(loaded)
     terrain.apply_stroke_with_hardness(source, .Raise, 0, 0, 100, 1, 1, .8)
     terrain.apply_stroke_with_hardness(source, .Paint, 0, 0, 100, 1, 1, .8)
-    terrain.add_structure(source, terrain.structure_make(20, -30, 40, 50, 0, 60))
+    foliage := terrain.structure_make(20, -30, 40, 50, 0, 60)
+    foliage.kind = .Foliage
+    terrain.add_structure(source, foliage)
+    source.city_density[terrain.RING_RESOLUTION / 2 * terrain.RING_RESOLUTION + terrain.RING_RESOLUTION / 2] = 203
     road_a := roads.add_node(&source.road_graph, {0, 2, 0})
     road_b := roads.add_node(&source.road_graph, {40, 3, 20})
     roads.add_straight_edge(&source.road_graph, road_a, road_b, 7, 1, .Cobblestone)
@@ -61,10 +112,69 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
     testing.expect(t, loaded.structure_count == 1)
     testing.expect(t, loaded.structures[0].height == source.structures[0].height)
     testing.expect(t, loaded.structures[0].group_id == source.structures[0].group_id)
+    testing.expect(t, loaded.structures[0].kind == .Foliage)
+    testing.expect(
+        t,
+        loaded.city_density[terrain.RING_RESOLUTION / 2 * terrain.RING_RESOLUTION + terrain.RING_RESOLUTION / 2] ==
+        203,
+    )
     testing.expect(t, loaded.road_graph.node_count == 2)
     testing.expect(t, loaded.road_graph.edge_count == 1)
     testing.expect(t, loaded.road_graph.nodes[1].position == source.road_graph.nodes[1].position)
     testing.expect(t, loaded.road_graph.edges[0].pavement == .Cobblestone)
+}
+
+@(test)
+terrain_project_file_migrates_v4_architecture_and_zeroes_city_density :: proc(t: ^testing.T) {
+    path := "build/terrain_project_v4_test.bin"
+    defer os.remove(path)
+    source := terrain.new_project()
+    loaded := terrain.new_project()
+    defer free(source)
+    defer free(loaded)
+    header_size := size_of(terrain.Project_File_Header)
+    data := make([]byte, header_size + size_of(terrain.Legacy_Project_V4))
+    defer delete(data)
+    header := cast(^terrain.Project_File_Header)raw_data(data)
+    header^ = {
+        magic        = terrain.PROJECT_FILE_MAGIC,
+        version      = 4,
+        payload_size = size_of(terrain.Legacy_Project_V4),
+    }
+    legacy := cast(^terrain.Legacy_Project_V4)raw_data(data[header_size:])
+    legacy.levels = source.levels
+    legacy.sea_level = source.sea_level
+    legacy.revision = 41
+    legacy.structure_count = 1
+    legacy.next_structure_id = 8
+    legacy.structures[0] = {
+        id       = 7,
+        group_id = 7,
+        center_x = 1300,
+        center_z = 1300,
+        width    = 24,
+        depth    = 18,
+        base_y   = 4.5,
+        height   = 30,
+        color    = {213, 196, 166, 255},
+        kind     = .Architecture,
+        seed     = 99,
+    }
+    testing.expect(t, os.write_entire_file(path, data) == nil)
+    testing.expect(t, terrain.load_project(loaded, path))
+    testing.expect(t, loaded.revision == 41)
+    testing.expect(t, loaded.structure_count == 1)
+    testing.expect(t, loaded.structures[0].kind == .Architecture)
+    testing.expect(t, loaded.structures[0].seed == 99)
+    testing.expect(t, architecture_density_is_zero(loaded))
+}
+
+architecture_density_is_zero :: proc(project: ^terrain.Project) -> bool {
+    if project == nil do return false
+    for value in project.city_density {
+        if value != 0 do return false
+    }
+    return true
 }
 
 @(test)
@@ -198,6 +308,8 @@ formation_kinds_cycle_without_skipping :: proc(t: ^testing.T) {
     testing.expect(t, kind == .Ridge)
     kind = terrain.formation_kind_next(kind)
     testing.expect(t, kind == .Cliff)
+    kind = terrain.formation_kind_next(kind)
+    testing.expect(t, kind == .Foliage)
     kind = terrain.formation_kind_next(kind)
     testing.expect(t, kind == .Box)
 }

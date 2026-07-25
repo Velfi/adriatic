@@ -8,6 +8,7 @@ import "core:math"
 Tri_Rotor_Airframe :: struct {
     mass_kg, maximum_gross_mass_kg:                                                            f32,
     maximum_collective_force, attitude_torque, yaw_torque, leveling_strength, angular_damping: f32,
+    maximum_tilt_angle:                                                                        f32,
     ground_effect_height, ground_effect_bonus, safe_landing_speed:                             f32,
 }
 
@@ -38,6 +39,7 @@ libellula_airframe :: proc() -> Tri_Rotor_Airframe {
         yaw_torque = 19000,
         leveling_strength = 26000,
         angular_damping = 8500,
+        maximum_tilt_angle = .55,
         ground_effect_height = 5.5,
         ground_effect_bonus = .14,
         safe_landing_speed = 5,
@@ -110,12 +112,22 @@ step_tri_rotor :: proc(
     level_axis := cross(
         state.basis.up,
         {y = 1},
-    ); local_level := world_to_local(state.basis, level_axis); damping := airframe.angular_damping; pitch_moment := command.pitch * airframe.attitude_torque - local_rate.x * damping; roll_moment := command.roll * airframe.attitude_torque - local_rate.z * damping
+    ); local_level := world_to_local(state.basis, level_axis); damping := airframe.angular_damping
+    pitch_moment, roll_moment: f32
     if runtime.auto_level {
-        // Preserve commanded cyclic authority while returning released axes to
-        // level. Previously auto-level replaced both pilot inputs entirely.
-        pitch_moment += local_level.x * airframe.leveling_strength * 2.5 * (1 - math.abs(command.pitch))
-        roll_moment += local_level.z * airframe.leveling_strength * 2.5 * (1 - math.abs(command.roll))
+        // Assisted cyclic commands a bounded lean angle rather than a raw
+        // torque. The airframe holds the requested tilt to translate and
+        // returns to level when released, so forward flight can no longer
+        // integrate into an ever-increasing pitch rate that flips the craft.
+        leveling := airframe.leveling_strength * 2.5
+        max_tilt := math.sin(airframe.maximum_tilt_angle)
+        target_pitch_level := -command.pitch * max_tilt
+        target_roll_level := -command.roll * max_tilt
+        pitch_moment = (local_level.x - target_pitch_level) * leveling - local_rate.x * damping
+        roll_moment = (local_level.z - target_roll_level) * leveling - local_rate.z * damping
+    } else {
+        pitch_moment = command.pitch * airframe.attitude_torque - local_rate.x * damping
+        roll_moment = command.roll * airframe.attitude_torque - local_rate.z * damping
     }
     solution := solve_tri_rotor(
         collective,

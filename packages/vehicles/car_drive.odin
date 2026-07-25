@@ -12,6 +12,10 @@ Car_Drive_State :: struct {
     handbrake_amount:                f32,
     body_roll, body_pitch:           f32,
     acceleration_feedback:           f32,
+    surface_longitudinal_grip:       f32,
+    surface_lateral_grip:            f32,
+    surface_rolling_resistance:      f32,
+    slip_amount:                     f32,
 }
 
 Car_Drive_Input :: struct {
@@ -23,8 +27,22 @@ Car_Drive_Tune :: struct {
     acceleration, brake, reverse_acceleration: f32,
     max_forward, max_reverse:                  f32,
     steering_response, yaw_response:           f32,
+    turn_curvature, max_yaw_rate:              f32,
+    high_speed_steering, reverse_steering:     f32,
     lateral_grip, handbrake_grip:              f32,
     coast_deceleration:                        f32,
+}
+
+Car_Drive_Surface :: struct {
+    longitudinal_grip:  f32,
+    lateral_grip:       f32,
+    rolling_resistance: f32,
+}
+
+CAR_DRIVE_DEFAULT_SURFACE :: Car_Drive_Surface {
+    longitudinal_grip  = 1,
+    lateral_grip       = 1,
+    rolling_resistance = 1,
 }
 
 CAR_DRIVE_SEDAN_TUNE :: Car_Drive_Tune {
@@ -33,10 +51,14 @@ CAR_DRIVE_SEDAN_TUNE :: Car_Drive_Tune {
     reverse_acceleration = 5.2,
     max_forward          = 24,
     max_reverse          = 8.5,
-    steering_response    = 7.5,
-    yaw_response         = 5.5,
-    lateral_grip         = 7.2,
-    handbrake_grip       = 1.15,
+    steering_response    = 10,
+    yaw_response         = 8.5,
+    turn_curvature       = .18,
+    max_yaw_rate         = 1.2,
+    high_speed_steering  = .55,
+    reverse_steering     = .78,
+    lateral_grip         = 8.4,
+    handbrake_grip       = .95,
     coast_deceleration   = 1.25,
 }
 
@@ -60,11 +82,42 @@ car_drive_angle_step :: proc(current, target, response: f32) -> f32 {
     return current + delta * clamp(response, 0, 1)
 }
 
+// GTA-like steering gives analog input a softer center without weakening full
+// keyboard or stick lock. This makes small corrections calm at road speed but
+// keeps the car immediately readable when the player commits to a turn.
+car_drive_arcade_steering :: proc(steering: f32) -> f32 {
+    magnitude := math.abs(clamp(steering, -1, 1))
+    curved := magnitude * .35 + magnitude * magnitude * .65
+    return math.sign(steering) * curved
+}
+
+car_drive_target_yaw_rate :: proc(
+    steering, longitudinal_speed, handbrake_amount: f32,
+    tune := CAR_DRIVE_SEDAN_TUNE,
+) -> f32 {
+    speed := math.abs(longitudinal_speed)
+    if speed < .08 || tune.max_forward <= .01 do return 0
+
+    speed_ratio := clamp(speed / tune.max_forward, 0, 1)
+    // Curvature makes steering build naturally from a crawl. The separate yaw
+    // cap then reduces authority at high speed, producing GTA's characteristic
+    // stable lane changes without making city corners feel sluggish.
+    curvature_rate := speed * tune.turn_curvature
+    speed_limited_rate := tune.max_yaw_rate * (1 - speed_ratio * (1 - clamp(tune.high_speed_steering, 0, 1)))
+    available_rate := min(curvature_rate, speed_limited_rate)
+    if longitudinal_speed < 0 do available_rate *= tune.reverse_steering
+
+    handbrake_boost := 1 + clamp(handbrake_amount, 0, 1) * .62
+    direction := longitudinal_speed < 0 ? f32(-1) : f32(1)
+    return car_drive_arcade_steering(steering) * available_rate * direction * handbrake_boost
+}
+
 car_drive_step :: proc(
     state: ^Car_Drive_State,
     vehicle: ^Vehicle,
     input: Car_Drive_Input,
     ground_height, delta_seconds: f32,
+    surface := CAR_DRIVE_DEFAULT_SURFACE,
     tune := CAR_DRIVE_SEDAN_TUNE,
 ) {
     if state == nil || vehicle == nil || delta_seconds <= 0 do return
@@ -72,6 +125,21 @@ car_drive_step :: proc(
     throttle := clamp(input.throttle, -1, 1)
     steer_input := clamp(input.steering, -1, 1)
     longitudinal_before := car_drive_longitudinal_speed(state^, vehicle.yaw_radians)
+    target_longitudinal_grip := clamp(surface.longitudinal_grip, f32(.2), f32(1.2))
+    target_lateral_grip := clamp(surface.lateral_grip, f32(.2), f32(1.2))
+    target_rolling_resistance := clamp(surface.rolling_resistance, f32(.65), f32(2))
+    if state.surface_longitudinal_grip <= 0 {
+        state.surface_longitudinal_grip = target_longitudinal_grip
+        state.surface_lateral_grip = target_lateral_grip
+        state.surface_rolling_resistance = target_rolling_resistance
+    } else {
+        surface_response := clamp(4.5 * dt, 0, 1)
+        state.surface_longitudinal_grip +=
+            (target_longitudinal_grip - state.surface_longitudinal_grip) * surface_response
+        state.surface_lateral_grip += (target_lateral_grip - state.surface_lateral_grip) * surface_response
+        state.surface_rolling_resistance +=
+            (target_rolling_resistance - state.surface_rolling_resistance) * surface_response
+    }
 
     if throttle > .01 {
         if state.wheel_speed < -.35 {
@@ -95,13 +163,14 @@ car_drive_step :: proc(
             )
         }
     } else {
-        state.wheel_speed = car_drive_approach(state.wheel_speed, 0, tune.coast_deceleration * dt)
+        state.wheel_speed = car_drive_approach(
+            state.wheel_speed,
+            0,
+            tune.coast_deceleration * state.surface_rolling_resistance * dt,
+        )
     }
 
-    speed_ratio := clamp(car_drive_speed(state^) / tune.max_forward, 0, 1)
-    steer_limit := 1 - speed_ratio * .48
-    target_steering := steer_input * steer_limit
-    state.steering += (target_steering - state.steering) * clamp(tune.steering_response * dt, 0, 1)
+    state.steering += (steer_input - state.steering) * clamp(tune.steering_response * dt, 0, 1)
     handbrake_target := input.handbrake ? f32(1) : f32(0)
     handbrake_response := input.handbrake ? f32(11) : f32(4.5)
     state.handbrake_amount += (handbrake_target - state.handbrake_amount) * clamp(handbrake_response * dt, 0, 1)
@@ -111,9 +180,9 @@ car_drive_step :: proc(
     right_x, right_z := -forward_z, forward_x
     longitudinal := state.velocity.x * forward_x + state.velocity.z * forward_z
     lateral := state.velocity.x * right_x + state.velocity.z * right_z
-    travel_for_yaw := math.abs(longitudinal) < .08 ? f32(0) : longitudinal
-    handbrake_yaw := 1 + state.handbrake_amount * .58
-    target_yaw_rate := state.steering * travel_for_yaw * .044 * handbrake_yaw
+    steering_authority := .55 + state.surface_lateral_grip * .45
+    target_yaw_rate :=
+        car_drive_target_yaw_rate(state.steering, longitudinal, state.handbrake_amount, tune) * steering_authority
     yaw_response := tune.yaw_response * (1 - state.handbrake_amount * .42)
     state.yaw_rate += (target_yaw_rate - state.yaw_rate) * clamp(yaw_response * dt, 0, 1)
     state.yaw_rate = clamp(state.yaw_rate, -1.35, 1.35)
@@ -122,9 +191,14 @@ car_drive_step :: proc(
     forward_x = math.cos(vehicle.yaw_radians)
     forward_z = math.sin(vehicle.yaw_radians)
     right_x, right_z = -forward_z, forward_x
-    longitudinal += (state.wheel_speed - longitudinal) * clamp((5.8 - state.handbrake_amount * 1.8) * dt, 0, 1)
+    wheel_slip := state.wheel_speed - longitudinal
+    longitudinal +=
+        wheel_slip * clamp((5.8 - state.handbrake_amount * 1.8) * state.surface_longitudinal_grip * dt, 0, 1)
     grip := tune.lateral_grip + (tune.handbrake_grip - tune.lateral_grip) * state.handbrake_amount
-    lateral *= 1 - clamp(grip * dt, 0, .95)
+    lateral_before := lateral
+    lateral *= 1 - clamp(grip * state.surface_lateral_grip * dt, 0, .95)
+    slip_target := clamp(math.abs(lateral_before) / 8 + math.abs(wheel_slip) / 18, 0, 1)
+    state.slip_amount += (slip_target - state.slip_amount) * clamp(8 * dt, 0, 1)
     state.velocity.x = forward_x * longitudinal + right_x * lateral
     state.velocity.z = forward_z * longitudinal + right_z * lateral
     vehicle.position.x += state.velocity.x * dt

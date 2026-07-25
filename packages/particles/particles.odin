@@ -23,6 +23,16 @@ Particle :: struct {
 Vehicle_Contact :: struct {
     position: Vec3,
     grounded: bool,
+    surface:  Dust_Surface,
+}
+
+Dust_Surface :: enum u8 {
+    Grass,
+    Asphalt,
+    Gravel,
+    Cobblestone,
+    Dirt,
+    Sand,
 }
 
 Vehicle_Particle :: struct {
@@ -32,6 +42,7 @@ Vehicle_Particle :: struct {
     max_life: f32,
     size:     f32,
     seed:     u32,
+    surface:  Dust_Surface,
 }
 
 Vehicle_Effects :: struct {
@@ -126,18 +137,71 @@ new_vehicle_effects :: proc(seed: u32) -> Vehicle_Effects { return {seed = seed}
 
 new_wing_trails :: proc(seed: u32) -> Wing_Trails { return {seed = seed} }
 
+vehicle_exhaust_opacity :: proc(life, max_life: f32) -> f32 {
+    if max_life <= 0 do return 0
+    remaining := clamp(life / max_life, f32(0), f32(1))
+    // Hold the neutral smoke body stable, then ease only the final 22% away.
+    tail := clamp(remaining / .22, f32(0), f32(1))
+    return tail * tail * (3 - 2 * tail)
+}
+
 spawn_dust :: proc(effects: ^Vehicle_Effects, contact: Vehicle_Contact, intensity: f32) {
     if effects.dust_count >= MAX_DUST_PARTICLES || !contact.grounded do return
-    spread := next_random(&effects.seed) - .5
+    spread_x := next_random(&effects.seed) - .5
+    spread_z := next_random(&effects.seed) - .5
     lift := next_random(&effects.seed)
+    position_spread, velocity_spread := f32(.18), f32(.35 + intensity)
+    base_lift, lift_range := f32(.18), f32(.32)
+    base_life, life_range := f32(.28), f32(.42)
+    base_size, intensity_size, lift_size := f32(.08), f32(.08), f32(.10)
+    switch contact.surface {
+    case .Asphalt:
+        position_spread, velocity_spread = .10, .16 + intensity * .24
+        base_lift, lift_range = .07, .10
+        base_life, life_range = .16, .20
+        base_size, intensity_size, lift_size = .035, .035, .035
+    case .Gravel:
+        position_spread, velocity_spread = .24, .52 + intensity * .70
+        base_lift, lift_range = .15, .32
+        base_life, life_range = .30, .34
+        base_size, intensity_size, lift_size = .055, .055, .075
+    case .Cobblestone:
+        position_spread, velocity_spread = .13, .24 + intensity * .30
+        base_lift, lift_range = .09, .16
+        base_life, life_range = .20, .23
+        base_size, intensity_size, lift_size = .04, .04, .045
+    case .Dirt:
+        position_spread, velocity_spread = .28, .42 + intensity * .54
+        base_lift, lift_range = .22, .42
+        base_life, life_range = .48, .48
+        base_size, intensity_size, lift_size = .10, .09, .13
+    case .Grass:
+        position_spread, velocity_spread = .22, .32 + intensity * .40
+        base_lift, lift_range = .15, .25
+        base_life, life_range = .30, .32
+        base_size, intensity_size, lift_size = .07, .06, .08
+    case .Sand:
+        // Fine grains launch a broad, buoyant plume that lingers longer than
+        // grass clippings while staying lighter than heavy dirt clods.
+        position_spread, velocity_spread = .26, .38 + intensity * .48
+        base_lift, lift_range = .20, .30
+        base_life, life_range = .40, .40
+        base_size, intensity_size, lift_size = .06, .05, .07
+    }
+    life := base_life + lift * life_range
     particle := &effects.dust[effects.dust_count]
     particle^ = {
-        position = {contact.position.x + spread * .18, contact.position.y + .045, contact.position.z + spread * .18},
-        velocity = {spread * (.35 + intensity), .18 + lift * .32, spread * (.35 + intensity)},
-        life     = .28 + lift * .42,
-        max_life = .28 + lift * .42,
-        size     = .08 + intensity * .08 + lift * .10,
+        position = {
+            contact.position.x + spread_x * position_spread,
+            contact.position.y + .045,
+            contact.position.z + spread_z * position_spread,
+        },
+        velocity = {spread_x * velocity_spread, base_lift + lift * lift_range, spread_z * velocity_spread},
+        life     = life,
+        max_life = life,
+        size     = base_size + intensity * intensity_size + lift * lift_size,
         seed     = effects.seed,
+        surface  = contact.surface,
     }
     effects.dust_count += 1
 }
@@ -169,11 +233,38 @@ step_vehicle_effects :: proc(
     position: Vec3,
     yaw, speed, steering, throttle: f32,
     handbrake: bool,
+    slip: f32,
     contacts: [4]Vehicle_Contact,
 ) {
     dt := clamp(delta_seconds, 0, .05)
-    intensity := clamp(speed / 12 + abs(steering) * speed / 18 + (handbrake ? f32(.65) : f32(0)), 0, 1.5)
-    effects.dust_spawn += dt * intensity * 48
+    intensity := clamp(
+        speed / 12 + abs(steering) * speed / 18 + clamp(slip, f32(0), f32(1)) * .7 + (handbrake ? f32(.65) : f32(0)),
+        0,
+        1.5,
+    )
+    surface := Dust_Surface.Grass
+    for contact in contacts {
+        if contact.grounded {
+            surface = contact.surface
+            break
+        }
+    }
+    spawn_scale := f32(.55)
+    switch surface {
+    case .Asphalt:
+        spawn_scale = .16
+    case .Gravel:
+        spawn_scale = 1.25
+    case .Cobblestone:
+        spawn_scale = .38
+    case .Dirt:
+        spawn_scale = 1
+    case .Grass:
+        spawn_scale = .55
+    case .Sand:
+        spawn_scale = 1.15
+    }
+    effects.dust_spawn += dt * intensity * 48 * spawn_scale
     for effects.dust_spawn >= 1 {
         for index in 0 ..< 4 {
             if intensity > .18 do spawn_dust(effects, contacts[index], intensity)
@@ -191,7 +282,25 @@ step_vehicle_effects :: proc(
         particle := &effects.dust[read]
         particle.life -= dt
         if particle.life <= 0 do continue
-        particle.velocity.y += .22 * dt
+        buoyancy := f32(.18)
+        drag := f32(.94)
+        switch particle.surface {
+        case .Asphalt:
+            buoyancy, drag = .07, .88
+        case .Gravel:
+            buoyancy, drag = -.18, .97
+        case .Cobblestone:
+            buoyancy, drag = .04, .90
+        case .Dirt:
+            buoyancy, drag = .30, .97
+        case .Grass:
+            buoyancy, drag = .16, .94
+        case .Sand:
+            buoyancy, drag = .24, .95
+        }
+        particle.velocity.x *= f32(math.pow(f64(drag), f64(dt * 60)))
+        particle.velocity.z *= f32(math.pow(f64(drag), f64(dt * 60)))
+        particle.velocity.y += buoyancy * dt
         particle.position.x += particle.velocity.x * dt
         particle.position.y += particle.velocity.y * dt
         particle.position.z += particle.velocity.z * dt

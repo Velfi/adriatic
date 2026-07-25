@@ -1,0 +1,63 @@
+{
+  "profile": "m4-max-720p",
+  "executable": "build/release/adriatic",
+  "repetitions": 3,
+  "defaults": {
+    "warmup_frames": 90,
+    "sample_frames": 360,
+    "window": [1280, 720],
+    "world": [854, 480],
+    "budgets_ms": {
+      "median": 16.667,
+      "p95": 16.667,
+      "p99": 20.0,
+      "max": 33.333
+    }
+  },
+  "scenarios": {
+    "editor": {
+      "enabled": true,
+      "description": "Default terrain editor overview and UI."
+    },
+    "foliage": {
+      "enabled": true,
+      "description": "Seeded bush, hedge, and forest canopy quality scene."
+    },
+    "foliage_forest": {
+      "enabled": true,
+      "description": "Tiered 19-patch forest surrounding an open glade."
+    },
+    "foliage_understory": {
+      "enabled": true,
+      "description": "Walking-distance forest floor with roots, trunks, and tiered fern LOD."
+    },
+    "foliage_stress": {
+      "enabled": true,
+      "description": "Dense 49-patch forest canopy stress scene."
+    },
+    "formations": {
+      "enabled": false,
+      "description": "Generated town and formation rendering."
+    },
+    "roads": {
+      "enabled": false,
+      "description": "Seeded spline-road network."
+    },
+    "road_dust": {
+      "enabled": false,
+      "description": "Seeded spline-road network with four material-specific dust clouds."
+    },
+    "road_grip": {
+      "enabled": false,
+      "description": "Deterministic driven-car path across authored road materials."
+    },
+    "terrain_grip": {
+      "enabled": false,
+      "description": "Deterministic driven-car path over classified off-road terrain."
+    },
+    "architecture": {
+      "enabled": false,
+      "description": "Generated town with the architecture authoring tool active."
+    }
+  }
+}

@@ -14,6 +14,7 @@ struct VertexInput {
     float3 position : POSITION;
     float4 color : COLOR0;
     float kind : TEXCOORD0;
+    float3 normal : NORMAL0;
 };
 
 struct VertexOutput {
@@ -22,12 +23,42 @@ struct VertexOutput {
     float depth : TEXCOORD0;
     float3 world_position : TEXCOORD1;
     float kind : TEXCOORD2;
+    float3 normal : TEXCOORD3;
 };
+
+// CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
+// Decode them before interpolation, lighting, and fog blending; the sRGB
+// attachment performs the single linear-to-sRGB conversion on write.
+float srgb_channel_to_linear(float color) {
+    return color <= 0.04045
+        ? color / 12.92
+        : pow((color + 0.055) / 1.055, 2.4);
+}
+
+float3 srgb_to_linear(float3 color) {
+    return float3(srgb_channel_to_linear(color.r),
+                  srgb_channel_to_linear(color.g),
+                  srgb_channel_to_linear(color.b));
+}
 
 [shader("vertex")]
 VertexOutput vertex_main(VertexInput input) {
     VertexOutput output;
-    float3 view = input.position - push.camera_position.xyz;
+    float3 world_position = input.position;
+    if (input.kind > 2.5 && input.kind < 3.5) {
+        float2 wind = push.water.zw;
+        float wind_speed = length(wind);
+        float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
+        float crown_weight = smoothstep(-.08, .76, input.normal.y);
+        float phase = dot(input.position.xz, float2(.021, -.016)) +
+                      push.water.x * (.34 + wind_speed * .012);
+        float broad_sway = sin(phase) + sin(phase * .47 + 1.9) * .34;
+        float amplitude = lerp(.20, 1.18, saturate(wind_speed / 14.0 + push.water.y * .24));
+        world_position.xz += wind_direction * broad_sway * amplitude * crown_weight;
+        world_position.y += sin(phase * .73 - .8) * amplitude * .075 * crown_weight;
+    }
+
+    float3 view = world_position - push.camera_position.xyz;
     float depth = dot(view, push.camera_forward.xyz);
     float x = dot(view, push.camera_right.xyz) * push.projection.x / push.projection.y;
     float y = dot(view, push.camera_up.xyz) * push.projection.x;
@@ -36,10 +67,11 @@ VertexOutput vertex_main(VertexInput input) {
     float clip_z = far_plane / (far_plane - near_plane) * depth -
                    far_plane * near_plane / (far_plane - near_plane);
     output.position = float4(x, -y, clip_z, depth);
-    output.color = input.color;
+    output.color = float4(srgb_to_linear(input.color.rgb), input.color.a);
     output.depth = depth;
-    output.world_position = input.position;
+    output.world_position = world_position;
     output.kind = input.kind;
+    output.normal = input.normal;
     return output;
 }
 
@@ -62,6 +94,244 @@ float value_noise(float2 p) {
 float2 rotate2(float2 p, float angle) {
     float c = cos(angle), s = sin(angle);
     return float2(p.x * c - p.y * s, p.x * s + p.y * c);
+}
+
+float3 shade_foliage(VertexOutput input) {
+    float3 normal = normalize(input.normal);
+    float3 geometric_normal = normal;
+    float3 to_camera = push.camera_position.xyz - input.world_position;
+    float view_distance = length(to_camera);
+    // Close foliage needs calm body shading and fine marks; broad graphic
+    // groups become progressively stronger as crowns recede and merge into a
+    // forest composition.
+    float broad_group_weight = smoothstep(180.0, 420.0, view_distance);
+    // Broad, continuous noise bends the interpolated dome normal into leafy
+    // bunches without revealing the underlying six-sided lobe topology.
+    // Skewed three-axis projections wrap the painted groups around crown
+    // shoulders. A plain XZ projection stretches patches into vertical
+    // curtains when trees are viewed near eye level.
+    float2 bunch_uv = float2(
+        dot(input.world_position, float3(.066, .031, .018)),
+        dot(input.world_position, float3(-.021, .044, .061))
+    );
+    float2 detail_uv = float2(
+        dot(input.world_position, float3(.119, -.038, .091)),
+        dot(input.world_position, float3(.047, .137, -.073))
+    );
+    float bunch = value_noise(bunch_uv + float2(0, -.37));
+    float bunch_detail = value_noise(detail_uv + float2(2.7, .41));
+    float angle = bunch * 6.2831853 + bunch_detail * 1.7;
+    float3 normal_wobble = float3(cos(angle), (bunch_detail - .5) * .72, sin(angle));
+    // Let the synthetic leafy bunches lead the body lighting. A weaker blend
+    // allowed the interpolated ring normal to form long triangular highlight
+    // ribbons at eye level, revealing tessellation instead of leaf volume.
+    // The untouched geometric normal still drives the restrained silhouette
+    // rim below, so this does not flatten the crown's overall form.
+    normal = normalize(normal + normal_wobble * lerp(.34, .42, broad_group_weight));
+
+    float3 sun_direction = normalize(push.sun.xyz);
+    float wrapped_light = saturate(dot(normal, sun_direction) * .5 + .5);
+    float top_light = saturate(normal.y * .5 + .5);
+    float cluster_value = bunch * .76 + bunch_detail * .24;
+    // A steeper light curve gives the canopy painterly value grouping: deep
+    // pockets between bunches, a clear body midtone, and restrained hot crowns.
+    float directional = pow(wrapped_light, 1.65);
+    // Two soft thresholds turn continuous noise into a few broad painted
+    // families instead of evenly distributed foam. Dark pockets stay sparse,
+    // most of the crown holds one calm midtone, and only selected planes lift.
+    float pocket_group = smoothstep(.27, .45, cluster_value);
+    float mid_group = smoothstep(.42, .56, cluster_value);
+    float crown_group = smoothstep(.65, .82, cluster_value);
+    float distant_grouped_value = .79 + pocket_group * .19 + crown_group * .14;
+    // Block the close canopy into a few painted value bands instead of a smooth
+    // gradient, the way a background painter stacks flat shapes: a deep pocket,
+    // a broad body, a lifted mid, and a restrained hot crown. The stepped sum
+    // keeps the same mean exposure as the former lerp while reading as grouped
+    // planes rather than a continuous chalky surface.
+    float close_grouped_value =
+        .74 + pocket_group * .18 + mid_group * .12 + crown_group * .16;
+    float grouped_value = lerp(close_grouped_value, distant_grouped_value, broad_group_weight);
+    float value = (.40 + directional * .66 + top_light * .07) * grouped_value;
+
+    // Separate light by color as well as value. Cool blue-green pockets make
+    // overlapping bunches recede while a restrained yellow warmth joins the
+    // sun-facing leaves into broad, readable crowns.
+    // A crisper transition and a wider temperature spread push the canopy
+    // toward a hand-painted read: teal-leaning shade against distinctly warm,
+    // yellow sun-facing leaves.
+    float light_group = smoothstep(.28, .76, directional);
+    float3 shadow_temperature = float3(.62, .82, .92);
+    float3 sun_temperature = float3(1.20, 1.06, .70);
+    float3 temperature = lerp(shadow_temperature, sun_temperature, light_group);
+
+    // Sparse leaf-shaped dry-brush marks add a readable middle scale between
+    // the broad value masses and the atlas fringe. The skewed world projection
+    // wraps across both crown and shoulder without UVs, while two related
+    // ellipses read as a tiny leaf pair rather than a regular polka-dot grid.
+    float2 brush_uv = float2(
+        dot(input.world_position, float3(.410, .148, .116)),
+        dot(input.world_position, float3(-.104, .184, .436))
+    );
+    float2 brush_cell = floor(brush_uv);
+    float2 brush_local = frac(brush_uv) - .5;
+    float brush_seed = hash12(brush_cell + float2(13.7, 4.1));
+    float brush_angle = brush_seed * 6.2831853;
+    brush_local = rotate2(brush_local, brush_angle);
+    float leaf_a = 1.0 - smoothstep(.13, .255, length(brush_local * float2(.72, 1.85)));
+    float2 paired_local = brush_local - float2(.17, -.09);
+    float leaf_b = 1.0 - smoothstep(.11, .225, length(paired_local * float2(.76, 1.72)));
+    float brush_pair = max(leaf_a, leaf_b * .78);
+    float brush_presence = smoothstep(.62, .78, brush_seed);
+    float brush_cluster = smoothstep(.43, .70, cluster_value);
+    // Painted leaf accents belong mostly on planes that catch sky or sun.
+    // Suppressing them in deep side planes prevents the paired ellipses from
+    // turning into dark vertical scratches across an otherwise calm crown.
+    float brush_light = lerp(.22, 1.0, smoothstep(.25, .78, wrapped_light));
+    float brush_sky = lerp(.48, 1.0, smoothstep(.34, .76, top_light));
+    float brush_mask =
+        brush_pair * brush_presence * brush_cluster * brush_light * brush_sky;
+    float close_detail_weight = 1.0 - broad_group_weight;
+    // A painted leaf bunch needs a dark socket as well as a bright dab. Offset
+    // a wider, softer echo beneath each selected pair so the mark reads as
+    // overlapping foliage instead of a pale spot printed onto the surface.
+    // The same wrapped projection and random rotation keep these shadows
+    // attached to the crown around its shoulders, while the distance fade
+    // prevents dense forests from turning into high-frequency noise.
+    float2 socket_local = brush_local + float2(-.018, .15);
+    float socket_a =
+        1.0 - smoothstep(.15, .30, length(socket_local * float2(.68, 1.58)));
+    float2 socket_pair_local = socket_local - float2(.18, -.075);
+    float socket_b =
+        1.0 - smoothstep(.13, .27, length(socket_pair_local * float2(.72, 1.48)));
+    float socket_pair = max(socket_a, socket_b * .82);
+    float socket_mask =
+        socket_pair *
+        brush_presence *
+        smoothstep(.31, .64, cluster_value) *
+        lerp(.44, .93, smoothstep(.18, .70, wrapped_light)) *
+        close_detail_weight;
+    value *= lerp(1.0, .84, socket_mask * .58);
+
+    // These are dry-brushed glints, not holes in the mass. Keep every mark at
+    // or above the local body value and let lighting decide how bright it gets.
+    float brush_value = lerp(1.025, 1.27, hash12(brush_cell + float2(2.3, 19.1)));
+    float brush_influence = lerp(.36, .72, close_detail_weight);
+    value *= lerp(1.0, brush_value, brush_mask * brush_influence);
+    float3 brush_temperature = lerp(float3(.76, .91, 1.06), float3(1.15, 1.08, .80), light_group);
+    temperature *= lerp(
+        float3(1.0),
+        brush_temperature,
+        brush_mask * lerp(.20, .46, close_detail_weight)
+    );
+
+    // Wind should change the painted light as well as displace the mesh.
+    // Two broad, wind-aligned phases travel across only sky-facing, lit
+    // bunches, producing a restrained leaf shimmer rather than full-canopy
+    // flashing or high-frequency glitter.
+    float wind_speed = length(push.water.zw);
+    float2 wind_direction =
+        wind_speed > .001 ? push.water.zw / wind_speed : float2(1, 0);
+    float shimmer_phase =
+        dot(input.world_position.xz, wind_direction) * .052 -
+        push.water.x * (.54 + wind_speed * .024) +
+        bunch * 1.73;
+    float shimmer_wave =
+        sin(shimmer_phase) * .67 +
+        sin(shimmer_phase * .47 + 2.1) * .33;
+    float shimmer_exposure =
+        smoothstep(.40, .82, wrapped_light) *
+        smoothstep(.38, .78, top_light) *
+        saturate(wind_speed / 10.0) *
+        saturate(push.sun.w);
+    value *= 1.0 + shimmer_wave * shimmer_exposure * .042;
+
+    float3 color = input.color.rgb * temperature * value;
+
+    // A light-story woodland should retain colored air beneath the crown
+    // instead of collapsing into a black ceiling. Downward-facing leaves pick
+    // up a restrained blue-green ground-and-sky bounce, broken by the same
+    // bunch field as the body shading so overlapping boughs remain readable.
+    // Daylight gating preserves the night hierarchy and the small additive
+    // term leaves sunlit crown contrast intact.
+    float underside = smoothstep(.08, .82, -geometric_normal.y);
+    float daylight = saturate(push.sun.w);
+    float bounce_group = lerp(.46, 1.0, smoothstep(.24, .76, cluster_value));
+    float bounce_amount = underside * daylight * bounce_group;
+    color += float3(.012, .027, .025) * bounce_amount;
+
+    // Thin canopy edges catch warm light even when the body remains a grouped
+    // painted mass. A view rim exposes the silhouette, sun-facing edges receive
+    // a restrained lift, and back-facing edges get a small transmitted glow.
+    // Daylight gating keeps twilight and night foliage from self-illuminating.
+    float3 view_direction = normalize(to_camera);
+    float view_facing = saturate(abs(dot(geometric_normal, view_direction)));
+    float rim = pow(1.0 - view_facing, 1.45);
+    float sun_rim = rim * smoothstep(.48, .84, wrapped_light);
+    float transmission = rim * pow(saturate(-dot(normal, sun_direction)), 1.45);
+    float edge_cluster = lerp(.72, 1.0, cluster_value);
+    // A soft darker perimeter blocks the crown in as a shape, the way a painter
+    // draws a canopy mass. It peaks exactly edge-on and is applied before the
+    // warm rim and backlit transmission below, so sun-facing and back-facing
+    // edges still glow rather than reading as a flat dark line.
+    float outline = smoothstep(.34, .06, view_facing);
+    color *= lerp(1.0, .60, outline * edge_cluster * daylight);
+    color *= 1.0 + sun_rim * daylight * edge_cluster * .27;
+    color += float3(.125, .096, .018) *
+             transmission * daylight * edge_cluster * .54;
+
+    return saturate(color);
+}
+
+float3 shade_road(VertexOutput input) {
+    float2 uv = input.normal.xy;
+    float pavement = input.normal.z;
+    float2 world = input.world_position.xz;
+
+    // Broad pigment clouds and a restrained dry-brush grain break up the
+    // computer-flat surface without introducing a repeating texture asset.
+    float broad = value_noise(rotate2(world, .43) * .052 + float2(.7, 2.1));
+    float grain = hash12(world * 1.37 + floor(uv.y * .35));
+    float value = lerp(.82, 1.16, broad) * lerp(.94, 1.06, grain);
+    float3 color = input.color.rgb * value;
+
+    // The swept profile places the carriageway between one- and two-thirds
+    // across its UV span. Soft dust at those seams integrates it with the
+    // earthen shoulder, while paired low-contrast wheel paths imply use.
+    float road_mask = smoothstep(.305, .365, uv.x) *
+                      (1.0 - smoothstep(.635, .695, uv.x));
+    float seam_distance = abs(abs(uv.x - .5) - .1667);
+    float dusty_seam = (1.0 - smoothstep(.018, .070, seam_distance)) * road_mask;
+    float3 dust = float3(.47, .36, .20);
+    color = lerp(color, color + dust * .11, dusty_seam * (.45 + broad * .35));
+
+    float wheel_distance = min(abs(uv.x - .415), abs(uv.x - .585));
+    float wheel_wear = (1.0 - smoothstep(.018, .052, wheel_distance)) * road_mask;
+    color *= 1.0 - wheel_wear * lerp(.045, .115, broad);
+
+    // Material-specific marks remain tonal rather than literal: broken pale
+    // aggregate for gravel, offset cool joints for cobble, and warm ruts for
+    // dirt. Pavement is constant per swept edge and interpolates naturally at
+    // the mixed-material junction.
+    float gravel_weight = saturate(1.0 - abs(pavement - 1.0));
+    float cobble_weight = saturate(1.0 - abs(pavement - 2.0));
+    float dirt_weight = saturate(1.0 - abs(pavement - 3.0));
+    float gravel = smoothstep(.77, .94, hash12(world * 2.45 + float2(8.1, .6)));
+    color += gravel * gravel_weight * road_mask * float3(.10, .085, .055);
+
+    float cobble_row = floor(uv.y * .58);
+    float cobble_cross = abs(frac(uv.x * 13.0 + frac(cobble_row * .5) * .5) - .5);
+    float cobble_along = abs(frac(uv.y * .58) - .5);
+    float cobble_joint = 1.0 - smoothstep(.035, .085, min(cobble_cross, cobble_along));
+    color *= 1.0 - cobble_joint * cobble_weight * road_mask * .20;
+
+    float rut = 1.0 - smoothstep(.028, .075, wheel_distance);
+    color = lerp(color, color * float3(.91, .84, .75), rut * dirt_weight * road_mask * .55);
+
+    // A gentle sun wash keeps the material in the same painted value hierarchy
+    // as foliage and terrain without adding a second lighting model.
+    float daylight = saturate(push.sun.w);
+    color *= lerp(.91, 1.035, daylight);
+    return saturate(color);
 }
 
 float3 shade_water(VertexOutput input) {
@@ -141,6 +411,10 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     float fog = saturate((input.depth - push.projection.z) /
                          max(push.projection.w - push.projection.z, .001));
     float3 base = input.kind > .5 && input.kind < 1.5 ?
-                  shade_water(input) : input.color.rgb;
-    return float4(lerp(base, push.fog_color.rgb, fog), input.color.a);
+                  shade_water(input) :
+                  (input.kind > 2.5 && input.kind < 3.5 ?
+                   shade_foliage(input) :
+                   (input.kind > 3.5 && input.kind < 4.5 ?
+                    shade_road(input) : input.color.rgb));
+    return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), input.color.a);
 }

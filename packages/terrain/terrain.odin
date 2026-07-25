@@ -36,11 +36,13 @@ Formation_Kind :: enum {
     Mountain,
     Ridge,
     Cliff,
+    Foliage,
     Architecture,
 }
 
 STRUCTURE_CAPACITY :: 256
-PROJECT_FILE_VERSION :: u32(4)
+CITY_DENSITY_SAMPLES :: SAMPLES_PER_LEVEL
+PROJECT_FILE_VERSION :: u32(5)
 PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '1'}
 
 Project_File_Header :: struct {
@@ -78,10 +80,49 @@ Project :: struct {
     structure_count:   int,
     next_structure_id: u64,
     road_graph:        roads.Graph,
+    city_density:      [CITY_DENSITY_SAMPLES]u8,
 }
 
-project_file_header_valid :: proc(header: ^Project_File_Header) -> bool {
-    if header == nil || header.version != PROJECT_FILE_VERSION || header.payload_size != size_of(Project) do return false
+// Version 4 predates the city-density field and also predates the Foliage
+// formation kind. Keep an explicit wire layout so old snapshots remain
+// readable even as the live Project structure evolves.
+Legacy_Formation_Kind_V4 :: enum {
+    Box,
+    Rock,
+    Spire,
+    Mountain,
+    Ridge,
+    Cliff,
+    Architecture,
+}
+
+Legacy_Structure_V4 :: struct {
+    id:       u64,
+    group_id: u64,
+    center_x: f32,
+    center_z: f32,
+    width:    f32,
+    depth:    f32,
+    base_y:   f32,
+    height:   f32,
+    rotation: f32,
+    color:    [4]u8,
+    kind:     Legacy_Formation_Kind_V4,
+    seed:     u32,
+}
+
+Legacy_Project_V4 :: struct {
+    levels:            [CLIPMAP_LEVELS]Clipmap_Level,
+    sea_level:         f32,
+    revision:          u64,
+    structures:        [STRUCTURE_CAPACITY]Legacy_Structure_V4,
+    structure_count:   int,
+    next_structure_id: u64,
+    road_graph:        roads.Graph,
+}
+
+project_file_magic_valid :: proc(header: ^Project_File_Header) -> bool {
+    if header == nil do return false
     magic := PROJECT_FILE_MAGIC
     for index in 0 ..< len(PROJECT_FILE_MAGIC) {
         if header.magic[index] != magic[index] do return false
@@ -110,10 +151,62 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
     if err != nil do return false
     defer delete(data)
     header_size := size_of(Project_File_Header)
-    if len(data) < header_size + size_of(Project) do return false
+    if len(data) < header_size do return false
     header := cast(^Project_File_Header)raw_data(data)
-    if !project_file_header_valid(header) do return false
-    runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
+    if !project_file_magic_valid(header) do return false
+    if header.version == PROJECT_FILE_VERSION &&
+       header.payload_size == size_of(Project) &&
+       len(data) >= header_size + size_of(Project) {
+        runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
+        return true
+    }
+    if header.version != 4 ||
+       header.payload_size != size_of(Legacy_Project_V4) ||
+       len(data) < header_size + size_of(Legacy_Project_V4) {
+        return false
+    }
+    legacy := cast(^Legacy_Project_V4)raw_data(data[header_size:])
+    project^ = {}
+    project.levels = legacy.levels
+    project.sea_level = legacy.sea_level
+    project.revision = legacy.revision
+    project.structure_count = clamp(legacy.structure_count, 0, STRUCTURE_CAPACITY)
+    project.next_structure_id = legacy.next_structure_id
+    project.road_graph = legacy.road_graph
+    for index in 0 ..< project.structure_count {
+        old := legacy.structures[index]
+        kind: Formation_Kind
+        switch old.kind {
+        case .Box:
+            kind = .Box
+        case .Rock:
+            kind = .Rock
+        case .Spire:
+            kind = .Spire
+        case .Mountain:
+            kind = .Mountain
+        case .Ridge:
+            kind = .Ridge
+        case .Cliff:
+            kind = .Cliff
+        case .Architecture:
+            kind = .Architecture
+        }
+        project.structures[index] = {
+            id       = old.id,
+            group_id = old.group_id,
+            center_x = old.center_x,
+            center_z = old.center_z,
+            width    = old.width,
+            depth    = old.depth,
+            base_y   = old.base_y,
+            height   = old.height,
+            rotation = old.rotation,
+            color    = old.color,
+            kind     = kind,
+            seed     = old.seed,
+        }
+    }
     return true
 }
 
@@ -172,6 +265,8 @@ formation_kind_next :: proc(kind: Formation_Kind) -> Formation_Kind {
     case .Ridge:
         return .Cliff
     case .Cliff:
+        return .Foliage
+    case .Foliage:
         return .Box
     case .Architecture:
         return .Box
@@ -299,6 +394,62 @@ sample_material :: proc(project: ^Project, level: int, x, z: f32) -> f32 {
     grid_x := clamp(int(math.round(f64(x / data.cell_size + f32(RING_RESOLUTION - 1) * .5))), 0, RING_RESOLUTION - 1)
     grid_z := clamp(int(math.round(f64(z / data.cell_size + f32(RING_RESOLUTION - 1) * .5))), 0, RING_RESOLUTION - 1)
     return data.material[sample_index(grid_x, grid_z)]
+}
+
+// Ground_Surface is the discrete, drivable ground classification derived from
+// the painted material channel and elevation. The heightfield stores only a
+// continuous painted scalar, so this enum names the visible bands that
+// consumers (surface particles, driving grip) can switch on. The set mirrors
+// the bands the terrain renderer paints in terrain_color: painted soil, the
+// low-elevation sand shelf, and the high-elevation grass.
+Ground_Surface :: enum u8 {
+    Sand,
+    Dirt,
+    Grass,
+}
+
+// classify_ground turns a raw material/height sample into the dominant visible
+// ground band. Thresholds intentionally mirror the renderer's terrain_color so
+// that effects keyed off this classifier match what the player sees:
+//   - painted material above .5 reads as bare soil (Dirt),
+//   - otherwise the sand->soil blend below .9m of elevation resolves to Sand
+//     while its soil-dominated upper half resolves to Dirt,
+//   - the soil->grass blend above .9m resolves to Grass once grass dominates.
+// Ground at or below sea level is shoreline; it classifies as Sand because
+// vehicles only ever contact the beach edge there, never open water.
+classify_ground :: proc(material, height, sea_level: f32) -> Ground_Surface {
+    if height <= sea_level do return .Sand
+    if material > .5 do return .Dirt
+    elevation := height - sea_level
+    if elevation < .9 {
+        return (elevation - .18) / .72 < .5 ? .Sand : .Dirt
+    }
+    return (elevation - .9) / 3.1 >= .5 ? .Grass : .Dirt
+}
+
+// ground_surface_at samples the classified ground under a world position. It is
+// the sampling counterpart to classify_ground for callers that hold a project.
+ground_surface_at :: proc(project: ^Project, level: int, x, z: f32) -> Ground_Surface {
+    if project == nil do return .Grass
+    return classify_ground(
+        sample_material(project, level, x, z),
+        sample_height(project, level, x, z),
+        project.sea_level,
+    )
+}
+
+// ground_grip keeps terrain-material handling policy beside the same bands the
+// renderer and classifier use. Road grip still wins whenever a road hit exists.
+ground_grip :: proc(surface: Ground_Surface) -> roads.Grip_Profile {
+    switch surface {
+    case .Sand:
+        return {longitudinal = .48, lateral = .40, rolling_resistance = 1.55}
+    case .Dirt:
+        return roads.pavement_grip(.Dirt)
+    case .Grass:
+        return roads.offroad_grip()
+    }
+    return roads.offroad_grip()
 }
 
 // apply_stroke keeps the original soft brush behavior for callers that do not

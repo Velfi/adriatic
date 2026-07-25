@@ -28,14 +28,46 @@ road_bake_outputs_indexed_road_shoulders_and_caps :: proc(t: ^testing.T) {
     defer roads.mesh_destroy(&mesh)
     testing.expect(t, len(mesh.vertices) > 0)
     testing.expect(t, len(mesh.indices) > 0)
-    saw_road, saw_shoulder, saw_junction := false, false, false
+    saw_road, saw_shoulder, saw_junction, saw_verge := false, false, false, false
     for vertex in mesh.vertices {
         saw_road = saw_road || vertex.surface == .Road
         saw_shoulder = saw_shoulder || vertex.surface == .Shoulder
         saw_junction = saw_junction || vertex.surface == .Junction
+        saw_verge = saw_verge || vertex.surface == .Verge
     }
-    testing.expect(t, saw_road && saw_shoulder && saw_junction)
+    testing.expect(t, saw_road && saw_shoulder && saw_junction && saw_verge)
     for index in mesh.indices do testing.expect(t, int(index) < len(mesh.vertices))
+}
+
+@(test)
+road_bake_feathers_an_outer_verge_beyond_each_shoulder :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    start := roads.add_node(&graph, {0, 0, 0}, 2)
+    end := roads.add_node(&graph, {24, 0, 0}, 2)
+    roads.add_straight_edge(&graph, start, end, 6, 1.5, .Dirt)
+    mesh := roads.bake(&graph)
+    defer roads.mesh_destroy(&mesh)
+
+    testing.expect(t, len(mesh.vertices) >= 6)
+    testing.expect(t, mesh.vertices[0].surface == .Verge)
+    testing.expect(t, mesh.vertices[1].surface == .Shoulder)
+    testing.expect(t, mesh.vertices[2].surface == .Road)
+    testing.expect(t, mesh.vertices[3].surface == .Road)
+    testing.expect(t, mesh.vertices[4].surface == .Shoulder)
+    testing.expect(t, mesh.vertices[5].surface == .Verge)
+    testing.expect(t, math.abs(mesh.vertices[0].position.z) > math.abs(mesh.vertices[1].position.z))
+    testing.expect(t, math.abs(mesh.vertices[1].position.z) > math.abs(mesh.vertices[2].position.z))
+    testing.expect(t, mesh.vertices[0].uv[0] == 0)
+    testing.expect(t, mesh.vertices[5].uv[0] == 1)
+
+    saw_rounded_start, saw_rounded_end := false, false
+    for vertex in mesh.vertices {
+        if vertex.surface != .Road do continue
+        saw_rounded_start = saw_rounded_start || vertex.position.x < -.25
+        saw_rounded_end = saw_rounded_end || vertex.position.x > 24.25
+    }
+    testing.expect(t, saw_rounded_start)
+    testing.expect(t, saw_rounded_end)
 }
 
 @(test)
@@ -45,9 +77,9 @@ road_t_junction_bakes_one_merged_cap_at_shared_node :: proc(t: ^testing.T) {
     junction := roads.add_node(&graph, {0, 1, 0}, 5)
     east := roads.add_node(&graph, {20, 2, 0}, 2)
     north := roads.add_node(&graph, {0, 4, 20}, 2)
-    roads.add_straight_edge(&graph, west, junction, 6)
-    roads.add_straight_edge(&graph, junction, east, 6)
-    roads.add_edge(&graph, junction, north, {0, 2, 7}, {0, 3, 14}, 8)
+    roads.add_straight_edge(&graph, west, junction, 6, 1, .Asphalt)
+    roads.add_straight_edge(&graph, junction, east, 6, 1, .Cobblestone)
+    roads.add_edge(&graph, junction, north, {0, 2, 7}, {0, 3, 14}, 8, 1, .Dirt)
     mesh := roads.bake(&graph)
     defer roads.mesh_destroy(&mesh)
     junction_vertices := 0
@@ -77,6 +109,21 @@ road_t_junction_bakes_one_merged_cap_at_shared_node :: proc(t: ^testing.T) {
         if int(index) == shared_center do center_index_uses += 1
     }
     testing.expect(t, center_index_uses == 6)
+
+    saw_mixed_shoulder_bridge, saw_mixed_verge_bridge := false, false
+    for triangle in 0 ..< len(mesh.indices) / 3 {
+        a := mesh.vertices[mesh.indices[triangle * 3]]
+        b := mesh.vertices[mesh.indices[triangle * 3 + 1]]
+        c := mesh.vertices[mesh.indices[triangle * 3 + 2]]
+        mixed_pavement := a.pavement != b.pavement || b.pavement != c.pavement
+        if !mixed_pavement do continue
+        saw_mixed_shoulder_bridge =
+            saw_mixed_shoulder_bridge || a.surface == .Shoulder || b.surface == .Shoulder || c.surface == .Shoulder
+        saw_mixed_verge_bridge =
+            saw_mixed_verge_bridge || a.surface == .Verge || b.surface == .Verge || c.surface == .Verge
+    }
+    testing.expect(t, saw_mixed_shoulder_bridge)
+    testing.expect(t, saw_mixed_verge_bridge)
 }
 
 @(test)
@@ -128,4 +175,42 @@ road_default_profile_keeps_outer_shoulders_above_the_spline :: proc(t: ^testing.
     settings := roads.default_bake_settings()
     testing.expect(t, settings.surface_lift > settings.shoulder_drop)
     testing.expect(t, settings.surface_lift - settings.shoulder_drop >= .05)
+}
+
+@(test)
+road_pavement_query_classifies_surface_and_offroad_contacts :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    a := roads.add_node(&graph, {0, 0, 0})
+    b := roads.add_node(&graph, {30, 0, 0})
+    roads.add_straight_edge(&graph, a, b, 8, 1.5, .Gravel)
+
+    center := roads.pavement_at(&graph, {15, 0, .5})
+    testing.expect(t, center.on_surface)
+    testing.expect(t, center.pavement == .Gravel)
+    testing.expect(t, center.edge_index == 0)
+    testing.expect(t, center.distance < .6)
+
+    offroad := roads.pavement_at(&graph, {15, 0, 8})
+    testing.expect(t, !offroad.on_surface)
+    testing.expect(t, offroad.pavement == .Gravel)
+    testing.expect(t, offroad.distance > 7.9)
+}
+
+@(test)
+road_material_grip_profiles_have_predictable_ordering :: proc(t: ^testing.T) {
+    asphalt := roads.pavement_grip(.Asphalt)
+    cobble := roads.pavement_grip(.Cobblestone)
+    gravel := roads.pavement_grip(.Gravel)
+    dirt := roads.pavement_grip(.Dirt)
+    grass := roads.offroad_grip()
+
+    testing.expect(t, asphalt.lateral > cobble.lateral)
+    testing.expect(t, cobble.lateral > gravel.lateral)
+    testing.expect(t, gravel.lateral > dirt.lateral)
+    testing.expect(t, dirt.lateral > grass.lateral)
+    testing.expect(t, asphalt.longitudinal > cobble.longitudinal)
+    testing.expect(t, cobble.longitudinal > gravel.longitudinal)
+    testing.expect(t, gravel.longitudinal > dirt.longitudinal)
+    testing.expect(t, dirt.longitudinal > grass.longitudinal)
+    testing.expect(t, asphalt.rolling_resistance < grass.rolling_resistance)
 }

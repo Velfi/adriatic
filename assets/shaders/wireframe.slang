@@ -22,6 +22,18 @@ struct VertexOutput {
     float4 color : COLOR0;
 };
 
+float srgb_channel_to_linear(float color) {
+    return color <= 0.04045
+        ? color / 12.92
+        : pow((color + 0.055) / 1.055, 2.4);
+}
+
+float3 srgb_to_linear(float3 color) {
+    return float3(srgb_channel_to_linear(color.r),
+                  srgb_channel_to_linear(color.g),
+                  srgb_channel_to_linear(color.b));
+}
+
 [shader("vertex")]
 VertexOutput vertex_main(VertexInput input) {
     VertexOutput output;
@@ -36,7 +48,9 @@ VertexOutput vertex_main(VertexInput input) {
     float2 perpendicular = float2(-direction_pixels.y, direction_pixels.x) / direction_length;
     float2 offset_ndc = perpendicular * input.parameter.y * push.line_width_pixels * 2.0 / max(push.viewport, 1.0);
     output.position.xy += offset_ndc * output.position.w;
-    output.color = lerp(input.start_color, input.end_color, t);
+    float4 start_color = float4(srgb_to_linear(input.start_color.rgb), input.start_color.a);
+    float4 end_color = float4(srgb_to_linear(input.end_color.rgb), input.end_color.a);
+    output.color = lerp(start_color, end_color, t);
     return output;
 }
 

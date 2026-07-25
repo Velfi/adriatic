@@ -5,6 +5,8 @@ import "core:math"
 MAX_NODES :: 64
 MAX_EDGES :: 128
 MAX_JUNCTION_POINTS :: MAX_EDGES * 2
+EDGE_LANE_COUNT :: 6
+END_CAP_SEGMENTS :: 8
 
 Vec3 :: struct {
     x, y, z: f32,
@@ -35,6 +37,7 @@ Surface :: enum u8 {
     Road,
     Shoulder,
     Junction,
+    Verge,
 }
 
 Pavement :: enum u8 {
@@ -42,6 +45,19 @@ Pavement :: enum u8 {
     Gravel,
     Cobblestone,
     Dirt,
+}
+
+Pavement_Hit :: struct {
+    pavement:   Pavement,
+    edge_index: int,
+    distance:   f32,
+    on_surface: bool,
+}
+
+Grip_Profile :: struct {
+    longitudinal:       f32,
+    lateral:            f32,
+    rolling_resistance: f32,
 }
 
 Vertex :: struct {
@@ -56,6 +72,8 @@ Mesh :: struct {
     vertices: [dynamic]Vertex,
     indices:  [dynamic]u32,
 }
+
+Edge_Boundaries :: [2][EDGE_LANE_COUNT]u32
 
 Bake_Settings :: struct {
     target_segment_length: f32,
@@ -203,6 +221,24 @@ pavement_next :: proc(pavement: Pavement) -> Pavement {
     return .Asphalt
 }
 
+pavement_grip :: proc(pavement: Pavement) -> Grip_Profile {
+    switch pavement {
+    case .Asphalt:
+        return {longitudinal = 1, lateral = 1, rolling_resistance = 1}
+    case .Gravel:
+        return {longitudinal = .74, lateral = .68, rolling_resistance = 1.18}
+    case .Cobblestone:
+        return {longitudinal = .86, lateral = .82, rolling_resistance = 1.08}
+    case .Dirt:
+        return {longitudinal = .62, lateral = .54, rolling_resistance = 1.30}
+    }
+    return {longitudinal = 1, lateral = 1, rolling_resistance = 1}
+}
+
+offroad_grip :: proc() -> Grip_Profile {
+    return {longitudinal = .54, lateral = .46, rolling_resistance = 1.40}
+}
+
 edge_between :: proc(graph: ^Graph, a, b: int) -> int {
     if graph == nil do return -1
     for edge, index in graph.edges[:graph.edge_count] {
@@ -276,6 +312,53 @@ edge_tangent :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
     return vec_normalize_or(derivative, vec_normalize_or(vec_sub(p3, p0), {1, 0, 0}))
 }
 
+pavement_at :: proc(graph: ^Graph, position: Vec3) -> Pavement_Hit {
+    hit := Pavement_Hit {
+        edge_index = -1,
+        distance   = f32(1e9),
+    }
+    if graph == nil do return hit
+
+    // A short polyline approximation keeps the driving query allocation-free.
+    // Twelve spans are enough to classify a wheel contact while the bake path
+    // remains the authoritative high-detail curve.
+    QUERY_SEGMENTS :: 12
+    best_distance_squared := f32(1e18)
+    for edge, edge_index in graph.edges[:graph.edge_count] {
+        previous := edge_point(graph, edge, 0)
+        for segment in 1 ..= QUERY_SEGMENTS {
+            current := edge_point(graph, edge, f32(segment) / QUERY_SEGMENTS)
+            segment_x := current.x - previous.x
+            segment_z := current.z - previous.z
+            length_squared := segment_x * segment_x + segment_z * segment_z
+            amount := f32(0)
+            if length_squared > .00001 {
+                amount = clamp(
+                    ((position.x - previous.x) * segment_x + (position.z - previous.z) * segment_z) / length_squared,
+                    0,
+                    1,
+                )
+            }
+            closest_x := previous.x + segment_x * amount
+            closest_z := previous.z + segment_z * amount
+            delta_x := position.x - closest_x
+            delta_z := position.z - closest_z
+            distance_squared := delta_x * delta_x + delta_z * delta_z
+            if distance_squared < best_distance_squared {
+                best_distance_squared = distance_squared
+                hit.pavement = edge.pavement
+                hit.edge_index = edge_index
+                hit.on_surface =
+                    distance_squared <=
+                    (edge.half_width + edge.shoulder_width) * (edge.half_width + edge.shoulder_width)
+            }
+            previous = current
+        }
+    }
+    if hit.edge_index >= 0 do hit.distance = f32(math.sqrt(f64(best_distance_squared)))
+    return hit
+}
+
 edge_control_polygon_length :: proc(graph: ^Graph, edge: Edge) -> f32 {
     p0 := graph.nodes[edge.from].position
     p3 := graph.nodes[edge.to].position
@@ -290,6 +373,15 @@ edge_segment_count :: proc(graph: ^Graph, edge: Edge, settings: Bake_Settings) -
     target := max(settings.target_segment_length, f32(.25))
     estimate := edge_control_polygon_length(graph, edge)
     return clamp(int(math.ceil(f64(estimate / target))), 2, max(settings.max_segments_per_edge, 2))
+}
+
+node_degree :: proc(graph: ^Graph, node_index: int) -> int {
+    if graph == nil || node_index < 0 || node_index >= graph.node_count do return 0
+    degree := 0
+    for edge in graph.edges[:graph.edge_count] {
+        if edge.from == node_index || edge.to == node_index do degree += 1
+    }
+    return degree
 }
 
 mesh_destroy :: proc(mesh: ^Mesh) {
@@ -325,18 +417,28 @@ edge_frame :: proc(graph: ^Graph, edge: Edge, t: f32) -> (center, side, normal: 
 
 edge_trim_range :: proc(graph: ^Graph, edge: Edge) -> (f32, f32) {
     length := max(edge_control_polygon_length(graph, edge), f32(.001))
-    from_trim := min(graph.nodes[edge.from].junction_radius / length, f32(.35))
-    to_trim := min(graph.nodes[edge.to].junction_radius / length, f32(.35))
+    from_trim := f32(0)
+    to_trim := f32(0)
+    if node_degree(graph, edge.from) > 1 {
+        from_trim = min(graph.nodes[edge.from].junction_radius / length, f32(.35))
+    }
+    if node_degree(graph, edge.to) > 1 {
+        to_trim = min(graph.nodes[edge.to].junction_radius / length, f32(.35))
+    }
     return from_trim, 1 - to_trim
 }
 
-bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Settings) -> [2][2]u32 {
-    boundaries: [2][2]u32
+bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Settings) -> Edge_Boundaries {
+    boundaries: Edge_Boundaries
     segment_count := edge_segment_count(graph, edge, settings)
     start_t, end_t := edge_trim_range(graph, edge)
     road_width := edge.half_width
     outer_width := road_width + edge.shoulder_width
-    previous: [4]u32
+    verge_width := clamp(edge.shoulder_width * .58, f32(.35), f32(1.25))
+    edge_phase :=
+        graph.nodes[edge.from].position.x * .031 + graph.nodes[edge.from].position.z * .017 + f32(edge.pavement) * 1.73
+    lane_uv := [EDGE_LANE_COUNT]f32{0, .20, .335, .665, .80, 1}
+    previous: [EDGE_LANE_COUNT]u32
     distance_along: f32
     previous_center: Vec3
     for sample in 0 ..= segment_count {
@@ -345,36 +447,62 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
         center, side, normal := edge_frame(graph, edge, t)
         center = vec_add(center, vec_scale(normal, settings.surface_lift))
         if sample > 0 do distance_along += vec_length(vec_sub(center, previous_center))
-        positions := [4]Vec3 {
-            vec_add(vec_sub(center, vec_scale(side, outer_width)), vec_scale(normal, -settings.shoulder_drop)),
-            vec_sub(center, vec_scale(side, road_width)),
-            vec_add(center, vec_scale(side, road_width)),
-            vec_add(vec_add(center, vec_scale(side, outer_width)), vec_scale(normal, -settings.shoulder_drop)),
+        // A pair of incommensurate waves gives the verge a restrained,
+        // hand-shaped silhouette. Only the outer shoulder moves appreciably;
+        // the carriageway remains stable for driving and junction welding.
+        road_wobble :=
+            f32(math.sin(f64(distance_along * .19 + edge_phase))) * min(edge.shoulder_width * .045, f32(.08))
+        verge_wobble :=
+            f32(math.sin(f64(distance_along * .13 + edge_phase))) * min(edge.shoulder_width * .12, f32(.18)) +
+            f32(math.sin(f64(distance_along * .47 + edge_phase * 1.61))) * min(edge.shoulder_width * .055, f32(.08))
+        sample_road_width := road_width + road_wobble
+        sample_outer_width := outer_width + verge_wobble
+        fringe_wobble :=
+            f32(math.sin(f64(distance_along * .09 + edge_phase * 2.13))) * min(verge_width * .18, f32(.16)) +
+            f32(math.sin(f64(distance_along * .71 + edge_phase * .73))) * min(verge_width * .07, f32(.06))
+        sample_fringe_width := sample_outer_width + verge_width + fringe_wobble
+        positions := [EDGE_LANE_COUNT]Vec3 {
+            vec_add(
+                vec_sub(center, vec_scale(side, sample_fringe_width)),
+                vec_scale(normal, -settings.shoulder_drop * 1.35),
+            ),
+            vec_add(vec_sub(center, vec_scale(side, sample_outer_width)), vec_scale(normal, -settings.shoulder_drop)),
+            vec_sub(center, vec_scale(side, sample_road_width)),
+            vec_add(center, vec_scale(side, sample_road_width)),
+            vec_add(vec_add(center, vec_scale(side, sample_outer_width)), vec_scale(normal, -settings.shoulder_drop)),
+            vec_add(
+                vec_add(center, vec_scale(side, sample_fringe_width)),
+                vec_scale(normal, -settings.shoulder_drop * 1.35),
+            ),
         }
-        current: [4]u32
-        for lane in 0 ..< 4 {
+        current: [EDGE_LANE_COUNT]u32
+        for lane in 0 ..< EDGE_LANE_COUNT {
             surface := Surface.Road
-            if lane == 0 || lane == 3 do surface = .Shoulder
+            if lane == 0 || lane == 5 {
+                surface = .Verge
+            } else if lane == 1 || lane == 4 {
+                surface = .Shoulder
+            }
             current[lane] = mesh_vertex(
                 mesh,
                 {
                     position = positions[lane],
                     normal = normal,
-                    uv = {f32(lane) / 3, distance_along},
+                    uv = {lane_uv[lane], distance_along},
                     surface = surface,
                     pavement = edge.pavement,
                 },
             )
         }
         if sample > 0 {
-            mesh_quad(mesh, previous[0], previous[1], current[1], current[0])
-            mesh_quad(mesh, previous[1], previous[2], current[2], current[1])
-            mesh_quad(mesh, previous[2], previous[3], current[3], current[2])
+            for strip in 0 ..< EDGE_LANE_COUNT - 1 {
+                mesh_quad(mesh, previous[strip], previous[strip + 1], current[strip + 1], current[strip])
+            }
         }
         if sample == 0 {
-            boundaries[0] = {current[1], current[2]}
+            boundaries[0] = current
         } else if sample == segment_count {
-            boundaries[1] = {current[1], current[2]}
+            boundaries[1] = current
         }
         previous = current
         previous_center = center
@@ -383,9 +511,11 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
 }
 
 Junction_Point :: struct {
-    position: Vec3,
-    angle:    f32,
-    index:    u32,
+    position:       Vec3,
+    angle:          f32,
+    road_index:     u32,
+    shoulder_index: u32,
+    verge_index:    u32,
 }
 
 junction_add_edge_points :: proc(
@@ -394,25 +524,121 @@ junction_add_edge_points :: proc(
     mesh: ^Mesh,
     graph: ^Graph,
     edge: Edge,
-    boundaries: [2][2]u32,
+    boundaries: Edge_Boundaries,
     node_index: int,
 ) {
     if count^ + 2 > MAX_JUNCTION_POINTS do return
     at_start := edge.from == node_index
     endpoint := at_start ? 0 : 1
     for boundary_index in 0 ..< 2 {
-        vertex_index := boundaries[endpoint][boundary_index]
-        // The boundary indices refer to vertices already emitted by the edge
-        // sweep. Reusing them makes junctions topologically welded rather than
-        // merely overlapping duplicate geometry at the seams.
-        point := mesh.vertices[vertex_index].position
+        road_lane := boundary_index + 2
+        shoulder_lane := boundary_index == 0 ? 1 : 4
+        verge_lane := boundary_index == 0 ? 0 : 5
+        road_index := boundaries[endpoint][road_lane]
+        // Keep the three profile rings bundled while sorting by the road edge.
+        // Matching angular order lets the junction extend the carriageway,
+        // shoulder, and feathered verge through the same welded topology.
+        point := mesh.vertices[road_index].position
         delta := vec_sub(point, graph.nodes[node_index].position)
         points[count^] = {
-            position = point,
-            angle    = math.atan2(delta.z, delta.x),
-            index    = vertex_index,
+            position       = point,
+            angle          = math.atan2(delta.z, delta.x),
+            road_index     = road_index,
+            shoulder_index = boundaries[endpoint][shoulder_lane],
+            verge_index    = boundaries[endpoint][verge_lane],
         }
         count^ += 1
+    }
+}
+
+bake_end_cap :: proc(
+    mesh: ^Mesh,
+    graph: ^Graph,
+    edge: Edge,
+    boundaries: Edge_Boundaries,
+    node_index: int,
+    settings: Bake_Settings,
+) {
+    if mesh == nil || graph == nil do return
+    at_start := edge.from == node_index
+    endpoint := at_start ? 0 : 1
+    boundary := boundaries[endpoint]
+    node := graph.nodes[node_index]
+    normal := vec_normalize_or(node.up, {0, 1, 0})
+    center_position := vec_add(node.position, vec_scale(normal, settings.surface_lift + .002))
+    tangent := edge_tangent(graph, edge, at_start ? 0 : 1)
+    outward := at_start ? vec_scale(tangent, -1) : tangent
+    left_road := mesh.vertices[boundary[2]].position
+    right_road := mesh.vertices[boundary[3]].position
+    side := vec_normalize_or(vec_sub(right_road, left_road), {0, 0, 1})
+
+    left_road_radius := vec_length(vec_sub(left_road, center_position))
+    right_road_radius := vec_length(vec_sub(right_road, center_position))
+    left_shoulder_radius := vec_length(vec_sub(mesh.vertices[boundary[1]].position, center_position))
+    right_shoulder_radius := vec_length(vec_sub(mesh.vertices[boundary[4]].position, center_position))
+    left_verge_radius := vec_length(vec_sub(mesh.vertices[boundary[0]].position, center_position))
+    right_verge_radius := vec_length(vec_sub(mesh.vertices[boundary[5]].position, center_position))
+
+    road_arc: [END_CAP_SEGMENTS + 1]u32
+    shoulder_arc: [END_CAP_SEGMENTS + 1]u32
+    verge_arc: [END_CAP_SEGMENTS + 1]u32
+    for sample in 0 ..= END_CAP_SEGMENTS {
+        fraction := f32(sample) / f32(END_CAP_SEGMENTS)
+        angle := fraction * math.PI
+        direction := vec_add(vec_scale(side, -math.cos(angle)), vec_scale(outward, math.sin(angle)))
+        if sample == 0 {
+            road_arc[sample] = boundary[2]
+            shoulder_arc[sample] = boundary[1]
+            verge_arc[sample] = boundary[0]
+        } else if sample == END_CAP_SEGMENTS {
+            road_arc[sample] = boundary[3]
+            shoulder_arc[sample] = boundary[4]
+            verge_arc[sample] = boundary[5]
+        } else {
+            road_radius := left_road_radius + (right_road_radius - left_road_radius) * fraction
+            shoulder_radius := left_shoulder_radius + (right_shoulder_radius - left_shoulder_radius) * fraction
+            verge_radius := left_verge_radius + (right_verge_radius - left_verge_radius) * fraction
+            road_arc[sample] = mesh_vertex(
+                mesh,
+                {
+                    position = vec_add(center_position, vec_scale(direction, road_radius)),
+                    normal = normal,
+                    uv = {.335 + fraction * .33, 0},
+                    surface = .Road,
+                    pavement = edge.pavement,
+                },
+            )
+            shoulder_arc[sample] = mesh_vertex(
+                mesh,
+                {
+                    position = vec_add(center_position, vec_scale(direction, shoulder_radius)),
+                    normal = normal,
+                    uv = {.20 + fraction * .60, 0},
+                    surface = .Shoulder,
+                    pavement = edge.pavement,
+                },
+            )
+            verge_arc[sample] = mesh_vertex(
+                mesh,
+                {
+                    position = vec_add(center_position, vec_scale(direction, verge_radius)),
+                    normal = normal,
+                    uv = {fraction, 0},
+                    surface = .Verge,
+                    pavement = edge.pavement,
+                },
+            )
+        }
+    }
+
+    center := mesh_vertex(
+        mesh,
+        {position = center_position, normal = normal, uv = {.5, 0}, surface = .Junction, pavement = edge.pavement},
+    )
+    for segment in 0 ..< END_CAP_SEGMENTS {
+        mesh_triangle(mesh, center, road_arc[segment], road_arc[segment + 1])
+        mesh_quad(mesh, road_arc[segment], shoulder_arc[segment], shoulder_arc[segment + 1], road_arc[segment + 1])
+        mesh_quad(mesh, shoulder_arc[segment], verge_arc[segment], verge_arc[segment + 1], shoulder_arc[segment + 1])
     }
 }
 
@@ -431,10 +657,18 @@ junction_sort :: proc(points: ^[MAX_JUNCTION_POINTS]Junction_Point, count: int) 
 bake_junction :: proc(
     mesh: ^Mesh,
     graph: ^Graph,
-    edge_boundaries: ^[MAX_EDGES][2][2]u32,
+    edge_boundaries: ^[MAX_EDGES]Edge_Boundaries,
     node_index: int,
     settings: Bake_Settings,
 ) {
+    if node_degree(graph, node_index) == 1 {
+        for edge, edge_index in graph.edges[:graph.edge_count] {
+            if edge.from == node_index || edge.to == node_index {
+                bake_end_cap(mesh, graph, edge, edge_boundaries[edge_index], node_index, settings)
+                return
+            }
+        }
+    }
     points: [MAX_JUNCTION_POINTS]Junction_Point
     point_count := 0
     for edge, edge_index in graph.edges[:graph.edge_count] {
@@ -459,13 +693,23 @@ bake_junction :: proc(
         mesh,
         {position = center_position, normal = normal, uv = {.5, .5}, surface = .Junction, pavement = pavement},
     )
-    if point_count == 2 {
-        mesh_triangle(mesh, center, points[0].index, points[1].index)
-        return
-    }
     for index in 0 ..< point_count {
         next := (index + 1) % point_count
-        mesh_triangle(mesh, center, points[index].index, points[next].index)
+        mesh_triangle(mesh, center, points[index].road_index, points[next].road_index)
+        mesh_quad(
+            mesh,
+            points[index].road_index,
+            points[index].shoulder_index,
+            points[next].shoulder_index,
+            points[next].road_index,
+        )
+        mesh_quad(
+            mesh,
+            points[index].shoulder_index,
+            points[index].verge_index,
+            points[next].verge_index,
+            points[next].shoulder_index,
+        )
     }
 }
 
@@ -474,7 +718,7 @@ bake :: proc(graph: ^Graph, settings: Bake_Settings = DEFAULT_BAKE_SETTINGS) -> 
     if graph == nil do return mesh
     mesh.vertices = make([dynamic]Vertex)
     mesh.indices = make([dynamic]u32)
-    edge_boundaries: [MAX_EDGES][2][2]u32
+    edge_boundaries: [MAX_EDGES]Edge_Boundaries
     for edge, edge_index in graph.edges[:graph.edge_count] {
         edge_boundaries[edge_index] = bake_edge(&mesh, graph, edge, settings)
     }

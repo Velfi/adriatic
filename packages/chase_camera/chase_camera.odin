@@ -4,7 +4,7 @@ import flight "../flight"
 import third_person "../third_person"
 import "core:math"
 
-FOLLOW_DISTANCE :: f32(16)
+FOLLOW_DISTANCE :: f32(8.0)
 FOLLOW_HEIGHT :: f32(5.5)
 LOOK_AHEAD :: f32(5)
 

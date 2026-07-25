@@ -14,8 +14,11 @@ import vk "vendor:vulkan"
 import rl "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
 import render3d "zelda_engine:render3d"
+import resources "zelda_engine:render_resources"
 
-WORLD_VERTEX_CAPACITY :: 320_000
+WORLD_VERTEX_CAPACITY :: 480_000
+ROAD_VERTEX_CAPACITY :: 320_000
+FOLIAGE_VERTEX_CAPACITY :: 24_000
 CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
 CLIPMAP_VERTEX_COUNT :: CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLUTION - 1) * 6
@@ -34,6 +37,13 @@ World_Vertex :: struct {
     position: [3]f32,
     color:    [4]f32,
     kind:     f32,
+    normal:   [3]f32,
+}
+
+Foliage_Vertex :: struct {
+    position: [3]f32,
+    uv:       [2]f32,
+    color:    [4]f32,
 }
 
 World_Push :: struct {
@@ -58,29 +68,37 @@ Sky_Push :: struct {
 }
 
 World_Renderer :: struct {
-    editor:               ^Editor,
-    ctx:                  ^engine.Vk_Context,
-    pipelines:            [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    road_pipelines:       [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    sky_pipelines:        [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    particle_pipelines:   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    layout:               vk.PipelineLayout,
-    sky_layout:           vk.PipelineLayout,
-    vertex:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    road_vertex:          [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    vertices:             [dynamic]World_Vertex,
-    road_vertices:        [dynamic]World_Vertex,
-    clipmap_vertex:       [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
-    clipmap_index:        engine.Vk_Buffer,
-    clipmap_full_indices: u32,
-    clipmap_ring_first:   u32,
-    clipmap_ring_indices: u32,
-    clipmap_revision:     [engine.MAX_FRAMES_IN_FLIGHT]u64,
-    clipmap_center:       [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
-    clipmap_valid:        [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
-    road_mesh:            roads.Mesh,
-    road_revision:        u64,
-    initialized:          bool,
+    editor:                    ^Editor,
+    ctx:                       ^engine.Vk_Context,
+    pipelines:                 [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    road_pipelines:            [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    sky_pipelines:             [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    particle_pipelines:        [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    foliage_pipelines:         [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    layout:                    vk.PipelineLayout,
+    sky_layout:                vk.PipelineLayout,
+    foliage_layout:            vk.PipelineLayout,
+    foliage_descriptor_layout: vk.DescriptorSetLayout,
+    foliage_descriptor_pool:   vk.DescriptorPool,
+    foliage_descriptor:        vk.DescriptorSet,
+    foliage_atlas:             resources.Image,
+    vertex:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    road_vertex:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    foliage_vertex:            [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    vertices:                  [dynamic]World_Vertex,
+    road_vertices:             [dynamic]World_Vertex,
+    foliage_vertices:          [dynamic]Foliage_Vertex,
+    clipmap_vertex:            [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
+    clipmap_index:             engine.Vk_Buffer,
+    clipmap_full_indices:      u32,
+    clipmap_ring_first:        u32,
+    clipmap_ring_indices:      u32,
+    clipmap_revision:          [engine.MAX_FRAMES_IN_FLIGHT]u64,
+    clipmap_center:            [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
+    clipmap_valid:             [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
+    road_mesh:                 roads.Mesh,
+    road_revision:             u64,
+    initialized:               bool,
 }
 
 world_renderer: World_Renderer
@@ -110,12 +128,28 @@ world_sky_horizon_color :: proc(sky: atmosphere.Sky_State) -> rl.Color {
     }
 }
 
+world_camera_near_clip :: proc(editor: ^Editor) -> f32 {
+    if editor == nil do return WORLD_EDITOR_NEAR_CLIP
+    if editor.in_map {
+        return driving_aircraft(editor) ? WORLD_FLIGHT_NEAR_CLIP : WORLD_PLAY_NEAR_CLIP
+    }
+    // A fixed 100 m editor near plane is appropriate for island overviews but
+    // clips the selected tree, roots, and understory when the author zooms in.
+    // Scale with orbit distance while retaining the old cap for distant views.
+    distance := editor.editor_camera.distance
+    return clamp(distance * distance / 720, f32(2), WORLD_EDITOR_NEAR_CLIP)
+}
+
 world_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 0}
+    return {{point.x, point.y, point.z}, world_color(color), 0, {0, 1, 0}}
 }
 
 world_water_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 1}
+    return {{point.x, point.y, point.z}, world_color(color), 1, {0, 1, 0}}
+}
+
+world_foliage_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
+    return {{point.x, point.y, point.z}, world_color(color), 3, {normal.x, normal.y, normal.z}}
 }
 
 world_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color) {
@@ -126,6 +160,20 @@ world_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color) {
 world_triangle_colored :: proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c))
+}
+
+world_triangle_foliage :: proc(
+    a, b, c: third_person.Vec3,
+    color_a, color_b, color_c: rl.Color,
+    normal_a, normal_b, normal_c: third_person.Vec3,
+) {
+    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    append(
+        &world_renderer.vertices,
+        world_foliage_vertex(a, color_a, normal_a),
+        world_foliage_vertex(b, color_b, normal_b),
+        world_foliage_vertex(c, color_c, normal_c),
+    )
 }
 
 world_quad :: proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
@@ -152,35 +200,54 @@ world_water_quad :: proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
 }
 
 road_world_point :: proc(editor: ^Editor, vertex: roads.Vertex) -> third_person.Vec3 {
-    clearance := vertex.surface == .Shoulder ? f32(.05) : f32(.12)
+    clearance := f32(.12)
+    if vertex.surface == .Shoulder {
+        clearance = .05
+    } else if vertex.surface == .Verge {
+        clearance = .018
+    }
     terrain_y := terrain.sample_height(&editor.project, 0, vertex.position.x, vertex.position.z)
     return {vertex.position.x, max(vertex.position.y, terrain_y + clearance), vertex.position.z}
 }
 
 road_surface_color :: proc(surface: roads.Surface, pavement: roads.Pavement) -> rl.Color {
+    if surface == .Verge {
+        // Outer verge vertices are transparent and interpolate into the opaque
+        // shoulder, revealing terrain through a soft, pavement-aware tint.
+        switch pavement {
+        case .Asphalt:
+            return {82, 111, 67, 0}
+        case .Gravel:
+            return {105, 119, 70, 0}
+        case .Cobblestone:
+            return {92, 112, 69, 0}
+        case .Dirt:
+            return {118, 101, 58, 0}
+        }
+    }
     if surface == .Shoulder {
         switch pavement {
         case .Asphalt:
-            return {145, 137, 117, 255}
+            return {164, 148, 116, 255}
         case .Gravel:
-            return {174, 158, 128, 255}
+            return {183, 163, 126, 255}
         case .Cobblestone:
-            return {143, 143, 134, 255}
+            return {151, 146, 126, 255}
         case .Dirt:
-            return {113, 82, 57, 255}
+            return {139, 96, 61, 255}
         }
     }
     switch pavement {
     case .Asphalt:
-        return surface == .Junction ? rl.Color{70, 75, 73, 255} : rl.Color{75, 79, 77, 255}
+        return surface == .Junction ? rl.Color{86, 92, 86, 255} : rl.Color{91, 97, 90, 255}
     case .Gravel:
-        return {145, 132, 107, 255}
+        return {158, 143, 111, 255}
     case .Cobblestone:
-        return {105, 116, 116, 255}
+        return {119, 130, 124, 255}
     case .Dirt:
-        return {143, 94, 58, 255}
+        return {158, 104, 61, 255}
     }
-    return {75, 79, 77, 255}
+    return {91, 97, 90, 255}
 }
 
 world_road_editor_link :: proc(a, b: roads.Vec3, width: f32, color: rl.Color) {
@@ -198,9 +265,23 @@ world_road_editor_link :: proc(a, b: roads.Vec3, width: f32, color: rl.Color) {
     )
 }
 
-world_road_triangle_colored :: proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
-    if len(world_renderer.road_vertices) + 3 > WORLD_VERTEX_CAPACITY do return
-    append(&world_renderer.road_vertices, world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c))
+world_road_vertex :: proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color) -> World_Vertex {
+    point := road_world_point(editor, vertex)
+    // Road UV and pavement live in the normal channel because the dedicated
+    // road pass does not need the generic mesh normal. This keeps the existing
+    // compact vertex format and draw call while giving the fragment shader
+    // stable material-space coordinates.
+    return {{point.x, point.y, point.z}, world_color(color), 4, {vertex.uv[0], vertex.uv[1], f32(vertex.pavement)}}
+}
+
+world_road_triangle_colored :: proc(editor: ^Editor, a, b, c: roads.Vertex, color_a, color_b, color_c: rl.Color) {
+    if len(world_renderer.road_vertices) + 3 > ROAD_VERTEX_CAPACITY do return
+    append(
+        &world_renderer.road_vertices,
+        world_road_vertex(editor, a, color_a),
+        world_road_vertex(editor, b, color_b),
+        world_road_vertex(editor, c, color_c),
+    )
 }
 
 world_roads :: proc(editor: ^Editor) {
@@ -218,16 +299,17 @@ world_roads :: proc(editor: ^Editor) {
             b := mesh.vertices[mesh.indices[triangle * 3 + 1]]
             c := mesh.vertices[mesh.indices[triangle * 3 + 2]]
             world_road_triangle_colored(
-                road_world_point(editor, a),
-                road_world_point(editor, b),
-                road_world_point(editor, c),
+                editor,
+                a,
+                b,
+                c,
                 road_surface_color(a.surface, a.pavement),
                 road_surface_color(b.surface, b.pavement),
                 road_surface_color(c.surface, c.pavement),
             )
         }
     }
-    if editor.in_map || !editor.road_mode do return
+    if editor.in_map || !editor.road_mode || editor.capture_world_only do return
     for node, index in graph.nodes[:graph.node_count] {
         selected := index == editor.road_selected_node
         color: rl.Color = selected ? {244, 216, 103, 255} : {101, 226, 203, 255}
@@ -271,7 +353,9 @@ world_ocean :: proc(editor: ^Editor) {
         for x_index in 0 ..< divisions {
             x0 := center_x - extent + f32(x_index) * cell
             x1 := x0 + cell
-            world_water_quad({x0, ocean_y, z0}, {x1, ocean_y, z0}, {x1, ocean_y, z1}, {x0, ocean_y, z1}, color)
+            // Reverse winding so the ocean's upward face is the front (CCW) face
+            // and survives back-face culling from a downward-looking camera.
+            world_water_quad({x0, ocean_y, z0}, {x0, ocean_y, z1}, {x1, ocean_y, z1}, {x1, ocean_y, z0}, color)
         }
     }
 }
@@ -368,7 +452,9 @@ clipmap_append_cell :: proc(indices: ^[dynamic]u32, x, z: int) {
     b := u32(z * row + x + 1)
     c := u32((z + 1) * row + x + 1)
     d := u32((z + 1) * row + x)
-    append(indices, a, b, c, a, c, d)
+    // Wound so the upward-facing terrain surface is the front (CCW) face, so it
+    // survives back-face culling when viewed from above.
+    append(indices, a, c, b, a, d, c)
 }
 
 clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
@@ -480,8 +566,140 @@ world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, ro
     world_quad(p[0], p[1], p[5], p[4], color)
 }
 
+world_tapered_box_rotated :: proc(
+    center: third_person.Vec3,
+    height, bottom_width, bottom_depth, top_width, top_depth, rotation: f32,
+    color: rl.Color,
+) {
+    half_height := height * .5
+    local := [8][3]f32 {
+        {-bottom_width * .5, -half_height, -bottom_depth * .5},
+        {bottom_width * .5, -half_height, -bottom_depth * .5},
+        {top_width * .5, half_height, -top_depth * .5},
+        {-top_width * .5, half_height, -top_depth * .5},
+        {-bottom_width * .5, -half_height, bottom_depth * .5},
+        {bottom_width * .5, -half_height, bottom_depth * .5},
+        {top_width * .5, half_height, top_depth * .5},
+        {-top_width * .5, half_height, top_depth * .5},
+    }
+    p: [8]third_person.Vec3
+    for index in 0 ..< 8 {
+        world_x, world_z := world_rotate_xz(center.x, center.z, local[index][0], local[index][2], rotation)
+        p[index] = {world_x, center.y + local[index][1], world_z}
+    }
+    world_quad(p[0], p[3], p[2], p[1], color)
+    world_quad(p[4], p[5], p[6], p[7], color)
+    world_quad(p[0], p[4], p[7], p[3], color)
+    world_quad(p[1], p[2], p[6], p[5], color)
+    world_quad(p[3], p[7], p[6], p[2], color)
+    world_quad(p[0], p[1], p[5], p[4], color)
+}
+
+world_vertical_prism :: proc(center: third_person.Vec3, radius_x, radius_z, height, rotation: f32, color: rl.Color) {
+    SEGMENTS :: 8
+    bottom, top: [SEGMENTS]third_person.Vec3
+    half_height := height * .5
+    for segment in 0 ..< SEGMENTS {
+        angle := (f32(segment) + .5) * math.PI * 2 / f32(SEGMENTS)
+        local_x := math.cos(angle) * radius_x
+        local_z := math.sin(angle) * radius_z
+        world_x, world_z := world_rotate_xz(center.x, center.z, local_x, local_z, rotation)
+        bottom[segment] = {world_x, center.y - half_height, world_z}
+        top[segment] = {world_x, center.y + half_height, world_z}
+    }
+    bottom_center := third_person.Vec3{center.x, center.y - half_height, center.z}
+    top_center := third_person.Vec3{center.x, center.y + half_height, center.z}
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        world_quad(bottom[segment], top[segment], top[next], bottom[next], color)
+        world_triangle(bottom_center, bottom[segment], bottom[next], color)
+        world_triangle(top_center, top[next], top[segment], color)
+    }
+}
+
+world_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, color: rl.Color) {
+    delta := third_person.Vec3{b.x - a.x, b.y - a.y, b.z - a.z}
+    length := f32(math.sqrt(f64(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z)))
+    if length <= .0001 do return
+    axis_y := third_person.Vec3{delta.x / length, delta.y / length, delta.z / length}
+    axis_z := vec_normalize(forward)
+    axis_x := vec_normalize(vec_cross(axis_y, axis_z))
+    center := third_person.Vec3{(a.x + b.x) * .5, (a.y + b.y) * .5, (a.z + b.z) * .5}
+    signs := [8][3]f32 {
+        {-1, -1, -1},
+        {1, -1, -1},
+        {1, 1, -1},
+        {-1, 1, -1},
+        {-1, -1, 1},
+        {1, -1, 1},
+        {1, 1, 1},
+        {-1, 1, 1},
+    }
+    p: [8]third_person.Vec3
+    for index in 0 ..< 8 {
+        x := signs[index][0] * width * .5
+        y := signs[index][1] * length * .5
+        z := signs[index][2] * depth * .5
+        p[index] = {
+            center.x + axis_x.x * x + axis_y.x * y + axis_z.x * z,
+            center.y + axis_x.y * x + axis_y.y * y + axis_z.y * z,
+            center.z + axis_x.z * x + axis_y.z * y + axis_z.z * z,
+        }
+    }
+    world_quad(p[0], p[3], p[2], p[1], color)
+    world_quad(p[4], p[5], p[6], p[7], color)
+    world_quad(p[0], p[4], p[7], p[3], color)
+    world_quad(p[1], p[2], p[6], p[5], color)
+    world_quad(p[3], p[7], p[6], p[2], color)
+    world_quad(p[0], p[1], p[5], p[4], color)
+}
+
 world_shadow_fade :: proc(color: rl.Color, factor: f32) -> rl.Color {
     return {color.r, color.g, color.b, u8(clamp(f32(color.a) * factor, 0, 255))}
+}
+
+world_vehicle_shadow_point :: proc(
+    point: third_person.Vec3,
+    sun_direction: [3]f32,
+    project: ^terrain.Project,
+) -> (
+    projected: third_person.Vec3,
+    on_land: bool,
+) {
+    projected = point
+    sun_y := max(sun_direction[1], f32(.12))
+    // Refine the receiver height because the ray can cross several terrain
+    // cells before it reaches the ground.
+    for _ in 0 ..< 3 {
+        ground := terrain.sample_height(project, 0, projected.x, projected.z)
+        ray_distance := min(max(point.y - ground, f32(0)) / sun_y, f32(300))
+        projected.x = point.x - sun_direction[0] * ray_distance
+        projected.z = point.z - sun_direction[2] * ray_distance
+    }
+    ground := terrain.sample_height(project, 0, projected.x, projected.z)
+    projected.y = ground + .145
+    return projected, ground > project.sea_level + .04
+}
+
+world_vehicle_shadow_triangle :: proc(
+    a, b, c: third_person.Vec3,
+    sun_direction: [3]f32,
+    cloud_cover: f32,
+    project: ^terrain.Project,
+) {
+    daylight := clamp(sun_direction[1], 0, 1)
+    if daylight <= .08 do return
+    projected_a, land_a := world_vehicle_shadow_point(a, sun_direction, project)
+    projected_b, land_b := world_vehicle_shadow_point(b, sun_direction, project)
+    projected_c, land_c := world_vehicle_shadow_point(c, sun_direction, project)
+    if !land_a && !land_b && !land_c do return
+
+    cloud := clamp(cloud_cover, 0, 1)
+    shade := u8(clamp(17 + cloud * 28 + (1 - daylight) * 8, 17, 53))
+    // Opaque projected faces merge into one clean, hard-edged silhouette.
+    // Vary the tone instead of alpha so overlapping mesh components cannot
+    // create accidental dark facets inside the shadow.
+    world_triangle(projected_a, projected_b, projected_c, {shade, shade + 2, shade + 3, 255})
 }
 
 world_structure_shadow_layer :: proc(
@@ -523,15 +741,17 @@ world_structure_shadow_layer :: proc(
         base_on_land := base[index].y > land_threshold || base[next].y > land_threshold
         projected_on_land := projected[index].y > land_threshold || projected[next].y > land_threshold
         if !base_on_land && !projected_on_land do continue
+        // Shadow decals lie flat on the ground; wind them so the upward face is
+        // the front (CCW) face and they survive back-face culling from above.
         world_quad_colored(
-            base[index],
-            base[next],
-            projected[next],
             projected[index],
-            shadow,
-            shadow,
+            projected[next],
+            base[next],
+            base[index],
             far_shadow,
             far_shadow,
+            shadow,
+            shadow,
         )
     }
     if projected_land {
@@ -540,7 +760,81 @@ world_structure_shadow_layer :: proc(
         center := third_person.Vec3{center_x, terrain.sample_height(project, 0, center_x, center_z) + lift, center_z}
         for index in 0 ..< 4 {
             next := (index + 1) % 4
-            world_triangle_colored(projected[index], projected[next], center, far_shadow, far_shadow, shadow)
+            world_triangle_colored(projected[next], projected[index], center, far_shadow, far_shadow, shadow)
+        }
+    }
+}
+
+world_foliage_shadow_layer :: proc(
+    structure: terrain.Structure,
+    project: ^terrain.Project,
+    offset_x, offset_z, footprint_scale: f32,
+    lift: f32,
+    shadow: rl.Color,
+    segments: int,
+) {
+    // The silhouette resolution is picked per structure by camera distance in
+    // world_structure_shadow: near canopies round out their penumbra while
+    // distant ones shed segments once the projected footprint covers only a
+    // few ground pixels.
+    MAX_SEGMENTS :: 16
+    seg := clamp(segments, 6, MAX_SEGMENTS)
+    base: [MAX_SEGMENTS]third_person.Vec3
+    projected: [MAX_SEGMENTS]third_person.Vec3
+    land_threshold := project.sea_level + .04
+    projected_land := false
+    center_x, center_z := f32(0), f32(0)
+
+    for index in 0 ..< seg {
+        angle := f32(index) * math.PI * 2 / f32(seg)
+        irregularity := 1 + f32(math.sin(f64(f32(structure.seed) * .009 + f32(index) * 2.23))) * .075
+        local_x := math.cos(angle) * structure.width * footprint_scale * .5 * irregularity
+        local_z := math.sin(angle) * structure.depth * footprint_scale * .5 * irregularity
+        x, z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
+        base[index] = {x, terrain.sample_height(project, 0, x, z) + lift, z}
+        projected[index] = {
+            x + offset_x,
+            terrain.sample_height(project, 0, x + offset_x, z + offset_z) + lift,
+            z + offset_z,
+        }
+        center_x += projected[index].x
+        center_z += projected[index].z
+        if projected[index].y > land_threshold do projected_land = true
+    }
+
+    far_shadow := world_shadow_fade(shadow, f32(.42))
+    for index in 0 ..< seg {
+        next := (index + 1) % seg
+        base_on_land := base[index].y > land_threshold || base[next].y > land_threshold
+        projected_on_land := projected[index].y > land_threshold || projected[next].y > land_threshold
+        if !base_on_land && !projected_on_land do continue
+        // Flat ground decal: wind the upward face as front (CCW) so culling keeps it.
+        world_quad_colored(
+            projected[index],
+            projected[next],
+            base[next],
+            base[index],
+            far_shadow,
+            far_shadow,
+            shadow,
+            shadow,
+        )
+    }
+    if projected_land {
+        center_x /= f32(seg)
+        center_z /= f32(seg)
+        center := third_person.Vec3{center_x, terrain.sample_height(project, 0, center_x, center_z) + lift, center_z}
+        // The cap fills the projected silhouette. Contact layers (no sun
+        // offset) sit directly under the plant, so a dark center reads as the
+        // grounded core of the shadow. Offset body/penumbra layers put this
+        // cap at the far tip, where the walls already faded to far_shadow;
+        // darkening the tip center there leaves an unnatural dark blob past a
+        // lighter waist, so the tip must keep fading outward instead.
+        is_contact := abs(offset_x) < .001 && abs(offset_z) < .001
+        cap_center := is_contact ? shadow : far_shadow
+        for index in 0 ..< seg {
+            next := (index + 1) % seg
+            world_triangle_colored(projected[next], projected[index], center, far_shadow, far_shadow, cap_center)
         }
     }
 }
@@ -579,6 +873,134 @@ world_structure_shadow :: proc(
     // Draw the broad penumbra first. Each layer gets a small, increasing lift
     // above the terrain so the translucent passes never fight for the same
     // depth value on flat ground or at the cap of a shadow.
+    if structure.kind == .Foliage {
+        // Match the canopy geometry's distance LOD (see world_foliage_lobe):
+        // near shadows gain a rounder silhouette and an extra soft penumbra,
+        // while distant shadows shed segments, split patches, and the contact
+        // core once they resolve to a few pixels. The near-quality cost is
+        // paid back by the distant savings, so the dense-forest frame budget
+        // holds against the 60 FPS contract.
+        camera_position := world_renderer.editor.camera_pose.position
+        camera_delta_x := camera_position.x - structure.center_x
+        camera_delta_z := camera_position.z - structure.center_z
+        camera_distance := f32(math.sqrt(f64(camera_delta_x * camera_delta_x + camera_delta_z * camera_delta_z)))
+
+        // Detail bands never drop below the previous fixed quality inside the
+        // range where a shadow reads as a shape (< 260 m); they only add near
+        // and subtract far.
+        outer_segments := 12
+        patch_segments := 12
+        draw_contact := true
+        soft_penumbra := false
+        if camera_distance < 145 {
+            outer_segments = 16
+            patch_segments = 14
+            soft_penumbra = true
+        } else if camera_distance < 260 {
+            outer_segments = 12
+            patch_segments = 12
+        } else if camera_distance < 520 {
+            outer_segments = 10
+            patch_segments = 8
+        } else {
+            outer_segments = 8
+            patch_segments = 6
+            draw_contact = false
+        }
+
+        // A wide, very translucent halo drawn only near the camera turns the
+        // single hard penumbra step into a graduated soft edge, reading as a
+        // diffuse leaf-shadow boundary instead of a scaled decal ring.
+        if soft_penumbra {
+            world_foliage_shadow_layer(
+                structure,
+                project,
+                offset_x * 1.16,
+                offset_z * 1.16,
+                1.24,
+                .028,
+                {41, 57, 44, u8(f32(outer_alpha) * .55)},
+                outer_segments,
+            )
+        }
+
+        world_foliage_shadow_layer(
+            structure,
+            project,
+            offset_x * 1.08,
+            offset_z * 1.08,
+            1.12,
+            .035,
+            {39, 55, 42, outer_alpha},
+            outer_segments,
+        )
+        // Dense foliage shadow is composed from overlapping canopy lobes, not
+        // two more copies of the full formation footprint. The shared outer
+        // penumbra keeps the plant grounded; these smaller cores create broken
+        // leafy edges and naturally darker overlap pockets.
+        wide, narrow := max(structure.width, structure.depth), min(structure.width, structure.depth)
+        hedge_shadow := wide / max(narrow, f32(.01)) >= 1.8
+        patch_count := hedge_shadow ? 5 : 4
+        // Distant clumps collapse to sub-pixel blotches; fewer patch lobes keep
+        // the grounding read without paying for detail nobody can resolve.
+        if camera_distance >= 520 do patch_count = hedge_shadow ? 3 : 2
+        patch_inner_alpha := u8(f32(inner_alpha) * .70)
+        patch_contact_alpha := u8(f32(inner_alpha) * .60)
+        for patch_index in 0 ..< patch_count {
+            patch := structure
+            local_x, local_z := f32(0), f32(0)
+            if hedge_shadow {
+                fraction := (f32(patch_index) + .5) / f32(patch_count)
+                along := (fraction - .5) * wide * .76
+                cross := f32(math.sin(f64(f32(structure.seed) * .013 + f32(patch_index) * 2.17))) * narrow * .11
+                local_x, local_z = along, cross
+                patch.width = wide / f32(patch_count) * 1.62
+                patch.depth = narrow * .86
+                if structure.depth > structure.width {
+                    local_x, local_z = cross, along
+                    patch.width, patch.depth = patch.depth, patch.width
+                }
+            } else {
+                angle := f32(patch_index) * 2.399963 + f32(structure.seed % 101) * .027
+                radial := .16 + f32(patch_index % 2) * .10
+                local_x = math.cos(angle) * structure.width * radial
+                local_z = math.sin(angle) * structure.depth * radial
+                patch.width = structure.width * (.50 + f32(patch_index % 2) * .06)
+                patch.depth = structure.depth * (.48 + f32((patch_index + 1) % 2) * .07)
+            }
+            patch.center_x, patch.center_z = world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                local_x,
+                local_z,
+                structure.rotation,
+            )
+            patch.seed += u32(patch_index * 733 + 97)
+            world_foliage_shadow_layer(
+                patch,
+                project,
+                offset_x,
+                offset_z,
+                .96,
+                .055 + f32(patch_index) * .001,
+                {34, 49, 38, patch_inner_alpha},
+                patch_segments,
+            )
+            if draw_contact {
+                world_foliage_shadow_layer(
+                    patch,
+                    project,
+                    0,
+                    0,
+                    .94,
+                    .075 + f32(patch_index) * .001,
+                    {30, 45, 35, patch_contact_alpha},
+                    patch_segments,
+                )
+            }
+        }
+        return
+    }
     world_structure_shadow_layer(
         structure,
         project,
@@ -1254,6 +1676,8 @@ world_formation :: proc(structure: terrain.Structure) {
         stone.color = world_limestone_color(.Cliff)
         world_cliff_formation(stone)
         world_foliage_tufts(stone)
+    case .Foliage:
+        world_foliage_formation(structure)
     case .Architecture:
         world_architecture(structure)
     }
@@ -1290,7 +1714,9 @@ world_structure_preview_cluster :: proc(editor: ^Editor) {
         copy.height = max(cell, copy.height * (.72 + f32(cluster_index) * .06))
         copy.base_y = terrain.sample_height(&editor.project, 0, copy.center_x, copy.center_z)
         copy.seed = u32(editor.project.next_structure_id + u64(cluster_index + 1)) * 747796405
-        if !editor.structure_force_box && !editor.structure_cliff_mode {
+        if editor.authoring_tool == .Foliage {
+            copy.kind = .Foliage
+        } else if !editor.structure_force_box && !editor.structure_cliff_mode {
             copy.kind = terrain.formation_kind_for_gesture(copy.width, copy.depth, copy.height)
         }
         copy.color = {168, 239, 220, 255}
@@ -1376,6 +1802,1453 @@ world_limestone_color :: proc(kind: terrain.Formation_Kind) -> [4]u8 {
     return {215, 211, 193, 255}
 }
 
+world_foliage_card :: proc(
+    center: third_person.Vec3,
+    width, height: f32,
+    tile: int,
+    color: rl.Color,
+    mirror: bool,
+    flip_vertical := false,
+) {
+    if len(world_renderer.foliage_vertices) + 6 > FOLIAGE_VERTEX_CAPACITY do return
+    editor := world_renderer.editor
+    if editor == nil do return
+    camera := perspective_camera(
+        editor.camera_pose,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
+    )
+    right := third_person.Vec3{camera.right.x * width * .5, camera.right.y * width * .5, camera.right.z * width * .5}
+    up := third_person.Vec3{camera.up.x * height * .5, camera.up.y * height * .5, camera.up.z * height * .5}
+    p0 := third_person.Vec3{center.x - right.x - up.x, center.y - right.y - up.y, center.z - right.z - up.z}
+    p1 := third_person.Vec3{center.x + right.x - up.x, center.y + right.y - up.y, center.z + right.z - up.z}
+    p2 := third_person.Vec3{center.x + right.x + up.x, center.y + right.y + up.y, center.z + right.z + up.z}
+    p3 := third_person.Vec3{center.x - right.x + up.x, center.y - right.y + up.y, center.z - right.z + up.z}
+
+    atlas_tile := ((tile % 16) + 16) % 16
+    column, row := atlas_tile % 4, atlas_tile / 4
+    // A two-pixel inset prevents linear filtering from borrowing color from
+    // the neighboring cell in the 1254px atlas.
+    inset := f32(2.0 / 1254.0)
+    u0 := f32(column) * .25 + inset
+    v0 := f32(row) * .25 + inset
+    u1 := f32(column + 1) * .25 - inset
+    v1 := f32(row + 1) * .25 - inset
+    if mirror {
+        u0, u1 = u1, u0
+    }
+    if flip_vertical {
+        v0, v1 = v1, v0
+    }
+    tint := world_color(color)
+    append(
+        &world_renderer.foliage_vertices,
+        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint},
+        Foliage_Vertex{{p1.x, p1.y, p1.z}, {u1, v1}, tint},
+        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint},
+        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint},
+        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint},
+        Foliage_Vertex{{p3.x, p3.y, p3.z}, {u0, v0}, tint},
+    )
+}
+
+world_foliage_vertex_color :: proc(ring, variation: int) -> rl.Color {
+    palette := ((variation % 4) + 4) % 4
+    switch ring {
+    case 0:
+        colors := [4]rl.Color{{43, 72, 48, 255}, {48, 78, 44, 255}, {52, 82, 47, 255}, {45, 75, 52, 255}}
+        return colors[palette]
+    case 1:
+        // A deliberately cool, low-value shoulder remains visible in the
+        // narrow gaps between overlapping lobes, acting as painted contact
+        // shadow without another texture lookup or render pass.
+        colors := [4]rl.Color{{58, 92, 55, 255}, {64, 97, 47, 255}, {70, 101, 51, 255}, {60, 94, 60, 255}}
+        return colors[palette]
+    case 2:
+        // Upper crown rings stay within one restrained body-color family.
+        // Broad value grouping belongs to the continuous foliage shader;
+        // large per-ring jumps expose the triangulated construction as bright
+        // ribbons when a tree is viewed near eye level.
+        colors := [4]rl.Color{{82, 121, 78, 255}, {100, 133, 64, 255}, {124, 150, 61, 255}, {88, 126, 85, 255}}
+        return colors[palette]
+    case 3:
+        colors := [4]rl.Color{{88, 128, 82, 255}, {106, 139, 66, 255}, {133, 157, 64, 255}, {95, 133, 90, 255}}
+        return colors[palette]
+    case 4:
+        colors := [4]rl.Color{{92, 132, 85, 255}, {111, 143, 68, 255}, {138, 162, 67, 255}, {99, 137, 94, 255}}
+        return colors[palette]
+    case 5:
+        colors := [4]rl.Color{{96, 136, 88, 255}, {115, 146, 70, 255}, {142, 166, 70, 255}, {103, 141, 98, 255}}
+        return colors[palette]
+    case 6:
+        colors := [4]rl.Color{{99, 139, 90, 255}, {118, 149, 72, 255}, {145, 169, 72, 255}, {106, 144, 101, 255}}
+        return colors[palette]
+    }
+    return {78, 112, 53, 255}
+}
+
+world_foliage_clump_color :: proc(ring, variation: int, clump: f32) -> rl.Color {
+    // Extend the ring palette with a clump-aligned temperature and value shift.
+    // Troughs between the rounded bunches sink into a cooler, lower-value
+    // pocket -- soft painted ambient occlusion in the crevices -- while the
+    // crests lift toward a warmer sunlit accent. Both are derived from the
+    // ring's own body color so every species and palette family stays
+    // harmonized, and the shift stays gentle so the grouped painted planes
+    // never resolve into bright ribbons that expose the triangulation.
+    base := world_foliage_vertex_color(ring, variation)
+    if clump < 0 {
+        // Deeper occlusion on the lower shoulders, where overlapping boughs
+        // trap shade; the upper crown plane keeps only a faint recess.
+        pocket_amount := clamp(-clump, 0, 1) * (.42 - f32(ring) * .035)
+        pocket := rl.Color{u8(f32(base.r) * .70), u8(f32(base.g) * .81), u8(f32(base.b) * .90), base.a}
+        return color_lerp(base, pocket, clamp(pocket_amount, 0, 1))
+    }
+    crest_amount := clamp(clump, 0, 1) * .22
+    crest := rl.Color {
+        u8(min(f32(base.r) * 1.15, 255.0)),
+        u8(min(f32(base.g) * 1.08, 255.0)),
+        u8(f32(base.b) * .93),
+        base.a,
+    }
+    return color_lerp(base, crest, crest_amount)
+}
+
+world_foliage_trunk :: proc(x, z, base_y, height, radius: f32, seed: u32) {
+    // Eight sides are enough to remove the conspicuous hexagonal shaft at
+    // walking distance while keeping mature forests inexpensive.
+    SEGMENTS :: 8
+    TRUNK_RINGS :: 4
+    base: [SEGMENTS]third_person.Vec3
+    top: [SEGMENTS]third_person.Vec3
+    rings: [TRUNK_RINGS][SEGMENTS]third_person.Vec3
+    lean_angle := f32(seed % 628) * .01
+    lean_x := math.cos(lean_angle) * height * .045
+    lean_z := math.sin(lean_angle) * height * .045
+    bend_angle := lean_angle + math.PI * .5 + f32(seed % 17) * .037
+    bend_x, bend_z := math.cos(bend_angle), math.sin(bend_angle)
+    ring_fraction := [TRUNK_RINGS]f32{0, .34, .69, 1}
+    ring_radius := [TRUNK_RINGS]f32{1, .91, .78, .66}
+    for ring in 0 ..< TRUNK_RINGS {
+        fraction := ring_fraction[ring]
+        curve := f32(math.sin(f64(fraction * math.PI)))
+        center_x := x + lean_x * fraction + bend_x * height * .027 * curve
+        center_z := z + lean_z * fraction + bend_z * height * .027 * curve
+        for segment in 0 ..< SEGMENTS {
+            angle := f32(segment) * math.PI * 2 / SEGMENTS + f32(ring) * .025
+            rings[ring][segment] = {
+                center_x + math.cos(angle) * radius * ring_radius[ring],
+                base_y + height * fraction,
+                center_z + math.sin(angle) * radius * ring_radius[ring],
+            }
+        }
+    }
+    for segment in 0 ..< SEGMENTS {
+        base[segment] = rings[0][segment]
+        top[segment] = rings[TRUNK_RINGS - 1][segment]
+    }
+    bark_light := [TRUNK_RINGS - 1]rl.Color{{91, 72, 52, 255}, {97, 76, 54, 255}, {103, 80, 55, 255}}
+    bark_shadow := [TRUNK_RINGS - 1]rl.Color{{62, 55, 46, 255}, {66, 58, 47, 255}, {71, 61, 48, 255}}
+    // Neighboring patches should not all expose the same orange-brown posts.
+    // Three restrained bark families give the woodland warm oak, cool
+    // gray-bark, and muted umber notes while keeping every trunk subordinate
+    // to the canopy. Moss is applied afterward and ties the families together.
+    bark_family := seed % 3
+    if bark_family == 1 {
+        bark_light = {{91, 79, 62, 255}, {98, 84, 64, 255}, {105, 89, 66, 255}}
+        bark_shadow = {{62, 58, 50, 255}, {66, 61, 51, 255}, {71, 65, 53, 255}}
+    } else if bark_family == 2 {
+        bark_light = {{102, 69, 49, 255}, {109, 73, 51, 255}, {116, 78, 53, 255}}
+        bark_shadow = {{68, 52, 43, 255}, {73, 55, 44, 255}, {78, 58, 45, 255}}
+    }
+    moss_light := [TRUNK_RINGS - 1]rl.Color{{91, 94, 53, 255}, {94, 96, 55, 255}, {96, 98, 57, 255}}
+    moss_shadow := [TRUNK_RINGS - 1]rl.Color{{59, 67, 45, 255}, {62, 69, 46, 255}, {65, 71, 47, 255}}
+    for ring in 0 ..< TRUNK_RINGS - 1 {
+        for segment in 0 ..< SEGMENTS {
+            next := (segment + 1) % SEGMENTS
+            // Let bark value travel continuously around the trunk instead of
+            // assigning every third face a dark stripe. A seed phase keeps
+            // neighboring trunks from repeating the identical highlight.
+            face_angle := (f32(segment) + .5) * math.PI * 2 / SEGMENTS + f32(seed % 37) * .017
+            bark_rhythm := f32(math.sin(f64(f32(segment) * 1.73 + f32(ring) * 2.11 + f32(seed % 29) * .19))) * .045
+            face_light := clamp(.18 + (.5 + .5 * math.cos(face_angle - .72)) * .72 + bark_rhythm, .12, .94)
+            lower_color := color_lerp(bark_shadow[ring], bark_light[ring], face_light)
+            upper_index := min(ring + 1, TRUNK_RINGS - 2)
+            upper_color := color_lerp(bark_shadow[upper_index], bark_light[upper_index], face_light)
+            // Moss shares one broad, cool-facing side across the woodland,
+            // with a small per-tree drift. Blending it into the existing
+            // vertices keeps the shaft inexpensive and avoids pasted stripes.
+            moss_angle := math.PI * 1.38 + f32(seed % 13) * .018
+            moss_facing := .5 + .5 * math.cos(face_angle - moss_angle)
+            moss_amount := clamp((moss_facing - .38) * .48, 0, .28) * (1 - f32(ring) * .19)
+            lower_moss := color_lerp(moss_shadow[ring], moss_light[ring], face_light)
+            upper_moss := color_lerp(moss_shadow[upper_index], moss_light[upper_index], face_light)
+            lower_color = color_lerp(lower_color, lower_moss, moss_amount)
+            upper_color = color_lerp(upper_color, upper_moss, moss_amount * .82)
+            world_quad_colored(
+                rings[ring][segment],
+                rings[ring + 1][segment],
+                rings[ring + 1][next],
+                rings[ring][next],
+                lower_color,
+                upper_color,
+                upper_color,
+                lower_color,
+            )
+        }
+    }
+
+    // Sparse vertical brush strips keep the broad front faces from reading as
+    // untextured orange posts. They sit just above the lower shaft and rotate
+    // per tree; one dark bark split and one shorter moss stroke are enough to
+    // imply surface rhythm without introducing another material or texture.
+    for stroke in 0 ..< 2 {
+        stroke_angle := f32(seed % 211) * .029 + f32(stroke) * 2.17
+        outward_x, outward_z := math.cos(stroke_angle), math.sin(stroke_angle)
+        tangent_x, tangent_z := -outward_z, outward_x
+        stroke_width := radius * (stroke == 0 ? f32(.20) : f32(.27))
+        stroke_bottom := base_y + height * (stroke == 0 ? f32(.12) : f32(.07))
+        stroke_top := base_y + height * (stroke == 0 ? f32(.43) : f32(.28))
+        lower_outset := radius * 1.018
+        upper_radius :=
+            radius *
+            (ring_radius[1] +
+                    (ring_radius[2] - ring_radius[1]) *
+                        clamp(
+                            ((stroke_top - base_y) / height - ring_fraction[1]) /
+                            (ring_fraction[2] - ring_fraction[1]),
+                            0,
+                            1,
+                        ))
+        upper_outset := upper_radius * 1.018
+        stroke_color := rl.Color{52, 49, 42, 220}
+        if stroke == 1 do stroke_color = {64, 76, 49, 205}
+        world_quad(
+            {
+                x + outward_x * lower_outset - tangent_x * stroke_width,
+                stroke_bottom,
+                z + outward_z * lower_outset - tangent_z * stroke_width,
+            },
+            {
+                x +
+                lean_x * (stroke_top - base_y) / height +
+                outward_x * upper_outset -
+                tangent_x * stroke_width * .68,
+                stroke_top - height * .012,
+                z +
+                lean_z * (stroke_top - base_y) / height +
+                outward_z * upper_outset -
+                tangent_z * stroke_width * .68,
+            },
+            {
+                x +
+                lean_x * (stroke_top - base_y) / height +
+                outward_x * upper_outset +
+                tangent_x * stroke_width * .68,
+                stroke_top,
+                z +
+                lean_z * (stroke_top - base_y) / height +
+                outward_z * upper_outset +
+                tangent_z * stroke_width * .68,
+            },
+            {
+                x + outward_x * lower_outset + tangent_x * stroke_width,
+                stroke_bottom + height * .018,
+                z + outward_z * lower_outset + tangent_z * stroke_width,
+            },
+            stroke_color,
+        )
+    }
+
+    // Three low buttress roots anchor the stylized trunk to the terrain.
+    // Their uneven reach avoids a decorative star, and the wedges disappear
+    // naturally beneath understory when viewed from above.
+    ROOTS :: 3
+    for root in 0 ..< ROOTS {
+        angle :=
+            lean_angle +
+            f32(root) * math.PI * 2 / ROOTS +
+            f32(math.sin(f64(f32(seed) * .023 + f32(root) * 1.71))) * .29
+        direction_x, direction_z := math.cos(angle), math.sin(angle)
+        side_x, side_z := -direction_z, direction_x
+        root_reach := radius * (2.35 + f32(root % 2) * .62)
+        root_half_width := radius * (.54 + f32((root + 1) % 2) * .12)
+        shoulder := third_person.Vec3 {
+            x + direction_x * radius * .72,
+            base_y + radius * (1.75 + f32(root) * .16),
+            z + direction_z * radius * .72,
+        }
+        left := third_person.Vec3 {
+            x + direction_x * radius - side_x * root_half_width,
+            base_y + .035,
+            z + direction_z * radius - side_z * root_half_width,
+        }
+        right := third_person.Vec3 {
+            x + direction_x * radius + side_x * root_half_width,
+            base_y + .035,
+            z + direction_z * radius + side_z * root_half_width,
+        }
+        tip := third_person.Vec3{x + direction_x * root_reach, base_y + .025, z + direction_z * root_reach}
+        root_light := rl.Color{91, 71, 52, 255}
+        root_shadow := rl.Color{62, 54, 46, 255}
+        if bark_family == 1 {
+            root_light = {87, 76, 61, 255}
+            root_shadow = {59, 57, 51, 255}
+        } else if bark_family == 2 {
+            root_light = {96, 66, 50, 255}
+            root_shadow = {65, 50, 43, 255}
+        }
+        if root % 2 == 1 {
+            root_light = color_lerp(root_light, {67, 63, 52, 255}, .34)
+            root_shadow = color_lerp(root_shadow, {49, 50, 45, 255}, .22)
+        }
+        world_triangle_colored(left, tip, shoulder, root_shadow, root_shadow, root_light)
+        world_triangle_colored(tip, right, shoulder, root_shadow, root_light, root_light)
+    }
+
+    crown := third_person.Vec3{x + lean_x, base_y + height, z + lean_z}
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        world_triangle(top[segment], crown, top[next], {65, 54, 39, 255})
+    }
+
+    // A few broad forked limbs turn the supporting pole into a tree. They
+    // disappear into the crown from above but become an important readable
+    // layer at walking height and across glade openings.
+    LIMBS :: 3
+    for limb in 0 ..< LIMBS {
+        angle :=
+            lean_angle +
+            f32(limb) * math.PI * 2 / LIMBS +
+            f32(math.sin(f64(f32(seed) * .017 + f32(limb) * 1.91))) * .34
+        direction_x, direction_z := math.cos(angle), math.sin(angle)
+        side_x, side_z := -direction_z, direction_x
+        start_height := height * (.54 + f32(limb) * .055)
+        start_fraction := start_height / height
+        start_curve := f32(math.sin(f64(start_fraction * math.PI)))
+        reach := radius * (2.75 + f32(limb % 2) * .58)
+        start := third_person.Vec3 {
+            x + lean_x * start_fraction + bend_x * height * .027 * start_curve,
+            base_y + start_height,
+            z + lean_z * start_fraction + bend_z * height * .027 * start_curve,
+        }
+        finish := third_person.Vec3 {
+            x + lean_x * .92 + direction_x * reach,
+            base_y + height * (.76 + f32(limb) * .035),
+            z + lean_z * .92 + direction_z * reach,
+        }
+        start_half_width := radius * .58
+        finish_half_width := radius * .28
+        limb_color := rl.Color{80, 64, 49, 255}
+        if bark_family == 1 do limb_color = {76, 69, 57, 255}
+        if bark_family == 2 do limb_color = {88, 60, 46, 255}
+        if limb % 2 == 1 {
+            limb_color = color_lerp(limb_color, {55, 53, 47, 255}, .42)
+        }
+        world_quad(
+            {start.x - side_x * start_half_width, start.y, start.z - side_z * start_half_width},
+            {start.x + side_x * start_half_width, start.y, start.z + side_z * start_half_width},
+            {finish.x + side_x * finish_half_width, finish.y, finish.z + side_z * finish_half_width},
+            {finish.x - side_x * finish_half_width, finish.y, finish.z - side_z * finish_half_width},
+            limb_color,
+        )
+    }
+}
+
+world_foliage_understory_tuft :: proc(x, z, base_y, width, height: f32, seed: u32) {
+    FRONDS :: 6
+    camera_position := world_renderer.editor.camera_pose.position
+    camera_delta_x := camera_position.x - x
+    camera_delta_z := camera_position.z - z
+    leaflet_distance := f32(math.sqrt(f64(camera_delta_x * camera_delta_x + camera_delta_z * camera_delta_z)))
+    // Leaflet tiers are a walking-distance silhouette feature. Beyond this
+    // range they occupy sub-pixel space and would only consume world-mesh
+    // capacity needed by the dense forest canopy.
+    emit_leaflets := leaflet_distance < 220
+    emit_lush_leaflets := leaflet_distance < 140
+    for frond in 0 ..< FRONDS {
+        angle := f32(frond) * math.PI * 2 / FRONDS + f32(seed % 113) * .037
+        direction_x, direction_z := math.cos(angle), math.sin(angle)
+        side_x, side_z := -direction_z, direction_x
+        spread := width * (.24 + f32(frond % 2) * .055)
+        if emit_lush_leaflets {
+            // At walking distance the central triangle is only a narrow stem;
+            // the tiered leaflets, not a giant spearhead, carry the fern.
+            spread = width * (.065 + f32(frond % 2) * .018)
+        }
+        lean := width * (.18 + f32((frond + 1) % 3) * .045)
+        blade_height := height * (.72 + f32(math.sin(f64(f32(seed) * .011 + f32(frond) * 1.83))) * .18)
+        left := third_person.Vec3{x - side_x * spread, base_y + .08, z - side_z * spread}
+        right := third_person.Vec3{x + side_x * spread, base_y + .08, z + side_z * spread}
+        tip := third_person.Vec3{x + direction_x * lean, base_y + blade_height, z + direction_z * lean}
+        color := rl.Color{46, 91, 60, 255}
+        if frond % 3 == 1 do color = {58, 108, 64, 255}
+        if frond % 3 == 2 do color = {39, 80, 59, 255}
+        tip_color := color
+        tip_color.r = u8(min(int(tip_color.r) + 12, 255))
+        tip_color.g = u8(min(int(tip_color.g) + 16, 255))
+        tip_color.b = u8(min(int(tip_color.b) + 5, 255))
+        // Ground vertices carry a downward normal so the canopy wind weight is
+        // zero; the upright tip carries the full weight. The same triangle
+        // therefore bends like a rooted fern instead of sliding as one rigid
+        // piece across the forest floor.
+        base_normal := third_person.Vec3{0, -1, 0}
+        tip_normal := vec_normalize({direction_x * .34, .94, direction_z * .34})
+        world_triangle_foliage(left, tip, right, color, tip_color, color, base_normal, tip_normal, base_normal)
+
+        // Walking-distance ferns carry three tapered leaflet tiers on every
+        // frond. The middle LOD keeps one tier on alternating fronds, and the
+        // distant LOD retains only the broad blade. This turns nearby cones
+        // into layered woodland silhouettes without multiplying the stress
+        // scene's sub-pixel geometry.
+        tier_count := 0
+        if emit_lush_leaflets {
+            tier_count = 3
+        } else if emit_leaflets && frond % 2 == 0 {
+            tier_count = 1
+        }
+        lush_fractions := [3]f32{.29, .49, .68}
+        lush_reaches := [3]f32{.32, .27, .20}
+        for tier in 0 ..< tier_count {
+            leaflet_fraction := f32(.56)
+            if emit_lush_leaflets {
+                leaflet_fraction = lush_fractions[tier]
+            }
+            stem_half_span := emit_lush_leaflets ? f32(.075) : f32(.08)
+            stem_back_fraction := leaflet_fraction - stem_half_span
+            stem_front_fraction := leaflet_fraction + stem_half_span
+            stem_back := third_person.Vec3 {
+                x + direction_x * lean * stem_back_fraction,
+                base_y + blade_height * stem_back_fraction,
+                z + direction_z * lean * stem_back_fraction,
+            }
+            stem_front := third_person.Vec3 {
+                x + direction_x * lean * stem_front_fraction,
+                base_y + blade_height * stem_front_fraction,
+                z + direction_z * lean * stem_front_fraction,
+            }
+            leaflet_center_x := x + direction_x * lean * leaflet_fraction
+            leaflet_center_z := z + direction_z * lean * leaflet_fraction
+            leaflet_reach := width * (.23 + f32(frond % 2) * .035)
+            if emit_lush_leaflets {
+                leaflet_reach = width * lush_reaches[tier]
+            }
+            leaflet_lift := height * (.030 + f32((frond + tier + 1) % 2) * .012)
+            left_leaflet := third_person.Vec3 {
+                leaflet_center_x - side_x * leaflet_reach,
+                base_y + blade_height * leaflet_fraction + leaflet_lift,
+                leaflet_center_z - side_z * leaflet_reach,
+            }
+            right_leaflet := third_person.Vec3 {
+                leaflet_center_x + side_x * leaflet_reach,
+                base_y + blade_height * leaflet_fraction + leaflet_lift,
+                leaflet_center_z + side_z * leaflet_reach,
+            }
+            leaflet_color := tip_color
+            if tier == 0 {
+                leaflet_color.r = u8(max(int(leaflet_color.r) - 6, 0))
+                leaflet_color.g = u8(max(int(leaflet_color.g) - 7, 0))
+            }
+            stem_normal := vec_normalize({direction_x * .18, .44, direction_z * .18})
+            leaflet_normal := vec_normalize({direction_x * .24, .68, direction_z * .24})
+            world_triangle_foliage(
+                stem_back,
+                left_leaflet,
+                stem_front,
+                color,
+                leaflet_color,
+                leaflet_color,
+                stem_normal,
+                leaflet_normal,
+                leaflet_normal,
+            )
+            world_triangle_foliage(
+                stem_front,
+                right_leaflet,
+                stem_back,
+                leaflet_color,
+                leaflet_color,
+                color,
+                leaflet_normal,
+                leaflet_normal,
+                stem_normal,
+            )
+        }
+    }
+}
+
+world_foliage_ground_rosette :: proc(x, z, base_y, width, height: f32, seed: u32) {
+    camera_position := world_renderer.editor.camera_pose.position
+    camera_delta_x := camera_position.x - x
+    camera_delta_z := camera_position.z - z
+    camera_distance := f32(math.sqrt(f64(camera_delta_x * camera_delta_x + camera_delta_z * camera_delta_z)))
+    leaf_count := 4
+    if camera_distance < 180 do leaf_count = 7
+    for leaf in 0 ..< leaf_count {
+        angle := f32(leaf) * math.PI * 2 / f32(leaf_count) + f32(seed % 137) * .031
+        direction_x, direction_z := math.cos(angle), math.sin(angle)
+        side_x, side_z := -direction_z, direction_x
+        reach := width * (.34 + f32(math.sin(f64(f32(seed) * .013 + f32(leaf) * 1.79))) * .08)
+        lift := height * (.56 + f32(math.sin(f64(f32(seed) * .019 + f32(leaf) * 2.17))) * .18)
+        half_width := width * (.105 + f32(leaf % 2) * .018)
+        root := third_person.Vec3{x, base_y + .07, z}
+        left := third_person.Vec3 {
+            x + direction_x * reach * .50 - side_x * half_width,
+            base_y + lift * .72,
+            z + direction_z * reach * .50 - side_z * half_width,
+        }
+        right := third_person.Vec3 {
+            x + direction_x * reach * .50 + side_x * half_width,
+            base_y + lift * .72,
+            z + direction_z * reach * .50 + side_z * half_width,
+        }
+        tip := third_person.Vec3{x + direction_x * reach, base_y + lift * .38, z + direction_z * reach}
+        root_color := rl.Color{38, 77, 53, 255}
+        leaf_color := rl.Color{61, 111, 66, 255}
+        tip_color := rl.Color{70, 118, 68, 255}
+        if leaf % 3 == 1 {
+            root_color = {43, 81, 48, 255}
+            leaf_color = {72, 119, 62, 255}
+            tip_color = {82, 128, 66, 255}
+        } else if leaf % 3 == 2 {
+            root_color = {35, 72, 56, 255}
+            leaf_color = {53, 101, 71, 255}
+            tip_color = {63, 111, 74, 255}
+        }
+        root_normal := third_person.Vec3{0, -1, 0}
+        leaf_normal := vec_normalize({direction_x * .32, .88, direction_z * .32})
+        tip_normal := vec_normalize({direction_x * .46, .76, direction_z * .46})
+        world_triangle_foliage(
+            root,
+            left,
+            tip,
+            root_color,
+            leaf_color,
+            tip_color,
+            root_normal,
+            leaf_normal,
+            tip_normal,
+        )
+        world_triangle_foliage(
+            root,
+            tip,
+            right,
+            root_color,
+            tip_color,
+            leaf_color,
+            root_normal,
+            tip_normal,
+            leaf_normal,
+        )
+    }
+}
+
+world_foliage_ground_dapple :: proc(x, z, base_y, width, depth, rotation: f32, seed: u32) {
+    SEGMENTS :: 7
+    // Painted woodland floors need readable pools of bounced canopy light.
+    // Keep the irregular edge fully transparent, but lift the center enough
+    // to separate fern and trunk silhouettes from one uniform green plane.
+    center_color := rl.Color{184, 166, 86, 101}
+    if seed % 3 == 1 do center_color = {143, 154, 83, 92}
+    if seed % 3 == 2 do center_color = {197, 172, 91, 98}
+    edge_color := center_color
+    edge_color.a = 0
+    center := third_person.Vec3{x, base_y + .115, z}
+    points: [SEGMENTS]third_person.Vec3
+    for segment in 0 ..< SEGMENTS {
+        angle := rotation + f32(segment) * math.PI * 2 / SEGMENTS
+        irregularity := .82 + f32(math.sin(f64(f32(seed) * .019 + f32(segment) * 2.37))) * .18
+        points[segment] = {
+            x + math.cos(angle) * width * .5 * irregularity,
+            base_y + .11,
+            z + math.sin(angle) * depth * .5 * irregularity,
+        }
+    }
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        world_triangle_colored(points[segment], points[next], center, edge_color, edge_color, center_color)
+    }
+}
+
+world_foliage_lobe :: proc(
+    structure: terrain.Structure,
+    local_center_x, local_center_z, width, depth, height: f32,
+    base_lift: f32,
+    is_hedge: bool,
+    variation: int,
+    outline_angle: f32,
+    emit_outline: bool,
+) {
+    // Smooth normals cannot repair a faceted outer contour. Eighteen sides
+    // keep the long crown ridge and hanging skirt from resolving into obvious
+    // straight runs at eye level. The deterministic radius and height rhythm
+    // still does the silhouette design; the extra sides only let that rhythm
+    // describe a soft painted edge.
+    // Nearby crowns receive a finer silhouette while distant forest masses
+    // retain the cheaper contour. This spends vertices where scallops occupy
+    // multiple pixels instead of increasing every canopy in overview scenes.
+    MAX_SEGMENTS :: 30
+    segment_count := 18
+    lobe_world_x, lobe_world_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        local_center_x,
+        local_center_z,
+        structure.rotation,
+    )
+    camera_position := world_renderer.editor.camera_pose.position
+    camera_delta_x := camera_position.x - lobe_world_x
+    camera_delta_z := camera_position.z - lobe_world_z
+    camera_distance := f32(math.sqrt(f64(camera_delta_x * camera_delta_x + camera_delta_z * camera_delta_z)))
+    if camera_distance < 260 do segment_count = 24
+    if camera_distance < 145 do segment_count = MAX_SEGMENTS
+    PROFILE_RINGS :: 7
+    MAX_RINGS :: 10
+    ring_count := PROFILE_RINGS
+    if camera_distance < 260 do ring_count = 9
+    if camera_distance < 145 do ring_count = MAX_RINGS
+    is_forest_lobe := !is_hedge && max(structure.width, structure.depth) >= 105 && structure.height >= 58
+    if is_forest_lobe && camera_distance >= 260 {
+        // Dense stands contain dozens of tree-scale crowns. Eight sides and
+        // four sampled profile rings are enough once those crowns merge into
+        // a distant forest silhouette, while keeping the aggregate affordable.
+        segment_count = 8
+        ring_count = 4
+    }
+    // Near crowns keep the full medium and fine clump breakup; distant masses
+    // shed it so their silhouette stays a calm, inexpensive composition of the
+    // bold dominant bunches. The fade is continuous, so a crown morphs its
+    // surface detail smoothly rather than popping at an LOD band boundary.
+    clump_detail_fade := clamp((320 - camera_distance) / 175, 0, 1)
+    // Canopy lobes are broad layered shelves, not inflated spheres. The
+    // widest contour sits low, the upper shoulder stays full, and the shallow
+    // cap produces a painted crown plane instead of a pointed balloon.
+    ring_height := [PROFILE_RINGS]f32{.06, .15, .28, .43, .58, .71, .81}
+    ring_radius := [PROFILE_RINGS]f32{.70, .86, .98, 1.0, .92, .69, .44}
+    profile_width, profile_depth, profile_height := width, depth, height
+    irregularity_strength := f32(.14)
+    crown_base := f32(.90)
+    species := int(structure.seed % 3)
+    switch species {
+    case 1:
+        // Oak-like: a low, broad, rugged shelf with a full upper shoulder.
+        ring_height = {.05, .14, .26, .39, .52, .64, .75}
+        ring_radius = {.74, .88, .98, 1.0, .94, .74, .54}
+        profile_width *= 1.09
+        profile_depth *= 1.05
+        profile_height *= .90
+        irregularity_strength = .20
+        crown_base = .85
+    case 2:
+        // Laurel-like: tighter upright bunches with a steeper shoulder and
+        // smaller crown plane, useful as vertical accents in a mixed forest.
+        ring_height = {.07, .18, .32, .47, .63, .77, .86}
+        ring_radius = {.62, .82, .97, 1.0, .79, .52, .30}
+        profile_width *= .84
+        profile_depth *= .87
+        profile_height *= 1.12
+        irregularity_strength = .105
+        crown_base = .96
+    case:
+    // Rounded broadleaf is the balanced default.
+    }
+    if base_lift > 0 {
+        // Forest crowns join into broad, overlapping bough shelves. Keeping
+        // their widest contour high and flattening the crown prevents a grove
+        // from becoming a collection of upright gumdrops, while the stronger
+        // irregularity preserves distinct hand-painted crown gestures.
+        ring_height = {.04, .11, .21, .33, .46, .58, .69}
+        ring_radius = {.78, .90, .98, 1.0, .94, .78, .58}
+        profile_width *= 1.17
+        profile_depth *= 1.10
+        profile_height *= .79
+        irregularity_strength = max(irregularity_strength, f32(.18))
+        crown_base = .80
+        switch species {
+        case 1:
+            // Mature oak shelves stay especially broad and low, with a full
+            // shoulder and a gently recessed crown plane.
+            ring_height = {.03, .09, .17, .28, .40, .52, .64}
+            ring_radius = {.82, .93, .99, 1.0, .95, .79, .57}
+            crown_base = .75
+        case 2:
+            // Laurel-like forest crowns keep a narrower, rising outer gesture
+            // so mixed woods do not collapse into one repeated flat cushion.
+            ring_height = {.05, .14, .25, .39, .54, .68, .79}
+            ring_radius = {.70, .87, .98, 1.0, .87, .64, .40}
+            crown_base = .89
+        case:
+        // Balanced broadleaf keeps the shared forest shelf.
+        }
+    } else if is_hedge {
+        // A maintained hedge is one shallow rolling volume rather than a row
+        // of miniature trees. Preserve soft crown undulation while keeping
+        // the shoulders broad enough for neighboring lobes to disappear into.
+        ring_height = {.04, .10, .19, .31, .43, .55, .66}
+        ring_radius = {.80, .91, .98, 1.0, .94, .79, .58}
+        profile_width *= 1.08
+        profile_depth *= 1.04
+        profile_height *= .78
+        irregularity_strength = max(irregularity_strength, f32(.15))
+        crown_base = .76
+    }
+    // The seven authored profile points remain the shape authority. Nearby
+    // crowns interpolate two additional contours from that same curve instead
+    // of changing species proportions or procedural phases with LOD.
+    sampled_ring_height: [MAX_RINGS]f32
+    sampled_ring_radius: [MAX_RINGS]f32
+    for ring in 0 ..< ring_count {
+        profile_position := f32(ring) * f32(PROFILE_RINGS - 1) / f32(max(ring_count - 1, 1))
+        lower := clamp(int(profile_position), 0, PROFILE_RINGS - 1)
+        upper := min(lower + 1, PROFILE_RINGS - 1)
+        fraction := profile_position - f32(lower)
+        sampled_ring_height[ring] = ring_height[lower] + (ring_height[upper] - ring_height[lower]) * fraction
+        sampled_ring_radius[ring] = ring_radius[lower] + (ring_radius[upper] - ring_radius[lower]) * fraction
+    }
+    vertices: [MAX_RINGS][MAX_SEGMENTS]third_person.Vec3
+    normals: [MAX_RINGS][MAX_SEGMENTS]third_person.Vec3
+    // The signed clump field, sampled once per contour vertex, drives both the
+    // rounded three-dimensional bulges and the crevice ambient occlusion baked
+    // into the vertex colors, so the painted shade tracks the real mesh volume.
+    clump_field: [MAX_RINGS][MAX_SEGMENTS]f32
+    // One authored mass keeps a coherent species hue. Earlier per-lobe palette
+    // cycling made close trees read as a patchwork of unrelated teal, olive,
+    // and yellow polygons; lighting and brush marks already provide the
+    // necessary internal variation.
+    color_variation := int(structure.seed % 4)
+    if is_hedge {
+        // Dense clipped laurel lives in the cool palette families. Excluding
+        // the hot yellow variant separates hedges from flowering bushes and
+        // keeps a long formation from becoming one fluorescent stripe.
+        color_variation = structure.seed % 2 == 0 ? 0 : 3
+    }
+    if base_lift > 0 {
+        // Mature woods need broad color regions, not a checkerboard of random
+        // lime and teal crowns. A slow world-space field lets neighboring
+        // authored patches share a palette family while still drifting from
+        // cool recesses through green into warm olive crowns. The hottest
+        // yellow-green family remains available to standalone flowering
+        // bushes; across a mature canopy it overexposes broad eye-level faces
+        // and makes the underlying mesh transitions unnecessarily visible.
+        palette_field :=
+            f32(math.sin(f64(structure.center_x * .0092 + structure.center_z * .0049))) +
+            f32(math.sin(f64(structure.center_x * -.0037 + structure.center_z * .0081 + 1.7))) * .62
+        if palette_field < -.48 {
+            color_variation = 0
+        } else if palette_field < .16 {
+            color_variation = 3
+        } else if palette_field < .72 {
+            color_variation = 1
+        } else {
+            color_variation = 1
+        }
+    }
+
+    for ring in 0 ..< ring_count {
+        profile_ring := f32(ring) * f32(PROFILE_RINGS - 1) / f32(max(ring_count - 1, 1))
+        for segment in 0 ..< segment_count {
+            // Slightly twist each contour so the facets do not stack into
+            // continuous vertical seams. A deterministic phase keeps adjacent
+            // lobes from sharing the same outline.
+            contour_angle := f32(segment) * math.PI * 2 / f32(segment_count)
+            angle :=
+                contour_angle +
+                profile_ring * .075 +
+                f32(math.sin(f64(f32(variation) * 1.37 + profile_ring * 2.11))) * .045
+            // Three correlated octaves compose the crown as bold, rounded
+            // cumulus clumps with a clear big/medium/small nesting -- the
+            // Ghibli canopy read -- rather than one uniform scallop frequency.
+            // The dominant octave carves a few large bunches; the medium and
+            // fine octaves only break their edges, and both quieter octaves
+            // fade with distance so far masses stay calm while near crowns gain
+            // hand-painted volume without changing topology or vertex cost.
+            clump_dominant := f32(
+                math.sin(
+                    f64(f32(structure.seed) * .008 + f32(variation) * 1.63 + contour_angle * 1.8 + profile_ring * .42),
+                ),
+            )
+            clump_medium := f32(
+                math.sin(
+                    f64(f32(structure.seed) * .013 + f32(variation) * 2.11 + contour_angle * 3.9 - profile_ring * .63),
+                ),
+            )
+            clump_fine := f32(
+                math.sin(
+                    f64(f32(structure.seed) * .021 + f32(variation) * 2.67 + contour_angle * 7.1 + profile_ring * .94),
+                ),
+            )
+            clump :=
+                clump_dominant * .60 +
+                clump_medium * .28 * (.5 + .5 * clump_detail_fade) +
+                clump_fine * .14 * clump_detail_fade
+            clump_field[ring][segment] = clump
+            irregularity := 1 + clump * irregularity_strength
+            local_x := local_center_x + math.cos(angle) * profile_width * .5 * sampled_ring_radius[ring] * irregularity
+            local_z := local_center_z + math.sin(angle) * profile_depth * .5 * sampled_ring_radius[ring] * irregularity
+            world_x, world_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                local_x,
+                local_z,
+                structure.rotation,
+            )
+            contour_lift :=
+                f32(math.sin(f64(f32(structure.seed) * .007 + f32(variation) * 1.43 + contour_angle * 4.899))) *
+                profile_height *
+                (ring == 0 ? f32(.008) : f32(.026))
+            // Bulge crests dome outward and upward while troughs carve soft
+            // crevices, turning the wavy outline into rounded three-dimensional
+            // bunches. The dome weight peaks on the mid and upper shoulder and
+            // vanishes at the skirt so the hanging underside stays a clean
+            // shelf rather than a rippled ceiling.
+            dome_weight := sampled_ring_height[ring] * (1 - sampled_ring_height[ring]) * 4
+            contour_lift += clump * profile_height * dome_weight * .055
+            if base_lift > 0 && ring == 0 {
+                // The lowest forest contour carries uneven hanging bough
+                // pockets. A broad rhythm chooses the limbs while a smaller
+                // ripple keeps their tips leafy, breaking the tabletop
+                // underside without adding cards hidden inside the mesh.
+                broad_droop := f32(
+                    math.sin(f64(f32(structure.seed) * .017 + f32(variation) * 1.23 + contour_angle * 3.841)),
+                )
+                tip_droop := f32(
+                    math.sin(f64(f32(structure.seed) * .029 + f32(variation) * 2.07 + contour_angle * 7.369 + .8)),
+                )
+                droop_wave := clamp(.5 + broad_droop * .34 + tip_droop * .16, 0, 1)
+                contour_lift -= profile_height * (.010 + droop_wave * .068)
+            }
+            vertices[ring][segment] = {
+                world_x,
+                structure.base_y + base_lift + profile_height * sampled_ring_height[ring] + contour_lift,
+                world_z,
+            }
+            local_normal_x := math.cos(angle) * profile_height / max(profile_width, f32(.01))
+            local_normal_y := (sampled_ring_height[ring] - .30) * 1.68
+            local_normal_z := math.sin(angle) * profile_height / max(profile_depth, f32(.01))
+            if base_lift > 0 {
+                // Nearby forest lobes should share the lighting flow of their
+                // parent crown. Blend each small ellipsoid normal toward a
+                // broad formation normal so overlaps read as leafy bunches,
+                // not colliding independently lit balls.
+                mass_normal_x := local_x * structure.height * 2 / max(structure.width * structure.width, f32(.01))
+                mass_normal_z := local_z * structure.height * 2 / max(structure.depth * structure.depth, f32(.01))
+                local_normal_x += (mass_normal_x - local_normal_x) * .46
+                local_normal_z += (mass_normal_z - local_normal_z) * .46
+            }
+            cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
+            normals[ring][segment] = vec_normalize(
+                {
+                    local_normal_x * cosine - local_normal_z * sine,
+                    local_normal_y,
+                    local_normal_x * sine + local_normal_z * cosine,
+                },
+            )
+        }
+    }
+
+    base_x, base_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        local_center_x,
+        local_center_z,
+        structure.rotation,
+    )
+    base_fraction := f32(.065)
+    if base_lift > 0 {
+        // Lift the middle of an elevated crown's underside into a shallow
+        // bowl. A flat center at the perimeter height created broad black
+        // shelves when trees were viewed from below; this curved closure
+        // keeps the deep pocket while allowing a soft value roll toward it.
+        base_fraction = .115
+    }
+    base := third_person.Vec3{base_x, structure.base_y + base_lift + profile_height * base_fraction, base_z}
+    for segment in 0 ..< segment_count {
+        next := (segment + 1) % segment_count
+        if base_lift > 0 {
+            world_triangle_foliage(
+                vertices[0][next],
+                base,
+                vertices[0][segment],
+                world_foliage_clump_color(0, color_variation, clump_field[0][next]),
+                {39, 66, 48, 255},
+                world_foliage_clump_color(0, color_variation, clump_field[0][segment]),
+                normals[0][next],
+                {0, -1, 0},
+                normals[0][segment],
+            )
+        } else {
+            world_triangle(vertices[0][next], base, vertices[0][segment], {34, 61, 45, 255})
+        }
+    }
+
+    for ring in 0 ..< ring_count - 1 {
+        lower_palette_ring := clamp(
+            int(f32(ring) * f32(PROFILE_RINGS - 1) / f32(max(ring_count - 1, 1)) + .5),
+            0,
+            PROFILE_RINGS - 1,
+        )
+        upper_palette_ring := clamp(
+            int(f32(ring + 1) * f32(PROFILE_RINGS - 1) / f32(max(ring_count - 1, 1)) + .5),
+            0,
+            PROFILE_RINGS - 1,
+        )
+        for segment in 0 ..< segment_count {
+            next := (segment + 1) % segment_count
+            // Paint soft ambient occlusion into the troughs between clumps and
+            // a restrained warm lift onto their crests, per contour vertex, so
+            // the grouped shade is anchored to the real mesh bulges instead of
+            // a detached noise field. This is the crevice read that gives the
+            // near canopy its rounded, hand-painted volume.
+            lower_here := world_foliage_clump_color(lower_palette_ring, color_variation, clump_field[ring][segment])
+            lower_next := world_foliage_clump_color(lower_palette_ring, color_variation, clump_field[ring][next])
+            upper_here := world_foliage_clump_color(
+                upper_palette_ring,
+                color_variation,
+                clump_field[ring + 1][segment],
+            )
+            upper_next := world_foliage_clump_color(upper_palette_ring, color_variation, clump_field[ring + 1][next])
+            world_triangle_foliage(
+                vertices[ring][segment],
+                vertices[ring + 1][segment],
+                vertices[ring + 1][next],
+                lower_here,
+                upper_here,
+                upper_next,
+                normals[ring][segment],
+                normals[ring + 1][segment],
+                normals[ring + 1][next],
+            )
+            world_triangle_foliage(
+                vertices[ring][segment],
+                vertices[ring + 1][next],
+                vertices[ring][next],
+                lower_here,
+                upper_next,
+                lower_next,
+                normals[ring][segment],
+                normals[ring + 1][next],
+                normals[ring][next],
+            )
+        }
+    }
+
+    crown_x, crown_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        local_center_x + profile_width * f32(math.sin(f64(f32(variation) * 2.3))) * .035,
+        local_center_z + profile_depth * f32(math.cos(f64(f32(variation) * 1.7))) * .035,
+        structure.rotation,
+    )
+    crown_fraction := crown_base + f32(math.sin(f64(f32(structure.seed) * .005 + f32(variation) * 1.61))) * .035
+    crown := third_person.Vec3{crown_x, structure.base_y + base_lift + profile_height * crown_fraction, crown_z}
+    for segment in 0 ..< segment_count {
+        next := (segment + 1) % segment_count
+        world_triangle_foliage(
+            vertices[ring_count - 1][segment],
+            crown,
+            vertices[ring_count - 1][next],
+            world_foliage_clump_color(PROFILE_RINGS - 1, color_variation, clump_field[ring_count - 1][segment]),
+            world_foliage_vertex_color(PROFILE_RINGS - 1, color_variation),
+            world_foliage_clump_color(PROFILE_RINGS - 1, color_variation, clump_field[ring_count - 1][next]),
+            normals[ring_count - 1][segment],
+            {0, 1, 0},
+            normals[ring_count - 1][next],
+        )
+    }
+
+    // The atlas is primarily a silhouette accent. Perimeter boughs carry the
+    // large sprays; clipped hedges also receive a few much smaller translucent
+    // face clusters below so their long front plane does not stay textureless.
+    if emit_outline {
+        local_x := local_center_x + math.cos(outline_angle) * profile_width * .64
+        local_z := local_center_z + math.sin(outline_angle) * profile_depth * .64
+        card_x, card_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
+        focal_length := f32(1.35)
+        if world_renderer.editor.in_map && driving_aircraft(world_renderer.editor) {
+            focal_length = world_renderer.editor.flight_camera.focal_length
+        }
+        camera := perspective_camera(world_renderer.editor.camera_pose, focal_length)
+        to_camera_x := camera.position.x - card_x
+        to_camera_z := camera.position.z - card_z
+        to_camera_length := max(f32(.001), f32(math.sqrt(f64(to_camera_x * to_camera_x + to_camera_z * to_camera_z))))
+        outward_angle := outline_angle + structure.rotation
+        view_alignment := math.abs(
+            math.cos(outward_angle) * to_camera_x / to_camera_length +
+            math.sin(outward_angle) * to_camera_z / to_camera_length,
+        )
+
+        // Only side-on perimeter boughs break the screen-space silhouette.
+        // Front-facing billboards would lie across the crown and read as giant
+        // flat polygons when the camera approaches tree height. The near band
+        // is now admitted -- down to a few crown radii away -- so walking-height
+        // and understory views gain a soft leafy contour instead of the bare
+        // triangulated mesh edge. It stays side-on and is eased in very small,
+        // so the sprig sits on the silhouette rather than sheeting across it,
+        // and because only nearby lobes qualify the card budget stays bounded
+        // (overview forest and stress scenes keep the existing far-only path).
+        if view_alignment < .68 && to_camera_length > 34 {
+            card_scale_factor := f32(.255 + f32(variation % 3) * .018)
+            if is_hedge do card_scale_factor = .225 + f32(variation % 3) * .016
+            if !is_hedge && base_lift <= 0 {
+                card_scale_factor = .292 + f32(variation % 3) * .018
+            }
+            // Cards ease in small near the camera as leafy contour nicks, reach
+            // full silhouette-breaking size by mid distance, and hold there.
+            near_mix := clamp((to_camera_length - 34) / 78, 0, 1)
+            far_mix := clamp((to_camera_length - 112) / 82, 0, 1)
+            distance_scale := .52 + near_mix * .24 + far_mix * .24
+            card_scale := card_scale_factor * max(profile_width, profile_depth)
+            card_scale *= distance_scale
+            card_y := structure.base_y + base_lift + profile_height * (.51 + f32(variation % 3) * .032)
+            world_foliage_card(
+                {card_x, card_y, card_z},
+                card_scale,
+                card_scale * .82,
+                variation * 5 + 7,
+                world_foliage_vertex_color(3, color_variation),
+                (variation + int(structure.seed)) % 2 == 0,
+            )
+
+            // A smaller offset spray turns the single cutout into an uneven
+            // leafy bunch. Offset both outward and along the contour so the
+            // pair overlaps near its branch bases but separates at the tips,
+            // breaking the parent mesh silhouette at two different scales.
+            tangent_x, tangent_z := -math.sin(outward_angle), math.cos(outward_angle)
+            echo_side := (variation + int(structure.seed)) % 2 == 0 ? f32(1) : f32(-1)
+            echo_x := card_x + math.cos(outward_angle) * card_scale * .10 + tangent_x * card_scale * .17 * echo_side
+            echo_z := card_z + math.sin(outward_angle) * card_scale * .10 + tangent_z * card_scale * .17 * echo_side
+            echo_scale := card_scale * (.63 + f32(variation % 2) * .055)
+            world_foliage_card(
+                {echo_x, card_y + card_scale * (.09 + f32(variation % 3) * .018), echo_z},
+                echo_scale,
+                echo_scale * .88,
+                variation * 7 + 3,
+                world_foliage_vertex_color(2, color_variation + 1),
+                (variation + int(structure.seed)) % 2 != 0,
+            )
+
+            // Alternating mature-forest boughs receive one inverted lower
+            // spray. Its branch base stays buried in the dark shelf while the
+            // painted tips trail below, breaking the long canopy-ceiling edge
+            // without filling the open understory with billboard cards.
+            hanging_selected := base_lift > 0 && to_camera_length > 76
+            if hanging_selected {
+                hanging_scale := card_scale * (.57 + f32(variation % 3) * .028)
+                hanging_side := variation % 2 == 0 ? f32(1) : f32(-1)
+                hanging_x :=
+                    card_x + math.cos(outward_angle) * card_scale * .055 + tangent_x * card_scale * .11 * hanging_side
+                hanging_z :=
+                    card_z + math.sin(outward_angle) * card_scale * .055 + tangent_z * card_scale * .11 * hanging_side
+                world_foliage_card(
+                    {
+                        hanging_x,
+                        structure.base_y + base_lift + profile_height * (.175 + f32(variation % 2) * .026),
+                        hanging_z,
+                    },
+                    hanging_scale,
+                    hanging_scale * 1.18,
+                    variation * 11 + 5,
+                    world_foliage_vertex_color(2, color_variation),
+                    hanging_side < 0,
+                    true,
+                )
+            }
+        }
+
+        hedge_face_selected :=
+            is_hedge && to_camera_length > 72 && to_camera_length < 430 && (variation + int(structure.seed)) % 2 == 0
+        if hedge_face_selected {
+            // Push the accent onto the camera-facing shoulder so depth testing
+            // attaches it to the solid crown instead of hiding it inside the
+            // lobe. Partial opacity and alternating placement keep these as
+            // broken leaf suggestions rather than a repeated decal strip.
+            face_offset := min(profile_width, profile_depth) * .47
+            face_x := lobe_world_x + to_camera_x / to_camera_length * face_offset
+            face_z := lobe_world_z + to_camera_z / to_camera_length * face_offset
+            face_scale := min(profile_width, profile_depth) * (.235 + f32(variation % 3) * .016)
+            face_tint := world_foliage_vertex_color(3, color_variation)
+            face_tint.a = 198
+            world_foliage_card(
+                {face_x, structure.base_y + profile_height * (.49 + f32(variation % 3) * .045), face_z},
+                face_scale,
+                face_scale * .78,
+                variation * 13 + 9,
+                face_tint,
+                (variation + int(structure.seed)) % 4 == 0,
+            )
+        }
+
+        bush_face_selected :=
+            !is_hedge &&
+            base_lift <= 0 &&
+            to_camera_length > 78 &&
+            to_camera_length < 430 &&
+            (variation + int(structure.seed)) % 3 != 0
+        if bush_face_selected {
+            // Standalone bushes can carry a little more leaf-scale surface
+            // rhythm than distant forest masses. Keep the accents small and
+            // translucent so several read as one painted bunch, not stickers.
+            face_offset := min(profile_width, profile_depth) * .46
+            face_x := lobe_world_x + to_camera_x / to_camera_length * face_offset
+            face_z := lobe_world_z + to_camera_z / to_camera_length * face_offset
+            face_scale := min(profile_width, profile_depth) * (.19 + f32(variation % 3) * .014)
+            face_tint := world_foliage_vertex_color(3, color_variation)
+            face_tint.a = 186
+            world_foliage_card(
+                {face_x, structure.base_y + profile_height * (.50 + f32(variation % 3) * .042), face_z},
+                face_scale,
+                face_scale * .84,
+                variation * 17 + 1,
+                face_tint,
+                (variation + int(structure.seed)) % 2 == 0,
+            )
+        }
+    }
+}
+
+world_foliage_formation :: proc(structure: terrain.Structure) {
+    width := max(structure.width, terrain.BASE_CELL_SIZE)
+    depth := max(structure.depth, terrain.BASE_CELL_SIZE)
+    wide, narrow := max(width, depth), min(width, depth)
+    aspect := wide / max(narrow, f32(.01))
+    is_forest := aspect < 1.8 && wide >= 105 && structure.height >= 58
+    // Keep forest patches dense by filling their area with tree-scale trees,
+    // rather than stretching a handful of crowns across the footprint.
+    forest_tree_count := is_forest ? clamp(int(width * depth / 460), 24, 36) : 0
+    // A forest formation is a grove footprint, not one gigantic tree. Keep
+    // the leaf ceiling around four character heights while individual crown
+    // clusters supply the remaining tree height.
+    canopy_lift := is_forest ? structure.height * .11 : f32(0)
+
+    if is_forest {
+        camera_position := world_renderer.editor.camera_pose.position
+        camera_dx := camera_position.x - structure.center_x
+        camera_dz := camera_position.z - structure.center_z
+        formation_distance :=
+            f32(math.sqrt(f64(camera_dx * camera_dx + camera_dz * camera_dz)))
+        walking_distance := formation_distance < 260
+        dapple_count := 7
+        for dapple in 0 ..< dapple_count {
+            angle := f32(dapple) * 2.399963 + f32(structure.seed % 149) * .026
+            radial := .12 + f32((dapple * 5 + 2) % 9) / 8 * .30
+            local_x := math.cos(angle) * width * radial
+            local_z := math.sin(angle) * depth * radial
+            dapple_x, dapple_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                local_x,
+                local_z,
+                structure.rotation,
+            )
+            dapple_width := 13.0 + f32(dapple % 3) * 5.5
+            dapple_depth := 9.5 + f32((dapple + 1) % 3) * 4.0
+            dapple_rotation := angle * .47 + structure.rotation
+            world_foliage_ground_dapple(
+                dapple_x,
+                dapple_z,
+                structure.base_y,
+                dapple_width,
+                dapple_depth,
+                dapple_rotation,
+                structure.seed + u32(dapple * 1699),
+            )
+            // A smaller overlapping echo breaks the radial fan into a loose
+            // painted pool. Offset it across the main ellipse rather than
+            // scattering another isolated dot, so their shared center gains
+            // light while the combined outer edge stays irregular and soft.
+            echo_angle := dapple_rotation + 1.17 + f32(dapple % 2) * .41
+            echo_x := dapple_x + math.cos(echo_angle) * dapple_width * .22
+            echo_z := dapple_z + math.sin(echo_angle) * dapple_depth * .22
+            world_foliage_ground_dapple(
+                echo_x,
+                echo_z,
+                structure.base_y + .006,
+                dapple_width * (.61 + f32(dapple % 2) * .07),
+                dapple_depth * (.66 - f32(dapple % 2) * .05),
+                dapple_rotation - .58,
+                structure.seed + u32(dapple * 1699 + 947),
+            )
+        }
+
+        understory_count := clamp(forest_tree_count * 2 / 3, 16, 24)
+        if walking_distance {
+            understory_count = clamp(forest_tree_count, 24, 32)
+        }
+        for tuft in 0 ..< understory_count {
+            angle := f32(tuft) * 2.399963 + f32(structure.seed % 127) * .029
+            radial := .28 + f32((tuft * 7) % 9) / 8 * .25
+            local_x := math.cos(angle) * width * radial
+            local_z := math.sin(angle) * depth * radial
+            tuft_x, tuft_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                local_x,
+                local_z,
+                structure.rotation,
+            )
+            // Human-scale fern colonies: broad enough to read from the editor
+            // camera, but roughly knee-to-chest high in third person.
+            // Each placement represents an overlapping fern colony, not one
+            // enormous plant: widen the fan while retaining human-scale
+            // frond height so ground cover reads as painted patches.
+            tuft_width := 2.05 + f32(tuft % 4) * .38
+            tuft_height := 1.05 + f32((tuft + 2) % 5) * .22
+            tuft_gesture := tuft % 4
+            if tuft_gesture == 0 || tuft_gesture == 1 {
+                // Broad, low fern fans are the dominant ground gesture. This
+                // avoids a floor full of narrow conifer-like spikes while
+                // preserving layered silhouettes between the trunks.
+                tuft_width *= 1.28
+                tuft_height *= .76
+            } else if tuft_gesture == 3 {
+                // Occasional upright clumps punctuate the fan rhythm without
+                // becoming the default understory silhouette.
+                tuft_width *= .90
+                tuft_height *= 1.10
+            }
+            world_foliage_understory_tuft(
+                tuft_x,
+                tuft_z,
+                structure.base_y,
+                tuft_width,
+                tuft_height,
+                structure.seed + u32(tuft * 1301),
+            )
+        }
+
+        // A quieter layer of low broadleaf rosettes bridges the empty ground
+        // between fern fans. Their separate spiral and smaller radial range
+        // produce loose colonies rather than a uniformly stamped carpet.
+        ground_cover_count := clamp(forest_tree_count * 3 / 4, 18, 27)
+        if walking_distance {
+            ground_cover_count = clamp(forest_tree_count + 8, 30, 44)
+        }
+        for cover in 0 ..< ground_cover_count {
+            angle := f32(cover) * 2.399963 + f32(structure.seed % 163) * .021 + .83
+            radial := .09 + f32((cover * 5 + 3) % 11) / 10 * .41
+            local_x := math.cos(angle) * width * radial
+            local_z := math.sin(angle) * depth * radial
+            cover_x, cover_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                local_x,
+                local_z,
+                structure.rotation,
+            )
+            cover_width := 1.25 + f32(cover % 4) * .28
+            cover_height := .28 + f32((cover + 2) % 3) * .08
+            world_foliage_ground_rosette(
+                cover_x,
+                cover_z,
+                structure.base_y,
+                cover_width,
+                cover_height,
+                structure.seed + u32(cover * 1877 + 431),
+            )
+        }
+
+        // A low-discrepancy spiral makes a dense natural stand without rows.
+        trunk_count := forest_tree_count
+        for trunk in 0 ..< trunk_count {
+            angle := f32(trunk) * 2.399963 + f32(structure.seed % 91) * .041
+            radial := .06 + .43 * f32(math.sqrt(f64((f32(trunk) + .5) / f32(max(trunk_count, 1)))))
+            local_x := math.cos(angle) * width * radial
+            local_z := math.sin(angle) * depth * radial
+            trunk_x, trunk_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                local_x,
+                local_z,
+                structure.rotation,
+            )
+            height_noise := .5 + .5 * f32(math.sin(f64(f32(structure.seed) * .013 + f32(trunk) * 1.73)))
+            tree_canopy_lift := structure.height * (.075 + height_noise * .055)
+            trunk_height := tree_canopy_lift + structure.height * (.040 + height_noise * .012)
+            trunk_radius := max(
+                f32(.42),
+                min(width, depth) *
+                (.0045 + (.5 + .5 * f32(math.sin(f64(f32(structure.seed) * .031 + f32(trunk) * 2.53)))) * .0025),
+            )
+            world_foliage_trunk(
+                trunk_x,
+                trunk_z,
+                structure.base_y,
+                trunk_height,
+                trunk_radius,
+                structure.seed + u32(trunk * 977),
+            )
+        }
+    }
+
+    if aspect >= 1.8 {
+        // Long gestures become hedges. Shorter, more numerous crowns overlap
+        // into a continuous mass while exposing a readable scalloped rhythm;
+        // the earlier four very long lobes merged into smooth sausages.
+        lobe_count := clamp(int(wide / max(narrow * 1.15, f32(1))) + 3, 4, 8)
+        // A low recessed binder closes the dark gaps between crown beats. Most
+        // of it remains concealed by the scallops, preserving one continuous
+        // hedge gesture without returning to a single exposed sausage.
+        binder_width, binder_depth := wide * .88, narrow * .76
+        if depth > width do binder_width, binder_depth = binder_depth, binder_width
+        world_foliage_lobe(structure, 0, 0, binder_width, binder_depth, structure.height * .44, 0, true, 19, 0, false)
+        for lobe in 0 ..< lobe_count {
+            fraction := (f32(lobe) + .5) / f32(lobe_count)
+            along :=
+                (fraction - .5) * wide * .82 +
+                f32(math.sin(f64(f32(structure.seed) * .013 + f32(lobe) * 1.77))) * wide / f32(lobe_count) * .08
+            cross := f32(math.sin(f64(f32(structure.seed) * .009 + f32(lobe) * 2.41))) * narrow * .12
+            local_x, local_z := along, cross
+            crown_scale := .90 + (.5 + .5 * f32(math.sin(f64(f32(structure.seed) * .027 + f32(lobe) * 1.87)))) * .20
+            if lobe == int(structure.seed % u32(lobe_count)) do crown_scale *= 1.14
+            lobe_width := max(wide / f32(lobe_count) * 1.72, narrow * 1.04) * crown_scale
+            lobe_depth :=
+                narrow *
+                (.92 + f32(math.sin(f64(f32(structure.seed) * .021 + f32(lobe) * 1.31))) * .065) *
+                (.96 + (crown_scale - 1) * .38)
+            if depth > width {
+                local_x, local_z = cross, along
+                lobe_width, lobe_depth = lobe_depth, lobe_width
+            }
+            lobe_height :=
+                structure.height *
+                (.68 + f32(math.sin(f64(f32(structure.seed) * .017 + f32(lobe) * 1.63))) * .085) *
+                (.95 + (crown_scale - 1) * .32)
+            outward := f32(math.PI * .5)
+            if depth > width do outward = 0
+            if lobe % 2 != 0 do outward += math.PI
+            world_foliage_lobe(
+                structure,
+                local_x,
+                local_z,
+                lobe_width,
+                lobe_depth,
+                lobe_height,
+                0,
+                true,
+                lobe,
+                outward,
+                true,
+            )
+        }
+        return
+    }
+
+    // Broad gestures become bushes or forest canopy patches. A deterministic
+    // dominant crown and an opposing concave opening give each gesture a
+    // composed silhouette instead of an evenly filled radial blob.
+    lobe_count := clamp(int(wide / (terrain.BASE_CELL_SIZE * 1.5)) + 5, 5, 9)
+    if is_forest do lobe_count = forest_tree_count
+    outer_count := max(lobe_count - 1, 1)
+    dominant_lobe := 1 + int(structure.seed % u32(outer_count))
+    seed_phase := f32(structure.seed % 97) * .031
+    dominant_angle := f32(dominant_lobe - 1) * 2.399963 + seed_phase
+    opening_angle := dominant_angle + math.PI
+    for lobe in 0 ..< lobe_count {
+        local_x, local_z := f32(0), f32(0)
+        radial := f32(0)
+        angle := f32(0)
+        opening_strength := f32(0)
+        if lobe > 0 {
+            angle = f32(lobe - 1) * 2.399963 + seed_phase
+            radial = .18 + .27 * f32(math.sqrt(f64(f32(lobe) / f32(outer_count))))
+            opening_delta := angle - opening_angle
+            opening_distance := math.abs(math.atan2(math.sin(opening_delta), math.cos(opening_delta)))
+            opening_strength = clamp(1 - opening_distance / .72, 0, 1)
+            radial += opening_strength * .055
+            if is_forest {
+                // Forest positions are composed below from a shared tree
+                // center plus one of three overlapping crown offsets. The
+                // bush-specific concave opening must not shrink one crown in
+                // every tree cluster.
+                opening_strength = 0
+            }
+        }
+        // The center only binds the patch together; it should not become one
+        // dominant balloon. Mid-sized perimeter crowns now carry the canopy.
+        scale := is_forest ? f32(.085) : f32(.59)
+        if lobe > 0 {
+            scale = .40 + (.5 + .5 * f32(math.sin(f64(f32(structure.seed) * .019 + f32(lobe) * 1.87)))) * .20
+            if is_forest {
+                scale = .075 + (.5 + .5 * f32(math.sin(f64(f32(structure.seed) * .019 + f32(lobe) * 1.87)))) * .035
+            }
+            scale *= 1 - opening_strength * .34
+        }
+        height_fraction := is_forest ? f32(.17) : f32(.80)
+        if lobe > 0 {
+            height_fraction = .62 + f32(math.sin(f64(f32(structure.seed) * .013 + f32(lobe) * 1.71))) * .15
+            if is_forest {
+                height_fraction = .15 + f32(math.sin(f64(f32(structure.seed) * .013 + f32(lobe) * 1.71))) * .028
+            }
+        }
+        height_fraction *= 1 - opening_strength * .18
+        if lobe == dominant_lobe {
+            scale *= 1.16
+            height_fraction *= 1.20
+            radial *= .92
+        }
+        if lobe > 0 {
+            if is_forest {
+                // One irregular crown per trunk preserves density without
+                // tripling the tessellation cost of every tree.
+                tree_index := lobe
+                tree_angle := f32(tree_index) * 2.399963 + f32(structure.seed % 91) * .041
+                tree_radial := .06 + .43 * f32(math.sqrt(f64((f32(tree_index) + .5) / f32(max(forest_tree_count, 1)))))
+                local_x = math.cos(tree_angle) * width * tree_radial
+                local_z = math.sin(tree_angle) * depth * tree_radial
+                angle = math.atan2(local_z / depth, local_x / width)
+            } else {
+                local_x = math.cos(angle) * width * radial
+                local_z = math.sin(angle) * depth * radial
+            }
+        } else if is_forest {
+            tree_angle := f32(structure.seed % 91) * .041
+            tree_radial := .06 + .43 * f32(math.sqrt(f64(.5 / f32(max(forest_tree_count, 1)))))
+            local_x = math.cos(tree_angle) * width * tree_radial
+            local_z = math.sin(tree_angle) * depth * tree_radial
+            angle = math.atan2(local_z / depth, local_x / width)
+            scale = .075 + (.5 + .5 * f32(math.sin(f64(f32(structure.seed) * .019)))) * .035
+            height_fraction = .15 + f32(math.sin(f64(f32(structure.seed) * .013))) * .028
+        }
+        lobe_height := structure.height * height_fraction
+        outward := f32(0)
+        if lobe > 0 do outward = math.atan2(local_z / depth, local_x / width)
+        lobe_base_lift := canopy_lift
+        if is_forest {
+            // Layer saplings, middle crowns, and mature trees into one dense
+            // stand. The matching expression in the trunk pass keeps every
+            // crown attached to its own trunk.
+            height_noise := .5 + .5 * f32(math.sin(f64(f32(structure.seed) * .013 + f32(lobe) * 1.73)))
+            lobe_base_lift = structure.height * (.075 + height_noise * .055)
+            lobe_height *= .82 + height_noise * .30
+        }
+        lobe_width, lobe_depth := width * scale, depth * scale
+        lobe_structure := structure
+        if is_forest {
+            // A tree crown has its own dimensions; it must not inherit the
+            // aspect ratio of the authored forest footprint. Per-tree seed
+            // variation also mixes crown profiles and green families across
+            // the stand instead of tinting the whole patch as one species.
+            crown_noise := .5 + .5 * f32(math.sin(f64(f32(structure.seed) * .029 + f32(lobe) * 2.17)))
+            crown_span := structure.height * (.17 + crown_noise * .075)
+            crown_aspect := .84 + (.5 + .5 * f32(math.sin(f64(f32(structure.seed) * .041 + f32(lobe) * 1.31)))) * .34
+            lobe_width = crown_span * crown_aspect
+            lobe_depth = crown_span / crown_aspect
+            lobe_structure.seed += u32(lobe * 977)
+        }
+        world_foliage_lobe(
+            lobe_structure,
+            local_x,
+            local_z,
+            lobe_width,
+            lobe_depth,
+            lobe_height,
+            lobe_base_lift,
+            false,
+            lobe,
+            outward,
+            lobe > 0,
+        )
+    }
+}
+
 world_formation_top_fraction :: proc(structure: terrain.Structure, local_x, local_z: f32) -> f32 {
     if structure.kind == .Cliff {
         // Cliff tops follow the same segmented, lightly broken profile as the
@@ -1405,11 +3278,24 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
         bush_width := clamp(structure.depth * .50, 1.8, 10.0)
         bush_depth := clamp(structure.depth * .38, 1.3, 7.0)
         bush_height := clamp(structure.height * (.22 + f32(tuft % 3) * .035), 2.5, 10.0)
+        // Cliff and ridge tufts now share the canopy palette, foliage normals,
+        // and painterly lighting so a rocky shoulder reads with the same
+        // rounded, warm-crowned Ghibli bushes as the lowland crowns. The vertex
+        // count is unchanged from the former flat mound: six-sided shoulder and
+        // crown rings plus a cap and one taller blade.
+        variation := int((structure.seed + u32(tuft)) % 4)
         bottom: [6]third_person.Vec3
         top: [6]third_person.Vec3
+        bottom_normal: [6]third_person.Vec3
+        top_normal: [6]third_person.Vec3
+        clump: [6]f32
         for segment in 0 ..< 6 {
             angle := f32(segment) * math.PI * 2 / 6
-            jitter_scale := 1 + f32(math.sin(f64(f32(structure.seed) * .009 + f32(tuft) * 1.7 + f32(segment)))) * .12
+            // One rounded lobe wave per tuft carves the shoulder into a few
+            // soft bunches and drives the same crevice shading as the crowns.
+            lobe_wave := f32(math.sin(f64(f32(structure.seed) * .017 + f32(tuft) * 1.9 + angle * 2.0)))
+            clump[segment] = lobe_wave
+            jitter_scale := 1 + lobe_wave * .16
             local_bx := local_x + math.cos(angle) * bush_width * jitter_scale
             local_bz := local_z + math.sin(angle) * bush_depth * jitter_scale
             world_bx, world_bz := world_rotate_xz(
@@ -1420,20 +3306,51 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
                 structure.rotation,
             )
             bottom[segment] = {world_bx, base_y, world_bz}
+            // Keep the crown ring broad and let the crest lift it so the mound
+            // domes into a rounded bush instead of tapering toward a cone.
+            top_scale := .70 + lobe_wave * .06
             world_tx, world_tz := world_rotate_xz(
                 structure.center_x,
                 structure.center_z,
-                local_x + math.cos(angle) * bush_width * .58,
-                local_z + math.sin(angle) * bush_depth * .58,
+                local_x + math.cos(angle) * bush_width * top_scale,
+                local_z + math.sin(angle) * bush_depth * top_scale,
                 structure.rotation,
             )
-            top[segment] = {world_tx, base_y + bush_height * .62, world_tz}
+            top[segment] = {world_tx, base_y + bush_height * (.60 + lobe_wave * .06), world_tz}
+            nx, nz := math.cos(angle), math.sin(angle)
+            // A near-horizontal shoulder normal keeps the base anchored (the
+            // canopy wind weight rides normal.y), while the crown ring faces up.
+            bottom_normal[segment] = vec_normalize({nx, .06, nz})
+            top_normal[segment] = vec_normalize({nx * .62, 1.0, nz * .62})
         }
         for segment in 0 ..< 6 {
             next := (segment + 1) % 6
-            bush_color := segment % 2 == 0 ? rl.Color{67, 94, 38, 255} : rl.Color{91, 119, 44, 255}
-            world_triangle(bottom[segment], bottom[next], top[next], bush_color)
-            world_triangle(bottom[segment], top[next], top[segment], bush_color)
+            lower_here := world_foliage_clump_color(1, variation, clump[segment])
+            lower_next := world_foliage_clump_color(1, variation, clump[next])
+            upper_here := world_foliage_clump_color(4, variation, clump[segment])
+            upper_next := world_foliage_clump_color(4, variation, clump[next])
+            world_triangle_foliage(
+                bottom[segment],
+                bottom[next],
+                top[next],
+                lower_here,
+                lower_next,
+                upper_next,
+                bottom_normal[segment],
+                bottom_normal[next],
+                top_normal[next],
+            )
+            world_triangle_foliage(
+                bottom[segment],
+                top[next],
+                top[segment],
+                lower_here,
+                upper_next,
+                upper_here,
+                bottom_normal[segment],
+                top_normal[next],
+                top_normal[segment],
+            )
         }
         bush_cap := third_person.Vec3{0, base_y + bush_height, 0}
         bush_cap.x, bush_cap.z = world_rotate_xz(
@@ -1443,8 +3360,20 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
             local_z,
             structure.rotation,
         )
+        cap_color := world_foliage_vertex_color(6, variation)
         for segment in 0 ..< 6 {
-            world_triangle(top[segment], bush_cap, top[(segment + 1) % 6], {118, 143, 57, 255})
+            next := (segment + 1) % 6
+            world_triangle_foliage(
+                top[segment],
+                bush_cap,
+                top[next],
+                world_foliage_clump_color(5, variation, clump[segment]),
+                cap_color,
+                world_foliage_clump_color(5, variation, clump[next]),
+                top_normal[segment],
+                {0, 1, 0},
+                top_normal[next],
+            )
         }
 
         // A few taller blades break up the mound silhouette and keep the foliage
@@ -1475,8 +3404,21 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
         base_left := third_person.Vec3{left_x, base_y, left_z}
         base_right := third_person.Vec3{right_x, base_y, right_z}
         tip := third_person.Vec3{tip_x, base_y + blade_height, tip_z}
-        foliage := tuft % 2 == 0 ? rl.Color{54, 111, 67, 255} : rl.Color{72, 132, 76, 255}
-        world_triangle(base_left, tip, base_right, foliage)
+        blade_base := world_foliage_vertex_color(2, variation)
+        blade_tip := world_foliage_vertex_color(5, variation)
+        blade_base_normal := vec_normalize({0, .25, -1})
+        blade_front_normal := vec_normalize({0, .25, 1})
+        world_triangle_foliage(
+            base_left,
+            tip,
+            base_right,
+            blade_base,
+            blade_tip,
+            blade_base,
+            blade_base_normal,
+            {0, 1, 0},
+            blade_front_normal,
+        )
     }
 }
 
@@ -1600,6 +3542,15 @@ world_structures :: proc(editor: ^Editor) {
     }
     for index in 0 ..< editor.project.structure_count {
         structure := editor.project.structures[index]
+        if editor.architecture_painting &&
+           structure.kind == .Architecture &&
+           architecture.city_bounds_contains(
+               architecture.city_bounds_expand(editor.architecture_dirty_bounds, 48),
+               structure.center_x,
+               structure.center_z,
+           ) {
+            continue
+        }
         world_formation(structure)
         if index == editor.structure_selected && !editor.in_map && !editor.road_mode {
             world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
@@ -1612,22 +3563,44 @@ world_structures :: proc(editor: ^Editor) {
     }
     world_curve_preview(editor)
     if editor.architecture_painting {
-        min_x := min(editor.architecture_paint_start_x, editor.architecture_paint_end_x)
-        max_x := max(editor.architecture_paint_start_x, editor.architecture_paint_end_x)
-        min_z := min(editor.architecture_paint_start_z, editor.architecture_paint_end_z)
-        max_z := max(editor.architecture_paint_start_z, editor.architecture_paint_end_z)
-        samples := architecture.poisson_samples(min_x, min_z, max_x, max_z, editor.architecture_sample_radius, 0xA71D3)
-        for point in samples.points[:samples.count] {
-            base := terrain.sample_height(&editor.project, 0, point.x, point.z)
-            preview := terrain.structure_make(point.x, point.z, 8, 8, base, editor.architecture_building_height)
-            preview.kind = .Architecture
-            preview.color = {168, 239, 220, 255}
+        for candidate in editor.architecture_preview_plan.structures[:editor.architecture_preview_plan.count] {
+            preview := candidate
+            preview.color = {168, 239, 220, 210}
             world_formation(preview)
+            world_structure_frame(preview, preview.base_y + .05, {190, 255, 229, 210})
+        }
+    }
+}
+
+world_city_density_overlay :: proc(editor: ^Editor) {
+    if editor == nil || editor.in_map || !editor.architecture_paint_mode do return
+    field := &editor.project.city_density
+    if editor.architecture_painting do field = &editor.architecture_density_preview
+    cell := terrain.BASE_CELL_SIZE
+    half := f32(terrain.RING_RESOLUTION - 1) * .5
+    // Reserve enough geometry for buildings and vehicles even when the whole
+    // authored world has been painted.
+    overlay_limit := WORLD_VERTEX_CAPACITY - 120_000
+    for z in 0 ..< terrain.RING_RESOLUTION - 1 {
+        for x in 0 ..< terrain.RING_RESOLUTION - 1 {
+            density := f32(field[z * terrain.RING_RESOLUTION + x]) / 255
+            if density <= .01 do continue
+            if len(world_renderer.vertices) + 6 > overlay_limit do return
+            x0, z0 := (f32(x) - half) * cell, (f32(z) - half) * cell
+            x1, z1 := x0 + cell, z0 + cell
+            lift := f32(.115)
+            a := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z0) + lift, z0}
+            b := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z0) + lift, z0}
+            c := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z1) + lift, z1}
+            d := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z1) + lift, z1}
+            alpha := u8(28 + density * 112)
+            world_quad(a, b, c, d, {22, 27, 31, alpha})
         }
     }
 }
 
 world_aircraft :: proc(editor: ^Editor) {
+    sky := atmosphere.sample(&editor.atmosphere)
     if editor.postale_visible {
         mesh := vehicles.postale_mesh()
         vehicles.animate_postale_mesh(
@@ -1638,6 +3611,16 @@ world_aircraft :: proc(editor: ^Editor) {
             editor.flight_control.yaw,
             editor.postale.propeller_turns,
         )
+        for triangle in vehicles.mesh_triangles(&mesh) {
+            world_vehicle_shadow_triangle(
+                postale_vertex_world(&editor.postale, mesh.vertices[triangle.a].position, .68),
+                postale_vertex_world(&editor.postale, mesh.vertices[triangle.b].position, .68),
+                postale_vertex_world(&editor.postale, mesh.vertices[triangle.c].position, .68),
+                sky.sun_direction,
+                sky.weather.cloud_cover,
+                &editor.project,
+            )
+        }
         for triangle in vehicles.mesh_triangles(&mesh) {
             a := mesh.vertices[triangle.a]
             b := mesh.vertices[triangle.b]
@@ -1651,14 +3634,28 @@ world_aircraft :: proc(editor: ^Editor) {
         }
     }
     if editor.libellula_visible {
-        libellula := vehicles.libellula_mesh()
-        vehicles.animate_libellula_mesh(
-            &libellula,
+        vehicles.libellula_mesh_build(&editor.libellula_visual_mesh)
+        libellula := &editor.libellula_visual_mesh
+        vehicles.animate_libellula_mesh_pose(
+            libellula,
             editor.libellula.rotor_turns.x,
             editor.libellula.rotor_turns.y,
             editor.libellula.rotor_turns.z,
+            editor.libellula.pitch,
+            editor.libellula.roll,
+            0,
         )
-        for triangle in vehicles.mesh_triangles(&libellula) {
+        for triangle in vehicles.mesh_triangles(libellula) {
+            world_vehicle_shadow_triangle(
+                libellula_vertex_world(&editor.libellula, libellula.vertices[triangle.a].position, .72),
+                libellula_vertex_world(&editor.libellula, libellula.vertices[triangle.b].position, .72),
+                libellula_vertex_world(&editor.libellula, libellula.vertices[triangle.c].position, .72),
+                sky.sun_direction,
+                sky.weather.cloud_cover,
+                &editor.project,
+            )
+        }
+        for triangle in vehicles.mesh_triangles(libellula) {
             a := libellula.vertices[triangle.a]
             b := libellula.vertices[triangle.b]
             c := libellula.vertices[triangle.c]
@@ -1690,8 +3687,18 @@ car_vertex_world :: proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3
 }
 
 world_car :: proc(editor: ^Editor) {
-    origin := editor.car.position
     mesh := vehicles.simple_car_mesh()
+    sky := atmosphere.sample(&editor.atmosphere)
+    for triangle in vehicles.mesh_triangles(&mesh) {
+        world_vehicle_shadow_triangle(
+            car_vertex_world(editor, mesh.vertices[triangle.a].position),
+            car_vertex_world(editor, mesh.vertices[triangle.b].position),
+            car_vertex_world(editor, mesh.vertices[triangle.c].position),
+            sky.sun_direction,
+            sky.weather.cloud_cover,
+            &editor.project,
+        )
+    }
     for triangle in vehicles.mesh_triangles(&mesh) {
         a := mesh.vertices[triangle.a]
         b := mesh.vertices[triangle.b]
@@ -1708,13 +3715,83 @@ world_car :: proc(editor: ^Editor) {
 world_character :: proc(editor: ^Editor) {
     if !editor.in_map || editor.pilot.mode != .On_Foot do return
     p := editor.player.position
-    world_box({p.x, p.y + .72, p.z}, {.42, 1.15, .28}, {42, 213, 201, 255})
-    world_box({p.x, p.y + 1.48, p.z}, {.34, .34, .34}, {247, 221, 167, 255})
-    forward := third_person.Vec3 {
-        x = -math.sin(editor.player.facing_yaw_radians),
-        z = -math.cos(editor.player.facing_yaw_radians),
+    rotation := math.PI - editor.player.facing_yaw_radians
+    local_point :: proc(origin: third_person.Vec3, rotation, x, y, z: f32) -> third_person.Vec3 {
+        world_x, world_z := world_rotate_xz(origin.x, origin.z, x, z, rotation)
+        return {world_x, origin.y + y, world_z}
     }
-    world_box({p.x + forward.x * .25, p.y + 1.16, p.z + forward.z * .25}, {.16, .16, .55}, {247, 221, 167, 255})
+    jacket: rl.Color = {35, 167, 162, 255}
+    jacket_dark: rl.Color = {23, 112, 119, 255}
+    shirt: rl.Color = {232, 222, 189, 255}
+    scarf: rl.Color = {205, 79, 62, 255}
+    skin: rl.Color = {226, 181, 128, 255}
+    hair: rl.Color = {68, 48, 39, 255}
+    trousers: rl.Color = {36, 55, 71, 255}
+    boots: rl.Color = {73, 53, 43, 255}
+    features: rl.Color = {43, 52, 53, 255}
+    model_forward := third_person.Vec3 {
+        x = -math.sin(rotation),
+        z = math.cos(rotation),
+    }
+    horizontal_speed := f32(
+        math.sqrt(
+            f64(
+                editor.player.velocity.x * editor.player.velocity.x +
+                editor.player.velocity.z * editor.player.velocity.z,
+            ),
+        ),
+    )
+    gait_weight := clamp(horizontal_speed / 3.5, 0, 1)
+    stride_phase := (p.x * model_forward.x + p.z * model_forward.z) * 6.5
+    if editor.capture_player_walk_pose {
+        gait_weight = 1
+        stride_phase = math.PI * .34
+    }
+    stride := math.sin(stride_phase) * gait_weight
+    p.y += math.abs(math.sin(stride_phase * 2)) * .018 * gait_weight
+
+    // Broad shoulders taper into a compact waist so the silhouette reads as a
+    // person rather than one rectangular column.
+    world_tapered_box_rotated(local_point(p, rotation, 0, .91, 0), .62, .40, .27, .52, .32, rotation, jacket)
+    world_box_rotated(local_point(p, rotation, 0, .98, .166), {.17, .29, .026}, rotation, shirt)
+    world_box_rotated(local_point(p, rotation, 0, 1.18, .175), {.44, .105, .035}, rotation, scarf)
+    world_box_rotated(local_point(p, rotation, 0, .58, 0), {.43, .18, .29}, rotation, jacket_dark)
+
+    sides := [2]f32{-1, 1}
+    for side_f in sides {
+        leg_swing := stride * side_f * .14
+        hip := local_point(p, rotation, side_f * .125, .61, 0)
+        knee := local_point(p, rotation, side_f * .15, .36, side_f * -.018 + leg_swing * .42)
+        ankle := local_point(p, rotation, side_f * .14, .13, side_f * .025 + leg_swing)
+        world_box_between(hip, knee, model_forward, .18, .23, trousers)
+        world_box_between(knee, ankle, model_forward, .165, .21, trousers)
+        world_box_rotated(
+            local_point(p, rotation, side_f * .135, .075, .045 + leg_swing),
+            {.19, .15, .31},
+            rotation,
+            boots,
+        )
+
+        arm_swing := -leg_swing * .92
+        shoulder := local_point(p, rotation, side_f * .255, 1.14, 0)
+        elbow := local_point(p, rotation, side_f * .325, .89, .015 + arm_swing * .48)
+        wrist := local_point(p, rotation, side_f * .29, .66, .055 + arm_swing)
+        world_box_between(shoulder, elbow, model_forward, .16, .21, jacket_dark)
+        world_box_between(elbow, wrist, model_forward, .14, .19, jacket_dark)
+        world_vertical_prism(wrist, .085, .085, .16, rotation, skin)
+    }
+
+    world_vertical_prism(local_point(p, rotation, 0, 1.43, 0), .19, .17, .36, rotation, skin)
+    world_box_rotated(local_point(p, rotation, 0, 1.51, -.148), {.30, .22, .055}, rotation, hair)
+    world_vertical_prism(local_point(p, rotation, 0, 1.595, -.005), .198, .178, .11, rotation, hair)
+    world_box_rotated(local_point(p, rotation, 0, 1.43, .163), {.075, .065, .07}, rotation, skin)
+    eye_offsets := [2]f32{-.07, .07}
+    for eye_x in eye_offsets {
+        world_box_rotated(local_point(p, rotation, eye_x, 1.47, .16), {.034, .034, .018}, rotation, features)
+    }
+    for ear_x in eye_offsets {
+        world_vertical_prism(local_point(p, rotation, ear_x * 2.65, 1.43, 0), .035, .035, .09, rotation, skin)
+    }
 }
 
 world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: rl.Color) {
@@ -1738,12 +3815,13 @@ world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, colo
         }
         p0.y = terrain.sample_height(&editor.project, 0, p0.x, p0.z) + height_offset
         p1.y = terrain.sample_height(&editor.project, 0, p1.x, p1.z) + height_offset
-        world_triangle(center, p0, p1, color)
+        // Ground decal fan: upward face front (CCW) so it survives culling.
+        world_triangle(center, p1, p0, color)
     }
 }
 
 world_brush :: proc(editor: ^Editor) {
-    if editor.in_map || editor.tool == .Structure do return
+    if editor.in_map || (editor.tool == .Structure && !editor.architecture_paint_mode) do return
     camera := perspective_camera(
         editor.camera_pose,
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
@@ -1753,6 +3831,7 @@ world_brush :: proc(editor: ^Editor) {
     x, z, hit := terrain_under_cursor_3d(editor, camera, mouse, ADRIATIC_WORLD_WIDTH, ADRIATIC_WORLD_HEIGHT)
     if !hit do return
     color: rl.Color = {230, 244, 218, 76}
+    radius, hardness := editor.radius, editor.hardness
     switch editor.tool {
     case .Raise:
         color = {244, 214, 122, 88}
@@ -1761,14 +3840,16 @@ world_brush :: proc(editor: ^Editor) {
     case .Paint:
         color = {168, 239, 220, 88}
     case .Structure:
-        return
+        color = {90, 102, 112, 86}
+        radius = editor.architecture_brush_radius
+        hardness = editor.architecture_brush_hardness
     }
     if rl.IsMouseButtonDown(.RIGHT) do color = {245, 126, 112, 108}
-    world_brush_disc(editor, x, z, editor.radius, .09, color)
+    world_brush_disc(editor, x, z, radius, .09, color)
     // A denser inner disc makes the hardness setting legible at the cursor:
     // harder brushes have a larger, more opaque core while the outer disc
     // continues to show the full affected radius.
-    inner_radius := editor.radius * (.25 + editor.hardness * .65)
+    inner_radius := radius * (.25 + hardness * .65)
     core := color
     core.a = u8(min(int(color.a) + 34, 180))
     world_brush_disc(editor, x, z, inner_radius, .105, core)
@@ -1777,57 +3858,17 @@ world_brush :: proc(editor: ^Editor) {
 world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.vertices)
     clear(&world_renderer.road_vertices)
+    clear(&world_renderer.foliage_vertices)
     // Depth testing makes submission order independent. Put authored gameplay
     // meshes first so dense terrain can consume only the remaining capacity
     // instead of silently dropping vehicles at the end of the frame.
     world_ocean(editor)
     world_infrastructure(editor)
     world_roads(editor)
+    world_city_density_overlay(editor)
     sky := atmosphere.sample(&editor.atmosphere)
     for structure in editor.project.structures[:editor.project.structure_count] {
         world_structure_shadow(structure, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
-    }
-    car_ground := terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
-    car_shadow := terrain.structure_make(editor.car.position.x, editor.car.position.z, 3.8, 6.2, car_ground, 1.8)
-    car_shadow.rotation = editor.car.yaw_radians
-    world_structure_shadow(car_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
-
-    if editor.postale_visible {
-        postale_ground := terrain.sample_height(
-            &editor.project,
-            0,
-            editor.postale.body.position.x,
-            editor.postale.body.position.z,
-        )
-        postale_shadow := terrain.structure_make(
-            editor.postale.body.position.x,
-            editor.postale.body.position.z,
-            10,
-            6,
-            postale_ground,
-            max(editor.postale.body.position.y - postale_ground, f32(2)),
-        )
-        postale_shadow.rotation = editor.postale.vehicle.yaw_radians
-        world_structure_shadow(postale_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
-    }
-
-    if editor.libellula_visible {
-        libellula_ground := terrain.sample_height(
-            &editor.project,
-            0,
-            editor.libellula.body.position.x,
-            editor.libellula.body.position.z,
-        )
-        libellula_shadow := terrain.structure_make(
-            editor.libellula.body.position.x,
-            editor.libellula.body.position.z,
-            7,
-            4,
-            libellula_ground,
-            max(editor.libellula.body.position.y - libellula_ground, f32(1.5)),
-        )
-        libellula_shadow.rotation = editor.libellula.vehicle.yaw_radians
-        world_structure_shadow(libellula_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
     }
 
     if editor.in_map && editor.pilot.mode == .On_Foot {
@@ -1886,20 +3927,39 @@ world_particles_cpu :: proc(editor: ^Editor) {
     }
 }
 
-world_vehicle_particle :: proc(camera: Perspective_Camera, particle: particles.Vehicle_Particle, color: rl.Color) {
+world_vehicle_particle :: proc(
+    camera: Perspective_Camera,
+    particle: particles.Vehicle_Particle,
+    color: rl.Color,
+    opacity_override: f32 = -1,
+) {
     fade := clamp(particle.life / particle.max_life, 0, 1)
+    age := 1 - fade
+    rotation := particle.seed & 3
+    cosine, sine := f32(1), f32(0)
+    switch rotation {
+    case 1:
+        cosine, sine = .92388, .38268
+    case 2:
+        cosine, sine = .70711, .70711
+    case 3:
+        cosine, sine = .38268, .92388
+    }
+    width := particle.size * (.82 + f32((particle.seed >> 3) & 3) * .07) * (.78 + age * .46)
+    height := particle.size * (.62 + f32((particle.seed >> 5) & 3) * .08) * (.78 + age * .46)
     right := third_person.Vec3 {
-        x = camera.right.x * particle.size,
-        y = camera.right.y * particle.size,
-        z = camera.right.z * particle.size,
+        x = (camera.right.x * cosine + camera.up.x * sine) * width,
+        y = (camera.right.y * cosine + camera.up.y * sine) * width,
+        z = (camera.right.z * cosine + camera.up.z * sine) * width,
     }
     up := third_person.Vec3 {
-        x = camera.up.x * particle.size,
-        y = camera.up.y * particle.size,
-        z = camera.up.z * particle.size,
+        x = (-camera.right.x * sine + camera.up.x * cosine) * height,
+        y = (-camera.right.y * sine + camera.up.y * cosine) * height,
+        z = (-camera.right.z * sine + camera.up.z * cosine) * height,
     }
     p := third_person.Vec3{particle.position.x, particle.position.y, particle.position.z}
-    alpha := u8(f32(color.a) * fade)
+    opacity := opacity_override < 0 ? fade : clamp(opacity_override, 0, 1)
+    alpha := u8(f32(color.a) * opacity)
     shade := rl.Color{color.r, color.g, color.b, alpha}
     world_quad(
         {p.x - right.x - up.x, p.y - right.y - up.y, p.z - right.z - up.z},
@@ -1916,10 +3976,30 @@ world_vehicle_particles :: proc(editor: ^Editor) {
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     for particle in editor.vehicle_effects.dust[:editor.vehicle_effects.dust_count] {
-        world_vehicle_particle(camera, particle, {148, 105, 68, 155})
+        color := rl.Color{112, 119, 116, 100}
+        switch particle.surface {
+        case .Asphalt:
+            color = {116, 123, 124, 62}
+        case .Gravel:
+            color = {203, 181, 133, 178}
+        case .Cobblestone:
+            color = {156, 162, 157, 105}
+        case .Dirt:
+            color = {177, 111, 62, 190}
+        case .Grass:
+            color = {119, 126, 78, 132}
+        case .Sand:
+            color = {210, 192, 150, 150}
+        }
+        world_vehicle_particle(camera, particle, color)
     }
     for particle in editor.vehicle_effects.exhaust[:editor.vehicle_effects.exhaust_count] {
-        world_vehicle_particle(camera, particle, {112, 119, 116, 120})
+        world_vehicle_particle(
+            camera,
+            particle,
+            {126, 132, 130, 168},
+            particles.vehicle_exhaust_opacity(particle.life, particle.max_life),
+        )
     }
 }
 
@@ -1996,6 +4076,87 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         pPushConstantRanges    = &pr,
     }
     if vk.CreatePipelineLayout(ctx.device, &li, nil, &world_renderer.layout) != .SUCCESS do return false
+    foliage_bindings := [2]vk.DescriptorSetLayoutBinding {
+        {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+    }
+    foliage_descriptor_info := vk.DescriptorSetLayoutCreateInfo {
+        sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        bindingCount = 2,
+        pBindings    = raw_data(foliage_bindings[:]),
+    }
+    if vk.CreateDescriptorSetLayout(
+           ctx.device,
+           &foliage_descriptor_info,
+           nil,
+           &world_renderer.foliage_descriptor_layout,
+       ) !=
+       .SUCCESS {
+        return false
+    }
+    foliage_pool_sizes := [2]vk.DescriptorPoolSize {
+        {type = .SAMPLED_IMAGE, descriptorCount = 1},
+        {type = .SAMPLER, descriptorCount = 1},
+    }
+    foliage_pool_info := vk.DescriptorPoolCreateInfo {
+        sType         = .DESCRIPTOR_POOL_CREATE_INFO,
+        maxSets       = 1,
+        poolSizeCount = 2,
+        pPoolSizes    = raw_data(foliage_pool_sizes[:]),
+    }
+    if vk.CreateDescriptorPool(ctx.device, &foliage_pool_info, nil, &world_renderer.foliage_descriptor_pool) !=
+       .SUCCESS {
+        return false
+    }
+    foliage_allocate := vk.DescriptorSetAllocateInfo {
+        sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
+        descriptorPool     = world_renderer.foliage_descriptor_pool,
+        descriptorSetCount = 1,
+        pSetLayouts        = &world_renderer.foliage_descriptor_layout,
+    }
+    if vk.AllocateDescriptorSets(ctx.device, &foliage_allocate, &world_renderer.foliage_descriptor) != .SUCCESS {
+        return false
+    }
+    if !resources.texture_load_file(
+        ctx,
+        "assets/textures/foliage/leaf-branches-atlas.png",
+        &world_renderer.foliage_atlas,
+        {address_mode = .CLAMP_TO_EDGE},
+    ) {
+        return false
+    }
+    foliage_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.foliage_atlas.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    foliage_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.foliage_atlas.sampler,
+    }
+    foliage_writes := [2]vk.WriteDescriptorSet {
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.foliage_descriptor,
+            dstBinding = 0,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &foliage_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.foliage_descriptor,
+            dstBinding = 1,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &foliage_sampler_info,
+        },
+    }
+    vk.UpdateDescriptorSets(ctx.device, 2, raw_data(foliage_writes[:]), 0, nil)
+    foliage_layout_info := li
+    foliage_layout_info.setLayoutCount = 1
+    foliage_layout_info.pSetLayouts = &world_renderer.foliage_descriptor_layout
+    if vk.CreatePipelineLayout(ctx.device, &foliage_layout_info, nil, &world_renderer.foliage_layout) != .SUCCESS {
+        return false
+    }
     sky_pr := vk.PushConstantRange {
         stageFlags = {.VERTEX, .FRAGMENT},
         size       = u32(size_of(Sky_Push)),
@@ -2019,16 +4180,17 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         stride    = u32(size_of(World_Vertex)),
         inputRate = .VERTEX,
     }
-    attrs := [3]vk.VertexInputAttributeDescription {
+    attrs := [4]vk.VertexInputAttributeDescription {
         {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, position))},
         {location = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Vertex, color))},
         {location = 2, format = .R32_SFLOAT, offset = u32(offset_of(World_Vertex, kind))},
+        {location = 3, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, normal))},
     }
     vi := vk.PipelineVertexInputStateCreateInfo {
         sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         vertexBindingDescriptionCount   = 1,
         pVertexBindingDescriptions      = &binding,
-        vertexAttributeDescriptionCount = 3,
+        vertexAttributeDescriptionCount = 4,
         pVertexAttributeDescriptions    = raw_data(attrs[:]),
     }
     ia := vk.PipelineInputAssemblyStateCreateInfo {
@@ -2043,7 +4205,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     rs := vk.PipelineRasterizationStateCreateInfo {
         sType       = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         polygonMode = .FILL,
-        cullMode    = {},
+        cullMode    = {.BACK},
         frontFace   = .COUNTER_CLOCKWISE,
         lineWidth   = 1,
     }
@@ -2101,6 +4263,10 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     // LESS depth convention, preventing coplanar flicker at grazing angles
     // without making unrelated world geometry bleed through terrain.
     road_rs := rs
+    // Roads are a thin authored terrain overlay and legacy edge, cap, and
+    // junction builders do not share one winding convention. Keep only this
+    // dedicated pass two-sided so back-face culling cannot erase long strips.
+    road_rs.cullMode = {}
     road_rs.depthBiasEnable = true
     road_rs.depthBiasConstantFactor = -1
     road_rs.depthBiasSlopeFactor = -1
@@ -2110,6 +4276,58 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     road_info.pRasterizationState = &road_rs
     road_info.pDepthStencilState = &road_depth
     if !render3d.create_color_pipeline_variants(ctx, &road_info, .D32_SFLOAT, &world_renderer.road_pipelines) do return false
+    foliage_vert, foliage_frag: engine.Vk_Shader_Module
+    if !engine.vk_load_shader_module_with_fallback(
+        ctx,
+        "assets/shaders/foliage.slang",
+        "shaders/foliage.vert",
+        .Vertex,
+        "vertex_main",
+        &foliage_vert,
+    ) {
+        return false
+    }
+    defer engine.vk_destroy_shader_module(ctx, &foliage_vert)
+    if !engine.vk_load_shader_module_with_fallback(
+        ctx,
+        "assets/shaders/foliage.slang",
+        "shaders/foliage.frag",
+        .Fragment,
+        "fragment_main",
+        &foliage_frag,
+    ) {
+        return false
+    }
+    defer engine.vk_destroy_shader_module(ctx, &foliage_frag)
+    foliage_stages := stages
+    foliage_stages[0].module = foliage_vert.handle
+    foliage_stages[1].module = foliage_frag.handle
+    foliage_binding := vk.VertexInputBindingDescription {
+        stride    = u32(size_of(Foliage_Vertex)),
+        inputRate = .VERTEX,
+    }
+    foliage_attributes := [3]vk.VertexInputAttributeDescription {
+        {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Foliage_Vertex, position))},
+        {location = 1, format = .R32G32_SFLOAT, offset = u32(offset_of(Foliage_Vertex, uv))},
+        {location = 2, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Foliage_Vertex, color))},
+    }
+    foliage_vi := vk.PipelineVertexInputStateCreateInfo {
+        sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        vertexBindingDescriptionCount   = 1,
+        pVertexBindingDescriptions      = &foliage_binding,
+        vertexAttributeDescriptionCount = 3,
+        pVertexAttributeDescriptions    = raw_data(foliage_attributes[:]),
+    }
+    foliage_depth := depth
+    foliage_depth.depthCompareOp = .LESS_OR_EQUAL
+    foliage_info := info
+    foliage_info.pStages = raw_data(foliage_stages[:])
+    foliage_info.pVertexInputState = &foliage_vi
+    foliage_info.pDepthStencilState = &foliage_depth
+    foliage_info.layout = world_renderer.foliage_layout
+    if !render3d.create_color_pipeline_variants(ctx, &foliage_info, .D32_SFLOAT, &world_renderer.foliage_pipelines) {
+        return false
+    }
     particle_vert, particle_frag: engine.Vk_Shader_Module
     if !engine.vk_load_shader_module_with_fallback(ctx, "assets/shaders/particles.slang", "shaders/particles.vert", .Vertex, "vertex_main", &particle_vert) do return false
     defer engine.vk_destroy_shader_module(ctx, &particle_vert)
@@ -2152,7 +4370,17 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
     }
     for &buffer in world_renderer.road_vertex {
-        if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
+        if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(ROAD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
+    }
+    for &buffer in world_renderer.foliage_vertex {
+        if !engine.vk_create_host_buffer(
+            ctx,
+            vk.DeviceSize(FOLIAGE_VERTEX_CAPACITY * size_of(Foliage_Vertex)),
+            {.VERTEX_BUFFER},
+            &buffer,
+        ) {
+            return false
+        }
     }
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
@@ -2168,7 +4396,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     }
     if !clipmap_create_indices(ctx) do return false
     world_renderer.vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
-    world_renderer.road_vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
+    world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_CAPACITY)
+    world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_CAPACITY)
     world_renderer.ctx = ctx
     world_renderer.initialized = true
     return true
@@ -2182,6 +4411,7 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     clipmap_update(editor, int(pass.frame.frame_index))
     buffer := &world_renderer.vertex[pass.frame.frame_index]
     road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
+    foliage_buffer := &world_renderer.foliage_vertex[pass.frame.frame_index]
     if len(world_renderer.vertices) > 0 {
         mem.copy_non_overlapping(
             buffer.mapped,
@@ -2194,6 +4424,13 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             road_buffer.mapped,
             raw_data(world_renderer.road_vertices[:]),
             len(world_renderer.road_vertices) * size_of(World_Vertex),
+        )
+    }
+    if len(world_renderer.foliage_vertices) > 0 {
+        mem.copy_non_overlapping(
+            foliage_buffer.mapped,
+            raw_data(world_renderer.foliage_vertices[:]),
+            len(world_renderer.foliage_vertices) * size_of(Foliage_Vertex),
         )
     }
     viewport := vk.Viewport {
@@ -2215,12 +4452,7 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     sky := atmosphere.sample(&editor.atmosphere)
     fog := world_sky_horizon_color(sky)
     world_push := World_Push {
-        camera_position = {
-            camera.position.x,
-            camera.position.y,
-            camera.position.z,
-            editor.in_map ? (driving_aircraft(editor) ? WORLD_FLIGHT_NEAR_CLIP : WORLD_PLAY_NEAR_CLIP) : WORLD_EDITOR_NEAR_CLIP,
-        },
+        camera_position = {camera.position.x, camera.position.y, camera.position.z, world_camera_near_clip(editor)},
         camera_right    = {camera.right.x, camera.right.y, camera.right.z, WORLD_FAR_CLIP},
         camera_up       = {camera.up.x, camera.up.y, camera.up.z, 0},
         camera_forward  = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
@@ -2325,6 +4557,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     clipmap_update(editor, int(pass.frame.frame_index))
     buffer := &world_renderer.vertex[pass.frame.frame_index]
     road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
+    foliage_buffer := &world_renderer.foliage_vertex[pass.frame.frame_index]
     if len(world_renderer.vertices) > 0 {
         mem.copy_non_overlapping(
             buffer.mapped,
@@ -2337,6 +4570,13 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             road_buffer.mapped,
             raw_data(world_renderer.road_vertices[:]),
             len(world_renderer.road_vertices) * size_of(World_Vertex),
+        )
+    }
+    if len(world_renderer.foliage_vertices) > 0 {
+        mem.copy_non_overlapping(
+            foliage_buffer.mapped,
+            raw_data(world_renderer.foliage_vertices[:]),
+            len(world_renderer.foliage_vertices) * size_of(Foliage_Vertex),
         )
     }
     viewport := vk.Viewport {
@@ -2358,12 +4598,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     sky := atmosphere.sample(&editor.atmosphere)
     fog := world_sky_horizon_color(sky)
     world_push := World_Push {
-        camera_position = {
-            camera.position.x,
-            camera.position.y,
-            camera.position.z,
-            editor.in_map ? (driving_aircraft(editor) ? WORLD_FLIGHT_NEAR_CLIP : WORLD_PLAY_NEAR_CLIP) : WORLD_EDITOR_NEAR_CLIP,
-        },
+        camera_position = {camera.position.x, camera.position.y, camera.position.z, world_camera_near_clip(editor)},
         camera_right    = {camera.right.x, camera.right.y, camera.right.z, WORLD_FAR_CLIP},
         camera_up       = {camera.up.x, camera.up.y, camera.up.z, 0},
         camera_forward  = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
@@ -2401,6 +4636,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         pass           = pass,
         buffer         = buffer,
         road_buffer    = road_buffer,
+        foliage_buffer = foliage_buffer,
         offset         = offset,
         pipeline_index = pipeline_index,
         world_push     = world_push,
@@ -2424,6 +4660,7 @@ world_renderer_destroy :: proc() {
     imgui_destroy()
     for &buffer in world_renderer.vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.road_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.foliage_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
             engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_vertex[frame][level])
@@ -2435,9 +4672,19 @@ world_renderer_destroy :: proc() {
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.road_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.sky_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.particle_pipelines)
+    render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.foliage_pipelines)
+    resources.image_destroy(&world_renderer.foliage_atlas, world_renderer.ctx)
     if world_renderer.layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.layout, nil)
     if world_renderer.sky_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.sky_layout, nil)
+    if world_renderer.foliage_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.foliage_layout, nil)
+    if world_renderer.foliage_descriptor_pool != vk.DescriptorPool(0) {
+        vk.DestroyDescriptorPool(world_renderer.ctx.device, world_renderer.foliage_descriptor_pool, nil)
+    }
+    if world_renderer.foliage_descriptor_layout != vk.DescriptorSetLayout(0) {
+        vk.DestroyDescriptorSetLayout(world_renderer.ctx.device, world_renderer.foliage_descriptor_layout, nil)
+    }
     delete(world_renderer.vertices)
     delete(world_renderer.road_vertices)
+    delete(world_renderer.foliage_vertices)
     world_renderer = {}
 }
