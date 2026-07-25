@@ -29,6 +29,7 @@ Config :: struct {
     constraint_iterations: int,
     substeps:              int,
     root_stiffness:        f32,
+    root_damping:          f32,
     bend_stiffness:        f32,
     surface_friction:      f32,
 }
@@ -42,6 +43,7 @@ default_config :: proc() -> Config {
         constraint_iterations = 8,
         substeps = 3,
         root_stiffness = .42,
+        root_damping = .72,
         bend_stiffness = .18,
         surface_friction = .22,
     }
@@ -232,19 +234,27 @@ step :: proc(
         }
         for index in 1 ..< POINT_COUNT {
             point := &state.points[index]
-            velocity := scale(subtract(point.position, point.previous), damping)
+            // The first link is driven by the rump's changing heading. Give
+            // it a separate damper so running does not excite a visible
+            // high-frequency shake through the rest of the chain.
+            point_damping := index == 1 ? clamp(config.root_damping, 0, 1) : damping
+            velocity := scale(subtract(point.position, point.previous), point_damping)
             point.previous = point.position
             point.position = add(add(point.position, velocity), {y = -max(config.gravity, f32(0)) * dt_squared})
         }
 
+        // Apply the rump's heading once per substep. Reapplying this inside
+        // every solver iteration makes the first link snap toward the target
+        // repeatedly and shows up as a shake while running.
+        desired_first := add(root, scale(backward_direction, segment_length))
+        root_stiffness := clamp(config.root_stiffness, 0, 1)
+        state.points[1].position = add(
+            state.points[1].position,
+            scale(subtract(desired_first, state.points[1].position), root_stiffness),
+        )
+
         for _ in 0 ..< iterations {
             state.points[0].position = root
-            desired_first := add(root, scale(backward_direction, segment_length))
-            root_stiffness := clamp(config.root_stiffness, 0, 1)
-            state.points[1].position = add(
-                state.points[1].position,
-                scale(subtract(desired_first, state.points[1].position), root_stiffness),
-            )
             bend_target := segment_length * 1.94
             bend_weight := clamp(config.bend_stiffness, 0, 1)
             for index in 0 ..< POINT_COUNT - 2 {

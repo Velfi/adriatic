@@ -153,6 +153,15 @@ checkout when building, releasing, or testing Adriatic.
 | `make run` | Build and run the development executable. |
 | `make release` | Build an optimized executable. |
 | `make physics-build` | Fetch and build Zelda Engine's pinned Jolt dependency. |
+| `make capture` | Render the default screenshot as a quality-75 JPEG. |
+| `make capture-jpeg` | Render the default screenshot as a quality-75 JPEG. |
+
+Capture targets accept `CAPTURE_FORMAT=jpeg`, `CAPTURE_QUALITY=1..100`, and
+`CAPTURE_PATH=/absolute/path/to/output.jpg`; for example,
+`make capture-building CAPTURE_FORMAT=jpeg CAPTURE_QUALITY=65`. JPEG conversion
+uses macOS `sips` after the asynchronous GPU capture completes, leaving only
+the compressed output file behind. Use `CAPTURE_FORMAT=png` when a lossless PNG
+is needed.
 
 ## Releases
 

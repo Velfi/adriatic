@@ -110,15 +110,15 @@ animate_postale_mesh :: proc(mesh: ^Aircraft_Mesh, flap_fraction, pitch, roll, y
     rotate_mesh_part_x(
         mesh,
         .Left_Flap,
-        {-2.35, .99, .245},
+        {-2.35, 1.49, .245},
         flap,
-    ); rotate_mesh_part_x(mesh, .Right_Flap, {2.35, .99, .245}, flap)
+    ); rotate_mesh_part_x(mesh, .Right_Flap, {2.35, 1.49, .245}, flap)
     rotate_mesh_part_x(
         mesh,
         .Left_Aileron,
-        {-4.55, 1.035, .33},
+        {-4.55, 1.535, .33},
         degrees(-4 - roll * 16),
-    ); rotate_mesh_part_x(mesh, .Right_Aileron, {4.55, 1.035, .33}, degrees(-4 + roll * 16))
+    ); rotate_mesh_part_x(mesh, .Right_Aileron, {4.55, 1.535, .33}, degrees(-4 + roll * 16))
     rotate_mesh_part_x(
         mesh,
         .Elevator,

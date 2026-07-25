@@ -77,6 +77,33 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
 
 player_tail_update :: proc(editor: ^Editor, delta_seconds: f32) {
     if editor == nil || !editor.in_map || editor.pilot.mode != .On_Foot do return
+    player_scarf_rotation_update(editor, delta_seconds)
     root, backward := player_tail_root(editor)
     mouse_tail.step(&editor.player_tail, root, backward, &editor.project, editor.tweak.player_tail, delta_seconds)
+}
+
+player_scarf_rotation_update :: proc(editor: ^Editor, delta_seconds: f32) {
+    if editor == nil || delta_seconds <= 0 do return
+    delta := min(delta_seconds, f32(.1))
+    if !editor.mouse_scarf_enabled {
+        editor.mouse_scarf_angular_velocity *= f32(math.exp(f64(-delta * 3)))
+        return
+    }
+
+    rotation := math.PI - editor.player.facing_yaw_radians
+    right_x, right_z := math.cos(rotation), math.sin(rotation)
+    wind_right :=
+        editor.atmosphere.weather.wind[0] * right_x +
+        editor.atmosphere.weather.wind[1] * right_z
+    velocity_right :=
+        editor.player.velocity.x * right_x +
+        editor.player.velocity.z * right_z
+    relative_air_right := wind_right - velocity_right
+    torque := clamp(relative_air_right * .22 - editor.player.turn_amount * 1.15, -3.2, 3.2)
+    editor.mouse_scarf_angular_velocity += torque * delta
+    editor.mouse_scarf_angular_velocity *= f32(math.exp(f64(-delta * .85)))
+    editor.mouse_scarf_angular_velocity = clamp(editor.mouse_scarf_angular_velocity, -2.8, 2.8)
+    editor.mouse_scarf_rotation += editor.mouse_scarf_angular_velocity * delta
+    for editor.mouse_scarf_rotation > math.PI do editor.mouse_scarf_rotation -= math.PI * 2
+    for editor.mouse_scarf_rotation < -math.PI do editor.mouse_scarf_rotation += math.PI * 2
 }

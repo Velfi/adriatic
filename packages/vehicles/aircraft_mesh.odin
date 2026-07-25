@@ -14,6 +14,7 @@ Aircraft_Mesh_Part :: enum u8 {
     Glass,
     Engine,
     Propeller,
+    Propeller_Blur,
     Left_Propeller,
     Right_Propeller,
     Left_Rotor,
@@ -314,6 +315,31 @@ add_propeller :: proc(mesh: ^Aircraft_Mesh, pivot: [3]f32, radius, chord, thickn
     }
 }
 
+// A shallow translucent disk is the high-RPM propeller volume. It is kept as
+// product geometry so the renderer can fade it independently from the solid
+// blades, matching the airborne blur handoff used by the reference aircraft.
+add_propeller_spin_volume :: proc(mesh: ^Aircraft_Mesh, pivot: [3]f32, radius, depth: f32) {
+    SEGMENTS :: 24
+    front_z := pivot[2] - depth * .5
+    back_z := pivot[2] + depth * .5
+    front_center := [3]f32{pivot[0], pivot[1], front_z}
+    back_center := [3]f32{pivot[0], pivot[1], back_z}
+    for index in 0 ..< SEGMENTS {
+        next := (index + 1) % SEGMENTS
+        angle := f32(index) * 2 * math.PI / f32(SEGMENTS)
+        next_angle := f32(next) * 2 * math.PI / f32(SEGMENTS)
+        front_a := [3]f32{pivot[0] + math.cos(angle) * radius, pivot[1] + math.sin(angle) * radius, front_z}
+        front_b := [3]f32{pivot[0] + math.cos(next_angle) * radius, pivot[1] + math.sin(next_angle) * radius, front_z}
+        back_a := [3]f32{pivot[0] + math.cos(angle) * radius, pivot[1] + math.sin(angle) * radius, back_z}
+        back_b := [3]f32{pivot[0] + math.cos(next_angle) * radius, pivot[1] + math.sin(next_angle) * radius, back_z}
+        // Both caps are emitted because the aircraft can be viewed from
+        // either side of the propeller disk.
+        mesh_triangle(mesh, front_center, front_b, front_a, .Propeller_Blur)
+        mesh_triangle(mesh, back_center, back_a, back_b, .Propeller_Blur)
+        mesh_quad(mesh, front_a, front_b, back_b, back_a, .Propeller_Blur)
+    }
+}
+
 add_horizontal_beam :: proc(mesh: ^Aircraft_Mesh, a, b: [3]f32, width: f32, part: Aircraft_Mesh_Part) {
     dx := b[0] - a[0]; dz := b[2] - a[2]
     length := f32(math.sqrt(f64(dx * dx + dz * dz)))
@@ -370,11 +396,14 @@ add_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32, radius, thickness: f32) 
 
 postale_mesh :: proc() -> Aircraft_Mesh {
     mesh: Aircraft_Mesh
-    fuselage := [8]Mesh_Ring {
+    forward_fuselage := [4]Mesh_Ring {
         {-3.12, .3, .12, .35},
         {-2.78, .58, .12, .58},
         {-2.15, .66, .14, .83},
-        {-.65, .68, .1, .87},
+        {-1.52, .68, .12, .78},
+    }
+    rear_fuselage := [5]Mesh_Ring {
+        {.30, .65, .12, .70},
         {.55, .62, .12, .72},
         {1.65, .45, .18, .5},
         {2.55, .25, .28, .28},
@@ -403,21 +432,37 @@ postale_mesh :: proc() -> Aircraft_Mesh {
         {2.18, 2.46, 3.08, .035},
     }
     fin := [5]Mesh_Profile_Point{{2.28, .38}, {2.5, 1.85}, {2.87, 2.45}, {3.16, 2.3}, {3.18, .4}}
-    add_ring_mesh(&mesh, fuselage[:], 10, .Body); add_ring_mesh(&mesh, cowling[:], 14, .Engine)
-    add_section_mesh(&mesh, wing[:], 1.05, .Wing); add_section_mesh(&mesh, tail[:], .55, .Tail)
+    add_ring_mesh(&mesh, forward_fuselage[:], 10, .Body)
+    add_ring_mesh(&mesh, rear_fuselage[:], 10, .Body)
+    add_ring_mesh(&mesh, cowling[:], 14, .Engine)
+
+    // Open mail-pilot cockpit. The old continuous fuselage sealed this entire
+    // bay, forcing occupants to be rendered on top of the wing. Low side
+    // coamings preserve the fuselage silhouette while leaving the seat and
+    // pilot visible from frontal and three-quarter views.
+    add_box(&mesh, {0, -.61, -.61}, {1.12, .14, 1.72}, .Body)
+    add_box(&mesh, {-.59, -.01, -.61}, {.14, 1.12, 1.72}, .Body)
+    add_box(&mesh, {.59, -.01, -.61}, {.14, 1.12, 1.72}, .Body)
+    add_box(&mesh, {0, .49, -1.43}, {1.10, .18, .16}, .Body)
+    add_box(&mesh, {0, .47, .22}, {1.05, .18, .16}, .Body)
+    add_box(&mesh, {0, -.43, -.60}, {.74, .16, .62}, .Dark_Metal)
+    add_box(&mesh, {0, -.10, -.27}, {.74, .68, .14}, .Dark_Metal)
+
+    POSTALE_WING_Y :: f32(1.55)
+    add_section_mesh(&mesh, wing[:], POSTALE_WING_Y, .Wing); add_section_mesh(&mesh, tail[:], .55, .Tail)
     add_profile_prism(&mesh, fin[:], .065, .Tail)
     add_box(
         &mesh,
-        {-2.35, .99, .48},
+        {-2.35, POSTALE_WING_Y - .06, .48},
         {2.75, .085, .47},
         .Left_Flap,
-    ); add_box(&mesh, {2.35, .99, .48}, {2.75, .085, .47}, .Right_Flap)
+    ); add_box(&mesh, {2.35, POSTALE_WING_Y - .06, .48}, {2.75, .085, .47}, .Right_Flap)
     add_box(
         &mesh,
-        {-4.55, 1.035, .5},
+        {-4.55, POSTALE_WING_Y - .015, .5},
         {1.75, .065, .34},
         .Left_Aileron,
-    ); add_box(&mesh, {4.55, 1.035, .5}, {1.75, .065, .34}, .Right_Aileron)
+    ); add_box(&mesh, {4.55, POSTALE_WING_Y - .015, .5}, {1.75, .065, .34}, .Right_Aileron)
     add_box(
         &mesh,
         {-1.12, .56, 3.05},
@@ -431,14 +476,15 @@ postale_mesh :: proc() -> Aircraft_Mesh {
     add_wheel(&mesh, {-1.45, -1.18, -.48}, .47, .24)
     add_wheel(&mesh, {1.45, -1.18, -.48}, .47, .24)
     add_wheel(&mesh, {0, -.91, 2.96}, .24, .18)
-    // Main struts run from the lower wing skin (about y=.9) to each axle;
+    // Main struts run from the raised parasol wing to each axle;
     // keeping the full span here prevents the tires from appearing detached.
-    add_box(&mesh, {-1.45, -.14, -.48}, {.13, 2.08, .13}, .Frame)
-    add_box(&mesh, {1.45, -.14, -.48}, {.13, 2.08, .13}, .Frame)
+    add_box(&mesh, {-1.45, .11, -.48}, {.13, 2.58, .13}, .Frame)
+    add_box(&mesh, {1.45, .11, -.48}, {.13, 2.58, .13}, .Frame)
     // The tail strut reaches up into the rear fuselage instead of stopping
     // halfway between the tail wheel and the airframe.
     add_box(&mesh, {0, -.28, 2.72}, {.11, 1.26, .11}, .Frame)
     add_propeller(&mesh, {0, .12, -3.42}, 1.58, .2, .08, .Propeller)
+    add_propeller_spin_volume(&mesh, {0, .12, -3.42}, 1.58, .018)
     return mesh
 }
 

@@ -7,9 +7,11 @@ import rl "zelda_engine:canvas2d"
 CUSTOMIZATION_COLOR_COUNT :: 6
 CUSTOMIZATION_PATTERN_COUNT :: 4
 CUSTOMIZATION_HEADGEAR_COUNT :: 7
+CUSTOMIZATION_SCARF_CONTROL_COUNT :: 4
 CUSTOMIZATION_PATTERN_START :: CUSTOMIZATION_COLOR_COUNT
 CUSTOMIZATION_HEADGEAR_START :: CUSTOMIZATION_PATTERN_START + CUSTOMIZATION_PATTERN_COUNT
-CUSTOMIZATION_BACK_FOCUS :: CUSTOMIZATION_HEADGEAR_START + CUSTOMIZATION_HEADGEAR_COUNT
+CUSTOMIZATION_SCARF_START :: CUSTOMIZATION_HEADGEAR_START + CUSTOMIZATION_HEADGEAR_COUNT
+CUSTOMIZATION_BACK_FOCUS :: CUSTOMIZATION_SCARF_START + CUSTOMIZATION_SCARF_CONTROL_COUNT
 
 mouse_fur_label :: proc(value: Mouse_Fur) -> cstring {
     switch value {
@@ -111,6 +113,14 @@ customization_headgear_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rec
     return {controls_x + f32(index % 4) * (card_width + gap), panel.y + 356 + f32(index / 4) * 50, card_width, 42}
 }
 
+customization_scarf_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
+    controls_x := panel.x + panel.width * .41
+    available := panel.width * .55
+    gap := f32(8)
+    card_width := (available - gap * 3) / 4
+    return {controls_x + f32(index) * (card_width + gap), panel.y + 482, card_width, 42}
+}
+
 customization_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
     return {panel.x + panel.width * .41, panel.y + panel.height - 58, panel.width * .55, 42}
 }
@@ -120,8 +130,23 @@ customization_activate :: proc(editor: ^Editor, focus: int) {
         editor.mouse_fur = Mouse_Fur(focus)
     } else if focus >= CUSTOMIZATION_PATTERN_START && focus < CUSTOMIZATION_HEADGEAR_START {
         editor.mouse_pattern = Mouse_Fur_Pattern(focus - CUSTOMIZATION_PATTERN_START)
-    } else if focus >= CUSTOMIZATION_HEADGEAR_START && focus < CUSTOMIZATION_BACK_FOCUS {
+    } else if focus >= CUSTOMIZATION_HEADGEAR_START && focus < CUSTOMIZATION_SCARF_START {
         editor.mouse_headgear = Mouse_Accessory(focus - CUSTOMIZATION_HEADGEAR_START)
+    } else if focus == CUSTOMIZATION_SCARF_START {
+        editor.mouse_scarf_enabled = !editor.mouse_scarf_enabled
+    } else if focus > CUSTOMIZATION_SCARF_START && focus < CUSTOMIZATION_BACK_FOCUS {
+        component := focus - CUSTOMIZATION_SCARF_START - 1
+        value := component == 0 ? editor.mouse_scarf_color.r :
+            component == 1 ? editor.mouse_scarf_color.g : editor.mouse_scarf_color.b
+        next := u8((int(value) + 32) % 256)
+        if component == 0 {
+            editor.mouse_scarf_color.r = next
+        } else if component == 1 {
+            editor.mouse_scarf_color.g = next
+        } else {
+            editor.mouse_scarf_color.b = next
+        }
+        editor.mouse_scarf_enabled = true
     } else if focus == CUSTOMIZATION_BACK_FOCUS {
         editor.pause_screen = .Options
     }
@@ -135,10 +160,12 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
             focus = row_start + clamp(focus + horizontal - row_start, 0, 2)
         } else if focus < CUSTOMIZATION_HEADGEAR_START {
             focus = clamp(focus + horizontal, CUSTOMIZATION_PATTERN_START, CUSTOMIZATION_HEADGEAR_START - 1)
-        } else if focus < CUSTOMIZATION_BACK_FOCUS {
+        } else if focus < CUSTOMIZATION_SCARF_START {
             row_start := CUSTOMIZATION_HEADGEAR_START + ((focus - CUSTOMIZATION_HEADGEAR_START) / 4) * 4
-            row_end := min(row_start + 3, CUSTOMIZATION_BACK_FOCUS - 1)
+            row_end := min(row_start + 3, CUSTOMIZATION_SCARF_START - 1)
             focus = clamp(focus + horizontal, row_start, row_end)
+        } else if focus < CUSTOMIZATION_BACK_FOCUS {
+            focus = clamp(focus + horizontal, CUSTOMIZATION_SCARF_START, CUSTOMIZATION_BACK_FOCUS - 1)
         }
     }
     if vertical < 0 {
@@ -150,10 +177,17 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
             focus = min(focus - CUSTOMIZATION_PATTERN_START, 2)
         } else if focus < CUSTOMIZATION_HEADGEAR_START + 4 {
             focus = CUSTOMIZATION_PATTERN_START + min(focus - CUSTOMIZATION_HEADGEAR_START, 3)
-        } else if focus < CUSTOMIZATION_BACK_FOCUS {
+        } else if focus < CUSTOMIZATION_SCARF_START {
             focus -= 4
+        } else if focus < CUSTOMIZATION_BACK_FOCUS {
+            scarf_column := focus - CUSTOMIZATION_SCARF_START
+            if scarf_column < 3 {
+                focus = CUSTOMIZATION_HEADGEAR_START + 4 + scarf_column
+            } else {
+                focus = CUSTOMIZATION_HEADGEAR_START + 3
+            }
         } else {
-            focus = CUSTOMIZATION_HEADGEAR_START + 4
+            focus = CUSTOMIZATION_SCARF_START
         }
     } else if vertical > 0 {
         if focus < 3 {
@@ -162,8 +196,17 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
             focus = CUSTOMIZATION_PATTERN_START + min(focus - 3, 3)
         } else if focus < CUSTOMIZATION_HEADGEAR_START {
             focus = CUSTOMIZATION_HEADGEAR_START + min(focus - CUSTOMIZATION_PATTERN_START, 3)
-        } else if focus < CUSTOMIZATION_HEADGEAR_START + 3 {
-            focus += 4
+        } else if focus < CUSTOMIZATION_SCARF_START {
+            headgear_index := focus - CUSTOMIZATION_HEADGEAR_START
+            if headgear_index < 3 {
+                focus += 4
+            } else if headgear_index == 3 {
+                focus = CUSTOMIZATION_SCARF_START + 3
+            } else {
+                focus = CUSTOMIZATION_SCARF_START + min(headgear_index - 4, 2)
+            }
+        } else if focus < CUSTOMIZATION_BACK_FOCUS {
+            focus = CUSTOMIZATION_BACK_FOCUS
         } else {
             focus = CUSTOMIZATION_BACK_FOCUS
         }
@@ -209,13 +252,36 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
                 pointer_focus = CUSTOMIZATION_HEADGEAR_START + index
             }
         }
+        for index in 0 ..< CUSTOMIZATION_SCARF_CONTROL_COUNT {
+            if rl.CheckCollisionPointRec(mouse, customization_scarf_bounds(panel, index)) {
+                pointer_focus = CUSTOMIZATION_SCARF_START + index
+            }
+        }
         if rl.CheckCollisionPointRec(mouse, customization_back_bounds(panel)) {
             pointer_focus = CUSTOMIZATION_BACK_FOCUS
         }
         if pointer_focus >= 0 do editor.customization_focus = pointer_focus
     }
     if input_action_pressed(.Menu_Accept) do customization_activate(editor, editor.customization_focus)
-    if rl.IsMouseButtonPressed(.LEFT) && pointer_focus >= 0 do customization_activate(editor, pointer_focus)
+    if rl.IsMouseButtonPressed(.LEFT) && pointer_focus >= 0 {
+        if pointer_focus > CUSTOMIZATION_SCARF_START && pointer_focus < CUSTOMIZATION_BACK_FOCUS {
+            component := pointer_focus - CUSTOMIZATION_SCARF_START - 1
+            bounds := customization_scarf_bounds(panel, component + 1)
+            track_x := bounds.x + 42
+            normalized := clamp((mouse.x - track_x) / max(bounds.width - 52, f32(1)), 0, 1)
+            value := u8(normalized * 255)
+            if component == 0 {
+                editor.mouse_scarf_color.r = value
+            } else if component == 1 {
+                editor.mouse_scarf_color.g = value
+            } else {
+                editor.mouse_scarf_color.b = value
+            }
+            editor.mouse_scarf_enabled = true
+        } else {
+            customization_activate(editor, pointer_focus)
+        }
+    }
 }
 
 customization_card :: proc(bounds: rl.Rectangle, label: cstring, selected, focused: bool, swatch: rl.Color = {}) {
@@ -235,6 +301,21 @@ customization_card :: proc(bounds: rl.Rectangle, label: cstring, selected, focus
     }
     size := ui_measure_text(.Data, label, .2)
     ui_draw_text(.Data, label, {text_x, bounds.y + (bounds.height - size.y) * .5 + 1}, .2, {229, 234, 238, 255})
+}
+
+customization_color_component :: proc(
+    bounds: rl.Rectangle,
+    label: cstring,
+    value: u8,
+    focused: bool,
+    color: rl.Color,
+) {
+    customization_card(bounds, label, false, focused)
+    track := rl.Rectangle{bounds.x + 42, bounds.y + 16, bounds.width - 52, 10}
+    rl.DrawRectangleRounded(track, .45, 6, {12, 17, 21, 255})
+    fill := track
+    fill.width *= f32(value) / 255
+    if fill.width > 0 do rl.DrawRectangleRounded(fill, .45, 6, color)
 }
 
 customization_draw_legacy_preview :: proc(editor: ^Editor, bounds: rl.Rectangle) {
@@ -294,6 +375,13 @@ customization_draw_legacy_preview :: proc(editor: ^Editor, bounds: rl.Rectangle)
         rl.DrawCircleV({center.x + 14, hat_y - 10}, 24, {242, 239, 226, 255})
         rl.DrawCircleV({center.x + 40, hat_y - 20}, 28, {242, 239, 226, 255})
         rl.DrawCircleV({center.x + 67, hat_y - 9}, 24, {242, 239, 226, 255})
+    }
+    if editor.mouse_scarf_enabled {
+        scarf := editor.mouse_scarf_color
+        scarf.a = 255
+        rl.DrawRectangleRounded({center.x - 16, center.y + 8, 112, 24}, .18, 6, scarf)
+        rl.DrawRectangleRounded({center.x + 10, center.y + 26, 28, 74}, .18, 6, scarf)
+        rl.DrawRectangleRounded({center.x + 52, center.y + 24, 28, 84}, .18, 6, scarf)
     }
 
     caption := mouse_headgear_label(editor.mouse_headgear)
@@ -369,6 +457,36 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
             editor.customization_focus == CUSTOMIZATION_HEADGEAR_START + index,
         )
     }
+
+    ui_draw_text(.Label, "SCARF", {controls_x, panel.y + 456}, .4, {225, 230, 235, 255})
+    customization_card(
+        customization_scarf_bounds(panel, 0),
+        editor.mouse_scarf_enabled ? "ON" : "OFF",
+        editor.mouse_scarf_enabled,
+        editor.customization_focus == CUSTOMIZATION_SCARF_START,
+        editor.mouse_scarf_color,
+    )
+    customization_color_component(
+        customization_scarf_bounds(panel, 1),
+        "R",
+        editor.mouse_scarf_color.r,
+        editor.customization_focus == CUSTOMIZATION_SCARF_START + 1,
+        {235, 65, 65, 255},
+    )
+    customization_color_component(
+        customization_scarf_bounds(panel, 2),
+        "G",
+        editor.mouse_scarf_color.g,
+        editor.customization_focus == CUSTOMIZATION_SCARF_START + 2,
+        {65, 218, 104, 255},
+    )
+    customization_color_component(
+        customization_scarf_bounds(panel, 3),
+        "B",
+        editor.mouse_scarf_color.b,
+        editor.customization_focus == CUSTOMIZATION_SCARF_START + 3,
+        {74, 128, 239, 255},
+    )
 
     pause_menu_button(
         customization_back_bounds(panel),

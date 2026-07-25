@@ -96,7 +96,10 @@ render_graph_foliage :: proc(user_data: rawptr) {
 
 render_graph_terrain :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
-    if world_renderer.editor != nil && world_renderer.editor.pause_screen == .Customization do return
+    if world_renderer.editor != nil &&
+       (world_renderer.editor.pause_screen == .Customization || world_renderer.editor.vehicle_showcase_scene) {
+        return
+    }
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / Terrain Clipmap")
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.pipelines[ctx.pipeline_index])

@@ -16,11 +16,12 @@ Authoring_Tool :: enum {
     Ridge,
     Cliff,
     Building,
+    ClimbingLeaves,
     Roads,
     GreekAssets,
 }
 
-AUTHORING_TOOL_COUNT :: 10
+AUTHORING_TOOL_COUNT :: 11
 EDITOR_UI_TOP_HEIGHT :: f32(54)
 EDITOR_UI_RAIL_WIDTH :: f32(184)
 EDITOR_UI_INSPECTOR_WIDTH :: f32(292)
@@ -63,6 +64,8 @@ authoring_tool_name :: proc(tool: Authoring_Tool) -> cstring {
         return "CLIFF"
     case .Building:
         return "CITY BRUSH"
+    case .ClimbingLeaves:
+        return "CLIMBING LEAVES"
     case .Roads:
         return "ROADS"
     case .GreekAssets:
@@ -89,6 +92,8 @@ authoring_tool_shortcut :: proc(tool: Authoring_Tool) -> cstring {
         return "C"
     case .Building:
         return "N"
+    case .ClimbingLeaves:
+        return "L"
     case .Roads:
         return "M"
     case .GreekAssets:
@@ -105,6 +110,9 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.architecture_dirty_bounds = {}
     editor.architecture_node_mode = false
     editor.architecture_paint_mode = false
+    editor.climbing_leaf_paint_mode = false
+    editor.climbing_leaf_painting = false
+    editor.formation_brush_painting = false
     editor.greek_placement_mode = false
     editor.road_mode = false
     editor.curve_mode = false
@@ -130,6 +138,9 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     case .Building:
         editor.tool = .Structure
         editor.architecture_paint_mode = true
+    case .ClimbingLeaves:
+        editor.tool = .Structure
+        editor.climbing_leaf_paint_mode = true
     case .Roads:
         editor.tool = .Structure
         editor.road_mode = true
@@ -306,6 +317,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     }
     if editor.architecture_painting do return "Paint city density; release to commit the preview."
     if editor.curve_drawing do return editor.curve_cliff_mode ? "Draw the cliff path; release to commit." : "Draw the ridge path; release to commit."
+    if editor.formation_brush_painting do return "Release to commit the brush stroke."
     if editor.structure_placing do return "Drag the footprint; wheel zooms; Shift changes size; Alt changes height."
     if editor.structure_moving do return "Move the selected formation; release to commit."
     switch editor.authoring_tool {
@@ -316,15 +328,17 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Paint:
         return "Left paints material; right erases it. Wheel zooms; use Radius in the inspector."
     case .Formations:
-        return "Drag to place or click to select. V cycles profile; X enables automatic."
+        return "Left stamps formations; right erases. Wheel zooms; Shift density; Alt hardness."
     case .Foliage:
-        return "Drag a canopy footprint. Wheel zooms; Shift broadens it; Alt adjusts height."
+        return "Left stamps foliage; right erases. Wheel zooms; Shift density; Alt hardness."
     case .Ridge:
         return "Draw a freehand ridge. Wheel zooms; Shift adjusts width and height."
     case .Cliff:
         return "Draw a freehand cliff. Wheel zooms; Shift adjusts width and height."
     case .Building:
         return "Left darkens density; right lightens. Wheel zooms; Shift flow; Alt hardness."
+    case .ClimbingLeaves:
+        return "Left spreads climbing leaves; right erases. Wheel zooms; Shift spread; Alt hardness."
     case .Roads:
         return "Click terrain to add nodes and drag handles to curve edges."
     case .GreekAssets:
@@ -415,6 +429,19 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             !editor.structure_auto_kind,
         )
         row += 2
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "RADIUS (m)",
+            editor.formation_brush_radius,
+            terrain.BASE_CELL_SIZE,
+            240,
+            1,
+        )
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DENSITY", editor.formation_brush_strength, .02, 1, 2)
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HARDNESS", editor.formation_brush_hardness, 0, 1, 2)
+        row += 1
         if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
             structure := editor.project.structures[editor.structure_selected]
             ui_draw_text(
@@ -427,7 +454,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         } else {
             ui_draw_text(
                 .Data,
-                "DRAG TO DEFINE A FOOTPRINT",
+                "PAINT A FORMATION FIELD",
                 {panel.x + 14, panel.y + 82 + f32(row) * 48},
                 .4,
                 {139, 149, 160, 255},
@@ -437,6 +464,19 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         bounds := editor_ui_slider_bounds(layout, row)
         ui_draw_text(.Label, "CANOPY PROFILE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
         ui_draw_text(.Data, "SHADED BLOBS", {bounds.x, bounds.y + 25}, .5, {143, 190, 91, 255})
+        row += 1
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "RADIUS (m)",
+            editor.formation_brush_radius,
+            terrain.BASE_CELL_SIZE,
+            240,
+            1,
+        )
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DENSITY", editor.formation_brush_strength, .02, 1, 2)
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HARDNESS", editor.formation_brush_hardness, 0, 1, 2)
         row += 1
         if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
             structure := editor.project.structures[editor.structure_selected]
@@ -450,7 +490,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         } else {
             ui_draw_text(
                 .Data,
-                "DRAG ONE LARGE FOLIAGE MASS",
+                "PAINT A FOLIAGE FIELD",
                 {panel.x + 14, panel.y + 82 + f32(row) * 48},
                 .4,
                 {139, 149, 160, 255},
@@ -498,6 +538,34 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             editor_ui_slider_bounds(layout, row),
             "HARDNESS",
             editor.architecture_brush_hardness,
+            0,
+            1,
+            2,
+        )
+        row += 1
+    case .ClimbingLeaves:
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "RADIUS (m)",
+            editor.climbing_leaf_brush_radius,
+            terrain.BASE_CELL_SIZE,
+            240,
+            1,
+        )
+        row += 1
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "SPREAD",
+            editor.climbing_leaf_brush_strength,
+            .02,
+            1,
+            2,
+        )
+        row += 1
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "HARDNESS",
+            editor.climbing_leaf_brush_hardness,
             0,
             1,
             2,
@@ -709,9 +777,19 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             structure_cycle_kind(editor)
         }
         row += 2
+        _ = editor_ui_slider_input(editor, layout, 14, row, &editor.formation_brush_radius, terrain.BASE_CELL_SIZE, 240, terrain.BASE_CELL_SIZE)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 15, row, &editor.formation_brush_strength, .02, 1, .01)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 16, row, &editor.formation_brush_hardness, 0, 1, .01)
+        row += 1
     case .Foliage:
-        // Foliage uses the standard structure gesture and wheel controls. Its
-        // profile is intentionally fixed so every stroke reads as one canopy.
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 14, row, &editor.formation_brush_radius, terrain.BASE_CELL_SIZE, 240, terrain.BASE_CELL_SIZE)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 15, row, &editor.formation_brush_strength, .02, 1, .01)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 16, row, &editor.formation_brush_hardness, 0, 1, .01)
         row += 1
     case .Ridge, .Cliff:
         _ = editor_ui_slider_input(
@@ -751,6 +829,22 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         _ = editor_ui_slider_input(editor, layout, 7, row, &editor.architecture_brush_strength, .02, 1, .01)
         row += 1
         _ = editor_ui_slider_input(editor, layout, 10, row, &editor.architecture_brush_hardness, 0, 1, .01)
+        row += 1
+    case .ClimbingLeaves:
+        _ = editor_ui_slider_input(
+            editor,
+            layout,
+            11,
+            row,
+            &editor.climbing_leaf_brush_radius,
+            terrain.BASE_CELL_SIZE,
+            240,
+            terrain.BASE_CELL_SIZE,
+        )
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 12, row, &editor.climbing_leaf_brush_strength, .02, 1, .01)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 13, row, &editor.climbing_leaf_brush_hardness, 0, 1, .01)
         row += 1
     case .GreekAssets:
         if pressed {

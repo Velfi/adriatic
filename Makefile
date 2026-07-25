@@ -57,7 +57,9 @@ HOT_SHADER_DIR := $(HOT_DIR)/shaders
 HOT_PHYSICS_STAMP := $(HOT_DIR)/physics.stamp
 HOT_APP_STAMP := $(HOT_DIR)/app.stamp
 HOT_SHADER_STAMP := $(HOT_DIR)/shader.stamp
-CAPTURE_PATH ?= $(abspath $(BUILD_DIR)/captures/$(APP).png)
+CAPTURE_FORMAT ?= jpeg
+CAPTURE_QUALITY ?= 75
+CAPTURE_PATH ?= $(abspath $(BUILD_DIR)/captures/$(APP).$(if $(filter jpeg jpg,$(CAPTURE_FORMAT)),jpg,png))
 CAPTURE_TARGET ?=
 ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/null)
 HOT_ODIN_SOURCES := $(shell find src packages "$(ZELDA_ENGINE_PACKAGES)" -type f -name '*.odin' 2>/dev/null)
@@ -79,7 +81,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/foliage.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark capture capture-building capture-player capture-player-front capture-player-three-quarter capture-player-profile capture-player-walk capture-player-run-compress capture-player-turn-left capture-player-turn-right capture-player-brake capture-player-jump capture-player-fall capture-player-blink capture-player-posted capture-car capture-foliage capture-foliage-forest capture-foliage-forest-low capture-foliage-understory capture-foliage-forest-golden capture-foliage-forest-wind-a capture-foliage-forest-wind-b capture-foliage-forest-low-wind-a capture-foliage-forest-low-wind-b capture-foliage-stress fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark capture capture-jpeg capture-building capture-player capture-player-front capture-player-three-quarter capture-player-profile capture-player-walk capture-player-run-compress capture-player-turn-left capture-player-turn-right capture-player-brake capture-player-jump capture-player-fall capture-player-blink capture-player-posted capture-car capture-vehicle-showcase capture-foliage capture-foliage-forest capture-foliage-forest-low capture-foliage-understory capture-foliage-forest-golden capture-foliage-forest-wind-a capture-foliage-forest-wind-b capture-foliage-forest-low-wind-a capture-foliage-forest-low-wind-b capture-foliage-stress fmt check test clean
 
 all: build
 
@@ -506,20 +508,29 @@ run: build
 benchmark: release
 	$(PYTHON) tools/perf.py run --scenario all --output "$(abspath $(BUILD_DIR)/perf/latest.json)"
 
-# Render a screenshot to $(CAPTURE_PATH). Each capture target name matches its
-# app flag, so the recipe derives the flag from $@ (e.g. capture-foliage-forest
-# runs --capture-foliage-forest).
+# Render a screenshot to $(CAPTURE_PATH). PNG is the native capture format.
+# JPEG mode captures to a temporary PNG, then uses macOS `sips` conversion so
+# the delivered file is small and has a real JPEG codec.
+# Each capture target name matches its app flag, so the recipe derives the flag
+# from $@ (e.g. capture-foliage-forest runs --capture-foliage-forest).
 # $(1): capture flag passed to the app.
 # $(2): optional trailing argument (e.g. a map name).
 define capture-recipe
 	@mkdir -p "$(dir $(CAPTURE_PATH))"
-	$(DEV_APP) $(1) "$(CAPTURE_PATH)" $(2)
+	$(DEV_APP) $(1) "$(if $(filter jpeg jpg,$(CAPTURE_FORMAT)),$(CAPTURE_PATH).capture.png,$(CAPTURE_PATH))" $(2)
+	@if [ "$(CAPTURE_FORMAT)" = "jpeg" ] || [ "$(CAPTURE_FORMAT)" = "jpg" ]; then \
+		sips -s format jpeg -s formatOptions "$(CAPTURE_QUALITY)" --out "$(CAPTURE_PATH)" "$(CAPTURE_PATH).capture.png" >/dev/null; \
+		rm -f "$(CAPTURE_PATH).capture.png"; \
+	fi
 	@test -s "$(CAPTURE_PATH)" || { echo "error: screenshot was not written to $(CAPTURE_PATH)" >&2; exit 1; }
 	@echo "Screenshot: $(CAPTURE_PATH)"
 endef
 
 capture: build
 	$(call capture-recipe,--$@)
+
+capture-jpeg: CAPTURE_FORMAT=jpeg
+capture-jpeg: capture
 
 capture-building: build
 	$(call capture-recipe,--$@,$(CAPTURE_TARGET))
@@ -565,6 +576,9 @@ capture-player-posted: build
 
 capture-car: build
 	$(call capture-recipe,--$@)
+
+capture-vehicle-showcase: build
+	$(call capture-recipe,--$@,$(CAPTURE_TARGET))
 
 capture-foliage: build
 	$(call capture-recipe,--$@)

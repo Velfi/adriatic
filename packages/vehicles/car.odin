@@ -2,6 +2,7 @@ package vehicles
 
 import third_person "../third_person"
 import wireframe "../wireframe"
+import "core:math"
 
 Car_Wireframe :: struct {
     vertices: [32]wireframe.Vertex,
@@ -124,44 +125,58 @@ simple_car :: proc() -> Car_Wireframe {
     }
 }
 
-// simple_car_mesh is the solid counterpart to simple_car. It deliberately
-// uses the shared product-local mesh container so all procedural vehicles can
-// be submitted through the same depth-tested world pass.
+// car_wheel adds a short, faceted cylinder along the axle, with a smaller
+// circular hub on each face. Keeping this here makes the car's miniature
+// wheels round without changing the shared aircraft mesh helpers.
+car_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32) {
+    tire := [2]Mesh_Ring{{-.12, .32, 0, .32}, {.12, .32, 0, .32}}
+    first := mesh.vertex_count
+    add_ring_mesh(mesh, tire[:], 12, .Wheel)
+    rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
+    translate_new_vertices(mesh, first, center)
+
+    hub := [2]Mesh_Ring{{-.125, .13, 0, .13}, {.125, .13, 0, .13}}
+    first = mesh.vertex_count
+    add_ring_mesh(mesh, hub[:], 12, .Bumper)
+    rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
+    translate_new_vertices(mesh, first, center)
+}
+
+// simple_car_mesh is a tiny, open-top roadster: its proportions are sized for
+// the mouse rather than a human, and the low beltline keeps the driver visible
+// in the showcase and during play.
 simple_car_mesh :: proc() -> Aircraft_Mesh {
     mesh: Aircraft_Mesh
 
-    // Chassis and lower body.
-    add_box(&mesh, {0, .28, 0}, {1.82, .42, 3.62}, .Body)
-    add_box(&mesh, {0, .60, -.08}, {1.72, .36, 3.12}, .Body)
+    // Tiny chassis, hood, rear deck, and a low sill around the open cockpit.
+    add_box(&mesh, {0, .22, 0}, {1.46, .38, 2.72}, .Body)
+    add_box(&mesh, {0, .48, -.82}, {1.32, .22, .66}, .Body)
+    add_box(&mesh, {0, .46, .84}, {1.28, .18, .48}, .Body)
+    add_box(&mesh, {-.62, .53, .08}, {.16, .18, 1.25}, .Body)
+    add_box(&mesh, {.62, .53, .08}, {.16, .18, 1.25}, .Body)
 
-    // A faceted cabin gives the windscreen and rear glass a readable rake.
-    cabin_profile := [6]Mesh_Profile_Point {
-        {z = -1.08, y = .72},
-        {z = -.68, y = 1.35},
-        {z = .48, y = 1.35},
-        {z = .98, y = .72},
-        {z = .72, y = .64},
-        {z = -.88, y = .64},
-    }
-    add_profile_prism(&mesh, cabin_profile[:], .72, .Glass)
+    // A short split windscreen makes the convertible read clearly without
+    // hiding the mouse behind a roof or a tall glass cabin.
+    add_box(&mesh, {-.43, .76, -.43}, {.08, .48, .08}, .Frame)
+    add_box(&mesh, {.43, .76, -.43}, {.08, .48, .08}, .Frame)
+    add_box(&mesh, {0, .98, -.43}, {.92, .08, .08}, .Glass)
+    add_box(&mesh, {0, .78, -.43}, {.72, .24, .035}, .Glass)
 
-    // Four broad tires; slightly inset bright hubs keep the boxy low-poly
-    // silhouette legible from the capture camera and during normal play.
-    wheel_x := [2]f32{-1.0, 1.0}
-    wheel_z := [2]f32{-1.12, 1.12}
+    // Four broad tires; inset hubs keep the miniature silhouette legible.
+    wheel_x := [2]f32{-.78, .78}
+    wheel_z := [2]f32{-.82, .82}
     for x in wheel_x {
         for z in wheel_z {
-            add_box(&mesh, {x, .31, z}, {.30, .62, .72}, .Wheel)
-            add_box(&mesh, {x * 1.015, .31, z}, {.08, .26, .30}, .Bumper)
+            car_wheel(&mesh, {x, .30, z})
         }
     }
 
-    add_box(&mesh, {0, .30, -1.88}, {1.68, .18, .18}, .Bumper)
-    add_box(&mesh, {0, .30, 1.88}, {1.68, .18, .18}, .Bumper)
+    add_box(&mesh, {0, .25, -1.42}, {1.34, .14, .14}, .Bumper)
+    add_box(&mesh, {0, .25, 1.42}, {1.30, .14, .14}, .Bumper)
     light_x := [2]f32{-.58, .58}
     for x in light_x {
-        add_box(&mesh, {x, .61, -1.66}, {.30, .18, .08}, .Headlight)
-        add_box(&mesh, {x, .61, 1.66}, {.30, .18, .08}, .Tail_Light)
+        add_box(&mesh, {x, .56, -1.18}, {.22, .14, .06}, .Headlight)
+        add_box(&mesh, {x, .54, 1.14}, {.22, .12, .06}, .Tail_Light)
     }
     return mesh
 }

@@ -42,7 +42,7 @@ Formation_Kind :: enum {
 
 STRUCTURE_CAPACITY :: 256
 CITY_DENSITY_SAMPLES :: SAMPLES_PER_LEVEL
-PROJECT_FILE_VERSION :: u32(6)
+PROJECT_FILE_VERSION :: u32(7)
 PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '1'}
 
 Project_File_Header :: struct {
@@ -73,6 +73,21 @@ Clipmap_Level :: struct {
 }
 
 Project :: struct {
+    levels:            [CLIPMAP_LEVELS]Clipmap_Level,
+    sea_level:         f32,
+    revision:          u64,
+    structures:        [STRUCTURE_CAPACITY]Structure,
+    structure_count:   int,
+    next_structure_id: u64,
+    road_graph:        roads.Graph,
+    city_density:      [CITY_DENSITY_SAMPLES]u8,
+    climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
+}
+
+// Version 6 had the same payload as Project before climbing-leaf density was
+// added. Keep it explicit so existing authored islands load with an empty leaf
+// field instead of being rejected as an incompatible project.
+Legacy_Project_V6 :: struct {
     levels:            [CLIPMAP_LEVELS]Clipmap_Level,
     sea_level:         f32,
     revision:          u64,
@@ -163,9 +178,20 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
     // Version 5 used the current wire layout, but its two default runways were
     // presentation-only quads. Promote them into ordinary editable road paths
     // exactly once while loading that version.
-    if header.version == 5 && header.payload_size == size_of(Project) && len(data) >= header_size + size_of(Project) {
-        runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
-        if add_default_runways(project) do project.revision += 1
+    if (header.version == 5 || header.version == 6) &&
+       header.payload_size == size_of(Legacy_Project_V6) &&
+       len(data) >= header_size + size_of(Legacy_Project_V6) {
+        legacy := cast(^Legacy_Project_V6)raw_data(data[header_size:])
+        project^ = {}
+        project.levels = legacy.levels
+        project.sea_level = legacy.sea_level
+        project.revision = legacy.revision
+        project.structures = legacy.structures
+        project.structure_count = legacy.structure_count
+        project.next_structure_id = legacy.next_structure_id
+        project.road_graph = legacy.road_graph
+        project.city_density = legacy.city_density
+        if header.version == 5 && add_default_runways(project) do project.revision += 1
         return true
     }
     if header.version != 4 ||
