@@ -68,13 +68,51 @@ postale_exit_requires_a_safe_stop :: proc(t: ^testing.T) {
 @(test)
 postale_accelerates_and_leaves_the_short_runway :: proc(t: ^testing.T) {
     runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
-    for _ in 0 ..< 240 {
+    takeoff_distance: f32
+    took_off := false
+    for _ in 0 ..< 420 {
         postale.step(&runtime, {throttle_up = true, pitch = .35}, 0, 1.0 / 60.0)
-        if !runtime.grounded do break
+        if !took_off && !runtime.grounded {
+            took_off = true
+            takeoff_distance = math.abs(runtime.body.position.x - runtime.spawn_position.x)
+        }
     }
-    distance := math.abs(runtime.body.position.x - runtime.spawn_position.x)
-    testing.expect(t, !runtime.grounded && !runtime.crashed)
-    testing.expect(t, distance < 20)
+    testing.expect(t, took_off && !runtime.grounded && !runtime.crashed)
+    testing.expect(t, takeoff_distance < 50)
+    testing.expect(t, runtime.body.position.y > postale.GROUND_CLEARANCE + 5)
+}
+
+@(test)
+postale_requires_rotation_input_to_take_off :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    for _ in 0 ..< 360 {
+        postale.step(&runtime, {throttle_up = true}, 0, 1.0 / 60.0)
+    }
+    testing.expect(t, runtime.grounded)
+    testing.expect(t, runtime.body.position.y == postale.GROUND_CLEARANCE)
+}
+
+@(test)
+postale_does_not_bounce_back_into_flight_on_touchdown :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime.grounded = false
+    runtime.was_grounded = false
+    runtime.throttle = 1
+    runtime.pitch = 1
+    runtime.body.velocity = flight.scale(runtime.body.basis.forward, 30)
+    runtime.body.velocity.y = -1
+    runtime.body.position.y = postale.GROUND_CLEARANCE
+
+    result := postale.step(&runtime, {pitch = 1}, 0, 1.0 / 60.0)
+
+    testing.expect(t, result.touched_down)
+    testing.expect(t, runtime.grounded)
+    testing.expect(t, runtime.body.velocity.y == 0)
+    for _ in 0 ..< 120 {
+        postale.step(&runtime, {pitch = 1}, 0, 1.0 / 60.0)
+    }
+    testing.expect(t, runtime.grounded)
+    testing.expect(t, runtime.body.position.y == postale.GROUND_CLEARANCE)
 }
 
 @(test)

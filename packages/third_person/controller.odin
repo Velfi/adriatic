@@ -135,7 +135,7 @@ default_config :: proc() -> Config {
     }
 }
 
-default_camera :: proc() -> Camera { return {pitch_radians = .35, distance = 5, height = 1.5} }
+default_camera :: proc() -> Camera { return {pitch_radians = .35, distance = 4, height = 1.5} }
 
 // look applies raw mouse/stick deltas to the orbit camera. Keeping the clamp
 // here makes the controller safe to use from any presentation layer.

@@ -44,21 +44,26 @@ Camera_Tweak :: struct {
 }
 
 Player_Animation_Tweak :: struct {
-    stride_radians_per_meter: f32 `tweak:"range=.1..12;.05"`,
-    walk_full_speed:          f32 `tweak:"range=.1..20;.05"`,
-    vertical_full_speed:      f32 `tweak:"range=.1..20;.05"`,
-    locomotion_blend_rate:    f32 `tweak:"range=.1..30;.1"`,
-    airborne_blend_rate:      f32 `tweak:"range=.1..30;.1"`,
-    vertical_blend_rate:      f32 `tweak:"range=.1..30;.1"`,
-    turn_blend_rate:          f32 `tweak:"range=.1..30;.1"`,
-    brake_blend_rate:         f32 `tweak:"range=.1..30;.1"`,
-    turn_lean_radians:        f32 `tweak:"range=0..0.5;.005"`,
-    turn_spine_offset:        f32 `tweak:"range=0..0.3;.005"`,
-    turn_paw_offset:          f32 `tweak:"range=0..0.3;.005"`,
-    run_body_lift:            f32 `tweak:"range=0..0.2;.005"`,
-    brake_compression:        f32 `tweak:"range=0..0.3;.005"`,
-    tail_counterbalance:      f32 `tweak:"range=0..0.5;.005"`,
-    slope_alignment:          f32 `tweak:"range=0..1;.01"`,
+    stride_radians_per_meter:       f32 `tweak:"range=.1..16;.05"`,
+    trot_stride_radians_per_meter:  f32 `tweak:"range=.1..16;.05"`,
+    bound_stride_radians_per_meter: f32 `tweak:"range=.1..16;.05"`,
+    walk_full_speed:                f32 `tweak:"range=.1..20;.05"`,
+    trot_full_speed:                f32 `tweak:"range=.1..20;.05"`,
+    bound_start_speed:              f32 `tweak:"range=.1..30;.05"`,
+    bound_full_speed:               f32 `tweak:"range=.1..30;.05"`,
+    vertical_full_speed:            f32 `tweak:"range=.1..20;.05"`,
+    locomotion_blend_rate:          f32 `tweak:"range=.1..30;.1"`,
+    airborne_blend_rate:            f32 `tweak:"range=.1..30;.1"`,
+    vertical_blend_rate:            f32 `tweak:"range=.1..30;.1"`,
+    turn_blend_rate:                f32 `tweak:"range=.1..30;.1"`,
+    brake_blend_rate:               f32 `tweak:"range=.1..30;.1"`,
+    turn_lean_radians:              f32 `tweak:"range=0..0.5;.005"`,
+    turn_spine_offset:              f32 `tweak:"range=0..0.3;.005"`,
+    turn_paw_offset:                f32 `tweak:"range=0..0.3;.005"`,
+    run_body_lift:                  f32 `tweak:"range=0..0.2;.005"`,
+    brake_compression:              f32 `tweak:"range=0..0.3;.005"`,
+    tail_counterbalance:            f32 `tweak:"range=0..0.5;.005"`,
+    slope_alignment:                f32 `tweak:"range=0..1;.01"`,
 }
 
 World_Tweak :: struct {
@@ -342,8 +347,13 @@ tweak_default_state :: proc() -> Tweak_State {
         player = third_person.default_config(),
         player_tail = mouse_tail.default_config(),
         player_animation = {
-            stride_radians_per_meter = 3.25,
-            walk_full_speed = 3.5,
+            stride_radians_per_meter = 9.5,
+            trot_stride_radians_per_meter = 5.5,
+            bound_stride_radians_per_meter = 3.5,
+            walk_full_speed = 6,
+            trot_full_speed = 8,
+            bound_start_speed = 9,
+            bound_full_speed = 11,
             vertical_full_speed = 5,
             locomotion_blend_rate = 8,
             airborne_blend_rate = 12,
@@ -646,8 +656,13 @@ tweak_draw_player :: proc(editor: ^Editor) {
     tweak_drag_f32("Slope gravity scale", &c.slope_gravity_scale, 0, 2, .01)
     tweak_drag_f32("Max slope acceleration", &c.max_slope_acceleration, 0, 50, .1)
     im.SeparatorText("Animation")
-    tweak_drag_f32("Stride radians / meter", &a.stride_radians_per_meter, .1, 12, .05)
+    tweak_drag_f32("Walk stride radians / meter", &a.stride_radians_per_meter, .1, 16, .05)
+    tweak_drag_f32("Trot stride radians / meter", &a.trot_stride_radians_per_meter, .1, 16, .05)
+    tweak_drag_f32("Bound stride radians / meter", &a.bound_stride_radians_per_meter, .1, 16, .05)
     tweak_drag_f32("Full walk speed", &a.walk_full_speed, .1, 20, .05)
+    tweak_drag_f32("Full trot speed", &a.trot_full_speed, .1, 20, .05)
+    tweak_drag_f32("Bound start speed", &a.bound_start_speed, .1, 30, .05)
+    tweak_drag_f32("Full bound speed", &a.bound_full_speed, .1, 30, .05)
     tweak_drag_f32("Full vertical speed", &a.vertical_full_speed, .1, 20, .05)
     tweak_drag_f32("Locomotion blend rate", &a.locomotion_blend_rate, .1, 30, .1)
     tweak_drag_f32("Airborne blend rate", &a.airborne_blend_rate, .1, 30, .1)
@@ -913,6 +928,8 @@ tweak_draw_postale :: proc(editor: ^Editor) {
     tweak_drag_f32("Ground steer slow", &editor.tweak.postale_tuning.ground_steer_slow, 0, 20, .01)
     tweak_drag_f32("Takeoff throttle", &editor.tweak.postale_tuning.takeoff_throttle, 0, 1, .01)
     tweak_drag_f32("Takeoff speed scale", &editor.tweak.postale_tuning.takeoff_speed_scale, 0, 2, .01)
+    tweak_drag_f32("Takeoff pitch", &editor.tweak.postale_tuning.takeoff_pitch, 0, 1, .01)
+    tweak_drag_f32("Takeoff ground time", &editor.tweak.postale_tuning.takeoff_ground_time, 0, 2, .01)
     tweak_drag_f32("Takeoff vertical assist", &editor.tweak.postale_tuning.takeoff_vertical_assist, 0, 20, .01)
     im.SeparatorText("Propeller")
     tweak_drag_f32("Propeller base rate", &editor.tweak.postale_tuning.propeller_base_rate, 0, 50, .01)

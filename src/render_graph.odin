@@ -96,6 +96,7 @@ render_graph_foliage :: proc(user_data: rawptr) {
 
 render_graph_terrain :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
+    if world_renderer.editor != nil && world_renderer.editor.pause_screen == .Customization do return
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / Terrain Clipmap")
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.pipelines[ctx.pipeline_index])
@@ -139,6 +140,20 @@ render_graph_roads :: proc(user_data: rawptr) {
     render_graph_stage_end(ctx)
 }
 
+render_graph_character_shadow :: proc(user_data: rawptr) {
+    ctx := cast(^Render_Graph_Context)user_data
+    if world_renderer.player_vertex_count <= 0 do return
+    cmd := ctx.pass.frame.command_buffer
+    render_graph_stage_label(ctx, "Adriatic / Character Shadow")
+    vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.shadow_pipelines[ctx.pipeline_index])
+    shadow_push := ctx.world_push
+    shadow_push.water[1] = world_renderer.player_shadow_receiver
+    vk.CmdPushConstants(cmd, world_renderer.layout, {.VERTEX, .FRAGMENT}, 0, u32(size_of(shadow_push)), &shadow_push)
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.buffer.handle, &ctx.offset)
+    vk.CmdDraw(cmd, u32(world_renderer.player_vertex_count), 1, u32(world_renderer.player_vertex_first), 0)
+    render_graph_stage_end(ctx)
+}
+
 adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
     if graph == nil do return false
     render_graph.reset(graph)
@@ -147,10 +162,12 @@ adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
     foliage := render_graph.add_pass(graph, "foliage", render_graph_foliage)
     terrain := render_graph.add_pass(graph, "terrain", render_graph_terrain)
     roads := render_graph.add_pass(graph, "roads", render_graph_roads)
+    character_shadow := render_graph.add_pass(graph, "character_shadow", render_graph_character_shadow)
     return(
         render_graph.depends_on(graph, terrain, sky) &&
         render_graph.depends_on(graph, geometry, terrain) &&
         render_graph.depends_on(graph, foliage, geometry) &&
-        render_graph.depends_on(graph, roads, foliage) \
+        render_graph.depends_on(graph, roads, foliage) &&
+        render_graph.depends_on(graph, character_shadow, roads) \
     )
 }

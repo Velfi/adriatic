@@ -1,0 +1,141 @@
+name: Release build (macOS)
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Release macOS
+    runs-on: macos-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      ZELDA_ENGINE_REPOSITORY: ${{ vars.ZELDA_ENGINE_REPOSITORY || 'Velfi/zelda-engine' }}
+      ZELDA_ENGINE_REF: ${{ vars.ZELDA_ENGINE_REF || 'main' }}
+      ZELDA_ENGINE_ROOT: ${{ github.workspace }}/zelda-engine
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag }}
+
+      - name: Check out Zelda Engine
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.ZELDA_ENGINE_REPOSITORY }}
+          ref: ${{ env.ZELDA_ENGINE_REF }}
+          path: zelda-engine
+          submodules: recursive
+          token: ${{ secrets.ZELDA_ENGINE_TOKEN || github.token }}
+
+      - name: Cache Homebrew downloads
+        id: brew-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: ${{ runner.os }}-${{ runner.arch }}-homebrew-v1-${{ hashFiles('.github/Brewfile') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-homebrew-v1-
+
+      - name: Install build dependencies
+        shell: bash
+        run: brew bundle install --file=.github/Brewfile --no-upgrade
+
+      - name: Save Homebrew download cache
+        if: steps.brew-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: ${{ steps.brew-cache.outputs.cache-primary-key }}
+
+      - name: Cache pinned toolchain
+        id: toolchain-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .tools
+          key: ${{ runner.os }}-${{ runner.arch }}-toolchain-v2-${{ hashFiles('toolchain.mk', 'tools/bootstrap-macos.sh', 'tools/bootstrap-odin-fork-macos.sh') }}
+
+      - name: Install pinned Odin fork and Slang
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          ./tools/bootstrap-macos.sh
+          ./tools/bootstrap-odin-fork-macos.sh
+
+      - name: Verify cached toolchain
+        if: steps.toolchain-cache.outputs.cache-hit == 'true'
+        shell: bash
+        run: make doctor
+
+      - name: Save pinned toolchain
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .tools
+          key: ${{ steps.toolchain-cache.outputs.cache-primary-key }}
+
+      - name: Import Apple signing certificate
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import "$RUNNER_TEMP/certificate.p12" -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -f pkcs12
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain | awk -F '"' '/Developer ID Application/ {print $2; exit}')"
+          test -n "$IDENTITY"
+          echo "MACOS_CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Write notarization API key
+        if: env.APPLE_API_KEY_CONTENT != ''
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.private_keys"
+          KEY_PATH="$HOME/.private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s\n' "$APPLE_API_KEY_CONTENT" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Package macOS app
+        env:
+          VERSION: ${{ inputs.release_tag }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          args=(--version "${VERSION#v}")
+          if [[ -z "${MACOS_CODESIGN_IDENTITY:-}" ]]; then
+            args+=(--skip-sign --skip-notarize)
+          elif [[ -z "${APPLE_API_KEY_PATH:-}" ]]; then
+            args+=(--skip-notarize)
+          fi
+          ./scripts/package_macos.sh "${args[@]}"
+
+      - name: Name artifact
+        id: artifact
+        shell: bash
+        run: |
+          NAME="adriatic-${RELEASE_TAG}-macos"
+          cp dist/Adriatic-macos.zip "dist/${NAME}.zip"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: dist/${{ steps.artifact.outputs.name }}.zip

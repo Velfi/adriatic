@@ -55,6 +55,10 @@
       "enabled": false,
       "description": "Deterministic driven-car path over classified off-road terrain."
     },
+    "player": {
+      "enabled": false,
+      "description": "Deterministic on-foot player rendering and projected character shadow."
+    },
     "architecture": {
       "enabled": false,
       "description": "Generated town with the architecture authoring tool active."

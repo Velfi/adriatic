@@ -153,3 +153,9 @@ checkout when building, releasing, or testing Adriatic.
 | `make run` | Build and run the development executable. |
 | `make release` | Build an optimized executable. |
 | `make physics-build` | Fetch and build Zelda Engine's pinned Jolt dependency. |
+
+## Releases
+
+Pushing a `v*` tag builds self-contained macOS and Windows x64 archives and
+publishes a GitHub Release. See [docs/release.md](docs/release.md) for the
+required engine checkout settings and optional Apple signing credentials.

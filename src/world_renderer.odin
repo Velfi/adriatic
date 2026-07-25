@@ -39,6 +39,7 @@ World_Vertex :: struct {
     color:    [4]f32,
     kind:     f32,
     normal:   [3]f32,
+    material: [2]f32, // metallic, roughness for imported glTF primitives
 }
 
 Foliage_Vertex :: struct {
@@ -72,6 +73,7 @@ World_Renderer :: struct {
     editor:                    ^Editor,
     ctx:                       ^engine.Vk_Context,
     pipelines:                 [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    shadow_pipelines:          [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     road_pipelines:            [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     sky_pipelines:             [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     particle_pipelines:        [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
@@ -89,6 +91,9 @@ World_Renderer :: struct {
     vertices:                  [dynamic]World_Vertex,
     road_vertices:             [dynamic]World_Vertex,
     foliage_vertices:          [dynamic]Foliage_Vertex,
+    player_vertex_first:       int,
+    player_vertex_count:       int,
+    player_shadow_receiver:    f32,
     clipmap_vertex:            [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
     clipmap_index:             engine.Vk_Buffer,
     clipmap_full_indices:      u32,
@@ -113,6 +118,29 @@ world_renderer: World_Renderer
 
 world_color :: proc(color: rl.Color) -> [4]f32 {
     return {f32(color.r) / 255, f32(color.g) / 255, f32(color.b) / 255, f32(color.a) / 255}
+}
+
+world_srgb_to_linear_channel :: proc(value: f32) -> f32 {
+    clamped := clamp(value, 0, 1)
+    if clamped <= .04045 do return clamped / 12.92
+    return f32(math.pow(f64((clamped + .055) / 1.055), 2.4))
+}
+
+world_linear_to_srgb_channel :: proc(value: f32) -> f32 {
+    clamped := clamp(value, 0, 1)
+    if clamped <= .0031308 do return clamped * 12.92
+    return 1.055 * f32(math.pow(f64(clamped), 1.0 / 2.4)) - .055
+}
+
+world_gltf_material_color :: proc(tint: rl.Color, factor: [4]f32, alpha: u8) -> [4]f32 {
+    // glTF factors are linear while palette tints are authored as sRGB. Return
+    // sRGB here because world.slang performs the shared vertex-color decode.
+    return {
+        world_linear_to_srgb_channel(world_srgb_to_linear_channel(f32(tint.r) / 255) * clamp(factor[0], 0, 1)),
+        world_linear_to_srgb_channel(world_srgb_to_linear_channel(f32(tint.g) / 255) * clamp(factor[1], 0, 1)),
+        world_linear_to_srgb_channel(world_srgb_to_linear_channel(f32(tint.b) / 255) * clamp(factor[2], 0, 1)),
+        f32(tint.a) / 255 * clamp(factor[3], 0, 1) * f32(alpha) / 255,
+    }
 }
 
 world_sky_horizon_color :: proc(sky: atmosphere.Sky_State) -> rl.Color {
@@ -142,15 +170,19 @@ world_camera_near_clip :: proc(editor: ^Editor) -> f32 {
 }
 
 world_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 0, {0, 1, 0}}
+    return {{point.x, point.y, point.z}, world_color(color), 0, {0, 1, 0}, {}}
 }
 
 world_water_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 1, {0, 1, 0}}
+    return {{point.x, point.y, point.z}, world_color(color), 1, {0, 1, 0}, {}}
 }
 
 world_foliage_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 3, {normal.x, normal.y, normal.z}}
+    return {{point.x, point.y, point.z}, world_color(color), 3, {normal.x, normal.y, normal.z}, {}}
+}
+
+world_eye_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
+    return {{point.x, point.y, point.z}, world_color(color), 6, {normal.x, normal.y, normal.z}, {}}
 }
 
 world_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color) {
@@ -165,17 +197,28 @@ world_triangle_colored :: proc(a, b, c: third_person.Vec3, color_a, color_b, col
 
 world_greek_asset_vertex :: proc(
     point: third_person.Vec3,
-    color: rl.Color,
+    color: [4]f32,
     normal: third_person.Vec3,
+    metallic, roughness: f32,
 ) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 0, {normal.x, normal.y, normal.z}}
+    return {
+        {point.x, point.y, point.z},
+        color,
+        5,
+        {normal.x, normal.y, normal.z},
+        {clamp(metallic, 0, 1), clamp(roughness, .04, 1)},
+    }
 }
 
-world_greek_asset_mesh :: proc(asset: Greek_Asset, placement: Greek_Placement, alpha: u8) {
-    if !asset.ready do return
-    color := asset.color
-    color.a = alpha
-    for index := 0; index + 2 < len(asset.mesh.indices); index += 3 {
+world_greek_asset_primitive :: proc(
+    asset: Greek_Asset,
+    placement: Greek_Placement,
+    first, count: int,
+    color: [4]f32,
+    metallic, roughness: f32,
+) {
+    end := min(first + count, len(asset.mesh.indices))
+    for index := max(first, 0); index + 2 < end; index += 3 {
         ia, ib, ic := asset.mesh.indices[index], asset.mesh.indices[index + 1], asset.mesh.indices[index + 2]
         if ia >= u32(len(asset.mesh.vertices)) || ib >= u32(len(asset.mesh.vertices)) || ic >= u32(len(asset.mesh.vertices)) do continue
         a := greek_asset_local_to_world(asset, placement, asset.mesh.vertices[ia])
@@ -187,9 +230,40 @@ world_greek_asset_mesh :: proc(asset: Greek_Asset, placement: Greek_Placement, a
         if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
         append(
             &world_renderer.vertices,
-            world_greek_asset_vertex(a, color, normal),
-            world_greek_asset_vertex(b, color, normal),
-            world_greek_asset_vertex(c, color, normal),
+            world_greek_asset_vertex(a, color, normal, metallic, roughness),
+            world_greek_asset_vertex(b, color, normal, metallic, roughness),
+            world_greek_asset_vertex(c, color, normal, metallic, roughness),
+        )
+    }
+}
+
+world_greek_asset_mesh :: proc(asset: Greek_Asset, placement: Greek_Placement, alpha: u8) {
+    if !asset.ready do return
+    if len(asset.mesh.primitives) == 0 {
+        world_greek_asset_primitive(
+            asset,
+            placement,
+            0,
+            len(asset.mesh.indices),
+            world_gltf_material_color(asset.color, {1, 1, 1, 1}, alpha),
+            0,
+            1,
+        )
+        return
+    }
+    for primitive, primitive_index in asset.mesh.primitives {
+        metallic: f32 = 1
+        roughness: f32 = 1
+        if primitive_index < len(asset.mesh.metallic_factors) do metallic = asset.mesh.metallic_factors[primitive_index]
+        if primitive_index < len(asset.mesh.roughness_factors) do roughness = asset.mesh.roughness_factors[primitive_index]
+        world_greek_asset_primitive(
+            asset,
+            placement,
+            primitive.first,
+            primitive.count,
+            world_gltf_material_color(asset.color, primitive.base_color, alpha),
+            metallic,
+            roughness,
         )
     }
 }
@@ -322,7 +396,7 @@ world_road_vertex :: proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color
     // road pass does not need the generic mesh normal. This keeps the existing
     // compact vertex format and draw call while giving the fragment shader
     // stable material-space coordinates.
-    return {{point.x, point.y, point.z}, world_color(color), 4, {vertex.uv[0], vertex.uv[1], f32(vertex.pavement)}}
+    return {{point.x, point.y, point.z}, world_color(color), 4, {vertex.uv[0], vertex.uv[1], f32(vertex.pavement)}, {}}
 }
 
 world_road_triangle_colored :: proc(editor: ^Editor, a, b, c: roads.Vertex, color_a, color_b, color_c: rl.Color) {
@@ -697,6 +771,53 @@ world_vertical_disc_rotated :: proc(
     }
 }
 
+world_ellipsoid_rotated :: proc(
+    center: third_person.Vec3,
+    radius_x, radius_y, radius_z, rotation: f32,
+    color: rl.Color,
+) {
+    LATITUDE_SEGMENTS :: 6
+    LONGITUDE_SEGMENTS :: 10
+    points: [LATITUDE_SEGMENTS + 1][LONGITUDE_SEGMENTS]third_person.Vec3
+    normals: [LATITUDE_SEGMENTS + 1][LONGITUDE_SEGMENTS]third_person.Vec3
+    for latitude in 0 ..= LATITUDE_SEGMENTS {
+        latitude_angle := -math.PI * .5 + f32(latitude) * math.PI / f32(LATITUDE_SEGMENTS)
+        latitude_radius := math.cos(latitude_angle)
+        local_y := math.sin(latitude_angle) * radius_y
+        for longitude in 0 ..< LONGITUDE_SEGMENTS {
+            longitude_angle := f32(longitude) * math.PI * 2 / f32(LONGITUDE_SEGMENTS)
+            local_x := math.cos(longitude_angle) * latitude_radius * radius_x
+            local_z := math.sin(longitude_angle) * latitude_radius * radius_z
+            world_x, world_z := world_rotate_xz(center.x, center.z, local_x, local_z, rotation)
+            points[latitude][longitude] = {world_x, center.y + local_y, world_z}
+            local_normal := vec_normalize(
+                {
+                    x = local_x / max(radius_x * radius_x, f32(.000001)),
+                    y = local_y / max(radius_y * radius_y, f32(.000001)),
+                    z = local_z / max(radius_z * radius_z, f32(.000001)),
+                },
+            )
+            normal_x, normal_z := world_rotate_xz(0, 0, local_normal.x, local_normal.z, rotation)
+            normals[latitude][longitude] = {normal_x, local_normal.y, normal_z}
+        }
+    }
+    for latitude in 0 ..< LATITUDE_SEGMENTS {
+        for longitude in 0 ..< LONGITUDE_SEGMENTS {
+            next := (longitude + 1) % LONGITUDE_SEGMENTS
+            if len(world_renderer.vertices) + 6 > WORLD_VERTEX_CAPACITY do return
+            append(
+                &world_renderer.vertices,
+                world_eye_vertex(points[latitude][longitude], color, normals[latitude][longitude]),
+                world_eye_vertex(points[latitude + 1][longitude], color, normals[latitude + 1][longitude]),
+                world_eye_vertex(points[latitude + 1][next], color, normals[latitude + 1][next]),
+                world_eye_vertex(points[latitude][longitude], color, normals[latitude][longitude]),
+                world_eye_vertex(points[latitude + 1][next], color, normals[latitude + 1][next]),
+                world_eye_vertex(points[latitude][next], color, normals[latitude][next]),
+            )
+        }
+    }
+}
+
 world_tapered_disc_depth_rotated :: proc(
     center: third_person.Vec3,
     back_radius_x, back_radius_y, front_radius_x, front_radius_y, depth, rotation: f32,
@@ -880,7 +1001,19 @@ world_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, c
     if length <= .0001 do return
     axis_y := third_person.Vec3{delta.x / length, delta.y / length, delta.z / length}
     axis_z := vec_normalize(forward)
-    axis_x := vec_normalize(vec_cross(axis_y, axis_z))
+    axis_x := vec_cross(axis_y, axis_z)
+    axis_x_length := f32(math.sqrt(f64(axis_x.x * axis_x.x + axis_x.y * axis_x.y + axis_x.z * axis_x.z)))
+    if axis_x_length <= .0001 {
+        axis_x = vec_cross(axis_y, {x = 0, y = 1, z = 0})
+        axis_x_length = f32(math.sqrt(f64(axis_x.x * axis_x.x + axis_x.y * axis_x.y + axis_x.z * axis_x.z)))
+    }
+    if axis_x_length > .0001 {
+        axis_x = {axis_x.x / axis_x_length, axis_x.y / axis_x_length, axis_x.z / axis_x_length}
+    } else {
+        axis_x = {
+            x = 1,
+        }
+    }
     center := third_person.Vec3{(a.x + b.x) * .5, (a.y + b.y) * .5, (a.z + b.z) * .5}
     signs := [8][3]f32 {
         {-1, -1, -1},
@@ -1470,11 +1603,14 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
     // ends against the shortened ridge.
     wall := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     if roof_style == .Gable || roof_style == .Low_Gable {
-        world_triangle(wall_front_left, wall_front_right, wall_front_apex, wall)
-        world_triangle(wall_back_right, wall_back_left, wall_back_apex, wall)
+        // Wind each end cap toward the outside of the building. The previous
+        // inward-facing order let back-face culling erase the gable viewed
+        // from its corresponding end.
+        world_triangle(wall_front_left, wall_front_apex, wall_front_right, wall)
+        world_triangle(wall_back_right, wall_back_apex, wall_back_left, wall)
     } else if roof_style == .Hip || landmark {
-        world_triangle(left_front, right_front, ridge_front, terracotta)
-        world_triangle(right_back, left_back, ridge_back, formation_face_color(terracotta, 1.4, 0))
+        world_triangle(left_front, ridge_front, right_front, terracotta)
+        world_triangle(right_back, ridge_back, left_back, formation_face_color(terracotta, 1.4, 0))
     }
     world_quad(left_front, left_back, ridge_back, ridge_front, terracotta)
     world_quad(right_back, right_front, ridge_front, ridge_back, formation_face_color(terracotta, 1.4, 0))
@@ -1738,40 +1874,23 @@ world_architecture :: proc(structure: terrain.Structure) {
         }
     }
     if !landmark && (roof_style == .Gable || roof_style == .Low_Gable) {
-        // A single attic opening keeps the gable end from reading as an empty
-        // triangle while staying small enough to preserve the roof silhouette.
+        // Put each opening on one consistent plane just beyond the barge
+        // overhang. Size it from the roof rise and leave off shutters: the
+        // triangular end has room for one clear opening, not three competing
+        // vertical marks beneath its slopes.
         rise := roof_style == .Low_Gable ? structure.width * .24 : structure.width * .34
-        attic_x, attic_z := world_rotate_xz(
-            structure.center_x,
-            structure.center_z,
-            0,
-            structure.depth * .58 + .18,
-            structure.rotation,
-        )
-        world_box_rotated(
-            {attic_x, structure.base_y + structure.height + rise * .40, attic_z},
-            {structure.width * .16, structure.height * .12, .20},
-            structure.rotation,
-            window,
-        )
-        if facade_style != 1 {
-            shutter_color := facade_style == 2 ? rl.Color{43, 102, 126, 255} : rl.Color{167, 61, 53, 255}
-            for side in -1 ..= 1 {
-                if side == 0 do continue
-                shutter_x, shutter_z := world_rotate_xz(
-                    structure.center_x,
-                    structure.center_z,
-                    f32(side) * structure.width * .075,
-                    structure.depth * .58 + .18,
-                    structure.rotation,
-                )
-                world_box_rotated(
-                    {shutter_x, structure.base_y + structure.height + rise * .40, shutter_z},
-                    {structure.width * .025, structure.height * .13, .23},
-                    structure.rotation,
-                    shutter_color,
-                )
-            }
+        attic_y := structure.base_y + structure.height + rise * .40
+        attic_height := min(structure.height * .12, rise * .32)
+        for gable_end in -1 ..= 1 {
+            if gable_end == 0 do continue
+            local_z := f32(gable_end) * (structure.depth * .58 + .12)
+            attic_x, attic_z := world_rotate_xz(structure.center_x, structure.center_z, 0, local_z, structure.rotation)
+            world_box_rotated(
+                {attic_x, attic_y, attic_z},
+                {structure.width * .16, attic_height, .20},
+                structure.rotation,
+                window,
+            )
         }
     }
     if !landmark {
@@ -3975,6 +4094,26 @@ player_animation_approach :: proc(current, target, rate, delta_seconds: f32) -> 
     return max(current - maximum_delta, target)
 }
 
+Mouse_Gait_Weights :: struct {
+    walk:  f32,
+    trot:  f32,
+    bound: f32,
+}
+
+mouse_gait_weights :: proc(
+    animation: ^Player_Animation_Tweak,
+    horizontal_speed, airborne_weight: f32,
+) -> Mouse_Gait_Weights {
+    if animation == nil do return {walk = 1}
+    walk_end := max(animation.walk_full_speed, f32(.1))
+    trot_end := max(animation.trot_full_speed, walk_end + .1)
+    bound_start := max(animation.bound_start_speed, trot_end)
+    bound_end := max(animation.bound_full_speed, bound_start + .1)
+    walk_to_trot := clamp((horizontal_speed - walk_end) / (trot_end - walk_end), 0, 1)
+    bound := max(clamp((horizontal_speed - bound_start) / (bound_end - bound_start), 0, 1), airborne_weight)
+    return {walk = (1 - walk_to_trot) * (1 - bound), trot = walk_to_trot * (1 - bound), bound = bound}
+}
+
 Mouse_Bone :: enum u8 {
     Pelvis,
     Spine,
@@ -4036,7 +4175,8 @@ world_mouse_skinned_hull :: proc(
     origin: third_person.Vec3,
     rotation: f32,
     skeleton: ^[5]Mouse_Bone_Pose,
-    fur, fur_light: rl.Color,
+    fur, fur_dark, fur_light: rl.Color,
+    pattern: Mouse_Fur_Pattern,
     breath: f32,
 ) {
     RINGS :: 10
@@ -4066,7 +4206,22 @@ world_mouse_skinned_hull :: proc(
             dorsal_weight := clamp((sine - .10) * .30, 0, .27)
             if ring >= 6 do dorsal_weight *= .55
             coat_color := color_lerp(fur, fur_light, belly_weight)
-            coat_color = color_lerp(coat_color, {91, 70, 57, 255}, dorsal_weight)
+            coat_color = color_lerp(coat_color, fur_dark, dorsal_weight)
+            marking := color_lerp(fur_light, {247, 239, 218, 255}, .72)
+            switch pattern {
+            case .Solid:
+            case .Pale_Belly:
+                pale_weight := clamp((-sine + .15) * 1.15, 0, .92)
+                coat_color = color_lerp(coat_color, marking, pale_weight)
+            case .Hooded:
+                if ring < 6 {
+                    hood_edge := ring == 5 ? clamp((sine + .2) * .7, 0, 1) : f32(1)
+                    coat_color = color_lerp(coat_color, marking, hood_edge)
+                }
+            case .Piebald:
+                patch_value := (ring * 7 + segment * 3 + (segment / 3) * 5) % 13
+                if patch_value < 5 do coat_color = color_lerp(coat_color, marking, .92)
+            }
             vertices[ring][segment] = {
                 bind_position = {
                     cosine * radius_x[ring] * breath_scale,
@@ -4240,8 +4395,12 @@ player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
         delta_seconds,
     )
     if editor.player.grounded {
-        editor.player_stride_phase +=
-            horizontal_speed * delta_seconds * max(animation.stride_radians_per_meter, f32(.1))
+        gait := mouse_gait_weights(animation, horizontal_speed, editor.player_airborne_weight)
+        stride_radians_per_meter :=
+            animation.stride_radians_per_meter * gait.walk +
+            animation.trot_stride_radians_per_meter * gait.trot +
+            animation.bound_stride_radians_per_meter * gait.bound
+        editor.player_stride_phase += horizontal_speed * delta_seconds * max(stride_radians_per_meter, f32(.1))
         for editor.player_stride_phase >= math.PI * 2 do editor.player_stride_phase -= math.PI * 2
     }
 }
@@ -4267,16 +4426,102 @@ mouse_ground_contact :: proc(
     return result
 }
 
+Mouse_Paw_Cycle :: struct {
+    reach: f32,
+    lift:  f32,
+}
+
+// A planted paw travels backward relative to the body for most of a stride,
+// then follows a shorter, arcing recovery path forward. This asymmetric cycle
+// is what keeps slow mouse locomotion grounded instead of looking like four
+// feet pedaling through equal half-circles.
+mouse_paw_cycle :: proc(phase_radians, phase_offset, duty_factor: f32) -> Mouse_Paw_Cycle {
+    phase := phase_radians / (math.PI * 2) + phase_offset
+    phase -= f32(math.floor(f64(phase)))
+    duty := clamp(duty_factor, .05, .95)
+    if phase < duty {
+        stance := phase / duty
+        return {reach = 1 - stance * 2}
+    }
+    swing := (phase - duty) / (1 - duty)
+    smooth_swing := swing * swing * (3 - 2 * swing)
+    return {reach = -1 + smooth_swing * 2, lift = math.sin(swing * math.PI)}
+}
+
+mouse_paw_cycle_blend :: proc(
+    phase_radians: f32,
+    walk_offset, trot_offset, bound_offset: f32,
+    walk_weight, trot_weight, bound_weight: f32,
+) -> Mouse_Paw_Cycle {
+    // Walking mice retain three or four contacts for much of the cycle;
+    // stance shortens through trot and becomes shorter than swing in a bound.
+    walk := mouse_paw_cycle(phase_radians, walk_offset, .76)
+    trot := mouse_paw_cycle(phase_radians, trot_offset, .54)
+    bound := mouse_paw_cycle(phase_radians, bound_offset, .43)
+    return {
+        reach = walk.reach * walk_weight + trot.reach * trot_weight + bound.reach * bound_weight,
+        lift = walk.lift * walk_weight * .72 + trot.lift * trot_weight * .88 + bound.lift * bound_weight,
+    }
+}
+
+mouse_pin_player_paw :: proc(
+    editor: ^Editor,
+    paw_index: int,
+    desired: third_person.Vec3,
+    planted: bool,
+) -> third_person.Vec3 {
+    if editor == nil || paw_index < 0 || paw_index >= len(editor.player_paw_planted) do return desired
+    if !planted {
+        editor.player_paw_planted[paw_index] = false
+        return desired
+    }
+    cached := editor.player_paw_plant_positions[paw_index]
+    dx, dz := desired.x - cached.x, desired.z - cached.z
+    teleported := dx * dx + dz * dz > 4
+    if !editor.player_paw_planted[paw_index] || teleported {
+        editor.player_paw_plant_positions[paw_index] = desired
+        editor.player_paw_planted[paw_index] = true
+        return desired
+    }
+    result := desired
+    result.x = cached.x
+    result.z = cached.z
+    return result
+}
+
 Mouse_Accessory :: enum {
     None,
     Goggles,
     Flower,
+    Acorn_Cap,
+    Bottle_Cap,
+    Paper_Boat,
+    Chef_Hat,
+}
+
+Mouse_Fur :: enum {
+    Chestnut,
+    Silver,
+    Cream,
+    Soot,
+    Russet,
+    White,
+}
+
+Mouse_Fur_Pattern :: enum {
+    Solid,
+    Pale_Belly,
+    Hooded,
+    Piebald,
 }
 
 Mouse_Model :: struct {
     position:          third_person.Vec3,
     rotation:          f32,
     accessory:         Mouse_Accessory,
+    fur:               Mouse_Fur,
+    pattern:           Mouse_Fur_Pattern,
+    preview:           bool,
     player_controlled: bool,
     grounded:          bool,
 }
@@ -4293,9 +4538,23 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         return {world_x, origin.y + y, world_z}
     }
 
-    fur: rl.Color = {132, 107, 84, 255}
-    fur_dark: rl.Color = {91, 70, 57, 255}
-    fur_light: rl.Color = {184, 164, 139, 255}
+    fur: rl.Color
+    fur_dark: rl.Color
+    fur_light: rl.Color
+    switch model.fur {
+    case .Chestnut:
+        fur, fur_dark, fur_light = {132, 107, 84, 255}, {91, 70, 57, 255}, {184, 164, 139, 255}
+    case .Silver:
+        fur, fur_dark, fur_light = {139, 145, 151, 255}, {83, 90, 98, 255}, {197, 202, 207, 255}
+    case .Cream:
+        fur, fur_dark, fur_light = {213, 190, 151, 255}, {145, 119, 88, 255}, {241, 224, 190, 255}
+    case .Soot:
+        fur, fur_dark, fur_light = {59, 63, 69, 255}, {27, 30, 35, 255}, {111, 118, 125, 255}
+    case .Russet:
+        fur, fur_dark, fur_light = {169, 91, 55, 255}, {103, 51, 37, 255}, {216, 139, 91, 255}
+    case .White:
+        fur, fur_dark, fur_light = {226, 224, 216, 255}, {157, 154, 150, 255}, {249, 246, 233, 255}
+    }
     ear: rl.Color = {188, 126, 123, 255}
     paw: rl.Color = {201, 146, 139, 255}
     features: rl.Color = {35, 32, 30, 255}
@@ -4337,23 +4596,48 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     run_weight :=
         model.player_controlled ? editor.player_gait_weight * (1 - airborne_weight) + .88 * airborne_weight : f32(0)
     stride_phase := model.player_controlled ? editor.player_stride_phase : f32(0)
+    horizontal_speed := f32(
+        math.sqrt(
+            f64(
+                editor.player.velocity.x * editor.player.velocity.x +
+                editor.player.velocity.z * editor.player.velocity.z,
+            ),
+        ),
+    )
+    gait := mouse_gait_weights(animation, horizontal_speed, airborne_weight)
+    walk_weight, trot_weight, bound_weight := gait.walk, gait.trot, gait.bound
     if model.player_controlled && editor.capture_player_walk_pose {
         run_weight = 1
         stride_phase = math.PI * 1.75
+        walk_weight = 1
+        trot_weight = 0
+        bound_weight = 0
     } else if model.player_controlled && editor.capture_player_run_compress_pose {
         run_weight = 1
         stride_phase = math.PI * .50
+        walk_weight = 0
+        trot_weight = 0
+        bound_weight = 1
     } else if model.player_controlled &&
        (editor.capture_player_turn_left_pose || editor.capture_player_turn_right_pose) {
         run_weight = 1
         stride_phase = math.PI * 1.75
+        walk_weight = 0
+        trot_weight = 0
+        bound_weight = 1
     } else if model.player_controlled && editor.capture_player_brake_pose {
         run_weight = 1
         stride_phase = math.PI * .50
+        walk_weight = 0
+        trot_weight = 0
+        bound_weight = 1
     }
     vertical_pose := model.player_controlled ? editor.player_vertical_pose : f32(0)
     if model.player_controlled && (editor.capture_player_jump_pose || editor.capture_player_fall_pose) {
         airborne_weight = 1
+        walk_weight = 0
+        trot_weight = 0
+        bound_weight = 1
         vertical_pose = clamp(
             editor.player.velocity.y / max(editor.tweak.player_animation.vertical_full_speed, f32(.1)),
             -1,
@@ -4365,7 +4649,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     descent_weight := max(-jump_rise, f32(0))
 
     idle_phase := editor.map_time * 2.2
-    bound := math.sin(stride_phase) * run_weight
+    // Sagittal spinal flexion is pronounced in a bound, but deliberately
+    // restrained in alternating walk and trot gaits.
+    bound := math.sin(stride_phase) * run_weight * (.16 + .84 * bound_weight)
     spine_extension := -bound
     body_bob :=
         (-bound * .018 + math.abs(math.sin(stride_phase * 2)) * .014) * run_weight +
@@ -4449,7 +4735,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             roll = body_roll * .22,
         },
     }
-    world_mouse_skinned_hull(p, rotation, &skeleton, fur, fur_light, breathing)
+    world_mouse_skinned_hull(p, rotation, &skeleton, fur, fur_dark, fur_light, model.pattern, breathing)
 
     ear_offsets := [2]f32{-.125, .125}
     for ear_x in ear_offsets {
@@ -4506,15 +4792,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
     }
 
-    eye_offsets := [2]f32{-.18, .18}
+    eye_offsets := [2]f32{-.165, .165}
     eye_radius_y := .004 + (1 - blink_weight) * .033
     for eye_x in eye_offsets {
-        eye_side := eye_x / .18
-        // Mouse eyes sit on the lateral skull, not on a forward-facing mask.
-        // Cant each cornea toward its own side so the near eye remains the
-        // dominant facial landmark in profile.
-        eye_rotation := rotation - eye_side * (math.PI * .5)
-        world_vertical_disc_rotated(
+        // Faceted ellipsoids keep the lateral eyes round through the complete
+        // camera orbit. A side-canted disc only looked correct in exact
+        // profile and collapsed into a black bar from the front.
+        world_ellipsoid_rotated(
             local_point(
                 p,
                 rotation,
@@ -4522,29 +4806,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 head_y + .018 + eye_x * math.sin(body_roll) * .32,
                 head_z + .31,
             ),
-            .030,
+            .034,
             eye_radius_y,
-            .019,
-            eye_rotation,
+            .032,
+            rotation,
             features,
         )
-        if blink_weight < .55 {
-            // The catchlight belongs on the outward corneal cap. Offset it in
-            // lateral-skull space rather than along model-forward, otherwise
-            // a profile eye buries the highlight inside its own disc.
-            world_box_rotated(
-                local_point(
-                    p,
-                    rotation,
-                    eye_x + eye_side * .035 + head_sway + head_turn_x,
-                    head_y + .034 + eye_x * math.sin(body_roll) * .32,
-                    head_z + .318,
-                ),
-                {.012 * (1 - blink_weight), .013 * (1 - blink_weight), .012 * (1 - blink_weight)},
-                rotation,
-                tooth,
-            )
-        }
     }
 
     if model.accessory == .Goggles {
@@ -4732,6 +4999,63 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             flower_yaw,
             {232, 180, 62, 255},
         )
+    } else if model.accessory == .Acorn_Cap {
+        crown := local_point(p, rotation, head_sway + head_turn_x, head_y + .205, head_z + .105)
+        world_ellipsoid_rotated(crown, .255, .105, .235, rotation, {112, 72, 38, 255})
+        world_box_rotated(
+            local_point(p, rotation, head_sway + head_turn_x, head_y + .310, head_z + .070),
+            {.025, .065, .025},
+            rotation,
+            {75, 49, 29, 255},
+        )
+    } else if model.accessory == .Bottle_Cap {
+        cap_center := local_point(p, rotation, head_sway + head_turn_x, head_y + .205, head_z + .105)
+        world_ellipsoid_rotated(cap_center, .245, .075, .225, rotation, {55, 139, 151, 255})
+        world_ellipsoid_rotated(
+            local_point(p, rotation, head_sway + head_turn_x, head_y + .257, head_z + .105),
+            .205,
+            .030,
+            .185,
+            rotation,
+            {91, 198, 202, 255},
+        )
+    } else if model.accessory == .Paper_Boat {
+        paper := rl.Color{232, 224, 198, 255}
+        crown_y := head_y + .245
+        crown_z := head_z + .095
+        world_box_rotated(
+            local_point(p, rotation, -.10 + head_sway + head_turn_x, crown_y, crown_z),
+            {.13, .025, .19},
+            rotation + .28,
+            paper,
+        )
+        world_box_rotated(
+            local_point(p, rotation, .10 + head_sway + head_turn_x, crown_y, crown_z),
+            {.13, .025, .19},
+            rotation - .28,
+            {210, 202, 178, 255},
+        )
+    } else if model.accessory == .Chef_Hat {
+        cloth := rl.Color{239, 237, 224, 255}
+        crown_x := head_sway + head_turn_x
+        crown_z := head_z + .085
+        world_box_rotated(
+            local_point(p, rotation, crown_x, head_y + .205, crown_z),
+            {.19, .055, .17},
+            rotation,
+            {207, 205, 195, 255},
+        )
+        puff_offsets := [3]f32{-.12, 0, .12}
+        for puff_x in puff_offsets {
+            world_ellipsoid_rotated(
+                local_point(p, rotation, crown_x + puff_x, head_y + .305 + math.abs(puff_x) * .08, crown_z),
+                .13,
+                .13,
+                .14,
+                rotation,
+                cloth,
+            )
+        }
     }
 
     world_box_rotated(
@@ -4748,6 +5072,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     )
 
     sides := [2]f32{-1, 1}
+    whisker_scale := model.preview ? f32(.38) : f32(1)
     for side_f in sides {
         whisker_root := local_point(p, rotation, side_f * .035 + head_sway + head_turn_x, muzzle_y, muzzle_z + .165)
         for whisker_index in 0 ..< 3 {
@@ -4757,14 +5082,17 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             whisker_mid := local_point(
                 p,
                 rotation,
-                side_f * (.19 + f32(whisker_index) * .012) + head_sway + head_turn_x,
+                side_f * (.19 * whisker_scale + f32(whisker_index) * .012 * whisker_scale) + head_sway + head_turn_x,
                 (muzzle_y + whisker_y) * .5 + whisker_flex,
                 muzzle_z + .13,
             )
             whisker_tip := local_point(
                 p,
                 rotation,
-                side_f * (.36 + f32(whisker_index) * .022 + whisker_flex) + head_sway + head_turn_x,
+                side_f *
+                    (.36 * whisker_scale + f32(whisker_index) * .022 * whisker_scale + whisker_flex * whisker_scale) +
+                head_sway +
+                head_turn_x,
                 whisker_y + whisker_flex,
                 muzzle_z + .07 - f32(whisker_index) * .012,
             )
@@ -4773,15 +5101,40 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         }
     }
 
-    // A mouse bounds: the fore pair reaches together while the powerful hind
-    // pair compresses and releases half a cycle later.
+    // Mice progress from a four-beat walk through diagonal trot to a bound.
+    // Generate all three footfall patterns and blend them by speed so gait
+    // transitions do not pop when the controller accelerates.
     air_tuck := airborne_weight * (.13 + ascent_weight * .05 - descent_weight * .085)
-    for side_f in sides {
-        // A small bilateral phase lag keeps the paws from landing as mirrored
-        // mechanical pairs while preserving the mouse's bounding gait.
-        front_cycle := -math.sin(stride_phase + side_f * .12) * run_weight
-        rear_cycle := math.sin(stride_phase - side_f * .10) * run_weight
-        front_lift := max(front_cycle, f32(0)) * .105 * run_weight
+    for side_f, side_index in sides {
+        left_side := side_f < 0
+        // Walk footfalls: LF, RH, RF, LH. Trot synchronizes diagonal pairs;
+        // bound synchronizes each homologous pair, fore then hind.
+        front_walk_offset := left_side ? f32(0) : f32(.50)
+        rear_walk_offset := left_side ? f32(.25) : f32(.75)
+        front_trot_offset := left_side ? f32(0) : f32(.50)
+        rear_trot_offset := left_side ? f32(.50) : f32(0)
+        bilateral_lag := side_f * .018
+        front_motion := mouse_paw_cycle_blend(
+            stride_phase,
+            front_walk_offset,
+            front_trot_offset,
+            bilateral_lag,
+            walk_weight,
+            trot_weight,
+            bound_weight,
+        )
+        rear_motion := mouse_paw_cycle_blend(
+            stride_phase,
+            rear_walk_offset,
+            rear_trot_offset,
+            .50 - bilateral_lag,
+            walk_weight,
+            trot_weight,
+            bound_weight,
+        )
+        front_cycle := front_motion.reach * run_weight
+        rear_cycle := rear_motion.reach * run_weight
+        front_lift := front_motion.lift * .105 * run_weight
         scapula_slide := front_cycle * .038
         inside_turn := max(side_f * turn_pose, f32(0))
         outside_turn := max(-side_f * turn_pose, f32(0))
@@ -4842,7 +5195,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             brake_pose * .12 -
             posted_weight * .095
         fore_paw := local_point(p, rotation, fore_paw_x, fore_paw_y, fore_paw_z)
-        fore_planted := model.grounded && front_lift < .025 && posted_weight < .5
+        fore_planted := model.grounded && front_motion.lift < .025 && posted_weight < .5
+        if model.player_controlled {
+            fore_paw = mouse_pin_player_paw(editor, side_index * 2, fore_paw, fore_planted)
+        }
         if model.grounded {
             fore_paw = mouse_ground_contact(editor, fore_paw, .024, fore_planted)
         }
@@ -4859,13 +5215,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // discs presented their extrusion as a rectangular bar in profile.
         world_vertical_prism(fore_paw, .044, .041, .030, rotation, paw)
         for digit in 0 ..< 3 {
-            digit_x := fore_paw_x + side_f * (f32(digit) - 1) * .013
             digit_tip := local_point(
-                p,
+                fore_paw,
                 rotation,
-                digit_x,
-                fore_paw_y - .036 * (1 - run_weight) - .006 * run_weight,
-                fore_paw_z + .018 * (1 - run_weight) + .064 * run_weight,
+                side_f * (f32(digit) - 1) * .013,
+                -.036 * (1 - run_weight) - .006 * run_weight,
+                .018 * (1 - run_weight) + .064 * run_weight,
             )
             if model.grounded {
                 digit_tip = mouse_ground_contact(editor, digit_tip, .008, fore_planted)
@@ -4873,8 +5228,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             world_tube_between(fore_paw, digit_tip, model_forward, .008, .008, paw)
         }
 
-        hind_cycle := rear_cycle + side_f * math.cos(stride_phase) * .035 * run_weight
-        hind_lift := max(hind_cycle, f32(0)) * .120 * run_weight
+        hind_cycle := rear_cycle
+        hind_lift := rear_motion.lift * .120 * run_weight
         pelvic_drive := hind_cycle * .028
         hind_hip := local_point(
             p,
@@ -4908,7 +5263,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         hind_paw_z :=
             -.16 + hind_cycle * .17 * run_weight + side_f * .018 * run_weight + brake_pose * .15 - posted_weight * .10
         hind_paw := local_point(p, rotation, hind_paw_x, hind_paw_y, hind_paw_z)
-        hind_planted := model.grounded && hind_lift < .025
+        hind_planted := model.grounded && rear_motion.lift < .025
+        if model.player_controlled {
+            hind_paw = mouse_pin_player_paw(editor, side_index * 2 + 1, hind_paw, hind_planted)
+        }
         if model.grounded {
             hind_paw = mouse_ground_contact(editor, hind_paw, .024, hind_planted)
         }
@@ -4923,13 +5281,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward)
         world_vertical_prism(hind_paw, .058, .058, .032, rotation, paw)
         for digit in 0 ..< 3 {
-            digit_tip := local_point(
-                p,
-                rotation,
-                hind_paw_x + side_f * (f32(digit) - 1) * .017,
-                hind_paw_y - .008,
-                hind_paw_z + .092,
-            )
+            digit_tip := local_point(hind_paw, rotation, side_f * (f32(digit) - 1) * .017, -.008, .092)
             if model.grounded {
                 digit_tip = mouse_ground_contact(editor, digit_tip, .009, hind_planted)
             }
@@ -4978,11 +5330,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             )
             tail_radii[tail_index] = .027 * (1 - weight * .58)
             tail_colors[tail_index] = paw
-            surface :=
-                mouse_surface_height(editor, tail_points[tail_index].x, tail_points[tail_index].z) +
-                tail_radii[tail_index] +
-                MOUSE_CONTACT_SKIN
-            tail_points[tail_index].y = max(tail_points[tail_index].y, surface)
+            if model.grounded {
+                surface :=
+                    mouse_surface_height(editor, tail_points[tail_index].x, tail_points[tail_index].z) +
+                    tail_radii[tail_index] +
+                    MOUSE_CONTACT_SKIN
+                tail_points[tail_index].y = max(tail_points[tail_index].y, surface)
+            }
         }
         world_mouse_limb_hull(tail_points[:], tail_radii[:], tail_colors[:], model_forward)
     }
@@ -4995,7 +5349,9 @@ world_character :: proc(editor: ^Editor) {
         {
             position = editor.player.position,
             rotation = math.PI - editor.player.facing_yaw_radians,
-            accessory = .Goggles,
+            accessory = editor.mouse_headgear,
+            fur = editor.mouse_fur,
+            pattern = editor.mouse_pattern,
             player_controlled = true,
             grounded = editor.player.grounded,
         },
@@ -5403,6 +5759,28 @@ world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.vertices)
     clear(&world_renderer.road_vertices)
     clear(&world_renderer.foliage_vertices)
+    world_renderer.player_vertex_first = 0
+    world_renderer.player_vertex_count = 0
+    if editor.pause_screen == .Customization {
+        // The customization screen gets a purpose-built miniature world pass.
+        // It uses the exact gameplay model and materials, rather than maintaining
+        // a second approximation of the mouse in the UI layer.
+        world_ellipsoid_rotated({0, -.08, 0}, .72, .08, .72, 0, {40, 58, 61, 255})
+        world_ellipsoid_rotated({0, -.025, 0}, .60, .035, .60, 0, {77, 112, 111, 255})
+        world_mouse_model(
+            editor,
+            {
+                position = {0, 0, 0},
+                rotation = f32(rl.GetTime()) * .32,
+                accessory = editor.mouse_headgear,
+                fur = editor.mouse_fur,
+                pattern = editor.mouse_pattern,
+                preview = true,
+                grounded = false,
+            },
+        )
+        return
+    }
     // Depth testing makes submission order independent. Put authored gameplay
     // meshes first so dense terrain can consume only the remaining capacity
     // instead of silently dropping vehicles at the end of the frame.
@@ -5415,23 +5793,6 @@ world_build :: proc(editor: ^Editor) {
         world_structure_shadow(structure, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
     }
 
-    if editor.in_map && editor.pilot.mode == .On_Foot {
-        character_ground := terrain.sample_height(
-            &editor.project,
-            0,
-            editor.player.position.x,
-            editor.player.position.z,
-        )
-        character_shadow := terrain.structure_make(
-            editor.player.position.x,
-            editor.player.position.z,
-            .72,
-            1.72,
-            character_ground,
-            .78,
-        )
-        world_structure_shadow(character_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
-    }
     if editor.in_map && editor.libellula_visible {
         marta_ground := terrain.sample_height(
             &editor.project,
@@ -5453,12 +5814,25 @@ world_build :: proc(editor: ^Editor) {
     world_aircraft(editor)
     world_car(editor)
     world_marta(editor)
+    world_renderer.player_vertex_first = len(world_renderer.vertices)
     world_character(editor)
+    world_renderer.player_vertex_count = len(world_renderer.vertices) - world_renderer.player_vertex_first
+    receiver := mouse_surface_height(editor, editor.player.position.x, editor.player.position.z)
+    pavement := roads.pavement_at(
+        &editor.project.road_graph,
+        {x = editor.player.position.x, y = receiver, z = editor.player.position.z},
+    )
+    if pavement.on_surface do receiver += .04
+    world_renderer.player_shadow_receiver = receiver
     world_brush(editor)
     world_particles_cpu(editor)
     world_vehicle_particles(editor)
     world_wing_trails(editor)
     world_wind_streaks(editor)
+}
+
+customization_preview_camera_pose :: proc() -> third_person.Camera_Pose {
+    return {position = {x = 2.35, y = 1.25, z = 3.2}, target = {x = 1.90, y = .43, z = 0}}
 }
 
 world_particles_cpu :: proc(editor: ^Editor) {
@@ -5799,17 +6173,18 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         stride    = u32(size_of(World_Vertex)),
         inputRate = .VERTEX,
     }
-    attrs := [4]vk.VertexInputAttributeDescription {
+    attrs := [5]vk.VertexInputAttributeDescription {
         {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, position))},
         {location = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Vertex, color))},
         {location = 2, format = .R32_SFLOAT, offset = u32(offset_of(World_Vertex, kind))},
         {location = 3, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, normal))},
+        {location = 4, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, material))},
     }
     vi := vk.PipelineVertexInputStateCreateInfo {
         sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         vertexBindingDescriptionCount   = 1,
         pVertexBindingDescriptions      = &binding,
-        vertexAttributeDescriptionCount = 4,
+        vertexAttributeDescriptionCount = 5,
         pVertexAttributeDescriptions    = raw_data(attrs[:]),
     }
     ia := vk.PipelineInputAssemblyStateCreateInfo {
@@ -5877,6 +6252,46 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         layout              = world_renderer.layout,
     }
     if !render3d.create_color_pipeline_variants(ctx, &info, .D32_SFLOAT, &world_renderer.pipelines) do return false
+    shadow_vert, shadow_frag: engine.Vk_Shader_Module
+    if !engine.vk_load_shader_module_with_fallback(
+        ctx,
+        "assets/shaders/world.slang",
+        "shaders/player-shadow.vert",
+        .Vertex,
+        "shadow_vertex",
+        &shadow_vert,
+    ) {
+        return false
+    }
+    defer engine.vk_destroy_shader_module(ctx, &shadow_vert)
+    if !engine.vk_load_shader_module_with_fallback(
+        ctx,
+        "assets/shaders/world.slang",
+        "shaders/player-shadow.frag",
+        .Fragment,
+        "shadow_fragment",
+        &shadow_frag,
+    ) {
+        return false
+    }
+    defer engine.vk_destroy_shader_module(ctx, &shadow_frag)
+    shadow_stages := stages
+    shadow_stages[0].module = shadow_vert.handle
+    shadow_stages[1].module = shadow_frag.handle
+    shadow_rs := rs
+    shadow_rs.cullMode = {}
+    shadow_rs.depthBiasEnable = true
+    shadow_rs.depthBiasConstantFactor = -1
+    shadow_rs.depthBiasSlopeFactor = -1
+    shadow_depth := depth
+    shadow_depth.depthCompareOp = .LESS_OR_EQUAL
+    shadow_info := info
+    shadow_info.pStages = raw_data(shadow_stages[:])
+    shadow_info.pRasterizationState = &shadow_rs
+    shadow_info.pDepthStencilState = &shadow_depth
+    if !render3d.create_color_pipeline_variants(ctx, &shadow_info, .D32_SFLOAT, &world_renderer.shadow_pipelines) {
+        return false
+    }
     // Roads are submitted after the terrain. A small negative polygon offset
     // pulls only their fragments toward the camera under the conventional
     // LESS depth convention, preventing coplanar flicker at grazing angles
@@ -6064,8 +6479,10 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     vk.CmdSetViewport(pass.frame.command_buffer, 0, 1, &viewport)
     vk.CmdSetScissor(pass.frame.command_buffer, 0, 1, &scissor)
     pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
+    render_camera_pose :=
+        editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
     camera := perspective_camera(
-        editor.camera_pose,
+        render_camera_pose,
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     sky := atmosphere.sample(&editor.atmosphere)
@@ -6210,8 +6627,10 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     vk.CmdSetViewport(pass.frame.command_buffer, 0, 1, &viewport)
     vk.CmdSetScissor(pass.frame.command_buffer, 0, 1, &scissor)
     pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
+    render_camera_pose :=
+        editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
     camera := perspective_camera(
-        editor.camera_pose,
+        render_camera_pose,
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     sky := atmosphere.sample(&editor.atmosphere)
@@ -6288,6 +6707,7 @@ world_renderer_destroy :: proc() {
     engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_index)
     roads.mesh_destroy(&world_renderer.road_mesh)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.pipelines)
+    render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.shadow_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.road_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.sky_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.particle_pipelines)

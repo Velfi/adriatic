@@ -11,6 +11,7 @@ Pause_Screen :: enum {
     Closed,
     Pause,
     Options,
+    Customization,
 }
 
 pause_menu_pointer_enabled := true
@@ -84,10 +85,10 @@ pause_menu_button_bounds :: proc(panel: rl.Rectangle, row: int) -> rl.Rectangle 
     return {panel.x + 44, panel.y + 126 + f32(row) * 58, panel.width - 88, 46}
 }
 
-OPTIONS_ROW_COUNT :: 6
+OPTIONS_ROW_COUNT :: 7
 OPTIONS_RESTORE_FOCUS :: OPTIONS_ROW_COUNT
 OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
-OPTIONS_CONTENT_HEIGHT :: f32(498)
+OPTIONS_CONTENT_HEIGHT :: f32(570)
 
 options_menu_viewport :: proc(panel: rl.Rectangle) -> rl.Rectangle {
     return {panel.x + 30, panel.y + 108, panel.width - 54, max(panel.height - 178, f32(80))}
@@ -104,7 +105,7 @@ options_menu_row_bounds :: proc(panel: rl.Rectangle, row: int, scroll_y: f32 = 0
 
 options_menu_restore_bounds :: proc(panel: rl.Rectangle, scroll_y: f32 = 0) -> rl.Rectangle {
     viewport := options_menu_viewport(panel)
-    return {panel.x + 44, viewport.y + 442 - scroll_y, panel.width - 88, 46}
+    return {panel.x + 44, viewport.y + 514 - scroll_y, panel.width - 88, 46}
 }
 
 options_menu_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
@@ -284,6 +285,9 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         case OPTIONS_RESTORE_FOCUS:
             editor.gameplay_options = gameplay_options_default()
             crunchiness_apply(editor.gameplay_options.crunchiness)
+        case 6:
+            editor.pause_screen = .Customization
+            editor.customization_focus = 0
         case OPTIONS_BACK_FOCUS:
             editor.pause_screen = .Pause
             editor.options_scroll_dragging = false
@@ -392,6 +396,12 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         crunchiness_apply(editor.gameplay_options.crunchiness)
         return
     }
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 6, scroll_y)) {
+        editor.options_focus = 6
+        editor.pause_screen = .Customization
+        editor.customization_focus = 0
+        return
+    }
     if pressed && rl.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
         editor.options_focus = OPTIONS_BACK_FOCUS
         editor.pause_screen = .Pause
@@ -411,7 +421,9 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     }
 
     if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
-        if editor.pause_screen == .Options {
+        if editor.pause_screen == .Customization {
+            editor.pause_screen = .Options
+        } else if editor.pause_screen == .Options {
             editor.pause_screen = .Pause
         } else {
             pause_menu_resume(editor)
@@ -421,6 +433,10 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
 
     if editor.pause_screen == .Options {
         options_menu_process_input(editor, width, height, delta_seconds)
+        return
+    }
+    if editor.pause_screen == .Customization {
+        customization_scene_process_input(editor, width, height, delta_seconds)
         return
     }
 
@@ -622,6 +638,8 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         )
     }
 
+    pause_menu_button(options_menu_row_bounds(panel, 6, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 6)
+
     pause_menu_button(
         options_menu_restore_bounds(panel, scroll_y),
         "RESTORE DEFAULTS",
@@ -642,7 +660,13 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
 pause_menu_draw :: proc(editor: ^Editor, width, height: i32) {
     if !pause_menu_is_open(editor) do return
     pause_menu_pointer_enabled = !controller_prompt_active(editor)
-    rl.DrawRectangle(0, 0, width, height, {7, 11, 15, 190})
+    overlay_alpha: u8 = editor.pause_screen == .Customization ? 58 : 190
+    rl.DrawRectangle(0, 0, width, height, {7, 11, 15, overlay_alpha})
+
+    if editor.pause_screen == .Customization {
+        customization_scene_draw(editor, width, height)
+        return
+    }
 
     options := editor.pause_screen == .Options
     panel := pause_menu_panel(width, height, options)

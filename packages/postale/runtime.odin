@@ -38,6 +38,8 @@ Tuning :: struct {
     ground_steer_slow:         f32,
     takeoff_throttle:          f32,
     takeoff_speed_scale:       f32,
+    takeoff_pitch:             f32,
+    takeoff_ground_time:       f32,
     takeoff_vertical_assist:   f32,
     propeller_base_rate:       f32,
     propeller_throttle_rate:   f32,
@@ -62,11 +64,13 @@ default_tuning :: proc() -> Tuning {
         flap_auto_throttle = .35,
         flap_auto_speed = 28,
         ground_brake = 3.2,
-        ground_coast = .55,
+        ground_coast = .12,
         ground_steer_fast = .8,
         ground_steer_slow = .22,
         takeoff_throttle = .8,
-        takeoff_speed_scale = .72,
+        takeoff_speed_scale = .9,
+        takeoff_pitch = .2,
+        takeoff_ground_time = .2,
         takeoff_vertical_assist = 2.4,
         propeller_base_rate = 1.5,
         propeller_throttle_rate = 18,
@@ -95,6 +99,8 @@ Runtime :: struct {
     grounded:        bool,
     crashed:         bool,
     was_grounded:    bool,
+    grounded_time:   f32,
+    takeoff_armed:   bool,
     spawn_position:  flight.Vec3,
     spawn_basis:     flight.Basis,
     tuning:          Tuning,
@@ -142,6 +148,8 @@ reset :: proc(runtime: ^Runtime, ground_height: f32) {
     runtime.yaw = 0
     runtime.grounded = true
     runtime.was_grounded = true
+    runtime.grounded_time = 0
+    runtime.takeoff_armed = true
     runtime.crashed = false
 }
 
@@ -193,6 +201,14 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
 
     result := resolve_ground_contact(runtime, ground_height, vertical_before)
     if runtime.grounded {
+        if runtime.pitch <= runtime.tuning.takeoff_pitch {
+            runtime.takeoff_armed = true
+        }
+        if runtime.was_grounded {
+            runtime.grounded_time += dt
+        } else {
+            runtime.grounded_time = 0
+        }
         // Wheels remove lateral slip and make low-speed runway steering forgiving.
         forward_speed := flight.dot(runtime.body.velocity, runtime.body.basis.forward)
         forward_speed *= max_f32(
@@ -208,12 +224,22 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
             lerp(runtime.tuning.ground_steer_fast, runtime.tuning.ground_steer_slow, clamp(forward_speed / 20, 0, 1))
         rotate_ground_heading(&runtime.body.basis, steer)
         // Short-field assistance lets the authored runway reach flying speed.
+        rotation_speed :=
+            flight.effective_stall_speed(runtime.airframe.mass_kg, runtime.airframe) *
+            runtime.tuning.takeoff_speed_scale
         if runtime.throttle > runtime.tuning.takeoff_throttle &&
-           forward_speed > runtime.telemetry.effective_stall_speed * runtime.tuning.takeoff_speed_scale {
+           forward_speed > rotation_speed &&
+           runtime.pitch > runtime.tuning.takeoff_pitch &&
+           runtime.takeoff_armed &&
+           runtime.grounded_time >= runtime.tuning.takeoff_ground_time {
             runtime.body.velocity.y = max_f32(runtime.body.velocity.y, runtime.tuning.takeoff_vertical_assist)
             runtime.grounded = false
+            runtime.grounded_time = 0
+            runtime.takeoff_armed = false
             result.grounded = false
         }
+    } else {
+        runtime.grounded_time = 0
     }
     runtime.propeller_turns +=
         dt * (runtime.tuning.propeller_base_rate + runtime.throttle * runtime.tuning.propeller_throttle_rate)
@@ -225,8 +251,13 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
 resolve_ground_contact :: proc(runtime: ^Runtime, ground_height, vertical_speed_before: f32) -> Ground_Result {
     if runtime == nil do return {}
     floor := ground_height + runtime.tuning.ground_clearance
-    if runtime.body.position.y > floor do return {}
+    // A body that began the frame on its wheels stays constrained to the
+    // runway until the explicit rotation gate below releases it. Without this,
+    // aerodynamic lift can make the nominally grounded body hover and settle
+    // every few frames.
+    if runtime.body.position.y > floor && !runtime.was_grounded do return {}
     touched_down := !runtime.was_grounded
+    if touched_down do runtime.takeoff_armed = false
     bank := bank_radians(runtime.body.basis)
     if touched_down &&
        (-vertical_speed_before > runtime.tuning.safe_touchdown_speed ||

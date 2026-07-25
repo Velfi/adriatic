@@ -1,0 +1,106 @@
+name: Release build (Windows)
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Release Windows
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VCPKG_ROOT: C:\vcpkg
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}\.cache\vcpkg
+      ZELDA_ENGINE_REPOSITORY: ${{ vars.ZELDA_ENGINE_REPOSITORY || 'Velfi/zelda-engine' }}
+      ZELDA_ENGINE_REF: ${{ vars.ZELDA_ENGINE_REF || 'main' }}
+      ZELDA_ENGINE_ROOT: ${{ github.workspace }}\zelda-engine
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag }}
+
+      - name: Check out Zelda Engine
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.ZELDA_ENGINE_REPOSITORY }}
+          ref: ${{ env.ZELDA_ENGINE_REF }}
+          path: zelda-engine
+          submodules: recursive
+          token: ${{ secrets.ZELDA_ENGINE_TOKEN || github.token }}
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Cache pinned tools
+        id: tools-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .tools
+          key: ${{ runner.os }}-${{ runner.arch }}-tools-v2-${{ hashFiles('toolchain.mk', 'scripts/install_odin_fork_windows.ps1', 'scripts/install_slangc.ps1') }}
+
+      - name: Install pinned Odin fork and Slang
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          ./scripts/install_odin_fork_windows.ps1
+          ./scripts/install_slangc.ps1
+
+      - name: Add tools to PATH
+        shell: pwsh
+        run: |
+          $odin = (Resolve-Path ".tools/odin/*/odin.exe" | Select-Object -First 1).Path
+          $slang = (Resolve-Path ".tools/slang/bin").Path
+          Split-Path $odin -Parent | Out-File -FilePath $env:GITHUB_PATH -Append
+          $slang | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Save pinned tools
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .tools
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\installed
+            ${{ env.VCPKG_BINARY_CACHE }}
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v1-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install Windows dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_BINARY_CACHE | Out-Null
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$env:VCPKG_BINARY_CACHE,readwrite"
+          & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet $env:VCPKG_DEFAULT_TRIPLET --x-install-root "$env:VCPKG_ROOT\installed"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }
+
+      - name: Package Windows app
+        shell: pwsh
+        run: ./scripts/package_windows.ps1 -Version ($env:RELEASE_TAG -replace '^v', '')
+
+      - name: Name artifact
+        id: artifact
+        shell: pwsh
+        run: |
+          $name = "adriatic-$env:RELEASE_TAG-windows-x64"
+          Copy-Item dist/Adriatic-windows.zip "dist/$name.zip"
+          "name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: dist/${{ steps.artifact.outputs.name }}.zip

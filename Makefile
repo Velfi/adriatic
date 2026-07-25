@@ -17,6 +17,14 @@ ODINFMT ?= odinfmt
 CC ?= cc
 AR ?= ar
 PYTHON ?= python3
+CONTROL_HINT_ASSETS := \
+	assets/icons/control-hints/keyboard-mouse.png \
+	assets/icons/control-hints/generic.png \
+	assets/icons/control-hints/xbox.png \
+	assets/icons/control-hints/playstation.png \
+	assets/icons/control-hints/nintendo.png \
+	assets/icons/control-hints/LICENSE.txt \
+	assets/icons/control-hints/SOURCE.md
 
 ifeq ($(shell uname -s),Darwin)
 HOMEBREW_LLVM_PREFIX := $(shell brew --prefix $(LLVM_HOMEBREW_FORMULA) 2>/dev/null)
@@ -50,11 +58,14 @@ HOT_PHYSICS_STAMP := $(HOT_DIR)/physics.stamp
 HOT_APP_STAMP := $(HOT_DIR)/app.stamp
 HOT_SHADER_STAMP := $(HOT_DIR)/shader.stamp
 CAPTURE_PATH ?= $(abspath $(BUILD_DIR)/captures/$(APP).png)
+CAPTURE_TARGET ?=
 ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/null)
 HOT_ODIN_SOURCES := $(shell find src packages "$(ZELDA_ENGINE_PACKAGES)" -type f -name '*.odin' 2>/dev/null)
 HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/world.vert.spv \
 	$(HOT_SHADER_DIR)/world.frag.spv \
+	$(HOT_SHADER_DIR)/player-shadow.vert.spv \
+	$(HOT_SHADER_DIR)/player-shadow.frag.spv \
 	$(HOT_SHADER_DIR)/world-sky.vert.spv \
 	$(HOT_SHADER_DIR)/world-sky.frag.spv \
 	$(HOT_SHADER_DIR)/wireframe.vert.spv \
@@ -68,7 +79,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/foliage.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark capture capture-player capture-player-walk capture-player-run-compress capture-player-turn-left capture-player-turn-right capture-player-brake capture-player-jump capture-player-fall capture-player-blink capture-player-posted capture-car capture-foliage capture-foliage-forest capture-foliage-forest-low capture-foliage-understory capture-foliage-forest-golden capture-foliage-forest-wind-a capture-foliage-forest-wind-b capture-foliage-forest-low-wind-a capture-foliage-forest-low-wind-b capture-foliage-stress fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark capture capture-building capture-player capture-player-front capture-player-three-quarter capture-player-profile capture-player-walk capture-player-run-compress capture-player-turn-left capture-player-turn-right capture-player-brake capture-player-jump capture-player-fall capture-player-blink capture-player-posted capture-car capture-foliage capture-foliage-forest capture-foliage-forest-low capture-foliage-understory capture-foliage-forest-golden capture-foliage-forest-wind-a capture-foliage-forest-wind-b capture-foliage-forest-low-wind-a capture-foliage-forest-low-wind-b capture-foliage-stress fmt check test clean
 
 all: build
 
@@ -93,7 +104,7 @@ doctor:
 
 build: doctor $(DEV_APP)
 
-shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/foliage.frag.spv
+shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/foliage.frag.spv
 
 build/generated/shaders/foliage.vert.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)
@@ -118,6 +129,14 @@ build/generated/shaders/world.vert.spv: assets/shaders/world.slang
 build/generated/shaders/world.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+build/generated/shaders/player-shadow.vert.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry shadow_vertex -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+build/generated/shaders/player-shadow.frag.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry shadow_fragment -stage fragment -target spirv -profile spirv_1_5 -o $@
 
 build/generated/shaders/world-sky.vert.spv: assets/shaders/sky.slang
 	@mkdir -p $(@D)
@@ -160,6 +179,14 @@ $(DEV_DIR)/shaders/world.vert.spv: build/generated/shaders/world.vert.spv
 	cp $< $@
 
 $(DEV_DIR)/shaders/world.frag.spv: build/generated/shaders/world.frag.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(DEV_DIR)/shaders/player-shadow.vert.spv: build/generated/shaders/player-shadow.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(DEV_DIR)/shaders/player-shadow.frag.spv: build/generated/shaders/player-shadow.frag.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -215,6 +242,10 @@ $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-gar
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(DEV_DIR)/assets/icons/control-hints/%: assets/icons/control-hints/%
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf: assets/fonts/ZeldaSans-Regular-v1.otf
 	@mkdir -p $(@D)
 	cp $< $@
@@ -236,6 +267,14 @@ $(RELEASE_DIR)/shaders/world.vert.spv: build/generated/shaders/world.vert.spv
 	cp $< $@
 
 $(RELEASE_DIR)/shaders/world.frag.spv: build/generated/shaders/world.frag.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(RELEASE_DIR)/shaders/player-shadow.vert.spv: build/generated/shaders/player-shadow.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(RELEASE_DIR)/shaders/player-shadow.frag.spv: build/generated/shaders/player-shadow.frag.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -291,6 +330,10 @@ $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(RELEASE_DIR)/assets/icons/control-hints/%: assets/icons/control-hints/%
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf: assets/fonts/ZeldaSans-Regular-v1.otf
 	@mkdir -p $(@D)
 	cp $< $@
@@ -323,6 +366,10 @@ $(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-gar
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(HOT_DIR)/assets/icons/control-hints/%: assets/icons/control-hints/%
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf: assets/fonts/ZeldaSans-Regular-v1.otf
 	@mkdir -p $(@D)
 	cp $< $@
@@ -342,6 +389,14 @@ $(HOT_SHADER_DIR)/world.vert.spv: assets/shaders/world.slang
 $(HOT_SHADER_DIR)/world.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/player-shadow.vert.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry shadow_vertex -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/player-shadow.frag.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry shadow_fragment -stage fragment -target spirv -profile spirv_1_5 -o $@
 
 $(HOT_SHADER_DIR)/world-sky.vert.spv: assets/shaders/sky.slang
 	@mkdir -p $(@D)
@@ -395,7 +450,7 @@ $(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
 	@mkdir -p $(@D)
 	touch $@
 
-$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png $(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf
+$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(HOT_DIR)/,$(CONTROL_HINT_ASSETS)) $(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -debug -o:minimal -build-mode:shared -define:HOT_RELOAD=true -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
 
@@ -437,11 +492,11 @@ $(RELEASE_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signpos
 	$(CC) -O2 -c $< -o $(RELEASE_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(RELEASE_DIR)/gfx_signposts.o
 
-$(DEV_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
+$(DEV_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(DEV_DIR)/,$(CONTROL_HINT_ASSETS)) $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -debug -o:minimal -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
-$(RELEASE_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
+$(RELEASE_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(RELEASE_DIR)/,$(CONTROL_HINT_ASSETS)) $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -o:speed -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 
@@ -466,8 +521,20 @@ endef
 capture: build
 	$(call capture-recipe,--$@)
 
+capture-building: build
+	$(call capture-recipe,--$@,$(CAPTURE_TARGET))
+
 capture-player: build
 	$(call capture-recipe,--capture-map,player)
+
+capture-player-front: build
+	$(call capture-recipe,--capture-map,player-front)
+
+capture-player-three-quarter: build
+	$(call capture-recipe,--capture-map,player-three-quarter)
+
+capture-player-profile: build
+	$(call capture-recipe,--capture-map,player-profile)
 
 capture-player-walk: build
 	$(call capture-recipe,--capture-map,player-walk)

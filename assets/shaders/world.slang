@@ -15,6 +15,7 @@ struct VertexInput {
     float4 color : COLOR0;
     float kind : TEXCOORD0;
     float3 normal : NORMAL0;
+    float2 material : TEXCOORD1;
 };
 
 struct VertexOutput {
@@ -24,6 +25,7 @@ struct VertexOutput {
     float3 world_position : TEXCOORD1;
     float kind : TEXCOORD2;
     float3 normal : TEXCOORD3;
+    float2 material : TEXCOORD4;
 };
 
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
@@ -72,7 +74,84 @@ VertexOutput vertex_main(VertexInput input) {
     output.world_position = world_position;
     output.kind = input.kind;
     output.normal = input.normal;
+    output.material = input.material;
     return output;
+}
+
+[shader("vertex")]
+VertexOutput shadow_vertex(VertexInput input) {
+    VertexOutput output;
+    float receiver_y = push.water.y;
+    float sun_y = max(push.sun.y, .12);
+    float ray_distance = max(input.position.y - receiver_y, 0.0) / sun_y;
+    float3 world_position = float3(
+        input.position.x - push.sun.x * ray_distance,
+        receiver_y + .020,
+        input.position.z - push.sun.z * ray_distance
+    );
+
+    float3 view = world_position - push.camera_position.xyz;
+    float depth = dot(view, push.camera_forward.xyz);
+    float x = dot(view, push.camera_right.xyz) * push.projection.x / push.projection.y;
+    float y = dot(view, push.camera_up.xyz) * push.projection.x;
+    float near_plane = push.camera_position.w;
+    float far_plane = push.camera_right.w;
+    float clip_z = far_plane / (far_plane - near_plane) * depth -
+                   far_plane * near_plane / (far_plane - near_plane);
+    output.position = float4(x, -y, clip_z, depth);
+    output.color = 0;
+    output.depth = depth;
+    output.world_position = world_position;
+    output.kind = 0;
+    output.normal = float3(0, 1, 0);
+    output.material = 0;
+    return output;
+}
+
+[shader("fragment")]
+float4 shadow_fragment(VertexOutput input) : SV_Target {
+    return float4(.030, .036, .039, 1.0);
+}
+
+float3 shade_imported_material(VertexOutput input) {
+    float3 base_color = input.color.rgb;
+    float3 normal = normalize(input.normal);
+    float3 sun_direction = normalize(push.sun.xyz);
+    float3 view_direction = normalize(push.camera_position.xyz - input.world_position);
+    float3 half_direction = normalize(sun_direction + view_direction);
+    float metallic = saturate(input.material.x);
+    float roughness = clamp(input.material.y, .04, 1.0);
+
+    float direct = saturate(dot(normal, sun_direction));
+    float sky = saturate(normal.y * .5 + .5);
+    float daylight = saturate(push.sun.w);
+    float diffuse_light = .22 + sky * .16 + direct * lerp(.26, .78, daylight);
+    float3 diffuse = base_color * diffuse_light * (1.0 - metallic * .72);
+
+    // A compact metallic-roughness response gives imported assets readable
+    // form without adding a separate texture pipeline to the world pass.
+    float3 f0 = lerp(float3(.04, .04, .04), base_color, metallic);
+    float specular_power = lerp(128.0, 6.0, roughness);
+    float specular_strength = pow(saturate(dot(normal, half_direction)), specular_power);
+    specular_strength *= lerp(.72, .09, roughness) * direct * lerp(.18, 1.0, daylight);
+    return saturate(diffuse + f0 * specular_strength);
+}
+
+float3 shade_eye(VertexOutput input) {
+    float3 normal = normalize(input.normal);
+    float3 view_direction = normalize(push.camera_position.xyz - input.world_position);
+    // A camera-relative studio light keeps the small corneal glint on the
+    // upper-left shoulder from every gameplay angle without separate geometry.
+    float3 highlight_direction = normalize(
+        view_direction + push.camera_up.xyz * .30 - push.camera_right.xyz * .22
+    );
+    float highlight_alignment = saturate(dot(normal, highlight_direction));
+    float broad_gloss = pow(highlight_alignment, 18.0) * .12;
+    float sharp_glint = pow(highlight_alignment, 92.0) * .94;
+    float rim = pow(1.0 - saturate(dot(normal, view_direction)), 3.0) * .08;
+    float3 highlight_color = srgb_to_linear(float3(1.0, .94, .78));
+    return saturate(input.color.rgb * (.82 + rim) +
+                    highlight_color * (broad_gloss + sharp_glint));
 }
 
 float hash12(float2 p) {
@@ -410,11 +489,15 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     }
     float fog = saturate((input.depth - push.projection.z) /
                          max(push.projection.w - push.projection.z, .001));
-    float3 base = input.kind > .5 && input.kind < 1.5 ?
+    float3 base = input.kind > 5.5 && input.kind < 6.5 ?
+                  shade_eye(input) :
+                  (input.kind > .5 && input.kind < 1.5 ?
                   shade_water(input) :
                   (input.kind > 2.5 && input.kind < 3.5 ?
                    shade_foliage(input) :
                    (input.kind > 3.5 && input.kind < 4.5 ?
-                    shade_road(input) : input.color.rgb));
+                    shade_road(input) :
+                    (input.kind > 4.5 && input.kind < 5.5 ?
+                     shade_imported_material(input) : input.color.rgb))));
     return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), input.color.a);
 }

@@ -142,6 +142,8 @@ Editor :: struct {
     player_brake_pose:                        f32,
     player_posted_idle_seconds:               f32,
     player_posted_weight:                     f32,
+    player_paw_plant_positions:               [4]third_person.Vec3,
+    player_paw_planted:                       [4]bool,
     player_tail:                              mouse_tail.State,
     camera:                                   third_person.Camera,
     camera_pose:                              third_person.Camera_Pose,
@@ -179,12 +181,17 @@ Editor :: struct {
     pause_screen:                             Pause_Screen,
     gameplay_options:                         Gameplay_Options,
     runtime_input:                            game_input.State,
+    control_hint_atlases:                     Control_Hint_Atlases,
     controller_disconnect_notice:             bool,
     pause_focus:                              int,
     options_focus:                            int,
     options_scroll_y:                         f32,
     options_scroll_dragging:                  bool,
     options_scroll_drag_offset:               f32,
+    mouse_fur:                                Mouse_Fur,
+    mouse_pattern:                            Mouse_Fur_Pattern,
+    mouse_headgear:                           Mouse_Accessory,
+    customization_focus:                      int,
     quit_requested:                           bool,
 }
 
@@ -952,6 +959,29 @@ seed_terrain_grip_benchmark :: proc(editor: ^Editor) {
     editor.camera_pose = third_person.camera_pose(editor.car.position, editor.camera)
 }
 
+seed_player_benchmark :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.player = {
+        position = runway_spawn_position(editor),
+        grounded = true,
+    }
+    editor.player.position.x += 24
+    editor.player.position.z += 20
+    editor.player.position.y = terrain.sample_height(
+        &editor.project,
+        0,
+        editor.player.position.x,
+        editor.player.position.z,
+    )
+    editor.pilot.position = editor.player.position
+    editor.postale_visible = false
+    editor.libellula_visible = false
+    editor.in_map = true
+    editor.map_time = f32(rl.GetTime())
+    editor.camera = third_person.default_camera()
+    editor.camera_pose = third_person.camera_pose(editor.player.position, editor.camera)
+}
+
 benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
     if editor == nil do return false
     switch scenario {
@@ -977,6 +1007,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         seed_road_grip_benchmark(editor)
     case "terrain_grip":
         seed_terrain_grip_benchmark(editor)
+    case "player":
+        seed_player_benchmark(editor)
     case "architecture":
         seed_city_capture(editor)
     case:
@@ -986,7 +1018,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "foliage_forest" &&
        scenario != "foliage_understory" &&
        scenario != "road_grip" &&
-       scenario != "terrain_grip" {
+       scenario != "terrain_grip" &&
+       scenario != "player" {
         editor.editor_camera.distance = 260
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     }
@@ -1347,6 +1380,89 @@ seed_city_capture :: proc(editor: ^Editor) {
     _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
     authoring_select_tool(editor, .Building)
     editor.structure_selected = -1
+}
+
+configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = "") -> bool {
+    if editor == nil do return false
+    target_index := -1
+    requested_ordinal := -1
+    if target_arg != "" {
+        parsed, ok := strconv.parse_int(target_arg)
+        if ok && parsed >= 0 do requested_ordinal = int(parsed)
+    }
+
+    // Explicit targets use a stable zero-based ordinal over architecture
+    // structures, independent of roads, foliage, and other authored items.
+    if requested_ordinal >= 0 {
+        ordinal := 0
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind != .Architecture do continue
+            if ordinal == requested_ordinal {
+                target_index = index
+                break
+            }
+            ordinal += 1
+        }
+    }
+
+    // Auto-target a normal building on the camera-facing edge of the town.
+    // That keeps intervening rows out of the shot as generated layouts change.
+    if target_index < 0 {
+        center_x, building_count := f32(0), 0
+        for structure in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind != .Architecture || structure.height > 60 do continue
+            center_x += structure.center_x
+            building_count += 1
+        }
+        if building_count > 0 do center_x /= f32(building_count)
+        best_score := -f32(1e30)
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind != .Architecture || structure.height > 60 do continue
+            score := structure.center_z - abs(structure.center_x - center_x) * .16 + structure.width * .08
+            if score > best_score {
+                best_score = score
+                target_index = index
+            }
+        }
+    }
+    if target_index < 0 do return false
+
+    building := editor.project.structures[target_index]
+    facade_x, facade_z := -math.sin(building.rotation), math.cos(building.rotation)
+    camera_distance := building.depth * .5 + max(f32(24), building.height * 1.55)
+    minimum_distance := building.depth * .5 + 14
+    for camera_distance > minimum_distance {
+        dry_approach := true
+        facade_distance := building.depth * .5 + .75
+        for sample in 1 ..= 12 {
+            sample_distance :=
+                facade_distance + (camera_distance - facade_distance) * f32(sample) / 12
+            sample_x := building.center_x + facade_x * sample_distance
+            sample_z := building.center_z + facade_z * sample_distance
+            sample_ground := terrain.sample_height(&editor.project, 0, sample_x, sample_z)
+            if sample_ground <= editor.project.sea_level + .35 {
+                dry_approach = false
+                break
+            }
+        }
+        if dry_approach do break
+        camera_distance = max(minimum_distance, camera_distance - 4)
+    }
+    eye_x := building.center_x + facade_x * camera_distance
+    eye_z := building.center_z + facade_z * camera_distance
+    eye_y := terrain.sample_height(&editor.project, 0, eye_x, eye_z) + 1.7
+    target_y := building.base_y + clamp(building.height * .44, f32(6), f32(16))
+    editor.capture_world_only = true
+    // The pose is explicit; keep the editor-orbit distance low only so its
+    // near-clip heuristic does not cut away the street under this camera.
+    editor.editor_camera.distance = min(camera_distance, f32(36))
+    editor.editor_focus = {
+        x = building.center_x,
+        y = target_y,
+        z = building.center_z,
+    }
+    editor.camera_pose = third_person.camera_look_at({x = eye_x, y = eye_y, z = eye_z}, editor.editor_focus)
+    return true
 }
 
 architecture_paint_commit :: proc(editor: ^Editor) {
@@ -3808,7 +3924,9 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     // The depth-tested world pass has already drawn the game/editor scene.
     // Canvas commands from here onward are deliberately UI-only.
     rl.ClearBackground({r = 104, g = 154, b = 181, a = 255})
+    if editor.pause_screen == .Customization do return
     draw_postale_speed_effects(editor, width, height, time)
+    control_hint_draw_gameplay_hud(editor, width)
     if editor.in_map {
         flying := driving_aircraft(editor)
         if flying && editor.gameplay_options.show_hud {
@@ -4108,7 +4226,11 @@ adriatic_run :: proc() -> bool {
     editor.tweak_status = .Defaults
     editor.tweak_panel_visible = false
     editor.gameplay_options = gameplay_options_default()
+    editor.mouse_fur = .Chestnut
+    editor.mouse_pattern = .Solid
+    editor.mouse_headgear = .Goggles
     editor.runtime_input = game_input.default_state()
+    control_hints_load(editor)
     island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
     editor.editor_focus = {
         x = island_center,
@@ -4162,6 +4284,9 @@ adriatic_run :: proc() -> bool {
         if !capture_foliage_stress_mode && !capture_foliage_forest_mode {
             editor.editor_camera.distance = 260
             editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+        }
+        if capture_building_mode {
+            _ = configure_building_capture_camera(editor, capture_target)
         }
         if capture_foliage_low_mode {
             // A near-canopy cinematic angle verifies that authored forest
@@ -4346,6 +4471,9 @@ adriatic_run :: proc() -> bool {
             editor.camera_pose = inspection_pose
         }
         if capture_target == "player" ||
+           capture_target == "player-front" ||
+           capture_target == "player-three-quarter" ||
+           capture_target == "player-profile" ||
            capture_target == "player-walk" ||
            capture_target == "player-run-compress" ||
            capture_target == "player-turn-left" ||
@@ -4354,7 +4482,8 @@ adriatic_run :: proc() -> bool {
            capture_target == "player-jump" ||
            capture_target == "player-fall" ||
            capture_target == "player-blink" ||
-           capture_target == "player-posted" {
+           capture_target == "player-posted" ||
+           capture_target == "player-customization" {
             editor.camera_target_lock = false
             editor.postale_visible = false
             editor.libellula_visible = false
@@ -4378,6 +4507,11 @@ adriatic_run :: proc() -> bool {
             editor.capture_player_fall_pose = capture_target == "player-fall"
             editor.capture_player_blink_pose = capture_target == "player-blink"
             editor.capture_player_posted_pose = capture_target == "player-posted"
+            if capture_target == "player-customization" {
+                editor.mouse_fur = .Silver
+                editor.mouse_pattern = .Piebald
+                editor.mouse_headgear = .Chef_Hat
+            }
             if editor.capture_player_jump_pose || editor.capture_player_fall_pose {
                 editor.player.position.y += .42
                 editor.player.velocity.y = editor.capture_player_jump_pose ? f32(3.2) : f32(-3.2)
@@ -4390,10 +4524,25 @@ adriatic_run :: proc() -> bool {
             }
             capture_run_pose := capture_target == "player-walk" || capture_target == "player-run-compress"
             capture_posted_pose := capture_target == "player-posted"
+            capture_front_view := capture_target == "player-front"
+            capture_three_quarter_view := capture_target == "player-three-quarter"
+            capture_profile_view := capture_target == "player-profile"
             // Track the moving profile from its longitudinal center so the
             // body and body-length tail share one depth plane in the capture.
             capture_front_distance := capture_run_pose ? f32(-.45) : (capture_posted_pose ? f32(1.32) : f32(1.95))
             capture_side_distance := capture_run_pose ? f32(2.45) : (capture_posted_pose ? f32(1.20) : f32(.40))
+            if capture_front_view {
+                capture_front_distance = 1.95
+                capture_side_distance = 0
+            }
+            if capture_three_quarter_view {
+                capture_front_distance = 1.72
+                capture_side_distance = .92
+            }
+            if capture_profile_view {
+                capture_front_distance = 0
+                capture_side_distance = 1.95
+            }
             capture_height := capture_run_pose ? f32(.62) : (capture_posted_pose ? f32(.90) : f32(.78))
             inspection_pose := third_person.Camera_Pose {
                 position = {
@@ -4417,6 +4566,12 @@ adriatic_run :: proc() -> bool {
         }
         if capture_target == "pause" do editor.pause_screen = .Pause
         if capture_target == "options" do editor.pause_screen = .Options
+        if capture_target == "customization" {
+            editor.pause_screen = .Customization
+            editor.mouse_fur = .Russet
+            editor.mouse_pattern = .Piebald
+            editor.mouse_headgear = .Acorn_Cap
+        }
         if capture_target == "options-240" {
             editor.pause_screen = .Options
             editor.gameplay_options.crunchiness = .P240

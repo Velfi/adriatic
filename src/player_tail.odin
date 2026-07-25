@@ -10,22 +10,35 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
     rotation := math.PI - editor.player.facing_yaw_radians
     run_weight := editor.player_gait_weight * (1 - editor.player_airborne_weight) + .88 * editor.player_airborne_weight
     stride_phase := editor.player_stride_phase
+    horizontal_speed := f32(
+        math.sqrt(
+            f64(
+                editor.player.velocity.x * editor.player.velocity.x +
+                editor.player.velocity.z * editor.player.velocity.z,
+            ),
+        ),
+    )
+    gait := mouse_gait_weights(&editor.tweak.player_animation, horizontal_speed, editor.player_airborne_weight)
+    bound_weight := gait.bound
     if editor.capture_player_walk_pose ||
        editor.capture_player_turn_left_pose ||
        editor.capture_player_turn_right_pose {
         run_weight = 1
         stride_phase = math.PI * 1.75
+        bound_weight = editor.capture_player_walk_pose ? f32(0) : f32(1)
     } else if editor.capture_player_run_compress_pose || editor.capture_player_brake_pose {
         run_weight = 1
         stride_phase = math.PI * .50
+        bound_weight = 1
     }
+    if editor.capture_player_jump_pose || editor.capture_player_fall_pose do bound_weight = 1
     turn_pose := clamp(editor.player_turn_pose, -1, 1)
     brake_pose := clamp(editor.player_brake_pose, 0, 1)
     if editor.capture_player_turn_left_pose do turn_pose = -1
     if editor.capture_player_turn_right_pose do turn_pose = 1
     if editor.capture_player_brake_pose do brake_pose = 1
 
-    bound := math.sin(stride_phase) * run_weight
+    bound := math.sin(stride_phase) * run_weight * (.16 + .84 * bound_weight)
     spine_extension := -bound
     body_bob :=
         (-bound * .018 + math.abs(math.sin(stride_phase * 2)) * .014) * run_weight +
