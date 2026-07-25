@@ -68,7 +68,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/foliage.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark capture capture-player capture-player-walk capture-car capture-foliage capture-foliage-forest capture-foliage-forest-low capture-foliage-understory capture-foliage-forest-golden capture-foliage-forest-wind-a capture-foliage-forest-wind-b capture-foliage-forest-low-wind-a capture-foliage-forest-low-wind-b capture-foliage-stress fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark capture capture-player capture-player-walk capture-player-run-compress capture-player-jump capture-player-fall capture-player-blink capture-car capture-foliage capture-foliage-forest capture-foliage-forest-low capture-foliage-understory capture-foliage-forest-golden capture-foliage-forest-wind-a capture-foliage-forest-wind-b capture-foliage-forest-low-wind-a capture-foliage-forest-low-wind-b capture-foliage-stress fmt check test clean
 
 all: build
 
@@ -471,6 +471,18 @@ capture-player: build
 
 capture-player-walk: build
 	$(call capture-recipe,--capture-map,player-walk)
+
+capture-player-run-compress: build
+	$(call capture-recipe,--capture-map,player-run-compress)
+
+capture-player-jump: build
+	$(call capture-recipe,--capture-map,player-jump)
+
+capture-player-fall: build
+	$(call capture-recipe,--capture-map,player-fall)
+
+capture-player-blink: build
+	$(call capture-recipe,--capture-map,player-blink)
 
 capture-car: build
 	$(call capture-recipe,--$@)

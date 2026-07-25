@@ -10,8 +10,11 @@ LOOK_AHEAD :: f32(5)
 
 State :: struct {
     pose:                   third_person.Camera_Pose,
+    base_pose:              third_person.Camera_Pose,
     orbit_yaw, orbit_pitch: f32,
     focal_length:           f32,
+    shake_phase:            f32,
+    shake_intensity:        f32,
     initialized:            bool,
 }
 
@@ -27,8 +30,11 @@ reset :: proc(state: ^State, target: Target) {
     if state == nil do return
     state.orbit_yaw = 0
     state.orbit_pitch = 0
-    state.pose = desired_pose(target, 0, 0)
+    state.base_pose = desired_pose(target, 0, 0)
+    state.pose = state.base_pose
     state.focal_length = focal_length_for_fov(desired_fov(target.airspeed))
+    state.shake_phase = 0
+    state.shake_intensity = 0
     state.initialized = true
 }
 
@@ -38,21 +44,65 @@ look :: proc(state: ^State, mouse_x, mouse_y: f32) {
     state.orbit_pitch = clamp(state.orbit_pitch - mouse_y * .0025, -.75, .75)
 }
 
-step :: proc(state: ^State, target: Target, delta_seconds: f32) {
+step :: proc(state: ^State, target: Target, delta_seconds: f32, flyby_shake: f32 = 0) {
     if state == nil do return
     desired := desired_pose(target, state.orbit_yaw, state.orbit_pitch)
-    if !state.initialized || distance_squared(state.pose.position, desired.position) > 50 * 50 {
-        state.pose = desired
+    if !state.initialized || distance_squared(state.base_pose.position, desired.position) > 50 * 50 {
+        state.base_pose = desired
         state.initialized = true
     } else {
-        state.pose.position = lerp(state.pose.position, desired.position, exp_response(8, delta_seconds))
-        state.pose.target = lerp(state.pose.target, desired.target, exp_response(10, delta_seconds))
+        state.base_pose.position = lerp(state.base_pose.position, desired.position, exp_response(8, delta_seconds))
+        state.base_pose.target = lerp(state.base_pose.target, desired.target, exp_response(10, delta_seconds))
     }
     state.focal_length = scalar_lerp(
         state.focal_length,
         focal_length_for_fov(desired_fov(target.airspeed)),
         exp_response(3.5, delta_seconds),
     )
+    state.shake_intensity = scalar_lerp(
+        state.shake_intensity,
+        clamp(flyby_shake, 0, 1),
+        exp_response(flyby_shake > state.shake_intensity ? f32(18) : f32(7), delta_seconds),
+    )
+    state.shake_phase = wrap_angle(state.shake_phase + delta_seconds * (16 + target.airspeed * .42))
+    state.pose = shake_pose(state.base_pose, target, state.shake_phase, state.shake_intensity)
+}
+
+shake_pose :: proc(pose: third_person.Camera_Pose, target: Target, phase, intensity: f32) -> third_person.Camera_Pose {
+    amount := clamp(intensity, 0, 1)
+    if amount <= .001 do return pose
+    amplitude := amount * amount * .34
+    side := f32(math.sin(f64(phase * 1.73))) * amplitude
+    lift := f32(math.sin(f64(phase * 2.41 + 1.2))) * amplitude * .62
+    pulse := f32(math.sin(f64(phase * .79 + .4))) * amplitude * .18
+    position_offset := flight.add(
+        flight.add(flight.scale(target.basis.right, side), flight.scale(target.basis.up, lift)),
+        flight.scale(target.basis.forward, pulse),
+    )
+    target_offset := flight.add(
+        flight.scale(target.basis.right, side * .28),
+        flight.scale(target.basis.up, lift * .22),
+    )
+    result := pose
+    result.position = third_person.add(result.position, to_third_person(position_offset))
+    result.target = third_person.add(result.target, to_third_person(target_offset))
+    return result
+}
+
+// Measures clearance to an oriented structure volume. Product code decides
+// which authored objects are large enough to produce a camera response.
+box_flyby_strength :: proc(position, center, half_extent: flight.Vec3, rotation, response_range: f32) -> f32 {
+    if response_range <= 0 do return 0
+    dx, dz := position.x - center.x, position.z - center.z
+    sine, cosine := f32(math.sin(f64(rotation))), f32(math.cos(f64(rotation)))
+    local_x := dx * cosine + dz * sine
+    local_z := -dx * sine + dz * cosine
+    outside_x := max(math.abs(local_x) - max(half_extent.x, f32(0)), f32(0))
+    outside_y := max(math.abs(position.y - center.y) - max(half_extent.y, f32(0)), f32(0))
+    outside_z := max(math.abs(local_z) - max(half_extent.z, f32(0)), f32(0))
+    clearance := f32(math.sqrt(f64(outside_x * outside_x + outside_y * outside_y + outside_z * outside_z)))
+    normalized := clamp(1 - clearance / response_range, 0, 1)
+    return smooth_step(normalized)
 }
 
 desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_person.Camera_Pose {

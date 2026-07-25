@@ -85,6 +85,15 @@ Editor :: struct {
     architecture_brush_radius:                f32,
     architecture_brush_strength:              f32,
     architecture_brush_hardness:              f32,
+    greek_assets:                             [GREEK_ASSET_CAPACITY]Greek_Asset,
+    greek_asset_count:                        int,
+    greek_asset_selected:                     int,
+    greek_asset_rotation:                     f32,
+    greek_asset_scale:                        f32,
+    greek_placements:                         [GREEK_PLACEMENT_CAPACITY]Greek_Placement,
+    greek_placement_count:                    int,
+    greek_placement_selected:                 int,
+    greek_placement_mode:                     bool,
     curve_points:                             [CURVE_POINT_CAPACITY]Curve_Point,
     curve_point_count:                        int,
     curve_drawing:                            bool,
@@ -101,6 +110,10 @@ Editor :: struct {
     road_pavement:                            roads.Pavement,
     capture_world_only:                       bool,
     capture_player_walk_pose:                 bool,
+    capture_player_run_compress_pose:         bool,
+    capture_player_jump_pose:                 bool,
+    capture_player_fall_pose:                 bool,
+    capture_player_blink_pose:                bool,
     structure_undo:                           [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
     structure_redo:                           [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
     structure_undo_count:                     int,
@@ -114,6 +127,10 @@ Editor :: struct {
     terrain_saved_revision:                   u64,
     in_map:                                   bool,
     player:                                   third_person.State,
+    player_stride_phase:                      f32,
+    player_gait_weight:                       f32,
+    player_airborne_weight:                   f32,
+    player_vertical_pose:                     f32,
     camera:                                   third_person.Camera,
     camera_pose:                              third_person.Camera_Pose,
     cameras:                                  third_person.Camera_System,
@@ -1677,6 +1694,35 @@ active_aircraft_airspeed :: proc(editor: ^Editor) -> f32 {
     return editor.postale.telemetry.airspeed
 }
 
+postale_flyby_shake :: proc(editor: ^Editor) -> f32 {
+    if editor == nil || editor.aircraft.active != .Postale || editor.postale.grounded || editor.postale.crashed {
+        return 0
+    }
+    speed_strength := clamp((editor.postale.telemetry.airspeed - 32) / 30, 0, 1)
+    if speed_strength <= 0 do return 0
+    position := editor.postale.body.position
+    strongest := f32(0)
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        longest := max(max(structure.width, structure.depth), structure.height)
+        if longest < 18 do continue
+        center := flight.Vec3 {
+            x = structure.center_x,
+            y = structure.base_y + structure.height * .5,
+            z = structure.center_z,
+        }
+        extent := flight.Vec3 {
+            x = structure.width * .5,
+            y = structure.height * .5,
+            z = structure.depth * .5,
+        }
+        response_range := 10 + clamp(longest * .08, 2, 18)
+        proximity := chase_camera.box_flyby_strength(position, center, extent, structure.rotation, response_range)
+        size_strength := clamp((longest - 12) / 48, .25, 1)
+        strongest = max(strongest, proximity * size_strength)
+    }
+    return strongest * speed_strength
+}
+
 active_aircraft_ground_clearance :: proc(editor: ^Editor) -> f32 {
     if editor != nil && editor.aircraft.active == .Libellula do return editor.libellula.tuning.ground_clearance
     return postale_game.GROUND_CLEARANCE
@@ -1787,13 +1833,16 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
             height,
         )
         if !(pa.visible && pb.visible && pc.visible) do continue
-        append(&editor.libellula_projected_faces, Projected_Aircraft_Face {
-            a     = pa.position,
-            b     = pb.position,
-            c     = pc.position,
-            depth = (pa.depth + pb.depth + pc.depth) / 3,
-            color = aircraft_part_color(a.part),
-        })
+        append(
+            &editor.libellula_projected_faces,
+            Projected_Aircraft_Face {
+                a = pa.position,
+                b = pb.position,
+                c = pc.position,
+                depth = (pa.depth + pb.depth + pc.depth) / 3,
+                color = aircraft_part_color(a.part),
+            },
+        )
     }
     faces := editor.libellula_projected_faces[:]
     face_count := len(faces)
@@ -1989,7 +2038,58 @@ color_lerp :: proc(a, b: rl.Color, amount: f32) -> rl.Color {
     }
 }
 
-draw_instrument_dial :: proc(center: rl.Vector2, label: cstring, value, minimum, maximum: f32, value_text: cstring) {
+draw_antialiased_disc :: proc(center: rl.Vector2, radius: f32, color: rl.Color) {
+    feather := color
+    feather.a = u8(f32(color.a) * .18)
+    shoulder := color
+    shoulder.a = u8(f32(color.a) * .48)
+    rl.DrawCircleHatched(center, radius + 1.25, feather, rl.HATCH_DISABLED, 96)
+    rl.DrawCircleHatched(center, radius + .55, shoulder, rl.HATCH_DISABLED, 96)
+    rl.DrawCircleHatched(center, radius, color, rl.HATCH_DISABLED, 96)
+}
+
+draw_antialiased_line :: proc(a, b: rl.Vector2, thickness: f32, color: rl.Color) {
+    feather := color
+    feather.a = u8(f32(color.a) * .22)
+    rl.DrawLineEx(a, b, thickness + 1.5, feather)
+    rl.DrawLineEx(a, b, thickness, color)
+}
+
+draw_instrument_text :: proc(text: cstring, position: rl.Vector2, size, spacing: f32, color: rl.Color) {
+    shadow := rl.Color {
+        r = 0,
+        g = 7,
+        b = 12,
+        a = 235,
+    }
+    rl.DrawTextEx(rl.Font{}, text, {position.x + 1.5, position.y + 1.5}, size, spacing, shadow)
+    rl.DrawTextEx(rl.Font{}, text, position, size, spacing, color)
+}
+
+draw_flight_console_panel :: proc(bounds: rl.Rectangle, corner_radius: f32, color: rl.Color) {
+    radius := clamp(corner_radius, 0, min(bounds.width * .5, bounds.height))
+    // Scan the upper quarter-arcs into horizontal subpixel lines. Unlike whole
+    // discs, this keeps very large radii clipped to the upper corners and
+    // guarantees that the installed console's lower edge remains square.
+    rows := max(1, int(math.ceil(f64(radius))))
+    for row in 0 ..< rows {
+        vertical := radius - min(f32(row) + .5, radius)
+        horizontal := f32(math.sqrt(f64(max(radius * radius - vertical * vertical, 0))))
+        inset := radius - horizontal
+        y := bounds.y + f32(row) + .5
+        draw_antialiased_line({bounds.x + inset, y}, {bounds.x + bounds.width - inset, y}, 1, color)
+    }
+    rl.DrawRectangle(i32(bounds.x), i32(bounds.y + radius), i32(bounds.width), i32(bounds.height - radius), color)
+}
+
+draw_instrument_dial :: proc(
+    center: rl.Vector2,
+    radius: f32,
+    label: cstring,
+    value, minimum, maximum: f32,
+    value_text: cstring,
+    value_y_offset: f32 = 27,
+) {
     dial := rl.Color {
         r = 12,
         g = 25,
@@ -1997,9 +2097,9 @@ draw_instrument_dial :: proc(center: rl.Vector2, label: cstring, value, minimum,
         a = 245,
     }
     mark := rl.Color {
-        r = 185,
-        g = 217,
-        b = 216,
+        r = 232,
+        g = 247,
+        b = 245,
         a = 255,
     }
     accent := rl.Color {
@@ -2008,25 +2108,38 @@ draw_instrument_dial :: proc(center: rl.Vector2, label: cstring, value, minimum,
         b = 111,
         a = 255,
     }
-    rl.DrawCircleV(center, 48, dial)
-    for tick in 0 ..= 10 {
-        angle := -math.PI * .75 + f32(tick) / 10 * math.PI * 1.5
-        outer := rl.Vector2{center.x + math.cos(angle) * 42, center.y + math.sin(angle) * 42}
-        inner := rl.Vector2{center.x + math.cos(angle) * 36, center.y + math.sin(angle) * 36}
-        rl.DrawLineEx(inner, outer, tick % 5 == 0 ? f32(2) : f32(1), mark)
+    rim := rl.Color {
+        r = 83,
+        g = 118,
+        b = 125,
+        a = 220,
+    }
+    draw_antialiased_disc(center, radius + 3, rim)
+    draw_antialiased_disc(center, radius, dial)
+    for tick in 0 ..= 14 {
+        angle := -math.PI * .75 + f32(tick) / 14 * math.PI * 1.5
+        outer := rl.Vector2{center.x + math.cos(angle) * (radius - 7), center.y + math.sin(angle) * (radius - 7)}
+        major := tick % 7 == 0
+        inner_radius := radius - (major ? f32(18) : f32(13))
+        inner := rl.Vector2{center.x + math.cos(angle) * inner_radius, center.y + math.sin(angle) * inner_radius}
+        draw_antialiased_line(inner, outer, major ? f32(2.6) : f32(1.5), mark)
     }
     fraction := clamp((value - minimum) / max(f32(.001), maximum - minimum), 0, 1)
     needle_angle := -math.PI * .75 + fraction * math.PI * 1.5
-    needle_end := rl.Vector2{center.x + math.cos(needle_angle) * 31, center.y + math.sin(needle_angle) * 31}
-    rl.DrawLineEx(center, needle_end, 2.5, accent)
-    rl.DrawCircleV(center, 3, accent)
-    label_size := rl.MeasureTextEx(rl.Font{}, label, 10, 1)
-    value_size := rl.MeasureTextEx(rl.Font{}, value_text, 13, 1)
-    rl.DrawTextEx(rl.Font{}, label, {center.x - label_size.x * .5, center.y - 24}, 10, 1, mark)
-    rl.DrawTextEx(rl.Font{}, value_text, {center.x - value_size.x * .5, center.y + 19}, 13, 1, accent)
+    needle_length := radius - 23
+    needle_end := rl.Vector2 {
+        center.x + math.cos(needle_angle) * needle_length,
+        center.y + math.sin(needle_angle) * needle_length,
+    }
+    draw_antialiased_line(center, needle_end, 3.5, accent)
+    draw_antialiased_disc(center, 5, accent)
+    label_size := rl.MeasureTextEx(rl.Font{}, label, 14, 1)
+    value_size := rl.MeasureTextEx(rl.Font{}, value_text, 18, 1)
+    draw_instrument_text(label, {center.x - label_size.x * .5, center.y - 34}, 14, 1, mark)
+    draw_instrument_text(value_text, {center.x - value_size.x * .5, center.y + value_y_offset}, 18, 1, accent)
 }
 
-draw_attitude_indicator :: proc(center: rl.Vector2, pitch, bank: f32) {
+draw_attitude_indicator :: proc(center: rl.Vector2, radius, pitch, bank: f32) {
     dial := rl.Color {
         r = 12,
         g = 25,
@@ -2046,9 +2159,9 @@ draw_attitude_indicator :: proc(center: rl.Vector2, pitch, bank: f32) {
         a = 255,
     }
     mark := rl.Color {
-        r = 224,
-        g = 232,
-        b = 207,
+        r = 240,
+        g = 248,
+        b = 235,
         a = 255,
     }
     accent := rl.Color {
@@ -2057,35 +2170,155 @@ draw_attitude_indicator :: proc(center: rl.Vector2, pitch, bank: f32) {
         b = 111,
         a = 255,
     }
-    rl.DrawCircleV(center, 48, dial)
+    rim := rl.Color {
+        r = 83,
+        g = 118,
+        b = 125,
+        a = 220,
+    }
+    draw_antialiased_disc(center, radius + 3, rim)
+    draw_antialiased_disc(center, radius, dial)
     // The moving horizon gives an immediate read of bank and pitch without
     // obscuring the third-person view with a full-screen artificial horizon.
-    pitch_offset := clamp(pitch * 34, -24, 24)
+    scale := radius / 48
+    pitch_offset := clamp(pitch * 34 * scale, -24 * scale, 24 * scale)
     c, s := math.cos(bank), math.sin(bank)
     horizon_center := rl.Vector2{center.x + s * pitch_offset, center.y - c * pitch_offset}
-    horizon_left := rl.Vector2{horizon_center.x - c * 39, horizon_center.y - s * 39}
-    horizon_right := rl.Vector2{horizon_center.x + c * 39, horizon_center.y + s * 39}
-    rl.DrawLineEx(horizon_left, horizon_right, 13, sky)
+    horizon_left := rl.Vector2{horizon_center.x - c * 39 * scale, horizon_center.y - s * 39 * scale}
+    horizon_right := rl.Vector2{horizon_center.x + c * 39 * scale, horizon_center.y + s * 39 * scale}
+    draw_antialiased_line(horizon_left, horizon_right, 18 * scale, sky)
     rl.DrawLineEx(
-        {horizon_left.x - s * 8, horizon_left.y + c * 8},
-        {horizon_right.x - s * 8, horizon_right.y + c * 8},
-        13,
+        {horizon_left.x - s * 11 * scale, horizon_left.y + c * 11 * scale},
+        {horizon_right.x - s * 11 * scale, horizon_right.y + c * 11 * scale},
+        18 * scale,
         earth,
     )
-    rl.DrawLineEx(horizon_left, horizon_right, 2, mark)
-    rl.DrawLineEx({center.x - 19, center.y}, {center.x - 5, center.y}, 3, accent)
-    rl.DrawLineEx({center.x + 5, center.y}, {center.x + 19, center.y}, 3, accent)
-    rl.DrawCircleV(center, 2.5, accent)
+    draw_antialiased_line(horizon_left, horizon_right, 2.5, mark)
+    draw_antialiased_line({center.x - 28 * scale, center.y}, {center.x - 7 * scale, center.y}, 4, accent)
+    draw_antialiased_line({center.x + 7 * scale, center.y}, {center.x + 28 * scale, center.y}, 4, accent)
+    draw_antialiased_disc(center, 4, accent)
     label: cstring = "ATTITUDE"
-    label_size := rl.MeasureTextEx(rl.Font{}, label, 10, 1)
-    rl.DrawTextEx(rl.Font{}, label, {center.x - label_size.x * .5, center.y - 42}, 10, 1, mark)
+    label_size := rl.MeasureTextEx(rl.Font{}, label, 14, 1)
+    draw_instrument_text(label, {center.x - label_size.x * .5, center.y - radius + 10}, 14, 1, mark)
+}
+
+compass_tick_label :: proc(degrees: int) -> cstring {
+    heading := degrees % 360
+    if heading < 0 do heading += 360
+    switch heading {
+    case 0:
+        return "N"
+    case 90:
+        return "E"
+    case 180:
+        return "S"
+    case 270:
+        return "W"
+    case:
+        return fmt.ctprintf("%02d", heading / 10)
+    }
+}
+
+draw_heading_compass :: proc(center: rl.Vector2, width, heading_degrees: f32) {
+    height := f32(34)
+    left := center.x - width * .5
+    top := center.y - height * .5
+    rl.DrawRectangle(i32(left), i32(top), i32(width), i32(height), {r = 7, g = 20, b = 29, a = 238})
+
+    accent := rl.Color {
+        r = 239,
+        g = 203,
+        b = 111,
+        a = 255,
+    }
+    nearest := int(math.round(f64(heading_degrees / 15))) * 15
+    half_range := f32(52.5)
+    for offset := -4; offset <= 4; offset += 1 {
+        tick_heading := nearest + offset * 15
+        delta := f32(tick_heading) - heading_degrees
+        for delta > 180 do delta -= 360
+        for delta < -180 do delta += 360
+        if math.abs(delta) > half_range do continue
+        x := center.x + delta / half_range * (width * .46)
+        major := tick_heading % 30 == 0
+        tick_top := top + (major ? f32(5) : f32(9))
+        draw_antialiased_line({x, tick_top}, {x, top + 15}, major ? f32(1.8) : f32(1), {220, 239, 238, 255})
+        if major {
+            label := compass_tick_label(tick_heading)
+            label_size := rl.MeasureTextEx(rl.Font{}, label, 11, 1)
+            normalized := tick_heading % 360
+            if normalized < 0 do normalized += 360
+            label_color := normalized % 90 == 0 ? accent : rl.Color{235, 248, 246, 255}
+            draw_instrument_text(label, {x - label_size.x * .5, top + 15}, 11, 1, label_color)
+        }
+    }
+
+    draw_antialiased_line({center.x, top + 2}, {center.x, top + 11}, 2.5, accent)
+    draw_antialiased_line({center.x - 5, top + 3}, {center.x, top + 8}, 2, accent)
+    draw_antialiased_line({center.x + 5, top + 3}, {center.x, top + 8}, 2, accent)
+}
+
+draw_power_bar :: proc(right, top, height, power: f32) {
+    normalized := clamp(power, 0, 1)
+    track_width := f32(14)
+    track_left := right - track_width
+    rl.DrawRectangle(i32(track_left), i32(top), i32(track_width), i32(height), {r = 7, g = 20, b = 29, a = 238})
+    fill_height := max(f32(0), (height - 4) * normalized)
+    rl.DrawRectangle(
+        i32(track_left + 2),
+        i32(top + height - 2 - fill_height),
+        i32(track_width - 4),
+        i32(fill_height),
+        {r = 239, g = 203, b = 111, a = 255},
+    )
+    draw_antialiased_line({track_left, top}, {right, top}, 1, {126, 164, 168, 220})
+    draw_antialiased_line({track_left, top + height}, {right, top + height}, 1, {126, 164, 168, 220})
+    draw_antialiased_line({track_left, top}, {track_left, top + height}, 1, {126, 164, 168, 220})
+    draw_antialiased_line({right, top}, {right, top + height}, 1, {126, 164, 168, 220})
+
+    label: cstring = "PWR"
+    value := fmt.ctprintf("%.0f%%", normalized * 100)
+    value_size := rl.MeasureTextEx(rl.Font{}, value, 11, 1)
+    draw_instrument_text(label, {track_left - 36, top + 2}, 10, 1, {231, 245, 243, 255})
+    draw_instrument_text(value, {track_left - value_size.x - 7, top + 16}, 11, 1, {239, 203, 111, 255})
+}
+
+draw_vsi_inset :: proc(center: rl.Vector2, radius, vertical_speed: f32) {
+    track_x := center.x + radius * .55
+    track_half_height := radius * .32
+    track := rl.Color {
+        r = 126,
+        g = 164,
+        b = 168,
+        a = 210,
+    }
+    climb := rl.Color {
+        r = 92,
+        g = 219,
+        b = 213,
+        a = 255,
+    }
+    draw_antialiased_line({track_x, center.y - track_half_height}, {track_x, center.y + track_half_height}, 1.5, track)
+    draw_antialiased_line({track_x - 4, center.y}, {track_x + 4, center.y}, 1.5, track)
+    end_y := center.y - clamp(vertical_speed / 10, -1, 1) * track_half_height
+    draw_antialiased_line({track_x, center.y}, {track_x, end_y}, 3, climb)
+    draw_antialiased_disc({track_x, end_y}, 3.2, climb)
+
+    readout := fmt.ctprintf("VSI %+.1f", vertical_speed)
+    readout_size := rl.MeasureTextEx(rl.Font{}, readout, 10, 1)
+    draw_instrument_text(readout, {center.x - readout_size.x * .5, center.y + radius * .29}, 10, 1, climb)
 }
 
 draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f32) {
-    panel_width := f32(400)
+    panel_width := min(f32(width) - 32, f32(620))
+    panel_height := f32(184)
     panel_left := f32(width) * .5 - panel_width * .5
-    panel_top := f32(height) - 144
-    rl.DrawRectangle(i32(panel_left), i32(panel_top), i32(panel_width), 130, {r = 5, g = 16, b = 25, a = 215})
+    panel_top := f32(height) - panel_height - 14
+    draw_flight_console_panel(
+        {x = panel_left, y = panel_top, width = panel_width, height = panel_height},
+        112,
+        {r = 5, g = 16, b = 25, a = 242},
+    )
     body := active_aircraft_body(editor)
     airspeed := active_aircraft_airspeed(editor)
     vertical_speed := body.velocity.y
@@ -2093,33 +2326,85 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
     pitch := math.asin(clamp(body.basis.forward.y, -1, 1))
     heading := postale_game.yaw_radians(body.basis) * 180 / math.PI
     if heading < 0 do heading += 360
-    y := panel_top + 64
-    draw_instrument_dial({panel_left + 67, y}, "AIRSPEED", airspeed, 0, 60, fmt.ctprintf("%.0f m/s", airspeed))
-    draw_attitude_indicator({panel_left + 200, y}, pitch, bank)
-    draw_instrument_dial({panel_left + 333, y}, "ALTITUDE", altitude, 0, 500, fmt.ctprintf("%.0f m", altitude))
-    readout := fmt.tprintf(
-        "HDG %03.0f°     VSI %+4.1f m/s     WIND %2.1f m/s     POWER %3.0f%%",
-        heading,
-        vertical_speed,
-        f32(
-            math.sqrt(
-                f64(
-                    editor.atmosphere.weather.wind[0] * editor.atmosphere.weather.wind[0] +
-                    editor.atmosphere.weather.wind[1] * editor.atmosphere.weather.wind[1],
-                ),
-            ),
-        ),
-        active_aircraft_throttle(editor) * 100,
+    dial_spacing := panel_width / 3
+    dial_radius := clamp(dial_spacing * .30, 54, 64)
+    y := panel_top + 68
+    draw_instrument_dial(
+        {panel_left + dial_spacing * .5, y},
+        dial_radius,
+        "AIRSPEED",
+        airspeed,
+        0,
+        70,
+        fmt.ctprintf("%.0f m/s", airspeed),
     )
-    readout_size := rl.MeasureTextEx(rl.Font{}, fmt.ctprintf("%s", readout), 11, 1)
-    rl.DrawTextEx(
-        rl.Font{},
-        fmt.ctprintf("%s", readout),
-        {f32(width) * .5 - readout_size.x * .5, panel_top + 113},
-        11,
-        1,
-        {r = 185, g = 217, b = 216, a = 255},
+    draw_attitude_indicator({panel_left + dial_spacing * 1.5, y}, dial_radius, pitch, bank)
+    draw_instrument_dial(
+        {panel_left + dial_spacing * 2.5, y},
+        dial_radius,
+        "ALTITUDE",
+        altitude,
+        0,
+        500,
+        fmt.ctprintf("%.0f m", altitude),
+        dial_radius * .62,
     )
+    draw_vsi_inset({panel_left + dial_spacing * 2.5, y}, dial_radius, vertical_speed)
+    compass_y := panel_top + 151
+    draw_heading_compass({f32(width) * .5, compass_y}, 290, heading)
+    draw_power_bar(panel_left + panel_width - 18, panel_top + 135, 40, active_aircraft_throttle(editor))
+}
+
+draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f32) {
+    if editor == nil ||
+       !editor.in_map ||
+       !driving_aircraft(editor) ||
+       editor.aircraft.active != .Postale ||
+       editor.postale.grounded ||
+       editor.postale.crashed {
+        return
+    }
+    intensity := clamp((editor.postale.telemetry.airspeed - 34) / 34, 0, 1)
+    if intensity <= .001 do return
+
+    center := rl.Vector2 {
+        x = f32(width) * .5 - editor.flight_control.roll * 34,
+        y = f32(height) * .46 + editor.flight_control.pitch * 22,
+    }
+    short_side := min(f32(width), f32(height))
+    long_side := max(f32(width), f32(height))
+    for index in 0 ..< 42 {
+        seed := f32(index) * 2.399963
+        speed_variation := .72 + f32(math.sin(f64(seed * 2.17))) * .18
+        cycle := time * (1.05 + intensity * 1.8) * speed_variation + f32(index) * .173
+        progress := cycle - f32(math.floor(f64(cycle)))
+        eased := progress * progress
+        inner := short_side * (.10 + .16 * (.5 + .5 * f32(math.sin(f64(seed * 1.31)))))
+        distance := inner + (long_side * .72 - inner) * eased
+        ray_x := f32(math.cos(f64(seed)))
+        ray_y := f32(math.sin(f64(seed))) * .64
+        variation := math.abs(f32(math.sin(f64(seed * 3.07))))
+        streak_length := (12 + intensity * 76) * (.65 + .35 * variation)
+        fade := 1 - math.abs(progress * 2 - 1)
+        alpha := u8(clamp((18 + intensity * 108) * fade, 0, 126))
+        start := rl.Vector2{center.x + ray_x * distance, center.y + ray_y * distance}
+        finish := rl.Vector2 {
+            center.x + ray_x * (distance + streak_length),
+            center.y + ray_y * (distance + streak_length),
+        }
+        rl.DrawLineEx(start, finish, .8 + intensity * 1.35, {205, 239, 236, alpha})
+    }
+
+    // A quiet edge wash sells peripheral blur without obscuring the aircraft or
+    // instruments. Its stepped bands avoid requiring a post-process shader.
+    for band in 0 ..< 5 {
+        inset := i32(band * 7)
+        alpha := u8((5 - band) * int(3 + intensity * 3))
+        rl.DrawRectangle(inset, inset, width - inset * 2, 3, {188, 226, 231, alpha})
+        rl.DrawRectangle(inset, height - inset - 3, width - inset * 2, 3, {188, 226, 231, alpha})
+        rl.DrawRectangle(inset, inset, 3, height - inset * 2, {188, 226, 231, alpha})
+        rl.DrawRectangle(width - inset - 3, inset, 3, height - inset * 2, {188, 226, 231, alpha})
+    }
 }
 
 perspective_camera :: proc(pose: third_person.Camera_Pose, focal_length: f32 = 1.35) -> Perspective_Camera {
@@ -2311,8 +2596,14 @@ update_editor_camera :: proc(editor: ^Editor, delta_seconds: f32) {
         mouse_delta := rl.GetMouseDelta()
         third_person.look(&editor.editor_camera, -mouse_delta.x, mouse_delta.y, .006)
     }
+    if !imgui_captures_keyboard() {
+        rotate_direction := f32(0)
+        if rl.IsKeyDown(.Q) do rotate_direction -= 1
+        if rl.IsKeyDown(.E) do rotate_direction += 1
+        editor.editor_camera.yaw_radians += rotate_direction * 1.5 * delta_seconds
+    }
     wheel := rl.GetMouseWheelMove()
-    if shift_key_down() && wheel != 0 {
+    if wheel != 0 && !shift_key_down() && !alt_key_down() {
         editor.editor_camera.distance = clamp(
             editor.editor_camera.distance * f32(math.pow(0.82, f64(wheel))),
             80,
@@ -2699,7 +2990,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
         rl.DrawTextEx(rl.Font{}, "ADRIATIC TERRAIN LAB — 3D", {26, 25}, 19, 1, {r = 211, g = 250, b = 242, a = 255})
         rl.DrawTextEx(
             rl.Font{},
-            "Q/E/T tools  WASD pan  Middle orbit  Shift+wheel zoom  Wheel radius  Left/Right brush",
+            "WASD pan  Q/E rotate  Middle orbit  Wheel zoom  Shift+wheel strength  Left/Right brush",
             {26, 49},
             12,
             1,
@@ -2948,7 +3239,7 @@ draw_editor_context :: proc(editor: ^Editor) {
             message = "CURVING ROAD  |  drag handle  LMB release commit  Esc cancel"
         } else if editor.road_selected_node >= 0 {
             message = fmt.tprintf(
-                "NODE %d  |  LMB add/connect  drag handles  K surface  wheel width  Shift+wheel radius  Backspace delete",
+                "NODE %d  |  LMB add/connect  drag handles  K surface  Wheel zoom  Alt width  Shift radius",
                 editor.road_selected_node + 1,
             )
         } else {
@@ -2956,7 +3247,7 @@ draw_editor_context :: proc(editor: ^Editor) {
         }
     } else if editor.tool == .Structure && editor.structure_placing {
         message = fmt.tprintf(
-            "PLACING %s  %.0f x %.0f x %.0f m  |  LMB commit  RMB cliff  Shift+wheel size  Alt+wheel scatter  Esc cancel",
+            "PLACING %s  %.0f x %.0f x %.0f m  |  Wheel zoom  Shift size  Alt height/scatter  Esc cancel",
             formation_kind_name(editor.structure_preview.kind),
             editor.structure_preview.width,
             editor.structure_preview.depth,
@@ -2964,7 +3255,7 @@ draw_editor_context :: proc(editor: ^Editor) {
         )
     } else if editor.architecture_painting {
         message = fmt.tprintf(
-            "PAINTING CITY DENSITY  radius %.0f m  |  LMB darken  RMB lighten  Shift+wheel flow  Alt+wheel hardness  Esc cancel",
+            "PAINTING CITY DENSITY  radius %.0f m  |  LMB darken  RMB lighten  Wheel zoom  Shift flow  Alt hardness",
             editor.architecture_brush_radius,
         )
     } else if editor.tool == .Structure &&
@@ -2973,7 +3264,7 @@ draw_editor_context :: proc(editor: ^Editor) {
         structure := editor.project.structures[editor.structure_selected]
         state: cstring = editor.structure_moving ? "MOVING" : "SELECTED"
         message = fmt.tprintf(
-            "%s %s  %.0f x %.0f x %.0f m  |  F focus  R rotate  Ctrl+D duplicate  Backspace delete  Wheel height  Shift+wheel size",
+            "%s %s  %.0f x %.0f x %.0f m  |  F focus  R rotate  Wheel zoom  Alt height  Shift size  Backspace delete",
             state,
             formation_kind_name(structure.kind),
             structure.width,
@@ -2982,7 +3273,7 @@ draw_editor_context :: proc(editor: ^Editor) {
         )
     } else if editor.cursor_hit {
         message = fmt.tprintf(
-            "CURSOR  X %.0f  Z %.0f  HEIGHT %.2f m  MATERIAL %.2f  |  LMB/RMB sculpt  Wheel size  Shift strength  Alt hardness",
+            "CURSOR  X %.0f  Z %.0f  HEIGHT %.2f m  MATERIAL %.2f  |  LMB/RMB sculpt  Wheel zoom  Shift strength  Alt hardness",
             editor.cursor_world_x,
             editor.cursor_world_z,
             editor.cursor_height,
@@ -3226,7 +3517,7 @@ draw_terrain_isometric_legacy :: proc(editor: ^Editor, width, height: i32, time:
         draw_spawn_button()
         rl.DrawTextEx(
             rl.Font{},
-            "Q Sculpt   E Smooth   T Paint   B Formation Toolbox   Wheel Radius   Shift+Wheel Strength   LMB/RMB Brush",
+            "Q/E Rotate Camera   T Paint   B Formation Toolbox   Wheel Zoom   Shift+Wheel Strength   LMB/RMB Brush",
             {20, f32(height) - 30},
             15,
             1,
@@ -3239,30 +3530,9 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     // The depth-tested world pass has already drawn the game/editor scene.
     // Canvas commands from here onward are deliberately UI-only.
     rl.ClearBackground({r = 104, g = 154, b = 181, a = 255})
+    draw_postale_speed_effects(editor, width, height, time)
     if editor.in_map && editor.gameplay_options.show_hud {
         flying := driving_aircraft(editor)
-        in_car := driving_car(editor)
-        driving := flying || in_car
-        panel_width := driving ? i32(650) : i32(430)
-        if flying && editor.aircraft.active == .Libellula do panel_width = 800
-        help_text: cstring = "WASD move  Mouse look  Wheel zoom  Space jump  Esc pause"
-        if flying {
-            help_text = "W/S pitch  A/D roll  Q/E yaw  Mouse orbit  C camera  Shift/Ctrl power  F exit  R reset"
-            if editor.aircraft.active == .Libellula {
-                help_text = "W/S pitch  A/D roll  Q/E yaw  Shift climb  Ctrl descend  Release to hover  F exit  R reset"
-            }
-        }
-        if in_car do help_text = "W/S drive  A/D steer  Space handbrake  F exit  Esc pause"
-        rl.DrawRectangle(14, 14, panel_width, 72, {r = 8, g = 28, b = 45, a = 210})
-        rl.DrawTextEx(
-            rl.Font{},
-            flying ? fmt.ctprintf("%s FLIGHT", vehicles.aircraft_kind_name(editor.aircraft.active)) : (in_car ? "DRIVING" : "ON FOOT"),
-            {26, 25},
-            19,
-            1,
-            {211, 250, 242, 255},
-        )
-        rl.DrawTextEx(rl.Font{}, help_text, {26, 49}, 13, 1, {183, 219, 221, 255})
         if flying {
             body := active_aircraft_body(editor)
             ground := postale_game.drivable_surface_height(
@@ -3270,13 +3540,6 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
                 editor.project.sea_level,
             )
             altitude := max(f32(0), body.position.y - ground - active_aircraft_ground_clearance(editor))
-            hud := fmt.tprintf(
-                "THR %3.0f%%   AIR %3.0f m/s   ALT %3.0f m",
-                active_aircraft_throttle(editor) * 100,
-                active_aircraft_airspeed(editor),
-                altitude,
-            )
-            rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", hud), {26, 68}, 13, 1, {236, 239, 190, 255})
             draw_flight_instruments(editor, width, height, altitude)
         } else if editor.attendant_dialogue_open {
             rl.DrawRectangle(width / 2 - 310, height - 190, 620, 142, {8, 28, 45, 238})
@@ -3314,20 +3577,6 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     }
     if !editor.in_map && !editor.capture_world_only {
         editor_ui_draw(editor, width, height)
-    }
-    sky := atmosphere.sample(&editor.atmosphere)
-    minutes := int(sky.world_minutes)
-    clock := fmt.tprintf(
-        "%02d:%02d  %s%s  [P] pause  [←/→] time  [4] auto  [1/2/3] weather",
-        minutes / 60,
-        minutes % 60,
-        atmosphere.preset_name(editor.atmosphere.override),
-        editor.atmosphere.paused ? " PAUSED" : "",
-    )
-    if editor.in_map && editor.gameplay_options.show_hud {
-        // The clock sits over the sky, so give it its own high-contrast backing.
-        rl.DrawRectangle(width - 560, 14, 546, 40, {8, 28, 45, 242})
-        ui_draw_text(.Data, fmt.ctprintf("%s", clock), {f32(width) - 548, 24}, 1, {239, 255, 250, 255})
     }
 }
 
@@ -3547,6 +3796,8 @@ adriatic_run :: proc() -> bool {
     editor.architecture_brush_radius = terrain.BASE_CELL_SIZE * 4.0
     editor.architecture_brush_strength = .55
     editor.architecture_brush_hardness = .45
+    greek_asset_init(editor)
+    editor.greek_placement_mode = false
     editor.atmosphere = atmosphere.new(0x41c10)
     editor.particles = particle_systems.new_cpu(0x9e3779b9)
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
@@ -3699,7 +3950,7 @@ adriatic_run :: proc() -> bool {
                 // Give the flight capture a reproducible airborne state so visual
                 // verification exercises the wing-trail and wind-response systems.
                 editor.postale.body.position.y += 85
-                editor.postale.body.velocity = flight.scale(editor.postale.body.basis.forward, 38)
+                editor.postale.body.velocity = flight.scale(editor.postale.body.basis.forward, 58)
                 editor.postale.grounded = false
                 editor.postale.was_grounded = false
                 editor.postale.throttle = .82
@@ -3765,7 +4016,12 @@ adriatic_run :: proc() -> bool {
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
         }
-        if capture_target == "player" || capture_target == "player-walk" {
+        if capture_target == "player" ||
+           capture_target == "player-walk" ||
+           capture_target == "player-run-compress" ||
+           capture_target == "player-jump" ||
+           capture_target == "player-fall" ||
+           capture_target == "player-blink" {
             editor.camera_target_lock = false
             editor.postale_visible = false
             editor.libellula_visible = false
@@ -3781,20 +4037,38 @@ adriatic_run :: proc() -> bool {
             editor.player.facing_yaw_radians = -.70
             editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
             editor.capture_player_walk_pose = capture_target == "player-walk"
+            editor.capture_player_run_compress_pose = capture_target == "player-run-compress"
+            editor.capture_player_jump_pose = capture_target == "player-jump"
+            editor.capture_player_fall_pose = capture_target == "player-fall"
+            editor.capture_player_blink_pose = capture_target == "player-blink"
+            if editor.capture_player_jump_pose || editor.capture_player_fall_pose {
+                editor.player.position.y += .42
+                editor.player.velocity.y = editor.capture_player_jump_pose ? f32(3.2) : f32(-3.2)
+                editor.player.grounded = false
+                editor.pilot.position = editor.player.position
+            }
             capture_forward := third_person.Vec3 {
                 x = -math.sin(editor.player.facing_yaw_radians),
                 z = -math.cos(editor.player.facing_yaw_radians),
             }
+            capture_run_pose := capture_target == "player-walk" || capture_target == "player-run-compress"
+            capture_front_distance := capture_run_pose ? f32(.72) : f32(1.95)
+            capture_side_distance := capture_run_pose ? f32(1.72) : f32(.40)
+            capture_height := capture_run_pose ? f32(.62) : f32(.78)
             inspection_pose := third_person.Camera_Pose {
                 position = {
-                    x = editor.player.position.x + capture_forward.x * 2.65 + capture_forward.z * .52,
-                    y = editor.player.position.y + 1.55,
-                    z = editor.player.position.z + capture_forward.z * 2.65 - capture_forward.x * .52,
+                    x = editor.player.position.x +
+                    capture_forward.x * capture_front_distance +
+                    capture_forward.z * capture_side_distance,
+                    y = editor.player.position.y + capture_height,
+                    z = editor.player.position.z +
+                    capture_forward.z * capture_front_distance -
+                    capture_forward.x * capture_side_distance,
                 },
                 target = {
-                    x = editor.player.position.x,
-                    y = editor.player.position.y + .82,
-                    z = editor.player.position.z,
+                    x = editor.player.position.x - capture_forward.x * .18,
+                    y = editor.player.position.y + .34,
+                    z = editor.player.position.z - capture_forward.z * .18,
                 },
             }
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
@@ -3846,7 +4120,11 @@ adriatic_run :: proc() -> bool {
             y = editor.car.position.y + .75,
             z = editor.car.position.z,
         }
-        editor.editor_camera = {yaw_radians = math.PI * .72, pitch_radians = .48, distance = 52}
+        editor.editor_camera = {
+            yaw_radians   = math.PI * .72,
+            pitch_radians = .48,
+            distance      = 52,
+        }
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     }
     if capture_terrain_grip_mode {
@@ -3856,7 +4134,11 @@ adriatic_run :: proc() -> bool {
             y = editor.car.position.y + .75,
             z = editor.car.position.z,
         }
-        editor.editor_camera = {yaw_radians = math.PI * .72, pitch_radians = .48, distance = 48}
+        editor.editor_camera = {
+            yaw_radians   = math.PI * .72,
+            pitch_radians = .48,
+            distance      = 48,
+        }
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     }
     benchmark_samples: [4096]f64
@@ -3892,8 +4174,6 @@ adriatic_run :: proc() -> bool {
         if !editor.in_map {
             if !imgui_captures_keyboard() && rl.IsKeyPressed(.ESCAPE) do editor_cancel_interaction(editor)
             if !imgui_captures_keyboard() {
-                if rl.IsKeyPressed(.Q) do authoring_select_tool(editor, .Sculpt)
-                if rl.IsKeyPressed(.E) do authoring_select_tool(editor, .Smooth)
                 if rl.IsKeyPressed(.T) do authoring_select_tool(editor, .Paint)
                 if rl.IsKeyPressed(.B) do authoring_select_tool(editor, .Formations)
                 if rl.IsKeyPressed(.H) do authoring_select_tool(editor, .Foliage)
@@ -3901,8 +4181,9 @@ adriatic_run :: proc() -> bool {
                 if !control_key_down() && rl.IsKeyPressed(.C) do authoring_select_tool(editor, .Cliff)
                 if !control_key_down() && rl.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
                 if rl.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)
+                if !control_key_down() && rl.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
             }
-            if !imgui_captures_keyboard() && rl.IsKeyPressed(.G) {
+            if !imgui_captures_keyboard() && control_key_down() && rl.IsKeyPressed(.G) {
                 center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
                 architecture.generate(&editor.project, center, center, 0xA71D3)
                 editor.authoring_tool = .Formations
@@ -3948,14 +4229,21 @@ adriatic_run :: proc() -> bool {
             viewport_ui_hit := editor_ui_hit(editor, rl.GetMousePosition(), width, height)
             update_editor_camera(editor, min(frame_delta, f32(.05)))
             viewport_wheel := viewport_ui_hit ? f32(0) : rl.GetMouseWheelMove()
-            if editor.road_mode {
+            if editor.greek_placement_mode {
+                wheel := viewport_wheel
+                if shift_key_down() {
+                    editor.greek_asset_scale = clamp(editor.greek_asset_scale + wheel * .05, .25, 3.0)
+                } else if alt_key_down() && wheel != 0 {
+                    editor.greek_asset_rotation += wheel * .18
+                }
+            } else if editor.road_mode {
                 wheel := viewport_wheel
                 if shift_key_down() && editor.road_selected_node >= 0 {
                     node := &editor.project.road_graph.nodes[editor.road_selected_node]
                     if wheel != 0 do structure_history_push_undo(editor)
                     node.junction_radius = clamp(node.junction_radius + wheel, f32(1), f32(40))
                     if wheel != 0 do editor.project.revision += 1
-                } else {
+                } else if alt_key_down() {
                     editor.road_width = clamp(editor.road_width + wheel, f32(2.5), f32(24))
                     if wheel != 0 && editor.road_selected_node >= 0 {
                         structure_history_push_undo(editor)
@@ -3970,8 +4258,10 @@ adriatic_run :: proc() -> bool {
             } else if editor.tool == .Structure && editor.curve_drawing {
                 cell := editor.project.levels[0].cell_size
                 wheel := viewport_wheel
-                editor.curve_width = max(cell, editor.curve_width + wheel * cell)
-                editor.curve_height = max(cell, editor.curve_height + wheel * cell)
+                if shift_key_down() {
+                    editor.curve_width = max(cell, editor.curve_width + wheel * cell)
+                    editor.curve_height = max(cell, editor.curve_height + wheel * cell)
+                }
             } else if editor.tool == .Structure && editor.architecture_paint_mode {
                 wheel := viewport_wheel
                 if shift_key_down() {
@@ -3982,24 +4272,12 @@ adriatic_run :: proc() -> bool {
                     )
                 } else if alt_key_down() {
                     editor.architecture_brush_hardness = clamp(editor.architecture_brush_hardness + wheel * .04, 0, 1)
-                } else {
-                    editor.architecture_brush_radius = clamp(
-                        editor.architecture_brush_radius + wheel * terrain.BASE_CELL_SIZE,
-                        terrain.BASE_CELL_SIZE,
-                        400,
-                    )
                 }
-            } else if editor.tool == .Structure {
+            } else if editor.tool == .Structure && (shift_key_down() || alt_key_down()) {
                 structure_adjust_with_wheel(editor, viewport_wheel)
             } else if alt_key_down() && (editor.tool == .Raise || editor.tool == .Smooth || editor.tool == .Paint) {
                 editor.hardness = clamp(editor.hardness + viewport_wheel * .02, 0, 1)
-            } else if !shift_key_down() {
-                editor.radius = clamp(
-                    editor.radius + viewport_wheel * terrain.BASE_CELL_SIZE,
-                    terrain.BASE_CELL_SIZE,
-                    400,
-                )
-            } else if editor.tool == .Raise || editor.tool == .Smooth || editor.tool == .Paint {
+            } else if shift_key_down() && (editor.tool == .Raise || editor.tool == .Smooth || editor.tool == .Paint) {
                 editor.strength = clamp(editor.strength + viewport_wheel * .02, 0, 1)
             }
         }
@@ -4026,9 +4304,11 @@ adriatic_run :: proc() -> bool {
             editor.cursor_material = terrain.sample_material(&editor.project, 0, world_x, world_z)
         }
         architecture_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        greek_placement_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         curve_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         if !editor.architecture_paint_mode &&
+           !editor.greek_placement_mode &&
            !editor.road_mode &&
            !editor.curve_mode &&
            !editor.curve_drawing &&
@@ -4158,7 +4438,12 @@ adriatic_run :: proc() -> bool {
                         editor.camera = third_person.default_camera()
                     }
                 }
-                chase_camera.step(&editor.flight_camera, aircraft_camera_target(editor), min(delta_seconds, .05))
+                chase_camera.step(
+                    &editor.flight_camera,
+                    aircraft_camera_target(editor),
+                    min(delta_seconds, .05),
+                    postale_flyby_shake(editor),
+                )
                 editor.camera_pose = editor.flight_camera.pose
             }
             if in_car {
@@ -4337,7 +4622,9 @@ adriatic_run :: proc() -> bool {
                     grounded           = editor.player.position.y <= ground_height + .01,
                     camera_yaw_radians = editor.camera.yaw_radians,
                 }
-                third_person.step(&editor.player, input, third_person.default_config(), min(delta_seconds, .05))
+                frame_seconds := min(delta_seconds, .05)
+                third_person.step(&editor.player, input, editor.tweak.player, frame_seconds)
+                player_animation_update(editor, frame_seconds)
                 ground_height = terrain.sample_height(
                     &editor.project,
                     0,

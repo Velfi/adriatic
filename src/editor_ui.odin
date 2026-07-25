@@ -4,6 +4,7 @@ import atmosphere "../packages/atmosphere"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:fmt"
+import "core:math"
 import rl "zelda_engine:canvas2d"
 
 Authoring_Tool :: enum {
@@ -16,9 +17,10 @@ Authoring_Tool :: enum {
     Cliff,
     Building,
     Roads,
+    GreekAssets,
 }
 
-AUTHORING_TOOL_COUNT :: 9
+AUTHORING_TOOL_COUNT :: 10
 EDITOR_UI_TOP_HEIGHT :: f32(54)
 EDITOR_UI_RAIL_WIDTH :: f32(184)
 EDITOR_UI_INSPECTOR_WIDTH :: f32(292)
@@ -63,6 +65,8 @@ authoring_tool_name :: proc(tool: Authoring_Tool) -> cstring {
         return "CITY BRUSH"
     case .Roads:
         return "ROADS"
+    case .GreekAssets:
+        return "GREEK ASSETS"
     }
     return "TOOL"
 }
@@ -70,9 +74,9 @@ authoring_tool_name :: proc(tool: Authoring_Tool) -> cstring {
 authoring_tool_shortcut :: proc(tool: Authoring_Tool) -> cstring {
     switch tool {
     case .Sculpt:
-        return "Q"
+        return ""
     case .Smooth:
-        return "E"
+        return ""
     case .Paint:
         return "T"
     case .Formations:
@@ -87,6 +91,8 @@ authoring_tool_shortcut :: proc(tool: Authoring_Tool) -> cstring {
         return "N"
     case .Roads:
         return "M"
+    case .GreekAssets:
+        return "G"
     }
     return ""
 }
@@ -99,6 +105,7 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.architecture_dirty_bounds = {}
     editor.architecture_node_mode = false
     editor.architecture_paint_mode = false
+    editor.greek_placement_mode = false
     editor.road_mode = false
     editor.curve_mode = false
     switch selected {
@@ -126,6 +133,10 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     case .Roads:
         editor.tool = .Structure
         editor.road_mode = true
+        editor.structure_selected = -1
+    case .GreekAssets:
+        editor.tool = .Structure
+        editor.greek_placement_mode = true
         editor.structure_selected = -1
     }
     editor.tweak.terrain.tool = editor.tool
@@ -166,7 +177,7 @@ editor_ui_layout :: proc(editor: ^Editor, width, height: i32) -> Editor_UI_Layou
 }
 
 editor_ui_tool_bounds :: proc(layout: Editor_UI_Layout, index: int) -> rl.Rectangle {
-    return {layout.left.x + 10, layout.left.y + 50 + f32(index) * 47, layout.left.width - 20, 41}
+    return {layout.left.x + 10, layout.left.y + 50 + f32(index) * 39, layout.left.width - 20, 35}
 }
 
 editor_ui_focus_bounds :: proc(layout: Editor_UI_Layout) -> rl.Rectangle {
@@ -295,27 +306,29 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     }
     if editor.architecture_painting do return "Paint city density; release to commit the preview."
     if editor.curve_drawing do return editor.curve_cliff_mode ? "Draw the cliff path; release to commit." : "Draw the ridge path; release to commit."
-    if editor.structure_placing do return "Drag the footprint; wheel changes height; release to place."
+    if editor.structure_placing do return "Drag the footprint; wheel zooms; Shift changes size; Alt changes height."
     if editor.structure_moving do return "Move the selected formation; release to commit."
     switch editor.authoring_tool {
     case .Sculpt:
-        return "Left raises terrain; right lowers it. Wheel adjusts radius."
+        return "Left raises terrain; right lowers it. Wheel zooms; use Radius in the inspector."
     case .Smooth:
-        return "Paint smoothing with either mouse button. Wheel adjusts radius."
+        return "Paint smoothing with either mouse button. Wheel zooms; use Radius in the inspector."
     case .Paint:
-        return "Left paints material; right erases it. Wheel adjusts radius."
+        return "Left paints material; right erases it. Wheel zooms; use Radius in the inspector."
     case .Formations:
         return "Drag to place or click to select. V cycles profile; X enables automatic."
     case .Foliage:
-        return "Drag a canopy footprint. Wheel adjusts height; Shift+wheel broadens it."
+        return "Drag a canopy footprint. Wheel zooms; Shift broadens it; Alt adjusts height."
     case .Ridge:
-        return "Draw a freehand ridge. Wheel adjusts width and height."
+        return "Draw a freehand ridge. Wheel zooms; Shift adjusts width and height."
     case .Cliff:
-        return "Draw a freehand cliff. Wheel adjusts width and height."
+        return "Draw a freehand cliff. Wheel zooms; Shift adjusts width and height."
     case .Building:
-        return "Left darkens density; right lightens. Wheel radius; Shift flow; Alt hardness."
+        return "Left darkens density; right lightens. Wheel zooms; Shift flow; Alt hardness."
     case .Roads:
         return "Click terrain to add nodes and drag handles to curve edges."
+    case .GreekAssets:
+        return "Click an asset, then click terrain to place it. Wheel zooms; Alt rotates; Shift scales."
     }
     return ""
 }
@@ -490,6 +503,40 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             2,
         )
         row += 1
+    case .GreekAssets:
+        bounds := editor_ui_slider_bounds(layout, row)
+        ui_draw_text(.Label, "ASSET PREVIEW", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        ui_draw_text(
+            .Data,
+            editor.greek_assets[editor.greek_asset_selected].name,
+            {bounds.x, bounds.y + 24},
+            .45,
+            {134, 224, 216, 255},
+        )
+        row += 1
+        asset_list_y := panel.y + 132
+        for index in 0 ..< GREEK_ASSET_CAPACITY {
+            asset_bounds := rl.Rectangle{panel.x + 14, asset_list_y + f32(index) * 34, panel.width - 28, 28}
+            editor_ui_panel_button(
+                asset_bounds,
+                editor.greek_assets[index].name,
+                editor.greek_asset_selected == index,
+                editor.greek_assets[index].ready,
+            )
+        }
+        ui_draw_text(
+            .Data,
+            fmt.ctprintf(
+                "ROTATION %3.0f°   SCALE %.2f   PLACED %d",
+                editor.greek_asset_rotation * 180 / math.PI,
+                editor.greek_asset_scale,
+                editor.greek_placement_count,
+            ),
+            {panel.x + 14, asset_list_y + f32(GREEK_ASSET_CAPACITY) * 34 + 10},
+            .4,
+            {209, 215, 222, 255},
+        )
+        row = 7
     case .Roads:
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "ROAD WIDTH (m)", editor.road_width, 2.5, 24, 1)
         row += 1
@@ -705,6 +752,20 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         row += 1
         _ = editor_ui_slider_input(editor, layout, 10, row, &editor.architecture_brush_hardness, 0, 1, .01)
         row += 1
+    case .GreekAssets:
+        if pressed {
+            asset_list_y := layout.inspector.y + 132
+            for index in 0 ..< GREEK_ASSET_CAPACITY {
+                asset_bounds := rl.Rectangle{layout.inspector.x + 14, asset_list_y + f32(index) * 34, layout.inspector.width - 28, 28}
+                if rl.CheckCollisionPointRec(mouse, asset_bounds) && editor.greek_assets[index].ready {
+                    editor.greek_asset_selected = index
+                    editor.greek_asset_rotation = 0
+                    editor.greek_asset_scale = 1
+                    return
+                }
+            }
+        }
+        row = 7
     case .Roads:
         road_changed := editor_ui_slider_input(
             editor,

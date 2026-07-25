@@ -42,3 +42,22 @@ aircraft_chase_camera_smooths_motion_and_speed_fov :: proc(t: ^testing.T) {
     testing.expect(t, state.pose.position.x > start.x && state.pose.position.x < 10)
     testing.expect(t, chase_camera.desired_fov(70) > chase_camera.desired_fov(8))
 }
+
+@(test)
+aircraft_chase_camera_shakes_near_large_flyby_volumes :: proc(t: ^testing.T) {
+    target := chase_camera.Target {
+        position = {x = 13, y = 20},
+        basis = flight.identity_basis(),
+        airspeed = 62,
+    }
+    proximity := chase_camera.box_flyby_strength(target.position, {y = 15}, {x = 5, y = 15, z = 5}, 0, 12)
+    testing.expect(t, proximity > 0)
+    testing.expect(t, chase_camera.box_flyby_strength({x = 80, y = 20}, {y = 15}, {x = 5, y = 15, z = 5}, 0, 12) == 0)
+
+    state: chase_camera.State
+    chase_camera.reset(&state, target)
+    unshaken := state.pose.position
+    chase_camera.step(&state, target, 1.0 / 30.0, proximity)
+    testing.expect(t, state.shake_intensity > 0)
+    testing.expect(t, state.pose.position != unshaken)
+}

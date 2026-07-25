@@ -42,6 +42,15 @@ Camera_Tweak :: struct {
     flight_orbit_pitch: f32,
 }
 
+Player_Animation_Tweak :: struct {
+    stride_radians_per_meter: f32 `tweak:"range=.1..12;.05"`,
+    walk_full_speed:          f32 `tweak:"range=.1..20;.05"`,
+    vertical_full_speed:      f32 `tweak:"range=.1..20;.05"`,
+    locomotion_blend_rate:    f32 `tweak:"range=.1..30;.1"`,
+    airborne_blend_rate:      f32 `tweak:"range=.1..30;.1"`,
+    vertical_blend_rate:      f32 `tweak:"range=.1..30;.1"`,
+}
+
 World_Tweak :: struct {
     far_clip:               f32 `tweak:"range=100..50000;10"`,
     fog_start:              f32 `tweak:"range=0..50000;10"`,
@@ -175,6 +184,7 @@ Tweak_State :: struct {
     terrain:          Terrain_Tweak,
     atmosphere:       atmosphere.Atmosphere,
     player:           third_person.Config,
+    player_animation: Player_Animation_Tweak,
     camera:           Camera_Tweak,
     world:            World_Tweak,
     particles:        Particle_Tweak,
@@ -319,6 +329,14 @@ tweak_default_state :: proc() -> Tweak_State {
         terrain = {tool = .Raise, radius = 48, strength = .10, hardness = .5, sea_level = 0},
         atmosphere = atmosphere.new(0x41c10),
         player = third_person.default_config(),
+        player_animation = {
+            stride_radians_per_meter = 3.25,
+            walk_full_speed = 3.5,
+            vertical_full_speed = 5,
+            locomotion_blend_rate = 8,
+            airborne_blend_rate = 12,
+            vertical_blend_rate = 8,
+        },
         camera = {
             editor_camera = {yaw_radians = math.PI * .25, pitch_radians = .58, distance = 900},
             editor_focus = {
@@ -482,7 +500,7 @@ tweak_draw_terrain :: proc(editor: ^Editor) {
     if state.tool == .Structure {
         if editor.road_mode {
             im.TextDisabled("LMB adds/connects nodes; drag handles curves; RMB ends chain")
-            im.TextDisabled("K cycles surface; wheel width; Shift+wheel radius; Backspace deletes")
+            im.TextDisabled("Wheel zoom; Alt+wheel width; Shift+wheel radius; Backspace deletes")
             im.TextUnformatted("Surface")
             if im.RadioButton("Asphalt", editor.road_pavement == .Asphalt) {
                 road_set_pavement(editor, .Asphalt)
@@ -501,14 +519,14 @@ tweak_draw_terrain :: proc(editor: ^Editor) {
             }
         } else {
             im.TextDisabled("LMB places/selects; RMB makes cliffs; Esc cancels")
-            im.TextDisabled("Wheel height; Shift+wheel size; R rotates; Ctrl+D duplicates")
+            im.TextDisabled("Wheel zoom; Alt+wheel height; Shift+wheel size; R rotates")
         }
         im.TextDisabled("Ctrl+Z/Y undoes or redoes formation edits")
     } else {
         tweak_drag_f32("Radius", &state.radius, terrain.BASE_CELL_SIZE, 400, 1)
         tweak_drag_f32("Strength", &state.strength, 0, 1, .01)
         tweak_drag_f32("Hardness", &state.hardness, 0, 1, .01)
-        im.TextDisabled("Viewport: wheel size; Shift+wheel strength; Alt+wheel hardness")
+        im.TextDisabled("Viewport: wheel zoom; Shift+wheel strength; Alt+wheel hardness")
         im.TextDisabled("LMB raises/paints, RMB lowers/erases")
         im.TextDisabled("Ctrl+Z/Y undoes or redoes the last terrain stroke")
     }
@@ -584,14 +602,29 @@ tweak_draw_atmosphere :: proc(editor: ^Editor) {
 
 tweak_draw_player :: proc(editor: ^Editor) {
     c := &editor.tweak.player
+    a := &editor.tweak.player_animation
+    im.SeparatorText("Controller")
     tweak_drag_f32("Move speed", &c.move_speed, 0, 100, .1)
     tweak_drag_f32("Ground acceleration", &c.ground_acceleration, 0, 200, .5)
     tweak_drag_f32("Air acceleration", &c.air_acceleration, 0, 200, .5)
     tweak_drag_f32("Jump speed", &c.jump_speed, 0, 50, .1)
     tweak_drag_f32("Gravity", &c.gravity, 0, 100, .1)
+    im.SeparatorText("Animation")
+    tweak_drag_f32("Stride radians / meter", &a.stride_radians_per_meter, .1, 12, .05)
+    tweak_drag_f32("Full walk speed", &a.walk_full_speed, .1, 20, .05)
+    tweak_drag_f32("Full vertical speed", &a.vertical_full_speed, .1, 20, .05)
+    tweak_drag_f32("Locomotion blend rate", &a.locomotion_blend_rate, .1, 30, .1)
+    tweak_drag_f32("Airborne blend rate", &a.airborne_blend_rate, .1, 30, .1)
+    tweak_drag_f32("Jump / fall blend rate", &a.vertical_blend_rate, .1, 30, .1)
     im.SeparatorText("Runtime")
     im.Text("Position: %.2f %.2f %.2f", editor.player.position.x, editor.player.position.y, editor.player.position.z)
     im.Text("Grounded: %s", editor.player.grounded ? "yes" : "no")
+    im.Text(
+        "Blend: walk %.2f  air %.2f  vertical %+.2f",
+        editor.player_gait_weight,
+        editor.player_airborne_weight,
+        editor.player_vertical_pose,
+    )
 }
 
 tweak_draw_camera :: proc(editor: ^Editor) {
