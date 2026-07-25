@@ -1706,6 +1706,21 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
             structure.rotation,
             {184, 93, 61, 255},
         )
+        // A pale cap lip and a dark inset keep the stack from reading as a
+        // single solid cube at eye level, while preserving the hand-built
+        // terracotta character of the roofline.
+        world_box_rotated(
+            {chimney_x, chimney_base + 3.16, chimney_z},
+            {2.30, .10, 2.30},
+            structure.rotation,
+            {214, 178, 139, 255},
+        )
+        world_box_rotated(
+            {chimney_x, chimney_base + 3.23, chimney_z},
+            {1.42, .035, 1.42},
+            structure.rotation,
+            {65, 55, 49, 255},
+        )
     }
     if landmark {
         world_box_rotated(
@@ -1783,6 +1798,48 @@ world_architecture :: proc(structure: terrain.Structure) {
             structure.rotation,
             door,
         )
+        surround := facade_style == 2 ? rl.Color{166, 171, 151, 255} : rl.Color{190, 166, 128, 255}
+        frame_height := structure.height * .27
+        frame_offset := structure.width * .12
+        left_frame_x, left_frame_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            -frame_offset,
+            structure.depth * .5 + .34,
+            structure.rotation,
+        )
+        right_frame_x, right_frame_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            frame_offset,
+            structure.depth * .5 + .34,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {left_frame_x, structure.base_y + structure.height * .145, left_frame_z},
+            {.10, frame_height, .12},
+            structure.rotation,
+            surround,
+        )
+        world_box_rotated(
+            {right_frame_x, structure.base_y + structure.height * .145, right_frame_z},
+            {.10, frame_height, .12},
+            structure.rotation,
+            surround,
+        )
+        lintel_x, lintel_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + .34,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {lintel_x, structure.base_y + structure.height * .285, lintel_z},
+            {structure.width * .22, .11, .14},
+            structure.rotation,
+            surround,
+        )
         step_x, step_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -1798,6 +1855,60 @@ world_architecture :: proc(structure: terrain.Structure) {
             structure.rotation,
             step_color,
         )
+        // A handful of low-rise blocks read as village shops: a shallow
+        // canvas canopy over the entrance adds the lived-in 1940s street
+        // rhythm without turning every façade into a storefront.
+        if structure.height < 52 && structure.seed % 2 == 0 {
+            awning_x, awning_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .46,
+                structure.rotation,
+            )
+            awning_color :=
+                structure.seed % 4 == 0 ? rl.Color{196, 105, 71, 255} :
+                structure.seed % 4 == 1 ? rl.Color{215, 198, 151, 255} :
+                rl.Color{105, 143, 151, 255}
+            world_box_rotated(
+                {awning_x, structure.base_y + structure.height * .32, awning_z},
+                {structure.width * .34, .14, .52},
+                structure.rotation,
+                awning_color,
+            )
+            stripe_color :=
+                structure.seed % 4 == 0 ? rl.Color{226, 198, 157, 255} :
+                structure.seed % 4 == 1 ? rl.Color{183, 91, 70, 255} :
+                rl.Color{214, 199, 163, 255}
+            for stripe in -1 ..= 1 {
+                stripe_x, stripe_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    f32(stripe) * structure.width * .105,
+                    structure.depth * .5 + .49,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {stripe_x, structure.base_y + structure.height * .32 + .012, stripe_z},
+                    {structure.width * .095, .035, .54},
+                    structure.rotation,
+                    stripe % 2 == 0 ? stripe_color : awning_color,
+                )
+            }
+            fascia_x, fascia_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .73,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {fascia_x, structure.base_y + structure.height * .29, fascia_z},
+                {structure.width * .34, .12, .07},
+                structure.rotation,
+                formation_face_color(awning_color, math.PI, 0),
+            )
+        }
     }
     for row in 0 ..< rows {
         for column in 0 ..< columns {
@@ -1811,6 +1922,60 @@ world_architecture :: proc(structure: terrain.Structure) {
                 structure.rotation,
                 window,
             )
+            if !landmark && (facade_style == 0 || facade_style == 1) {
+                trim := facade_style == 1 ? rl.Color{205, 190, 157, 255} : rl.Color{190, 166, 128, 255}
+                trim_width := structure.width * (columns == 1 ? .19 : .16)
+                trim_z := local_z + .045
+                trim_x, trim_world_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    x,
+                    trim_z,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {trim_x, y + structure.height * .062, trim_world_z},
+                    {trim_width, .075, .16},
+                    structure.rotation,
+                    trim,
+                )
+                world_box_rotated(
+                    {trim_x, y - structure.height * .062, trim_world_z},
+                    {trim_width * .92, .065, .18},
+                    structure.rotation,
+                    formation_face_color(trim, math.PI, 0),
+                )
+            }
+            if !landmark && (facade_style == 2 || (facade_style == 0 && row % 2 == 1)) && (row + column) % 2 == 0 {
+                flower_x, flower_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    x,
+                    local_z + .30,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {flower_x, y - structure.height * .075, flower_z},
+                    {structure.width * .22, .12, .22},
+                    structure.rotation,
+                    {178, 111, 73, 255},
+                )
+                for sprig in 0 ..< 3 {
+                    sprig_x, sprig_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x + (f32(sprig) - 1) * structure.width * .055,
+                        local_z + .34,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {sprig_x, y - structure.height * .025, sprig_z},
+                        {.055, structure.height * .065, .08},
+                        structure.rotation,
+                        sprig == 1 ? rl.Color{87, 132, 74, 255} : rl.Color{113, 151, 78, 255},
+                    )
+                }
+            }
             if !landmark {
                 if facade_style == 1 {
                     // A shallow balcony is a small silhouette break that reads
@@ -1842,6 +2007,21 @@ world_architecture :: proc(structure: terrain.Structure) {
                         structure.rotation,
                         {102, 76, 63, 255},
                     )
+                    for post in -1 ..= 1 {
+                        post_x, post_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x + f32(post) * structure.width * .12,
+                            local_z + .29,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {post_x, y + structure.height * .025, post_z},
+                            {.055, structure.height * .11, .065},
+                            structure.rotation,
+                            {102, 76, 63, 255},
+                        )
+                    }
                 } else if facade_style == 2 {
                     // Blue façades use small fabric awnings rather than
                     // balconies, giving this seed variant a distinct profile.
@@ -1859,6 +2039,64 @@ world_architecture :: proc(structure: terrain.Structure) {
                         shutter,
                     )
                 } else {
+                    if facade_style == 0 && row % 2 == 0 {
+                        // Alternating wrought-iron balconies give the warmer
+                        // stucco façades a lived-in 1940s Mediterranean rhythm.
+                        balcony_x, balcony_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x,
+                            local_z + .08,
+                            structure.rotation,
+                        )
+                        railing_x, railing_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x,
+                            local_z + .30,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {balcony_x, y - structure.height * .065, balcony_z},
+                            {structure.width * .30, .26, .48},
+                            structure.rotation,
+                            {178, 127, 88, 255},
+                        )
+                        world_box_rotated(
+                            {railing_x, y + structure.height * .025, railing_z},
+                            {structure.width * .25, structure.height * .085, .08},
+                            structure.rotation,
+                            {83, 68, 62, 255},
+                        )
+                        for post in -1 ..= 1 {
+                            post_x, post_z := world_rotate_xz(
+                                structure.center_x,
+                                structure.center_z,
+                                x + f32(post) * structure.width * .105,
+                                local_z + .31,
+                                structure.rotation,
+                            )
+                            world_box_rotated(
+                                {post_x, y + structure.height * .025, post_z},
+                                {.05, structure.height * .105, .06},
+                                structure.rotation,
+                                {83, 68, 62, 255},
+                            )
+                        }
+                        planter_x, planter_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x,
+                            local_z + .34,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {planter_x, y - structure.height * .005, planter_z},
+                            {structure.width * .16, .12, .12},
+                            structure.rotation,
+                            {107, 132, 92, 255},
+                        )
+                    } else {
                     for side in -1 ..= 1 {
                         if side == 0 do continue
                         sx, sz := world_rotate_xz(wx, wz, f32(side) * structure.width * .085, 0, structure.rotation)
@@ -1867,10 +2105,98 @@ world_architecture :: proc(structure: terrain.Structure) {
                             {structure.width * .035, structure.height * .11, .28},
                             structure.rotation,
                             shutter,
-                        )
+                            )
+                        }
+                    }
                     }
                 }
+        }
+    }
+    if !landmark && structure.height < 52 {
+        // A single deterministic bougainvillea climb softens a few low-rise
+        // walls without turning the generated town into a wall of foliage.
+        vine_side := structure.seed % 2 == 0 ? -1 : 1
+        for segment in 0 ..< 5 {
+            fraction := f32(segment) / 4
+            vine_y := structure.base_y + structure.height * (.18 + fraction * .38)
+            vine_x_local := f32(vine_side) * structure.width * .36 + f32(math.sin(f64(f32(structure.seed + u32(segment)) * .41))) * .12
+            vine_z_local := structure.depth * .5 + .38
+            vine_x, vine_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                vine_x_local,
+                vine_z_local,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {vine_x, vine_y, vine_z},
+                {.075, structure.height * .075, .09},
+                structure.rotation,
+                {72, 119, 62, 255},
+            )
+            if segment % 2 == 1 {
+                // Reuse the foliage blob's distance-aware lobe mesh for the
+                // leaf clusters; only the blossom accents remain bespoke.
+                leaf_structure := structure
+                leaf_structure.base_y = vine_y - structure.height * .035
+                world_foliage_lobe(
+                    leaf_structure,
+                    vine_x_local,
+                    vine_z_local + .02,
+                    2.2,
+                    .95,
+                    structure.height * .085,
+                    0,
+                    false,
+                    int(structure.seed % 4),
+                    -.35,
+                    false,
+                )
+                bloom_x, bloom_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    vine_x_local + f32(vine_side) * .12,
+                    vine_z_local + .22,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {bloom_x, vine_y + structure.height * .035, bloom_z},
+                    {.28, .24, .12},
+                    structure.rotation,
+                    segment == 1 ? rl.Color{214, 82, 112, 255} : rl.Color{224, 112, 79, 255},
+                )
             }
+        }
+    }
+    if !landmark && rows >= 2 {
+        // Laundry lines add the quiet domestic life of a 1940s Mediterranean
+        // lane; one restrained line per eligible façade keeps the rhythm calm.
+        laundry_row := 1 + int(structure.seed % u32(max(rows - 1, 1)))
+        laundry_y := structure.base_y + structure.height * (.24 + f32(laundry_row) * .16) + structure.height * .12
+        laundry_z := structure.depth * .5 + .48
+        line_x, line_z := world_rotate_xz(structure.center_x, structure.center_z, 0, laundry_z, structure.rotation)
+        world_box_rotated(
+            {line_x, laundry_y + .12, line_z},
+            {structure.width * .62, .045, .045},
+            structure.rotation,
+            {70, 64, 57, 255},
+        )
+        laundry_colors := [3]rl.Color{{235, 224, 188, 255}, {112, 157, 171, 255}, {191, 94, 72, 255}}
+        for cloth in 0 ..< 3 {
+            cloth_x := (f32(cloth) - 1) * structure.width * .18
+            cloth_world_x, cloth_world_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                cloth_x,
+                laundry_z + .02,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {cloth_world_x, laundry_y - structure.height * (.035 + f32(cloth % 2) * .018), cloth_world_z},
+                {structure.width * .10, structure.height * .12, .055},
+                structure.rotation,
+                laundry_colors[cloth],
+            )
         }
     }
     if !landmark && (roof_style == .Gable || roof_style == .Low_Gable) {
@@ -1974,9 +2300,11 @@ world_radial_formation :: proc(
     heights: [4]f32,
     z_scale, cap_height: f32,
 ) {
-    segments := 8
+    // Twelve sides keep cypress crowns and other radial formations from
+    // resolving as hard triangular prisms in eye-level architectural views.
+    segments := 12
     color := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
-    vertices: [4][8]third_person.Vec3
+    vertices: [4][12]third_person.Vec3
     for layer in 0 ..< 4 {
         for segment in 0 ..< segments {
             angle := f32(segment) * math.PI * 2 / f32(segments)
@@ -3798,11 +4126,198 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
 }
 
 world_architecture_cypress :: proc(x, z, base_y: f32, seed: u32) {
-    tree := terrain.structure_make(x, z, 6.5, 6.5, base_y, 21)
+    // Build the crown as three overlapping, slightly offset tiers. The stepped
+    // silhouette feels hand-painted and wind-shaped rather than like a single
+    // procedural cone, while remaining a street-scale Mediterranean accent.
+    // terrain.Structure keeps a ten-metre minimum footprint, so the slender
+    // reading comes from tall tier heights rather than sub-cell widths.
+    tree := terrain.structure_make(x, z, 10.0, 10.0, base_y + 1.3, 22.0)
     tree.seed = seed
-    tree.color = {45, 93, 59, 255}
-    world_box_rotated({x, base_y + 2.0, z}, {1.0, 4.0, 1.0}, 0, {108, 78, 48, 255})
-    world_radial_formation(tree, {1, .68, .36, .08}, {0, .28, .58, .92}, .90, 1)
+    tree.color = {35, 76, 47, 255}
+    world_box_rotated({x, base_y + 3.8, z}, {1.15, 7.6, 1.15}, 0, {108, 78, 48, 255})
+    world_radial_formation(tree, {1, .96, .72, .38}, {0, .42, .76, .92}, .86, .80)
+
+    middle := tree
+    middle.center_x += f32(math.sin(f64(f32(seed) * .013))) * .32
+    middle.center_z += f32(math.cos(f64(f32(seed) * .017))) * .24
+    middle.base_y = base_y + 18.5
+    middle.width, middle.depth, middle.height = 8.5, 8.5, 17.0
+    middle.seed += 17
+    middle.color = {48, 101, 58, 255}
+    world_radial_formation(middle, {1, .95, .65, .28}, {0, .40, .75, .93}, .88, .94)
+
+    crown := middle
+    crown.center_x += f32(math.cos(f64(f32(seed) * .019))) * .22
+    crown.center_z += f32(math.sin(f64(f32(seed) * .023))) * .18
+    crown.base_y = base_y + 31.5
+    crown.width, crown.depth, crown.height = 6.5, 6.5, 13.5
+    crown.seed += 31
+    crown.color = {72, 125, 70, 255}
+    world_radial_formation(crown, {1, .84, .50, .04}, {0, .38, .72, .95}, .90, 1)
+}
+
+world_architecture_olive :: proc(x, z, base_y: f32, seed: u32) {
+    // Low, wind-shaped olive crowns soften the cypress punctuation and keep
+    // the town's planted edges from reading as an empty green plane.
+    trunk := terrain.structure_make(x, z, 1.0, 1.0, base_y, 2.8)
+    world_box_rotated({x, base_y + 1.4, z}, {.62, 2.8, .62}, 0, {116, 83, 48, 255})
+    crown := terrain.structure_make(x, z, 8.2, 6.8, base_y + 1.8, 7.2)
+    crown.seed = seed + 71
+    crown.color = {83, 108, 63, 255}
+    world_foliage_lobe(crown, 0, 0, crown.width, crown.depth, crown.height, 0, false, int(seed % 4), -.18, true)
+    _ = trunk
+}
+
+world_laundry_web_segment :: proc(a, b: third_person.Vec3, color: rl.Color) {
+    dx := b.x - a.x
+    dz := b.z - a.z
+    length := f32(math.sqrt(f64(dx * dx + (b.y - a.y) * (b.y - a.y) + dz * dz)))
+    if length <= .05 do return
+    world_box_rotated(
+        {(a.x + b.x) * .5, (a.y + b.y) * .5, (a.z + b.z) * .5},
+        {.06, .06, length},
+        math.atan2(dx, dz),
+        color,
+    )
+}
+
+world_laundry_cloth :: proc(
+    top: third_person.Vec3,
+    tangent_x, tangent_z, width, height, drift: f32,
+    color: rl.Color,
+) {
+    // Hang each item as a thin, slightly skewed panel instead of a solid box.
+    // The skew and uneven hem keep the span from reading as a row of signs.
+    side_x, side_z := -tangent_z, tangent_x
+    top_left := third_person.Vec3{
+        top.x - side_x * width * .5,
+        top.y,
+        top.z - side_z * width * .5,
+    }
+    top_right := third_person.Vec3{
+        top.x + side_x * width * .5,
+        top.y - .025,
+        top.z + side_z * width * .5,
+    }
+    bottom_left := third_person.Vec3{
+        top.x - side_x * width * .40 + tangent_x * drift,
+        top.y - height,
+        top.z - side_z * width * .40 + tangent_z * drift,
+    }
+    bottom_right := third_person.Vec3{
+        top.x + side_x * width * .40 + tangent_x * drift * .55,
+        top.y - height - .07,
+        top.z + side_z * width * .40 + tangent_z * drift * .55,
+    }
+    world_quad(top_left, bottom_left, bottom_right, top_right, color)
+    world_quad(top_right, bottom_right, bottom_left, top_left, color)
+}
+
+world_architecture_laundry_webbing :: proc(editor: ^Editor) {
+    if editor == nil do return
+    webbing_count := 0
+    structures := editor.project.structures[:editor.project.structure_count]
+    cloth_colors := [4]rl.Color{
+        {235, 224, 188, 255},
+        {112, 157, 171, 255},
+        {191, 94, 72, 255},
+        {205, 157, 177, 255},
+    }
+    for first, first_index in structures {
+        if first.kind != .Architecture || first.height > 52 do continue
+        first_front := [2]f32{-math.sin(first.rotation), math.cos(first.rotation)}
+        for second_index in first_index + 1 ..< len(structures) {
+            second := structures[second_index]
+            if second.kind != .Architecture || second.height > 52 do continue
+            if webbing_count >= 4 do return
+            dx := second.center_x - first.center_x
+            dz := second.center_z - first.center_z
+            distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            if distance < 14 || distance > 76 do continue
+            direction_x, direction_z := dx / distance, dz / distance
+            second_front := [2]f32{-math.sin(second.rotation), math.cos(second.rotation)}
+            // Only span a line when the two selected façades face each other;
+            // this keeps the webbing in alleys instead of through back walls.
+            first_facing := first_front.x * direction_x + first_front.y * direction_z
+            second_facing := second_front.x * -direction_x + second_front.y * -direction_z
+            if first_facing < .05 || second_facing < .05 do continue
+            first_x, first_z := world_rotate_xz(
+                first.center_x,
+                first.center_z,
+                0,
+                first.depth * .5 + .55,
+                first.rotation,
+            )
+            second_x, second_z := world_rotate_xz(
+                second.center_x,
+                second.center_z,
+                0,
+                second.depth * .5 + .55,
+                second.rotation,
+            )
+            line_y := min(
+                first.base_y + first.height * (.46 + f32(first.seed % 3) * .035),
+                second.base_y + second.height * (.46 + f32(second.seed % 3) * .035),
+            )
+            if line_y < editor.project.sea_level + 3 do continue
+            start := third_person.Vec3{first_x, line_y, first_z}
+            finish := third_person.Vec3{second_x, line_y, second_z}
+            middle := third_person.Vec3{
+                (start.x + finish.x) * .5,
+                line_y - min(f32(1.35), distance * .040),
+                (start.z + finish.z) * .5,
+            }
+            line_color := rl.Color{66, 61, 56, 255}
+            world_laundry_web_segment(start, middle, line_color)
+            world_laundry_web_segment(middle, finish, line_color)
+            span_dx, span_dz := finish.x - start.x, finish.z - start.z
+            span_length := f32(math.sqrt(f64(span_dx * span_dx + span_dz * span_dz)))
+            tangent_x, tangent_z := span_dx / span_length, span_dz / span_length
+            for cloth in 0 ..< 4 {
+                t := f32(cloth + 1) / 5
+                sag := f32(math.sin(f64(t * math.PI))) * min(f32(1.35), distance * .040)
+                cloth_x := start.x + (finish.x - start.x) * t
+                cloth_z := start.z + (finish.z - start.z) * t
+                cloth_y := line_y - sag - .05
+                world_laundry_cloth(
+                    {cloth_x, cloth_y, cloth_z},
+                    tangent_x,
+                    tangent_z,
+                    1.02 + f32(cloth % 2) * .16,
+                    .72 + f32((cloth + int(first.seed)) % 3) * .12,
+                    (f32(cloth % 2) - .5) * .12,
+                    cloth_colors[(cloth + int(first.seed % 3)) % len(cloth_colors)],
+                )
+            }
+            if (first.seed + second.seed) % 3 == 0 {
+                // Abstract, low-detail resident silhouette: body, head, and
+                // outstretched arms reaching the line. One endpoint per few
+                // spans keeps the town inhabited without making mannequins a
+                // repeated façade motif.
+                worker_body := rl.Color{74, 67, 61, 255}
+                worker_shirt := (first.seed + second.seed) % 2 == 0 ? rl.Color{132, 104, 79, 255} : rl.Color{77, 109, 119, 255}
+                world_box_rotated(
+                    {start.x, line_y - .72, start.z},
+                    {.32, .92, .24},
+                    0,
+                    worker_shirt,
+                )
+                world_box_rotated(
+                    {start.x, line_y - 1.25, start.z},
+                    {.36, .36, .36},
+                    0,
+                    {91, 69, 53, 255},
+                )
+                world_box_rotated(
+                    {start.x, line_y - .68, start.z},
+                    {.98, .11, .10},
+                    math.atan2(finish.x - start.x, finish.z - start.z),
+                    worker_body,
+                )
+            }
+            webbing_count += 1
+        }
+    }
 }
 
 world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud_cover: f32) {
@@ -3876,12 +4391,61 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
         path_center_z := (door_z + target_z) * .5
         path_y := terrain.sample_height(&editor.project, 0, path_center_x, path_center_z)
         world_box_rotated(
-            {path_center_x, path_y + .08, path_center_z},
-            {3.2, .12, path_length},
+            {path_center_x, path_y + .20, path_center_z},
+            {3.6, .16, path_length},
             math.atan2(path_dx, path_dz),
             path_color,
         )
+        // A few entrances get paired terracotta pots. They keep the lane
+        // human-scaled and add a quiet garden note without cluttering every
+        // procedural frontage.
+        if structure.seed % 3 == 0 {
+            for pot_side in -1 ..= 1 {
+                if pot_side == 0 do continue
+                pot_x, pot_z := world_rotate_xz(
+                    door_x,
+                    door_z,
+                    f32(pot_side) * structure.width * .27,
+                    .88,
+                    structure.rotation,
+                )
+                pot_y := terrain.sample_height(&editor.project, 0, pot_x, pot_z)
+                world_box_rotated(
+                    {pot_x, pot_y + .22, pot_z},
+                    {.32, .44, .32},
+                    structure.rotation,
+                    {169, 96, 61, 255},
+                )
+                world_box_rotated(
+                    {pot_x, pot_y + .53, pot_z},
+                    {.44, .18, .44},
+                    structure.rotation,
+                    {77, 111, 63, 255},
+                )
+            }
+        }
     }
+    // Extend a shallow limestone forecourt from the camera-facing town edge.
+    // The sign is derived from the live pose so numeric building targets keep
+    // a readable lane even when their façade faces the opposite direction.
+    approach_sign := editor.camera_pose.position.z >= center_z ? f32(1) : f32(-1)
+    edge_z := approach_sign > 0 ? max_z : min_z
+    forecourt_depth := f32(18)
+    forecourt_z := edge_z + approach_sign * forecourt_depth * .5
+    forecourt_y := terrain.sample_height(&editor.project, 0, center_x, forecourt_z)
+    world_box_rotated(
+        {center_x, forecourt_y + .16, forecourt_z},
+        {road_span, .22, forecourt_depth},
+        0,
+        {194, 184, 157, 255},
+    )
+    world_box_rotated(
+        {center_x, forecourt_y + .29, edge_z + approach_sign * 2.4},
+        {road_span, .07, .38},
+        0,
+        {151, 132, 104, 255},
+    )
+    world_architecture_laundry_webbing(editor)
     // Cypress accents mark the two lane intersections and give the graph town
     // a readable Mediterranean scale cue without changing terrain data.
     for x_side in -1 ..= 1 {
@@ -3897,8 +4461,19 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                 tree_base,
                 u32((x_side + 2) * 37 + (z_side + 2) * 11 + buildings * 5),
             )
-            tree := terrain.structure_make(tree_x, tree_z, 6.5, 6.5, tree_base, 21)
+            tree := terrain.structure_make(tree_x, tree_z, 4.8, 4.8, tree_base, 15)
             world_structure_shadow(tree, sun_direction, cloud_cover, &editor.project)
+            if (x_side == -1 && z_side == 1) || (x_side == 1 && z_side == -1) {
+                olive_x := tree_x - f32(x_side) * 8
+                olive_z := tree_z - f32(z_side) * 5
+                olive_base := terrain.sample_height(&editor.project, 0, olive_x, olive_z)
+                world_architecture_olive(
+                    olive_x,
+                    olive_z,
+                    olive_base,
+                    u32((x_side + 3) * 53 + (z_side + 3) * 17 + buildings * 9),
+                )
+            }
         }
     }
 }
@@ -6396,10 +6971,19 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         depthTestEnable  = false,
         depthWriteEnable = false,
     }
-    info.pVertexInputState = &sky_vi
-    info.pDepthStencilState = &sky_depth
-    info.layout = world_renderer.sky_layout
-    if !render3d.create_color_pipeline_variants(ctx, &info, .D32_SFLOAT, &world_renderer.sky_pipelines) do return false
+    // The sky writes alpha zero as a classification marker for the world
+    // palette post-process. It must not alpha-blend against the cleared target,
+    // or the marker would also attenuate the sky color.
+    sky_ca := ca
+    sky_ca.blendEnable = false
+    sky_cb := cb
+    sky_cb.pAttachments = &sky_ca
+    sky_info := info
+    sky_info.pVertexInputState = &sky_vi
+    sky_info.pDepthStencilState = &sky_depth
+    sky_info.pColorBlendState = &sky_cb
+    sky_info.layout = world_renderer.sky_layout
+    if !render3d.create_color_pipeline_variants(ctx, &sky_info, .D32_SFLOAT, &world_renderer.sky_pipelines) do return false
     for &buffer in world_renderer.vertex {
         if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
     }

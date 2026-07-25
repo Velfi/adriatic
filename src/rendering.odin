@@ -10,5 +10,8 @@ ADRIATIC_RENDERER_DESCRIPTOR := render2d.Renderer_Descriptor {
         post_vertex = {"assets/shaders/canvas-post.vert", .Vertex, "main", "shaders/canvas-post.vert"},
         post_fragment = {"assets/shaders/canvas-post.frag", .Fragment, "main", "shaders/canvas-post.frag"},
         push_constant_size = size_of(rl.Push),
+        post_process_enabled = true,
     },
+    user_data = &world_renderer,
+    encode_world_post_push = dither_encode_world_post_push,
 }

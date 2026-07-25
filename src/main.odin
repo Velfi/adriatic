@@ -180,6 +180,7 @@ Editor :: struct {
     tweak_panel_visible:                      bool,
     pause_screen:                             Pause_Screen,
     gameplay_options:                         Gameplay_Options,
+    dither_state:                             Dither_State,
     runtime_input:                            game_input.State,
     control_hint_atlases:                     Control_Hint_Atlases,
     controller_disconnect_notice:             bool,
@@ -1384,6 +1385,40 @@ seed_city_capture :: proc(editor: ^Editor) {
 
 configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = "") -> bool {
     if editor == nil do return false
+    if target_arg == "cypress" {
+        min_x, max_x := f32(1e9), f32(-1e9)
+        min_z, max_z := f32(1e9), f32(-1e9)
+        buildings := 0
+        for structure in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind != .Architecture || structure.height > 60 do continue
+            min_x = min(min_x, structure.center_x)
+            max_x = max(max_x, structure.center_x)
+            min_z = min(min_z, structure.center_z)
+            max_z = max(max_z, structure.center_z)
+            buildings += 1
+        }
+        if buildings >= 4 {
+            center_x, center_z := (min_x + max_x) * .5, (min_z + max_z) * .5
+            road_span := max(max_x - min_x + 36, 160)
+            tree_x := center_x + road_span * .42
+            tree_z := center_z + (max_z - min_z) * .5 + 7
+            tree_y := terrain.sample_height(&editor.project, 0, tree_x, tree_z)
+            // The cypress is taller than a façade, so pull the verification
+            // camera back and aim through its middle instead of clipping the
+            // crown from an eye-level close-up.
+            eye_x, eye_z := tree_x - 30, tree_z - 30
+            eye_y := terrain.sample_height(&editor.project, 0, eye_x, eye_z) + 4.0
+            editor.capture_world_only = true
+            editor.architecture_node_mode = true
+            editor.editor_camera.distance = 36
+            editor.editor_focus = {x = tree_x, y = tree_y + 20.0, z = tree_z}
+            editor.camera_pose = third_person.camera_look_at(
+                {x = eye_x, y = eye_y, z = eye_z},
+                editor.editor_focus,
+            )
+            return true
+        }
+    }
     target_index := -1
     requested_ordinal := -1
     if target_arg != "" {
@@ -1429,8 +1464,10 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
 
     building := editor.project.structures[target_index]
     facade_x, facade_z := -math.sin(building.rotation), math.cos(building.rotation)
-    camera_distance := building.depth * .5 + max(f32(24), building.height * 1.55)
-    minimum_distance := building.depth * .5 + 14
+    // Move the architectural capture into the lane so balconies and laundry
+    // read as the subject instead of small details in a town-wide shot.
+    camera_distance := building.depth * .5 + max(f32(12), building.height * .72)
+    minimum_distance := building.depth * .5 + 8
     for camera_distance > minimum_distance {
         dry_approach := true
         facade_distance := building.depth * .5 + .75
@@ -1453,6 +1490,10 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     eye_y := terrain.sample_height(&editor.project, 0, eye_x, eye_z) + 1.7
     target_y := building.base_y + clamp(building.height * .44, f32(6), f32(16))
     editor.capture_world_only = true
+    // Keep the procedural street dressing in the architectural capture so
+    // façades read as a walkable Mediterranean neighborhood, not isolated
+    // blocks floating on a blank field.
+    editor.architecture_node_mode = true
     // The pose is explicit; keep the editor-orbit distance low only so its
     // near-clip heuristic does not cut away the street under this camera.
     editor.editor_camera.distance = min(camera_distance, f32(36))
@@ -4226,6 +4267,18 @@ adriatic_run :: proc() -> bool {
     editor.tweak_status = .Defaults
     editor.tweak_panel_visible = false
     editor.gameplay_options = gameplay_options_default()
+    if capture_mode {
+        capture_dither := os.get_env("ADRIATIC_CAPTURE_DITHER", context.temp_allocator)
+        switch capture_dither {
+        case "bayer":
+            editor.gameplay_options.dither_mode = .Bayer
+        case "blue":
+            editor.gameplay_options.dither_mode = .Blue_Noise
+        case "matriax8":
+            editor.gameplay_options.dither_mode = .Matriax_8
+        }
+    }
+    dither_apply(editor)
     editor.mouse_fur = .Chestnut
     editor.mouse_pattern = .Solid
     editor.mouse_headgear = .Goggles
@@ -4339,6 +4392,15 @@ adriatic_run :: proc() -> bool {
         atmosphere.set_weather_override(&editor.atmosphere, .Clear)
         editor.atmosphere.weather = atmosphere.weather_for(.Clear)
         editor.atmosphere.front_seconds = 1.75
+        editor.atmosphere.paused = true
+    }
+    if capture_building_mode {
+        // A warm, still late-afternoon preset gives stucco and terracotta a
+        // hand-painted Mediterranean glow while keeping the capture stable.
+        atmosphere.set_world_minutes(&editor.atmosphere, 16 * 60 + 45)
+        atmosphere.set_weather_override(&editor.atmosphere, .Clear)
+        editor.atmosphere.weather = atmosphere.weather_for(.Clear)
+        editor.atmosphere.front_seconds = .75
         editor.atmosphere.paused = true
     }
     if benchmark_mode {

@@ -143,5 +143,8 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     cloud = lerp(cloud * float3(.09, .14, .24), cloud, daylight);
     density = saturate(density * lerp(.76, 1.24, overcast));
     color = lerp(color, cloud, density * lerp(.32, .68, overcast));
-    return float4(color, 1);
+    // Alpha is a world-pass classification channel. The sky is rendered first
+    // and remains alpha-zero so the palette post-process can leave this smooth
+    // gradient alone while opaque world geometry overwrites it with alpha one.
+    return float4(color, 0);
 }

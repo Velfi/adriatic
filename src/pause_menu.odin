@@ -23,6 +23,7 @@ Gameplay_Options :: struct {
     invert_flight_pitch: bool,
     show_hud:            bool,
     crunchiness:         Crunchiness,
+    dither_mode:         Dither_Mode,
 }
 
 Crunchiness :: enum {
@@ -40,6 +41,7 @@ gameplay_options_default :: proc() -> Gameplay_Options {
         invert_flight_pitch = false,
         show_hud = true,
         crunchiness = .P480,
+        dither_mode = .Off,
     }
 }
 
@@ -85,10 +87,10 @@ pause_menu_button_bounds :: proc(panel: rl.Rectangle, row: int) -> rl.Rectangle 
     return {panel.x + 44, panel.y + 126 + f32(row) * 58, panel.width - 88, 46}
 }
 
-OPTIONS_ROW_COUNT :: 7
+OPTIONS_ROW_COUNT :: 8
 OPTIONS_RESTORE_FOCUS :: OPTIONS_ROW_COUNT
 OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
-OPTIONS_CONTENT_HEIGHT :: f32(570)
+OPTIONS_CONTENT_HEIGHT :: f32(642)
 
 options_menu_viewport :: proc(panel: rl.Rectangle) -> rl.Rectangle {
     return {panel.x + 30, panel.y + 108, panel.width - 54, max(panel.height - 178, f32(80))}
@@ -105,7 +107,7 @@ options_menu_row_bounds :: proc(panel: rl.Rectangle, row: int, scroll_y: f32 = 0
 
 options_menu_restore_bounds :: proc(panel: rl.Rectangle, scroll_y: f32 = 0) -> rl.Rectangle {
     viewport := options_menu_viewport(panel)
-    return {panel.x + 44, viewport.y + 514 - scroll_y, panel.width - 88, 46}
+    return {panel.x + 44, viewport.y + 586 - scroll_y, panel.width - 88, 46}
 }
 
 options_menu_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
@@ -229,6 +231,10 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
         selected := clamp(int(editor.gameplay_options.crunchiness) + direction, 0, 3)
         editor.gameplay_options.crunchiness = Crunchiness(selected)
         crunchiness_apply(editor.gameplay_options.crunchiness)
+    case 6:
+        editor.gameplay_options.dither_mode =
+            dither_adjust_mode(editor.gameplay_options.dither_mode, direction)
+        dither_apply(editor)
     }
 }
 
@@ -282,17 +288,21 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
             editor.gameplay_options.invert_flight_pitch = !editor.gameplay_options.invert_flight_pitch
         case 4:
             editor.gameplay_options.show_hud = !editor.gameplay_options.show_hud
+        case 6:
+            editor.gameplay_options.dither_mode = dither_next_mode(editor.gameplay_options.dither_mode)
+            dither_apply(editor)
         case OPTIONS_RESTORE_FOCUS:
             editor.gameplay_options = gameplay_options_default()
             crunchiness_apply(editor.gameplay_options.crunchiness)
-        case 6:
+            dither_apply(editor)
+        case 7:
             editor.pause_screen = .Customization
             editor.customization_focus = 0
         case OPTIONS_BACK_FOCUS:
             editor.pause_screen = .Pause
             editor.options_scroll_dragging = false
         }
-        if editor.options_focus != 0 && editor.options_focus != 5 do return
+        if editor.options_focus != 0 && editor.options_focus != 5 && editor.options_focus != 6 do return
     }
 
     if rl.CheckCollisionPointRec(mouse, viewport) {
@@ -394,10 +404,30 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         editor.options_focus = OPTIONS_RESTORE_FOCUS
         editor.gameplay_options = gameplay_options_default()
         crunchiness_apply(editor.gameplay_options.crunchiness)
+        dither_apply(editor)
         return
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 6, scroll_y)) {
-        editor.options_focus = 6
+    dither := options_menu_row_bounds(panel, 6, scroll_y)
+    dither_gap := f32(6)
+    dither_segment_width := (dither.width - dither_gap * 3) / 4
+    if content_hovered && pressed {
+        for index in 0 ..< 4 {
+            segment := rl.Rectangle {
+                dither.x + f32(index) * (dither_segment_width + dither_gap),
+                dither.y + 28,
+                dither_segment_width,
+                30,
+            }
+            if rl.CheckCollisionPointRec(mouse, segment) {
+                editor.options_focus = 6
+                editor.gameplay_options.dither_mode = Dither_Mode(index)
+                dither_apply(editor)
+                return
+            }
+        }
+    }
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 7, scroll_y)) {
+        editor.options_focus = 7
         editor.pause_screen = .Customization
         editor.customization_focus = 0
         return
@@ -638,7 +668,35 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         )
     }
 
-    pause_menu_button(options_menu_row_bounds(panel, 6, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 6)
+    dither := options_menu_row_bounds(panel, 6, scroll_y)
+    if editor.options_focus == 6 {
+        rl.DrawRectangleRounded(
+            {dither.x - 4, dither.y - 4, dither.width + 8, dither.height + 8},
+            .08,
+            8,
+            {31, 45, 50, 220},
+        )
+        rl.DrawRectangleRoundedLinesEx(
+            {dither.x - 4, dither.y - 4, dither.width + 8, dither.height + 8},
+            .08,
+            8,
+            2,
+            {91, 211, 201, 255},
+        )
+    }
+    ui_draw_text(.Label, "COLOR DITHER", {dither.x, dither.y + 2}, .4, {225, 230, 235, 255})
+    dither_gap := f32(6)
+    dither_segment_width := (dither.width - dither_gap * 3) / 4
+    for index in 0 ..< 4 {
+        value := Dither_Mode(index)
+        pause_menu_button(
+            {dither.x + f32(index) * (dither_segment_width + dither_gap), dither.y + 28, dither_segment_width, 30},
+            dither_mode_label(value),
+            editor.gameplay_options.dither_mode == value,
+        )
+    }
+
+    pause_menu_button(options_menu_row_bounds(panel, 7, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 7)
 
     pause_menu_button(
         options_menu_restore_bounds(panel, scroll_y),
