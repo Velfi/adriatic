@@ -3,6 +3,7 @@ package main
 import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import chase_camera "../packages/chase_camera"
+import dio "../packages/dio"
 import dialogue "../packages/dialogue"
 import engine_sound "../packages/engine_sound"
 import flight "../packages/flight"
@@ -67,6 +68,7 @@ Curve_Point :: struct {
 
 Editor :: struct {
     project:                                        terrain.Project,
+    flame_graph:                                    dio.Flame_Graph,
     authoring_tool:                                 Authoring_Tool,
     editor_ui:                                      Editor_UI_State,
     tool:                                           terrain.Tool,
@@ -5118,6 +5120,7 @@ adriatic_run :: proc(
     }
     editor := new(Editor)
     defer free(editor)
+    defer dio.flame_graph_destroy(&editor.flame_graph)
     engine_audio_ready := !capture_mode && !benchmark_mode && engine_sound.open(&editor.engine_audio)
     if engine_audio_ready do defer engine_sound.close(&editor.engine_audio)
     vehicle_paint_history_init(editor)
@@ -5785,6 +5788,7 @@ adriatic_run :: proc(
     benchmark_sample_count := 0
     frame := 0
     for !rl.WindowShouldClose() && !editor.quit_requested {
+        dio.flame_graph_begin_frame(&editor.flame_graph)
         benchmark_frame_start := rl.GetTime()
         frame_now := rl.GetTime()
         frame_delta := frame == 0 ? f32(0) : min(f32(frame_now - editor.last_frame_time), f32(.1))
@@ -6609,6 +6613,15 @@ adriatic_run :: proc(
         pause_menu_draw(editor, width, height)
         live_capture_poll()
         rl.EndDrawing()
+        gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()
+        dio.flame_graph_set_frame_metrics(
+            &editor.flame_graph,
+            0,
+            0,
+            f32(gpu_frame_ms),
+            gpu_frame_available,
+        )
+        dio.flame_graph_end_frame(&editor.flame_graph)
         if interpolate_aircraft {
             render_aircraft_body^ = saved_aircraft_body
         }

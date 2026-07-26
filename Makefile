@@ -37,9 +37,26 @@ PROFILE_LINK_MODE_validation := system
 PROFILE_VULKAN_VALIDATION_validation := true
 PROFILE_ASAN_validation := true
 
+PROFILE_ODIN_FLAGS_instrument := -dynamic-map-calls -o:minimal -debug
+PROFILE_DEFINE_FLAGS_instrument := -define:FLAME_AUTO_INSTRUMENT=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true -define:BACK_OTHER_CUSTOM_INSTRUMENTATION=true
+PROFILE_CONFIG_instrument := release
+PROFILE_ENTRY_instrument := cold
+PROFILE_LINK_MODE_instrument := system
+PROFILE_VULKAN_VALIDATION_instrument := false
+PROFILE_ASAN_instrument := false
+
 VALIDATION_PROFILE_RUNTIME_ENV := env \
 	VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
 	ASAN_OPTIONS=halt_on_error=1:abort_on_error=1
+NON_VALIDATION_PROFILE_RUNTIME_ENV := env \
+	-u VK_INSTANCE_LAYERS \
+	-u VK_LOADER_LAYERS_ENABLE
+PROFILE_RUNTIME_ENV_hot := $(NON_VALIDATION_PROFILE_RUNTIME_ENV)
+PROFILE_RUNTIME_ENV_debug := $(NON_VALIDATION_PROFILE_RUNTIME_ENV)
+PROFILE_RUNTIME_ENV_release := $(NON_VALIDATION_PROFILE_RUNTIME_ENV)
+PROFILE_RUNTIME_ENV_validation := $(VALIDATION_PROFILE_RUNTIME_ENV)
+PROFILE_RUNTIME_ENV_instrument := $(NON_VALIDATION_PROFILE_RUNTIME_ENV) \
+	ZELDA_ENGINE_GPU_PROFILER=1
 
 ZELDA_ENGINE_ROOT ?= $(CURDIR)/zelda-engine
 ZELDA_ENGINE_PACKAGES := $(abspath $(ZELDA_ENGINE_ROOT))/packages
@@ -90,9 +107,13 @@ link_flags = $(TEXTSHAPE_LIBS) -L$(abspath $(1)) -lgfx_signposts -lc++ $(LINKER_
 DEV_DIR := $(BUILD_DIR)/dev
 RELEASE_DIR := $(BUILD_DIR)/release
 VALIDATION_DIR := $(BUILD_DIR)/validation
+INSTRUMENT_DIR := $(BUILD_DIR)/instrument
 DEV_APP := $(DEV_DIR)/$(APP)
 RELEASE_APP := $(RELEASE_DIR)/$(APP)
 VALIDATION_APP := $(VALIDATION_DIR)/$(APP)
+INSTRUMENT_APP := $(INSTRUMENT_DIR)/$(APP)
+INSTRUMENT_RUNTIME_STAMP := $(INSTRUMENT_DIR)/runtime-assets.stamp
+INSTRUMENT_ASSET_SOURCES := $(shell find assets -type f 2>/dev/null)
 ifeq ($(shell uname -s),Darwin)
 SHARED_EXT := dylib
 else ifeq ($(shell uname -s),Linux)
@@ -131,7 +152,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
 
 all: build
 
@@ -484,7 +505,7 @@ hot-shaders: $(HOT_SHADER_STAMP)
 hot-build: doctor $(HOT_PHYSICS_STAMP) assets-hot hot-app hot-shaders hot-host
 
 hot: hot-build
-	ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" $(PYTHON) tools/hot_watch.py --root "$(CURDIR)" --engine-root "$(ZELDA_ENGINE_ROOT)" --host "$(abspath $(HOT_HOST))" --make "$(MAKE)"
+	$(PROFILE_RUNTIME_ENV_hot) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" $(PYTHON) tools/hot_watch.py --root "$(CURDIR)" --engine-root "$(ZELDA_ENGINE_ROOT)" --host "$(abspath $(HOT_HOST))" --make "$(MAKE)"
 
 # Zelda Engine's UI package imports this native archive directly. Build it
 # before every Adriatic link instead of relying on a sibling checkout having
@@ -511,7 +532,7 @@ cgltf-build: doctor $(CGLTF_LIB)
 
 profile-info:
 	@case "$(PROFILE)" in \
-		hot|debug|release|validation) \
+		hot|debug|release|validation|instrument) \
 			echo "Profile: $(PROFILE)"; \
 			echo "Config: $(PROFILE_CONFIG_$(PROFILE))"; \
 			echo "Entry: $(PROFILE_ENTRY_$(PROFILE))"; \
@@ -520,7 +541,7 @@ profile-info:
 			echo "Vulkan validation: $(PROFILE_VULKAN_VALIDATION_$(PROFILE))"; \
 			echo "ASAN: $(PROFILE_ASAN_$(PROFILE))"; \
 			;; \
-		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, debug, release, or validation" >&2; exit 2 ;; \
+		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, debug, release, validation, or instrument" >&2; exit 2 ;; \
 	esac
 
 profile:
@@ -529,7 +550,8 @@ profile:
 		debug) $(MAKE) build ;; \
 		release) $(MAKE) release ;; \
 		validation) $(MAKE) validation-build ;; \
-		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, debug, release, or validation" >&2; exit 2 ;; \
+		instrument) $(MAKE) instrument-build ;; \
+		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, debug, release, validation, or instrument" >&2; exit 2 ;; \
 	esac
 
 dev: PROFILE=hot
@@ -587,6 +609,16 @@ $(RELEASE_DIR)/libadriatic_mesh.a: native/adriatic_xatlas.cpp third_party/xatlas
 	$(CXX) -std=c++11 -O3 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vfetchoptimizer.cpp -o $(RELEASE_DIR)/meshopt_vfetchoptimizer.o
 	$(AR) rcs $@ $(RELEASE_DIR)/adriatic_mesh_bridge.o $(RELEASE_DIR)/xatlas.o $(RELEASE_DIR)/meshopt_allocator.o $(RELEASE_DIR)/meshopt_indexgenerator.o $(RELEASE_DIR)/meshopt_vcacheoptimizer.o $(RELEASE_DIR)/meshopt_vfetchoptimizer.o
 
+$(INSTRUMENT_DIR)/libadriatic_mesh.a: native/adriatic_xatlas.cpp third_party/xatlas/source/xatlas/xatlas.cpp third_party/xatlas/source/xatlas/xatlas.h third_party/xatlas/source/xatlas/xatlas_c.h third_party/meshoptimizer/src/meshoptimizer.h third_party/meshoptimizer/src/allocator.cpp third_party/meshoptimizer/src/indexgenerator.cpp third_party/meshoptimizer/src/vcacheoptimizer.cpp third_party/meshoptimizer/src/vfetchoptimizer.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++11 -O2 -Ithird_party/xatlas/source/xatlas -Ithird_party/meshoptimizer/src -c native/adriatic_xatlas.cpp -o $(INSTRUMENT_DIR)/adriatic_mesh_bridge.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/xatlas/source/xatlas -c third_party/xatlas/source/xatlas/xatlas.cpp -o $(INSTRUMENT_DIR)/xatlas.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/allocator.cpp -o $(INSTRUMENT_DIR)/meshopt_allocator.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/indexgenerator.cpp -o $(INSTRUMENT_DIR)/meshopt_indexgenerator.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vcacheoptimizer.cpp -o $(INSTRUMENT_DIR)/meshopt_vcacheoptimizer.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vfetchoptimizer.cpp -o $(INSTRUMENT_DIR)/meshopt_vfetchoptimizer.o
+	$(AR) rcs $@ $(INSTRUMENT_DIR)/adriatic_mesh_bridge.o $(INSTRUMENT_DIR)/xatlas.o $(INSTRUMENT_DIR)/meshopt_allocator.o $(INSTRUMENT_DIR)/meshopt_indexgenerator.o $(INSTRUMENT_DIR)/meshopt_vcacheoptimizer.o $(INSTRUMENT_DIR)/meshopt_vfetchoptimizer.o
+
 $(HOT_APP): $(HOT_DIR)/libadriatic_mesh.a
 $(DEV_APP): $(DEV_DIR)/libadriatic_mesh.a
 $(RELEASE_APP): $(RELEASE_DIR)/libadriatic_mesh.a
@@ -595,6 +627,11 @@ $(VALIDATION_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_sign
 	@mkdir -p $(@D)
 	$(CC) -O2 -c $< -o $(VALIDATION_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(VALIDATION_DIR)/gfx_signposts.o
+
+$(INSTRUMENT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c Makefile
+	@mkdir -p $(@D)
+	$(CC) -O2 -c $< -o $(INSTRUMENT_DIR)/gfx_signposts.o
+	$(AR) rcs $@ $(INSTRUMENT_DIR)/gfx_signposts.o
 
 $(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
@@ -611,16 +648,33 @@ $(VALIDATION_APP): physics-build $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolc
 validation-build: doctor $(VALIDATION_APP)
 
 validation: validation-build
-	$(VALIDATION_PROFILE_RUNTIME_ENV) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(VALIDATION_APP)"
+	$(PROFILE_RUNTIME_ENV_validation) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(VALIDATION_APP)"
 
 lldb: validation-build assets-validation
-	$(VALIDATION_PROFILE_RUNTIME_ENV) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" lldb -- "$(VALIDATION_APP)"
+	$(PROFILE_RUNTIME_ENV_validation) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" lldb -- "$(VALIDATION_APP)"
+
+
+$(INSTRUMENT_APP): $(INSTRUMENT_DIR)/libadriatic_mesh.a
+$(INSTRUMENT_APP): physics-build $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(INSTRUMENT_DIR)/libgfx_signposts.a
+	@mkdir -p $(@D)
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_instrument) $(PROFILE_DEFINE_FLAGS_instrument) -out:$@ -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
+
+instrument-build: doctor $(INSTRUMENT_APP)
+
+$(INSTRUMENT_RUNTIME_STAMP): shaders $(INSTRUMENT_ASSET_SOURCES)
+	@mkdir -p "$(INSTRUMENT_DIR)/assets" "$(INSTRUMENT_DIR)/shaders"
+	cp -R assets/. "$(INSTRUMENT_DIR)/assets/"
+	cp -R build/generated/shaders/. "$(INSTRUMENT_DIR)/shaders/"
+	touch $@
+
+instrument: instrument-build $(INSTRUMENT_RUNTIME_STAMP)
+	$(PROFILE_RUNTIME_ENV_instrument) "$(INSTRUMENT_APP)"
 
 run: build
-	ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" $(DEV_APP)
+	$(PROFILE_RUNTIME_ENV_debug) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(DEV_APP)"
 
 benchmark: release
-	$(PYTHON) tools/perf.py run --scenario all --output "$(abspath $(BUILD_DIR)/perf/latest.json)"
+	$(PROFILE_RUNTIME_ENV_release) $(PYTHON) tools/perf.py run --scenario all --output "$(abspath $(BUILD_DIR)/perf/latest.json)"
 
 capture-live:
 	$(PYTHON) tools/live_capture.py --path "$(LIVE_CAPTURE_PATH)" --request "$(LIVE_CAPTURE_REQUEST_PATH)" --timeout "$(LIVE_CAPTURE_TIMEOUT)"

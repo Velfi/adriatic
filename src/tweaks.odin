@@ -1,6 +1,7 @@
 package main
 
 import atmosphere "../packages/atmosphere"
+import dio "../packages/dio"
 import flight "../packages/flight"
 import im "../packages/imgui"
 import mouse_tail "../packages/mouse_tail"
@@ -900,6 +901,12 @@ tweak_draw_presentation :: proc(editor: ^Editor) {
     tweak_drag_f32("Height shade", &p.height_shade, -1, 1, .001)
 }
 
+tweak_draw_performance :: proc(editor: ^Editor) {
+    when !dio.FLAME_GRAPH do return
+    im.TextUnformatted("Frame instrumentation")
+    dio.flame_graph_widget(&editor.flame_graph)
+}
+
 imgui_draw_tweaks :: proc(editor: ^Editor) {
     if editor == nil || !editor.tweak_panel_visible do return
     tweak_sync_from_editor(editor)
@@ -958,6 +965,12 @@ imgui_draw_tweaks :: proc(editor: ^Editor) {
             if im.BeginTabItem("Presentation") {
                 tweak_draw_presentation(editor)
                 im.EndTabItem()
+            }
+            when dio.FLAME_GRAPH {
+                if im.BeginTabItem("Performance") {
+                    tweak_draw_performance(editor)
+                    im.EndTabItem()
+                }
             }
             im.EndTabBar()
         }
