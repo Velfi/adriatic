@@ -5,7 +5,7 @@ import third_person "../third_person"
 import "core:math"
 
 FOLLOW_DISTANCE :: f32(6.5)
-FOLLOW_HEIGHT :: f32(5.5)
+FOLLOW_HEIGHT :: f32(7.5)
 LOOK_AHEAD :: f32(5)
 FOCUS_HEIGHT :: f32(-5.5)
 

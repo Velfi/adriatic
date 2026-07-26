@@ -14,6 +14,7 @@ aircraft_chase_camera_sits_behind_and_looks_ahead :: proc(t: ^testing.T) {
     testing.expect(t, pose.position.z > target.position.z)
     testing.expect(t, pose.target.z < target.position.z)
     testing.expect(t, pose.position.y > pose.target.y)
+    testing.expect(t, pose.position.y - target.position.y >= 7)
 }
 
 @(test)

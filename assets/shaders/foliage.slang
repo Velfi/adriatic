@@ -85,26 +85,32 @@ VertexOutput foliage_vertex_transform(VertexInput input) {
         float grass_time = push.water.x * (.62 + wind_speed * .018);
         float downwind_coordinate = dot(input.position.xz, wind_direction);
         float crosswind_coordinate = dot(input.position.xz, wind_across);
-        float field_wave =
-            sin(downwind_coordinate * .071 - grass_time) * .52 +
+        float primary_wave = sin(downwind_coordinate * .071 - grass_time);
+        float crossing_wave =
             sin((downwind_coordinate * .039 + crosswind_coordinate * .052) -
-                grass_time * .73 + 1.7) * .31 +
+                grass_time * .73 + 1.7);
+        float detail_wave =
             sin((downwind_coordinate * .113 - crosswind_coordinate * .027) -
-                grass_time * 1.31 + 4.1) * .17;
-        float gust_front = smoothstep(-.42, .68, field_wave);
+                grass_time * 1.07 + 4.1);
+        float field_wave =
+            primary_wave * .52 +
+            crossing_wave * .31 +
+            detail_wave * .17;
 
-        // A finer oscillation varies blade-to-blade inside the broad gust.
-        // Only the upper atlas region receives the displacement, keeping roots
-        // planted while stronger bends shorten the tuft slightly.
+        // Keep the response continuous. Thresholding this signal into a gust
+        // front made the cards appear to tick between poses even though the
+        // underlying waves were smooth. A separate, low-amplitude tip ripple
+        // adds local variation without changing the field's broad cadence.
+        float wave_energy = field_wave * .5 + .5;
         float blade_flutter =
-            sin(push.water.x * (1.74 + wind_speed * .036) +
-                dot(input.position.xz, float2(.37, -.29))) *
-            (.35 + gust_front * .65);
-        float downwind_bend = (.035 + gust_front * .13 + blade_flutter * .025) * amplitude;
-        float crosswind_bend = (field_wave * .018 + blade_flutter * .022) * amplitude;
+            sin(push.water.x * (.91 + wind_speed * .018) +
+                dot(input.position.xz, float2(.29, -.23)) +
+                crossing_wave * .35);
+        float downwind_bend = (.045 + wave_energy * .105 + blade_flutter * .010) * amplitude;
+        float crosswind_bend = (field_wave * .024 + blade_flutter * .010) * amplitude;
         world_position.xz += wind_direction * downwind_bend * tip_weight;
         world_position.xz += wind_across * crosswind_bend * tip_weight;
-        world_position.y -= downwind_bend * (.055 + gust_front * .035) * tip_weight;
+        world_position.y -= downwind_bend * (.060 + wave_energy * .025) * tip_weight;
     } else if (native_atlas_card) {
         // Wall-trained bougainvillea is tied to masonry. Keep the lower card
         // vertices pinned to the woody attachment and confine motion to the

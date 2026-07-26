@@ -5275,8 +5275,45 @@ world_architecture_path_footprints :: proc(
     if buildings < 4 || max_z <= min_z do return paths
 
     center_x := (min_x + max_x) * .5
+    center_z := (min_z + max_z) * .5
     lane_a := min_z + (max_z - min_z) / 3
     lane_b := min_z + (max_z - min_z) * 2 / 3
+    road_span := max(max_x - min_x + 36, f32(160))
+    // These procedural town surfaces are overlays rather than authored road
+    // graph edges, so pavement_at cannot classify them. Mirror every broad
+    // street surface here to keep terrain grass below the visible paving.
+    street_lanes := [2]f32{lane_a, lane_b}
+    for lane_z in street_lanes {
+        append(
+            &paths,
+            Architecture_Path_Footprint {
+                center_x = center_x,
+                center_z = lane_z,
+                width = road_span,
+                length = 6.5,
+            },
+        )
+    }
+    append(
+        &paths,
+        Architecture_Path_Footprint {
+            center_x = center_x,
+            center_z = center_z,
+            width = 28,
+            length = 18,
+        },
+    )
+    approach_sign := editor.camera_pose.position.z >= center_z ? f32(1) : f32(-1)
+    edge_z := approach_sign > 0 ? max_z : min_z
+    append(
+        &paths,
+        Architecture_Path_Footprint {
+            center_x = center_x,
+            center_z = edge_z + approach_sign * 9,
+            width = road_span,
+            length = 18,
+        },
+    )
     for structure in editor.project.structures[:editor.project.structure_count] {
         if structure.kind != .Architecture || structure.height > 60 do continue
         frontage := architecture.architecture_frontage_structure(structure)
@@ -5760,7 +5797,6 @@ world_climbing_leaf_vine :: proc(
     growth_density: f32,
     seed, plant_seed: u32,
     render_root: bool,
-    wind_x, wind_z, wind_phase: f32,
 ) {
     vine_maturity := f32(1)
     if structure.kind == .Architecture {
@@ -5799,24 +5835,16 @@ world_climbing_leaf_vine :: proc(
         t := f32(point_index) / f32(len(vine_points) - 1)
         sway := f32(math.sin(f64(f32(seed) * .013 + t * 5.7))) * structure.width * (.025 + t * .055)
         drift := f32(math.cos(f64(f32(seed) * .021 + t * 4.1))) * (.16 + t * .08)
-        wind_wave := f32(math.sin(f64(wind_phase * .85 + t * 3.2 + f32(seed % 17))))
         if structure.kind == .Architecture {
             divergence := t * t * (3 - 2 * t)
             trained_x := root_local_x + (local_x - root_local_x) * divergence
             // Multiple leaders share an exact basal origin, then acquire
-            // independent movement only as their woody paths diverge.
+            // independent shape only as their woody paths diverge.
             sway = trained_x - local_x + sway * divergence
         }
-        // Young green leaders yield to gusts; an established, wall-trained
-        // woody trunk should barely move. Leaf cards and papery bracts retain
-        // their faster shader motion, creating a believable stiffness
-        // hierarchy instead of making the entire mature plant rubbery.
-        woody_compliance := f32(1)
-        if structure.kind == .Architecture {
-            woody_compliance = architecture.bougainvillea_woody_compliance(vine_maturity)
-        }
-        sway += (wind_x * .72 + wind_z * .28) * wind_wave * (t * t) * structure.width * .025 * woody_compliance
-        drift += (wind_z * .72 - wind_x * .28) * wind_wave * (t * t) * .16 * woody_compliance
+        // The woody path is structural geometry and must remain attached to
+        // its wall. Leaf cards and papery bracts receive wind deformation in
+        // the foliage shader without moving this attachment skeleton.
         local_y := stem_start + (stem_end - stem_start) * t - structure.base_y
         routed_x := world_climbing_leaf_route_x(
             structure,
@@ -7149,9 +7177,6 @@ world_climbing_leaves :: proc(editor: ^Editor) {
                 vine_seed,
                 plant_seed,
                 vine == 0,
-                sky.weather.wind[0],
-                sky.weather.wind[1],
-                sky.cloud_time_seconds,
             )
         }
     }
