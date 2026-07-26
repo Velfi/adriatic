@@ -67,6 +67,32 @@ Invoke-Checked "cl" @(
 )
 Invoke-Checked "lib" @("/nologo", "/OUT:$TextshapeLibrary", $TextshapeObject)
 
+# Build Adriatic's xatlas/meshoptimizer bridge imported by the world and vehicle
+# packages. Keep the source list aligned with the native archive rules in the
+# Makefile.
+$MeshSources = @(
+	"native/adriatic_xatlas.cpp",
+	"third_party/xatlas/source/xatlas/xatlas.cpp",
+	"third_party/meshoptimizer/src/allocator.cpp",
+	"third_party/meshoptimizer/src/indexgenerator.cpp",
+	"third_party/meshoptimizer/src/vcacheoptimizer.cpp",
+	"third_party/meshoptimizer/src/vfetchoptimizer.cpp"
+)
+$MeshObjects = @()
+foreach ($source in $MeshSources) {
+	$object = Join-Path $Build (([IO.Path]::GetFileNameWithoutExtension($source)) + ".obj")
+	Invoke-Checked "cl" @(
+		"/nologo", "/O2", "/DNDEBUG", "/EHsc", "/std:c++17",
+		"/I$(Join-Path $Root 'third_party/xatlas/source/xatlas')",
+		"/I$(Join-Path $Root 'third_party/meshoptimizer/src')",
+		"/c", (Join-Path $Root $source),
+		"/Fo$object"
+	)
+	$MeshObjects += $object
+}
+$MeshLibrary = Join-Path $Build "adriatic_mesh.lib"
+Invoke-Checked "lib" (@("/nologo", "/OUT:$MeshLibrary") + $MeshObjects)
+
 # Build the engine-owned Jolt bridge and put its import library where the Odin
 # physics package's platform declaration expects it.
 $JoltSource = Join-Path $ZeldaEngineRoot "third_party/jolt"

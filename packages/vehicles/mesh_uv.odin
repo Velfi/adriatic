@@ -2,7 +2,11 @@ package vehicles
 
 import "core:sync"
 
-foreign import adriatic_mesh "system:adriatic_mesh"
+when ODIN_OS == .Windows {
+	foreign import adriatic_mesh "system:adriatic_mesh.lib"
+} else {
+	foreign import adriatic_mesh "system:adriatic_mesh"
+}
 
 foreign adriatic_mesh {
     adriatic_generate_optimized_mesh :: proc(vertices: rawptr, vertex_count, vertex_stride, position_offset, uv_offset, part_offset: u32, indices: ^u16, triangle_count: u32, uv_by_source_vertex: ^f32, source_by_optimized_vertex, optimized_indices: ^u16, output_vertex_capacity, output_index_capacity: u32) -> u32 ---

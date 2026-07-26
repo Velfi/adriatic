@@ -178,7 +178,11 @@ World_Renderer :: struct {
 
 world_renderer: World_Renderer
 
-foreign import adriatic_mesh "system:adriatic_mesh"
+when ODIN_OS == .Windows {
+    foreign import adriatic_mesh "system:adriatic_mesh.lib"
+} else {
+    foreign import adriatic_mesh "system:adriatic_mesh"
+}
 foreign adriatic_mesh {
     adriatic_optimize_index_buffer :: proc(destination, indices: ^u16, index_count, vertex_count: u32) ---
 }
