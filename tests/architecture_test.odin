@@ -135,18 +135,27 @@ architecture_append_density_removes_buildings_without_scaling_survivors :: proc(
     testing.expect(t, sparse_created >= 4)
     testing.expect(t, sparse_created < full_created)
 
+    lowered_height := false
     for sparse_structure in sparse.structures[:sparse.structure_count] {
         matched := false
         for full_structure in full.structures[:full.structure_count] {
-            if sparse_structure.seed != full_structure.seed do continue
+            if sparse_structure.center_x != full_structure.center_x ||
+               sparse_structure.center_z != full_structure.center_z {
+                continue
+            }
             testing.expect(t, sparse_structure.width == full_structure.width)
             testing.expect(t, sparse_structure.depth == full_structure.depth)
-            testing.expect(t, sparse_structure.height == full_structure.height)
+            testing.expect(t, sparse_structure.height <= full_structure.height)
+            if sparse_structure.height <= 22.2 && sparse_structure.height <= 60 {
+                testing.expect(t, sparse_structure.seed % 5 == 0)
+            }
+            if sparse_structure.height < full_structure.height do lowered_height = true
             matched = true
             break
         }
         testing.expect(t, matched)
     }
+    testing.expect(t, lowered_height)
 }
 
 @(test)

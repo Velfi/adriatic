@@ -13,7 +13,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  adriatic capture bougainvillea [output-directory] [seed ...]")
     fmt.println("")
     fmt.println("modes:")
-    fmt.println("  formation, map, flight, car, vehicle-showcase, paint-mode")
+    fmt.println("  editor, formation, map, flight, car, vehicle-showcase, paint-mode")
     fmt.println("  road, road-dust, road-grip, terrain-grip, building")
     fmt.println("  foliage, foliage-forest, foliage-forest-low, foliage-understory")
     fmt.println("  foliage-forest-golden, foliage-forest-wind-a, foliage-forest-wind-b")

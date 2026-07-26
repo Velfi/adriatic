@@ -2291,9 +2291,6 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
                 rl.DrawRectangleRoundedLinesEx(secondary_bounds, .22, 5, 2, {70, 32, 44, 255})
             }
         }
-        active_tool_label := fmt.ctprintf("TOOLS — %s", tool_names[int(editor.vehicle_paint_tool)])
-        if editor.vehicle_paint_erase do active_tool_label = "TOOLS — ERASER"
-        rl.DrawTextEx(rl.Font{}, active_tool_label, {18, 194}, 16, 1, {255, 245, 193, 255})
         symmetry_bounds := rl.Rectangle{190, 190, 112, 30}
         symmetry_fill := rl.Color{29, 61, 65, 225}
         rl.DrawRectangleRounded(symmetry_bounds, .18, 6, symmetry_fill)
@@ -2432,7 +2429,6 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
             int(editor.vehicle_paint_brush_strength * 100 + .5),
         )
         rl.DrawTextEx(rl.Font{}, brush_label, {176, parts_top - 19}, 13, 1, {255, 226, 163, 255})
-        rl.DrawTextEx(rl.Font{}, "HAND-PAINTED AIRCRAFT", {f32(width) - 280, 32}, 14, 1, {223, 238, 225, 220})
         for index in 0 ..< len(component_names) {
             bounds := vehicle_paint_component_bounds(editor, index)
             enabled := editor.vehicle_paint_component_mask[index]
@@ -2523,17 +2519,17 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
         tool_hint: cstring
         #partial switch editor.vehicle_paint_tool {
         case .Brush:
-            tool_hint = "SURFACE PREVIEW — DRAG FREEHAND"
+            tool_hint = "DRAG TO PAINT"
         case .Bucket:
             tool_hint = "CLICK CONNECTED REGION"
         case .Shape:
-            tool_hint = "SELECT SHAPE — PREVIEW ON SURFACE"
+            tool_hint = "CHOOSE A SHAPE, THEN CLICK TO APPLY"
         case .Blend:
             tool_hint = "DRAG TO SMOOTH"
         case .Gradient:
             tool_hint = "DRAG COLOR DIRECTION"
         case .Pattern:
-            tool_hint = "PREVIEW FILL — CLICK TO APPLY"
+            tool_hint = "CLICK TO APPLY PATTERN"
         case .Strip:
             tool_hint = "DRAG STRAIGHT BAND"
         case .Shade:
@@ -2597,7 +2593,7 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
             2,
             cursor_color,
         )
-        cursor_label: cstring = "MASKED / NO SURFACE"
+        cursor_label: cstring = "CAN'T PAINT HERE"
         if editor.vehicle_paint_hover_hit {
             cursor_label = fmt.ctprintf("%s", tool_names[int(editor.vehicle_paint_tool)])
             if editor.vehicle_paint_erase do cursor_label = "ERASE"

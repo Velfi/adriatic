@@ -1263,6 +1263,7 @@ generate_append :: proc(
     if project == nil do return 0
     graph := adriatic_graph(center_x, center_z, seed)
     safe_density := clamp(density, f32(.2), f32(1))
+    first_structure := project.structure_count
     created := 0
     for node, node_index in graph.nodes[:graph.count] {
         if node.kind == .Site do continue
@@ -1270,16 +1271,43 @@ generate_append :: proc(
            graph_unit(seed, u32(node_index) + 211) > safe_density {
             continue
         }
+        if node.kind == .Street_Block && safe_density < 1 {
+            separated := true
+            for existing in project.structures[first_structure:project.structure_count] {
+                if existing.kind != .Architecture do continue
+                dx, dz := node.x - existing.center_x, node.z - existing.center_z
+                // Sparse settlements need visible gaps, not merely fewer
+                // buildings selected from the same tight street wall.
+                if dx * dx + dz * dz < 46 * 46 {
+                    separated = false
+                    break
+                }
+            }
+            if !separated do continue
+        }
         base_height := architecture_base_height(project, node.x, node.z)
         if base_height <= project.sea_level do continue
-        structure := terrain.structure_make(node.x, node.z, node.width, node.depth, base_height, node.height)
+        building_height := node.height
+        structure_seed := node.seed
+        if node.kind == .Street_Block && safe_density < 1 {
+            // Density controls vertical intensity as well as occupancy. This
+            // keeps a lightly settled mouse town low-rise without uniformly
+            // scaling its authored footprints, doors, or windows.
+            building_height = min(building_height, 18 + safe_density * 8)
+            // Compound L/U plans make one sparse lot read as several attached
+            // towers. Select the simple single-mass presentation variant while
+            // retaining the authored footprint dimensions and deterministic
+            // palette variation.
+            structure_seed -= structure_seed % 5
+        }
+        structure := terrain.structure_make(node.x, node.z, node.width, node.depth, base_height, building_height)
         structure.kind = .Architecture
         structure.rotation = node.rotation
-        structure.seed = node.seed
-        structure.color = architecture_color(node.seed, node.kind == .Landmark)
+        structure.seed = structure_seed
+        structure.color = architecture_color(structure_seed, node.kind == .Landmark)
         index := terrain.add_structure(project, structure)
         if index >= 0 {
-            project.structures[index].seed = node.seed
+            project.structures[index].seed = structure_seed
             project.revision += 1
             created += 1
         }

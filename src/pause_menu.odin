@@ -522,8 +522,12 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
 }
 
 pause_menu_draw_header :: proc(panel: rl.Rectangle, eyebrow, title: cstring) {
-    ui_draw_text(.Data, eyebrow, {panel.x + 40, panel.y + 28}, .6, {103, 210, 201, 255})
-    ui_draw_text(.Display, title, {panel.x + 40, panel.y + 57}, .5, {244, 247, 249, 255})
+    if eyebrow != "" {
+        ui_draw_text(.Data, eyebrow, {panel.x + 40, panel.y + 28}, .6, {103, 210, 201, 255})
+    }
+    title_y := panel.y + 57
+    if eyebrow == "" do title_y = panel.y + 38
+    ui_draw_text(.Display, title, {panel.x + 40, title_y}, .5, {244, 247, 249, 255})
     rl.DrawLineEx({panel.x + 40, panel.y + 96}, {panel.x + panel.width - 40, panel.y + 96}, 1, {65, 73, 83, 255})
 }
 
@@ -573,7 +577,7 @@ options_menu_draw_scrollbar :: proc(panel: rl.Rectangle, scroll_y: f32) {
 }
 
 options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
-    pause_menu_draw_header(panel, "PAUSED  /  SETTINGS", "OPTIONS")
+    pause_menu_draw_header(panel, "", "OPTIONS")
     navigation_hint: cstring = "ARROWS MOVE + CHANGE"
     if controller_prompt_active(editor) do navigation_hint = "D-PAD / LS MOVE + CHANGE"
     navigation_size := ui_measure_text(.Data, navigation_hint, .2)
@@ -744,11 +748,11 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32) {
     }
 
     if editor.controller_disconnect_notice {
-        pause_menu_draw_header(panel, "INPUT DEVICE LOST", "CONTROLLER DISCONNECTED")
+        pause_menu_draw_header(panel, "", "CONTROLLER DISCONNECTED")
     } else if editor.vehicle_paint_scene {
-        pause_menu_draw_header(panel, "ADRIATIC  /  PAINT", "PAINT MODE")
+        pause_menu_draw_header(panel, "", "PAUSED")
     } else {
-        pause_menu_draw_header(panel, "ADRIATIC  /  FLIGHT", "PAUSED")
+        pause_menu_draw_header(panel, "", "PAUSED")
     }
     pause_menu_button(pause_menu_button_bounds(panel, 0), "RESUME", true, editor.pause_focus == 0)
     pause_menu_button(pause_menu_button_bounds(panel, 1), "OPTIONS", false, editor.pause_focus == 1)

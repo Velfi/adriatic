@@ -73,8 +73,21 @@ its events into animation, clock advancement, repair effects, and feedback.
 `packages/dialogue` ports the reusable branching conversation runtime from
 ArchipelagoGame. A `Definition` contains authored nodes and choices;
 conditions filter choices against the caller's `Context`, and effects update
-the owning game's state. The package is deliberately presentation-neutral, so
-the game can render `current` and `available_at` with its own canvas/UI layer.
+the owning game's state. Nodes support enter/exit hooks, timed transitions,
+terminal beats, named jumps, restart, and bounded backtracking. Rich dialogue
+is authored as `Text_Span` values with color, scale, bold/italic/underline,
+shadow, spacing, offset, wave, shake, pulse, drift, and typewriter properties;
+the package supplies deterministic reveal timing while leaving glyph drawing
+to the game's canvas/UI layer.
+
+## Two-island story
+
+`packages/story` contains the first narrative campaign and its dialogue
+catalog. Niko, a west-island baker, and Iva, the east-island lighthouse keeper,
+fall in love through a sequence of deliveries. Bojan's courier-plane crash
+temporarily gates their final invitation behind a diagnose, patch, and
+verification repair sequence. Once they meet, the same route continues as an
+alternating repeatable mail job that awards one stamp per completed delivery.
 
 ## Wireframe renderer
 

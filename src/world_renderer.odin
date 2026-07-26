@@ -18,7 +18,10 @@ import engine "zelda_engine:engine"
 import render3d "zelda_engine:render3d"
 import resources "zelda_engine:render_resources"
 
-WORLD_VERTEX_CAPACITY :: 480_000
+// Keep the hard ceiling representative of the target handheld budget. Critical
+// characters and landmarks submit first; environment range/LOD must fit in the
+// remaining space instead of normalizing an oversized world buffer.
+WORLD_VERTEX_CAPACITY :: 600_000
 ROAD_VERTEX_CAPACITY :: 320_000
 FOLIAGE_VERTEX_CAPACITY :: 24_000
 // Bougainvillea cards use four anchor-centered sub-quads (24 vertices) so
@@ -5713,6 +5716,44 @@ world_climbing_leaf_route_x :: proc(
     return best_x
 }
 
+world_climbing_leaf_segment_detour_x :: proc(
+    structure: terrain.Structure,
+    start_x, start_y, end_x, end_y: f32,
+) -> f32 {
+    if structure.kind != .Architecture do return (start_x + end_x) * .5
+    middle_y := (start_y + end_y) * .5
+    preferred_x := (start_x + end_x) * .5
+    best_x := preferred_x
+    best_score := f32(1.0e20)
+    // Search the full usable façade width. The ordinary point router favors
+    // smooth local motion; this fallback instead prioritizes a clear masonry
+    // corridor so a difficult opening can never sever the woody leader.
+    for candidate_index in 0 ..= 20 {
+        candidate_x := (-.45 + f32(candidate_index) / 20 * .90) * structure.width
+        opening := f32(0)
+        for route_sample in 0 ..= 5 {
+            sample_t := f32(route_sample) / 5
+            first_x := start_x + (candidate_x - start_x) * sample_t
+            first_y := start_y + (middle_y - start_y) * sample_t
+            second_x := candidate_x + (end_x - candidate_x) * sample_t
+            second_y := middle_y + (end_y - middle_y) * sample_t
+            opening = max(
+                opening,
+                max(
+                    world_climbing_leaf_stem_opening_badness(structure, first_x, first_y),
+                    world_climbing_leaf_stem_opening_badness(structure, second_x, second_y),
+                ),
+            )
+        }
+        departure := math.abs(candidate_x - preferred_x) / max(structure.width, f32(1))
+        score := opening * 8 + departure * .18
+        if score < best_score {
+            best_x, best_score = candidate_x, score
+        }
+    }
+    return best_x
+}
+
 world_climbing_leaf_vine :: proc(
     structure: terrain.Structure,
     local_x, root_local_x, surface_z, vine_height: f32,
@@ -5990,10 +6031,12 @@ world_climbing_leaf_vine :: proc(
     secondary_strength := f32(0)
     facade_right_x, facade_right_z := f32(0), f32(0)
     facade_out_x, facade_out_z := f32(0), f32(0)
-    if structure.kind == .Architecture && render_root {
-        secondary_strength = architecture.bougainvillea_secondary_leader_strength(vine_maturity)
+    if structure.kind == .Architecture {
         facade_right_x, facade_right_z = world_rotate_xz(0, 0, 1, 0, structure.rotation)
         facade_out_x, facade_out_z = world_rotate_xz(0, 0, 0, 1, structure.rotation)
+        if render_root {
+            secondary_strength = architecture.bougainvillea_secondary_leader_strength(vine_maturity)
+        }
     }
     for point_index in 0 ..< len(vine_points) - 1 {
         segment_t := f32(point_index) / f32(len(vine_points) - 1)
@@ -6015,21 +6058,55 @@ world_climbing_leaf_vine :: proc(
             middle_x,
             (vine_points[point_index].y + vine_points[point_index + 1].y) * .5 - structure.base_y,
         )
-        // Routing normally carries the stem around openings. Retain a final
-        // guard for unusually short façades where no masonry corridor exists.
-        if max(start_badness, max(end_badness, middle_badness)) > .68 do continue
+        needs_detour := max(start_badness, max(end_badness, middle_badness)) > .68
         segment_radius := woody_base_radius + (woody_tip_radius - woody_base_radius) * segment_t
         bark_value := .035 + f32((point_index + int(seed)) % 3) * .035
         segment_color :=
             point_index % 2 == 0 ? color_lerp(woody_color, {171, 128, 84, 255}, bark_value) : color_lerp(woody_color, {77, 55, 42, 255}, bark_value)
-        world_tube_between(
-            vine_points[point_index],
-            vine_points[point_index + 1],
-            {0, 1, 0},
-            segment_radius,
-            segment_radius * .91,
-            segment_color,
-        )
+        if needs_detour {
+            start_local_y := vine_points[point_index].y - structure.base_y
+            end_local_y := vine_points[point_index + 1].y - structure.base_y
+            detour_x := world_climbing_leaf_segment_detour_x(
+                structure,
+                start_x,
+                start_local_y,
+                end_x,
+                end_local_y,
+            )
+            detour := third_person.Vec3 {
+                (vine_points[point_index].x + vine_points[point_index + 1].x) * .5,
+                (vine_points[point_index].y + vine_points[point_index + 1].y) * .5,
+                (vine_points[point_index].z + vine_points[point_index + 1].z) * .5,
+            }
+            detour.x += facade_right_x * (detour_x - middle_x) + facade_out_x * .08
+            detour.z += facade_right_z * (detour_x - middle_x) + facade_out_z * .08
+            middle_radius := segment_radius * .955
+            world_tube_between(
+                vine_points[point_index],
+                detour,
+                {0, 1, 0},
+                segment_radius,
+                middle_radius,
+                segment_color,
+            )
+            world_tube_between(
+                detour,
+                vine_points[point_index + 1],
+                {0, 1, 0},
+                middle_radius,
+                segment_radius * .91,
+                segment_color,
+            )
+        } else {
+            world_tube_between(
+                vine_points[point_index],
+                vine_points[point_index + 1],
+                {0, 1, 0},
+                segment_radius,
+                segment_radius * .91,
+                segment_color,
+            )
+        }
         if secondary_strength > 0 {
             // Mature bougainvillea is commonly multi-stemmed. Weave one
             // thinner leader around the routed trunk, converging at both ends
@@ -9147,54 +9224,64 @@ world_town_mice :: proc(editor: ^Editor) {
     if editor == nil do return
 
     residents := [7]Town_Mouse {
-        {-1.0, 2.5, .18, .88, .Acorn_Cap, .Chestnut, .Pale_Belly, false, {}},
-        {.8, 2.2, -.22, .82, .Flower, .Cream, .Piebald, true, {177, 65, 73, 255}},
-        {-1.3, 2.7, .12, .92, .Bottle_Cap, .Soot, .Solid, true, {61, 112, 139, 255}},
-        {1.1, 2.4, -.16, .86, .Paper_Boat, .Silver, .Hooded, false, {}},
-        {-.7, 2.2, .24, .80, .Chef_Hat, .White, .Pale_Belly, false, {}},
-        {1.4, 2.6, -.10, .90, .None, .Russet, .Piebald, true, {205, 151, 52, 255}},
-        {-.9, 2.3, .20, .84, .Goggles, .Chestnut, .Hooded, false, {}},
+        {-1.0, 2.5, .18, 1.02, .Acorn_Cap, .Chestnut, .Pale_Belly, false, {}},
+        {.8, 2.2, -.22, .96, .Flower, .Cream, .Piebald, true, {177, 65, 73, 255}},
+        {-1.3, 2.7, .12, 1.05, .Bottle_Cap, .Soot, .Solid, true, {61, 112, 139, 255}},
+        {1.1, 2.4, -.16, 1.00, .Paper_Boat, .Silver, .Hooded, false, {}},
+        {-.7, 2.2, .24, .95, .Chef_Hat, .White, .Pale_Belly, false, {}},
+        {1.4, 2.6, -.10, 1.04, .None, .Russet, .Piebald, true, {205, 151, 52, 255}},
+        {-.9, 2.3, .20, .98, .Goggles, .Chestnut, .Hooded, false, {}},
     }
     structures := editor.project.structures[:editor.project.structure_count]
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        resident_index := 0
-        for structure in structures {
+        candidates: [terrain.STRUCTURE_CAPACITY]int
+        candidate_count := 0
+        for structure, structure_index in structures {
             if structure.kind != .Architecture || structure.height > 60 do continue
             dx, dz := structure.center_x - island_center, structure.center_z - island_center
             if dx * dx + dz * dz > island_radius * island_radius do continue
-            if resident_index >= len(residents) do break
-            resident := residents[resident_index]
-            frontage := architecture.architecture_frontage_structure(structure)
-            x, z := world_rotate_xz(
-                frontage.center_x,
-                frontage.center_z,
-                resident.lateral,
-                frontage.depth * .5 + resident.outward,
-                frontage.rotation,
-            )
-            ground_y := terrain.sample_height(&editor.project, 0, x, z)
-            if ground_y <= editor.project.sea_level + .35 do continue
-            // Each resident faces loosely along the frontage, producing small
-            // conversational groupings without requiring simulation state.
-            rotation := frontage.rotation + math.PI * .5 + resident.facing
-            world_mouse_model_scaled(
-                editor,
-                {
-                    position = {x = x, y = ground_y, z = z},
-                    rotation = rotation,
-                    accessory = resident.accessory,
-                    fur = resident.fur,
-                    pattern = resident.pattern,
-                    scarf_enabled = resident.scarf,
-                    scarf_color = resident.scarf_color,
-                    grounded = true,
-                },
-                resident.scale,
-            )
-            resident_index += 1
+            candidates[candidate_count] = structure_index
+            candidate_count += 1
+        }
+        if candidate_count == 0 do continue
+
+        // Sparse towns still receive the complete cast. When there are fewer
+        // façades than residents, wrap to a second doorway position rather
+        // than silently shrinking the population with the building density.
+        for resident, resident_index in residents {
+            for attempt in 0 ..< candidate_count {
+                candidate_index := candidates[(resident_index + attempt) % candidate_count]
+                frontage := architecture.architecture_frontage_structure(structures[candidate_index])
+                doorway_row := resident_index / candidate_count
+                x, z := world_rotate_xz(
+                    frontage.center_x,
+                    frontage.center_z,
+                    resident.lateral,
+                    frontage.depth * .5 + resident.outward + f32(doorway_row) * 1.25,
+                    frontage.rotation,
+                )
+                ground_y := terrain.sample_height(&editor.project, 0, x, z)
+                if ground_y <= editor.project.sea_level + .35 do continue
+                rotation := frontage.rotation + math.PI * .5 + resident.facing
+                world_mouse_model_scaled(
+                    editor,
+                    {
+                        position = {x = x, y = ground_y, z = z},
+                        rotation = rotation,
+                        accessory = resident.accessory,
+                        fur = resident.fur,
+                        pattern = resident.pattern,
+                        scarf_enabled = resident.scarf,
+                        scarf_color = resident.scarf_color,
+                        grounded = true,
+                    },
+                    resident.scale,
+                )
+                break
+            }
         }
     }
 }
@@ -9276,12 +9363,12 @@ world_ground_grass :: proc(editor: ^Editor) {
     // keeps the visible field dense when an inspection or chase camera moves
     // away from the mouse, while the snapped world grid prevents shimmer.
     field_x, field_z := editor.camera_pose.position.x, editor.camera_pose.position.z
-    field_radius := f32(63)
+    field_radius := f32(42)
     if driving_aircraft(editor) {
         body := active_aircraft_body(editor)
         ground := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
         if body.position.y - ground > 28 do return
-        field_radius = 90
+        field_radius = 60
     } else if editor.pilot.mode != .On_Foot {
         return
     }

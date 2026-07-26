@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fix Adriatic Release"
+  short_description: "Diagnose and repair release pipeline failures"
+  default_prompt: "Use $fix-release to diagnose, repair, publish, and monitor the Adriatic release pipeline."

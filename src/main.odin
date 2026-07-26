@@ -1769,24 +1769,74 @@ seed_city_capture :: proc(editor: ^Editor) {
 seed_default_island_towns :: proc(editor: ^Editor) {
     if editor == nil do return
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    // Put each settlement inland of the coast and across the island from its
-    // runway apron. The shared offset keeps both islands compositionally
-    // related while distinct seeds give them their own roof and façade mix.
+    // Put each settlement across the island from its runway apron. A short
+    // cobblestone frontage gives the ordinary painted-density parcel planner
+    // the same street skeleton it receives from an authored road.
     for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
         town_z := island_center + sign * 118
         seed := u32(0xA71D3 + island_index * 0x31F29)
+        road_start_x, road_finish_x := island_center - 78, island_center + 78
+        road_start_y := terrain.sample_height(&editor.project, 0, road_start_x, town_z)
+        road_finish_y := terrain.sample_height(&editor.project, 0, road_finish_x, town_z)
+        road_start := roads.add_node(
+            &editor.project.road_graph,
+            {x = road_start_x, y = road_start_y, z = town_z},
+            0,
+        )
+        road_finish := roads.add_node(
+            &editor.project.road_graph,
+            {x = road_finish_x, y = road_finish_y, z = town_z},
+            0,
+        )
+        if road_start >= 0 && road_finish >= 0 {
+            _ = roads.add_straight_edge(
+                &editor.project.road_graph,
+                road_start,
+                road_finish,
+                5.5,
+                1.4,
+                .Cobblestone,
+            )
+        }
+
+        town_bounds := architecture.City_Bounds {
+            island_center - 108,
+            town_z - 68,
+            island_center + 108,
+            town_z + 68,
+            true,
+        }
+        _ = architecture.city_density_stamp(
+            &editor.project.city_density,
+            island_center,
+            town_z,
+            82,
+            .20,
+            .70,
+        )
+        plan := architecture.city_plan_density(
+            &editor.project,
+            &editor.project.city_density,
+            town_bounds,
+            seed,
+        )
         first_structure := editor.project.structure_count
-        _ = architecture.generate_append(&editor.project, island_center, town_z, seed, .52)
+        _ = architecture.city_commit_plan(
+            &editor.project,
+            &editor.project.city_density,
+            town_bounds,
+            &plan,
+        )
         for structure in editor.project.structures[first_structure:editor.project.structure_count] {
-            if structure.kind != .Architecture || structure.height > 52 do continue
+            if structure.kind != .Architecture || structure.height > 60 do continue
             _ = architecture.city_density_stamp(
                 &editor.project.climbing_leaf_density,
                 structure.center_x,
                 structure.center_z,
-                max(structure.width, structure.depth) * .46,
-                .62,
-                .70,
+                max(structure.width, structure.depth) * .56,
+                .78,
+                .68,
             )
         }
     }
@@ -4145,12 +4195,11 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                 rl.DrawCircleV(brush_center.position, brush_radius, {r = 230, g = 244, b = 218, a = 55})
             }
         }
-        rl.DrawRectangle(14, 14, 520, 54, {r = 8, g = 28, b = 45, a = 210})
-        rl.DrawTextEx(rl.Font{}, "ADRIATIC TERRAIN LAB — 3D", {26, 25}, 19, 1, {r = 211, g = 250, b = 242, a = 255})
+        rl.DrawRectangle(14, 14, 520, 42, {r = 8, g = 28, b = 45, a = 210})
         rl.DrawTextEx(
             rl.Font{},
             "WASD pan  Q/E rotate  Middle orbit  Wheel zoom  Shift+wheel strength  Left/Right brush",
-            {26, 49},
+            {26, 29},
             12,
             1,
             {r = 183, g = 219, b = 221, a = 255},
@@ -4367,7 +4416,7 @@ draw_spawn_button :: proc() {
     }
     rl.DrawRectangleRounded(bounds, .18, 8, fill)
     rl.DrawRectangleRoundedLinesEx(bounds, .18, 8, 1, {r = 176, g = 239, b = 230, a = 255})
-    ui_draw_text(.Body, "SPAWN INTO MAP", {bounds.x + 15, bounds.y + 9}, 1, {r = 245, g = 255, b = 247, a = 255})
+    ui_draw_text(.Body, "ENTER WORLD", {bounds.x + 28, bounds.y + 9}, 1, {r = 245, g = 255, b = 247, a = 255})
 }
 
 draw_editor_context :: proc(editor: ^Editor) {
@@ -5057,6 +5106,7 @@ adriatic_run :: proc(
     capture_kind := request != nil ? request.kind : Capture_Kind.None
     if request == nil && len(args) >= 3 do capture_kind = capture_kind_from_arg(args[1])
     capture_mode := capture_kind != .None
+    capture_editor_mode := capture_kind == .Editor
     showcase_interactive_mode := len(args) >= 2 && args[1] == "--vehicle-showcase"
     capture_sky_mode := capture_kind in CAPTURE_SKY_KINDS
     capture_map_mode := capture_kind == .Map || capture_sky_mode
@@ -5065,6 +5115,11 @@ adriatic_run :: proc(
     capture_vehicle_showcase_mode := capture_kind == .Vehicle_Showcase
     capture_paint_mode := capture_kind == .Paint_Mode
     vehicle_showcase_mode := capture_vehicle_showcase_mode || capture_paint_mode || showcase_interactive_mode
+    capture_gameplay_mode :=
+        capture_mode &&
+        !capture_editor_mode &&
+        !capture_vehicle_showcase_mode &&
+        !capture_paint_mode
     capture_road_mode := capture_kind == .Road || capture_kind == .Road_Dust
     capture_road_dust_mode := capture_kind == .Road_Dust
     capture_road_grip_mode := capture_kind == .Road_Grip
@@ -5265,7 +5320,13 @@ adriatic_run :: proc(
             seed_road_capture(editor)
             if capture_road_dust_mode do seed_road_dust_capture(editor)
         } else if capture_building_mode {
-            seed_city_capture(editor)
+            if capture_target == "mouse-town" {
+                seed_default_island_towns(editor)
+                authoring_select_tool(editor, .Building)
+                editor.structure_selected = -1
+            } else {
+                seed_city_capture(editor)
+            }
         } else {
             seed_formation_capture(editor)
             // Keep the flight capture exercising distant road depth precision
@@ -5379,13 +5440,37 @@ adriatic_run :: proc(
     }
     world_renderer_attach(editor)
     defer world_renderer_destroy()
-    if capture_map_mode || capture_flight_mode || capture_car_mode {
-        editor.player = {
-            position = runway_spawn_position(editor),
-            grounded = true,
+    if capture_gameplay_mode {
+        if capture_map_mode || capture_flight_mode || capture_car_mode {
+            editor.player = {
+                position = runway_spawn_position(editor),
+                grounded = true,
+            }
+            editor.camera = third_person.default_camera()
+            editor.camera_pose = third_person.camera_pose(editor.player.position, editor.camera)
+        } else {
+            // Scene-specific captures author their framing before the renderer
+            // attaches. Enter gameplay without replacing that camera, and put
+            // the player at its focus so range-limited gameplay vegetation is
+            // populated around what the capture is actually inspecting.
+            editor.player = {
+                position = {
+                    x = editor.editor_focus.x,
+                    y = terrain.sample_height(
+                        &editor.project,
+                        0,
+                        editor.editor_focus.x,
+                        editor.editor_focus.z,
+                    ),
+                    z = editor.editor_focus.z,
+                },
+                grounded = true,
+            }
+            editor.camera = third_person.default_camera()
+            third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+            third_person.camera_set_active(&editor.cameras, .Inspection)
+            editor.capture_world_only = true
         }
-        editor.camera = third_person.default_camera()
-        editor.camera_pose = third_person.camera_pose(editor.player.position, editor.camera)
         editor.pilot.position = editor.player.position
         editor.in_map = true
         editor.map_time = f32(rl.GetTime())

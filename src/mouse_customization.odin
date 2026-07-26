@@ -350,22 +350,12 @@ customization_color_component :: proc(
     if fill.width > 0 do rl.DrawRectangleRounded(fill, .45, 6, color)
 }
 
-customization_draw_3d_preview :: proc(editor: ^Editor, bounds: rl.Rectangle) {
+customization_draw_3d_preview :: proc(_: ^Editor, bounds: rl.Rectangle) {
     // The world pass renders the gameplay mouse beneath this translucent frame.
-    // Keeping the UI layer to chrome and labels preserves the model's real
+    // Keeping the UI layer to chrome preserves the model's real
     // depth, lighting, animation, fur markings, and headgear geometry.
     rl.DrawRectangleRounded(bounds, .035, 12, {8, 15, 20, 42})
     rl.DrawRectangleRoundedLinesEx(bounds, .035, 12, 2, {83, 151, 151, 235})
-    ui_draw_text(.Data, "LIVE 3D PREVIEW", {bounds.x + 14, bounds.y + 13}, .2, {113, 224, 214, 255})
-    caption := mouse_headgear_label(editor.mouse_headgear)
-    caption_size := ui_measure_text(.Label, caption, .4)
-    ui_draw_text(
-        .Label,
-        caption,
-        {bounds.x + (bounds.width - caption_size.x) * .5, bounds.y + bounds.height - 43},
-        .4,
-        {113, 224, 214, 255},
-    )
 }
 
 customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
@@ -375,7 +365,7 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
     rl.DrawRectangleRounded(header_panel, .025, 12, {22, 26, 32, 252})
     rl.DrawRectangleRounded(controls_panel, .02, 10, {22, 26, 32, 252})
     rl.DrawRectangleRoundedLinesEx(panel, .025, 12, 1, {78, 88, 100, 255})
-    pause_menu_draw_header(panel, "OPTIONS  /  APPEARANCE", "CUSTOMIZE YOUR MOUSE")
+    pause_menu_draw_header(panel, "", "CUSTOMIZE MOUSE")
     customization_draw_3d_preview(editor, {panel.x + 28, panel.y + 112, panel.width * .35, panel.height - 142})
 
     controls_x := panel.x + panel.width * .41

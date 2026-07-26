@@ -379,7 +379,7 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         )
     }
     editor_ui_panel_button(editor_ui_focus_bounds(layout), "FOCUS  [F]")
-    editor_ui_panel_button(editor_ui_spawn_bounds(layout), "SPAWN INTO WORLD")
+    editor_ui_panel_button(editor_ui_spawn_bounds(layout), "ENTER WORLD")
 }
 
 editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
@@ -469,17 +469,13 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         } else {
             ui_draw_text(
                 .Data,
-                "PAINT A FORMATION FIELD",
+                "DRAG TO PLACE FORMATIONS",
                 {panel.x + 14, panel.y + 82 + f32(row) * 48},
                 .4,
                 {139, 149, 160, 255},
             )
         }
     case .Foliage:
-        bounds := editor_ui_slider_bounds(layout, row)
-        ui_draw_text(.Label, "CANOPY PROFILE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        ui_draw_text(.Data, "SHADED BLOBS", {bounds.x, bounds.y + 25}, .5, {143, 190, 91, 255})
-        row += 1
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
             "RADIUS (m)",
@@ -519,7 +515,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         } else {
             ui_draw_text(
                 .Data,
-                "PAINT A FOLIAGE FIELD",
+                "DRAG TO PLACE FOLIAGE",
                 {panel.x + 14, panel.y + 82 + f32(row) * 48},
                 .4,
                 {139, 149, 160, 255},
@@ -602,11 +598,10 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         row += 1
     case .GreekAssets:
         bounds := editor_ui_slider_bounds(layout, row)
-        ui_draw_text(.Label, "ASSET PREVIEW", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
         ui_draw_text(
             .Data,
             editor.greek_assets[editor.greek_asset_selected].name,
-            {bounds.x, bounds.y + 24},
+            {bounds.x, bounds.y},
             .45,
             {134, 224, 216, 255},
         )
@@ -656,27 +651,23 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     world_y := min(panel.y + 82 + f32(max(row, 3)) * 48 + 12, panel.y + panel.height - 276)
     editor_ui_section_title("WORLD", panel.x + 14, world_y, panel.width - 28)
     data_y := world_y + 32
-    project_state: cstring = editor.project.revision == editor.terrain_saved_revision ? "SAVED" : "UNSAVED"
-    state_color :=
-        editor.project.revision == editor.terrain_saved_revision ? rl.Color{134, 224, 216, 255} : rl.Color{245, 189, 97, 255}
-    ui_draw_text(.Data, fmt.ctprintf("PROJECT  %s", project_state), {panel.x + 14, data_y}, .4, state_color)
     if editor.cursor_hit {
         ui_draw_text(
             .Data,
             fmt.ctprintf("CURSOR   X %.0f   Z %.0f", editor.cursor_world_x, editor.cursor_world_z),
-            {panel.x + 14, data_y + 24},
+            {panel.x + 14, data_y},
             .4,
             {209, 215, 222, 255},
         )
         ui_draw_text(
             .Data,
             fmt.ctprintf("HEIGHT   %.2f m   MAT %.2f", editor.cursor_height, editor.cursor_material),
-            {panel.x + 14, data_y + 48},
+            {panel.x + 14, data_y + 24},
             .4,
             {209, 215, 222, 255},
         )
     } else {
-        ui_draw_text(.Data, "CURSOR   OUTSIDE TERRAIN", {panel.x + 14, data_y + 24}, .4, {139, 149, 160, 255})
+        ui_draw_text(.Data, "CURSOR   OUTSIDE TERRAIN", {panel.x + 14, data_y}, .4, {139, 149, 160, 255})
     }
     minutes := int(editor.atmosphere.world_minutes)
     ui_draw_text(
@@ -687,7 +678,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             minutes % 60,
             atmosphere.preset_name(editor.atmosphere.override),
         ),
-        {panel.x + 14, data_y + 72},
+        {panel.x + 14, data_y + 48},
         .4,
         {209, 215, 222, 255},
     )
@@ -698,11 +689,11 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             editor.project.structure_count,
             editor.project.road_graph.edge_count,
         ),
-        {panel.x + 14, data_y + 96},
+        {panel.x + 14, data_y + 72},
         .4,
         {209, 215, 222, 255},
     )
-    sea_bounds := rl.Rectangle{panel.x + 14, data_y + 122, panel.width - 28, 42}
+    sea_bounds := rl.Rectangle{panel.x + 14, data_y + 98, panel.width - 28, 42}
     editor_ui_slider_draw(sea_bounds, "SEA LEVEL (m)", editor.project.sea_level, -50, 50, 1)
 
     undo_enabled := editor.tool == .Structure ? editor.structure_undo_count > 0 : editor.terrain_undo_count > 0
@@ -718,9 +709,8 @@ editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
     layout := editor_ui_layout(editor, width, height)
     rl.DrawRectangle(0, 0, width, i32(EDITOR_UI_TOP_HEIGHT), {22, 25, 29, 248})
     rl.DrawLineEx({0, EDITOR_UI_TOP_HEIGHT - 1}, {f32(width), EDITOR_UI_TOP_HEIGHT - 1}, 1, {65, 72, 81, 255})
-    ui_draw_text(.Heading, "ADRIATIC  /  TERRAIN EDITOR", {16, 16}, .4, {238, 241, 244, 255})
     project_state: cstring = editor.project.revision == editor.terrain_saved_revision ? "SAVED" : "UNSAVED"
-    status := fmt.ctprintf("%s  |  SHIFT+ESC TUNING", project_state)
+    status := fmt.ctprintf("%s", project_state)
     status_size := ui_measure_text(.Data, status, .4)
     ui_draw_text(.Data, status, {f32(width) - status_size.x - 16, 18}, .4, {151, 161, 172, 255})
     editor_ui_draw_left(editor, layout)

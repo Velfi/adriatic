@@ -2,6 +2,7 @@ package main
 
 Capture_Kind :: enum {
     None,
+    Editor,
     Formation,
     Map,
     Flight,
@@ -65,6 +66,8 @@ CAPTURE_FOLIAGE_LOW_KINDS :: bit_set[Capture_Kind] {
 
 capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
     switch name {
+    case "editor":
+        return .Editor, true
     case "formation":
         return .Formation, true
     case "map":
