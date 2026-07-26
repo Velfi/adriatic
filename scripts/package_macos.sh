@@ -66,7 +66,7 @@ cat > "$ROOT/build/release/adriatic_launcher.c" <<'SOURCE'
 #include <string.h>
 #include <unistd.h>
 int main(int argc, char **argv) {
-	char path[PATH_MAX], resolved[PATH_MAX], contents[PATH_MAX], resources[PATH_MAX], target[PATH_MAX], icd[PATH_MAX];
+	char path[PATH_MAX], resolved[PATH_MAX], contents[PATH_MAX], resources[PATH_MAX], target[PATH_MAX], loader[PATH_MAX], icd[PATH_MAX];
 	uint32_t size = sizeof(path);
 	if (_NSGetExecutablePath(path, &size) != 0 || realpath(path, resolved) == NULL) return 1;
 	strncpy(contents, resolved, sizeof(contents));
@@ -74,7 +74,9 @@ int main(int argc, char **argv) {
 	slash = strrchr(contents, '/'); if (!slash) return 1; *slash = 0;
 	snprintf(resources, sizeof(resources), "%s/Resources", contents);
 	snprintf(target, sizeof(target), "%s/Resources/adriatic-bin", contents);
+	snprintf(loader, sizeof(loader), "%s/Frameworks/libvulkan.1.dylib", contents);
 	snprintf(icd, sizeof(icd), "%s/vulkan/icd.d/MoltenVK_icd.json", resources);
+	if (access(loader, R_OK) == 0) setenv("SDL_VULKAN_LIBRARY", loader, 1);
 	if (access(icd, R_OK) == 0) setenv("VK_ICD_FILENAMES", icd, 1);
 	if (chdir(resources) != 0) { perror("chdir"); return 1; }
 	argv[0] = target;
