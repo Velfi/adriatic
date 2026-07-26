@@ -83,6 +83,8 @@ VALIDATION_DIR := $(BUILD_DIR)/validation
 DEV_APP := $(DEV_DIR)/$(APP)
 RELEASE_APP := $(RELEASE_DIR)/$(APP)
 VALIDATION_APP := $(VALIDATION_DIR)/$(APP)
+VALIDATION_RUNTIME_STAMP := $(VALIDATION_DIR)/runtime-assets.stamp
+VALIDATION_ASSET_SOURCES := $(shell find assets -type f 2>/dev/null)
 ifeq ($(shell uname -s),Darwin)
 SHARED_EXT := dylib
 else ifeq ($(shell uname -s),Linux)
@@ -97,6 +99,9 @@ HOT_SHADER_DIR := $(HOT_DIR)/shaders
 HOT_PHYSICS_STAMP := $(HOT_DIR)/physics.stamp
 HOT_APP_STAMP := $(HOT_DIR)/app.stamp
 HOT_SHADER_STAMP := $(HOT_DIR)/shader.stamp
+LIVE_CAPTURE_PATH ?= $(abspath $(BUILD_DIR)/captures/$(APP)-live.png)
+LIVE_CAPTURE_TIMEOUT ?= 30
+LIVE_CAPTURE_REQUEST_PATH := $(abspath $(BUILD_DIR)/live-capture.request)
 ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/null)
 HOT_ODIN_SOURCES := $(shell find src packages "$(ZELDA_ENGINE_PACKAGES)" -type f -name '*.odin' 2>/dev/null)
 HOT_SHADER_OUTPUTS := \
@@ -117,7 +122,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/foliage.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor textshape-build physics-deps physics-build shaders build release validation validation-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor textshape-build physics-deps physics-build shaders build release validation validation-build lldb profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
 
 all: build
 
@@ -509,7 +514,7 @@ hot-shaders: $(HOT_SHADER_STAMP)
 hot-build: doctor $(HOT_PHYSICS_STAMP) hot-app hot-shaders hot-host
 
 hot: hot-build
-	$(PYTHON) tools/hot_watch.py --root "$(CURDIR)" --engine-root "$(ZELDA_ENGINE_ROOT)" --host "$(abspath $(HOT_HOST))" --make "$(MAKE)"
+	ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" $(PYTHON) tools/hot_watch.py --root "$(CURDIR)" --engine-root "$(ZELDA_ENGINE_ROOT)" --host "$(abspath $(HOT_HOST))" --make "$(MAKE)"
 
 # Zelda Engine's UI package imports this native archive directly. Build it
 # before every Adriatic link instead of relying on a sibling checkout having
@@ -621,13 +626,25 @@ $(VALIDATION_APP): physics-build $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(VAL
 validation-build: doctor $(VALIDATION_APP)
 
 validation: validation-build
-	$(VALIDATION_PROFILE_RUNTIME_ENV) "$(VALIDATION_APP)"
+	$(VALIDATION_PROFILE_RUNTIME_ENV) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(VALIDATION_APP)"
+
+$(VALIDATION_RUNTIME_STAMP): shaders $(VALIDATION_ASSET_SOURCES)
+	@mkdir -p "$(VALIDATION_DIR)/assets" "$(VALIDATION_DIR)/shaders"
+	cp -R assets/. "$(VALIDATION_DIR)/assets/"
+	cp -R build/generated/shaders/. "$(VALIDATION_DIR)/shaders/"
+	touch $@
+
+lldb: validation-build $(VALIDATION_RUNTIME_STAMP)
+	$(VALIDATION_PROFILE_RUNTIME_ENV) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" lldb -- "$(VALIDATION_APP)"
 
 run: build
-	$(DEV_APP)
+	ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" $(DEV_APP)
 
 benchmark: release
 	$(PYTHON) tools/perf.py run --scenario all --output "$(abspath $(BUILD_DIR)/perf/latest.json)"
+
+capture-live:
+	$(PYTHON) tools/live_capture.py --path "$(LIVE_CAPTURE_PATH)" --request "$(LIVE_CAPTURE_REQUEST_PATH)" --timeout "$(LIVE_CAPTURE_TIMEOUT)"
 
 fmt:
 	@command -v $(ODINFMT) >/dev/null || { echo "odinfmt is required" >&2; exit 1; }

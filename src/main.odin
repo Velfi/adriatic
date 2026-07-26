@@ -6465,6 +6465,7 @@ adriatic_run :: proc(
         rl.BeginDrawing()
         draw_terrain(editor, width, height, f32(rl.GetTime()))
         pause_menu_draw(editor, width, height)
+        live_capture_poll()
         rl.EndDrawing()
         if interpolate_aircraft {
             render_aircraft_body^ = saved_aircraft_body
