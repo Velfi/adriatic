@@ -17,7 +17,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       VCPKG_REF: a0400024711b283056538ac19ced80b91a83c24c
-      VCPKG_ROOT: ${{ github.workspace }}\.vcpkg
+      ADRIATIC_VCPKG_ROOT: ${{ github.workspace }}\.vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
       VCPKG_BINARY_CACHE: ${{ github.workspace }}\.cache\vcpkg\archives
       VCPKG_DOWNLOADS: ${{ github.workspace }}\.cache\vcpkg\downloads
@@ -53,7 +53,7 @@ jobs:
 
       - name: Bootstrap pinned vcpkg
         shell: pwsh
-        run: '& "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
+        run: '& "$env:ADRIATIC_VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
 
       - name: Cache pinned tools
         id: tools-cache
@@ -103,7 +103,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:VCPKG_BINARY_CACHE | Out-Null
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
           $env:VCPKG_BINARY_SOURCES = "clear;files,$env:VCPKG_BINARY_CACHE,readwrite"
-          & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet $env:VCPKG_DEFAULT_TRIPLET --x-install-root "$env:VCPKG_ROOT\installed"
+          & "$env:ADRIATIC_VCPKG_ROOT\vcpkg.exe" install --triplet $env:VCPKG_DEFAULT_TRIPLET --x-install-root "$env:ADRIATIC_VCPKG_ROOT\installed"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }
 
       - name: Save vcpkg caches
@@ -117,7 +117,7 @@ jobs:
 
       - name: Package Windows app
         shell: pwsh
-        run: ./scripts/package_windows.ps1 -Version ($env:RELEASE_TAG -replace '^v', '')
+        run: ./scripts/package_windows.ps1 -Version ($env:RELEASE_TAG -replace '^v', '') -VcpkgRoot $env:ADRIATIC_VCPKG_ROOT
 
       - name: Name artifact
         id: artifact

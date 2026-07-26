@@ -44,6 +44,8 @@ VALIDATION_PROFILE_RUNTIME_ENV := env \
 ZELDA_ENGINE_ROOT ?= ../zelda-engine
 ZELDA_ENGINE_PACKAGES := $(abspath $(ZELDA_ENGINE_ROOT))/packages
 ZELDA_ENGINE_COLLECTION := -collection:zelda_engine=$(ZELDA_ENGINE_PACKAGES)
+TEXTSHAPE_DIR := $(abspath $(ZELDA_ENGINE_ROOT))/third_party/textshape
+TEXTSHAPE_LIB := $(TEXTSHAPE_DIR)/libtextshape.a
 
 LOCAL_ODIN := $(TOOLS_DIR)/odin/$(ODIN_FORK_VERSION)/odin
 LOCAL_SLANGC := $(TOOLS_DIR)/slang/$(SLANG_VERSION)/slangc

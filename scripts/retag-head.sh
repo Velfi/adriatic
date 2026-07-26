@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# Move a release tag to the current HEAD and force-push only that tag to origin.
+# Fetch a release tag, move it to the current HEAD, and force-push only that
+# tag to origin without prompting.
 #
 # Usage:
 #   scripts/retag-head.sh <version>
 #
-# This is intentionally explicit because rewriting a published tag replaces
-# the commit used by the release workflow.
+# The version remains explicit because rewriting a published tag replaces the
+# commit used by the release workflow.
 
 set -euo pipefail
 
@@ -32,21 +33,12 @@ if [[ -n "$(git status --porcelain)" ]]; then
 	exit 1
 fi
 
-if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null &&
-	! git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+	git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+elif ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
 	echo "error: tag ${TAG} does not exist locally or on origin" >&2
 	exit 1
 fi
-
-echo "This will move ${TAG} to HEAD ($(git rev-parse --short HEAD)) and force-push it."
-read -r -p "Continue? [y/N] " reply
-case "$reply" in
-	[yY]|[yY][eE][sS]) ;;
-	*)
-		echo "Cancelled."
-		exit 0
-		;;
-esac
 
 git tag -f -a "${TAG}" -m "Adriatic ${TAG}"
 echo "Tagged ${TAG} at $(git rev-parse --short HEAD)"

@@ -25,7 +25,8 @@ scripts/retag-head.sh 0.1.0
 ```
 
 This rewrites and force-pushes the named tag, so use it only when replacing a
-mistaken release tag is intentional.
+mistaken release tag is intentional. The helper fetches the named tag from
+`origin`, moves it to `HEAD`, and force-pushes it without prompting.
 
 Both builders check out Zelda Engine separately. By default they use
 `Velfi/zelda-engine` at `main`. Set these repository variables to override it:
