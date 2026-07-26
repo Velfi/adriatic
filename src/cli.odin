@@ -128,7 +128,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         output_path = output,
         target      = target,
     }
-    _ = adriatic_run(request = &request)
+    _ = adriatic_run(nil, request = &request)
     info, screenshot_error := os.stat(output, context.temp_allocator)
     if screenshot_error != nil || info.size == 0 {
         fmt.eprintf("adriatic: capture did not write a non-empty image to %s\n", output)

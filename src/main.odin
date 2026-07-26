@@ -8,6 +8,7 @@ import engine_sound "../packages/engine_sound"
 import flight "../packages/flight"
 import game_input "../packages/game_input"
 import hot_abi "../packages/hot_abi"
+import hs "../packages/hs"
 import libellula_game "../packages/libellula"
 import mouse_tail "../packages/mouse_tail"
 import ocean_audio "../packages/ocean_audio"
@@ -22,6 +23,7 @@ import wind_audio "../packages/wind_audio"
 import "core:c"
 import "core:fmt"
 import "core:math"
+import "core:mem"
 import "core:os"
 import "core:strconv"
 import "core:time"
@@ -4844,14 +4846,118 @@ hot_reload_requested :: proc(library_path: string, loaded_mtime: i64) -> bool {
     return modified_mtime > loaded_mtime
 }
 
-adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) -> bool {
+Hot_State_File_Header :: struct {
+    magic:        [8]u8,
+    version:      u32,
+    type_hash:    u64,
+    payload_size: u64,
+}
+
+HOT_STATE_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'H', 'S', 'T', '1', 0}
+HOT_STATE_FILE_VERSION :: u32(1)
+
+Hot_State_Load_Result :: enum {
+    Missing,
+    Loaded,
+    Invalid,
+}
+
+hot_state_header_valid :: proc(header: ^Hot_State_File_Header, payload_size: int) -> bool {
+    if header == nil || payload_size < 0 do return false
+    magic := HOT_STATE_FILE_MAGIC
+    for i in 0 ..< len(HOT_STATE_FILE_MAGIC) {
+        if header.magic[i] != magic[i] do return false
+    }
+    return header.version == HOT_STATE_FILE_VERSION && header.payload_size == u64(payload_size)
+}
+
+hot_state_save :: proc(editor: ^Editor, path: string) -> bool {
+    if editor == nil || path == "" do return false
+
+    saved_mesh := editor.libellula_visual_mesh
+    saved_faces := editor.libellula_projected_faces
+    saved_dialogue := editor.attendant_dialogue
+    saved_dialogue_open := editor.attendant_dialogue_open
+    defer {
+        editor.libellula_visual_mesh = saved_mesh
+        editor.libellula_projected_faces = saved_faces
+        editor.attendant_dialogue = saved_dialogue
+        editor.attendant_dialogue_open = saved_dialogue_open
+    }
+
+    // These values belong to the loaded dylib or the GPU. Never preserve their
+    // pointers across an unload. Canvas textures live in the host-owned canvas
+    // state and are intentionally serialized with the editor.
+    editor.libellula_visual_mesh = {}
+    editor.libellula_projected_faces = {}
+    editor.attendant_dialogue = {}
+    editor.attendant_dialogue_open = false
+
+    payload := hs.serialize(editor, {.Dynamics}, context.allocator)
+    defer delete(payload)
+    if len(payload) == 0 do return false
+
+    header := Hot_State_File_Header {
+        magic        = HOT_STATE_FILE_MAGIC,
+        version      = HOT_STATE_FILE_VERSION,
+        type_hash    = hs.type_hash(Editor),
+        payload_size = u64(len(payload)),
+    }
+    output := make([dynamic]byte, 0, size_of(header) + len(payload), context.allocator)
+    append(&output, ..mem.ptr_to_bytes(&header))
+    append(&output, ..payload)
+    defer delete(output)
+    return os.write_entire_file(path, output[:]) == nil
+}
+
+hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
+    if editor == nil || path == "" do return .Missing
+
+    data, err := os.read_entire_file_from_path(path, context.temp_allocator)
+    if err == .Not_Exist do return .Missing
+    if err != nil || len(data) < size_of(Hot_State_File_Header) do return .Invalid
+
+    header := transmute(^Hot_State_File_Header)(&data[0])
+    payload := data[size_of(Hot_State_File_Header):]
+    if !hot_state_header_valid(header, len(payload)) do return .Invalid
+    if len(payload) == 0 do return .Invalid
+
+    // Existing allocations are runtime-owned. hs rebuilds dynamic data from
+    // the blob, so release these before it replaces their descriptors.
+    vehicles.libellula_mesh_destroy(&editor.libellula_visual_mesh)
+    delete(editor.libellula_projected_faces)
+    editor.attendant_dialogue = {}
+    editor.attendant_dialogue_open = false
+
+    identical := hs.deserialize(editor, payload, {.Dynamics}, context.allocator)
+    _ = identical // hs already used mem.copy for every identical subtree.
+
+    editor.libellula_visual_mesh = {}
+    vehicles.libellula_mesh_init(&editor.libellula_visual_mesh)
+    editor.libellula_projected_faces = make(
+        [dynamic]Projected_Aircraft_Face,
+        0,
+        vehicles.LIBELLULA_MESH_TRIANGLE_CAPACITY,
+    )
+    editor.attendant_dialogue = {}
+    editor.attendant_dialogue_open = false
+    editor.quit_requested = false
+    return .Loaded
+}
+
+adriatic_run :: proc(
+    persistent_canvas_state: rawptr,
+    args: []string = os.args,
+    request: ^Capture_Request = nil,
+) -> hot_abi.Run_Result {
+    rl.SetPersistentState(persistent_canvas_state)
     assert(rl.SetRendererDescriptor(ADRIATIC_RENDERER_DESCRIPTOR))
     benchmark_requested := len(args) >= 2 && args[1] == "--benchmark"
     if benchmark_requested && len(args) < 9 {
         fmt.eprintln(
             "usage: adriatic --benchmark <scenario> <warmup_frames> <sample_frames> <window_width> <window_height> <world_width> <world_height>",
         )
-        return false
+        return .Quit
     }
     benchmark_mode := benchmark_requested && len(args) >= 9
     benchmark_scenario := benchmark_mode ? args[2] : ""
@@ -4913,7 +5019,8 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
     if capture_kind == .Narrow do initial_width = 1000
     if capture_kind == .Compact do initial_width = 760
     rl.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring")
-    defer rl.CloseWindow()
+    reload_requested := false
+    defer if !reload_requested do rl.CloseWindow()
     wind_sound: wind_audio.Runtime
     wind_audio_ready := false
     if !capture_mode && !benchmark_mode {
@@ -5157,7 +5264,7 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
     if benchmark_mode {
         if !benchmark_seed_scene(editor, benchmark_scenario) {
             fmt.eprintf("unknown benchmark scenario: %s\n", benchmark_scenario)
-            return false
+            return .Quit
         }
         atmosphere.set_world_minutes(&editor.atmosphere, 9 * 60 + 30)
         atmosphere.set_weather_override(&editor.atmosphere, .Clear)
@@ -5165,9 +5272,12 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
         editor.atmosphere.paused = true
     }
     hot_library_path := ""
+    hot_state_path := ""
     hot_library_mtime: i64
+    state_loaded := false
     when HOT_RELOAD {
         hot_library_path = os.get_env(HOT_LIBRARY_ENV, context.temp_allocator)
+        hot_state_path = os.get_env("ADRIATIC_HOT_STATE", context.temp_allocator)
         if hot_library_path != "" {
             modified, err := os.modification_time_by_path(hot_library_path)
             if err == nil do hot_library_mtime = time.time_to_unix_nano(modified)
@@ -5396,7 +5506,7 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
         if target == "" do target = "postale"
         if target != "postale" && target != "libellula" && target != "libellula-mk2" && target != "car" {
             fmt.eprintf("vehicle showcase target must be postale, libellula, libellula-mk2, or car\n")
-            return false
+            return .Quit
         }
         editor.vehicle_showcase_scene = true
         editor.vehicle_showcase_target = target
@@ -5437,15 +5547,15 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
         editor.pilot.vehicle = nil
         if target == "postale" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
-            if !entered do return false
+            if !entered do return .Quit
             editor.camera_pose = third_person.camera_look_at({x = 10.5, y = 5.7, z = 10.5}, {y = .45})
         } else if target == "libellula" || target == "libellula-mk2" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.libellula.vehicle})
-            if !entered do return false
+            if !entered do return .Quit
             editor.camera_pose = third_person.camera_look_at({x = 6, y = 5.8, z = 10}, {y = 1.2})
         } else {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
-            if !entered do return false
+            if !entered do return .Quit
             // A true side elevation makes the wheelbase, overhangs, beltline,
             // and mouse-to-car scale directly comparable in capture reviews.
             editor.camera_pose = third_person.camera_look_at({x = 5.4, y = 2.0}, {y = .56})
@@ -5459,7 +5569,7 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
         if capture_paint_mode {
             if target == "car" {
                 fmt.eprintf("paint mode target must be postale, libellula, or libellula-mk2\n")
-                return false
+                return .Quit
             }
             vehicle_paint_open(editor)
             if os.get_env("ADRIATIC_CAPTURE_PAINT_PANEL", context.temp_allocator) == "hidden" {
@@ -5525,6 +5635,17 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
         }
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     }
+    when HOT_RELOAD {
+        switch hot_state_load(editor, hot_state_path) {
+        case .Invalid:
+            fmt.eprintln("adriatic hot reload state is irreparable; starting clean")
+            return .Restart
+        case .Loaded:
+            state_loaded = true
+        case .Missing:
+        }
+    }
+    if !state_loaded do control_hints_load(editor)
     benchmark_samples: [4096]f64
     benchmark_sample_count := 0
     frame := 0
@@ -6529,10 +6650,17 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.
         if capture_mode && frame >= 32 do break
-        if HOT_RELOAD && hot_reload_requested(hot_library_path, hot_library_mtime) do break
+        if HOT_RELOAD && hot_reload_requested(hot_library_path, hot_library_mtime) {
+            if !hot_state_save(editor, hot_state_path) {
+                fmt.eprintln("adriatic hot reload could not save state")
+                return .Quit
+            }
+            reload_requested = true
+            break
+        }
         frame += 1
     }
-    return HOT_RELOAD && hot_reload_requested(hot_library_path, hot_library_mtime)
+    return reload_requested ? .Reload : .Quit
 }
 
 @(export)
@@ -6541,8 +6669,23 @@ abi_version :: proc() -> u64 {
 }
 
 @(export)
-run :: proc() -> bool {
-    return adriatic_run()
+run :: proc(persistent_canvas_state: rawptr) -> hot_abi.Run_Result {
+    return adriatic_run(persistent_canvas_state)
+}
+
+@(export)
+canvas_state :: proc() -> rawptr {
+    return rl.PersistentState()
+}
+
+@(export)
+canvas_state_abi_version :: proc() -> u64 {
+    return rl.State_Abi_Version()
+}
+
+@(export)
+close_canvas :: proc() {
+    rl.CloseWindow()
 }
 
 when !HOT_RELOAD {
@@ -6552,6 +6695,6 @@ when !HOT_RELOAD {
             if !success do os.exit(1)
             return
         }
-        _ = adriatic_run()
+        _ = adriatic_run(nil)
     }
 }

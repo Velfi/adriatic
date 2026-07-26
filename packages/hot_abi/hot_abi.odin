@@ -4,9 +4,18 @@ import "core:hash"
 import "core:mem"
 import "core:reflect"
 
+Run_Result :: enum {
+    Quit,
+    Reload,
+    Restart,
+}
+
 Contract :: struct {
-    run:         proc() -> bool,
+    run:         proc(rawptr) -> Run_Result,
     abi_version: proc() -> u64,
+    canvas_state: proc() -> rawptr,
+    canvas_state_abi_version: proc() -> u64,
+    close_canvas: proc(),
 }
 
 ABI_Hash_State :: struct {
@@ -59,7 +68,7 @@ hash_type :: proc(state: ^ABI_Hash_State, info: ^reflect.Type_Info) {
     }
 }
 
-type_hash :: proc(T: typeid) -> u64 {
+type_hash :: proc($T: typeid) -> u64 {
     state := ABI_Hash_State {
         value = ABI_HASH_SEED,
     }
