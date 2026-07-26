@@ -73,10 +73,7 @@ try_exit :: proc(character: ^Character, exit_position_clear: bool) -> (exited: b
     vehicle := character.vehicle
     distance := vehicle.exit_distance
     if distance <= 0 do distance = 1.8
-    left := third_person.Vec3 {
-        x = -math.cos(vehicle.yaw_radians),
-        z = math.sin(vehicle.yaw_radians),
-    }
+    left := third_person.Vec3 {-math.cos(vehicle.yaw_radians), 0, math.sin(vehicle.yaw_radians)}
     character.position = add(vehicle.position, scale(left, distance))
     character.facing_yaw_radians = vehicle.yaw_radians
     character.vehicle = nil

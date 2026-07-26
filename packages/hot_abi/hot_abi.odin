@@ -35,11 +35,11 @@ hash_type :: proc(state: ^ABI_Hash_State, info: ^reflect.Type_Info) {
         return
     }
 
-    info := reflect.type_info_base(info)
-    hash_value(state, u64(info.size))
-    hash_value(state, u64(info.align))
+    type_info := reflect.type_info_base(info)
+    hash_value(state, u64(type_info.size))
+    hash_value(state, u64(type_info.align))
 
-    #partial switch v in info.variant {
+    #partial switch v in type_info.variant {
     case reflect.Type_Info_Named:
         hash_type(state, v.base)
     case reflect.Type_Info_Integer:

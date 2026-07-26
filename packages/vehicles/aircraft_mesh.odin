@@ -169,7 +169,8 @@ mesh_generate_smooth_normals :: proc(mesh: ^$Mesh) {
     }
 }
 
-aircraft_mesh_part_uses_smooth_normals :: proc(part: Aircraft_Mesh_Part) -> bool {
+@(no_instrumentation)
+aircraft_mesh_part_uses_smooth_normals :: #force_inline proc(part: Aircraft_Mesh_Part) -> bool {
     #partial switch part {
     case .Body,
          .Wing,
@@ -215,7 +216,8 @@ mesh_quad :: proc(mesh: ^$Mesh, a, b, c, d: [3]f32, part: Aircraft_Mesh_Part) {
     mesh_triangle(mesh, a, d, c, part)
 }
 
-ring_point :: proc(ring: Mesh_Ring, side, sides: int) -> [3]f32 {
+@(no_instrumentation)
+ring_point :: #force_inline proc(ring: Mesh_Ring, side, sides: int) -> [3]f32 {
     angle := f32(side) * 2 * math.PI / f32(sides)
     return {math.cos(angle) * ring.width, ring.center_y + math.sin(angle) * ring.height, ring.z}
 }

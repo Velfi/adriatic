@@ -141,10 +141,10 @@ add_default_runways :: proc(project: ^Project) -> bool {
         runway_height := sample_height(project, 0, center, center)
         from := roads.add_node(
             &project.road_graph,
-            {x = center - runway_half_length, y = runway_height, z = center},
+            {center - runway_half_length, runway_height, center},
             0,
         )
-        to := roads.add_node(&project.road_graph, {x = center + runway_half_length, y = runway_height, z = center}, 0)
+        to := roads.add_node(&project.road_graph, {center + runway_half_length, runway_height, center}, 0)
         if from < 0 ||
            to < 0 ||
            roads.add_straight_edge(&project.road_graph, from, to, runway_width, 2, .Asphalt) < 0 {
@@ -379,7 +379,8 @@ new_project :: proc() -> ^Project {
     return result
 }
 
-sample_index :: proc(x, z: int) -> int { return z * RING_RESOLUTION + x }
+@(no_instrumentation)
+sample_index :: #force_inline proc(x, z: int) -> int { return z * RING_RESOLUTION + x }
 
 default_height :: proc(world_x, world_z, half_extent: f32) -> f32 {
     radius := half_extent * DEFAULT_ISLAND_RADIUS
@@ -398,7 +399,8 @@ default_height :: proc(world_x, world_z, half_extent: f32) -> f32 {
     return 0
 }
 
-level_contains :: proc(data: ^Clipmap_Level, x, z: f32) -> bool {
+@(no_instrumentation)
+level_contains :: #force_inline proc(data: ^Clipmap_Level, x, z: f32) -> bool {
     if data == nil do return false
     extent := f32(RING_RESOLUTION - 1) * data.cell_size
     return x >= data.origin_x && x <= data.origin_x + extent && z >= data.origin_z && z <= data.origin_z + extent
@@ -408,7 +410,8 @@ level_contains_bounds :: proc(data: ^Clipmap_Level, min_x, min_z, max_x, max_z: 
     return level_contains(data, min_x, min_z) && level_contains(data, max_x, max_z)
 }
 
-sample_level_height :: proc(data: ^Clipmap_Level, x, z: f32) -> f32 {
+@(no_instrumentation)
+sample_level_height :: #force_inline proc(data: ^Clipmap_Level, x, z: f32) -> f32 {
     if data == nil || !level_contains(data, x, z) do return 0
     grid_x := (x - data.origin_x) / data.cell_size
     grid_z := (z - data.origin_z) / data.cell_size
@@ -432,7 +435,8 @@ sample_level_material :: proc(data: ^Clipmap_Level, x, z: f32) -> f32 {
 
 // Sampling starts at the requested level and falls back outward through the
 // coarser nested grids when a coordinate is outside a fine level.
-sample_height :: proc(project: ^Project, level: int, x, z: f32) -> f32 {
+@(no_instrumentation)
+sample_height :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> f32 {
     if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return 0
     for candidate in level ..< CLIPMAP_LEVELS {
         data := &project.levels[candidate]

@@ -30,7 +30,7 @@ libellula_mk2_mesh_build :: proc(mesh: ^Libellula_Mesh) {
         libellula_add_beam(mesh, hubs[index], hubs[next], .14, .Lift_Frame)
         libellula_add_beam(mesh, hubs[index], {hubs[index][0], .72, hubs[index][2]}, .085, .Lift_Frame)
         libellula_add_cylinder(mesh, hubs[index], {0, 1, 0}, .34, .34, .16, 10, .Lift_Frame)
-        libellula_add_torus(mesh, lib_vadd(hubs[index], {0, .10, 0}), {0, 1, 0}, .20, .29, 12, 5, .Brass)
+        libellula_add_torus(mesh, (hubs[index] + {0, .10, 0}), {0, 1, 0}, .20, .29, 12, 5, .Brass)
     }
     libellula_add_beam(mesh, {0, 1.12, -1.85}, {0, 1.12, 2.72}, .12, .Lift_Frame)
     libellula_add_beam(mesh, {-4.15, 1.12, .42}, {4.15, 1.12, .42}, .10, .Lift_Frame)
@@ -76,7 +76,7 @@ libellula_mk2_mesh_build :: proc(mesh: ^Libellula_Mesh) {
     for root, index in roots {
         foot := feet[index]
         libellula_add_beam(mesh, root, foot, .10, .Wheel)
-        libellula_add_beam(mesh, lib_vadd(root, {0, 0, .28}), foot, .05, .Lift_Frame)
+        libellula_add_beam(mesh, (root + {0, 0, .28}), foot, .05, .Lift_Frame)
         add_box(mesh, foot, {.58, .13, .34}, .Wheel)
     }
 
@@ -84,8 +84,8 @@ libellula_mk2_mesh_build :: proc(mesh: ^Libellula_Mesh) {
     // swivel, and hook are all authored as Mk2-only geometry.
     winch := [3]f32{0, -1.24, .40}
     libellula_add_cylinder(mesh, winch, {1, 0, 0}, .34, .34, 1.25, 16, .Dark_Metal)
-    libellula_add_torus(mesh, lib_vadd(winch, {-.48, 0, 0}), {1, 0, 0}, .27, .39, 12, 5, .Brass)
-    libellula_add_torus(mesh, lib_vadd(winch, {.48, 0, 0}), {1, 0, 0}, .27, .39, 12, 5, .Brass)
+    libellula_add_torus(mesh, (winch + {-.48, 0, 0}), {1, 0, 0}, .27, .39, 12, 5, .Brass)
+    libellula_add_torus(mesh, (winch + {.48, 0, 0}), {1, 0, 0}, .27, .39, 12, 5, .Brass)
     libellula_add_cylinder(mesh, {0, -1.52, .40}, {0, 1, 0}, .07, .07, .48, 10, .Steel)
     libellula_add_beam(mesh, {0, -1.78, .40}, {0, -4.18, .40}, .028, .Strap)
     libellula_add_torus(mesh, {0, -4.22, .40}, {0, 1, 0}, .14, .21, 10, 5, .Brass)
@@ -104,25 +104,25 @@ animate_libellula_mk2_mesh :: proc(mesh: ^Libellula_Mesh, front_left, front_righ
     rotate_mesh_group_y(
         mesh,
         .Libellula_Left_Rotor,
-        lib_vadd(LIBELLULA_MK2_FRONT_LEFT_HUB, {0, .38, 0}),
+        (LIBELLULA_MK2_FRONT_LEFT_HUB + {0, .38, 0}),
         front_left * 2 * math.PI,
     )
     rotate_mesh_group_y(
         mesh,
         .Libellula_Right_Rotor,
-        lib_vadd(LIBELLULA_MK2_FRONT_RIGHT_HUB, {0, .38, 0}),
+        (LIBELLULA_MK2_FRONT_RIGHT_HUB + {0, .38, 0}),
         -front_right * 2 * math.PI,
     )
     rotate_mesh_group_y(
         mesh,
         .Libellula_Rear_Rotor,
-        lib_vadd(LIBELLULA_MK2_REAR_LEFT_HUB, {0, .38, 0}),
+        (LIBELLULA_MK2_REAR_LEFT_HUB + {0, .38, 0}),
         rear_left * 2 * math.PI,
     )
     rotate_mesh_group_y(
         mesh,
         .Libellula_Mk2_Rear_Rotor,
-        lib_vadd(LIBELLULA_MK2_REAR_RIGHT_HUB, {0, .38, 0}),
+        (LIBELLULA_MK2_REAR_RIGHT_HUB + {0, .38, 0}),
         -rear_right * 2 * math.PI,
     )
 }

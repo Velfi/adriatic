@@ -44,7 +44,8 @@ new :: proc(seed: u32) -> Atmosphere {
     return {seed = seed, world_minutes = 9.5 * 60, weather = weather_for(.Clear), override = .Automatic}
 }
 
-weather_for :: proc(preset: Weather_Preset) -> Weather_State {
+@(no_instrumentation)
+weather_for :: #force_inline proc(preset: Weather_Preset) -> Weather_State {
     switch preset {
     case .Windy:
         return {.56, .07, .17, .30, {8, -4}}
@@ -56,7 +57,8 @@ weather_for :: proc(preset: Weather_Preset) -> Weather_State {
     return {}
 }
 
-hash :: proc(value: u32) -> u32 {
+@(no_instrumentation)
+hash :: #force_inline proc(value: u32) -> u32 {
     x := value
     x = (x ~ (x >> 16)) * 0x7feb352d
     x = (x ~ (x >> 15)) * 0x846ca68b
@@ -127,7 +129,8 @@ sample :: proc(state: ^Atmosphere) -> Sky_State {
     }
 }
 
-preset_name :: proc(preset: Weather_Preset) -> string {
+@(no_instrumentation)
+preset_name :: #force_inline proc(preset: Weather_Preset) -> string {
     switch preset {
     case .Automatic:
         return "AUTO"

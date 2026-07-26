@@ -55,23 +55,13 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
         posted_weight * .010
     local_z := -.78 - spine_extension * .035 * run_weight + brake_pose * .035
     cosine, sine := math.cos(rotation), math.sin(rotation)
-    root = {
-        x = editor.player.position.x + local_x * cosine - local_z * sine,
-        y = editor.player.position.y + local_y + mouse_surface_height(editor, editor.player.position.x, editor.player.position.z) - terrain.sample_height(&editor.project, 0, editor.player.position.x, editor.player.position.z),
-        z = editor.player.position.z + local_x * sine + local_z * cosine,
-    }
+    root = {editor.player.position.x + local_x * cosine - local_z * sine, editor.player.position.y + local_y + mouse_surface_height(editor, editor.player.position.x, editor.player.position.z) - terrain.sample_height(&editor.project, 0, editor.player.position.x, editor.player.position.z), editor.player.position.z + local_x * sine + local_z * cosine}
     // Turning shifts the tail's preferred first segment to the outside of the
     // curve. The remaining Verlet chain still lags and collides freely, so this
     // is a weight-shift bias rather than a canned tail pose.
-    model_right := third_person.Vec3 {
-        x = cosine,
-        z = sine,
-    }
+    model_right := third_person.Vec3 {cosine, 0, sine}
     counterbalance := turn_pose * editor.tweak.player_animation.tail_counterbalance
-    backward = {
-        x = sine - model_right.x * counterbalance,
-        z = -cosine - model_right.z * counterbalance,
-    }
+    backward = {sine - model_right.x * counterbalance, 0, -cosine - model_right.z * counterbalance}
     return
 }
 

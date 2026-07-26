@@ -170,11 +170,13 @@ imgui_begin_frame :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
     return true
 }
 
-imgui_captures_mouse :: proc() -> bool {
+@(no_instrumentation)
+imgui_captures_mouse :: #force_inline proc() -> bool {
     return imgui.initialized && imgui.io != nil && imgui.io.WantCaptureMouse
 }
 
-imgui_captures_keyboard :: proc() -> bool {
+@(no_instrumentation)
+imgui_captures_keyboard :: #force_inline proc() -> bool {
     return imgui.initialized && imgui.io != nil && imgui.io.WantCaptureKeyboard
 }
 

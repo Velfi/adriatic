@@ -3,6 +3,7 @@ package main
 import dither "../packages/dither"
 import third_person "../packages/third_person"
 import "core:math"
+import "core:math/linalg"
 import "core:mem"
 import rl "zelda_engine:canvas2d"
 import render2d "zelda_engine:render2d"
@@ -39,15 +40,15 @@ dither_apply :: proc(editor: ^Editor) {
 }
 
 dither_camera_angles :: proc(pose: third_person.Camera_Pose) -> (yaw, pitch: f32) {
-    forward := vec_normalize(vec_sub(pose.target, pose.position))
+    forward := linalg.normalize0((pose.target - pose.position))
     yaw = math.atan2(-forward.x, -forward.z)
     pitch = math.asin(clamp(forward.y, f32(-1), f32(1)))
     return
 }
 
 dither_position_cut :: proc(a, b: third_person.Vec3) -> bool {
-    delta := vec_sub(a, b)
-    return vec_dot(delta, delta) > 400
+    delta := (a - b)
+    return linalg.dot(delta, delta) > 400
 }
 
 dither_update_tracking :: proc(

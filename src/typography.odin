@@ -17,7 +17,8 @@ Ui_Typography_Role :: enum {
 
 UI_TYPOGRAPHY_MIN_SIZE :: f32(16)
 
-ui_typography_size :: proc(role: Ui_Typography_Role) -> f32 {
+@(no_instrumentation)
+ui_typography_size :: #force_inline proc(role: Ui_Typography_Role) -> f32 {
     switch role {
     case .Display:
         return 24

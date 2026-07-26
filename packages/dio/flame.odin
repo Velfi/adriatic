@@ -86,6 +86,19 @@ Flame_Graph_Session_Record :: struct {
     slot_count: u32,
 }
 
+Flame_Graph_Session_Slot :: struct {
+    name_len:      u32,
+    file_path_len: u32,
+    color:         u32,
+    depth:         int,
+    line:          int,
+    start:         time.Tick,
+    end:           time.Tick,
+    active:        bool,
+}
+
+FLAME_SESSION_STRING_CAP :: u32(4096)
+
 Flame_Export_Summary :: struct {
     kind:               string,
     freq_hz:            u64,
@@ -519,6 +532,41 @@ flame_graph_session_ensure_open :: proc(graph: ^Flame_Graph) -> bool {
 }
 
 @(no_instrumentation)
+flame_graph_session_write_bytes :: proc(file: ^os.File, bytes: []byte) -> bool {
+    if file == nil do return false
+    if len(bytes) == 0 do return true
+    written, err := os.write(file, bytes)
+    return err == nil && written == len(bytes)
+}
+
+@(no_instrumentation)
+flame_graph_session_release_slots :: proc(slots: []Flame_Slot) {
+    for slot in slots {
+        delete(slot.name)
+        delete(slot.file_path)
+    }
+}
+
+@(no_instrumentation)
+flame_graph_session_read_string :: proc(file: ^os.File, length: u32) -> (string, bool) {
+    if file == nil || length > FLAME_SESSION_STRING_CAP do return "", false
+    bytes := make([]byte, int(length))
+    defer delete(bytes)
+    if !flame_graph_session_read_bytes(file, bytes) do return "", false
+    value, err := strings.clone(transmute(string)bytes)
+    if err != nil do return "", false
+    return value, true
+}
+
+@(no_instrumentation)
+flame_graph_session_read_bytes :: proc(file: ^os.File, bytes: []byte) -> bool {
+    if file == nil do return false
+    if len(bytes) == 0 do return true
+    read_count, err := os.read_full(file, bytes)
+    return err == nil && read_count == len(bytes)
+}
+
+@(no_instrumentation)
 flame_graph_session_record :: proc(graph: ^Flame_Graph, entry: ^Flame_Frame_History) {
     when !FLAME_AUTO_INSTRUMENT do return
     if graph == nil || entry == nil || len(entry.slots) == 0 do return
@@ -535,16 +583,33 @@ flame_graph_session_record :: proc(graph: ^Flame_Graph, entry: ^Flame_Frame_Hist
     }
     record_array := [1]Flame_Graph_Session_Record{record}
     record_bytes := slice.reinterpret([]byte, record_array[:])
-    slot_bytes := slice.reinterpret([]byte, entry.slots[:])
-    written, err := os.write(graph.session_file, record_bytes)
-    if err != nil || written != len(record_bytes) {
+    if !flame_graph_session_write_bytes(graph.session_file, record_bytes) {
         flame_graph_session_close(graph, true)
         return
     }
-    written, err = os.write(graph.session_file, slot_bytes)
-    if err != nil || written != len(slot_bytes) {
-        flame_graph_session_close(graph, true)
-        return
+    for slot in entry.slots {
+        if len(slot.name) > int(FLAME_SESSION_STRING_CAP) || len(slot.file_path) > int(FLAME_SESSION_STRING_CAP) {
+            flame_graph_session_close(graph, true)
+            return
+        }
+        session_slot := Flame_Graph_Session_Slot {
+            name_len      = u32(len(slot.name)),
+            file_path_len = u32(len(slot.file_path)),
+            color         = slot.color,
+            depth         = slot.depth,
+            line          = slot.line,
+            start         = slot.start,
+            end           = slot.end,
+            active        = slot.active,
+        }
+        session_slot_array := [1]Flame_Graph_Session_Slot{session_slot}
+        session_slot_bytes := slice.reinterpret([]byte, session_slot_array[:])
+        if !flame_graph_session_write_bytes(graph.session_file, session_slot_bytes) ||
+           !flame_graph_session_write_bytes(graph.session_file, transmute([]byte)slot.name) ||
+           !flame_graph_session_write_bytes(graph.session_file, transmute([]byte)slot.file_path) {
+            flame_graph_session_close(graph, true)
+            return
+        }
     }
     graph.session_frame_count += 1
 }
@@ -1218,12 +1283,31 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
             return false
         }
         resize(&slots, int(record.slot_count))
-        if len(slots) > 0 {
-            slot_bytes := slice.reinterpret([]byte, slots[:])
-            read_count, read_err = os.read_full(session, slot_bytes)
-            if read_err != nil || read_count != len(slot_bytes) {
+        for index in 0 ..< len(slots) {
+            session_slot_array: [1]Flame_Graph_Session_Slot
+            session_slot_bytes := slice.reinterpret([]byte, session_slot_array[:])
+            if !flame_graph_session_read_bytes(session, session_slot_bytes) {
                 flame_graph_export_job_error(job, "flame session slots truncated")
                 return false
+            }
+            session_slot := session_slot_array[0]
+            name, name_ok := flame_graph_session_read_string(session, session_slot.name_len)
+            file_path, file_path_ok := flame_graph_session_read_string(session, session_slot.file_path_len)
+            if !name_ok || !file_path_ok {
+                delete(name)
+                delete(file_path)
+                flame_graph_export_job_error(job, "flame session string truncated")
+                return false
+            }
+            slots[index] = {
+                name      = name,
+                file_path = file_path,
+                color     = session_slot.color,
+                depth     = session_slot.depth,
+                line      = session_slot.line,
+                start     = session_slot.start,
+                end       = session_slot.end,
+                active    = session_slot.active,
             }
         }
 
@@ -1241,6 +1325,7 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
         strings.builder_reset(&builder)
         if !flame_graph_write_source_frame(&builder, &entry) ||
            !flame_graph_export_file_write(frames_file, strings.to_string(builder)) {
+            flame_graph_session_release_slots(slots[:])
             flame_graph_export_job_error(job, "failed to write flame frames export")
             return false
         }
@@ -1248,6 +1333,7 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
         strings.builder_reset(&builder)
         if !flame_graph_write_source_scopes(&builder, &entry) ||
            !flame_graph_export_file_write(scopes_file, strings.to_string(builder)) {
+            flame_graph_session_release_slots(slots[:])
             flame_graph_export_job_error(job, "failed to write flame scopes export")
             return false
         }
@@ -1255,9 +1341,11 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
         strings.builder_reset(&builder)
         flame_graph_write_folded_slots(&builder, slots[:])
         if !flame_graph_export_file_write(folded_file, strings.to_string(builder)) {
+            flame_graph_session_release_slots(slots[:])
             flame_graph_export_job_error(job, "failed to write flame folded export")
             return false
         }
+        flame_graph_session_release_slots(slots[:])
         sync.atomic_add_explicit(&job.progress_done, 1, .Acq_Rel)
     }
 
@@ -1595,15 +1683,15 @@ flame_graph_widget :: proc(
                 if im.Button("Export selection") do _ = flame_graph_write_source_selection_exports(graph)
                 im.SameLine()
                 if im.Button("Export selection folded") {
-                    summary := flame_graph_selected_range_summary(graph)
-                    if summary.valid {
-                        first_order := flame_graph_history_order_for_frame(graph, summary.first_frame)
-                        last_order := flame_graph_history_order_for_frame(graph, summary.last_frame)
+                    selection := flame_graph_selected_range_summary(graph)
+                    if selection.valid {
+                        first_order := flame_graph_history_order_for_frame(graph, selection.first_frame)
+                        last_order := flame_graph_history_order_for_frame(graph, selection.last_frame)
                         base := fmt.aprintf(
                             "%s_selection_%d_%d.graph",
                             flame_graph_source_stem(FLAME_GRAPH_DUMP_PATH),
-                            summary.first_frame,
-                            summary.last_frame,
+                            selection.first_frame,
+                            selection.last_frame,
                         )
                         _ = flame_graph_write_source_selection_folded(graph, base, first_order, last_order)
                         delete(base)

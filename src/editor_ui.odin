@@ -46,7 +46,8 @@ Editor_UI_Layout :: struct {
     inspector_visible: bool,
 }
 
-authoring_tool_name :: proc(tool: Authoring_Tool) -> cstring {
+@(no_instrumentation)
+authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
     switch tool {
     case .Sculpt:
         return "SCULPT"
@@ -74,7 +75,8 @@ authoring_tool_name :: proc(tool: Authoring_Tool) -> cstring {
     return "TOOL"
 }
 
-authoring_tool_shortcut :: proc(tool: Authoring_Tool) -> cstring {
+@(no_instrumentation)
+authoring_tool_shortcut :: #force_inline proc(tool: Authoring_Tool) -> cstring {
     switch tool {
     case .Sculpt:
         return ""
@@ -188,15 +190,18 @@ editor_ui_layout :: proc(editor: ^Editor, width, height: i32) -> Editor_UI_Layou
     return result
 }
 
-editor_ui_tool_bounds :: proc(layout: Editor_UI_Layout, index: int) -> rl.Rectangle {
+@(no_instrumentation)
+editor_ui_tool_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> rl.Rectangle {
     return {layout.left.x + 10, layout.left.y + 50 + f32(index) * 39, layout.left.width - 20, 35}
 }
 
-editor_ui_focus_bounds :: proc(layout: Editor_UI_Layout) -> rl.Rectangle {
+@(no_instrumentation)
+editor_ui_focus_bounds :: #force_inline proc(layout: Editor_UI_Layout) -> rl.Rectangle {
     return {layout.left.x + 10, layout.left.y + layout.left.height - 88, layout.left.width - 20, 32}
 }
 
-editor_ui_spawn_bounds :: proc(layout: Editor_UI_Layout) -> rl.Rectangle {
+@(no_instrumentation)
+editor_ui_spawn_bounds :: #force_inline proc(layout: Editor_UI_Layout) -> rl.Rectangle {
     return {layout.left.x + 10, layout.left.y + layout.left.height - 46, layout.left.width - 20, 36}
 }
 
@@ -239,7 +244,8 @@ editor_ui_section_title :: proc(label: cstring, x, y, width: f32) {
     rl.DrawLineEx({x, y + 22}, {x + width, y + 22}, 1, {58, 65, 74, 255})
 }
 
-editor_ui_slider_bounds :: proc(layout: Editor_UI_Layout, row: int) -> rl.Rectangle {
+@(no_instrumentation)
+editor_ui_slider_bounds :: #force_inline proc(layout: Editor_UI_Layout, row: int) -> rl.Rectangle {
     return {layout.inspector.x + 14, layout.inspector.y + 82 + f32(row) * 48, layout.inspector.width - 28, 42}
 }
 
@@ -298,7 +304,8 @@ editor_ui_slider_input :: proc(
     return changed
 }
 
-editor_ui_small_action_bounds :: proc(layout: Editor_UI_Layout, index: int) -> rl.Rectangle {
+@(no_instrumentation)
+editor_ui_small_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> rl.Rectangle {
     gap := f32(6)
     width := (layout.inspector.width - 28 - gap) * .5
     return {

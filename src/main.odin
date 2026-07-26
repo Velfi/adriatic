@@ -3,8 +3,8 @@ package main
 import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import chase_camera "../packages/chase_camera"
-import dio "../packages/dio"
 import dialogue "../packages/dialogue"
+import dio "../packages/dio"
 import engine_sound "../packages/engine_sound"
 import flight "../packages/flight"
 import game_input "../packages/game_input"
@@ -24,6 +24,7 @@ import wind_audio "../packages/wind_audio"
 import "core:c"
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
 import "core:mem"
 import "core:os"
 import "core:strconv"
@@ -66,9 +67,8 @@ Curve_Point :: struct {
     x, z: f32,
 }
 
-Editor :: struct {
+Fixture :: struct {
     project:                                        terrain.Project,
-    flame_graph:                                    dio.Flame_Graph,
     authoring_tool:                                 Authoring_Tool,
     editor_ui:                                      Editor_UI_State,
     tool:                                           terrain.Tool,
@@ -76,46 +76,44 @@ Editor :: struct {
     strength:                                       f32,
     hardness:                                       f32,
     structure_selected:                             int,
-    structure_placing:                              bool,
-    structure_moving:                               bool,
-    structure_anchor_x:                             f32,
-    structure_anchor_z:                             f32,
-    structure_preview_end_x:                        f32,
-    structure_preview_end_z:                        f32,
-    structure_grab_offset_x:                        f32,
-    structure_grab_offset_z:                        f32,
-    structure_preview:                              terrain.Structure,
+    structure_placing:                              bool `fixture:"-"`,
+    structure_moving:                               bool `fixture:"-"`,
+    structure_anchor_x:                             f32 `fixture:"-"`,
+    structure_anchor_z:                             f32 `fixture:"-"`,
+    structure_preview_end_x:                        f32 `fixture:"-"`,
+    structure_preview_end_z:                        f32 `fixture:"-"`,
+    structure_grab_offset_x:                        f32 `fixture:"-"`,
+    structure_grab_offset_z:                        f32 `fixture:"-"`,
+    structure_preview:                              terrain.Structure `fixture:"-"`,
     structure_kind:                                 terrain.Formation_Kind,
     structure_auto_kind:                            bool,
     structure_force_box:                            bool,
     structure_cliff_mode:                           bool,
     structure_scatter_mode:                         bool,
     structure_scatter_count:                        int,
-    formation_brush_painting:                       bool,
-    formation_brush_group_id:                       u64,
-    formation_brush_last_x, formation_brush_last_z: f32,
+    formation_brush_painting:                       bool `fixture:"-"`,
+    formation_brush_group_id:                       u64 `fixture:"-"`,
+    formation_brush_last_x, formation_brush_last_z: f32 `fixture:"-"`,
     formation_brush_radius:                         f32,
     formation_brush_strength:                       f32,
     formation_brush_hardness:                       f32,
     architecture_node_mode:                         bool,
     architecture_paint_mode:                        bool,
-    architecture_painting:                          bool,
-    architecture_density_preview:                   [terrain.CITY_DENSITY_SAMPLES]u8,
-    architecture_preview_plan:                      architecture.City_Plan,
+    architecture_painting:                          bool `fixture:"-"`,
+    architecture_density_preview:                   [terrain.CITY_DENSITY_SAMPLES]u8 `fixture:"-"`,
+    architecture_preview_plan:                      architecture.City_Plan `fixture:"-"`,
     architecture_city_plan:                         architecture.City_Plan,
-    architecture_dirty_bounds:                      architecture.City_Bounds,
-    architecture_last_x, architecture_last_z:       f32,
+    architecture_dirty_bounds:                      architecture.City_Bounds `fixture:"-"`,
+    architecture_last_x, architecture_last_z:       f32 `fixture:"-"`,
     architecture_brush_radius:                      f32,
     architecture_brush_strength:                    f32,
     architecture_brush_hardness:                    f32,
     climbing_leaf_paint_mode:                       bool,
-    climbing_leaf_painting:                         bool,
-    climbing_leaf_last_x, climbing_leaf_last_z:     f32,
+    climbing_leaf_painting:                         bool `fixture:"-"`,
+    climbing_leaf_last_x, climbing_leaf_last_z:     f32 `fixture:"-"`,
     climbing_leaf_brush_radius:                     f32,
     climbing_leaf_brush_strength:                   f32,
     climbing_leaf_brush_hardness:                   f32,
-    greek_assets:                                   [GREEK_ASSET_CAPACITY]Greek_Asset,
-    greek_asset_count:                              int,
     greek_asset_selected:                           int,
     greek_asset_rotation:                           f32,
     greek_asset_scale:                              f32,
@@ -125,15 +123,15 @@ Editor :: struct {
     greek_placement_mode:                           bool,
     curve_points:                                   [CURVE_POINT_CAPACITY]Curve_Point,
     curve_point_count:                              int,
-    curve_drawing:                                  bool,
+    curve_drawing:                                  bool `fixture:"-"`,
     curve_mode:                                     bool,
     curve_cliff_mode:                               bool,
     curve_width:                                    f32,
     curve_height:                                   f32,
     road_mode:                                      bool,
     road_selected_node:                             int,
-    road_drag_edge:                                 int,
-    road_drag_handle:                               int,
+    road_drag_edge:                                 int `fixture:"-"`,
+    road_drag_handle:                               int `fixture:"-"`,
     road_width:                                     f32,
     road_shoulder_width:                            f32,
     road_pavement:                                  roads.Pavement,
@@ -172,8 +170,8 @@ Editor :: struct {
     player_brake_pose:                              f32,
     player_posted_idle_seconds:                     f32,
     player_posted_weight:                           f32,
-    player_paw_plant_positions:                     [4]third_person.Vec3,
-    player_paw_planted:                             [4]bool,
+    player_paw_plant_positions:                     [4]third_person.Vec3 `fixture:"-"`,
+    player_paw_planted:                             [4]bool `fixture:"-"`,
     player_tail:                                    mouse_tail.State,
     camera:                                         third_person.Camera,
     camera_pose:                                    third_person.Camera_Pose,
@@ -181,41 +179,19 @@ Editor :: struct {
     flight_camera:                                  chase_camera.State,
     editor_camera:                                  third_person.Camera,
     editor_focus:                                   third_person.Vec3,
-    cursor_world_x, cursor_world_z:                 f32,
-    cursor_height, cursor_material:                 f32,
-    cursor_hit:                                     bool,
+    cursor_world_x, cursor_world_z:                 f32 `fixture:"-"`,
+    cursor_height, cursor_material:                 f32 `fixture:"-"`,
+    cursor_hit:                                     bool `fixture:"-"`,
     map_time:                                       f32,
-    last_frame_time:                                f64,
-    aircraft_fixed_accumulator:                     f64,
-    aircraft_previous_body:                         flight.Body_State,
-    aircraft_previous_body_valid:                   bool,
     pilot:                                          vehicles.Character,
     car:                                            vehicles.Vehicle,
     car_drive:                                      vehicles.Car_Drive_State,
-    car_physics_world:                              physics.World,
-    car_physics_vehicle:                            physics.Vehicle,
-    car_physics_terrain:                            [terrain.CLIPMAP_LEVELS]physics.Body_ID,
-    car_physics_terrain_revision:                   u64,
-    car_physics_accumulator:                        f64,
-    car_wheels:                                     [4]physics.Wheel_State,
-    car_impact_detector:                            engine_sound.Vehicle_Impact_Detector,
-    car_audio_damage:                               f32,
-    engine_audio:                                   engine_sound.Device,
-    car_audio_gearbox:                              engine_sound.Car_Gearbox,
-    landing_wheel_squeal:                           f32,
-    landing_wheel_speed:                            f32,
     car_trailer:                                    vehicles.Car_Trailer_State,
     car_trailer_attached:                           bool,
     car_trailer_position:                           third_person.Vec3,
     car_trailer_yaw:                                f32,
     postale:                                        postale_game.Runtime,
     libellula:                                      libellula_game.Runtime,
-    libellula_visual_mesh:                          vehicles.Libellula_Mesh,
-    libellula_mk2_visual_mesh:                      vehicles.Libellula_Mesh,
-    libellula_base_mesh:                            vehicles.Libellula_Mesh,
-    libellula_mk2_base_mesh:                        vehicles.Libellula_Mesh,
-    postale_base_mesh:                              vehicles.Aircraft_Mesh,
-    libellula_projected_faces:                      [dynamic]Projected_Aircraft_Face,
     aircraft:                                       vehicles.Aircraft_Fleet,
     postale_visible:                                bool,
     libellula_visible:                              bool,
@@ -225,7 +201,7 @@ Editor :: struct {
     vehicle_paint_yaw:                              f32,
     vehicle_paint_pitch:                            f32,
     vehicle_paint_distance:                         f32,
-    vehicle_paint_settings_initialized:             bool,
+    vehicle_paint_settings_initialized:             bool `fixture:"-"`,
     vehicle_paint_panel_visible:                    bool,
     vehicle_paint_color:                            int,
     vehicle_paint_secondary_color:                  int,
@@ -238,85 +214,75 @@ Editor :: struct {
     vehicle_paint_tool:                             Vehicle_Paint_Tool,
     vehicle_paint_component:                        int,
     vehicle_paint_component_mask:                   [5]bool,
-    vehicle_paint_texture_dirty:                    bool,
-    vehicle_paint_propeller_color_dirty:            bool,
-    vehicle_paint_propeller_color_valid:            bool,
-    vehicle_paint_propeller_color:                  rl.Color,
-    vehicle_paint_preview_texture_dirty:            bool,
-    vehicle_paint_save_pending:                     bool,
-    vehicle_paint_save_due_at:                      f32,
-    vehicle_paint_save_failed:                      bool,
-    vehicle_paint_clear_confirm_until:              f32,
-    vehicle_paint_sound_until:                      f32,
+    vehicle_paint_texture_dirty:                    bool `fixture:"-"`,
+    vehicle_paint_propeller_color_dirty:            bool `fixture:"-"`,
+    vehicle_paint_propeller_color_valid:            bool `fixture:"-"`,
+    vehicle_paint_propeller_color:                  rl.Color `fixture:"-"`,
+    vehicle_paint_preview_texture_dirty:            bool `fixture:"-"`,
+    vehicle_paint_save_pending:                     bool `fixture:"-"`,
+    vehicle_paint_save_due_at:                      f32 `fixture:"-"`,
+    vehicle_paint_save_failed:                      bool `fixture:"-"`,
+    vehicle_paint_clear_confirm_until:              f32 `fixture:"-"`,
+    vehicle_paint_sound_until:                      f32 `fixture:"-"`,
     vehicle_paint_saved_postale_position:           flight.Vec3,
     vehicle_paint_saved_libellula_position:         flight.Vec3,
-    vehicle_paint_postale_mesh:                     vehicles.Aircraft_Mesh,
-    vehicle_paint_cursor_x:                         f32,
-    vehicle_paint_cursor_y:                         f32,
-    vehicle_paint_orbit_drag_active:                bool,
+    vehicle_paint_postale_mesh:                     vehicles.Aircraft_Mesh `fixture:"-"`,
+    vehicle_paint_cursor_x:                         f32 `fixture:"-"`,
+    vehicle_paint_cursor_y:                         f32 `fixture:"-"`,
+    vehicle_paint_orbit_drag_active:                bool `fixture:"-"`,
     vehicle_paint_brush_radius:                     int,
     vehicle_paint_brush_hardness:                   f32,
     vehicle_paint_brush_strength:                   f32,
-    vehicle_paint_brush_slider_active:              int,
+    vehicle_paint_brush_slider_active:              int `fixture:"-"`,
     vehicle_paint_erase:                            bool,
     vehicle_paint_symmetry:                         bool,
-    vehicle_paint_stroke_active:                    bool,
-    vehicle_paint_stroke_uv_valid:                  bool,
-    vehicle_paint_stroke_uv:                        [2]f32,
-    vehicle_paint_stroke_part:                      vehicles.Aircraft_Mesh_Part,
-    vehicle_paint_stroke_mirror_valid:              bool,
-    vehicle_paint_stroke_mirror_uv:                 [2]f32,
-    vehicle_paint_stroke_mirror_part:               vehicles.Aircraft_Mesh_Part,
-    vehicle_paint_tool_drag_active:                 bool,
-    vehicle_paint_tool_drag_start_uv:               [2]f32,
-    vehicle_paint_tool_drag_start_screen:           rl.Vector2,
-    vehicle_paint_tool_drag_part:                   vehicles.Aircraft_Mesh_Part,
-    vehicle_paint_tool_drag_texels:                 [dynamic]int,
-    vehicle_paint_tool_drag_mirror_valid:           bool,
-    vehicle_paint_tool_drag_mirror_start_uv:        [2]f32,
-    vehicle_paint_tool_drag_mirror_part:            vehicles.Aircraft_Mesh_Part,
-    vehicle_paint_tool_drag_mirror_texels:          [dynamic]int,
-    vehicle_paint_hover_hit:                        bool,
-    vehicle_paint_hover_component:                  int,
-    vehicle_paint_hover_uv:                         [2]f32,
-    vehicle_paint_history_capturing:                bool,
-    vehicle_paint_open_pixels:                      []u8,
+    vehicle_paint_stroke_active:                    bool `fixture:"-"`,
+    vehicle_paint_stroke_uv_valid:                  bool `fixture:"-"`,
+    vehicle_paint_stroke_uv:                        [2]f32 `fixture:"-"`,
+    vehicle_paint_stroke_part:                      vehicles.Aircraft_Mesh_Part `fixture:"-"`,
+    vehicle_paint_stroke_mirror_valid:              bool `fixture:"-"`,
+    vehicle_paint_stroke_mirror_uv:                 [2]f32 `fixture:"-"`,
+    vehicle_paint_stroke_mirror_part:               vehicles.Aircraft_Mesh_Part `fixture:"-"`,
+    vehicle_paint_tool_drag_active:                 bool `fixture:"-"`,
+    vehicle_paint_tool_drag_start_uv:               [2]f32 `fixture:"-"`,
+    vehicle_paint_tool_drag_start_screen:           rl.Vector2 `fixture:"-"`,
+    vehicle_paint_tool_drag_part:                   vehicles.Aircraft_Mesh_Part `fixture:"-"`,
+    vehicle_paint_tool_drag_texels:                 [dynamic]int `fixture:"-"`,
+    vehicle_paint_tool_drag_mirror_valid:           bool `fixture:"-"`,
+    vehicle_paint_tool_drag_mirror_start_uv:        [2]f32 `fixture:"-"`,
+    vehicle_paint_tool_drag_mirror_part:            vehicles.Aircraft_Mesh_Part `fixture:"-"`,
+    vehicle_paint_tool_drag_mirror_texels:          [dynamic]int `fixture:"-"`,
+    vehicle_paint_hover_hit:                        bool `fixture:"-"`,
+    vehicle_paint_hover_component:                  int `fixture:"-"`,
+    vehicle_paint_hover_uv:                         [2]f32 `fixture:"-"`,
+    vehicle_paint_history_capturing:                bool `fixture:"-"`,
+    vehicle_paint_open_pixels:                      []u8 `fixture:"-"`,
     vehicle_paint_layers:                           [VEHICLE_PAINT_AIRCRAFT_COUNT][VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
-    vehicle_paint_preview_pixels:                   [VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
-    vehicle_paint_history_pixels:                   [VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
-    vehicle_paint_undo:                             [VEHICLE_PAINT_AIRCRAFT_COUNT][dynamic]Vehicle_Paint_History_Entry,
-    vehicle_paint_redo:                             [VEHICLE_PAINT_AIRCRAFT_COUNT][dynamic]Vehicle_Paint_History_Entry,
-    vehicle_paint_texel_part:                       [VEHICLE_PAINT_TEXTURE_WIDTH * VEHICLE_PAINT_TEXTURE_HEIGHT]u8,
+    vehicle_paint_preview_pixels:                   [VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8 `fixture:"-"`,
+    vehicle_paint_history_pixels:                   [VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8 `fixture:"-"`,
+    vehicle_paint_undo:                             [VEHICLE_PAINT_AIRCRAFT_COUNT][dynamic]Vehicle_Paint_History_Entry `fixture:"-"`,
+    vehicle_paint_redo:                             [VEHICLE_PAINT_AIRCRAFT_COUNT][dynamic]Vehicle_Paint_History_Entry `fixture:"-"`,
+    vehicle_paint_texel_part:                       [VEHICLE_PAINT_TEXTURE_WIDTH * VEHICLE_PAINT_TEXTURE_HEIGHT]u8 `fixture:"-"`,
     vehicle_paint_components:                       [5]bool,
     attendant_position:                             third_person.Vec3,
-    attendant_dialogue:                             dialogue.Conversation,
-    attendant_dialogue_open:                        bool,
-    attendant_dialogue_focus:                       int,
-    attendant_dialogue_action:                      Marta_Menu_Action,
-    attendant_dialogue_vehicle_target:              vehicles.Aircraft_Kind,
-    attendant_dialogue_vehicle_choices:             [8]vehicles.Aircraft_Kind,
-    attendant_dialogue_vehicle_choice_count:        int,
+    attendant_dialogue:                             dialogue.Conversation `fixture:"-"`,
+    attendant_dialogue_open:                        bool `fixture:"-"`,
+    attendant_dialogue_focus:                       int `fixture:"-"`,
+    attendant_dialogue_action:                      Marta_Menu_Action `fixture:"-"`,
+    attendant_dialogue_vehicle_target:              vehicles.Aircraft_Kind `fixture:"-"`,
+    attendant_dialogue_vehicle_choices:             [8]vehicles.Aircraft_Kind `fixture:"-"`,
+    attendant_dialogue_vehicle_choice_count:        int `fixture:"-"`,
     camera_target_lock:                             bool,
-    flight_control:                                 postale_game.Control,
+    flight_control:                                 postale_game.Control `fixture:"-"`,
     atmosphere:                                     atmosphere.Atmosphere,
     vehicle_effects:                                particle_systems.Vehicle_Effects,
     wing_trails:                                    particle_systems.Wing_Trails,
     petal_effects:                                  particle_systems.Petal_Effects,
     tweak:                                          Tweak_State,
-    tweak_status:                                   Tweak_Status,
-    tweak_panel_visible:                            bool,
-    pause_screen:                                   Pause_Screen,
-    gameplay_options:                               Gameplay_Options,
-    dither_state:                                   Dither_State,
-    runtime_input:                                  game_input.State,
-    control_hint_atlases:                           Control_Hint_Atlases,
-    vehicle_paint_tool_icons:                       rl.Texture,
-    controller_disconnect_notice:                   bool,
-    pause_focus:                                    int,
-    options_focus:                                  int,
-    options_scroll_y:                               f32,
-    options_scroll_dragging:                        bool,
-    options_scroll_drag_offset:                     f32,
+    tweak_status:                                   Tweak_Status `fixture:"-"`,
+    tweak_panel_visible:                            bool `fixture:"-"`,
+    pause_screen:                                   Pause_Screen `fixture:"-"`,
+    dither_state:                                   Dither_State `fixture:"-"`,
     mouse_fur:                                      Mouse_Fur,
     mouse_pattern:                                  Mouse_Fur_Pattern,
     mouse_headgear:                                 Mouse_Accessory,
@@ -324,8 +290,47 @@ Editor :: struct {
     mouse_scarf_color:                              rl.Color,
     mouse_scarf_rotation:                           f32,
     mouse_scarf_angular_velocity:                   f32,
-    customization_focus:                            int,
-    quit_requested:                                 bool,
+    customization_focus:                            int `fixture:"-"`,
+}
+
+Editor :: struct {
+    using fixture:                      Fixture,
+    flame_graph:                        dio.Flame_Graph,
+    last_frame_time:                    f64,
+    aircraft_fixed_accumulator:         f64,
+    aircraft_previous_body:             flight.Body_State,
+    aircraft_previous_body_valid:       bool,
+    greek_assets:                       [GREEK_ASSET_CAPACITY]Greek_Asset,
+    greek_asset_count:                  int,
+    car_physics_world:                  physics.World,
+    car_physics_vehicle:                physics.Vehicle,
+    car_physics_terrain:                [terrain.CLIPMAP_LEVELS]physics.Body_ID,
+    car_physics_terrain_revision:       u64,
+    car_physics_accumulator:            f64,
+    car_wheels:                         [4]physics.Wheel_State,
+    car_impact_detector:                engine_sound.Vehicle_Impact_Detector,
+    car_audio_damage:                   f32,
+    engine_audio:                       engine_sound.Device,
+    car_audio_gearbox:                  engine_sound.Car_Gearbox,
+    landing_wheel_squeal:               f32,
+    landing_wheel_speed:                f32,
+    libellula_visual_mesh:              vehicles.Libellula_Mesh,
+    libellula_mk2_visual_mesh:          vehicles.Libellula_Mesh,
+    libellula_base_mesh:                vehicles.Libellula_Mesh,
+    libellula_mk2_base_mesh:            vehicles.Libellula_Mesh,
+    postale_base_mesh:                  vehicles.Aircraft_Mesh,
+    libellula_projected_faces:          [dynamic]Projected_Aircraft_Face,
+    gameplay_options:                   Gameplay_Options,
+    runtime_input:                      game_input.State,
+    control_hint_atlases:               Control_Hint_Atlases,
+    vehicle_paint_tool_icons:           rl.Texture,
+    controller_disconnect_notice:       bool,
+    pause_focus:                        int,
+    options_focus:                      int,
+    options_scroll_y:                   f32,
+    options_scroll_dragging:            bool,
+    options_scroll_drag_offset:         f32,
+    quit_requested:                     bool,
 }
 
 Marta_Menu_Action :: enum {
@@ -1201,11 +1206,7 @@ seed_road_grip_benchmark :: proc(editor: ^Editor) {
     edge := editor.project.road_graph.edges[0]
     point := roads.edge_point(&editor.project.road_graph, edge, .08)
     tangent := roads.edge_tangent(&editor.project.road_graph, edge, .08)
-    editor.car.position = {
-        x = point.x,
-        y = point.y,
-        z = point.z,
-    }
+    editor.car.position = {point.x, point.y, point.z}
     editor.car.yaw_radians = math.atan2(tangent.z, tangent.x)
     car_physics_teleport(editor)
     editor.pilot.position = editor.car.position
@@ -1222,11 +1223,7 @@ seed_terrain_grip_benchmark :: proc(editor: ^Editor) {
     editor.project.road_graph = {}
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     center := half_extent * terrain.DEFAULT_ISLAND_OFFSET
-    editor.car.position = {
-        x = center + half_extent * terrain.DEFAULT_ISLAND_RADIUS,
-        y = 0,
-        z = center,
-    }
+    editor.car.position = {center + half_extent * terrain.DEFAULT_ISLAND_RADIUS, 0, center}
     editor.car.position.y = terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
     editor.car.yaw_radians = math.PI * .5
     car_physics_teleport(editor)
@@ -1501,11 +1498,7 @@ seed_road_grip_capture :: proc(editor: ^Editor) {
     edge := editor.project.road_graph.edges[dirt_edge]
     point := roads.edge_point(&editor.project.road_graph, edge, .18)
     tangent := roads.edge_tangent(&editor.project.road_graph, edge, .18)
-    editor.car.position = {
-        x = point.x,
-        y = point.y,
-        z = point.z,
-    }
+    editor.car.position = {point.x, point.y, point.z}
     editor.car.yaw_radians = math.atan2(tangent.z, tangent.x)
     dirt_grip := roads.pavement_grip(.Dirt)
     drive_surface := vehicles.Car_Drive_Surface {
@@ -1555,11 +1548,7 @@ seed_terrain_grip_capture :: proc(editor: ^Editor) {
     shore_x := center + half_extent * terrain.DEFAULT_ISLAND_RADIUS
     shore_z := center
     ground := terrain.sample_height(&editor.project, 0, shore_x, shore_z)
-    editor.car.position = {
-        x = shore_x,
-        y = ground,
-        z = shore_z,
-    }
+    editor.car.position = {shore_x, ground, shore_z}
     editor.car.yaw_radians = math.PI * .5
     sand_grip := terrain.ground_grip(.Sand)
     drive_surface := vehicles.Car_Drive_Surface {
@@ -1853,12 +1842,8 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
             editor.capture_world_only = true
             editor.architecture_node_mode = true
             editor.editor_camera.distance = 36
-            editor.editor_focus = {
-                x = tree_x,
-                y = tree_y + 20.0,
-                z = tree_z,
-            }
-            editor.camera_pose = third_person.camera_look_at({x = eye_x, y = eye_y, z = eye_z}, editor.editor_focus)
+            editor.editor_focus = {tree_x, tree_y + 20.0, tree_z}
+            editor.camera_pose = third_person.camera_look_at({eye_x, eye_y, eye_z}, editor.editor_focus)
             return true
         }
     }
@@ -1953,12 +1938,8 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     // The pose is explicit; keep the editor-orbit distance low only so its
     // near-clip heuristic does not cut away the street under this camera.
     editor.editor_camera.distance = min(camera_distance, f32(36))
-    editor.editor_focus = {
-        x = building.center_x,
-        y = target_y,
-        z = building.center_z,
-    }
-    editor.camera_pose = third_person.camera_look_at({x = eye_x, y = eye_y, z = eye_z}, editor.editor_focus)
+    editor.editor_focus = {building.center_x, target_y, building.center_z}
+    editor.camera_pose = third_person.camera_look_at({eye_x, eye_y, eye_z}, editor.editor_focus)
     return true
 }
 
@@ -2238,25 +2219,16 @@ Screen_Point :: struct {
     visible:  bool,
 }
 
-vec_sub :: proc(a, b: third_person.Vec3) -> third_person.Vec3 { return {a.x - b.x, a.y - b.y, a.z - b.z} }
-vec_dot :: proc(a, b: third_person.Vec3) -> f32 { return a.x * b.x + a.y * b.y + a.z * b.z }
-vec_cross :: proc(a, b: third_person.Vec3) -> third_person.Vec3 {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}
-}
-vec_normalize :: proc(v: third_person.Vec3) -> third_person.Vec3 {
-    length := f32(math.sqrt(f64(vec_dot(v, v))))
-    if length < .0001 do return {}
-    return {v.x / length, v.y / length, v.z / length}
-}
-
 player_ground_normal :: proc(editor: ^Editor, position: third_person.Vec3) -> third_person.Vec3 {
-    if editor == nil do return {y = 1}
+    if editor == nil do return third_person.Vec3{0, 1, 0}
     SAMPLE_DISTANCE :: f32(.35)
     height_left := terrain.sample_height(&editor.project, 0, position.x - SAMPLE_DISTANCE, position.z)
     height_right := terrain.sample_height(&editor.project, 0, position.x + SAMPLE_DISTANCE, position.z)
     height_back := terrain.sample_height(&editor.project, 0, position.x, position.z - SAMPLE_DISTANCE)
     height_front := terrain.sample_height(&editor.project, 0, position.x, position.z + SAMPLE_DISTANCE)
-    return vec_normalize({x = height_left - height_right, y = SAMPLE_DISTANCE * 2, z = height_back - height_front})
+    return linalg.normalize0(
+        third_person.Vec3{height_left - height_right, SAMPLE_DISTANCE * 2, height_back - height_front},
+    )
 }
 
 shape_flight_axis :: proc(value: f32) -> f32 {
@@ -2436,17 +2408,20 @@ stronger_axis :: proc(first, second: f32) -> f32 {
     return first
 }
 
-control_key_down :: proc() -> bool {
+@(no_instrumentation)
+control_key_down :: #force_inline proc() -> bool {
     keys := sdl.GetKeyboardState(nil)
     return keys[int(sdl.Scancode.LCTRL)] || keys[int(sdl.Scancode.RCTRL)]
 }
 
-shift_key_down :: proc() -> bool {
+@(no_instrumentation)
+shift_key_down :: #force_inline proc() -> bool {
     keys := sdl.GetKeyboardState(nil)
     return keys[int(sdl.Scancode.LSHIFT)] || keys[int(sdl.Scancode.RSHIFT)]
 }
 
-alt_key_down :: proc() -> bool {
+@(no_instrumentation)
+alt_key_down :: #force_inline proc() -> bool {
     keys := sdl.GetKeyboardState(nil)
     return keys[int(sdl.Scancode.LALT)] || keys[int(sdl.Scancode.RALT)]
 }
@@ -2469,7 +2444,7 @@ postale_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {
         terrain.sample_height(&editor.project, 0, x, z),
         editor.project.sea_level,
     )
-    return {x = x, y = ground + postale_game.GROUND_CLEARANCE, z = z}
+    return {x, ground + postale_game.GROUND_CLEARANCE, z}
 }
 
 flight_to_world :: proc(value: flight.Vec3) -> third_person.Vec3 {
@@ -2488,30 +2463,36 @@ POSTALE_WING_TRAIL_LOCAL_X :: f32(4.96)
 POSTALE_WING_TRAIL_LOCAL_Y :: f32(.08 + 4.96 * .045)
 POSTALE_WING_TRAIL_LOCAL_Z :: f32(-.39)
 
-postale_vertex_world :: proc(runtime: ^postale_game.Runtime, position: [3]f32, scale: f32) -> third_person.Vec3 {
+@(no_instrumentation)
+postale_vertex_world :: #force_inline proc(
+    runtime: ^postale_game.Runtime,
+    position: [3]f32,
+    scale: f32,
+) -> third_person.Vec3 {
     body := runtime.body
     return {
-        x = body.position.x +
+        body.position.x +
         body.basis.right.x * position[0] * scale +
         body.basis.up.x * position[1] * scale -
         body.basis.forward.x * position[2] * scale,
-        y = body.position.y +
+        body.position.y +
         body.basis.right.y * position[0] * scale +
         body.basis.up.y * position[1] * scale -
         body.basis.forward.y * position[2] * scale,
-        z = body.position.z +
+        body.position.z +
         body.basis.right.z * position[0] * scale +
         body.basis.up.z * position[1] * scale -
         body.basis.forward.z * position[2] * scale,
     }
 }
 
-postale_normal_world :: proc(runtime: ^postale_game.Runtime, normal: [3]f32) -> third_person.Vec3 {
+@(no_instrumentation)
+postale_normal_world :: #force_inline proc(runtime: ^postale_game.Runtime, normal: [3]f32) -> third_person.Vec3 {
     basis := runtime.body.basis
     return {
-        x = basis.right.x * normal[0] + basis.up.x * normal[1] - basis.forward.x * normal[2],
-        y = basis.right.y * normal[0] + basis.up.y * normal[1] - basis.forward.y * normal[2],
-        z = basis.right.z * normal[0] + basis.up.z * normal[1] - basis.forward.z * normal[2],
+        basis.right.x * normal[0] + basis.up.x * normal[1] - basis.forward.x * normal[2],
+        basis.right.y * normal[0] + basis.up.y * normal[1] - basis.forward.y * normal[2],
+        basis.right.z * normal[0] + basis.up.z * normal[1] - basis.forward.z * normal[2],
     }
 }
 
@@ -2557,7 +2538,8 @@ aircraft_render_body :: proc(editor: ^Editor) -> flight.Body_State {
     return result
 }
 
-active_aircraft_body :: proc(editor: ^Editor) -> ^flight.Body_State {
+@(no_instrumentation)
+active_aircraft_body :: #force_inline proc(editor: ^Editor) -> ^flight.Body_State {
     if editor != nil && editor.aircraft.active != .Postale do return &editor.libellula.body
     if editor == nil do return nil
     return &editor.postale.body
@@ -2593,16 +2575,8 @@ postale_flyby_shake :: proc(editor: ^Editor) -> f32 {
     for structure in editor.project.structures[:editor.project.structure_count] {
         longest := max(max(structure.width, structure.depth), structure.height)
         if longest < 18 do continue
-        center := flight.Vec3 {
-            x = structure.center_x,
-            y = structure.base_y + structure.height * .5,
-            z = structure.center_z,
-        }
-        extent := flight.Vec3 {
-            x = structure.width * .5,
-            y = structure.height * .5,
-            z = structure.depth * .5,
-        }
+        center := flight.Vec3{structure.center_x, structure.base_y + structure.height * .5, structure.center_z}
+        extent := flight.Vec3{structure.width * .5, structure.height * .5, structure.depth * .5}
         response_range := 10 + clamp(longest * .08, 2, 18)
         proximity := chase_camera.box_flyby_strength(position, center, extent, structure.rotation, response_range)
         size_strength := clamp((longest - 12) / 48, .25, 1)
@@ -2620,7 +2594,7 @@ libellula_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET + 12
     z := half_extent * terrain.DEFAULT_ISLAND_OFFSET + 8
-    return {x = x, y = terrain.sample_height(&editor.project, 0, x, z) + 2.1, z = z}
+    return {x, terrain.sample_height(&editor.project, 0, x, z) + 2.1, z}
 }
 
 attendant_spawn_position :: proc(editor: ^Editor, _: third_person.Vec3) -> third_person.Vec3 {
@@ -2629,21 +2603,26 @@ attendant_spawn_position :: proc(editor: ^Editor, _: third_person.Vec3) -> third
     // the arrival point. The attendant stands at its open service counter.
     x := runway.x + 5.5
     z := runway.z + 10.5
-    return {x = x, y = terrain.sample_height(&editor.project, 0, x, z), z = z}
+    return {x, terrain.sample_height(&editor.project, 0, x, z), z}
 }
 
-libellula_vertex_world :: proc(runtime: ^libellula_game.Runtime, position: [3]f32, scale: f32) -> third_person.Vec3 {
+@(no_instrumentation)
+libellula_vertex_world :: #force_inline proc(
+    runtime: ^libellula_game.Runtime,
+    position: [3]f32,
+    scale: f32,
+) -> third_person.Vec3 {
     body := runtime.body
     return {
-        x = body.position.x +
+        body.position.x +
         body.basis.right.x * position[0] * scale +
         body.basis.up.x * position[1] * scale -
         body.basis.forward.x * position[2] * scale,
-        y = body.position.y +
+        body.position.y +
         body.basis.right.y * position[0] * scale +
         body.basis.up.y * position[1] * scale -
         body.basis.forward.y * position[2] * scale,
-        z = body.position.z +
+        body.position.z +
         body.basis.right.z * position[0] * scale +
         body.basis.up.z * position[1] * scale -
         body.basis.forward.z * position[2] * scale,
@@ -2738,27 +2717,19 @@ marta_select_aircraft :: proc(editor: ^Editor, target: vehicles.Aircraft_Kind) {
     editor.libellula.vehicle.locked = target == .Postale
     line_ground := terrain.sample_height(&editor.project, 0, line_position.x, line_position.z)
     if target != .Postale {
-        editor.libellula.spawn_position = {
-            x = line_position.x,
-            y = line_position.y,
-            z = line_position.z,
-        }
+        editor.libellula.spawn_position = {line_position.x, line_position.y, line_position.z}
         libellula_game.reset(&editor.libellula, line_ground)
     } else {
-        editor.postale.spawn_position = {
-            x = line_position.x,
-            y = line_position.y,
-            z = line_position.z,
-        }
+        editor.postale.spawn_position = {line_position.x, line_position.y, line_position.z}
         postale_game.reset(
             &editor.postale,
             postale_game.drivable_surface_height(line_ground, editor.project.sea_level),
         )
     }
     editor.player.position = {
-        x = line_position.x,
-        y = terrain.sample_height(&editor.project, 0, line_position.x, line_position.z + 1.8),
-        z = line_position.z + 1.8,
+        line_position.x,
+        terrain.sample_height(&editor.project, 0, line_position.x, line_position.z + 1.8),
+        line_position.z + 1.8,
     }
     editor.pilot.position = editor.player.position
 }
@@ -2841,8 +2812,8 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
 
 libellula_attendant_near :: proc(editor: ^Editor) -> bool {
     if editor == nil || editor.pilot.mode != .On_Foot do return false
-    delta := vec_sub(editor.player.position, editor.attendant_position)
-    return vec_dot(delta, delta) <= 2.25 * 2.25
+    delta := (editor.player.position - editor.attendant_position)
+    return linalg.dot(delta, delta) <= 2.25 * 2.25
 }
 
 draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
@@ -2915,11 +2886,12 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
     for face in faces[:face_count] {
         rl.DrawQuadHatched(face.a, face.b, face.c, face.c, face.color, rl.HATCH_DISABLED)
     }
-    label := project_3d(camera, {
-            x = editor.libellula.body.position.x,
-            y = editor.libellula.body.position.y + 3.2,
-            z = editor.libellula.body.position.z,
-        }, width, height)
+    label := project_3d(
+        camera,
+        {editor.libellula.body.position.x, editor.libellula.body.position.y + 3.2, editor.libellula.body.position.z},
+        width,
+        height,
+    )
     if label.visible do rl.DrawTextEx(rl.Font{}, "LIBELLULA", {label.position.x - 35, label.position.y - 12}, 13, 1, {r = 255, g = 239, b = 192, a = 255})
 }
 
@@ -2990,7 +2962,8 @@ Projected_Aircraft_Face :: struct {
     color:   rl.Color,
 }
 
-aircraft_part_color :: proc(part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
+@(no_instrumentation)
+aircraft_part_color :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
     #partial switch part {
     case .Wing, .Tail, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron, .Elevator, .Rudder:
         return {r = 238, g = 207, b = 120, a = 255}
@@ -3037,14 +3010,16 @@ aircraft_part_color :: proc(part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
     }
 }
 
-aircraft_propeller_blur_amount :: proc(throttle: f32) -> f32 {
+@(no_instrumentation)
+aircraft_propeller_blur_amount :: #force_inline proc(throttle: f32) -> f32 {
     // Match the reference's blade-to-disk handoff: the disk only appears
     // once the propeller is moving quickly enough to read as a volume.
     normalized_rpm := clamp((1.5 + clamp(throttle, 0, 1) * 18) / 19.5, 0, 1)
     return clamp((normalized_rpm - .42) / .36, 0, 1)
 }
 
-aircraft_postale_part_color :: proc(part: vehicles.Aircraft_Mesh_Part, throttle: f32) -> rl.Color {
+@(no_instrumentation)
+aircraft_postale_part_color :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part, throttle: f32) -> rl.Color {
     color: rl.Color
     #partial switch part {
     case .Body:
@@ -3122,7 +3097,8 @@ aircraft_postale_part_color :: proc(part: vehicles.Aircraft_Mesh_Part, throttle:
     return color
 }
 
-aircraft_postale_part_color_with_paint :: proc(
+@(no_instrumentation)
+aircraft_postale_part_color_with_paint :: #force_inline proc(
     editor: ^Editor,
     part: vehicles.Aircraft_Mesh_Part,
     throttle: f32,
@@ -3529,23 +3505,23 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
 }
 
 perspective_camera :: proc(pose: third_person.Camera_Pose, focal_length: f32 = 1.35) -> Perspective_Camera {
-    forward := vec_normalize(vec_sub(pose.target, pose.position))
-    right := vec_normalize(vec_cross(forward, {y = 1}))
+    forward := linalg.normalize0((pose.target - pose.position))
+    right := linalg.normalize0(linalg.cross(forward, third_person.Vec3{0, 1, 0}))
     return {
         position = pose.position,
         forward = forward,
         right = right,
-        up = vec_cross(right, forward),
+        up = linalg.cross(right, forward),
         focal_length = focal_length,
     }
 }
 
 project_3d :: proc(camera: Perspective_Camera, point: third_person.Vec3, width, height: i32) -> Screen_Point {
-    view := vec_sub(point, camera.position)
-    depth := vec_dot(view, camera.forward)
+    view := (point - camera.position)
+    depth := linalg.dot(view, camera.forward)
     if depth <= .08 do return {}
-    x := vec_dot(view, camera.right) * camera.focal_length / depth
-    y := vec_dot(view, camera.up) * camera.focal_length / depth
+    x := linalg.dot(view, camera.right) * camera.focal_length / depth
+    y := linalg.dot(view, camera.up) * camera.focal_length / depth
     // Use the viewport height for both axes so pixels remain square on
     // widescreen targets. Scaling X by width stretches projected geometry by
     // the display aspect ratio.
@@ -3660,11 +3636,19 @@ world_under_cursor_3d :: proc(
     screen_x := (mouse.x / f32(width) - .5) * 2
     screen_y := (.5 - mouse.y / f32(height)) * 2
     aspect := f32(width) / f32(height)
-    direction := vec_normalize(third_person.Vec3 {
-        x = camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
-        y = camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
-        z = camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
-    })
+    direction := linalg.normalize0(
+        third_person.Vec3 {
+            camera.forward.x +
+            camera.right.x * screen_x * aspect / camera.focal_length +
+            camera.up.x * screen_y / camera.focal_length,
+            camera.forward.y +
+            camera.right.y * screen_x * aspect / camera.focal_length +
+            camera.up.y * screen_y / camera.focal_length,
+            camera.forward.z +
+            camera.right.z * screen_x * aspect / camera.focal_length +
+            camera.up.z * screen_y / camera.focal_length,
+        },
+    )
     if math.abs(direction.y) < .0001 do return 0, 0, false
     distance := (plane_height - camera.position.y) / direction.y
     if distance <= 0 do return 0, 0, false
@@ -3685,11 +3669,19 @@ terrain_under_cursor_3d :: proc(
     screen_x := (mouse.x / f32(width) - .5) * 2
     screen_y := (.5 - mouse.y / f32(height)) * 2
     aspect := f32(width) / f32(height)
-    direction := vec_normalize(third_person.Vec3 {
-        x = camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
-        y = camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
-        z = camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
-    })
+    direction := linalg.normalize0(
+        third_person.Vec3 {
+            camera.forward.x +
+            camera.right.x * screen_x * aspect / camera.focal_length +
+            camera.up.x * screen_y / camera.focal_length,
+            camera.forward.y +
+            camera.right.y * screen_x * aspect / camera.focal_length +
+            camera.up.y * screen_y / camera.focal_length,
+            camera.forward.z +
+            camera.right.z * screen_x * aspect / camera.focal_length +
+            camera.up.z * screen_y / camera.focal_length,
+        },
+    )
     step := max(f32(terrain.BASE_CELL_SIZE * .5), f32(2))
     half := f32(terrain.WORLD_SIZE_METERS * .5)
     previous_distance := f32(.1)
@@ -3752,14 +3744,8 @@ update_editor_camera :: proc(editor: ^Editor, delta_seconds: f32) {
     if rl.IsKeyDown(.W) do move_z += 1
     if rl.IsKeyDown(.S) do move_z -= 1
     yaw := editor.editor_camera.yaw_radians
-    forward := third_person.Vec3 {
-        x = -math.sin(yaw),
-        z = -math.cos(yaw),
-    }
-    right := third_person.Vec3 {
-        x = math.cos(yaw),
-        z = -math.sin(yaw),
-    }
+    forward := third_person.Vec3{-math.sin(yaw), 0, -math.cos(yaw)}
+    right := third_person.Vec3{math.cos(yaw), 0, -math.sin(yaw)}
     speed := clamp(editor.editor_camera.distance * .8, 80, 1600)
     if shift_key_down() do speed *= 2
     editor.editor_focus.x += (forward.x * move_z + right.x * move_x) * speed * delta_seconds
@@ -3774,18 +3760,11 @@ update_editor_camera :: proc(editor: ^Editor, delta_seconds: f32) {
 editor_focus_terrain :: proc(editor: ^Editor) {
     if editor == nil do return
     focus := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-    editor.editor_focus = {
-        x = focus,
-        z = focus,
-    }
+    editor.editor_focus = {focus, 0, focus}
     editor.editor_camera.distance = 900
     if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
         structure := editor.project.structures[editor.structure_selected]
-        editor.editor_focus = {
-            x = structure.center_x,
-            y = structure.base_y + structure.height * .35,
-            z = structure.center_z,
-        }
+        editor.editor_focus = {structure.center_x, structure.base_y + structure.height * .35, structure.center_z}
         editor.editor_camera.distance = clamp(max(structure.width, structure.depth) * 4.5, 180, 1800)
     }
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
@@ -3808,10 +3787,10 @@ draw_infrastructure_3d :: proc(editor: ^Editor, camera: Perspective_Camera, widt
         pier_outer_height := editor.project.sea_level + .09
         draw_quad_3d(
             camera,
-            {x = pier_inner_x, y = pier_inner_height, z = pier_inner_z - pier_width},
-            {x = pier_outer_x, y = pier_outer_height, z = pier_outer_z - pier_width},
-            {x = pier_outer_x, y = pier_outer_height, z = pier_outer_z + pier_width},
-            {x = pier_inner_x, y = pier_inner_height, z = pier_inner_z + pier_width},
+            {pier_inner_x, pier_inner_height, pier_inner_z - pier_width},
+            {pier_outer_x, pier_outer_height, pier_outer_z - pier_width},
+            {pier_outer_x, pier_outer_height, pier_outer_z + pier_width},
+            {pier_inner_x, pier_inner_height, pier_inner_z + pier_width},
             width,
             height,
             {r = 137, g = 89, b = 48, a = 255},
@@ -3858,13 +3837,18 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
     camera := perspective_camera(editor.camera_pose)
     // Build terrain in camera-space order: far rows first give the canvas pass
     // stable painter's depth while each face is still perspective-projected.
-    forward_flat := vec_normalize(third_person.Vec3{x = camera.forward.x, z = camera.forward.z})
-    right_flat := vec_normalize(third_person.Vec3{x = camera.right.x, z = camera.right.z})
-    horizon := project_3d(camera, {
-            x = camera.position.x + forward_flat.x * 10000,
-            y = editor.project.sea_level,
-            z = camera.position.z + forward_flat.z * 10000,
-        }, width, height)
+    forward_flat := linalg.normalize0(third_person.Vec3{camera.forward.x, 0, camera.forward.z})
+    right_flat := linalg.normalize0(third_person.Vec3{camera.right.x, 0, camera.right.z})
+    horizon := project_3d(
+        camera,
+        {
+            camera.position.x + forward_flat.x * 10000,
+            editor.project.sea_level,
+            camera.position.z + forward_flat.z * 10000,
+        },
+        width,
+        height,
+    )
     if horizon.visible {
         horizon_y := i32(clamp(horizon.position.y, 0, f32(height)))
         rl.DrawRectangle(0, 0, width, horizon_y + 1, sky_color)
@@ -3877,7 +3861,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
     near_rows := 48
     far_rows := 176
     side_rows := 180
-    light_direction := vec_normalize(third_person.Vec3{x = -.45, y = .85, z = -.3})
+    light_direction := linalg.normalize0(third_person.Vec3{-.45, .85, -.3})
     fog_start := f32(terrain.WORLD_SIZE_METERS * .55)
     fog_end := f32(terrain.WORLD_SIZE_METERS * 1.5)
     for depth_order in 0 ..< near_rows + far_rows {
@@ -3897,24 +3881,16 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             h10 := terrain.sample_height(&editor.project, 0, next_x, next_z)
             h01 := terrain.sample_height(&editor.project, 0, far_x, far_z)
             h11 := terrain.sample_height(&editor.project, 0, far_next_x, far_next_z)
-            p00 := project_3d(camera, {x = base_x, y = h00, z = base_z}, width, height)
-            p10 := project_3d(camera, {x = next_x, y = h10, z = next_z}, width, height)
-            p11 := project_3d(camera, {x = far_next_x, y = h11, z = far_next_z}, width, height)
-            p01 := project_3d(camera, {x = far_x, y = h01, z = far_z}, width, height)
+            p00 := project_3d(camera, {base_x, h00, base_z}, width, height)
+            p10 := project_3d(camera, {next_x, h10, next_z}, width, height)
+            p11 := project_3d(camera, {far_next_x, h11, far_next_z}, width, height)
+            p01 := project_3d(camera, {far_x, h01, far_z}, width, height)
             if !(p00.visible && p10.visible && p11.visible && p01.visible) do continue
             average_height := (h00 + h10 + h11 + h01) * .25
-            surface_right := third_person.Vec3 {
-                x = next_x - base_x,
-                y = h10 - h00,
-                z = next_z - base_z,
-            }
-            surface_forward := third_person.Vec3 {
-                x = far_x - base_x,
-                y = h01 - h00,
-                z = far_z - base_z,
-            }
-            surface_normal := vec_normalize(vec_cross(surface_right, surface_forward))
-            diffuse := max(vec_dot(surface_normal, light_direction), 0)
+            surface_right := third_person.Vec3{next_x - base_x, h10 - h00, next_z - base_z}
+            surface_forward := third_person.Vec3{far_x - base_x, h01 - h00, far_z - base_z}
+            surface_normal := linalg.normalize0(linalg.cross(surface_right, surface_forward))
+            diffuse := max(linalg.dot(surface_normal, light_direction), 0)
             shade := clamp(.52 + diffuse * .48 + average_height * .012, .42, 1.05)
             base_color := terrain_color(
                 average_height,
@@ -3953,32 +3929,17 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             b = 167,
             a = 255,
         }
-        draw_line_3d(
-            camera,
-            {x = p.x, y = p.y + .2, z = p.z},
-            {x = p.x, y = p.y + 1.35, z = p.z},
-            width,
-            height,
-            7,
-            body,
-        )
-        draw_line_3d(
-            camera,
-            {x = p.x, y = p.y + 1.35, z = p.z},
-            {x = p.x, y = p.y + 1.62, z = p.z},
-            width,
-            height,
-            12,
-            skin,
-        )
+        draw_line_3d(camera, {p.x, p.y + .2, p.z}, {p.x, p.y + 1.35, p.z}, width, height, 7, body)
+        draw_line_3d(camera, {p.x, p.y + 1.35, p.z}, {p.x, p.y + 1.62, p.z}, width, height, 12, skin)
         forward := third_person.Vec3 {
-            x = -math.sin(editor.player.facing_yaw_radians),
-            z = -math.cos(editor.player.facing_yaw_radians),
+            -math.sin(editor.player.facing_yaw_radians),
+            0,
+            -math.cos(editor.player.facing_yaw_radians),
         }
         draw_line_3d(
             camera,
-            {x = p.x, y = p.y + 1.12, z = p.z},
-            {x = p.x + forward.x * .48, y = p.y + 1.12, z = p.z + forward.z * .48},
+            {p.x, p.y + 1.12, p.z},
+            {p.x + forward.x * .48, p.y + 1.12, p.z + forward.z * .48},
             width,
             height,
             4,
@@ -4089,8 +4050,8 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                 )
             }
         } else {
-            delta := vec_sub(editor.player.position, editor.postale.vehicle.position)
-            if vec_dot(delta, delta) <=
+            delta := (editor.player.position - editor.postale.vehicle.position)
+            if linalg.dot(delta, delta) <=
                editor.postale.vehicle.interaction_radius * editor.postale.vehicle.interaction_radius {
                 rl.DrawRectangle(width / 2 - 116, height - 92, 232, 42, {r = 8, g = 28, b = 45, a = 220})
                 entry_prompt: cstring = "PRESS F TO ENTER POSTALE"
@@ -4117,13 +4078,8 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
         )
         if hit {
             brush_height := terrain.sample_height(&editor.project, 0, world_x, world_z) + .08
-            brush_center := project_3d(camera, {x = world_x, y = brush_height, z = world_z}, width, height)
-            brush_edge := project_3d(
-                camera,
-                {x = world_x + editor.radius, y = brush_height, z = world_z},
-                width,
-                height,
-            )
+            brush_center := project_3d(camera, {world_x, brush_height, world_z}, width, height)
+            brush_edge := project_3d(camera, {world_x + editor.radius, brush_height, world_z}, width, height)
             if brush_center.visible && brush_edge.visible {
                 brush_radius := f32(
                     math.sqrt(
@@ -4427,7 +4383,7 @@ runway_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     // Start beside the parked aircraft so the default camera presents it and
     // the runway immediately instead of placing the character inside its mesh.
     z := half_extent * terrain.DEFAULT_ISLAND_OFFSET + 2.2
-    return {x = x, y = terrain.sample_height(&editor.project, 0, x, z), z = z}
+    return {x, terrain.sample_height(&editor.project, 0, x, z), z}
 }
 
 car_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
@@ -4435,12 +4391,13 @@ car_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     // surface. This keeps the aircraft arrival lane clear while leaving the car
     // close enough to reach from the default player spawn.
     runway := runway_spawn_position(editor)
-    spawn := vehicles.car_spawn_near({x = runway.x + 8, y = runway.y, z = runway.z + 4})
+    spawn := vehicles.car_spawn_near({runway.x + 8, runway.y, runway.z + 4})
     spawn.y = terrain.sample_height(&editor.project, 0, spawn.x, spawn.z)
     return spawn
 }
 
-driving_aircraft :: proc(editor: ^Editor) -> bool {
+@(no_instrumentation)
+driving_aircraft :: #force_inline proc(editor: ^Editor) -> bool {
     if editor == nil || editor.pilot.mode != .Driving do return false
     return editor.pilot.vehicle == &editor.postale.vehicle || editor.pilot.vehicle == &editor.libellula.vehicle
 }
@@ -4706,12 +4663,12 @@ car_trailer_hitch_position :: proc(editor: ^Editor, trailer: bool = false) -> th
         yaw = editor.car_trailer_yaw
     }
     hitch_z := trailer ? f32(1.36) : f32(1.48)
-    return {x = origin.x - math.cos(yaw) * hitch_z, y = origin.y, z = origin.z - math.sin(yaw) * hitch_z}
+    return {origin.x - math.cos(yaw) * hitch_z, origin.y, origin.z - math.sin(yaw) * hitch_z}
 }
 
 car_trailer_can_attach :: proc(editor: ^Editor) -> bool {
     if editor == nil || editor.car_trailer_attached do return false
-    delta := vec_sub(car_trailer_hitch_position(editor), car_trailer_hitch_position(editor, true))
+    delta := (car_trailer_hitch_position(editor) - car_trailer_hitch_position(editor, true))
     close := delta.x * delta.x + delta.z * delta.z <= .72 * .72
     yaw_delta := editor.car.yaw_radians - editor.car_trailer_yaw
     for yaw_delta > math.PI do yaw_delta -= math.PI * 2
@@ -4722,7 +4679,7 @@ car_trailer_can_attach :: proc(editor: ^Editor) -> bool {
 car_trailer_interaction_near :: proc(editor: ^Editor) -> bool {
     if editor == nil || editor.pilot.mode != .On_Foot do return false
     hitch := car_trailer_hitch_position(editor, !editor.car_trailer_attached)
-    delta := vec_sub(editor.player.position, hitch)
+    delta := (editor.player.position - hitch)
     return delta.x * delta.x + delta.z * delta.z <= 1.45 * 1.45
 }
 
@@ -4747,17 +4704,17 @@ car_trailer_interact :: proc(editor: ^Editor) -> bool {
 
 vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
     if editor == nil || editor.pilot.mode != .On_Foot do return nil
-    car_delta := vec_sub(editor.player.position, editor.car.position)
-    car_distance := vec_dot(car_delta, car_delta)
+    car_delta := (editor.player.position - editor.car.position)
+    car_distance := linalg.dot(car_delta, car_delta)
     car_radius := editor.car.interaction_radius
     if car_radius <= 0 do car_radius = 2.5
     aircraft := active_aircraft_vehicle(editor)
-    aircraft_delta := vec_sub(editor.player.position, aircraft.position)
-    aircraft_distance := vec_dot(aircraft_delta, aircraft_delta)
+    aircraft_delta := (editor.player.position - aircraft.position)
+    aircraft_distance := linalg.dot(aircraft_delta, aircraft_delta)
     aircraft_radius := aircraft.interaction_radius
     if aircraft_radius <= 0 do aircraft_radius = 2.5
-    attendant_delta := vec_sub(editor.player.position, editor.attendant_position)
-    attendant_distance := vec_dot(attendant_delta, attendant_delta)
+    attendant_delta := (editor.player.position - editor.attendant_position)
+    attendant_distance := linalg.dot(attendant_delta, attendant_delta)
     attendant_near := editor.libellula_visible && attendant_distance <= 2.25 * 2.25
     trailer_near := car_trailer_interaction_near(editor)
     car_near := car_distance <= car_radius * car_radius
@@ -4799,15 +4756,12 @@ vehicle_showcase_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
         third_person.look(&editor.camera, -mouse_delta.x, mouse_delta.y, .006)
     }
     editor.camera.distance = clamp(editor.camera.distance - rl.GetMouseWheelMove() * .7, 2.5, 30)
-    editor.camera_pose = third_person.camera_pose({y = editor.camera.height}, editor.camera)
+    editor.camera_pose = third_person.camera_pose(third_person.Vec3{0, editor.camera.height, 0}, editor.camera)
 }
 
 editor_camera_pose :: proc() -> third_person.Camera_Pose {
     island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-    return {
-        position = {x = island_center + 650, y = 720, z = island_center + 650},
-        target = {x = island_center, y = 1.5, z = island_center},
-    }
+    return {position = {island_center + 650, 720, island_center + 650}, target = {island_center, 1.5, island_center}}
 }
 
 draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
@@ -4978,7 +4932,7 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
     if err == .Not_Exist do return .Missing
     if err != nil || len(data) < size_of(Hot_State_File_Header) do return .Invalid
 
-    header := transmute(^Hot_State_File_Header)(&data[0])
+    header := cast(^Hot_State_File_Header)(&data[0])
     payload := data[size_of(Hot_State_File_Header):]
     if !hot_state_header_valid(header, len(payload)) do return .Invalid
     if len(payload) == 0 do return .Invalid
@@ -5209,10 +5163,7 @@ adriatic_run :: proc(
     control_hints_load(editor)
     _ = vehicle_paint_load(editor)
     island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-    editor.editor_focus = {
-        x = island_center,
-        z = island_center,
-    }
+    editor.editor_focus = third_person.Vec3{island_center, 0, island_center}
     editor.editor_camera = {
         yaw_radians   = math.PI * .25,
         pitch_radians = .58,
@@ -5221,9 +5172,7 @@ adriatic_run :: proc(
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     editor.postale = postale_game.new_runtime(postale_spawn_position(editor))
     libellula_spawn := libellula_spawn_position(editor)
-    editor.libellula = libellula_game.new_runtime(
-        {x = libellula_spawn.x, y = libellula_spawn.y, z = libellula_spawn.z},
-    )
+    editor.libellula = libellula_game.new_runtime({libellula_spawn.x, libellula_spawn.y, libellula_spawn.z})
     editor.attendant_position = attendant_spawn_position(editor, editor.libellula.vehicle.position)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
@@ -5391,9 +5340,9 @@ adriatic_run :: proc(
             // populated around what the capture is actually inspecting.
             editor.player = {
                 position = {
-                    x = editor.editor_focus.x,
-                    y = terrain.sample_height(&editor.project, 0, editor.editor_focus.x, editor.editor_focus.z),
-                    z = editor.editor_focus.z,
+                    editor.editor_focus.x,
+                    terrain.sample_height(&editor.project, 0, editor.editor_focus.x, editor.editor_focus.z),
+                    editor.editor_focus.z,
                 },
                 grounded = true,
             }
@@ -5424,15 +5373,11 @@ adriatic_run :: proc(
         }
         if capture_car_mode {
             car := car_spawn_position(editor)
-            editor.player.position = {
-                x = car.x + 100,
-                y = car.y,
-                z = car.z + 100,
-            }
+            editor.player.position = {car.x + 100, car.y, car.z + 100}
             editor.pilot.position = editor.player.position
             editor.camera_pose = {
-                position = {x = car.x - 7.5, y = car.y + 4.6, z = car.z + 7.5},
-                target = {x = car.x, y = car.y + .65, z = car.z},
+                position = {car.x - 7.5, car.y + 4.6, car.z + 7.5},
+                target   = {car.x, car.y + .65, car.z},
             }
         }
         if !capture_vehicle_showcase_mode && capture_target == "libellula" {
@@ -5444,17 +5389,17 @@ adriatic_run :: proc(
             editor.car.position.x += 100
             editor.car.position.z += 100
             editor.player.position = {
-                x = editor.libellula.vehicle.position.x + 12,
-                y = terrain.sample_height(
+                editor.libellula.vehicle.position.x + 12,
+                terrain.sample_height(
                     &editor.project,
                     0,
                     editor.libellula.vehicle.position.x + 12,
                     editor.libellula.vehicle.position.z + 12,
                 ),
-                z = editor.libellula.vehicle.position.z + 12,
+                editor.libellula.vehicle.position.z + 12,
             }
             editor.pilot.position = editor.player.position
-            inspection_pose := third_person.camera_near(editor.libellula.vehicle.position, {x = 6, y = 3.5, z = 6})
+            inspection_pose := third_person.camera_near(editor.libellula.vehicle.position, {6, 3.5, 6})
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
@@ -5462,17 +5407,17 @@ adriatic_run :: proc(
         if !capture_vehicle_showcase_mode && capture_target == "postale" {
             editor.camera_target_lock = true
             postale_position := third_person.Vec3 {
-                x = editor.postale.body.position.x,
-                y = editor.postale.body.position.y,
-                z = editor.postale.body.position.z,
+                editor.postale.body.position.x,
+                editor.postale.body.position.y,
+                editor.postale.body.position.z,
             }
             editor.player.position = {
-                x = postale_position.x + 12,
-                y = terrain.sample_height(&editor.project, 0, postale_position.x + 12, postale_position.z + 12),
-                z = postale_position.z + 12,
+                postale_position.x + 12,
+                terrain.sample_height(&editor.project, 0, postale_position.x + 12, postale_position.z + 12),
+                postale_position.z + 12,
             }
             editor.pilot.position = editor.player.position
-            inspection_pose := third_person.camera_near(postale_position, {x = 4.5, y = 2.6, z = 4.5})
+            inspection_pose := third_person.camera_near(postale_position, {4.5, 2.6, 4.5})
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
@@ -5481,21 +5426,20 @@ adriatic_run :: proc(
             editor.camera_target_lock = false
             editor.postale_visible = false
             editor.player.position = {
-                x = editor.attendant_position.x + 20,
-                y = terrain.sample_height(
+                editor.attendant_position.x + 20,
+                terrain.sample_height(
                     &editor.project,
                     0,
                     editor.attendant_position.x + 20,
                     editor.attendant_position.z,
                 ),
-                z = editor.attendant_position.z,
+                editor.attendant_position.z,
             }
             editor.pilot.position = editor.player.position
-            inspection_pose := third_person.camera_near({
-                x = editor.attendant_position.x,
-                y = editor.attendant_position.y + .48,
-                z = editor.attendant_position.z,
-            }, {x = 1.35, y = .62, z = 1.35})
+            inspection_pose := third_person.camera_near(
+                {editor.attendant_position.x, editor.attendant_position.y + .48, editor.attendant_position.z},
+                {1.35, .62, 1.35},
+            )
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
@@ -5549,8 +5493,9 @@ adriatic_run :: proc(
                 editor.pilot.position = editor.player.position
             }
             capture_forward := third_person.Vec3 {
-                x = -math.sin(editor.player.facing_yaw_radians),
-                z = -math.cos(editor.player.facing_yaw_radians),
+                -math.sin(editor.player.facing_yaw_radians),
+                0,
+                -math.cos(editor.player.facing_yaw_radians),
             }
             capture_run_pose := capture_target == "player-walk" || capture_target == "player-run-compress"
             capture_posted_pose := capture_target == "player-posted"
@@ -5576,18 +5521,18 @@ adriatic_run :: proc(
             capture_height := capture_run_pose ? f32(.62) : (capture_posted_pose ? f32(.90) : f32(.78))
             inspection_pose := third_person.Camera_Pose {
                 position = {
-                    x = editor.player.position.x +
+                    editor.player.position.x +
                     capture_forward.x * capture_front_distance +
                     capture_forward.z * capture_side_distance,
-                    y = editor.player.position.y + capture_height,
-                    z = editor.player.position.z +
+                    editor.player.position.y + capture_height,
+                    editor.player.position.z +
                     capture_forward.z * capture_front_distance -
                     capture_forward.x * capture_side_distance,
                 },
-                target = {
-                    x = editor.player.position.x - capture_forward.x * (capture_run_pose ? f32(.52) : f32(.18)),
-                    y = editor.player.position.y + (capture_posted_pose ? f32(.48) : f32(.34)),
-                    z = editor.player.position.z - capture_forward.z * (capture_run_pose ? f32(.52) : f32(.18)),
+                target   = {
+                    editor.player.position.x - capture_forward.x * (capture_run_pose ? f32(.52) : f32(.18)),
+                    editor.player.position.y + (capture_posted_pose ? f32(.48) : f32(.34)),
+                    editor.player.position.z - capture_forward.z * (capture_run_pose ? f32(.52) : f32(.18)),
                 },
             }
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
@@ -5610,13 +5555,13 @@ adriatic_run :: proc(
             )
             editor.pilot.position = editor.player.position
             grass_pose := third_person.camera_look_at({
-                x = editor.player.position.x + 8,
-                y = editor.player.position.y + 1.65,
-                z = editor.player.position.z + 15,
+                editor.player.position.x + 8,
+                editor.player.position.y + 1.65,
+                editor.player.position.z + 15,
             }, {
-                x = editor.player.position.x - 2,
-                y = editor.player.position.y + .55,
-                z = editor.player.position.z - 9,
+                editor.player.position.x - 2,
+                editor.player.position.y + .55,
+                editor.player.position.z - 9,
             })
             third_person.camera_set_pose(&editor.cameras, .Inspection, grass_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -5656,18 +5601,10 @@ adriatic_run :: proc(
         editor.postale_visible = target == "postale"
         editor.libellula_visible = target == "libellula" || target == "libellula-mk2"
         editor.libellula.vehicle.locked = false
-        editor.postale.body.position = {
-            y = postale_game.GROUND_CLEARANCE,
-        }
-        editor.postale.vehicle.position = {
-            y = postale_game.GROUND_CLEARANCE,
-        }
-        editor.libellula.body.position = {
-            y = libellula_game.GROUND_CLEARANCE,
-        }
-        editor.libellula.vehicle.position = {
-            y = libellula_game.GROUND_CLEARANCE,
-        }
+        editor.postale.body.position = {0, postale_game.GROUND_CLEARANCE, 0}
+        editor.postale.vehicle.position = {0, postale_game.GROUND_CLEARANCE, 0}
+        editor.libellula.body.position = {0, libellula_game.GROUND_CLEARANCE, 0}
+        editor.libellula.vehicle.position = {0, libellula_game.GROUND_CLEARANCE, 0}
         editor.car.position = {}
         editor.car.yaw_radians = -math.PI * .5
         // Default showcase framing: aligned with the vehicle's forward axis,
@@ -5686,17 +5623,17 @@ adriatic_run :: proc(
         if target == "postale" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
             if !entered do return .Quit
-            editor.camera_pose = third_person.camera_look_at({x = 10.5, y = 5.7, z = 10.5}, {y = .45})
+            editor.camera_pose = third_person.camera_look_at({10.5, 5.7, 10.5}, {0, .45, 0})
         } else if target == "libellula" || target == "libellula-mk2" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.libellula.vehicle})
             if !entered do return .Quit
-            editor.camera_pose = third_person.camera_look_at({x = 6, y = 5.8, z = 10}, {y = 1.2})
+            editor.camera_pose = third_person.camera_look_at({6, 5.8, 10}, {0, 1.2, 0})
         } else {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
             if !entered do return .Quit
             // A true side elevation makes the wheelbase, overhangs, beltline,
             // and mouse-to-car scale directly comparable in capture reviews.
-            editor.camera_pose = third_person.camera_look_at({x = 5.4, y = 2.0}, {y = .56})
+            editor.camera_pose = third_person.camera_look_at({5.4, 2.0, 0}, {0, .56, 0})
         }
         third_person.camera_set_pose(&editor.cameras, .Player, editor.camera_pose)
         third_person.camera_set_active(&editor.cameras, .Player)
@@ -5733,11 +5670,7 @@ adriatic_run :: proc(
             for edge in editor.project.road_graph.edges[:editor.project.road_graph.edge_count] {
                 if edge.pavement != target_pavement do continue
                 point := roads.edge_point(&editor.project.road_graph, edge, .58)
-                editor.editor_focus = {
-                    x = point.x,
-                    y = point.y + .5,
-                    z = point.z,
-                }
+                editor.editor_focus = {point.x, point.y + .5, point.z}
                 editor.editor_camera.distance = 34
                 editor.editor_camera.pitch_radians = .28
                 break
@@ -5747,11 +5680,7 @@ adriatic_run :: proc(
     }
     if capture_road_grip_mode {
         editor.capture_world_only = true
-        editor.editor_focus = {
-            x = editor.car.position.x,
-            y = editor.car.position.y + .75,
-            z = editor.car.position.z,
-        }
+        editor.editor_focus = {editor.car.position.x, editor.car.position.y + .75, editor.car.position.z}
         editor.editor_camera = {
             yaw_radians   = math.PI * .72,
             pitch_radians = .48,
@@ -5761,11 +5690,7 @@ adriatic_run :: proc(
     }
     if capture_terrain_grip_mode {
         editor.capture_world_only = true
-        editor.editor_focus = {
-            x = editor.car.position.x,
-            y = editor.car.position.y + .75,
-            z = editor.car.position.z,
-        }
+        editor.editor_focus = {editor.car.position.x, editor.car.position.y + .75, editor.car.position.z}
         editor.editor_camera = {
             yaw_radians   = math.PI * .72,
             pitch_radians = .48,
@@ -6105,7 +6030,6 @@ adriatic_run :: proc(
                 look_y := editor.gameplay_options.invert_look_y ? -mouse_delta.y : mouse_delta.y
                 flying := driving_aircraft(editor)
                 in_car := driving_car(editor)
-                driving := flying || in_car
                 if flying {
                     flight_stick_x := gamepad_axis(.Right_X) * 700 * delta_seconds
                     if editor.gameplay_options.invert_look_x do flight_stick_x = -flight_stick_x
@@ -6352,12 +6276,12 @@ adriatic_run :: proc(
                                 contact_z := editor.car.position.z + right_z * x - forward_z * z
                                 contacts[contact_index] = {
                                     position = {
-                                        x = contact_x,
-                                        y = terrain.sample_height(&editor.project, 0, contact_x, contact_z),
-                                        z = contact_z,
+                                        contact_x,
+                                        terrain.sample_height(&editor.project, 0, contact_x, contact_z),
+                                        contact_z,
                                     },
                                     grounded = true,
-                                    surface = dust_surface,
+                                    surface  = dust_surface,
                                 }
                                 contact_index += 1
                             }
@@ -6521,10 +6445,7 @@ adriatic_run :: proc(
                             }
                         }
                         if editor.camera_target_lock {
-                            editor.camera_pose = third_person.camera_near(
-                                editor.libellula.vehicle.position,
-                                {x = 8, y = 5, z = 8},
-                            )
+                            editor.camera_pose = third_person.camera_near(editor.libellula.vehicle.position, {8, 5, 8})
                         } else {
                             desired_camera := third_person.camera_pose(editor.player.position, editor.camera)
                             editor.camera_pose = third_person.follow_camera(
@@ -6614,13 +6535,7 @@ adriatic_run :: proc(
         live_capture_poll()
         rl.EndDrawing()
         gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()
-        dio.flame_graph_set_frame_metrics(
-            &editor.flame_graph,
-            0,
-            0,
-            f32(gpu_frame_ms),
-            gpu_frame_available,
-        )
+        dio.flame_graph_set_frame_metrics(&editor.flame_graph, 0, 0, f32(gpu_frame_ms), gpu_frame_available)
         dio.flame_graph_end_frame(&editor.flame_graph)
         if interpolate_aircraft {
             render_aircraft_body^ = saved_aircraft_body

@@ -74,11 +74,8 @@ normalize_or :: proc(value, fallback: third_person.Vec3) -> third_person.Vec3 {
 
 reset :: proc(state: ^State, root, backward: third_person.Vec3, config: Config) {
     if state == nil do return
-    direction := normalize_or({backward.x, -.22, backward.z}, {z = 1})
-    side := third_person.Vec3 {
-        x = direction.z,
-        z = -direction.x,
-    }
+    direction := normalize_or({backward.x, -.22, backward.z}, third_person.Vec3{0, 0, 1})
+    side := third_person.Vec3 {direction.z, 0, -direction.x}
     segment_length := max(config.segment_length, f32(.02))
     for index in 0 ..< POINT_COUNT {
         distance := f32(index) * segment_length
@@ -125,7 +122,7 @@ resolve_terrain :: proc(point: ^Point, project: ^terrain.Project, radius, fricti
     surface_height := terrain.sample_height(project, 0, point.position.x, point.position.z)
     pavement := roads.pavement_at(
         &project.road_graph,
-        {x = point.position.x, y = point.position.y, z = point.position.z},
+        {point.position.x, point.position.y, point.position.z},
     )
     // Rendered road crowns sit 12 cm above the terrain heightfield. Treat that
     // presentation lift as physical support so a grounded tail rests on the
@@ -225,7 +222,7 @@ step :: proc(
     dt_squared := dt * dt
     damping := clamp(config.damping, 0, 1)
     segment_length := max(config.segment_length, f32(.02))
-    backward_direction := normalize_or({backward.x, 0, backward.z}, {z = 1})
+    backward_direction := normalize_or({backward.x, 0, backward.z}, third_person.Vec3{0, 0, 1})
 
     for _ in 0 ..< substeps {
         state.points[0] = {
@@ -240,7 +237,7 @@ step :: proc(
             point_damping := index == 1 ? clamp(config.root_damping, 0, 1) : damping
             velocity := scale(subtract(point.position, point.previous), point_damping)
             point.previous = point.position
-            point.position = add(add(point.position, velocity), {y = -max(config.gravity, f32(0)) * dt_squared})
+            point.position = add(add(point.position, velocity), {0, -max(config.gravity, f32(0)) * dt_squared, 0})
         }
 
         // Apply the rump's heading once per substep. Reapplying this inside

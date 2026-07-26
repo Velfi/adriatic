@@ -7,6 +7,7 @@ import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
 import "core:mem"
 import rl "zelda_engine:canvas2d"
 
@@ -78,7 +79,8 @@ VEHICLE_PAINT_COLORS :: [16]rl.Color {
     {46, 49, 57, 255},
 }
 
-vehicle_paint_layer_index :: proc(kind: vehicles.Aircraft_Kind) -> int {
+@(no_instrumentation)
+vehicle_paint_layer_index :: #force_inline proc(kind: vehicles.Aircraft_Kind) -> int {
     return clamp(int(kind), 0, VEHICLE_PAINT_AIRCRAFT_COUNT - 1)
 }
 
@@ -209,22 +211,14 @@ vehicle_paint_open :: proc(editor: ^Editor) {
         editor.postale.body.position = {
             y = postale_game.GROUND_CLEARANCE,
         }
-        editor.postale.vehicle.position = {
-            x = editor.postale.body.position.x,
-            y = editor.postale.body.position.y,
-            z = editor.postale.body.position.z,
-        }
+        editor.postale.vehicle.position = {editor.postale.body.position.x, editor.postale.body.position.y, editor.postale.body.position.z}
     } else {
         editor.libellula.body.position = {
             y = libellula_game.GROUND_CLEARANCE,
         }
-        editor.libellula.vehicle.position = {
-            x = editor.libellula.body.position.x,
-            y = editor.libellula.body.position.y,
-            z = editor.libellula.body.position.z,
-        }
+        editor.libellula.vehicle.position = {editor.libellula.body.position.x, editor.libellula.body.position.y, editor.libellula.body.position.z}
     }
-    editor.camera_pose = third_person.camera_pose({y = 1}, {
+    editor.camera_pose = third_person.camera_pose({0, 1, 0}, {
         yaw_radians   = editor.vehicle_paint_yaw,
         pitch_radians = editor.vehicle_paint_pitch,
         distance      = editor.vehicle_paint_distance,
@@ -256,7 +250,8 @@ vehicle_paint_component_names :: proc(editor: ^Editor) -> [5]string {
     return VEHICLE_PAINT_COMPONENT_NAMES
 }
 
-vehicle_paint_part_is_paintable :: proc(part: vehicles.Aircraft_Mesh_Part) -> bool {
+@(no_instrumentation)
+vehicle_paint_part_is_paintable :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part) -> bool {
     // Rubber and glass keep their authored materials instead of accepting the
     // vehicle paint atlas.
     return(
@@ -1255,17 +1250,9 @@ vehicle_paint_close :: proc(editor: ^Editor) -> bool {
     }
     editor.vehicle_paint_save_failed = false
     editor.postale.body.position = editor.vehicle_paint_saved_postale_position
-    editor.postale.vehicle.position = {
-        x = editor.postale.body.position.x,
-        y = editor.postale.body.position.y,
-        z = editor.postale.body.position.z,
-    }
+    editor.postale.vehicle.position = {editor.postale.body.position.x, editor.postale.body.position.y, editor.postale.body.position.z}
     editor.libellula.body.position = editor.vehicle_paint_saved_libellula_position
-    editor.libellula.vehicle.position = {
-        x = editor.libellula.body.position.x,
-        y = editor.libellula.body.position.y,
-        z = editor.libellula.body.position.z,
-    }
+    editor.libellula.vehicle.position = {editor.libellula.body.position.x, editor.libellula.body.position.y, editor.libellula.body.position.z}
     editor.vehicle_paint_scene = false
     editor.vehicle_paint_sound_until = 0
     editor.vehicle_showcase_scene = false
@@ -1350,7 +1337,7 @@ vehicle_paint_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
     if math.abs(pinch_scale - 1) > .001 {
         editor.vehicle_paint_distance = clamp(editor.vehicle_paint_distance / pinch_scale, 4.2, 9.5)
     }
-    editor.camera_pose = third_person.camera_pose({y = 1}, {
+    editor.camera_pose = third_person.camera_pose(third_person.Vec3{0, 1, 0}, {
         yaw_radians   = editor.vehicle_paint_yaw,
         pitch_radians = editor.vehicle_paint_pitch,
         distance      = editor.vehicle_paint_distance,
@@ -1392,10 +1379,10 @@ vehicle_paint_camera_ray :: proc(
     screen_x := (mouse.x / f32(width) - .5) * 2
     screen_y := (.5 - mouse.y / f32(height)) * 2
     aspect := f32(width) / f32(height)
-    direction := vec_normalize({
-        x = camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
-        y = camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
-        z = camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
+    direction := linalg.normalize0(third_person.Vec3 {
+        camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
+        camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
+        camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
     })
     return {camera.position.x, camera.position.y, camera.position.z}, {direction.x, direction.y, direction.z}
 }

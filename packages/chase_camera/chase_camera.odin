@@ -59,18 +59,16 @@ step :: proc(state: ^State, target: Target, delta_seconds: f32, flyby_shake: f32
         // the camera through uneven frame deltas, which reads as judder.
         previous_target := to_third_person(state.previous_target_position)
         current_target := to_third_person(target.position)
-        current_position_offset := vec_sub(state.base_pose.position, previous_target)
-        desired_position_offset := vec_sub(desired.position, current_target)
-        current_focus_offset := vec_sub(state.base_pose.target, previous_target)
-        desired_focus_offset := vec_sub(desired.target, current_target)
-        state.base_pose.position = third_person.add(
-            current_target,
-            lerp(current_position_offset, desired_position_offset, exp_response(8, delta_seconds)),
-        )
-        state.base_pose.target = third_person.add(
-            current_target,
-            lerp(current_focus_offset, desired_focus_offset, exp_response(10, delta_seconds)),
-        )
+        current_position_offset := state.base_pose.position - previous_target
+        desired_position_offset := desired.position - current_target
+        current_focus_offset := state.base_pose.target - previous_target
+        desired_focus_offset := desired.target - current_target
+        position_t := exp_response(8, delta_seconds)
+        focus_t := exp_response(10, delta_seconds)
+        state.base_pose.position =
+            current_target + current_position_offset + (desired_position_offset - current_position_offset) * position_t
+        state.base_pose.target =
+            current_target + current_focus_offset + (desired_focus_offset - current_focus_offset) * focus_t
     }
     state.previous_target_position = target.position
     state.focal_length = scalar_lerp(
@@ -115,8 +113,8 @@ shake_pose :: proc(pose: third_person.Camera_Pose, target: Target, phase, intens
         flight.scale(target.basis.up, lift * .22),
     )
     result := pose
-    result.position = third_person.add(result.position, to_third_person(position_offset))
-    result.target = third_person.add(result.target, to_third_person(target_offset))
+    result.position = result.position + to_third_person(position_offset)
+    result.target = result.target + to_third_person(target_offset)
     return result
 }
 
@@ -196,14 +194,6 @@ to_third_person :: proc(value: flight.Vec3) -> third_person.Vec3 {
 distance_squared :: proc(a, b: third_person.Vec3) -> f32 {
     x, y, z := b.x - a.x, b.y - a.y, b.z - a.z
     return x * x + y * y + z * z
-}
-
-vec_sub :: proc(a, b: third_person.Vec3) -> third_person.Vec3 {
-    return {a.x - b.x, a.y - b.y, a.z - b.z}
-}
-
-lerp :: proc(a, b: third_person.Vec3, amount: f32) -> third_person.Vec3 {
-    return {scalar_lerp(a.x, b.x, amount), scalar_lerp(a.y, b.y, amount), scalar_lerp(a.z, b.z, amount)}
 }
 
 exp_response :: proc(response, delta_seconds: f32) -> f32 {

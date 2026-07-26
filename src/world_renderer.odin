@@ -11,6 +11,7 @@ import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
 import "core:math"
+import "core:math/linalg"
 import "core:mem"
 import vk "vendor:vulkan"
 import rl "zelda_engine:canvas2d"
@@ -197,7 +198,8 @@ foreign adriatic_mesh {
 #assert(offset_of(Sky_Push, wind_cloud) == 80)
 #assert(offset_of(Sky_Push, haze_severity) == 96)
 
-world_color :: proc(color: rl.Color) -> [4]f32 {
+@(no_instrumentation)
+world_color :: #force_inline proc(color: rl.Color) -> [4]f32 {
     return {f32(color.r) / 255, f32(color.g) / 255, f32(color.b) / 255, f32(color.a) / 255}
 }
 
@@ -259,11 +261,13 @@ world_scene_sun :: proc(editor: ^Editor, sky: atmosphere.Sky_State) -> [4]f32 {
     return {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], sky.daylight}
 }
 
-world_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
+@(no_instrumentation)
+world_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Plain, {0, 1, 0}, {}, {}}
 }
 
-world_water_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
+@(no_instrumentation)
+world_water_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Water, {0, 1, 0}, {}, {}}
 }
 
@@ -275,12 +279,14 @@ world_eye_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: thir
     return {{point.x, point.y, point.z}, world_color(color), .Eye, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
-world_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color) {
+@(no_instrumentation)
+world_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color) {
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color), world_vertex(b, color), world_vertex(c, color))
 }
 
-world_aircraft_triangle :: proc(
+@(no_instrumentation)
+world_aircraft_triangle :: #force_inline proc(
     a, b, c: third_person.Vec3,
     color: rl.Color,
     uv_a, uv_b, uv_c: [2]f32,
@@ -293,7 +299,7 @@ world_aircraft_triangle :: proc(
         vertex.kind = .Vehicle
         vertex.material[0] = paintable ? 1 : 0
         vertex.material[1] = paint_layer
-        normal := vec_normalize(vec_cross(vec_sub(b, a), vec_sub(c, a)))
+        normal := linalg.normalize0(linalg.cross((b - a), (c - a)))
         vertex.normal = {normal.x, normal.y, normal.z}
     }
     vertices[0].uv = uv_a
@@ -302,7 +308,8 @@ world_aircraft_triangle :: proc(
     append(&world_renderer.vertices, ..vertices[:])
 }
 
-world_aircraft_triangle_smooth :: proc(
+@(no_instrumentation)
+world_aircraft_triangle_smooth :: #force_inline proc(
     a, b, c: third_person.Vec3,
     normal_a, normal_b, normal_c: third_person.Vec3,
     color: rl.Color,
@@ -318,7 +325,7 @@ world_aircraft_triangle_smooth :: proc(
         vertices[index].kind = .Vehicle
         vertices[index].material[0] = paintable ? 1 : 0
         vertices[index].material[1] = paint_layer
-        normal := vec_normalize(normals[index])
+        normal := linalg.normalize0(normals[index])
         vertices[index].normal = {normal.x, normal.y, normal.z}
         vertices[index].uv = uvs[index]
     }
@@ -360,8 +367,11 @@ world_greek_asset_primitive :: proc(
         a := greek_asset_local_to_world(asset, placement, asset.mesh.vertices[ia])
         b := greek_asset_local_to_world(asset, placement, asset.mesh.vertices[ib])
         c := greek_asset_local_to_world(asset, placement, asset.mesh.vertices[ic])
-        normal := vec_normalize(
-            vec_cross({x = b.x - a.x, y = b.y - a.y, z = b.z - a.z}, {x = c.x - a.x, y = c.y - a.y, z = c.z - a.z}),
+        normal := linalg.normalize0(
+            linalg.cross(
+                third_person.Vec3{b.x - a.x, b.y - a.y, b.z - a.z},
+                third_person.Vec3{c.x - a.x, c.y - a.y, c.z - a.z},
+            ),
         )
         if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
         append(
@@ -447,7 +457,8 @@ world_quad_colored :: proc(a, b, c, d: third_person.Vec3, color_a, color_b, colo
     world_triangle_colored(a, c, d, color_a, color_c, color_d)
 }
 
-world_water_quad :: proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
+@(no_instrumentation)
+world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
     if len(world_renderer.vertices) + 6 > WORLD_VERTEX_CAPACITY do return
     append(
         &world_renderer.vertices,
@@ -460,7 +471,8 @@ world_water_quad :: proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
     )
 }
 
-road_world_point :: proc(editor: ^Editor, vertex: roads.Vertex) -> third_person.Vec3 {
+@(no_instrumentation)
+road_world_point :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex) -> third_person.Vec3 {
     clearance := f32(.12)
     if vertex.surface == .Shoulder {
         clearance = .05
@@ -471,7 +483,8 @@ road_world_point :: proc(editor: ^Editor, vertex: roads.Vertex) -> third_person.
     return {vertex.position.x, max(vertex.position.y, terrain_y + clearance), vertex.position.z}
 }
 
-road_surface_color :: proc(surface: roads.Surface, pavement: roads.Pavement) -> rl.Color {
+@(no_instrumentation)
+road_surface_color :: #force_inline proc(surface: roads.Surface, pavement: roads.Pavement) -> rl.Color {
     if surface == .Verge {
         // Outer verge vertices are transparent and interpolate into the opaque
         // shoulder, revealing terrain through a soft, pavement-aware tint.
@@ -526,7 +539,8 @@ world_road_editor_link :: proc(a, b: roads.Vec3, width: f32, color: rl.Color) {
     )
 }
 
-world_road_vertex :: proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color) -> World_Vertex {
+@(no_instrumentation)
+world_road_vertex :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color) -> World_Vertex {
     point := road_world_point(editor, vertex)
     // Road UV and pavement live in the normal channel because the dedicated
     // road pass does not need the generic mesh normal. This keeps the existing
@@ -542,7 +556,8 @@ world_road_vertex :: proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color
     }
 }
 
-world_road_triangle_colored :: proc(editor: ^Editor, a, b, c: roads.Vertex, color_a, color_b, color_c: rl.Color) {
+@(no_instrumentation)
+world_road_triangle_colored :: #force_inline proc(editor: ^Editor, a, b, c: roads.Vertex, color_a, color_b, color_c: rl.Color) {
     if len(world_renderer.road_vertices) + 3 > ROAD_VERTEX_CAPACITY do return
     land_threshold := editor.project.sea_level + .04
     if terrain.sample_height(&editor.project, 0, a.position.x, a.position.z) <= land_threshold ||
@@ -660,9 +675,11 @@ clipmap_vertex_color :: proc(editor: ^Editor, level: int, x, z, height: f32) -> 
     right := terrain.sample_height(&editor.project, level, x + cell, z)
     back := terrain.sample_height(&editor.project, level, x, z - cell)
     front := terrain.sample_height(&editor.project, level, x, z + cell)
-    normal := vec_normalize(vec_cross({y = front - back, z = cell * 2}, {x = cell * 2, y = right - left}))
-    light := vec_normalize(third_person.Vec3{x = -.45, y = .85, z = -.3})
-    shade := clamp(.48 + max(vec_dot(normal, light), 0) * .52, .42, 1.05)
+    normal := linalg.normalize0(
+        linalg.cross(third_person.Vec3{0, front - back, cell * 2}, third_person.Vec3{cell * 2, right - left, 0}),
+    )
+    light := linalg.normalize0(third_person.Vec3{-.45, .85, -.3})
+    shade := clamp(.48 + max(linalg.dot(normal, light), 0) * .52, .42, 1.05)
     base := terrain_color(
         max(height, editor.project.sea_level + .12),
         terrain.sample_material(&editor.project, level, x, z),
@@ -1030,11 +1047,13 @@ world_ellipsoid_rotated :: proc(
             local_z := math.sin(longitude_angle) * latitude_radius * radius_z
             world_x, world_z := world_rotate_xz(center.x, center.z, local_x, local_z, rotation)
             points[latitude][longitude] = {world_x, center.y + local_y, world_z}
-            local_normal := vec_normalize({
-                x = local_x / max(radius_x * radius_x, f32(.000001)),
-                y = local_y / max(radius_y * radius_y, f32(.000001)),
-                z = local_z / max(radius_z * radius_z, f32(.000001)),
-            })
+            local_normal := linalg.normalize0(
+                third_person.Vec3 {
+                    local_x / max(radius_x * radius_x, f32(.000001)),
+                    local_y / max(radius_y * radius_y, f32(.000001)),
+                    local_z / max(radius_z * radius_z, f32(.000001)),
+                },
+            )
             normal_x, normal_z := world_rotate_xz(0, 0, local_normal.x, local_normal.z, rotation)
             normals[latitude][longitude] = {normal_x, local_normal.y, normal_z}
         }
@@ -1099,11 +1118,11 @@ world_tapered_disc_depth_rotated :: proc(
 world_tube_between :: proc(a, b, forward: third_person.Vec3, radius_x, radius_z: f32, color: rl.Color) {
     SEGMENTS :: 8
     delta := third_person.Vec3{b.x - a.x, b.y - a.y, b.z - a.z}
-    length := f32(math.sqrt(f64(vec_dot(delta, delta))))
+    length := f32(math.sqrt(f64(linalg.dot(delta, delta))))
     if length <= .0001 do return
     axis_y := third_person.Vec3{delta.x / length, delta.y / length, delta.z / length}
-    reference := vec_normalize(forward)
-    projection := vec_dot(reference, axis_y)
+    reference := linalg.normalize0(forward)
+    projection := linalg.dot(reference, axis_y)
     axis_z_candidate := third_person.Vec3 {
         reference.x - axis_y.x * projection,
         reference.y - axis_y.y * projection,
@@ -1113,22 +1132,18 @@ world_tube_between :: proc(a, b, forward: third_person.Vec3, radius_x, radius_z:
     // Gram-Schmidt with `forward` produces a zero radial axis and collapses
     // the tube into invisible, zero-area triangles. Choose a stable fallback
     // reference for any collinear segment.
-    if vec_dot(axis_z_candidate, axis_z_candidate) < .0001 {
-        fallback := third_person.Vec3 {
-            y = 1,
-        }
-        if math.abs(axis_y.y) > .90 do fallback = {
-            x = 1,
-        }
-        fallback_projection := vec_dot(fallback, axis_y)
+    if linalg.dot(axis_z_candidate, axis_z_candidate) < .0001 {
+        fallback := third_person.Vec3{0, 1, 0}
+        if math.abs(axis_y.y) > .90 do fallback = third_person.Vec3{1, 0, 0}
+        fallback_projection := linalg.dot(fallback, axis_y)
         axis_z_candidate = {
             fallback.x - axis_y.x * fallback_projection,
             fallback.y - axis_y.y * fallback_projection,
             fallback.z - axis_y.z * fallback_projection,
         }
     }
-    axis_z := vec_normalize(axis_z_candidate)
-    axis_x := vec_normalize(vec_cross(axis_y, axis_z))
+    axis_z := linalg.normalize0(axis_z_candidate)
+    axis_x := linalg.normalize0(linalg.cross(axis_y, axis_z))
     ring_a, ring_b: [SEGMENTS]third_person.Vec3
     for segment in 0 ..< SEGMENTS {
         angle := (f32(segment) + .5) * math.PI * 2 / f32(SEGMENTS)
@@ -1162,7 +1177,7 @@ world_mouse_limb_hull :: proc(
     }
 
     rings: [MAX_RINGS][SEGMENTS]third_person.Vec3
-    reference := vec_normalize(forward)
+    reference := linalg.normalize0(forward)
     previous_axis_x, previous_axis_z: third_person.Vec3
     for ring_index in 0 ..< len(points) {
         previous := max(ring_index - 1, 0)
@@ -1172,29 +1187,27 @@ world_mouse_limb_hull :: proc(
             points[next].y - points[previous].y,
             points[next].z - points[previous].z,
         }
-        axis_y := vec_normalize(tangent)
+        axis_y := linalg.normalize0(tangent)
         frame_reference := reference
         if ring_index > 0 do frame_reference = previous_axis_z
-        projection := vec_dot(frame_reference, axis_y)
+        projection := linalg.dot(frame_reference, axis_y)
         axis_z_candidate := third_person.Vec3 {
             frame_reference.x - axis_y.x * projection,
             frame_reference.y - axis_y.y * projection,
             frame_reference.z - axis_y.z * projection,
         }
-        if vec_dot(axis_z_candidate, axis_z_candidate) < .0001 {
-            fallback := ring_index > 0 ? previous_axis_x : third_person.Vec3{y = 1}
-            if ring_index == 0 && math.abs(axis_y.y) > .90 do fallback = {
-                x = 1,
-            }
-            fallback_projection := vec_dot(fallback, axis_y)
+        if linalg.dot(axis_z_candidate, axis_z_candidate) < .0001 {
+            fallback := ring_index > 0 ? previous_axis_x : third_person.Vec3{0, 1, 0}
+            if ring_index == 0 && math.abs(axis_y.y) > .90 do fallback = third_person.Vec3{1, 0, 0}
+            fallback_projection := linalg.dot(fallback, axis_y)
             axis_z_candidate = {
                 fallback.x - axis_y.x * fallback_projection,
                 fallback.y - axis_y.y * fallback_projection,
                 fallback.z - axis_y.z * fallback_projection,
             }
         }
-        axis_z := vec_normalize(axis_z_candidate)
-        axis_x := vec_normalize(vec_cross(axis_y, axis_z))
+        axis_z := linalg.normalize0(axis_z_candidate)
+        axis_x := linalg.normalize0(linalg.cross(axis_y, axis_z))
         // Projecting the previous radial axis onto the new tangent plane is a
         // discrete parallel transport: ring indices retain their orientation
         // through bends instead of independently choosing a frame/sign.
@@ -1238,19 +1251,17 @@ world_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, c
     length := f32(math.sqrt(f64(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z)))
     if length <= .0001 do return
     axis_y := third_person.Vec3{delta.x / length, delta.y / length, delta.z / length}
-    axis_z := vec_normalize(forward)
-    axis_x := vec_cross(axis_y, axis_z)
+    axis_z := linalg.normalize0(forward)
+    axis_x := linalg.cross(axis_y, axis_z)
     axis_x_length := f32(math.sqrt(f64(axis_x.x * axis_x.x + axis_x.y * axis_x.y + axis_x.z * axis_x.z)))
     if axis_x_length <= .0001 {
-        axis_x = vec_cross(axis_y, {x = 0, y = 1, z = 0})
+        axis_x = linalg.cross(axis_y, third_person.Vec3{0, 1, 0})
         axis_x_length = f32(math.sqrt(f64(axis_x.x * axis_x.x + axis_x.y * axis_x.y + axis_x.z * axis_x.z)))
     }
     if axis_x_length > .0001 {
         axis_x = {axis_x.x / axis_x_length, axis_x.y / axis_x_length, axis_x.z / axis_x_length}
     } else {
-        axis_x = {
-            x = 1,
-        }
+        axis_x = third_person.Vec3{1, 0, 0}
     }
     center := third_person.Vec3{(a.x + b.x) * .5, (a.y + b.y) * .5, (a.z + b.z) * .5}
     signs := [8][3]f32 {
@@ -1286,7 +1297,8 @@ world_shadow_fade :: proc(color: rl.Color, factor: f32) -> rl.Color {
     return {color.r, color.g, color.b, u8(clamp(f32(color.a) * factor, 0, 255))}
 }
 
-world_vehicle_shadow_point :: proc(
+@(no_instrumentation)
+world_vehicle_shadow_point :: #force_inline proc(
     point: third_person.Vec3,
     sun_direction: [3]f32,
     project: ^terrain.Project,
@@ -1309,7 +1321,8 @@ world_vehicle_shadow_point :: proc(
     return projected, ground > project.sea_level + .04
 }
 
-world_vehicle_shadow_triangle :: proc(
+@(no_instrumentation)
+world_vehicle_shadow_triangle :: #force_inline proc(
     a, b, c: third_person.Vec3,
     sun_direction: [3]f32,
     cloud_cover: f32,
@@ -2773,11 +2786,7 @@ world_radial_formation :: proc(
                 local_z,
                 structure.rotation,
             )
-            vertices[layer][segment] = {
-                x = world_x,
-                y = structure.base_y + structure.height * heights[layer],
-                z = world_z,
-            }
+            vertices[layer][segment] = {world_x, structure.base_y + structure.height * heights[layer], world_z}
         }
     }
     for layer in 0 ..< 3 {
@@ -2794,11 +2803,7 @@ world_radial_formation :: proc(
             world_triangle(vertices[layer][segment], vertices[layer + 1][next], vertices[layer][next], face_color)
         }
     }
-    top := third_person.Vec3 {
-        x = structure.center_x,
-        y = structure.base_y + structure.height * cap_height,
-        z = structure.center_z,
-    }
+    top := third_person.Vec3{structure.center_x, structure.base_y + structure.height * cap_height, structure.center_z}
     for segment in 0 ..< segments {
         next := (segment + 1) % segments
         world_triangle(
@@ -3122,7 +3127,9 @@ world_bougainvillea_card :: proc(
         yaw_cosine, yaw_sine := f32(math.cos(f64(yaw_bias))), f32(math.sin(f64(yaw_bias)))
         right = {right.x * yaw_cosine + right.z * yaw_sine, 0, -right.x * yaw_sine + right.z * yaw_cosine}
     }
-    constrained_up := vec_normalize(third_person.Vec3{camera.up.x * .28, .72 + camera.up.y * .28, camera.up.z * .28})
+    constrained_up := linalg.normalize0(
+        third_person.Vec3{camera.up.x * .28, .72 + camera.up.y * .28, camera.up.z * .28},
+    )
     up := third_person.Vec3 {
         constrained_up.x * height * .5,
         constrained_up.y * height * .5,
@@ -3563,7 +3570,7 @@ world_foliage_understory_tuft :: proc(x, z, base_y, width, height: f32, seed: u3
         // therefore bends like a rooted fern instead of sliding as one rigid
         // piece across the forest floor.
         base_normal := third_person.Vec3{0, -1, 0}
-        tip_normal := vec_normalize({direction_x * .34, .94, direction_z * .34})
+        tip_normal := linalg.normalize0(third_person.Vec3{direction_x * .34, .94, direction_z * .34})
         world_triangle_foliage(left, tip, right, color, tip_color, color, base_normal, tip_normal, base_normal)
 
         // Walking-distance ferns carry three tapered leaflet tiers on every
@@ -3619,8 +3626,8 @@ world_foliage_understory_tuft :: proc(x, z, base_y, width, height: f32, seed: u3
                 leaflet_color.r = u8(max(int(leaflet_color.r) - 6, 0))
                 leaflet_color.g = u8(max(int(leaflet_color.g) - 7, 0))
             }
-            stem_normal := vec_normalize({direction_x * .18, .44, direction_z * .18})
-            leaflet_normal := vec_normalize({direction_x * .24, .68, direction_z * .24})
+            stem_normal := linalg.normalize0(third_person.Vec3{direction_x * .18, .44, direction_z * .18})
+            leaflet_normal := linalg.normalize0(third_person.Vec3{direction_x * .24, .68, direction_z * .24})
             world_triangle_foliage(
                 stem_back,
                 left_leaflet,
@@ -3686,8 +3693,8 @@ world_foliage_ground_rosette :: proc(x, z, base_y, width, height: f32, seed: u32
             tip_color = {63, 111, 74, 255}
         }
         root_normal := third_person.Vec3{0, -1, 0}
-        leaf_normal := vec_normalize({direction_x * .32, .88, direction_z * .32})
-        tip_normal := vec_normalize({direction_x * .46, .76, direction_z * .46})
+        leaf_normal := linalg.normalize0(third_person.Vec3{direction_x * .32, .88, direction_z * .32})
+        tip_normal := linalg.normalize0(third_person.Vec3{direction_x * .46, .76, direction_z * .46})
         world_triangle_foliage(
             root,
             left,
@@ -4006,8 +4013,8 @@ world_foliage_lobe :: proc(
                 local_normal_z += (mass_normal_z - local_normal_z) * .46
             }
             cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
-            normals[ring][segment] = vec_normalize(
-                {
+            normals[ring][segment] = linalg.normalize0(
+                third_person.Vec3 {
                     local_normal_x * cosine - local_normal_z * sine,
                     local_normal_y,
                     local_normal_x * sine + local_normal_z * cosine,
@@ -4691,8 +4698,8 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
             nx, nz := math.cos(angle), math.sin(angle)
             // A near-horizontal shoulder normal keeps the base anchored (the
             // canopy wind weight rides normal.y), while the crown ring faces up.
-            bottom_normal[segment] = vec_normalize({nx, .06, nz})
-            top_normal[segment] = vec_normalize({nx * .62, 1.0, nz * .62})
+            bottom_normal[segment] = linalg.normalize0(third_person.Vec3{nx, .06, nz})
+            top_normal[segment] = linalg.normalize0(third_person.Vec3{nx * .62, 1.0, nz * .62})
         }
         for segment in 0 ..< 6 {
             next := (segment + 1) % 6
@@ -4777,8 +4784,8 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
         tip := third_person.Vec3{tip_x, base_y + blade_height, tip_z}
         blade_base := world_foliage_vertex_color(2, variation)
         blade_tip := world_foliage_vertex_color(5, variation)
-        blade_base_normal := vec_normalize({0, .25, -1})
-        blade_front_normal := vec_normalize({0, .25, 1})
+        blade_base_normal := linalg.normalize0(third_person.Vec3{0, .25, -1})
+        blade_front_normal := linalg.normalize0(third_person.Vec3{0, .25, 1})
         world_triangle_foliage(
             base_left,
             tip,
@@ -6146,9 +6153,9 @@ world_climbing_leaf_vine :: proc(
             }
         }
         if structure.kind == .Architecture && point_index > 0 {
-            previous_delta := vine_local_x[point_index] - vine_local_x[point_index - 1]
+            segment_previous_delta := vine_local_x[point_index] - vine_local_x[point_index - 1]
             next_delta := vine_local_x[point_index + 1] - vine_local_x[point_index]
-            bend := math.abs(next_delta - previous_delta)
+            bend := math.abs(next_delta - segment_previous_delta)
             if bend > structure.width * .0045 && start_badness < .48 {
                 // A subtle swollen knuckle rounds the join between the two
                 // tapered tubes. Restrict it to visible bends so straight
@@ -6282,8 +6289,8 @@ world_climbing_leaf_vine :: proc(
         // close façade view without turning the stem into a saw blade.
         thorn_indices := [4]int{4, 7, 10, 13}
         thorn_count := architecture.bougainvillea_thorn_count(vine_maturity, len(thorn_indices))
-        facade_right_x, facade_right_z := world_rotate_xz(0, 0, 1, 0, structure.rotation)
-        facade_out_x, facade_out_z := world_rotate_xz(0, 0, 0, 1, structure.rotation)
+        thorn_facade_right_x, thorn_facade_right_z := world_rotate_xz(0, 0, 1, 0, structure.rotation)
+        thorn_facade_out_x, thorn_facade_out_z := world_rotate_xz(0, 0, 0, 1, structure.rotation)
         for thorn in 0 ..< thorn_count {
             point_index := thorn_indices[len(thorn_indices) - thorn_count + thorn]
             thorn_local_y := vine_points[point_index].y - structure.base_y
@@ -6294,14 +6301,14 @@ world_climbing_leaf_vine :: proc(
             thorn_length := .11 + vine_maturity * .07 + f32(thorn % 2) * .025
             root := vine_points[point_index]
             bend := third_person.Vec3 {
-                root.x + facade_right_x * side * thorn_length * .68 + facade_out_x * .045,
+                root.x + thorn_facade_right_x * side * thorn_length * .68 + thorn_facade_out_x * .045,
                 root.y + thorn_length * .32,
-                root.z + facade_right_z * side * thorn_length * .68 + facade_out_z * .045,
+                root.z + thorn_facade_right_z * side * thorn_length * .68 + thorn_facade_out_z * .045,
             }
             tip := third_person.Vec3 {
-                bend.x + facade_right_x * side * thorn_length * .32 + facade_out_x * .025,
+                bend.x + thorn_facade_right_x * side * thorn_length * .32 + thorn_facade_out_x * .025,
                 bend.y - thorn_length * .24,
-                bend.z + facade_right_z * side * thorn_length * .32 + facade_out_z * .025,
+                bend.z + thorn_facade_right_z * side * thorn_length * .32 + thorn_facade_out_z * .025,
             }
             thorn_color := color_lerp({84, 111, 64, 255}, {112, 77, 51, 255}, vine_maturity)
             thorn_radius := .007 + vine_maturity * .005
@@ -6316,8 +6323,8 @@ world_climbing_leaf_vine :: proc(
         // look damaged or leafless.
         stub_indices := [3]int{5, 8, 11}
         stub_count := architecture.bougainvillea_pruned_stub_count(vine_maturity)
-        facade_right_x, facade_right_z := world_rotate_xz(0, 0, 1, 0, structure.rotation)
-        facade_out_x, facade_out_z := world_rotate_xz(0, 0, 0, 1, structure.rotation)
+        stub_facade_right_x, stub_facade_right_z := world_rotate_xz(0, 0, 1, 0, structure.rotation)
+        stub_facade_out_x, stub_facade_out_z := world_rotate_xz(0, 0, 0, 1, structure.rotation)
         for stub in 0 ..< stub_count {
             point_index := stub_indices[stub]
             node := vine_points[point_index]
@@ -6325,9 +6332,9 @@ world_climbing_leaf_vine :: proc(
             side := (stub + int(seed)) % 2 == 0 ? f32(1) : f32(-1)
             stub_length := .13 + f32(stub) * .025 + vine_maturity * .035
             tip := third_person.Vec3 {
-                node.x + facade_right_x * side * stub_length + facade_out_x * .025,
+                node.x + stub_facade_right_x * side * stub_length + stub_facade_out_x * .025,
                 node.y + .055 + f32(stub % 2) * .025,
-                node.z + facade_right_z * side * stub_length + facade_out_z * .025,
+                node.z + stub_facade_right_z * side * stub_length + stub_facade_out_z * .025,
             }
             tip_local_x := node_local_x + side * stub_length
             if max(
@@ -6548,12 +6555,12 @@ world_climbing_leaf_vine :: proc(
         for normal_sample in -2 ..= 2 {
             sample_x := cluster_x + f32(normal_sample) * .12
             sample_z := surface_z + .16 + f32(math.sin(f64(f32(normal_sample) * .9))) * .06
-            normal_local := vec_normalize(third_person.Vec3{sample_x, 0, sample_z})
+            normal_local := linalg.normalize0(third_person.Vec3{sample_x, 0, sample_z})
             normal_world_x, normal_world_z := world_rotate_xz(0, 0, normal_local.x, normal_local.z, structure.rotation)
             normal_sum.x += normal_world_x
             normal_sum.z += normal_world_z
         }
-        average_normal := vec_normalize(normal_sum)
+        average_normal := linalg.normalize0(normal_sum)
         surface_rotation := -math.atan2(average_normal.x, average_normal.z)
         cluster_structure.rotation = surface_rotation
         offset_x := attachment_x - structure.center_x
@@ -6656,10 +6663,10 @@ world_climbing_leaf_vine :: proc(
                 card_width *= .80
                 card_height *= .80
             }
-            facade_right_x, facade_right_z := world_rotate_xz(0, 0, 1, 0, structure.rotation)
+            card_facade_right_x, card_facade_right_z := world_rotate_xz(0, 0, 1, 0, structure.rotation)
             resolved_shift := silhouette_shift + clearance_shift
-            cluster_center.x += facade_right_x * resolved_shift
-            cluster_center.z += facade_right_z * resolved_shift
+            cluster_center.x += card_facade_right_x * resolved_shift
+            cluster_center.z += card_facade_right_z * resolved_shift
             if math.abs(resolved_shift) > card_width * .12 {
                 // Preserve the visual connection when the safest masonry
                 // pocket moves the atlas anchor away from the original node.
@@ -6680,7 +6687,7 @@ world_climbing_leaf_vine :: proc(
                 // screen-right. Mirror when the supporting branch reaches
                 // screen-left so the painted continuation grows away from the
                 // trunk in either view direction.
-                mirrored = vec_dot(branch_delta, card_camera.right) < 0
+                mirrored = linalg.dot(branch_delta, card_camera.right) < 0
             }
             card_roll := f32(int((seed + u32(leaf_index * 17)) % 7) - 3) * .016
             card_value := .965 + f32((seed + u32(leaf_index * 23)) % 4) * .012
@@ -6789,7 +6796,7 @@ world_climbing_leaf_vine :: proc(
                 echo_center.x += tangent.x * card_width * .24
                 echo_center.y -= card_height * .18
                 echo_center.z += tangent.z * card_width * .24
-                echo_mirrored := vec_dot(tangent, card_camera.right) < 0
+                echo_mirrored := linalg.dot(tangent, card_camera.right) < 0
                 world_bougainvillea_card(
                     echo_center,
                     card_width * .62,
@@ -7346,7 +7353,8 @@ world_car_pilot :: proc(editor: ^Editor) {
     world_car_pilot_model(editor, editor.car_drive.steering, editor.car_drive.acceleration_feedback)
 }
 
-car_vertex_world :: proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3 {
+@(no_instrumentation)
+car_vertex_world :: #force_inline proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3 {
     origin := editor.car.position
     // The authored car faces local -Z. Apply restrained pitch and roll feedback
     // before rotating that axis onto the simulation's ground-plane heading.
@@ -7357,13 +7365,14 @@ car_vertex_world :: proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3
     right, up = right * roll_cos - up * roll_sin, right * roll_sin + up * roll_cos
     heading_cos, heading_sin := math.cos(editor.car.yaw_radians), math.sin(editor.car.yaw_radians)
     return {
-        x = origin.x + forward * heading_cos - right * heading_sin,
-        y = origin.y + up,
-        z = origin.z + forward * heading_sin + right * heading_cos,
+        origin.x + forward * heading_cos - right * heading_sin,
+        origin.y + up,
+        origin.z + forward * heading_sin + right * heading_cos,
     }
 }
 
-trailer_vertex_world :: proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3 {
+@(no_instrumentation)
+trailer_vertex_world :: #force_inline proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3 {
     origin := editor.car_trailer_position
     yaw := editor.car_trailer_yaw
     right, up, forward := position[0], position[1], -position[2]
@@ -7373,13 +7382,14 @@ trailer_vertex_world :: proc(editor: ^Editor, position: [3]f32) -> third_person.
     right, up = right * roll_cos - up * roll_sin, right * roll_sin + up * roll_cos
     heading_cos, heading_sin := math.cos(yaw), math.sin(yaw)
     return {
-        x = origin.x + forward * heading_cos - right * heading_sin,
-        y = origin.y + up,
-        z = origin.z + forward * heading_sin + right * heading_cos,
+        origin.x + forward * heading_cos - right * heading_sin,
+        origin.y + up,
+        origin.z + forward * heading_sin + right * heading_cos,
     }
 }
 
-trailer_part_color :: proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
+@(no_instrumentation)
+trailer_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
     color := aircraft_part_color(part)
     if part == .Tail_Light {
         braking := editor.car_drive.handbrake_amount > .15 || editor.car_drive.acceleration_feedback < -.12
@@ -7451,11 +7461,9 @@ world_car_cockpit :: proc(editor: ^Editor) {
     wheel_center := [3]f32{0, CAR_STEERING_WHEEL_Y, CAR_STEERING_WHEEL_Z}
     wheel_radius := CAR_STEERING_WHEEL_RADIUS
     wheel_rotation := clamp(editor.car_drive.steering, -1, 1) * .55
-    forward := vec_normalize(
-        vec_sub(
-            car_vertex_world(editor, {wheel_center.x, wheel_center.y, wheel_center.z - .1}),
-            car_vertex_world(editor, wheel_center),
-        ),
+    forward := linalg.normalize0(
+        (car_vertex_world(editor, {wheel_center.x, wheel_center.y, wheel_center.z - .1}) -
+            car_vertex_world(editor, wheel_center)),
     )
     leather := rl.Color{48, 39, 34, 255}
     spoke := rl.Color{104, 83, 65, 255}
@@ -7872,7 +7880,7 @@ player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
 
 mouse_surface_height :: proc(editor: ^Editor, x, z: f32) -> f32 {
     height := terrain.sample_height(&editor.project, 0, x, z)
-    pavement := roads.pavement_at(&editor.project.road_graph, {x = x, y = height, z = z})
+    pavement := roads.pavement_at(&editor.project.road_graph, {x, height, z})
     if pavement.on_surface do height = max(height + .12, pavement.height + .12)
     return height
 }
@@ -8009,14 +8017,8 @@ world_mouse_model_parented :: proc(editor: ^Editor, model: Mouse_Model, basis: f
     first_vertex := len(world_renderer.vertices)
     world_mouse_model(editor, model)
 
-    yaw_right := third_person.Vec3 {
-        x = math.cos(model.rotation),
-        z = math.sin(model.rotation),
-    }
-    yaw_forward := third_person.Vec3 {
-        x = -math.sin(model.rotation),
-        z = math.cos(model.rotation),
-    }
+    yaw_right := third_person.Vec3{math.cos(model.rotation), 0, math.sin(model.rotation)}
+    yaw_forward := third_person.Vec3{-math.sin(model.rotation), 0, math.cos(model.rotation)}
     origin := model.position
     for index in first_vertex ..< len(world_renderer.vertices) {
         vertex := &world_renderer.vertices[index]
@@ -8098,10 +8100,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     leather_dark: rl.Color = {58, 38, 31, 255}
     brass: rl.Color = {204, 157, 72, 255}
     goggle_glass: rl.Color = {78, 157, 169, 255}
-    model_forward := third_person.Vec3 {
-        x = -math.sin(rotation),
-        z = math.cos(rotation),
-    }
+    model_forward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
     animation := &editor.tweak.player_animation
     turn_pose :=
         model.player_controlled ? clamp(editor.player_turn_pose, -1, 1) : (model.driving_pose ? clamp(model.drive_steering, -1, 1) : f32(0))
@@ -8109,14 +8108,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     if model.player_controlled && editor.capture_player_turn_left_pose do turn_pose = -1
     if model.player_controlled && editor.capture_player_turn_right_pose do turn_pose = 1
     if model.player_controlled && editor.capture_player_brake_pose do brake_pose = 1
-    ground_normal := model.player_controlled ? editor.player.ground_normal : third_person.Vec3{y = 1}
-    if ground_normal.y <= .1 do ground_normal = {
-        y = 1,
-    }
-    model_right := third_person.Vec3 {
-        x = math.cos(rotation),
-        z = math.sin(rotation),
-    }
+    ground_normal := model.player_controlled ? editor.player.ground_normal : third_person.Vec3{0, 1, 0}
+    if ground_normal.y <= .1 do ground_normal = third_person.Vec3{0, 1, 0}
+    model_right := third_person.Vec3{math.cos(rotation), 0, math.sin(rotation)}
     normal_forward := ground_normal.x * model_forward.x + ground_normal.z * model_forward.z
     normal_right := ground_normal.x * model_right.x + ground_normal.z * model_right.z
     slope_pitch := math.atan2(normal_forward, ground_normal.y) * animation.slope_alignment
@@ -9052,9 +9046,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 for sample_index in 1 ..= 3 {
                     amount := f32(sample_index) * .25
                     sample := third_person.Vec3 {
-                        x = tail_points[tail_index].x * (1 - amount) + tail_points[tail_index + 1].x * amount,
-                        y = tail_points[tail_index].y * (1 - amount) + tail_points[tail_index + 1].y * amount,
-                        z = tail_points[tail_index].z * (1 - amount) + tail_points[tail_index + 1].z * amount,
+                        tail_points[tail_index].x * (1 - amount) + tail_points[tail_index + 1].x * amount,
+                        tail_points[tail_index].y * (1 - amount) + tail_points[tail_index + 1].y * amount,
+                        tail_points[tail_index].z * (1 - amount) + tail_points[tail_index + 1].z * amount,
                     }
                     radius := tail_radii[tail_index] * (1 - amount) + tail_radii[tail_index + 1] * amount
                     floor := mouse_surface_height(editor, sample.x, sample.z) + radius + MOUSE_CONTACT_SKIN
@@ -9175,8 +9169,9 @@ world_attendant_kiosk :: proc(editor: ^Editor) {
 world_marta :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
     delta := third_person.Vec3 {
-        x = editor.player.position.x - editor.attendant_position.x,
-        z = editor.player.position.z - editor.attendant_position.z,
+        editor.player.position.x - editor.attendant_position.x,
+        0,
+        editor.player.position.z - editor.attendant_position.z,
     }
     facing := math.atan2(-delta.x, -delta.z)
     position := editor.attendant_position
@@ -9246,7 +9241,7 @@ world_town_mice :: proc(editor: ^Editor) {
                 if ground_y <= editor.project.sea_level + .35 do continue
                 rotation := frontage.rotation + math.PI * .5 + resident.facing
                 world_mouse_model_scaled(editor, {
-                        position = {x = x, y = ground_y, z = z},
+                        position = {x, ground_y, z},
                         rotation = rotation,
                         accessory = resident.accessory,
                         fur = resident.fur,
@@ -9264,22 +9259,12 @@ world_town_mice :: proc(editor: ^Editor) {
 world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: rl.Color) {
     if editor == nil do return
     segments := 48
-    center := third_person.Vec3 {
-        x = x,
-        y = terrain.sample_height(&editor.project, 0, x, z) + height_offset,
-        z = z,
-    }
+    center := third_person.Vec3{x, terrain.sample_height(&editor.project, 0, x, z) + height_offset, z}
     for i in 0 ..< segments {
         a0 := f32(i) * 2 * math.PI / f32(segments)
         a1 := f32(i + 1) * 2 * math.PI / f32(segments)
-        p0 := third_person.Vec3 {
-            x = x + math.cos(a0) * radius,
-            z = z + math.sin(a0) * radius,
-        }
-        p1 := third_person.Vec3 {
-            x = x + math.cos(a1) * radius,
-            z = z + math.sin(a1) * radius,
-        }
+        p0 := third_person.Vec3{x + math.cos(a0) * radius, 0, z + math.sin(a0) * radius}
+        p1 := third_person.Vec3{x + math.cos(a1) * radius, 0, z + math.sin(a1) * radius}
         p0.y = terrain.sample_height(&editor.project, 0, p0.x, p0.z) + height_offset
         p1.y = terrain.sample_height(&editor.project, 0, p1.x, p1.z) + height_offset
         // Ground decal fan: upward face front (CCW) so it survives culling.
@@ -9390,6 +9375,8 @@ world_ground_grass :: proc(editor: ^Editor) {
                 }
             }
             if on_building_path do continue
+            pavement := roads.pavement_at(&editor.project.road_graph, {x, height_at, z})
+            if pavement.on_surface do continue
 
             variation := wind_streak_hash(seed_index, 4)
             // The atlas is sampled as luminance, so elevation can drive the
@@ -9577,7 +9564,7 @@ world_petal_particles :: proc(editor: ^Editor) {
 }
 
 customization_preview_camera_pose :: proc() -> third_person.Camera_Pose {
-    return {position = {x = 2.35, y = 1.25, z = 3.2}, target = {x = 1.90, y = .43, z = 0}}
+    return {position = {2.35, 1.25, 3.2}, target = {1.90, .43, 0}}
 }
 
 world_vehicle_particle :: proc(
@@ -9601,14 +9588,14 @@ world_vehicle_particle :: proc(
     width := particle.size * (.82 + f32((particle.seed >> 3) & 3) * .07) * (.78 + age * .46)
     height := particle.size * (.62 + f32((particle.seed >> 5) & 3) * .08) * (.78 + age * .46)
     right := third_person.Vec3 {
-        x = (camera.right.x * cosine + camera.up.x * sine) * width,
-        y = (camera.right.y * cosine + camera.up.y * sine) * width,
-        z = (camera.right.z * cosine + camera.up.z * sine) * width,
+        (camera.right.x * cosine + camera.up.x * sine) * width,
+        (camera.right.y * cosine + camera.up.y * sine) * width,
+        (camera.right.z * cosine + camera.up.z * sine) * width,
     }
     up := third_person.Vec3 {
-        x = (-camera.right.x * sine + camera.up.x * cosine) * height,
-        y = (-camera.right.y * sine + camera.up.y * cosine) * height,
-        z = (-camera.right.z * sine + camera.up.z * cosine) * height,
+        (-camera.right.x * sine + camera.up.x * cosine) * height,
+        (-camera.right.y * sine + camera.up.y * cosine) * height,
+        (-camera.right.z * sine + camera.up.z * cosine) * height,
     }
     p := third_person.Vec3{particle.position.x, particle.position.y, particle.position.z}
     opacity := opacity_override < 0 ? fade : clamp(opacity_override, 0, 1)
@@ -9666,9 +9653,9 @@ world_wing_trails :: proc(editor: ^Editor) {
             for ring_side in 0 ..< 8 {
                 angle := f32(ring_side) * math.PI * 2 / 8
                 radial := third_person.Vec3 {
-                    x = (camera.right.x * math.cos(angle) + camera.up.x * math.sin(angle)) * radius,
-                    y = (camera.right.y * math.cos(angle) + camera.up.y * math.sin(angle)) * radius,
-                    z = (camera.right.z * math.cos(angle) + camera.up.z * math.sin(angle)) * radius,
+                    (camera.right.x * math.cos(angle) + camera.up.x * math.sin(angle)) * radius,
+                    (camera.right.y * math.cos(angle) + camera.up.y * math.sin(angle)) * radius,
+                    (camera.right.z * math.cos(angle) + camera.up.z * math.sin(angle)) * radius,
                 }
                 append(
                     &world_renderer.wing_trail_vertices,
@@ -9740,24 +9727,20 @@ world_wind_streaks :: proc(editor: ^Editor) {
         lateral := (wind_streak_hash(index, 3) - .5) * 62
         vertical := (wind_streak_hash(index, 4) - .5) * 25 + 3
         center := particles.Vec3 {
-            x = body.position.x + direction_x * along + side_x * lateral,
-            y = body.position.y + vertical,
-            z = body.position.z + direction_z * along + side_z * lateral,
+            body.position.x + direction_x * along + side_x * lateral,
+            body.position.y + vertical,
+            body.position.z + direction_z * along + side_z * lateral,
         }
         streak_length := (1.4 + wind_speed * .58) * (.62 + wind_streak_hash(index, 5) * .58)
         tail := particles.Vec3 {
-            x = center.x - direction_x * streak_length,
-            y = center.y,
-            z = center.z - direction_z * streak_length,
+            center.x - direction_x * streak_length,
+            center.y,
+            center.z - direction_z * streak_length,
         }
         fade := math.sin(phase * math.PI)
         alpha := u8(clamp((22 + strength * 82) * fade, 0, 104))
         width := .018 + strength * .035
-        offset := third_person.Vec3 {
-            x = camera.up.x * width,
-            y = camera.up.y * width,
-            z = camera.up.z * width,
-        }
+        offset := third_person.Vec3{camera.up.x * width, camera.up.y * width, camera.up.z * width}
         world_quad(
             {tail.x - offset.x, tail.y - offset.y, tail.z - offset.z},
             {center.x - offset.x, center.y - offset.y, center.z - offset.z},

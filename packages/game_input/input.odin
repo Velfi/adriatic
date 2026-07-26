@@ -119,7 +119,8 @@ menu_steps :: proc(state: ^State, horizontal, vertical, delta_seconds: f32) -> (
     return
 }
 
-reset_menu_repeat :: proc(state: ^State) {
+@(no_instrumentation)
+reset_menu_repeat :: #force_inline proc(state: ^State) {
     if state == nil do return
     state.menu_horizontal = {}
     state.menu_vertical = {}

@@ -1,6 +1,7 @@
 package vehicles
 
 import "core:math"
+import "core:math/linalg"
 
 // Faithful product-local port of ArchipelagoGame's TriRotorVisual. The source
 // builds the aircraft from Godot primitives; this file emits the same authored
@@ -12,28 +13,20 @@ LIBELLULA_REAR_HUB :: [3]f32{0, 1.17, 4.5425625}
 LIBELLULA_CENTROID :: [3]f32{0, 1.17, .8475208}
 LIBELLULA_SUSPENSION_CENTER_Z :: f32(1.8475208)
 LIBELLULA_CARRIAGE_OFFSET :: [3]f32{0, -1.1, 1.6475208}
-
-lib_vadd :: proc(a, b: [3]f32) -> [3]f32 { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]} }
-lib_vsub :: proc(a, b: [3]f32) -> [3]f32 { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]} }
-lib_vscale :: proc(a: [3]f32, scale: f32) -> [3]f32 { return {a[0] * scale, a[1] * scale, a[2] * scale} }
-lib_vdot :: proc(a, b: [3]f32) -> f32 { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
-lib_vcross :: proc(a, b: [3]f32) -> [3]f32 {
-    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}
-}
-lib_vlength :: proc(a: [3]f32) -> f32 { return f32(math.sqrt(f64(lib_vdot(a, a)))) }
-lib_vnormalize :: proc(a: [3]f32) -> [3]f32 {
-    length := lib_vlength(a)
+@(no_instrumentation)
+lib_vnormalize :: #force_inline proc(value: [3]f32) -> [3]f32 {
+    length := linalg.length(value)
     if length < .00001 do return {0, 1, 0}
-    return lib_vscale(a, 1 / length)
+    return value / length
 }
-lib_vlerp :: proc(a, b: [3]f32, t: f32) -> [3]f32 { return lib_vadd(a, lib_vscale(lib_vsub(b, a), t)) }
+
 
 libellula_axis_basis :: proc(axis: [3]f32) -> (n, tangent, bitangent: [3]f32) {
     n = lib_vnormalize(axis)
     reference := [3]f32{0, 1, 0}
-    if math.abs(lib_vdot(n, reference)) > .92 do reference = {1, 0, 0}
-    tangent = lib_vnormalize(lib_vcross(reference, n))
-    bitangent = lib_vnormalize(lib_vcross(n, tangent))
+    if math.abs(linalg.dot(n, reference)) > .92 do reference = {1, 0, 0}
+    tangent = lib_vnormalize(linalg.cross(reference, n))
+    bitangent = lib_vnormalize(linalg.cross(n, tangent))
     return
 }
 
@@ -46,18 +39,18 @@ libellula_add_cylinder :: proc(
 ) {
     if sides < 3 || height <= 0 do return
     n, tangent, bitangent := libellula_axis_basis(axis)
-    bottom_center := lib_vsub(center, lib_vscale(n, height * .5))
-    top_center := lib_vadd(center, lib_vscale(n, height * .5))
+    bottom_center := (center - (n * height * .5))
+    top_center := (center + (n * height * .5))
     for side in 0 ..< sides {
         next := (side + 1) % sides
         a0 := f32(side) * 2 * math.PI / f32(sides)
         a1 := f32(next) * 2 * math.PI / f32(sides)
-        radial0 := lib_vadd(lib_vscale(tangent, math.cos(a0)), lib_vscale(bitangent, math.sin(a0)))
-        radial1 := lib_vadd(lib_vscale(tangent, math.cos(a1)), lib_vscale(bitangent, math.sin(a1)))
-        b0 := lib_vadd(bottom_center, lib_vscale(radial0, bottom_radius))
-        b1 := lib_vadd(bottom_center, lib_vscale(radial1, bottom_radius))
-        t1 := lib_vadd(top_center, lib_vscale(radial1, top_radius))
-        t0 := lib_vadd(top_center, lib_vscale(radial0, top_radius))
+        radial0 := ((tangent * math.cos(a0)) + (bitangent * math.sin(a0)))
+        radial1 := ((tangent * math.cos(a1)) + (bitangent * math.sin(a1)))
+        b0 := (bottom_center + (radial0 * bottom_radius))
+        b1 := (bottom_center + (radial1 * bottom_radius))
+        t1 := (top_center + (radial1 * top_radius))
+        t0 := (top_center + (radial0 * top_radius))
         mesh_quad(mesh, b0, b1, t1, t0, part)
         mesh_triangle(mesh, bottom_center, b0, b1, part)
         mesh_triangle(mesh, top_center, t1, t0, part)
@@ -65,10 +58,10 @@ libellula_add_cylinder :: proc(
 }
 
 libellula_add_beam :: proc(mesh: ^Libellula_Mesh, a, b: [3]f32, radius: f32, part: Aircraft_Mesh_Part) {
-    delta := lib_vsub(b, a)
-    length := lib_vlength(delta)
+    delta := (b - a)
+    length := linalg.length(delta)
     if length < .0001 do return
-    libellula_add_cylinder(mesh, lib_vlerp(a, b, .5), delta, radius, radius, length, 8, part)
+    libellula_add_cylinder(mesh, linalg.lerp(a, b, .5), delta, radius, radius, length, 8, part)
 }
 
 libellula_add_sphere :: proc(
@@ -129,27 +122,15 @@ libellula_add_torus :: proc(
     for side in 0 ..< sides {
         a0 := f32(side) * 2 * math.PI / f32(sides)
         a1 := f32(side + 1) * 2 * math.PI / f32(sides)
-        radial0 := lib_vadd(lib_vscale(tangent, math.cos(a0)), lib_vscale(bitangent, math.sin(a0)))
-        radial1 := lib_vadd(lib_vscale(tangent, math.cos(a1)), lib_vscale(bitangent, math.sin(a1)))
+        radial0 := ((tangent * math.cos(a0)) + (bitangent * math.sin(a0)))
+        radial1 := ((tangent * math.cos(a1)) + (bitangent * math.sin(a1)))
         for tube_side in 0 ..< tube_sides {
             b0 := f32(tube_side) * 2 * math.PI / f32(tube_sides)
             b1 := f32(tube_side + 1) * 2 * math.PI / f32(tube_sides)
-            p00 := lib_vadd(
-                center,
-                lib_vadd(lib_vscale(radial0, major + tube * math.cos(b0)), lib_vscale(n, tube * math.sin(b0))),
-            )
-            p01 := lib_vadd(
-                center,
-                lib_vadd(lib_vscale(radial1, major + tube * math.cos(b0)), lib_vscale(n, tube * math.sin(b0))),
-            )
-            p11 := lib_vadd(
-                center,
-                lib_vadd(lib_vscale(radial1, major + tube * math.cos(b1)), lib_vscale(n, tube * math.sin(b1))),
-            )
-            p10 := lib_vadd(
-                center,
-                lib_vadd(lib_vscale(radial0, major + tube * math.cos(b1)), lib_vscale(n, tube * math.sin(b1))),
-            )
+            p00 := (center + ((radial0 * major + tube * math.cos(b0)) + (n * tube * math.sin(b0))))
+            p01 := (center + ((radial1 * major + tube * math.cos(b0)) + (n * tube * math.sin(b0))))
+            p11 := (center + ((radial1 * major + tube * math.cos(b1)) + (n * tube * math.sin(b1))))
+            p10 := (center + ((radial0 * major + tube * math.cos(b1)) + (n * tube * math.sin(b1))))
             mesh_quad(mesh, p00, p01, p11, p10, part)
         }
     }
@@ -277,22 +258,22 @@ libellula_add_rotor :: proc(
     libellula_add_cylinder(mesh, position, {0, 1, 0}, .5, .42, .58, 16, .Dark_Metal)
     cooling_band_ys := [3]f32{-.2, -.04, .12}
     for y in cooling_band_ys {
-        libellula_add_torus(mesh, lib_vadd(position, {0, y, 0}), {0, 1, 0}, .43, .51, 12, 5, .Steel)
+        libellula_add_torus(mesh, (position + {0, y, 0}), {0, 1, 0}, .43, .51, 12, 5, .Steel)
     }
-    libellula_add_torus(mesh, lib_vadd(position, {0, .12, 0}), {0, 1, 0}, .39, .55, 14, 6, .Red_Paint)
+    libellula_add_torus(mesh, (position + {0, .12, 0}), {0, 1, 0}, .39, .55, 14, 6, .Red_Paint)
     for index in 0 ..< 4 {
         angle := f32(index) * math.PI * .5
         libellula_add_box_rotated(
             mesh,
-            lib_vadd(position, {math.sin(angle) * .43, -.08, math.cos(angle) * .43}),
+            (position + {math.sin(angle) * .43, -.08, math.cos(angle) * .43}),
             {.13, .2, .035},
             {0, angle * 180 / math.PI, 0},
             .Dark_Metal,
         )
     }
-    add_box(mesh, lib_vadd(position, {.42, -.24, 0}), {.26, .08, .13}, .Brass)
-    add_box(mesh, lib_vadd(position, {-.39, -.12, 0}), {.18, .16, .24}, .Steel)
-    libellula_add_cylinder(mesh, lib_vadd(position, {-.5, .02, 0}), {0, 1, 0}, .075, .055, .16, 8, .Brass)
+    add_box(mesh, (position + {.42, -.24, 0}), {.26, .08, .13}, .Brass)
+    add_box(mesh, (position + {-.39, -.12, 0}), {.18, .16, .24}, .Steel)
+    libellula_add_cylinder(mesh, (position + {-.5, .02, 0}), {0, 1, 0}, .075, .055, .16, 8, .Brass)
     exhaust := [3]f32{-1, 0, 0}
     exhaust_axis := [3]f32{1, 0, 0}
     if unit == 1 {
@@ -301,39 +282,30 @@ libellula_add_rotor :: proc(
         exhaust = {0, 0, 1}
         exhaust_axis = {0, 0, 1}
     }
-    exhaust_a := lib_vadd(position, lib_vadd({0, -.14, 0}, lib_vscale(exhaust, .34)))
-    exhaust_b := lib_vadd(position, lib_vadd({0, -.22, 0}, lib_vscale(exhaust, .68)))
+    exhaust_a := (position + ({0, -.14, 0} + (exhaust * .34)))
+    exhaust_b := (position + ({0, -.22, 0} + (exhaust * .68)))
     libellula_add_beam(mesh, exhaust_a, exhaust_b, .07, .Steel)
-    libellula_add_torus(
-        mesh,
-        lib_vadd(position, lib_vadd({0, -.22, 0}, lib_vscale(exhaust, .7))),
-        exhaust_axis,
-        .055,
-        .085,
-        10,
-        5,
-        .Brass,
-    )
-    libellula_add_cylinder(mesh, lib_vadd(position, {0, .29, 0}), {0, 1, 0}, .105, .075, .42, 10, .Steel)
-    libellula_add_torus(mesh, lib_vadd(position, {0, .29, 0}), {0, 1, 0}, .2, .29, 12, 5, .Steel)
+    libellula_add_torus(mesh, (position + ({0, -.22, 0} + (exhaust * .7))), exhaust_axis, .055, .085, 10, 5, .Brass)
+    libellula_add_cylinder(mesh, (position + {0, .29, 0}), {0, 1, 0}, .105, .075, .42, 10, .Steel)
+    libellula_add_torus(mesh, (position + {0, .29, 0}), {0, 1, 0}, .2, .29, 12, 5, .Steel)
     for index in 0 ..< 3 {
         angle := f32(index) * 2 * math.PI / 3
         radial := [3]f32{math.sin(angle), 0, math.cos(angle)}
-        link_a := lib_vadd(position, lib_vadd(lib_vscale(radial, .32), {0, .1, 0}))
-        link_b := lib_vadd(position, lib_vadd(lib_vscale(radial, .24), {0, .28, 0}))
+        link_a := (position + ((radial * .32) + {0, .1, 0}))
+        link_b := (position + ((radial * .24) + {0, .28, 0}))
         libellula_add_beam(mesh, link_a, link_b, .022, .Brass)
         libellula_add_sphere(mesh, link_b, .035, 8, 4, .Steel)
     }
 
-    rotor_center := lib_vadd(position, {0, .38, 0})
+    rotor_center := (position + {0, .38, 0})
     rotating_first := mesh.vertex_count
-    libellula_add_torus(mesh, lib_vadd(rotor_center, {0, -.055, 0}), {0, 1, 0}, .2, .29, 12, 5, .Brass)
-    libellula_add_cylinder(mesh, lib_vadd(rotor_center, {0, .13, 0}), {0, 1, 0}, .21, .14, .3, 12, .Brass)
-    libellula_add_cylinder(mesh, lib_vadd(rotor_center, {0, .11, 0}), {0, 1, 0}, .065, .065, .42, 10, .Steel)
+    libellula_add_torus(mesh, (rotor_center + {0, -.055, 0}), {0, 1, 0}, .2, .29, 12, 5, .Brass)
+    libellula_add_cylinder(mesh, (rotor_center + {0, .13, 0}), {0, 1, 0}, .21, .14, .3, 12, .Brass)
+    libellula_add_cylinder(mesh, (rotor_center + {0, .11, 0}), {0, 1, 0}, .065, .065, .42, 10, .Steel)
     for blade in 0 ..< 3 {
         angle := f32(blade) * 2 * math.PI / 3
         direction := [3]f32{-math.sin(angle), 0, -math.cos(angle)}
-        cuff_center := lib_vadd(rotor_center, lib_vscale(direction, .31))
+        cuff_center := (rotor_center + (direction * .31))
         libellula_add_cylinder(mesh, cuff_center, direction, .13, .13, .72, 10, rotor_part)
         libellula_add_blade_segment(mesh, rotor_center, angle, -.52, -2.01, .31, .17, 0, .08, .078, .046, .Rotor_Blade)
         libellula_add_blade_segment(
@@ -350,10 +322,10 @@ libellula_add_rotor :: proc(
             .034,
             .Rotor_Tip,
         )
-        pin := lib_vadd(rotor_center, lib_vscale(direction, .18))
+        pin := (rotor_center + (direction * .18))
         libellula_add_cylinder(mesh, pin, direction, .072, .072, .3, 8, .Steel)
-        horn := lib_vadd(rotor_center, lib_vadd(lib_vscale(direction, .39), {0, .075, 0}))
-        link_base := lib_vadd(rotor_center, lib_vadd(lib_vscale(direction, .2), {0, -.045, 0}))
+        horn := (rotor_center + ((direction * .39) + {0, .075, 0}))
+        link_base := (rotor_center + ((direction * .2) + {0, -.045, 0}))
         libellula_add_beam(mesh, link_base, horn, .021, .Brass)
         libellula_add_sphere(mesh, horn, .038, 8, 4, .Steel)
     }
@@ -544,10 +516,10 @@ libellula_add_carriage_geometry :: proc(mesh: ^Libellula_Mesh) {
     carriage_anchors := [3][3]f32{{-.58, .36, -1.25}, {.58, .36, -1.25}, {0, .36, 1.55}}
     for anchor in carriage_anchors {
         add_box(mesh, {anchor[0], .17, anchor[2]}, {.42, .11, .42}, .Steel)
-        add_box(mesh, lib_vadd(anchor, {-.13, -.07, 0}), {.045, .28, .25}, .Brass)
-        add_box(mesh, lib_vadd(anchor, {.13, -.07, 0}), {.045, .28, .25}, .Brass)
+        add_box(mesh, (anchor + {-.13, -.07, 0}), {.045, .28, .25}, .Brass)
+        add_box(mesh, (anchor + {.13, -.07, 0}), {.045, .28, .25}, .Brass)
         libellula_add_cylinder(mesh, anchor, {1, 0, 0}, .06, .06, .38, 8, .Steel)
-        libellula_add_torus(mesh, lib_vadd(anchor, {0, .04, 0}), {1, 0, 0}, .065, .115, 10, 5, .Strap)
+        libellula_add_torus(mesh, (anchor + {0, .04, 0}), {1, 0, 0}, .065, .115, 10, 5, .Strap)
     }
     libellula_add_sphere(mesh, {0, .36, .12}, .14, 10, 5, .Brass)
 
@@ -580,8 +552,8 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
     }
     lower_nodes: [3][3]f32
     for node, index in top_nodes {
-        radial := lib_vsub(node, {LIBELLULA_CENTROID[0], node[1], LIBELLULA_CENTROID[2]})
-        lower_nodes[index] = lib_vadd({LIBELLULA_CENTROID[0], .55, LIBELLULA_CENTROID[2]}, lib_vscale(radial, .84))
+        radial := (node - {LIBELLULA_CENTROID[0], node[1], LIBELLULA_CENTROID[2]})
+        lower_nodes[index] = ({LIBELLULA_CENTROID[0], .55, LIBELLULA_CENTROID[2]} + (radial * .84))
     }
     for index in 0 ..< 3 {
         next := (index + 1) % 3
@@ -589,14 +561,14 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
         libellula_add_beam(mesh, lower_nodes[index], lower_nodes[next], .082, .Lift_Frame)
         libellula_add_beam(mesh, top_nodes[index], lower_nodes[next], .06, .Lift_Frame)
         libellula_add_beam(mesh, top_nodes[index], lower_nodes[index], .074, .Lift_Frame)
-        inward := lib_vnormalize(lib_vsub({LIBELLULA_CENTROID[0], hubs[index][1], LIBELLULA_CENTROID[2]}, hubs[index]))
-        lateral := lib_vnormalize(lib_vcross({0, 1, 0}, inward))
+        inward := lib_vnormalize(({LIBELLULA_CENTROID[0], hubs[index][1], LIBELLULA_CENTROID[2]} - hubs[index]))
+        lateral := lib_vnormalize(linalg.cross([3]f32{0, 1, 0}, inward))
         fork_sides := [2]f32{-.16, .16}
         for side in fork_sides {
             libellula_add_beam(
                 mesh,
-                lib_vadd(lower_nodes[index], lib_vscale(lateral, side)),
-                lib_vadd(lib_vadd(hubs[index], {0, -.2, 0}), lib_vscale(lateral, side)),
+                (lower_nodes[index] + (lateral * side)),
+                ((hubs[index] + {0, -.2, 0}) + (lateral * side)),
                 .07,
                 .Lift_Frame,
             )
@@ -608,17 +580,17 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
 
     manifold := [3]f32{LIBELLULA_CENTROID[0], .9, LIBELLULA_CENTROID[2]}
     libellula_add_cylinder(mesh, manifold, {0, 1, 0}, .24, .2, .24, 12, .Steel)
-    libellula_add_torus(mesh, lib_vadd(manifold, {0, .08, 0}), {0, 1, 0}, .16, .23, 12, 5, .Brass)
-    libellula_add_cylinder(mesh, lib_vadd(manifold, {0, .15, 0}), {0, 1, 0}, .08, .08, .04, 8, .Red_Paint)
+    libellula_add_torus(mesh, (manifold + {0, .08, 0}), {0, 1, 0}, .16, .23, 12, 5, .Brass)
+    libellula_add_cylinder(mesh, (manifold + {0, .15, 0}), {0, 1, 0}, .08, .08, .04, 8, .Red_Paint)
     for hub in hubs {
         target := [3]f32{hub[0], .82, hub[2]}
-        direction := lib_vnormalize(lib_vsub(target, manifold))
-        side := lib_vscale(lib_vnormalize(lib_vcross({0, 1, 0}, direction)), .045)
-        elbow := lib_vadd(lib_vlerp(manifold, target, .54), {0, -.07, 0})
-        libellula_add_beam(mesh, lib_vadd(manifold, side), lib_vadd(elbow, side), .018, .Red_Paint)
-        libellula_add_beam(mesh, lib_vadd(elbow, side), lib_vadd(target, side), .018, .Red_Paint)
-        libellula_add_beam(mesh, lib_vsub(manifold, side), lib_vsub(elbow, side), .016, .Brass)
-        libellula_add_beam(mesh, lib_vsub(elbow, side), lib_vsub(target, side), .016, .Brass)
+        direction := lib_vnormalize(target - manifold)
+        side := (lib_vnormalize(linalg.cross([3]f32{0, 1, 0}, direction)) * .045)
+        elbow := ((manifold + (target - manifold) * .54) + {0, -.07, 0})
+        libellula_add_beam(mesh, (manifold + side), (elbow + side), .018, .Red_Paint)
+        libellula_add_beam(mesh, (elbow + side), (target + side), .018, .Red_Paint)
+        libellula_add_beam(mesh, (manifold - side), (elbow - side), .016, .Brass)
+        libellula_add_beam(mesh, (elbow - side), (target - side), .016, .Brass)
         libellula_add_sphere(mesh, elbow, .045, 6, 3, .Steel)
         libellula_add_torus(mesh, target, {0, 1, 0}, .035, .065, 8, 4, .Brass)
     }
@@ -629,10 +601,10 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
         libellula_add_beam(mesh, anchor, frame_anchors[next], .055, .Lift_Frame)
         libellula_add_beam(mesh, anchor, lower_nodes[index], .052, .Lift_Frame)
         libellula_add_cylinder(mesh, anchor, {0, 1, 0}, .19, .16, .12, 8, .Lift_Frame)
-        libellula_add_torus(mesh, lib_vadd(anchor, {0, .065, 0}), {0, 1, 0}, .085, .145, 10, 5, .Brass)
-        add_box(mesh, lib_vadd(anchor, {-.12, -.06, 0}), {.045, .22, .2}, .Lift_Frame)
-        add_box(mesh, lib_vadd(anchor, {.12, -.06, 0}), {.045, .22, .2}, .Lift_Frame)
-        libellula_add_cylinder(mesh, lib_vadd(anchor, {0, .02, 0}), {1, 0, 0}, .055, .055, .36, 8, .Steel)
+        libellula_add_torus(mesh, (anchor + {0, .065, 0}), {0, 1, 0}, .085, .145, 10, 5, .Brass)
+        add_box(mesh, (anchor + {-.12, -.06, 0}), {.045, .22, .2}, .Lift_Frame)
+        add_box(mesh, (anchor + {.12, -.06, 0}), {.045, .22, .2}, .Lift_Frame)
+        libellula_add_cylinder(mesh, (anchor + {0, .02, 0}), {1, 0, 0}, .055, .055, .36, 8, .Steel)
     }
 
     libellula_add_rotor(mesh, hubs[0], 0, .Left_Rotor, .Libellula_Left_Rotor)
@@ -644,21 +616,21 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
     feet := [4][3]f32{{-2.85, -2.55, -.8}, {2.85, -2.55, -.8}, {-2.85, -2.55, 3.4}, {2.85, -2.55, 3.4}}
     for mount, index in mounts {
         foot := feet[index]
-        knee := lib_vlerp(mount, foot, .58)
+        knee := (mount + (foot - mount) * .58)
         fore_aft := f32(-1)
         if index >= 2 do fore_aft = 1
         side_shift := f32(.18)
         if mount[0] > 0 do side_shift = -.18
-        second_root := lib_vadd(mount, {side_shift, .08, fore_aft * .46})
+        second_root := (mount + {side_shift, .08, fore_aft * .46})
         libellula_add_beam(mesh, mount, knee, .095, .Wheel)
         libellula_add_beam(mesh, second_root, knee, .052, .Wheel)
         libellula_add_beam(mesh, knee, foot, .072, .Wheel)
         libellula_add_beam(mesh, mount, second_root, .06, .Lift_Frame)
-        add_box(mesh, lib_vlerp(mount, second_root, .5), {.42, .12, .34}, .Lift_Frame)
+        add_box(mesh, (mount + (second_root - mount) * .5), {.42, .12, .34}, .Lift_Frame)
         libellula_add_torus(mesh, mount, {0, 1, 0}, .09, .145, 10, 5, .Brass)
-        libellula_add_cylinder(mesh, knee, lib_vsub(foot, knee), .115, .115, .16, 8, .Red_Paint)
+        libellula_add_cylinder(mesh, knee, (foot - knee), .115, .115, .16, 8, .Red_Paint)
         add_box(mesh, foot, {.58, .13, .46}, .Wheel)
-        add_box(mesh, lib_vadd(foot, {0, -.075, 0}), {.48, .025, .36}, .Bumper)
+        add_box(mesh, (foot + {0, -.075, 0}), {.48, .025, .36}, .Bumper)
     }
 
     libellula_add_carriage_geometry(mesh)
@@ -666,24 +638,24 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
     carriage_anchors_local := [3][3]f32{{-.58, .36, -1.25}, {.58, .36, -1.25}, {0, .36, 1.55}}
     strap_groups := [3]Mesh_Animation_Group{.Libellula_Strap_Left, .Libellula_Strap_Right, .Libellula_Strap_Rear}
     for anchor, index in frame_anchors {
-        lower := lib_vadd(LIBELLULA_CARRIAGE_OFFSET, carriage_anchors_local[index])
+        lower := (LIBELLULA_CARRIAGE_OFFSET + carriage_anchors_local[index])
         libellula_add_dynamic_beam(mesh, anchor, lower, .105, .Strap, strap_groups[index])
     }
     kingpost_upper := [3]f32{0, .76, LIBELLULA_SUSPENSION_CENTER_Z - .03}
-    kingpost_lower := lib_vadd(LIBELLULA_CARRIAGE_OFFSET, {0, .36, .12})
-    span := lib_vsub(kingpost_lower, kingpost_upper)
+    kingpost_lower := (LIBELLULA_CARRIAGE_OFFSET + {0, .36, .12})
+    span := (kingpost_lower - kingpost_upper)
     libellula_add_sphere(mesh, kingpost_upper, .14, 10, 5, .Brass)
     libellula_add_dynamic_beam(
         mesh,
         kingpost_upper,
-        lib_vadd(kingpost_upper, lib_vscale(span, .62)),
+        (kingpost_upper + (span * .62)),
         .105,
         .Steel,
         .Libellula_Kingpost_Outer,
     )
     libellula_add_dynamic_beam(
         mesh,
-        lib_vadd(kingpost_upper, lib_vscale(span, .42)),
+        (kingpost_upper + (span * .42)),
         kingpost_lower,
         .065,
         .Brass,
@@ -691,8 +663,8 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
     )
     libellula_add_dynamic_beam(
         mesh,
-        lib_vadd(kingpost_upper, lib_vscale(span, .58)),
-        lib_vadd(kingpost_upper, lib_vscale(span, .7)),
+        (kingpost_upper + (span * .58)),
+        (kingpost_upper + (span * .7)),
         .14,
         .Red_Paint,
         .Libellula_Kingpost_Stop,
@@ -704,8 +676,8 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
     umbilical_xs := [2]f32{-.14, .14}
     for x, index in umbilical_xs {
         upper := [3]f32{x, .72, LIBELLULA_SUSPENSION_CENTER_Z - .03}
-        lower := lib_vadd(LIBELLULA_CARRIAGE_OFFSET, {x, .29, .12})
-        sag := lib_vadd(lib_vlerp(upper, lower, .5), {0, -.16, 0})
+        lower := (LIBELLULA_CARRIAGE_OFFSET + {x, .29, .12})
+        sag := ((upper + (lower - upper) * .5) + {0, -.16, 0})
         part := Aircraft_Mesh_Part.Red_Paint
         if index == 1 do part = .Steel
         libellula_add_dynamic_beam(mesh, upper, sag, .018, part, cable_groups[index][0])

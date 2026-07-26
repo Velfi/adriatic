@@ -200,10 +200,7 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
         }
         runtime.body.position.y = floor
         if runtime.body.velocity.y < 0 do runtime.body.velocity.y = 0
-        horizontal := flight.Vec3 {
-            x = runtime.body.velocity.x,
-            z = runtime.body.velocity.z,
-        }
+        horizontal := flight.Vec3 {runtime.body.velocity.x, 0, runtime.body.velocity.z}
         horizontal = flight.scale(horizontal, max_f32(0, 1 - runtime.tuning.ground_friction * dt))
         runtime.body.velocity.x = horizontal.x
         runtime.body.velocity.z = horizontal.z

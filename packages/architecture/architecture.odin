@@ -1221,12 +1221,12 @@ generate_poisson :: proc(
         if base_height <= project.sea_level do continue
         width := 24 + random01(&state) * 22
         depth := 15 + random01(&state) * 15
-        radius := architecture_footprint_radius(width, depth)
+        building_radius := architecture_footprint_radius(width, depth)
         overlaps := false
         for existing in project.structures[:project.structure_count] {
             if existing.kind != .Architecture do continue
             dx, dz := point.x - existing.center_x, point.z - existing.center_z
-            minimum_distance := radius + architecture_footprint_radius(existing.width, existing.depth) + 1.5
+            minimum_distance := building_radius + architecture_footprint_radius(existing.width, existing.depth) + 1.5
             if dx * dx + dz * dz < minimum_distance * minimum_distance {
                 overlaps = true
                 break

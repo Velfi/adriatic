@@ -330,10 +330,10 @@ CAR_SPAWN_OFFSET :: f32(2)
 
 car_spawn_near :: proc(player_spawn: third_person.Vec3) -> third_person.Vec3 {
     return {
-        x = player_spawn.x,
-        y = player_spawn.y,
+        player_spawn.x,
+        player_spawn.y,
         // Park beyond the player, across the runway from the aircraft, instead
         // of overlapping the Postale's longitudinal footprint.
-        z = player_spawn.z + CAR_SPAWN_OFFSET,
+        player_spawn.z + CAR_SPAWN_OFFSET,
     }
 }
