@@ -78,7 +78,12 @@ if (-not (Test-Path (Join-Path $ZeldaEngineRoot "third_party/JoltPhysics/.git"))
 		(Join-Path $ZeldaEngineRoot "third_party/JoltPhysics")
 	)
 }
-Invoke-Checked "cmake" @("-S", $JoltSource, "-B", $JoltBuild, "-A", "x64")
+Invoke-Checked "cmake" @(
+	"-S", $JoltSource,
+	"-B", $JoltBuild,
+	"-A", "x64",
+	"-DUSE_STATIC_MSVC_RUNTIME_LIBRARY=OFF"
+)
 Invoke-Checked "cmake" @("--build", $JoltBuild, "--config", "Release", "--target", "zelda_physics")
 $PhysicsImport = Get-ChildItem $JoltSource -Recurse -File -Filter "zelda_physics.lib" |
 	Where-Object { $_.FullName -notlike "*Jolt.lib" } |
