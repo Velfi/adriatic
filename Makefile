@@ -85,6 +85,7 @@ LOCAL_SLANGC := $(TOOLS_DIR)/slang/$(SLANG_VERSION)/slangc
 PATH_ODIN := $(shell command -v odin 2>/dev/null)
 PATH_SLANGC := $(shell command -v slangc 2>/dev/null)
 ODIN ?= $(if $(wildcard $(LOCAL_ODIN)),$(LOCAL_ODIN),$(PATH_ODIN))
+ODIN_VET_FLAGS := -vet-shadowing -vet-cast
 SLANGC ?= $(if $(PATH_SLANGC),$(PATH_SLANGC),$(LOCAL_SLANGC))
 ODINFMT ?= odinfmt
 CC ?= cc
@@ -486,7 +487,7 @@ $(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
 
 $(HOT_APP): $(HOT_PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_hot) -build-mode:shared $(PROFILE_DEFINE_FLAGS_hot) -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_hot) -build-mode:shared $(PROFILE_DEFINE_FLAGS_hot) -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
 
 $(HOT_APP_STAMP): $(HOT_APP)
 	@mkdir -p $(@D)
@@ -494,7 +495,7 @@ $(HOT_APP_STAMP): $(HOT_APP)
 
 $(HOT_HOST): hot/main.odin Makefile toolchain.mk
 	@mkdir -p $(@D)
-	$(ODIN) build hot/main.odin -file $(PROFILE_ODIN_FLAGS_hot) -out:$@
+	$(ODIN) build hot/main.odin -file $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_hot) -out:$@
 
 hot-app: $(HOT_APP_STAMP)
 
@@ -635,15 +636,15 @@ $(INSTRUMENT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_sign
 
 $(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_debug) $(PROFILE_DEFINE_FLAGS_debug) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_debug) $(PROFILE_DEFINE_FLAGS_debug) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
 $(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_release) $(PROFILE_DEFINE_FLAGS_release) -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_release) $(PROFILE_DEFINE_FLAGS_release) -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 
 $(VALIDATION_APP): physics-build $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(VALIDATION_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_validation) $(PROFILE_DEFINE_FLAGS_validation) -out:$@ -extra-linker-flags:"$(call link_flags,$(VALIDATION_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_validation) $(PROFILE_DEFINE_FLAGS_validation) -out:$@ -extra-linker-flags:"$(call link_flags,$(VALIDATION_DIR))"
 
 validation-build: doctor $(VALIDATION_APP)
 
@@ -657,7 +658,7 @@ lldb: validation-build assets-validation
 $(INSTRUMENT_APP): $(INSTRUMENT_DIR)/libadriatic_mesh.a
 $(INSTRUMENT_APP): physics-build $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(INSTRUMENT_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_instrument) $(PROFILE_DEFINE_FLAGS_instrument) -out:$@ -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_instrument) $(PROFILE_DEFINE_FLAGS_instrument) -out:$@ -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
 
 instrument-build: doctor $(INSTRUMENT_APP)
 
@@ -686,19 +687,19 @@ fmt:
 		-exec sh -c 'for file do "$$0" -w "$$file" || exit 1; done' "$(ODINFMT)" {} +
 
 check: doctor
-	$(ODIN) check src $(ZELDA_ENGINE_COLLECTION)
-	$(ODIN) check packages/flight $(ZELDA_ENGINE_COLLECTION) -no-entry-point
-	$(ODIN) check packages/third_person $(ZELDA_ENGINE_COLLECTION) -no-entry-point
-	$(ODIN) check packages/wireframe $(ZELDA_ENGINE_COLLECTION) -no-entry-point
-	$(ODIN) check packages/vehicles $(ZELDA_ENGINE_COLLECTION) -no-entry-point
-	$(ODIN) check packages/machines $(ZELDA_ENGINE_COLLECTION) -no-entry-point
-	$(ODIN) check packages/terrain $(ZELDA_ENGINE_COLLECTION) -no-entry-point
-	$(ODIN) check packages/postale $(ZELDA_ENGINE_COLLECTION) -no-entry-point
-	$(ODIN) check packages/libellula $(ZELDA_ENGINE_COLLECTION) -no-entry-point
-	$(ODIN) check packages/atmosphere $(ZELDA_ENGINE_COLLECTION) -no-entry-point
+	$(ODIN) check src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS)
+	$(ODIN) check packages/flight $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/third_person $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/wireframe $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/vehicles $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/machines $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/terrain $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/postale $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/libellula $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/atmosphere $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 
 test: doctor $(DEV_DIR)/libadriatic_mesh.a
-	$(ODIN) test tests $(ZELDA_ENGINE_COLLECTION) -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -lc++"
+	$(ODIN) test tests $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -lc++"
 
 clean:
 	rm -rf "$(BUILD_DIR)"

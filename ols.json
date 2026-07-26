@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
+  "verbose": false,
+  "collections": [
+    {
+      "name": "studio",
+      "path": "./"
+    },
+    {
+      "name": "zelda_engine",
+      "path": "../zelda-engine/packages"
+    }
+  ],
+  "checker_args": "-vet-shadowing -vet-cast -debug",
+  "enable_checker_workspace_diagnostics": false,
+  "enable_checker_only_saved": true,
+  "profile": "default",
+  "enable_definition_skip_alias": true,
+  "completion_exclude_attributes": [
+    "test"
+  ]
+}
