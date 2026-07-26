@@ -232,8 +232,7 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
         editor.gameplay_options.crunchiness = Crunchiness(selected)
         crunchiness_apply(editor.gameplay_options.crunchiness)
     case 6:
-        editor.gameplay_options.dither_mode =
-            dither_adjust_mode(editor.gameplay_options.dither_mode, direction)
+        editor.gameplay_options.dither_mode = dither_adjust_mode(editor.gameplay_options.dither_mode, direction)
         dither_apply(editor)
     }
 }

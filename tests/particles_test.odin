@@ -48,18 +48,8 @@ vehicle_dust_spawn_density_tracks_road_surface :: proc(t: ^testing.T) {
             surface  = .Gravel,
         }
     }
-    particle_systems.step_vehicle_effects(&asphalt, .05, {}, 0, 12, 0, 0, false, 0, asphalt_contacts)
-    particle_systems.step_vehicle_effects(&gravel, .05, {}, 0, 12, 0, 0, false, 0, gravel_contacts)
+    particle_systems.step_vehicle_effects(&asphalt, .05, 12, 0, false, 0, asphalt_contacts)
+    particle_systems.step_vehicle_effects(&gravel, .05, 12, 0, false, 0, gravel_contacts)
     testing.expect(t, asphalt.dust_count == 0)
     testing.expect(t, gravel.dust_count > asphalt.dust_count)
-}
-
-@(test)
-vehicle_exhaust_holds_neutral_opacity_until_its_tail :: proc(t: ^testing.T) {
-    testing.expect(t, particle_systems.vehicle_exhaust_opacity(1, 1) == 1)
-    testing.expect(t, particle_systems.vehicle_exhaust_opacity(.3, 1) == 1)
-    middle_tail := particle_systems.vehicle_exhaust_opacity(.11, 1)
-    testing.expect(t, middle_tail > .49 && middle_tail < .51)
-    testing.expect(t, particle_systems.vehicle_exhaust_opacity(0, 1) == 0)
-    testing.expect(t, particle_systems.vehicle_exhaust_opacity(1, 0) == 0)
 }

@@ -293,7 +293,6 @@ Editor :: struct {
     camera_target_lock:                             bool,
     flight_control:                                 postale_game.Control,
     atmosphere:                                     atmosphere.Atmosphere,
-    particles:                                      particle_systems.Cpu_System,
     vehicle_effects:                                particle_systems.Vehicle_Effects,
     wing_trails:                                    particle_systems.Wing_Trails,
     tweak:                                          Tweak_State,
@@ -1458,8 +1457,8 @@ seed_road_dust_capture :: proc(editor: ^Editor) {
         }
     }
     empty_contacts: [4]particle_systems.Vehicle_Contact
-    particle_systems.step_vehicle_effects(&editor.vehicle_effects, .05, {}, 0, 0, 0, 0, false, 0, empty_contacts)
-    particle_systems.step_vehicle_effects(&editor.vehicle_effects, .05, {}, 0, 0, 0, 0, false, 0, empty_contacts)
+    particle_systems.step_vehicle_effects(&editor.vehicle_effects, .05, 0, 0, false, 0, empty_contacts)
+    particle_systems.step_vehicle_effects(&editor.vehicle_effects, .05, 0, 0, false, 0, empty_contacts)
 }
 
 seed_road_grip_capture :: proc(editor: ^Editor) {
@@ -1509,11 +1508,8 @@ seed_road_grip_capture :: proc(editor: ^Editor) {
         particle_systems.step_vehicle_effects(
             &editor.vehicle_effects,
             1.0 / 60,
-            {editor.car.position.x, editor.car.position.y, editor.car.position.z},
-            editor.car.yaw_radians,
             vehicles.car_drive_speed(editor.car_drive),
             editor.car_drive.steering,
-            1,
             false,
             editor.car_drive.slip_amount,
             contacts,
@@ -1566,11 +1562,8 @@ seed_terrain_grip_capture :: proc(editor: ^Editor) {
         particle_systems.step_vehicle_effects(
             &editor.vehicle_effects,
             1.0 / 60,
-            {editor.car.position.x, editor.car.position.y, editor.car.position.z},
-            editor.car.yaw_radians,
             vehicles.car_drive_speed(editor.car_drive),
             editor.car_drive.steering,
-            1,
             false,
             editor.car_drive.slip_amount,
             contacts,
@@ -1753,8 +1746,7 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     if editor == nil do return false
     bougainvillea_seed_override := -1
     bougainvillea_prefix := "bougainvillea-"
-    if len(target_arg) > len(bougainvillea_prefix) &&
-       target_arg[:len(bougainvillea_prefix)] == bougainvillea_prefix {
+    if len(target_arg) > len(bougainvillea_prefix) && target_arg[:len(bougainvillea_prefix)] == bougainvillea_prefix {
         parsed, ok := strconv.parse_int(target_arg[len(bougainvillea_prefix):])
         if ok && parsed >= 0 && parsed <= 0xffffffff {
             bougainvillea_seed_override = int(parsed)
@@ -2409,7 +2401,9 @@ flight_to_world :: proc(value: flight.Vec3) -> third_person.Vec3 {
     return {value.x, value.y, value.z}
 }
 
-POSTALE_PRESENTATION_SCALE :: f32(.68)
+// The source Postale mesh is presented slightly larger so the cockpit and
+// undercarriage fit the mouse pilot without changing gameplay physics.
+POSTALE_PRESENTATION_SCALE :: f32(.714)
 LIBELLULA_PRESENTATION_SCALE :: f32(.72)
 
 // The rebuilt Postale wing tips are swept forward and rise with the wing's
@@ -4464,12 +4458,12 @@ car_physics_create :: proc(editor: ^Editor) {
             half_length = 1.22,
             mass = 720,
             center_of_mass_offset_y = -.18,
-            wheel_x = .78,
-            front_wheel_z = .82,
-            rear_wheel_z = -.82,
+            wheel_x = vehicles.CAR_WHEEL_TRACK_HALF,
+            front_wheel_z = vehicles.CAR_WHEELBASE_HALF,
+            rear_wheel_z = -vehicles.CAR_WHEELBASE_HALF,
             wheel_y = -.20,
-            wheel_radius = .32,
-            wheel_width = .24,
+            wheel_radius = vehicles.CAR_WHEEL_RADIUS,
+            wheel_width = vehicles.CAR_WHEEL_WIDTH,
             suspension_min = .08,
             suspension_max = .30,
             suspension_frequency = 2.4,
@@ -4604,6 +4598,14 @@ car_physics_step :: proc(
     editor.car_drive.body_pitch = math.asin(clamp(2 * (y * z - w * x), -1, 1))
     editor.car_drive.body_roll = math.asin(clamp(2 * (x * y + w * z), -1, 1))
     dt := max(delta_seconds, f32(.001))
+    longitudinal_after := velocity[0] * forward[0] + velocity[2] * forward[2]
+    acceleration_target := clamp(
+        (longitudinal_after - longitudinal) / dt / max(vehicles.CAR_DRIVE_SEDAN_TUNE.acceleration, f32(1)),
+        -1,
+        1,
+    )
+    editor.car_drive.acceleration_feedback +=
+        (acceleration_target - editor.car_drive.acceleration_feedback) * clamp(6 * dt, 0, 1)
     editor.car_drive.velocity = {velocity[0], velocity[1], velocity[2]}
     editor.car_drive.wheel_speed = longitudinal
     editor.car_drive.steering += (steering - editor.car_drive.steering) * clamp(10 * dt, 0, 1)
@@ -4998,7 +5000,6 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
     greek_asset_init(editor)
     editor.greek_placement_mode = false
     editor.atmosphere = atmosphere.new(0x41c10)
-    editor.particles = particle_systems.new_cpu(0x9e3779b9)
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
     editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
     editor.tweak = tweak_default_state()
@@ -5034,7 +5035,6 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
         x = island_center,
         z = island_center,
     }
-    particle_systems.step(&editor.particles, 2.4, particle_systems.Vec3{x = island_center, y = 6.0, z = island_center})
     editor.editor_camera = {
         yaw_radians   = math.PI * .25,
         pitch_radians = .58,
@@ -5446,7 +5446,9 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
         } else {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
             if !entered do return false
-            editor.camera_pose = third_person.camera_look_at({x = 5, y = 4.2, z = 8}, {y = .5})
+            // A true side elevation makes the wheelbase, overhangs, beltline,
+            // and mouse-to-car scale directly comparable in capture reviews.
+            editor.camera_pose = third_person.camera_look_at({x = 5.4, y = 2.0}, {y = .56})
         }
         third_person.camera_set_pose(&editor.cameras, .Player, editor.camera_pose)
         third_person.camera_set_active(&editor.cameras, .Player)
@@ -5631,11 +5633,6 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
             }
             spray_audio.update(&spray_sound, spray_active, spray_intensity, spray_pan, pause_menu_is_open(editor))
         }
-        particle_systems.step(
-            &editor.particles,
-            simulation_delta,
-            particle_systems.Vec3{x = island_center, y = 6.0, z = island_center},
-        )
         if !pause_menu_is_open(editor) {
             if rl.IsKeyPressed(.P) do editor.atmosphere.paused = !editor.atmosphere.paused
             if rl.IsKeyDown(.LEFT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes - frame_delta * 180)
@@ -5837,7 +5834,10 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
             if editor.vehicle_paint_scene {
                 vehicle_paint_process_input(editor, width, height, min(delta_seconds, .05))
             } else if editor.vehicle_showcase_scene {
-                vehicle_showcase_camera_step(editor, min(delta_seconds, .05))
+                // Capture setup installs a deterministic target-specific pose.
+                // Preserve it instead of replacing it with the interactive
+                // orbit camera on the first frame.
+                if !capture_mode do vehicle_showcase_camera_step(editor, min(delta_seconds, .05))
             } else {
                 mouse_delta := rl.GetMouseDelta()
                 look_scale := editor.gameplay_options.look_sensitivity / .012
@@ -6088,8 +6088,8 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
                         forward_x, forward_z := math.cos(editor.car.yaw_radians), math.sin(editor.car.yaw_radians)
                         right_x, right_z := -forward_z, forward_x
                         contacts := [4]particle_systems.Vehicle_Contact{}
-                        wheel_x := [2]f32{-.78, .78}
-                        wheel_z := [2]f32{-.82, .82}
+                        wheel_x := [2]f32{-vehicles.CAR_WHEEL_TRACK_HALF, vehicles.CAR_WHEEL_TRACK_HALF}
+                        wheel_z := [2]f32{-vehicles.CAR_WHEELBASE_HALF, vehicles.CAR_WHEELBASE_HALF}
                         contact_index := 0
                         for x in wheel_x {
                             for z in wheel_z {
@@ -6110,11 +6110,8 @@ adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) 
                         particle_systems.step_vehicle_effects(
                             &editor.vehicle_effects,
                             min(delta_seconds, .05),
-                            particle_systems.Vec3{editor.car.position.x, editor.car.position.y, editor.car.position.z},
-                            editor.car.yaw_radians,
                             vehicles.car_drive_speed(editor.car_drive),
                             editor.car_drive.steering,
-                            throttle,
                             handbrake,
                             editor.car_drive.slip_amount,
                             contacts,

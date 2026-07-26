@@ -4,7 +4,6 @@ import "core:math"
 
 MAX_CPU_PARTICLES :: 384
 MAX_DUST_PARTICLES :: 256
-MAX_EXHAUST_PARTICLES :: 128
 MAX_WING_TRAIL_PARTICLES :: 192
 
 Vec3 :: struct {
@@ -46,13 +45,10 @@ Vehicle_Particle :: struct {
 }
 
 Vehicle_Effects :: struct {
-    dust:          [MAX_DUST_PARTICLES]Vehicle_Particle,
-    dust_count:    int,
-    exhaust:       [MAX_EXHAUST_PARTICLES]Vehicle_Particle,
-    exhaust_count: int,
-    dust_spawn:    f32,
-    exhaust_spawn: f32,
-    seed:          u32,
+    dust:       [MAX_DUST_PARTICLES]Vehicle_Particle,
+    dust_count: int,
+    dust_spawn: f32,
+    seed:       u32,
 }
 
 Wing_Trail_Particle :: struct {
@@ -137,14 +133,6 @@ new_vehicle_effects :: proc(seed: u32) -> Vehicle_Effects { return {seed = seed}
 
 new_wing_trails :: proc(seed: u32) -> Wing_Trails { return {seed = seed} }
 
-vehicle_exhaust_opacity :: proc(life, max_life: f32) -> f32 {
-    if max_life <= 0 do return 0
-    remaining := clamp(life / max_life, f32(0), f32(1))
-    // Hold the neutral smoke body stable, then ease only the final 22% away.
-    tail := clamp(remaining / .22, f32(0), f32(1))
-    return tail * tail * (3 - 2 * tail)
-}
-
 spawn_dust :: proc(effects: ^Vehicle_Effects, contact: Vehicle_Contact, intensity: f32) {
     if effects.dust_count >= MAX_DUST_PARTICLES || !contact.grounded do return
     spread_x := next_random(&effects.seed) - .5
@@ -206,32 +194,10 @@ spawn_dust :: proc(effects: ^Vehicle_Effects, contact: Vehicle_Contact, intensit
     effects.dust_count += 1
 }
 
-spawn_exhaust :: proc(effects: ^Vehicle_Effects, position: Vec3, yaw: f32, intensity: f32) {
-    if effects.exhaust_count >= MAX_EXHAUST_PARTICLES do return
-    forward := Vec3{math.cos(yaw), 0, math.sin(yaw)}
-    spread := next_random(&effects.seed) - .5
-    lift := next_random(&effects.seed)
-    particle := &effects.exhaust[effects.exhaust_count]
-    particle^ = {
-        position = {position.x - forward.x * 1.92, position.y + .42, position.z - forward.z * 1.92},
-        velocity = {
-            -forward.x * (.25 + intensity * .45) + spread * .22,
-            .08 + lift * .15,
-            -forward.z * (.25 + intensity * .45) + spread * .22,
-        },
-        life     = .34 + lift * .42,
-        max_life = .34 + lift * .42,
-        size     = .055 + intensity * .045 + lift * .06,
-        seed     = effects.seed,
-    }
-    effects.exhaust_count += 1
-}
-
 step_vehicle_effects :: proc(
     effects: ^Vehicle_Effects,
     delta_seconds: f32,
-    position: Vec3,
-    yaw, speed, steering, throttle: f32,
+    speed, steering: f32,
     handbrake: bool,
     slip: f32,
     contacts: [4]Vehicle_Contact,
@@ -271,12 +237,6 @@ step_vehicle_effects :: proc(
         }
         effects.dust_spawn -= 1
     }
-    exhaust_intensity := clamp(abs(throttle) * .7 + speed / 32, 0, 1)
-    effects.exhaust_spawn += dt * (4 + exhaust_intensity * 22)
-    for effects.exhaust_spawn >= 1 {
-        if exhaust_intensity > .02 do spawn_exhaust(effects, position, yaw, exhaust_intensity)
-        effects.exhaust_spawn -= 1
-    }
     write := 0
     for read in 0 ..< effects.dust_count {
         particle := &effects.dust[read]
@@ -308,19 +268,6 @@ step_vehicle_effects :: proc(
         write += 1
     }
     effects.dust_count = write
-    write = 0
-    for read in 0 ..< effects.exhaust_count {
-        particle := &effects.exhaust[read]
-        particle.life -= dt
-        if particle.life <= 0 do continue
-        particle.velocity.y += .06 * dt
-        particle.position.x += particle.velocity.x * dt
-        particle.position.y += particle.velocity.y * dt
-        particle.position.z += particle.velocity.z * dt
-        if write != read do effects.exhaust[write] = particle^
-        write += 1
-    }
-    effects.exhaust_count = write
 }
 
 step_wing_trails :: proc(

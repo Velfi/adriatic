@@ -35,10 +35,7 @@ wrap_angle :: proc(angle: f32) -> f32 {
     return math.atan2(math.sin(angle), math.cos(angle))
 }
 
-pattern_offset :: proc(
-    accumulated_angle, field_of_view: f32,
-    viewport_pixels, pattern_size: int,
-) -> int {
+pattern_offset :: proc(accumulated_angle, field_of_view: f32, viewport_pixels, pattern_size: int) -> int {
     if field_of_view <= .0001 || viewport_pixels <= 0 || pattern_size <= 0 do return 0
     raw := int(math.round(f64(f32(viewport_pixels) * accumulated_angle / field_of_view)))
     return ((raw % pattern_size) + pattern_size) % pattern_size

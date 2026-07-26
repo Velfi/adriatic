@@ -808,20 +808,35 @@ add_postale_hull :: proc(mesh: ^Aircraft_Mesh) {
     // A recessed tub and seat complete the single-place cockpit. These are
     // interior fittings, not exterior hull primitives.
     mesh_quad(mesh, {-.42, -.48, -1.18}, {.42, -.48, -1.18}, {.42, -.48, .20}, {-.42, -.48, .20}, .Dark_Metal)
-    add_box(mesh, {0, -.48, -.24}, {.62, .20, .52}, .Dark_Metal)
-    add_box(mesh, {0, -.14, .08}, {.62, .68, .12}, .Dark_Metal)
+    // Carry the cushion beneath the pilot, but place the back against the
+    // rear of the aperture so it supports rather than intersects the torso.
+    add_box(mesh, {0, -.48, -.10}, {.62, .20, .80}, .Dark_Metal)
+    add_box(mesh, {0, -.14, .30}, {.62, .68, .12}, .Dark_Metal)
     add_strut(mesh, {-.54, .42, -1.18}, {-.54, .46, .22}, .10, .Strap)
     add_strut(mesh, {.54, .42, -1.18}, {.54, .46, .22}, .10, .Strap)
     add_strut(mesh, {-.54, .42, -1.18}, {.54, .42, -1.18}, .10, .Strap)
     add_strut(mesh, {-.54, .46, .22}, {.54, .46, .22}, .10, .Strap)
-    headrest := [2]Mesh_Ring{{.20, .28, .48, .34}, {.30, .28, .48, .34}}
+    headrest := [2]Mesh_Ring{{.40, .28, .48, .34}, {.52, .28, .48, .34}}
     add_ring_mesh(mesh, headrest[:], 12, .Strap)
     mesh_quad(mesh, {-.45, .08, -1.05}, {.45, .08, -1.05}, {.40, .43, -1.10}, {-.40, .43, -1.10}, .Dark_Metal)
     add_cockpit_gauge(mesh, {-.23, .29, -1.105}, .095)
     add_cockpit_gauge(mesh, {0, .23, -1.108}, .09)
     add_cockpit_gauge(mesh, {.23, .29, -1.105}, .095)
-    cowling_band := [2]Mesh_Ring{{-2.74, .736, .12, .626}, {-2.68, .718, .12, .638}}
-    add_ring_mesh(mesh, cowling_band[:], 16, .Marking)
+    // Conform the painted band to the hull's twelve facets. This is an open
+    // surface strip: capped ring geometry would place cream discs through the
+    // cowl at both ends and leak out as wedges in profile.
+    cowling_band := [2]Mesh_Ring{{-2.77, .738, .12, .618}, {-2.63, .744, .12, .664}}
+    for side in 0 ..< SIDES {
+        next := (side + 1) % SIDES
+        mesh_quad(
+            mesh,
+            ring_point(cowling_band[0], side, SIDES),
+            ring_point(cowling_band[1], side, SIDES),
+            ring_point(cowling_band[1], next, SIDES),
+            ring_point(cowling_band[0], next, SIDES),
+            .Marking,
+        )
+    }
     // A dark recessed engine bay gives the cowl a readable opening at gameplay
     // distance. Nine broad, radial cylinder heads replace the former ring of
     // dots; their compressed vertical spacing follows the elliptical cowl.
@@ -845,8 +860,8 @@ add_postale_hull :: proc(mesh: ^Aircraft_Mesh) {
     chin_intake := [5]Mesh_Profile_Point{{-3.05, -.32}, {-2.88, -.53}, {-2.56, -.48}, {-2.43, -.30}, {-2.72, -.25}}
     add_profile_prism(mesh, chin_intake[:], .20, .Dark_Metal)
 
-    screen_low_y := f32(.45)
-    screen_high_y := f32(1.03)
+    screen_low_y := f32(.51)
+    screen_high_y := f32(1.09)
     screen_low_z := f32(-1.18)
     screen_high_z := f32(-1.02)
     mesh_quad(
@@ -968,7 +983,12 @@ postale_mesh :: proc() -> Aircraft_Mesh {
     right_axle := [3]f32{1.34, -1.13, -.48}
     add_wheel(&mesh, left_axle, .45, .22)
     add_wheel(&mesh, right_axle, .45, .22)
-    add_wheel(&mesh, {0, -.91, 2.96}, .24, .18)
+    // A small castering tailwheel trails a sprung pivot beneath the stern.
+    // Keep its contact patch at the former height, but use a realistic tire
+    // proportion and a fork rather than hanging the axle from one long rod.
+    tailwheel_axle := [3]f32{0, -.97, 3.00}
+    tailwheel_pivot := [3]f32{0, -.58, 2.76}
+    add_wheel(&mesh, tailwheel_axle, .18, .13)
     // Simple oval covers sit just outside each tire face. Keeping them thin
     // avoids the intersecting teardrop shell that left a black center notch.
     wheel_cover := [2]Mesh_Ring{{-.018, .34, 0, .42}, {.018, .34, 0, .42}}
@@ -987,7 +1007,24 @@ postale_mesh :: proc() -> Aircraft_Mesh {
     add_strut(&mesh, right_axle, {.42, -.39, -.82}, .13, .Frame)
     add_strut(&mesh, right_axle, {.46, -.36, .02}, .13, .Frame)
     add_strut(&mesh, left_axle, right_axle, .09, .Frame)
-    add_strut(&mesh, {0, -.91, 2.96}, {0, -.05, 2.52}, .09, .Frame)
+    add_strut(&mesh, {0, -.05, 2.52}, tailwheel_pivot, .075, .Frame)
+    tailwheel_fork_sides := [2]f32{-.075, .075}
+    for fork_side in tailwheel_fork_sides {
+        add_strut(
+            &mesh,
+            {fork_side, tailwheel_pivot[1], tailwheel_pivot[2]},
+            {fork_side, tailwheel_axle[1], tailwheel_axle[2]},
+            .052,
+            .Frame,
+        )
+    }
+    add_strut(
+        &mesh,
+        {-.075, tailwheel_axle[1], tailwheel_axle[2]},
+        {.075, tailwheel_axle[1], tailwheel_axle[2]},
+        .040,
+        .Frame,
+    )
     add_postale_propeller(&mesh, {0, .12, -3.42})
     add_propeller_spin_volume(&mesh, {0, .12, -3.42}, 1.46, .018)
     mesh_finalize(

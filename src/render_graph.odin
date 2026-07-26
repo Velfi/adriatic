@@ -7,16 +7,16 @@ import rl "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
 
 Render_Graph_Context :: struct {
-    pass:           ^rl.World_Pass_Context,
-    buffer:         ^engine.Vk_Buffer,
-    road_buffer:    ^engine.Vk_Buffer,
-    foliage_buffer: ^engine.Vk_Buffer,
+    pass:                     ^rl.World_Pass_Context,
+    buffer:                   ^engine.Vk_Buffer,
+    road_buffer:              ^engine.Vk_Buffer,
+    foliage_buffer:           ^engine.Vk_Buffer,
     wing_trail_vertex_buffer: ^engine.Vk_Buffer,
     wing_trail_index_buffer:  ^engine.Vk_Buffer,
-    offset:         vk.DeviceSize,
-    pipeline_index: int,
-    world_push:     World_Push,
-    sky_push:       Sky_Push,
+    offset:                   vk.DeviceSize,
+    pipeline_index:           int,
+    world_push:               World_Push,
+    sky_push:                 Sky_Push,
 }
 
 world_render_graph: render_graph.Graph

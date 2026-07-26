@@ -111,25 +111,6 @@ Particle_Vehicle_Tweak :: struct {
     dust_intensity_size:        f32,
     dust_lift_size:             f32,
     dust_gravity:               f32,
-    exhaust_base_spawn_rate:    f32,
-    exhaust_throttle_scale:     f32,
-    exhaust_speed_divisor:      f32,
-    exhaust_max_intensity:      f32,
-    exhaust_intensity_rate:     f32,
-    exhaust_spawn_threshold:    f32,
-    exhaust_offset:             f32,
-    exhaust_height:             f32,
-    exhaust_forward_speed:      f32,
-    exhaust_intensity_speed:    f32,
-    exhaust_spread:             f32,
-    exhaust_lift:               f32,
-    exhaust_lift_variation:     f32,
-    exhaust_lifetime:           f32,
-    exhaust_lifetime_variation: f32,
-    exhaust_size:               f32,
-    exhaust_intensity_size:     f32,
-    exhaust_lift_size:          f32,
-    exhaust_gravity:            f32,
 }
 
 Particle_Wing_Tweak :: struct {
@@ -284,25 +265,6 @@ tweak_default_particles :: proc() -> Particle_Tweak {
             dust_intensity_size = .08,
             dust_lift_size = .10,
             dust_gravity = .22,
-            exhaust_base_spawn_rate = 4,
-            exhaust_throttle_scale = .7,
-            exhaust_speed_divisor = 32,
-            exhaust_max_intensity = 1,
-            exhaust_intensity_rate = 22,
-            exhaust_spawn_threshold = .02,
-            exhaust_offset = 1.92,
-            exhaust_height = .42,
-            exhaust_forward_speed = .25,
-            exhaust_intensity_speed = .45,
-            exhaust_spread = .22,
-            exhaust_lift = .08,
-            exhaust_lift_variation = .15,
-            exhaust_lifetime = .34,
-            exhaust_lifetime_variation = .42,
-            exhaust_size = .055,
-            exhaust_intensity_size = .045,
-            exhaust_lift_size = .06,
-            exhaust_gravity = .06,
         },
         wing = {
             airspeed_start = 12,
@@ -783,27 +745,6 @@ tweak_draw_particles :: proc(editor: ^Editor) {
     tweak_drag_f32("Dust intensity size", &p.vehicle.dust_intensity_size, 0, 2, .001)
     tweak_drag_f32("Dust lift size", &p.vehicle.dust_lift_size, 0, 2, .001)
     tweak_drag_f32("Dust gravity", &p.vehicle.dust_gravity, 0, 20, .01)
-
-    im.SeparatorText("Vehicle exhaust")
-    tweak_drag_f32("Exhaust base spawn", &p.vehicle.exhaust_base_spawn_rate, 0, 100, 1)
-    tweak_drag_f32("Exhaust throttle scale", &p.vehicle.exhaust_throttle_scale, 0, 5, .01)
-    tweak_drag_f32("Exhaust speed divisor", &p.vehicle.exhaust_speed_divisor, .01, 200, .1)
-    tweak_drag_f32("Exhaust max intensity", &p.vehicle.exhaust_max_intensity, 0, 5, .01)
-    tweak_drag_f32("Exhaust intensity rate", &p.vehicle.exhaust_intensity_rate, 0, 100, 1)
-    tweak_drag_f32("Exhaust spawn threshold", &p.vehicle.exhaust_spawn_threshold, 0, 1, .01)
-    tweak_drag_f32("Exhaust offset", &p.vehicle.exhaust_offset, 0, 10, .01)
-    tweak_drag_f32("Exhaust height", &p.vehicle.exhaust_height, 0, 5, .01)
-    tweak_drag_f32("Exhaust forward speed", &p.vehicle.exhaust_forward_speed, 0, 10, .01)
-    tweak_drag_f32("Exhaust intensity speed", &p.vehicle.exhaust_intensity_speed, 0, 10, .01)
-    tweak_drag_f32("Exhaust spread", &p.vehicle.exhaust_spread, 0, 5, .01)
-    tweak_drag_f32("Exhaust lift", &p.vehicle.exhaust_lift, 0, 5, .01)
-    tweak_drag_f32("Exhaust lift variation", &p.vehicle.exhaust_lift_variation, 0, 5, .01)
-    tweak_drag_f32("Exhaust lifetime", &p.vehicle.exhaust_lifetime, 0, 10, .01)
-    tweak_drag_f32("Exhaust lifetime variation", &p.vehicle.exhaust_lifetime_variation, 0, 10, .01)
-    tweak_drag_f32("Exhaust size", &p.vehicle.exhaust_size, 0, 2, .001)
-    tweak_drag_f32("Exhaust intensity size", &p.vehicle.exhaust_intensity_size, 0, 2, .001)
-    tweak_drag_f32("Exhaust lift size", &p.vehicle.exhaust_lift_size, 0, 2, .001)
-    tweak_drag_f32("Exhaust gravity", &p.vehicle.exhaust_gravity, 0, 20, .01)
 
     im.SeparatorText("Wing trails")
     tweak_drag_f32("Trail airspeed start", &p.wing.airspeed_start, 0, 200, .1)

@@ -277,10 +277,23 @@ third_person_look_clamps_pitch_and_camera_follow_eases :: proc(t: ^testing.T) {
     camera := third_person.default_camera()
     third_person.look(&camera, 2, 100, .1)
     testing.expect(t, camera.yaw_radians == .2 && camera.pitch_radians == 1.2)
-    current := third_person.Camera_Pose{}
+    current := third_person.camera_pose({}, third_person.default_camera())
     desired := third_person.camera_pose({x = 10}, camera)
     next := third_person.follow_camera(current, desired, 5, .1)
-    testing.expect(t, next.target.x > 0 && next.target.x < desired.target.x)
+    testing.expect(t, next.target == desired.target)
+    testing.expect(t, next.position != desired.position)
+}
+
+@(test)
+third_person_camera_follow_does_not_lag_steady_translation :: proc(t: ^testing.T) {
+    camera := third_person.default_camera()
+    current := third_person.camera_pose({}, camera)
+    desired := third_person.camera_pose({x = 10, y = 2, z = -4}, camera)
+    next := third_person.follow_camera(current, desired, 8, 1.0 / 60.0)
+    current_offset := third_person.sub(current.position, current.target)
+    next_offset := third_person.sub(next.position, next.target)
+    testing.expect(t, next.target == desired.target)
+    testing.expect(t, next_offset == current_offset)
 }
 
 @(test)

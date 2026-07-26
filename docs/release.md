@@ -1,18 +1,31 @@
 # Release pipeline
 
-Adriatic publishes macOS and Windows x64 archives from GitHub Actions. Push a
-tag beginning with `v`, or run the **Release** workflow manually against an
-existing tag:
+Adriatic publishes macOS and Windows x64 archives from GitHub Actions. Run the
+release helper from a clean `main` branch that is synchronized with
+`origin/main`:
 
 ```sh
-git tag -a v0.1.0 -m "Adriatic v0.1.0"
-git push origin v0.1.0
+scripts/release.sh 0.1.0
 ```
+
+The helper validates the version, checks for existing tags, creates an
+annotated `v<version>` tag, and asks before pushing it. You can also run the
+**Release** workflow manually against an existing tag.
 
 The coordinator in `.github/workflows/release.yml` calls the reusable macOS
 and Windows workflows, waits for both artifacts, and creates a GitHub Release
 with generated notes. Tags with a SemVer prerelease suffix, such as
 `v0.2.0-beta.1`, create a prerelease.
+
+If a release tag must be corrected to point at the current commit, use the
+explicit retag helper:
+
+```sh
+scripts/retag-head.sh 0.1.0
+```
+
+This rewrites and force-pushes the named tag, so use it only when replacing a
+mistaken release tag is intentional.
 
 Both builders check out Zelda Engine separately. By default they use
 `Velfi/zelda-engine` at `main`. Set these repository variables to override it:

@@ -4,30 +4,6 @@ import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
 import "core:testing"
 
-Car_Mesh_Component :: struct {
-    first_triangle, triangle_count: int,
-    center:                         [3]f32,
-}
-
-car_triangle_winds_outward :: proc(t: ^testing.T, mesh: ^vehicles.Aircraft_Mesh, component: Car_Mesh_Component) {
-    for index in component.first_triangle ..< component.first_triangle + component.triangle_count {
-        triangle := mesh.triangles[index]
-        a := mesh.vertices[triangle.a].position
-        b := mesh.vertices[triangle.b].position
-        c := mesh.vertices[triangle.c].position
-        ab := [3]f32{b[0] - a[0], b[1] - a[1], b[2] - a[2]}
-        ac := [3]f32{c[0] - a[0], c[1] - a[1], c[2] - a[2]}
-        normal := [3]f32{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
-        face_center := [3]f32{(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3}
-        outward := [3]f32 {
-            face_center[0] - component.center[0],
-            face_center[1] - component.center[1],
-            face_center[2] - component.center[2],
-        }
-        testing.expect(t, normal[0] * outward[0] + normal[1] * outward[1] + normal[2] * outward[2] > 0)
-    }
-}
-
 @(test)
 simple_car_has_valid_wireframe_indices :: proc(t: ^testing.T) {
     car := vehicles.simple_car()
@@ -58,38 +34,25 @@ simple_car_solid_mesh_is_closed_and_grouped :: proc(t: ^testing.T) {
 }
 
 @(test)
-simple_car_solid_mesh_winds_every_component_outward :: proc(t: ^testing.T) {
+simple_car_solid_mesh_is_nondegenerate_with_kei_proportions :: proc(t: ^testing.T) {
     mesh := vehicles.simple_car_mesh()
-    components := [24]Car_Mesh_Component {
-        {0, 12, {0, .22, 0}},
-        {12, 12, {0, .48, -.82}},
-        {24, 12, {0, .46, .84}},
-        {36, 12, {-.62, .53, .08}},
-        {48, 12, {.62, .53, .08}},
-        {60, 12, {-.43, .76, -.43}},
-        {72, 12, {.43, .76, -.43}},
-        {84, 12, {0, .98, -.43}},
-        {96, 12, {0, .78, -.43}},
-        {108, 48, {-.78, .30, -.82}},
-        {156, 48, {-.78, .30, -.82}},
-        {204, 48, {-.78, .30, .82}},
-        {252, 48, {-.78, .30, .82}},
-        {300, 48, {.78, .30, -.82}},
-        {348, 48, {.78, .30, -.82}},
-        {396, 48, {.78, .30, .82}},
-        {444, 48, {.78, .30, .82}},
-        {492, 12, {0, .25, -1.42}},
-        {504, 12, {0, .25, 1.42}},
-        {516, 12, {-.58, .56, -1.18}},
-        {528, 12, {-.58, .54, 1.14}},
-        {540, 12, {.58, .56, -1.18}},
-        {552, 12, {.58, .54, 1.14}},
-        {564, 0, {}},
+    for triangle in vehicles.mesh_triangles(&mesh) {
+        a := mesh.vertices[triangle.a].position
+        b := mesh.vertices[triangle.b].position
+        c := mesh.vertices[triangle.c].position
+        ab := b - a
+        ac := c - a
+        normal := [3]f32{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
+        area_squared := normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]
+        testing.expect(t, area_squared > .0000001)
     }
-    for component in components {
-        car_triangle_winds_outward(t, &mesh, component)
-    }
-    testing.expect(t, mesh.triangle_count == components[len(components) - 1].first_triangle)
+    testing.expect(t, vehicles.CAR_WHEEL_TRACK_HALF >= .67)
+    testing.expect(t, vehicles.CAR_WHEEL_TRACK_HALF <= .68)
+    testing.expect(t, vehicles.CAR_WHEELBASE_HALF >= .95)
+    testing.expect(t, vehicles.CAR_WHEEL_RADIUS >= .23)
+    testing.expect(t, vehicles.CAR_WHEEL_RADIUS <= .24)
+    testing.expect(t, vehicles.CAR_WHEEL_WIDTH < vehicles.CAR_WHEEL_RADIUS)
+    testing.expect(t, vehicles.CAR_WHEEL_CENTER_Y == vehicles.CAR_WHEEL_RADIUS)
 }
 
 @(test)

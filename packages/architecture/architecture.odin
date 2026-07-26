@@ -232,11 +232,7 @@ bougainvillea_crown_detail_fade :: proc(camera_distance: f32) -> f32 {
     return fade * fade * (3 - 2 * fade)
 }
 
-bougainvillea_branch_flowering :: proc(
-    maturity, node_fraction: f32,
-    seed: u32,
-    branch_index: int,
-) -> bool {
+bougainvillea_branch_flowering :: proc(maturity, node_fraction: f32, seed: u32, branch_index: int) -> bool {
     clamped_maturity := clamp(maturity, 0, 1)
     bloom_threshold := .82 - clamped_maturity * .26
     if clamped_maturity <= .16 || node_fraction <= bloom_threshold do return false
@@ -246,8 +242,7 @@ bougainvillea_branch_flowering :: proc(
     // branch as foliage and guarantee the terminal leader carries bracts.
     if clamped_maturity > .82 {
         if branch_index == 5 do return true
-        resting_branch :=
-            1 + int(city_hash(int(seed & 0xffff), int(seed >> 16), seed ~ 0x91e10da5) % 4)
+        resting_branch := 1 + int(city_hash(int(seed & 0xffff), int(seed >> 16), seed ~ 0x91e10da5) % 4)
         if branch_index == resting_branch do return false
     }
 

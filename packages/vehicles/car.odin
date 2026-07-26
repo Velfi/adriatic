@@ -9,6 +9,13 @@ Car_Wireframe :: struct {
     edges:    [48]wireframe.Edge,
 }
 
+CAR_WHEEL_TRACK_HALF :: f32(.675)
+CAR_WHEELBASE_HALF :: f32(.96)
+CAR_WHEEL_RADIUS :: f32(.235)
+CAR_WHEEL_CENTER_Y :: CAR_WHEEL_RADIUS
+CAR_WHEEL_WIDTH :: f32(.17)
+CAR_WHEEL_HUB_RADIUS :: f32(.095)
+
 // simple_car returns a compact, game-facing wireframe: a low body, raised
 // cabin, and four square wheel silhouettes. The model faces negative Z.
 simple_car :: proc() -> Car_Wireframe {
@@ -129,13 +136,21 @@ simple_car :: proc() -> Car_Wireframe {
 // circular hub on each face. Keeping this here makes the car's miniature
 // wheels round without changing the shared aircraft mesh helpers.
 car_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32) {
-    tire := [2]Mesh_Ring{{-.12, .32, 0, .32}, {.12, .32, 0, .32}}
+    half_width := CAR_WHEEL_WIDTH * .5
+    tire := [2]Mesh_Ring {
+        {-half_width, CAR_WHEEL_RADIUS, 0, CAR_WHEEL_RADIUS},
+        {half_width, CAR_WHEEL_RADIUS, 0, CAR_WHEEL_RADIUS},
+    }
     first := mesh.vertex_count
     add_ring_mesh(mesh, tire[:], 12, .Wheel)
     rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
     translate_new_vertices(mesh, first, center)
 
-    hub := [2]Mesh_Ring{{-.125, .13, 0, .13}, {.125, .13, 0, .13}}
+    hub_face := half_width + .005
+    hub := [2]Mesh_Ring {
+        {-hub_face, CAR_WHEEL_HUB_RADIUS, 0, CAR_WHEEL_HUB_RADIUS},
+        {hub_face, CAR_WHEEL_HUB_RADIUS, 0, CAR_WHEEL_HUB_RADIUS},
+    }
     first = mesh.vertex_count
     add_ring_mesh(mesh, hub[:], 12, .Bumper)
     rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
@@ -191,26 +206,61 @@ animate_trailer_wheels :: proc(mesh: ^Aircraft_Mesh, rotation: f32) {
 simple_car_mesh :: proc() -> Aircraft_Mesh {
     mesh: Aircraft_Mesh
 
-    // Tiny chassis, hood, rear deck, and a low sill around the open cockpit.
-    add_box(&mesh, {0, .22, 0}, {1.46, .38, 2.72}, .Body)
-    add_box(&mesh, {0, .48, -.82}, {1.32, .22, .66}, .Body)
-    add_box(&mesh, {0, .46, .84}, {1.28, .18, .48}, .Body)
+    // Three nested, tapered shells give the tiny roadster one continuous
+    // shoulder line. Broad middle rings wrap the wheels while narrower end
+    // rings soften the nose and tail without abandoning the faceted style.
+    lower_body := [7]Mesh_Ring {
+        {-1.40, .48, .26, .18},
+        {-1.24, .66, .28, .24},
+        {-.84, .74, .29, .27},
+        {0, .76, .29, .27},
+        {.84, .74, .29, .27},
+        {1.24, .64, .28, .23},
+        {1.40, .46, .26, .17},
+    }
+    add_ring_mesh(&mesh, lower_body[:], 10, .Body)
+
+    hood := [4]Mesh_Ring{{-1.34, .44, .47, .08}, {-1.17, .60, .49, .12}, {-.78, .66, .50, .14}, {-.45, .58, .47, .10}}
+    add_ring_mesh(&mesh, hood[:], 10, .Body)
+
+    rear_deck := [4]Mesh_Ring{{.46, .57, .45, .08}, {.78, .65, .48, .12}, {1.16, .59, .47, .11}, {1.34, .43, .43, .07}}
+    add_ring_mesh(&mesh, rear_deck[:], 10, .Body)
+
+    // Low cockpit rails preserve a crisp opening against the rounded shells.
     add_box(&mesh, {-.62, .53, .08}, {.16, .18, 1.25}, .Body)
     add_box(&mesh, {.62, .53, .08}, {.16, .18, 1.25}, .Body)
 
-    // A short split windscreen makes the convertible read clearly without
-    // hiding the mouse behind a roof or a tall glass cabin.
-    add_box(&mesh, {-.43, .76, -.43}, {.08, .48, .08}, .Frame)
-    add_box(&mesh, {.43, .76, -.43}, {.08, .48, .08}, .Frame)
-    add_box(&mesh, {0, .98, -.43}, {.92, .08, .08}, .Glass)
-    add_box(&mesh, {0, .78, -.43}, {.72, .24, .035}, .Glass)
+    // A visible bucket seat grounds the driver inside the cockpit instead of
+    // leaving the character suspended over the rear deck. The low cushion and
+    // gently reclined two-piece back preserve the open roadster silhouette.
+    add_box(&mesh, {0, .50, .27}, {.62, .12, .64}, .Strap)
+    add_box(&mesh, {0, .61, .64}, {.62, .20, .10}, .Strap)
 
-    // Four broad tires; inset hubs keep the miniature silhouette legible.
-    wheel_x := [2]f32{-.78, .78}
-    wheel_z := [2]f32{-.82, .82}
+    // Move the short split windscreen toward the nose and rake its top back
+    // over the cockpit. The lower pivot keeps the glass rooted in the scuttle.
+    windscreen_pivot := [3]f32{0, .54, -.58}
+    windscreen_rake := f32(.30)
+    first := mesh.vertex_count
+    add_box(&mesh, {-.43, .76, -.58}, {.08, .48, .08}, .Frame)
+    rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
+    first = mesh.vertex_count
+    add_box(&mesh, {.43, .76, -.58}, {.08, .48, .08}, .Frame)
+    rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
+    first = mesh.vertex_count
+    add_box(&mesh, {0, .98, -.58}, {.92, .08, .08}, .Glass)
+    rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
+    first = mesh.vertex_count
+    add_box(&mesh, {0, .78, -.58}, {.72, .24, .035}, .Glass)
+    rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
+
+    // Keep the narrower tire faces flush with the shoulder. Realistic kei-car
+    // tread is much slimmer relative to diameter than the former toy-like
+    // wheels, while the compact wheelbase supplies the short overhangs.
+    wheel_x := [2]f32{-CAR_WHEEL_TRACK_HALF, CAR_WHEEL_TRACK_HALF}
+    wheel_z := [2]f32{-CAR_WHEELBASE_HALF, CAR_WHEELBASE_HALF}
     for x in wheel_x {
         for z in wheel_z {
-            car_wheel(&mesh, {x, .30, z})
+            car_wheel(&mesh, {x, CAR_WHEEL_CENTER_Y, z})
         }
     }
 

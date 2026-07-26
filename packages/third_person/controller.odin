@@ -347,13 +347,19 @@ camera_pose :: proc(character_position: Vec3, camera: Camera) -> Camera_Pose {
     }
 }
 
-// follow_camera eases an orbit camera toward the character without changing
-// its look angles. It gives the familiar third-person follow feel while the
-// caller remains free to run collision avoidance on the returned pose.
+// follow_camera tracks target translation exactly and eases only the camera's
+// offset from that target. Smoothing both world-space points makes a moving
+// target drag the camera through its old positions, which can appear as a
+// back-and-forth wobble when vehicle motion is stepped independently.
 follow_camera :: proc(current: Camera_Pose, desired: Camera_Pose, sharpness, delta_seconds: f32) -> Camera_Pose {
     if delta_seconds <= 0 do return current
     t := clamp(sharpness * delta_seconds, 0, 1)
-    return {position = lerp(current.position, desired.position, t), target = lerp(current.target, desired.target, t)}
+    current_offset := sub(current.position, current.target)
+    desired_offset := sub(desired.position, desired.target)
+    return {
+        position = add(desired.target, lerp(current_offset, desired_offset, t)),
+        target = desired.target,
+    }
 }
 
 // camera_above_height applies a caller-supplied collision floor while
@@ -430,5 +436,6 @@ angle_move_towards :: proc(current, target, maximum_delta: f32) -> f32 {
 min_f32 :: proc(a, b: f32) -> f32 { if a < b do return a; return b }
 max_f32 :: proc(a, b: f32) -> f32 { if a > b do return a; return b }
 add :: proc(a, b: Vec3) -> Vec3 { return {a.x + b.x, a.y + b.y, a.z + b.z} }
+sub :: proc(a, b: Vec3) -> Vec3 { return {a.x - b.x, a.y - b.y, a.z - b.z} }
 scale :: proc(value: Vec3, amount: f32) -> Vec3 { return {value.x * amount, value.y * amount, value.z * amount} }
 lerp :: proc(a, b: Vec3, t: f32) -> Vec3 { return add(a, scale(Vec3{b.x - a.x, b.y - a.y, b.z - a.z}, t)) }

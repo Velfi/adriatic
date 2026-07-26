@@ -63,33 +63,60 @@ CAPTURE_FOLIAGE_LOW_KINDS :: bit_set[Capture_Kind] {
 
 capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
     switch name {
-    case "formation": return .Formation, true
-    case "map": return .Map, true
-    case "flight": return .Flight, true
-    case "car": return .Car, true
-    case "vehicle-showcase": return .Vehicle_Showcase, true
-    case "paint-mode": return .Paint_Mode, true
-    case "road": return .Road, true
-    case "road-dust": return .Road_Dust, true
-    case "road-grip": return .Road_Grip, true
-    case "terrain-grip": return .Terrain_Grip, true
-    case "building": return .Building, true
-    case "foliage": return .Foliage, true
-    case "foliage-forest": return .Foliage_Forest, true
-    case "foliage-forest-low": return .Foliage_Forest_Low, true
-    case "foliage-understory": return .Foliage_Understory, true
-    case "foliage-forest-golden": return .Foliage_Golden, true
-    case "foliage-forest-wind-a": return .Foliage_Wind_A, true
-    case "foliage-forest-wind-b": return .Foliage_Wind_B, true
-    case "foliage-forest-low-wind-a": return .Foliage_Low_Wind_A, true
-    case "foliage-forest-low-wind-b": return .Foliage_Low_Wind_B, true
-    case "foliage-stress": return .Foliage_Stress, true
-    case "narrow": return .Narrow, true
-    case "compact": return .Compact, true
-    case "sky-noon": return .Sky_Noon, true
-    case "sky-sunset": return .Sky_Sunset, true
-    case "sky-storm": return .Sky_Storm, true
-    case "sky-night": return .Sky_Night, true
+    case "formation":
+        return .Formation, true
+    case "map":
+        return .Map, true
+    case "flight":
+        return .Flight, true
+    case "car":
+        return .Car, true
+    case "vehicle-showcase":
+        return .Vehicle_Showcase, true
+    case "paint-mode":
+        return .Paint_Mode, true
+    case "road":
+        return .Road, true
+    case "road-dust":
+        return .Road_Dust, true
+    case "road-grip":
+        return .Road_Grip, true
+    case "terrain-grip":
+        return .Terrain_Grip, true
+    case "building":
+        return .Building, true
+    case "foliage":
+        return .Foliage, true
+    case "foliage-forest":
+        return .Foliage_Forest, true
+    case "foliage-forest-low":
+        return .Foliage_Forest_Low, true
+    case "foliage-understory":
+        return .Foliage_Understory, true
+    case "foliage-forest-golden":
+        return .Foliage_Golden, true
+    case "foliage-forest-wind-a":
+        return .Foliage_Wind_A, true
+    case "foliage-forest-wind-b":
+        return .Foliage_Wind_B, true
+    case "foliage-forest-low-wind-a":
+        return .Foliage_Low_Wind_A, true
+    case "foliage-forest-low-wind-b":
+        return .Foliage_Low_Wind_B, true
+    case "foliage-stress":
+        return .Foliage_Stress, true
+    case "narrow":
+        return .Narrow, true
+    case "compact":
+        return .Compact, true
+    case "sky-noon":
+        return .Sky_Noon, true
+    case "sky-sunset":
+        return .Sky_Sunset, true
+    case "sky-storm":
+        return .Sky_Storm, true
+    case "sky-night":
+        return .Sky_Night, true
     }
     if len(name) >= 6 && name[:6] == "player" do return .Map, true
     return .None, false

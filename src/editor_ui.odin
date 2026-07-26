@@ -438,9 +438,23 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             1,
         )
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DENSITY", editor.formation_brush_strength, .02, 1, 2)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "DENSITY",
+            editor.formation_brush_strength,
+            .02,
+            1,
+            2,
+        )
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HARDNESS", editor.formation_brush_hardness, 0, 1, 2)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "HARDNESS",
+            editor.formation_brush_hardness,
+            0,
+            1,
+            2,
+        )
         row += 1
         if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
             structure := editor.project.structures[editor.structure_selected]
@@ -474,9 +488,23 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             1,
         )
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DENSITY", editor.formation_brush_strength, .02, 1, 2)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "DENSITY",
+            editor.formation_brush_strength,
+            .02,
+            1,
+            2,
+        )
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HARDNESS", editor.formation_brush_hardness, 0, 1, 2)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "HARDNESS",
+            editor.formation_brush_hardness,
+            0,
+            1,
+            2,
+        )
         row += 1
         if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
             structure := editor.project.structures[editor.structure_selected]
@@ -777,7 +805,16 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             structure_cycle_kind(editor)
         }
         row += 2
-        _ = editor_ui_slider_input(editor, layout, 14, row, &editor.formation_brush_radius, terrain.BASE_CELL_SIZE, 240, terrain.BASE_CELL_SIZE)
+        _ = editor_ui_slider_input(
+            editor,
+            layout,
+            14,
+            row,
+            &editor.formation_brush_radius,
+            terrain.BASE_CELL_SIZE,
+            240,
+            terrain.BASE_CELL_SIZE,
+        )
         row += 1
         _ = editor_ui_slider_input(editor, layout, 15, row, &editor.formation_brush_strength, .02, 1, .01)
         row += 1
@@ -785,7 +822,16 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         row += 1
     case .Foliage:
         row += 1
-        _ = editor_ui_slider_input(editor, layout, 14, row, &editor.formation_brush_radius, terrain.BASE_CELL_SIZE, 240, terrain.BASE_CELL_SIZE)
+        _ = editor_ui_slider_input(
+            editor,
+            layout,
+            14,
+            row,
+            &editor.formation_brush_radius,
+            terrain.BASE_CELL_SIZE,
+            240,
+            terrain.BASE_CELL_SIZE,
+        )
         row += 1
         _ = editor_ui_slider_input(editor, layout, 15, row, &editor.formation_brush_strength, .02, 1, .01)
         row += 1

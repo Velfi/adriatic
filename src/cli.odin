@@ -22,12 +22,9 @@ adriatic_cli_usage :: proc() {
 }
 
 adriatic_cli_child :: proc(command: []string) -> bool {
-    process, start_error := os.process_start({
-        command = command,
-        stdin = os.stdin,
-        stdout = os.stdout,
-        stderr = os.stderr,
-    })
+    process, start_error := os.process_start(
+        {command = command, stdin = os.stdin, stdout = os.stdout, stderr = os.stderr},
+    )
     if start_error != nil {
         fmt.eprintf("adriatic: failed to start capture: %v\n", start_error)
         return false
@@ -47,10 +44,7 @@ adriatic_cli_absolute_path :: proc(path: string) -> (string, bool) {
         fmt.eprintf("adriatic: cannot resolve current directory: %v\n", err)
         return "", false
     }
-    absolute, join_error := filepath.join(
-        []string{working_directory, path},
-        context.temp_allocator,
-    )
+    absolute, join_error := filepath.join([]string{working_directory, path}, context.temp_allocator)
     if join_error != nil {
         fmt.eprintf("adriatic: cannot resolve %s: %v\n", path, join_error)
         return "", false
@@ -129,7 +123,11 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         fmt.eprintf("adriatic: cannot replace %s: %v\n", output, err)
         return true, false
     }
-    request := Capture_Request{kind = kind, output_path = output, target = target}
+    request := Capture_Request {
+        kind        = kind,
+        output_path = output,
+        target      = target,
+    }
     _ = adriatic_run(request = &request)
     info, screenshot_error := os.stat(output, context.temp_allocator)
     if screenshot_error != nil || info.size == 0 {

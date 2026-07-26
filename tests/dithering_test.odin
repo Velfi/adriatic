@@ -1,8 +1,8 @@
 package tests
 
+import dither "../packages/dither"
 import "core:math"
 import "core:testing"
-import dither "../packages/dither"
 
 @(test)
 dither_mode_labels_and_offsets :: proc(t: ^testing.T) {

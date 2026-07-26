@@ -92,12 +92,8 @@ player_scarf_rotation_update :: proc(editor: ^Editor, delta_seconds: f32) {
 
     rotation := math.PI - editor.player.facing_yaw_radians
     right_x, right_z := math.cos(rotation), math.sin(rotation)
-    wind_right :=
-        editor.atmosphere.weather.wind[0] * right_x +
-        editor.atmosphere.weather.wind[1] * right_z
-    velocity_right :=
-        editor.player.velocity.x * right_x +
-        editor.player.velocity.z * right_z
+    wind_right := editor.atmosphere.weather.wind[0] * right_x + editor.atmosphere.weather.wind[1] * right_z
+    velocity_right := editor.player.velocity.x * right_x + editor.player.velocity.z * right_z
     relative_air_right := wind_right - velocity_right
     torque := clamp(relative_air_right * .22 - editor.player.turn_amount * 1.15, -3.2, 3.2)
     editor.mouse_scarf_angular_velocity += torque * delta

@@ -1,11 +1,11 @@
 package main
 
+import dither "../packages/dither"
+import third_person "../packages/third_person"
 import "core:math"
 import "core:mem"
 import rl "zelda_engine:canvas2d"
 import render2d "zelda_engine:render2d"
-import dither "../packages/dither"
-import third_person "../packages/third_person"
 
 Dither_Mode :: dither.Mode
 dither_mode_label :: dither.mode_label
@@ -87,18 +87,13 @@ dither_update_tracking :: proc(
     state.previous_position = pose.position
 }
 
-dither_encode_world_post_push :: proc(
-    destination: []u8,
-    ctx: render2d.World_Post_Context,
-    _: rawptr,
-) -> bool {
+dither_encode_world_post_push :: proc(destination: []u8, ctx: render2d.World_Post_Context, _: rawptr) -> bool {
     if len(destination) < size_of(rl.Push) do return false
     push := rl.Push{}
     editor := world_renderer.editor
     if editor != nil {
         mode := editor.gameplay_options.dither_mode
-        render_pose :=
-            editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
+        render_pose := editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
         focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
         focal_length = max(focal_length, f32(.1))
         field_of_view := f32(2 * math.atan(1 / f64(focal_length)))
@@ -120,12 +115,7 @@ dither_encode_world_post_push :: proc(
             f32(ctx.composite_extent[1]),
         }
         push.texture_hatch = {f32(mode), f32(offset_x), f32(offset_y), 0}
-        push.hatch_shape = {
-            f32(ctx.source_extent[0]),
-            f32(ctx.source_extent[1]),
-            field_of_view,
-            0,
-        }
+        push.hatch_shape = {f32(ctx.source_extent[0]), f32(ctx.source_extent[1]), field_of_view, 0}
     }
     mem.copy_non_overlapping(raw_data(destination), &push, size_of(push))
     return true

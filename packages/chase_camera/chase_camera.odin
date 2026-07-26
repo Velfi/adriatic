@@ -10,14 +10,14 @@ LOOK_AHEAD :: f32(5)
 FOCUS_HEIGHT :: f32(-5.5)
 
 State :: struct {
-    pose:                   third_person.Camera_Pose,
-    base_pose:              third_person.Camera_Pose,
-    orbit_yaw, orbit_pitch: f32,
-    focal_length:           f32,
-    shake_phase:            f32,
-    shake_intensity:        f32,
+    pose:                     third_person.Camera_Pose,
+    base_pose:                third_person.Camera_Pose,
+    orbit_yaw, orbit_pitch:   f32,
+    focal_length:             f32,
+    shake_phase:              f32,
+    shake_intensity:          f32,
     previous_target_position: flight.Vec3,
-    initialized:            bool,
+    initialized:              bool,
 }
 
 Target :: struct {

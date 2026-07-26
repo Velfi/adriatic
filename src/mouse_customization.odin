@@ -136,8 +136,8 @@ customization_activate :: proc(editor: ^Editor, focus: int) {
         editor.mouse_scarf_enabled = !editor.mouse_scarf_enabled
     } else if focus > CUSTOMIZATION_SCARF_START && focus < CUSTOMIZATION_BACK_FOCUS {
         component := focus - CUSTOMIZATION_SCARF_START - 1
-        value := component == 0 ? editor.mouse_scarf_color.r :
-            component == 1 ? editor.mouse_scarf_color.g : editor.mouse_scarf_color.b
+        value :=
+            component == 0 ? editor.mouse_scarf_color.r : component == 1 ? editor.mouse_scarf_color.g : editor.mouse_scarf_color.b
         next := u8((int(value) + 32) % 256)
         if component == 0 {
             editor.mouse_scarf_color.r = next

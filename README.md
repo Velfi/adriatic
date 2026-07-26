@@ -171,3 +171,9 @@ an output directory; append seed values to override the default matrix.
 Pushing a `v*` tag builds self-contained macOS and Windows x64 archives and
 publishes a GitHub Release. See [docs/release.md](docs/release.md) for the
 required engine checkout settings and optional Apple signing credentials.
+
+From a clean, synchronized `main` branch, start a release with:
+
+```sh
+scripts/release.sh 0.1.0
+```

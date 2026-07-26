@@ -6860,9 +6860,9 @@ world_aircraft :: proc(editor: ^Editor) {
         for triangle in vehicles.mesh_triangles(&mesh) {
             if mesh.vertices[triangle.a].part == .Propeller_Blur do continue
             world_vehicle_shadow_triangle(
-                postale_vertex_world(&editor.postale, mesh.vertices[triangle.a].position, .68),
-                postale_vertex_world(&editor.postale, mesh.vertices[triangle.b].position, .68),
-                postale_vertex_world(&editor.postale, mesh.vertices[triangle.c].position, .68),
+                postale_vertex_world(&editor.postale, mesh.vertices[triangle.a].position, POSTALE_PRESENTATION_SCALE),
+                postale_vertex_world(&editor.postale, mesh.vertices[triangle.b].position, POSTALE_PRESENTATION_SCALE),
+                postale_vertex_world(&editor.postale, mesh.vertices[triangle.c].position, POSTALE_PRESENTATION_SCALE),
                 sky.sun_direction,
                 sky.weather.cloud_cover,
                 &editor.project,
@@ -6875,9 +6875,9 @@ world_aircraft :: proc(editor: ^Editor) {
             if a.part == .Propeller_Blur && aircraft_propeller_blur_amount(editor.postale.throttle) <= .01 do continue
             if vehicles.aircraft_mesh_part_uses_smooth_normals(a.part) {
                 world_aircraft_triangle_smooth(
-                    postale_vertex_world(&editor.postale, a.position, .68),
-                    postale_vertex_world(&editor.postale, b.position, .68),
-                    postale_vertex_world(&editor.postale, c.position, .68),
+                    postale_vertex_world(&editor.postale, a.position, POSTALE_PRESENTATION_SCALE),
+                    postale_vertex_world(&editor.postale, b.position, POSTALE_PRESENTATION_SCALE),
+                    postale_vertex_world(&editor.postale, c.position, POSTALE_PRESENTATION_SCALE),
                     postale_normal_world(&editor.postale, a.normal),
                     postale_normal_world(&editor.postale, b.normal),
                     postale_normal_world(&editor.postale, c.normal),
@@ -6890,9 +6890,9 @@ world_aircraft :: proc(editor: ^Editor) {
                 )
             } else {
                 world_aircraft_triangle(
-                    postale_vertex_world(&editor.postale, a.position, .68),
-                    postale_vertex_world(&editor.postale, b.position, .68),
-                    postale_vertex_world(&editor.postale, c.position, .68),
+                    postale_vertex_world(&editor.postale, a.position, POSTALE_PRESENTATION_SCALE),
+                    postale_vertex_world(&editor.postale, b.position, POSTALE_PRESENTATION_SCALE),
+                    postale_vertex_world(&editor.postale, c.position, POSTALE_PRESENTATION_SCALE),
                     aircraft_postale_part_color_with_paint(editor, a.part, editor.postale.throttle),
                     a.uv,
                     b.uv,
@@ -6989,28 +6989,53 @@ world_showcase_aircraft_pilot :: proc(editor: ^Editor, position: flight.Vec3, ba
             scarf_enabled = editor.mouse_scarf_enabled,
             scarf_color = editor.mouse_scarf_color,
             grounded = false,
+            hide_tail = true,
+            hide_hind_feet = true,
         },
         basis,
     )
 }
 
 world_showcase_car_pilot :: proc(editor: ^Editor) {
+    world_car_pilot_model(editor, 0, 0)
+}
+
+CAR_PILOT_SCALE :: f32(.78)
+CAR_PILOT_SEAT_Y :: f32(.31)
+CAR_PILOT_SEAT_Z :: f32(.05)
+CAR_STEERING_WHEEL_Y :: f32(.59)
+CAR_STEERING_WHEEL_Z :: f32(-.25)
+CAR_STEERING_WHEEL_RADIUS :: f32(.17)
+
+world_car_pilot_model :: proc(editor: ^Editor, steering, acceleration: f32) {
     rotation := editor.car.yaw_radians - math.PI * .5
-    world_mouse_model(
+    seat := car_vertex_world(editor, {0, CAR_PILOT_SEAT_Y, CAR_PILOT_SEAT_Z})
+    world_mouse_model_scaled(
         editor,
         {
-            // The roadster has no roof, so keep the mouse's feet just above
-            // the low seat and let the head and ears clear the windscreen.
-            position      = {editor.car.position.x, editor.car.position.y + .47, editor.car.position.z + .05},
-            rotation      = rotation,
-            accessory     = editor.mouse_headgear,
-            fur           = editor.mouse_fur,
-            pattern       = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color   = editor.mouse_scarf_color,
-            grounded      = false,
+            // Settle the mouse into the low seat while leaving its head and
+            // ears above the roadster's windscreen.
+            position           = seat,
+            rotation           = rotation,
+            accessory          = editor.mouse_headgear,
+            fur                = editor.mouse_fur,
+            pattern            = editor.mouse_pattern,
+            scarf_enabled      = editor.mouse_scarf_enabled,
+            scarf_color        = editor.mouse_scarf_color,
+            grounded           = false,
+            hide_tail          = true,
+            hide_hind_feet     = true,
+            driving_pose       = true,
+            drive_steering     = steering,
+            drive_acceleration = acceleration,
         },
+        CAR_PILOT_SCALE,
     )
+}
+
+world_car_pilot :: proc(editor: ^Editor) {
+    if !editor.in_map || editor.pilot.mode != .Driving || editor.pilot.vehicle != &editor.car do return
+    world_car_pilot_model(editor, editor.car_drive.steering, editor.car_drive.acceleration_feedback)
 }
 
 car_vertex_world :: proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3 {
@@ -7077,6 +7102,7 @@ world_car :: proc(editor: ^Editor) {
             &editor.project,
         )
     }
+    world_car_cockpit(editor)
     for triangle in vehicles.mesh_triangles(&mesh) {
         a := mesh.vertices[triangle.a]
         b := mesh.vertices[triangle.b]
@@ -7109,6 +7135,53 @@ world_car :: proc(editor: ^Editor) {
             trailer_part_color(editor, a.part),
         )
     }
+}
+
+world_car_cockpit :: proc(editor: ^Editor) {
+    // Keep the wheel low enough for the mouse's forepaws to meet the rim
+    // without lifting its elbows into the windscreen.
+    wheel_center := [3]f32{0, CAR_STEERING_WHEEL_Y, CAR_STEERING_WHEEL_Z}
+    wheel_radius := CAR_STEERING_WHEEL_RADIUS
+    wheel_rotation := clamp(editor.car_drive.steering, -1, 1) * .55
+    forward := vec_normalize(
+        vec_sub(
+            car_vertex_world(editor, {wheel_center.x, wheel_center.y, wheel_center.z - .1}),
+            car_vertex_world(editor, wheel_center),
+        ),
+    )
+    leather := rl.Color{48, 39, 34, 255}
+    spoke := rl.Color{104, 83, 65, 255}
+    SEGMENTS :: 12
+    ring: [SEGMENTS]third_person.Vec3
+    for segment in 0 ..< SEGMENTS {
+        angle := f32(segment) * math.PI * 2 / f32(SEGMENTS) + wheel_rotation
+        ring[segment] = car_vertex_world(
+            editor,
+            {
+                wheel_center.x + math.cos(angle) * wheel_radius,
+                wheel_center.y + math.sin(angle) * wheel_radius,
+                wheel_center.z,
+            },
+        )
+    }
+    for segment in 0 ..< SEGMENTS {
+        world_tube_between(ring[segment], ring[(segment + 1) % SEGMENTS], forward, .026, .026, leather)
+    }
+    center := car_vertex_world(editor, wheel_center)
+    for segment in 0 ..< 3 {
+        angle := f32(segment) * math.PI * 2 / 3 + wheel_rotation
+        rim := car_vertex_world(
+            editor,
+            {
+                wheel_center.x + math.cos(angle) * wheel_radius * .88,
+                wheel_center.y + math.sin(angle) * wheel_radius * .88,
+                wheel_center.z,
+            },
+        )
+        world_tube_between(center, rim, forward, .018, .018, spoke)
+    }
+    column := car_vertex_world(editor, {0, .47, .08})
+    world_tube_between(column, center, forward, .035, .035, spoke)
 }
 
 player_animation_approach :: proc(current, target, rate, delta_seconds: f32) -> f32 {
@@ -7382,22 +7455,25 @@ world_mouse_ear :: proc(
         outer_y := sine * .108
         inner_x := cosine * .069 * root_taper
         inner_y := .006 + sine * .073
-        outer_back[segment] = mouse_ear_world_point(origin, center, rotation, yaw, outer_x, outer_y, -.026)
-        outer_front[segment] = mouse_ear_world_point(origin, center, rotation, yaw, outer_x, outer_y, .024)
-        inner_rim[segment] = mouse_ear_world_point(origin, center, rotation, yaw, inner_x, inner_y, .030)
+        outer_back[segment] = mouse_ear_world_point(origin, center, rotation, yaw, outer_x, outer_y, -.034)
+        outer_front[segment] = mouse_ear_world_point(origin, center, rotation, yaw, outer_x, outer_y, .034)
+        inner_rim[segment] = mouse_ear_world_point(origin, center, rotation, yaw, inner_x, inner_y, .036)
     }
 
-    back_center := mouse_ear_world_point(origin, center, rotation, yaw, 0, 0, -.026)
+    back_center := mouse_ear_world_point(origin, center, rotation, yaw, 0, 0, -.034)
     // Recessing the pink center behind its inner rim gives the pinna a shallow
     // bowl instead of reading as a sticker laid over a flat disc.
-    cup_center := mouse_ear_world_point(origin, center, rotation, yaw, 0, .008, .002)
+    cup_center := mouse_ear_world_point(origin, center, rotation, yaw, 0, .008, .014)
     // Thin mouse ears transmit some of their pink tone even from behind. This
     // keeps the far pinna recognizable instead of reducing it to a dark fur
     // bump when its cup faces away from the camera.
     back_color := color_lerp(rim_color, inner_color, .34)
     for segment in 0 ..< SEGMENTS {
         next := (segment + 1) % SEGMENTS
-        world_triangle(back_center, outer_back[next], outer_back[segment], back_color)
+        // The back cap faces away from the pink cup. Wind it outward so it
+        // survives normal back-face culling and occludes the inner surfaces
+        // when the far pinna is viewed from behind.
+        world_triangle(back_center, outer_back[segment], outer_back[next], back_color)
         world_quad(outer_back[segment], outer_back[next], outer_front[next], outer_front[segment], rim_color)
         world_quad(outer_front[segment], outer_front[next], inner_rim[next], inner_rim[segment], rim_color)
         world_triangle(cup_center, inner_rim[segment], inner_rim[next], inner_color)
@@ -7585,16 +7661,21 @@ Mouse_Fur_Pattern :: enum {
 }
 
 Mouse_Model :: struct {
-    position:          third_person.Vec3,
-    rotation:          f32,
-    accessory:         Mouse_Accessory,
-    fur:               Mouse_Fur,
-    pattern:           Mouse_Fur_Pattern,
-    scarf_enabled:     bool,
-    scarf_color:       rl.Color,
-    preview:           bool,
-    player_controlled: bool,
-    grounded:          bool,
+    position:           third_person.Vec3,
+    rotation:           f32,
+    accessory:          Mouse_Accessory,
+    fur:                Mouse_Fur,
+    pattern:            Mouse_Fur_Pattern,
+    scarf_enabled:      bool,
+    scarf_color:        rl.Color,
+    preview:            bool,
+    player_controlled:  bool,
+    grounded:           bool,
+    hide_tail:          bool,
+    hide_hind_feet:     bool,
+    driving_pose:       bool,
+    drive_steering:     f32,
+    drive_acceleration: f32,
 }
 
 // world_mouse_model builds geometry in a yaw-only frame because ordinary mice
@@ -7643,6 +7724,20 @@ world_mouse_model_parented :: proc(editor: ^Editor, model: Mouse_Model, basis: f
     }
 }
 
+world_mouse_model_scaled :: proc(editor: ^Editor, model: Mouse_Model, scale: f32) {
+    first_vertex := len(world_renderer.vertices)
+    world_mouse_model(editor, model)
+    safe_scale := max(scale, f32(.01))
+    for index in first_vertex ..< len(world_renderer.vertices) {
+        vertex := &world_renderer.vertices[index]
+        vertex.position = {
+            model.position.x + (vertex.position[0] - model.position.x) * safe_scale,
+            model.position.y + (vertex.position[1] - model.position.y) * safe_scale,
+            model.position.z + (vertex.position[2] - model.position.z) * safe_scale,
+        }
+    }
+}
+
 world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     p := model.position
     if model.grounded {
@@ -7686,7 +7781,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         z = math.cos(rotation),
     }
     animation := &editor.tweak.player_animation
-    turn_pose := model.player_controlled ? clamp(editor.player_turn_pose, -1, 1) : f32(0)
+    turn_pose :=
+        model.player_controlled ? clamp(editor.player_turn_pose, -1, 1) : (model.driving_pose ? clamp(model.drive_steering, -1, 1) : f32(0))
     brake_pose := model.player_controlled ? clamp(editor.player_brake_pose, 0, 1) : f32(0)
     if model.player_controlled && editor.capture_player_turn_left_pose do turn_pose = -1
     if model.player_controlled && editor.capture_player_turn_right_pose do turn_pose = 1
@@ -7704,6 +7800,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     slope_pitch := math.atan2(normal_forward, ground_normal.y) * animation.slope_alignment
     slope_roll := math.atan2(-normal_right, ground_normal.y) * animation.slope_alignment
     body_roll := slope_roll - turn_pose * animation.turn_lean_radians
+    drive_reaction := model.driving_pose ? -clamp(model.drive_acceleration, -1, 1) : f32(0)
     spine_side := turn_pose * animation.turn_spine_offset
     brake_compression := brake_pose * animation.brake_compression
     posted_weight := model.player_controlled ? clamp(editor.player_posted_weight, 0, 1) : f32(1)
@@ -7794,6 +7891,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         brake_compression * .72 +
         posted_weight * .27
     head_z := .02 + run_weight * .18 + spine_extension * .055 * run_weight - brake_pose * .025 - posted_weight * .035
+    if model.driving_pose {
+        // The driver reaches into the controls instead of holding the tall,
+        // alert posted pose used by idle NPCs.
+        head_y -= .055
+        head_y -= math.abs(drive_reaction) * .018
+        head_z += .055 + drive_reaction * .065
+    }
     head_turn_x := spine_side * .24
     skeleton := [5]Mouse_Bone_Pose {
         {
@@ -7813,7 +7917,11 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             position = {
                 spine_side * .48,
                 .39 - run_weight * .035 + body_bob - brake_compression * .64 + posted_weight * .15,
-                -.25 + spine_extension * .018 * run_weight + brake_pose * .025 - posted_weight * .035,
+                -.25 +
+                spine_extension * .018 * run_weight +
+                brake_pose * .025 -
+                posted_weight * .035 +
+                drive_reaction * .018,
             },
             pitch = run_weight * .055 + bound * .045 + slope_pitch * .82 - posted_weight * .10,
             roll = body_roll,
@@ -7828,7 +7936,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 run_weight * .06 +
                 spine_extension * .040 * run_weight -
                 brake_pose * .015 -
-                posted_weight * .055,
+                posted_weight * .055 +
+                drive_reaction * .035,
             },
             pitch = run_weight * .075 + bound * .055 + slope_pitch - posted_weight * .14,
             roll = body_roll,
@@ -7839,7 +7948,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             position = {
                 head_sway * .25 + spine_side * .62,
                 .50 - run_weight * .135 + body_bob - brake_compression * .82 + posted_weight * .27,
-                .10 + run_weight * .10 + spine_extension * .050 * run_weight - brake_pose * .02 - posted_weight * .055,
+                .10 +
+                run_weight * .10 +
+                spine_extension * .050 * run_weight -
+                brake_pose * .02 -
+                posted_weight * .055 +
+                drive_reaction * .050,
             },
             pitch = run_weight * .085 + bound * .035 + slope_pitch * .72 - posted_weight * .08,
             roll = body_roll * .58,
@@ -7858,13 +7972,11 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     for ear_x in ear_offsets {
         side := ear_x / .125
         side_motion := ear_twitch * side
-        // Bilateral ears are rarely held in one perfectly coincident plane.
-        // A small fore/aft stagger exposes the far pinna in profile, while the
-        // low-frequency swivel keeps an alert posted mouse listening rather
-        // than freezing both ears into a mirrored emblem.
+        // Keep the bilateral ears subtly asymmetric without pulling the far
+        // pinna forward through the head silhouette in a true profile.
         ear_swivel := math.sin(idle_phase * 1.18 + side * 1.05) * .010 * (1 - run_weight)
-        ear_depth_stagger := side * .060 + ear_swivel
-        ear_height_stagger := side < 0 ? f32(.045) : f32(-.005)
+        ear_depth_stagger := side * .015 + ear_swivel
+        ear_height_stagger := side < 0 ? f32(.012) : f32(-.005)
         world_mouse_ear(
             p,
             rotation,
@@ -7952,9 +8064,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             head_z + .285,
         )
         world_box_between(goggle_strap_left, goggle_strap_right, model_forward, .032, .022, leather_dark)
-        goggle_offsets := [2]f32{-.16, .16}
+        // Keep each cup tight to its side of the skull. At a true profile the
+        // former broad, deeply canted far cup projected beyond the muzzle and
+        // looked as though it rendered through the head.
+        goggle_offsets := [2]f32{-.18, .18}
         for goggle_x in goggle_offsets {
-            goggle_side := goggle_x / .16
+            goggle_side := goggle_x / .18
             // The two cups follow the curved brow rather than sharing one
             // billboard plane. A restrained outward cant keeps the near lens
             // readable in profile while preserving their forward function.
@@ -7970,9 +8085,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                     goggle_y + goggle_x * goggle_roll_slope,
                     goggle_z,
                 ),
-                .057,
-                .047,
-                .026,
+                .050,
+                .042,
+                .022,
                 goggle_rotation,
                 leather,
             )
@@ -7984,9 +8099,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                     goggle_y + goggle_x * goggle_roll_slope,
                     goggle_z + goggle_normal_z * .020,
                 ),
-                .040,
-                .031,
-                .012,
+                .036,
+                .028,
+                .010,
                 goggle_rotation,
                 goggle_glass,
             )
@@ -8009,22 +8124,22 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             // camera reaches a true profile. They share the cup's material and
             // glass, so this reads as wraparound goggles rather than a badge.
             side_window_rotation := rotation - goggle_side * (math.PI * .5)
-            side_window_x := goggle_x + goggle_side * .045 + head_sway + head_turn_x
+            side_window_x := goggle_x + goggle_side * .035 + head_sway + head_turn_x
             side_window_y := goggle_y + goggle_x * goggle_roll_slope
             side_window_z := goggle_z - .008
             world_vertical_disc_rotated(
                 local_point(p, rotation, side_window_x, side_window_y, side_window_z),
-                .030,
-                .025,
-                .010,
+                .024,
+                .021,
+                .008,
                 side_window_rotation,
                 leather,
             )
             world_vertical_disc_rotated(
                 local_point(p, rotation, side_window_x + goggle_side * .010, side_window_y, side_window_z),
-                .021,
                 .017,
-                .006,
+                .014,
+                .005,
                 side_window_rotation,
                 goggle_glass,
             )
@@ -8442,6 +8557,34 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             brake_pose * .12 -
             posted_weight * .095
         fore_paw := local_point(p, rotation, fore_paw_x, fore_paw_y, fore_paw_z)
+        if model.driving_pose {
+            // Preserve the anatomical shoulder sockets computed above and
+            // place each paw directly on the steering-wheel rim. Convert the
+            // car-authored wheel dimensions into the scaled mouse-local frame
+            // so the grip cannot drift when either side is adjusted.
+            steering := clamp(model.drive_steering, -1, 1)
+            wheel_rotation := steering * .55
+            grip_radius := CAR_STEERING_WHEEL_RADIUS / CAR_PILOT_SCALE
+            neutral_grip_x := side_f * grip_radius * f32(.8660254)
+            neutral_grip_y := grip_radius * .5
+            grip_x :=
+                neutral_grip_x * math.cos(wheel_rotation) -
+                neutral_grip_y * math.sin(wheel_rotation)
+            grip_y :=
+                (CAR_STEERING_WHEEL_Y - CAR_PILOT_SEAT_Y) / CAR_PILOT_SCALE +
+                neutral_grip_y * math.cos(wheel_rotation) +
+                neutral_grip_x * math.sin(wheel_rotation)
+            grip_z := (CAR_PILOT_SEAT_Z - CAR_STEERING_WHEEL_Z) / CAR_PILOT_SCALE
+            fore_paw = local_point(p, rotation, grip_x, grip_y, grip_z)
+            // A mouse forelimb reaches from a low shoulder as a soft, shallow
+            // chain. Place the elbow along that reach with only a slight sag;
+            // a raised midpoint creates an angular, human-like bent arm.
+            fore_elbow = third_person.Vec3 {
+                fore_shoulder.x * .56 + fore_paw.x * .44,
+                fore_shoulder.y * .56 + fore_paw.y * .44 - .018 * CAR_PILOT_SCALE,
+                fore_shoulder.z * .56 + fore_paw.z * .44,
+            }
+        }
         fore_planted := model.grounded && front_motion.lift < .025 && posted_weight < .5
         if model.player_controlled {
             fore_paw = mouse_pin_player_paw(editor, side_index * 2, fore_paw, fore_planted)
@@ -8510,6 +8653,15 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         hind_paw_z :=
             -.16 + hind_cycle * .17 * run_weight + side_f * .018 * run_weight + brake_pose * .15 - posted_weight * .10
         hind_paw := local_point(p, rotation, hind_paw_x, hind_paw_y, hind_paw_z)
+        if model.driving_pose {
+            // Fold the rear legs into the bucket seat. Keeping the hock behind
+            // the knee creates a readable seated zig-zag when the cockpit is
+            // viewed from either three-quarter angle.
+            hind_hip = local_point(p, rotation, side_f * .17, .285, -.43)
+            hind_knee = local_point(p, rotation, side_f * .205, .19, -.20)
+            hind_hock = local_point(p, rotation, side_f * .19, .105, -.36)
+            hind_paw = local_point(p, rotation, side_f * .17, .095, -.11)
+        }
         hind_planted := model.grounded && rear_motion.lift < .025
         if model.player_controlled {
             hind_paw = mouse_pin_player_paw(editor, side_index * 2 + 1, hind_paw, hind_planted)
@@ -8517,22 +8669,31 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         if model.grounded {
             hind_paw = mouse_ground_contact(editor, hind_paw, .024, hind_planted)
         }
-        hind_ankle := third_person.Vec3 {
-            hind_hock.x * .42 + hind_paw.x * .58,
-            hind_hock.y * .42 + hind_paw.y * .58,
-            hind_hock.z * .42 + hind_paw.z * .58,
-        }
-        hind_points := [5]third_person.Vec3{hind_hip, hind_knee, hind_hock, hind_ankle, hind_paw}
-        hind_radii := [5]f32{.065, .052, .041, .030, .022}
-        hind_colors := [5]rl.Color{fur, fur, fur_dark, paw, paw}
-        world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward)
-        world_vertical_prism(hind_paw, .058, .058, .032, rotation, paw)
-        for digit in 0 ..< 3 {
-            digit_tip := local_point(hind_paw, rotation, side_f * (f32(digit) - 1) * .017, -.008, .092)
-            if model.grounded {
-                digit_tip = mouse_ground_contact(editor, digit_tip, .009, hind_planted)
+        if model.hide_hind_feet {
+            // Vehicle seats conceal the folded rear feet. Stop the visible
+            // limb at the hock so pads and toes cannot poke through bodywork.
+            hind_points := [3]third_person.Vec3{hind_hip, hind_knee, hind_hock}
+            hind_radii := [3]f32{.065, .052, .041}
+            hind_colors := [3]rl.Color{fur, fur, fur_dark}
+            world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward)
+        } else {
+            hind_ankle := third_person.Vec3 {
+                hind_hock.x * .42 + hind_paw.x * .58,
+                hind_hock.y * .42 + hind_paw.y * .58,
+                hind_hock.z * .42 + hind_paw.z * .58,
             }
-            world_tube_between(hind_paw, digit_tip, model_forward, .009, .009, paw)
+            hind_points := [5]third_person.Vec3{hind_hip, hind_knee, hind_hock, hind_ankle, hind_paw}
+            hind_radii := [5]f32{.065, .052, .041, .030, .022}
+            hind_colors := [5]rl.Color{fur, fur, fur_dark, paw, paw}
+            world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward)
+            world_vertical_prism(hind_paw, .058, .058, .032, rotation, paw)
+            for digit in 0 ..< 3 {
+                digit_tip := local_point(hind_paw, rotation, side_f * (f32(digit) - 1) * .017, -.008, .092)
+                if model.grounded {
+                    digit_tip = mouse_ground_contact(editor, digit_tip, .009, hind_planted)
+                }
+                world_tube_between(hind_paw, digit_tip, model_forward, .009, .009, paw)
+            }
         }
     }
 
@@ -8559,7 +8720,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             tail_points[tail_index].y += weight * .018
         }
         world_mouse_limb_hull(tail_points[:], tail_radii[:], tail_colors[:], model_forward)
-    } else {
+    } else if !model.hide_tail {
         tail_points: [9]third_person.Vec3
         tail_radii: [9]f32
         tail_colors: [9]rl.Color
@@ -8615,7 +8776,7 @@ world_postale_pilot :: proc(editor: ^Editor) {
     // Parent the pilot to a fixed seat in Postale mesh-local space. The mouse
     // model's origin is at its feet, so the seat belongs below the high wing,
     // inside the forward fuselage—not on top of the aircraft.
-    seat_local := [3]f32{0, -.43, -.28}
+    seat_local := [3]f32{0, -.37, -.20}
     position := postale_vertex_world(&editor.postale, seat_local, POSTALE_PRESENTATION_SCALE)
     rotation := math.atan2(-body.basis.forward.x, -body.basis.forward.z)
     world_mouse_model_parented(
@@ -8629,6 +8790,8 @@ world_postale_pilot :: proc(editor: ^Editor) {
             scarf_enabled = editor.mouse_scarf_enabled,
             scarf_color = editor.mouse_scarf_color,
             grounded = false,
+            hide_tail = true,
+            hide_hind_feet = true,
         },
         body.basis,
     )
@@ -8890,6 +9053,7 @@ world_build :: proc(editor: ^Editor) {
     world_ground_grass(editor)
     world_aircraft(editor)
     world_car(editor)
+    world_car_pilot(editor)
     world_attendant_kiosk(editor)
     world_marta(editor)
     world_renderer.player_vertex_first = len(world_renderer.vertices)
@@ -8904,7 +9068,6 @@ world_build :: proc(editor: ^Editor) {
     if pavement.on_surface do receiver += .04
     world_renderer.player_shadow_receiver = receiver
     world_brush(editor)
-    world_particles_cpu(editor)
     world_vehicle_particles(editor)
     world_wing_trails(editor)
     world_wind_streaks(editor)
@@ -8912,35 +9075,6 @@ world_build :: proc(editor: ^Editor) {
 
 customization_preview_camera_pose :: proc() -> third_person.Camera_Pose {
     return {position = {x = 2.35, y = 1.25, z = 3.2}, target = {x = 1.90, y = .43, z = 0}}
-}
-
-world_particles_cpu :: proc(editor: ^Editor) {
-    camera := perspective_camera(
-        editor.camera_pose,
-        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
-    )
-    for particle in editor.particles.particles[:editor.particles.count] {
-        fade := clamp(particle.life / particle.max_life, 0, 1)
-        color := rl.Color{u8(220 + 35 * fade), u8(120 + 90 * fade), u8(36 + 100 * fade), u8(110 + 145 * fade)}
-        right := third_person.Vec3 {
-            x = camera.right.x * particle.size,
-            y = camera.right.y * particle.size,
-            z = camera.right.z * particle.size,
-        }
-        up := third_person.Vec3 {
-            x = camera.up.x * particle.size,
-            y = camera.up.y * particle.size,
-            z = camera.up.z * particle.size,
-        }
-        p := third_person.Vec3{particle.position.x, particle.position.y, particle.position.z}
-        world_quad(
-            {p.x - right.x - up.x, p.y - right.y - up.y, p.z - right.z - up.z},
-            {p.x + right.x - up.x, p.y + right.y - up.y, p.z + right.z - up.z},
-            {p.x + right.x + up.x, p.y + right.y + up.y, p.z + right.z + up.z},
-            {p.x - right.x + up.x, p.y - right.y + up.y, p.z - right.z + up.z},
-            color,
-        )
-    }
 }
 
 world_vehicle_particle :: proc(
@@ -9008,14 +9142,6 @@ world_vehicle_particles :: proc(editor: ^Editor) {
             color = {210, 192, 150, 150}
         }
         world_vehicle_particle(camera, particle, color)
-    }
-    for particle in editor.vehicle_effects.exhaust[:editor.vehicle_effects.exhaust_count] {
-        world_vehicle_particle(
-            camera,
-            particle,
-            {126, 132, 130, 168},
-            particles.vehicle_exhaust_opacity(particle.life, particle.max_life),
-        )
     }
 }
 
