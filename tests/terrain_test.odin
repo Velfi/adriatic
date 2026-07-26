@@ -21,7 +21,11 @@ terrain_material_is_bounded :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)
     terrain.apply_stroke(project, .Paint, 0, 0, 8, 10, 1)
-    for level in 0 ..< terrain.CLIPMAP_LEVELS do testing.expect(t, terrain.sample_material(project, level, 0, 0) == 1)
+    for level in 0 ..< terrain.CLIPMAP_LEVELS {
+        material := terrain.sample_material(project, level, 0, 0)
+        testing.expect(t, material > 0)
+        testing.expect(t, material <= 1)
+    }
 }
 
 @(test)
@@ -30,14 +34,19 @@ terrain_brush_hardness_controls_edge_falloff :: proc(t: ^testing.T) {
     hard := terrain.new_project()
     defer free(soft)
     defer free(hard)
-    center := terrain.BASE_CELL_SIZE * .5
-    terrain.apply_stroke_with_hardness(soft, .Raise, center, center, 100, 1, 1, 0)
-    terrain.apply_stroke_with_hardness(hard, .Raise, center, center, 100, 1, 1, 1)
+    center_x := soft.levels[0].origin_x + f32(terrain.RING_RESOLUTION / 2) * soft.levels[0].cell_size
+    center_z := soft.levels[0].origin_z + f32(terrain.RING_RESOLUTION / 2) * soft.levels[0].cell_size
+    terrain.apply_stroke_with_hardness(soft, .Raise, center_x, center_z, 100, 1, 1, 0)
+    terrain.apply_stroke_with_hardness(hard, .Raise, center_x, center_z, 100, 1, 1, 1)
     testing.expect(
         t,
-        terrain.sample_height(hard, 0, center + 50, center) > terrain.sample_height(soft, 0, center + 50, center),
+        terrain.sample_height(hard, 0, center_x + 50, center_z) >
+        terrain.sample_height(soft, 0, center_x + 50, center_z),
     )
-    testing.expect(t, terrain.sample_height(soft, 0, center, center) == terrain.sample_height(hard, 0, center, center))
+    testing.expect(
+        t,
+        terrain.sample_height(soft, 0, center_x, center_z) == terrain.sample_height(hard, 0, center_x, center_z),
+    )
 }
 
 @(test)
@@ -65,7 +74,7 @@ terrain_ground_surface_at_tracks_painted_material :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)
     // A default island top is unpainted upland: it should read as grass.
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * project.levels[0].cell_size * .5
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     offset := half_extent * terrain.DEFAULT_ISLAND_OFFSET
     testing.expect(t, terrain.ground_surface_at(project, 0, -offset, -offset) == .Grass)
     // Painting the same spot flips it to bare soil.
@@ -128,7 +137,7 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
 default_terrain_has_two_opposite_corner_islands :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * project.levels[0].cell_size * .5
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     offset := half_extent * terrain.DEFAULT_ISLAND_OFFSET
     testing.expect(t, terrain.sample_height(project, 0, -offset, -offset) > project.sea_level)
     testing.expect(t, terrain.sample_height(project, 0, offset, offset) > project.sea_level)
@@ -137,14 +146,12 @@ default_terrain_has_two_opposite_corner_islands :: proc(t: ^testing.T) {
 }
 
 @(test)
-coarse_clipmap_levels_do_not_repeat_scaled_islands :: proc(t: ^testing.T) {
+clipmap_levels_are_nested_without_scaled_world_features :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)
     authored_half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    for level in 1 ..< terrain.CLIPMAP_LEVELS {
-        level_half_extent := f32(terrain.RING_RESOLUTION - 1) * project.levels[level].cell_size * .5
-        echo_center := level_half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        testing.expect(t, terrain.sample_height(project, level, echo_center, echo_center) == project.sea_level)
+    for level in 0 ..< terrain.CLIPMAP_LEVELS {
+        testing.expect(t, project.levels[level].cell_size == terrain.FINE_CELL_SIZE * f32(u32(1) << u32(level)))
     }
     testing.expect(
         t,
@@ -162,7 +169,7 @@ coarse_clipmap_levels_do_not_repeat_scaled_islands :: proc(t: ^testing.T) {
 default_islands_support_the_full_runway :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * project.levels[0].cell_size * .5
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
         runway_half_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH
@@ -191,7 +198,7 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
 default_islands_are_aircraft_scale :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * project.levels[0].cell_size * .5
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     diameter := half_extent * terrain.DEFAULT_ISLAND_RADIUS * 2
     runway_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH * 2
     testing.expect(t, diameter >= 550)
@@ -199,11 +206,36 @@ default_islands_are_aircraft_scale :: proc(t: ^testing.T) {
 }
 
 @(test)
-finest_terrain_level_is_four_kilometers_square :: proc(t: ^testing.T) {
+terrain_levels_progress_from_one_meter_to_world_scale :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)
-    span := f32(terrain.RING_RESOLUTION - 1) * project.levels[0].cell_size
-    testing.expect(t, span == terrain.WORLD_SIZE_METERS)
+    testing.expect(t, project.levels[0].cell_size == 1)
+    testing.expect(t, project.levels[4].cell_size == 16)
+    span := f32(terrain.RING_RESOLUTION - 1) * project.levels[4].cell_size
+    testing.expect(t, span >= terrain.WORLD_SIZE_METERS)
+}
+
+@(test)
+terrain_edits_downsample_into_coarser_overlaps :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    fine := &project.levels[0]
+    center_x := fine.origin_x + 128 * fine.cell_size
+    center_z := fine.origin_z + 128 * fine.cell_size
+    terrain.apply_stroke_with_hardness(project, .Raise, center_x, center_z, 24, 1, 1, .5)
+    for level in 1 ..< terrain.CLIPMAP_LEVELS {
+        coarse := &project.levels[level]
+        previous := &project.levels[level - 1]
+        for z in 0 ..< terrain.RING_RESOLUTION {
+            world_z := coarse.origin_z + f32(z) * coarse.cell_size
+            for x in 0 ..< terrain.RING_RESOLUTION {
+                world_x := coarse.origin_x + f32(x) * coarse.cell_size
+                if !terrain.level_contains(previous, world_x, world_z) do continue
+                expected := terrain.sample_level_height(previous, world_x, world_z)
+                testing.expect(t, coarse.heights[terrain.sample_index(x, z)] == expected)
+            }
+        }
+    }
 }
 
 @(test)

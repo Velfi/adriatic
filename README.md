@@ -153,15 +153,18 @@ checkout when building, releasing, or testing Adriatic.
 | `make run` | Build and run the development executable. |
 | `make release` | Build an optimized executable. |
 | `make physics-build` | Fetch and build Zelda Engine's pinned Jolt dependency. |
-| `make capture` | Render the default screenshot as a quality-75 JPEG. |
-| `make capture-jpeg` | Render the default screenshot as a quality-75 JPEG. |
 
-Capture targets accept `CAPTURE_FORMAT=jpeg`, `CAPTURE_QUALITY=1..100`, and
-`CAPTURE_PATH=/absolute/path/to/output.jpg`; for example,
-`make capture-building CAPTURE_FORMAT=jpeg CAPTURE_QUALITY=65`. JPEG conversion
-uses macOS `sips` after the asynchronous GPU capture completes, leaving only
-the compressed output file behind. Use `CAPTURE_FORMAT=png` when a lossless PNG
-is needed.
+The executable owns capture commands:
+
+```sh
+build/dev/adriatic capture building build/captures/building.png 4
+build/dev/adriatic capture foliage-forest build/captures/forest.png
+build/dev/adriatic capture bougainvillea build/captures/bougainvillea-seeds
+```
+
+The generic form is `adriatic capture <mode> <output.png> [target]`.
+`capture bougainvillea` writes the six-seed palette/habit validation matrix to
+an output directory; append seed values to override the default matrix.
 
 ## Releases
 

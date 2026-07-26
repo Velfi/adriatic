@@ -84,20 +84,14 @@ render_graph_geometry :: proc(user_data: rawptr) {
 
 render_graph_foliage :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
-    if len(world_renderer.foliage_vertices) <= 0 do return
+    if len(world_renderer.foliage_vertices) <= 0 &&
+       len(world_renderer.bougainvillea_vertices) <= 0 &&
+       len(world_renderer.grass_vertices) <= 0 {
+        return
+    }
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / Foliage Atlas")
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.foliage_pipelines[ctx.pipeline_index])
-    vk.CmdBindDescriptorSets(
-        cmd,
-        .GRAPHICS,
-        world_renderer.foliage_layout,
-        0,
-        1,
-        &world_renderer.foliage_descriptor,
-        0,
-        nil,
-    )
     vk.CmdPushConstants(
         cmd,
         world_renderer.foliage_layout,
@@ -107,7 +101,57 @@ render_graph_foliage :: proc(user_data: rawptr) {
         &ctx.world_push,
     )
     vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.foliage_buffer.handle, &ctx.offset)
-    vk.CmdDraw(cmd, u32(len(world_renderer.foliage_vertices)), 1, 0, 0)
+    if len(world_renderer.foliage_vertices) > 0 {
+        vk.CmdBindDescriptorSets(
+            cmd,
+            .GRAPHICS,
+            world_renderer.foliage_layout,
+            0,
+            1,
+            &world_renderer.foliage_descriptor,
+            0,
+            nil,
+        )
+        vk.CmdDraw(cmd, u32(len(world_renderer.foliage_vertices)), 1, 0, 0)
+    }
+    if len(world_renderer.bougainvillea_vertices) > 0 {
+        vk.CmdBindDescriptorSets(
+            cmd,
+            .GRAPHICS,
+            world_renderer.foliage_layout,
+            0,
+            1,
+            &world_renderer.bougainvillea_descriptor,
+            0,
+            nil,
+        )
+        vk.CmdDraw(
+            cmd,
+            u32(len(world_renderer.bougainvillea_vertices)),
+            1,
+            u32(len(world_renderer.foliage_vertices)),
+            0,
+        )
+    }
+    if len(world_renderer.grass_vertices) > 0 {
+        vk.CmdBindDescriptorSets(
+            cmd,
+            .GRAPHICS,
+            world_renderer.foliage_layout,
+            0,
+            1,
+            &world_renderer.grass_descriptor,
+            0,
+            nil,
+        )
+        vk.CmdDraw(
+            cmd,
+            u32(len(world_renderer.grass_vertices)),
+            1,
+            u32(len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)),
+            0,
+        )
+    }
     render_graph_stage_end(ctx)
 }
 

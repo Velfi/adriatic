@@ -154,10 +154,258 @@ architecture_accent_sites_respect_rotated_building_footprints :: proc(t: ^testin
 
 @(test)
 architecture_facade_floor_count_tracks_height :: proc(t: ^testing.T) {
-    testing.expect(t, architecture.facade_floor_count(18) == 2)
-    testing.expect(t, architecture.facade_floor_count(33) == 3)
-    testing.expect(t, architecture.facade_floor_count(50) == 5)
-    testing.expect(t, architecture.facade_floor_count(80) == 7)
+    testing.expect(t, architecture.facade_floor_count(18) == 3)
+    testing.expect(t, architecture.facade_floor_count(33) == 6)
+    testing.expect(t, architecture.facade_floor_count(50) == 9)
+    testing.expect(t, architecture.facade_floor_count(80) == 16)
+    testing.expect(t, architecture.facade_window_row_y(50, 0) == 5)
+    testing.expect(t, architecture.facade_window_row_y(50, 8) == 47)
+    testing.expect(t, architecture.facade_column_count(24) == 2)
+    testing.expect(t, architecture.facade_column_count(32) == 3)
+    testing.expect(t, architecture.facade_window_column_x(24, 0) < 0)
+    testing.expect(t, architecture.facade_window_column_x(24, 1) > 0)
+    testing.expect(t, architecture.facade_window_column_x(32, 1) == 0)
+}
+
+@(test)
+architecture_frontage_rotation_faces_both_sides_toward_the_road :: proc(t: ^testing.T) {
+    tangents := [2][2]f32{{1, 0}, {.6, .8}}
+    sides := [2]f32{-1, 1}
+    for tangent in tangents {
+        normal_x, normal_z := -tangent[1], tangent[0]
+        for side in sides {
+            rotation := architecture.architecture_frontage_rotation(tangent[0], tangent[1], side)
+            front_x := -f32(math.sin(f64(rotation)))
+            front_z := f32(math.cos(f64(rotation)))
+            roadward_x, roadward_z := -normal_x * side, -normal_z * side
+            testing.expect(t, front_x * roadward_x + front_z * roadward_z > .999)
+        }
+    }
+}
+
+@(test)
+bougainvillea_maturity_is_bounded_and_monotonic :: proc(t: ^testing.T) {
+    testing.expect(t, architecture.bougainvillea_maturity(0) == 0)
+    testing.expect(t, architecture.bougainvillea_maturity(.035) == 0)
+    testing.expect(t, architecture.bougainvillea_maturity(.72) == 1)
+    testing.expect(t, architecture.bougainvillea_maturity(1) == 1)
+
+    previous := f32(-1)
+    for step in 0 ..= 20 {
+        maturity := architecture.bougainvillea_maturity(f32(step) / 20)
+        testing.expect(t, maturity >= previous)
+        testing.expect(t, maturity >= 0 && maturity <= 1)
+        previous = maturity
+    }
+}
+
+@(test)
+bougainvillea_growth_controls_reach_and_branch_hierarchy :: proc(t: ^testing.T) {
+    covered_palette_habits: [3][2]bool
+    planter_examples, soil_examples := 0, 0
+    validation_branch_nodes := [6]int{7, 9, 11, 13, 14, 15}
+    for seed in architecture.BOUGAINVILLEA_VALIDATION_SEEDS {
+        palette := architecture.bougainvillea_palette(seed)
+        habit := architecture.bougainvillea_training_habit(seed)
+        testing.expect(t, palette >= 0 && palette < 3)
+        testing.expect(t, habit >= 0 && habit < 2)
+        covered_palette_habits[palette][habit] = true
+        if architecture.bougainvillea_planter_rooted(seed) {
+            planter_examples += 1
+        } else {
+            soil_examples += 1
+        }
+        mature_blooms := 0
+        for branch_index in 1 ..= 5 {
+            node_fraction := f32(validation_branch_nodes[branch_index]) / 15
+            if architecture.bougainvillea_branch_flowering(1, node_fraction, seed, branch_index) {
+                mature_blooms += 1
+            }
+        }
+        testing.expect(t, mature_blooms >= 1)
+        testing.expect(t, mature_blooms <= 4)
+    }
+    for palette in 0 ..< 3 {
+        for habit in 0 ..< 2 {
+            testing.expect(t, covered_palette_habits[palette][habit])
+        }
+    }
+    testing.expect(t, planter_examples == 3)
+    testing.expect(t, soil_examples == 3)
+
+    testing.expect(t, math.abs(architecture.bougainvillea_height_fraction(0) - .24) < .0001)
+    testing.expect(t, math.abs(architecture.bougainvillea_height_fraction(1) - .84) < .0001)
+    testing.expect(t, architecture.bougainvillea_active_branch_count(0, 6) == 2)
+    testing.expect(t, architecture.bougainvillea_active_branch_count(.5, 6) == 4)
+    testing.expect(t, architecture.bougainvillea_active_branch_count(1, 6) == 6)
+    testing.expect(t, architecture.bougainvillea_active_branch_count(1, 3) == 3)
+    testing.expect(t, architecture.bougainvillea_active_branch_count(1, 0) == 0)
+    testing.expect(t, architecture.bougainvillea_thorn_count(.38, 4) == 0)
+    testing.expect(t, architecture.bougainvillea_thorn_count(.39, 4) == 1)
+    testing.expect(t, architecture.bougainvillea_thorn_count(1, 4) == 4)
+    testing.expect(t, architecture.bougainvillea_thorn_count(1, 2) == 2)
+    testing.expect(t, architecture.bougainvillea_thorn_count(1, 0) == 0)
+    testing.expect(t, architecture.bougainvillea_fallen_bract_count(.62) == 0)
+    testing.expect(t, architecture.bougainvillea_fallen_bract_count(.63) == 2)
+    testing.expect(t, architecture.bougainvillea_fallen_bract_count(1) == 5)
+    testing.expect(t, architecture.bougainvillea_cascade_count(.56) == 0)
+    testing.expect(t, architecture.bougainvillea_cascade_count(.57) == 1)
+    testing.expect(t, architecture.bougainvillea_cascade_count(.83) == 1)
+    testing.expect(t, architecture.bougainvillea_cascade_count(.84) == 2)
+    testing.expect(t, architecture.bougainvillea_secondary_leader_strength(.46) == 0)
+    testing.expect(t, architecture.bougainvillea_secondary_leader_strength(.63) > 0)
+    testing.expect(t, architecture.bougainvillea_secondary_leader_strength(.63) < 1)
+    testing.expect(t, architecture.bougainvillea_secondary_leader_strength(.80) == 1)
+    testing.expect(t, math.abs(architecture.bougainvillea_woody_compliance(0) - 1) < .0001)
+    testing.expect(t, math.abs(architecture.bougainvillea_woody_compliance(.5) - .57) < .0001)
+    testing.expect(t, math.abs(architecture.bougainvillea_woody_compliance(1) - .14) < .0001)
+    testing.expect(t, architecture.bougainvillea_detail_tier(0) == 2)
+    testing.expect(t, architecture.bougainvillea_detail_tier(47.99) == 2)
+    testing.expect(t, architecture.bougainvillea_detail_tier(48) == 1)
+    testing.expect(t, architecture.bougainvillea_detail_tier(111.99) == 1)
+    testing.expect(t, architecture.bougainvillea_detail_tier(112) == 0)
+    testing.expect(t, architecture.bougainvillea_crown_detail_fade(88) == 1)
+    testing.expect(t, math.abs(architecture.bougainvillea_crown_detail_fade(100) - .5) < .0001)
+    testing.expect(t, architecture.bougainvillea_crown_detail_fade(112) == 0)
+    testing.expect(t, architecture.bougainvillea_basal_shoot_count(.34) == 0)
+    testing.expect(t, architecture.bougainvillea_basal_shoot_count(.35) == 1)
+    testing.expect(t, architecture.bougainvillea_basal_shoot_count(.77) == 1)
+    testing.expect(t, architecture.bougainvillea_basal_shoot_count(.78) == 2)
+    testing.expect(t, architecture.bougainvillea_pruned_stub_count(.52) == 0)
+    testing.expect(t, architecture.bougainvillea_pruned_stub_count(.53) == 1)
+    testing.expect(t, architecture.bougainvillea_pruned_stub_count(.75) == 2)
+    testing.expect(t, architecture.bougainvillea_pruned_stub_count(1) == 3)
+
+    building := terrain.structure_make(1300, 1300, 24, 20, 4, 30)
+    building.kind = .Architecture
+    left_root := architecture.bougainvillea_root_attachment_x(building, -.2, 2)
+    right_root := architecture.bougainvillea_root_attachment_x(building, .2, 2)
+    tied_left := architecture.bougainvillea_root_attachment_x(building, 0, 2)
+    tied_right := architecture.bougainvillea_root_attachment_x(building, 0, 3)
+    testing.expect(t, left_root <= -building.width * .52)
+    testing.expect(t, right_root >= building.width * .52)
+    testing.expect(t, tied_left < 0)
+    testing.expect(t, tied_right > 0)
+}
+
+@(test)
+bougainvillea_palette_is_stable_and_uses_every_flower_family :: proc(t: ^testing.T) {
+    seen: [3]bool
+    for seed in 0 ..< 64 {
+        palette := architecture.bougainvillea_palette(u32(seed))
+        testing.expect(t, palette >= 0 && palette < len(seen))
+        testing.expect(t, palette == architecture.bougainvillea_palette(u32(seed)))
+        seen[palette] = true
+    }
+    for present in seen {
+        testing.expect(t, present)
+    }
+}
+
+@(test)
+bougainvillea_training_habit_is_stable_and_varied :: proc(t: ^testing.T) {
+    seen := [2]bool{}
+    for seed in 0 ..< 64 {
+        habit := architecture.bougainvillea_training_habit(u32(seed))
+        testing.expect(t, habit >= 0 && habit < len(seen))
+        testing.expect(t, habit == architecture.bougainvillea_training_habit(u32(seed)))
+        seen[habit] = true
+    }
+    for present in seen {
+        testing.expect(t, present)
+    }
+}
+
+@(test)
+bougainvillea_atlas_assigns_four_distinct_cells_to_every_flower_palette :: proc(t: ^testing.T) {
+    expected_bases := [3]int{8, 4, 12}
+    expected_colors := [3][4]u8{{213, 65, 132, 255}, {226, 100, 86, 255}, {144, 65, 190, 255}}
+    occupied := [16]bool{}
+    for palette in 0 ..< 3 {
+        base := architecture.bougainvillea_flower_tile_base(palette)
+        testing.expect(t, base == expected_bases[palette])
+        testing.expect(t, architecture.bougainvillea_bract_color(palette) == expected_colors[palette])
+        for variation in 0 ..< 4 {
+            tile := base + variation
+            testing.expect(t, tile >= 4 && tile < 16)
+            testing.expect(t, !occupied[tile])
+            occupied[tile] = true
+        }
+    }
+    for leaf_tile in 0 ..< 4 {
+        testing.expect(t, !occupied[leaf_tile])
+    }
+}
+
+@(test)
+bougainvillea_bract_value_keeps_fresh_tips_brighter_without_leaving_palette_range :: proc(t: ^testing.T) {
+    protected := architecture.bougainvillea_bract_value(.8, .4, 0)
+    terminal := architecture.bougainvillea_bract_value(.8, 1, 0)
+    varied := architecture.bougainvillea_bract_value(.8, 1, 3)
+    testing.expect(t, terminal > protected)
+    testing.expect(t, varied >= terminal)
+    for maturity_step in 0 ..= 4 {
+        for node_step in 0 ..= 4 {
+            for variation in -2 ..= 6 {
+                value := architecture.bougainvillea_bract_value(f32(maturity_step) / 4, f32(node_step) / 4, variation)
+                testing.expect(t, value >= .895 && value <= 1.01)
+            }
+        }
+    }
+}
+
+@(test)
+bougainvillea_density_and_laundry_clearance_share_lifecycle_rules :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(1300, 1300, 24, 20, 4, 30)
+    structure.kind = .Architecture
+    field: [terrain.CITY_DENSITY_SAMPLES]u8
+    _ = architecture.city_density_stamp(&field, 1300, 1300, 80, 1, 1)
+    density := architecture.bougainvillea_density_at_structure(&field, structure)
+    testing.expect(t, density > .7)
+    testing.expect(
+        t,
+        architecture.bougainvillea_laundry_conflict(structure, density, structure.base_y + structure.height * .5),
+    )
+    testing.expect(
+        t,
+        architecture.bougainvillea_laundry_conflict(
+            structure,
+            density,
+            structure.base_y + structure.height * .84 + 1.2,
+        ),
+    )
+    testing.expect(
+        t,
+        !architecture.bougainvillea_laundry_conflict(structure, density, structure.base_y + structure.height * .15),
+    )
+    testing.expect(
+        t,
+        !architecture.bougainvillea_laundry_conflict(structure, 0, structure.base_y + structure.height * .5),
+    )
+    testing.expect(
+        t,
+        architecture.bougainvillea_laundry_span_conflict(
+            structure,
+            density,
+            structure.base_y + structure.height * .5,
+            structure.center_x - 20,
+            structure.center_z,
+            structure.center_x + 20,
+            structure.center_z,
+        ),
+    )
+    testing.expect(
+        t,
+        !architecture.bougainvillea_laundry_span_conflict(
+            structure,
+            density,
+            structure.base_y + structure.height * .5,
+            structure.center_x - 20,
+            structure.center_z + 40,
+            structure.center_x + 20,
+            structure.center_z + 40,
+        ),
+    )
 }
 
 @(test)
@@ -253,12 +501,32 @@ city_planner_queries_curved_road_clearance_and_tangent :: proc(t: ^testing.T) {
     a := roads.add_node(&graph, {1200, 4, 1200}, 8)
     b := roads.add_node(&graph, {1400, 4, 1200}, 8)
     _ = roads.add_edge(&graph, a, b, {1260, 4, 1280}, {1340, 4, 1280}, 10, 2)
+    frontage := architecture.city_nearest_road_frontage(&graph, 1300, 1260)
     found, distance, tangent_x, tangent_z, clearance := architecture.city_nearest_road(&graph, 1300, 1260)
+    testing.expect(t, frontage.found)
+    testing.expect(t, math.abs(frontage.point_x - 1300) < 2)
+    testing.expect(t, math.abs(frontage.point_z - 1260) < 30)
     testing.expect(t, found)
     testing.expect(t, distance < 30)
     testing.expect(t, clearance == 9)
     testing.expect(t, math.abs(tangent_x) > .8)
     testing.expect(t, math.abs(tangent_z) < .4)
+}
+
+@(test)
+city_road_clearance_uses_the_rotated_footprint_instead_of_its_bounding_circle :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    a := roads.add_node(&graph, {1200, 4, 1300}, 4)
+    b := roads.add_node(&graph, {1400, 4, 1300}, 4)
+    _ = roads.add_straight_edge(&graph, a, b, 10, 2)
+
+    aligned := terrain.structure_make(1300, 1321, 36, 18, 4, 20)
+    aligned.kind = .Architecture
+    testing.expect(t, architecture.city_structure_road_clear(&graph, &aligned))
+
+    intruding := aligned
+    intruding.center_z = 1315
+    testing.expect(t, !architecture.city_structure_road_clear(&graph, &intruding))
 }
 
 @(test)
@@ -306,4 +574,71 @@ city_preview_plan_matches_committed_structures :: proc(t: ^testing.T) {
         testing.expect(t, project.structures[index].height == plan.structures[index].height)
         testing.expect(t, project.structures[index].rotation == plan.structures[index].rotation)
     }
+}
+
+@(test)
+city_planner_builds_accessible_frontage_parcels_and_deep_alleys :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    field: [terrain.CITY_DENSITY_SAMPLES]u8
+    bounds := architecture.City_Bounds{1120, 1120, 1480, 1480, true}
+    _ = architecture.city_density_stamp(&field, 1300, 1300, 185, 1, 1)
+    plan := architecture.city_plan_density(project, &field, bounds)
+    testing.expect(t, plan.count > 0)
+    testing.expect(t, plan.parcel_count == plan.count)
+    testing.expect(t, plan.alley_count > 0)
+    for parcel in plan.parcels[:plan.parcel_count] {
+        testing.expect(t, parcel.frontage_width >= 8 && parcel.frontage_width <= 20)
+        testing.expect(t, parcel.depth >= 13 && parcel.depth <= 36)
+    }
+}
+
+@(test)
+architecture_compound_footprints_are_seed_stable_and_use_exact_overlap :: proc(t: ^testing.T) {
+    a := terrain.structure_make(1300, 1300, 30, 24, 4, 24)
+    a.kind = .Architecture
+    a.seed = 1
+    first := architecture.architecture_footprint(a)
+    second := architecture.architecture_footprint(a)
+    testing.expect(t, first.count == 2)
+    testing.expect(t, first == second)
+
+    b := a
+    b.center_x += 31
+    testing.expect(t, !architecture.city_structure_overlaps(a, b, 0))
+    b.center_x -= 3
+    testing.expect(t, architecture.city_structure_overlaps(a, b, 0))
+}
+
+@(test)
+architecture_frontage_mass_is_the_farthest_rendered_front_plane :: proc(t: ^testing.T) {
+    for seed in 0 ..< 10 {
+        structure := terrain.structure_make(1300, 1300, 30, 24, 4, 24)
+        structure.kind = .Architecture
+        structure.seed = u32(seed)
+        footprint := architecture.architecture_footprint(structure)
+        selected := architecture.architecture_frontage_mass_index(structure)
+        testing.expect(t, selected >= 0 && selected < footprint.count)
+        selected_front := footprint.masses[selected].local_z + footprint.masses[selected].depth * .5
+        for mass in footprint.masses[:footprint.count] {
+            testing.expect(t, selected_front >= mass.local_z + mass.depth * .5)
+        }
+        frontage_structure := architecture.architecture_frontage_structure(structure)
+        selected_mass := footprint.masses[selected]
+        expected_x, expected_z := architecture.architecture_mass_world(structure, selected_mass)
+        testing.expect(t, frontage_structure.center_x == expected_x)
+        testing.expect(t, frontage_structure.center_z == expected_z)
+        testing.expect(t, frontage_structure.width == selected_mass.width)
+        testing.expect(t, frontage_structure.depth == selected_mass.depth)
+    }
+}
+
+@(test)
+city_density_bounds_tracks_only_authored_density :: proc(t: ^testing.T) {
+    field: [terrain.CITY_DENSITY_SAMPLES]u8
+    testing.expect(t, !architecture.city_density_bounds(&field).valid)
+    _ = architecture.city_density_stamp(&field, 1300, 1300, 40, 1, 1)
+    bounds := architecture.city_density_bounds(&field)
+    testing.expect(t, bounds.valid)
+    testing.expect(t, architecture.city_bounds_contains(bounds, 1300, 1300))
 }

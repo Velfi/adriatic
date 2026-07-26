@@ -21,6 +21,11 @@ import resources "zelda_engine:render_resources"
 WORLD_VERTEX_CAPACITY :: 480_000
 ROAD_VERTEX_CAPACITY :: 320_000
 FOLIAGE_VERTEX_CAPACITY :: 24_000
+// Bougainvillea cards use four anchor-centered sub-quads (24 vertices) so
+// their painted roots remain fixed under wind. Preserve the former effective
+// budget of 2,000 cards after that fourfold tessellation.
+BOUGAINVILLEA_VERTEX_CAPACITY :: 48_000
+GRASS_VERTEX_CAPACITY :: 18_000
 WING_TRAIL_VERTEX_CAPACITY :: particles.MAX_WING_TRAIL_PARTICLES * 8
 WING_TRAIL_INDEX_CAPACITY :: (particles.MAX_WING_TRAIL_PARTICLES - 2) * 8 * 6 + 8 * 6
 CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
@@ -62,6 +67,7 @@ Foliage_Vertex :: struct {
     position: [3]f32,
     uv:       [2]f32,
     color:    [4]f32,
+    kind:     u32,
 }
 
 World_Push :: struct {
@@ -100,7 +106,11 @@ World_Renderer :: struct {
     foliage_descriptor_layout:       vk.DescriptorSetLayout,
     foliage_descriptor_pool:         vk.DescriptorPool,
     foliage_descriptor:              vk.DescriptorSet,
+    bougainvillea_descriptor:        vk.DescriptorSet,
+    grass_descriptor:                vk.DescriptorSet,
     foliage_atlas:                   resources.Image,
+    bougainvillea_atlas:             resources.Image,
+    grass_atlas:                     resources.Image,
     vehicle_paint_atlas:             resources.Image,
     vehicle_paint_staging:           [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vehicle_paint_descriptor_layout: vk.DescriptorSetLayout,
@@ -114,6 +124,8 @@ World_Renderer :: struct {
     vertices:                        [dynamic]World_Vertex,
     road_vertices:                   [dynamic]World_Vertex,
     foliage_vertices:                [dynamic]Foliage_Vertex,
+    bougainvillea_vertices:          [dynamic]Foliage_Vertex,
+    grass_vertices:                  [dynamic]Foliage_Vertex,
     wing_trail_vertices:             [dynamic]World_Vertex,
     wing_trail_indices:              [dynamic]u16,
     wing_trail_optimized_indices:    [dynamic]u16,
@@ -707,7 +719,7 @@ clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
 }
 
 world_infrastructure :: proc(editor: ^Editor) {
-    half := f32(terrain.RING_RESOLUTION - 1) * editor.project.levels[0].cell_size * .5
+    half := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         x, z := sign * half * terrain.DEFAULT_ISLAND_OFFSET, sign * half * terrain.DEFAULT_ISLAND_OFFSET
         run_l, run_w := half * terrain.DEFAULT_RUNWAY_HALF_LENGTH, half * terrain.DEFAULT_RUNWAY_HALF_WIDTH
@@ -782,6 +794,56 @@ world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, ro
     world_quad(p[1], p[2], p[6], p[5], color)
     world_quad(p[3], p[7], p[6], p[2], color)
     world_quad(p[0], p[1], p[5], p[4], color)
+}
+
+world_architecture_face_color :: proc(base: rl.Color, normal_x, normal_z: f32, top: bool = false) -> rl.Color {
+    // A restrained baked key keeps the plain-color architecture readable
+    // without fighting the authored stucco palette or the dynamic sky.
+    shade := top ? f32(1.015) : clamp(.955 + normal_x * -.035 + normal_z * -.025, f32(.90), f32(1.01))
+    return {
+        r = u8(clamp(f32(base.r) * shade, 0, 255)),
+        g = u8(clamp(f32(base.g) * shade, 0, 255)),
+        b = u8(clamp(f32(base.b) * shade, 0, 255)),
+        a = base.a,
+    }
+}
+
+world_architecture_box_rotated :: proc(
+    center: third_person.Vec3,
+    size: third_person.Vec3,
+    rotation: f32,
+    color: rl.Color,
+) {
+    x, y, z := size.x * .5, size.y * .5, size.z * .5
+    p: [8]third_person.Vec3
+    local := [8][3]f32 {
+        {-x, -y, -z},
+        {x, -y, -z},
+        {x, y, -z},
+        {-x, y, -z},
+        {-x, -y, z},
+        {x, -y, z},
+        {x, y, z},
+        {-x, y, z},
+    }
+    for index in 0 ..< 8 {
+        world_x, world_z := world_rotate_xz(center.x, center.z, local[index][0], local[index][2], rotation)
+        p[index] = {world_x, center.y + local[index][1], world_z}
+    }
+    cosine, sine := f32(math.cos(f64(rotation))), f32(math.sin(f64(rotation)))
+    back := world_architecture_face_color(color, sine, -cosine)
+    front := world_architecture_face_color(color, -sine, cosine)
+    left := world_architecture_face_color(color, -cosine, -sine)
+    right := world_architecture_face_color(color, cosine, sine)
+    top := world_architecture_face_color(color, 0, 0, true)
+    bottom := world_architecture_face_color(color, 0, 0)
+    // Preserve the same outward CCW winding as world_box_rotated.
+    world_quad(p[0], p[3], p[2], p[1], back)
+    world_quad(p[4], p[5], p[6], p[7], front)
+    world_quad(p[0], p[4], p[7], p[3], left)
+    world_quad(p[1], p[2], p[6], p[5], right)
+    world_quad(p[3], p[7], p[6], p[2], top)
+    world_quad(p[0], p[1], p[5], p[4], bottom)
 }
 
 world_tapered_box_rotated :: proc(
@@ -1708,6 +1770,7 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
     world_quad(left_front, left_back, ridge_back, ridge_front, terracotta)
     world_quad(right_back, right_front, ridge_front, ridge_back, formation_face_color(terracotta, 1.4, 0))
     fascia := formation_face_color(terracotta, math.PI, 0)
+    soffit := formation_face_color(terracotta, math.PI * .72, 0)
     front_fascia_x, front_fascia_z := world_rotate_xz(
         structure.center_x,
         structure.center_z,
@@ -1722,18 +1785,84 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
         depth,
         structure.rotation,
     )
-    world_box_rotated(
-        {front_fascia_x, eave_y + .05, front_fascia_z},
-        {structure.width * 1.10, .24, .18},
-        structure.rotation,
-        fascia,
-    )
-    world_box_rotated(
-        {back_fascia_x, eave_y + .05, back_fascia_z},
-        {structure.width * 1.10, .24, .18},
-        structure.rotation,
-        fascia,
-    )
+    if roof_style == .Gable || roof_style == .Low_Gable {
+        // A gable's end fascia follows both rakes up to the ridge. A single
+        // horizontal strip across the eave floated in front of the triangular
+        // wall at street level and made the roof read as a detached plank.
+        // Follow the overhanging roof edge, not the recessed masonry apex.
+        fascia_radius := f32(.12)
+        world_tube_between(left_front, ridge_front, {0, 0, 1}, fascia_radius, fascia_radius, fascia)
+        world_tube_between(ridge_front, right_front, {0, 0, 1}, fascia_radius, fascia_radius, fascia)
+        world_tube_between(right_back, ridge_back, {0, 0, 1}, fascia_radius, fascia_radius, fascia)
+        world_tube_between(ridge_back, left_back, {0, 0, 1}, fascia_radius, fascia_radius, fascia)
+
+        // Close the shallow gap between the recessed triangular wall and the
+        // overhanging roof edge. These downward-wound strips are the visible
+        // underside of the front and rear rake overhangs.
+        world_quad(left_front, ridge_front, wall_front_apex, wall_front_left, soffit)
+        world_quad(ridge_front, right_front, wall_front_right, wall_front_apex, soffit)
+        world_quad(right_back, ridge_back, wall_back_apex, wall_back_right, soffit)
+        world_quad(ridge_back, left_back, wall_back_left, wall_back_apex, soffit)
+    } else {
+        world_box_rotated(
+            {front_fascia_x, eave_y + .05, front_fascia_z},
+            {structure.width * 1.10, .24, .18},
+            structure.rotation,
+            fascia,
+        )
+        world_box_rotated(
+            {back_fascia_x, eave_y + .05, back_fascia_z},
+            {structure.width * 1.10, .24, .18},
+            structure.rotation,
+            fascia,
+        )
+    }
+    // Give the long eaves a visible edge. Without this small fascia the roof
+    // quad is literally paper-thin and reads as a floating dark strip when
+    // the camera is near wall height.
+    left_eave_x, left_eave_z := (left_front.x + left_back.x) * .5, (left_front.z + left_back.z) * .5
+    right_eave_x, right_eave_z := (right_front.x + right_back.x) * .5, (right_front.z + right_back.z) * .5
+    eave_length := depth * 2
+    world_box_rotated({left_eave_x, eave_y + .03, left_eave_z}, {.20, .24, eave_length}, structure.rotation, fascia)
+    world_box_rotated({right_eave_x, eave_y + .03, right_eave_z}, {.20, .24, eave_length}, structure.rotation, fascia)
+    // Close only the narrow long-eave overhangs. A full-width flat plate under
+    // the entire roof intersects the triangular gable and reads as a ceiling.
+    soffit_width := structure.width * .04
+    for side in -1 ..= 1 {
+        if side == 0 do continue
+        soffit_x, soffit_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            f32(side) * structure.width * .52,
+            0,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {soffit_x, eave_y + .02, soffit_z},
+            {soffit_width, .10, depth * 2},
+            structure.rotation,
+            soffit,
+        )
+    }
+    if roof_style == .Hip {
+        end_soffit_depth := structure.depth * .08
+        for end in -1 ..= 1 {
+            if end == 0 do continue
+            soffit_x, soffit_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                f32(end) * structure.depth * .54,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {soffit_x, eave_y + .02, soffit_z},
+                {structure.width, .10, end_soffit_depth},
+                structure.rotation,
+                soffit,
+            )
+        }
+    }
 
     courses := clamp(int(structure.width / 5.5), 4, 7)
     segments := clamp(int(structure.depth / 7), 3, 6)
@@ -1825,12 +1954,12 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
     }
 }
 
-world_architecture :: proc(structure: terrain.Structure) {
+world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool = true) {
     landmark := structure.height > 60
     facade_style := architecture.facade_style_for_seed(structure.seed)
     roof_style := architecture.roof_style_for_seed(structure.seed)
     stone := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
-    world_box_rotated(
+    world_architecture_box_rotated(
         {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
         {structure.width, structure.height, structure.depth},
         structure.rotation,
@@ -1839,7 +1968,7 @@ world_architecture :: proc(structure: terrain.Structure) {
     // A shallow overhanging limestone plinth separates each façade from the
     // terrain and gives the compact blocks a believable masonry foundation.
     plinth := formation_face_color(stone, math.PI, 0)
-    world_box_rotated(
+    world_architecture_box_rotated(
         {structure.center_x, structure.base_y + .30, structure.center_z},
         {structure.width + .46, .60, structure.depth + .46},
         structure.rotation,
@@ -1854,7 +1983,7 @@ world_architecture :: proc(structure: terrain.Structure) {
             structure.rotation,
         )
         wing_height := structure.height * .44
-        world_box_rotated(
+        world_architecture_box_rotated(
             {wing_x, structure.base_y + wing_height * .5, wing_z},
             {structure.width * .38, wing_height, structure.depth * .72},
             structure.rotation,
@@ -1873,9 +2002,9 @@ world_architecture :: proc(structure: terrain.Structure) {
     window := facade_style == 2 ? rl.Color{42, 74, 82, 255} : rl.Color{48, 62, 64, 255}
     shutter :=
         facade_style == 2 ? rl.Color{43, 102, 126, 255} : facade_style == 3 ? rl.Color{236, 218, 179, 255} : rl.Color{167, 61, 53, 255}
-    rows := landmark ? 4 : architecture.facade_floor_count(structure.height)
-    columns := landmark ? 1 : 2
-    if !landmark {
+    rows := architecture.facade_floor_count(structure.height)
+    columns := architecture.facade_column_count(structure.width)
+    if !landmark && has_entrance {
         door_x, door_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -1885,15 +2014,15 @@ world_architecture :: proc(structure: terrain.Structure) {
         )
         door :=
             facade_style == 2 ? rl.Color{54, 91, 99, 255} : facade_style == 3 ? rl.Color{109, 75, 57, 255} : rl.Color{92, 66, 57, 255}
-        world_box_rotated(
-            {door_x, structure.base_y + structure.height * .14, door_z},
-            {structure.width * .18, structure.height * .24, .24},
-            structure.rotation,
-            door,
-        )
+        door_width := clamp(structure.width * .13, f32(1.8), f32(2.8))
+        door_height := clamp(structure.height * .075, f32(3.0), f32(4.0))
+        step_height: f32 = .20
+        door_center_y := structure.base_y + step_height + door_height * .5
+        world_box_rotated({door_x, door_center_y, door_z}, {door_width, door_height, .24}, structure.rotation, door)
         surround := facade_style == 2 ? rl.Color{166, 171, 151, 255} : rl.Color{190, 166, 128, 255}
-        frame_height := structure.height * .27
-        frame_offset := structure.width * .12
+        frame_width: f32 = .12
+        frame_height := door_height + .30
+        frame_offset := door_width * .5 + frame_width * .5
         left_frame_x, left_frame_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -1909,14 +2038,14 @@ world_architecture :: proc(structure: terrain.Structure) {
             structure.rotation,
         )
         world_box_rotated(
-            {left_frame_x, structure.base_y + structure.height * .145, left_frame_z},
-            {.10, frame_height, .12},
+            {left_frame_x, door_center_y + .08, left_frame_z},
+            {frame_width, frame_height, .12},
             structure.rotation,
             surround,
         )
         world_box_rotated(
-            {right_frame_x, structure.base_y + structure.height * .145, right_frame_z},
-            {.10, frame_height, .12},
+            {right_frame_x, door_center_y + .08, right_frame_z},
+            {frame_width, frame_height, .12},
             structure.rotation,
             surround,
         )
@@ -1928,8 +2057,8 @@ world_architecture :: proc(structure: terrain.Structure) {
             structure.rotation,
         )
         world_box_rotated(
-            {lintel_x, structure.base_y + structure.height * .285, lintel_z},
-            {structure.width * .22, .11, .14},
+            {lintel_x, structure.base_y + step_height + door_height + .22, lintel_z},
+            {door_width + .34, .14, .14},
             structure.rotation,
             surround,
         )
@@ -1943,8 +2072,8 @@ world_architecture :: proc(structure: terrain.Structure) {
         step_color :=
             facade_style == 2 ? rl.Color{103, 130, 125, 255} : facade_style == 3 ? rl.Color{178, 127, 88, 255} : rl.Color{178, 127, 88, 255}
         world_box_rotated(
-            {step_x, structure.base_y + structure.height * .035, step_z},
-            {structure.width * .24, .20, .42},
+            {step_x, structure.base_y + step_height * .5, step_z},
+            {door_width + .72, step_height, .42},
             structure.rotation,
             step_color,
         )
@@ -1961,9 +2090,10 @@ world_architecture :: proc(structure: terrain.Structure) {
             )
             awning_color :=
                 structure.seed % 4 == 0 ? rl.Color{196, 105, 71, 255} : structure.seed % 4 == 1 ? rl.Color{215, 198, 151, 255} : rl.Color{105, 143, 151, 255}
+            awning_width := door_width + 1.4
             world_box_rotated(
-                {awning_x, structure.base_y + structure.height * .32, awning_z},
-                {structure.width * .34, .14, .52},
+                {awning_x, structure.base_y + step_height + door_height + .82, awning_z},
+                {awning_width, .14, .52},
                 structure.rotation,
                 awning_color,
             )
@@ -1973,13 +2103,13 @@ world_architecture :: proc(structure: terrain.Structure) {
                 stripe_x, stripe_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
-                    f32(stripe) * structure.width * .105,
+                    f32(stripe) * awning_width * .30,
                     structure.depth * .5 + .49,
                     structure.rotation,
                 )
                 world_box_rotated(
-                    {stripe_x, structure.base_y + structure.height * .32 + .012, stripe_z},
-                    {structure.width * .095, .035, .54},
+                    {stripe_x, structure.base_y + step_height + door_height + .832, stripe_z},
+                    {awning_width * .28, .035, .54},
                     structure.rotation,
                     stripe % 2 == 0 ? stripe_color : awning_color,
                 )
@@ -1992,28 +2122,25 @@ world_architecture :: proc(structure: terrain.Structure) {
                 structure.rotation,
             )
             world_box_rotated(
-                {fascia_x, structure.base_y + structure.height * .29, fascia_z},
-                {structure.width * .34, .12, .07},
+                {fascia_x, structure.base_y + step_height + door_height + .74, fascia_z},
+                {awning_width, .12, .07},
                 structure.rotation,
                 formation_face_color(awning_color, math.PI, 0),
             )
         }
     }
+    window_width := architecture.facade_window_width(structure.width)
+    window_height := architecture.facade_window_height(structure.height)
     for row in 0 ..< rows {
         for column in 0 ..< columns {
-            x := columns == 1 ? 0 : (f32(column) - .5) * structure.width * .42
-            y := structure.base_y + structure.height * (.24 + f32(row) * .16)
+            x := architecture.facade_window_column_x(structure.width, column)
+            y := structure.base_y + architecture.facade_window_row_y(structure.height, row)
             local_z := structure.depth * .5 + .16
             wx, wz := world_rotate_xz(structure.center_x, structure.center_z, x, local_z, structure.rotation)
-            world_box_rotated(
-                {wx, y, wz},
-                {structure.width * (columns == 1 ? .16 : .13), structure.height * .10, .22},
-                structure.rotation,
-                window,
-            )
+            world_box_rotated({wx, y, wz}, {window_width, window_height, .22}, structure.rotation, window)
             if !landmark && (facade_style == 0 || facade_style == 1) {
                 trim := facade_style == 1 ? rl.Color{205, 190, 157, 255} : rl.Color{190, 166, 128, 255}
-                trim_width := structure.width * (columns == 1 ? .19 : .16)
+                trim_width := window_width + .40
                 trim_z := local_z + .045
                 trim_x, trim_world_z := world_rotate_xz(
                     structure.center_x,
@@ -2023,13 +2150,13 @@ world_architecture :: proc(structure: terrain.Structure) {
                     structure.rotation,
                 )
                 world_box_rotated(
-                    {trim_x, y + structure.height * .062, trim_world_z},
+                    {trim_x, y + window_height * .5 + .12, trim_world_z},
                     {trim_width, .075, .16},
                     structure.rotation,
                     trim,
                 )
                 world_box_rotated(
-                    {trim_x, y - structure.height * .062, trim_world_z},
+                    {trim_x, y - window_height * .5 - .10, trim_world_z},
                     {trim_width * .92, .065, .18},
                     structure.rotation,
                     formation_face_color(trim, math.PI, 0),
@@ -2044,8 +2171,8 @@ world_architecture :: proc(structure: terrain.Structure) {
                     structure.rotation,
                 )
                 world_box_rotated(
-                    {flower_x, y - structure.height * .075, flower_z},
-                    {structure.width * .22, .12, .22},
+                    {flower_x, y - window_height * .5 - .18, flower_z},
+                    {window_width + .56, .12, .22},
                     structure.rotation,
                     {178, 111, 73, 255},
                 )
@@ -2053,15 +2180,57 @@ world_architecture :: proc(structure: terrain.Structure) {
                     sprig_x, sprig_z := world_rotate_xz(
                         structure.center_x,
                         structure.center_z,
-                        x + (f32(sprig) - 1) * structure.width * .055,
+                        x + (f32(sprig) - 1) * window_width * .34,
                         local_z + .34,
                         structure.rotation,
                     )
                     world_box_rotated(
-                        {sprig_x, y - structure.height * .025, sprig_z},
-                        {.055, structure.height * .065, .08},
+                        {sprig_x, y - window_height * .28, sprig_z},
+                        {.055, window_height * .62, .08},
                         structure.rotation,
                         sprig == 1 ? rl.Color{87, 132, 74, 255} : rl.Color{113, 151, 78, 255},
+                    )
+                }
+                // Flower-box openings still need a small Juliet guard. Without
+                // it the planter lip reads as an unsupported balcony with its
+                // upper railing missing.
+                guard_width := window_width + .48
+                guard_z := local_z + .40
+                guard_color := facade_style == 2 ? rl.Color{64, 82, 83, 255} : rl.Color{83, 68, 62, 255}
+                guard_height: f32 = .09
+                guard_center_above_sill: f32 = 1.04
+                post_width: f32 = .055
+                post_base_above_sill: f32 = .04
+                post_top_above_sill := guard_center_above_sill - guard_height * .5
+                post_height := post_top_above_sill - post_base_above_sill
+                post_center_above_sill := (post_base_above_sill + post_top_above_sill) * .5
+                post_center_span := guard_width - post_width
+                guard_x, guard_world_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    x,
+                    guard_z,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {guard_x, y - window_height * .5 + guard_center_above_sill, guard_world_z},
+                    {guard_width, guard_height, .08},
+                    structure.rotation,
+                    guard_color,
+                )
+                for post in -2 ..= 2 {
+                    post_x, post_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x + f32(post) * post_center_span * .25,
+                        guard_z,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {post_x, y - window_height * .5 + post_center_above_sill, post_z},
+                        {post_width, post_height, .07},
+                        structure.rotation,
+                        guard_color,
                     )
                 }
             }
@@ -2070,43 +2239,64 @@ world_architecture :: proc(structure: terrain.Structure) {
                     // A shallow balcony is a small silhouette break that reads
                     // clearly from the wide editor camera without needing a
                     // separate mesh asset.
+                    balcony_width := window_width + 1.35
+                    balcony_depth: f32 = .90
+                    balcony_center_z := local_z + balcony_depth * .5 - .08
                     balcony_x, balcony_z := world_rotate_xz(
                         structure.center_x,
                         structure.center_z,
                         x,
-                        local_z + .08,
+                        balcony_center_z,
                         structure.rotation,
                     )
+                    rail_width := window_width + .85
+                    rail_front_z := local_z + balcony_depth - .13
                     railing_x, railing_z := world_rotate_xz(
                         structure.center_x,
                         structure.center_z,
                         x,
-                        local_z + .28,
+                        rail_front_z,
                         structure.rotation,
                     )
                     world_box_rotated(
-                        {balcony_x, y - structure.height * .065, balcony_z},
-                        {structure.width * .34, .20, .90},
+                        {balcony_x, y - window_height * .5 - .14, balcony_z},
+                        {balcony_width, .20, balcony_depth},
                         structure.rotation,
                         {196, 151, 103, 255},
                     )
                     world_box_rotated(
-                        {railing_x, y - structure.height * .035, railing_z},
-                        {structure.width * .28, .11, .08},
+                        {railing_x, y - window_height * .5 + .58, railing_z},
+                        {window_width + .85, .11, .08},
                         structure.rotation,
                         {102, 76, 63, 255},
                     )
-                    for post in -1 ..= 1 {
+                    for post in -2 ..= 2 {
                         post_x, post_z := world_rotate_xz(
                             structure.center_x,
                             structure.center_z,
-                            x + f32(post) * structure.width * .12,
-                            local_z + .29,
+                            x + f32(post) * rail_width * .25,
+                            rail_front_z,
                             structure.rotation,
                         )
                         world_box_rotated(
-                            {post_x, y - structure.height * .035, post_z},
+                            {post_x, y - window_height * .5 + .20, post_z},
                             {.065, .72, .08},
+                            structure.rotation,
+                            {102, 76, 63, 255},
+                        )
+                    }
+                    for side in -1 ..= 1 {
+                        if side == 0 do continue
+                        return_x, return_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x + f32(side) * rail_width * .5,
+                            (local_z + rail_front_z) * .5,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {return_x, y - window_height * .5 + .58, return_z},
+                            {.08, .11, rail_front_z - local_z},
                             structure.rotation,
                             {102, 76, 63, 255},
                         )
@@ -2122,8 +2312,8 @@ world_architecture :: proc(structure: terrain.Structure) {
                         structure.rotation,
                     )
                     world_box_rotated(
-                        {awning_x, y + structure.height * .075, awning_z},
-                        {structure.width * .20, .12, .34},
+                        {awning_x, y + window_height * .5 + .30, awning_z},
+                        {window_width + .65, .12, .34},
                         structure.rotation,
                         shutter,
                     )
@@ -2131,43 +2321,64 @@ world_architecture :: proc(structure: terrain.Structure) {
                     if facade_style == 0 && row % 2 == 0 {
                         // Alternating wrought-iron balconies give the warmer
                         // stucco façades a lived-in 1940s Mediterranean rhythm.
+                        balcony_width := window_width + 1.20
+                        balcony_depth: f32 = .90
+                        balcony_center_z := local_z + balcony_depth * .5 - .08
                         balcony_x, balcony_z := world_rotate_xz(
                             structure.center_x,
                             structure.center_z,
                             x,
-                            local_z + .08,
+                            balcony_center_z,
                             structure.rotation,
                         )
+                        rail_width := window_width + .75
+                        rail_front_z := local_z + balcony_depth - .13
                         railing_x, railing_z := world_rotate_xz(
                             structure.center_x,
                             structure.center_z,
                             x,
-                            local_z + .30,
+                            rail_front_z,
                             structure.rotation,
                         )
                         world_box_rotated(
-                            {balcony_x, y - structure.height * .065, balcony_z},
-                            {structure.width * .30, .20, .90},
+                            {balcony_x, y - window_height * .5 - .14, balcony_z},
+                            {balcony_width, .20, balcony_depth},
                             structure.rotation,
                             {196, 151, 103, 255},
                         )
                         world_box_rotated(
-                            {railing_x, y - structure.height * .035, railing_z},
-                            {structure.width * .25, .11, .08},
+                            {railing_x, y - window_height * .5 + .58, railing_z},
+                            {window_width + .75, .11, .08},
                             structure.rotation,
                             {83, 68, 62, 255},
                         )
-                        for post in -1 ..= 1 {
+                        for post in -2 ..= 2 {
                             post_x, post_z := world_rotate_xz(
                                 structure.center_x,
                                 structure.center_z,
-                                x + f32(post) * structure.width * .105,
-                                local_z + .31,
+                                x + f32(post) * rail_width * .25,
+                                rail_front_z,
                                 structure.rotation,
                             )
                             world_box_rotated(
-                                {post_x, y - structure.height * .035, post_z},
+                                {post_x, y - window_height * .5 + .20, post_z},
                                 {.06, .68, .08},
+                                structure.rotation,
+                                {83, 68, 62, 255},
+                            )
+                        }
+                        for side in -1 ..= 1 {
+                            if side == 0 do continue
+                            return_x, return_z := world_rotate_xz(
+                                structure.center_x,
+                                structure.center_z,
+                                x + f32(side) * rail_width * .5,
+                                (local_z + rail_front_z) * .5,
+                                structure.rotation,
+                            )
+                            world_box_rotated(
+                                {return_x, y - window_height * .5 + .58, return_z},
+                                {.08, .11, rail_front_z - local_z},
                                 structure.rotation,
                                 {83, 68, 62, 255},
                             )
@@ -2180,24 +2391,25 @@ world_architecture :: proc(structure: terrain.Structure) {
                             structure.rotation,
                         )
                         world_box_rotated(
-                            {planter_x, y - structure.height * .005, planter_z},
-                            {structure.width * .16, .12, .12},
+                            {planter_x, y - window_height * .5 + .10, planter_z},
+                            {window_width + .25, .12, .12},
                             structure.rotation,
                             {107, 132, 92, 255},
                         )
                     } else {
+                        shutter_width := clamp(window_width * .30, f32(.42), f32(.62))
                         for side in -1 ..= 1 {
                             if side == 0 do continue
                             sx, sz := world_rotate_xz(
                                 wx,
                                 wz,
-                                f32(side) * structure.width * .085,
+                                f32(side) * (window_width * .5 + shutter_width * .5 + .08),
                                 0,
                                 structure.rotation,
                             )
                             world_box_rotated(
                                 {sx, y, sz},
-                                {structure.width * .035, structure.height * .11, .28},
+                                {shutter_width, window_height + .24, .28},
                                 structure.rotation,
                                 shutter,
                             )
@@ -2311,73 +2523,87 @@ world_architecture :: proc(structure: terrain.Structure) {
             }
         }
     }
-    if !landmark && rows >= 2 {
-        // Laundry lines add the quiet domestic life of a 1940s Mediterranean
-        // lane; one restrained line per eligible façade keeps the rhythm calm.
-        laundry_row := 1 + int(structure.seed % u32(max(rows - 1, 1)))
-        laundry_y := structure.base_y + structure.height * (.24 + f32(laundry_row) * .16) + structure.height * .12
-        laundry_z := structure.depth * .5 + .48
-        line_x, line_z := world_rotate_xz(structure.center_x, structure.center_z, 0, laundry_z, structure.rotation)
-        world_box_rotated(
-            {line_x, laundry_y + .12, line_z},
-            {structure.width * .62, .045, .045},
-            structure.rotation,
-            {70, 64, 57, 255},
-        )
-        laundry_colors := [3]rl.Color{{235, 224, 188, 255}, {112, 157, 171, 255}, {191, 94, 72, 255}}
-        for cloth in 0 ..< 3 {
-            cloth_x := (f32(cloth) - 1) * structure.width * .18
-            cloth_world_x, cloth_world_z := world_rotate_xz(
-                structure.center_x,
-                structure.center_z,
-                cloth_x,
-                laundry_z + .02,
-                structure.rotation,
-            )
-            world_box_rotated(
-                {cloth_world_x, laundry_y - structure.height * (.035 + f32(cloth % 2) * .018), cloth_world_z},
-                {structure.width * .10, structure.height * .12, .055},
-                structure.rotation,
-                laundry_colors[cloth],
-            )
-        }
-    }
     if !landmark && (roof_style == .Gable || roof_style == .Low_Gable) {
         // Put each opening on one consistent plane just beyond the barge
         // overhang. Size it from the roof rise and leave off shutters: the
         // triangular end has room for one clear opening, not three competing
         // vertical marks beneath its slopes.
         rise := roof_style == .Low_Gable ? structure.width * .24 : structure.width * .34
-        attic_y := structure.base_y + structure.height + rise * .40
-        attic_height := min(structure.height * .12, rise * .32)
-        for gable_end in -1 ..= 1 {
-            if gable_end == 0 do continue
-            local_z := f32(gable_end) * (structure.depth * .58 + .12)
-            attic_x, attic_z := world_rotate_xz(structure.center_x, structure.center_z, 0, local_z, structure.rotation)
-            world_box_rotated(
-                {attic_x, attic_y, attic_z},
-                {structure.width * .16, attic_height, .20},
-                structure.rotation,
-                window,
-            )
-        }
-    }
-    if !landmark {
-        for row in 0 ..< rows {
-            y := structure.base_y + structure.height * (.24 + f32(row) * .16)
-            side_z := row % 2 == 0 ? -structure.depth * .16 : structure.depth * .16
-            for side in -1 ..= 1 {
-                if side == 0 do continue
-                side_x := f32(side) * (structure.width * .5 + .14)
-                wx, wz := world_rotate_xz(structure.center_x, structure.center_z, side_x, side_z, structure.rotation)
+        center_fraction := roof_style == .Low_Gable ? f32(.36) : f32(.40)
+        attic_height := min(clamp(rise * .25, f32(.75), f32(2.4)), rise * .38)
+        attic_top_fraction := center_fraction + attic_height * .5 / rise
+        // The gable narrows linearly toward the ridge. Cap the opening from
+        // the width available at its upper corners so low roofs cannot clip
+        // or completely surround a minimum-sized window.
+        available_width := structure.width * (1 - attic_top_fraction) * .72
+        attic_width := min(clamp(structure.width * .12, f32(1.0), f32(2.2)), available_width)
+        if attic_height >= .65 && attic_width >= .80 {
+            attic_y := structure.base_y + structure.height + rise * center_fraction
+            for gable_end in -1 ..= 1 {
+                if gable_end == 0 do continue
+                local_z := f32(gable_end) * (structure.depth * .58 + .12)
+                attic_x, attic_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    0,
+                    local_z,
+                    structure.rotation,
+                )
                 world_box_rotated(
-                    {wx, y, wz},
-                    {.22, structure.height * .10, structure.depth * .14},
+                    {attic_x, attic_y, attic_z},
+                    {attic_width, attic_height, .20},
                     structure.rotation,
                     window,
                 )
             }
         }
+    }
+    side_window_width := clamp(structure.depth * .14, f32(1.6), f32(2.6))
+    for row in 0 ..< rows {
+        y := structure.base_y + architecture.facade_window_row_y(structure.height, row)
+        side_z := row % 2 == 0 ? -structure.depth * .16 : structure.depth * .16
+        for side in -1 ..= 1 {
+            if side == 0 do continue
+            side_x := f32(side) * (structure.width * .5 + .14)
+            wx, wz := world_rotate_xz(structure.center_x, structure.center_z, side_x, side_z, structure.rotation)
+            world_box_rotated({wx, y, wz}, {.22, window_height, side_window_width}, structure.rotation, window)
+        }
+    }
+}
+
+world_architecture :: proc(structure: terrain.Structure) {
+    footprint := architecture.architecture_footprint(structure)
+    if footprint.count <= 1 {
+        world_architecture_mass(structure)
+        return
+    }
+    frontage_index := architecture.architecture_frontage_mass_index(structure)
+    for mass, mass_index in footprint.masses[:footprint.count] {
+        child := structure
+        child.center_x, child.center_z = architecture.architecture_mass_world(structure, mass)
+        child.width = mass.width
+        child.depth = mass.depth
+        child.height = max(terrain.BASE_CELL_SIZE, structure.height * mass.height_scale)
+        // Keep palette identity while decoupling repeated openings and tiles.
+        child.seed = structure.seed + u32(mass_index * 747796405)
+        world_architecture_mass(child, mass_index == frontage_index)
+    }
+}
+
+world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan, preview: bool = false) {
+    if editor == nil || plan == nil do return
+    for alley in plan.alleys[:plan.alley_count] {
+        dx, dz := alley.end_x - alley.start_x, alley.end_z - alley.start_z
+        length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+        if length <= .01 do continue
+        center_x, center_z := (alley.start_x + alley.end_x) * .5, (alley.start_z + alley.end_z) * .5
+        alley_y := terrain.sample_height(&editor.project, 0, center_x, center_z) + .09
+        world_box_rotated(
+            {center_x, alley_y, center_z},
+            {length, .08, alley.half_width * 2},
+            f32(math.atan2(f64(dz), f64(dx))),
+            preview ? rl.Color{176, 161, 128, 150} : rl.Color{151, 137, 110, 255},
+        )
     }
 }
 
@@ -2689,12 +2915,199 @@ world_foliage_card :: proc(
     tint := world_color(color)
     append(
         &world_renderer.foliage_vertices,
-        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint},
-        Foliage_Vertex{{p1.x, p1.y, p1.z}, {u1, v1}, tint},
-        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint},
-        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint},
-        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint},
-        Foliage_Vertex{{p3.x, p3.y, p3.z}, {u0, v0}, tint},
+        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint, 0},
+        Foliage_Vertex{{p1.x, p1.y, p1.z}, {u1, v1}, tint, 0},
+        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint, 0},
+        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint, 0},
+        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint, 0},
+        Foliage_Vertex{{p3.x, p3.y, p3.z}, {u0, v0}, tint, 0},
+    )
+}
+
+bougainvillea_card_lerp :: proc(a, b: third_person.Vec3, amount: f32) -> third_person.Vec3 {
+    return {a.x + (b.x - a.x) * amount, a.y + (b.y - a.y) * amount, a.z + (b.z - a.z) * amount}
+}
+
+world_bougainvillea_card :: proc(
+    center: third_person.Vec3,
+    width, height: f32,
+    tile: int,
+    mirror: bool,
+    roll: f32 = 0,
+    value: f32 = 1,
+    young_growth: bool = false,
+    yaw_bias: f32 = 0,
+) {
+    if len(world_renderer.bougainvillea_vertices) + 24 > BOUGAINVILLEA_VERTEX_CAPACITY do return
+    editor := world_renderer.editor
+    if editor == nil do return
+    atlas_tile := ((tile % 16) + 16) % 16
+    // Normalized painted branch origins within each atlas cell. Upright
+    // clumps root near bottom-center; lateral sprays root at the appropriate
+    // lower corner. Aligning these rather than each card's geometric center
+    // keeps the generated foliage visibly attached to its procedural branch.
+    anchors := [16][2]f32 {
+        {.50, .90},
+        {.12, .88},
+        {.50, .91},
+        {.08, .88},
+        {.50, .90},
+        {.12, .88},
+        {.50, .91},
+        {.08, .88},
+        {.50, .90},
+        {.10, .87},
+        {.50, .91},
+        {.08, .88},
+        {.50, .90},
+        {.10, .88},
+        {.50, .92},
+        {.08, .88},
+    }
+    anchor_x, anchor_y := anchors[atlas_tile][0], anchors[atlas_tile][1]
+    texture_anchor_x := anchor_x
+    if mirror do anchor_x = 1 - anchor_x
+    camera := perspective_camera(
+        editor.camera_pose,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
+    )
+    // Constrained cylindrical billboarding keeps the painted stem origin
+    // mostly vertical as the camera pitches. A small camera-up contribution
+    // prevents severe foreshortening in low-angle architectural views without
+    // letting the clump lean freely like a HUD sprite.
+    horizontal_right_length := f32(math.sqrt(f64(camera.right.x * camera.right.x + camera.right.z * camera.right.z)))
+    if horizontal_right_length < .001 do horizontal_right_length = 1
+    right_scale := width * .5 / horizontal_right_length
+    right := third_person.Vec3{camera.right.x * right_scale, 0, camera.right.z * right_scale}
+    if math.abs(yaw_bias) > .0001 {
+        // Secondary crown layers can sit on a slightly different vertical
+        // plane while remaining upright. This restrained yaw produces real
+        // parallax instead of a stack of parallel camera-facing cutouts.
+        yaw_cosine, yaw_sine := f32(math.cos(f64(yaw_bias))), f32(math.sin(f64(yaw_bias)))
+        right = {right.x * yaw_cosine + right.z * yaw_sine, 0, -right.x * yaw_sine + right.z * yaw_cosine}
+    }
+    constrained_up := vec_normalize(third_person.Vec3{camera.up.x * .28, .72 + camera.up.y * .28, camera.up.z * .28})
+    up := third_person.Vec3 {
+        constrained_up.x * height * .5,
+        constrained_up.y * height * .5,
+        constrained_up.z * height * .5,
+    }
+    if math.abs(roll) > .0001 {
+        roll_cosine, roll_sine := f32(math.cos(f64(roll))), f32(math.sin(f64(roll)))
+        unit_right := third_person.Vec3{right.x / (width * .5), right.y / (width * .5), right.z / (width * .5)}
+        unit_up := third_person.Vec3{up.x / (height * .5), up.y / (height * .5), up.z / (height * .5)}
+        right = {
+            (unit_right.x * roll_cosine + unit_up.x * roll_sine) * width * .5,
+            (unit_right.y * roll_cosine + unit_up.y * roll_sine) * width * .5,
+            (unit_right.z * roll_cosine + unit_up.z * roll_sine) * width * .5,
+        }
+        up = {
+            (-unit_right.x * roll_sine + unit_up.x * roll_cosine) * height * .5,
+            (-unit_right.y * roll_sine + unit_up.y * roll_cosine) * height * .5,
+            (-unit_right.z * roll_sine + unit_up.z * roll_cosine) * height * .5,
+        }
+    }
+    anchored_center := third_person.Vec3 {
+        center.x + right.x * (1 - anchor_x * 2) + up.x * (anchor_y * 2 - 1),
+        center.y + right.y * (1 - anchor_x * 2) + up.y * (anchor_y * 2 - 1),
+        center.z + right.z * (1 - anchor_x * 2) + up.z * (anchor_y * 2 - 1),
+    }
+    p0 := third_person.Vec3 {
+        anchored_center.x - right.x - up.x,
+        anchored_center.y - right.y - up.y,
+        anchored_center.z - right.z - up.z,
+    }
+    p1 := third_person.Vec3 {
+        anchored_center.x + right.x - up.x,
+        anchored_center.y + right.y - up.y,
+        anchored_center.z + right.z - up.z,
+    }
+    p2 := third_person.Vec3 {
+        anchored_center.x + right.x + up.x,
+        anchored_center.y + right.y + up.y,
+        anchored_center.z + right.z + up.z,
+    }
+    p3 := third_person.Vec3 {
+        anchored_center.x - right.x + up.x,
+        anchored_center.y - right.y + up.y,
+        anchored_center.z - right.z + up.z,
+    }
+
+    column, row := atlas_tile % 4, atlas_tile / 4
+    inset := f32(2.0 / 1254.0)
+    u0 := f32(column) * .25 + inset
+    v0 := f32(row) * .25 + inset
+    u1 := f32(column + 1) * .25 - inset
+    v1 := f32(row + 1) * .25 - inset
+    if mirror do u0, u1 = u1, u0
+    anchor_u := u0 + (u1 - u0) * anchor_x
+    anchor_v := v0 + (v1 - v0) * anchor_y
+    // Alpha above one is an internal shader marker: use the native atlas
+    // colors instead of treating this texture as a luminance tint mask.
+    // Native cards use RGB as compact metadata: layer value, texture-space
+    // anchor X, and texture-space anchor Y. This keeps shader wind weighting
+    // synchronized with the single authoritative atlas anchor table above.
+    // Alpha is an internal native-card marker rather than visible opacity.
+    // Three marks bronze-flushed new growth; two marks established foliage.
+    native_color := [4]f32{value, texture_anchor_x, anchor_y, young_growth ? f32(3) : f32(2)}
+    positions: [3][3]third_person.Vec3
+    positions[0] = {p3, bougainvillea_card_lerp(p3, p2, anchor_x), p2}
+    positions[1] = {bougainvillea_card_lerp(p3, p0, anchor_y), center, bougainvillea_card_lerp(p2, p1, anchor_y)}
+    positions[2] = {p0, bougainvillea_card_lerp(p0, p1, anchor_x), p1}
+    card_u := [3]f32{u0, anchor_u, u1}
+    card_v := [3]f32{v0, anchor_v, v1}
+    for card_row in 0 ..< 2 {
+        for card_column in 0 ..< 2 {
+            top_left := positions[card_row][card_column]
+            top_right := positions[card_row][card_column + 1]
+            bottom_left := positions[card_row + 1][card_column]
+            bottom_right := positions[card_row + 1][card_column + 1]
+            left_u, right_u := card_u[card_column], card_u[card_column + 1]
+            top_v, bottom_v := card_v[card_row], card_v[card_row + 1]
+            append(
+                &world_renderer.bougainvillea_vertices,
+                Foliage_Vertex{{bottom_left.x, bottom_left.y, bottom_left.z}, {left_u, bottom_v}, native_color, 0},
+                Foliage_Vertex{{bottom_right.x, bottom_right.y, bottom_right.z}, {right_u, bottom_v}, native_color, 0},
+                Foliage_Vertex{{top_right.x, top_right.y, top_right.z}, {right_u, top_v}, native_color, 0},
+                Foliage_Vertex{{bottom_left.x, bottom_left.y, bottom_left.z}, {left_u, bottom_v}, native_color, 0},
+                Foliage_Vertex{{top_right.x, top_right.y, top_right.z}, {right_u, top_v}, native_color, 0},
+                Foliage_Vertex{{top_left.x, top_left.y, top_left.z}, {left_u, top_v}, native_color, 0},
+            )
+        }
+    }
+}
+
+world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: int, color: rl.Color) {
+    if len(world_renderer.grass_vertices) + 6 > GRASS_VERTEX_CAPACITY do return
+    editor := world_renderer.editor
+    if editor == nil do return
+    camera := perspective_camera(editor.camera_pose, 1.35)
+    right := third_person.Vec3{camera.right.x * width * .5, camera.right.y * width * .5, camera.right.z * width * .5}
+    // Keep the roots planted vertically even when the chase camera pitches.
+    up := third_person.Vec3 {
+        y = height * .5,
+    }
+    p0 := third_person.Vec3{center.x - right.x - up.x, center.y - up.y, center.z - right.z - up.z}
+    p1 := third_person.Vec3{center.x + right.x - up.x, center.y - up.y, center.z + right.z - up.z}
+    p2 := third_person.Vec3{center.x + right.x + up.x, center.y + up.y, center.z + right.z + up.z}
+    p3 := third_person.Vec3{center.x - right.x + up.x, center.y + up.y, center.z - right.z + up.z}
+    atlas_tile := ((tile % 16) + 16) % 16
+    column, row := atlas_tile % 4, atlas_tile / 4
+    inset := f32(2.0 / 1254.0)
+    u0 := f32(column) * .25 + inset
+    v0 := f32(row) * .25 + inset
+    u1 := f32(column + 1) * .25 - inset
+    v1 := f32(row + 1) * .25 - inset
+    if tile % 2 == 0 do u0, u1 = u1, u0
+    tint := world_color(color)
+    append(
+        &world_renderer.grass_vertices,
+        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint, 1},
+        Foliage_Vertex{{p1.x, p1.y, p1.z}, {u1, v1}, tint, 1},
+        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint, 1},
+        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint, 1},
+        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint, 1},
+        Foliage_Vertex{{p3.x, p3.y, p3.z}, {u0, v0}, tint, 1},
     )
 }
 
@@ -4268,35 +4681,200 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
     }
 }
 
+world_architecture_cypress_surface_color :: proc(
+    base: rl.Color,
+    angle, progress: f32,
+    ring: int,
+    seed: u32,
+) -> rl.Color {
+    color := formation_face_color(base, angle, ring)
+    // Long correlated waves imply upright sprays and the cool recesses between
+    // them. A quieter cross-wave keeps those strokes from becoming stripes.
+    long_wave := f32(math.sin(f64(angle * 3.1 + progress * 2.4 + f32(seed % 211) * .031)))
+    cross_wave := f32(math.sin(f64(angle * 6.7 - progress * 5.2 + f32(seed % 157) * .047)))
+    spray_field := long_wave * .72 + cross_wave * .28
+    if spray_field < -.12 {
+        recess := clamp((-spray_field - .12) / .88, 0, 1)
+        color = color_lerp(color, {18, 49, 34, 255}, recess * .42)
+    } else if spray_field > .24 {
+        crest := clamp((spray_field - .24) / .76, 0, 1)
+        color = color_lerp(color, {82, 137, 73, 255}, crest * .16)
+    }
+    return color
+}
+
+world_architecture_cypress_crown :: proc(x, z, base_y: f32, seed: u32) {
+    // One continuous profile avoids the pinched necks of stacked cones. The
+    // low shoulder stays dense, then small alternating swells carry the eye
+    // into a narrow, slightly wind-bent tip.
+    RINGS :: 13
+    SEGMENTS :: 20
+    height_noise := f32(seed % 997) / 996
+    width_noise := f32((seed / 997) % 991) / 990
+    fullness_noise := f32((seed / 7919) % 983) / 982
+    height := 40.5 + height_noise * 5.5
+    width := 9.3 + width_noise * 2.0
+    fullness := .94 + fullness_noise * .12
+    // Small reversals in the taper suggest overlapping upright sprays without
+    // breaking the unmistakable columnar outline.
+    ring_height := [RINGS]f32{0, .075, .15, .24, .33, .42, .51, .60, .69, .77, .85, .92, .975}
+    ring_radius := [RINGS]f32{.72, .96, 1, .94, .96, .84, .86, .72, .70, .57, .45, .28, .105}
+    ring_color := [RINGS]rl.Color {
+        {30, 68, 43, 255},
+        {31, 72, 44, 255},
+        {33, 76, 46, 255},
+        {35, 81, 48, 255},
+        {36, 84, 49, 255},
+        {39, 91, 52, 255},
+        {41, 95, 54, 255},
+        {43, 98, 55, 255},
+        {48, 105, 58, 255},
+        {51, 109, 60, 255},
+        {55, 112, 62, 255},
+        {62, 119, 66, 255},
+        {70, 126, 70, 255},
+    }
+    vertices: [RINGS][SEGMENTS]third_person.Vec3
+    for ring in 0 ..< RINGS {
+        progress := ring_height[ring]
+        // Lean grows gradually with height, so the trunk and crown remain one
+        // gesture instead of introducing another visibly offset tier.
+        lean_x := f32(math.sin(f64(f32(seed) * .013))) * progress * progress * .72
+        lean_z := f32(math.cos(f64(f32(seed) * .017))) * progress * progress * .56
+        // Each spray band wanders by only a fraction of its radius. Correlated
+        // phases keep the movement branch-like rather than noisy.
+        branch_drift := math.sin(f32(ring) * 1.71 + f32(seed % 101) * .037)
+        center_x := x + lean_x + branch_drift * width * ring_radius[ring] * .026
+        center_z :=
+            z +
+            lean_z +
+            f32(math.cos(f64(f32(ring) * 1.43 + f32(seed % 79) * .041))) * width * ring_radius[ring] * .021
+        for segment in 0 ..< SEGMENTS {
+            angle := f32(segment) * math.PI * 2 / SEGMENTS
+            broad := f32(math.sin(f64(f32(seed) * .009 + angle * 3 + progress * 2.4)))
+            fine := f32(math.sin(f64(f32(seed) * .017 + angle * 7 - progress * 3.1)))
+            // A slow one-sided bulge creates occasional lateral sprays. Its
+            // phase changes by band, preventing a continuous corkscrew seam.
+            spray := f32(math.sin(f64(angle + f32(ring) * 1.19 + f32(seed % 127) * .023)))
+            spray = max(spray, f32(0))
+            irregularity := 1 + broad * .065 + fine * .022 + spray * spray * .055
+            // Fullness affects the broad lower and middle sprays, then fades
+            // toward the tip so even the stockier trees finish crisply.
+            habit_scale := 1 + (fullness - 1) * (1 - progress * progress)
+            radius := width * .5 * ring_radius[ring] * irregularity * habit_scale
+            vertex_y := base_y + 1.2 + height * progress
+            if ring == 0 {
+                hanging_spray := f32(math.sin(f64(angle * 4.3 + f32(seed % 173) * .039)))
+                hanging_spray = clamp(.48 + hanging_spray * .52, 0, 1)
+                vertex_y -= .10 + hanging_spray * .48
+            }
+            vertices[ring][segment] = {
+                center_x + math.cos(angle) * radius,
+                vertex_y,
+                center_z + math.sin(angle) * radius * .90,
+            }
+        }
+    }
+    // Close the low skirt around a shallow raised center. Eye-level views
+    // otherwise look into an empty crown and expose the trunk as a square peg.
+    skirt_center := third_person.Vec3{x, base_y + 1.55, z}
+    skirt_center_color := rl.Color{20, 50, 34, 255}
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        angle_here := f32(segment) * math.PI * 2 / SEGMENTS
+        angle_next := f32(next) * math.PI * 2 / SEGMENTS
+        edge_here := world_architecture_cypress_surface_color(ring_color[0], angle_here, 0, 0, seed)
+        edge_next := world_architecture_cypress_surface_color(ring_color[0], angle_next, 0, 0, seed)
+        world_triangle_colored(
+            vertices[0][next],
+            skirt_center,
+            vertices[0][segment],
+            edge_next,
+            skirt_center_color,
+            edge_here,
+        )
+    }
+    for ring in 0 ..< RINGS - 1 {
+        for segment in 0 ..< SEGMENTS {
+            next := (segment + 1) % SEGMENTS
+            angle_here := f32(segment) * math.PI * 2 / SEGMENTS
+            angle_next := f32(next) * math.PI * 2 / SEGMENTS
+            lower_here := world_architecture_cypress_surface_color(
+                ring_color[ring],
+                angle_here,
+                ring_height[ring],
+                ring,
+                seed,
+            )
+            lower_next := world_architecture_cypress_surface_color(
+                ring_color[ring],
+                angle_next,
+                ring_height[ring],
+                ring,
+                seed,
+            )
+            upper_here := world_architecture_cypress_surface_color(
+                ring_color[ring + 1],
+                angle_here,
+                ring_height[ring + 1],
+                ring + 1,
+                seed,
+            )
+            upper_next := world_architecture_cypress_surface_color(
+                ring_color[ring + 1],
+                angle_next,
+                ring_height[ring + 1],
+                ring + 1,
+                seed,
+            )
+            world_triangle_colored(
+                vertices[ring][segment],
+                vertices[ring + 1][segment],
+                vertices[ring + 1][next],
+                lower_here,
+                upper_here,
+                upper_next,
+            )
+            world_triangle_colored(
+                vertices[ring][segment],
+                vertices[ring + 1][next],
+                vertices[ring][next],
+                lower_here,
+                upper_next,
+                lower_next,
+            )
+        }
+    }
+    tip_x := x + f32(math.sin(f64(f32(seed) * .013))) * .78
+    tip_z := z + f32(math.cos(f64(f32(seed) * .017))) * .62
+    tip := third_person.Vec3{tip_x, base_y + 1.2 + height * 1.045, tip_z}
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        angle := (f32(segment) + .5) * math.PI * 2 / SEGMENTS
+        color := formation_face_color({75, 130, 72, 255}, angle, RINGS)
+        world_triangle_colored(
+            vertices[RINGS - 1][segment],
+            tip,
+            vertices[RINGS - 1][next],
+            ring_color[RINGS - 1],
+            color,
+            ring_color[RINGS - 1],
+        )
+    }
+}
+
 world_architecture_cypress :: proc(x, z, base_y: f32, seed: u32) {
-    // Build the crown as three overlapping, slightly offset tiers. The stepped
-    // silhouette feels hand-painted and wind-shaped rather than like a single
-    // procedural cone, while remaining a street-scale Mediterranean accent.
-    // terrain.Structure keeps a ten-metre minimum footprint, so the slender
-    // reading comes from tall tier heights rather than sub-cell widths.
-    tree := terrain.structure_make(x, z, 10.0, 10.0, base_y + 1.3, 22.0)
-    tree.seed = seed
-    tree.color = {35, 76, 47, 255}
-    world_box_rotated({x, base_y + 3.8, z}, {1.15, 7.6, 1.15}, 0, {108, 78, 48, 255})
-    world_radial_formation(tree, {1, .96, .72, .38}, {0, .42, .76, .92}, .86, .80)
-
-    middle := tree
-    middle.center_x += f32(math.sin(f64(f32(seed) * .013))) * .32
-    middle.center_z += f32(math.cos(f64(f32(seed) * .017))) * .24
-    middle.base_y = base_y + 18.5
-    middle.width, middle.depth, middle.height = 8.5, 8.5, 17.0
-    middle.seed += 17
-    middle.color = {48, 101, 58, 255}
-    world_radial_formation(middle, {1, .95, .65, .28}, {0, .40, .75, .93}, .88, .94)
-
-    crown := middle
-    crown.center_x += f32(math.cos(f64(f32(seed) * .019))) * .22
-    crown.center_z += f32(math.sin(f64(f32(seed) * .023))) * .18
-    crown.base_y = base_y + 31.5
-    crown.width, crown.depth, crown.height = 6.5, 6.5, 13.5
-    crown.seed += 31
-    crown.color = {72, 125, 70, 255}
-    world_radial_formation(crown, {1, .84, .50, .04}, {0, .38, .72, .95}, .90, 1)
+    trunk_rotation := f32(seed % 31) * .071
+    world_vertical_prism({x, base_y + 3.8, z}, .62, .56, 7.6, trunk_rotation, {101, 73, 47, 255})
+    // Short buttress roots visually seat the narrow trunk without competing
+    // with the dense low crown.
+    for root in 0 ..< 3 {
+        angle := trunk_rotation + f32(root) * math.PI * 2 / 3
+        root_x := x + math.cos(angle) * .46
+        root_z := z + math.sin(angle) * .46
+        world_tapered_box_rotated({root_x, base_y + .34, root_z}, .68, .48, .34, .18, .18, angle, {91, 65, 43, 255})
+    }
+    world_architecture_cypress_crown(x, z, base_y, seed)
 }
 
 world_architecture_olive :: proc(x, z, base_y: f32, seed: u32) {
@@ -4313,32 +4891,101 @@ world_architecture_olive :: proc(x, z, base_y: f32, seed: u32) {
 
 world_laundry_web_segment :: proc(a, b: third_person.Vec3, color: rl.Color) {
     dx := b.x - a.x
+    dy := b.y - a.y
     dz := b.z - a.z
-    length := f32(math.sqrt(f64(dx * dx + (b.y - a.y) * (b.y - a.y) + dz * dz)))
+    length := f32(math.sqrt(f64(dx * dx + dy * dy + dz * dz)))
     if length <= .05 do return
-    world_box_rotated(
-        {(a.x + b.x) * .5, (a.y + b.y) * .5, (a.z + b.z) * .5},
-        {.06, .06, length},
-        math.atan2(dx, dz),
-        color,
-    )
+    horizontal_length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    if horizontal_length <= .001 do return
+    half_width: f32 = .025
+    side_x, side_z := -dz / horizontal_length * half_width, dx / horizontal_length * half_width
+    a_left, a_right :=
+        third_person.Vec3{a.x - side_x, a.y, a.z - side_z}, third_person.Vec3{a.x + side_x, a.y, a.z + side_z}
+    b_left, b_right :=
+        third_person.Vec3{b.x - side_x, b.y, b.z - side_z}, third_person.Vec3{b.x + side_x, b.y, b.z + side_z}
+    world_quad(a_left, b_left, b_right, a_right, color)
+    world_quad(a_right, b_right, b_left, a_left, color)
+    a_low, a_high := third_person.Vec3{a.x, a.y - half_width, a.z}, third_person.Vec3{a.x, a.y + half_width, a.z}
+    b_low, b_high := third_person.Vec3{b.x, b.y - half_width, b.z}, third_person.Vec3{b.x, b.y + half_width, b.z}
+    world_quad(a_low, b_low, b_high, a_high, color)
+    world_quad(a_high, b_high, b_low, a_low, color)
 }
 
-world_laundry_cloth :: proc(top: third_person.Vec3, tangent_x, tangent_z, width, height, drift: f32, color: rl.Color) {
+world_laundry_span_blocked :: proc(
+    structures: []terrain.Structure,
+    first_index, second_index: int,
+    start_x, start_z, finish_x, finish_z: f32,
+) -> bool {
+    dx, dz := finish_x - start_x, finish_z - start_z
+    distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    samples := max(2, int(math.ceil(f64(distance / 1.5))))
+    for sample in 1 ..< samples {
+        t := f32(sample) / f32(samples)
+        point_x, point_z := start_x + dx * t, start_z + dz * t
+        for blocker, blocker_index in structures {
+            if blocker_index == first_index || blocker_index == second_index || blocker.kind != .Architecture do continue
+            footprint := architecture.architecture_footprint(blocker)
+            cosine, sine := f32(math.cos(f64(blocker.rotation))), f32(math.sin(f64(blocker.rotation)))
+            for mass in footprint.masses[:footprint.count] {
+                mass_x, mass_z := architecture.architecture_mass_world(blocker, mass)
+                offset_x, offset_z := point_x - mass_x, point_z - mass_z
+                local_x := offset_x * cosine + offset_z * sine
+                local_z := -offset_x * sine + offset_z * cosine
+                if math.abs(local_x) <= mass.width * .5 + .45 && math.abs(local_z) <= mass.depth * .5 + .45 {
+                    return true
+                }
+            }
+        }
+    }
+    return false
+}
+
+world_laundry_catenary_drop :: proc(t, sag: f32) -> f32 {
+    // A normalized cosh curve: zero drop at both anchors and exactly `sag`
+    // at midspan. A modest shape factor keeps the line natural rather than
+    // sharply pinched beneath the center.
+    shape: f64 = 1.55
+    centered := f64(t * 2 - 1)
+    normalized := (math.cosh(shape) - math.cosh(shape * centered)) / (math.cosh(shape) - 1)
+    return sag * f32(normalized)
+}
+
+world_laundry_catenary_slope :: proc(t, sag, span_length: f32) -> f32 {
+    if span_length <= .001 do return 0
+    shape: f64 = 1.55
+    centered := f64(t * 2 - 1)
+    // y = anchor_y - drop(t), converted from dy/dt to dy per horizontal metre.
+    derivative := 2 * shape * math.sinh(shape * centered) / (math.cosh(shape) - 1)
+    return sag * f32(derivative) / span_length
+}
+
+world_laundry_cloth :: proc(
+    top: third_person.Vec3,
+    tangent_x, tangent_y, tangent_z, width, height, drift: f32,
+    color: rl.Color,
+) {
     // Hang each item as a thin, slightly skewed panel instead of a solid box.
     // The skew and uneven hem keep the span from reading as a row of signs.
-    side_x, side_z := -tangent_z, tangent_x
-    top_left := third_person.Vec3{top.x - side_x * width * .5, top.y, top.z - side_z * width * .5}
-    top_right := third_person.Vec3{top.x + side_x * width * .5, top.y - .025, top.z + side_z * width * .5}
+    wind_x, wind_z := -tangent_z, tangent_x
+    top_left := third_person.Vec3 {
+        top.x - tangent_x * width * .5,
+        top.y - tangent_y * width * .5,
+        top.z - tangent_z * width * .5,
+    }
+    top_right := third_person.Vec3 {
+        top.x + tangent_x * width * .5,
+        top.y + tangent_y * width * .5,
+        top.z + tangent_z * width * .5,
+    }
     bottom_left := third_person.Vec3 {
-        top.x - side_x * width * .40 + tangent_x * drift,
-        top.y - height,
-        top.z - side_z * width * .40 + tangent_z * drift,
+        top_left.x + tangent_x * width * .10 + wind_x * drift,
+        top_left.y - height,
+        top_left.z + tangent_z * width * .10 + wind_z * drift,
     }
     bottom_right := third_person.Vec3 {
-        top.x + side_x * width * .40 + tangent_x * drift * .55,
-        top.y - height - .07,
-        top.z + side_z * width * .40 + tangent_z * drift * .55,
+        top_right.x - tangent_x * width * .10 + wind_x * drift * .55,
+        top_right.y - height - .07,
+        top_right.z - tangent_z * width * .10 + wind_z * drift * .55,
     }
     world_quad(top_left, bottom_left, bottom_right, top_right, color)
     world_quad(top_right, bottom_right, bottom_left, top_left, color)
@@ -4347,74 +4994,128 @@ world_laundry_cloth :: proc(top: third_person.Vec3, tangent_x, tangent_z, width,
 world_architecture_laundry_webbing :: proc(editor: ^Editor) {
     if editor == nil do return
     webbing_count := 0
+    webbing_limit := 8
+    building_spans: [terrain.STRUCTURE_CAPACITY]u8
     structures := editor.project.structures[:editor.project.structure_count]
     cloth_colors := [4]rl.Color{{235, 224, 188, 255}, {112, 157, 171, 255}, {191, 94, 72, 255}, {205, 157, 177, 255}}
     for first, first_index in structures {
         if first.kind != .Architecture || first.height > 52 do continue
-        first_front := [2]f32{-math.sin(first.rotation), math.cos(first.rotation)}
+        if building_spans[first_index] >= 2 do continue
+        first_facade := architecture.architecture_frontage_structure(first)
+        first_front := [2]f32{-math.sin(first_facade.rotation), math.cos(first_facade.rotation)}
         for second_index in first_index + 1 ..< len(structures) {
             second := structures[second_index]
             if second.kind != .Architecture || second.height > 52 do continue
-            if webbing_count >= 4 do return
-            dx := second.center_x - first.center_x
-            dz := second.center_z - first.center_z
+            if building_spans[first_index] >= 2 do break
+            if building_spans[second_index] >= 2 do continue
+            second_facade := architecture.architecture_frontage_structure(second)
+            if webbing_count >= webbing_limit do return
+            dx := second_facade.center_x - first_facade.center_x
+            dz := second_facade.center_z - first_facade.center_z
             distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
             if distance < 14 || distance > 76 do continue
             direction_x, direction_z := dx / distance, dz / distance
-            second_front := [2]f32{-math.sin(second.rotation), math.cos(second.rotation)}
+            second_front := [2]f32{-math.sin(second_facade.rotation), math.cos(second_facade.rotation)}
             // Only span a line when the two selected façades face each other;
             // this keeps the webbing in alleys instead of through back walls.
             first_facing := first_front.x * direction_x + first_front.y * direction_z
             second_facing := second_front.x * -direction_x + second_front.y * -direction_z
             if first_facing < .05 || second_facing < .05 do continue
+            first_side := direction_x * math.cos(first_facade.rotation) + direction_z * math.sin(first_facade.rotation)
+            if math.abs(first_side) < .08 do first_side = first_facade.seed & 1 == 0 ? f32(-1) : f32(1)
+            second_side :=
+                -direction_x * math.cos(second_facade.rotation) - direction_z * math.sin(second_facade.rotation)
+            if math.abs(second_side) < .08 do second_side = second_facade.seed & 1 == 0 ? f32(-1) : f32(1)
             first_x, first_z := world_rotate_xz(
-                first.center_x,
-                first.center_z,
-                0,
-                first.depth * .5 + .55,
-                first.rotation,
+                first_facade.center_x,
+                first_facade.center_z,
+                clamp(first_side, f32(-1), f32(1)) * first_facade.width * .30,
+                first_facade.depth * .5 + .55,
+                first_facade.rotation,
             )
             second_x, second_z := world_rotate_xz(
-                second.center_x,
-                second.center_z,
-                0,
-                second.depth * .5 + .55,
-                second.rotation,
+                second_facade.center_x,
+                second_facade.center_z,
+                clamp(second_side, f32(-1), f32(1)) * second_facade.width * .30,
+                second_facade.depth * .5 + .55,
+                second_facade.rotation,
             )
+            if world_laundry_span_blocked(
+                structures,
+                first_index,
+                second_index,
+                first_x,
+                first_z,
+                second_x,
+                second_z,
+            ) {
+                continue
+            }
             line_y := min(
-                first.base_y + first.height * (.46 + f32(first.seed % 3) * .035),
-                second.base_y + second.height * (.46 + f32(second.seed % 3) * .035),
+                first_facade.base_y +
+                clamp(first_facade.height * (.34 + f32(first_facade.seed % 3) * .025), f32(7.5), f32(14)),
+                second_facade.base_y +
+                clamp(second_facade.height * (.34 + f32(second_facade.seed % 3) * .025), f32(7.5), f32(14)),
             )
             if line_y < editor.project.sea_level + 3 do continue
+            crown_conflict := false
+            for planted in structures {
+                if planted.kind != .Architecture do continue
+                growth := architecture.bougainvillea_density_at_structure(
+                    &editor.project.climbing_leaf_density,
+                    planted,
+                )
+                if architecture.bougainvillea_laundry_span_conflict(
+                    planted,
+                    growth,
+                    line_y,
+                    first_x,
+                    first_z,
+                    second_x,
+                    second_z,
+                ) {
+                    crown_conflict = true
+                    break
+                }
+            }
+            if crown_conflict do continue
             start := third_person.Vec3{first_x, line_y, first_z}
             finish := third_person.Vec3{second_x, line_y, second_z}
-            middle := third_person.Vec3 {
-                (start.x + finish.x) * .5,
-                line_y - min(f32(1.35), distance * .040),
-                (start.z + finish.z) * .5,
+            catenary_sag := min(f32(1.35), distance * .040)
+            catenary_segments := clamp(int(math.ceil(f64(distance / 3.0))), 8, 20)
+            previous := start
+            for segment in 1 ..= catenary_segments {
+                t := f32(segment) / f32(catenary_segments)
+                next := third_person.Vec3 {
+                    start.x + (finish.x - start.x) * t,
+                    line_y - world_laundry_catenary_drop(t, catenary_sag),
+                    start.z + (finish.z - start.z) * t,
+                }
+                world_laundry_web_segment(previous, next, {66, 61, 56, 255})
+                previous = next
             }
-            line_color := rl.Color{66, 61, 56, 255}
-            world_laundry_web_segment(start, middle, line_color)
-            world_laundry_web_segment(middle, finish, line_color)
             span_dx, span_dz := finish.x - start.x, finish.z - start.z
             span_length := f32(math.sqrt(f64(span_dx * span_dx + span_dz * span_dz)))
             tangent_x, tangent_z := span_dx / span_length, span_dz / span_length
-            for cloth in 0 ..< 4 {
-                t := f32(cloth + 1) / 5
-                sag := f32(math.sin(f64(t * math.PI))) * min(f32(1.35), distance * .040)
+            cloth_count := 5 + int((first.seed + second.seed) % 3)
+            for cloth in 0 ..< cloth_count {
+                t := f32(cloth + 1) / f32(cloth_count + 1)
                 cloth_x := start.x + (finish.x - start.x) * t
                 cloth_z := start.z + (finish.z - start.z) * t
-                cloth_y := line_y - sag - .05
+                cloth_y := line_y - world_laundry_catenary_drop(t, catenary_sag) - .05
                 world_laundry_cloth(
                     {cloth_x, cloth_y, cloth_z},
                     tangent_x,
+                    world_laundry_catenary_slope(t, catenary_sag, span_length),
                     tangent_z,
-                    1.02 + f32(cloth % 2) * .16,
-                    .72 + f32((cloth + int(first.seed)) % 3) * .12,
+                    .82 + f32((cloth + int(second.seed)) % 3) * .15,
+                    .62 + f32((cloth + int(first.seed)) % 3) * .14,
                     (f32(cloth % 2) - .5) * .12,
                     cloth_colors[(cloth + int(first.seed % 3)) % len(cloth_colors)],
                 )
             }
+            building_spans[first_index] += 1
+            building_spans[second_index] += 1
             if (first.seed + second.seed) % 3 == 0 {
                 // Abstract, low-detail resident silhouette: body, head, and
                 // outstretched arms reaching the line. One endpoint per few
@@ -4471,14 +5172,15 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     path_color := rl.Color{194, 184, 157, 255}
     for structure in editor.project.structures[:editor.project.structure_count] {
         if structure.kind != .Architecture || structure.height > 60 do continue
+        frontage := architecture.architecture_frontage_structure(structure)
         lane_a := min_z + (max_z - min_z) / 3
         lane_b := min_z + (max_z - min_z) * 2 / 3
         door_x, door_z := world_rotate_xz(
-            structure.center_x,
-            structure.center_z,
+            frontage.center_x,
+            frontage.center_z,
             0,
-            structure.depth * .5 + .22,
-            structure.rotation,
+            frontage.depth * .5 + .22,
+            frontage.rotation,
         )
         front_x := -math.sin(structure.rotation)
         front_z := math.cos(structure.rotation)
@@ -4522,13 +5224,13 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                 pot_x, pot_z := world_rotate_xz(
                     door_x,
                     door_z,
-                    f32(pot_side) * structure.width * .27,
+                    f32(pot_side) * frontage.width * .27,
                     .88,
-                    structure.rotation,
+                    frontage.rotation,
                 )
                 pot_y := terrain.sample_height(&editor.project, 0, pot_x, pot_z)
-                world_box_rotated({pot_x, pot_y + .22, pot_z}, {.32, .44, .32}, structure.rotation, {169, 96, 61, 255})
-                world_box_rotated({pot_x, pot_y + .53, pot_z}, {.44, .18, .44}, structure.rotation, {77, 111, 63, 255})
+                world_box_rotated({pot_x, pot_y + .22, pot_z}, {.32, .44, .32}, frontage.rotation, {169, 96, 61, 255})
+                world_box_rotated({pot_x, pot_y + .53, pot_z}, {.44, .18, .44}, frontage.rotation, {77, 111, 63, 255})
             }
         }
     }
@@ -4563,13 +5265,13 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
             tree_z := center_z + f32(z_side) * ((max_z - min_z) * .5 + 7)
             if !architecture.city_accent_site_clear(&editor.project, tree_x, tree_z, 5) do continue
             tree_base := terrain.sample_height(&editor.project, 0, tree_x, tree_z)
-            world_architecture_cypress(
-                tree_x,
-                tree_z,
-                tree_base,
-                u32((x_side + 2) * 37 + (z_side + 2) * 11 + buildings * 5),
-            )
-            tree := terrain.structure_make(tree_x, tree_z, 4.8, 4.8, tree_base, 15)
+            tree_seed := u32((x_side + 2) * 37 + (z_side + 2) * 11 + buildings * 5)
+            world_architecture_cypress(tree_x, tree_z, tree_base, tree_seed)
+            tree_width := 9.3 + f32((tree_seed / 997) % 991) / 990 * 2
+            tree_height := 40.5 + f32(tree_seed % 997) / 996 * 5.5
+            tree := terrain.structure_make(tree_x, tree_z, tree_width, tree_width * .9, tree_base, tree_height)
+            tree.kind = .Foliage
+            tree.seed = tree_seed
             world_structure_shadow(tree, sun_direction, cloud_cover, &editor.project)
             if (x_side == -1 && z_side == 1) || (x_side == 1 && z_side == -1) {
                 olive_x := tree_x - f32(x_side) * 8
@@ -4620,7 +5322,9 @@ world_structures :: proc(editor: ^Editor) {
         world_structure_preview_cluster(editor)
     }
     world_curve_preview(editor)
+    world_architecture_alleys(editor, &editor.architecture_city_plan)
     if editor.architecture_painting {
+        world_architecture_alleys(editor, &editor.architecture_preview_plan, true)
         for candidate in editor.architecture_preview_plan.structures[:editor.architecture_preview_plan.count] {
             preview := candidate
             preview.color = {168, 239, 220, 210}
@@ -4671,122 +5375,850 @@ world_climbing_leaf_opening_badness :: proc(structure: terrain.Structure, local_
         badness = max(badness, door_x_score * door_y_score)
     }
 
-    rows := landmark ? 4 : architecture.facade_floor_count(structure.height)
-    columns := landmark ? 1 : 2
+    rows := architecture.facade_floor_count(structure.height)
+    columns := architecture.facade_column_count(structure.width)
+    window_height := architecture.facade_window_height(structure.height)
+    window_width := architecture.facade_window_width(structure.width)
     for row in 0 ..< rows {
-        window_y := structure.height * (.24 + f32(row) * .16)
-        window_y_score := clamp(1 - math.abs(local_y - window_y) / (structure.height * .12), 0, 1)
+        window_y := architecture.facade_window_row_y(structure.height, row)
+        window_y_score := clamp(1 - math.abs(local_y - window_y) / (window_height * .75 + .55), 0, 1)
         // Protect the full visual window band, not only the dark rectangle.
         // At façade distance a lobe beside a frame still reads as covering
         // the opening, so growth is routed into the masonry between floors.
         badness = max(badness, window_y_score * .74)
         for column in 0 ..< columns {
-            window_x := columns == 1 ? f32(0) : (f32(column) - .5) * structure.width * .42
-            window_x_score := clamp(1 - math.abs(local_x - window_x) / (structure.width * .16), 0, 1)
+            window_x := architecture.facade_window_column_x(structure.width, column)
+            window_x_score := clamp(1 - math.abs(local_x - window_x) / (window_width * .5 + .75), 0, 1)
             badness = max(badness, window_x_score * window_y_score)
         }
     }
     return clamp(badness, 0, 1)
 }
 
+world_climbing_leaf_stem_opening_badness :: proc(structure: terrain.Structure, local_x, local_y: f32) -> f32 {
+    if structure.kind != .Architecture do return 0
+
+    // Woody leaders only need to avoid the actual opening rectangles. The
+    // broader floor-band exclusion used by foliage masses would make every
+    // stem disappear between floors even when there is clear masonry beside
+    // the windows.
+    badness := f32(0)
+    landmark := structure.height > 60
+    if !landmark {
+        door_x_score := clamp(1 - math.abs(local_x) / (structure.width * .20), 0, 1)
+        door_y_score := clamp(1 - math.abs(local_y - structure.height * .14) / (structure.height * .23), 0, 1)
+        badness = max(badness, door_x_score * door_y_score)
+    }
+
+    rows := architecture.facade_floor_count(structure.height)
+    columns := architecture.facade_column_count(structure.width)
+    window_height := architecture.facade_window_height(structure.height)
+    window_width := architecture.facade_window_width(structure.width)
+    for row in 0 ..< rows {
+        window_y := architecture.facade_window_row_y(structure.height, row)
+        window_y_score := clamp(1 - math.abs(local_y - window_y) / (window_height * .5 + .30), 0, 1)
+        for column in 0 ..< columns {
+            window_x := architecture.facade_window_column_x(structure.width, column)
+            window_x_score := clamp(1 - math.abs(local_x - window_x) / (window_width * .5 + .35), 0, 1)
+            badness = max(badness, window_x_score * window_y_score)
+        }
+    }
+    return clamp(badness, 0, 1)
+}
+
+world_climbing_leaf_route_x :: proc(
+    structure: terrain.Structure,
+    preferred_x, previous_x, previous_y, previous_delta, local_y: f32,
+) -> f32 {
+    if structure.kind != .Architecture do return preferred_x
+    offsets := [13]f32{0, -.055, .055, -.11, .11, -.17, .17, -.23, .23, -.30, .30, -.37, .37}
+    best_x := preferred_x
+    best_score := f32(1.0e20)
+    for offset in offsets {
+        candidate := clamp(preferred_x + offset * structure.width, -structure.width * .45, structure.width * .45)
+        opening := f32(0)
+        // Score the entire proposed segment, not just its destination. A
+        // horizontal leader can have clear endpoints yet pass directly
+        // through a window between them.
+        for route_sample in 0 ..= 4 {
+            sample_t := f32(route_sample) / 4
+            sample_x := previous_x + (candidate - previous_x) * sample_t
+            sample_y := previous_y + (local_y - previous_y) * sample_t
+            opening = max(opening, world_climbing_leaf_stem_opening_badness(structure, sample_x, sample_y))
+        }
+        continuity := math.abs(candidate - previous_x) / max(structure.width, f32(1))
+        curvature := math.abs((candidate - previous_x) - previous_delta) / max(structure.width, f32(1))
+        departure := math.abs(candidate - preferred_x) / max(structure.width, f32(1))
+        score := opening * 4.5 + continuity * 1.40 + curvature * .82 + departure * .18
+        if score < best_score {
+            best_x, best_score = candidate, score
+        }
+    }
+    return best_x
+}
+
 world_climbing_leaf_vine :: proc(
     structure: terrain.Structure,
-    local_x, surface_z, vine_height: f32,
-    seed: u32,
+    local_x, root_local_x, surface_z, vine_height: f32,
+    growth_density: f32,
+    seed, plant_seed: u32,
+    render_root: bool,
     wind_x, wind_z, wind_phase: f32,
 ) {
+    vine_maturity := f32(1)
+    if structure.kind == .Architecture {
+        vine_maturity = architecture.bougainvillea_maturity(growth_density)
+    }
+    detail_tier := 2
+    crown_detail_fade := f32(1)
+    if structure.kind == .Architecture && world_renderer.editor != nil {
+        camera_position := world_renderer.editor.camera_pose.position
+        camera_dx := camera_position.x - structure.center_x
+        camera_dz := camera_position.z - structure.center_z
+        camera_distance := f32(math.sqrt(f64(camera_dx * camera_dx + camera_dz * camera_dz)))
+        detail_tier = architecture.bougainvillea_detail_tier(camera_distance)
+        crown_detail_fade = architecture.bougainvillea_crown_detail_fade(camera_distance)
+    }
+    root_scale := .78 + vine_maturity * .42
     stem_start := structure.base_y + .12 + f32(seed % 5) * .28
+    planter_rooted := false
+    if structure.kind == .Architecture {
+        // Architectural bougainvillea starts from a legible growing medium,
+        // never from an arbitrary point partway up the wall.
+        planter_rooted = architecture.bougainvillea_planter_rooted(plant_seed)
+        stem_start = structure.base_y + (planter_rooted ? .50 * root_scale : .12)
+    }
     stem_end := min(structure.base_y + vine_height, structure.base_y + structure.height * .86)
     if stem_end <= stem_start + .2 do return
-    vine_points: [7]third_person.Vec3
+    // Sixteen samples keep detours around openings curved and connected.
+    // Ten allowed a safe point above and below a window to be joined by one
+    // long diagonal that visibly crossed the opening between them.
+    vine_points: [16]third_person.Vec3
+    vine_local_x: [16]f32
+    previous_x := local_x
+    previous_y := stem_start - structure.base_y
+    previous_delta := f32(0)
     for point_index in 0 ..< len(vine_points) {
         t := f32(point_index) / f32(len(vine_points) - 1)
-        sway := f32(math.sin(f64(f32(seed) * .013 + t * 5.7))) * structure.width * (.06 + t * .10)
+        sway := f32(math.sin(f64(f32(seed) * .013 + t * 5.7))) * structure.width * (.025 + t * .055)
         drift := f32(math.cos(f64(f32(seed) * .021 + t * 4.1))) * (.16 + t * .08)
         wind_wave := f32(math.sin(f64(wind_phase * .85 + t * 3.2 + f32(seed % 17))))
-        sway += (wind_x * .72 + wind_z * .28) * wind_wave * (t * t) * structure.width * .08
-        drift += (wind_z * .72 - wind_x * .28) * wind_wave * (t * t) * .16
+        if structure.kind == .Architecture {
+            divergence := t * t * (3 - 2 * t)
+            trained_x := root_local_x + (local_x - root_local_x) * divergence
+            // Multiple leaders share an exact basal origin, then acquire
+            // independent movement only as their woody paths diverge.
+            sway = trained_x - local_x + sway * divergence
+        }
+        // Young green leaders yield to gusts; an established, wall-trained
+        // woody trunk should barely move. Leaf cards and papery bracts retain
+        // their faster shader motion, creating a believable stiffness
+        // hierarchy instead of making the entire mature plant rubbery.
+        woody_compliance := f32(1)
+        if structure.kind == .Architecture {
+            woody_compliance = architecture.bougainvillea_woody_compliance(vine_maturity)
+        }
+        sway += (wind_x * .72 + wind_z * .28) * wind_wave * (t * t) * structure.width * .025 * woody_compliance
+        drift += (wind_z * .72 - wind_x * .28) * wind_wave * (t * t) * .16 * woody_compliance
+        local_y := stem_start + (stem_end - stem_start) * t - structure.base_y
+        routed_x := world_climbing_leaf_route_x(
+            structure,
+            local_x + sway,
+            previous_x,
+            previous_y,
+            previous_delta,
+            local_y,
+        )
+        vine_local_x[point_index] = routed_x
+        previous_delta = routed_x - previous_x
+        previous_x = routed_x
+        previous_y = local_y
         point_x, point_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
-            local_x + sway,
+            routed_x,
             surface_z + drift,
             structure.rotation,
         )
-        vine_points[point_index] = {point_x, stem_start + (stem_end - stem_start) * t, point_z}
+        vine_points[point_index] = {point_x, structure.base_y + local_y, point_z}
+    }
+    if structure.kind == .Architecture {
+        for _ in 0 ..< 2 {
+            smoothed_points := vine_points
+            smoothed_local_x := vine_local_x
+            for point_index in 1 ..< len(vine_points) - 1 {
+                candidate_x :=
+                    vine_local_x[point_index - 1] * .25 +
+                    vine_local_x[point_index] * .50 +
+                    vine_local_x[point_index + 1] * .25
+                candidate_y := vine_points[point_index].y - structure.base_y
+                left_mid_x := (vine_local_x[point_index - 1] + candidate_x) * .5
+                left_mid_y := (vine_points[point_index - 1].y + vine_points[point_index].y) * .5 - structure.base_y
+                right_mid_x := (candidate_x + vine_local_x[point_index + 1]) * .5
+                right_mid_y := (vine_points[point_index].y + vine_points[point_index + 1].y) * .5 - structure.base_y
+                candidate_badness := world_climbing_leaf_stem_opening_badness(structure, candidate_x, candidate_y)
+                segment_badness := max(
+                    world_climbing_leaf_stem_opening_badness(structure, left_mid_x, left_mid_y),
+                    world_climbing_leaf_stem_opening_badness(structure, right_mid_x, right_mid_y),
+                )
+                if max(candidate_badness, segment_badness) < .42 {
+                    smoothed_local_x[point_index] = candidate_x
+                    smoothed_points[point_index].x =
+                        vine_points[point_index - 1].x * .25 +
+                        vine_points[point_index].x * .50 +
+                        vine_points[point_index + 1].x * .25
+                    smoothed_points[point_index].z =
+                        vine_points[point_index - 1].z * .25 +
+                        vine_points[point_index].z * .50 +
+                        vine_points[point_index + 1].z * .25
+                }
+            }
+            vine_points = smoothed_points
+            vine_local_x = smoothed_local_x
+        }
+    }
+    if structure.kind == .Architecture && render_root {
+        root := vine_points[0]
+        if planter_rooted {
+            pottery := plant_seed % 2 == 0 ? rl.Color{177, 92, 57, 255} : rl.Color{156, 79, 53, 255}
+            pottery_lip := formation_face_color(pottery, .35, 0)
+            // A tapered body, proud rim, and visible soil plane read as an
+            // actual terracotta planter rather than the former generic cube.
+            world_box_rotated(
+                {root.x, structure.base_y + .025 * root_scale, root.z},
+                {.76 * root_scale, .05 * root_scale, .62 * root_scale},
+                structure.rotation,
+                plant_seed % 2 == 0 ? rl.Color{139, 70, 47, 255} : rl.Color{124, 62, 44, 255},
+            )
+            world_tapered_box_rotated(
+                {root.x, structure.base_y + .22 * root_scale, root.z},
+                .40 * root_scale,
+                .48 * root_scale,
+                .38 * root_scale,
+                .64 * root_scale,
+                .50 * root_scale,
+                structure.rotation,
+                pottery,
+            )
+            world_box_rotated(
+                {root.x, structure.base_y + .43 * root_scale, root.z},
+                {.70 * root_scale, .12 * root_scale, .56 * root_scale},
+                structure.rotation,
+                pottery_lip,
+            )
+            world_box_rotated(
+                {root.x, structure.base_y + .495 * root_scale, root.z},
+                {.56 * root_scale, .025 * root_scale, .42 * root_scale},
+                structure.rotation,
+                {72, 55, 37, 255},
+            )
+            // Mature bougainvillea develops a conspicuous woody crown rather
+            // than emerging from the compost as one pencil-thin line. Seat a
+            // low swelling and a few surface roots just above the soil plane;
+            // all remain inside the rim, so entrance clearance is unchanged.
+            // Small geometry receives stronger face shading than the main
+            // tubes, so start lighter here to retain warm bark detail instead
+            // of collapsing into a near-black knot at architectural distance.
+            root_wood := color_lerp({151, 111, 72, 255}, {132, 91, 58, 255}, vine_maturity)
+            root_crown := third_person.Vec3{root.x, structure.base_y + .502 * root_scale, root.z}
+            world_ellipsoid_rotated(
+                root_crown,
+                (.070 + vine_maturity * .032) * root_scale,
+                (.052 + vine_maturity * .024) * root_scale,
+                (.060 + vine_maturity * .020) * root_scale,
+                structure.rotation,
+                root_wood,
+            )
+            if detail_tier >= 2 {
+                for root_index in 0 ..< 3 {
+                    root_angle := structure.rotation + (f32(root_index) - 1) * .82 + f32(plant_seed % 5) * .06
+                    root_reach := (.12 + f32(root_index % 2) * .035) * root_scale
+                    root_tip := third_person.Vec3 {
+                        root.x + f32(math.cos(f64(root_angle))) * root_reach,
+                        structure.base_y + .508 * root_scale,
+                        root.z + f32(math.sin(f64(root_angle))) * root_reach,
+                    }
+                    world_tube_between(
+                        root_crown,
+                        root_tip,
+                        {0, 1, 0},
+                        (.040 + vine_maturity * .012) * root_scale,
+                        .018 * root_scale,
+                        root_wood,
+                    )
+                }
+            }
+        } else {
+            // Some façades grow directly from a narrow soil pocket at the
+            // masonry edge. Keep it low so it reads as ground contact rather
+            // than another planter variant.
+            world_tapered_box_rotated(
+                {root.x, structure.base_y + .035, root.z},
+                .07,
+                .72 * root_scale,
+                .46 * root_scale,
+                .58 * root_scale,
+                .36 * root_scale,
+                structure.rotation,
+                {76, 60, 40, 255},
+            )
+            for root_index in 0 ..< 3 {
+                angle := structure.rotation + (f32(root_index) - 1) * .72
+                root_tip := third_person.Vec3 {
+                    root.x + math.cos(angle) * (.22 + f32(root_index) * .035) * root_scale,
+                    structure.base_y + .075,
+                    root.z + math.sin(angle) * (.22 + f32(root_index) * .035) * root_scale,
+                }
+                world_tube_between(
+                    {root.x, structure.base_y + .13, root.z},
+                    root_tip,
+                    {0, 1, 0},
+                    .045 * root_scale,
+                    .025 * root_scale,
+                    {112, 78, 50, 255},
+                )
+            }
+        }
+        fallen_count := architecture.bougainvillea_fallen_bract_count(vine_maturity)
+        if fallen_count > 0 && detail_tier >= 2 {
+            // Mature bougainvillea sheds papery bracts continuously. A small
+            // palette-matched scatter ties the distant flower crown back to
+            // its planter or soil pocket without becoming a litter decal.
+            palette_color := architecture.bougainvillea_bract_color(architecture.bougainvillea_palette(plant_seed))
+            bract_color := rl.Color{palette_color[0], palette_color[1], palette_color[2], palette_color[3]}
+            base_radius := planter_rooted ? .46 * root_scale : .20 * root_scale
+            for fallen in 0 ..< fallen_count {
+                angle := f32(plant_seed % 29) * .31 + f32(fallen) * 2.399963
+                radius := base_radius + f32(fallen % 3) * .10 * root_scale
+                direction_x, direction_z := f32(math.cos(f64(angle))), f32(math.sin(f64(angle)))
+                tangent_x, tangent_z := -direction_z, direction_x
+                center := third_person.Vec3 {
+                    root.x + direction_x * radius,
+                    structure.base_y + .018 + f32(fallen % 2) * .003,
+                    root.z + direction_z * radius,
+                }
+                bract_length := (.055 + f32(fallen % 2) * .014) * root_scale
+                bract_width := bract_length * .58
+                tip := third_person.Vec3 {
+                    center.x + direction_x * bract_length,
+                    center.y,
+                    center.z + direction_z * bract_length,
+                }
+                left := third_person.Vec3 {
+                    center.x - direction_x * bract_length * .52 - tangent_x * bract_width,
+                    center.y,
+                    center.z - direction_z * bract_length * .52 - tangent_z * bract_width,
+                }
+                right := third_person.Vec3 {
+                    center.x - direction_x * bract_length * .52 + tangent_x * bract_width,
+                    center.y,
+                    center.z - direction_z * bract_length * .52 + tangent_z * bract_width,
+                }
+                tone := f32(fallen % 3) * .06
+                fallen_color := color_lerp(bract_color, {239, 188, 157, 255}, tone)
+                world_triangle(tip, left, right, fallen_color)
+                world_triangle(tip, right, left, fallen_color)
+            }
+        }
+    }
+    woody_color := rl.Color{62, 108, 55, 255}
+    woody_base_radius := f32(.055)
+    woody_tip_radius := f32(.040)
+    if structure.kind == .Architecture {
+        wood_age := clamp((vine_maturity - .06) / .50, 0, 1)
+        wood_age = wood_age * wood_age * (3 - 2 * wood_age)
+        woody_color = color_lerp({78, 105, 63, 255}, {126, 91, 59, 255}, wood_age)
+        woody_base_radius = .044 + vine_maturity * .030
+        woody_tip_radius = .030 + vine_maturity * .012
+    }
+    secondary_strength := f32(0)
+    facade_right_x, facade_right_z := f32(0), f32(0)
+    facade_out_x, facade_out_z := f32(0), f32(0)
+    if structure.kind == .Architecture && render_root {
+        secondary_strength = architecture.bougainvillea_secondary_leader_strength(vine_maturity)
+        facade_right_x, facade_right_z = world_rotate_xz(0, 0, 1, 0, structure.rotation)
+        facade_out_x, facade_out_z = world_rotate_xz(0, 0, 0, 1, structure.rotation)
     }
     for point_index in 0 ..< len(vine_points) - 1 {
-        start_t := f32(point_index) / f32(len(vine_points) - 1)
-        end_t := f32(point_index + 1) / f32(len(vine_points) - 1)
-        start_sway := f32(math.sin(f64(f32(seed) * .013 + start_t * 5.7))) * structure.width * (.06 + start_t * .10)
-        end_sway := f32(math.sin(f64(f32(seed) * .013 + end_t * 5.7))) * structure.width * (.06 + end_t * .10)
-        start_x := local_x + start_sway
-        end_x := local_x + end_sway
+        segment_t := f32(point_index) / f32(len(vine_points) - 1)
+        start_x := vine_local_x[point_index]
+        end_x := vine_local_x[point_index + 1]
         middle_x := (start_x + end_x) * .5
-        start_badness := world_climbing_leaf_opening_badness(
+        start_badness := world_climbing_leaf_stem_opening_badness(
             structure,
             start_x,
             vine_points[point_index].y - structure.base_y,
         )
-        end_badness := world_climbing_leaf_opening_badness(
+        end_badness := world_climbing_leaf_stem_opening_badness(
             structure,
             end_x,
             vine_points[point_index + 1].y - structure.base_y,
         )
-        middle_badness := world_climbing_leaf_opening_badness(
+        middle_badness := world_climbing_leaf_stem_opening_badness(
             structure,
             middle_x,
             (vine_points[point_index].y + vine_points[point_index + 1].y) * .5 - structure.base_y,
         )
-        // Do not draw the stem itself through a protected opening. The vine
-        // resumes above/below it, leaving a deliberate tendril-free corridor.
-        if max(start_badness, max(end_badness, middle_badness)) > .34 do continue
+        // Routing normally carries the stem around openings. Retain a final
+        // guard for unusually short façades where no masonry corridor exists.
+        if max(start_badness, max(end_badness, middle_badness)) > .68 do continue
+        segment_radius := woody_base_radius + (woody_tip_radius - woody_base_radius) * segment_t
+        bark_value := .035 + f32((point_index + int(seed)) % 3) * .035
+        segment_color :=
+            point_index % 2 == 0 ? color_lerp(woody_color, {171, 128, 84, 255}, bark_value) : color_lerp(woody_color, {77, 55, 42, 255}, bark_value)
         world_tube_between(
             vine_points[point_index],
             vine_points[point_index + 1],
             {0, 1, 0},
-            .055,
-            .050,
-            {62, 108, 55, 255},
+            segment_radius,
+            segment_radius * .91,
+            segment_color,
         )
+        if secondary_strength > 0 {
+            // Mature bougainvillea is commonly multi-stemmed. Weave one
+            // thinner leader around the routed trunk, converging at both ends
+            // so it reads as a shared woody base rather than parallel piping.
+            start_t := f32(point_index) / f32(len(vine_points) - 1)
+            finish_t := f32(point_index + 1) / f32(len(vine_points) - 1)
+            start_envelope := f32(math.sin(f64(start_t * math.PI)))
+            finish_envelope := f32(math.sin(f64(finish_t * math.PI)))
+            weave_amplitude := (.075 + vine_maturity * .085) * secondary_strength
+            start_weave :=
+                f32(math.sin(f64(f32(seed) * .071 + start_t * math.PI * 4.4))) * weave_amplitude * start_envelope
+            finish_weave :=
+                f32(math.sin(f64(f32(seed) * .071 + finish_t * math.PI * 4.4))) * weave_amplitude * finish_envelope
+            start_depth := f32(math.cos(f64(f32(seed) * .071 + start_t * math.PI * 4.4))) * .045 * start_envelope
+            finish_depth := f32(math.cos(f64(f32(seed) * .071 + finish_t * math.PI * 4.4))) * .045 * finish_envelope
+            secondary_start_local_x := start_x + start_weave
+            secondary_finish_local_x := end_x + finish_weave
+            secondary_middle_x := (secondary_start_local_x + secondary_finish_local_x) * .5
+            secondary_badness := max(
+                world_climbing_leaf_stem_opening_badness(
+                    structure,
+                    secondary_start_local_x,
+                    vine_points[point_index].y - structure.base_y,
+                ),
+                max(
+                    world_climbing_leaf_stem_opening_badness(
+                        structure,
+                        secondary_finish_local_x,
+                        vine_points[point_index + 1].y - structure.base_y,
+                    ),
+                    world_climbing_leaf_stem_opening_badness(
+                        structure,
+                        secondary_middle_x,
+                        (vine_points[point_index].y + vine_points[point_index + 1].y) * .5 - structure.base_y,
+                    ),
+                ),
+            )
+            if secondary_badness <= .68 {
+                secondary_start := vine_points[point_index]
+                secondary_start.x += facade_right_x * start_weave + facade_out_x * start_depth
+                secondary_start.z += facade_right_z * start_weave + facade_out_z * start_depth
+                secondary_finish := vine_points[point_index + 1]
+                secondary_finish.x += facade_right_x * finish_weave + facade_out_x * finish_depth
+                secondary_finish.z += facade_right_z * finish_weave + facade_out_z * finish_depth
+                secondary_radius := segment_radius * (.50 + secondary_strength * .12)
+                secondary_color := color_lerp(segment_color, {76, 52, 39, 255}, .18)
+                world_tube_between(
+                    secondary_start,
+                    secondary_finish,
+                    {0, 1, 0},
+                    secondary_radius,
+                    secondary_radius * .88,
+                    secondary_color,
+                )
+            }
+        }
+        if structure.kind == .Architecture && point_index > 0 {
+            previous_delta := vine_local_x[point_index] - vine_local_x[point_index - 1]
+            next_delta := vine_local_x[point_index + 1] - vine_local_x[point_index]
+            bend := math.abs(next_delta - previous_delta)
+            if bend > structure.width * .0045 && start_badness < .48 {
+                // A subtle swollen knuckle rounds the join between the two
+                // tapered tubes. Restrict it to visible bends so straight
+                // leaders stay lean and vertex cost remains bounded.
+                joint_radius := segment_radius * 1.04
+                world_ellipsoid_rotated(
+                    vine_points[point_index],
+                    joint_radius,
+                    joint_radius * 1.10,
+                    joint_radius * .96,
+                    structure.rotation,
+                    woody_color,
+                )
+            }
+        }
+        if structure.kind == .Architecture &&
+           detail_tier >= 2 &&
+           point_index > 0 &&
+           point_index % 3 == 2 &&
+           start_badness < .42 {
+            // Mature wall-trained bougainvillea needs sparse physical
+            // attachment. A small iron eye and short jute tie make long
+            // lateral leaders feel supported by the façade rather than
+            // suspended in front of it.
+            anchor_x, anchor_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                start_x,
+                structure.depth * .5 + .07,
+                structure.rotation,
+            )
+            anchor := third_person.Vec3{anchor_x, vine_points[point_index].y, anchor_z}
+            guide_half_span := .24 + vine_maturity * .22
+            guide_local_y := anchor.y - structure.base_y
+            guide_left_x := start_x - guide_half_span
+            guide_right_x := start_x + guide_half_span
+            guide_badness := max(
+                world_climbing_leaf_stem_opening_badness(structure, guide_left_x, guide_local_y),
+                max(
+                    world_climbing_leaf_stem_opening_badness(structure, start_x, guide_local_y),
+                    world_climbing_leaf_stem_opening_badness(structure, guide_right_x, guide_local_y),
+                ),
+            )
+            if guide_badness < .42 {
+                // Eyelets work as a small tensioned training system rather
+                // than isolated pegs. Keep each wire span short and test both
+                // ends against openings so it stays on masonry instead of
+                // crossing shutters or glass.
+                guide_left_world_x, guide_left_world_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    guide_left_x,
+                    structure.depth * .5 + .065,
+                    structure.rotation,
+                )
+                guide_right_world_x, guide_right_world_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    guide_right_x,
+                    structure.depth * .5 + .065,
+                    structure.rotation,
+                )
+                world_tube_between(
+                    {guide_left_world_x, anchor.y, guide_left_world_z},
+                    {guide_right_world_x, anchor.y, guide_right_world_z},
+                    {0, 1, 0},
+                    .011,
+                    .011,
+                    {76, 78, 72, 255},
+                )
+            }
+            world_tube_between(anchor, vine_points[point_index], {0, 1, 0}, .018, .018, {117, 96, 67, 255})
+            world_box_rotated({anchor.x, anchor.y, anchor.z}, {.11, .11, .045}, structure.rotation, {72, 74, 68, 255})
+        }
     }
-    leaf_point_indices := [4]int{1, 3, 4, 6}
-    for leaf_index in 0 ..< 4 {
+    if structure.kind == .Architecture && render_root {
+        basal_count := architecture.bougainvillea_basal_shoot_count(vine_maturity)
+        basal_indices := [2]int{1, 3}
+        root_side := root_local_x < 0 ? f32(-1) : f32(1)
+        for basal in 0 ..< basal_count {
+            point_index := basal_indices[basal]
+            node := vine_points[point_index]
+            node_local_x := vine_local_x[point_index]
+            reach := structure.width * (.022 + f32(basal) * .006)
+            shoot_local_x := node_local_x + root_side * reach
+            shoot_local_y := node.y - structure.base_y + .16 + f32(basal) * .08
+            if world_climbing_leaf_stem_opening_badness(structure, shoot_local_x, shoot_local_y) > .48 {
+                continue
+            }
+            shoot_x, shoot_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                shoot_local_x,
+                surface_z + .18,
+                structure.rotation,
+            )
+            shoot_end := third_person.Vec3{shoot_x, structure.base_y + shoot_local_y, shoot_z}
+            basal_color := color_lerp({73, 103, 61, 255}, {105, 74, 51, 255}, vine_maturity)
+            world_tube_between(
+                node,
+                shoot_end,
+                {0, 1, 0},
+                .027 + vine_maturity * .009,
+                .018 + vine_maturity * .005,
+                basal_color,
+            )
+            card_width := (.58 + vine_maturity * .18) * (1 - f32(basal) * .10)
+            card_height := card_width * .82
+            card_center := shoot_end
+            card_center.y += card_height * .30
+            footprint_clear := true
+            for footprint_x in -1 ..= 1 {
+                for footprint_y in 0 ..= 2 {
+                    sample_x := shoot_local_x + f32(footprint_x) * card_width * .31
+                    sample_y := shoot_local_y + f32(footprint_y) * card_height * .28
+                    if world_climbing_leaf_stem_opening_badness(structure, sample_x, sample_y) > .48 {
+                        footprint_clear = false
+                    }
+                }
+            }
+            if footprint_clear {
+                tile := int((plant_seed + u32(basal * 11)) % 2) * 2
+                roll := root_side * (.018 + f32(basal) * .007)
+                world_bougainvillea_card(card_center, card_width, card_height, tile, root_side < 0, roll, .93, true)
+            }
+        }
+    }
+    if structure.kind == .Architecture && detail_tier >= 2 && vine_maturity > .38 {
+        // Bougainvillea climbs with sparse hooked thorns rather than tendrils.
+        // Place only a few on established woody nodes; they should reward a
+        // close façade view without turning the stem into a saw blade.
+        thorn_indices := [4]int{4, 7, 10, 13}
+        thorn_count := architecture.bougainvillea_thorn_count(vine_maturity, len(thorn_indices))
+        facade_right_x, facade_right_z := world_rotate_xz(0, 0, 1, 0, structure.rotation)
+        facade_out_x, facade_out_z := world_rotate_xz(0, 0, 0, 1, structure.rotation)
+        for thorn in 0 ..< thorn_count {
+            point_index := thorn_indices[len(thorn_indices) - thorn_count + thorn]
+            thorn_local_y := vine_points[point_index].y - structure.base_y
+            if world_climbing_leaf_stem_opening_badness(structure, vine_local_x[point_index], thorn_local_y) > .48 {
+                continue
+            }
+            side := ((thorn + int(seed)) & 1) == 0 ? f32(1) : f32(-1)
+            thorn_length := .11 + vine_maturity * .07 + f32(thorn % 2) * .025
+            root := vine_points[point_index]
+            bend := third_person.Vec3 {
+                root.x + facade_right_x * side * thorn_length * .68 + facade_out_x * .045,
+                root.y + thorn_length * .32,
+                root.z + facade_right_z * side * thorn_length * .68 + facade_out_z * .045,
+            }
+            tip := third_person.Vec3 {
+                bend.x + facade_right_x * side * thorn_length * .32 + facade_out_x * .025,
+                bend.y - thorn_length * .24,
+                bend.z + facade_right_z * side * thorn_length * .32 + facade_out_z * .025,
+            }
+            thorn_color := color_lerp({84, 111, 64, 255}, {112, 77, 51, 255}, vine_maturity)
+            thorn_radius := .007 + vine_maturity * .005
+            world_tube_between(root, bend, {0, 1, 0}, thorn_radius, thorn_radius * .62, thorn_color)
+            world_tube_between(bend, tip, {0, 1, 0}, thorn_radius * .62, .0015, thorn_color)
+        }
+    }
+    if structure.kind == .Architecture && detail_tier >= 2 {
+        // Established wall plants are cut back repeatedly. A few short dead
+        // ends with pale cut faces interrupt the mathematically continuous
+        // tube and record that maintenance history without making the plant
+        // look damaged or leafless.
+        stub_indices := [3]int{5, 8, 11}
+        stub_count := architecture.bougainvillea_pruned_stub_count(vine_maturity)
+        facade_right_x, facade_right_z := world_rotate_xz(0, 0, 1, 0, structure.rotation)
+        facade_out_x, facade_out_z := world_rotate_xz(0, 0, 0, 1, structure.rotation)
+        for stub in 0 ..< stub_count {
+            point_index := stub_indices[stub]
+            node := vine_points[point_index]
+            node_local_x := vine_local_x[point_index]
+            side := (stub + int(seed)) % 2 == 0 ? f32(1) : f32(-1)
+            stub_length := .13 + f32(stub) * .025 + vine_maturity * .035
+            tip := third_person.Vec3 {
+                node.x + facade_right_x * side * stub_length + facade_out_x * .025,
+                node.y + .055 + f32(stub % 2) * .025,
+                node.z + facade_right_z * side * stub_length + facade_out_z * .025,
+            }
+            tip_local_x := node_local_x + side * stub_length
+            if max(
+                   world_climbing_leaf_stem_opening_badness(structure, node_local_x, node.y - structure.base_y),
+                   world_climbing_leaf_stem_opening_badness(structure, tip_local_x, tip.y - structure.base_y),
+               ) >
+               .48 {
+                continue
+            }
+            stub_radius := (.025 + vine_maturity * .009) * (1 - f32(stub) * .08)
+            stub_color := color_lerp({104, 76, 52, 255}, {128, 91, 59, 255}, vine_maturity)
+            world_tube_between(node, tip, {0, 1, 0}, stub_radius, stub_radius * .84, stub_color)
+            cut_color := color_lerp({185, 143, 91, 255}, {220, 181, 119, 255}, vine_maturity)
+            world_ellipsoid_rotated(
+                tip,
+                stub_radius * .93,
+                stub_radius * .82,
+                stub_radius * .34,
+                structure.rotation,
+                cut_color,
+            )
+        }
+    }
+    if structure.kind == .Architecture && vine_maturity > .28 {
+        // Established bougainvillea continually throws short renewal shoots
+        // from its older framework. These small, leaf-only tufts bridge the
+        // long woody trunk into the flowering crown without making the whole
+        // façade uniformly bushy.
+        renewal_indices := [4]int{4, 6, 8, 10}
+        renewal_count := min(1 + int((vine_maturity - .28) * 3.0), len(renewal_indices))
+        for renewal in 0 ..< renewal_count {
+            point_index := renewal_indices[len(renewal_indices) - renewal_count + renewal]
+            node := vine_points[point_index]
+            node_x := vine_local_x[point_index]
+            // Grow toward the nearest building edge. This keeps renewal
+            // foliage on the masonry margin instead of sending alternating
+            // tufts back across the window field.
+            side := node_x >= 0 ? f32(1) : f32(-1)
+            reach := structure.width * (.024 + f32(renewal % 2) * .007)
+            shoot_local_x := node_x + side * reach
+            shoot_y := node.y + .20 + f32(renewal % 2) * .10
+            // Use the exact opening rectangles here. The broader crown
+            // avoidance field is intentionally conservative and suppresses
+            // nearly every small shoot along a windowed façade.
+            if world_climbing_leaf_stem_opening_badness(structure, shoot_local_x, shoot_y - structure.base_y) > .52 {
+                continue
+            }
+            shoot_x, shoot_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                shoot_local_x,
+                surface_z + .16,
+                structure.rotation,
+            )
+            shoot_end := third_person.Vec3{shoot_x, shoot_y, shoot_z}
+            world_tube_between(
+                node,
+                shoot_end,
+                {0, 1, 0},
+                .030 + vine_maturity * .010,
+                .021 + vine_maturity * .006,
+                color_lerp({73, 103, 61, 255}, {105, 74, 51, 255}, vine_maturity),
+            )
+            card_width := (.62 + vine_maturity * .28) * (1 - f32(renewal) * .07)
+            card_height := card_width * .76
+            card_center := third_person.Vec3{shoot_end.x, shoot_end.y + card_height * .28, shoot_end.z}
+            footprint_clear := true
+            for footprint_x in -1 ..= 1 {
+                for footprint_y in 0 ..= 2 {
+                    sample_x := shoot_local_x + f32(footprint_x) * card_width * .30
+                    sample_y := card_center.y - structure.base_y + f32(footprint_y - 1) * card_height * .28
+                    if world_climbing_leaf_stem_opening_badness(structure, sample_x, sample_y) > .52 {
+                        footprint_clear = false
+                    }
+                }
+            }
+            if footprint_clear {
+                tile := int((seed + u32(renewal * 5)) % 4)
+                // Upright source tiles suit these young shoots better than
+                // the long lateral sprays used in the terminal crown.
+                tile -= tile % 2
+                renewal_roll := f32(int((seed + u32(renewal * 17)) % 7) - 3) * .014
+                world_bougainvillea_card(card_center, card_width, card_height, tile, side < 0, renewal_roll, .94, true)
+            }
+        }
+    }
+    // Bougainvillea carries most of its visual weight high on an exposed,
+    // woody framework. Rounded terrain growth keeps the more even distribution.
+    leaf_point_indices := structure.kind == .Architecture ? [6]int{7, 9, 11, 13, 14, 15} : [6]int{2, 5, 7, 10, 12, 15}
+    crown_side := seed % 2 == 0 ? f32(1) : f32(-1)
+    training_habit := architecture.bougainvillea_training_habit(plant_seed)
+    for leaf_index in 0 ..< len(leaf_point_indices) {
+        if structure.kind == .Architecture {
+            active_branches := architecture.bougainvillea_active_branch_count(vine_maturity, len(leaf_point_indices))
+            // Juveniles invest in their newest terminal shoots first. Lower
+            // and counter-branches appear progressively as the plant matures,
+            // avoiding a six-rung ladder of uniformly tiny leaf tufts.
+            if leaf_index < len(leaf_point_indices) - active_branches do continue
+        }
         point_index := leaf_point_indices[leaf_index]
+        node_t := f32(point_index) / f32(len(vine_points) - 1)
         base := vine_points[point_index]
         leaf_side := leaf_index % 2 == 0 ? f32(1) : f32(-1)
+        if structure.kind == .Architecture && leaf_index >= 3 {
+            if training_habit == 0 {
+                // Fan-trained plants divide their upper leaders across both
+                // sides of the trunk, producing a broad, architectural crown.
+                leaf_side = (leaf_index + int(seed)) % 2 == 0 ? f32(1) : f32(-1)
+            } else {
+                // Wind-trained plants favor one side with a single
+                // counter-branch, preserving the exposed coastal silhouette.
+                leaf_side = crown_side
+                if leaf_index == 4 do leaf_side = -crown_side
+            }
+        }
+        node_x := vine_local_x[point_index]
+        branch_reach := structure.width * (.045 + node_t * .025)
+        branch_rise := .08 + f32(leaf_index % 2) * .05
+        if structure.kind == .Architecture {
+            // Atlas clumps already paint a substantial woody extension from
+            // their attachment anchor. Keep the procedural support compact so
+            // the two systems do not double the reach into bare, lollipop-like
+            // limbs before foliage begins.
+            branch_reach = structure.width * (.018 + node_t * .038)
+            branch_rise = .08 + node_t * .38 + f32(leaf_index % 2) * .12
+        }
         branch_x, branch_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
-            local_x +
-            f32(math.sin(f64(f32(seed + u32(leaf_index)) * .47))) * structure.width * .07 +
-            leaf_side * structure.width * .10,
+            node_x + leaf_side * branch_reach,
             surface_z + .16,
             structure.rotation,
         )
-        branch_end := third_person.Vec3{branch_x, base.y + .08 + f32(leaf_index % 2) * .05, branch_z}
+        branch_end := third_person.Vec3{branch_x, min(base.y + branch_rise, stem_end + 1.8), branch_z}
         opening_badness := world_climbing_leaf_opening_badness(
             structure,
-            local_x +
-            f32(math.sin(f64(f32(seed + u32(leaf_index)) * .47))) * structure.width * .07 +
-            leaf_side * structure.width * .10,
+            node_x + leaf_side * branch_reach,
             branch_end.y - structure.base_y,
         )
         // Keep a clean visual corridor over doors and windows. The stem can
         // continue past the opening, but branch/lobe geometry is omitted when
         // it would materially obscure the architectural opening.
         if opening_badness > .72 do continue
-        world_tube_between(base, branch_end, {0, 1, 0}, .036, .032, {62, 108, 55, 255})
+        branch_color := rl.Color{62, 108, 55, 255}
+        branch_base_radius := f32(.036)
+        branch_tip_radius := f32(.032)
+        if structure.kind == .Architecture {
+            wood_age := clamp((vine_maturity - .06) / .50, 0, 1)
+            wood_age = wood_age * wood_age * (3 - 2 * wood_age)
+            branch_color = color_lerp({73, 103, 61, 255}, {105, 74, 51, 255}, wood_age)
+            branch_base_radius = .034 + vine_maturity * .022
+            branch_tip_radius = .027 + vine_maturity * .012
+            // A restrained collar hides the tube seam and gives mature
+            // branches the swollen node characteristic of woody climbers.
+            collar_radius := branch_base_radius * (1.05 + vine_maturity * .20)
+            world_ellipsoid_rotated(
+                base,
+                collar_radius,
+                collar_radius * 1.16,
+                collar_radius * .88,
+                structure.rotation,
+                branch_color,
+            )
+        }
+        world_tube_between(base, branch_end, {0, 1, 0}, branch_base_radius, branch_tip_radius, branch_color)
 
-        // Reuse the rounded foliage-lobe mesh for the main mass. This keeps
-        // each climbing node a connected volume instead of a few flat discs.
+        if structure.kind == .Architecture && vine_maturity > .24 {
+            // A mature lateral should not read as a bare support rod ending in
+            // one atlas billboard. Add a restrained, leaf-only spray partway
+            // along the branch. It bridges the woody framework into the crown
+            // while leaving the terminal bracts visually dominant.
+            connector_amount := .52 + f32((seed + u32(leaf_index * 19)) % 3) * .08
+            connector_center := third_person.Vec3 {
+                base.x + (branch_end.x - base.x) * connector_amount,
+                base.y + (branch_end.y - base.y) * connector_amount,
+                base.z + (branch_end.z - base.z) * connector_amount,
+            }
+            connector_local_x := node_x + leaf_side * branch_reach * connector_amount
+            connector_local_y := connector_center.y - structure.base_y
+            connector_badness := world_climbing_leaf_opening_badness(structure, connector_local_x, connector_local_y)
+            if connector_badness < .58 {
+                outward_x, outward_z := world_rotate_xz(0, 0, 0, .11, structure.rotation)
+                connector_center.x += outward_x
+                connector_center.z += outward_z
+                connector_scale := (.48 + vine_maturity * .22) * (1 - connector_badness * .34)
+                connector_tile := int((seed + u32(leaf_index * 29)) % 4)
+                connector_mirrored := leaf_side < 0
+                connector_roll := leaf_side * (.018 + f32(leaf_index % 2) * .009)
+                world_bougainvillea_card(
+                    connector_center,
+                    connector_scale * 1.06,
+                    connector_scale * .82,
+                    connector_tile,
+                    connector_mirrored,
+                    connector_roll,
+                    .925,
+                )
+            }
+        }
+
+        // Rounded terrain growth and wall-trained bougainvillea need different
+        // silhouettes. They share routing, but not their main foliage mass.
         cluster_structure := structure
         cluster_structure.base_y = branch_end.y - .72
         cluster_structure.seed = seed + u32(leaf_index * 41)
-        cluster_x :=
-            local_x +
-            f32(math.sin(f64(f32(seed + u32(leaf_index)) * .47))) * structure.width * .07 +
-            leaf_side * structure.width * .10
+        cluster_x := node_x + leaf_side * branch_reach
         attachment_x, attachment_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -4823,29 +6255,309 @@ world_climbing_leaf_vine :: proc(
             {58, 101, 53, 255},
         )
         lobe_scale := 1 - opening_badness * .42
-        world_foliage_lobe(
-            cluster_structure,
-            lobe_local_x,
-            lobe_local_z,
-            (1.55 + f32((seed + u32(leaf_index)) % 3) * .12) * lobe_scale,
-            .92,
-            (1.48 + f32((seed + u32(leaf_index * 3)) % 3) * .12) * lobe_scale,
-            0,
-            false,
-            1 + int((seed + u32(leaf_index)) % 3),
-            0,
-            false,
-        )
-        // Add two camera-facing leaf sprays on the lobe's outward side. The
-        // cards supply a readable leaf silhouette while the rounded lobe
-        // carries the volume; both are positioned from the averaged normal.
+        crown_scale := f32(1)
+        if structure.kind == .Architecture {
+            // Density is also maturity: a lightly painted patch begins as a
+            // sparse leafy juvenile, while sustained density earns the broad,
+            // flower-heavy crown of an established bougainvillea.
+            maturity := architecture.bougainvillea_maturity(growth_density)
+            maturity_scale := .52 + maturity * .48
+            crown_scale = (.38 + node_t * 1.68) * maturity_scale
+            if training_habit == 0 {
+                if leaf_index >= 3 do crown_scale *= 1.06
+            } else if leaf_side == crown_side {
+                crown_scale *= 1.12
+            }
+        }
         tangent := third_person.Vec3{-average_normal.z, 0, average_normal.x}
         cluster_center := third_person.Vec3 {
             attachment_x + average_normal.x * .32,
             branch_end.y + .10,
             attachment_z + average_normal.z * .32,
         }
-        spray_scale := .92 + f32((seed + u32(leaf_index)) % 3) * .10
+        if structure.kind == .Architecture {
+            maturity := architecture.bougainvillea_maturity(growth_density)
+            flowering := architecture.bougainvillea_branch_flowering(maturity, node_t, seed, leaf_index)
+            // Even atlas columns are upright clumps; odd columns are lateral
+            // sprays. Continue the procedural branch's rise/reach instead of
+            // choosing a contradictory silhouette at random.
+            lateral_shape := math.abs(branch_reach) > branch_rise * .92
+            variation := int((seed + u32(leaf_index * 7)) % 2) * 2 + (lateral_shape ? 1 : 0)
+            tile := variation
+            flower_base := architecture.bougainvillea_flower_tile_base(architecture.bougainvillea_palette(plant_seed))
+            if flowering {
+                tile = flower_base + variation
+            }
+            card_width := (2.34 + f32(variation % 2) * .20) * crown_scale * lobe_scale
+            card_height := (1.84 + f32((variation + 1) % 3) * .14) * crown_scale * lobe_scale
+            // Avoid lining every atlas card up on the routed stem. Keep the
+            // silhouette shift in façade-local space so the opening test can
+            // evaluate the card's actual final horizontal placement.
+            silhouette_step := f32(int((seed + u32(leaf_index * 11)) % 5) - 2)
+            silhouette_shift := silhouette_step * card_width * .045
+            cluster_center.y += silhouette_step * card_height * .035
+
+            // The procedural attachment can be safely on masonry while an
+            // anchored atlas clump still extends across nearby glass. Search
+            // a few short offsets along the wall before shrinking or omitting
+            // the clump; this preserves foliage while favoring clear masonry.
+            footprint_offsets := [5]f32{0, -.28, .28, -.48, .48}
+            best_footprint_score := f32(1.0e20)
+            footprint_badness := f32(1)
+            clearance_shift := f32(0)
+            attachment_local_y := cluster_center.y - structure.base_y
+            for footprint_offset in footprint_offsets {
+                candidate_shift := footprint_offset * card_width
+                candidate_badness := f32(0)
+                // Atlas roots range from bottom-center to a lower corner, so
+                // sample a conservative envelope around the anchor rather
+                // than only the card's central 60 percent.
+                for footprint_x in -2 ..= 2 {
+                    for footprint_y in 0 ..= 3 {
+                        sample_x :=
+                            cluster_x + silhouette_shift + candidate_shift + f32(footprint_x) * card_width * .34
+                        sample_y := attachment_local_y + f32(footprint_y) * card_height * .30
+                        candidate_badness = max(
+                            candidate_badness,
+                            world_climbing_leaf_stem_opening_badness(structure, sample_x, sample_y),
+                        )
+                    }
+                }
+                candidate_score := candidate_badness + math.abs(footprint_offset) * .05
+                if candidate_score < best_footprint_score {
+                    best_footprint_score = candidate_score
+                    footprint_badness = candidate_badness
+                    clearance_shift = candidate_shift
+                }
+            }
+            if footprint_badness > .90 {
+                // Sparse juvenile growth is better with one fewer clump than
+                // with a billboard visibly pasted over a window.
+                continue
+            } else if footprint_badness > .72 {
+                card_width *= .62
+                card_height *= .62
+            } else if footprint_badness > .58 {
+                card_width *= .80
+                card_height *= .80
+            }
+            facade_right_x, facade_right_z := world_rotate_xz(0, 0, 1, 0, structure.rotation)
+            resolved_shift := silhouette_shift + clearance_shift
+            cluster_center.x += facade_right_x * resolved_shift
+            cluster_center.z += facade_right_z * resolved_shift
+            if math.abs(resolved_shift) > card_width * .12 {
+                // Preserve the visual connection when the safest masonry
+                // pocket moves the atlas anchor away from the original node.
+                world_tube_between(
+                    branch_end,
+                    cluster_center,
+                    {0, 1, 0},
+                    branch_tip_radius * .72,
+                    branch_tip_radius * .42,
+                    branch_color,
+                )
+            }
+            mirrored := (leaf_index + int(seed)) % 2 == 0
+            card_camera := perspective_camera(world_renderer.editor.camera_pose, 1.35)
+            branch_delta := third_person.Vec3{branch_end.x - base.x, branch_end.y - base.y, branch_end.z - base.z}
+            if lateral_shape {
+                // Unmirrored lateral tiles grow from their left anchor toward
+                // screen-right. Mirror when the supporting branch reaches
+                // screen-left so the painted continuation grows away from the
+                // trunk in either view direction.
+                mirrored = vec_dot(branch_delta, card_camera.right) < 0
+            }
+            card_roll := f32(int((seed + u32(leaf_index * 17)) % 7) - 3) * .016
+            card_value := .965 + f32((seed + u32(leaf_index * 23)) % 4) * .012
+            if flowering {
+                card_value = architecture.bougainvillea_bract_value(
+                    maturity,
+                    node_t,
+                    int((seed + u32(leaf_index * 23)) % 4),
+                )
+            }
+            if flowering && maturity > .34 {
+                // Bougainvillea color comes from papery bracts carried over a
+                // leafy scaffold. Let a smaller green spray show through the
+                // bloom card's transparent gaps and around one lower edge so
+                // dense crowns retain botanical structure instead of reading
+                // as an uninterrupted patch of flower color.
+                foliage_tile := (variation + int((seed + u32(leaf_index * 13)) % 2) * 2) % 4
+                foliage_center := cluster_center
+                foliage_center.x +=
+                    tangent.x * card_width * (mirrored ? f32(.10) : f32(-.10)) - average_normal.x * .045
+                foliage_center.y -= card_height * .13
+                foliage_center.z +=
+                    tangent.z * card_width * (mirrored ? f32(.10) : f32(-.10)) - average_normal.z * .045
+                world_bougainvillea_card(
+                    foliage_center,
+                    card_width * (.60 + maturity * .08),
+                    card_height * (.56 + maturity * .08),
+                    foliage_tile,
+                    !mirrored,
+                    -card_roll * .72,
+                    .91,
+                )
+            }
+            world_bougainvillea_card(cluster_center, card_width, card_height, tile, mirrored, card_roll, card_value)
+            resting_leaf_index := 3 + int(plant_seed % 2)
+            if crown_detail_fade > .02 && flowering && maturity > .62 && leaf_index == resting_leaf_index {
+                // Even at peak bloom, one sheltered crown pocket remains
+                // leaf-dominant. Place a compact green spray just proud of a
+                // flower card so the canopy has a readable rest between large
+                // color masses instead of becoming one uniform neon shelf.
+                resting_center := cluster_center
+                resting_side := mirrored ? f32(1) : f32(-1)
+                resting_center.x += tangent.x * card_width * resting_side * .20 + average_normal.x * .09
+                resting_center.y -= card_height * .12
+                resting_center.z += tangent.z * card_width * resting_side * .20 + average_normal.z * .09
+                resting_tile := (variation + 3) % 4
+                world_bougainvillea_card(
+                    resting_center,
+                    card_width * .40 * crown_detail_fade,
+                    card_height * .38 * crown_detail_fade,
+                    resting_tile,
+                    !mirrored,
+                    -card_roll * .58,
+                    .93,
+                    false,
+                    resting_side * .085,
+                )
+            }
+            if crown_detail_fade > .02 && maturity > .52 && node_t > .68 && (leaf_index + int(seed)) % 2 == 0 {
+                // A façade-trained plant is shallow, but not planar. Push a
+                // restrained secondary spray away from the wall and connect
+                // it with a real twig so the crown gains parallax as the
+                // camera moves without turning into a spherical shrub.
+                depth_amount := .20 + maturity * .26
+                depth_center := cluster_center
+                depth_center.x += average_normal.x * depth_amount - tangent.x * card_width * .08
+                depth_center.y -= card_height * (.08 + f32(leaf_index % 2) * .04)
+                depth_center.z += average_normal.z * depth_amount - tangent.z * card_width * .08
+                world_tube_between(
+                    branch_end,
+                    depth_center,
+                    {0, 1, 0},
+                    branch_tip_radius * .78 * crown_detail_fade,
+                    branch_tip_radius * .48 * crown_detail_fade,
+                    branch_color,
+                )
+                depth_tile := tile
+                if flowering {
+                    depth_tile = flower_base + (variation + 1) % 4
+                } else {
+                    depth_tile = (tile + 2) % 4
+                }
+                depth_mirrored := !mirrored
+                world_bougainvillea_card(
+                    depth_center,
+                    card_width * (.46 + maturity * .10) * crown_detail_fade,
+                    card_height * (.44 + maturity * .10) * crown_detail_fade,
+                    depth_tile,
+                    depth_mirrored,
+                    card_roll * .58,
+                    card_value * .955,
+                    false,
+                    depth_mirrored ? f32(-.13) : f32(.13),
+                )
+            }
+            terminal_emphasis :=
+                training_habit == 0 ? leaf_index >= len(leaf_point_indices) - 2 : leaf_side == crown_side
+            if node_t > .76 && terminal_emphasis {
+                echo_tile := tile
+                if flowering {
+                    echo_tile = flower_base + (variation + 2) % 4
+                } else {
+                    echo_tile = (tile + 2) % 4
+                }
+                echo_center := cluster_center
+                echo_center.x += tangent.x * card_width * .24
+                echo_center.y -= card_height * .18
+                echo_center.z += tangent.z * card_width * .24
+                echo_mirrored := vec_dot(tangent, card_camera.right) < 0
+                world_bougainvillea_card(
+                    echo_center,
+                    card_width * .62,
+                    card_height * .60,
+                    echo_tile,
+                    echo_mirrored,
+                    -card_roll * .84,
+                    card_value * .98,
+                    false,
+                    echo_mirrored ? f32(-.075) : f32(.075),
+                )
+            }
+            if flowering && node_t > .76 && terminal_emphasis {
+                // Mature terminal sprays arch outward and then hang under
+                // their own weight. A short descending chain breaks the
+                // crown's horizontal shelf silhouette and gives the papery
+                // bracts the characteristic bougainvillea cascade.
+                cascade_count := architecture.bougainvillea_cascade_count(maturity)
+                cascade_side := mirrored ? f32(-1) : f32(1)
+                cascade_parent := cluster_center
+                for cascade in 0 ..< cascade_count {
+                    cascade_scale := 1 - f32(cascade) * .18
+                    cascade_width := card_width * .43 * cascade_scale
+                    cascade_height := card_height * .50 * cascade_scale
+                    lateral_drop := cascade_side * card_width * (.14 + f32(cascade) * .10)
+                    vertical_drop := card_height * (.34 + f32(cascade) * .30)
+                    cascade_local_x := cluster_x + resolved_shift + lateral_drop
+                    cascade_local_y := cluster_center.y - structure.base_y - vertical_drop
+                    cascade_badness := f32(0)
+                    for footprint_x in -1 ..= 1 {
+                        for footprint_y in 0 ..= 2 {
+                            sample_x := cascade_local_x + f32(footprint_x) * cascade_width * .34
+                            sample_y := cascade_local_y + f32(footprint_y) * cascade_height * .32
+                            cascade_badness = max(
+                                cascade_badness,
+                                world_climbing_leaf_stem_opening_badness(structure, sample_x, sample_y),
+                            )
+                        }
+                    }
+                    if cascade_badness > .72 do continue
+                    cascade_center := cluster_center
+                    cascade_center.x += tangent.x * lateral_drop + average_normal.x * (.10 + f32(cascade) * .06)
+                    cascade_center.y -= vertical_drop
+                    cascade_center.z += tangent.z * lateral_drop + average_normal.z * (.10 + f32(cascade) * .06)
+                    world_tube_between(
+                        cascade_parent,
+                        cascade_center,
+                        {0, 1, 0},
+                        branch_tip_radius * (.54 - f32(cascade) * .08),
+                        branch_tip_radius * .28,
+                        branch_color,
+                    )
+                    cascade_tile := flower_base + (variation + cascade + 1) % 4
+                    world_bougainvillea_card(
+                        cascade_center,
+                        cascade_width,
+                        cascade_height,
+                        cascade_tile,
+                        cascade % 2 == 0 ? !mirrored : mirrored,
+                        card_roll * .45 + cascade_side * .022,
+                        card_value * (.985 - f32(cascade) * .018),
+                    )
+                    cascade_parent = cascade_center
+                }
+            }
+        } else {
+            world_foliage_lobe(
+                cluster_structure,
+                lobe_local_x,
+                lobe_local_z,
+                (1.52 + f32((seed + u32(leaf_index)) % 3) * .14) * lobe_scale * crown_scale,
+                .86 * crown_scale,
+                (1.42 + f32((seed + u32(leaf_index * 3)) % 3) * .14) * lobe_scale * crown_scale,
+                0,
+                false,
+                1 + int((seed + u32(leaf_index)) % 3),
+                0,
+                false,
+            )
+        }
+        if structure.kind == .Architecture do continue
+        // Camera-facing sprays break the edge of both foliage treatments.
+        spray_scale := (.74 + f32((seed + u32(leaf_index)) % 3) * .09) * crown_scale
         world_foliage_card(
             {cluster_center.x + tangent.x * .14, cluster_center.y + .05, cluster_center.z + tangent.z * .14},
             spray_scale,
@@ -4866,49 +6578,169 @@ world_climbing_leaf_vine :: proc(
             world_foliage_vertex_color(2, 1 + int((seed + u32(leaf_index + 1)) % 3)),
             leaf_index % 2 != 0,
         )
-        for leaf_accent in 0 ..< 3 {
+        accent_count := structure.kind == .Architecture ? 4 : 3
+        for leaf_accent in 0 ..< accent_count {
             accent_side := leaf_accent == 1 ? f32(-1) : f32(1)
-            accent_offset := f32(leaf_accent - 1) * .28
+            accent_offset := (f32(leaf_accent) - f32(accent_count - 1) * .5) * .24 * crown_scale
             accent_center := third_person.Vec3 {
                 cluster_center.x + tangent.x * accent_offset + average_normal.x * (.10 + f32(leaf_accent % 2) * .05),
                 cluster_center.y + f32(leaf_accent - 1) * .16,
                 cluster_center.z + tangent.z * accent_offset + average_normal.z * (.10 + f32(leaf_accent % 2) * .05),
             }
-            world_ellipsoid_rotated(
-                accent_center,
-                .30 + f32(leaf_accent % 2) * .06,
-                .13,
-                .18 + f32(leaf_accent) * .025,
-                surface_rotation + accent_side * .12,
-                leaf_accent == 1 ? rl.Color{93, 151, 70, 255} : rl.Color{76, 135, 65, 255},
-            )
-        }
-        if (seed + u32(leaf_index * 5)) % 3 == 0 {
-            for petal in 0 ..< 3 {
-                petal_offset := f32(petal - 1) * .12
-                bloom_center := third_person.Vec3 {
-                    cluster_center.x + tangent.x * petal_offset + average_normal.x * .22,
-                    cluster_center.y + .18 + f32(petal % 2) * .05,
-                    cluster_center.z + tangent.z * petal_offset + average_normal.z * .22,
-                }
+            accent_width := (.22 + f32(leaf_accent % 2) * .04) * crown_scale
+            accent_height := .10 * crown_scale
+            accent_color := leaf_accent == 1 ? rl.Color{93, 151, 70, 255} : rl.Color{76, 135, 65, 255}
+            if structure.kind == .Architecture {
+                world_tapered_disc_depth_rotated(
+                    accent_center,
+                    accent_width,
+                    accent_height,
+                    accent_width * .78,
+                    accent_height * .82,
+                    .035,
+                    surface_rotation + accent_side * .12,
+                    accent_color,
+                )
+            } else {
                 world_ellipsoid_rotated(
-                    bloom_center,
-                    .11,
-                    .10,
-                    .10,
-                    surface_rotation,
-                    petal == 1 ? rl.Color{226, 113, 130, 255} : rl.Color{205, 82, 111, 255},
+                    accent_center,
+                    accent_width,
+                    accent_height,
+                    (.14 + f32(leaf_accent) * .015) * crown_scale,
+                    surface_rotation + accent_side * .12,
+                    accent_color,
                 )
             }
         }
-        world_ellipsoid_rotated(
-            branch_end,
-            max(f32(.24), min(structure.width * .06, f32(.46))),
-            .12,
-            .20,
-            structure.rotation,
-            leaf_index % 2 == 0 ? rl.Color{63, 117, 62, 255} : rl.Color{78, 136, 70, 255},
-        )
+        flowering := (seed + u32(leaf_index * 5)) % 3 == 0
+        if structure.kind == .Architecture {
+            flowering = node_t > .58 && (seed + u32(leaf_index * 5)) % 4 != 0
+        }
+        if flowering {
+            petal_count := structure.kind == .Architecture ? 36 : 3
+            flower_palette := int(seed % 3)
+            for petal in 0 ..< petal_count {
+                flower_index := petal
+                bract_index := 0
+                flower_count := petal_count
+                if structure.kind == .Architecture {
+                    flower_index = petal / 3
+                    bract_index = petal % 3
+                    flower_count = petal_count / 3
+                }
+                petal_angle := f32(flower_index) * 2.399963
+                petal_radius := (.11 + f32(petal % 4) * .09) * crown_scale
+                if structure.kind == .Architecture {
+                    petal_radius =
+                        (.08 + f32(math.sqrt(f64(f32(flower_index + 1) / f32(flower_count)))) * .62) * crown_scale
+                }
+                bloom_center := third_person.Vec3 {
+                    cluster_center.x +
+                    tangent.x * f32(math.cos(f64(petal_angle))) * petal_radius +
+                    average_normal.x * (.20 + f32(petal % 2) * .05),
+                    cluster_center.y + .12 + f32(math.sin(f64(petal_angle))) * petal_radius * .72,
+                    cluster_center.z +
+                    tangent.z * f32(math.cos(f64(petal_angle))) * petal_radius +
+                    average_normal.z * (.20 + f32(petal % 2) * .05),
+                }
+                bloom_color := rl.Color{238, 121, 151, 255}
+                switch flower_palette {
+                case 0:
+                    if petal % 3 == 0 {
+                        bloom_color = {226, 90, 134, 255}
+                    } else if petal % 3 == 1 {
+                        bloom_color = {202, 57, 111, 255}
+                    }
+                case 1:
+                    bloom_color = {245, 142, 112, 255}
+                    if petal % 3 == 0 {
+                        bloom_color = {231, 98, 82, 255}
+                    } else if petal % 3 == 1 {
+                        bloom_color = {202, 65, 70, 255}
+                    }
+                case 2:
+                    bloom_color = {220, 123, 181, 255}
+                    if petal % 3 == 0 {
+                        bloom_color = {192, 78, 158, 255}
+                    } else if petal % 3 == 1 {
+                        bloom_color = {153, 57, 136, 255}
+                    }
+                }
+                bloom_width := .14 * crown_scale
+                bloom_height := .10 * crown_scale
+                if structure.kind == .Architecture {
+                    // Bougainvillea color comes from thin, pointed paper
+                    // bracts rather than round flowers. Rotate each triangle
+                    // in the wall plane and draw both faces.
+                    bloom_width = .15 * crown_scale
+                    bloom_height = .112 * crown_scale
+                    bract_rotation := f32(bract_index) * math.PI * 2 / 3 + f32(seed % 11) * .19
+                    direction_x := tangent.x * f32(math.cos(f64(bract_rotation)))
+                    direction_y := f32(math.sin(f64(bract_rotation)))
+                    direction_z := tangent.z * f32(math.cos(f64(bract_rotation)))
+                    perpendicular_x := tangent.x * -f32(math.sin(f64(bract_rotation)))
+                    perpendicular_y := f32(math.cos(f64(bract_rotation)))
+                    perpendicular_z := tangent.z * -f32(math.sin(f64(bract_rotation)))
+                    bract_tip := third_person.Vec3 {
+                        bloom_center.x + direction_x * bloom_height,
+                        bloom_center.y + direction_y * bloom_height,
+                        bloom_center.z + direction_z * bloom_height,
+                    }
+                    bract_left := third_person.Vec3 {
+                        bloom_center.x - direction_x * bloom_height * .58 - perpendicular_x * bloom_width,
+                        bloom_center.y - direction_y * bloom_height * .58 - perpendicular_y * bloom_width,
+                        bloom_center.z - direction_z * bloom_height * .58 - perpendicular_z * bloom_width,
+                    }
+                    bract_right := third_person.Vec3 {
+                        bloom_center.x - direction_x * bloom_height * .58 + perpendicular_x * bloom_width,
+                        bloom_center.y - direction_y * bloom_height * .58 + perpendicular_y * bloom_width,
+                        bloom_center.z - direction_z * bloom_height * .58 + perpendicular_z * bloom_width,
+                    }
+                    world_triangle(bract_tip, bract_left, bract_right, bloom_color)
+                    world_triangle(bract_tip, bract_right, bract_left, bloom_color)
+                    if bract_index == 2 {
+                        flower_center := bloom_center
+                        flower_center.x += average_normal.x * .018
+                        flower_center.z += average_normal.z * .018
+                        world_tapered_disc_depth_rotated(
+                            flower_center,
+                            .042 * crown_scale,
+                            .034 * crown_scale,
+                            .030 * crown_scale,
+                            .026 * crown_scale,
+                            .012,
+                            surface_rotation,
+                            {244, 218, 145, 255},
+                        )
+                    }
+                } else {
+                    world_ellipsoid_rotated(
+                        bloom_center,
+                        bloom_width,
+                        bloom_height,
+                        .12 * crown_scale,
+                        surface_rotation,
+                        bloom_color,
+                    )
+                }
+            }
+        }
+        node_width := max(f32(.18), min(structure.width * .04, f32(.32)))
+        node_color := leaf_index % 2 == 0 ? rl.Color{63, 117, 62, 255} : rl.Color{78, 136, 70, 255}
+        if structure.kind == .Architecture {
+            world_tapered_disc_depth_rotated(
+                branch_end,
+                node_width,
+                .09,
+                node_width * .72,
+                .072,
+                .035,
+                surface_rotation,
+                node_color,
+            )
+        } else {
+            world_ellipsoid_rotated(branch_end, node_width, .09, .15, structure.rotation, node_color)
+        }
 
     }
 }
@@ -4925,37 +6757,49 @@ world_climbing_leaves :: proc(editor: ^Editor) {
             structure.kind == .Ridge ||
             structure.kind == .Cliff
         if !eligible do continue
-        footprint := max(structure.width, structure.depth) * .42
-        density_sum: f32 = 0
-        density_samples := 0
-        for sample in -2 ..= 2 {
-            sample_x, sample_z := world_rotate_xz(
-                structure.center_x,
-                structure.center_z,
-                f32(sample) * footprint * .52,
-                f32((sample + int(structure.seed % 3)) % 3 - 1) * footprint * .16,
-                structure.rotation,
-            )
-            density_sum += architecture.city_density_sample(&editor.project.climbing_leaf_density, sample_x, sample_z)
-            density_samples += 1
-        }
-        density := density_sum / f32(density_samples)
+        density := architecture.bougainvillea_density_at_structure(&editor.project.climbing_leaf_density, structure)
         if density < .035 do continue
+        // Compound buildings, laundry anchors, and climbing growth all share
+        // the same frontmost rendered mass.
+        growth_structure := architecture.architecture_frontage_structure(structure)
         // A painted patch should grow into a small colony of stems rather
         // than a single line; density controls the colony size continuously.
         vine_count := min(1 + int(density * 5.0), 4)
+        if structure.kind == .Architecture {
+            // Mature bougainvillea usually presents one woody plant with a
+            // small number of leaders, not several unrelated ivy-like tracks.
+            vine_count = min(1 + int(density * 1.8), 2)
+        }
+        height_fraction := .50 + density * .30
+        if structure.kind == .Architecture {
+            maturity := architecture.bougainvillea_maturity(density)
+            // Juveniles should be visibly young in reach as well as foliage
+            // density. Established plants can still occupy most of a façade.
+            height_fraction = architecture.bougainvillea_height_fraction(maturity)
+        }
+        plant_seed := structure.seed + u32(structure_index * 19)
+        if editor.capture_bougainvillea_seed_enabled && structure.id == editor.capture_bougainvillea_structure_id {
+            plant_seed = editor.capture_bougainvillea_seed
+        }
+        root_spread := f32(math.sin(f64(f32(plant_seed) * .17))) * .38
+        root_attachment_x := architecture.bougainvillea_root_attachment_x(
+            growth_structure,
+            root_spread * growth_structure.width * .62,
+            plant_seed,
+        )
         for vine in 0 ..< vine_count {
-            vine_seed := structure.seed + u32(structure_index * 19 + vine * 7)
-            spread := f32(math.sin(f64(f32(vine_seed) * .17))) * .38
+            vine_seed := plant_seed + u32(vine * 7)
+            spread := root_spread
             if vine_count > 1 do spread += (f32(vine) / f32(vine_count - 1) - .5) * .24
-            surface_offset := f32(math.cos(f64(f32(vine_seed) * .23))) * .18
-            attachment_x := spread * structure.width * .62
-            attachment_z := structure.depth * .5 + .28 + surface_offset
-            if structure.kind != .Architecture {
+            surface_seed := growth_structure.kind == .Architecture ? plant_seed : vine_seed
+            surface_offset := f32(math.cos(f64(f32(surface_seed) * .23))) * .18
+            attachment_x := spread * growth_structure.width * .62
+            attachment_z := growth_structure.depth * .5 + .28 + surface_offset
+            if growth_structure.kind != .Architecture {
                 // Non-building targets are treated as rounded masses: place
                 // each vine on the near radial shell instead of projecting it
                 // onto an arbitrary rectangular front plane.
-                shell_radius := max(structure.width, structure.depth) * .46 + .24
+                shell_radius := max(growth_structure.width, growth_structure.depth) * .46 + .24
                 attachment_x = spread * shell_radius
                 shell_height := f32(
                     math.sqrt(f64(max(shell_radius * shell_radius - attachment_x * attachment_x, f32(.16)))),
@@ -4963,11 +6807,15 @@ world_climbing_leaves :: proc(editor: ^Editor) {
                 attachment_z = shell_height + surface_offset
             }
             world_climbing_leaf_vine(
-                structure,
+                growth_structure,
                 attachment_x,
+                root_attachment_x,
                 attachment_z,
-                structure.height * (.50 + density * .30) * (.88 + f32((vine + int(structure.seed)) % 3) * .08),
+                growth_structure.height * height_fraction * (.88 + f32((vine + int(structure.seed)) % 3) * .08),
+                density,
                 vine_seed,
+                plant_seed,
+                vine == 0,
                 sky.weather.wind[0],
                 sky.weather.wind[1],
                 sky.cloud_time_seconds,
@@ -6905,6 +8753,71 @@ world_brush :: proc(editor: ^Editor) {
     world_brush_disc(editor, x, z, inner_radius, .105, core)
 }
 
+world_ground_grass :: proc(editor: ^Editor) {
+    if editor == nil || !editor.in_map || editor.pilot.mode != .On_Foot do return
+    if terrain.ground_surface_at(&editor.project, 0, editor.player.position.x, editor.player.position.z) != .Grass {
+        return
+    }
+
+    // A snapped, deterministic field follows the player without shimmer. Its
+    // concentric density falloff keeps the near field lush while bounding CPU
+    // terrain samples and opaque blade geometry for the 4K frame budget.
+    SPACING :: f32(.92)
+    RADIUS :: f32(21)
+    grid_radius := int(math.ceil(f64(RADIUS / SPACING)))
+    center_x := f32(math.floor(f64(editor.player.position.x / SPACING))) * SPACING
+    center_z := f32(math.floor(f64(editor.player.position.z / SPACING))) * SPACING
+    for grid_z in -grid_radius ..= grid_radius {
+        for grid_x in -grid_radius ..= grid_radius {
+            world_grid_x := grid_x + int(center_x / SPACING)
+            world_grid_z := grid_z + int(center_z / SPACING)
+            seed_index := world_grid_x * 73856093 + world_grid_z * 19349663
+            jitter_x := (wind_streak_hash(seed_index, 1) - .5) * SPACING * .76
+            jitter_z := (wind_streak_hash(seed_index, 2) - .5) * SPACING * .76
+            x := center_x + f32(grid_x) * SPACING + jitter_x
+            z := center_z + f32(grid_z) * SPACING + jitter_z
+            dx, dz := x - editor.player.position.x, z - editor.player.position.z
+            distance_squared := dx * dx + dz * dz
+            if distance_squared > RADIUS * RADIUS do continue
+            distance := f32(math.sqrt(f64(distance_squared)))
+            fade := clamp((distance - RADIUS * .58) / (RADIUS * .42), f32(0), f32(1))
+            fade = fade * fade * (3 - 2 * fade)
+            density := 1 - fade
+            if wind_streak_hash(seed_index, 3) > .52 + density * .47 do continue
+            height_at := terrain.sample_height(&editor.project, 0, x, z)
+            if terrain.classify_ground(
+                   terrain.sample_material(&editor.project, 0, x, z),
+                   height_at,
+                   editor.project.sea_level,
+               ) !=
+               .Grass {
+                continue
+            }
+            pavement := roads.pavement_at(&editor.project.road_graph, {x = x, y = height_at, z = z})
+            if pavement.on_surface do continue
+
+            variation := wind_streak_hash(seed_index, 4)
+            // The atlas is sampled as luminance, so elevation can drive the
+            // complete palette without additional texture variants. Moist,
+            // near-shore grass is cool and blue-green; high exposed slopes
+            // transition through olive into a dry, sun-warmed yellow-green.
+            elevation := max(height_at - editor.project.sea_level, f32(0))
+            altitude := clamp((elevation - 2.4) / 28, f32(0), f32(1))
+            low := rl.Color{49, 112, 78, 255}
+            middle := rl.Color{75, 137, 68, 255}
+            high := rl.Color{139, 145, 70, 255}
+            color := color_lerp(middle, high, (altitude - .52) / .48)
+            if altitude < .52 {
+                color = color_lerp(low, middle, altitude / .52)
+            }
+            color = color_lerp(color, {157, 164, 87, 255}, variation * .09)
+            height := .58 + variation * .42
+            width := height * (.74 + wind_streak_hash(seed_index, 6) * .18)
+            world_grass_card({x, height_at + height * .5, z}, width, height, abs(seed_index) % 16, color)
+        }
+    }
+}
+
 world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.vertices)
     clear(&world_renderer.wing_trail_vertices)
@@ -6912,6 +8825,8 @@ world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.wing_trail_optimized_indices)
     clear(&world_renderer.road_vertices)
     clear(&world_renderer.foliage_vertices)
+    clear(&world_renderer.bougainvillea_vertices)
+    clear(&world_renderer.grass_vertices)
     world_renderer.player_vertex_first = 0
     world_renderer.player_vertex_count = 0
     if editor.pause_screen == .Customization {
@@ -6972,6 +8887,7 @@ world_build :: proc(editor: ^Editor) {
     }
     world_structures(editor)
     world_climbing_leaves(editor)
+    world_ground_grass(editor)
     world_aircraft(editor)
     world_car(editor)
     world_attendant_kiosk(editor)
@@ -7482,12 +9398,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         return false
     }
     foliage_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = 1},
-        {type = .SAMPLER, descriptorCount = 1},
+        {type = .SAMPLED_IMAGE, descriptorCount = 3},
+        {type = .SAMPLER, descriptorCount = 3},
     }
     foliage_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-        maxSets       = 1,
+        maxSets       = 3,
         poolSizeCount = 2,
         pPoolSizes    = raw_data(foliage_pool_sizes[:]),
     }
@@ -7495,19 +9411,44 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
        .SUCCESS {
         return false
     }
+    foliage_layouts := [3]vk.DescriptorSetLayout {
+        world_renderer.foliage_descriptor_layout,
+        world_renderer.foliage_descriptor_layout,
+        world_renderer.foliage_descriptor_layout,
+    }
+    foliage_descriptors: [3]vk.DescriptorSet
     foliage_allocate := vk.DescriptorSetAllocateInfo {
         sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
         descriptorPool     = world_renderer.foliage_descriptor_pool,
-        descriptorSetCount = 1,
-        pSetLayouts        = &world_renderer.foliage_descriptor_layout,
+        descriptorSetCount = 3,
+        pSetLayouts        = raw_data(foliage_layouts[:]),
     }
-    if vk.AllocateDescriptorSets(ctx.device, &foliage_allocate, &world_renderer.foliage_descriptor) != .SUCCESS {
+    if vk.AllocateDescriptorSets(ctx.device, &foliage_allocate, raw_data(foliage_descriptors[:])) != .SUCCESS {
         return false
     }
+    world_renderer.foliage_descriptor = foliage_descriptors[0]
+    world_renderer.bougainvillea_descriptor = foliage_descriptors[1]
+    world_renderer.grass_descriptor = foliage_descriptors[2]
     if !resources.texture_load_file(
         ctx,
         "assets/textures/foliage/leaf-branches-atlas.png",
         &world_renderer.foliage_atlas,
+        {address_mode = .CLAMP_TO_EDGE},
+    ) {
+        return false
+    }
+    if !resources.texture_load_file(
+        ctx,
+        "assets/textures/foliage/bougainvillea-clumps-atlas-v2.png",
+        &world_renderer.bougainvillea_atlas,
+        {address_mode = .CLAMP_TO_EDGE},
+    ) {
+        return false
+    }
+    if !resources.texture_load_file(
+        ctx,
+        "assets/textures/foliage/grass-tufts-atlas.png",
+        &world_renderer.grass_atlas,
         {address_mode = .CLAMP_TO_EDGE},
     ) {
         return false
@@ -7519,7 +9460,21 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     foliage_sampler_info := vk.DescriptorImageInfo {
         sampler = world_renderer.foliage_atlas.sampler,
     }
-    foliage_writes := [2]vk.WriteDescriptorSet {
+    bougainvillea_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.bougainvillea_atlas.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    bougainvillea_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.bougainvillea_atlas.sampler,
+    }
+    grass_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.grass_atlas.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    grass_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.grass_atlas.sampler,
+    }
+    foliage_writes := [6]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
             dstSet = world_renderer.foliage_descriptor,
@@ -7536,8 +9491,40 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             descriptorType = .SAMPLER,
             pImageInfo = &foliage_sampler_info,
         },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.bougainvillea_descriptor,
+            dstBinding = 0,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &bougainvillea_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.bougainvillea_descriptor,
+            dstBinding = 1,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &bougainvillea_sampler_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.grass_descriptor,
+            dstBinding = 0,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &grass_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.grass_descriptor,
+            dstBinding = 1,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &grass_sampler_info,
+        },
     }
-    vk.UpdateDescriptorSets(ctx.device, 2, raw_data(foliage_writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(ctx.device, 6, raw_data(foliage_writes[:]), 0, nil)
     foliage_layout_info := li
     foliage_layout_info.setLayoutCount = 1
     foliage_layout_info.pSetLayouts = &world_renderer.foliage_descriptor_layout
@@ -7735,16 +9722,17 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         stride    = u32(size_of(Foliage_Vertex)),
         inputRate = .VERTEX,
     }
-    foliage_attributes := [3]vk.VertexInputAttributeDescription {
+    foliage_attributes := [4]vk.VertexInputAttributeDescription {
         {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Foliage_Vertex, position))},
         {location = 1, format = .R32G32_SFLOAT, offset = u32(offset_of(Foliage_Vertex, uv))},
         {location = 2, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Foliage_Vertex, color))},
+        {location = 3, format = .R32_UINT, offset = u32(offset_of(Foliage_Vertex, kind))},
     }
     foliage_vi := vk.PipelineVertexInputStateCreateInfo {
         sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         vertexBindingDescriptionCount   = 1,
         pVertexBindingDescriptions      = &foliage_binding,
-        vertexAttributeDescriptionCount = 3,
+        vertexAttributeDescriptionCount = 4,
         pVertexAttributeDescriptions    = raw_data(foliage_attributes[:]),
     }
     foliage_depth := depth
@@ -7813,7 +9801,10 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     for &buffer in world_renderer.foliage_vertex {
         if !engine.vk_create_host_buffer(
             ctx,
-            vk.DeviceSize(FOLIAGE_VERTEX_CAPACITY * size_of(Foliage_Vertex)),
+            vk.DeviceSize(
+                (FOLIAGE_VERTEX_CAPACITY + BOUGAINVILLEA_VERTEX_CAPACITY + GRASS_VERTEX_CAPACITY) *
+                size_of(Foliage_Vertex),
+            ),
             {.VERTEX_BUFFER},
             &buffer,
         ) {
@@ -7850,6 +9841,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
     world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_CAPACITY)
     world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_CAPACITY)
+    world_renderer.bougainvillea_vertices = make([dynamic]Foliage_Vertex, 0, BOUGAINVILLEA_VERTEX_CAPACITY)
+    world_renderer.grass_vertices = make([dynamic]Foliage_Vertex, 0, GRASS_VERTEX_CAPACITY)
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
     world_renderer.wing_trail_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
     world_renderer.wing_trail_optimized_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
@@ -7895,6 +9888,27 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             foliage_buffer.mapped,
             raw_data(world_renderer.foliage_vertices[:]),
             len(world_renderer.foliage_vertices) * size_of(Foliage_Vertex),
+        )
+    }
+    if len(world_renderer.bougainvillea_vertices) > 0 {
+        destination := cast(rawptr)(cast(uintptr)foliage_buffer.mapped +
+            uintptr(len(world_renderer.foliage_vertices) * size_of(Foliage_Vertex)))
+        mem.copy_non_overlapping(
+            destination,
+            raw_data(world_renderer.bougainvillea_vertices[:]),
+            len(world_renderer.bougainvillea_vertices) * size_of(Foliage_Vertex),
+        )
+    }
+    if len(world_renderer.grass_vertices) > 0 {
+        destination := cast(rawptr)(cast(uintptr)foliage_buffer.mapped +
+            uintptr(
+                (len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)) *
+                size_of(Foliage_Vertex),
+            ))
+        mem.copy_non_overlapping(
+            destination,
+            raw_data(world_renderer.grass_vertices[:]),
+            len(world_renderer.grass_vertices) * size_of(Foliage_Vertex),
         )
     }
     if len(world_renderer.wing_trail_vertices) > 0 {
@@ -8012,6 +10026,8 @@ world_renderer_destroy :: proc() {
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.particle_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.foliage_pipelines)
     resources.image_destroy(&world_renderer.foliage_atlas, world_renderer.ctx)
+    resources.image_destroy(&world_renderer.bougainvillea_atlas, world_renderer.ctx)
+    resources.image_destroy(&world_renderer.grass_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.vehicle_paint_atlas, world_renderer.ctx)
     if world_renderer.layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.layout, nil)
     if world_renderer.sky_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.sky_layout, nil)
@@ -8031,6 +10047,8 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.vertices)
     delete(world_renderer.road_vertices)
     delete(world_renderer.foliage_vertices)
+    delete(world_renderer.bougainvillea_vertices)
+    delete(world_renderer.grass_vertices)
     delete(world_renderer.wing_trail_vertices)
     delete(world_renderer.wing_trail_indices)
     delete(world_renderer.wing_trail_optimized_indices)

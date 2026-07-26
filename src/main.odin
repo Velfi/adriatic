@@ -27,6 +27,7 @@ import "core:strconv"
 import "core:time"
 import sdl "vendor:sdl3"
 import rl "zelda_engine:canvas2d"
+import physics "zelda_engine:physics"
 
 HOT_RELOAD :: #config(HOT_RELOAD, false)
 HOT_LIBRARY_ENV :: "ADRIATIC_HOT_LIBRARY"
@@ -96,6 +97,7 @@ Editor :: struct {
     architecture_painting:                          bool,
     architecture_density_preview:                   [terrain.CITY_DENSITY_SAMPLES]u8,
     architecture_preview_plan:                      architecture.City_Plan,
+    architecture_city_plan:                         architecture.City_Plan,
     architecture_dirty_bounds:                      architecture.City_Bounds,
     architecture_last_x, architecture_last_z:       f32,
     architecture_brush_radius:                      f32,
@@ -140,6 +142,9 @@ Editor :: struct {
     capture_player_fall_pose:                       bool,
     capture_player_blink_pose:                      bool,
     capture_player_posted_pose:                     bool,
+    capture_bougainvillea_seed_enabled:             bool,
+    capture_bougainvillea_structure_id:             u64,
+    capture_bougainvillea_seed:                     u32,
     structure_undo:                                 [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
     structure_redo:                                 [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
     structure_undo_count:                           int,
@@ -181,7 +186,16 @@ Editor :: struct {
     pilot:                                          vehicles.Character,
     car:                                            vehicles.Vehicle,
     car_drive:                                      vehicles.Car_Drive_State,
+    car_physics_world:                              physics.World,
+    car_physics_vehicle:                            physics.Vehicle,
+    car_physics_terrain:                            [terrain.CLIPMAP_LEVELS]physics.Body_ID,
+    car_physics_terrain_revision:                   u64,
+    car_physics_accumulator:                        f64,
+    car_wheels:                                     [4]physics.Wheel_State,
+    car_impact_detector:                            engine_sound.Vehicle_Impact_Detector,
+    car_audio_damage:                               f32,
     engine_audio:                                   engine_sound.Device,
+    car_audio_gearbox:                              engine_sound.Car_Gearbox,
     landing_wheel_squeal:                           f32,
     landing_wheel_speed:                            f32,
     car_trailer:                                    vehicles.Car_Trailer_State,
@@ -496,9 +510,26 @@ terrain_project_save :: proc(editor: ^Editor) {
     }
 }
 
+architecture_regenerate_all :: proc(editor: ^Editor) {
+    if editor == nil do return
+    bounds := architecture.city_density_bounds(&editor.project.city_density)
+    if !bounds.valid {
+        architecture.clear_architecture(&editor.project)
+        editor.architecture_city_plan = {}
+        return
+    }
+    plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, bounds)
+    _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
+    editor.architecture_city_plan = plan
+}
+
 terrain_project_load :: proc(editor: ^Editor) {
     if editor == nil do return
     if terrain.load_project(&editor.project, TERRAIN_PROJECT_PATH) {
+        // Parcels are transient and deterministic. Refit all architecture to
+        // the saved roads and density instead of persisting product-specific
+        // lot data in terrain.Project.
+        architecture_regenerate_all(editor)
         // Loading can restore the same authored revision number as the current
         // project. Advance it so revision-keyed render caches always rebuild.
         editor.project.revision += 1
@@ -712,14 +743,20 @@ formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cu
         dx, dz := world_x - editor.formation_brush_last_x, world_z - editor.formation_brush_last_z
         distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
         step := max(editor.formation_brush_radius * .30, terrain.BASE_CELL_SIZE * .45)
-        stamps := max(int(math.ceil(f64(distance / step))), 1)
-        for stamp in 1 ..= stamps {
-            amount := f32(stamp) / f32(stamps)
-            x := editor.formation_brush_last_x + dx * amount
-            z := editor.formation_brush_last_z + dz * amount
-            formation_brush_stamp(editor, x, z, erase)
+        stamps := int(math.floor(f64(distance / step)))
+        if stamps > 0 {
+            direction_x, direction_z := dx / distance, dz / distance
+            for stamp in 1 ..= stamps {
+                travel := f32(stamp) * step
+                x := editor.formation_brush_last_x + direction_x * travel
+                z := editor.formation_brush_last_z + direction_z * travel
+                formation_brush_stamp(editor, x, z, erase)
+            }
+            // Keep the unpainted tail so sub-step mouse movement accumulates
+            // across frames instead of producing a stamp on every frame.
+            editor.formation_brush_last_x += direction_x * f32(stamps) * step
+            editor.formation_brush_last_z += direction_z * f32(stamps) * step
         }
-        editor.formation_brush_last_x, editor.formation_brush_last_z = world_x, world_z
     }
     if editor.formation_brush_painting && (rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)) {
         editor.formation_brush_painting = false
@@ -883,6 +920,7 @@ road_delete_selected :: proc(editor: ^Editor) {
     structure_history_push_undo(editor)
     if roads.remove_node(&editor.project.road_graph, editor.road_selected_node) {
         editor.project.revision += 1
+        architecture_regenerate_all(editor)
     }
     editor.road_selected_node = -1
     editor.road_drag_edge = -1
@@ -908,6 +946,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
                 edge.control_to = point
             }
             editor.project.revision += 1
+            architecture_regenerate_all(editor)
         }
         if rl.IsMouseButtonReleased(.LEFT) {
             editor.road_drag_edge = -1
@@ -934,6 +973,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
                 structure_history_push_undo(editor)
                 _ = road_connect(editor, editor.road_selected_node, clicked_node)
                 editor.project.revision += 1
+                architecture_regenerate_all(editor)
             }
         }
         editor.road_selected_node = clicked_node
@@ -945,6 +985,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
         if editor.road_selected_node >= 0 do _ = road_connect(editor, editor.road_selected_node, new_node)
         editor.road_selected_node = new_node
         editor.project.revision += 1
+        architecture_regenerate_all(editor)
     }
 }
 
@@ -1148,6 +1189,7 @@ seed_road_grip_benchmark :: proc(editor: ^Editor) {
         z = point.z,
     }
     editor.car.yaw_radians = math.atan2(tangent.z, tangent.x)
+    car_physics_teleport(editor)
     editor.pilot.position = editor.car.position
     _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
     if !entered do return
@@ -1169,6 +1211,7 @@ seed_terrain_grip_benchmark :: proc(editor: ^Editor) {
     }
     editor.car.position.y = terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
     editor.car.yaw_radians = math.PI * .5
+    car_physics_teleport(editor)
     editor.pilot.position = editor.car.position
     _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
     if !entered do return
@@ -1277,9 +1320,13 @@ benchmark_report :: proc(
     maximum := sorted[len(sorted) - 1]
     world_vertex_count := len(world_renderer.vertices)
     road_vertex_count := len(world_renderer.road_vertices)
-    foliage_vertex_count := len(world_renderer.foliage_vertices)
+    foliage_vertex_count :=
+        len(world_renderer.foliage_vertices) +
+        len(world_renderer.bougainvillea_vertices) +
+        len(world_renderer.grass_vertices)
     world_vertex_utilization := f64(world_vertex_count) / f64(max(WORLD_VERTEX_CAPACITY, 1))
-    foliage_vertex_utilization := f64(foliage_vertex_count) / f64(max(FOLIAGE_VERTEX_CAPACITY, 1))
+    foliage_vertex_capacity := FOLIAGE_VERTEX_CAPACITY + BOUGAINVILLEA_VERTEX_CAPACITY + GRASS_VERTEX_CAPACITY
+    foliage_vertex_utilization := f64(foliage_vertex_count) / f64(max(foliage_vertex_capacity, 1))
     road_vertex_utilization := f64(road_vertex_count) / f64(max(ROAD_VERTEX_CAPACITY, 1))
     fmt.printf(
         "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f}}}}\n",
@@ -1302,7 +1349,7 @@ benchmark_report :: proc(
         ROAD_VERTEX_CAPACITY,
         road_vertex_utilization,
         foliage_vertex_count,
-        FOLIAGE_VERTEX_CAPACITY,
+        foliage_vertex_capacity,
         foliage_vertex_utilization,
     )
 }
@@ -1475,6 +1522,7 @@ seed_road_grip_capture :: proc(editor: ^Editor) {
     for index in 0 ..< editor.vehicle_effects.dust_count {
         editor.vehicle_effects.dust[index].size *= 2.8
     }
+    car_physics_teleport(editor)
 }
 
 seed_terrain_grip_capture :: proc(editor: ^Editor) {
@@ -1531,6 +1579,7 @@ seed_terrain_grip_capture :: proc(editor: ^Editor) {
     for index in 0 ..< editor.vehicle_effects.dust_count {
         editor.vehicle_effects.dust[index].size *= 2.8
     }
+    car_physics_teleport(editor)
 }
 
 // terrain_dust_surface maps the terrain classifier's discrete ground band onto
@@ -1546,6 +1595,92 @@ terrain_dust_surface :: proc(surface: terrain.Ground_Surface) -> particle_system
         return .Grass
     }
     return .Grass
+}
+
+footstep_surface_from_dust :: proc(surface: particle_systems.Dust_Surface) -> engine_sound.Footstep_Surface {
+    switch surface {
+    case .Asphalt:
+        return .Asphalt
+    case .Cobblestone:
+        return .Cobblestone
+    case .Gravel:
+        return .Gravel
+    case .Dirt:
+        return .Dirt
+    case .Sand:
+        return .Sand
+    case .Grass:
+        return .Grass
+    }
+    return .Grass
+}
+
+crash_surface_from_dust :: proc(surface: particle_systems.Dust_Surface) -> engine_sound.Crash_Surface {
+    switch surface {
+    case .Asphalt:
+        return .Asphalt
+    case .Cobblestone:
+        return .Cobblestone
+    case .Gravel:
+        return .Gravel
+    case .Dirt:
+        return .Dirt
+    case .Sand:
+        return .Sand
+    case .Grass:
+        return .Grass
+    }
+    return .Dirt
+}
+
+ocean_shore_proximity :: proc(editor: ^Editor, x, z: f32) -> f32 {
+    if editor == nil do return 1
+    sea_level := editor.project.sea_level
+    if terrain.sample_height(&editor.project, 0, x, z) < sea_level do return 1
+    directions := [8][2]f32 {
+        {1, 0},
+        {-1, 0},
+        {0, 1},
+        {0, -1},
+        {.707, .707},
+        {-.707, .707},
+        {.707, -.707},
+        {-.707, -.707},
+    }
+    radii := [3]f32{30, 80, 160}
+    proximity := [3]f32{1, .68, .34}
+    for ring in 0 ..< len(radii) {
+        for direction in directions {
+            if terrain.sample_height(
+                   &editor.project,
+                   0,
+                   x + direction[0] * radii[ring],
+                   z + direction[1] * radii[ring],
+               ) <
+               sea_level {
+                return proximity[ring]
+            }
+        }
+    }
+    return .12
+}
+
+tire_roughness_from_dust :: proc(surface: particle_systems.Dust_Surface) -> f32 {
+    switch surface {
+    case .Asphalt:
+        return .12
+    case .Cobblestone:
+        return .72
+    case .Gravel:
+        return .9
+    case .Dirt:
+        return .62
+    case .Sand:
+        return .48
+    case .Grass:
+        return .38
+    }
+    return .38
 }
 
 road_car_surface :: proc(
@@ -1616,6 +1751,15 @@ seed_city_capture :: proc(editor: ^Editor) {
 
 configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = "") -> bool {
     if editor == nil do return false
+    bougainvillea_seed_override := -1
+    bougainvillea_prefix := "bougainvillea-"
+    if len(target_arg) > len(bougainvillea_prefix) &&
+       target_arg[:len(bougainvillea_prefix)] == bougainvillea_prefix {
+        parsed, ok := strconv.parse_int(target_arg[len(bougainvillea_prefix):])
+        if ok && parsed >= 0 && parsed <= 0xffffffff {
+            bougainvillea_seed_override = int(parsed)
+        }
+    }
     if target_arg == "cypress" {
         min_x, max_x := f32(1e9), f32(-1e9)
         min_z, max_z := f32(1e9), f32(-1e9)
@@ -1652,8 +1796,12 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
         }
     }
     target_index := -1
-    requested_ordinal := -1
-    if target_arg != "" {
+    // Seed-matrix captures use the same close façade as the long-running
+    // architectural validation shot, changing only the plant seed. This keeps
+    // palette and habit comparisons from being confounded by camera/building
+    // selection.
+    requested_ordinal := bougainvillea_seed_override >= 0 ? 4 : -1
+    if target_arg != "" && bougainvillea_seed_override < 0 {
         parsed, ok := strconv.parse_int(target_arg)
         if ok && parsed >= 0 do requested_ordinal = int(parsed)
     }
@@ -1695,6 +1843,11 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     if target_index < 0 do return false
 
     building := editor.project.structures[target_index]
+    if bougainvillea_seed_override >= 0 {
+        editor.capture_bougainvillea_seed_enabled = true
+        editor.capture_bougainvillea_structure_id = building.id
+        editor.capture_bougainvillea_seed = u32(bougainvillea_seed_override)
+    }
     facade_x, facade_z := -math.sin(building.rotation), math.cos(building.rotation)
     // Move the architectural capture into the lane so balconies and laundry
     // read as the subject instead of small details in a town-wide shot.
@@ -1752,6 +1905,9 @@ architecture_paint_commit :: proc(editor: ^Editor) {
         rebuild_bounds,
         &editor.architecture_preview_plan,
     )
+    // Reconstruct the full transient parcel/alley cache after the bounded
+    // paint commit so previously generated districts remain visible.
+    architecture_regenerate_all(editor)
     editor.architecture_painting = false
     editor.architecture_preview_plan = {}
     editor.architecture_dirty_bounds = {}
@@ -2239,7 +2395,7 @@ editor_debug_toggle_pressed :: proc(editor: ^Editor) -> bool {
 }
 
 postale_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * editor.project.levels[0].cell_size * .5
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
     z := half_extent * terrain.DEFAULT_ISLAND_OFFSET
     ground := postale_game.drivable_surface_height(
@@ -2394,7 +2550,7 @@ active_aircraft_ground_clearance :: proc(editor: ^Editor) -> f32 {
 }
 
 libellula_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * editor.project.levels[0].cell_size * .5
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET + 12
     z := half_extent * terrain.DEFAULT_ISLAND_OFFSET + 8
     return {x = x, y = terrain.sample_height(&editor.project, 0, x, z) + 2.1, z = z}
@@ -3572,7 +3728,7 @@ editor_focus_terrain :: proc(editor: ^Editor) {
 
 draw_infrastructure_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
     level := 0
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * editor.project.levels[level].cell_size * .5
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_x := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
         island_z := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
@@ -3952,7 +4108,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
 
 draw_default_infrastructure :: proc(editor: ^Editor, center: rl.Vector2, scale: f32) {
     level := 0
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * editor.project.levels[level].cell_size * .5
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_x := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
         island_z := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
@@ -4204,7 +4360,7 @@ draw_editor_context :: proc(editor: ^Editor) {
 }
 
 runway_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * editor.project.levels[0].cell_size * .5
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
     // Start beside the parked aircraft so the default camera presents it and
     // the runway immediately instead of placing the character inside its mesh.
@@ -4229,6 +4385,251 @@ driving_aircraft :: proc(editor: ^Editor) -> bool {
 
 driving_car :: proc(editor: ^Editor) -> bool {
     return editor != nil && editor.pilot.mode == .Driving && editor.pilot.vehicle == &editor.car
+}
+
+car_physics_rotation :: proc(yaw: f32) -> physics.Quat {
+    jolt_yaw := math.PI * .5 - yaw
+    return {0, math.sin(jolt_yaw * .5), 0, math.cos(jolt_yaw * .5)}
+}
+
+car_physics_yaw :: proc(rotation: physics.Quat) -> f32 {
+    jolt_yaw := math.atan2(
+        2 * (rotation[3] * rotation[1] + rotation[0] * rotation[2]),
+        1 - 2 * (rotation[1] * rotation[1] + rotation[2] * rotation[2]),
+    )
+    return math.PI * .5 - jolt_yaw
+}
+
+car_physics_level_heights :: proc(editor: ^Editor, level_index: int, result: []f32) {
+    if editor == nil ||
+       level_index < 0 ||
+       level_index >= terrain.CLIPMAP_LEVELS ||
+       len(result) < terrain.SAMPLES_PER_LEVEL {
+        return
+    }
+    level := &editor.project.levels[level_index]
+    copy(result, level.heights[:])
+    if level_index == 0 do return
+    finer := &editor.project.levels[level_index - 1]
+    // Preserve one coarse-cell apron. Since even-sized grids at successive
+    // resolutions cannot share both boundary vertices exactly, the overlap is
+    // safer than allowing no-collision vertices to remove the seam triangles.
+    apron := level.cell_size
+    finer_extent := f32(terrain.RING_RESOLUTION - 1) * finer.cell_size
+    for z in 0 ..< terrain.RING_RESOLUTION {
+        world_z := level.origin_z + f32(z) * level.cell_size
+        for x in 0 ..< terrain.RING_RESOLUTION {
+            world_x := level.origin_x + f32(x) * level.cell_size
+            if world_x >= finer.origin_x + apron &&
+               world_x <= finer.origin_x + finer_extent - apron &&
+               world_z >= finer.origin_z + apron &&
+               world_z <= finer.origin_z + finer_extent - apron {
+                result[terrain.sample_index(x, z)] = math.F32_MAX
+            }
+        }
+    }
+}
+
+car_physics_create :: proc(editor: ^Editor) {
+    if editor == nil || editor.car_physics_world != nil do return
+    editor.car_physics_world = physics.create_world(128, 1)
+    physics.set_gravity(editor.car_physics_world, {0, -9.81, 0})
+    ground := terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
+    collision_heights := make([]f32, terrain.SAMPLES_PER_LEVEL)
+    defer delete(collision_heights)
+    for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
+        level := &editor.project.levels[level_index]
+        car_physics_level_heights(editor, level_index, collision_heights)
+        editor.car_physics_terrain[level_index] = physics.add_height_field(
+            editor.car_physics_world,
+            collision_heights,
+            terrain.RING_RESOLUTION,
+            {level.origin_x, 0, level.origin_z},
+            {level.cell_size, 1, level.cell_size},
+            4,
+            8,
+        )
+        if editor.car_physics_terrain[level_index] == physics.INVALID_BODY {
+            physics.destroy_world(editor.car_physics_world)
+            editor.car_physics_world = nil
+            return
+        }
+    }
+    editor.car_physics_terrain_revision = editor.project.revision
+    editor.car_physics_vehicle = physics.create_vehicle(
+        editor.car_physics_world,
+        {
+            half_width = .67,
+            half_height = .25,
+            half_length = 1.22,
+            mass = 720,
+            center_of_mass_offset_y = -.18,
+            wheel_x = .78,
+            front_wheel_z = .82,
+            rear_wheel_z = -.82,
+            wheel_y = -.20,
+            wheel_radius = .32,
+            wheel_width = .24,
+            suspension_min = .08,
+            suspension_max = .30,
+            suspension_frequency = 2.4,
+            suspension_damping = .9,
+            max_steer_angle = math.PI * .19,
+            max_engine_torque = 520,
+            max_brake_torque = 1100,
+            max_handbrake_torque = 1400,
+            four_wheel_drive = false,
+        },
+        {editor.car.position.x, ground + .74, editor.car.position.z},
+        car_physics_rotation(editor.car.yaw_radians),
+    )
+    if editor.car_physics_vehicle == nil {
+        physics.destroy_world(editor.car_physics_world)
+        editor.car_physics_world = nil
+        for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
+            editor.car_physics_terrain[level_index] = physics.INVALID_BODY
+        }
+    }
+}
+
+car_physics_destroy :: proc(editor: ^Editor) {
+    if editor == nil || editor.car_physics_world == nil do return
+    physics.destroy_world(editor.car_physics_world)
+    editor.car_physics_world = nil
+    editor.car_physics_vehicle = nil
+    for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
+        editor.car_physics_terrain[level_index] = physics.INVALID_BODY
+    }
+    editor.car_physics_terrain_revision = 0
+}
+
+car_physics_teleport :: proc(editor: ^Editor, reset_velocity: bool = true) {
+    if editor == nil || editor.car_physics_world == nil || editor.car_physics_vehicle == nil do return
+    physics.set_vehicle_transform(
+        editor.car_physics_world,
+        editor.car_physics_vehicle,
+        {editor.car.position.x, editor.car.position.y + .74, editor.car.position.z},
+        car_physics_rotation(editor.car.yaw_radians),
+        reset_velocity,
+    )
+    if reset_velocity {
+        editor.car_drive = {}
+        editor.car_physics_accumulator = 0
+    }
+}
+
+car_physics_step :: proc(
+    editor: ^Editor,
+    throttle, steering: f32,
+    handbrake: bool,
+    surface: vehicles.Car_Drive_Surface,
+    delta_seconds: f32,
+) -> (
+    impact_severity, impact_slide_speed, impact_obliqueness: f32,
+) {
+    if editor == nil || editor.car_physics_vehicle == nil || delta_seconds <= 0 do return
+    body := physics.vehicle_body(editor.car_physics_vehicle)
+    velocity := physics.get_linear_velocity(editor.car_physics_world, body)
+    velocity_before := velocity
+    forward := physics.Vec3{math.cos(editor.car.yaw_radians), 0, math.sin(editor.car.yaw_radians)}
+    longitudinal := velocity[0] * forward[0] + velocity[2] * forward[2]
+    brake := f32(0)
+    drive := throttle
+    if throttle > .01 && longitudinal < -.5 {
+        brake, drive = throttle, 0
+    } else if throttle < -.01 && longitudinal > .5 {
+        brake, drive = -throttle, 0
+    }
+    physics.set_vehicle_input(
+        editor.car_physics_world,
+        editor.car_physics_vehicle,
+        drive,
+        steering,
+        brake,
+        handbrake ? 1 : 0,
+    )
+    physics.set_vehicle_grip(
+        editor.car_physics_vehicle,
+        surface.longitudinal_grip,
+        surface.lateral_grip * (handbrake ? f32(.22) : f32(1)),
+    )
+
+    if editor.project.revision != editor.car_physics_terrain_revision {
+        updated := true
+        collision_heights := make([]f32, terrain.SAMPLES_PER_LEVEL)
+        defer delete(collision_heights)
+        for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
+            level := &editor.project.levels[level_index]
+            car_physics_level_heights(editor, level_index, collision_heights)
+            updated =
+                physics.update_height_field(
+                    editor.car_physics_world,
+                    editor.car_physics_terrain[level_index],
+                    0,
+                    0,
+                    terrain.RING_RESOLUTION,
+                    terrain.RING_RESOLUTION,
+                    collision_heights,
+                    terrain.RING_RESOLUTION,
+                ) &&
+                updated
+        }
+        if updated {
+            editor.car_physics_terrain_revision = editor.project.revision
+        }
+    }
+    editor.car_physics_accumulator = min(editor.car_physics_accumulator + f64(delta_seconds), f64(.1))
+    for editor.car_physics_accumulator >= 1.0 / 120.0 {
+        physics.step(editor.car_physics_world, 1.0 / 120.0, 2)
+        editor.car_physics_accumulator -= 1.0 / 120.0
+    }
+
+    position, body_rotation, body_ok := physics.get_transform(editor.car_physics_world, body)
+    if !body_ok do return
+    velocity = physics.get_linear_velocity(editor.car_physics_world, body)
+    impact_severity, impact_slide_speed, impact_obliqueness = engine_sound.detect_vehicle_impact(
+        &editor.car_impact_detector,
+        velocity_before[0],
+        velocity_before[1],
+        velocity_before[2],
+        velocity[0],
+        velocity[1],
+        velocity[2],
+        delta_seconds,
+    )
+    previous_yaw := editor.car.yaw_radians
+    editor.car.position = {position[0], position[1] - .74, position[2]}
+    editor.car.yaw_radians = car_physics_yaw(body_rotation)
+    x, y, z, w := body_rotation[0], body_rotation[1], body_rotation[2], body_rotation[3]
+    editor.car_drive.body_pitch = math.asin(clamp(2 * (y * z - w * x), -1, 1))
+    editor.car_drive.body_roll = math.asin(clamp(2 * (x * y + w * z), -1, 1))
+    dt := max(delta_seconds, f32(.001))
+    editor.car_drive.velocity = {velocity[0], velocity[1], velocity[2]}
+    editor.car_drive.wheel_speed = longitudinal
+    editor.car_drive.steering += (steering - editor.car_drive.steering) * clamp(10 * dt, 0, 1)
+    yaw_delta := editor.car.yaw_radians - previous_yaw
+    for yaw_delta > math.PI do yaw_delta -= 2 * math.PI
+    for yaw_delta < -math.PI do yaw_delta += 2 * math.PI
+    editor.car_drive.yaw_rate = yaw_delta / dt
+    editor.car_drive.handbrake_amount +=
+        ((handbrake ? f32(1) : f32(0)) - editor.car_drive.handbrake_amount) * clamp(8 * dt, 0, 1)
+    lateral := velocity[0] * -forward[2] + velocity[2] * forward[0]
+    editor.car_drive.slip_amount +=
+        (clamp(math.abs(lateral) / 8, 0, 1) - editor.car_drive.slip_amount) * clamp(8 * dt, 0, 1)
+    for index in 0 ..< 4 {
+        wheel_state, wheel_ok := physics.get_wheel_state(editor.car_physics_vehicle, u32(index))
+        if !wheel_ok do continue
+        editor.car_wheels[index] = wheel_state
+        wheel := editor.car_wheels[index]
+        _, wheel_surface := road_car_surface(editor, {wheel.position[0], wheel.position[1], wheel.position[2]})
+        physics.set_vehicle_wheel_grip(
+            editor.car_physics_vehicle,
+            u32(index),
+            wheel_surface.longitudinal_grip,
+            wheel_surface.lateral_grip,
+        )
+    }
+    return
 }
 
 car_trailer_hitch_position :: proc(editor: ^Editor, trailer: bool = false) -> third_person.Vec3 {
@@ -4433,128 +4834,6 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     }
 }
 
-// Every `--capture*` command-line flag maps to exactly one Capture_Kind. This
-// enum is the single source of truth for the capture CLI: the flag strings are
-// only spelled out in capture_kind_from_arg, and all downstream behaviour keys
-// off the enum (see the CAPTURE_*_KINDS groups) rather than re-matching strings.
-Capture_Kind :: enum {
-    None,
-    Formation, // --capture
-    Map, // --capture-map
-    Flight, // --capture-flight
-    Car, // --capture-car
-    Vehicle_Showcase, // --capture-vehicle-showcase
-    Paint_Mode, // --capture-paint-mode
-    Road, // --capture-road
-    Road_Dust, // --capture-road-dust
-    Road_Grip, // --capture-road-grip
-    Terrain_Grip, // --capture-terrain-grip
-    Building, // --capture-building
-    Foliage, // --capture-foliage
-    Foliage_Forest, // --capture-foliage-forest
-    Foliage_Forest_Low, // --capture-foliage-forest-low
-    Foliage_Understory, // --capture-foliage-understory
-    Foliage_Golden, // --capture-foliage-forest-golden
-    Foliage_Wind_A, // --capture-foliage-forest-wind-a
-    Foliage_Wind_B, // --capture-foliage-forest-wind-b
-    Foliage_Low_Wind_A, // --capture-foliage-forest-low-wind-a
-    Foliage_Low_Wind_B, // --capture-foliage-forest-low-wind-b
-    Foliage_Stress, // --capture-foliage-stress
-    Narrow, // --capture-narrow
-    Compact, // --capture-compact
-    Sky_Noon, // --capture-sky-noon
-    Sky_Sunset, // --capture-sky-sunset
-    Sky_Storm, // --capture-sky-storm
-    Sky_Night, // --capture-sky-night
-}
-
-// Kinds that pose the world/map camera rather than seeding an authoring scene.
-CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night}
-CAPTURE_FOLIAGE_FOREST_KINDS :: bit_set[Capture_Kind] {
-    .Foliage_Forest,
-    .Foliage_Forest_Low,
-    .Foliage_Understory,
-    .Foliage_Golden,
-    .Foliage_Wind_A,
-    .Foliage_Wind_B,
-    .Foliage_Low_Wind_A,
-    .Foliage_Low_Wind_B,
-}
-CAPTURE_FOLIAGE_MOTION_KINDS :: bit_set[Capture_Kind] {
-    .Foliage_Wind_A,
-    .Foliage_Wind_B,
-    .Foliage_Low_Wind_A,
-    .Foliage_Low_Wind_B,
-}
-CAPTURE_FOLIAGE_LOW_KINDS :: bit_set[Capture_Kind] {
-    .Foliage_Forest_Low,
-    .Foliage_Understory,
-    .Foliage_Low_Wind_A,
-    .Foliage_Low_Wind_B,
-}
-
-capture_kind_from_arg :: proc(arg: string) -> Capture_Kind {
-    switch arg {
-    case "--capture":
-        return .Formation
-    case "--capture-map":
-        return .Map
-    case "--capture-flight":
-        return .Flight
-    case "--capture-car":
-        return .Car
-    case "--capture-vehicle-showcase":
-        return .Vehicle_Showcase
-    case "--capture-paint-mode":
-        return .Paint_Mode
-    case "--vehicle-showcase":
-        return .None
-    case "--capture-road":
-        return .Road
-    case "--capture-road-dust":
-        return .Road_Dust
-    case "--capture-road-grip":
-        return .Road_Grip
-    case "--capture-terrain-grip":
-        return .Terrain_Grip
-    case "--capture-building":
-        return .Building
-    case "--capture-foliage":
-        return .Foliage
-    case "--capture-foliage-forest":
-        return .Foliage_Forest
-    case "--capture-foliage-forest-low":
-        return .Foliage_Forest_Low
-    case "--capture-foliage-understory":
-        return .Foliage_Understory
-    case "--capture-foliage-forest-golden":
-        return .Foliage_Golden
-    case "--capture-foliage-forest-wind-a":
-        return .Foliage_Wind_A
-    case "--capture-foliage-forest-wind-b":
-        return .Foliage_Wind_B
-    case "--capture-foliage-forest-low-wind-a":
-        return .Foliage_Low_Wind_A
-    case "--capture-foliage-forest-low-wind-b":
-        return .Foliage_Low_Wind_B
-    case "--capture-foliage-stress":
-        return .Foliage_Stress
-    case "--capture-narrow":
-        return .Narrow
-    case "--capture-compact":
-        return .Compact
-    case "--capture-sky-noon":
-        return .Sky_Noon
-    case "--capture-sky-sunset":
-        return .Sky_Sunset
-    case "--capture-sky-storm":
-        return .Sky_Storm
-    case "--capture-sky-night":
-        return .Sky_Night
-    }
-    return .None
-}
-
 hot_reload_requested :: proc(library_path: string, loaded_mtime: i64) -> bool {
     if library_path == "" do return false
     modified, err := os.modification_time_by_path(library_path)
@@ -4563,40 +4842,40 @@ hot_reload_requested :: proc(library_path: string, loaded_mtime: i64) -> bool {
     return modified_mtime > loaded_mtime
 }
 
-adriatic_run :: proc() -> bool {
+adriatic_run :: proc(args: []string = os.args, request: ^Capture_Request = nil) -> bool {
     assert(rl.SetRendererDescriptor(ADRIATIC_RENDERER_DESCRIPTOR))
-    benchmark_requested := len(os.args) >= 2 && os.args[1] == "--benchmark"
-    if benchmark_requested && len(os.args) < 9 {
+    benchmark_requested := len(args) >= 2 && args[1] == "--benchmark"
+    if benchmark_requested && len(args) < 9 {
         fmt.eprintln(
             "usage: adriatic --benchmark <scenario> <warmup_frames> <sample_frames> <window_width> <window_height> <world_width> <world_height>",
         )
         return false
     }
-    benchmark_mode := benchmark_requested && len(os.args) >= 9
-    benchmark_scenario := benchmark_mode ? os.args[2] : ""
+    benchmark_mode := benchmark_requested && len(args) >= 9
+    benchmark_scenario := benchmark_mode ? args[2] : ""
     benchmark_warmup, benchmark_frames := 0, 0
     benchmark_window_width, benchmark_window_height := 1280, 720
     benchmark_world_width, benchmark_world_height := ADRIATIC_WORLD_WIDTH, ADRIATIC_WORLD_HEIGHT
     if benchmark_mode {
-        parsed, ok := strconv.parse_int(os.args[3])
+        parsed, ok := strconv.parse_int(args[3])
         if ok do benchmark_warmup = clamp(int(parsed), 0, 4096)
-        parsed, ok = strconv.parse_int(os.args[4])
+        parsed, ok = strconv.parse_int(args[4])
         if ok do benchmark_frames = clamp(int(parsed), 1, 4096)
-        parsed, ok = strconv.parse_int(os.args[5])
+        parsed, ok = strconv.parse_int(args[5])
         if ok do benchmark_window_width = clamp(int(parsed), 320, 7680)
-        parsed, ok = strconv.parse_int(os.args[6])
+        parsed, ok = strconv.parse_int(args[6])
         if ok do benchmark_window_height = clamp(int(parsed), 240, 4320)
-        parsed, ok = strconv.parse_int(os.args[7])
+        parsed, ok = strconv.parse_int(args[7])
         if ok do benchmark_world_width = clamp(int(parsed), 320, 7680)
-        parsed, ok = strconv.parse_int(os.args[8])
+        parsed, ok = strconv.parse_int(args[8])
         if ok do benchmark_world_height = clamp(int(parsed), 180, 4320)
     }
     flags := rl.ConfigFlags{.WINDOW_RESIZABLE}
     if !benchmark_mode do flags += {.VSYNC_HINT}
-    capture_kind := Capture_Kind.None
-    if len(os.args) >= 3 do capture_kind = capture_kind_from_arg(os.args[1])
+    capture_kind := request != nil ? request.kind : Capture_Kind.None
+    if request == nil && len(args) >= 3 do capture_kind = capture_kind_from_arg(args[1])
     capture_mode := capture_kind != .None
-    showcase_interactive_mode := len(os.args) >= 2 && os.args[1] == "--vehicle-showcase"
+    showcase_interactive_mode := len(args) >= 2 && args[1] == "--vehicle-showcase"
     capture_sky_mode := capture_kind in CAPTURE_SKY_KINDS
     capture_map_mode := capture_kind == .Map || capture_sky_mode
     capture_flight_mode := capture_kind == .Flight
@@ -4616,8 +4895,9 @@ adriatic_run :: proc() -> bool {
     capture_foliage_low_mode := capture_kind in CAPTURE_FOLIAGE_LOW_KINDS
     capture_foliage_understory_mode := capture_kind == .Foliage_Understory
     capture_foliage_stress_mode := capture_kind == .Foliage_Stress
-    capture_target := capture_mode && len(os.args) >= 4 ? os.args[3] : ""
-    showcase_target := showcase_interactive_mode ? (len(os.args) >= 3 ? os.args[2] : "") : capture_target
+    capture_target := request != nil ? request.target : (capture_mode && len(args) >= 4 ? args[3] : "")
+    capture_output := request != nil ? request.output_path : (capture_mode && len(args) >= 3 ? args[2] : "")
+    showcase_target := showcase_interactive_mode ? (len(args) >= 3 ? args[2] : "") : capture_target
     capture_player_mode := capture_kind == .Map && capture_target != ""
     if capture_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     if benchmark_mode do flags += {.WINDOW_NOT_FOCUSABLE}
@@ -4777,6 +5057,8 @@ adriatic_run :: proc() -> bool {
     editor.car.interaction_radius = 2.2
     editor.car.exit_distance = 1.1
     editor.car.yaw_radians = -math.PI * .5
+    car_physics_create(editor)
+    defer car_physics_destroy(editor)
     editor.car_trailer_attached = true
     editor.car_trailer_position = editor.car.position
     editor.car_trailer_yaw = editor.car.yaw_radians
@@ -5270,15 +5552,84 @@ adriatic_run :: proc() -> bool {
         atmosphere.step(&editor.atmosphere, simulation_delta)
         wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
         wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
-        if wind_audio_ready do wind_audio.update(&wind_sound, wind_speed, pause_menu_is_open(editor))
-        if ocean_audio_ready do ocean_audio.update(&ocean_sound, pause_menu_is_open(editor))
+        listener_yaw := editor.in_map ? editor.camera.yaw_radians : editor.editor_camera.yaw_radians
+        listener_velocity_x, listener_velocity_z := f32(0), f32(0)
+        if editor.in_map {
+            if driving_aircraft(editor) {
+                listener_body := active_aircraft_body(editor)
+                listener_velocity_x, listener_velocity_z = listener_body.velocity.x, listener_body.velocity.z
+            } else if driving_car(editor) {
+                listener_velocity_x, listener_velocity_z =
+                    editor.car_drive.velocity.x * .35, editor.car_drive.velocity.z * .35
+            } else {
+                listener_velocity_x, listener_velocity_z =
+                    editor.player.velocity.x * .55, editor.player.velocity.z * .55
+            }
+        }
+        apparent_airflow_speed := wind_audio.apparent_airflow_speed(
+            wind_x,
+            wind_z,
+            listener_velocity_x,
+            listener_velocity_z,
+        )
+        wind_direction := wind_audio.apparent_lateral_direction(
+            wind_x,
+            wind_z,
+            listener_velocity_x,
+            listener_velocity_z,
+            listener_yaw,
+        )
+        if wind_audio_ready {
+            wind_audio.update(
+                &wind_sound,
+                apparent_airflow_speed,
+                0,
+                editor.atmosphere.weather.precipitation,
+                editor.atmosphere.weather.severity,
+                wind_direction,
+                pause_menu_is_open(editor),
+            )
+        }
+        if ocean_audio_ready {
+            listener_height_above_sea := f32(0)
+            listener_x, listener_z := f32(0), f32(0)
+            if editor.in_map {
+                if driving_aircraft(editor) {
+                    listener_body := active_aircraft_body(editor)
+                    listener_height_above_sea = listener_body.position.y - editor.project.sea_level
+                    listener_x, listener_z = listener_body.position.x, listener_body.position.z
+                } else if driving_car(editor) {
+                    listener_height_above_sea = editor.car.position.y - editor.project.sea_level
+                    listener_x, listener_z = editor.car.position.x, editor.car.position.z
+                } else {
+                    listener_height_above_sea = editor.player.position.y - editor.project.sea_level
+                    listener_x, listener_z = editor.player.position.x, editor.player.position.z
+                }
+            } else {
+                listener_height_above_sea = editor.camera_pose.position.y - editor.project.sea_level
+                listener_x, listener_z = editor.camera_pose.position.x, editor.camera_pose.position.z
+            }
+            shore_proximity := ocean_shore_proximity(editor, listener_x, listener_z)
+            ocean_direction := wind_audio.wind_lateral_direction(wind_x, wind_z, listener_yaw)
+            ocean_audio.update(
+                &ocean_sound,
+                wind_speed,
+                editor.atmosphere.weather.severity,
+                pause_menu_is_open(editor),
+                listener_height_above_sea,
+                shore_proximity,
+                ocean_direction,
+            )
+        }
         if spray_audio_ready {
-            spray_active :=
-                editor.vehicle_paint_scene &&
-                f32(rl.GetTime()) < editor.vehicle_paint_sound_until &&
-                !pause_menu_is_open(editor)
+            spray_active := editor.vehicle_paint_scene && f32(rl.GetTime()) < editor.vehicle_paint_sound_until
             spray_intensity := .45 + f32(editor.vehicle_paint_brush_radius) / 40 * .55
-            spray_audio.update(&spray_sound, spray_active, spray_intensity)
+            spray_pan := f32(0)
+            screen_width := rl.GetScreenWidth()
+            if screen_width > 0 {
+                spray_pan = clamp(rl.GetMousePosition().x / f32(screen_width) * 2 - 1, -1, 1)
+            }
+            spray_audio.update(&spray_sound, spray_active, spray_intensity, spray_pan, pause_menu_is_open(editor))
         }
         particle_systems.step(
             &editor.particles,
@@ -5469,6 +5820,18 @@ adriatic_run :: proc() -> bool {
            editor.curve_point_count == 0 {
             structure_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         }
+        crash_severity := f32(0)
+        crash_water_mix := f32(0)
+        crash_slide_speed := f32(0)
+        crash_surface := engine_sound.Crash_Surface.Dirt
+        crash_profile := engine_sound.Crash_Profile.Car
+        crash_wetness := clamp(editor.atmosphere.weather.precipitation, 0, 1)
+        crash_obliqueness := f32(0)
+        footstep_triggered := false
+        footstep_intensity := f32(0)
+        footstep_surface := engine_sound.Footstep_Surface.Grass
+        footstep_landing := false
+        footstep_slide := f32(0)
         if editor.in_map && !pause_menu_is_open(editor) && !capture_car_mode {
             delta_seconds := frame_delta
             if editor.vehicle_paint_scene {
@@ -5548,6 +5911,11 @@ adriatic_run :: proc() -> bool {
                     )
                     for editor.aircraft_fixed_accumulator >= AIRCRAFT_FIXED_STEP {
                         body := active_aircraft_body(editor)
+                        was_crashed := editor.postale.crashed
+                        if editor.aircraft.active != .Postale {
+                            was_crashed = editor.libellula.crashed
+                        }
+                        impact_vertical_speed := max(-body.velocity.y, f32(0))
                         editor.aircraft_previous_body = body^
                         editor.aircraft_previous_body_valid = true
                         touchdown_speed := f32(
@@ -5582,6 +5950,28 @@ adriatic_run :: proc() -> bool {
                                     clamp((touchdown_speed - 3) / 18, 0, 1),
                                 )
                                 editor.landing_wheel_speed = touchdown_speed
+                            }
+                        }
+                        is_crashed := editor.postale.crashed
+                        if editor.aircraft.active != .Postale {
+                            is_crashed = editor.libellula.crashed
+                        }
+                        if !was_crashed && is_crashed {
+                            crash_profile =
+                                editor.aircraft.active == .Postale ? engine_sound.Crash_Profile.Fixed_Wing : engine_sound.Crash_Profile.Rotorcraft
+                            crash_severity = max(
+                                crash_severity,
+                                clamp(impact_vertical_speed / 18 + touchdown_speed / 75, .2, 1),
+                            )
+                            crash_slide_speed = clamp(touchdown_speed / 60, 0, 1)
+                            dust_surface, _ := road_car_surface(
+                                editor,
+                                {body.position.x, body.position.y, body.position.z},
+                            )
+                            crash_surface = crash_surface_from_dust(dust_surface)
+                            crash_water_mix = 0
+                            if terrain_height < editor.project.sea_level {
+                                crash_water_mix = 1
                             }
                         }
                         editor.aircraft_fixed_accumulator -= AIRCRAFT_FIXED_STEP
@@ -5669,29 +6059,32 @@ adriatic_run :: proc() -> bool {
                             throttle = 1
                             steering = math.sin(f32(frame) * .032) * .72
                         }
-                        ground := terrain.sample_height(
-                            &editor.project,
-                            0,
-                            editor.car.position.x,
-                            editor.car.position.z,
-                        )
                         handbrake := input_action_down(.Handbrake)
                         dust_surface, drive_surface := road_car_surface(
                             editor,
                             {editor.car.position.x, editor.car.position.y, editor.car.position.z},
                         )
-                        vehicles.car_drive_step(
-                            &editor.car_drive,
-                            &editor.car,
-                            {
-                                throttle = clamp(throttle, -1, 1),
-                                steering = clamp(steering, -1, 1),
-                                handbrake = handbrake,
-                            },
-                            ground,
-                            min(delta_seconds, .05),
+                        car_impact_severity, car_impact_slide_speed, car_impact_obliqueness := car_physics_step(
+                            editor,
+                            clamp(throttle, -1, 1),
+                            clamp(steering, -1, 1),
+                            handbrake,
                             drive_surface,
+                            min(delta_seconds, .05),
                         )
+                        if car_impact_severity > 0 {
+                            crash_severity = max(crash_severity, car_impact_severity)
+                            crash_slide_speed = car_impact_slide_speed
+                            crash_obliqueness = car_impact_obliqueness
+                            crash_surface = crash_surface_from_dust(dust_surface)
+                            terrain_height := terrain.sample_height(
+                                &editor.project,
+                                0,
+                                editor.car.position.x,
+                                editor.car.position.z,
+                            )
+                            crash_water_mix = terrain_height < editor.project.sea_level ? 1 : 0
+                        }
                         forward_x, forward_z := math.cos(editor.car.yaw_radians), math.sin(editor.car.yaw_radians)
                         right_x, right_z := -forward_z, forward_x
                         contacts := [4]particle_systems.Vehicle_Contact{}
@@ -5800,6 +6193,9 @@ adriatic_run :: proc() -> bool {
                             ground_normal      = player_ground_normal(editor, editor.player.position),
                         }
                         frame_seconds := min(delta_seconds, .05)
+                        stride_phase_before := editor.player_stride_phase
+                        player_was_grounded := editor.player.grounded
+                        player_vertical_speed_before := editor.player.velocity.y
                         third_person.step(&editor.player, input, editor.tweak.player, frame_seconds)
                         player_animation_update(editor, frame_seconds)
                         ground_height = terrain.sample_height(
@@ -5811,6 +6207,44 @@ adriatic_run :: proc() -> bool {
                         if editor.player.position.y <= ground_height {
                             editor.player.position.y = ground_height
                             editor.player.grounded = true
+                        }
+                        player_horizontal_speed := f32(
+                            math.sqrt(
+                                f64(
+                                    editor.player.velocity.x * editor.player.velocity.x +
+                                    editor.player.velocity.z * editor.player.velocity.z,
+                                ),
+                            ),
+                        )
+                        if editor.player.grounded &&
+                           player_horizontal_speed > .12 &&
+                           engine_sound.footstep_phase_crossed(stride_phase_before, editor.player_stride_phase) {
+                            footstep_triggered = true
+                            footstep_intensity = clamp(
+                                .2 +
+                                player_horizontal_speed /
+                                    max(editor.tweak.player_animation.bound_full_speed, f32(.1)) *
+                                    .8,
+                                .2,
+                                1,
+                            )
+                        }
+                        if !player_was_grounded && editor.player.grounded && player_vertical_speed_before < -.5 {
+                            footstep_triggered = true
+                            footstep_landing = true
+                            footstep_intensity = clamp((-player_vertical_speed_before - .5) / 7, .35, 1)
+                            footstep_slide = clamp(
+                                player_horizontal_speed / max(editor.tweak.player_animation.bound_full_speed, f32(.1)),
+                                0,
+                                1,
+                            )
+                        }
+                        if footstep_triggered {
+                            dust_surface, _ := road_car_surface(
+                                editor,
+                                {editor.player.position.x, editor.player.position.y, editor.player.position.z},
+                            )
+                            footstep_surface = footstep_surface_from_dust(dust_surface)
                         }
                         player_tail_update(editor, frame_seconds)
                         editor.pilot.position = editor.player.position
@@ -5874,6 +6308,13 @@ adriatic_run :: proc() -> bool {
             if editor.car_trailer_attached {
                 editor.car_drive.velocity.x += editor.car_trailer.reaction_force.x * min(frame_delta, .05)
                 editor.car_drive.velocity.z += editor.car_trailer.reaction_force.z * min(frame_delta, .05)
+                if editor.car_physics_vehicle != nil {
+                    physics.set_linear_velocity(
+                        editor.car_physics_world,
+                        physics.vehicle_body(editor.car_physics_vehicle),
+                        {editor.car_drive.velocity.x, editor.car_drive.velocity.y, editor.car_drive.velocity.z},
+                    )
+                }
             }
         }
         if editor.cameras.active != .Player {
@@ -5910,14 +6351,23 @@ adriatic_run :: proc() -> bool {
         if interpolate_aircraft {
             render_aircraft_body^ = saved_aircraft_body
         }
+        car_damage_impact := f32(0)
+        if driving_car(editor) do car_damage_impact = crash_severity
+        editor.car_audio_damage = engine_sound.vehicle_audio_damage_step(
+            editor.car_audio_damage,
+            car_damage_impact,
+            simulation_delta,
+        )
         engine_controls := engine_sound.Controls{}
-        if editor.pilot.mode == .Driving && !pause_menu_is_open(editor) {
+        if editor.pilot.mode == .Driving {
             engine_controls.active = true
             if driving_aircraft(editor) {
                 if editor.aircraft.active == .Postale {
                     engine_controls.rate = .12 + editor.postale.throttle * .88
                     engine_controls.power =
                         editor.postale.throttle * clamp(editor.postale.flight_runtime.engine_output, 0, 1)
+                    engine_controls.propeller_mix = 1
+                    engine_controls.propeller_airspeed = clamp(editor.postale.telemetry.airspeed / 65, 0, 1)
                 } else {
                     rotor_rate :=
                         (editor.libellula.telemetry.rotor_rpm_normalized.x +
@@ -5930,13 +6380,35 @@ adriatic_run :: proc() -> bool {
                             editor.libellula.flight_runtime.rear_engine_output) /
                         3
                     engine_controls.rate = .16 + clamp(rotor_rate, 0, 1) * .84
+                    engine_controls.rotor_rate_a = clamp(editor.libellula.telemetry.rotor_rpm_normalized.x, 0, 1)
+                    engine_controls.rotor_rate_b = clamp(editor.libellula.telemetry.rotor_rpm_normalized.y, 0, 1)
+                    engine_controls.rotor_rate_c = clamp(editor.libellula.telemetry.rotor_rpm_normalized.z, 0, 1)
                     engine_controls.power = editor.libellula.throttle * clamp(available_power, 0, 1)
+                    engine_controls.rotor_mix = 1
+                }
+                if editor.aircraft.active == .Postale {
+                    engine_controls.damage = editor.postale.crashed ? 1 : 0
+                } else {
+                    engine_controls.damage = editor.libellula.crashed ? 1 : 0
                 }
             } else if driving_car(editor) {
-                engine_controls.rate =
-                    .08 +
-                    clamp(math.abs(editor.car_drive.wheel_speed) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward, 0, 1) *
-                        .92
+                car_reversing := editor.car_drive.wheel_speed < 0
+                normalized_wheel_speed :=
+                    math.abs(editor.car_drive.wheel_speed) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward
+                if car_reversing {
+                    normalized_wheel_speed =
+                        math.abs(editor.car_drive.wheel_speed) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_reverse
+                    engine_controls.reverse_mix = 1
+                }
+                engine_controls.rate = engine_sound.car_rate_step(
+                    &editor.car_audio_gearbox,
+                    normalized_wheel_speed,
+                    car_reversing,
+                )
+                engine_controls.shift = editor.car_audio_gearbox.shifted
+                engine_controls.transmission_mix = 1
+                engine_controls.gear = editor.car_audio_gearbox.gear
+                engine_controls.damage = editor.car_audio_damage
                 wheel_load := math.abs(
                     editor.car_drive.wheel_speed -
                     vehicles.car_drive_longitudinal_speed(editor.car_drive, editor.car.yaw_radians),
@@ -5950,6 +6422,8 @@ adriatic_run :: proc() -> bool {
             }
         }
         wheel_slip_controls := engine_sound.Slip_Controls{}
+        tire_wetness := clamp(editor.atmosphere.weather.precipitation, 0, 1)
+        tire_surface := particle_systems.Dust_Surface.Grass
         postale_wheels_on_land := false
         if driving_aircraft(editor) && editor.aircraft.active == .Postale && editor.postale.grounded {
             terrain_height := terrain.sample_height(
@@ -5959,9 +6433,21 @@ adriatic_run :: proc() -> bool {
                 editor.postale.body.position.z,
             )
             postale_wheels_on_land = terrain_height >= editor.project.sea_level
+            if postale_wheels_on_land {
+                tire_surface, _ = road_car_surface(
+                    editor,
+                    {editor.postale.body.position.x, editor.postale.body.position.y, editor.postale.body.position.z},
+                )
+            }
         }
         if driving_car(editor) && !pause_menu_is_open(editor) {
+            tire_surface, _ = road_car_surface(
+                editor,
+                {editor.car.position.x, editor.car.position.y, editor.car.position.z},
+            )
             wheel_slip_controls.active = true
+            wheel_slip_controls.wetness = tire_wetness
+            wheel_slip_controls.surface = footstep_surface_from_dust(tire_surface)
             wheel_slip_controls.amount = editor.car_drive.slip_amount
             wheel_slip_controls.speed = clamp(
                 vehicles.car_drive_speed(editor.car_drive) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward,
@@ -5974,43 +6460,55 @@ adriatic_run :: proc() -> bool {
            editor.landing_wheel_squeal > 0 &&
            !pause_menu_is_open(editor) {
             wheel_slip_controls.active = true
+            wheel_slip_controls.wetness = tire_wetness
+            wheel_slip_controls.surface = footstep_surface_from_dust(tire_surface)
             wheel_slip_controls.amount = editor.landing_wheel_squeal
             wheel_slip_controls.speed = clamp(editor.landing_wheel_speed / 32, 0, 1)
         }
         tire_roll_controls := engine_sound.Roll_Controls{}
         if driving_car(editor) && !pause_menu_is_open(editor) {
             tire_roll_controls.active = true
+            tire_roll_controls.wetness = tire_wetness
+            tire_roll_controls.damage = editor.car_audio_damage
             tire_roll_controls.speed = clamp(
                 vehicles.car_drive_speed(editor.car_drive) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward,
                 0,
                 1,
             )
-            tire_surface, _ := road_car_surface(
-                editor,
-                {editor.car.position.x, editor.car.position.y, editor.car.position.z},
-            )
-            switch tire_surface {
-            case .Asphalt:
-                tire_roll_controls.roughness = .12
-            case .Cobblestone:
-                tire_roll_controls.roughness = .72
-            case .Gravel:
-                tire_roll_controls.roughness = .9
-            case .Dirt:
-                tire_roll_controls.roughness = .62
-            case .Sand:
-                tire_roll_controls.roughness = .48
-            case .Grass:
-                tire_roll_controls.roughness = .38
-            }
+            tire_roll_controls.surface = footstep_surface_from_dust(tire_surface)
+            tire_roll_controls.roughness = tire_roughness_from_dust(tire_surface)
         } else if driving_aircraft(editor) && !pause_menu_is_open(editor) {
             if postale_wheels_on_land {
                 tire_roll_controls.active = true
+                tire_roll_controls.wetness = tire_wetness
+                tire_roll_controls.damage = editor.postale.crashed ? 1 : 0
                 tire_roll_controls.speed = clamp(editor.postale.telemetry.airspeed / 45, 0, 1)
-                tire_roll_controls.roughness = .1
+                tire_roll_controls.surface = footstep_surface_from_dust(tire_surface)
+                tire_roll_controls.roughness = tire_roughness_from_dust(tire_surface)
             }
         }
-        if engine_audio_ready do engine_sound.update(&editor.engine_audio, engine_controls, wheel_slip_controls, tire_roll_controls)
+        if engine_audio_ready {
+            engine_sound.update(
+                &editor.engine_audio,
+                engine_controls,
+                wheel_slip_controls,
+                tire_roll_controls,
+                crash_severity,
+                crash_water_mix,
+                crash_slide_speed,
+                crash_surface,
+                footstep_triggered,
+                footstep_intensity,
+                footstep_surface,
+                footstep_landing,
+                tire_wetness,
+                crash_profile,
+                crash_wetness,
+                crash_obliqueness,
+                footstep_slide,
+                pause_menu_is_open(editor),
+            )
+        }
         editor.landing_wheel_squeal = max(0, editor.landing_wheel_squeal - simulation_delta * 1.65)
         if benchmark_mode && frame >= benchmark_warmup {
             benchmark_samples[benchmark_sample_count] = rl.GetTime() - benchmark_frame_start
@@ -6030,7 +6528,7 @@ adriatic_run :: proc() -> bool {
         // Player captures wait long enough for the Verlet tail and pose blends
         // to settle; frame two only showed the first few links as a short nub.
         capture_frame := capture_flight_mode || capture_player_mode ? 20 : 2
-        if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", os.args[2]))
+        if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.
         if capture_mode && frame >= 32 do break
@@ -6052,6 +6550,11 @@ run :: proc() -> bool {
 
 when !HOT_RELOAD {
     main :: proc() {
+        handled, success := adriatic_cli(os.args)
+        if handled {
+            if !success do os.exit(1)
+            return
+        }
         _ = adriatic_run()
     }
 }

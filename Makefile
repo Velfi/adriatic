@@ -57,10 +57,6 @@ HOT_SHADER_DIR := $(HOT_DIR)/shaders
 HOT_PHYSICS_STAMP := $(HOT_DIR)/physics.stamp
 HOT_APP_STAMP := $(HOT_DIR)/app.stamp
 HOT_SHADER_STAMP := $(HOT_DIR)/shader.stamp
-CAPTURE_FORMAT ?= jpeg
-CAPTURE_QUALITY ?= 75
-CAPTURE_PATH ?= $(abspath $(BUILD_DIR)/captures/$(APP).$(if $(filter jpeg jpg,$(CAPTURE_FORMAT)),jpg,png))
-CAPTURE_TARGET ?=
 ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/null)
 HOT_ODIN_SOURCES := $(shell find src packages "$(ZELDA_ENGINE_PACKAGES)" -type f -name '*.odin' 2>/dev/null)
 HOT_SHADER_OUTPUTS := \
@@ -81,7 +77,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/foliage.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark capture capture-jpeg capture-building capture-player capture-player-front capture-player-three-quarter capture-player-profile capture-player-walk capture-player-run-compress capture-player-turn-left capture-player-turn-right capture-player-brake capture-player-jump capture-player-fall capture-player-blink capture-player-posted capture-car capture-vehicle-showcase capture-paint-mode capture-foliage capture-foliage-forest capture-foliage-forest-low capture-foliage-understory capture-foliage-forest-golden capture-foliage-forest-wind-a capture-foliage-forest-wind-b capture-foliage-forest-low-wind-a capture-foliage-forest-low-wind-b capture-foliage-stress fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark fmt check test clean
 
 all: build
 
@@ -240,6 +236,14 @@ $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/foli
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(DEV_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png: assets/textures/foliage/bougainvillea-clumps-atlas-v2.png
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(DEV_DIR)/assets/textures/foliage/grass-tufts-atlas.png: assets/textures/foliage/grass-tufts-atlas.png
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
 	@mkdir -p $(@D)
 	cp $< $@
@@ -328,6 +332,14 @@ $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(RELEASE_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png: assets/textures/foliage/bougainvillea-clumps-atlas-v2.png
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(RELEASE_DIR)/assets/textures/foliage/grass-tufts-atlas.png: assets/textures/foliage/grass-tufts-atlas.png
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
 	@mkdir -p $(@D)
 	cp $< $@
@@ -361,6 +373,14 @@ $(HOT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c
 	$(AR) rcs $@ $(HOT_DIR)/gfx_signposts.o
 
 $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/foliage/leaf-branches-atlas.png
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(HOT_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png: assets/textures/foliage/bougainvillea-clumps-atlas-v2.png
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(HOT_DIR)/assets/textures/foliage/grass-tufts-atlas.png: assets/textures/foliage/grass-tufts-atlas.png
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -452,7 +472,7 @@ $(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
 	@mkdir -p $(@D)
 	touch $@
 
-$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(HOT_DIR)/,$(CONTROL_HINT_ASSETS)) $(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf
+$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(HOT_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(HOT_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(HOT_DIR)/,$(CONTROL_HINT_ASSETS)) $(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -debug -o:minimal -build-mode:shared -define:HOT_RELOAD=true -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
 
@@ -528,11 +548,11 @@ $(HOT_APP): $(HOT_DIR)/libadriatic_mesh.a
 $(DEV_APP): $(DEV_DIR)/libadriatic_mesh.a
 $(RELEASE_APP): $(RELEASE_DIR)/libadriatic_mesh.a
 
-$(DEV_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(DEV_DIR)/,$(CONTROL_HINT_ASSETS)) $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
+$(DEV_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(DEV_DIR)/,$(CONTROL_HINT_ASSETS)) $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(DEV_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -debug -o:minimal -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
-$(RELEASE_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(RELEASE_DIR)/,$(CONTROL_HINT_ASSETS)) $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
+$(RELEASE_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(RELEASE_DIR)/,$(CONTROL_HINT_ASSETS)) $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(RELEASE_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(RELEASE_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -o:speed -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 
@@ -541,111 +561,6 @@ run: build
 
 benchmark: release
 	$(PYTHON) tools/perf.py run --scenario all --output "$(abspath $(BUILD_DIR)/perf/latest.json)"
-
-# Render a screenshot to $(CAPTURE_PATH). PNG is the native capture format.
-# JPEG mode captures to a temporary PNG, then uses macOS `sips` conversion so
-# the delivered file is small and has a real JPEG codec.
-# Each capture target name matches its app flag, so the recipe derives the flag
-# from $@ (e.g. capture-foliage-forest runs --capture-foliage-forest).
-# $(1): capture flag passed to the app.
-# $(2): optional trailing argument (e.g. a map name).
-define capture-recipe
-	@mkdir -p "$(dir $(CAPTURE_PATH))"
-	$(DEV_APP) $(1) "$(if $(filter jpeg jpg,$(CAPTURE_FORMAT)),$(CAPTURE_PATH).capture.png,$(CAPTURE_PATH))" $(2)
-	@if [ "$(CAPTURE_FORMAT)" = "jpeg" ] || [ "$(CAPTURE_FORMAT)" = "jpg" ]; then \
-		sips -s format jpeg -s formatOptions "$(CAPTURE_QUALITY)" --out "$(CAPTURE_PATH)" "$(CAPTURE_PATH).capture.png" >/dev/null; \
-		rm -f "$(CAPTURE_PATH).capture.png"; \
-	fi
-	@test -s "$(CAPTURE_PATH)" || { echo "error: screenshot was not written to $(CAPTURE_PATH)" >&2; exit 1; }
-	@echo "Screenshot: $(CAPTURE_PATH)"
-endef
-
-capture: build
-	$(call capture-recipe,--$@)
-
-capture-jpeg: CAPTURE_FORMAT=jpeg
-capture-jpeg: capture
-
-capture-building: build
-	$(call capture-recipe,--$@,$(CAPTURE_TARGET))
-
-capture-player: build
-	$(call capture-recipe,--capture-map,player)
-
-capture-player-front: build
-	$(call capture-recipe,--capture-map,player-front)
-
-capture-player-three-quarter: build
-	$(call capture-recipe,--capture-map,player-three-quarter)
-
-capture-player-profile: build
-	$(call capture-recipe,--capture-map,player-profile)
-
-capture-player-walk: build
-	$(call capture-recipe,--capture-map,player-walk)
-
-capture-player-run-compress: build
-	$(call capture-recipe,--capture-map,player-run-compress)
-
-capture-player-turn-left: build
-	$(call capture-recipe,--capture-map,player-turn-left)
-
-capture-player-turn-right: build
-	$(call capture-recipe,--capture-map,player-turn-right)
-
-capture-player-brake: build
-	$(call capture-recipe,--capture-map,player-brake)
-
-capture-player-jump: build
-	$(call capture-recipe,--capture-map,player-jump)
-
-capture-player-fall: build
-	$(call capture-recipe,--capture-map,player-fall)
-
-capture-player-blink: build
-	$(call capture-recipe,--capture-map,player-blink)
-
-capture-player-posted: build
-	$(call capture-recipe,--capture-map,player-posted)
-
-capture-car: build
-	$(call capture-recipe,--$@)
-
-capture-vehicle-showcase: build
-	$(call capture-recipe,--$@,$(CAPTURE_TARGET))
-
-capture-paint-mode: build
-	$(call capture-recipe,--$@,$(CAPTURE_TARGET))
-
-capture-foliage: build
-	$(call capture-recipe,--$@)
-
-capture-foliage-forest: build
-	$(call capture-recipe,--$@)
-
-capture-foliage-forest-low: build
-	$(call capture-recipe,--$@)
-
-capture-foliage-understory: build
-	$(call capture-recipe,--$@)
-
-capture-foliage-forest-golden: build
-	$(call capture-recipe,--$@)
-
-capture-foliage-forest-wind-a: build
-	$(call capture-recipe,--$@)
-
-capture-foliage-forest-wind-b: build
-	$(call capture-recipe,--$@)
-
-capture-foliage-forest-low-wind-a: build
-	$(call capture-recipe,--$@)
-
-capture-foliage-forest-low-wind-b: build
-	$(call capture-recipe,--$@)
-
-capture-foliage-stress: build
-	$(call capture-recipe,--$@)
 
 fmt:
 	@command -v $(ODINFMT) >/dev/null || { echo "odinfmt is required" >&2; exit 1; }
