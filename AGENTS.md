@@ -7,6 +7,12 @@
   with `vk.SetDebugUtilsObjectNameEXT` (through the shared helper when available); for
   objects created before device-level function loading, name them at the first possible point.
 
+## Validation profile
+
+- When the user reports memory or rendering problems, reproduce with `make validation`
+  before diagnosing or changing code. This profile enables Vulkan validation layers and
+  ASAN.
+
 ## Screenshot capture
 
 - Build the app, then use its capture CLI:

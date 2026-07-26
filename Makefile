@@ -3,6 +3,44 @@ include toolchain.mk
 APP := adriatic
 BUILD_DIR := build
 TOOLS_DIR := .tools
+
+PROFILE ?= hot
+PROFILE_ODIN_FLAGS_hot := -dynamic-map-calls -o:minimal -debug
+PROFILE_DEFINE_FLAGS_hot := -define:HOT_RELOAD=true
+PROFILE_CONFIG_hot := debug
+PROFILE_ENTRY_hot := hot
+PROFILE_LINK_MODE_hot := shared
+PROFILE_VULKAN_VALIDATION_hot := false
+PROFILE_ASAN_hot := false
+
+PROFILE_ODIN_FLAGS_debug := -dynamic-map-calls -o:minimal -debug
+PROFILE_DEFINE_FLAGS_debug :=
+PROFILE_CONFIG_debug := debug
+PROFILE_ENTRY_debug := cold
+PROFILE_LINK_MODE_debug := system
+PROFILE_VULKAN_VALIDATION_debug := false
+PROFILE_ASAN_debug := false
+
+PROFILE_ODIN_FLAGS_release := -dynamic-map-calls -o:minimal -debug
+PROFILE_DEFINE_FLAGS_release :=
+PROFILE_CONFIG_release := release
+PROFILE_ENTRY_release := cold
+PROFILE_LINK_MODE_release := system
+PROFILE_VULKAN_VALIDATION_release := false
+PROFILE_ASAN_release := false
+
+PROFILE_ODIN_FLAGS_validation := -debug -o:none -sanitize:address
+PROFILE_DEFINE_FLAGS_validation :=
+PROFILE_CONFIG_validation := debug
+PROFILE_ENTRY_validation := cold
+PROFILE_LINK_MODE_validation := system
+PROFILE_VULKAN_VALIDATION_validation := true
+PROFILE_ASAN_validation := true
+
+VALIDATION_PROFILE_RUNTIME_ENV := env \
+	VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+	ASAN_OPTIONS=halt_on_error=1:abort_on_error=1
+
 ZELDA_ENGINE_ROOT ?= ../zelda-engine
 ZELDA_ENGINE_PACKAGES := $(abspath $(ZELDA_ENGINE_ROOT))/packages
 ZELDA_ENGINE_COLLECTION := -collection:zelda_engine=$(ZELDA_ENGINE_PACKAGES)
@@ -37,14 +75,14 @@ LINKER_PLATFORM_FLAGS := -Wl,-no_warn_duplicate_libraries -framework Cocoa
 endif
 
 TEXTSHAPE_LIBS := $(shell pkg-config --libs harfbuzz freetype2 2>/dev/null)
-TEXTSHAPE_DIR := $(abspath $(ZELDA_ENGINE_ROOT))/third_party/textshape
-TEXTSHAPE_LIB := $(TEXTSHAPE_DIR)/libtextshape.a
 link_flags = $(TEXTSHAPE_LIBS) -L$(abspath $(1)) -lgfx_signposts -lc++ $(LINKER_PLATFORM_FLAGS)
 
 DEV_DIR := $(BUILD_DIR)/dev
 RELEASE_DIR := $(BUILD_DIR)/release
+VALIDATION_DIR := $(BUILD_DIR)/validation
 DEV_APP := $(DEV_DIR)/$(APP)
 RELEASE_APP := $(RELEASE_DIR)/$(APP)
+VALIDATION_APP := $(VALIDATION_DIR)/$(APP)
 ifeq ($(shell uname -s),Darwin)
 SHARED_EXT := dylib
 else ifeq ($(shell uname -s),Linux)
@@ -79,7 +117,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/foliage.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor textshape-build physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor textshape-build physics-deps physics-build shaders build release validation validation-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark fmt check test clean
 
 all: build
 
@@ -238,14 +276,6 @@ $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/foli
 	@mkdir -p $(@D)
 	cp $< $@
 
-$(DEV_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png: assets/textures/foliage/bougainvillea-clumps-atlas-v2.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(DEV_DIR)/assets/textures/foliage/grass-tufts-atlas.png: assets/textures/foliage/grass-tufts-atlas.png
-	@mkdir -p $(@D)
-	cp $< $@
-
 $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
 	@mkdir -p $(@D)
 	cp $< $@
@@ -334,14 +364,6 @@ $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/
 	@mkdir -p $(@D)
 	cp $< $@
 
-$(RELEASE_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png: assets/textures/foliage/bougainvillea-clumps-atlas-v2.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(RELEASE_DIR)/assets/textures/foliage/grass-tufts-atlas.png: assets/textures/foliage/grass-tufts-atlas.png
-	@mkdir -p $(@D)
-	cp $< $@
-
 $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
 	@mkdir -p $(@D)
 	cp $< $@
@@ -375,14 +397,6 @@ $(HOT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c
 	$(AR) rcs $@ $(HOT_DIR)/gfx_signposts.o
 
 $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/foliage/leaf-branches-atlas.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(HOT_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png: assets/textures/foliage/bougainvillea-clumps-atlas-v2.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(HOT_DIR)/assets/textures/foliage/grass-tufts-atlas.png: assets/textures/foliage/grass-tufts-atlas.png
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -474,9 +488,9 @@ $(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
 	@mkdir -p $(@D)
 	touch $@
 
-$(HOT_APP): $(HOT_PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(HOT_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(HOT_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(HOT_DIR)/,$(CONTROL_HINT_ASSETS)) $(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf
+$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(HOT_DIR)/,$(CONTROL_HINT_ASSETS)) $(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -debug -o:minimal -build-mode:shared -define:HOT_RELOAD=true -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_hot) -build-mode:shared $(PROFILE_DEFINE_FLAGS_hot) -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
 
 $(HOT_APP_STAMP): $(HOT_APP)
 	@mkdir -p $(@D)
@@ -484,7 +498,7 @@ $(HOT_APP_STAMP): $(HOT_APP)
 
 $(HOT_HOST): hot/main.odin Makefile toolchain.mk
 	@mkdir -p $(@D)
-	$(ODIN) build hot/main.odin -file -debug -o:minimal -out:$@
+	$(ODIN) build hot/main.odin -file $(PROFILE_ODIN_FLAGS_hot) -out:$@
 
 hot-app: $(HOT_APP_STAMP)
 
@@ -504,6 +518,35 @@ $(TEXTSHAPE_LIB): $(TEXTSHAPE_DIR)/textshape.c
 	$(MAKE) -C "$(ZELDA_ENGINE_ROOT)" textshape-build
 
 textshape-build: doctor $(TEXTSHAPE_LIB)
+
+profile-info:
+	@case "$(PROFILE)" in \
+		hot|debug|release|validation) \
+			echo "Profile: $(PROFILE)"; \
+			echo "Config: $(PROFILE_CONFIG_$(PROFILE))"; \
+			echo "Entry: $(PROFILE_ENTRY_$(PROFILE))"; \
+			echo "Link mode: $(PROFILE_LINK_MODE_$(PROFILE))"; \
+			echo "Odin flags: $(PROFILE_ODIN_FLAGS_$(PROFILE))"; \
+			echo "Vulkan validation: $(PROFILE_VULKAN_VALIDATION_$(PROFILE))"; \
+			echo "ASAN: $(PROFILE_ASAN_$(PROFILE))"; \
+			;; \
+		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, debug, release, or validation" >&2; exit 2 ;; \
+	esac
+
+profile:
+	@case "$(PROFILE)" in \
+		hot) $(MAKE) hot-build ;; \
+		debug) $(MAKE) build ;; \
+		release) $(MAKE) release ;; \
+		validation) $(MAKE) validation-build ;; \
+		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, debug, release, or validation" >&2; exit 2 ;; \
+	esac
+
+dev: PROFILE=hot
+dev: hot
+
+debug: PROFILE=debug
+debug: profile
 
 # The Zelda Engine physics package is backed by its pinned Jolt checkout. Keep
 # the native build in the engine repository, but provision it before producing
@@ -558,13 +601,27 @@ $(HOT_APP): $(HOT_DIR)/libadriatic_mesh.a
 $(DEV_APP): $(DEV_DIR)/libadriatic_mesh.a
 $(RELEASE_APP): $(RELEASE_DIR)/libadriatic_mesh.a
 
-$(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(DEV_DIR)/,$(CONTROL_HINT_ASSETS)) $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(DEV_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv
+$(VALIDATION_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c Makefile
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -debug -o:minimal -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
+	$(CC) -O2 -c $< -o $(VALIDATION_DIR)/gfx_signposts.o
+	$(AR) rcs $@ $(VALIDATION_DIR)/gfx_signposts.o
 
-$(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(RELEASE_DIR)/,$(CONTROL_HINT_ASSETS)) $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(RELEASE_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(RELEASE_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv
+$(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(DEV_DIR)/,$(CONTROL_HINT_ASSETS)) $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) -o:speed -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_debug) $(PROFILE_DEFINE_FLAGS_debug) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
+
+$(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(RELEASE_DIR)/,$(CONTROL_HINT_ASSETS)) $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
+	@mkdir -p $(@D)
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_release) $(PROFILE_DEFINE_FLAGS_release) -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
+
+$(VALIDATION_APP): physics-build $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(VALIDATION_DIR)/libgfx_signposts.a
+	@mkdir -p $(@D)
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_validation) $(PROFILE_DEFINE_FLAGS_validation) -out:$@ -extra-linker-flags:"$(call link_flags,$(VALIDATION_DIR))"
+
+validation-build: doctor $(VALIDATION_APP)
+
+validation: validation-build
+	$(VALIDATION_PROFILE_RUNTIME_ENV) "$(VALIDATION_APP)"
 
 run: build
 	$(DEV_APP)
