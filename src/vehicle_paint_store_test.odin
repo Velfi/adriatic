@@ -295,6 +295,46 @@ when ODIN_TEST {
     }
 
     @(test)
+    vehicle_paint_shade_ramps_are_asymmetric_and_step_without_recoloring_unrelated_pixels :: proc(t: ^testing.T) {
+        for base in VEHICLE_PAINT_COLORS {
+            ramp := vehicle_paint_shade_ramp(base)
+            testing.expect(t, ramp[2] == base)
+            for index in 1 ..< len(ramp) {
+                previous_value := int(ramp[index - 1].r) + int(ramp[index - 1].g) + int(ramp[index - 1].b)
+                value := int(ramp[index].r) + int(ramp[index].g) + int(ramp[index].b)
+                testing.expect(t, value > previous_value)
+            }
+            cool := rl.Color{12, 22, 39, 255}
+            warm := rl.Color{255, 248, 224, 255}
+            bcr, bcg, bcb := int(base.r) - int(cool.r), int(base.g) - int(cool.g), int(base.b) - int(cool.b)
+            scr, scg, scb := int(ramp[0].r) - int(cool.r), int(ramp[0].g) - int(cool.g), int(ramp[0].b) - int(cool.b)
+            bwr, bwg, bwb := int(base.r) - int(warm.r), int(base.g) - int(warm.g), int(base.b) - int(warm.b)
+            hwr, hwg, hwb := int(ramp[4].r) - int(warm.r), int(ramp[4].g) - int(warm.g), int(ramp[4].b) - int(warm.b)
+            base_cool_distance := bcr * bcr + bcg * bcg + bcb * bcb
+            shadow_cool_distance := scr * scr + scg * scg + scb * scb
+            base_warm_distance := bwr * bwr + bwg * bwg + bwb * bwb
+            highlight_warm_distance := hwr * hwr + hwg * hwg + hwb * hwb
+            testing.expect(t, shadow_cool_distance < base_cool_distance)
+            testing.expect(t, highlight_warm_distance < base_warm_distance)
+        }
+
+        base := VEHICLE_PAINT_COLORS[0]
+        ramp := vehicle_paint_shade_ramp(base)
+        low_gap := int(ramp[1].r) - int(ramp[0].r)
+        high_gap := int(ramp[4].r) - int(ramp[3].r)
+        testing.expect(t, low_gap != high_gap)
+
+        darker, changed := vehicle_paint_shade_step({base.r, base.g, base.b, 255}, base, false)
+        testing.expect(t, changed)
+        testing.expect(t, darker == ramp[1])
+        lighter, changed := vehicle_paint_shade_step({darker.r, darker.g, darker.b, 255}, base, true)
+        testing.expect(t, changed)
+        testing.expect(t, lighter == base)
+        _, changed = vehicle_paint_shade_step({0, 255, 0, 255}, base, false)
+        testing.expect(t, !changed)
+    }
+
+    @(test)
     vehicle_paint_working_settings_initialize_once :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)

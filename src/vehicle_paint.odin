@@ -34,9 +34,10 @@ Vehicle_Paint_Tool :: enum u8 {
     Gradient,
     Pattern,
     Strip,
+    Shade,
 }
 
-VEHICLE_PAINT_TOOL_NAMES :: [7]string{"BRUSH", "BUCKET", "SHAPE", "BLEND", "GRADIENT", "PATTERN", "STRIP"}
+VEHICLE_PAINT_TOOL_NAMES :: [8]string{"BRUSH", "BUCKET", "SHAPE", "BLEND", "GRADIENT", "PATTERN", "STRIP", "SHADE"}
 
 VEHICLE_PAINT_COMPONENT_NAMES :: [5]string{"BODY", "WINGS", "TAIL", "ENGINE", "FLOATS"}
 POSTALE_PAINT_COMPONENT_NAMES :: [5]string{"FUSELAGE", "WINGS", "TAIL", "ENGINE", "GEAR"}
@@ -551,6 +552,95 @@ vehicle_paint_brush_coverage :: proc(distance, hardness: f32) -> f32 {
     normalized_hardness := clamp(hardness, 0, 1)
     if distance <= normalized_hardness || normalized_hardness >= .999 do return 1
     return clamp(1 - (distance - normalized_hardness) / (1 - normalized_hardness), 0, 1)
+}
+
+vehicle_paint_mix_color :: proc(a, b: rl.Color, amount: f32) -> rl.Color {
+    t := clamp(amount, 0, 1)
+    return {
+        u8(clamp(f32(a.r) + (f32(b.r) - f32(a.r)) * t, 0, 255)),
+        u8(clamp(f32(a.g) + (f32(b.g) - f32(a.g)) * t, 0, 255)),
+        u8(clamp(f32(a.b) + (f32(b.b) - f32(a.b)) * t, 0, 255)),
+        255,
+    }
+}
+
+// A compact cel-paint ramp: two cool, widely separated shadow values and two
+// progressively warmer/desaturated reflections. The asymmetric spacing keeps
+// the body color dominant and gives hard-surface forms a strong terminator plus
+// a narrow highlight, instead of looking like a generic five-step gradient.
+vehicle_paint_shade_ramp :: proc(base: rl.Color) -> [5]rl.Color {
+    cool_deep := rl.Color{12, 22, 39, 255}
+    cool_shadow := rl.Color{24, 42, 61, 255}
+    warm_light := rl.Color{255, 226, 174, 255}
+    warm_glint := rl.Color{255, 248, 224, 255}
+    return {
+        vehicle_paint_mix_color(base, cool_deep, .72),
+        vehicle_paint_mix_color(base, cool_shadow, .43),
+        {base.r, base.g, base.b, 255},
+        vehicle_paint_mix_color(base, warm_light, .30),
+        vehicle_paint_mix_color(base, warm_glint, .68),
+    }
+}
+
+vehicle_paint_shade_step :: proc(pixel: [4]u8, base: rl.Color, lighter: bool) -> (rl.Color, bool) {
+    if pixel[3] < 16 do return {}, false
+    ramp := vehicle_paint_shade_ramp(base)
+    nearest := 0
+    nearest_distance := 2_000_000_000
+    for color, index in ramp {
+        dr := int(pixel[0]) - int(color.r)
+        dg := int(pixel[1]) - int(color.g)
+        db := int(pixel[2]) - int(color.b)
+        distance := dr * dr + dg * dg + db * db
+        if distance < nearest_distance {
+            nearest = index
+            nearest_distance = distance
+        }
+    }
+    // Avoid pulling unrelated liveries into the selected hue family. The
+    // tolerance still accepts soft brush/texture filtering residue.
+    if nearest_distance > 48 * 48 * 3 do return {}, false
+    target := lighter ? min(nearest + 1, len(ramp) - 1) : max(nearest - 1, 0)
+    return ramp[target], target != nearest
+}
+
+vehicle_paint_shade_texture :: proc(
+    editor: ^Editor,
+    part: vehicles.Aircraft_Mesh_Part,
+    uv: [2]f32,
+    base: rl.Color,
+    lighter: bool,
+) {
+    if editor == nil do return
+    pixels := vehicle_paint_pixels(editor)
+    component := vehicle_paint_component_for_part(part)
+    if !editor.vehicle_paint_component_mask[component] do return
+    radius := editor.vehicle_paint_brush_radius
+    center_x := int(uv[0] * f32(VEHICLE_PAINT_TEXTURE_WIDTH))
+    center_y := int(uv[1] * f32(VEHICLE_PAINT_TEXTURE_HEIGHT))
+    owner := u8(part) + 1
+    changed := false
+    for y in max(0, center_y - radius) ..= min(VEHICLE_PAINT_TEXTURE_HEIGHT - 1, center_y + radius) {
+        for x in max(0, center_x - radius) ..= min(VEHICLE_PAINT_TEXTURE_WIDTH - 1, center_x + radius) {
+            dx, dy := x - center_x, y - center_y
+            distance := f32(math.sqrt(f64(dx * dx + dy * dy))) / f32(radius)
+            // Cel shading needs a stable, exact palette edge. Hardness controls
+            // that edge; strength intentionally does not create in-between hues.
+            if vehicle_paint_brush_coverage(distance, editor.vehicle_paint_brush_hardness) < .5 do continue
+            texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
+            if editor.vehicle_paint_texel_part[texel] != owner do continue
+            index := texel * 4
+            before := [4]u8{pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]}
+            if shade, ok := vehicle_paint_shade_step(before, base, lighter); ok {
+                vehicle_paint_set_texel(pixels, texel, shade, before[3])
+                changed = true
+            }
+        }
+    }
+    if changed {
+        vehicle_paint_mark_texture_dirty(editor)
+        editor.vehicle_paint_save_pending = true
+    }
 }
 
 vehicle_paint_stamp_texture :: proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part, uv: [2]f32, color: rl.Color) {
@@ -1970,7 +2060,7 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                         }
                     }
                 }
-            case .Brush, .Blend:
+            case .Brush, .Shade, .Blend:
                 vehicle_paint_sound_pulse(editor)
                 if !editor.vehicle_paint_stroke_active {
                     vehicle_paint_history_capture(editor)
@@ -2003,17 +2093,23 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                             dab_uv := editor.vehicle_paint_stroke_uv + delta_uv * fraction
                             if editor.vehicle_paint_tool == .Blend {
                                 vehicle_paint_blend(editor, hover_part, dab_uv)
+                            } else if editor.vehicle_paint_tool == .Shade {
+                                vehicle_paint_shade_texture(editor, hover_part, dab_uv, primary, shift_key_down())
                             } else {
                                 vehicle_paint_stamp_texture(editor, hover_part, dab_uv, primary)
                             }
                         }
                     } else if editor.vehicle_paint_tool == .Blend {
                         vehicle_paint_blend(editor, hover_part, hover_uv)
+                    } else if editor.vehicle_paint_tool == .Shade {
+                        vehicle_paint_shade_texture(editor, hover_part, hover_uv, primary, shift_key_down())
                     } else {
                         vehicle_paint_stamp_texture(editor, hover_part, hover_uv, primary)
                     }
                 } else if editor.vehicle_paint_tool == .Blend {
                     vehicle_paint_blend(editor, hover_part, hover_uv)
+                } else if editor.vehicle_paint_tool == .Shade {
+                    vehicle_paint_shade_texture(editor, hover_part, hover_uv, primary, shift_key_down())
                 } else {
                     vehicle_paint_stamp_texture(editor, hover_part, hover_uv, primary)
                 }
@@ -2051,17 +2147,23 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                                 dab_uv := editor.vehicle_paint_stroke_mirror_uv + mirror_delta * fraction
                                 if editor.vehicle_paint_tool == .Blend {
                                     vehicle_paint_blend(editor, mirror_part, dab_uv)
+                                } else if editor.vehicle_paint_tool == .Shade {
+                                    vehicle_paint_shade_texture(editor, mirror_part, dab_uv, primary, shift_key_down())
                                 } else {
                                     vehicle_paint_stamp_texture(editor, mirror_part, dab_uv, primary)
                                 }
                             }
                         } else if editor.vehicle_paint_tool == .Blend {
                             vehicle_paint_blend(editor, mirror_part, mirror_uv)
+                        } else if editor.vehicle_paint_tool == .Shade {
+                            vehicle_paint_shade_texture(editor, mirror_part, mirror_uv, primary, shift_key_down())
                         } else {
                             vehicle_paint_stamp_texture(editor, mirror_part, mirror_uv, primary)
                         }
                     } else if editor.vehicle_paint_tool == .Blend {
                         vehicle_paint_blend(editor, mirror_part, mirror_uv)
+                    } else if editor.vehicle_paint_tool == .Shade {
+                        vehicle_paint_shade_texture(editor, mirror_part, mirror_uv, primary, shift_key_down())
                     } else {
                         vehicle_paint_stamp_texture(editor, mirror_part, mirror_uv, primary)
                     }
@@ -2164,10 +2266,23 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
         rl.DrawTextEx(rl.Font{}, "ALTOBERTO'S PAINT HANGAR", {18, 24}, 20, 1, {244, 255, 250, 255})
         rl.DrawTextEx(rl.Font{}, "LMB PAINT   RMB ORBIT   TAB HIDE", {18, 54}, 16, 1, {211, 235, 235, 255})
         rl.DrawTextEx(rl.Font{}, "ESC LEAVE   B ERASE   S SYMMETRY", {18, 76}, 16, 1, {255, 226, 163, 255})
-        rl.DrawTextEx(rl.Font{}, "ALT SAMPLE   SHIFT+WHEEL SIZE   H HARD", {18, 98}, 16, 1, {255, 226, 163, 255})
+        hint: cstring = "ALT SAMPLE   SHIFT+WHEEL SIZE   H HARD"
+        if editor.vehicle_paint_tool == .Shade do hint = "SHADE: LMB DARK   SHIFT+LMB LIGHT"
+        rl.DrawTextEx(rl.Font{}, hint, {18, 98}, 16, 1, {255, 226, 163, 255})
         for index in 0 ..< len(VEHICLE_PAINT_COLORS) {
             bounds := vehicle_paint_color_bounds(index)
-            rl.DrawRectangleRounded(bounds, .25, 5, palette[index])
+            if editor.vehicle_paint_tool == .Shade {
+                ramp := vehicle_paint_shade_ramp(palette[index])
+                shade_width := bounds.width / f32(len(ramp))
+                for shade, shade_index in ramp {
+                    rl.DrawRectangleRec(
+                        {bounds.x + f32(shade_index) * shade_width, bounds.y, shade_width + .25, bounds.height},
+                        shade,
+                    )
+                }
+            } else {
+                rl.DrawRectangleRounded(bounds, .25, 5, palette[index])
+            }
             if index == editor.vehicle_paint_color {
                 rl.DrawRectangleRoundedLinesEx(bounds, .25, 5, 3, {248, 245, 214, 255})
             }
@@ -2209,7 +2324,14 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
             rl.DrawRectangleRounded(bounds, .12, 6, fill)
             rl.DrawRectangleRoundedLinesEx(bounds, .12, 6, selected ? 2 : 1, border)
             tool_name := fmt.ctprintf("%s", tool_names[index])
-            vehicle_paint_draw_icon(editor, index, {bounds.x + 6, bounds.y + 6, 24, 24})
+            if Vehicle_Paint_Tool(index) == .Shade {
+                ramp := vehicle_paint_shade_ramp(palette[editor.vehicle_paint_color])
+                for shade, shade_index in ramp {
+                    rl.DrawRectangle(i32(bounds.x + 6 + f32(shade_index) * 5), i32(bounds.y + 7), 5, 22, shade)
+                }
+            } else {
+                vehicle_paint_draw_icon(editor, index, {bounds.x + 6, bounds.y + 6, 24, 24})
+            }
             rl.DrawTextEx(rl.Font{}, tool_name, {bounds.x + 36, bounds.y + 9}, 16, 1, {236, 243, 224, 255})
         }
         if editor.vehicle_paint_tool == .Pattern && !editor.vehicle_paint_erase {
@@ -2414,6 +2536,8 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
             tool_hint = "PREVIEW FILL — CLICK TO APPLY"
         case .Strip:
             tool_hint = "DRAG STRAIGHT BAND"
+        case .Shade:
+            tool_hint = "LMB DARKER — SHIFT+LMB LIGHTER"
         }
         if clear_armed do tool_hint = "CLICK AGAIN TO CLEAR — UNDO AVAILABLE"
         footer_y := vehicle_paint_actions_top(editor) + 50
