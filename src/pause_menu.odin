@@ -508,9 +508,17 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         editor.pause_screen = .Options
         editor.options_focus = 0
     case 2:
-        pause_menu_return_to_editor(editor)
+        if editor.vehicle_paint_scene {
+            if vehicle_paint_close(editor) do editor.pause_screen = .Closed
+        } else {
+            pause_menu_return_to_editor(editor)
+        }
     case 3:
-        editor.quit_requested = true
+        if editor.vehicle_paint_scene {
+            if vehicle_paint_discard(editor) do editor.pause_screen = .Closed
+        } else {
+            editor.quit_requested = true
+        }
     }
 }
 
@@ -738,13 +746,17 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32) {
 
     if editor.controller_disconnect_notice {
         pause_menu_draw_header(panel, "INPUT DEVICE LOST", "CONTROLLER DISCONNECTED")
+    } else if editor.vehicle_paint_scene {
+        pause_menu_draw_header(panel, "ADRIATIC  /  PAINT", "PAINT MODE")
     } else {
         pause_menu_draw_header(panel, "ADRIATIC  /  FLIGHT", "PAUSED")
     }
     pause_menu_button(pause_menu_button_bounds(panel, 0), "RESUME", true, editor.pause_focus == 0)
     pause_menu_button(pause_menu_button_bounds(panel, 1), "OPTIONS", false, editor.pause_focus == 1)
-    pause_menu_button(pause_menu_button_bounds(panel, 2), "RETURN TO EDITOR", false, editor.pause_focus == 2)
-    pause_menu_button(pause_menu_button_bounds(panel, 3), "QUIT TO DESKTOP", false, editor.pause_focus == 3)
+    return_label: cstring = editor.vehicle_paint_scene ? "SAVE AND EXIT" : "RETURN TO EDITOR"
+    quit_label: cstring = editor.vehicle_paint_scene ? "DISCARD AND EXIT" : "QUIT TO DESKTOP"
+    pause_menu_button(pause_menu_button_bounds(panel, 2), return_label, false, editor.pause_focus == 2)
+    pause_menu_button(pause_menu_button_bounds(panel, 3), quit_label, false, editor.pause_focus == 3)
     hint: cstring
     if editor.controller_disconnect_notice {
         hint = "Reconnect the controller or continue with keyboard and mouse"

@@ -11,10 +11,7 @@ import rl "zelda_engine:canvas2d"
 
 when ODIN_TEST {
     vehicle_paint_test_uv :: proc(x, y: int) -> [2]f32 {
-        return {
-            (f32(x) + .5) / VEHICLE_PAINT_TEXTURE_WIDTH,
-            (f32(y) + .5) / VEHICLE_PAINT_TEXTURE_HEIGHT,
-        }
+        return {(f32(x) + .5) / VEHICLE_PAINT_TEXTURE_WIDTH, (f32(y) + .5) / VEHICLE_PAINT_TEXTURE_HEIGHT}
     }
 
     @(test)
@@ -45,7 +42,7 @@ when ODIN_TEST {
         testing.expect(
             t,
             vehicle_paint_checksum(vehicle_paint_layer_bytes(source)) ==
-                vehicle_paint_checksum(vehicle_paint_layer_bytes(restored)),
+            vehicle_paint_checksum(vehicle_paint_layer_bytes(restored)),
         )
 
         bytes, read_err := os.read_entire_file(path, context.allocator)
@@ -67,11 +64,13 @@ when ODIN_TEST {
         defer vehicle_paint_history_destroy(editor)
         editor.vehicle_paint_component_mask = {true, true, true, true, true}
         editor.vehicle_paint_brush_radius = 4
+        editor.vehicle_paint_brush_strength = 1
         part := vehicles.Aircraft_Mesh_Part.Body
         owner := u8(part) + 1
         pixels := vehicle_paint_pixels(editor)
 
-        // Two UV islands owned by the same mesh part must remain disconnected.
+        // Bucket covers every enabled component, including disconnected UV
+        // islands, while leaving masked components untouched.
         for y in 10 ..= 19 {
             for x in 10 ..= 19 {
                 editor.vehicle_paint_texel_part[y * VEHICLE_PAINT_TEXTURE_WIDTH + x] = owner
@@ -82,11 +81,16 @@ when ODIN_TEST {
         }
         red := rl.Color{220, 20, 30, 255}
         blue := rl.Color{20, 60, 220, 255}
+        masked_part := vehicles.Aircraft_Mesh_Part.Wing
+        masked_texel := 14 * VEHICLE_PAINT_TEXTURE_WIDTH + 32
+        editor.vehicle_paint_texel_part[masked_texel] = u8(masked_part) + 1
+        editor.vehicle_paint_component_mask[vehicle_paint_component_for_part(masked_part)] = false
         vehicle_paint_history_capture(editor)
         vehicle_paint_bucket(editor, part, vehicle_paint_test_uv(14, 14), red)
         testing.expect(t, vehicle_paint_history_commit(editor))
         testing.expect(t, pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 14) * 4] == red.r)
-        testing.expect(t, pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 24) * 4 + 3] == 0)
+        testing.expect(t, pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 24) * 4] == red.r)
+        testing.expect(t, pixels[masked_texel * 4 + 3] == 0)
 
         vehicle_paint_history_capture(editor)
         vehicle_paint_pattern(editor, part, vehicle_paint_test_uv(24, 14), red, blue)
@@ -94,9 +98,11 @@ when ODIN_TEST {
         first_pattern := pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 24) * 4]
         second_pattern := pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 28) * 4]
         testing.expect(t, first_pattern != second_pattern)
+        testing.expect(t, pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 14) * 4] == red.r)
+        testing.expect(t, pixels[masked_texel * 4 + 3] == 0)
 
         vehicle_paint_history_undo(editor)
-        testing.expect(t, pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 24) * 4 + 3] == 0)
+        testing.expect(t, pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 24) * 4] == red.r)
         vehicle_paint_history_undo(editor)
         testing.expect(t, pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 14) * 4 + 3] == 0)
         vehicle_paint_history_redo(editor)
@@ -105,14 +111,7 @@ when ODIN_TEST {
         testing.expect(t, pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 24) * 4 + 3] == 255)
 
         // Gradient produces both endpoint colors but cannot leave the island.
-        vehicle_paint_gradient(
-            editor,
-            part,
-            vehicle_paint_test_uv(10, 14),
-            vehicle_paint_test_uv(19, 14),
-            red,
-            blue,
-        )
+        vehicle_paint_gradient(editor, part, vehicle_paint_test_uv(10, 14), vehicle_paint_test_uv(19, 14), red, blue)
         left := (14 * VEHICLE_PAINT_TEXTURE_WIDTH + 10) * 4
         right := (14 * VEHICLE_PAINT_TEXTURE_WIDTH + 19) * 4
         testing.expect(t, pixels[left] > pixels[right])
@@ -123,13 +122,7 @@ when ODIN_TEST {
         testing.expect(t, pixels[(14 * VEHICLE_PAINT_TEXTURE_WIDTH + 14) * 4 + 2] == blue.b)
         disconnected_near_strip := 12 * VEHICLE_PAINT_TEXTURE_WIDTH + 22
         vehicle_paint_set_texel(pixels, disconnected_near_strip, {}, 0)
-        vehicle_paint_strip(
-            editor,
-            part,
-            vehicle_paint_test_uv(10, 12),
-            vehicle_paint_test_uv(19, 12),
-            red,
-        )
+        vehicle_paint_strip(editor, part, vehicle_paint_test_uv(10, 12), vehicle_paint_test_uv(19, 12), red)
         testing.expect(t, pixels[(12 * VEHICLE_PAINT_TEXTURE_WIDTH + 15) * 4] == red.r)
         testing.expect(t, pixels[disconnected_near_strip * 4 + 3] == 0)
         testing.expect(t, pixels[(12 * VEHICLE_PAINT_TEXTURE_WIDTH + 24) * 4] != red.r)
@@ -146,26 +139,101 @@ when ODIN_TEST {
     }
 
     @(test)
+    vehicle_paint_uv_mask_includes_triangle_edge_texels :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        mesh: vehicles.Aircraft_Mesh
+        part := vehicles.Aircraft_Mesh_Part.Body
+        mesh.vertex_count = 3
+        mesh.triangle_count = 1
+        mesh.vertices[0] = {
+            uv   = {9.9 / VEHICLE_PAINT_TEXTURE_WIDTH, 10.0 / VEHICLE_PAINT_TEXTURE_HEIGHT},
+            part = part,
+        }
+        mesh.vertices[1] = {
+            uv   = {14.0 / VEHICLE_PAINT_TEXTURE_WIDTH, 10.0 / VEHICLE_PAINT_TEXTURE_HEIGHT},
+            part = part,
+        }
+        mesh.vertices[2] = {
+            uv   = {9.9 / VEHICLE_PAINT_TEXTURE_WIDTH, 14.0 / VEHICLE_PAINT_TEXTURE_HEIGHT},
+            part = part,
+        }
+        mesh.triangles[0] = {0, 1, 2}
+
+        vehicle_paint_build_texel_parts(editor, &mesh)
+
+        owner := u8(part) + 1
+        testing.expect(t, editor.vehicle_paint_texel_part[10 * VEHICLE_PAINT_TEXTURE_WIDTH + 9] == owner)
+        testing.expect(t, editor.vehicle_paint_texel_part[10 * VEHICLE_PAINT_TEXTURE_WIDTH + 8] == 0)
+    }
+
+    @(test)
+    vehicle_paint_uv_mask_excludes_protected_materials :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        mesh: vehicles.Aircraft_Mesh
+        mesh.vertex_count = 6
+        mesh.triangle_count = 2
+        for index in 0 ..< 3 do mesh.vertices[index].part = .Wheel
+        mesh.vertices[0].uv = {.10, .10}
+        mesh.vertices[1].uv = {.20, .10}
+        mesh.vertices[2].uv = {.10, .20}
+        for index in 3 ..< 6 do mesh.vertices[index].part = .Glass
+        mesh.vertices[3].uv = {.30, .30}
+        mesh.vertices[4].uv = {.40, .30}
+        mesh.vertices[5].uv = {.30, .40}
+        mesh.triangles[0] = {0, 1, 2}
+        mesh.triangles[1] = {3, 4, 5}
+
+        vehicle_paint_build_texel_parts(editor, &mesh)
+
+        testing.expect(t, !vehicle_paint_part_is_paintable(.Wheel))
+        testing.expect(t, !vehicle_paint_part_is_paintable(.Glass))
+        testing.expect(t, vehicle_paint_part_is_paintable(.Body))
+        for owner in editor.vehicle_paint_texel_part do testing.expect(t, owner == 0)
+    }
+
+    @(test)
     vehicle_paint_symmetry_resolves_the_opposite_surface_not_flipped_uv :: proc(t: ^testing.T) {
         mesh: vehicles.Aircraft_Mesh
         mesh.vertex_count = 6
         mesh.triangle_count = 2
-        mesh.vertices[0] = {position = {-1, 0, 0}, uv = {.10, .10}, part = .Wing}
-        mesh.vertices[1] = {position = {-1, 1, 0}, uv = {.10, .20}, part = .Wing}
-        mesh.vertices[2] = {position = {-1, 0, 1}, uv = {.20, .10}, part = .Wing}
+        mesh.vertices[0] = {
+            position = {-1, 0, 0},
+            uv       = {.10, .10},
+            part     = .Wing,
+        }
+        mesh.vertices[1] = {
+            position = {-1, 1, 0},
+            uv       = {.10, .20},
+            part     = .Wing,
+        }
+        mesh.vertices[2] = {
+            position = {-1, 0, 1},
+            uv       = {.20, .10},
+            part     = .Wing,
+        }
         // The opposite triangle deliberately lives in an unrelated area of
         // the packed atlas. A raw U flip would produce .85 instead of .75.
-        mesh.vertices[3] = {position = {1, 0, 0}, uv = {.70, .70}, part = .Wing}
-        mesh.vertices[4] = {position = {1, 1, 0}, uv = {.70, .80}, part = .Wing}
-        mesh.vertices[5] = {position = {1, 0, 1}, uv = {.80, .70}, part = .Wing}
+        mesh.vertices[3] = {
+            position = {1, 0, 0},
+            uv       = {.70, .70},
+            part     = .Wing,
+        }
+        mesh.vertices[4] = {
+            position = {1, 1, 0},
+            uv       = {.70, .80},
+            part     = .Wing,
+        }
+        mesh.vertices[5] = {
+            position = {1, 0, 1},
+            uv       = {.80, .70},
+            part     = .Wing,
+        }
         mesh.triangles[0] = {0, 1, 2}
         mesh.triangles[1] = {3, 4, 5}
 
-        found, mirrored_part, mirrored_uv := vehicle_paint_mirror_uv_mesh(
-            &mesh,
-            {-1, .25, .25},
-            .Wing,
-        )
+        found, mirrored_part, mirrored_uv := vehicle_paint_mirror_uv_mesh(&mesh, {-1, .25, .25}, .Wing)
         testing.expect(t, found)
         testing.expect(t, mirrored_part == .Wing)
         testing.expect(t, math.abs(mirrored_uv[0] - .725) < .001)
@@ -205,11 +273,7 @@ when ODIN_TEST {
 
         pixels := vehicle_paint_pixels(editor)
         target := VEHICLE_PAINT_COLORS[6]
-        vehicle_paint_set_texel(
-            pixels,
-            texel,
-            {target.r + 2, target.g - 3, target.b + 1, 255},
-        )
+        vehicle_paint_set_texel(pixels, texel, {target.r + 2, target.g - 3, target.b + 1, 255})
         palette_index: int
         palette_index, sampled = vehicle_paint_sample_palette(editor, part, uv)
         testing.expect(t, sampled)
@@ -239,25 +303,97 @@ when ODIN_TEST {
         testing.expect(t, editor.vehicle_paint_tool == .Brush)
         testing.expect(t, editor.vehicle_paint_color == 0)
         testing.expect(t, editor.vehicle_paint_secondary_color == 13)
+        testing.expect(t, editor.vehicle_paint_pattern == 0)
+        testing.expect(t, editor.vehicle_paint_pattern_size == 32)
+        testing.expect(t, editor.vehicle_paint_pattern_rotation == 0)
+        testing.expect(t, editor.vehicle_paint_shape_kind == 0)
+        testing.expect(t, editor.vehicle_paint_shape_size == 32)
+        testing.expect(t, editor.vehicle_paint_shape_rotation == 0)
         testing.expect(t, editor.vehicle_paint_brush_radius == 14)
         testing.expect(t, editor.vehicle_paint_brush_hardness == .75)
+        testing.expect(t, editor.vehicle_paint_brush_strength == .75)
         for enabled in editor.vehicle_paint_component_mask do testing.expect(t, enabled)
 
         editor.vehicle_paint_tool = .Gradient
         editor.vehicle_paint_color = 8
         editor.vehicle_paint_secondary_color = 2
+        editor.vehicle_paint_pattern = 9
+        editor.vehicle_paint_pattern_size = 96
+        editor.vehicle_paint_pattern_rotation = 45
+        editor.vehicle_paint_shape_kind = 5
+        editor.vehicle_paint_shape_size = 96
+        editor.vehicle_paint_shape_rotation = 30
         editor.vehicle_paint_brush_radius = 29
         editor.vehicle_paint_brush_hardness = .25
+        editor.vehicle_paint_brush_strength = .5
         editor.vehicle_paint_symmetry = true
         editor.vehicle_paint_component_mask[1] = false
         vehicle_paint_settings_initialize(editor)
         testing.expect(t, editor.vehicle_paint_tool == .Gradient)
         testing.expect(t, editor.vehicle_paint_color == 8)
         testing.expect(t, editor.vehicle_paint_secondary_color == 2)
+        testing.expect(t, editor.vehicle_paint_pattern == 9)
+        testing.expect(t, editor.vehicle_paint_pattern_size == 96)
+        testing.expect(t, editor.vehicle_paint_pattern_rotation == 45)
+        testing.expect(t, editor.vehicle_paint_shape_kind == 5)
+        testing.expect(t, editor.vehicle_paint_shape_size == 96)
+        testing.expect(t, editor.vehicle_paint_shape_rotation == 30)
         testing.expect(t, editor.vehicle_paint_brush_radius == 29)
         testing.expect(t, editor.vehicle_paint_brush_hardness == .25)
+        testing.expect(t, editor.vehicle_paint_brush_strength == .5)
         testing.expect(t, editor.vehicle_paint_symmetry)
         testing.expect(t, !editor.vehicle_paint_component_mask[1])
+    }
+
+    @(test)
+    vehicle_paint_pattern_palette_contains_twelve_two_color_patterns :: proc(t: ^testing.T) {
+        testing.expect(t, len(VEHICLE_PAINT_PATTERN_NAMES) == 12)
+        for pattern in 0 ..< len(VEHICLE_PAINT_PATTERN_NAMES) {
+            has_primary, has_secondary := false, false
+            for y in 0 ..< 32 {
+                for x in 0 ..< 32 {
+                    if vehicle_paint_pattern_secondary(pattern, x, y, 8) {
+                        has_secondary = true
+                    } else {
+                        has_primary = true
+                    }
+                }
+            }
+            testing.expect(t, has_primary)
+            testing.expect(t, has_secondary)
+        }
+    }
+
+    @(test)
+    vehicle_paint_pattern_edges_are_antialiased_and_rotation_changes_sampling :: proc(t: ^testing.T) {
+        edge := vehicle_paint_pattern_coverage(1, 4, 8, 16, 1, 0)
+        testing.expect(t, math.abs(edge - .5) < .001)
+
+        unrotated := vehicle_paint_pattern_coverage(1, 4, 4, 16, 1, 0)
+        quarter_turn := vehicle_paint_pattern_coverage(1, 4, 4, 16, 0, 1)
+        testing.expect(t, unrotated == 0)
+        testing.expect(t, quarter_turn == 1)
+    }
+
+    @(test)
+    vehicle_paint_touchpad_orbit_distinguishes_precise_scroll_from_mouse_wheel :: proc(t: ^testing.T) {
+        testing.expect(t, vehicle_paint_touchpad_orbit_gesture({.35, 0}))
+        testing.expect(t, vehicle_paint_touchpad_orbit_gesture({0, .125}))
+        testing.expect(t, !vehicle_paint_touchpad_orbit_gesture({0, 1}))
+        testing.expect(t, !vehicle_paint_touchpad_orbit_gesture({0, -2}))
+    }
+
+    @(test)
+    vehicle_paint_shape_palette_has_distinct_rotatable_silhouettes :: proc(t: ^testing.T) {
+        testing.expect(t, len(VEHICLE_PAINT_SHAPE_NAMES) == 6)
+        for kind in 0 ..< len(VEHICLE_PAINT_SHAPE_NAMES) {
+            testing.expect(t, vehicle_paint_shape_contains(kind, 0, 0, 10))
+            testing.expect(t, !vehicle_paint_shape_contains(kind, 11, 11, 10))
+        }
+        testing.expect(t, vehicle_paint_shape_contains(2, 9, 9, 10))
+        testing.expect(t, !vehicle_paint_shape_contains(1, 9, 9, 10))
+        testing.expect(t, vehicle_paint_shape_contains(3, 5, -8, 10, 0))
+        testing.expect(t, !vehicle_paint_shape_contains(3, 5, -8, 10, 180))
     }
 
     @(test)

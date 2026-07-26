@@ -122,7 +122,7 @@ float4 shadow_fragment(VertexOutput input) : SV_Target {
 
 float3 shade_imported_material(VertexOutput input) {
     float3 base_color = input.color.rgb;
-    if (input.kind > 6.5 && input.kind < 7.5) {
+    if (input.kind > 6.5 && input.kind < 7.5 && input.material.x > .5) {
         float4 paint = vehicle_paint_atlas.Sample(
             vehicle_paint_sampler,
             float3(input.uv, input.material.y)
@@ -139,7 +139,12 @@ float3 shade_imported_material(VertexOutput input) {
     float direct = saturate(dot(normal, sun_direction));
     float sky = saturate(normal.y * .5 + .5);
     float daylight = saturate(push.sun.w);
-    float diffuse_light = .22 + sky * .16 + direct * lerp(.26, .78, daylight);
+    // Values above ordinary daylight are reserved for presentation scenes and
+    // act as overall daylight exposure, brightening ambient and direct light.
+    float daylight_intensity = max(push.sun.w, 1.0);
+    float diffuse_light =
+        (.22 + sky * .16 + direct * lerp(.26, .78, daylight)) *
+        daylight_intensity;
     float3 diffuse = base_color * diffuse_light * (1.0 - metallic * .72);
 
     // A compact metallic-roughness response gives imported assets readable
@@ -147,7 +152,11 @@ float3 shade_imported_material(VertexOutput input) {
     float3 f0 = lerp(float3(.04, .04, .04), base_color, metallic);
     float specular_power = lerp(128.0, 6.0, roughness);
     float specular_strength = pow(saturate(dot(normal, half_direction)), specular_power);
-    specular_strength *= lerp(.72, .09, roughness) * direct * lerp(.18, 1.0, daylight);
+    specular_strength *=
+        lerp(.72, .09, roughness) *
+        direct *
+        lerp(.18, 1.0, daylight) *
+        daylight_intensity;
     return saturate(diffuse + f0 * specular_strength);
 }
 

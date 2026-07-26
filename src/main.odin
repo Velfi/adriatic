@@ -206,10 +206,17 @@ Editor :: struct {
     vehicle_paint_panel_visible:                    bool,
     vehicle_paint_color:                            int,
     vehicle_paint_secondary_color:                  int,
+    vehicle_paint_pattern:                          int,
+    vehicle_paint_pattern_size:                     int,
+    vehicle_paint_pattern_rotation:                 f32,
+    vehicle_paint_shape_kind:                       int,
+    vehicle_paint_shape_size:                       int,
+    vehicle_paint_shape_rotation:                   f32,
     vehicle_paint_tool:                             Vehicle_Paint_Tool,
     vehicle_paint_component:                        int,
     vehicle_paint_component_mask:                   [5]bool,
     vehicle_paint_texture_dirty:                    bool,
+    vehicle_paint_preview_texture_dirty:            bool,
     vehicle_paint_save_pending:                     bool,
     vehicle_paint_save_due_at:                      f32,
     vehicle_paint_save_failed:                      bool,
@@ -220,8 +227,11 @@ Editor :: struct {
     vehicle_paint_postale_mesh:                     vehicles.Aircraft_Mesh,
     vehicle_paint_cursor_x:                         f32,
     vehicle_paint_cursor_y:                         f32,
+    vehicle_paint_orbit_drag_active:                bool,
     vehicle_paint_brush_radius:                     int,
     vehicle_paint_brush_hardness:                   f32,
+    vehicle_paint_brush_strength:                   f32,
+    vehicle_paint_brush_slider_active:              int,
     vehicle_paint_erase:                            bool,
     vehicle_paint_symmetry:                         bool,
     vehicle_paint_stroke_active:                    bool,
@@ -242,8 +252,11 @@ Editor :: struct {
     vehicle_paint_tool_drag_mirror_texels:          [dynamic]int,
     vehicle_paint_hover_hit:                        bool,
     vehicle_paint_hover_component:                  int,
+    vehicle_paint_hover_uv:                         [2]f32,
     vehicle_paint_history_capturing:                bool,
+    vehicle_paint_open_pixels:                      []u8,
     vehicle_paint_layers:                           [VEHICLE_PAINT_AIRCRAFT_COUNT][VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
+    vehicle_paint_preview_pixels:                   [VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
     vehicle_paint_history_pixels:                   [VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
     vehicle_paint_undo:                             [VEHICLE_PAINT_AIRCRAFT_COUNT][dynamic]Vehicle_Paint_History_Entry,
     vehicle_paint_redo:                             [VEHICLE_PAINT_AIRCRAFT_COUNT][dynamic]Vehicle_Paint_History_Entry,
@@ -5620,14 +5633,11 @@ adriatic_run :: proc() -> bool {
                         body := active_aircraft_body(editor)
                         editor.aircraft_previous_body = body^
                         editor.aircraft_previous_body_valid = true
-                        touchdown_speed :=
-                            f32(math.sqrt(f64(body.velocity.x * body.velocity.x + body.velocity.z * body.velocity.z)))
-                        terrain_height :=
-                            terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
-                        ground := postale_game.drivable_surface_height(
-                            terrain_height,
-                            editor.project.sea_level,
+                        touchdown_speed := f32(
+                            math.sqrt(f64(body.velocity.x * body.velocity.x + body.velocity.z * body.velocity.z)),
                         )
+                        terrain_height := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
+                        ground := postale_game.drivable_surface_height(terrain_height, editor.project.sea_level)
                         if editor.aircraft.active != .Postale {
                             libellula_game.step(
                                 &editor.libellula,
@@ -5642,8 +5652,12 @@ adriatic_run :: proc() -> bool {
                                 f32(AIRCRAFT_FIXED_STEP),
                             )
                         } else {
-                            ground_result :=
-                                postale_game.step(&editor.postale, control, ground, f32(AIRCRAFT_FIXED_STEP))
+                            ground_result := postale_game.step(
+                                &editor.postale,
+                                control,
+                                ground,
+                                f32(AIRCRAFT_FIXED_STEP),
+                            )
                             wheels_on_land := terrain_height >= editor.project.sea_level
                             if ground_result.touched_down && wheels_on_land {
                                 editor.landing_wheel_squeal = max(
@@ -5990,13 +6004,13 @@ adriatic_run :: proc() -> bool {
                 } else {
                     rotor_rate :=
                         (editor.libellula.telemetry.rotor_rpm_normalized.x +
-                         editor.libellula.telemetry.rotor_rpm_normalized.y +
-                         editor.libellula.telemetry.rotor_rpm_normalized.z) /
+                            editor.libellula.telemetry.rotor_rpm_normalized.y +
+                            editor.libellula.telemetry.rotor_rpm_normalized.z) /
                         3
                     available_power :=
                         (editor.libellula.flight_runtime.left_engine_output +
-                         editor.libellula.flight_runtime.right_engine_output +
-                         editor.libellula.flight_runtime.rear_engine_output) /
+                            editor.libellula.flight_runtime.right_engine_output +
+                            editor.libellula.flight_runtime.rear_engine_output) /
                         3
                     engine_controls.rate = .16 + clamp(rotor_rate, 0, 1) * .84
                     engine_controls.power = editor.libellula.throttle * clamp(available_power, 0, 1)
@@ -6032,13 +6046,16 @@ adriatic_run :: proc() -> bool {
         if driving_car(editor) && !pause_menu_is_open(editor) {
             wheel_slip_controls.active = true
             wheel_slip_controls.amount = editor.car_drive.slip_amount
-            wheel_slip_controls.speed =
-                clamp(vehicles.car_drive_speed(editor.car_drive) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward, 0, 1)
+            wheel_slip_controls.speed = clamp(
+                vehicles.car_drive_speed(editor.car_drive) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward,
+                0,
+                1,
+            )
         } else if driving_aircraft(editor) &&
-                  editor.aircraft.active == .Postale &&
-                  postale_wheels_on_land &&
-                  editor.landing_wheel_squeal > 0 &&
-                  !pause_menu_is_open(editor) {
+           editor.aircraft.active == .Postale &&
+           postale_wheels_on_land &&
+           editor.landing_wheel_squeal > 0 &&
+           !pause_menu_is_open(editor) {
             wheel_slip_controls.active = true
             wheel_slip_controls.amount = editor.landing_wheel_squeal
             wheel_slip_controls.speed = clamp(editor.landing_wheel_speed / 32, 0, 1)
@@ -6046,8 +6063,11 @@ adriatic_run :: proc() -> bool {
         tire_roll_controls := engine_sound.Roll_Controls{}
         if driving_car(editor) && !pause_menu_is_open(editor) {
             tire_roll_controls.active = true
-            tire_roll_controls.speed =
-                clamp(vehicles.car_drive_speed(editor.car_drive) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward, 0, 1)
+            tire_roll_controls.speed = clamp(
+                vehicles.car_drive_speed(editor.car_drive) / vehicles.CAR_DRIVE_SEDAN_TUNE.max_forward,
+                0,
+                1,
+            )
             tire_surface, _ := road_car_surface(
                 editor,
                 {editor.car.position.x, editor.car.position.y, editor.car.position.z},
@@ -6073,14 +6093,8 @@ adriatic_run :: proc() -> bool {
                 tire_roll_controls.roughness = .1
             }
         }
-        if engine_audio_ready do engine_sound.update(
-            &editor.engine_audio,
-            engine_controls,
-            wheel_slip_controls,
-            tire_roll_controls,
-        )
-        editor.landing_wheel_squeal =
-            max(0, editor.landing_wheel_squeal - simulation_delta * 1.65)
+        if engine_audio_ready do engine_sound.update(&editor.engine_audio, engine_controls, wheel_slip_controls, tire_roll_controls)
+        editor.landing_wheel_squeal = max(0, editor.landing_wheel_squeal - simulation_delta * 1.65)
         if benchmark_mode && frame >= benchmark_warmup {
             benchmark_samples[benchmark_sample_count] = rl.GetTime() - benchmark_frame_start
             benchmark_sample_count += 1

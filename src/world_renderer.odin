@@ -190,7 +190,9 @@ world_camera_near_clip :: proc(editor: ^Editor) -> f32 {
 
 world_scene_sun :: proc(editor: ^Editor, sky: atmosphere.Sky_State) -> [4]f32 {
     if editor != nil && editor.vehicle_paint_scene {
-        return {.28, .88, .38, 1}
+        // The paint hangar uses a brighter studio key so colors and surface
+        // coverage remain easy to judge around the full aircraft.
+        return {.28, .88, .38, 1.6}
     }
     return {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], sky.daylight}
 }
@@ -221,11 +223,13 @@ world_aircraft_triangle :: proc(
     color: rl.Color,
     uv_a, uv_b, uv_c: [2]f32,
     paint_layer: f32,
+    paintable := true,
 ) {
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
     for &vertex in vertices {
         vertex.kind = 7
+        vertex.material[0] = paintable ? 1 : 0
         vertex.material[1] = paint_layer
         normal := vec_normalize(vec_cross(vec_sub(b, a), vec_sub(c, a)))
         vertex.normal = {normal.x, normal.y, normal.z}
@@ -4994,6 +4998,7 @@ world_aircraft :: proc(editor: ^Editor) {
                 b.uv,
                 c.uv,
                 f32(vehicle_paint_layer_index(.Postale)),
+                vehicle_paint_part_is_paintable(a.part),
             )
         }
     }
@@ -5044,6 +5049,7 @@ world_aircraft :: proc(editor: ^Editor) {
                 b.uv,
                 c.uv,
                 f32(vehicle_paint_layer_index(editor.aircraft.active)),
+                vehicle_paint_part_is_paintable(a.part),
             )
         }
     }
@@ -7388,19 +7394,31 @@ world_wing_trails :: proc(editor: ^Editor) {
                     y = (camera.right.y * math.cos(angle) + camera.up.y * math.sin(angle)) * radius,
                     z = (camera.right.z * math.cos(angle) + camera.up.z * math.sin(angle)) * radius,
                 }
-                append(&world_renderer.wing_trail_vertices, world_vertex(
-                    {particle.position.x + radial.x, particle.position.y + radial.y, particle.position.z + radial.z},
-                    color,
-                ))
+                append(
+                    &world_renderer.wing_trail_vertices,
+                    world_vertex(
+                        {
+                            particle.position.x + radial.x,
+                            particle.position.y + radial.y,
+                            particle.position.z + radial.z,
+                        },
+                        color,
+                    ),
+                )
             }
             if ring_count > 0 {
                 previous_ring := first_ring + (ring_count - 1) * 8
                 current_ring := first_ring + ring_count * 8
                 for ring_side in 0 ..< 8 {
                     next := (ring_side + 1) % 8
-                    append(&world_renderer.wing_trail_indices,
-                        u16(previous_ring + ring_side), u16(current_ring + ring_side), u16(current_ring + next),
-                        u16(previous_ring + ring_side), u16(current_ring + next), u16(previous_ring + next),
+                    append(
+                        &world_renderer.wing_trail_indices,
+                        u16(previous_ring + ring_side),
+                        u16(current_ring + ring_side),
+                        u16(current_ring + next),
+                        u16(previous_ring + ring_side),
+                        u16(current_ring + next),
+                        u16(previous_ring + next),
                     )
                 }
             }
@@ -7506,21 +7524,21 @@ vehicle_paint_atlas_create :: proc(ctx: ^engine.Vk_Context, out: ^resources.Imag
         return false
     }
     barrier := vk.ImageMemoryBarrier2 {
-        sType               = .IMAGE_MEMORY_BARRIER_2,
-        srcStageMask        = {.TOP_OF_PIPE},
-        dstStageMask        = {.TRANSFER},
-        dstAccessMask       = {.TRANSFER_WRITE},
-        oldLayout           = .UNDEFINED,
-        newLayout           = .TRANSFER_DST_OPTIMAL,
+        sType = .IMAGE_MEMORY_BARRIER_2,
+        srcStageMask = {.TOP_OF_PIPE},
+        dstStageMask = {.TRANSFER},
+        dstAccessMask = {.TRANSFER_WRITE},
+        oldLayout = .UNDEFINED,
+        newLayout = .TRANSFER_DST_OPTIMAL,
         srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
         dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-        image               = out.image,
-        subresourceRange    = {
-            aspectMask     = {.COLOR},
-            baseMipLevel   = 0,
-            levelCount     = 1,
+        image = out.image,
+        subresourceRange = {
+            aspectMask = {.COLOR},
+            baseMipLevel = 0,
+            levelCount = 1,
             baseArrayLayer = 0,
-            layerCount     = VEHICLE_PAINT_AIRCRAFT_COUNT,
+            layerCount = VEHICLE_PAINT_AIRCRAFT_COUNT,
         },
     }
     dependency := vk.DependencyInfo {
@@ -7531,16 +7549,12 @@ vehicle_paint_atlas_create :: proc(ctx: ^engine.Vk_Context, out: ^resources.Imag
     vk.CmdPipelineBarrier2(cmd, &dependency)
     region := vk.BufferImageCopy {
         imageSubresource = {
-            aspectMask     = {.COLOR},
-            mipLevel       = 0,
+            aspectMask = {.COLOR},
+            mipLevel = 0,
             baseArrayLayer = 0,
-            layerCount     = VEHICLE_PAINT_AIRCRAFT_COUNT,
+            layerCount = VEHICLE_PAINT_AIRCRAFT_COUNT,
         },
-        imageExtent = {
-            VEHICLE_PAINT_TEXTURE_WIDTH,
-            VEHICLE_PAINT_TEXTURE_HEIGHT,
-            1,
-        },
+        imageExtent = {VEHICLE_PAINT_TEXTURE_WIDTH, VEHICLE_PAINT_TEXTURE_HEIGHT, 1},
     }
     vk.CmdCopyBufferToImage(cmd, staging.handle, out.image, .TRANSFER_DST_OPTIMAL, 1, &region)
     barrier.srcStageMask = {.TRANSFER}
@@ -7574,7 +7588,7 @@ vehicle_paint_atlas_create :: proc(ctx: ^engine.Vk_Context, out: ^resources.Imag
 
 vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_index: int) {
     if editor == nil ||
-       !editor.vehicle_paint_texture_dirty ||
+       (!editor.vehicle_paint_texture_dirty && !editor.vehicle_paint_preview_texture_dirty) ||
        cmd == nil ||
        frame_index < 0 ||
        frame_index >= engine.MAX_FRAMES_IN_FLIGHT {
@@ -7582,29 +7596,38 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
     }
     staging := &world_renderer.vehicle_paint_staging[frame_index]
     if staging.handle == vk.Buffer(0) || staging.mapped == nil do return
-    mem.copy_non_overlapping(
-        staging.mapped,
-        raw_data(vehicle_paint_pixels(editor)),
-        VEHICLE_PAINT_TEXTURE_BYTE_COUNT,
-    )
+    mem.copy_non_overlapping(staging.mapped, raw_data(vehicle_paint_pixels(editor)), VEHICLE_PAINT_TEXTURE_BYTE_COUNT)
+    staging_pixels := mem.slice_ptr(cast([^]u8)staging.mapped, VEHICLE_PAINT_TEXTURE_BYTE_COUNT)
+    for preview_alpha, byte_index in editor.vehicle_paint_preview_pixels {
+        if byte_index % 4 != 3 || preview_alpha == 0 do continue
+        pixel := byte_index - 3
+        blend := f32(preview_alpha) / 255
+        staging_pixels[pixel] =
+            u8(f32(editor.vehicle_paint_preview_pixels[pixel]) * blend + f32(staging_pixels[pixel]) * (1 - blend))
+        staging_pixels[pixel + 1] =
+            u8(f32(editor.vehicle_paint_preview_pixels[pixel + 1]) * blend + f32(staging_pixels[pixel + 1]) * (1 - blend))
+        staging_pixels[pixel + 2] =
+            u8(f32(editor.vehicle_paint_preview_pixels[pixel + 2]) * blend + f32(staging_pixels[pixel + 2]) * (1 - blend))
+        staging_pixels[pixel + 3] = max(staging_pixels[pixel + 3], preview_alpha)
+    }
     layer := u32(vehicle_paint_layer_index(editor.aircraft.active))
     barrier := vk.ImageMemoryBarrier2 {
-        sType               = .IMAGE_MEMORY_BARRIER_2,
-        srcStageMask        = {.FRAGMENT_SHADER},
-        srcAccessMask       = {.SHADER_READ},
-        dstStageMask        = {.TRANSFER},
-        dstAccessMask       = {.TRANSFER_WRITE},
-        oldLayout           = .SHADER_READ_ONLY_OPTIMAL,
-        newLayout           = .TRANSFER_DST_OPTIMAL,
+        sType = .IMAGE_MEMORY_BARRIER_2,
+        srcStageMask = {.FRAGMENT_SHADER},
+        srcAccessMask = {.SHADER_READ},
+        dstStageMask = {.TRANSFER},
+        dstAccessMask = {.TRANSFER_WRITE},
+        oldLayout = .SHADER_READ_ONLY_OPTIMAL,
+        newLayout = .TRANSFER_DST_OPTIMAL,
         srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
         dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-        image               = world_renderer.vehicle_paint_atlas.image,
-        subresourceRange    = {
-            aspectMask     = {.COLOR},
-            baseMipLevel   = 0,
-            levelCount     = 1,
+        image = world_renderer.vehicle_paint_atlas.image,
+        subresourceRange = {
+            aspectMask = {.COLOR},
+            baseMipLevel = 0,
+            levelCount = 1,
             baseArrayLayer = layer,
-            layerCount     = 1,
+            layerCount = 1,
         },
     }
     dependency := vk.DependencyInfo {
@@ -7614,17 +7637,8 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
     }
     vk.CmdPipelineBarrier2(cmd, &dependency)
     region := vk.BufferImageCopy {
-        imageSubresource = {
-            aspectMask     = {.COLOR},
-            mipLevel       = 0,
-            baseArrayLayer = layer,
-            layerCount     = 1,
-        },
-        imageExtent = {
-            VEHICLE_PAINT_TEXTURE_WIDTH,
-            VEHICLE_PAINT_TEXTURE_HEIGHT,
-            1,
-        },
+        imageSubresource = {aspectMask = {.COLOR}, mipLevel = 0, baseArrayLayer = layer, layerCount = 1},
+        imageExtent = {VEHICLE_PAINT_TEXTURE_WIDTH, VEHICLE_PAINT_TEXTURE_HEIGHT, 1},
     }
     vk.CmdCopyBufferToImage(
         cmd,
@@ -7642,6 +7656,7 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
     barrier.newLayout = .SHADER_READ_ONLY_OPTIMAL
     vk.CmdPipelineBarrier2(cmd, &dependency)
     editor.vehicle_paint_texture_dirty = false
+    editor.vehicle_paint_preview_texture_dirty = false
 }
 
 world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
@@ -8140,8 +8155,16 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         )
     }
     if len(world_renderer.wing_trail_vertices) > 0 {
-        mem.copy_non_overlapping(wing_trail_vertex_buffer.mapped, raw_data(world_renderer.wing_trail_vertices), len(world_renderer.wing_trail_vertices) * size_of(World_Vertex))
-        mem.copy_non_overlapping(wing_trail_index_buffer.mapped, raw_data(world_renderer.wing_trail_optimized_indices), len(world_renderer.wing_trail_optimized_indices) * size_of(u16))
+        mem.copy_non_overlapping(
+            wing_trail_vertex_buffer.mapped,
+            raw_data(world_renderer.wing_trail_vertices),
+            len(world_renderer.wing_trail_vertices) * size_of(World_Vertex),
+        )
+        mem.copy_non_overlapping(
+            wing_trail_index_buffer.mapped,
+            raw_data(world_renderer.wing_trail_optimized_indices),
+            len(world_renderer.wing_trail_optimized_indices) * size_of(u16),
+        )
     }
     viewport := vk.Viewport {
         width    = f32(pass.framebuffer_extent.width),
@@ -8282,11 +8305,17 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     }
 }
 
-world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
+world_pre_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
     editor := world_renderer.editor
     if editor == nil do return
     vehicle_paint_atlas_flush(editor, pass.frame.command_buffer, int(pass.frame.frame_index))
+}
+
+world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
+    if !world_renderer.initialized do return
+    editor := world_renderer.editor
+    if editor == nil do return
     world_build(editor)
     if !editor.vehicle_showcase_scene do clipmap_update(editor, int(pass.frame.frame_index))
     buffer := &world_renderer.vertex[pass.frame.frame_index]
@@ -8316,8 +8345,16 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         )
     }
     if len(world_renderer.wing_trail_vertices) > 0 {
-        mem.copy_non_overlapping(wing_trail_vertex_buffer.mapped, raw_data(world_renderer.wing_trail_vertices), len(world_renderer.wing_trail_vertices) * size_of(World_Vertex))
-        mem.copy_non_overlapping(wing_trail_index_buffer.mapped, raw_data(world_renderer.wing_trail_optimized_indices), len(world_renderer.wing_trail_optimized_indices) * size_of(u16))
+        mem.copy_non_overlapping(
+            wing_trail_vertex_buffer.mapped,
+            raw_data(world_renderer.wing_trail_vertices),
+            len(world_renderer.wing_trail_vertices) * size_of(World_Vertex),
+        )
+        mem.copy_non_overlapping(
+            wing_trail_index_buffer.mapped,
+            raw_data(world_renderer.wing_trail_optimized_indices),
+            len(world_renderer.wing_trail_optimized_indices) * size_of(u16),
+        )
     }
     viewport := vk.Viewport {
         width    = f32(pass.framebuffer_extent.width),
@@ -8374,16 +8411,16 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     }
     offset := vk.DeviceSize(0)
     graph_context := Render_Graph_Context {
-        pass           = pass,
-        buffer         = buffer,
-        road_buffer    = road_buffer,
-        foliage_buffer = foliage_buffer,
+        pass                     = pass,
+        buffer                   = buffer,
+        road_buffer              = road_buffer,
+        foliage_buffer           = foliage_buffer,
         wing_trail_vertex_buffer = wing_trail_vertex_buffer,
-        wing_trail_index_buffer = wing_trail_index_buffer,
-        offset         = offset,
-        pipeline_index = pipeline_index,
-        world_push     = world_push,
-        sky_push       = sky_push,
+        wing_trail_index_buffer  = wing_trail_index_buffer,
+        offset                   = offset,
+        pipeline_index           = pipeline_index,
+        world_push               = world_push,
+        sky_push                 = sky_push,
     }
     if !world_render_graph_ready {
         world_render_graph_ready = adriatic_render_graph(&world_render_graph)
@@ -8393,6 +8430,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
 
 world_renderer_attach :: proc(editor: ^Editor) {
     world_renderer.editor = editor
+    rl.SetWorldPrePass(world_pre_pass)
     rl.SetWorldPass(world_pass)
     rl.SetUIPass(imgui_ui_pass)
 }
