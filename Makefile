@@ -120,6 +120,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/particles.vert.spv \
 	$(HOT_SHADER_DIR)/particles.frag.spv \
 	$(HOT_SHADER_DIR)/foliage.vert.spv \
+	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
 .PHONY: all bootstrap bootstrap-fork doctor textshape-build physics-deps physics-build shaders build release validation validation-build lldb profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
@@ -147,11 +148,15 @@ doctor:
 
 build: doctor $(DEV_APP)
 
-shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/foliage.frag.spv
+shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
 
 build/generated/shaders/foliage.vert.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+build/generated/shaders/grass.vert.spv: assets/shaders/foliage.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry grass_vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
 
 build/generated/shaders/foliage.frag.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)
@@ -273,6 +278,10 @@ $(DEV_DIR)/shaders/foliage.vert.spv: build/generated/shaders/foliage.vert.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(DEV_DIR)/shaders/grass.vert.spv: build/generated/shaders/grass.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(DEV_DIR)/shaders/foliage.frag.spv: build/generated/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	cp $< $@
@@ -358,6 +367,10 @@ $(RELEASE_DIR)/shaders/particles.frag.spv: build/generated/shaders/particles.fra
 	cp $< $@
 
 $(RELEASE_DIR)/shaders/foliage.vert.spv: build/generated/shaders/foliage.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(RELEASE_DIR)/shaders/grass.vert.spv: build/generated/shaders/grass.vert.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -485,6 +498,10 @@ $(HOT_SHADER_DIR)/foliage.vert.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
 
+$(HOT_SHADER_DIR)/grass.vert.spv: assets/shaders/foliage.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry grass_vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
 $(HOT_SHADER_DIR)/foliage.frag.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
@@ -611,11 +628,11 @@ $(VALIDATION_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_sign
 	$(CC) -O2 -c $< -o $(VALIDATION_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(VALIDATION_DIR)/gfx_signposts.o
 
-$(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(DEV_DIR)/,$(CONTROL_HINT_ASSETS)) $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
+$(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(DEV_DIR)/,$(CONTROL_HINT_ASSETS)) $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(DEV_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_debug) $(PROFILE_DEFINE_FLAGS_debug) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
-$(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(RELEASE_DIR)/,$(CONTROL_HINT_ASSETS)) $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
+$(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(RELEASE_DIR)/,$(CONTROL_HINT_ASSETS)) $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(RELEASE_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(RELEASE_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_release) $(PROFILE_DEFINE_FLAGS_release) -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 

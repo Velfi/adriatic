@@ -18,6 +18,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  foliage, foliage-forest, foliage-forest-low, foliage-understory")
     fmt.println("  foliage-forest-golden, foliage-forest-wind-a, foliage-forest-wind-b")
     fmt.println("  foliage-forest-low-wind-a, foliage-forest-low-wind-b, foliage-stress")
+    fmt.println("  grass-wind, wildflower-lab")
     fmt.println("  narrow, compact, sky-noon, sky-sunset, sky-storm, sky-night, player-*")
 }
 

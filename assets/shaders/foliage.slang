@@ -42,8 +42,7 @@ float3 srgb_to_linear(float3 color) {
                   srgb_channel_to_linear(color.b));
 }
 
-[shader("vertex")]
-VertexOutput vertex_main(VertexInput input) {
+VertexOutput foliage_vertex_transform(VertexInput input) {
     float3 world_position = input.position;
     float2 wind = push.water.zw;
     float wind_speed = length(wind);
@@ -80,11 +79,32 @@ VertexOutput vertex_main(VertexInput input) {
                              dot(input.position.xz, float2(.133, -.097)) +
                              tile_uv.x * 6.1 + tile_uv.y * 4.7);
     if (input.kind == 1) {
-        // Grass roots stay planted while tips follow a lower, quicker gust.
-        float grass_gust = broad_sway * .10 + flutter * .055;
-        world_position.xz += wind_direction * grass_gust * amplitude * tip_weight;
-        world_position.xz += wind_across * flutter * amplitude * .025 * tip_weight;
-        world_position.y -= abs(grass_gust) * amplitude * .018 * tip_weight;
+        // Advect several broad waves through world space. Their different
+        // headings and wavelengths form irregular gust fronts that travel
+        // across a field instead of making every tuft sway in unison.
+        float grass_time = push.water.x * (.62 + wind_speed * .018);
+        float downwind_coordinate = dot(input.position.xz, wind_direction);
+        float crosswind_coordinate = dot(input.position.xz, wind_across);
+        float field_wave =
+            sin(downwind_coordinate * .071 - grass_time) * .52 +
+            sin((downwind_coordinate * .039 + crosswind_coordinate * .052) -
+                grass_time * .73 + 1.7) * .31 +
+            sin((downwind_coordinate * .113 - crosswind_coordinate * .027) -
+                grass_time * 1.31 + 4.1) * .17;
+        float gust_front = smoothstep(-.42, .68, field_wave);
+
+        // A finer oscillation varies blade-to-blade inside the broad gust.
+        // Only the upper atlas region receives the displacement, keeping roots
+        // planted while stronger bends shorten the tuft slightly.
+        float blade_flutter =
+            sin(push.water.x * (1.74 + wind_speed * .036) +
+                dot(input.position.xz, float2(.37, -.29))) *
+            (.35 + gust_front * .65);
+        float downwind_bend = (.035 + gust_front * .13 + blade_flutter * .025) * amplitude;
+        float crosswind_bend = (field_wave * .018 + blade_flutter * .022) * amplitude;
+        world_position.xz += wind_direction * downwind_bend * tip_weight;
+        world_position.xz += wind_across * crosswind_bend * tip_weight;
+        world_position.y -= downwind_bend * (.055 + gust_front * .035) * tip_weight;
     } else if (native_atlas_card) {
         // Wall-trained bougainvillea is tied to masonry. Keep the lower card
         // vertices pinned to the woody attachment and confine motion to the
@@ -123,6 +143,54 @@ VertexOutput vertex_main(VertexInput input) {
     output.depth = depth;
     output.kind = input.kind;
     return output;
+}
+
+[shader("vertex")]
+VertexOutput vertex_main(VertexInput input) {
+    return foliage_vertex_transform(input);
+}
+
+struct GrassInstance {
+    float3 center : POSITION;
+    float2 size : TEXCOORD0;
+    uint tile : TEXCOORD1;
+    float4 color : COLOR0;
+};
+
+[shader("vertex")]
+VertexOutput grass_vertex_main(GrassInstance instance, uint vertex_id : SV_VertexID) {
+    static const float2 corners[6] = {
+        float2(-.5, -.5), float2(.5, -.5), float2(.5, .5),
+        float2(-.5, -.5), float2(.5, .5), float2(-.5, .5)
+    };
+    float2 corner = corners[vertex_id];
+    float3 position = instance.center;
+    // Camera-facing width with a world-vertical axis keeps roots planted even
+    // when the chase camera pitches.
+    position += push.camera_right.xyz * (corner.x * instance.size.x);
+    position.y += corner.y * instance.size.y;
+
+    uint column = instance.tile & 3;
+    uint row = instance.tile >> 2;
+    float inset = 2.0 / 1254.0;
+    float u0 = float(column) * .25 + inset;
+    float u1 = float(column + 1) * .25 - inset;
+    if ((instance.tile & 1) == 0) {
+        float swap_u = u0;
+        u0 = u1;
+        u1 = swap_u;
+    }
+    float v0 = float(row) * .25 + inset;
+    float v1 = float(row + 1) * .25 - inset;
+    float2 uv = float2(lerp(u0, u1, corner.x + .5),
+                       lerp(v1, v0, corner.y + .5));
+
+    VertexInput input;
+    input.position = position;
+    input.uv = uv;
+    input.color = instance.color;
+    input.kind = 1;
+    return foliage_vertex_transform(input);
 }
 
 [shader("fragment")]
@@ -228,8 +296,15 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     }
     if (input.kind == 1) {
         // Grass uses the atlas strictly as a grayscale value/alpha mask. The
-        // CPU tint is derived from live elevation above sea level.
-        color *= lerp(.86, 1.08, tip);
+        // CPU tint is derived from the live terrain beneath the card. Ease out
+        // the atlas contrast with the same edge coverage used for the field
+        // falloff, leaving the final visible blades at the terrain's value.
+        // Grass atlas pixels skew dark, so use a narrower, higher value range
+        // than canopy cards. This keeps texture definition without pulling the
+        // field below the luminance-matched CPU tint.
+        float grass_detail = lerp(.82, 1.30, smoothstep(.06, .94, luminance)) *
+                             lerp(.94, 1.08, tip);
+        color = input.color.rgb * lerp(1.0, grass_detail, input.color.a);
     }
 
     float alpha = native_atlas_color ? coverage : texel.a * input.color.a;

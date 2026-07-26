@@ -126,6 +126,7 @@ customization_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
 }
 
 customization_activate :: proc(editor: ^Editor, focus: int) {
+    changed := true
     if focus >= 0 && focus < CUSTOMIZATION_COLOR_COUNT {
         editor.mouse_fur = Mouse_Fur(focus)
     } else if focus >= CUSTOMIZATION_PATTERN_START && focus < CUSTOMIZATION_HEADGEAR_START {
@@ -149,7 +150,11 @@ customization_activate :: proc(editor: ^Editor, focus: int) {
         editor.mouse_scarf_enabled = true
     } else if focus == CUSTOMIZATION_BACK_FOCUS {
         editor.pause_screen = .Options
+        changed = false
+    } else {
+        changed = false
     }
+    if changed do _ = mouse_preference_save(editor)
 }
 
 customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
@@ -278,6 +283,7 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
                 editor.mouse_scarf_color.b = value
             }
             editor.mouse_scarf_enabled = true
+            _ = mouse_preference_save(editor)
         } else {
             customization_activate(editor, pointer_focus)
         }

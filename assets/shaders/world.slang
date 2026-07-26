@@ -101,7 +101,7 @@ VertexOutput shadow_vertex(VertexInput input) {
     float ray_distance = max(input.position.y - receiver_y, 0.0) / sun_y;
     float3 world_position = float3(
         input.position.x - push.sun.x * ray_distance,
-        receiver_y + .020,
+        receiver_y + .040,
         input.position.z - push.sun.z * ray_distance
     );
 

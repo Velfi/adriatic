@@ -51,6 +51,7 @@ Pavement_Hit :: struct {
     pavement:   Pavement,
     edge_index: int,
     distance:   f32,
+    height:     f32,
     on_surface: bool,
 }
 
@@ -340,6 +341,7 @@ pavement_at :: proc(graph: ^Graph, position: Vec3) -> Pavement_Hit {
                 )
             }
             closest_x := previous.x + segment_x * amount
+            closest_y := previous.y + (current.y - previous.y) * amount
             closest_z := previous.z + segment_z * amount
             delta_x := position.x - closest_x
             delta_z := position.z - closest_z
@@ -348,6 +350,7 @@ pavement_at :: proc(graph: ^Graph, position: Vec3) -> Pavement_Hit {
                 best_distance_squared = distance_squared
                 hit.pavement = edge.pavement
                 hit.edge_index = edge_index
+                hit.height = closest_y
                 hit.on_surface =
                     distance_squared <=
                     (edge.half_width + edge.shoulder_width) * (edge.half_width + edge.shoulder_width)

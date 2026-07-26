@@ -147,6 +147,7 @@ Editor :: struct {
     capture_bougainvillea_seed_enabled:             bool,
     capture_bougainvillea_structure_id:             u64,
     capture_bougainvillea_seed:                     u32,
+    benchmark_ground_grass_disabled:                bool,
     structure_undo:                                 [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
     structure_redo:                                 [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
     structure_undo_count:                           int,
@@ -297,6 +298,7 @@ Editor :: struct {
     atmosphere:                                     atmosphere.Atmosphere,
     vehicle_effects:                                particle_systems.Vehicle_Effects,
     wing_trails:                                    particle_systems.Wing_Trails,
+    petal_effects:                                  particle_systems.Petal_Effects,
     tweak:                                          Tweak_State,
     tweak_status:                                   Tweak_Status,
     tweak_panel_visible:                            bool,
@@ -1272,6 +1274,11 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         seed_terrain_grip_benchmark(editor)
     case "player":
         seed_player_benchmark(editor)
+    case "grass":
+        seed_player_benchmark(editor)
+    case "grass_disabled":
+        seed_player_benchmark(editor)
+        editor.benchmark_ground_grass_disabled = true
     case "architecture":
         seed_city_capture(editor)
     case:
@@ -1282,7 +1289,9 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "foliage_understory" &&
        scenario != "road_grip" &&
        scenario != "terrain_grip" &&
-       scenario != "player" {
+       scenario != "player" &&
+       scenario != "grass" &&
+       scenario != "grass_disabled" {
         editor.editor_camera.distance = 260
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     }
@@ -1324,9 +1333,9 @@ benchmark_report :: proc(
     foliage_vertex_count :=
         len(world_renderer.foliage_vertices) +
         len(world_renderer.bougainvillea_vertices) +
-        len(world_renderer.grass_vertices)
+        len(world_renderer.grass_instances) * 6
     world_vertex_utilization := f64(world_vertex_count) / f64(max(WORLD_VERTEX_CAPACITY, 1))
-    foliage_vertex_capacity := FOLIAGE_VERTEX_CAPACITY + BOUGAINVILLEA_VERTEX_CAPACITY + GRASS_VERTEX_CAPACITY
+    foliage_vertex_capacity := FOLIAGE_VERTEX_CAPACITY + BOUGAINVILLEA_VERTEX_CAPACITY + GRASS_INSTANCE_CAPACITY * 6
     foliage_vertex_utilization := f64(foliage_vertex_count) / f64(max(foliage_vertex_capacity, 1))
     road_vertex_utilization := f64(road_vertex_count) / f64(max(ROAD_VERTEX_CAPACITY, 1))
     fmt.printf(
@@ -3500,7 +3509,28 @@ world_under_cursor :: proc(mouse, center: rl.Vector2, scale: f32) -> (f32, f32) 
     return (a + b) * .5, (b - a) * .5
 }
 
-terrain_color :: proc(height, painted, sea_level: f32) -> rl.Color {
+terrain_color_variation :: proc(color: rl.Color, x, z: f32) -> rl.Color {
+    // Broad, overlapping waves read as irregular patches instead of a repeated
+    // per-cell pattern. World-space sampling keeps the color stable as clipmap
+    // levels and the camera move.
+    broad := f32(math.sin(f64(x * .021 + z * .013)))
+    cross := f32(math.sin(f64(x * -.047 + z * .039 + 1.7)))
+    detail := f32(math.sin(f64(x * .113 + z * -.097 + broad * 1.4)))
+    variation := broad * .52 + cross * .31 + detail * .17
+
+    // A slight warm/cool shift varies hue as well as brightness. Keeping the
+    // range restrained preserves the authored material identity.
+    warm := max(variation, 0)
+    cool := max(-variation, 0)
+    return {
+        u8(clamp(f32(color.r) * (1 + variation * .075) + warm * 3, 0, 255)),
+        u8(clamp(f32(color.g) * (1 + variation * .055) + cool * 2, 0, 255)),
+        u8(clamp(f32(color.b) * (1 + variation * .035) + cool * 4, 0, 255)),
+        color.a,
+    }
+}
+
+terrain_color :: proc(height, painted, sea_level, x, z: f32) -> rl.Color {
     water := rl.Color {
         r = 26,
         g = 80,
@@ -3526,16 +3556,18 @@ terrain_color :: proc(height, painted, sea_level: f32) -> rl.Color {
         a = 255,
     }
     if height <= sea_level do return water
-    if painted > .5 do return soil
+    if painted > .5 do return terrain_color_variation(soil, x, z)
 
     elevation := height - sea_level
     // Broad blends keep the elevation bands from turning the heightfield cells
     // into hard material rings. The normal-based light applied by each renderer
     // then provides the small-scale shape and slope definition.
     if elevation < .9 {
-        return color_lerp(sand, soil, clamp((elevation - .18) / .72, 0, 1))
+        base := color_lerp(sand, soil, clamp((elevation - .18) / .72, 0, 1))
+        return terrain_color_variation(base, x, z)
     }
-    return color_lerp(soil, grass, clamp((elevation - .9) / 3.1, 0, 1))
+    base := color_lerp(soil, grass, clamp((elevation - .9) / 3.1, 0, 1))
+    return terrain_color_variation(base, x, z)
 }
 
 draw_line_3d :: proc(
@@ -3855,6 +3887,8 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                 average_height,
                 terrain.sample_material(&editor.project, 0, base_x, base_z),
                 editor.project.sea_level,
+                (base_x + far_next_x) * .5,
+                (base_z + far_next_z) * .5,
             )
             color := rl.Color {
                 r = u8(f32(base_color.r) * shade),
@@ -3920,7 +3954,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
 
     }
 
-    if editor.in_map {
+    if editor.in_map && !editor.capture_world_only {
         flying := driving_aircraft(editor)
         in_car := driving_car(editor)
         driving := flying || in_car
@@ -5003,6 +5037,9 @@ adriatic_run :: proc(
     capture_foliage_low_mode := capture_kind in CAPTURE_FOLIAGE_LOW_KINDS
     capture_foliage_understory_mode := capture_kind == .Foliage_Understory
     capture_foliage_stress_mode := capture_kind == .Foliage_Stress
+    capture_grass_wind_mode := capture_kind == .Grass_Wind
+    capture_wildflower_lab_mode := capture_kind == .Wildflower_Lab
+    capture_map_mode = capture_map_mode || capture_grass_wind_mode || capture_wildflower_lab_mode
     capture_target := request != nil ? request.target : (capture_mode && len(args) >= 4 ? args[3] : "")
     capture_output := request != nil ? request.output_path : (capture_mode && len(args) >= 3 ? args[2] : "")
     showcase_target := showcase_interactive_mode ? (len(args) >= 3 ? args[2] : "") : capture_target
@@ -5109,6 +5146,7 @@ adriatic_run :: proc(
     editor.atmosphere = atmosphere.new(0x41c10)
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
     editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
+    editor.petal_effects = particle_systems.new_petal_effects(0x6a09e667)
     editor.tweak = tweak_default_state()
     editor.tweak_status = .Defaults
     editor.tweak_panel_visible = false
@@ -5130,6 +5168,7 @@ adriatic_run :: proc(
     editor.mouse_headgear = .Goggles
     editor.mouse_scarf_enabled = false
     editor.mouse_scarf_color = {194, 35, 47, 255}
+    if !capture_mode do _ = mouse_preference_load(editor)
     editor.runtime_input = game_input.default_state()
     editor.vehicle_paint_tool_icons = rl.LoadTexture("assets/icons/control-hints/keyboard-mouse.png")
     if !editor.vehicle_paint_tool_icons.ready {
@@ -5236,6 +5275,20 @@ adriatic_run :: proc(
         if capture_kind == .Foliage_Wind_B || capture_kind == .Foliage_Low_Wind_B {
             editor.atmosphere.front_seconds = 4.25
         }
+        editor.atmosphere.paused = true
+    }
+    if capture_grass_wind_mode {
+        atmosphere.set_world_minutes(&editor.atmosphere, 10 * 60 + 15)
+        atmosphere.set_weather_override(&editor.atmosphere, .Windy)
+        editor.atmosphere.weather = atmosphere.weather_for(.Windy)
+        editor.atmosphere.front_seconds = 2.4
+        editor.atmosphere.paused = true
+    }
+    if capture_wildflower_lab_mode {
+        atmosphere.set_world_minutes(&editor.atmosphere, 10 * 60 + 45)
+        atmosphere.set_weather_override(&editor.atmosphere, .Windy)
+        editor.atmosphere.weather = atmosphere.weather_for(.Windy)
+        editor.atmosphere.front_seconds = 1.6
         editor.atmosphere.paused = true
     }
     if capture_foliage_golden_mode {
@@ -5486,6 +5539,40 @@ adriatic_run :: proc(
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
+        }
+        if capture_grass_wind_mode || capture_target == "grass" {
+            editor.capture_world_only = true
+            editor.postale_visible = false
+            editor.libellula_visible = false
+            editor.player.position.x += 24
+            // Clear the runway and its shoulder so the full radial grass
+            // population falloff is visible against uninterrupted terrain.
+            editor.player.position.z += 60
+            editor.player.position.y = terrain.sample_height(
+                &editor.project,
+                0,
+                editor.player.position.x,
+                editor.player.position.z,
+            )
+            editor.pilot.position = editor.player.position
+            grass_pose := third_person.camera_look_at(
+                {
+                    x = editor.player.position.x + 8,
+                    y = editor.player.position.y + 1.65,
+                    z = editor.player.position.z + 15,
+                },
+                {
+                    x = editor.player.position.x - 2,
+                    y = editor.player.position.y + .55,
+                    z = editor.player.position.z - 9,
+                },
+            )
+            third_person.camera_set_pose(&editor.cameras, .Inspection, grass_pose)
+            third_person.camera_set_active(&editor.cameras, .Inspection)
+            editor.camera_pose = grass_pose
+        }
+        if capture_wildflower_lab_mode {
+            configure_wildflower_lab_capture(editor)
         }
         if capture_target == "pause" do editor.pause_screen = .Pause
         if capture_target == "options" do editor.pause_screen = .Options
@@ -6437,6 +6524,18 @@ adriatic_run :: proc(
         }
         if editor.cameras.active != .Player {
             editor.camera_pose = third_person.camera_active_pose(&editor.cameras)
+        }
+        wildflower_effects_step(editor, simulation_delta)
+        if capture_wildflower_lab_mode {
+            wind := editor.atmosphere.weather.wind
+            particle_systems.step_petals(
+                &editor.petal_effects,
+                min(frame_delta, .05),
+                {editor.player.position.x + 1.1, editor.player.position.y, editor.player.position.z},
+                {8, 0, 1.5},
+                {wind[0], 0, wind[1]},
+                1,
+            )
         }
         if !editor.vehicle_showcase_scene && !driving_aircraft(editor) {
             camera_ground := terrain.sample_height(

@@ -356,10 +356,7 @@ follow_camera :: proc(current: Camera_Pose, desired: Camera_Pose, sharpness, del
     t := clamp(sharpness * delta_seconds, 0, 1)
     current_offset := sub(current.position, current.target)
     desired_offset := sub(desired.position, desired.target)
-    return {
-        position = add(desired.target, lerp(current_offset, desired_offset, t)),
-        target = desired.target,
-    }
+    return {position = add(desired.target, lerp(current_offset, desired_offset, t)), target = desired.target}
 }
 
 // camera_above_height applies a caller-supplied collision floor while

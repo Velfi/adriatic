@@ -11,6 +11,7 @@ Render_Graph_Context :: struct {
     buffer:                   ^engine.Vk_Buffer,
     road_buffer:              ^engine.Vk_Buffer,
     foliage_buffer:           ^engine.Vk_Buffer,
+    grass_instance_buffer:    ^engine.Vk_Buffer,
     wing_trail_vertex_buffer: ^engine.Vk_Buffer,
     wing_trail_index_buffer:  ^engine.Vk_Buffer,
     offset:                   vk.DeviceSize,
@@ -86,7 +87,7 @@ render_graph_foliage :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
     if len(world_renderer.foliage_vertices) <= 0 &&
        len(world_renderer.bougainvillea_vertices) <= 0 &&
-       len(world_renderer.grass_vertices) <= 0 {
+       len(world_renderer.grass_instances) <= 0 {
         return
     }
     cmd := ctx.pass.frame.command_buffer
@@ -133,7 +134,9 @@ render_graph_foliage :: proc(user_data: rawptr) {
             0,
         )
     }
-    if len(world_renderer.grass_vertices) > 0 {
+    if len(world_renderer.grass_instances) > 0 {
+        vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.grass_pipelines[ctx.pipeline_index])
+        vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.grass_instance_buffer.handle, &ctx.offset)
         vk.CmdBindDescriptorSets(
             cmd,
             .GRAPHICS,
@@ -144,13 +147,7 @@ render_graph_foliage :: proc(user_data: rawptr) {
             0,
             nil,
         )
-        vk.CmdDraw(
-            cmd,
-            u32(len(world_renderer.grass_vertices)),
-            1,
-            u32(len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)),
-            0,
-        )
+        vk.CmdDraw(cmd, 6, u32(len(world_renderer.grass_instances)), 0, 0)
     }
     render_graph_stage_end(ctx)
 }

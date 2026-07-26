@@ -25,7 +25,7 @@ FOLIAGE_VERTEX_CAPACITY :: 24_000
 // their painted roots remain fixed under wind. Preserve the former effective
 // budget of 2,000 cards after that fourfold tessellation.
 BOUGAINVILLEA_VERTEX_CAPACITY :: 48_000
-GRASS_VERTEX_CAPACITY :: 18_000
+GRASS_INSTANCE_CAPACITY :: 18_000
 WING_TRAIL_VERTEX_CAPACITY :: particles.MAX_WING_TRAIL_PARTICLES * 8
 WING_TRAIL_INDEX_CAPACITY :: (particles.MAX_WING_TRAIL_PARTICLES - 2) * 8 * 6 + 8 * 6
 CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
@@ -70,6 +70,13 @@ Foliage_Vertex :: struct {
     kind:     u32,
 }
 
+Grass_Instance :: struct {
+    center: [3]f32,
+    size:   [2]f32,
+    tile:   u32,
+    color:  [4]f32,
+}
+
 World_Push :: struct {
     camera_position: [4]f32,
     camera_right:    [4]f32,
@@ -100,6 +107,7 @@ World_Renderer :: struct {
     sky_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     particle_pipelines:              [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     foliage_pipelines:               [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    grass_pipelines:                 [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     layout:                          vk.PipelineLayout,
     sky_layout:                      vk.PipelineLayout,
     foliage_layout:                  vk.PipelineLayout,
@@ -119,13 +127,14 @@ World_Renderer :: struct {
     vertex:                          [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     road_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     foliage_vertex:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    grass_instance:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     wing_trail_vertex:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     wing_trail_index:                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vertices:                        [dynamic]World_Vertex,
     road_vertices:                   [dynamic]World_Vertex,
     foliage_vertices:                [dynamic]Foliage_Vertex,
     bougainvillea_vertices:          [dynamic]Foliage_Vertex,
-    grass_vertices:                  [dynamic]Foliage_Vertex,
+    grass_instances:                 [dynamic]Grass_Instance,
     wing_trail_vertices:             [dynamic]World_Vertex,
     wing_trail_indices:              [dynamic]u16,
     wing_trail_optimized_indices:    [dynamic]u16,
@@ -623,6 +632,8 @@ clipmap_vertex_color :: proc(editor: ^Editor, level: int, x, z, height: f32) -> 
         max(height, editor.project.sea_level + .12),
         terrain.sample_material(&editor.project, level, x, z),
         editor.project.sea_level,
+        x,
+        z,
     )
     return {
         u8(clamp(f32(base.r) * shade, 0, 255)),
@@ -3076,36 +3087,15 @@ world_bougainvillea_card :: proc(
 }
 
 world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: int, color: rl.Color) {
-    if len(world_renderer.grass_vertices) + 6 > GRASS_VERTEX_CAPACITY do return
-    editor := world_renderer.editor
-    if editor == nil do return
-    camera := perspective_camera(editor.camera_pose, 1.35)
-    right := third_person.Vec3{camera.right.x * width * .5, camera.right.y * width * .5, camera.right.z * width * .5}
-    // Keep the roots planted vertically even when the chase camera pitches.
-    up := third_person.Vec3 {
-        y = height * .5,
-    }
-    p0 := third_person.Vec3{center.x - right.x - up.x, center.y - up.y, center.z - right.z - up.z}
-    p1 := third_person.Vec3{center.x + right.x - up.x, center.y - up.y, center.z + right.z - up.z}
-    p2 := third_person.Vec3{center.x + right.x + up.x, center.y + up.y, center.z + right.z + up.z}
-    p3 := third_person.Vec3{center.x - right.x + up.x, center.y + up.y, center.z - right.z + up.z}
-    atlas_tile := ((tile % 16) + 16) % 16
-    column, row := atlas_tile % 4, atlas_tile / 4
-    inset := f32(2.0 / 1254.0)
-    u0 := f32(column) * .25 + inset
-    v0 := f32(row) * .25 + inset
-    u1 := f32(column + 1) * .25 - inset
-    v1 := f32(row + 1) * .25 - inset
-    if tile % 2 == 0 do u0, u1 = u1, u0
-    tint := world_color(color)
+    if len(world_renderer.grass_instances) >= GRASS_INSTANCE_CAPACITY do return
     append(
-        &world_renderer.grass_vertices,
-        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint, 1},
-        Foliage_Vertex{{p1.x, p1.y, p1.z}, {u1, v1}, tint, 1},
-        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint, 1},
-        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint, 1},
-        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint, 1},
-        Foliage_Vertex{{p3.x, p3.y, p3.z}, {u0, v0}, tint, 1},
+        &world_renderer.grass_instances,
+        Grass_Instance {
+            center = {center.x, center.y, center.z},
+            size = {width, height},
+            tile = u32(((tile % 16) + 16) % 16),
+            color = world_color(color),
+        },
     )
 }
 
@@ -7544,7 +7534,7 @@ player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
 mouse_surface_height :: proc(editor: ^Editor, x, z: f32) -> f32 {
     height := terrain.sample_height(&editor.project, 0, x, z)
     pavement := roads.pavement_at(&editor.project.road_graph, {x = x, y = height, z = z})
-    if pavement.on_surface do height += .12
+    if pavement.on_surface do height = max(height + .12, pavement.height + .12)
     return height
 }
 
@@ -8703,10 +8693,39 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 tail_radii[tail_index] +
                 MOUSE_CONTACT_SKIN
             tail_points[tail_index].y = max(tail_points[tail_index].y, tail_floor)
-            // At the low gameplay camera, a mathematically tangent tail tip is
-            // depth-occluded by the road crown several segments away. Feather
-            // in a tiny clearance without lifting the root off the rump.
-            tail_points[tail_index].y += weight * .018
+            // At the low gameplay camera, a mathematically tangent tail loses
+            // its lower facets to the road depth buffer. Reach full visual
+            // clearance over the first few links, then add a slight tapering
+            // bias toward the thin tip. The root remains fixed to the rump.
+            clearance_weight := clamp(weight * 4, 0, 1)
+            tail_points[tail_index].y += clearance_weight * .012 + weight * .012
+        }
+        // Clearing only the Verlet points is insufficient on a road crown or
+        // uneven heightfield: the straight rendered span between two clear
+        // endpoints can still pass through a higher patch of ground. Sample
+        // each span and lift both of its endpoints by any missing clearance.
+        // Two passes also propagate the correction through neighboring spans
+        // without changing the physics state or detaching the root.
+        for _ in 0 ..< 2 {
+            for tail_index in 0 ..< len(tail_points) - 1 {
+                for sample_index in 1 ..= 3 {
+                    amount := f32(sample_index) * .25
+                    sample := third_person.Vec3 {
+                        x = tail_points[tail_index].x * (1 - amount) + tail_points[tail_index + 1].x * amount,
+                        y = tail_points[tail_index].y * (1 - amount) + tail_points[tail_index + 1].y * amount,
+                        z = tail_points[tail_index].z * (1 - amount) + tail_points[tail_index + 1].z * amount,
+                    }
+                    radius := tail_radii[tail_index] * (1 - amount) + tail_radii[tail_index + 1] * amount
+                    floor := mouse_surface_height(editor, sample.x, sample.z) + radius + MOUSE_CONTACT_SKIN
+                    penetration := floor - sample.y
+                    if penetration > 0 {
+                        // Apply the full correction at both ends so their
+                        // interpolation is guaranteed to clear this sample.
+                        tail_points[tail_index].y += penetration
+                        tail_points[tail_index + 1].y += penetration
+                    }
+                }
+            }
         }
         world_mouse_limb_hull(tail_points[:], tail_radii[:], tail_colors[:], model_forward)
     } else if !model.hide_tail {
@@ -8899,19 +8918,29 @@ world_brush :: proc(editor: ^Editor) {
 }
 
 world_ground_grass :: proc(editor: ^Editor) {
-    if editor == nil || !editor.in_map || editor.pilot.mode != .On_Foot do return
-    if terrain.ground_surface_at(&editor.project, 0, editor.player.position.x, editor.player.position.z) != .Grass {
+    if editor == nil || !editor.in_map || editor.benchmark_ground_grass_disabled do return
+    // Populate around the active view rather than the player character. This
+    // keeps the visible field dense when an inspection or chase camera moves
+    // away from the mouse, while the snapped world grid prevents shimmer.
+    field_x, field_z := editor.camera_pose.position.x, editor.camera_pose.position.z
+    field_radius := f32(63)
+    if driving_aircraft(editor) {
+        body := active_aircraft_body(editor)
+        ground := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
+        if body.position.y - ground > 28 do return
+        field_radius = 90
+    } else if editor.pilot.mode != .On_Foot {
         return
     }
 
-    // A snapped, deterministic field follows the player without shimmer. Its
+    // A snapped, deterministic field follows the camera without shimmer. Its
     // concentric density falloff keeps the near field lush while bounding CPU
     // terrain samples and opaque blade geometry for the 4K frame budget.
-    SPACING :: f32(.92)
-    RADIUS :: f32(21)
-    grid_radius := int(math.ceil(f64(RADIUS / SPACING)))
-    center_x := f32(math.floor(f64(editor.player.position.x / SPACING))) * SPACING
-    center_z := f32(math.floor(f64(editor.player.position.z / SPACING))) * SPACING
+    // Half the spacing in both axes yields four times the card density.
+    SPACING :: f32(.46)
+    grid_radius := int(math.ceil(f64(field_radius / SPACING)))
+    center_x := f32(math.floor(f64(field_x / SPACING))) * SPACING
+    center_z := f32(math.floor(f64(field_z / SPACING))) * SPACING
     for grid_z in -grid_radius ..= grid_radius {
         for grid_x in -grid_radius ..= grid_radius {
             world_grid_x := grid_x + int(center_x / SPACING)
@@ -8921,14 +8950,16 @@ world_ground_grass :: proc(editor: ^Editor) {
             jitter_z := (wind_streak_hash(seed_index, 2) - .5) * SPACING * .76
             x := center_x + f32(grid_x) * SPACING + jitter_x
             z := center_z + f32(grid_z) * SPACING + jitter_z
-            dx, dz := x - editor.player.position.x, z - editor.player.position.z
+            dx, dz := x - field_x, z - field_z
             distance_squared := dx * dx + dz * dz
-            if distance_squared > RADIUS * RADIUS do continue
+            if distance_squared > field_radius * field_radius do continue
             distance := f32(math.sqrt(f64(distance_squared)))
-            fade := clamp((distance - RADIUS * .58) / (RADIUS * .42), f32(0), f32(1))
+            fade := clamp((distance - field_radius * .35) / (field_radius * .65), f32(0), f32(1))
             fade = fade * fade * (3 - 2 * fade)
             density := 1 - fade
-            if wind_streak_hash(seed_index, 3) > .52 + density * .47 do continue
+            // Dither the population all the way to zero instead of retaining
+            // half the cards at the render limit and dropping them at once.
+            if wind_streak_hash(seed_index, 3) > density do continue
             height_at := terrain.sample_height(&editor.project, 0, x, z)
             if terrain.classify_ground(
                    terrain.sample_material(&editor.project, 0, x, z),
@@ -8956,9 +8987,50 @@ world_ground_grass :: proc(editor: ^Editor) {
                 color = color_lerp(low, middle, altitude / .52)
             }
             color = color_lerp(color, {157, 164, 87, 255}, variation * .09)
-            height := .58 + variation * .42
-            width := height * (.74 + wind_streak_hash(seed_index, 6) * .18)
+            // Keep the authored grass hue, but match its value to the shaded
+            // terrain beneath it. In the outer falloff, converge on the exact
+            // terrain color so the final cards cannot form a dark cutoff ring.
+            ground_color := clipmap_vertex_color(editor, 0, x, z, height_at)
+            grass_value := f32(color.r) * .2126 + f32(color.g) * .7152 + f32(color.b) * .0722
+            ground_value := f32(ground_color.r) * .2126 + f32(ground_color.g) * .7152 + f32(ground_color.b) * .0722
+            value_scale := ground_value / max(grass_value, f32(1))
+            color.r = u8(clamp(f32(color.r) * value_scale, 0, 255))
+            color.g = u8(clamp(f32(color.g) * value_scale, 0, 255))
+            color.b = u8(clamp(f32(color.b) * value_scale, 0, 255))
+            color = color_lerp(color, ground_color, fade)
+            color.a = u8(clamp(density * 255, 0, 255))
+            // Size uses independent hashes so the field does not repeat one
+            // uniformly scaled tuft silhouette. Most blades stay near the
+            // median, with occasional cropped and seed-head-tall outliers.
+            height_noise := wind_streak_hash(seed_index, 7)
+            width_noise := wind_streak_hash(seed_index, 8)
+            height := .48 + height_noise * .62
+            if height_noise < .12 {
+                height *= .62
+            } else if height_noise > .90 {
+                height *= 1.28
+            }
+            width := height * (.56 + width_noise * .48)
             world_grass_card({x, height_at + height * .5, z}, width, height, abs(seed_index) % 16, color)
+            flower_density := wildflower_density_at(x, z)
+            if flower_density > .18 && wind_streak_hash(seed_index, 12) < flower_density * .34 {
+                flower_colors := [5]rl.Color {
+                    {239, 198, 67, color.a},
+                    {238, 121, 151, color.a},
+                    {190, 142, 222, color.a},
+                    {238, 232, 205, color.a},
+                    {207, 77, 101, color.a},
+                }
+                flower_color := flower_colors[abs(seed_index / 7) % len(flower_colors)]
+                flower_height := .32 + wind_streak_hash(seed_index, 13) * .34
+                world_grass_card(
+                    {x, height_at + flower_height * .5 + .12, z},
+                    .22 + wind_streak_hash(seed_index, 14) * .18,
+                    flower_height,
+                    abs(seed_index / 11) % 16,
+                    flower_color,
+                )
+            }
         }
     }
 }
@@ -8971,7 +9043,7 @@ world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.road_vertices)
     clear(&world_renderer.foliage_vertices)
     clear(&world_renderer.bougainvillea_vertices)
-    clear(&world_renderer.grass_vertices)
+    clear(&world_renderer.grass_instances)
     world_renderer.player_vertex_first = 0
     world_renderer.player_vertex_count = 0
     if editor.pause_screen == .Customization {
@@ -9039,17 +9111,41 @@ world_build :: proc(editor: ^Editor) {
     world_character(editor)
     world_renderer.player_vertex_count = len(world_renderer.vertices) - world_renderer.player_vertex_first
     world_postale_pilot(editor)
-    receiver := mouse_surface_height(editor, editor.player.position.x, editor.player.position.z)
-    pavement := roads.pavement_at(
-        &editor.project.road_graph,
-        {x = editor.player.position.x, y = receiver, z = editor.player.position.z},
+    world_renderer.player_shadow_receiver = mouse_surface_height(
+        editor,
+        editor.player.position.x,
+        editor.player.position.z,
     )
-    if pavement.on_surface do receiver += .04
-    world_renderer.player_shadow_receiver = receiver
     world_brush(editor)
     world_vehicle_particles(editor)
+    world_petal_particles(editor)
     world_wing_trails(editor)
     world_wind_streaks(editor)
+}
+
+world_petal_particles :: proc(editor: ^Editor) {
+    camera := perspective_camera(
+        editor.camera_pose,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
+    )
+    palette := [5]rl.Color {
+        {246, 201, 70, 235},
+        {242, 121, 151, 235},
+        {199, 151, 229, 225},
+        {248, 238, 210, 230},
+        {218, 78, 105, 230},
+    }
+    for particle in editor.petal_effects.particles[:editor.petal_effects.count] {
+        display := particles.Vehicle_Particle {
+            position = particle.position,
+            velocity = particle.velocity,
+            life     = particle.life,
+            max_life = particle.max_life,
+            size     = particle.size,
+            seed     = particle.seed,
+        }
+        world_vehicle_particle(camera, display, palette[int(particle.seed % u32(len(palette)))])
+    }
 }
 
 customization_preview_camera_pose :: proc() -> third_person.Camera_Pose {
@@ -9815,8 +9911,13 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     shadow_rs := rs
     shadow_rs.cullMode = {}
     shadow_rs.depthBiasEnable = true
-    shadow_rs.depthBiasConstantFactor = -1
-    shadow_rs.depthBiasSlopeFactor = -1
+    // The character shadow lies almost coplanar with roads and terrain.
+    // A one-unit bias still produces horizontal depth-fighting gaps at the
+    // low gameplay camera, especially on road crowns. Pull the shadow toward
+    // the camera in depth only so its silhouette remains continuous without
+    // visibly lifting the projected geometry away from the ground.
+    shadow_rs.depthBiasConstantFactor = -8
+    shadow_rs.depthBiasSlopeFactor = -2
     shadow_depth := depth
     shadow_depth.depthCompareOp = .LESS_OR_EQUAL
     shadow_info := info
@@ -9897,6 +9998,43 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     if !render3d.create_color_pipeline_variants(ctx, &foliage_info, .D32_SFLOAT, &world_renderer.foliage_pipelines) {
         return false
     }
+    grass_vert: engine.Vk_Shader_Module
+    if !engine.vk_load_shader_module_with_fallback(
+        ctx,
+        "assets/shaders/foliage.slang",
+        "shaders/grass.vert",
+        .Vertex,
+        "grass_vertex_main",
+        &grass_vert,
+    ) {
+        return false
+    }
+    defer engine.vk_destroy_shader_module(ctx, &grass_vert)
+    grass_stages := foliage_stages
+    grass_stages[0].module = grass_vert.handle
+    grass_binding := vk.VertexInputBindingDescription {
+        stride    = u32(size_of(Grass_Instance)),
+        inputRate = .INSTANCE,
+    }
+    grass_attributes := [4]vk.VertexInputAttributeDescription {
+        {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Grass_Instance, center))},
+        {location = 1, format = .R32G32_SFLOAT, offset = u32(offset_of(Grass_Instance, size))},
+        {location = 2, format = .R32_UINT, offset = u32(offset_of(Grass_Instance, tile))},
+        {location = 3, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Grass_Instance, color))},
+    }
+    grass_vi := vk.PipelineVertexInputStateCreateInfo {
+        sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        vertexBindingDescriptionCount   = 1,
+        pVertexBindingDescriptions      = &grass_binding,
+        vertexAttributeDescriptionCount = 4,
+        pVertexAttributeDescriptions    = raw_data(grass_attributes[:]),
+    }
+    grass_info := foliage_info
+    grass_info.pStages = raw_data(grass_stages[:])
+    grass_info.pVertexInputState = &grass_vi
+    if !render3d.create_color_pipeline_variants(ctx, &grass_info, .D32_SFLOAT, &world_renderer.grass_pipelines) {
+        return false
+    }
     particle_vert, particle_frag: engine.Vk_Shader_Module
     if !engine.vk_load_shader_module_with_fallback(ctx, "assets/shaders/particles.slang", "shaders/particles.vert", .Vertex, "vertex_main", &particle_vert) do return false
     defer engine.vk_destroy_shader_module(ctx, &particle_vert)
@@ -9953,10 +10091,17 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     for &buffer in world_renderer.foliage_vertex {
         if !engine.vk_create_host_buffer(
             ctx,
-            vk.DeviceSize(
-                (FOLIAGE_VERTEX_CAPACITY + BOUGAINVILLEA_VERTEX_CAPACITY + GRASS_VERTEX_CAPACITY) *
-                size_of(Foliage_Vertex),
-            ),
+            vk.DeviceSize((FOLIAGE_VERTEX_CAPACITY + BOUGAINVILLEA_VERTEX_CAPACITY) * size_of(Foliage_Vertex)),
+            {.VERTEX_BUFFER},
+            &buffer,
+        ) {
+            return false
+        }
+    }
+    for &buffer in world_renderer.grass_instance {
+        if !engine.vk_create_host_buffer(
+            ctx,
+            vk.DeviceSize(GRASS_INSTANCE_CAPACITY * size_of(Grass_Instance)),
             {.VERTEX_BUFFER},
             &buffer,
         ) {
@@ -9994,7 +10139,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_CAPACITY)
     world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_CAPACITY)
     world_renderer.bougainvillea_vertices = make([dynamic]Foliage_Vertex, 0, BOUGAINVILLEA_VERTEX_CAPACITY)
-    world_renderer.grass_vertices = make([dynamic]Foliage_Vertex, 0, GRASS_VERTEX_CAPACITY)
+    world_renderer.grass_instances = make([dynamic]Grass_Instance, 0, GRASS_INSTANCE_CAPACITY)
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
     world_renderer.wing_trail_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
     world_renderer.wing_trail_optimized_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
@@ -10019,6 +10164,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     buffer := &world_renderer.vertex[pass.frame.frame_index]
     road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
     foliage_buffer := &world_renderer.foliage_vertex[pass.frame.frame_index]
+    grass_instance_buffer := &world_renderer.grass_instance[pass.frame.frame_index]
     wing_trail_vertex_buffer := &world_renderer.wing_trail_vertex[pass.frame.frame_index]
     wing_trail_index_buffer := &world_renderer.wing_trail_index[pass.frame.frame_index]
     if len(world_renderer.vertices) > 0 {
@@ -10051,16 +10197,11 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             len(world_renderer.bougainvillea_vertices) * size_of(Foliage_Vertex),
         )
     }
-    if len(world_renderer.grass_vertices) > 0 {
-        destination := cast(rawptr)(cast(uintptr)foliage_buffer.mapped +
-            uintptr(
-                (len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)) *
-                size_of(Foliage_Vertex),
-            ))
+    if len(world_renderer.grass_instances) > 0 {
         mem.copy_non_overlapping(
-            destination,
-            raw_data(world_renderer.grass_vertices[:]),
-            len(world_renderer.grass_vertices) * size_of(Foliage_Vertex),
+            grass_instance_buffer.mapped,
+            raw_data(world_renderer.grass_instances[:]),
+            len(world_renderer.grass_instances) * size_of(Grass_Instance),
         )
     }
     if len(world_renderer.wing_trail_vertices) > 0 {
@@ -10134,6 +10275,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         buffer                   = buffer,
         road_buffer              = road_buffer,
         foliage_buffer           = foliage_buffer,
+        grass_instance_buffer    = grass_instance_buffer,
         wing_trail_vertex_buffer = wing_trail_vertex_buffer,
         wing_trail_index_buffer  = wing_trail_index_buffer,
         offset                   = offset,
@@ -10161,6 +10303,7 @@ world_renderer_destroy :: proc() {
     for &buffer in world_renderer.vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.road_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.foliage_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.grass_instance do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.vehicle_paint_staging do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.wing_trail_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.wing_trail_index do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
@@ -10177,6 +10320,7 @@ world_renderer_destroy :: proc() {
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.sky_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.particle_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.foliage_pipelines)
+    render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.grass_pipelines)
     resources.image_destroy(&world_renderer.foliage_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.bougainvillea_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.grass_atlas, world_renderer.ctx)
@@ -10200,7 +10344,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.road_vertices)
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)
-    delete(world_renderer.grass_vertices)
+    delete(world_renderer.grass_instances)
     delete(world_renderer.wing_trail_vertices)
     delete(world_renderer.wing_trail_indices)
     delete(world_renderer.wing_trail_optimized_indices)

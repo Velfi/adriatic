@@ -59,6 +59,14 @@
       "enabled": false,
       "description": "Deterministic on-foot player rendering and projected character shadow."
     },
+    "grass": {
+      "enabled": false,
+      "description": "Deterministic on-foot scene with the camera-centered ground-grass field."
+    },
+    "grass_disabled": {
+      "enabled": false,
+      "description": "Matched on-foot scene with only ground-grass generation and rendering disabled."
+    },
     "architecture": {
       "enabled": false,
       "description": "Generated town with the architecture authoring tool active."

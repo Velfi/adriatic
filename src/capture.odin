@@ -23,6 +23,8 @@ Capture_Kind :: enum {
     Foliage_Low_Wind_A,
     Foliage_Low_Wind_B,
     Foliage_Stress,
+    Grass_Wind,
+    Wildflower_Lab,
     Narrow,
     Compact,
     Sky_Noon,
@@ -105,6 +107,10 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Foliage_Low_Wind_B, true
     case "foliage-stress":
         return .Foliage_Stress, true
+    case "grass-wind":
+        return .Grass_Wind, true
+    case "wildflower-lab":
+        return .Wildflower_Lab, true
     case "narrow":
         return .Narrow, true
     case "compact":

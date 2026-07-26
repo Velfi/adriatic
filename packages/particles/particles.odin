@@ -5,6 +5,7 @@ import "core:math"
 MAX_CPU_PARTICLES :: 384
 MAX_DUST_PARTICLES :: 256
 MAX_WING_TRAIL_PARTICLES :: 192
+MAX_PETAL_PARTICLES :: 192
 
 Vec3 :: struct {
     x, y, z: f32,
@@ -64,6 +65,13 @@ Wing_Trail_Particle :: struct {
 
 Wing_Trails :: struct {
     particles: [MAX_WING_TRAIL_PARTICLES]Wing_Trail_Particle,
+    count:     int,
+    spawn:     f32,
+    seed:      u32,
+}
+
+Petal_Effects :: struct {
+    particles: [MAX_PETAL_PARTICLES]Particle,
     count:     int,
     spawn:     f32,
     seed:      u32,
@@ -132,6 +140,56 @@ active_count :: proc(system: ^Cpu_System) -> int { return system.count }
 new_vehicle_effects :: proc(seed: u32) -> Vehicle_Effects { return {seed = seed} }
 
 new_wing_trails :: proc(seed: u32) -> Wing_Trails { return {seed = seed} }
+
+new_petal_effects :: proc(seed: u32) -> Petal_Effects { return {seed = seed} }
+
+step_petals :: proc(effects: ^Petal_Effects, delta_seconds: f32, origin, motion, wind: Vec3, intensity: f32) {
+    dt := clamp(delta_seconds, 0, .05)
+    effects.spawn += dt * 34 * clamp(intensity, 0, 1)
+    for effects.spawn >= 1 && effects.count < MAX_PETAL_PARTICLES {
+        angle := next_random(&effects.seed) * math.PI * 2
+        radius := next_random(&effects.seed) * (1.1 + intensity * 1.4)
+        lift := next_random(&effects.seed)
+        life := 1.1 + next_random(&effects.seed) * 1.35
+        particle := &effects.particles[effects.count]
+        particle^ = {
+            position = {
+                origin.x + math.cos(angle) * radius,
+                origin.y + .12 + lift * .42,
+                origin.z + math.sin(angle) * radius,
+            },
+            velocity = {
+                motion.x * .10 + math.cos(angle) * (.35 + intensity * .85),
+                .55 + lift * 1.25 + intensity * .45,
+                motion.z * .10 + math.sin(angle) * (.35 + intensity * .85),
+            },
+            life     = life,
+            max_life = life,
+            size     = .035 + next_random(&effects.seed) * .055,
+            seed     = effects.seed,
+        }
+        effects.count += 1
+        effects.spawn -= 1
+    }
+    if intensity <= 0 do effects.spawn = min(effects.spawn, .95)
+
+    write := 0
+    for read in 0 ..< effects.count {
+        particle := &effects.particles[read]
+        particle.life -= dt
+        if particle.life <= 0 do continue
+        flutter := math.sin(f32(particle.seed & 255) + particle.life * 13) * .34
+        particle.velocity.x += (wind.x * .7 + flutter) * dt
+        particle.velocity.z += (wind.z * .7 - flutter * .45) * dt
+        particle.velocity.y -= .52 * dt
+        particle.position.x += particle.velocity.x * dt
+        particle.position.y += particle.velocity.y * dt
+        particle.position.z += particle.velocity.z * dt
+        if write != read do effects.particles[write] = particle^
+        write += 1
+    }
+    effects.count = write
+}
 
 spawn_dust :: proc(effects: ^Vehicle_Effects, contact: Vehicle_Contact, intensity: f32) {
     if effects.dust_count >= MAX_DUST_PARTICLES || !contact.grounded do return

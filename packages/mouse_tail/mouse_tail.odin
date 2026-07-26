@@ -130,7 +130,7 @@ resolve_terrain :: proc(point: ^Point, project: ^terrain.Project, radius, fricti
     // Rendered road crowns sit 12 cm above the terrain heightfield. Treat that
     // presentation lift as physical support so a grounded tail rests on the
     // pavement instead of disappearing beneath it.
-    if pavement.on_surface do surface_height += .12
+    if pavement.on_surface do surface_height = max(surface_height + .12, pavement.height + .12)
     // Keep a small separation beyond the rendered radius. Exact tangency is
     // vulnerable to raster/depth precision and makes the underside of the
     // tail intermittently disappear into the terrain or road crown.
