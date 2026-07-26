@@ -55,14 +55,6 @@ ODINFMT ?= odinfmt
 CC ?= cc
 AR ?= ar
 PYTHON ?= python3
-CONTROL_HINT_ASSETS := \
-	assets/icons/control-hints/keyboard-mouse.png \
-	assets/icons/control-hints/generic.png \
-	assets/icons/control-hints/xbox.png \
-	assets/icons/control-hints/playstation.png \
-	assets/icons/control-hints/nintendo.png \
-	assets/icons/control-hints/LICENSE.txt \
-	assets/icons/control-hints/SOURCE.md
 
 ifeq ($(shell uname -s),Darwin)
 HOMEBREW_LLVM_PREFIX := $(shell brew --prefix $(LLVM_HOMEBREW_FORMULA) 2>/dev/null)
@@ -83,8 +75,6 @@ VALIDATION_DIR := $(BUILD_DIR)/validation
 DEV_APP := $(DEV_DIR)/$(APP)
 RELEASE_APP := $(RELEASE_DIR)/$(APP)
 VALIDATION_APP := $(VALIDATION_DIR)/$(APP)
-VALIDATION_RUNTIME_STAMP := $(VALIDATION_DIR)/runtime-assets.stamp
-VALIDATION_ASSET_SOURCES := $(shell find assets -type f 2>/dev/null)
 ifeq ($(shell uname -s),Darwin)
 SHARED_EXT := dylib
 else ifeq ($(shell uname -s),Linux)
@@ -123,7 +113,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor textshape-build physics-deps physics-build shaders build release validation validation-build lldb profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor textshape-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
 
 all: build
 
@@ -146,7 +136,24 @@ doctor:
 	echo "Zelda Engine: $$(git -C "$(ZELDA_ENGINE_ROOT)" rev-parse --short HEAD 2>/dev/null || echo unversioned)"; \
 	echo "Toolchain: $$actual"
 
-build: doctor $(DEV_APP)
+assets-dev:
+	@mkdir -p "$(DEV_DIR)/assets"
+	rsync -a --delete assets/ "$(DEV_DIR)/assets/"
+
+assets-release:
+	@mkdir -p "$(RELEASE_DIR)/assets"
+	rsync -a --delete assets/ "$(RELEASE_DIR)/assets/"
+
+assets-hot:
+	@mkdir -p "$(HOT_DIR)/assets"
+	rsync -a --delete assets/ "$(HOT_DIR)/assets/"
+
+assets-validation: shaders
+	@mkdir -p "$(VALIDATION_DIR)/assets" "$(VALIDATION_DIR)/shaders"
+	rsync -a --delete assets/ "$(VALIDATION_DIR)/assets/"
+	rsync -a --delete build/generated/shaders/ "$(VALIDATION_DIR)/shaders/"
+
+build: doctor assets-dev $(DEV_APP)
 
 shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
 
@@ -286,30 +293,6 @@ $(DEV_DIR)/shaders/foliage.frag.spv: build/generated/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
-$(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/foliage/leaf-branches-atlas.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(DEV_DIR)/assets/icons/control-hints/%: assets/icons/control-hints/%
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf: assets/fonts/ZeldaSans-Regular-v1.otf
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf: assets/fonts/ZeldaSerif-Regular-v0_1.otf
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf: assets/fonts/MomoTrustDisplay-Regular.ttf
-	@mkdir -p $(@D)
-	cp $< $@
-
 $(RELEASE_DIR)/shaders/wireframe.vert.spv: build/generated/shaders/wireframe.vert.spv
 	@mkdir -p $(@D)
 	cp $< $@
@@ -378,31 +361,7 @@ $(RELEASE_DIR)/shaders/foliage.frag.spv: build/generated/shaders/foliage.frag.sp
 	@mkdir -p $(@D)
 	cp $< $@
 
-$(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/foliage/leaf-branches-atlas.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(RELEASE_DIR)/assets/icons/control-hints/%: assets/icons/control-hints/%
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf: assets/fonts/ZeldaSans-Regular-v1.otf
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf: assets/fonts/ZeldaSerif-Regular-v0_1.otf
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf: assets/fonts/MomoTrustDisplay-Regular.ttf
-	@mkdir -p $(@D)
-	cp $< $@
-
-release: doctor $(RELEASE_APP)
+release: doctor assets-release $(RELEASE_APP)
 
 $(HOT_PHYSICS_STAMP): Makefile
 	@mkdir -p $(@D)
@@ -413,30 +372,6 @@ $(HOT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c
 	@mkdir -p $(@D)
 	$(CC) -O2 -c $< -o $(HOT_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(HOT_DIR)/gfx_signposts.o
-
-$(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png: assets/textures/foliage/leaf-branches-atlas.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png: assets/icons/ui-icon-atlas-garden.png
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(HOT_DIR)/assets/icons/control-hints/%: assets/icons/control-hints/%
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf: assets/fonts/ZeldaSans-Regular-v1.otf
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf: assets/fonts/ZeldaSerif-Regular-v0_1.otf
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf: assets/fonts/MomoTrustDisplay-Regular.ttf
-	@mkdir -p $(@D)
-	cp $< $@
 
 $(HOT_SHADER_DIR)/world.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
@@ -510,7 +445,7 @@ $(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
 	@mkdir -p $(@D)
 	touch $@
 
-$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a $(HOT_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(HOT_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(HOT_DIR)/,$(CONTROL_HINT_ASSETS)) $(HOT_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(HOT_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(HOT_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf
+$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_hot) -build-mode:shared $(PROFILE_DEFINE_FLAGS_hot) -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
 
@@ -528,7 +463,7 @@ hot-host: $(HOT_HOST)
 
 hot-shaders: $(HOT_SHADER_STAMP)
 
-hot-build: doctor $(HOT_PHYSICS_STAMP) hot-app hot-shaders hot-host
+hot-build: doctor $(HOT_PHYSICS_STAMP) assets-hot hot-app hot-shaders hot-host
 
 hot: hot-build
 	ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" $(PYTHON) tools/hot_watch.py --root "$(CURDIR)" --engine-root "$(ZELDA_ENGINE_ROOT)" --host "$(abspath $(HOT_HOST))" --make "$(MAKE)"
@@ -628,11 +563,11 @@ $(VALIDATION_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_sign
 	$(CC) -O2 -c $< -o $(VALIDATION_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(VALIDATION_DIR)/gfx_signposts.o
 
-$(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(DEV_DIR)/,$(CONTROL_HINT_ASSETS)) $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(DEV_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
+$(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_debug) $(PROFILE_DEFINE_FLAGS_debug) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
-$(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(RELEASE_DIR)/,$(CONTROL_HINT_ASSETS)) $(RELEASE_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(RELEASE_DIR)/assets/textures/foliage/bougainvillea-clumps-atlas-v2.png $(RELEASE_DIR)/assets/textures/foliage/grass-tufts-atlas.png $(RELEASE_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(RELEASE_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(RELEASE_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
+$(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_release) $(PROFILE_DEFINE_FLAGS_release) -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 
@@ -645,13 +580,7 @@ validation-build: doctor $(VALIDATION_APP)
 validation: validation-build
 	$(VALIDATION_PROFILE_RUNTIME_ENV) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(VALIDATION_APP)"
 
-$(VALIDATION_RUNTIME_STAMP): shaders $(VALIDATION_ASSET_SOURCES)
-	@mkdir -p "$(VALIDATION_DIR)/assets" "$(VALIDATION_DIR)/shaders"
-	cp -R assets/. "$(VALIDATION_DIR)/assets/"
-	cp -R build/generated/shaders/. "$(VALIDATION_DIR)/shaders/"
-	touch $@
-
-lldb: validation-build $(VALIDATION_RUNTIME_STAMP)
+lldb: validation-build assets-validation
 	$(VALIDATION_PROFILE_RUNTIME_ENV) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" lldb -- "$(VALIDATION_APP)"
 
 run: build

@@ -118,10 +118,8 @@ foreach ($job in $ShaderJobs) {
 }
 
 $Assets = Join-Path $Build "assets"
-New-Item -ItemType Directory -Force -Path (Join-Path $Assets "icons"), (Join-Path $Assets "fonts"), (Join-Path $Assets "textures/foliage") | Out-Null
-Copy-Item (Join-Path $Root "assets/icons/ui-icon-atlas-garden.png") (Join-Path $Assets "icons") -Force
-Copy-Item (Join-Path $Root "assets/fonts/*") (Join-Path $Assets "fonts") -Force
-Copy-Item (Join-Path $Root "assets/textures/foliage/leaf-branches-atlas.png") (Join-Path $Assets "textures/foliage") -Force
+if (Test-Path $Assets) { Remove-Item -Recurse -Force $Assets }
+Copy-Item (Join-Path $Root "assets") $Assets -Recurse
 
 $Exe = Join-Path $Build "adriatic.exe"
 $LinkerFlags = "/LIBPATH:$Lib SDL3.lib harfbuzz.lib freetype.lib vulkan-1.lib /LIBPATH:$Build gfx_signposts.lib"

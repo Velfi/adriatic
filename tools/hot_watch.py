@@ -11,13 +11,17 @@ import time
 
 
 POLL_SECONDS = 0.25
-SOURCE_SUFFIXES = {".c", ".h", ".odin", ".slang"}
-WATCH_ROOTS = ("assets/shaders", "hot", "packages", "src")
+SOURCE_SUFFIXES = {".c", ".h", ".odin"}
+WATCH_ROOTS = ("hot", "packages", "src")
 WATCH_FILES = ("Makefile", "toolchain.mk")
 
 
 def watched_files(root: Path, engine_root: Path) -> set[Path]:
     files = {root / path for path in WATCH_FILES}
+    assets = root / "assets"
+    if assets.is_dir():
+        files.update(path for path in assets.rglob("*") if path.is_file())
+
     for relative_root in WATCH_ROOTS:
         directory = root / relative_root
         if not directory.is_dir():
@@ -72,6 +76,13 @@ def is_shader(path: Path, root: Path) -> bool:
         return str(path).startswith(str(root / "assets" / "shaders"))
 
 
+def is_asset(path: Path, root: Path) -> bool:
+    try:
+        return path.is_relative_to(root / "assets")
+    except AttributeError:
+        return str(path).startswith(str(root / "assets"))
+
+
 def is_host(path: Path, root: Path) -> bool:
     try:
         return path.is_relative_to(root / "hot")
@@ -105,11 +116,17 @@ def main() -> int:
                 continue
 
             shader_changed = any(is_shader(path, root) for path in changed)
+            asset_changed = any(is_asset(path, root) for path in changed)
             host_changed = any(is_host(path, root) for path in changed)
-            app_changed = any(not is_shader(path, root) and not is_host(path, root) for path in changed)
+            app_changed = any(
+                not is_asset(path, root) and not is_host(path, root)
+                for path in changed
+            )
             targets = []
             if app_changed:
                 targets.append("hot-app")
+            if asset_changed:
+                targets.append("assets-hot")
             if shader_changed:
                 targets.append("hot-shaders")
             if host_changed:
