@@ -42,12 +42,10 @@ Formation_Kind :: enum {
 
 STRUCTURE_CAPACITY :: 256
 CITY_DENSITY_SAMPLES :: SAMPLES_PER_LEVEL
-PROJECT_FILE_VERSION :: u32(7)
 PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '1'}
 
 Project_File_Header :: struct {
     magic:        [8]u8,
-    version:      u32,
     payload_size: u64,
 }
 
@@ -84,58 +82,6 @@ Project :: struct {
     climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
 }
 
-// Version 6 had the same payload as Project before climbing-leaf density was
-// added. Keep it explicit so existing authored islands load with an empty leaf
-// field instead of being rejected as an incompatible project.
-Legacy_Project_V6 :: struct {
-    levels:            [CLIPMAP_LEVELS]Clipmap_Level,
-    sea_level:         f32,
-    revision:          u64,
-    structures:        [STRUCTURE_CAPACITY]Structure,
-    structure_count:   int,
-    next_structure_id: u64,
-    road_graph:        roads.Graph,
-    city_density:      [CITY_DENSITY_SAMPLES]u8,
-}
-
-// Version 4 predates the city-density field and also predates the Foliage
-// formation kind. Keep an explicit wire layout so old snapshots remain
-// readable even as the live Project structure evolves.
-Legacy_Formation_Kind_V4 :: enum {
-    Box,
-    Rock,
-    Spire,
-    Mountain,
-    Ridge,
-    Cliff,
-    Architecture,
-}
-
-Legacy_Structure_V4 :: struct {
-    id:       u64,
-    group_id: u64,
-    center_x: f32,
-    center_z: f32,
-    width:    f32,
-    depth:    f32,
-    base_y:   f32,
-    height:   f32,
-    rotation: f32,
-    color:    [4]u8,
-    kind:     Legacy_Formation_Kind_V4,
-    seed:     u32,
-}
-
-Legacy_Project_V4 :: struct {
-    levels:            [CLIPMAP_LEVELS]Clipmap_Level,
-    sea_level:         f32,
-    revision:          u64,
-    structures:        [STRUCTURE_CAPACITY]Legacy_Structure_V4,
-    structure_count:   int,
-    next_structure_id: u64,
-    road_graph:        roads.Graph,
-}
-
 project_file_magic_valid :: proc(header: ^Project_File_Header) -> bool {
     if header == nil do return false
     magic := PROJECT_FILE_MAGIC
@@ -153,7 +99,6 @@ save_project :: proc(project: ^Project, filename: string) -> bool {
     header := cast(^Project_File_Header)raw_data(data)
     header^ = {
         magic        = PROJECT_FILE_MAGIC,
-        version      = PROJECT_FILE_VERSION,
         payload_size = size_of(Project),
     }
     runtime.mem_copy_non_overlapping(raw_data(data[header_size:]), cast(rawptr)project, size_of(Project))
@@ -169,79 +114,11 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
     if len(data) < header_size do return false
     header := cast(^Project_File_Header)raw_data(data)
     if !project_file_magic_valid(header) do return false
-    if header.version == PROJECT_FILE_VERSION &&
-       header.payload_size == size_of(Project) &&
-       len(data) >= header_size + size_of(Project) {
-        runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
-        return true
-    }
-    // Version 5 used the current wire layout, but its two default runways were
-    // presentation-only quads. Promote them into ordinary editable road paths
-    // exactly once while loading that version.
-    if (header.version == 5 || header.version == 6) &&
-       header.payload_size == size_of(Legacy_Project_V6) &&
-       len(data) >= header_size + size_of(Legacy_Project_V6) {
-        legacy := cast(^Legacy_Project_V6)raw_data(data[header_size:])
-        project^ = {}
-        project.levels = legacy.levels
-        project.sea_level = legacy.sea_level
-        project.revision = legacy.revision
-        project.structures = legacy.structures
-        project.structure_count = legacy.structure_count
-        project.next_structure_id = legacy.next_structure_id
-        project.road_graph = legacy.road_graph
-        project.city_density = legacy.city_density
-        if header.version == 5 && add_default_runways(project) do project.revision += 1
-        return true
-    }
-    if header.version != 4 ||
-       header.payload_size != size_of(Legacy_Project_V4) ||
-       len(data) < header_size + size_of(Legacy_Project_V4) {
+    if header.payload_size != size_of(Project) ||
+       len(data) != header_size + size_of(Project) {
         return false
     }
-    legacy := cast(^Legacy_Project_V4)raw_data(data[header_size:])
-    project^ = {}
-    project.levels = legacy.levels
-    project.sea_level = legacy.sea_level
-    project.revision = legacy.revision
-    project.structure_count = clamp(legacy.structure_count, 0, STRUCTURE_CAPACITY)
-    project.next_structure_id = legacy.next_structure_id
-    project.road_graph = legacy.road_graph
-    for index in 0 ..< project.structure_count {
-        old := legacy.structures[index]
-        kind: Formation_Kind
-        switch old.kind {
-        case .Box:
-            kind = .Box
-        case .Rock:
-            kind = .Rock
-        case .Spire:
-            kind = .Spire
-        case .Mountain:
-            kind = .Mountain
-        case .Ridge:
-            kind = .Ridge
-        case .Cliff:
-            kind = .Cliff
-        case .Architecture:
-            kind = .Architecture
-        }
-        project.structures[index] = {
-            id       = old.id,
-            group_id = old.group_id,
-            center_x = old.center_x,
-            center_z = old.center_z,
-            width    = old.width,
-            depth    = old.depth,
-            base_y   = old.base_y,
-            height   = old.height,
-            rotation = old.rotation,
-            color    = old.color,
-            kind     = kind,
-            seed     = old.seed,
-        }
-    }
-    if add_default_runways(project) do project.revision += 1
+    runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
     return true
 }
 

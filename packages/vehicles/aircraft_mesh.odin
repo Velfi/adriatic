@@ -67,6 +67,7 @@ Mesh_Animation_Group :: enum u8 {
 
 Mesh_Vertex :: struct {
     position:        [3]f32,
+    normal:          [3]f32,
     uv:              [2]f32,
     part:            Aircraft_Mesh_Part,
     animation_group: Mesh_Animation_Group,
@@ -76,8 +77,8 @@ Mesh_Triangle :: struct {
     a, b, c: u16,
 }
 
-AIRCRAFT_MESH_VERTEX_CAPACITY :: 4096
-AIRCRAFT_MESH_TRIANGLE_CAPACITY :: 2048
+AIRCRAFT_MESH_VERTEX_CAPACITY :: 6400
+AIRCRAFT_MESH_TRIANGLE_CAPACITY :: 4096
 LIBELLULA_MESH_VERTEX_CAPACITY :: 57344
 LIBELLULA_MESH_TRIANGLE_CAPACITY :: 19114
 
@@ -110,6 +111,15 @@ libellula_mesh_destroy :: proc(mesh: ^Libellula_Mesh) {
     mesh^ = {}
 }
 
+libellula_mesh_copy :: proc(destination, source: ^Libellula_Mesh) {
+    if destination == nil || source == nil || source.vertices == nil || source.triangles == nil do return
+    if destination.vertices == nil do libellula_mesh_init(destination)
+    destination.vertex_count = source.vertex_count
+    destination.triangle_count = source.triangle_count
+    copy(destination.vertices[:destination.vertex_count], source.vertices[:source.vertex_count])
+    copy(destination.triangles[:destination.triangle_count], source.triangles[:source.triangle_count])
+}
+
 Mesh_Ring :: struct {
     z, width, center_y, height: f32,
 }
@@ -128,6 +138,54 @@ mesh_vertices :: proc(mesh: ^$Mesh) -> []Mesh_Vertex {
 mesh_triangles :: proc(mesh: ^$Mesh) -> []Mesh_Triangle {
     if mesh == nil do return nil
     return mesh.triangles[:mesh.triangle_count]
+}
+
+mesh_generate_smooth_normals :: proc(mesh: ^$Mesh) {
+    if mesh == nil do return
+    for vertex_index in 0 ..< mesh.vertex_count {
+        vertex := &mesh.vertices[vertex_index]
+        sum: [3]f32
+        for triangle in mesh.triangles[:mesh.triangle_count] {
+            a := mesh.vertices[triangle.a]
+            if a.part != vertex.part do continue
+            b := mesh.vertices[triangle.b]
+            c := mesh.vertices[triangle.c]
+            shares_position := false
+            corners := [3]Mesh_Vertex{a, b, c}
+            for corner in corners {
+                delta := corner.position - vertex.position
+                if delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2] < .000001 {
+                    shares_position = true
+                    break
+                }
+            }
+            if !shares_position do continue
+            ab := b.position - a.position
+            ac := c.position - a.position
+            sum += [3]f32{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
+        }
+        length := f32(math.sqrt(f64(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2])))
+        if length > .0001 do vertex.normal = sum / length
+    }
+}
+
+aircraft_mesh_part_uses_smooth_normals :: proc(part: Aircraft_Mesh_Part) -> bool {
+    #partial switch part {
+    case .Body,
+         .Wing,
+         .Tail,
+         .Engine,
+         .Wheel,
+         .Propeller,
+         .Left_Flap,
+         .Right_Flap,
+         .Left_Aileron,
+         .Right_Aileron,
+         .Elevator,
+         .Rudder:
+        return true
+    }
+    return false
 }
 
 mesh_triangle :: proc(mesh: ^$Mesh, a, b, c: [3]f32, part: Aircraft_Mesh_Part) {
@@ -192,6 +250,64 @@ add_ring_mesh :: proc(mesh: ^Aircraft_Mesh, rings: []Mesh_Ring, sides: int, part
     }
 }
 
+add_compact_ring_mesh :: proc(mesh: ^Aircraft_Mesh, rings: []Mesh_Ring, sides: int, part: Aircraft_Mesh_Part) {
+    if mesh == nil || len(rings) < 2 || sides < 3 do return
+    required_vertices := len(rings) * sides + 2
+    required_triangles := (len(rings) - 1) * sides * 2 + sides * 2
+    if mesh.vertex_count + required_vertices > len(mesh.vertices) ||
+       mesh.triangle_count + required_triangles > len(mesh.triangles) {
+        return
+    }
+
+    first := mesh.vertex_count
+    for ring in rings {
+        for side in 0 ..< sides {
+            mesh.vertices[mesh.vertex_count] = {
+                position = ring_point(ring, side, sides),
+                part     = part,
+            }
+            mesh.vertex_count += 1
+        }
+    }
+    front_index := mesh.vertex_count
+    mesh.vertices[mesh.vertex_count] = {
+        position = {0, rings[0].center_y, rings[0].z},
+        part     = part,
+    }
+    mesh.vertex_count += 1
+    rear_index := mesh.vertex_count
+    mesh.vertices[mesh.vertex_count] = {
+        position = {0, rings[len(rings) - 1].center_y, rings[len(rings) - 1].z},
+        part     = part,
+    }
+    mesh.vertex_count += 1
+
+    for ring_index in 0 ..< len(rings) - 1 {
+        for side in 0 ..< sides {
+            next := (side + 1) % sides
+            a := first + ring_index * sides + side
+            b := first + (ring_index + 1) * sides + side
+            c := first + (ring_index + 1) * sides + next
+            d := first + ring_index * sides + next
+            mesh.triangles[mesh.triangle_count] = {u16(a), u16(c), u16(b)}
+            mesh.triangle_count += 1
+            mesh.triangles[mesh.triangle_count] = {u16(a), u16(d), u16(c)}
+            mesh.triangle_count += 1
+        }
+    }
+    for side in 0 ..< sides {
+        next := (side + 1) % sides
+        front_side := first + side
+        front_next := first + next
+        rear_side := first + (len(rings) - 1) * sides + side
+        rear_next := first + (len(rings) - 1) * sides + next
+        mesh.triangles[mesh.triangle_count] = {u16(front_index), u16(front_next), u16(front_side)}
+        mesh.triangle_count += 1
+        mesh.triangles[mesh.triangle_count] = {u16(rear_index), u16(rear_side), u16(rear_next)}
+        mesh.triangle_count += 1
+    }
+}
+
 add_ring_mesh_at_x :: proc(mesh: ^Aircraft_Mesh, rings: []Mesh_Ring, sides: int, x: f32, part: Aircraft_Mesh_Part) {
     first := mesh.vertex_count
     add_ring_mesh(mesh, rings, sides, part)
@@ -247,6 +363,17 @@ add_profile_prism :: proc(
             part,
         )
     }
+}
+
+add_profile_prism_at_x :: proc(
+    mesh: ^Aircraft_Mesh,
+    profile: []Mesh_Profile_Point,
+    half_width, x: f32,
+    part: Aircraft_Mesh_Part,
+) {
+    first := mesh.vertex_count
+    add_profile_prism(mesh, profile, half_width, part)
+    for index in first ..< mesh.vertex_count do mesh.vertices[index].position[0] += x
 }
 
 add_box :: proc(mesh: ^$Mesh, center, size: [3]f32, part: Aircraft_Mesh_Part) {
@@ -318,6 +445,55 @@ add_propeller :: proc(mesh: ^Aircraft_Mesh, pivot: [3]f32, radius, chord, thickn
     }
 }
 
+add_postale_propeller :: proc(mesh: ^Aircraft_Mesh, pivot: [3]f32) {
+    blade := proc(mesh: ^Aircraft_Mesh, pivot: [3]f32, angle: f32) {
+        first := mesh.vertex_count
+        root_y := pivot[1] + .24
+        shoulder_y := pivot[1] + .62
+        tip_y := pivot[1] + 1.44
+        front_z := pivot[2] - .045
+        back_z := pivot[2] + .045
+        root_half := f32(.085)
+        shoulder_half := f32(.125)
+        tip_half := f32(.045)
+        front := [6][3]f32 {
+            {pivot[0] - root_half, root_y, front_z},
+            {pivot[0] + root_half, root_y, front_z},
+            {pivot[0] - shoulder_half, shoulder_y, front_z},
+            {pivot[0] + shoulder_half, shoulder_y, front_z},
+            {pivot[0] - tip_half, tip_y, front_z},
+            {pivot[0] + tip_half, tip_y, front_z},
+        }
+        back := front
+        for &point in back do point[2] = back_z
+        mesh_quad(mesh, front[0], front[1], front[3], front[2], .Propeller)
+        mesh_quad(mesh, front[2], front[3], front[5], front[4], .Propeller)
+        mesh_quad(mesh, back[1], back[0], back[2], back[3], .Propeller)
+        mesh_quad(mesh, back[3], back[2], back[4], back[5], .Propeller)
+        mesh_quad(mesh, front[0], front[2], back[2], back[0], .Propeller)
+        mesh_quad(mesh, front[2], front[4], back[4], back[2], .Propeller)
+        mesh_quad(mesh, front[3], front[1], back[1], back[3], .Propeller)
+        mesh_quad(mesh, front[5], front[3], back[3], back[5], .Propeller)
+        mesh_quad(mesh, front[4], front[5], back[5], back[4], .Propeller)
+        rotate_new_vertices_z(mesh, first, pivot, angle)
+    }
+    // Three broad blades give the compact radial nose a strong, readable
+    // silhouette without parking a single bar across the engine opening.
+    blade(mesh, pivot, 0)
+    blade(mesh, pivot, math.PI * 2 / 3)
+    blade(mesh, pivot, math.PI * 4 / 3)
+
+    spinner := [4]Mesh_Ring {
+        // Long, nearly pointed spinner with a restrained convex shoulder.
+        // The previous short profile read as a red ball at gameplay distance.
+        {pivot[2] - .50, .008, pivot[1], .008},
+        {pivot[2] - .34, .060, pivot[1], .060},
+        {pivot[2] - .17, .116, pivot[1], .116},
+        {pivot[2] + .025, .172, pivot[1], .172},
+    }
+    add_compact_ring_mesh(mesh, spinner[:], 16, .Engine)
+}
+
 // A shallow translucent disk is the high-RPM propeller volume. It is kept as
 // product geometry so the renderer can fade it independently from the solid
 // blades, matching the airborne blur handoff used by the reference aircraft.
@@ -363,6 +539,106 @@ add_horizontal_beam :: proc(mesh: ^Aircraft_Mesh, a, b: [3]f32, width: f32, part
     mesh_quad(mesh, p[3], p[2], p[6], p[7], part); mesh_quad(mesh, p[4], p[5], p[1], p[0], part)
 }
 
+add_strut :: proc(mesh: ^Aircraft_Mesh, a, b: [3]f32, width: f32, part: Aircraft_Mesh_Part) {
+    dx := b[0] - a[0]
+    dy := b[1] - a[1]
+    dz := b[2] - a[2]
+    length := f32(math.sqrt(f64(dx * dx + dy * dy + dz * dz)))
+    if length < .0001 do return
+    direction := [3]f32{dx / length, dy / length, dz / length}
+    reference := [3]f32{0, 1, 0}
+    if abs(direction[1]) > .92 do reference = {0, 0, 1}
+    side := [3]f32 {
+        direction[1] * reference[2] - direction[2] * reference[1],
+        direction[2] * reference[0] - direction[0] * reference[2],
+        direction[0] * reference[1] - direction[1] * reference[0],
+    }
+    side_length := f32(math.sqrt(f64(side[0] * side[0] + side[1] * side[1] + side[2] * side[2])))
+    side *= width * .5 / side_length
+    up := [3]f32 {
+        direction[1] * side[2] - direction[2] * side[1],
+        direction[2] * side[0] - direction[0] * side[2],
+        direction[0] * side[1] - direction[1] * side[0],
+    }
+    up *= width * .5
+    p := [8][3]f32 {
+        a - side - up,
+        a + side - up,
+        a + side + up,
+        a - side + up,
+        b - side - up,
+        b + side - up,
+        b + side + up,
+        b - side + up,
+    }
+    mesh_quad(mesh, p[0], p[1], p[2], p[3], part); mesh_quad(mesh, p[5], p[4], p[7], p[6], part)
+    mesh_quad(mesh, p[4], p[0], p[3], p[7], part); mesh_quad(mesh, p[1], p[5], p[6], p[2], part)
+    mesh_quad(mesh, p[3], p[2], p[6], p[7], part); mesh_quad(mesh, p[4], p[5], p[1], p[0], part)
+}
+
+add_cockpit_gauge :: proc(mesh: ^Aircraft_Mesh, center: [3]f32, radius: f32) {
+    SEGMENTS :: 12
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        angle := f32(segment) * 2 * math.PI / f32(SEGMENTS)
+        next_angle := f32(next) * 2 * math.PI / f32(SEGMENTS)
+        mesh_triangle(
+            mesh,
+            center,
+            {center[0] + math.cos(angle) * radius, center[1] + math.sin(angle) * radius, center[2]},
+            {center[0] + math.cos(next_angle) * radius, center[1] + math.sin(next_angle) * radius, center[2]},
+            .Brass,
+        )
+    }
+}
+
+add_ellipse_disc_z :: proc(mesh: ^Aircraft_Mesh, center: [3]f32, radius_x, radius_y: f32, part: Aircraft_Mesh_Part) {
+    SEGMENTS :: 12
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        angle := f32(segment) * 2 * math.PI / f32(SEGMENTS)
+        next_angle := f32(next) * 2 * math.PI / f32(SEGMENTS)
+        a := [3]f32{center[0] + math.cos(angle) * radius_x, center[1] + math.sin(angle) * radius_y, center[2]}
+        b := [3]f32 {
+            center[0] + math.cos(next_angle) * radius_x,
+            center[1] + math.sin(next_angle) * radius_y,
+            center[2],
+        }
+        mesh_triangle(mesh, center, b, a, part)
+    }
+}
+
+add_ellipse_annulus_z :: proc(
+    mesh: ^Aircraft_Mesh,
+    center: [3]f32,
+    outer_x, outer_y, inner_x, inner_y: f32,
+    part: Aircraft_Mesh_Part,
+) {
+    SEGMENTS :: 20
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        angle := f32(segment) * 2 * math.PI / f32(SEGMENTS)
+        next_angle := f32(next) * 2 * math.PI / f32(SEGMENTS)
+        outer_a := [3]f32{center[0] + math.cos(angle) * outer_x, center[1] + math.sin(angle) * outer_y, center[2]}
+        outer_b := [3]f32 {
+            center[0] + math.cos(next_angle) * outer_x,
+            center[1] + math.sin(next_angle) * outer_y,
+            center[2],
+        }
+        inner_a := [3]f32 {
+            center[0] + math.cos(angle) * inner_x,
+            center[1] + math.sin(angle) * inner_y,
+            center[2] - .002,
+        }
+        inner_b := [3]f32 {
+            center[0] + math.cos(next_angle) * inner_x,
+            center[1] + math.sin(next_angle) * inner_y,
+            center[2] - .002,
+        }
+        mesh_quad(mesh, outer_a, inner_a, inner_b, outer_b, part)
+    }
+}
+
 // Postale's source model uses three exposed gravel wheels: two main wheels
 // and a smaller tail wheel. Build them as low-poly rubber cylinders with
 // visible hubs and tread blocks so they remain readable in the world mesh.
@@ -380,14 +656,14 @@ add_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32, radius, thickness: f32) 
         {.56 * thickness, radius * .28, 0, radius * .28},
     }
     first = mesh.vertex_count
-    add_ring_mesh(mesh, hub[:], 10, .Engine)
+    add_ring_mesh(mesh, hub[:], 10, .Marking)
     rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
     for index in first ..< mesh.vertex_count {
         mesh.vertices[index].position += center
     }
 
-    for tread in 0 ..< 12 {
-        angle := f32(tread) * 2 * math.PI / 12
+    for tread in 0 ..< 6 {
+        angle := f32(tread) * 2 * math.PI / 6
         add_box(
             mesh,
             {center[0], center[1] + math.cos(angle) * radius * .91, center[2] + math.sin(angle) * radius * .91},
@@ -397,97 +673,323 @@ add_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32, radius, thickness: f32) 
     }
 }
 
+// Build the Postale as one continuous skin from spinner to tail. The cockpit
+// is a real opening in that skin: the upper facets are omitted through the
+// seating bay and folded inward to a low cockpit sill. This keeps the body
+// from reading as a stack of boxes while preserving a deliberately faceted,
+// hand-built mailplane silhouette.
+add_postale_hull :: proc(mesh: ^Aircraft_Mesh) {
+    SIDES :: 12
+    rings := [13]Mesh_Ring {
+        {-3.28, .42, .10, .30},
+        {-3.12, .64, .11, .47},
+        {-2.72, .73, .12, .62},
+        {-2.20, .70, .12, .78},
+        {-1.55, .69, .10, .80},
+        {-1.28, .68, .09, .78},
+        {-.92, .67, .07, .75},
+        {.28, .65, .10, .70},
+        {.58, .61, .22, .72},
+        {1.45, .48, .22, .53},
+        {2.20, .34, .25, .37},
+        {2.82, .18, .32, .21},
+        {3.18, .055, .37, .065},
+    }
+
+    // Remove the broad upper crown through the seating bay. It is skinned back
+    // in below around a tapered aperture; omitting these facets alone would
+    // leave the long rectangular slot visible from above.
+    for ring_index in 0 ..< len(rings) - 1 {
+        cockpit_segment := ring_index >= 4 && ring_index <= 7
+        hull_part := Aircraft_Mesh_Part.Body
+        if ring_index < 2 do hull_part = .Engine
+        for side in 0 ..< SIDES {
+            if cockpit_segment && (side == 2 || side == 3) do continue
+            next := (side + 1) % SIDES
+            mesh_quad(
+                mesh,
+                ring_point(rings[ring_index], side, SIDES),
+                ring_point(rings[ring_index + 1], side, SIDES),
+                ring_point(rings[ring_index + 1], next, SIDES),
+                ring_point(rings[ring_index], next, SIDES),
+                hull_part,
+            )
+        }
+    }
+
+    // Five boundary sections form a compact teardrop opening: narrow at the
+    // instrument panel, broad around the pilot, then pinched behind the seat.
+    // Their Y values follow the crown of the elliptical fuselage sections.
+    cockpit_right := [5][3]f32 {
+        {.10, .891, -1.55},
+        {.34, .766, -1.28},
+        {.40, .672, -.92},
+        {.34, .696, .28},
+        {.10, .930, .58},
+    }
+    cockpit_left := cockpit_right
+    for &point in cockpit_left do point[0] = -point[0]
+    for segment in 0 ..< 4 {
+        ring_index := segment + 4
+        mesh_quad(
+            mesh,
+            ring_point(rings[ring_index], 2, SIDES),
+            ring_point(rings[ring_index + 1], 2, SIDES),
+            cockpit_right[segment + 1],
+            cockpit_right[segment],
+            .Body,
+        )
+        mesh_quad(
+            mesh,
+            cockpit_left[segment],
+            cockpit_left[segment + 1],
+            ring_point(rings[ring_index + 1], 4, SIDES),
+            ring_point(rings[ring_index], 4, SIDES),
+            .Body,
+        )
+    }
+
+    nose := [3]f32{0, rings[0].center_y, rings[0].z}
+    tail := [3]f32{0, rings[len(rings) - 1].center_y, rings[len(rings) - 1].z}
+    for side in 0 ..< SIDES {
+        next := (side + 1) % SIDES
+        mesh_triangle(mesh, nose, ring_point(rings[0], next, SIDES), ring_point(rings[0], side, SIDES), .Dark_Metal)
+        mesh_triangle(
+            mesh,
+            tail,
+            ring_point(rings[len(rings) - 1], side, SIDES),
+            ring_point(rings[len(rings) - 1], next, SIDES),
+            .Body,
+        )
+    }
+
+    // Fold the tapered skin edges down into the cockpit instead of covering
+    // the opening with a separate rectangular coaming.
+    sill_y := f32(.34)
+    for segment in 0 ..< 4 {
+        right_front := cockpit_right[segment]
+        right_rear := cockpit_right[segment + 1]
+        left_front := cockpit_left[segment]
+        left_rear := cockpit_left[segment + 1]
+        mesh_quad(
+            mesh,
+            right_front,
+            right_rear,
+            {right_rear[0], sill_y, right_rear[2]},
+            {right_front[0], sill_y, right_front[2]},
+            .Body,
+        )
+        mesh_quad(
+            mesh,
+            left_rear,
+            left_front,
+            {left_front[0], sill_y, left_front[2]},
+            {left_rear[0], sill_y, left_rear[2]},
+            .Body,
+        )
+    }
+    mesh_quad(
+        mesh,
+        cockpit_left[0],
+        cockpit_right[0],
+        {cockpit_right[0][0], sill_y, cockpit_right[0][2]},
+        {cockpit_left[0][0], sill_y, cockpit_left[0][2]},
+        .Body,
+    )
+    mesh_quad(
+        mesh,
+        cockpit_right[4],
+        cockpit_left[4],
+        {cockpit_left[4][0], sill_y, cockpit_left[4][2]},
+        {cockpit_right[4][0], sill_y, cockpit_right[4][2]},
+        .Body,
+    )
+
+    // A recessed tub and seat complete the single-place cockpit. These are
+    // interior fittings, not exterior hull primitives.
+    mesh_quad(mesh, {-.42, -.48, -1.18}, {.42, -.48, -1.18}, {.42, -.48, .20}, {-.42, -.48, .20}, .Dark_Metal)
+    add_box(mesh, {0, -.48, -.24}, {.62, .20, .52}, .Dark_Metal)
+    add_box(mesh, {0, -.14, .08}, {.62, .68, .12}, .Dark_Metal)
+    add_strut(mesh, {-.54, .42, -1.18}, {-.54, .46, .22}, .10, .Strap)
+    add_strut(mesh, {.54, .42, -1.18}, {.54, .46, .22}, .10, .Strap)
+    add_strut(mesh, {-.54, .42, -1.18}, {.54, .42, -1.18}, .10, .Strap)
+    add_strut(mesh, {-.54, .46, .22}, {.54, .46, .22}, .10, .Strap)
+    headrest := [2]Mesh_Ring{{.20, .28, .48, .34}, {.30, .28, .48, .34}}
+    add_ring_mesh(mesh, headrest[:], 12, .Strap)
+    mesh_quad(mesh, {-.45, .08, -1.05}, {.45, .08, -1.05}, {.40, .43, -1.10}, {-.40, .43, -1.10}, .Dark_Metal)
+    add_cockpit_gauge(mesh, {-.23, .29, -1.105}, .095)
+    add_cockpit_gauge(mesh, {0, .23, -1.108}, .09)
+    add_cockpit_gauge(mesh, {.23, .29, -1.105}, .095)
+    cowling_band := [2]Mesh_Ring{{-2.74, .736, .12, .626}, {-2.68, .718, .12, .638}}
+    add_ring_mesh(mesh, cowling_band[:], 16, .Marking)
+    // A dark recessed engine bay gives the cowl a readable opening at gameplay
+    // distance. Nine broad, radial cylinder heads replace the former ring of
+    // dots; their compressed vertical spacing follows the elliptical cowl.
+    engine_face_center := [3]f32{0, .10, -3.305}
+    add_ellipse_disc_z(mesh, engine_face_center, .355, .245, .Dark_Metal)
+    for cylinder_index in 0 ..< 9 {
+        angle := math.PI * .5 + f32(cylinder_index) * 2 * math.PI / 9
+        inner_radius := f32(.145)
+        outer_radius := f32(.305)
+        inner := [3]f32{math.cos(angle) * inner_radius, .10 + math.sin(angle) * inner_radius * .70, -3.322}
+        outer := [3]f32{math.cos(angle) * outer_radius, .10 + math.sin(angle) * outer_radius * .70, -3.322}
+        add_strut(mesh, inner, outer, .082, .Steel)
+    }
+    // The thick forward lip hides the cylinder ends and makes the cowling feel
+    // like a formed metal shell instead of a colored decal on the nose.
+    add_ellipse_annulus_z(mesh, {0, .10, -3.338}, .455, .335, .345, .245, .Engine)
+    for exhaust_index in 0 ..< 3 {
+        z := -2.82 + f32(exhaust_index) * .24
+        add_strut(mesh, {-.55, -.08, z}, {-.72, -.12, z + .04}, .075, .Dark_Metal)
+    }
+    chin_intake := [5]Mesh_Profile_Point{{-3.05, -.32}, {-2.88, -.53}, {-2.56, -.48}, {-2.43, -.30}, {-2.72, -.25}}
+    add_profile_prism(mesh, chin_intake[:], .20, .Dark_Metal)
+
+    screen_low_y := f32(.45)
+    screen_high_y := f32(1.03)
+    screen_low_z := f32(-1.18)
+    screen_high_z := f32(-1.02)
+    mesh_quad(
+        mesh,
+        {-.47, screen_low_y, screen_low_z},
+        {-.20, screen_high_y, screen_high_z},
+        {0, screen_high_y + .05, screen_high_z},
+        {0, screen_low_y, screen_low_z},
+        .Glass,
+    )
+    mesh_quad(
+        mesh,
+        {0, screen_low_y, screen_low_z},
+        {0, screen_high_y + .05, screen_high_z},
+        {.20, screen_high_y, screen_high_z},
+        {.47, screen_low_y, screen_low_z},
+        .Glass,
+    )
+    mesh_quad(
+        mesh,
+        {0, screen_low_y, screen_low_z},
+        {0, screen_high_y + .05, screen_high_z},
+        {-.20, screen_high_y, screen_high_z},
+        {-.47, screen_low_y, screen_low_z},
+        .Glass,
+    )
+    mesh_quad(
+        mesh,
+        {.47, screen_low_y, screen_low_z},
+        {.20, screen_high_y, screen_high_z},
+        {0, screen_high_y + .05, screen_high_z},
+        {0, screen_low_y, screen_low_z},
+        .Glass,
+    )
+    add_strut(mesh, {-.49, screen_low_y, screen_low_z}, {-.20, screen_high_y, screen_high_z}, .035, .Frame)
+    add_strut(mesh, {-.20, screen_high_y, screen_high_z}, {0, screen_high_y + .05, screen_high_z}, .035, .Frame)
+    add_strut(mesh, {0, screen_high_y + .05, screen_high_z}, {.20, screen_high_y, screen_high_z}, .035, .Frame)
+    add_strut(mesh, {.20, screen_high_y, screen_high_z}, {.49, screen_low_y, screen_low_z}, .035, .Frame)
+    add_strut(mesh, {-.49, screen_low_y, screen_low_z}, {.49, screen_low_y, screen_low_z}, .04, .Frame)
+}
+
 postale_mesh :: proc() -> Aircraft_Mesh {
     mesh: Aircraft_Mesh
-    forward_fuselage := [4]Mesh_Ring {
-        {-3.12, .3, .12, .35},
-        {-2.78, .58, .12, .58},
-        {-2.15, .66, .14, .83},
-        {-1.52, .68, .12, .78},
+    wing := [9]Mesh_Section {
+        {-4.96, -.48, -.39, .025},
+        {-4.86, -.82, -.10, .045},
+        {-4.55, -1.12, .14, .07},
+        {-2.05, -1.42, .39, .12},
+        {0, -1.48, .43, .15},
+        {2.05, -1.42, .39, .12},
+        {4.55, -1.12, .14, .07},
+        {4.86, -.82, -.10, .045},
+        {4.96, -.48, -.39, .025},
     }
-    rear_fuselage := [5]Mesh_Ring {
-        {.30, .65, .12, .70},
-        {.55, .62, .12, .72},
-        {1.65, .45, .18, .5},
-        {2.55, .25, .28, .28},
-        {3.12, .07, .35, .08},
-    }
-    cowling := [4]Mesh_Ring {
-        {-3.22, .51, .12, .51},
-        {-3.08, .62, .12, .62},
-        {-2.73, .68, .12, .67},
-        {-2.48, .63, .12, .64},
-    }
-    wing := [7]Mesh_Section {
-        {-5.65, -1.15, .64, .035},
-        {-4.9, -1.32, .58, .06},
-        {-2.25, -1.55, .48, .1},
-        {0, -1.62, .44, .14},
-        {2.25, -1.55, .48, .1},
-        {4.9, -1.32, .58, .06},
-        {5.65, -1.15, .64, .035},
-    }
-    tail := [5]Mesh_Section {
-        {-2.18, 2.46, 3.08, .035},
-        {-1.55, 2.35, 3.14, .055},
+    tail := [7]Mesh_Section {
+        {-2.20, 2.68, 2.78, .025},
+        {-2.05, 2.52, 2.95, .04},
+        {-1.55, 2.38, 3.12, .055},
         {0, 2.22, 3.2, .085},
-        {1.55, 2.35, 3.14, .055},
-        {2.18, 2.46, 3.08, .035},
+        {1.55, 2.38, 3.12, .055},
+        {2.05, 2.52, 2.95, .04},
+        {2.20, 2.68, 2.78, .025},
     }
-    fin := [5]Mesh_Profile_Point{{2.28, .38}, {2.5, 1.85}, {2.87, 2.45}, {3.16, 2.3}, {3.18, .4}}
-    add_ring_mesh(&mesh, forward_fuselage[:], 10, .Body)
-    add_ring_mesh(&mesh, rear_fuselage[:], 10, .Body)
-    add_ring_mesh(&mesh, cowling[:], 14, .Engine)
+    fin := [7]Mesh_Profile_Point {
+        {2.05, .38},
+        {2.24, .78},
+        {2.46, 1.28},
+        {2.72, 1.62},
+        {2.94, 1.68},
+        {3.12, 1.50},
+        {3.18, .4},
+    }
+    add_postale_hull(&mesh)
 
-    // Open mail-pilot cockpit. The old continuous fuselage sealed this entire
-    // bay, forcing occupants to be rendered on top of the wing. Low side
-    // coamings preserve the fuselage silhouette while leaving the seat and
-    // pilot visible from frontal and three-quarter views.
-    add_box(&mesh, {0, -.61, -.61}, {1.12, .14, 1.72}, .Body)
-    add_box(&mesh, {-.59, -.01, -.61}, {.14, 1.12, 1.72}, .Body)
-    add_box(&mesh, {.59, -.01, -.61}, {.14, 1.12, 1.72}, .Body)
-    add_box(&mesh, {0, .49, -1.43}, {1.10, .18, .16}, .Body)
-    add_box(&mesh, {0, .47, .22}, {1.05, .18, .16}, .Body)
-    add_box(&mesh, {0, -.43, -.60}, {.74, .16, .62}, .Dark_Metal)
-    add_box(&mesh, {0, -.10, -.27}, {.74, .68, .14}, .Dark_Metal)
-
-    POSTALE_WING_Y :: f32(1.55)
-    add_section_mesh(&mesh, wing[:], POSTALE_WING_Y, .Wing); add_section_mesh(&mesh, tail[:], .55, .Tail)
+    POSTALE_WING_Y :: f32(.08)
+    wing_first := mesh.vertex_count
+    add_section_mesh(&mesh, wing[:], POSTALE_WING_Y, .Wing)
+    for index in wing_first ..< mesh.vertex_count {
+        mesh.vertices[index].position[1] += abs(mesh.vertices[index].position[0]) * .045
+    }
+    left_root_fillet := [3]Mesh_Section{{-1.10, -1.05, .20, .04}, {-.76, -1.25, .28, .12}, {-.52, -.90, .10, .20}}
+    right_root_fillet := [3]Mesh_Section{{.52, -.90, .10, .20}, {.76, -1.25, .28, .12}, {1.10, -1.05, .20, .04}}
+    add_section_mesh(&mesh, left_root_fillet[:], .17, .Body)
+    add_section_mesh(&mesh, right_root_fillet[:], .17, .Body)
+    add_section_mesh(&mesh, tail[:], .55, .Tail)
     add_profile_prism(&mesh, fin[:], .065, .Tail)
-    add_box(
-        &mesh,
-        {-2.35, POSTALE_WING_Y - .06, .48},
-        {2.75, .085, .47},
-        .Left_Flap,
-    ); add_box(&mesh, {2.35, POSTALE_WING_Y - .06, .48}, {2.75, .085, .47}, .Right_Flap)
-    add_box(
-        &mesh,
-        {-4.55, POSTALE_WING_Y - .015, .5},
-        {1.75, .065, .34},
-        .Left_Aileron,
-    ); add_box(&mesh, {4.55, POSTALE_WING_Y - .015, .5}, {1.75, .065, .34}, .Right_Aileron)
-    add_box(
-        &mesh,
-        {-1.12, .56, 3.05},
-        {1.72, .055, .24},
-        .Elevator,
-    ); add_box(&mesh, {1.12, .56, 3.05}, {1.72, .055, .24}, .Elevator)
-    rudder := [5]Mesh_Profile_Point{{2.96, .48}, {2.94, 1.72}, {3.02, 2.22}, {3.16, 2.3}, {3.18, .5}}
-    add_profile_prism(&mesh, rudder[:], .073, .Rudder)
-    // Positions and radii match AmbientMailPlane.cs: two main gravel wheels
-    // under the wing and a smaller tail wheel under the rear fuselage.
-    add_wheel(&mesh, {-1.45, -1.18, -.48}, .47, .24)
-    add_wheel(&mesh, {1.45, -1.18, -.48}, .47, .24)
+    left_flap := [3]Mesh_Section{{-3.25, .08, .30, .045}, {-1.90, .10, .40, .05}, {-.72, .10, .42, .055}}
+    right_flap := [3]Mesh_Section{{.72, .10, .42, .055}, {1.90, .10, .40, .05}, {3.25, .08, .30, .045}}
+    left_aileron := [4]Mesh_Section {
+        {-4.76, -.22, -.08, .028},
+        {-4.48, -.02, .16, .035},
+        {-3.85, .04, .25, .04},
+        {-3.24, .08, .30, .043},
+    }
+    right_aileron := [4]Mesh_Section {
+        {3.24, .08, .30, .043},
+        {3.85, .04, .25, .04},
+        {4.48, -.02, .16, .035},
+        {4.76, -.22, -.08, .028},
+    }
+    control_first := mesh.vertex_count
+    add_section_mesh(&mesh, left_flap[:], POSTALE_WING_Y, .Left_Flap)
+    add_section_mesh(&mesh, right_flap[:], POSTALE_WING_Y, .Right_Flap)
+    add_section_mesh(&mesh, left_aileron[:], POSTALE_WING_Y, .Left_Aileron)
+    add_section_mesh(&mesh, right_aileron[:], POSTALE_WING_Y, .Right_Aileron)
+    for index in control_first ..< mesh.vertex_count {
+        mesh.vertices[index].position[1] += abs(mesh.vertices[index].position[0]) * .045
+    }
+    left_elevator := [3]Mesh_Section{{-2.05, 2.76, 2.94, .028}, {-1.55, 2.76, 3.10, .04}, {-.08, 2.78, 3.18, .055}}
+    right_elevator := [3]Mesh_Section{{.08, 2.78, 3.18, .055}, {1.55, 2.76, 3.10, .04}, {2.05, 2.76, 2.94, .028}}
+    add_section_mesh(&mesh, left_elevator[:], .56, .Elevator)
+    add_section_mesh(&mesh, right_elevator[:], .56, .Elevator)
+    rudder := [6]Mesh_Profile_Point{{2.78, .48}, {2.76, 1.12}, {2.84, 1.54}, {2.96, 1.64}, {3.12, 1.47}, {3.18, .50}}
+    add_profile_prism(&mesh, rudder[:], .074, .Rudder)
+    // Compact, wide-track taildragger gear. Each axle is triangulated back to
+    // two lower-fuselage hardpoints, so the undercarriage reads as a sprung
+    // V-frame rather than a pair of posts hanging from the wing.
+    left_axle := [3]f32{-1.34, -1.13, -.48}
+    right_axle := [3]f32{1.34, -1.13, -.48}
+    add_wheel(&mesh, left_axle, .45, .22)
+    add_wheel(&mesh, right_axle, .45, .22)
     add_wheel(&mesh, {0, -.91, 2.96}, .24, .18)
-    // Main struts run from the raised parasol wing to each axle;
-    // keeping the full span here prevents the tires from appearing detached.
-    add_box(&mesh, {-1.45, .11, -.48}, {.13, 2.58, .13}, .Frame)
-    add_box(&mesh, {1.45, .11, -.48}, {.13, 2.58, .13}, .Frame)
-    // The tail strut reaches up into the rear fuselage instead of stopping
-    // halfway between the tail wheel and the airframe.
-    add_box(&mesh, {0, -.28, 2.72}, {.11, 1.26, .11}, .Frame)
-    add_propeller(&mesh, {0, .12, -3.42}, 1.58, .2, .08, .Propeller)
-    add_propeller_spin_volume(&mesh, {0, .12, -3.42}, 1.58, .018)
+    // Simple oval covers sit just outside each tire face. Keeping them thin
+    // avoids the intersecting teardrop shell that left a black center notch.
+    wheel_cover := [2]Mesh_Ring{{-.018, .34, 0, .42}, {.018, .34, 0, .42}}
+    wheel_cover_centers := [2][3]f32 {
+        {left_axle[0] - .13, left_axle[1], left_axle[2]},
+        {right_axle[0] + .13, right_axle[1], right_axle[2]},
+    }
+    for center in wheel_cover_centers {
+        first := mesh.vertex_count
+        add_ring_mesh(&mesh, wheel_cover[:], 12, .Marking)
+        rotate_new_vertices_y(&mesh, first, {0, 0, 0}, math.PI * .5)
+        translate_new_vertices(&mesh, first, center)
+    }
+    add_strut(&mesh, left_axle, {-.42, -.39, -.82}, .13, .Frame)
+    add_strut(&mesh, left_axle, {-.46, -.36, .02}, .13, .Frame)
+    add_strut(&mesh, right_axle, {.42, -.39, -.82}, .13, .Frame)
+    add_strut(&mesh, right_axle, {.46, -.36, .02}, .13, .Frame)
+    add_strut(&mesh, left_axle, right_axle, .09, .Frame)
+    add_strut(&mesh, {0, -.91, 2.96}, {0, -.05, 2.52}, .09, .Frame)
+    add_postale_propeller(&mesh, {0, .12, -3.42})
+    add_propeller_spin_volume(&mesh, {0, .12, -3.42}, 1.46, .018)
     mesh_finalize(
         &mesh,
         &postale_mesh_cache,

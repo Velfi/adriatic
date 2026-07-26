@@ -7,6 +7,7 @@ import "core:math"
 FOLLOW_DISTANCE :: f32(6.5)
 FOLLOW_HEIGHT :: f32(5.5)
 LOOK_AHEAD :: f32(5)
+FOCUS_HEIGHT :: f32(-5.5)
 
 State :: struct {
     pose:                   third_person.Camera_Pose,
@@ -151,7 +152,7 @@ desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_perso
         flight.add(target.position, flight.scale(forward, look_ahead)),
         flight.add(
             flight.scale(right, clamp(-target.roll_input * 3.2, -3.2, 3.2)),
-            {y = 1 + framing_focus + (target.grounded ? -.35 : 0)},
+            {y = FOCUS_HEIGHT + framing_focus + (target.grounded ? -.35 : 0)},
         ),
     )
     return {position = to_third_person(position), target = to_third_person(focus)}

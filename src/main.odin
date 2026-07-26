@@ -192,6 +192,9 @@ Editor :: struct {
     libellula:                                      libellula_game.Runtime,
     libellula_visual_mesh:                          vehicles.Libellula_Mesh,
     libellula_mk2_visual_mesh:                      vehicles.Libellula_Mesh,
+    libellula_base_mesh:                            vehicles.Libellula_Mesh,
+    libellula_mk2_base_mesh:                        vehicles.Libellula_Mesh,
+    postale_base_mesh:                              vehicles.Aircraft_Mesh,
     libellula_projected_faces:                      [dynamic]Projected_Aircraft_Face,
     aircraft:                                       vehicles.Aircraft_Fleet,
     postale_visible:                                bool,
@@ -216,6 +219,9 @@ Editor :: struct {
     vehicle_paint_component:                        int,
     vehicle_paint_component_mask:                   [5]bool,
     vehicle_paint_texture_dirty:                    bool,
+    vehicle_paint_propeller_color_dirty:            bool,
+    vehicle_paint_propeller_color_valid:            bool,
+    vehicle_paint_propeller_color:                  rl.Color,
     vehicle_paint_preview_texture_dirty:            bool,
     vehicle_paint_save_pending:                     bool,
     vehicle_paint_save_due_at:                      f32,
@@ -2250,11 +2256,12 @@ flight_to_world :: proc(value: flight.Vec3) -> third_person.Vec3 {
 POSTALE_PRESENTATION_SCALE :: f32(.68)
 LIBELLULA_PRESENTATION_SCALE :: f32(.72)
 
-// These are points on the visible wing's trailing edge in mesh-local space.
-// Keep them in the same local coordinate system and presentation scale as
-// draw_postale_3d so wing streams begin on the rendered wing tips.
-POSTALE_WING_TRAIL_LOCAL_Y :: f32(1.55)
-POSTALE_WING_TRAIL_LOCAL_Z :: f32(.6)
+// The rebuilt Postale wing tips are swept forward and rise with the wing's
+// dihedral. Keep these anchors on the outer trailing-edge vertices so the
+// streams do not appear behind, below, or outside the visible wing.
+POSTALE_WING_TRAIL_LOCAL_X :: f32(4.96)
+POSTALE_WING_TRAIL_LOCAL_Y :: f32(.08 + 4.96 * .045)
+POSTALE_WING_TRAIL_LOCAL_Z :: f32(-.39)
 
 postale_vertex_world :: proc(runtime: ^postale_game.Runtime, position: [3]f32, scale: f32) -> third_person.Vec3 {
     body := runtime.body
@@ -2271,6 +2278,15 @@ postale_vertex_world :: proc(runtime: ^postale_game.Runtime, position: [3]f32, s
         body.basis.right.z * position[0] * scale +
         body.basis.up.z * position[1] * scale -
         body.basis.forward.z * position[2] * scale,
+    }
+}
+
+postale_normal_world :: proc(runtime: ^postale_game.Runtime, normal: [3]f32) -> third_person.Vec3 {
+    basis := runtime.body.basis
+    return {
+        x = basis.right.x * normal[0] + basis.up.x * normal[1] - basis.forward.x * normal[2],
+        y = basis.right.y * normal[0] + basis.up.y * normal[1] - basis.forward.y * normal[2],
+        z = basis.right.z * normal[0] + basis.up.z * normal[1] - basis.forward.z * normal[2],
     }
 }
 
@@ -2609,7 +2625,7 @@ libellula_attendant_near :: proc(editor: ^Editor) -> bool {
 draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
     mesh := &editor.libellula_visual_mesh
     if editor.aircraft.active == .Libellula_Mk2 {
-        vehicles.libellula_mk2_mesh_build(&editor.libellula_mk2_visual_mesh)
+        vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
         mesh = &editor.libellula_mk2_visual_mesh
         vehicles.animate_libellula_mk2_mesh(
             mesh,
@@ -2619,7 +2635,7 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
             editor.libellula.rotor_turns.z,
         )
     } else {
-        vehicles.libellula_mesh_build(mesh)
+        vehicles.libellula_mesh_copy(mesh, &editor.libellula_base_mesh)
         vehicles.animate_libellula_mesh_pose(
             mesh,
             editor.libellula.rotor_turns.x,
@@ -2735,7 +2751,7 @@ draw_postale_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, heig
             b     = pb.position,
             c     = pc.position,
             depth = (pa.depth + pb.depth + pc.depth) / 3,
-            color = aircraft_postale_part_color(a.part, editor.postale.throttle),
+            color = aircraft_postale_part_color_with_paint(editor, a.part, editor.postale.throttle),
         }
         face_count += 1
     }
@@ -2814,12 +2830,92 @@ aircraft_propeller_blur_amount :: proc(throttle: f32) -> f32 {
 }
 
 aircraft_postale_part_color :: proc(part: vehicles.Aircraft_Mesh_Part, throttle: f32) -> rl.Color {
-    color := aircraft_part_color(part)
+    color: rl.Color
+    #partial switch part {
+    case .Body:
+        color = {
+            r = 70,
+            g = 103,
+            b = 76,
+            a = 255,
+        }
+    case .Wing, .Tail, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron, .Elevator, .Rudder:
+        color = {
+            r = 222,
+            g = 197,
+            b = 126,
+            a = 255,
+        }
+    case .Engine:
+        color = {
+            r = 164,
+            g = 61,
+            b = 48,
+            a = 255,
+        }
+    case .Propeller:
+        color = {
+            r = 104,
+            g = 70,
+            b = 42,
+            a = 255,
+        }
+    case .Frame:
+        color = {
+            r = 65,
+            g = 72,
+            b = 68,
+            a = 255,
+        }
+    case .Glass:
+        color = {
+            r = 142,
+            g = 218,
+            b = 230,
+            a = 190,
+        }
+    case .Strap:
+        color = {
+            r = 101,
+            g = 61,
+            b = 39,
+            a = 255,
+        }
+    case .Marking:
+        color = {
+            r = 237,
+            g = 226,
+            b = 192,
+            a = 255,
+        }
+    case .Red_Paint:
+        color = {
+            r = 188,
+            g = 55,
+            b = 45,
+            a = 255,
+        }
+    case:
+        color = aircraft_part_color(part)
+    }
     blur := aircraft_propeller_blur_amount(throttle)
     if part == .Propeller || part == .Left_Propeller || part == .Right_Propeller {
         color.a = u8(clamp(255 * (1 - blur * .84), 0, 255))
     } else if part == .Propeller_Blur {
         color.a = u8(clamp(18 + blur * 26, 0, 255))
+    }
+    return color
+}
+
+aircraft_postale_part_color_with_paint :: proc(
+    editor: ^Editor,
+    part: vehicles.Aircraft_Mesh_Part,
+    throttle: f32,
+) -> rl.Color {
+    color := aircraft_postale_part_color(part, throttle)
+    if part == .Propeller_Blur {
+        painted := vehicle_paint_propeller_color(editor)
+        color.r, color.g, color.b = painted.r, painted.g, painted.b
     }
     return color
 }
@@ -3196,11 +3292,13 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
             finish := rl.Vector2{center.x + ray_x * finish_distance, center.y + ray_y * finish_distance}
             segment_alpha := u8(clamp(f32(alpha) * (.28 + outer_amount * .72), 0, 126))
             segment_width := (.8 + intensity * 1.35) * (.72 + outer_amount * .28)
-            rl.DrawLineEx(start, finish, segment_width, {205, 239, 236, segment_alpha})
+            // Speed is a warm, screen-space effect radiating from the flight
+            // vanishing point. Wind remains cool and world-aligned.
+            rl.DrawLineEx(start, finish, segment_width, {244, 213, 142, segment_alpha})
         }
         head_distance := distance + streak_length
         head := rl.Vector2{center.x + ray_x * head_distance, center.y + ray_y * head_distance}
-        rl.DrawCircleV(head, .65 + intensity * .65, {221, 249, 244, alpha})
+        rl.DrawCircleV(head, .65 + intensity * .65, {255, 235, 174, alpha})
     }
 
     // A quiet edge wash sells peripheral blur without obscuring the aircraft or
@@ -3208,10 +3306,10 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
     for band in 0 ..< 5 {
         inset := i32(band * 7)
         alpha := u8((5 - band) * int(3 + intensity * 3))
-        rl.DrawRectangle(inset, inset, width - inset * 2, 3, {188, 226, 231, alpha})
-        rl.DrawRectangle(inset, height - inset - 3, width - inset * 2, 3, {188, 226, 231, alpha})
-        rl.DrawRectangle(inset, inset, 3, height - inset * 2, {188, 226, 231, alpha})
-        rl.DrawRectangle(width - inset - 3, inset, 3, height - inset * 2, {188, 226, 231, alpha})
+        rl.DrawRectangle(inset, inset, width - inset * 2, 3, {225, 194, 126, alpha})
+        rl.DrawRectangle(inset, height - inset - 3, width - inset * 2, 3, {225, 194, 126, alpha})
+        rl.DrawRectangle(inset, inset, 3, height - inset * 2, {225, 194, 126, alpha})
+        rl.DrawRectangle(width - inset - 3, inset, 3, height - inset * 2, {225, 194, 126, alpha})
     }
 }
 
@@ -4026,15 +4124,6 @@ editor_overlay_hit :: proc(position: rl.Vector2, width, height: i32) -> bool {
     return false
 }
 
-editor_ui_hit_legacy :: proc(position: rl.Vector2, width, height: i32) -> bool {
-    return(
-        editor_palette_index(position) >= 0 ||
-        rl.CheckCollisionPointRec(position, spawn_button_bounds()) ||
-        editor_overlay_hit(position, width, height) ||
-        imgui_captures_mouse() \
-    )
-}
-
 draw_spawn_button :: proc() {
     bounds := spawn_button_bounds()
     hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
@@ -4252,188 +4341,6 @@ editor_camera_pose :: proc() -> third_person.Camera_Pose {
     return {
         position = {x = island_center + 650, y = 720, z = island_center + 650},
         target = {x = island_center, y = 1.5, z = island_center},
-    }
-}
-
-draw_terrain_isometric_legacy :: proc(editor: ^Editor, width, height: i32, time: f32) {
-    draw_infinite_ocean(width, height, time)
-    center := rl.Vector2{f32(width) * .5, f32(height) * .55}
-    scale := min(f32(width) / 130, f32(height) / 78)
-    if editor.in_map {
-        // The rendered view follows the eased orbit target, rather than snapping
-        // to the player. Distance is a true camera zoom in this 2D presentation.
-        // (A 5-unit orbit is the authored, neutral field of view.)
-        view_target := editor.camera_pose.target
-        scale *= third_person.default_camera().distance / editor.camera.distance
-        center.x -= (view_target.x - view_target.z) * scale
-        center.y -= (view_target.x + view_target.z) * scale * .46
-        center.y += view_target.y * scale
-    }
-    // The near clipmap level is a dense heightfield; all five levels are edited
-    // together and their extents are shown as colored horizon rings below.
-    level := 0
-    cell := editor.project.levels[level].cell_size
-    for z in 0 ..< terrain.RING_RESOLUTION - 1 {
-        for x in 0 ..< terrain.RING_RESOLUTION - 1 {
-            x0 := (f32(x) - f32(terrain.RING_RESOLUTION - 1) * .5) * cell
-            z0 := (f32(z) - f32(terrain.RING_RESOLUTION - 1) * .5) * cell
-            h00 := terrain.sample_height(&editor.project, level, x0, z0)
-            h10 := terrain.sample_height(&editor.project, level, x0 + cell, z0)
-            h11 := terrain.sample_height(&editor.project, level, x0 + cell, z0 + cell)
-            h01 := terrain.sample_height(&editor.project, level, x0, z0 + cell)
-            color := terrain_color(
-                (h00 + h10 + h11 + h01) * .25,
-                terrain.sample_material(&editor.project, level, x0, z0),
-                editor.project.sea_level,
-            )
-            rl.DrawQuadHatched(
-                project_point(x0, z0, h00, center, scale),
-                project_point(x0 + cell, z0, h10, center, scale),
-                project_point(x0 + cell, z0 + cell, h11, center, scale),
-                project_point(x0, z0 + cell, h01, center, scale),
-                color,
-                rl.HATCH_DISABLED,
-            )
-        }
-    }
-
-    // draw_runway_spawn makes the starting position tangible: the amber beacon
-    // remains visible beneath the parked aircraft and shows where a reset returns.
-    draw_runway_spawn :: proc(editor: ^Editor, center: rl.Vector2, scale, x, z: f32) {
-        height := terrain.sample_height(&editor.project, 0, x, z) + .12
-        marker := project_point(x, z, height, center, scale)
-        rl.DrawCircleV(marker, 5, {r = 248, g = 185, b = 62, a = 255})
-        rl.DrawCircleV(marker, 2, {r = 255, g = 242, b = 196, a = 255})
-        rl.DrawTextEx(rl.Font{}, "SPAWN", {marker.x - 72, marker.y + 14}, 12, 1, {r = 255, g = 234, b = 164, a = 255})
-    }
-
-    // draw_postale_on_runway adapts the generated presentation mesh to the
-    // terrain lab's isometric view. The aircraft faces down the runway.
-    draw_postale_on_runway :: proc(editor: ^Editor, center: rl.Vector2, scale, x, z: f32) {
-        mesh := vehicles.postale_mesh()
-        aircraft_scale := f32(.68)
-        for triangle in vehicles.mesh_triangles(&mesh) {
-            points: [3]rl.Vector2
-            indices := [3]u16{triangle.a, triangle.b, triangle.c}
-            part := mesh.vertices[triangle.a].part
-            for index in 0 ..< 3 {
-                position := mesh.vertices[indices[index]].position
-                world_x := x + position[2] * aircraft_scale
-                world_z := z - position[0] * aircraft_scale
-                points[index] = project_point(
-                    world_x,
-                    world_z,
-                    terrain.sample_height(&editor.project, 0, world_x, world_z) + .32 + position[1] * aircraft_scale,
-                    center,
-                    scale,
-                )
-            }
-            if part == .Propeller_Blur && aircraft_propeller_blur_amount(editor.postale.throttle) <= .01 do continue
-            rl.DrawQuadHatched(
-                points[0],
-                points[1],
-                points[2],
-                points[2],
-                aircraft_postale_part_color(part, editor.postale.throttle),
-                rl.HATCH_DISABLED,
-            )
-        }
-        label := project_point(x, z, terrain.sample_height(&editor.project, 0, x, z) + 2.15, center, scale)
-        rl.DrawTextEx(rl.Font{}, "POSTALE", {label.x - 28, label.y - 30}, 12, 1, {r = 255, g = 239, b = 192, a = 255})
-    }
-    for level in 0 ..< terrain.CLIPMAP_LEVELS {
-        half_extent := f32(terrain.RING_RESOLUTION - 1) * editor.project.levels[level].cell_size * .5
-        shade := u8(96 + level * 26)
-        outline := rl.Color {
-            r = shade,
-            g = 210,
-            b = 240,
-            a = 135,
-        }
-        a := project_point(-half_extent, -half_extent, editor.project.sea_level, center, scale)
-        b := project_point(half_extent, -half_extent, editor.project.sea_level, center, scale)
-        c := project_point(half_extent, half_extent, editor.project.sea_level, center, scale)
-        d := project_point(-half_extent, half_extent, editor.project.sea_level, center, scale)
-        rl.DrawLineEx(
-            a,
-            b,
-            1,
-            outline,
-        ); rl.DrawLineEx(b, c, 1, outline); rl.DrawLineEx(c, d, 1, outline); rl.DrawLineEx(d, a, 1, outline)
-    }
-    draw_default_infrastructure(editor, center, scale)
-    // The northeast runway is the playable arrival point: a Postale waits at
-    // the threshold and the beacon provides an unambiguous respawn reference.
-    half_extent := f32(terrain.RING_RESOLUTION - 1) * editor.project.levels[0].cell_size * .5
-    spawn_x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
-    spawn_z := half_extent * terrain.DEFAULT_ISLAND_OFFSET
-    draw_runway_spawn(editor, center, scale, spawn_x, spawn_z)
-    draw_postale_on_runway(editor, center, scale, spawn_x, spawn_z)
-    if editor.in_map {
-        feet := project_point(
-            editor.player.position.x,
-            editor.player.position.z,
-            editor.player.position.y + .08,
-            center,
-            scale,
-        )
-        head := project_point(
-            editor.player.position.x,
-            editor.player.position.z,
-            editor.player.position.y + 1.55,
-            center,
-            scale,
-        )
-        // The body and a short facing marker make the controller's turn response
-        // immediately legible in this intentionally lightweight map renderer.
-        facing := rl.Vector2 {
-            x = head.x - math.sin(editor.player.facing_yaw_radians) * 14,
-            y = head.y - math.cos(editor.player.facing_yaw_radians) * 7,
-        }
-        rl.DrawLineEx(feet, head, 3, {r = 53, g = 226, b = 213, a = 255})
-        rl.DrawCircleV(head, 6, {r = 247, g = 221, b = 167, a = 255})
-        rl.DrawLineEx(head, facing, 3, {r = 247, g = 221, b = 167, a = 255})
-    }
-    mouse := rl.GetMousePosition()
-    world_x, world_z := world_under_cursor(mouse, center, scale)
-    brush := project_point(
-        world_x,
-        world_z,
-        terrain.sample_height(&editor.project, 0, world_x, world_z),
-        center,
-        scale,
-    )
-    rl.DrawCircleV(brush, editor.radius * scale, {r = 230, g = 244, b = 218, a = 60})
-    rl.DrawTextEx(rl.Font{}, "ADRIATIC TERRAIN LAB", {20, 18}, 24, 1, {r = 224, g = 245, b = 250, a = 255})
-    tool_name := editor.tool == .Raise ? "SCULPT" : editor.tool == .Smooth ? "SMOOTH" : "PAINT"
-    status := fmt.tprintf(
-        "%s  radius %.1f  strength %.2f  |  five-level terrain clipmap in an infinite ocean",
-        tool_name,
-        editor.radius,
-        editor.strength,
-    )
-    rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", status), {20, 48}, 16, 1, {r = 196, g = 222, b = 227, a = 255})
-    if editor.in_map {
-        rl.DrawRectangle(14, 14, 248, 54, {r = 11, g = 39, b = 55, a = 220})
-        rl.DrawTextEx(rl.Font{}, "THIRD-PERSON MAP", {26, 25}, 19, 1, {r = 211, g = 250, b = 242, a = 255})
-        rl.DrawTextEx(
-            rl.Font{},
-            "WASD move  Mouse look  Wheel zoom  Space jump  Esc editor",
-            {26, 49},
-            13,
-            1,
-            {r = 183, g = 219, b = 221, a = 255},
-        )
-    } else {
-        draw_spawn_button()
-        rl.DrawTextEx(
-            rl.Font{},
-            "Q/E Rotate Camera   T Paint   B Formation Toolbox   Wheel Zoom   Shift+Wheel Strength   LMB/RMB Brush",
-            {20, f32(height) - 30},
-            15,
-            1,
-            {r = 220, g = 238, b = 241, a = 230},
-        )
     }
 }
 
@@ -4765,6 +4672,16 @@ adriatic_run :: proc() -> bool {
     defer vehicles.libellula_mesh_destroy(&editor.libellula_visual_mesh)
     vehicles.libellula_mesh_init(&editor.libellula_mk2_visual_mesh)
     defer vehicles.libellula_mesh_destroy(&editor.libellula_mk2_visual_mesh)
+    vehicles.libellula_mesh_init(&editor.libellula_base_mesh)
+    defer vehicles.libellula_mesh_destroy(&editor.libellula_base_mesh)
+    vehicles.libellula_mesh_init(&editor.libellula_mk2_base_mesh)
+    defer vehicles.libellula_mesh_destroy(&editor.libellula_mk2_base_mesh)
+    vehicles.libellula_mesh_build(&editor.libellula_base_mesh)
+    vehicles.libellula_mk2_mesh_build(&editor.libellula_mk2_base_mesh)
+    vehicles.libellula_mesh_copy(&editor.libellula_visual_mesh, &editor.libellula_base_mesh)
+    vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
+    editor.postale_base_mesh = vehicles.postale_mesh()
+    vehicles.mesh_generate_smooth_normals(&editor.postale_base_mesh)
     editor.libellula_projected_faces = make(
         [dynamic]Projected_Aircraft_Face,
         0,
@@ -5239,7 +5156,7 @@ adriatic_run :: proc() -> bool {
         if target == "postale" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
             if !entered do return false
-            editor.camera_pose = third_person.camera_look_at({x = 6, y = 5.5, z = 10}, {y = 1})
+            editor.camera_pose = third_person.camera_look_at({x = 10.5, y = 5.7, z = 10.5}, {y = .45})
         } else if target == "libellula" || target == "libellula-mk2" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.libellula.vehicle})
             if !entered do return false
@@ -5672,12 +5589,12 @@ adriatic_run :: proc() -> bool {
                     if editor.aircraft.active == .Postale {
                         left_tip := postale_vertex_world(
                             &editor.postale,
-                            {-5.35, POSTALE_WING_TRAIL_LOCAL_Y, POSTALE_WING_TRAIL_LOCAL_Z},
+                            {-POSTALE_WING_TRAIL_LOCAL_X, POSTALE_WING_TRAIL_LOCAL_Y, POSTALE_WING_TRAIL_LOCAL_Z},
                             POSTALE_PRESENTATION_SCALE,
                         )
                         right_tip := postale_vertex_world(
                             &editor.postale,
-                            {5.35, POSTALE_WING_TRAIL_LOCAL_Y, POSTALE_WING_TRAIL_LOCAL_Z},
+                            {POSTALE_WING_TRAIL_LOCAL_X, POSTALE_WING_TRAIL_LOCAL_Y, POSTALE_WING_TRAIL_LOCAL_Z},
                             POSTALE_PRESENTATION_SCALE,
                         )
                         particle_systems.step_wing_trails(

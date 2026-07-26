@@ -25,6 +25,7 @@ aircraft_chase_camera_orbits_and_frames_vertical_attitudes :: proc(t: ^testing.T
     orbit := chase_camera.desired_pose(target, .5, .25)
     testing.expect(t, orbit.position.x != neutral.position.x)
     testing.expect(t, orbit.position.y > neutral.position.y)
+    testing.expect(t, neutral.target.y < target.position.y)
 
     camera_offset, focus_offset := chase_camera.vertical_framing(.9)
     testing.expect(t, camera_offset < 0 && focus_offset > 0)

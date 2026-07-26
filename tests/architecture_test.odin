@@ -139,6 +139,20 @@ architecture_chimney_variation_is_sparse_and_seed_stable :: proc(t: ^testing.T) 
 }
 
 @(test)
+architecture_accent_sites_respect_rotated_building_footprints :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    building := terrain.structure_make(100, 200, 30, 18, 4, 24)
+    building.kind = .Architecture
+    building.rotation = math.PI / 4
+    _ = terrain.add_structure(project, building)
+
+    testing.expect(t, !architecture.city_accent_site_clear(project, 100, 200, 5))
+    testing.expect(t, !architecture.city_accent_site_clear(project, 114, 214, 5))
+    testing.expect(t, architecture.city_accent_site_clear(project, 130, 230, 5))
+}
+
+@(test)
 architecture_facade_floor_count_tracks_height :: proc(t: ^testing.T) {
     testing.expect(t, architecture.facade_floor_count(18) == 2)
     testing.expect(t, architecture.facade_floor_count(33) == 3)

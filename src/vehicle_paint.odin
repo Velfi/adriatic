@@ -39,6 +39,7 @@ Vehicle_Paint_Tool :: enum u8 {
 VEHICLE_PAINT_TOOL_NAMES :: [7]string{"BRUSH", "BUCKET", "SHAPE", "BLEND", "GRADIENT", "PATTERN", "STRIP"}
 
 VEHICLE_PAINT_COMPONENT_NAMES :: [5]string{"BODY", "WINGS", "TAIL", "ENGINE", "FLOATS"}
+POSTALE_PAINT_COMPONENT_NAMES :: [5]string{"FUSELAGE", "WINGS", "TAIL", "ENGINE", "GEAR"}
 
 VEHICLE_PAINT_PATTERN_NAMES :: [12]string {
     "CHECK",
@@ -83,6 +84,42 @@ vehicle_paint_layer_index :: proc(kind: vehicles.Aircraft_Kind) -> int {
 vehicle_paint_pixels :: proc(editor: ^Editor) -> []u8 {
     if editor == nil do return nil
     return editor.vehicle_paint_layers[vehicle_paint_layer_index(editor.aircraft.active)][:]
+}
+
+vehicle_paint_mark_texture_dirty :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.vehicle_paint_texture_dirty = true
+    editor.vehicle_paint_propeller_color_dirty = true
+}
+
+vehicle_paint_propeller_color :: proc(editor: ^Editor) -> rl.Color {
+    base := rl.Color{54, 43, 35, 255}
+    if editor == nil do return base
+    if !editor.vehicle_paint_propeller_color_valid || editor.vehicle_paint_propeller_color_dirty {
+        if editor.aircraft.active == .Postale && editor.vehicle_paint_postale_mesh.vertex_count == 0 {
+            editor.vehicle_paint_postale_mesh = vehicles.postale_mesh()
+            vehicle_paint_build_texel_parts(editor, &editor.vehicle_paint_postale_mesh)
+        }
+        pixels := vehicle_paint_pixels(editor)
+        owner := int(u8(vehicles.Aircraft_Mesh_Part.Propeller) + 1)
+        red, green, blue, weight: u64
+        for value, texel in editor.vehicle_paint_texel_part {
+            if u8(value) != u8(owner) do continue
+            alpha := u64(pixels[texel * 4 + 3])
+            if alpha == 0 do continue
+            red += u64(pixels[texel * 4 + 0]) * alpha
+            green += u64(pixels[texel * 4 + 1]) * alpha
+            blue += u64(pixels[texel * 4 + 2]) * alpha
+            weight += alpha
+        }
+        if weight > 0 {
+            base = {u8(red / weight), u8(green / weight), u8(blue / weight), 255}
+        }
+        editor.vehicle_paint_propeller_color = base
+        editor.vehicle_paint_propeller_color_dirty = false
+        editor.vehicle_paint_propeller_color_valid = true
+    }
+    return editor.vehicle_paint_propeller_color
 }
 
 vehicle_paint_preview_clear :: proc(editor: ^Editor) {
@@ -214,10 +251,24 @@ vehicle_paint_component_for_part :: proc(part: vehicles.Aircraft_Mesh_Part) -> i
     return 0
 }
 
+vehicle_paint_component_names :: proc(editor: ^Editor) -> [5]string {
+    if editor != nil && editor.aircraft.active == .Postale {
+        return POSTALE_PAINT_COMPONENT_NAMES
+    }
+    return VEHICLE_PAINT_COMPONENT_NAMES
+}
+
 vehicle_paint_part_is_paintable :: proc(part: vehicles.Aircraft_Mesh_Part) -> bool {
     // Rubber and glass keep their authored materials instead of accepting the
     // vehicle paint atlas.
-    return part != .Wheel && part != .Glass
+    return(
+        part != .Wheel &&
+        part != .Glass &&
+        part != .Propeller_Blur &&
+        part != .Red_Paint &&
+        part != .Marking &&
+        part != .Strap \
+    )
 }
 
 vehicle_paint_component_mask_activate :: proc(editor: ^Editor, index: int, solo: bool) {
@@ -370,7 +421,7 @@ vehicle_paint_history_commit :: proc(editor: ^Editor) -> bool {
     layer := vehicle_paint_layer_index(editor.aircraft.active)
     vehicle_paint_history_entries_clear(&editor.vehicle_paint_redo[layer])
     vehicle_paint_history_push(&editor.vehicle_paint_undo[layer], entry)
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
     return true
 }
@@ -383,7 +434,7 @@ vehicle_paint_history_apply :: proc(editor: ^Editor, entry: ^Vehicle_Paint_Histo
         color := after ? change.after : change.before
         copy(pixels[index:index + 4], color[:])
     }
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
 }
 
@@ -533,7 +584,7 @@ vehicle_paint_stamp_texture :: proc(editor: ^Editor, part: vehicles.Aircraft_Mes
             pixels[index + 3] = max(old_alpha, alpha)
         }
     }
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
 }
 
@@ -644,7 +695,7 @@ vehicle_paint_bucket :: proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part,
         if !editor.vehicle_paint_component_mask[component] do continue
         vehicle_paint_set_texel(pixels, texel, color)
     }
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
 }
 
@@ -671,7 +722,7 @@ vehicle_paint_shape :: proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part, 
             }
         }
     }
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
 }
 
@@ -692,9 +743,7 @@ vehicle_paint_shape_contains :: proc(kind: int, x, y, radius: f32, rotation_degr
         return ny >= -.9 && ny <= 1 && math.abs(nx) <= (1 - ny) * .58
     case 4:
         // Flat-topped regular hexagon.
-        return math.abs(nx) <= 1 &&
-               math.abs(ny) <= .866 &&
-               math.abs(nx) * .866 + math.abs(ny) * .5 <= .866
+        return math.abs(nx) <= 1 && math.abs(ny) <= .866 && math.abs(nx) * .866 + math.abs(ny) * .5 <= .866
     case 5:
         angle := f32(math.atan2(f64(ny), f64(nx))) + f32(math.PI) * .5
         distance := f32(math.sqrt(f64(nx * nx + ny * ny)))
@@ -819,7 +868,7 @@ vehicle_paint_blend :: proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part, 
         index := int(update.texel) * 4
         for channel in 0 ..< 4 do pixels[index + channel] = update.after[channel]
     }
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
 }
 
@@ -848,7 +897,7 @@ vehicle_paint_gradient_texels :: proc(
         }
         vehicle_paint_set_texel(pixels, texel, color)
     }
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
 }
 
@@ -896,7 +945,7 @@ vehicle_paint_pattern :: proc(
         }
         vehicle_paint_set_texel(pixels, texel, color)
     }
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
 }
 
@@ -921,8 +970,7 @@ vehicle_paint_pattern_secondary_sample :: proc(pattern: int, x, y, tile: f32) ->
         return vehicle_paint_pattern_mod(x + y, tile) >= half
     case 4:
         // crosshatch
-        return vehicle_paint_pattern_mod(x + y, tile) < quarter ||
-               vehicle_paint_pattern_mod(x - y, tile) < quarter
+        return vehicle_paint_pattern_mod(x + y, tile) < quarter || vehicle_paint_pattern_mod(x - y, tile) < quarter
     case 5:
         // dots
         dx, dy := local_x - half, local_y - half
@@ -944,10 +992,7 @@ vehicle_paint_pattern_secondary_sample :: proc(pattern: int, x, y, tile: f32) ->
         return vehicle_paint_pattern_mod(x - y, tile) < quarter
     case 9:
         // waves
-        wave_y := vehicle_paint_pattern_mod(
-            y + math.abs(vehicle_paint_pattern_mod(x, tile * 2) - tile) * .5,
-            tile,
-        )
+        wave_y := vehicle_paint_pattern_mod(y + math.abs(vehicle_paint_pattern_mod(x, tile * 2) - tile) * .5, tile)
         return wave_y < quarter
     case 10:
         // brick
@@ -964,10 +1009,7 @@ vehicle_paint_pattern_secondary_sample :: proc(pattern: int, x, y, tile: f32) ->
     return (tile_x + tile_y) % 2 != 0
 }
 
-vehicle_paint_pattern_coverage :: proc(
-    pattern: int,
-    x, y, tile, rotation_cos, rotation_sin: f32,
-) -> f32 {
+vehicle_paint_pattern_coverage :: proc(pattern: int, x, y, tile, rotation_cos, rotation_sin: f32) -> f32 {
     coverage: f32
     offsets := [4][2]f32{{-.25, -.25}, {.25, -.25}, {-.25, .25}, {.25, .25}}
     for offset in offsets {
@@ -1098,7 +1140,7 @@ vehicle_paint_strip_texels :: proc(editor: ^Editor, texels: []int, start_uv, end
             vehicle_paint_set_texel(pixels, texel, color)
         }
     }
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
 }
 
@@ -1115,7 +1157,11 @@ vehicle_paint_strip :: proc(
 vehicle_paint_close :: proc(editor: ^Editor) -> bool {
     if editor == nil do return false
     if editor.vehicle_paint_texture_dirty do vehicle_paint_upload_texture(editor)
-    if editor.vehicle_paint_save_pending && !vehicle_paint_save(editor) {
+    // Closing is an explicit save operation. Do not let the autosave debounce
+    // flag decide whether it writes: it can be clear after an earlier autosave
+    // or stale while input is transitioning into the pause menu. A successful
+    // close must always leave the complete paint atlas on disk.
+    if !vehicle_paint_save(editor) {
         editor.vehicle_paint_save_failed = true
         editor.vehicle_paint_save_due_at = f32(rl.GetTime()) + 3
         return false
@@ -1149,7 +1195,7 @@ vehicle_paint_close :: proc(editor: ^Editor) -> bool {
 vehicle_paint_discard :: proc(editor: ^Editor) -> bool {
     if editor == nil || len(editor.vehicle_paint_open_pixels) != VEHICLE_PAINT_TEXTURE_BYTE_COUNT do return false
     copy(vehicle_paint_pixels(editor), editor.vehicle_paint_open_pixels)
-    editor.vehicle_paint_texture_dirty = true
+    vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
     return vehicle_paint_close(editor)
 }
@@ -1178,11 +1224,7 @@ vehicle_paint_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
     wheel_delta := rl.GetMouseWheelMoveV()
     wheel := wheel_delta.y
     if control_key_down() && math.abs(wheel) > .01 {
-        editor.vehicle_paint_brush_strength = clamp(
-            editor.vehicle_paint_brush_strength + wheel * .05,
-            .05,
-            1,
-        )
+        editor.vehicle_paint_brush_strength = clamp(editor.vehicle_paint_brush_strength + wheel * .05, .05, 1)
     } else if (vehicle_paint_pattern_active(editor) || vehicle_paint_shape_active(editor)) &&
        alt_key_down() &&
        math.abs(wheel) > .01 {
@@ -1685,8 +1727,7 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
     }
     if rl.IsMouseButtonPressed(.LEFT) &&
        !hit &&
-       (!editor.vehicle_paint_panel_visible ||
-        !rl.CheckCollisionPointRec(mouse, vehicle_paint_panel_bounds(editor))) {
+       (!editor.vehicle_paint_panel_visible || !rl.CheckCollisionPointRec(mouse, vehicle_paint_panel_bounds(editor))) {
         editor.vehicle_paint_orbit_drag_active = true
     }
     if editor.vehicle_paint_orbit_drag_active {
@@ -1821,7 +1862,7 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                 if vehicle_paint_clear_confirm(editor, f32(rl.GetTime())) {
                     vehicle_paint_history_capture(editor)
                     vehicle_paint_clear_texture(editor)
-                    editor.vehicle_paint_texture_dirty = true
+                    vehicle_paint_mark_texture_dirty(editor)
                     _ = vehicle_paint_history_commit(editor)
                     vehicle_paint_schedule_save(editor)
                 }
@@ -2121,14 +2162,7 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
             )
         }
         rl.DrawTextEx(rl.Font{}, "ALTOBERTO'S PAINT HANGAR", {18, 24}, 20, 1, {244, 255, 250, 255})
-        rl.DrawTextEx(
-            rl.Font{},
-            "LMB PAINT   RMB ORBIT   TAB HIDE",
-            {18, 54},
-            16,
-            1,
-            {211, 235, 235, 255},
-        )
+        rl.DrawTextEx(rl.Font{}, "LMB PAINT   RMB ORBIT   TAB HIDE", {18, 54}, 16, 1, {211, 235, 235, 255})
         rl.DrawTextEx(rl.Font{}, "ESC LEAVE   B ERASE   S SYMMETRY", {18, 76}, 16, 1, {255, 226, 163, 255})
         rl.DrawTextEx(rl.Font{}, "ALT SAMPLE   SHIFT+WHEEL SIZE   H HARD", {18, 98}, 16, 1, {255, 226, 163, 255})
         for index in 0 ..< len(VEHICLE_PAINT_COLORS) {
@@ -2148,13 +2182,7 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
         symmetry_bounds := rl.Rectangle{190, 190, 112, 30}
         symmetry_fill := rl.Color{29, 61, 65, 225}
         rl.DrawRectangleRounded(symmetry_bounds, .18, 6, symmetry_fill)
-        rl.DrawRectangleRoundedLinesEx(
-            symmetry_bounds,
-            .18,
-            6,
-            1,
-            {91, 143, 139, 255},
-        )
+        rl.DrawRectangleRoundedLinesEx(symmetry_bounds, .18, 6, 1, {91, 143, 139, 255})
         rl.DrawTextEx(
             rl.Font{},
             "SYMMETRY",
@@ -2164,8 +2192,7 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
             {246, 252, 240, 255},
         )
         toggle_bounds := rl.Rectangle{symmetry_bounds.x + 67, symmetry_bounds.y + 7, 36, 16}
-        toggle_fill :=
-            editor.vehicle_paint_symmetry ? rl.Color{70, 164, 137, 255} : rl.Color{48, 63, 66, 255}
+        toggle_fill := editor.vehicle_paint_symmetry ? rl.Color{70, 164, 137, 255} : rl.Color{48, 63, 66, 255}
         rl.DrawRectangleRounded(toggle_bounds, 1, 8, toggle_fill)
         rl.DrawRectangleRoundedLinesEx(toggle_bounds, 1, 8, 1, {127, 174, 164, 255})
         knob_x := editor.vehicle_paint_symmetry ? toggle_bounds.x + toggle_bounds.width - 9 : toggle_bounds.x + 9
@@ -2184,95 +2211,95 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
             tool_name := fmt.ctprintf("%s", tool_names[index])
             vehicle_paint_draw_icon(editor, index, {bounds.x + 6, bounds.y + 6, 24, 24})
             rl.DrawTextEx(rl.Font{}, tool_name, {bounds.x + 36, bounds.y + 9}, 16, 1, {236, 243, 224, 255})
-    }
-    if editor.vehicle_paint_tool == .Pattern && !editor.vehicle_paint_erase {
-        pattern_panel := vehicle_paint_pattern_palette_bounds()
-        pattern_names := VEHICLE_PAINT_PATTERN_NAMES
-        rl.DrawRectangleRounded(pattern_panel, .06, 8, {15, 31, 38, 248})
-        rl.DrawRectangleRoundedLinesEx(pattern_panel, .06, 8, 1, {91, 143, 139, 255})
-        primary := palette[editor.vehicle_paint_color]
-        secondary := palette[editor.vehicle_paint_secondary_color]
-        radians := editor.vehicle_paint_pattern_rotation * f32(math.PI) / 180
-        preview_cos := f32(math.cos(f64(radians)))
-        preview_sin := f32(math.sin(f64(radians)))
-        for index in 0 ..< len(VEHICLE_PAINT_PATTERN_NAMES) {
-            bounds := vehicle_paint_pattern_swatch_bounds(index)
-            selected := editor.vehicle_paint_pattern == index
-            rl.DrawRectangleRounded(bounds, .10, 5, {29, 61, 65, 245})
-            preview := rl.Rectangle{bounds.x + 3, bounds.y + 2, bounds.width - 6, 13}
-            rl.DrawRectangleRec(preview, primary)
-            cell_width := preview.width / 16
-            cell_height := preview.height / 6
-            for sample_y in 0 ..< 6 {
-                for sample_x in 0 ..< 16 {
-                    coverage := vehicle_paint_pattern_coverage(
-                        index,
-                        f32(sample_x) * 2,
-                        f32(sample_y) * 2,
-                        8,
-                        preview_cos,
-                        preview_sin,
-                    )
-                    color := rl.Color {
-                        u8(f32(primary.r) + (f32(secondary.r) - f32(primary.r)) * coverage),
-                        u8(f32(primary.g) + (f32(secondary.g) - f32(primary.g)) * coverage),
-                        u8(f32(primary.b) + (f32(secondary.b) - f32(primary.b)) * coverage),
-                        255,
+        }
+        if editor.vehicle_paint_tool == .Pattern && !editor.vehicle_paint_erase {
+            pattern_panel := vehicle_paint_pattern_palette_bounds()
+            pattern_names := VEHICLE_PAINT_PATTERN_NAMES
+            rl.DrawRectangleRounded(pattern_panel, .06, 8, {15, 31, 38, 248})
+            rl.DrawRectangleRoundedLinesEx(pattern_panel, .06, 8, 1, {91, 143, 139, 255})
+            primary := palette[editor.vehicle_paint_color]
+            secondary := palette[editor.vehicle_paint_secondary_color]
+            radians := editor.vehicle_paint_pattern_rotation * f32(math.PI) / 180
+            preview_cos := f32(math.cos(f64(radians)))
+            preview_sin := f32(math.sin(f64(radians)))
+            for index in 0 ..< len(VEHICLE_PAINT_PATTERN_NAMES) {
+                bounds := vehicle_paint_pattern_swatch_bounds(index)
+                selected := editor.vehicle_paint_pattern == index
+                rl.DrawRectangleRounded(bounds, .10, 5, {29, 61, 65, 245})
+                preview := rl.Rectangle{bounds.x + 3, bounds.y + 2, bounds.width - 6, 13}
+                rl.DrawRectangleRec(preview, primary)
+                cell_width := preview.width / 16
+                cell_height := preview.height / 6
+                for sample_y in 0 ..< 6 {
+                    for sample_x in 0 ..< 16 {
+                        coverage := vehicle_paint_pattern_coverage(
+                            index,
+                            f32(sample_x) * 2,
+                            f32(sample_y) * 2,
+                            8,
+                            preview_cos,
+                            preview_sin,
+                        )
+                        color := rl.Color {
+                            u8(f32(primary.r) + (f32(secondary.r) - f32(primary.r)) * coverage),
+                            u8(f32(primary.g) + (f32(secondary.g) - f32(primary.g)) * coverage),
+                            u8(f32(primary.b) + (f32(secondary.b) - f32(primary.b)) * coverage),
+                            255,
+                        }
+                        rl.DrawRectangleRec(
+                            {
+                                preview.x + f32(sample_x) * cell_width,
+                                preview.y + f32(sample_y) * cell_height,
+                                cell_width + .25,
+                                cell_height + .25,
+                            },
+                            color,
+                        )
                     }
-                    rl.DrawRectangleRec(
-                        {
-                            preview.x + f32(sample_x) * cell_width,
-                            preview.y + f32(sample_y) * cell_height,
-                            cell_width + .25,
-                            cell_height + .25,
-                        },
-                        color,
-                    )
                 }
+                border := selected ? rl.Color{255, 245, 193, 255} : rl.Color{91, 143, 139, 255}
+                rl.DrawRectangleRoundedLinesEx(bounds, .10, 5, selected ? 3 : 1, border)
+                name := fmt.ctprintf("%s", pattern_names[index])
+                rl.DrawTextEx(rl.Font{}, name, {bounds.x + 3, bounds.y + 18}, 7, 1, {236, 243, 224, 255})
             }
-            border := selected ? rl.Color{255, 245, 193, 255} : rl.Color{91, 143, 139, 255}
-            rl.DrawRectangleRoundedLinesEx(bounds, .10, 5, selected ? 3 : 1, border)
-            name := fmt.ctprintf("%s", pattern_names[index])
-            rl.DrawTextEx(rl.Font{}, name, {bounds.x + 3, bounds.y + 18}, 7, 1, {236, 243, 224, 255})
+            control_labels := [4]cstring {
+                fmt.ctprintf("SIZE -"),
+                fmt.ctprintf("+  %d", editor.vehicle_paint_pattern_size),
+                fmt.ctprintf("ROT -"),
+                fmt.ctprintf("+  %d°", int(editor.vehicle_paint_pattern_rotation)),
+            }
+            for label, index in control_labels {
+                bounds := vehicle_paint_pattern_control_bounds(index)
+                rl.DrawRectangleRounded(bounds, .15, 5, {29, 61, 65, 245})
+                rl.DrawRectangleRoundedLinesEx(bounds, .15, 5, 1, {91, 143, 139, 255})
+                rl.DrawTextEx(rl.Font{}, label, {bounds.x + 5, bounds.y + 6}, 10, 1, {236, 243, 224, 255})
+            }
         }
-        control_labels := [4]cstring {
-            fmt.ctprintf("SIZE -"),
-            fmt.ctprintf("+  %d", editor.vehicle_paint_pattern_size),
-            fmt.ctprintf("ROT -"),
-            fmt.ctprintf("+  %d°", int(editor.vehicle_paint_pattern_rotation)),
+        if editor.vehicle_paint_tool == .Shape && !editor.vehicle_paint_erase {
+            for name, index in VEHICLE_PAINT_SHAPE_NAMES {
+                bounds := vehicle_paint_shape_bounds(index)
+                selected := editor.vehicle_paint_shape_kind == index
+                fill := selected ? rl.Color{46, 104, 94, 245} : rl.Color{29, 61, 65, 225}
+                border := selected ? rl.Color{255, 245, 193, 255} : rl.Color{91, 143, 139, 255}
+                rl.DrawRectangleRounded(bounds, .12, 5, fill)
+                rl.DrawRectangleRoundedLinesEx(bounds, .12, 5, selected ? 2 : 1, border)
+                label := fmt.ctprintf("%s", name)
+                rl.DrawTextEx(rl.Font{}, label, {bounds.x + 3, bounds.y + 9}, 8, 1, {236, 243, 224, 255})
+            }
+            control_labels := [4]cstring {
+                fmt.ctprintf("SIZE -"),
+                fmt.ctprintf("+  %d", editor.vehicle_paint_shape_size),
+                fmt.ctprintf("ROT -"),
+                fmt.ctprintf("+  %d°", int(editor.vehicle_paint_shape_rotation)),
+            }
+            for label, index in control_labels {
+                bounds := vehicle_paint_shape_control_bounds(index)
+                rl.DrawRectangleRounded(bounds, .15, 5, {29, 61, 65, 245})
+                rl.DrawRectangleRoundedLinesEx(bounds, .15, 5, 1, {91, 143, 139, 255})
+                rl.DrawTextEx(rl.Font{}, label, {bounds.x + 5, bounds.y + 6}, 10, 1, {236, 243, 224, 255})
+            }
         }
-        for label, index in control_labels {
-            bounds := vehicle_paint_pattern_control_bounds(index)
-            rl.DrawRectangleRounded(bounds, .15, 5, {29, 61, 65, 245})
-            rl.DrawRectangleRoundedLinesEx(bounds, .15, 5, 1, {91, 143, 139, 255})
-            rl.DrawTextEx(rl.Font{}, label, {bounds.x + 5, bounds.y + 6}, 10, 1, {236, 243, 224, 255})
-        }
-    }
-    if editor.vehicle_paint_tool == .Shape && !editor.vehicle_paint_erase {
-        for name, index in VEHICLE_PAINT_SHAPE_NAMES {
-            bounds := vehicle_paint_shape_bounds(index)
-            selected := editor.vehicle_paint_shape_kind == index
-            fill := selected ? rl.Color{46, 104, 94, 245} : rl.Color{29, 61, 65, 225}
-            border := selected ? rl.Color{255, 245, 193, 255} : rl.Color{91, 143, 139, 255}
-            rl.DrawRectangleRounded(bounds, .12, 5, fill)
-            rl.DrawRectangleRoundedLinesEx(bounds, .12, 5, selected ? 2 : 1, border)
-            label := fmt.ctprintf("%s", name)
-            rl.DrawTextEx(rl.Font{}, label, {bounds.x + 3, bounds.y + 9}, 8, 1, {236, 243, 224, 255})
-        }
-        control_labels := [4]cstring {
-            fmt.ctprintf("SIZE -"),
-            fmt.ctprintf("+  %d", editor.vehicle_paint_shape_size),
-            fmt.ctprintf("ROT -"),
-            fmt.ctprintf("+  %d°", int(editor.vehicle_paint_shape_rotation)),
-        }
-        for label, index in control_labels {
-            bounds := vehicle_paint_shape_control_bounds(index)
-            rl.DrawRectangleRounded(bounds, .15, 5, {29, 61, 65, 245})
-            rl.DrawRectangleRoundedLinesEx(bounds, .15, 5, 1, {91, 143, 139, 255})
-            rl.DrawTextEx(rl.Font{}, label, {bounds.x + 5, bounds.y + 6}, 10, 1, {236, 243, 224, 255})
-        }
-    }
-    component_names := VEHICLE_PAINT_COMPONENT_NAMES
+        component_names := vehicle_paint_component_names(editor)
         parts_top := vehicle_paint_parts_top(editor)
         rl.DrawTextEx(rl.Font{}, "PAINTABLE PARTS", {18, parts_top}, 16, 1, {255, 245, 193, 255})
         rl.DrawTextEx(rl.Font{}, "SHIFT = SOLO", {168, parts_top}, 14, 1, {211, 235, 235, 255})

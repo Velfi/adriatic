@@ -12,6 +12,9 @@ rotate_mesh_part_x :: proc(mesh: ^Aircraft_Mesh, part: Aircraft_Mesh_Part, pivot
         if vertex.part != part do continue
         y := vertex.position[1] - pivot[1]; z := vertex.position[2] - pivot[2]
         vertex.position[1] = pivot[1] + y * c - z * s; vertex.position[2] = pivot[2] + y * s + z * c
+        normal_y, normal_z := vertex.normal[1], vertex.normal[2]
+        vertex.normal[1] = normal_y * c - normal_z * s
+        vertex.normal[2] = normal_y * s + normal_z * c
     }
 }
 
@@ -22,6 +25,9 @@ rotate_mesh_part_y :: proc(mesh: ^Aircraft_Mesh, part: Aircraft_Mesh_Part, pivot
         if vertex.part != part do continue
         x := vertex.position[0] - pivot[0]; z := vertex.position[2] - pivot[2]
         vertex.position[0] = pivot[0] + x * c + z * s; vertex.position[2] = pivot[2] - x * s + z * c
+        normal_x, normal_z := vertex.normal[0], vertex.normal[2]
+        vertex.normal[0] = normal_x * c + normal_z * s
+        vertex.normal[2] = -normal_x * s + normal_z * c
     }
 }
 
@@ -32,6 +38,9 @@ rotate_mesh_part_z :: proc(mesh: ^Aircraft_Mesh, part: Aircraft_Mesh_Part, pivot
         if vertex.part != part do continue
         x := vertex.position[0] - pivot[0]; y := vertex.position[1] - pivot[1]
         vertex.position[0] = pivot[0] + x * c - y * s; vertex.position[1] = pivot[1] + x * s + y * c
+        normal_x, normal_y := vertex.normal[0], vertex.normal[1]
+        vertex.normal[0] = normal_x * c - normal_y * s
+        vertex.normal[1] = normal_x * s + normal_y * c
     }
 }
 
@@ -110,21 +119,17 @@ animate_postale_mesh :: proc(mesh: ^Aircraft_Mesh, flap_fraction, pitch, roll, y
     rotate_mesh_part_x(
         mesh,
         .Left_Flap,
-        {-2.35, 1.49, .245},
+        {-2.0, .17, .09},
         flap,
-    ); rotate_mesh_part_x(mesh, .Right_Flap, {2.35, 1.49, .245}, flap)
+    ); rotate_mesh_part_x(mesh, .Right_Flap, {2.0, .17, .09}, flap)
     rotate_mesh_part_x(
         mesh,
         .Left_Aileron,
-        {-4.55, 1.535, .33},
+        {-4.05, .26, .02},
         degrees(-4 - roll * 16),
-    ); rotate_mesh_part_x(mesh, .Right_Aileron, {4.55, 1.535, .33}, degrees(-4 + roll * 16))
-    rotate_mesh_part_x(
-        mesh,
-        .Elevator,
-        {0, .56, 2.93},
-        degrees(-pitch * 18),
-    ); rotate_mesh_part_y(mesh, .Rudder, {0, 1.26, 2.96}, degrees(yaw * 20))
+    ); rotate_mesh_part_x(mesh, .Right_Aileron, {4.05, .26, .02}, degrees(-4 + roll * 16))
+    rotate_mesh_part_x(mesh, .Elevator, {0, .56, 2.78}, degrees(-pitch * 18))
+    rotate_mesh_part_y(mesh, .Rudder, {0, 1.04, 2.78}, degrees(yaw * 22))
     rotate_mesh_part_z(mesh, .Propeller, {0, .12, -3.42}, propeller_turns * 2 * math.PI)
 }
 

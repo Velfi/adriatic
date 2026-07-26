@@ -4,14 +4,10 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 
-VEHICLE_PAINT_SAVE_VERSION :: u32(1)
 VEHICLE_PAINT_SAVE_MAGIC :: [8]u8{'A', 'D', 'R', 'P', 'A', 'I', 'N', 'T'}
-VEHICLE_PAINT_MIN_LEGACY_WIDTH :: 512
-VEHICLE_PAINT_MIN_LEGACY_HEIGHT :: 256
 
 Vehicle_Paint_Save_Header :: struct {
     magic:        [8]u8,
-    version:      u32,
     width:        u32,
     height:       u32,
     layer_count:  u32,
@@ -43,10 +39,7 @@ vehicle_paint_save_path :: proc(allocator := context.allocator) -> (string, bool
 
 vehicle_paint_layer_bytes :: proc(editor: ^Editor) -> []u8 {
     if editor == nil do return nil
-    return mem.slice_ptr(
-        cast([^]u8)&editor.vehicle_paint_layers,
-        size_of(editor.vehicle_paint_layers),
-    )
+    return mem.slice_ptr(cast([^]u8)&editor.vehicle_paint_layers, size_of(editor.vehicle_paint_layers))
 }
 
 vehicle_paint_save_to_path :: proc(editor: ^Editor, path: string) -> bool {
@@ -54,7 +47,6 @@ vehicle_paint_save_to_path :: proc(editor: ^Editor, path: string) -> bool {
     payload := vehicle_paint_layer_bytes(editor)
     header := Vehicle_Paint_Save_Header {
         magic        = VEHICLE_PAINT_SAVE_MAGIC,
-        version      = VEHICLE_PAINT_SAVE_VERSION,
         width        = VEHICLE_PAINT_TEXTURE_WIDTH,
         height       = VEHICLE_PAINT_TEXTURE_HEIGHT,
         layer_count  = VEHICLE_PAINT_AIRCRAFT_COUNT,
@@ -92,47 +84,17 @@ vehicle_paint_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
     header := cast(^Vehicle_Paint_Save_Header)raw_data(bytes)
     expected_payload_size := size_of(editor.vehicle_paint_layers)
     if header.magic != VEHICLE_PAINT_SAVE_MAGIC ||
-       header.version != VEHICLE_PAINT_SAVE_VERSION ||
+       header.width != VEHICLE_PAINT_TEXTURE_WIDTH ||
+       header.height != VEHICLE_PAINT_TEXTURE_HEIGHT ||
        header.layer_count != VEHICLE_PAINT_AIRCRAFT_COUNT ||
+       header.payload_size != u64(expected_payload_size) ||
        len(bytes) != size_of(Vehicle_Paint_Save_Header) + int(header.payload_size) {
         return false
     }
     payload := bytes[size_of(Vehicle_Paint_Save_Header):]
     if vehicle_paint_checksum(payload) != header.checksum do return false
-    if header.width == VEHICLE_PAINT_TEXTURE_WIDTH &&
-       header.height == VEHICLE_PAINT_TEXTURE_HEIGHT &&
-       header.payload_size == u64(expected_payload_size) {
-        copy(vehicle_paint_layer_bytes(editor), payload)
-    } else if header.width >= VEHICLE_PAINT_MIN_LEGACY_WIDTH &&
-              header.height >= VEHICLE_PAINT_MIN_LEGACY_HEIGHT &&
-              header.width < VEHICLE_PAINT_TEXTURE_WIDTH &&
-              header.height < VEHICLE_PAINT_TEXTURE_HEIGHT &&
-              VEHICLE_PAINT_TEXTURE_WIDTH % int(header.width) == 0 &&
-              VEHICLE_PAINT_TEXTURE_HEIGHT % int(header.height) == 0 &&
-              header.payload_size ==
-                  u64(header.width) * u64(header.height) * 4 * VEHICLE_PAINT_AIRCRAFT_COUNT {
-        legacy_width := int(header.width)
-        legacy_height := int(header.height)
-        legacy_layer_size := legacy_width * legacy_height * 4
-        for layer in 0 ..< VEHICLE_PAINT_AIRCRAFT_COUNT {
-            source := payload[layer * legacy_layer_size:(layer + 1) * legacy_layer_size]
-            destination := editor.vehicle_paint_layers[layer][:]
-            for y in 0 ..< VEHICLE_PAINT_TEXTURE_HEIGHT {
-                source_y := y * legacy_height / VEHICLE_PAINT_TEXTURE_HEIGHT
-                for x in 0 ..< VEHICLE_PAINT_TEXTURE_WIDTH {
-                    source_x := x * legacy_width / VEHICLE_PAINT_TEXTURE_WIDTH
-                    source_index := (source_y * legacy_width + source_x) * 4
-                    destination_index := (y * VEHICLE_PAINT_TEXTURE_WIDTH + x) * 4
-                    copy(destination[destination_index:destination_index + 4], source[source_index:source_index + 4])
-                }
-            }
-        }
-        // Rewrite migrated paint at the new resolution on the next save.
-        editor.vehicle_paint_save_pending = true
-    } else {
-        return false
-    }
-    editor.vehicle_paint_texture_dirty = true
+    copy(vehicle_paint_layer_bytes(editor), payload)
+    vehicle_paint_mark_texture_dirty(editor)
     return true
 }
 

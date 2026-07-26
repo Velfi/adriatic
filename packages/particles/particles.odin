@@ -355,7 +355,7 @@ step_wing_trails :: proc(
                 },
                 life     = life,
                 max_life = life,
-                size     = .09 + strength * .12 + wind_speed * .004,
+                size     = .012 + strength * .020 + wind_speed * .0008,
                 seed     = trails.seed,
                 side     = u8(side),
                 curve    = trails_curve * (.7 + next_random(&trails.seed) * .3),

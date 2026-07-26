@@ -37,12 +37,24 @@ WORLD_EDITOR_NEAR_CLIP :: f32(100)
 WORLD_FOG_START :: f32(4500)
 WORLD_FOG_END :: f32(11000)
 
+World_Material_Kind :: enum u32 {
+    Plain,
+    Water,
+    Terrain,
+    Foliage,
+    Road,
+    Lit,
+    Eye,
+    Vehicle,
+}
+
 World_Vertex :: struct {
     position: [3]f32,
     color:    [4]f32,
-    kind:     f32,
+    kind:     World_Material_Kind,
     normal:   [3]f32,
-    material: [2]f32, // metallic, roughness for imported glTF primitives
+    // Lit: metallic, roughness. Vehicle: paintable, atlas layer.
+    material: [2]f32,
     uv:       [2]f32,
 }
 
@@ -198,19 +210,19 @@ world_scene_sun :: proc(editor: ^Editor, sky: atmosphere.Sky_State) -> [4]f32 {
 }
 
 world_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 0, {0, 1, 0}, {}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .Plain, {0, 1, 0}, {}, {}}
 }
 
 world_water_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 1, {0, 1, 0}, {}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .Water, {0, 1, 0}, {}, {}}
 }
 
 world_foliage_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 3, {normal.x, normal.y, normal.z}, {}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .Foliage, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
 world_eye_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 6, {normal.x, normal.y, normal.z}, {}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .Eye, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
 world_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color) {
@@ -228,7 +240,7 @@ world_aircraft_triangle :: proc(
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
     for &vertex in vertices {
-        vertex.kind = 7
+        vertex.kind = .Vehicle
         vertex.material[0] = paintable ? 1 : 0
         vertex.material[1] = paint_layer
         normal := vec_normalize(vec_cross(vec_sub(b, a), vec_sub(c, a)))
@@ -237,6 +249,29 @@ world_aircraft_triangle :: proc(
     vertices[0].uv = uv_a
     vertices[1].uv = uv_b
     vertices[2].uv = uv_c
+    append(&world_renderer.vertices, ..vertices[:])
+}
+
+world_aircraft_triangle_smooth :: proc(
+    a, b, c: third_person.Vec3,
+    normal_a, normal_b, normal_c: third_person.Vec3,
+    color: rl.Color,
+    uv_a, uv_b, uv_c: [2]f32,
+    paint_layer: f32,
+    paintable := true,
+) {
+    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
+    normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
+    uvs := [3][2]f32{uv_a, uv_b, uv_c}
+    for index in 0 ..< 3 {
+        vertices[index].kind = .Vehicle
+        vertices[index].material[0] = paintable ? 1 : 0
+        vertices[index].material[1] = paint_layer
+        normal := vec_normalize(normals[index])
+        vertices[index].normal = {normal.x, normal.y, normal.z}
+        vertices[index].uv = uvs[index]
+    }
     append(&world_renderer.vertices, ..vertices[:])
 }
 
@@ -254,7 +289,7 @@ world_greek_asset_vertex :: proc(
     return {
         {point.x, point.y, point.z},
         color,
-        5,
+        .Lit,
         {normal.x, normal.y, normal.z},
         {clamp(metallic, 0, 1), clamp(roughness, .04, 1)},
         {},
@@ -450,7 +485,7 @@ world_road_vertex :: proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color
     return {
         {point.x, point.y, point.z},
         world_color(color),
-        4,
+        .Road,
         {vertex.uv[0], vertex.uv[1], f32(vertex.pavement)},
         {},
         {},
@@ -600,7 +635,7 @@ clipmap_update_level :: proc(editor: ^Editor, frame_index, level: int, center: [
                 {world_x, height, world_z},
                 clipmap_vertex_color(editor, level, world_x, world_z, height),
             )
-            vertex.kind = 2
+            vertex.kind = .Terrain
             vertices[z * CLIPMAP_GRID_RESOLUTION + x] = vertex
         }
     }
@@ -4526,6 +4561,7 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
             if z_side == 0 do continue
             tree_x := center_x + f32(x_side) * road_span * .42
             tree_z := center_z + f32(z_side) * ((max_z - min_z) * .5 + 7)
+            if !architecture.city_accent_site_clear(&editor.project, tree_x, tree_z, 5) do continue
             tree_base := terrain.sample_height(&editor.project, 0, tree_x, tree_z)
             world_architecture_cypress(
                 tree_x,
@@ -4964,7 +5000,7 @@ world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
 world_aircraft :: proc(editor: ^Editor) {
     sky := atmosphere.sample(&editor.atmosphere)
     if editor.postale_visible {
-        mesh := vehicles.postale_mesh()
+        mesh := editor.postale_base_mesh
         vehicles.animate_postale_mesh(
             &mesh,
             editor.postale.flap_fraction,
@@ -4989,23 +5025,40 @@ world_aircraft :: proc(editor: ^Editor) {
             b := mesh.vertices[triangle.b]
             c := mesh.vertices[triangle.c]
             if a.part == .Propeller_Blur && aircraft_propeller_blur_amount(editor.postale.throttle) <= .01 do continue
-            world_aircraft_triangle(
-                postale_vertex_world(&editor.postale, a.position, .68),
-                postale_vertex_world(&editor.postale, b.position, .68),
-                postale_vertex_world(&editor.postale, c.position, .68),
-                aircraft_postale_part_color(a.part, editor.postale.throttle),
-                a.uv,
-                b.uv,
-                c.uv,
-                f32(vehicle_paint_layer_index(.Postale)),
-                vehicle_paint_part_is_paintable(a.part),
-            )
+            if vehicles.aircraft_mesh_part_uses_smooth_normals(a.part) {
+                world_aircraft_triangle_smooth(
+                    postale_vertex_world(&editor.postale, a.position, .68),
+                    postale_vertex_world(&editor.postale, b.position, .68),
+                    postale_vertex_world(&editor.postale, c.position, .68),
+                    postale_normal_world(&editor.postale, a.normal),
+                    postale_normal_world(&editor.postale, b.normal),
+                    postale_normal_world(&editor.postale, c.normal),
+                    aircraft_postale_part_color_with_paint(editor, a.part, editor.postale.throttle),
+                    a.uv,
+                    b.uv,
+                    c.uv,
+                    f32(vehicle_paint_layer_index(.Postale)),
+                    vehicle_paint_part_is_paintable(a.part),
+                )
+            } else {
+                world_aircraft_triangle(
+                    postale_vertex_world(&editor.postale, a.position, .68),
+                    postale_vertex_world(&editor.postale, b.position, .68),
+                    postale_vertex_world(&editor.postale, c.position, .68),
+                    aircraft_postale_part_color_with_paint(editor, a.part, editor.postale.throttle),
+                    a.uv,
+                    b.uv,
+                    c.uv,
+                    f32(vehicle_paint_layer_index(.Postale)),
+                    vehicle_paint_part_is_paintable(a.part),
+                )
+            }
         }
     }
     if editor.libellula_visible {
         libellula := &editor.libellula_visual_mesh
         if editor.aircraft.active == .Libellula_Mk2 {
-            vehicles.libellula_mk2_mesh_build(&editor.libellula_mk2_visual_mesh)
+            vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
             libellula = &editor.libellula_mk2_visual_mesh
             vehicles.animate_libellula_mk2_mesh(
                 libellula,
@@ -5015,7 +5068,7 @@ world_aircraft :: proc(editor: ^Editor) {
                 editor.libellula.rotor_turns.z,
             )
         } else {
-            vehicles.libellula_mesh_build(libellula)
+            vehicles.libellula_mesh_copy(libellula, &editor.libellula_base_mesh)
             vehicles.animate_libellula_mesh_pose(
                 libellula,
                 editor.libellula.rotor_turns.x,
@@ -6714,7 +6767,7 @@ world_postale_pilot :: proc(editor: ^Editor) {
     // Parent the pilot to a fixed seat in Postale mesh-local space. The mouse
     // model's origin is at its feet, so the seat belongs below the high wing,
     // inside the forward fuselage—not on top of the aircraft.
-    seat_local := [3]f32{0, -.25, -.60}
+    seat_local := [3]f32{0, -.43, -.28}
     position := postale_vertex_world(&editor.postale, seat_local, POSTALE_PRESENTATION_SCALE)
     rotation := math.atan2(-body.basis.forward.x, -body.basis.forward.z)
     world_mouse_model_parented(
@@ -6779,329 +6832,6 @@ world_marta :: proc(editor: ^Editor) {
         editor,
         {position = position, rotation = math.PI - facing, accessory = .Flower, grounded = false},
     )
-}
-
-world_character_legacy :: proc(editor: ^Editor) {
-    if !editor.in_map || editor.pilot.mode != .On_Foot do return
-    p := editor.player.position
-    rotation := math.PI - editor.player.facing_yaw_radians
-    local_point :: proc(origin: third_person.Vec3, rotation, x, y, z: f32) -> third_person.Vec3 {
-        world_x, world_z := world_rotate_xz(origin.x, origin.z, x, z, rotation)
-        return {world_x, origin.y + y, world_z}
-    }
-    jacket: rl.Color = {35, 167, 162, 255}
-    jacket_dark: rl.Color = {23, 112, 119, 255}
-    shirt: rl.Color = {232, 222, 189, 255}
-    scarf: rl.Color = {205, 79, 62, 255}
-    fur: rl.Color = {145, 137, 128, 255}
-    fur_light: rl.Color = {169, 161, 150, 255}
-    fur_dark: rl.Color = {91, 84, 81, 255}
-    ear: rl.Color = {184, 124, 123, 255}
-    tail: rl.Color = {168, 111, 113, 255}
-    trousers: rl.Color = {36, 55, 71, 255}
-    boots: rl.Color = {73, 53, 43, 255}
-    features: rl.Color = {35, 39, 42, 255}
-    model_forward := third_person.Vec3 {
-        x = -math.sin(rotation),
-        z = math.cos(rotation),
-    }
-    gait_weight := editor.player_gait_weight
-    airborne_weight := editor.player_airborne_weight
-    vertical_pose := editor.player_vertical_pose
-    if editor.capture_player_jump_pose || editor.capture_player_fall_pose {
-        airborne_weight = 1
-        vertical_pose = clamp(
-            editor.player.velocity.y / max(editor.tweak.player_animation.vertical_full_speed, f32(.1)),
-            -1,
-            1,
-        )
-    }
-    jump_rise := vertical_pose * airborne_weight
-    ascent_weight := max(jump_rise, f32(0))
-    descent_weight := max(-jump_rise, f32(0))
-    gait_weight *= 1 - airborne_weight
-    stride_phase := editor.player_stride_phase
-    if editor.capture_player_walk_pose {
-        gait_weight = 1
-        stride_phase = math.PI * .34
-    }
-    stride := math.sin(stride_phase) * gait_weight
-    p.y += math.abs(math.sin(stride_phase * 2)) * .018 * gait_weight
-    idle_phase := editor.map_time * 2.2
-    blink_period := f32(4.6)
-    blink_time := editor.map_time - f32(math.floor(f64(editor.map_time / blink_period))) * blink_period
-    blink_weight := clamp(1 - math.abs(blink_time - .10) / .10, 0, 1)
-    if editor.capture_player_blink_pose do blink_weight = 1
-    head_sway := math.sin(stride_phase) * .018 * gait_weight + math.sin(idle_phase * .55) * .006 * (1 - gait_weight)
-    head_bob :=
-        math.abs(math.sin(stride_phase * 2)) * .015 * gait_weight +
-        math.sin(idle_phase) * .006 * (1 - gait_weight) +
-        airborne_weight * .025
-    ear_flutter :=
-        math.abs(math.sin(stride_phase)) * .012 * gait_weight +
-        math.sin(idle_phase * 1.7) * .006 * (1 - gait_weight) +
-        blink_weight * .010
-    sniff := math.sin(editor.map_time * 5.4) * .007 * (1 - gait_weight)
-    tail_phase := idle_phase * .7 + stride_phase * .45 + descent_weight * 1.15
-    tail_amplitude := .05 + .07 * gait_weight + .055 * airborne_weight
-    tail_lift_amplitude := .025 + .035 * gait_weight + .075 * airborne_weight
-    torso_sway := stride * .016
-    torso_stretch := airborne_weight * (.018 + ascent_weight * .014 - descent_weight * .008)
-
-    // Keep the practical islander's clothes and gait, but give the player a
-    // mouse's compact proportions and unmistakable head-and-tail silhouette.
-    world_vertical_disc_rotated(
-        local_point(p, rotation, torso_sway, .91 + torso_stretch * .35, 0),
-        .26 - torso_stretch * .35,
-        .32 + torso_stretch,
-        .30,
-        rotation,
-        jacket,
-    )
-    world_box_rotated(
-        local_point(p, rotation, torso_sway, .98 + torso_stretch * .55, .166),
-        {.17, .29 + torso_stretch, .026},
-        rotation,
-        shirt,
-    )
-    world_box_rotated(
-        local_point(p, rotation, torso_sway, 1.18 + torso_stretch, .175),
-        {.44, .105, .035},
-        rotation,
-        scarf,
-    )
-    world_vertical_disc_rotated(
-        local_point(p, rotation, torso_sway * .35, .61, .005),
-        .22,
-        .055,
-        .30,
-        rotation,
-        jacket_dark,
-    )
-
-    sides := [2]f32{-1, 1}
-    for side_f in sides {
-        leg_cycle := math.sin(stride_phase) * side_f * gait_weight
-        leg_swing := leg_cycle * .14
-        airborne_tuck := airborne_weight * (.22 - descent_weight * .18 + side_f * jump_rise * .020)
-        foot_lift := max(leg_cycle, f32(0)) * .09 + airborne_tuck
-        hip := local_point(p, rotation, side_f * .125, .61, 0)
-        knee := local_point(
-            p,
-            rotation,
-            side_f * (.15 - airborne_weight * .015 + descent_weight * .025),
-            .36 + foot_lift * .55,
-            side_f * -.018 + leg_swing * .42 - airborne_weight * .035,
-        )
-        ankle := local_point(
-            p,
-            rotation,
-            side_f * (.14 - airborne_weight * .025 + descent_weight * .045),
-            .13 + foot_lift,
-            side_f * .025 + leg_swing - airborne_weight * .055,
-        )
-        world_tube_between(hip, knee, model_forward, .09, .115, trousers)
-        world_tube_between(knee, ankle, model_forward, .082, .105, trousers)
-        world_vertical_disc_rotated(
-            local_point(
-                p,
-                rotation,
-                side_f * (.135 + descent_weight * .050),
-                .09 + foot_lift,
-                .065 + leg_swing + descent_weight * .025,
-            ),
-            .12,
-            .09,
-            .33,
-            rotation,
-            boots,
-        )
-
-        arm_swing := -leg_swing * .92
-        shoulder := local_point(p, rotation, side_f * .255 + torso_sway, 1.14 + torso_stretch, 0)
-        elbow := local_point(
-            p,
-            rotation,
-            side_f * (.325 + airborne_weight * .055 + descent_weight * .050) + torso_sway * .75,
-            .89 + airborne_weight * .11 - descent_weight * .050,
-            .015 + arm_swing * .48 - airborne_weight * .025,
-        )
-        wrist := local_point(
-            p,
-            rotation,
-            side_f * (.29 + airborne_weight * .11 + descent_weight * .080) + torso_sway * .50,
-            .66 + airborne_weight * .25 - descent_weight * .14,
-            .055 + arm_swing - airborne_weight * .04 + descent_weight * .040,
-        )
-        world_tube_between(shoulder, elbow, model_forward, .08, .105, jacket_dark)
-        world_tube_between(elbow, wrist, model_forward, .07, .095, jacket_dark)
-        world_vertical_disc_rotated(wrist, .09, .078, .12, rotation, fur_light)
-    }
-
-    // The skull sits behind a long tapered rostrum: a mouse's face is a wedge,
-    // not a flat circular mask. Keep the ears high and slightly behind the eyes.
-    world_vertical_prism(
-        local_point(p, rotation, head_sway * .45, 1.34 + head_bob * .35, 0),
-        .09,
-        .08,
-        .18,
-        rotation,
-        fur_dark,
-    )
-    world_vertical_disc_rotated(
-        local_point(p, rotation, head_sway, 1.53 + head_bob, -.055),
-        .22,
-        .215,
-        .30,
-        rotation,
-        fur,
-    )
-    ear_offsets := [2]f32{-.18, .18}
-    for ear_x in ear_offsets {
-        side_motion := ear_flutter * (ear_x / .18)
-        ear_drag := airborne_weight * (.042 + ascent_weight * .015 - descent_weight * .025)
-        world_vertical_disc_rotated(
-            local_point(
-                p,
-                rotation,
-                ear_x + head_sway + side_motion * .16,
-                1.72 + head_bob + side_motion - ear_drag,
-                -.13 - ear_drag,
-            ),
-            .13,
-            .135 + side_motion * .10,
-            .09,
-            rotation,
-            fur_dark,
-        )
-        world_vertical_disc_rotated(
-            local_point(
-                p,
-                rotation,
-                ear_x + head_sway + side_motion * .16,
-                1.72 + head_bob + side_motion - ear_drag,
-                -.078 - ear_drag,
-            ),
-            .088,
-            .094 + side_motion * .07,
-            .018,
-            rotation,
-            ear,
-        )
-    }
-
-    world_tapered_disc_depth_rotated(
-        local_point(p, rotation, head_sway, 1.47 + head_bob, .215 + sniff),
-        .145,
-        .13,
-        .032,
-        .03,
-        .42,
-        rotation,
-        fur_light,
-    )
-    world_vertical_disc_rotated(
-        local_point(p, rotation, head_sway, 1.405 + head_bob, .255 + sniff * .45),
-        .066,
-        .045,
-        .13,
-        rotation,
-        fur_light,
-    )
-    world_vertical_disc_rotated(
-        local_point(p, rotation, head_sway, 1.47 + head_bob, .442 + sniff),
-        .033,
-        .026,
-        .032,
-        rotation,
-        features,
-    )
-    world_box_rotated(
-        local_point(p, rotation, -.027 + head_sway, 1.392 + head_bob, .385 + sniff * .35),
-        {.025, .052, .020},
-        rotation,
-        shirt,
-    )
-    world_box_rotated(
-        local_point(p, rotation, .027 + head_sway, 1.392 + head_bob, .385 + sniff * .35),
-        {.025, .052, .020},
-        rotation,
-        shirt,
-    )
-
-    // Small lateral eyes sit behind the muzzle base, closer to the ears than
-    // the nose. Their highlights remain tiny at this scale.
-    eye_offsets := [2]f32{-.14, .14}
-    eye_radius_y := .004 + (1 - blink_weight) * .030
-    for eye_x in eye_offsets {
-        world_vertical_disc_rotated(
-            local_point(p, rotation, eye_x + head_sway, 1.56 + head_bob, .102),
-            .028,
-            eye_radius_y,
-            .024,
-            rotation,
-            features,
-        )
-        if blink_weight < .55 {
-            world_vertical_disc_rotated(
-                local_point(p, rotation, eye_x - .007 + head_sway, 1.572 + head_bob, .117),
-                .007,
-                .009 * (1 - blink_weight),
-                .008,
-                rotation,
-                shirt,
-            )
-        }
-    }
-
-    for side_f in sides {
-        whisker_root := local_point(p, rotation, side_f * .038 + head_sway, 1.455 + head_bob, .39 + sniff)
-        for whisker_index in 0 ..< 3 {
-            whisker_phase := editor.map_time * 4.2 + f32(whisker_index) * .82 + side_f * .38 + stride_phase * .22
-            whisker_flex := math.sin(whisker_phase) * (.010 + .006 * gait_weight)
-            whisker_y := 1.40 + head_bob + f32(whisker_index) * .052
-            whisker_mid := local_point(
-                p,
-                rotation,
-                side_f * (.19 + f32(whisker_index) * .012) + head_sway,
-                (1.455 + head_bob + whisker_y) * .5 + whisker_flex,
-                .35 + sniff * .65,
-            )
-            whisker_tip := local_point(
-                p,
-                rotation,
-                side_f * (.35 + f32(whisker_index) * .022 + whisker_flex * .7) + head_sway,
-                whisker_y + whisker_flex * 1.35,
-                .30 + sniff * .35 - f32(whisker_index) * .014 + whisker_flex * .3,
-            )
-            world_box_between(whisker_root, whisker_mid, model_forward, .007, .007, fur_light)
-            world_box_between(whisker_mid, whisker_tip, model_forward, .006, .006, fur_light)
-        }
-    }
-
-    // A phase delay along the articulated tail produces a traveling wave
-    // rather than rotating the whole tail as one rigid prop.
-    tail_base_x := [6]f32{0, .14, .34, .51, .57, .52}
-    tail_base_y := [6]f32{.66, .49, .40, .42, .54, .67}
-    tail_base_z := [6]f32{-.18, -.34, -.53, -.70, -.84, -.94}
-    tail_points: [6]third_person.Vec3
-    for tail_index in 0 ..< len(tail_points) {
-        weight := f32(tail_index) / f32(len(tail_points) - 1)
-        delayed_phase := tail_phase - f32(tail_index) * .52
-        lateral_wave := math.sin(delayed_phase) * tail_amplitude * weight
-        vertical_wave := math.cos(delayed_phase * 1.08 + .8) * tail_lift_amplitude * weight
-        tail_points[tail_index] = local_point(
-            p,
-            rotation,
-            tail_base_x[tail_index] + lateral_wave,
-            tail_base_y[tail_index] + vertical_wave,
-            tail_base_z[tail_index],
-        )
-    }
-    for tail_index in 0 ..< len(tail_points) - 1 {
-        radius := .050 - f32(tail_index) * .006
-        world_tube_between(tail_points[tail_index], tail_points[tail_index + 1], model_forward, radius, radius, tail)
-    }
 }
 
 world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: rl.Color) {
@@ -7386,7 +7116,8 @@ world_wing_trails :: proc(editor: ^Editor) {
             if int(particle.side) != side do continue
             fade := clamp(particle.life / particle.max_life, 0, 1)
             radius := particle.size * (.8 + fade * .35)
-            color := rl.Color{205, 239, 236, u8(clamp(fade * 255, 0, 255))}
+            opacity := fade * fade
+            color := rl.Color{205, 239, 236, u8(clamp(opacity * 120, 0, 120))}
             for ring_side in 0 ..< 8 {
                 angle := f32(ring_side) * math.PI * 2 / 8
                 radial := third_person.Vec3 {
@@ -7487,7 +7218,9 @@ world_wind_streaks :: proc(editor: ^Editor) {
             {center.x - offset.x, center.y - offset.y, center.z - offset.z},
             {center.x + offset.x, center.y + offset.y, center.z + offset.z},
             {tail.x + offset.x, tail.y + offset.y, tail.z + offset.z},
-            {r = 205, g = 239, b = 236, a = alpha},
+            // Cool blue distinguishes wind moving through world space from
+            // the warm radial speed lines drawn in the flight overlay.
+            {r = 137, g = 218, b = 235, a = alpha},
         )
     }
 }
@@ -7602,12 +7335,15 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
         if byte_index % 4 != 3 || preview_alpha == 0 do continue
         pixel := byte_index - 3
         blend := f32(preview_alpha) / 255
-        staging_pixels[pixel] =
-            u8(f32(editor.vehicle_paint_preview_pixels[pixel]) * blend + f32(staging_pixels[pixel]) * (1 - blend))
-        staging_pixels[pixel + 1] =
-            u8(f32(editor.vehicle_paint_preview_pixels[pixel + 1]) * blend + f32(staging_pixels[pixel + 1]) * (1 - blend))
-        staging_pixels[pixel + 2] =
-            u8(f32(editor.vehicle_paint_preview_pixels[pixel + 2]) * blend + f32(staging_pixels[pixel + 2]) * (1 - blend))
+        staging_pixels[pixel] = u8(
+            f32(editor.vehicle_paint_preview_pixels[pixel]) * blend + f32(staging_pixels[pixel]) * (1 - blend),
+        )
+        staging_pixels[pixel + 1] = u8(
+            f32(editor.vehicle_paint_preview_pixels[pixel + 1]) * blend + f32(staging_pixels[pixel + 1]) * (1 - blend),
+        )
+        staging_pixels[pixel + 2] = u8(
+            f32(editor.vehicle_paint_preview_pixels[pixel + 2]) * blend + f32(staging_pixels[pixel + 2]) * (1 - blend),
+        )
         staging_pixels[pixel + 3] = max(staging_pixels[pixel + 3], preview_alpha)
     }
     layer := u32(vehicle_paint_layer_index(editor.aircraft.active))
@@ -7834,7 +7570,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     attrs := [6]vk.VertexInputAttributeDescription {
         {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, position))},
         {location = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Vertex, color))},
-        {location = 2, format = .R32_SFLOAT, offset = u32(offset_of(World_Vertex, kind))},
+        {location = 2, format = .R32_UINT, offset = u32(offset_of(World_Vertex, kind))},
         {location = 3, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, normal))},
         {location = 4, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, material))},
         {location = 5, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, uv))},
@@ -8120,189 +7856,6 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.ctx = ctx
     world_renderer.initialized = true
     return true
-}
-
-world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
-    if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
-    editor := world_renderer.editor
-    if editor == nil do return
-    world_build(editor)
-    if !editor.vehicle_showcase_scene do clipmap_update(editor, int(pass.frame.frame_index))
-    buffer := &world_renderer.vertex[pass.frame.frame_index]
-    road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
-    foliage_buffer := &world_renderer.foliage_vertex[pass.frame.frame_index]
-    wing_trail_vertex_buffer := &world_renderer.wing_trail_vertex[pass.frame.frame_index]
-    wing_trail_index_buffer := &world_renderer.wing_trail_index[pass.frame.frame_index]
-    if len(world_renderer.vertices) > 0 {
-        mem.copy_non_overlapping(
-            buffer.mapped,
-            raw_data(world_renderer.vertices[:]),
-            len(world_renderer.vertices) * size_of(World_Vertex),
-        )
-    }
-    if len(world_renderer.road_vertices) > 0 {
-        mem.copy_non_overlapping(
-            road_buffer.mapped,
-            raw_data(world_renderer.road_vertices[:]),
-            len(world_renderer.road_vertices) * size_of(World_Vertex),
-        )
-    }
-    if len(world_renderer.foliage_vertices) > 0 {
-        mem.copy_non_overlapping(
-            foliage_buffer.mapped,
-            raw_data(world_renderer.foliage_vertices[:]),
-            len(world_renderer.foliage_vertices) * size_of(Foliage_Vertex),
-        )
-    }
-    if len(world_renderer.wing_trail_vertices) > 0 {
-        mem.copy_non_overlapping(
-            wing_trail_vertex_buffer.mapped,
-            raw_data(world_renderer.wing_trail_vertices),
-            len(world_renderer.wing_trail_vertices) * size_of(World_Vertex),
-        )
-        mem.copy_non_overlapping(
-            wing_trail_index_buffer.mapped,
-            raw_data(world_renderer.wing_trail_optimized_indices),
-            len(world_renderer.wing_trail_optimized_indices) * size_of(u16),
-        )
-    }
-    viewport := vk.Viewport {
-        width    = f32(pass.framebuffer_extent.width),
-        height   = f32(pass.framebuffer_extent.height),
-        minDepth = 0,
-        maxDepth = 1,
-    }
-    scissor := vk.Rect2D {
-        extent = pass.framebuffer_extent,
-    }
-    vk.CmdSetViewport(pass.frame.command_buffer, 0, 1, &viewport)
-    vk.CmdSetScissor(pass.frame.command_buffer, 0, 1, &scissor)
-    pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
-    render_camera_pose :=
-        editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
-    focal_length :=
-        editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH : (editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35)
-    camera := perspective_camera(render_camera_pose, focal_length)
-    sky := atmosphere.sample(&editor.atmosphere)
-    fog := world_sky_horizon_color(sky)
-    world_push := World_Push {
-        camera_position = {camera.position.x, camera.position.y, camera.position.z, world_camera_near_clip(editor)},
-        camera_right    = {camera.right.x, camera.right.y, camera.right.z, WORLD_FAR_CLIP},
-        camera_up       = {camera.up.x, camera.up.y, camera.up.z, 0},
-        camera_forward  = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
-        projection      = {
-            camera.focal_length,
-            f32(pass.framebuffer_extent.width) / f32(max(pass.framebuffer_extent.height, 1)),
-            WORLD_FOG_START,
-            WORLD_FOG_END,
-        },
-        fog_color       = world_color(fog),
-        water           = {sky.cloud_time_seconds, sky.weather.severity, sky.weather.wind[0], sky.weather.wind[1]},
-        sun             = world_scene_sun(editor, sky),
-    }
-    sky_push := Sky_Push {
-        camera_right   = {
-            camera.right.x,
-            camera.right.y,
-            camera.right.z,
-            f32(pass.framebuffer_extent.width) / f32(max(pass.framebuffer_extent.height, 1)),
-        },
-        camera_up      = {camera.up.x, camera.up.y, camera.up.z, camera.focal_length},
-        camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
-        sun_direction  = {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], f32(sky.cloud_seed)},
-        time_light     = {sky.world_minutes, sky.cloud_time_seconds, sky.daylight, sky.twilight},
-        wind_cloud     = {
-            sky.weather.wind[0],
-            sky.weather.wind[1],
-            sky.weather.cloud_cover,
-            sky.weather.precipitation,
-        },
-        haze_severity  = {sky.weather.haze, sky.weather.severity, 0, 0},
-    }
-    vk.CmdPushConstants(
-        pass.frame.command_buffer,
-        world_renderer.sky_layout,
-        {.VERTEX, .FRAGMENT},
-        0,
-        u32(size_of(sky_push)),
-        &sky_push,
-    )
-    vk.CmdBindPipeline(pass.frame.command_buffer, .GRAPHICS, world_renderer.sky_pipelines[pipeline_index])
-    vk.CmdDraw(pass.frame.command_buffer, 3, 1, 0, 0)
-    vk.CmdBindPipeline(pass.frame.command_buffer, .GRAPHICS, world_renderer.pipelines[pipeline_index])
-    vk.CmdBindDescriptorSets(
-        pass.frame.command_buffer,
-        .GRAPHICS,
-        world_renderer.layout,
-        0,
-        1,
-        &world_renderer.vehicle_paint_descriptor,
-        0,
-        nil,
-    )
-    vk.CmdPushConstants(
-        pass.frame.command_buffer,
-        world_renderer.layout,
-        {.VERTEX, .FRAGMENT},
-        0,
-        u32(size_of(world_push)),
-        &world_push,
-    )
-    offset := vk.DeviceSize(0)
-    if len(world_renderer.vertices) > 0 {
-        vk.CmdBindVertexBuffers(pass.frame.command_buffer, 0, 1, &buffer.handle, &offset)
-        vk.CmdDraw(pass.frame.command_buffer, u32(len(world_renderer.vertices)), 1, 0, 0)
-    }
-    vk.CmdBindPipeline(pass.frame.command_buffer, .GRAPHICS, world_renderer.particle_pipelines[pipeline_index])
-    vk.CmdPushConstants(
-        pass.frame.command_buffer,
-        world_renderer.layout,
-        {.VERTEX, .FRAGMENT},
-        0,
-        u32(size_of(world_push)),
-        &world_push,
-    )
-    vk.CmdDraw(pass.frame.command_buffer, 6 * 512, 1, 0, 0)
-    // The particle pass uses a vertex-id-only pipeline. Rebind the terrain
-    // pipeline before submitting indexed clipmap vertices.
-    vk.CmdBindPipeline(pass.frame.command_buffer, .GRAPHICS, world_renderer.pipelines[pipeline_index])
-    vk.CmdBindDescriptorSets(
-        pass.frame.command_buffer,
-        .GRAPHICS,
-        world_renderer.layout,
-        0,
-        1,
-        &world_renderer.vehicle_paint_descriptor,
-        0,
-        nil,
-    )
-    vk.CmdPushConstants(
-        pass.frame.command_buffer,
-        world_renderer.layout,
-        {.VERTEX, .FRAGMENT},
-        0,
-        u32(size_of(world_push)),
-        &world_push,
-    )
-    if !editor.vehicle_showcase_scene {
-        vk.CmdBindIndexBuffer(pass.frame.command_buffer, world_renderer.clipmap_index.handle, 0, .UINT32)
-        for level in 0 ..< terrain.CLIPMAP_LEVELS {
-            level_buffer := &world_renderer.clipmap_vertex[pass.frame.frame_index][level]
-            vk.CmdBindVertexBuffers(pass.frame.command_buffer, 0, 1, &level_buffer.handle, &offset)
-            if level == 0 {
-                vk.CmdDrawIndexed(pass.frame.command_buffer, world_renderer.clipmap_full_indices, 1, 0, 0, 0)
-            } else {
-                vk.CmdDrawIndexed(
-                    pass.frame.command_buffer,
-                    world_renderer.clipmap_ring_indices,
-                    1,
-                    world_renderer.clipmap_ring_first,
-                    0,
-                    0,
-                )
-            }
-        }
-    }
 }
 
 world_pre_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {

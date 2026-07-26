@@ -16,7 +16,7 @@ struct Push {
 struct VertexInput {
     float3 position : POSITION;
     float4 color : COLOR0;
-    float kind : TEXCOORD0;
+    uint kind : TEXCOORD0;
     float3 normal : NORMAL0;
     float2 material : TEXCOORD1;
     float2 uv : TEXCOORD5;
@@ -27,11 +27,20 @@ struct VertexOutput {
     float4 color : COLOR0;
     float depth : TEXCOORD0;
     float3 world_position : TEXCOORD1;
-    float kind : TEXCOORD2;
+    nointerpolation uint kind : TEXCOORD2;
     float3 normal : TEXCOORD3;
     float2 material : TEXCOORD4;
     float2 uv : TEXCOORD5;
 };
+
+static const uint MATERIAL_PLAIN = 0;
+static const uint MATERIAL_WATER = 1;
+static const uint MATERIAL_TERRAIN = 2;
+static const uint MATERIAL_FOLIAGE = 3;
+static const uint MATERIAL_ROAD = 4;
+static const uint MATERIAL_LIT = 5;
+static const uint MATERIAL_EYE = 6;
+static const uint MATERIAL_VEHICLE = 7;
 
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
 // Decode them before interpolation, lighting, and fog blending; the sRGB
@@ -52,7 +61,7 @@ float3 srgb_to_linear(float3 color) {
 VertexOutput vertex_main(VertexInput input) {
     VertexOutput output;
     float3 world_position = input.position;
-    if (input.kind > 2.5 && input.kind < 3.5) {
+    if (input.kind == MATERIAL_FOLIAGE) {
         float2 wind = push.water.zw;
         float wind_speed = length(wind);
         float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
@@ -108,7 +117,7 @@ VertexOutput shadow_vertex(VertexInput input) {
     output.color = 0;
     output.depth = depth;
     output.world_position = world_position;
-    output.kind = 0;
+    output.kind = MATERIAL_PLAIN;
     output.normal = float3(0, 1, 0);
     output.material = 0;
     output.uv = 0;
@@ -120,21 +129,21 @@ float4 shadow_fragment(VertexOutput input) : SV_Target {
     return float4(.030, .036, .039, 1.0);
 }
 
-float3 shade_imported_material(VertexOutput input) {
-    float3 base_color = input.color.rgb;
-    if (input.kind > 6.5 && input.kind < 7.5 && input.material.x > .5) {
-        float4 paint = vehicle_paint_atlas.Sample(
-            vehicle_paint_sampler,
-            float3(input.uv, input.material.y)
-        );
-        base_color = lerp(base_color, srgb_to_linear(paint.rgb), paint.a);
-    }
-    float3 normal = normalize(input.normal);
+struct BrdfMaterial {
+    float3 base_color;
+    float metallic;
+    float roughness;
+};
+
+// Shared opaque-surface response. Product materials supply only base color,
+// metallic, and roughness; scene lighting and presentation exposure stay here.
+float3 shade_brdf(BrdfMaterial material, float3 normal, float3 world_position) {
+    normal = normalize(normal);
     float3 sun_direction = normalize(push.sun.xyz);
-    float3 view_direction = normalize(push.camera_position.xyz - input.world_position);
+    float3 view_direction = normalize(push.camera_position.xyz - world_position);
     float3 half_direction = normalize(sun_direction + view_direction);
-    float metallic = input.kind > 6.5 && input.kind < 7.5 ? 0 : saturate(input.material.x);
-    float roughness = input.kind > 6.5 && input.kind < 7.5 ? .04 : clamp(input.material.y, .04, 1.0);
+    float metallic = saturate(material.metallic);
+    float roughness = clamp(material.roughness, .04, 1.0);
 
     float direct = saturate(dot(normal, sun_direction));
     float sky = saturate(normal.y * .5 + .5);
@@ -145,11 +154,12 @@ float3 shade_imported_material(VertexOutput input) {
     float diffuse_light =
         (.22 + sky * .16 + direct * lerp(.26, .78, daylight)) *
         daylight_intensity;
-    float3 diffuse = base_color * diffuse_light * (1.0 - metallic * .72);
+    float3 diffuse = material.base_color * diffuse_light * (1.0 - metallic * .72);
 
-    // A compact metallic-roughness response gives imported assets readable
-    // form without adding a separate texture pipeline to the world pass.
-    float3 f0 = lerp(float3(.04, .04, .04), base_color, metallic);
+    // This intentionally remains a compact, art-directed BRDF rather than a
+    // full image-based PBR stack. It is stable for palette-authored surfaces
+    // and requires no material textures beyond optional vehicle paint.
+    float3 f0 = lerp(float3(.04, .04, .04), material.base_color, metallic);
     float specular_power = lerp(128.0, 6.0, roughness);
     float specular_strength = pow(saturate(dot(normal, half_direction)), specular_power);
     specular_strength *=
@@ -158,6 +168,23 @@ float3 shade_imported_material(VertexOutput input) {
         lerp(.18, 1.0, daylight) *
         daylight_intensity;
     return saturate(diffuse + f0 * specular_strength);
+}
+
+float3 shade_imported_material(VertexOutput input) {
+    float3 base_color = input.color.rgb;
+    bool vehicle = input.kind == MATERIAL_VEHICLE;
+    if (vehicle && input.material.x > .5) {
+        float4 paint = vehicle_paint_atlas.Sample(
+            vehicle_paint_sampler,
+            float3(input.uv, input.material.y)
+        );
+        base_color = lerp(base_color, srgb_to_linear(paint.rgb), paint.a);
+    }
+    BrdfMaterial material;
+    material.base_color = base_color;
+    material.metallic = vehicle ? 0 : input.material.x;
+    material.roughness = vehicle ? .04 : input.material.y;
+    return shade_brdf(material, input.normal, input.world_position);
 }
 
 float3 shade_eye(VertexOutput input) {
@@ -173,7 +200,12 @@ float3 shade_eye(VertexOutput input) {
     float sharp_glint = pow(highlight_alignment, 92.0) * .94;
     float rim = pow(1.0 - saturate(dot(normal, view_direction)), 3.0) * .08;
     float3 highlight_color = srgb_to_linear(float3(1.0, .94, .78));
-    return saturate(input.color.rgb * (.82 + rim) +
+    BrdfMaterial material;
+    material.base_color = input.color.rgb;
+    material.metallic = 0;
+    material.roughness = .16;
+    float3 body = shade_brdf(material, normal, input.world_position);
+    return saturate(body * (1.0 + rim) +
                     highlight_color * (broad_gloss + sharp_glint));
 }
 
@@ -507,20 +539,29 @@ float3 shade_water(VertexOutput input) {
 float4 fragment_main(VertexOutput input) : SV_Target {
     // Indexed clipmap grids retain sea-level vertices so their topology stays
     // reusable. Do not let those terrain fragments cover the ocean pass.
-    if (input.kind > 1.5 && input.world_position.y <= .001) {
+    if (input.kind == MATERIAL_TERRAIN && input.world_position.y <= .001) {
         discard;
     }
     float fog = saturate((input.depth - push.projection.z) /
                          max(push.projection.w - push.projection.z, .001));
-    float3 base = input.kind > 5.5 && input.kind < 6.5 ?
-                  shade_eye(input) :
-                  (input.kind > .5 && input.kind < 1.5 ?
-                  shade_water(input) :
-                  (input.kind > 2.5 && input.kind < 3.5 ?
-                   shade_foliage(input) :
-                   (input.kind > 3.5 && input.kind < 4.5 ?
-                    shade_road(input) :
-                    (input.kind > 4.5 && input.kind < 5.5 || input.kind > 6.5 && input.kind < 7.5 ?
-                     shade_imported_material(input) : input.color.rgb))));
+    float3 base = input.color.rgb;
+    switch (input.kind) {
+        case MATERIAL_WATER:
+            base = shade_water(input);
+            break;
+        case MATERIAL_FOLIAGE:
+            base = shade_foliage(input);
+            break;
+        case MATERIAL_ROAD:
+            base = shade_road(input);
+            break;
+        case MATERIAL_LIT:
+        case MATERIAL_VEHICLE:
+            base = shade_imported_material(input);
+            break;
+        case MATERIAL_EYE:
+            base = shade_eye(input);
+            break;
+    }
     return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), input.color.a);
 }

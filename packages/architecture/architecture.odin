@@ -321,6 +321,26 @@ city_structure_overlaps :: proc(a, b: terrain.Structure, padding: f32 = 1.5) -> 
     return dx * dx + dz * dz < minimum * minimum
 }
 
+city_accent_site_clear :: proc(
+    project: ^terrain.Project,
+    x, z, radius: f32,
+    padding: f32 = 1.5,
+) -> bool {
+    if project == nil do return false
+    clearance := max(radius + padding, f32(0))
+    for structure in project.structures[:project.structure_count] {
+        if structure.kind != .Architecture do continue
+        dx, dz := x - structure.center_x, z - structure.center_z
+        cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
+        local_x := dx * cosine + dz * sine
+        local_z := -dx * sine + dz * cosine
+        outside_x := max(math.abs(local_x) - structure.width * .5, f32(0))
+        outside_z := max(math.abs(local_z) - structure.depth * .5, f32(0))
+        if outside_x * outside_x + outside_z * outside_z < clearance * clearance do return false
+    }
+    return true
+}
+
 city_structure_site_valid :: proc(project: ^terrain.Project, structure: ^terrain.Structure) -> bool {
     if project == nil || structure == nil do return false
     cosine, sine := f32(math.cos(f64(structure.rotation))), f32(math.sin(f64(structure.rotation)))

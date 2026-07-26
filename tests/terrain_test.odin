@@ -2,7 +2,6 @@ package tests
 
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import "base:runtime"
 import "core:math"
 import "core:os"
 import "core:testing"
@@ -123,84 +122,6 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
     testing.expect(t, loaded.road_graph.edge_count == source.road_graph.edge_count)
     testing.expect(t, loaded.road_graph.nodes[road_b].position == source.road_graph.nodes[road_b].position)
     testing.expect(t, loaded.road_graph.edges[road_edge].pavement == .Cobblestone)
-}
-
-@(test)
-terrain_project_file_migrates_v5_special_runways_to_regular_paths :: proc(t: ^testing.T) {
-    path := "build/terrain_project_v5_test.bin"
-    defer os.remove(path)
-    source := terrain.new_project()
-    loaded := terrain.new_project()
-    defer free(source)
-    defer free(loaded)
-    source.road_graph = {}
-    header_size := size_of(terrain.Project_File_Header)
-    data := make([]byte, header_size + size_of(terrain.Project))
-    defer delete(data)
-    header := cast(^terrain.Project_File_Header)raw_data(data)
-    header^ = {
-        magic        = terrain.PROJECT_FILE_MAGIC,
-        version      = 5,
-        payload_size = size_of(terrain.Project),
-    }
-    runtime.mem_copy_non_overlapping(raw_data(data[header_size:]), cast(rawptr)source, size_of(terrain.Project))
-    testing.expect(t, os.write_entire_file(path, data) == nil)
-    testing.expect(t, terrain.load_project(loaded, path))
-    testing.expect(t, loaded.road_graph.node_count == 4)
-    testing.expect(t, loaded.road_graph.edge_count == 2)
-}
-
-@(test)
-terrain_project_file_migrates_v4_architecture_and_zeroes_city_density :: proc(t: ^testing.T) {
-    path := "build/terrain_project_v4_test.bin"
-    defer os.remove(path)
-    source := terrain.new_project()
-    loaded := terrain.new_project()
-    defer free(source)
-    defer free(loaded)
-    header_size := size_of(terrain.Project_File_Header)
-    data := make([]byte, header_size + size_of(terrain.Legacy_Project_V4))
-    defer delete(data)
-    header := cast(^terrain.Project_File_Header)raw_data(data)
-    header^ = {
-        magic        = terrain.PROJECT_FILE_MAGIC,
-        version      = 4,
-        payload_size = size_of(terrain.Legacy_Project_V4),
-    }
-    legacy := cast(^terrain.Legacy_Project_V4)raw_data(data[header_size:])
-    legacy.levels = source.levels
-    legacy.sea_level = source.sea_level
-    legacy.revision = 41
-    legacy.structure_count = 1
-    legacy.next_structure_id = 8
-    legacy.structures[0] = {
-        id       = 7,
-        group_id = 7,
-        center_x = 1300,
-        center_z = 1300,
-        width    = 24,
-        depth    = 18,
-        base_y   = 4.5,
-        height   = 30,
-        color    = {213, 196, 166, 255},
-        kind     = .Architecture,
-        seed     = 99,
-    }
-    testing.expect(t, os.write_entire_file(path, data) == nil)
-    testing.expect(t, terrain.load_project(loaded, path))
-    testing.expect(t, loaded.revision == 42)
-    testing.expect(t, loaded.structure_count == 1)
-    testing.expect(t, loaded.structures[0].kind == .Architecture)
-    testing.expect(t, loaded.structures[0].seed == 99)
-    testing.expect(t, architecture_density_is_zero(loaded))
-}
-
-architecture_density_is_zero :: proc(project: ^terrain.Project) -> bool {
-    if project == nil do return false
-    for value in project.city_density {
-        if value != 0 do return false
-    }
-    return true
 }
 
 @(test)

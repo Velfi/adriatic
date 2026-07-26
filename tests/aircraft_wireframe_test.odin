@@ -108,19 +108,22 @@ ring_mesh_winds_sides_and_caps_outward :: proc(t: ^testing.T) {
 @(test)
 section_mesh_winds_sides_and_caps_outward :: proc(t: ^testing.T) {
     mesh: vehicles.Aircraft_Mesh
-    sections := [2]vehicles.Mesh_Section {
-        {-1, -1, 1, .1},
-        {1, -1, 1, .1},
-    }
+    sections := [2]vehicles.Mesh_Section{{-1, -1, 1, .1}, {1, -1, 1, .1}}
     vehicles.add_section_mesh(&mesh, sections[:], 0, .Wing)
 
     expected_axes := [12][2]int {
-        {1, -1}, {1, -1},
-        {1, 1}, {1, 1},
-        {2, 1}, {2, 1},
-        {2, -1}, {2, -1},
-        {0, -1}, {0, -1},
-        {0, 1}, {0, 1},
+        {1, -1},
+        {1, -1},
+        {1, 1},
+        {1, 1},
+        {2, 1},
+        {2, 1},
+        {2, -1},
+        {2, -1},
+        {0, -1},
+        {0, -1},
+        {0, 1},
+        {0, 1},
     }
     testing.expect(t, mesh.triangle_count == len(expected_axes))
     for triangle_index in 0 ..< mesh.triangle_count {
@@ -178,9 +181,15 @@ furthest_mesh_part_position :: proc(mesh: ^$Mesh, part: vehicles.Aircraft_Mesh_P
 procedural_player_aircraft_meshes_pose_props_and_control_surfaces :: proc(t: ^testing.T) {
     postale := vehicles.postale_mesh()
     postale_flap := first_mesh_part_position(&postale, .Left_Flap)
+    postale_aileron := first_mesh_part_position(&postale, .Left_Aileron)
+    postale_elevator := first_mesh_part_position(&postale, .Elevator)
+    postale_rudder := first_mesh_part_position(&postale, .Rudder)
     postale_prop := first_mesh_part_position(&postale, .Propeller)
     vehicles.animate_postale_mesh(&postale, 1, 1, 1, 1, .25)
     testing.expect(t, first_mesh_part_position(&postale, .Left_Flap) != postale_flap)
+    testing.expect(t, first_mesh_part_position(&postale, .Left_Aileron) != postale_aileron)
+    testing.expect(t, first_mesh_part_position(&postale, .Elevator) != postale_elevator)
+    testing.expect(t, first_mesh_part_position(&postale, .Rudder) != postale_rudder)
     testing.expect(t, first_mesh_part_position(&postale, .Propeller) != postale_prop)
 
     pelican := vehicles.pelican_mesh()
