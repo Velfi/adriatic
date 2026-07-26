@@ -31,13 +31,14 @@ RESOURCES="$CONTENTS/Resources"
 FRAMEWORKS="$CONTENTS/Frameworks"
 ARCHIVE="$DIST/$APP_NAME-macos.zip"
 REAL_EXECUTABLE="adriatic-bin"
+REAL_BINARY="$RESOURCES/$REAL_EXECUTABLE"
 
 make -C "$ROOT" release ZELDA_ENGINE_ROOT="${ZELDA_ENGINE_ROOT:-$ROOT/../zelda-engine}"
 
 rm -rf "$APP" "$ARCHIVE"
 mkdir -p "$MACOS" "$RESOURCES" "$FRAMEWORKS"
-cp "$ROOT/build/release/adriatic" "$MACOS/$REAL_EXECUTABLE"
-chmod 755 "$MACOS/$REAL_EXECUTABLE"
+cp "$ROOT/build/release/adriatic" "$REAL_BINARY"
+chmod 755 "$REAL_BINARY"
 cp -R "$ROOT/build/release/assets" "$RESOURCES/assets"
 cp -R "$ROOT/build/release/shaders" "$RESOURCES/shaders"
 
@@ -72,7 +73,7 @@ int main(int argc, char **argv) {
 	char *slash = strrchr(contents, '/'); if (!slash) return 1; *slash = 0;
 	slash = strrchr(contents, '/'); if (!slash) return 1; *slash = 0;
 	snprintf(resources, sizeof(resources), "%s/Resources", contents);
-	snprintf(target, sizeof(target), "%s/MacOS/adriatic-bin", contents);
+	snprintf(target, sizeof(target), "%s/Resources/adriatic-bin", contents);
 	snprintf(icd, sizeof(icd), "%s/vulkan/icd.d/MoltenVK_icd.json", resources);
 	if (access(icd, R_OK) == 0) setenv("VK_ICD_FILENAMES", icd, 1);
 	if (chdir(resources) != 0) { perror("chdir"); return 1; }
@@ -119,7 +120,7 @@ if [[ -n "$moltenvk_icd" ]]; then
 fi
 
 # Pull every non-system dependency into Frameworks and rewrite its load path.
-queue=("$MACOS/$REAL_EXECUTABLE")
+queue=("$REAL_BINARY")
 while IFS= read -r -d '' library; do
 	queue+=("$library")
 done < <(find "$FRAMEWORKS" -type f -name '*.dylib' -print0)
@@ -146,14 +147,14 @@ while ((${#queue[@]})); do
 		install_name_tool -change "$dependency" "@rpath/$name" "$binary"
 	done < <(otool -L "$binary" | awk 'NR > 1 {print $1}')
 done
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/$REAL_EXECUTABLE" 2>/dev/null || true
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$REAL_BINARY" 2>/dev/null || true
 
 if [[ "$SKIP_SIGN" == 0 ]]; then
 	[[ -n "$SIGN_IDENTITY" ]] || { echo "MACOS_CODESIGN_IDENTITY is required" >&2; exit 1; }
 	while IFS= read -r -d '' item; do
 		codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$item"
 	done < <(find "$FRAMEWORKS" -type f -print0)
-	codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$MACOS/$REAL_EXECUTABLE"
+	codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$REAL_BINARY"
 	codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$MACOS/$APP_NAME"
 	codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$APP"
 	codesign --verify --deep --strict "$APP"
@@ -163,7 +164,7 @@ else
 	while IFS= read -r -d '' item; do
 		codesign --force --sign - "$item"
 	done < <(find "$FRAMEWORKS" -type f -print0)
-	codesign --force --sign - "$MACOS/$REAL_EXECUTABLE"
+	codesign --force --sign - "$REAL_BINARY"
 	codesign --force --sign - "$MACOS/$APP_NAME"
 	codesign --force --sign - "$APP"
 	codesign --verify --deep --strict "$APP"

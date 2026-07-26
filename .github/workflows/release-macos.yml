@@ -127,6 +127,14 @@ jobs:
           fi
           ./scripts/package_macos.sh "${args[@]}"
 
+      - name: Smoke test packaged macOS app
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          "${GITHUB_WORKSPACE}/dist/Adriatic.app/Contents/MacOS/Adriatic" \
+            capture building "${RUNNER_TEMP}/adriatic-release-smoke.png"
+          test -s "${RUNNER_TEMP}/adriatic-release-smoke.png"
+
       - name: Name artifact
         id: artifact
         shell: bash
