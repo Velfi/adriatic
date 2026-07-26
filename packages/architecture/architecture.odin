@@ -1254,13 +1254,22 @@ generate_poisson :: proc(
     return created
 }
 
-generate :: proc(project: ^terrain.Project, center_x, center_z: f32, seed: u32 = 0xA71D3) -> int {
+generate_append :: proc(
+    project: ^terrain.Project,
+    center_x, center_z: f32,
+    seed: u32 = 0xA71D3,
+    density: f32 = 1,
+) -> int {
     if project == nil do return 0
-    clear_architecture(project)
     graph := adriatic_graph(center_x, center_z, seed)
+    safe_density := clamp(density, f32(.2), f32(1))
     created := 0
-    for node in graph.nodes[:graph.count] {
+    for node, node_index in graph.nodes[:graph.count] {
         if node.kind == .Site do continue
+        if node.kind == .Street_Block &&
+           graph_unit(seed, u32(node_index) + 211) > safe_density {
+            continue
+        }
         base_height := architecture_base_height(project, node.x, node.z)
         if base_height <= project.sea_level do continue
         structure := terrain.structure_make(node.x, node.z, node.width, node.depth, base_height, node.height)
@@ -1276,4 +1285,10 @@ generate :: proc(project: ^terrain.Project, center_x, center_z: f32, seed: u32 =
         }
     }
     return created
+}
+
+generate :: proc(project: ^terrain.Project, center_x, center_z: f32, seed: u32 = 0xA71D3) -> int {
+    if project == nil do return 0
+    clear_architecture(project)
+    return generate_append(project, center_x, center_z, seed)
 }

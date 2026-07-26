@@ -90,6 +90,7 @@ Editor :: struct {
     structure_scatter_mode:                         bool,
     structure_scatter_count:                        int,
     formation_brush_painting:                       bool,
+    formation_brush_group_id:                       u64,
     formation_brush_last_x, formation_brush_last_z: f32,
     formation_brush_radius:                         f32,
     formation_brush_strength:                       f32,
@@ -684,7 +685,8 @@ formation_brush_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: boo
     }
     cell := editor.project.levels[0].cell_size
     stamp_count := max(1, 1 + int(editor.formation_brush_strength * 3))
-    group_id := editor.project.next_structure_id
+    group_id := editor.formation_brush_group_id
+    if group_id == 0 do group_id = editor.project.next_structure_id
     for stamp in 0 ..< stamp_count {
         // Stable noise keeps a stroke varied without making undo/redo or a
         // saved project depend on the runtime random-number stream.
@@ -721,7 +723,13 @@ formation_brush_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: boo
         if editor.authoring_tool == .Foliage {
             if terrain.add_or_merge_foliage(&editor.project, structure, cell * .5) < 0 do return
         } else {
-            if terrain.add_structure(&editor.project, structure) < 0 do return
+            merged_index := terrain.add_or_merge_formation(
+                &editor.project,
+                structure,
+                cell * .5,
+                editor.structure_auto_kind,
+            )
+            if merged_index < 0 do return
         }
     }
 }
@@ -730,7 +738,10 @@ formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cu
     if editor == nil || editor.in_map || editor.tool != .Structure do return
     if editor.authoring_tool != .Formations && editor.authoring_tool != .Foliage do return
     if !cursor_hit {
-        if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) do editor.formation_brush_painting = false
+        if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) {
+            editor.formation_brush_painting = false
+            editor.formation_brush_group_id = 0
+        }
         return
     }
     pressed := rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT)
@@ -738,6 +749,7 @@ formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cu
     erase := rl.IsMouseButtonDown(.RIGHT)
     if pressed {
         structure_history_push_undo(editor)
+        editor.formation_brush_group_id = editor.project.next_structure_id
         editor.formation_brush_painting = true
         editor.formation_brush_last_x, editor.formation_brush_last_z = world_x, world_z
         formation_brush_stamp(editor, world_x, world_z, erase)
@@ -763,6 +775,7 @@ formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cu
     }
     if editor.formation_brush_painting && (rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)) {
         editor.formation_brush_painting = false
+        editor.formation_brush_group_id = 0
     }
 }
 
@@ -1751,6 +1764,33 @@ seed_city_capture :: proc(editor: ^Editor) {
     }
     authoring_select_tool(editor, .Building)
     editor.structure_selected = -1
+}
+
+seed_default_island_towns :: proc(editor: ^Editor) {
+    if editor == nil do return
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    // Put each settlement inland of the coast and across the island from its
+    // runway apron. The shared offset keeps both islands compositionally
+    // related while distinct seeds give them their own roof and façade mix.
+    for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
+        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        town_z := island_center + sign * 118
+        seed := u32(0xA71D3 + island_index * 0x31F29)
+        first_structure := editor.project.structure_count
+        _ = architecture.generate_append(&editor.project, island_center, town_z, seed, .52)
+        for structure in editor.project.structures[first_structure:editor.project.structure_count] {
+            if structure.kind != .Architecture || structure.height > 52 do continue
+            _ = architecture.city_density_stamp(
+                &editor.project.climbing_leaf_density,
+                structure.center_x,
+                structure.center_z,
+                max(structure.width, structure.depth) * .46,
+                .62,
+                .70,
+            )
+        }
+    }
+    editor.architecture_node_mode = true
 }
 
 configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = "") -> bool {
@@ -5008,9 +5048,9 @@ adriatic_run :: proc(
         parsed, ok = strconv.parse_int(args[6])
         if ok do benchmark_window_height = clamp(int(parsed), 240, 4320)
         parsed, ok = strconv.parse_int(args[7])
-        if ok do benchmark_world_width = clamp(int(parsed), 320, 7680)
+        if ok do benchmark_world_width = parsed == 0 ? 0 : clamp(int(parsed), 320, 7680)
         parsed, ok = strconv.parse_int(args[8])
-        if ok do benchmark_world_height = clamp(int(parsed), 180, 4320)
+        if ok do benchmark_world_height = parsed == 0 ? 0 : clamp(int(parsed), 180, 4320)
     }
     flags := rl.ConfigFlags{.WINDOW_RESIZABLE}
     if !benchmark_mode do flags += {.VSYNC_HINT}
@@ -5115,6 +5155,7 @@ adriatic_run :: proc(
     )
     defer delete(editor.libellula_projected_faces)
     terrain.init_project(&editor.project)
+    if !capture_mode && !benchmark_mode do seed_default_island_towns(editor)
     editor.authoring_tool = .Sculpt
     editor.tool = .Raise
     editor.radius = 48

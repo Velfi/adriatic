@@ -38,6 +38,14 @@ wildflower_density_at :: proc(x, z: f32) -> f32 {
     return density
 }
 
+wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32) -> bool {
+    if editor == nil do return false
+    ground_height := terrain.sample_height(&editor.project, 0, x, z)
+    if terrain.ground_surface_at(&editor.project, 0, x, z) != .Grass do return false
+    pavement := roads.pavement_at(&editor.project.road_graph, {x = x, y = ground_height, z = z})
+    return !pavement.on_surface
+}
+
 wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
     if editor == nil do return
     if !editor.in_map || dt <= 0 {
@@ -61,8 +69,7 @@ wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
     }
     flower_density := wildflower_density_at(origin.x, origin.z)
     ground_height := terrain.sample_height(&editor.project, 0, origin.x, origin.z)
-    if terrain.ground_surface_at(&editor.project, 0, origin.x, origin.z) != .Grass ||
-       ground_height < editor.project.sea_level {
+    if !wildflowers_renderable_at(editor, origin.x, origin.z) {
         flower_density = 0
     }
     wind := editor.atmosphere.weather.wind
@@ -88,10 +95,7 @@ configure_wildflower_lab_capture :: proc(editor: ^Editor) {
             z := start.z + 56 + f32(gz) * 2
             density := wildflower_density_at(x, z)
             if density <= best_density do continue
-            height := terrain.sample_height(&editor.project, 0, x, z)
-            if terrain.ground_surface_at(&editor.project, 0, x, z) != .Grass do continue
-            pavement := roads.pavement_at(&editor.project.road_graph, {x = x, y = height, z = z})
-            if pavement.on_surface do continue
+            if !wildflowers_renderable_at(editor, x, z) do continue
             best_x, best_z, best_density = x, z, density
         }
     }

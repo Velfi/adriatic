@@ -1,0 +1,31 @@
+{
+  "profile": "m4-max-native-4k",
+  "executable": "build/release/adriatic",
+  "repetitions": 3,
+  "defaults": {
+    "warmup_frames": 90,
+    "sample_frames": 360,
+    "window": [3840, 2160],
+    "world": [0, 0],
+    "budgets_ms": {
+      "median": 16.667,
+      "p95": 16.667,
+      "p99": 20.0,
+      "max": 33.333
+    }
+  },
+  "scenarios": {
+    "editor": {
+      "enabled": true,
+      "description": "Default terrain editor overview rendered directly at native 4K."
+    },
+    "foliage_understory": {
+      "enabled": true,
+      "description": "Geometry-heavy forest floor rendered directly at native 4K."
+    },
+    "foliage_stress": {
+      "enabled": true,
+      "description": "Dense forest canopy rendered directly at native 4K."
+    }
+  }
+}

@@ -77,6 +77,27 @@ Grass_Instance :: struct {
     color:  [4]f32,
 }
 
+Architecture_Path_Footprint :: struct {
+    center_x, center_z: f32,
+    width, length:      f32,
+    rotation:           f32,
+}
+
+Architecture_Grass_Footprint :: struct {
+    center_x, center_z:       f32,
+    half_width, half_depth:   f32,
+    rotation:                 f32,
+}
+
+Foliage_Geometry_Cache_Entry :: struct {
+    valid:             bool,
+    structure:         terrain.Structure,
+    distance_bucket:   i32,
+    direction_bucket:  i32,
+    world_vertices:    [dynamic]World_Vertex,
+    foliage_vertices:  [dynamic]Foliage_Vertex,
+}
+
 World_Push :: struct {
     camera_position: [4]f32,
     camera_right:    [4]f32,
@@ -151,6 +172,7 @@ World_Renderer :: struct {
     clipmap_valid:                   [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
     road_mesh:                       roads.Mesh,
     road_revision:                   u64,
+    foliage_geometry_cache:          [terrain.STRUCTURE_CAPACITY]Foliage_Geometry_Cache_Entry,
     initialized:                     bool,
 }
 
@@ -515,6 +537,12 @@ world_road_vertex :: proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color
 
 world_road_triangle_colored :: proc(editor: ^Editor, a, b, c: roads.Vertex, color_a, color_b, color_c: rl.Color) {
     if len(world_renderer.road_vertices) + 3 > ROAD_VERTEX_CAPACITY do return
+    land_threshold := editor.project.sea_level + .04
+    if terrain.sample_height(&editor.project, 0, a.position.x, a.position.z) <= land_threshold ||
+       terrain.sample_height(&editor.project, 0, b.position.x, b.position.z) <= land_threshold ||
+       terrain.sample_height(&editor.project, 0, c.position.x, c.position.z) <= land_threshold {
+        return
+    }
     append(
         &world_renderer.road_vertices,
         world_road_vertex(editor, a, color_a),
@@ -805,6 +833,46 @@ world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, ro
     world_quad(p[1], p[2], p[6], p[5], color)
     world_quad(p[3], p[7], p[6], p[2], color)
     world_quad(p[0], p[1], p[5], p[4], color)
+}
+
+// Draw a terrain-following rectangular surface, discarding shoreline cells
+// instead of letting a single rigid road or path slab continue over the ocean.
+world_land_surface_rotated :: proc(
+    editor: ^Editor,
+    center_x, center_z, width, length, rotation, lift: f32,
+    color: rl.Color,
+) {
+    if editor == nil || width <= 0 || length <= 0 do return
+    columns := max(1, int(math.ceil(f64(width / 2))))
+    rows := max(1, int(math.ceil(f64(length / 2))))
+    land_threshold := editor.project.sea_level + .04
+    for row in 0 ..< rows {
+        local_z0 := -length * .5 + length * f32(row) / f32(rows)
+        local_z1 := -length * .5 + length * f32(row + 1) / f32(rows)
+        for column in 0 ..< columns {
+            local_x0 := -width * .5 + width * f32(column) / f32(columns)
+            local_x1 := -width * .5 + width * f32(column + 1) / f32(columns)
+            x00, z00 := world_rotate_xz(center_x, center_z, local_x0, local_z0, rotation)
+            x10, z10 := world_rotate_xz(center_x, center_z, local_x1, local_z0, rotation)
+            x11, z11 := world_rotate_xz(center_x, center_z, local_x1, local_z1, rotation)
+            x01, z01 := world_rotate_xz(center_x, center_z, local_x0, local_z1, rotation)
+            h00 := terrain.sample_height(&editor.project, 0, x00, z00)
+            h10 := terrain.sample_height(&editor.project, 0, x10, z10)
+            h11 := terrain.sample_height(&editor.project, 0, x11, z11)
+            h01 := terrain.sample_height(&editor.project, 0, x01, z01)
+            if h00 <= land_threshold || h10 <= land_threshold ||
+               h11 <= land_threshold || h01 <= land_threshold {
+                continue
+            }
+            world_quad(
+                {x00, h00 + lift, z00},
+                {x01, h01 + lift, z01},
+                {x11, h11 + lift, z11},
+                {x10, h10 + lift, z10},
+                color,
+            )
+        }
+    }
 }
 
 world_architecture_face_color :: proc(base: rl.Color, normal_x, normal_z: f32, top: bool = false) -> rl.Color {
@@ -2606,11 +2674,14 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
         length := f32(math.sqrt(f64(dx * dx + dz * dz)))
         if length <= .01 do continue
         center_x, center_z := (alley.start_x + alley.end_x) * .5, (alley.start_z + alley.end_z) * .5
-        alley_y := terrain.sample_height(&editor.project, 0, center_x, center_z) + .09
-        world_box_rotated(
-            {center_x, alley_y, center_z},
-            {length, .08, alley.half_width * 2},
+        world_land_surface_rotated(
+            editor,
+            center_x,
+            center_z,
+            length,
+            alley.half_width * 2,
             f32(math.atan2(f64(dz), f64(dx))),
+            .13,
             preview ? rl.Color{176, 161, 128, 150} : rl.Color{151, 137, 110, 255},
         )
     }
@@ -2763,6 +2834,56 @@ world_formation :: proc(structure: terrain.Structure) {
     case .Architecture:
         world_architecture(structure)
     }
+}
+
+world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_index: int) {
+    if structure_index < 0 || structure_index >= terrain.STRUCTURE_CAPACITY {
+        world_foliage_formation(structure)
+        return
+    }
+    camera := world_renderer.editor.camera_pose.position
+    dx := camera.x - structure.center_x
+    dz := camera.z - structure.center_z
+    distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    // Foliage topology and surface detail vary with camera distance, while a
+    // few accent cards choose the camera-facing side of a crown. Quantizing
+    // both values keeps those authored LOD decisions responsive without
+    // rebuilding thousands of deterministic static vertices every frame.
+    // Structure-relative buckets also stagger rebuilds naturally as the
+    // player moves through a forest instead of invalidating the whole scene.
+    distance_bucket := i32(math.floor(distance / 16))
+    direction := math.atan2(dz, dx)
+    direction_bucket := i32(math.floor((direction + math.PI) * 16 / (math.PI * 2)))
+    entry := &world_renderer.foliage_geometry_cache[structure_index]
+    if entry.valid &&
+       entry.structure == structure &&
+       entry.distance_bucket == distance_bucket &&
+       entry.direction_bucket == direction_bucket {
+        world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
+        if world_count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:world_count])
+        foliage_count := min(
+            len(entry.foliage_vertices),
+            FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices),
+        )
+        if foliage_count > 0 do append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:foliage_count])
+        return
+    }
+
+    world_first := len(world_renderer.vertices)
+    foliage_first := len(world_renderer.foliage_vertices)
+    world_foliage_formation(structure)
+    clear(&entry.world_vertices)
+    clear(&entry.foliage_vertices)
+    if world_first < len(world_renderer.vertices) {
+        append(&entry.world_vertices, ..world_renderer.vertices[world_first:])
+    }
+    if foliage_first < len(world_renderer.foliage_vertices) {
+        append(&entry.foliage_vertices, ..world_renderer.foliage_vertices[foliage_first:])
+    }
+    entry.valid = true
+    entry.structure = structure
+    entry.distance_bucket = distance_bucket
+    entry.direction_bucket = direction_bucket
 }
 
 world_structure_preview_cluster :: proc(editor: ^Editor) {
@@ -5126,8 +5247,129 @@ world_architecture_laundry_webbing :: proc(editor: ^Editor) {
     }
 }
 
+world_architecture_path_footprints :: proc(
+    editor: ^Editor,
+    allocator := context.temp_allocator,
+) -> [dynamic]Architecture_Path_Footprint {
+    paths := make([dynamic]Architecture_Path_Footprint, allocator)
+    if editor == nil || !editor.architecture_node_mode do return paths
+
+    min_x, max_x := f32(1e9), f32(-1e9)
+    min_z, max_z := f32(1e9), f32(-1e9)
+    buildings := 0
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if structure.kind != .Architecture || structure.height > 60 do continue
+        min_x = min(min_x, structure.center_x)
+        max_x = max(max_x, structure.center_x)
+        min_z = min(min_z, structure.center_z)
+        max_z = max(max_z, structure.center_z)
+        buildings += 1
+    }
+    if buildings < 4 || max_z <= min_z do return paths
+
+    center_x := (min_x + max_x) * .5
+    lane_a := min_z + (max_z - min_z) / 3
+    lane_b := min_z + (max_z - min_z) * 2 / 3
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if structure.kind != .Architecture || structure.height > 60 do continue
+        frontage := architecture.architecture_frontage_structure(structure)
+        door_x, door_z := world_rotate_xz(
+            frontage.center_x,
+            frontage.center_z,
+            0,
+            frontage.depth * .5 + .22,
+            frontage.rotation,
+        )
+        front_x := -math.sin(structure.rotation)
+        front_z := math.cos(structure.rotation)
+        target_lane := f32(1e9)
+        target_distance := f32(1e9)
+        lanes := [2]f32{lane_a, lane_b}
+        for candidate in lanes {
+            candidate_dx := center_x - door_x
+            candidate_dz := candidate - door_z
+            if candidate_dx * front_x + candidate_dz * front_z < 0 do continue
+            candidate_distance := candidate_dx * candidate_dx + candidate_dz * candidate_dz
+            if candidate_distance < target_distance {
+                target_lane = candidate
+                target_distance = candidate_distance
+            }
+        }
+        if target_distance >= 1e9 do continue
+        lane_direction := target_lane >= door_z ? f32(1) : f32(-1)
+        target_z := target_lane - lane_direction * 3.0
+        path_dx := center_x - door_x
+        path_dz := target_z - door_z
+        path_length := f32(math.sqrt(f64(path_dx * path_dx + path_dz * path_dz)))
+        if path_length <= 1.5 do continue
+        append(
+            &paths,
+            Architecture_Path_Footprint {
+                center_x = (door_x + center_x) * .5,
+                center_z = (door_z + target_z) * .5,
+                width = 3.6,
+                length = path_length,
+                rotation = math.atan2(path_dx, path_dz),
+            },
+        )
+    }
+    return paths
+}
+
+world_architecture_path_contains :: proc(path: Architecture_Path_Footprint, x, z: f32) -> bool {
+    dx, dz := x - path.center_x, z - path.center_z
+    cosine, sine := math.cos(path.rotation), math.sin(path.rotation)
+    local_x := dx * cosine + dz * sine
+    local_z := -dx * sine + dz * cosine
+    return math.abs(local_x) <= path.width * .5 && math.abs(local_z) <= path.length * .5
+}
+
+world_architecture_grass_footprints :: proc(
+    editor: ^Editor,
+    allocator := context.temp_allocator,
+) -> [dynamic]Architecture_Grass_Footprint {
+    footprints := make([dynamic]Architecture_Grass_Footprint, allocator)
+    if editor == nil || !editor.architecture_node_mode do return footprints
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if structure.kind != .Architecture || structure.height > 60 do continue
+        append(
+            &footprints,
+            Architecture_Grass_Footprint {
+                center_x = structure.center_x,
+                center_z = structure.center_z,
+                half_width = structure.width * .5,
+                half_depth = structure.depth * .5,
+                rotation = structure.rotation,
+            },
+        )
+    }
+    return footprints
+}
+
+world_architecture_grass_height_scale :: proc(
+    footprints: []Architecture_Grass_Footprint,
+    x, z: f32,
+) -> f32 {
+    scale := f32(1)
+    for footprint in footprints {
+        dx, dz := x - footprint.center_x, z - footprint.center_z
+        cosine, sine := math.cos(footprint.rotation), math.sin(footprint.rotation)
+        local_x := math.abs(dx * cosine + dz * sine)
+        local_z := math.abs(-dx * sine + dz * cosine)
+        outside_x := max(local_x - footprint.half_width, f32(0))
+        outside_z := max(local_z - footprint.half_depth, f32(0))
+        distance := f32(math.sqrt(f64(outside_x * outside_x + outside_z * outside_z)))
+        // Read as intentionally maintained grass beside homes, blending back
+        // to the wild field beyond the immediate building edge.
+        proximity := clamp(distance / 12, f32(0), f32(1))
+        proximity = proximity * proximity * (3 - 2 * proximity)
+        scale = min(scale, .25 + proximity * .75)
+    }
+    return scale
+}
+
 world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud_cover: f32) {
-    if editor == nil || !editor.architecture_node_mode do return
+    if editor == nil do return
     min_x, max_x := f32(1e9), f32(-1e9)
     min_z, max_z := f32(1e9), f32(-1e9)
     buildings := 0
@@ -5143,18 +5385,26 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     center_x := (min_x + max_x) * .5
     center_z := (min_z + max_z) * .5
     road_span := max(max_x - min_x + 36, 160)
-    base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
     road := rl.Color{117, 119, 110, 255}
     shoulder := rl.Color{177, 164, 135, 255}
     for lane in 1 ..= 2 {
         lane_z := min_z + (max_z - min_z) * f32(lane) / 3
-        world_box_rotated({center_x, base_y + .06, lane_z}, {road_span, .12, 5.5}, 0, road)
+        world_land_surface_rotated(editor, center_x, lane_z, road_span, 5.5, 0, .12, road)
         for side in -1 ..= 1 {
             if side == 0 do continue
-            world_box_rotated({center_x, base_y + .13, lane_z + f32(side) * 3.05}, {road_span, .05, .35}, 0, shoulder)
+            world_land_surface_rotated(
+                editor,
+                center_x,
+                lane_z + f32(side) * 3.05,
+                road_span,
+                .35,
+                0,
+                .15,
+                shoulder,
+            )
         }
     }
-    world_box_rotated({center_x, base_y + .08, center_z}, {28, .16, 18}, 0, {151, 144, 126, 255})
+    world_land_surface_rotated(editor, center_x, center_z, 28, 18, 0, .16, {151, 144, 126, 255})
     // Connect each frontage to the nearer lane so the generated streets read
     // as a walkable town rather than two unrelated strips of pavement.
     path_color := rl.Color{194, 184, 157, 255}
@@ -5196,11 +5446,14 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
         if path_length <= 1.5 do continue
         path_center_x := (door_x + center_x) * .5
         path_center_z := (door_z + target_z) * .5
-        path_y := terrain.sample_height(&editor.project, 0, path_center_x, path_center_z)
-        world_box_rotated(
-            {path_center_x, path_y + .20, path_center_z},
-            {3.6, .16, path_length},
+        world_land_surface_rotated(
+            editor,
+            path_center_x,
+            path_center_z,
+            3.6,
+            path_length,
             math.atan2(path_dx, path_dz),
+            .20,
             path_color,
         )
         // A few entrances get paired terracotta pots. They keep the lane
@@ -5229,17 +5482,24 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     edge_z := approach_sign > 0 ? max_z : min_z
     forecourt_depth := f32(18)
     forecourt_z := edge_z + approach_sign * forecourt_depth * .5
-    forecourt_y := terrain.sample_height(&editor.project, 0, center_x, forecourt_z)
-    world_box_rotated(
-        {center_x, forecourt_y + .16, forecourt_z},
-        {road_span, .22, forecourt_depth},
+    world_land_surface_rotated(
+        editor,
+        center_x,
+        forecourt_z,
+        road_span,
+        forecourt_depth,
         0,
+        .20,
         {194, 184, 157, 255},
     )
-    world_box_rotated(
-        {center_x, forecourt_y + .29, edge_z + approach_sign * 2.4},
-        {road_span, .07, .38},
+    world_land_surface_rotated(
+        editor,
+        center_x,
+        edge_z + approach_sign * 2.4,
+        road_span,
+        .38,
         0,
+        .29,
         {151, 132, 104, 255},
     )
     world_architecture_laundry_webbing(editor)
@@ -5299,7 +5559,11 @@ world_structures :: proc(editor: ^Editor) {
            ) {
             continue
         }
-        world_formation(structure)
+        if structure.kind == .Foliage {
+            world_foliage_formation_cached(structure, index)
+        } else {
+            world_formation(structure)
+        }
         if index == editor.structure_selected && !editor.in_map && !editor.road_mode {
             world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
         } else if index == hovered_index && !editor.in_map {
@@ -7347,6 +7611,21 @@ world_mouse_skinned_hull :: proc(
             case .Piebald:
                 patch_value := (ring * 7 + segment * 3 + (segment / 3) * 5) % 13
                 if patch_value < 5 do coat_color = color_lerp(coat_color, marking, .92)
+            case .Dorsal_Stripe:
+                // A narrow dark stripe follows the spine and softens toward
+                // the flanks, as on striped field mice.
+                stripe_center := clamp((sine - .48) * 3.4, 0, 1)
+                stripe_taper := ring == 0 || ring >= 8 ? f32(.62) : f32(1)
+                coat_color = color_lerp(coat_color, fur_dark, stripe_center * stripe_taper)
+            case .Masked:
+                // Keep the muzzle pale while wrapping a dark mask around the
+                // crown and sides of the head.
+                if ring >= 6 && ring < 9 {
+                    mask_weight := clamp((sine + .35) * .78, 0, .88)
+                    coat_color = color_lerp(coat_color, fur_dark, mask_weight)
+                } else if ring == 9 {
+                    coat_color = color_lerp(coat_color, marking, .42)
+                }
             }
             vertices[ring][segment] = {
                 bind_position = {
@@ -7639,6 +7918,8 @@ Mouse_Fur_Pattern :: enum {
     Pale_Belly,
     Hooded,
     Piebald,
+    Dorsal_Stripe,
+    Masked,
 }
 
 Mouse_Model :: struct {
@@ -8846,6 +9127,74 @@ world_marta :: proc(editor: ^Editor) {
     )
 }
 
+Town_Mouse :: struct {
+    lateral:     f32,
+    outward:     f32,
+    facing:      f32,
+    scale:       f32,
+    accessory:   Mouse_Accessory,
+    fur:         Mouse_Fur,
+    pattern:     Mouse_Fur_Pattern,
+    scarf:       bool,
+    scarf_color: rl.Color,
+}
+
+world_town_mice :: proc(editor: ^Editor) {
+    if editor == nil do return
+
+    residents := [7]Town_Mouse {
+        {-1.0, 2.5, .18, .88, .Acorn_Cap, .Chestnut, .Pale_Belly, false, {}},
+        {.8, 2.2, -.22, .82, .Flower, .Cream, .Piebald, true, {177, 65, 73, 255}},
+        {-1.3, 2.7, .12, .92, .Bottle_Cap, .Soot, .Solid, true, {61, 112, 139, 255}},
+        {1.1, 2.4, -.16, .86, .Paper_Boat, .Silver, .Hooded, false, {}},
+        {-.7, 2.2, .24, .80, .Chef_Hat, .White, .Pale_Belly, false, {}},
+        {1.4, 2.6, -.10, .90, .None, .Russet, .Piebald, true, {205, 151, 52, 255}},
+        {-.9, 2.3, .20, .84, .Goggles, .Chestnut, .Hooded, false, {}},
+    }
+    structures := editor.project.structures[:editor.project.structure_count]
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        resident_index := 0
+        for structure in structures {
+            if structure.kind != .Architecture || structure.height > 60 do continue
+            dx, dz := structure.center_x - island_center, structure.center_z - island_center
+            if dx * dx + dz * dz > island_radius * island_radius do continue
+            if resident_index >= len(residents) do break
+            resident := residents[resident_index]
+            frontage := architecture.architecture_frontage_structure(structure)
+            x, z := world_rotate_xz(
+                frontage.center_x,
+                frontage.center_z,
+                resident.lateral,
+                frontage.depth * .5 + resident.outward,
+                frontage.rotation,
+            )
+            ground_y := terrain.sample_height(&editor.project, 0, x, z)
+            if ground_y <= editor.project.sea_level + .35 do continue
+            // Each resident faces loosely along the frontage, producing small
+            // conversational groupings without requiring simulation state.
+            rotation := frontage.rotation + math.PI * .5 + resident.facing
+            world_mouse_model_scaled(
+                editor,
+                {
+                    position = {x = x, y = ground_y, z = z},
+                    rotation = rotation,
+                    accessory = resident.accessory,
+                    fur = resident.fur,
+                    pattern = resident.pattern,
+                    scarf_enabled = resident.scarf,
+                    scarf_color = resident.scarf_color,
+                    grounded = true,
+                },
+                resident.scale,
+            )
+            resident_index += 1
+        }
+    }
+}
+
 world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: rl.Color) {
     if editor == nil do return
     segments := 48
@@ -8933,6 +9282,11 @@ world_ground_grass :: proc(editor: ^Editor) {
         return
     }
 
+    building_paths := world_architecture_path_footprints(editor)
+    defer delete(building_paths)
+    building_footprints := world_architecture_grass_footprints(editor)
+    defer delete(building_footprints)
+
     // A snapped, deterministic field follows the camera without shimmer. Its
     // concentric density falloff keeps the near field lush while bounding CPU
     // terrain samples and opaque blade geometry for the 4K frame budget.
@@ -8961,16 +9315,15 @@ world_ground_grass :: proc(editor: ^Editor) {
             // half the cards at the render limit and dropping them at once.
             if wind_streak_hash(seed_index, 3) > density do continue
             height_at := terrain.sample_height(&editor.project, 0, x, z)
-            if terrain.classify_ground(
-                   terrain.sample_material(&editor.project, 0, x, z),
-                   height_at,
-                   editor.project.sea_level,
-               ) !=
-               .Grass {
-                continue
+            if !wildflowers_renderable_at(editor, x, z) do continue
+            on_building_path := false
+            for path in building_paths {
+                if world_architecture_path_contains(path, x, z) {
+                    on_building_path = true
+                    break
+                }
             }
-            pavement := roads.pavement_at(&editor.project.road_graph, {x = x, y = height_at, z = z})
-            if pavement.on_surface do continue
+            if on_building_path do continue
 
             variation := wind_streak_hash(seed_index, 4)
             // The atlas is sampled as luminance, so elevation can drive the
@@ -9010,6 +9363,7 @@ world_ground_grass :: proc(editor: ^Editor) {
             } else if height_noise > .90 {
                 height *= 1.28
             }
+            height *= world_architecture_grass_height_scale(building_footprints[:], x, z)
             width := height * (.56 + width_noise * .48)
             world_grass_card({x, height_at + height * .5, z}, width, height, abs(seed_index) % 16, color)
             flower_density := wildflower_density_at(x, z)
@@ -9099,18 +9453,26 @@ world_build :: proc(editor: ^Editor) {
         )
         world_structure_shadow(marta_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
     }
-    world_structures(editor)
-    world_climbing_leaves(editor)
-    world_ground_grass(editor)
+    // The player and vehicles are gameplay-critical. Submit them before any
+    // capacity-limited environment detail so a dense scene can never cull the
+    // controlled character or the vehicle they occupy. Keeping all vehicles
+    // in this protected group also prevents an enter/exit transition from
+    // exposing a one-frame ordering gap.
     world_aircraft(editor)
     world_car(editor)
     world_car_pilot(editor)
-    world_attendant_kiosk(editor)
-    world_marta(editor)
     world_renderer.player_vertex_first = len(world_renderer.vertices)
     world_character(editor)
     world_renderer.player_vertex_count = len(world_renderer.vertices) - world_renderer.player_vertex_first
     world_postale_pilot(editor)
+    // Persistent characters and their interaction landmarks must be submitted
+    // before the capacity-limited procedural town and vegetation passes.
+    world_attendant_kiosk(editor)
+    world_marta(editor)
+    world_town_mice(editor)
+    world_structures(editor)
+    world_climbing_leaves(editor)
+    world_ground_grass(editor)
     world_renderer.player_shadow_receiver = mouse_surface_height(
         editor,
         editor.player.position.x,
@@ -10348,5 +10710,9 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.wing_trail_vertices)
     delete(world_renderer.wing_trail_indices)
     delete(world_renderer.wing_trail_optimized_indices)
+    for &entry in world_renderer.foliage_geometry_cache {
+        delete(entry.world_vertices)
+        delete(entry.foliage_vertices)
+    }
     world_renderer = {}
 }

@@ -5,7 +5,8 @@ import "core:math"
 import rl "zelda_engine:canvas2d"
 
 CUSTOMIZATION_COLOR_COUNT :: 6
-CUSTOMIZATION_PATTERN_COUNT :: 4
+CUSTOMIZATION_PATTERN_COUNT :: 6
+CUSTOMIZATION_PATTERN_COLUMNS :: 3
 CUSTOMIZATION_HEADGEAR_COUNT :: 7
 CUSTOMIZATION_SCARF_CONTROL_COUNT :: 4
 CUSTOMIZATION_PATTERN_START :: CUSTOMIZATION_COLOR_COUNT
@@ -59,6 +60,10 @@ mouse_pattern_label :: proc(value: Mouse_Fur_Pattern) -> cstring {
         return "HOODED"
     case .Piebald:
         return "PIEBALD"
+    case .Dorsal_Stripe:
+        return "DORSAL STRIPE"
+    case .Masked:
+        return "MASKED"
     }
     return "SOLID"
 }
@@ -101,8 +106,13 @@ customization_pattern_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rect
     controls_x := panel.x + panel.width * .41
     available := panel.width * .55
     gap := f32(8)
-    card_width := (available - gap * 3) / 4
-    return {controls_x + f32(index) * (card_width + gap), panel.y + 252, card_width, 42}
+    card_width := (available - gap * f32(CUSTOMIZATION_PATTERN_COLUMNS - 1)) / f32(CUSTOMIZATION_PATTERN_COLUMNS)
+    return {
+        controls_x + f32(index % CUSTOMIZATION_PATTERN_COLUMNS) * (card_width + gap),
+        panel.y + 252 + f32(index / CUSTOMIZATION_PATTERN_COLUMNS) * 50,
+        card_width,
+        42,
+    }
 }
 
 customization_headgear_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
@@ -164,7 +174,11 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
             row_start := (focus / 3) * 3
             focus = row_start + clamp(focus + horizontal - row_start, 0, 2)
         } else if focus < CUSTOMIZATION_HEADGEAR_START {
-            focus = clamp(focus + horizontal, CUSTOMIZATION_PATTERN_START, CUSTOMIZATION_HEADGEAR_START - 1)
+            pattern_index := focus - CUSTOMIZATION_PATTERN_START
+            row_start := CUSTOMIZATION_PATTERN_START +
+                (pattern_index / CUSTOMIZATION_PATTERN_COLUMNS) * CUSTOMIZATION_PATTERN_COLUMNS
+            row_end := min(row_start + CUSTOMIZATION_PATTERN_COLUMNS - 1, CUSTOMIZATION_HEADGEAR_START - 1)
+            focus = clamp(focus + horizontal, row_start, row_end)
         } else if focus < CUSTOMIZATION_SCARF_START {
             row_start := CUSTOMIZATION_HEADGEAR_START + ((focus - CUSTOMIZATION_HEADGEAR_START) / 4) * 4
             row_end := min(row_start + 3, CUSTOMIZATION_SCARF_START - 1)
@@ -179,9 +193,15 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
         } else if focus < CUSTOMIZATION_COLOR_COUNT {
             focus -= 3
         } else if focus < CUSTOMIZATION_HEADGEAR_START {
-            focus = min(focus - CUSTOMIZATION_PATTERN_START, 2)
+            pattern_index := focus - CUSTOMIZATION_PATTERN_START
+            if pattern_index < CUSTOMIZATION_PATTERN_COLUMNS {
+                focus = 3 + pattern_index
+            } else {
+                focus -= CUSTOMIZATION_PATTERN_COLUMNS
+            }
         } else if focus < CUSTOMIZATION_HEADGEAR_START + 4 {
-            focus = CUSTOMIZATION_PATTERN_START + min(focus - CUSTOMIZATION_HEADGEAR_START, 3)
+            focus = CUSTOMIZATION_PATTERN_START + CUSTOMIZATION_PATTERN_COLUMNS +
+                min(focus - CUSTOMIZATION_HEADGEAR_START, CUSTOMIZATION_PATTERN_COLUMNS - 1)
         } else if focus < CUSTOMIZATION_SCARF_START {
             focus -= 4
         } else if focus < CUSTOMIZATION_BACK_FOCUS {
@@ -198,9 +218,15 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
         if focus < 3 {
             focus += 3
         } else if focus < CUSTOMIZATION_COLOR_COUNT {
-            focus = CUSTOMIZATION_PATTERN_START + min(focus - 3, 3)
+            focus = CUSTOMIZATION_PATTERN_START + min(focus - 3, CUSTOMIZATION_PATTERN_COLUMNS - 1)
         } else if focus < CUSTOMIZATION_HEADGEAR_START {
-            focus = CUSTOMIZATION_HEADGEAR_START + min(focus - CUSTOMIZATION_PATTERN_START, 3)
+            pattern_index := focus - CUSTOMIZATION_PATTERN_START
+            if pattern_index < CUSTOMIZATION_PATTERN_COLUMNS {
+                focus += CUSTOMIZATION_PATTERN_COLUMNS
+            } else {
+                focus = CUSTOMIZATION_HEADGEAR_START +
+                    min(pattern_index - CUSTOMIZATION_PATTERN_COLUMNS, 3)
+            }
         } else if focus < CUSTOMIZATION_SCARF_START {
             headgear_index := focus - CUSTOMIZATION_HEADGEAR_START
             if headgear_index < 3 {

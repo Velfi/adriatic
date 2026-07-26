@@ -312,6 +312,53 @@ add_or_merge_foliage :: proc(project: ^Project, structure: Structure, padding: f
     return add_structure(project, structure)
 }
 
+add_or_merge_formation :: proc(
+    project: ^Project,
+    structure: Structure,
+    padding: f32 = 0,
+    classify: bool = true,
+) -> int {
+    if project == nil ||
+       structure.kind == .Foliage ||
+       structure.kind == .Architecture ||
+       structure.group_id == 0 {
+        return add_structure(project, structure)
+    }
+
+    for index := project.structure_count - 1; index >= 0; index -= 1 {
+        existing := &project.structures[index]
+        if existing.kind == .Foliage ||
+           existing.kind == .Architecture ||
+           existing.group_id != structure.group_id {
+            continue
+        }
+        dx, dz := structure.center_x - existing.center_x, structure.center_z - existing.center_z
+        existing_radius := max(existing.width, existing.depth) * .5
+        incoming_radius := max(structure.width, structure.depth) * .5
+        merge_radius := existing_radius + incoming_radius + max(padding, 0)
+        if dx * dx + dz * dz > merge_radius * merge_radius do continue
+
+        minimum_x := min(existing.center_x - existing.width * .5, structure.center_x - structure.width * .5)
+        maximum_x := max(existing.center_x + existing.width * .5, structure.center_x + structure.width * .5)
+        minimum_z := min(existing.center_z - existing.depth * .5, structure.center_z - structure.depth * .5)
+        maximum_z := max(existing.center_z + existing.depth * .5, structure.center_z + structure.depth * .5)
+        maximum_y := max(existing.base_y + existing.height, structure.base_y + structure.height)
+        existing.center_x = (minimum_x + maximum_x) * .5
+        existing.center_z = (minimum_z + maximum_z) * .5
+        existing.width = maximum_x - minimum_x
+        existing.depth = maximum_z - minimum_z
+        existing.base_y = min(existing.base_y, structure.base_y)
+        existing.height = maximum_y - existing.base_y
+        existing.rotation = 0
+        if classify {
+            existing.kind = formation_kind_for_gesture(existing.width, existing.depth, existing.height)
+        }
+        project.revision += 1
+        return index
+    }
+    return add_structure(project, structure)
+}
+
 remove_structure :: proc(project: ^Project, index: int) -> bool {
     if project == nil || index < 0 || index >= project.structure_count do return false
     last := project.structure_count - 1

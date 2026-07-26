@@ -314,6 +314,41 @@ overlapping_foliage_nodes_merge_without_spending_structure_budget :: proc(t: ^te
 }
 
 @(test)
+formation_density_stroke_merges_into_a_range :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    cell := terrain.BASE_CELL_SIZE
+    group_id := project.next_structure_id
+    for index in 0 ..< 5 {
+        formation := terrain.structure_make(f32(index) * cell, 0, cell * 1.5, cell, 0, cell * 1.5)
+        formation.kind = .Rock
+        formation.group_id = group_id
+        _ = terrain.add_or_merge_formation(project, formation, cell * .5)
+    }
+
+    testing.expect(t, project.structure_count == 1)
+    testing.expect(t, project.structures[0].kind == .Ridge)
+    testing.expect(t, project.structures[0].width >= cell * 5)
+}
+
+@(test)
+formation_density_strokes_do_not_merge_across_edit_groups :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    cell := terrain.BASE_CELL_SIZE
+    first := terrain.structure_make(0, 0, cell * 2, cell, 0, cell)
+    first.kind = .Rock
+    first.group_id = 17
+    _ = terrain.add_or_merge_formation(project, first, cell)
+    second := first
+    second.center_x = cell
+    second.group_id = 18
+    _ = terrain.add_or_merge_formation(project, second, cell)
+
+    testing.expect(t, project.structure_count == 2)
+}
+
+@(test)
 formation_kinds_cycle_without_skipping :: proc(t: ^testing.T) {
     kind := terrain.Formation_Kind.Box
     kind = terrain.formation_kind_next(kind)

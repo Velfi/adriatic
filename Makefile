@@ -13,7 +13,7 @@ PROFILE_LINK_MODE_hot := shared
 PROFILE_VULKAN_VALIDATION_hot := false
 PROFILE_ASAN_hot := false
 
-PROFILE_ODIN_FLAGS_debug := -dynamic-map-calls -o:minimal -debug
+PROFILE_ODIN_FLAGS_debug := -dynamic-map-calls -o:speed -debug
 PROFILE_DEFINE_FLAGS_debug :=
 PROFILE_CONFIG_debug := debug
 PROFILE_ENTRY_debug := cold

@@ -1,6 +1,7 @@
 package tests
 
 import vehicles "../packages/vehicles"
+import third_person "../packages/third_person"
 import "core:math"
 import "core:testing"
 
@@ -129,4 +130,74 @@ car_drive_smooths_surface_transitions :: proc(t: ^testing.T) {
     vehicles.car_drive_step(&state, &car, {throttle = 1}, 0, 1.0 / 60, dirt)
     testing.expect(t, state.surface_lateral_grip < before)
     testing.expect(t, state.surface_lateral_grip > dirt.lateral_grip)
+}
+
+@(test)
+car_trailer_keeps_the_tow_ball_connected_without_spring_bounce :: proc(t: ^testing.T) {
+    state: vehicles.Car_Trailer_State
+    position := vehicles.car_spawn_near({})
+    position.x = -2.84
+    yaw: f32
+    car_position := position
+    car_position.x = 2.84
+
+    for _ in 0 ..< 120 {
+        car_position.x += 8.0 / 60
+        vehicles.car_trailer_step(
+            &state,
+            &position,
+            &yaw,
+            car_position,
+            0,
+            0,
+            {x = 8},
+            true,
+            0,
+            1.0 / 60,
+        )
+        car_hitch_x := car_position.x - 1.48
+        trailer_hitch_x := position.x - math.cos(yaw) * 1.36
+        trailer_hitch_z := position.z - math.sin(yaw) * 1.36
+        testing.expect(t, math.abs(car_hitch_x - trailer_hitch_x) < .001)
+        testing.expect(t, math.abs(car_position.z - trailer_hitch_z) < .001)
+    }
+    testing.expect(t, math.abs(yaw) < .001)
+}
+
+@(test)
+car_trailer_turns_from_tow_ball_motion_and_cuts_inside :: proc(t: ^testing.T) {
+    state: vehicles.Car_Trailer_State
+    car_position := vehicles.car_spawn_near({})
+    car_yaw: f32
+    yaw: f32
+    position := car_position
+    position.x = car_position.x - 1.48 + 1.36
+    speed := f32(7)
+    yaw_rate := f32(.55)
+
+    for _ in 0 ..< 90 {
+        car_yaw += yaw_rate / 60
+        car_velocity := third_person.Vec3 {
+            x = math.cos(car_yaw) * speed,
+            z = math.sin(car_yaw) * speed,
+        }
+        car_position.x += car_velocity.x / 60
+        car_position.z += car_velocity.z / 60
+        vehicles.car_trailer_step(
+            &state,
+            &position,
+            &yaw,
+            car_position,
+            car_yaw,
+            yaw_rate,
+            car_velocity,
+            true,
+            0,
+            1.0 / 60,
+        )
+    }
+
+    testing.expect(t, yaw > 0)
+    testing.expect(t, yaw < car_yaw)
+    testing.expect(t, car_yaw - yaw < 1.15)
 }

@@ -235,11 +235,11 @@ car_trailer_angle_delta :: proc(current, target: f32) -> f32 {
     return delta
 }
 
-// car_trailer_step advances a lightweight planar rigid body. While coupled,
-// the hitch behaves as a compliant distance constraint: acceleration transfers
-// through the tongue, braking makes the trailer push forward, and steering
-// produces a delayed articulation angle. Once detached, the same body keeps
-// its velocity and coasts with axle drag instead of snapping to a parked pose.
+// car_trailer_step advances a lightweight planar rigid body. While coupled, the
+// tow ball is a positional constraint and the trailer's passive axle determines
+// its yaw. This is deliberately different from steering the trailer toward the
+// car's yaw: a real trailer follows the tow-ball path and naturally cuts inside
+// a corner. Once detached, the same body coasts with axle drag.
 car_trailer_step :: proc(
     state: ^Car_Trailer_State,
     position: ^third_person.Vec3,
@@ -255,48 +255,47 @@ car_trailer_step :: proc(
     velocity_before := state.velocity
     if attached {
         car_cos, car_sin := math.cos(car_yaw), math.sin(car_yaw)
-        // Solve the target from both coupler positions. This keeps the tongue
-        // connected while the trailer articulates instead of assuming it is
-        // always aligned with the car's yaw.
-        trailer_cos, trailer_sin := math.cos(yaw^), math.sin(yaw^)
-        desired_x := car_position.x - car_cos * 1.48 + trailer_cos * 1.36
-        desired_z := car_position.z - car_sin * 1.48 + trailer_sin * 1.36
-        error_x := desired_x - position.x
-        error_z := desired_z - position.z
+        car_hitch_distance := f32(1.48)
+        trailer_hitch_distance := f32(1.36)
+        hitch_x := car_position.x - car_cos * car_hitch_distance
+        hitch_z := car_position.z - car_sin * car_hitch_distance
 
-        // A stiff but damped constraint prevents visible stretching while
-        // retaining believable lag when the car accelerates or turns.
-        acceleration_x := error_x * 42 + (car_velocity.x - state.velocity.x) * 11
-        acceleration_z := error_z * 42 + (car_velocity.z - state.velocity.z) * 11
-        state.reaction_force = {-acceleration_x * .24, 0, -acceleration_z * .24}
-        acceleration_limit := f32(55)
-        acceleration_length := math.sqrt(acceleration_x * acceleration_x + acceleration_z * acceleration_z)
-        if acceleration_length > acceleration_limit {
-            scale := acceleration_limit / acceleration_length
-            acceleration_x *= scale
-            acceleration_z *= scale
-        }
-        state.velocity.x += acceleration_x * dt
-        state.velocity.z += acceleration_z * dt
-
-        // The axle carries its own rolling and lateral resistance while
-        // coupled; the hitch then has to overcome that resistance naturally.
         forward_x, forward_z := math.cos(yaw^), math.sin(yaw^)
         right_x, right_z := -forward_z, forward_x
-        longitudinal := state.velocity.x * forward_x + state.velocity.z * forward_z
-        lateral := state.velocity.x * right_x + state.velocity.z * right_z
-        longitudinal *= 1 - clamp(.65 * dt, 0, .35)
-        lateral *= 1 - clamp(5.0 * dt, 0, .8)
-        state.velocity.x = forward_x * longitudinal + right_x * lateral
-        state.velocity.z = forward_z * longitudinal + right_z * lateral
+        // Include the tow ball's velocity around the car. Its lateral motion,
+        // rather than the car body angle, is what rotates a passive trailer.
+        hitch_velocity_x := car_velocity.x + car_yaw_rate * car_hitch_distance * car_sin
+        hitch_velocity_z := car_velocity.z - car_yaw_rate * car_hitch_distance * car_cos
+        hitch_longitudinal := hitch_velocity_x * forward_x + hitch_velocity_z * forward_z
+        hitch_lateral := hitch_velocity_x * right_x + hitch_velocity_z * right_z
 
-        yaw_error := car_trailer_angle_delta(yaw^, car_yaw)
-        // Keep the tongue from folding through the car during tight reverse
-        // maneuvers while still letting the body build a visible sway.
-        limited_yaw_error := clamp(yaw_error, f32(-1.15), f32(1.15))
-        state.yaw_rate += (limited_yaw_error * 30 + (car_yaw_rate - state.yaw_rate) * 8) * dt
-        state.yaw_rate *= 1 - clamp(3.5 * dt, 0, .8)
+        // The authored trailer origin faces away from its tow ball, so lateral
+        // tow-ball travel produces yaw with this sign. A small relaxation filters
+        // frame-to-frame input noise without adding a second spring that can fight
+        // the hitch constraint.
+        target_yaw_rate := clamp(hitch_lateral / trailer_hitch_distance, f32(-1.8), f32(1.8))
+        state.yaw_rate += (target_yaw_rate - state.yaw_rate) * clamp(12 * dt, 0, 1)
         yaw^ += state.yaw_rate * dt
+
+        // Rebuild the trailer pose from the single, exact tow-ball constraint.
+        // This removes the visible stretch/bounce produced by a stiff center
+        // spring and remains stable across ordinary frame-rate variations.
+        forward_x, forward_z = math.cos(yaw^), math.sin(yaw^)
+        desired_x := hitch_x + forward_x * trailer_hitch_distance
+        desired_z := hitch_z + forward_z * trailer_hitch_distance
+        state.velocity.x = (desired_x - position.x) / dt
+        state.velocity.z = (desired_z - position.z) / dt
+        position.x = desired_x
+        position.z = desired_z
+
+        // Rolling drag is reported back to the arcade car without disturbing
+        // the constrained trailer pose.
+        rolling_load := hitch_longitudinal * .11
+        state.reaction_force = {
+            -forward_x * rolling_load,
+            0,
+            -forward_z * rolling_load,
+        }
     } else {
         state.reaction_force = {}
         // Passive axle friction: retain forward roll, scrub lateral motion.
@@ -318,16 +317,15 @@ car_trailer_step :: proc(
     longitudinal_speed := state.velocity.x * forward_x + state.velocity.z * forward_z
     state.wheel_rotation += longitudinal_speed * dt / .25
     longitudinal_acceleration := acceleration_x * forward_x + acceleration_z * forward_z
-    if attached {
-        state.reaction_force = {-acceleration_x * .24, 0, -acceleration_z * .24}
-    }
     pitch_target := attached ? clamp(-longitudinal_acceleration * .012, -.12, .12) : f32(0)
     roll_target := attached ? clamp(-state.yaw_rate * longitudinal_speed * .018, -.14, .14) : f32(0)
     state.body_pitch += (pitch_target - state.body_pitch) * clamp(8 * dt, 0, 1)
     state.body_roll += (roll_target - state.body_roll) * clamp(9 * dt, 0, 1)
 
-    position.x += state.velocity.x * dt
-    position.z += state.velocity.z * dt
+    if !attached {
+        position.x += state.velocity.x * dt
+        position.z += state.velocity.z * dt
+    }
     position.y = ground_height
     state.velocity.y = 0
 }

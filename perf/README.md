@@ -8,11 +8,16 @@ python3 tools/perf.py run --scenario foliage --repeat 3 \
   --output /tmp/adriatic-foliage-perf.json
 
 python3 tools/perf.py run --scenario all --output /tmp/adriatic-perf.json
+
+python3 tools/perf.py run --config perf/scenarios-4k.json --scenario all \
+  --output /tmp/adriatic-native-4k-perf.json
 ```
 
 Build `build/release/adriatic` first with `make release`, or pass `--build`.
 Each run uses the configured window size, internal world-render size, warmup,
 sample count, and absolute budgets from `perf/scenarios.json`.
+The native-4K profile passes a zero internal world size to exercise the `FULL`
+quality path that renders the world directly into the 3840×2160 swapchain.
 
 Results also retain peak world-mesh, road-mesh, and foliage-card vertex counts
 with capacity utilization. These counters make geometry-heavy changes auditable:

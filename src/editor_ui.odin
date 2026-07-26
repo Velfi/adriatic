@@ -113,6 +113,7 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.climbing_leaf_paint_mode = false
     editor.climbing_leaf_painting = false
     editor.formation_brush_painting = false
+    editor.formation_brush_group_id = 0
     editor.greek_placement_mode = false
     editor.road_mode = false
     editor.curve_mode = false

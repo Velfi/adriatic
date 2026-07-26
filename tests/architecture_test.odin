@@ -105,6 +105,51 @@ architecture_regeneration_preserves_seeded_styles :: proc(t: ^testing.T) {
 }
 
 @(test)
+architecture_append_generation_keeps_both_island_towns :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    first_created := architecture.generate_append(project, -1300, -1418, 0xA71D3)
+    second_created := architecture.generate_append(project, 1300, 1418, 0xD911C)
+    testing.expect(t, first_created >= 12)
+    testing.expect(t, second_created >= 12)
+    testing.expect(t, project.structure_count == first_created + second_created)
+
+    negative_town, positive_town := 0, 0
+    for structure in project.structures[:project.structure_count] {
+        if structure.kind != .Architecture do continue
+        if structure.center_x < 0 do negative_town += 1
+        if structure.center_x > 0 do positive_town += 1
+    }
+    testing.expect(t, negative_town == first_created)
+    testing.expect(t, positive_town == second_created)
+}
+
+@(test)
+architecture_append_density_removes_buildings_without_scaling_survivors :: proc(t: ^testing.T) {
+    full := terrain.new_project()
+    sparse := terrain.new_project()
+    defer free(full)
+    defer free(sparse)
+    full_created := architecture.generate_append(full, 1300, 1418, 0xA71D3)
+    sparse_created := architecture.generate_append(sparse, 1300, 1418, 0xA71D3, .52)
+    testing.expect(t, sparse_created >= 4)
+    testing.expect(t, sparse_created < full_created)
+
+    for sparse_structure in sparse.structures[:sparse.structure_count] {
+        matched := false
+        for full_structure in full.structures[:full.structure_count] {
+            if sparse_structure.seed != full_structure.seed do continue
+            testing.expect(t, sparse_structure.width == full_structure.width)
+            testing.expect(t, sparse_structure.depth == full_structure.depth)
+            testing.expect(t, sparse_structure.height == full_structure.height)
+            matched = true
+            break
+        }
+        testing.expect(t, matched)
+    }
+}
+
+@(test)
 architecture_roof_styles_are_seed_stable :: proc(t: ^testing.T) {
     testing.expect(t, architecture.roof_style_for_seed(0) == .Gable)
     testing.expect(t, architecture.roof_style_for_seed(1) == .Low_Gable)
