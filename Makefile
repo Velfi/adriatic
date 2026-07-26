@@ -81,7 +81,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/foliage.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark capture capture-jpeg capture-building capture-player capture-player-front capture-player-three-quarter capture-player-profile capture-player-walk capture-player-run-compress capture-player-turn-left capture-player-turn-right capture-player-brake capture-player-jump capture-player-fall capture-player-blink capture-player-posted capture-car capture-vehicle-showcase capture-foliage capture-foliage-forest capture-foliage-forest-low capture-foliage-understory capture-foliage-forest-golden capture-foliage-forest-wind-a capture-foliage-forest-wind-b capture-foliage-forest-low-wind-a capture-foliage-forest-low-wind-b capture-foliage-stress fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor physics-deps physics-build shaders build release hot hot-build hot-app hot-host hot-shaders run benchmark capture capture-jpeg capture-building capture-player capture-player-front capture-player-three-quarter capture-player-profile capture-player-walk capture-player-run-compress capture-player-turn-left capture-player-turn-right capture-player-brake capture-player-jump capture-player-fall capture-player-blink capture-player-posted capture-car capture-vehicle-showcase capture-paint-mode capture-foliage capture-foliage-forest capture-foliage-forest-low capture-foliage-understory capture-foliage-forest-golden capture-foliage-forest-wind-a capture-foliage-forest-wind-b capture-foliage-forest-low-wind-a capture-foliage-forest-low-wind-b capture-foliage-stress fmt check test clean
 
 all: build
 
@@ -489,10 +489,44 @@ $(DEV_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c
 	$(CC) -O2 -c $< -o $(DEV_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(DEV_DIR)/gfx_signposts.o
 
+$(DEV_DIR)/libadriatic_mesh.a: native/adriatic_xatlas.cpp third_party/xatlas/source/xatlas/xatlas.cpp third_party/xatlas/source/xatlas/xatlas.h third_party/xatlas/source/xatlas/xatlas_c.h third_party/meshoptimizer/src/meshoptimizer.h third_party/meshoptimizer/src/allocator.cpp third_party/meshoptimizer/src/indexgenerator.cpp third_party/meshoptimizer/src/vcacheoptimizer.cpp third_party/meshoptimizer/src/vfetchoptimizer.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++11 -O2 -Ithird_party/xatlas/source/xatlas -Ithird_party/meshoptimizer/src -c native/adriatic_xatlas.cpp -o $(DEV_DIR)/adriatic_mesh_bridge.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/xatlas/source/xatlas -c third_party/xatlas/source/xatlas/xatlas.cpp -o $(DEV_DIR)/xatlas.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/allocator.cpp -o $(DEV_DIR)/meshopt_allocator.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/indexgenerator.cpp -o $(DEV_DIR)/meshopt_indexgenerator.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vcacheoptimizer.cpp -o $(DEV_DIR)/meshopt_vcacheoptimizer.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vfetchoptimizer.cpp -o $(DEV_DIR)/meshopt_vfetchoptimizer.o
+	$(AR) rcs $@ $(DEV_DIR)/adriatic_mesh_bridge.o $(DEV_DIR)/xatlas.o $(DEV_DIR)/meshopt_allocator.o $(DEV_DIR)/meshopt_indexgenerator.o $(DEV_DIR)/meshopt_vcacheoptimizer.o $(DEV_DIR)/meshopt_vfetchoptimizer.o
+
+$(HOT_DIR)/libadriatic_mesh.a: native/adriatic_xatlas.cpp third_party/xatlas/source/xatlas/xatlas.cpp third_party/xatlas/source/xatlas/xatlas.h third_party/xatlas/source/xatlas/xatlas_c.h third_party/meshoptimizer/src/meshoptimizer.h third_party/meshoptimizer/src/allocator.cpp third_party/meshoptimizer/src/indexgenerator.cpp third_party/meshoptimizer/src/vcacheoptimizer.cpp third_party/meshoptimizer/src/vfetchoptimizer.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++11 -O2 -Ithird_party/xatlas/source/xatlas -Ithird_party/meshoptimizer/src -c native/adriatic_xatlas.cpp -o $(HOT_DIR)/adriatic_mesh_bridge.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/xatlas/source/xatlas -c third_party/xatlas/source/xatlas/xatlas.cpp -o $(HOT_DIR)/xatlas.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/allocator.cpp -o $(HOT_DIR)/meshopt_allocator.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/indexgenerator.cpp -o $(HOT_DIR)/meshopt_indexgenerator.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vcacheoptimizer.cpp -o $(HOT_DIR)/meshopt_vcacheoptimizer.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vfetchoptimizer.cpp -o $(HOT_DIR)/meshopt_vfetchoptimizer.o
+	$(AR) rcs $@ $(HOT_DIR)/adriatic_mesh_bridge.o $(HOT_DIR)/xatlas.o $(HOT_DIR)/meshopt_allocator.o $(HOT_DIR)/meshopt_indexgenerator.o $(HOT_DIR)/meshopt_vcacheoptimizer.o $(HOT_DIR)/meshopt_vfetchoptimizer.o
+
 $(RELEASE_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c Makefile
 	@mkdir -p $(@D)
 	$(CC) -O2 -c $< -o $(RELEASE_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(RELEASE_DIR)/gfx_signposts.o
+
+$(RELEASE_DIR)/libadriatic_mesh.a: native/adriatic_xatlas.cpp third_party/xatlas/source/xatlas/xatlas.cpp third_party/xatlas/source/xatlas/xatlas.h third_party/xatlas/source/xatlas/xatlas_c.h third_party/meshoptimizer/src/meshoptimizer.h third_party/meshoptimizer/src/allocator.cpp third_party/meshoptimizer/src/indexgenerator.cpp third_party/meshoptimizer/src/vcacheoptimizer.cpp third_party/meshoptimizer/src/vfetchoptimizer.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++11 -O3 -Ithird_party/xatlas/source/xatlas -Ithird_party/meshoptimizer/src -c native/adriatic_xatlas.cpp -o $(RELEASE_DIR)/adriatic_mesh_bridge.o
+	$(CXX) -std=c++11 -O3 -Ithird_party/xatlas/source/xatlas -c third_party/xatlas/source/xatlas/xatlas.cpp -o $(RELEASE_DIR)/xatlas.o
+	$(CXX) -std=c++11 -O3 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/allocator.cpp -o $(RELEASE_DIR)/meshopt_allocator.o
+	$(CXX) -std=c++11 -O3 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/indexgenerator.cpp -o $(RELEASE_DIR)/meshopt_indexgenerator.o
+	$(CXX) -std=c++11 -O3 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vcacheoptimizer.cpp -o $(RELEASE_DIR)/meshopt_vcacheoptimizer.o
+	$(CXX) -std=c++11 -O3 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vfetchoptimizer.cpp -o $(RELEASE_DIR)/meshopt_vfetchoptimizer.o
+	$(AR) rcs $@ $(RELEASE_DIR)/adriatic_mesh_bridge.o $(RELEASE_DIR)/xatlas.o $(RELEASE_DIR)/meshopt_allocator.o $(RELEASE_DIR)/meshopt_indexgenerator.o $(RELEASE_DIR)/meshopt_vcacheoptimizer.o $(RELEASE_DIR)/meshopt_vfetchoptimizer.o
+
+$(HOT_APP): $(HOT_DIR)/libadriatic_mesh.a
+$(DEV_APP): $(DEV_DIR)/libadriatic_mesh.a
+$(RELEASE_APP): $(RELEASE_DIR)/libadriatic_mesh.a
 
 $(DEV_APP): physics-build $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/assets/icons/ui-icon-atlas-garden.png $(addprefix $(DEV_DIR)/,$(CONTROL_HINT_ASSETS)) $(DEV_DIR)/assets/textures/foliage/leaf-branches-atlas.png $(DEV_DIR)/assets/fonts/ZeldaSans-Regular-v1.otf $(DEV_DIR)/assets/fonts/ZeldaSerif-Regular-v0_1.otf $(DEV_DIR)/assets/fonts/MomoTrustDisplay-Regular.ttf $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
@@ -580,6 +614,9 @@ capture-car: build
 capture-vehicle-showcase: build
 	$(call capture-recipe,--$@,$(CAPTURE_TARGET))
 
+capture-paint-mode: build
+	$(call capture-recipe,--$@,$(CAPTURE_TARGET))
+
 capture-foliage: build
 	$(call capture-recipe,--$@)
 
@@ -628,8 +665,8 @@ check: doctor
 	$(ODIN) check packages/libellula $(ZELDA_ENGINE_COLLECTION) -no-entry-point
 	$(ODIN) check packages/atmosphere $(ZELDA_ENGINE_COLLECTION) -no-entry-point
 
-test: doctor
-	$(ODIN) test tests $(ZELDA_ENGINE_COLLECTION)
+test: doctor $(DEV_DIR)/libadriatic_mesh.a
+	$(ODIN) test tests $(ZELDA_ENGINE_COLLECTION) -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -lc++"
 
 clean:
 	rm -rf "$(BUILD_DIR)"

@@ -2,6 +2,7 @@ package tests
 
 import chase_camera "../packages/chase_camera"
 import flight "../packages/flight"
+import "core:math"
 import "core:testing"
 
 @(test)
@@ -30,7 +31,7 @@ aircraft_chase_camera_orbits_and_frames_vertical_attitudes :: proc(t: ^testing.T
 }
 
 @(test)
-aircraft_chase_camera_smooths_motion_and_speed_fov :: proc(t: ^testing.T) {
+aircraft_chase_camera_tracks_translation_exactly_and_smooths_speed_fov :: proc(t: ^testing.T) {
     state: chase_camera.State
     target := chase_camera.Target {
         basis = flight.identity_basis(),
@@ -39,7 +40,7 @@ aircraft_chase_camera_smooths_motion_and_speed_fov :: proc(t: ^testing.T) {
     start := state.pose.position
     target.position.x = 10
     chase_camera.step(&state, target, 1.0 / 60.0)
-    testing.expect(t, state.pose.position.x > start.x && state.pose.position.x < 10)
+    testing.expect(t, math.abs(state.pose.position.x - (start.x + 10)) < .0001)
     testing.expect(t, chase_camera.desired_fov(70) > chase_camera.desired_fov(8))
 }
 

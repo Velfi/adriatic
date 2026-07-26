@@ -15,6 +15,7 @@ State :: struct {
     focal_length:           f32,
     shake_phase:            f32,
     shake_intensity:        f32,
+    previous_target_position: flight.Vec3,
     initialized:            bool,
 }
 
@@ -35,6 +36,7 @@ reset :: proc(state: ^State, target: Target) {
     state.focal_length = focal_length_for_fov(desired_fov(target.airspeed))
     state.shake_phase = 0
     state.shake_intensity = 0
+    state.previous_target_position = target.position
     state.initialized = true
 }
 
@@ -51,9 +53,25 @@ step :: proc(state: ^State, target: Target, delta_seconds: f32, flyby_shake: f32
         state.base_pose = desired
         state.initialized = true
     } else {
-        state.base_pose.position = lerp(state.base_pose.position, desired.position, exp_response(8, delta_seconds))
-        state.base_pose.target = lerp(state.base_pose.target, desired.target, exp_response(10, delta_seconds))
+        // Follow target translation exactly and smooth only the camera's local
+        // offset. World-space smoothing makes a steadily moving aircraft drag
+        // the camera through uneven frame deltas, which reads as judder.
+        previous_target := to_third_person(state.previous_target_position)
+        current_target := to_third_person(target.position)
+        current_position_offset := vec_sub(state.base_pose.position, previous_target)
+        desired_position_offset := vec_sub(desired.position, current_target)
+        current_focus_offset := vec_sub(state.base_pose.target, previous_target)
+        desired_focus_offset := vec_sub(desired.target, current_target)
+        state.base_pose.position = third_person.add(
+            current_target,
+            lerp(current_position_offset, desired_position_offset, exp_response(8, delta_seconds)),
+        )
+        state.base_pose.target = third_person.add(
+            current_target,
+            lerp(current_focus_offset, desired_focus_offset, exp_response(10, delta_seconds)),
+        )
     }
+    state.previous_target_position = target.position
     state.focal_length = scalar_lerp(
         state.focal_length,
         focal_length_for_fov(desired_fov(target.airspeed)),
@@ -66,6 +84,18 @@ step :: proc(state: ^State, target: Target, delta_seconds: f32, flyby_shake: f32
     )
     state.shake_phase = wrap_angle(state.shake_phase + delta_seconds * (16 + target.airspeed * .42))
     state.pose = shake_pose(state.base_pose, target, state.shake_phase, state.shake_intensity)
+}
+
+// Diagnostic/direct follow path: derive the rendered camera from exactly the
+// same target pose as the aircraft, without retaining any temporal state.
+snap :: proc(state: ^State, target: Target) {
+    if state == nil do return
+    state.base_pose = desired_pose(target, state.orbit_yaw, state.orbit_pitch)
+    state.pose = state.base_pose
+    state.focal_length = focal_length_for_fov(desired_fov(target.airspeed))
+    state.shake_intensity = 0
+    state.previous_target_position = target.position
+    state.initialized = true
 }
 
 shake_pose :: proc(pose: third_person.Camera_Pose, target: Target, phase, intensity: f32) -> third_person.Camera_Pose {
@@ -165,6 +195,10 @@ to_third_person :: proc(value: flight.Vec3) -> third_person.Vec3 {
 distance_squared :: proc(a, b: third_person.Vec3) -> f32 {
     x, y, z := b.x - a.x, b.y - a.y, b.z - a.z
     return x * x + y * y + z * z
+}
+
+vec_sub :: proc(a, b: third_person.Vec3) -> third_person.Vec3 {
+    return {a.x - b.x, a.y - b.y, a.z - b.z}
 }
 
 lerp :: proc(a, b: third_person.Vec3, amount: f32) -> third_person.Vec3 {

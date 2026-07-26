@@ -11,6 +11,8 @@ Render_Graph_Context :: struct {
     buffer:         ^engine.Vk_Buffer,
     road_buffer:    ^engine.Vk_Buffer,
     foliage_buffer: ^engine.Vk_Buffer,
+    wing_trail_vertex_buffer: ^engine.Vk_Buffer,
+    wing_trail_index_buffer:  ^engine.Vk_Buffer,
     offset:         vk.DeviceSize,
     pipeline_index: int,
     world_push:     World_Push,
@@ -50,6 +52,16 @@ render_graph_geometry :: proc(user_data: rawptr) {
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / World Geometry")
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.pipelines[ctx.pipeline_index])
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        0,
+        1,
+        &world_renderer.vehicle_paint_descriptor,
+        0,
+        nil,
+    )
     vk.CmdPushConstants(
         cmd,
         world_renderer.layout,
@@ -61,6 +73,11 @@ render_graph_geometry :: proc(user_data: rawptr) {
     if len(world_renderer.vertices) > 0 {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.buffer.handle, &ctx.offset)
         vk.CmdDraw(cmd, u32(len(world_renderer.vertices)), 1, 0, 0)
+    }
+    if len(world_renderer.wing_trail_optimized_indices) > 0 {
+        vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.wing_trail_vertex_buffer.handle, &ctx.offset)
+        vk.CmdBindIndexBuffer(cmd, ctx.wing_trail_index_buffer.handle, 0, .UINT16)
+        vk.CmdDrawIndexed(cmd, u32(len(world_renderer.wing_trail_optimized_indices)), 1, 0, 0, 0)
     }
     render_graph_stage_end(ctx)
 }
@@ -103,6 +120,16 @@ render_graph_terrain :: proc(user_data: rawptr) {
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / Terrain Clipmap")
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.pipelines[ctx.pipeline_index])
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        0,
+        1,
+        &world_renderer.vehicle_paint_descriptor,
+        0,
+        nil,
+    )
     vk.CmdPushConstants(
         cmd,
         world_renderer.layout,
@@ -129,6 +156,16 @@ render_graph_roads :: proc(user_data: rawptr) {
     if len(world_renderer.road_vertices) <= 0 do return
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / Roads")
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        0,
+        1,
+        &world_renderer.vehicle_paint_descriptor,
+        0,
+        nil,
+    )
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.road_pipelines[ctx.pipeline_index])
     vk.CmdPushConstants(
         cmd,
@@ -149,6 +186,16 @@ render_graph_character_shadow :: proc(user_data: rawptr) {
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / Character Shadow")
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.shadow_pipelines[ctx.pipeline_index])
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        0,
+        1,
+        &world_renderer.vehicle_paint_descriptor,
+        0,
+        nil,
+    )
     shadow_push := ctx.world_push
     shadow_push.water[1] = world_renderer.player_shadow_receiver
     vk.CmdPushConstants(cmd, world_renderer.layout, {.VERTEX, .FRAGMENT}, 0, u32(size_of(shadow_push)), &shadow_push)

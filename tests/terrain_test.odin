@@ -332,6 +332,35 @@ structure_duplicate_and_remove_preserve_ids :: proc(t: ^testing.T) {
 }
 
 @(test)
+overlapping_foliage_nodes_merge_without_spending_structure_budget :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    cell := terrain.BASE_CELL_SIZE
+    first := terrain.structure_make(0, 0, cell * 2, cell, 3, cell)
+    first.kind = .Foliage
+    first_index := terrain.add_or_merge_foliage(project, first)
+    first_id := project.structures[first_index].id
+
+    overlapping := terrain.structure_make(cell * 1.5, 0, cell * 2, cell, 2, cell * 2)
+    overlapping.kind = .Foliage
+    merged_index := terrain.add_or_merge_foliage(project, overlapping)
+
+    testing.expect(t, merged_index == first_index)
+    testing.expect(t, project.structure_count == 1)
+    testing.expect(t, project.structures[merged_index].id == first_id)
+    testing.expect(t, project.structures[merged_index].center_x == cell * .75)
+    testing.expect(t, project.structures[merged_index].width == cell * 3.5)
+    testing.expect(t, project.structures[merged_index].depth == cell)
+    testing.expect(t, project.structures[merged_index].base_y == 2)
+    testing.expect(t, math.abs(project.structures[merged_index].height - cell * 2) < .001)
+
+    separate := terrain.structure_make(100, 0, cell, cell, 0, cell)
+    separate.kind = .Foliage
+    terrain.add_or_merge_foliage(project, separate)
+    testing.expect(t, project.structure_count == 2)
+}
+
+@(test)
 formation_kinds_cycle_without_skipping :: proc(t: ^testing.T) {
     kind := terrain.Formation_Kind.Box
     kind = terrain.formation_kind_next(kind)

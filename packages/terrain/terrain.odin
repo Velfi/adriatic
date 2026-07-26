@@ -73,14 +73,14 @@ Clipmap_Level :: struct {
 }
 
 Project :: struct {
-    levels:            [CLIPMAP_LEVELS]Clipmap_Level,
-    sea_level:         f32,
-    revision:          u64,
-    structures:        [STRUCTURE_CAPACITY]Structure,
-    structure_count:   int,
-    next_structure_id: u64,
-    road_graph:        roads.Graph,
-    city_density:      [CITY_DENSITY_SAMPLES]u8,
+    levels:                [CLIPMAP_LEVELS]Clipmap_Level,
+    sea_level:             f32,
+    revision:              u64,
+    structures:            [STRUCTURE_CAPACITY]Structure,
+    structure_count:       int,
+    next_structure_id:     u64,
+    road_graph:            roads.Graph,
+    city_density:          [CITY_DENSITY_SAMPLES]u8,
     climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
 }
 
@@ -386,6 +386,39 @@ add_structure :: proc(project: ^Project, structure: Structure) -> int {
     project.structure_count += 1
     project.revision += 1
     return index
+}
+
+add_or_merge_foliage :: proc(project: ^Project, structure: Structure, padding: f32 = 0) -> int {
+    if project == nil || structure.kind != .Foliage do return add_structure(project, structure)
+
+    for index := project.structure_count - 1; index >= 0; index -= 1 {
+        existing := &project.structures[index]
+        if existing.kind != .Foliage do continue
+        dx, dz := structure.center_x - existing.center_x, structure.center_z - existing.center_z
+        existing_radius := max(existing.width, existing.depth) * .5
+        incoming_radius := max(structure.width, structure.depth) * .5
+        merge_radius := existing_radius + incoming_radius + max(padding, 0)
+        if dx * dx + dz * dz > merge_radius * merge_radius do continue
+
+        // Brush foliage is rotationally symmetric enough that an axis-aligned
+        // union preserves its authored footprint while allowing later stamps
+        // to coalesce with the enlarged node.
+        minimum_x := min(existing.center_x - existing.width * .5, structure.center_x - structure.width * .5)
+        maximum_x := max(existing.center_x + existing.width * .5, structure.center_x + structure.width * .5)
+        minimum_z := min(existing.center_z - existing.depth * .5, structure.center_z - structure.depth * .5)
+        maximum_z := max(existing.center_z + existing.depth * .5, structure.center_z + structure.depth * .5)
+        maximum_y := max(existing.base_y + existing.height, structure.base_y + structure.height)
+        existing.center_x = (minimum_x + maximum_x) * .5
+        existing.center_z = (minimum_z + maximum_z) * .5
+        existing.width = maximum_x - minimum_x
+        existing.depth = maximum_z - minimum_z
+        existing.base_y = min(existing.base_y, structure.base_y)
+        existing.height = maximum_y - existing.base_y
+        existing.rotation = 0
+        project.revision += 1
+        return index
+    }
+    return add_structure(project, structure)
 }
 
 remove_structure :: proc(project: ^Project, index: int) -> bool {

@@ -90,6 +90,14 @@ libellula_mk2_mesh_build :: proc(mesh: ^Libellula_Mesh) {
     libellula_add_beam(mesh, {0, -1.78, .40}, {0, -4.18, .40}, .028, .Strap)
     libellula_add_torus(mesh, {0, -4.22, .40}, {0, 1, 0}, .14, .21, 10, 5, .Brass)
     libellula_add_sphere(mesh, {0, -4.35, .40}, .15, 10, 5, .Steel)
+    mesh_finalize(
+        mesh,
+        &libellula_mk2_mesh_cache,
+        libellula_mk2_uvs[:],
+        libellula_mk2_sources[:],
+        libellula_mk2_indices[:],
+        libellula_mk2_scratch[:],
+    )
 }
 
 animate_libellula_mk2_mesh :: proc(mesh: ^Libellula_Mesh, front_left, front_right, rear_left, rear_right: f32) {

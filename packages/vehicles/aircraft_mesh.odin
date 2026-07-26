@@ -67,6 +67,7 @@ Mesh_Animation_Group :: enum u8 {
 
 Mesh_Vertex :: struct {
     position:        [3]f32,
+    uv:              [2]f32,
     part:            Aircraft_Mesh_Part,
     animation_group: Mesh_Animation_Group,
 }
@@ -205,10 +206,10 @@ add_section_mesh :: proc(mesh: ^Aircraft_Mesh, sections: []Mesh_Section, y: f32,
         p2 := [3]f32{a.x, y + a.half_thickness, a.trailing}; p3 := [3]f32{a.x, y + a.half_thickness, a.leading}
         q0 := [3]f32{b.x, y - b.half_thickness, b.leading}; q1 := [3]f32{b.x, y - b.half_thickness, b.trailing}
         q2 := [3]f32{b.x, y + b.half_thickness, b.trailing}; q3 := [3]f32{b.x, y + b.half_thickness, b.leading}
-        mesh_quad(mesh, p0, q0, q1, p1, part); mesh_quad(mesh, p3, p2, q2, q3, part)
-        mesh_quad(mesh, p1, q1, q2, p2, part); mesh_quad(mesh, p0, p3, q3, q0, part)
-        if index == 0 do mesh_quad(mesh, p0, p1, p2, p3, part)
-        if index == len(sections) - 2 do mesh_quad(mesh, q0, q3, q2, q1, part)
+        mesh_quad(mesh, p0, p1, q1, q0, part); mesh_quad(mesh, p3, q3, q2, p2, part)
+        mesh_quad(mesh, p1, p2, q2, q1, part); mesh_quad(mesh, p0, q0, q3, p3, part)
+        if index == 0 do mesh_quad(mesh, p0, p3, p2, p1, part)
+        if index == len(sections) - 2 do mesh_quad(mesh, q0, q1, q2, q3, part)
     }
 }
 
@@ -487,6 +488,14 @@ postale_mesh :: proc() -> Aircraft_Mesh {
     add_box(&mesh, {0, -.28, 2.72}, {.11, 1.26, .11}, .Frame)
     add_propeller(&mesh, {0, .12, -3.42}, 1.58, .2, .08, .Propeller)
     add_propeller_spin_volume(&mesh, {0, .12, -3.42}, 1.58, .018)
+    mesh_finalize(
+        &mesh,
+        &postale_mesh_cache,
+        postale_uvs[:],
+        postale_sources[:],
+        postale_indices[:],
+        postale_scratch[:],
+    )
     return mesh
 }
 
@@ -601,5 +610,13 @@ pelican_mesh :: proc() -> Aircraft_Mesh {
         }
         add_ring_mesh_at_x(&mesh, floats[:], 8, x, .Float)
     }
+    mesh_finalize(
+        &mesh,
+        &pelican_mesh_cache,
+        pelican_uvs[:],
+        pelican_sources[:],
+        pelican_indices[:],
+        pelican_scratch[:],
+    )
     return mesh
 }

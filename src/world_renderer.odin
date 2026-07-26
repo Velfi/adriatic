@@ -21,6 +21,8 @@ import resources "zelda_engine:render_resources"
 WORLD_VERTEX_CAPACITY :: 480_000
 ROAD_VERTEX_CAPACITY :: 320_000
 FOLIAGE_VERTEX_CAPACITY :: 24_000
+WING_TRAIL_VERTEX_CAPACITY :: particles.MAX_WING_TRAIL_PARTICLES * 8
+WING_TRAIL_INDEX_CAPACITY :: (particles.MAX_WING_TRAIL_PARTICLES - 2) * 8 * 6 + 8 * 6
 CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
 CLIPMAP_VERTEX_COUNT :: CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLUTION - 1) * 6
@@ -41,6 +43,7 @@ World_Vertex :: struct {
     kind:     f32,
     normal:   [3]f32,
     material: [2]f32, // metallic, roughness for imported glTF primitives
+    uv:       [2]f32,
 }
 
 Foliage_Vertex :: struct {
@@ -71,44 +74,59 @@ Sky_Push :: struct {
 }
 
 World_Renderer :: struct {
-    editor:                    ^Editor,
-    ctx:                       ^engine.Vk_Context,
-    pipelines:                 [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    shadow_pipelines:          [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    road_pipelines:            [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    sky_pipelines:             [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    particle_pipelines:        [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    foliage_pipelines:         [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    layout:                    vk.PipelineLayout,
-    sky_layout:                vk.PipelineLayout,
-    foliage_layout:            vk.PipelineLayout,
-    foliage_descriptor_layout: vk.DescriptorSetLayout,
-    foliage_descriptor_pool:   vk.DescriptorPool,
-    foliage_descriptor:        vk.DescriptorSet,
-    foliage_atlas:             resources.Image,
-    vertex:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    road_vertex:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    foliage_vertex:            [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    vertices:                  [dynamic]World_Vertex,
-    road_vertices:             [dynamic]World_Vertex,
-    foliage_vertices:          [dynamic]Foliage_Vertex,
-    player_vertex_first:       int,
-    player_vertex_count:       int,
-    player_shadow_receiver:    f32,
-    clipmap_vertex:            [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
-    clipmap_index:             engine.Vk_Buffer,
-    clipmap_full_indices:      u32,
-    clipmap_ring_first:        u32,
-    clipmap_ring_indices:      u32,
-    clipmap_revision:          [engine.MAX_FRAMES_IN_FLIGHT]u64,
-    clipmap_center:            [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
-    clipmap_valid:             [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
-    road_mesh:                 roads.Mesh,
-    road_revision:             u64,
-    initialized:               bool,
+    editor:                          ^Editor,
+    ctx:                             ^engine.Vk_Context,
+    pipelines:                       [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    shadow_pipelines:                [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    road_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    sky_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    particle_pipelines:              [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    foliage_pipelines:               [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    layout:                          vk.PipelineLayout,
+    sky_layout:                      vk.PipelineLayout,
+    foliage_layout:                  vk.PipelineLayout,
+    foliage_descriptor_layout:       vk.DescriptorSetLayout,
+    foliage_descriptor_pool:         vk.DescriptorPool,
+    foliage_descriptor:              vk.DescriptorSet,
+    foliage_atlas:                   resources.Image,
+    vehicle_paint_atlas:             resources.Image,
+    vehicle_paint_staging:           [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    vehicle_paint_descriptor_layout: vk.DescriptorSetLayout,
+    vehicle_paint_descriptor_pool:   vk.DescriptorPool,
+    vehicle_paint_descriptor:        vk.DescriptorSet,
+    vertex:                          [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    road_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    foliage_vertex:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    wing_trail_vertex:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    wing_trail_index:                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    vertices:                        [dynamic]World_Vertex,
+    road_vertices:                   [dynamic]World_Vertex,
+    foliage_vertices:                [dynamic]Foliage_Vertex,
+    wing_trail_vertices:             [dynamic]World_Vertex,
+    wing_trail_indices:              [dynamic]u16,
+    wing_trail_optimized_indices:    [dynamic]u16,
+    player_vertex_first:             int,
+    player_vertex_count:             int,
+    player_shadow_receiver:          f32,
+    clipmap_vertex:                  [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
+    clipmap_index:                   engine.Vk_Buffer,
+    clipmap_full_indices:            u32,
+    clipmap_ring_first:              u32,
+    clipmap_ring_indices:            u32,
+    clipmap_revision:                [engine.MAX_FRAMES_IN_FLIGHT]u64,
+    clipmap_center:                  [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
+    clipmap_valid:                   [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
+    road_mesh:                       roads.Mesh,
+    road_revision:                   u64,
+    initialized:                     bool,
 }
 
 world_renderer: World_Renderer
+
+foreign import adriatic_mesh "system:adriatic_mesh"
+foreign adriatic_mesh {
+    adriatic_optimize_index_buffer :: proc(destination, indices: ^u16, index_count, vertex_count: u32) ---
+}
 
 #assert(size_of(World_Push) == 128)
 #assert(size_of(Sky_Push) == 112)
@@ -170,25 +188,52 @@ world_camera_near_clip :: proc(editor: ^Editor) -> f32 {
     return clamp(distance * distance / 720, f32(2), WORLD_EDITOR_NEAR_CLIP)
 }
 
+world_scene_sun :: proc(editor: ^Editor, sky: atmosphere.Sky_State) -> [4]f32 {
+    if editor != nil && editor.vehicle_paint_scene {
+        return {.28, .88, .38, 1}
+    }
+    return {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], sky.daylight}
+}
+
 world_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 0, {0, 1, 0}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), 0, {0, 1, 0}, {}, {}}
 }
 
 world_water_vertex :: proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 1, {0, 1, 0}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), 1, {0, 1, 0}, {}, {}}
 }
 
 world_foliage_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 3, {normal.x, normal.y, normal.z}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), 3, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
 world_eye_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), 6, {normal.x, normal.y, normal.z}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), 6, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
 world_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color) {
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color), world_vertex(b, color), world_vertex(c, color))
+}
+
+world_aircraft_triangle :: proc(
+    a, b, c: third_person.Vec3,
+    color: rl.Color,
+    uv_a, uv_b, uv_c: [2]f32,
+    paint_layer: f32,
+) {
+    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
+    for &vertex in vertices {
+        vertex.kind = 7
+        vertex.material[1] = paint_layer
+        normal := vec_normalize(vec_cross(vec_sub(b, a), vec_sub(c, a)))
+        vertex.normal = {normal.x, normal.y, normal.z}
+    }
+    vertices[0].uv = uv_a
+    vertices[1].uv = uv_b
+    vertices[2].uv = uv_c
+    append(&world_renderer.vertices, ..vertices[:])
 }
 
 world_triangle_colored :: proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
@@ -208,6 +253,7 @@ world_greek_asset_vertex :: proc(
         5,
         {normal.x, normal.y, normal.z},
         {clamp(metallic, 0, 1), clamp(roughness, .04, 1)},
+        {},
     }
 }
 
@@ -397,7 +443,14 @@ world_road_vertex :: proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color
     // road pass does not need the generic mesh normal. This keeps the existing
     // compact vertex format and draw call while giving the fragment shader
     // stable material-space coordinates.
-    return {{point.x, point.y, point.z}, world_color(color), 4, {vertex.uv[0], vertex.uv[1], f32(vertex.pavement)}, {}}
+    return {
+        {point.x, point.y, point.z},
+        world_color(color),
+        4,
+        {vertex.uv[0], vertex.uv[1], f32(vertex.pavement)},
+        {},
+        {},
+    }
 }
 
 world_road_triangle_colored :: proc(editor: ^Editor, a, b, c: roads.Vertex, color_a, color_b, color_c: rl.Color) {
@@ -1868,9 +1921,7 @@ world_architecture :: proc(structure: terrain.Structure) {
                 structure.rotation,
             )
             awning_color :=
-                structure.seed % 4 == 0 ? rl.Color{196, 105, 71, 255} :
-                structure.seed % 4 == 1 ? rl.Color{215, 198, 151, 255} :
-                rl.Color{105, 143, 151, 255}
+                structure.seed % 4 == 0 ? rl.Color{196, 105, 71, 255} : structure.seed % 4 == 1 ? rl.Color{215, 198, 151, 255} : rl.Color{105, 143, 151, 255}
             world_box_rotated(
                 {awning_x, structure.base_y + structure.height * .32, awning_z},
                 {structure.width * .34, .14, .52},
@@ -1878,9 +1929,7 @@ world_architecture :: proc(structure: terrain.Structure) {
                 awning_color,
             )
             stripe_color :=
-                structure.seed % 4 == 0 ? rl.Color{226, 198, 157, 255} :
-                structure.seed % 4 == 1 ? rl.Color{183, 91, 70, 255} :
-                rl.Color{214, 199, 163, 255}
+                structure.seed % 4 == 0 ? rl.Color{226, 198, 157, 255} : structure.seed % 4 == 1 ? rl.Color{183, 91, 70, 255} : rl.Color{214, 199, 163, 255}
             for stripe in -1 ..= 1 {
                 stripe_x, stripe_z := world_rotate_xz(
                     structure.center_x,
@@ -2098,19 +2147,25 @@ world_architecture :: proc(structure: terrain.Structure) {
                             {107, 132, 92, 255},
                         )
                     } else {
-                    for side in -1 ..= 1 {
-                        if side == 0 do continue
-                        sx, sz := world_rotate_xz(wx, wz, f32(side) * structure.width * .085, 0, structure.rotation)
-                        world_box_rotated(
-                            {sx, y, sz},
-                            {structure.width * .035, structure.height * .11, .28},
-                            structure.rotation,
-                            shutter,
+                        for side in -1 ..= 1 {
+                            if side == 0 do continue
+                            sx, sz := world_rotate_xz(
+                                wx,
+                                wz,
+                                f32(side) * structure.width * .085,
+                                0,
+                                structure.rotation,
+                            )
+                            world_box_rotated(
+                                {sx, y, sz},
+                                {structure.width * .035, structure.height * .11, .28},
+                                structure.rotation,
+                                shutter,
                             )
                         }
                     }
-                    }
                 }
+            }
         }
     }
     // Climbing foliage is authored exclusively through the density brush;
@@ -2154,8 +2209,10 @@ world_architecture :: proc(structure: terrain.Structure) {
         for segment in 0 ..< 7 {
             start_t := f32(segment) / 7
             end_t := f32(segment + 1) / 7
-            start_x := vine_x_base + f32(math.sin(f64(f32(structure.seed + u32(segment)) * .47))) * structure.width * .035
-            end_x := vine_x_base + f32(math.sin(f64(f32(structure.seed + u32(segment + 1)) * .47))) * structure.width * .035
+            start_x :=
+                vine_x_base + f32(math.sin(f64(f32(structure.seed + u32(segment)) * .47))) * structure.width * .035
+            end_x :=
+                vine_x_base + f32(math.sin(f64(f32(structure.seed + u32(segment + 1)) * .47))) * structure.width * .035
             start_y := vine_bottom + (vine_top - vine_bottom) * start_t
             end_y := vine_bottom + (vine_top - vine_bottom) * end_t
             if segment % 2 == 1 {
@@ -2179,14 +2236,7 @@ world_architecture :: proc(structure: terrain.Structure) {
                     vine_z_local + .02,
                     structure.rotation,
                 )
-                world_ellipsoid_rotated(
-                    {leaf_x, end_y, leaf_z},
-                    .38,
-                    .13,
-                    .22,
-                    structure.rotation,
-                    {63, 117, 62, 255},
-                )
+                world_ellipsoid_rotated({leaf_x, end_y, leaf_z}, .38, .13, .22, structure.rotation, {63, 117, 62, 255})
                 second_leaf_x, second_leaf_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
@@ -4235,30 +4285,18 @@ world_laundry_web_segment :: proc(a, b: third_person.Vec3, color: rl.Color) {
     )
 }
 
-world_laundry_cloth :: proc(
-    top: third_person.Vec3,
-    tangent_x, tangent_z, width, height, drift: f32,
-    color: rl.Color,
-) {
+world_laundry_cloth :: proc(top: third_person.Vec3, tangent_x, tangent_z, width, height, drift: f32, color: rl.Color) {
     // Hang each item as a thin, slightly skewed panel instead of a solid box.
     // The skew and uneven hem keep the span from reading as a row of signs.
     side_x, side_z := -tangent_z, tangent_x
-    top_left := third_person.Vec3{
-        top.x - side_x * width * .5,
-        top.y,
-        top.z - side_z * width * .5,
-    }
-    top_right := third_person.Vec3{
-        top.x + side_x * width * .5,
-        top.y - .025,
-        top.z + side_z * width * .5,
-    }
-    bottom_left := third_person.Vec3{
+    top_left := third_person.Vec3{top.x - side_x * width * .5, top.y, top.z - side_z * width * .5}
+    top_right := third_person.Vec3{top.x + side_x * width * .5, top.y - .025, top.z + side_z * width * .5}
+    bottom_left := third_person.Vec3 {
         top.x - side_x * width * .40 + tangent_x * drift,
         top.y - height,
         top.z - side_z * width * .40 + tangent_z * drift,
     }
-    bottom_right := third_person.Vec3{
+    bottom_right := third_person.Vec3 {
         top.x + side_x * width * .40 + tangent_x * drift * .55,
         top.y - height - .07,
         top.z + side_z * width * .40 + tangent_z * drift * .55,
@@ -4271,12 +4309,7 @@ world_architecture_laundry_webbing :: proc(editor: ^Editor) {
     if editor == nil do return
     webbing_count := 0
     structures := editor.project.structures[:editor.project.structure_count]
-    cloth_colors := [4]rl.Color{
-        {235, 224, 188, 255},
-        {112, 157, 171, 255},
-        {191, 94, 72, 255},
-        {205, 157, 177, 255},
-    }
+    cloth_colors := [4]rl.Color{{235, 224, 188, 255}, {112, 157, 171, 255}, {191, 94, 72, 255}, {205, 157, 177, 255}}
     for first, first_index in structures {
         if first.kind != .Architecture || first.height > 52 do continue
         first_front := [2]f32{-math.sin(first.rotation), math.cos(first.rotation)}
@@ -4316,7 +4349,7 @@ world_architecture_laundry_webbing :: proc(editor: ^Editor) {
             if line_y < editor.project.sea_level + 3 do continue
             start := third_person.Vec3{first_x, line_y, first_z}
             finish := third_person.Vec3{second_x, line_y, second_z}
-            middle := third_person.Vec3{
+            middle := third_person.Vec3 {
                 (start.x + finish.x) * .5,
                 line_y - min(f32(1.35), distance * .040),
                 (start.z + finish.z) * .5,
@@ -4349,19 +4382,10 @@ world_architecture_laundry_webbing :: proc(editor: ^Editor) {
                 // spans keeps the town inhabited without making mannequins a
                 // repeated façade motif.
                 worker_body := rl.Color{74, 67, 61, 255}
-                worker_shirt := (first.seed + second.seed) % 2 == 0 ? rl.Color{132, 104, 79, 255} : rl.Color{77, 109, 119, 255}
-                world_box_rotated(
-                    {start.x, line_y - .72, start.z},
-                    {.32, .92, .24},
-                    0,
-                    worker_shirt,
-                )
-                world_box_rotated(
-                    {start.x, line_y - 1.25, start.z},
-                    {.36, .36, .36},
-                    0,
-                    {91, 69, 53, 255},
-                )
+                worker_shirt :=
+                    (first.seed + second.seed) % 2 == 0 ? rl.Color{132, 104, 79, 255} : rl.Color{77, 109, 119, 255}
+                world_box_rotated({start.x, line_y - .72, start.z}, {.32, .92, .24}, 0, worker_shirt)
+                world_box_rotated({start.x, line_y - 1.25, start.z}, {.36, .36, .36}, 0, {91, 69, 53, 255})
                 world_box_rotated(
                     {start.x, line_y - .68, start.z},
                     {.98, .11, .10},
@@ -4464,18 +4488,8 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                     structure.rotation,
                 )
                 pot_y := terrain.sample_height(&editor.project, 0, pot_x, pot_z)
-                world_box_rotated(
-                    {pot_x, pot_y + .22, pot_z},
-                    {.32, .44, .32},
-                    structure.rotation,
-                    {169, 96, 61, 255},
-                )
-                world_box_rotated(
-                    {pot_x, pot_y + .53, pot_z},
-                    {.44, .18, .44},
-                    structure.rotation,
-                    {77, 111, 63, 255},
-                )
+                world_box_rotated({pot_x, pot_y + .22, pot_z}, {.32, .44, .32}, structure.rotation, {169, 96, 61, 255})
+                world_box_rotated({pot_x, pot_y + .53, pot_z}, {.44, .18, .44}, structure.rotation, {77, 111, 63, 255})
             }
         }
     }
@@ -4604,10 +4618,7 @@ world_city_density_overlay :: proc(editor: ^Editor) {
     }
 }
 
-world_climbing_leaf_opening_badness :: proc(
-    structure: terrain.Structure,
-    local_x, local_y: f32,
-) -> f32 {
+world_climbing_leaf_opening_badness :: proc(structure: terrain.Structure, local_x, local_y: f32) -> f32 {
     if structure.kind != .Architecture do return 0
 
     badness := f32(0)
@@ -4662,11 +4673,7 @@ world_climbing_leaf_vine :: proc(
             surface_z + drift,
             structure.rotation,
         )
-        vine_points[point_index] = {
-            point_x,
-            stem_start + (stem_end - stem_start) * t,
-            point_z,
-        }
+        vine_points[point_index] = {point_x, stem_start + (stem_end - stem_start) * t, point_z}
     }
     for point_index in 0 ..< len(vine_points) - 1 {
         start_t := f32(point_index) / f32(len(vine_points) - 1)
@@ -4676,9 +4683,21 @@ world_climbing_leaf_vine :: proc(
         start_x := local_x + start_sway
         end_x := local_x + end_sway
         middle_x := (start_x + end_x) * .5
-        start_badness := world_climbing_leaf_opening_badness(structure, start_x, vine_points[point_index].y - structure.base_y)
-        end_badness := world_climbing_leaf_opening_badness(structure, end_x, vine_points[point_index + 1].y - structure.base_y)
-        middle_badness := world_climbing_leaf_opening_badness(structure, middle_x, (vine_points[point_index].y + vine_points[point_index + 1].y) * .5 - structure.base_y)
+        start_badness := world_climbing_leaf_opening_badness(
+            structure,
+            start_x,
+            vine_points[point_index].y - structure.base_y,
+        )
+        end_badness := world_climbing_leaf_opening_badness(
+            structure,
+            end_x,
+            vine_points[point_index + 1].y - structure.base_y,
+        )
+        middle_badness := world_climbing_leaf_opening_badness(
+            structure,
+            middle_x,
+            (vine_points[point_index].y + vine_points[point_index + 1].y) * .5 - structure.base_y,
+        )
         // Do not draw the stem itself through a protected opening. The vine
         // resumes above/below it, leaving a deliberate tendril-free corridor.
         if max(start_badness, max(end_badness, middle_badness)) > .34 do continue
@@ -4699,35 +4718,35 @@ world_climbing_leaf_vine :: proc(
         branch_x, branch_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
-            local_x + f32(math.sin(f64(f32(seed + u32(leaf_index)) * .47))) * structure.width * .07 + leaf_side * structure.width * .10,
+            local_x +
+            f32(math.sin(f64(f32(seed + u32(leaf_index)) * .47))) * structure.width * .07 +
+            leaf_side * structure.width * .10,
             surface_z + .16,
             structure.rotation,
         )
         branch_end := third_person.Vec3{branch_x, base.y + .08 + f32(leaf_index % 2) * .05, branch_z}
         opening_badness := world_climbing_leaf_opening_badness(
             structure,
-            local_x + f32(math.sin(f64(f32(seed + u32(leaf_index)) * .47))) * structure.width * .07 + leaf_side * structure.width * .10,
+            local_x +
+            f32(math.sin(f64(f32(seed + u32(leaf_index)) * .47))) * structure.width * .07 +
+            leaf_side * structure.width * .10,
             branch_end.y - structure.base_y,
         )
         // Keep a clean visual corridor over doors and windows. The stem can
         // continue past the opening, but branch/lobe geometry is omitted when
         // it would materially obscure the architectural opening.
         if opening_badness > .72 do continue
-        world_tube_between(
-            base,
-            branch_end,
-            {0, 1, 0},
-            .036,
-            .032,
-            {62, 108, 55, 255},
-        )
+        world_tube_between(base, branch_end, {0, 1, 0}, .036, .032, {62, 108, 55, 255})
 
         // Reuse the rounded foliage-lobe mesh for the main mass. This keeps
         // each climbing node a connected volume instead of a few flat discs.
         cluster_structure := structure
         cluster_structure.base_y = branch_end.y - .72
         cluster_structure.seed = seed + u32(leaf_index * 41)
-        cluster_x := local_x + f32(math.sin(f64(f32(seed + u32(leaf_index)) * .47))) * structure.width * .07 + leaf_side * structure.width * .10
+        cluster_x :=
+            local_x +
+            f32(math.sin(f64(f32(seed + u32(leaf_index)) * .47))) * structure.width * .07 +
+            leaf_side * structure.width * .10
         attachment_x, attachment_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -4781,18 +4800,14 @@ world_climbing_leaf_vine :: proc(
         // cards supply a readable leaf silhouette while the rounded lobe
         // carries the volume; both are positioned from the averaged normal.
         tangent := third_person.Vec3{-average_normal.z, 0, average_normal.x}
-        cluster_center := third_person.Vec3{
+        cluster_center := third_person.Vec3 {
             attachment_x + average_normal.x * .32,
             branch_end.y + .10,
             attachment_z + average_normal.z * .32,
         }
         spray_scale := .92 + f32((seed + u32(leaf_index)) % 3) * .10
         world_foliage_card(
-            {
-                cluster_center.x + tangent.x * .14,
-                cluster_center.y + .05,
-                cluster_center.z + tangent.z * .14,
-            },
+            {cluster_center.x + tangent.x * .14, cluster_center.y + .05, cluster_center.z + tangent.z * .14},
             spray_scale,
             spray_scale * .86,
             leaf_index * 5 + 7,
@@ -4814,7 +4829,7 @@ world_climbing_leaf_vine :: proc(
         for leaf_accent in 0 ..< 3 {
             accent_side := leaf_accent == 1 ? f32(-1) : f32(1)
             accent_offset := f32(leaf_accent - 1) * .28
-            accent_center := third_person.Vec3{
+            accent_center := third_person.Vec3 {
                 cluster_center.x + tangent.x * accent_offset + average_normal.x * (.10 + f32(leaf_accent % 2) * .05),
                 cluster_center.y + f32(leaf_accent - 1) * .16,
                 cluster_center.z + tangent.z * accent_offset + average_normal.z * (.10 + f32(leaf_accent % 2) * .05),
@@ -4831,7 +4846,7 @@ world_climbing_leaf_vine :: proc(
         if (seed + u32(leaf_index * 5)) % 3 == 0 {
             for petal in 0 ..< 3 {
                 petal_offset := f32(petal - 1) * .12
-                bloom_center := third_person.Vec3{
+                bloom_center := third_person.Vec3 {
                     cluster_center.x + tangent.x * petal_offset + average_normal.x * .22,
                     cluster_center.y + .18 + f32(petal % 2) * .05,
                     cluster_center.z + tangent.z * petal_offset + average_normal.z * .22,
@@ -4902,7 +4917,9 @@ world_climbing_leaves :: proc(editor: ^Editor) {
                 // onto an arbitrary rectangular front plane.
                 shell_radius := max(structure.width, structure.depth) * .46 + .24
                 attachment_x = spread * shell_radius
-                shell_height := f32(math.sqrt(f64(max(shell_radius * shell_radius - attachment_x * attachment_x, f32(.16)))))
+                shell_height := f32(
+                    math.sqrt(f64(max(shell_radius * shell_radius - attachment_x * attachment_x, f32(.16)))),
+                )
                 attachment_z = shell_height + surface_offset
             }
             world_climbing_leaf_vine(
@@ -4968,11 +4985,15 @@ world_aircraft :: proc(editor: ^Editor) {
             b := mesh.vertices[triangle.b]
             c := mesh.vertices[triangle.c]
             if a.part == .Propeller_Blur && aircraft_propeller_blur_amount(editor.postale.throttle) <= .01 do continue
-            world_triangle(
+            world_aircraft_triangle(
                 postale_vertex_world(&editor.postale, a.position, .68),
                 postale_vertex_world(&editor.postale, b.position, .68),
                 postale_vertex_world(&editor.postale, c.position, .68),
                 aircraft_postale_part_color(a.part, editor.postale.throttle),
+                a.uv,
+                b.uv,
+                c.uv,
+                f32(vehicle_paint_layer_index(.Postale)),
             )
         }
     }
@@ -5014,11 +5035,15 @@ world_aircraft :: proc(editor: ^Editor) {
             a := libellula.vertices[triangle.a]
             b := libellula.vertices[triangle.b]
             c := libellula.vertices[triangle.c]
-            world_triangle(
+            world_aircraft_triangle(
                 libellula_vertex_world(&editor.libellula, a.position, .72),
                 libellula_vertex_world(&editor.libellula, b.position, .72),
                 libellula_vertex_world(&editor.libellula, c.position, .72),
                 aircraft_part_color(a.part),
+                a.uv,
+                b.uv,
+                c.uv,
+                f32(vehicle_paint_layer_index(editor.aircraft.active)),
             )
         }
     }
@@ -5069,14 +5094,14 @@ world_showcase_car_pilot :: proc(editor: ^Editor) {
         {
             // The roadster has no roof, so keep the mouse's feet just above
             // the low seat and let the head and ears clear the windscreen.
-            position = {editor.car.position.x, editor.car.position.y + .47, editor.car.position.z + .05},
-            rotation = rotation,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
+            position      = {editor.car.position.x, editor.car.position.y + .47, editor.car.position.z + .05},
+            rotation      = rotation,
+            accessory     = editor.mouse_headgear,
+            fur           = editor.mouse_fur,
+            pattern       = editor.mouse_pattern,
             scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
-            grounded = false,
+            scarf_color   = editor.mouse_scarf_color,
+            grounded      = false,
         },
     )
 }
@@ -5265,7 +5290,10 @@ mouse_skin_vertex :: proc(vertex: Mouse_Skin_Vertex, skeleton: ^[5]Mouse_Bone_Po
 mouse_body_surface_height :: proc(
     skeleton: ^[5]Mouse_Bone_Pose,
     local_x, local_y, local_z: f32,
-) -> (height: f32, push_up, hit: bool) {
+) -> (
+    height: f32,
+    push_up, hit: bool,
+) {
     if skeleton == nil do return
     RINGS :: 10
     ring_z := [RINGS]f32{-.78, -.70, -.52, -.28, -.04, .10, .20, .32, .47, .58}
@@ -5298,22 +5326,10 @@ mouse_body_surface_height :: proc(
         {primary[nearest], primary_weight[nearest]},
         {secondary[nearest], 1 - primary_weight[nearest]},
     }
-    posed_center := mouse_skin_vertex(
-        {
-            bind_position = {local_x, center_y, local_z},
-            groups = groups,
-        },
-        skeleton,
-    )
+    posed_center := mouse_skin_vertex({bind_position = {local_x, center_y, local_z}, groups = groups}, skeleton)
     push_up = local_y >= posed_center.y
     surface_y := center_y + (push_up ? vertical_radius : -vertical_radius)
-    posed_surface := mouse_skin_vertex(
-        {
-            bind_position = {local_x, surface_y, local_z},
-            groups = groups,
-        },
-        skeleton,
-    )
+    posed_surface := mouse_skin_vertex({bind_position = {local_x, surface_y, local_z}, groups = groups}, skeleton)
     return posed_surface.y, push_up, true
 }
 
@@ -5683,8 +5699,14 @@ world_mouse_model_parented :: proc(editor: ^Editor, model: Mouse_Model, basis: f
     first_vertex := len(world_renderer.vertices)
     world_mouse_model(editor, model)
 
-    yaw_right := third_person.Vec3{x = math.cos(model.rotation), z = math.sin(model.rotation)}
-    yaw_forward := third_person.Vec3{x = -math.sin(model.rotation), z = math.cos(model.rotation)}
+    yaw_right := third_person.Vec3 {
+        x = math.cos(model.rotation),
+        z = math.sin(model.rotation),
+    }
+    yaw_forward := third_person.Vec3 {
+        x = -math.sin(model.rotation),
+        z = math.cos(model.rotation),
+    }
     origin := model.position
     for index in first_vertex ..< len(world_renderer.vertices) {
         vertex := &world_renderer.vertices[index]
@@ -6279,15 +6301,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         collar_rear, collar_front: [SCARF_COLLAR_SEGMENTS]third_person.Vec3
         collar_color: [SCARF_COLLAR_SEGMENTS]rl.Color
         for segment in 0 ..< SCARF_COLLAR_SEGMENTS {
-            angle :=
-                f32(segment) * math.PI * 2 / f32(SCARF_COLLAR_SEGMENTS) +
-                editor.mouse_scarf_rotation
+            angle := f32(segment) * math.PI * 2 / f32(SCARF_COLLAR_SEGMENTS) + editor.mouse_scarf_rotation
             ring_x := math.cos(angle) * (SCARF_NECK_RADIUS_X + SCARF_SURFACE_CLEARANCE)
-            ring_y := SCARF_NECK_CENTER_Y +
-                math.sin(angle) * (SCARF_NECK_RADIUS_Y + SCARF_SURFACE_CLEARANCE)
+            ring_y := SCARF_NECK_CENTER_Y + math.sin(angle) * (SCARF_NECK_RADIUS_Y + SCARF_SURFACE_CLEARANCE)
             rear_vertex := Mouse_Skin_Vertex {
                 bind_position = {ring_x, ring_y, SCARF_NECK_Z - SCARF_HALF_WIDTH},
-                groups = {{.Neck, .66}, {.Chest, .34}},
+                groups        = {{.Neck, .66}, {.Chest, .34}},
             }
             front_vertex := rear_vertex
             front_vertex.bind_position.z = SCARF_NECK_Z + SCARF_HALF_WIDTH
@@ -6297,11 +6316,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             front := collar_front_local[segment]
             collar_rear[segment] = local_point(p, rotation, rear.x, rear.y, rear.z)
             collar_front[segment] = local_point(p, rotation, front.x, front.y, front.z)
-            light_amount := clamp(
-                .52 + math.cos(angle - .65) * .28 + math.sin(angle) * .12,
-                0,
-                1,
-            )
+            light_amount := clamp(.52 + math.cos(angle - .65) * .28 + math.sin(angle) * .12, 0, 1)
             collar_color[segment] = color_lerp(scarf_dark, scarf_light, light_amount)
         }
         for segment in 0 ..< SCARF_COLLAR_SEGMENTS {
@@ -6342,20 +6357,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                     wind_sway * eased +
                     sway * side_f * (amount + eased * .45) +
                     math.sin(tail_phase) * flap * .026 * amount
-                local_y :=
-                    root_local.y -
-                    .070 * amount +
-                    math.sin(tail_phase * 1.13) * flap * .050 * amount
-                local_z :=
-                    root_local.z -
-                    (.500 + flap * .200) * amount +
-                    wind_forward * .014 * eased
-                if body_y, push_up, body_hit := mouse_body_surface_height(
-                    &skeleton,
-                    local_x,
-                    local_y,
-                    local_z,
-                ); body_hit {
+                local_y := root_local.y - .070 * amount + math.sin(tail_phase * 1.13) * flap * .050 * amount
+                local_z := root_local.z - (.500 + flap * .200) * amount + wind_forward * .014 * eased
+                if body_y, push_up, body_hit := mouse_body_surface_height(&skeleton, local_x, local_y, local_z);
+                   body_hit {
                     if push_up {
                         local_y = max(local_y, body_y + SCARF_BODY_CLEARANCE)
                     } else {
@@ -6722,6 +6727,8 @@ world_postale_pilot :: proc(editor: ^Editor) {
     )
 }
 
+MARTA_STOOL_HEIGHT :: f32(.49)
+
 world_attendant_kiosk :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
     p := editor.attendant_position
@@ -6742,6 +6749,15 @@ world_attendant_kiosk :: proc(editor: ^Editor) {
     world_box_rotated({p.x, ground + .62, p.z - .36}, {2.85, .72, .14}, 0, timber)
     world_box_rotated({p.x, ground + 2.28, p.z + 1.47}, {2.25, .48, .08}, 0, cream)
     world_box_rotated({p.x, ground + 2.28, p.z + 1.40}, {1.55, .14, .06}, 0, painted)
+
+    // Marta is much shorter than the service counter. Give her a sturdy
+    // standing stool on the raised deck so she can comfortably see customers.
+    stool := rl.Color{126, 82, 47, 255}
+    world_box_rotated({p.x, ground + MARTA_STOOL_HEIGHT - .06, p.z}, {.62, .12, .54}, 0, stool)
+    stool_leg_offsets := [4][2]f32{{-.23, -.19}, {-.23, .19}, {.23, -.19}, {.23, .19}}
+    for offset in stool_leg_offsets {
+        world_box_rotated({p.x + offset.x, ground + .295, p.z + offset.y}, {.10, .27, .10}, 0, timber)
+    }
 }
 
 world_marta :: proc(editor: ^Editor) {
@@ -6751,9 +6767,11 @@ world_marta :: proc(editor: ^Editor) {
         z = editor.player.position.z - editor.attendant_position.z,
     }
     facing := math.atan2(-delta.x, -delta.z)
+    position := editor.attendant_position
+    position.y += MARTA_STOOL_HEIGHT
     world_mouse_model(
         editor,
-        {position = editor.attendant_position, rotation = math.PI - facing, accessory = .Flower, grounded = true},
+        {position = position, rotation = math.PI - facing, accessory = .Flower, grounded = false},
     )
 }
 
@@ -7153,6 +7171,9 @@ world_brush :: proc(editor: ^Editor) {
 
 world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.vertices)
+    clear(&world_renderer.wing_trail_vertices)
+    clear(&world_renderer.wing_trail_indices)
+    clear(&world_renderer.wing_trail_optimized_indices)
     clear(&world_renderer.road_vertices)
     clear(&world_renderer.foliage_vertices)
     world_renderer.player_vertex_first = 0
@@ -7346,40 +7367,6 @@ world_vehicle_particles :: proc(editor: ^Editor) {
     }
 }
 
-world_wing_trail_segment :: proc(camera: Perspective_Camera, a, b: particles.Vec3, width: f32, color: rl.Color) {
-    offset := third_person.Vec3 {
-        x = camera.right.x * width,
-        y = camera.right.y * width,
-        z = camera.right.z * width,
-    }
-    world_quad(
-        {a.x - offset.x, a.y - offset.y, a.z - offset.z},
-        {a.x + offset.x, a.y + offset.y, a.z + offset.z},
-        {b.x + offset.x, b.y + offset.y, b.z + offset.z},
-        {b.x - offset.x, b.y - offset.y, b.z - offset.z},
-        color,
-    )
-}
-
-world_wing_trail_cap :: proc(camera: Perspective_Camera, center: particles.Vec3, radius: f32, color: rl.Color) {
-    p := third_person.Vec3{center.x, center.y, center.z}
-    for side in 0 ..< 8 {
-        a0 := f32(side) * math.PI * 2 / 8
-        a1 := f32(side + 1) * math.PI * 2 / 8
-        p0 := third_person.Vec3 {
-            x = p.x + (camera.right.x * math.cos(a0) + camera.up.x * math.sin(a0)) * radius,
-            y = p.y + (camera.right.y * math.cos(a0) + camera.up.y * math.sin(a0)) * radius,
-            z = p.z + (camera.right.z * math.cos(a0) + camera.up.z * math.sin(a0)) * radius,
-        }
-        p1 := third_person.Vec3 {
-            x = p.x + (camera.right.x * math.cos(a1) + camera.up.x * math.sin(a1)) * radius,
-            y = p.y + (camera.right.y * math.cos(a1) + camera.up.y * math.sin(a1)) * radius,
-            z = p.z + (camera.right.z * math.cos(a1) + camera.up.z * math.sin(a1)) * radius,
-        }
-        world_triangle(p, p0, p1, color)
-    }
-}
-
 world_wing_trails :: proc(editor: ^Editor) {
     if editor.wing_trails.count <= 0 do return
     camera := perspective_camera(
@@ -7387,24 +7374,47 @@ world_wing_trails :: proc(editor: ^Editor) {
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     for side in 0 ..< 2 {
-        previous: particles.Vec3
-        has_previous := false
+        first_ring := len(world_renderer.wing_trail_vertices)
+        ring_count := 0
         for particle in editor.wing_trails.particles[:editor.wing_trails.count] {
             if int(particle.side) != side do continue
             fade := clamp(particle.life / particle.max_life, 0, 1)
-            if has_previous {
-                world_wing_trail_segment(
-                    camera,
-                    previous,
-                    particle.position,
-                    particle.size * (.8 + fade * .35),
-                    {205, 239, 236, 255},
-                )
+            radius := particle.size * (.8 + fade * .35)
+            color := rl.Color{205, 239, 236, u8(clamp(fade * 255, 0, 255))}
+            for ring_side in 0 ..< 8 {
+                angle := f32(ring_side) * math.PI * 2 / 8
+                radial := third_person.Vec3 {
+                    x = (camera.right.x * math.cos(angle) + camera.up.x * math.sin(angle)) * radius,
+                    y = (camera.right.y * math.cos(angle) + camera.up.y * math.sin(angle)) * radius,
+                    z = (camera.right.z * math.cos(angle) + camera.up.z * math.sin(angle)) * radius,
+                }
+                append(&world_renderer.wing_trail_vertices, world_vertex(
+                    {particle.position.x + radial.x, particle.position.y + radial.y, particle.position.z + radial.z},
+                    color,
+                ))
             }
-            world_wing_trail_cap(camera, particle.position, particle.size * (.8 + fade * .35), {205, 239, 236, 255})
-            previous = particle.position
-            has_previous = true
+            if ring_count > 0 {
+                previous_ring := first_ring + (ring_count - 1) * 8
+                current_ring := first_ring + ring_count * 8
+                for ring_side in 0 ..< 8 {
+                    next := (ring_side + 1) % 8
+                    append(&world_renderer.wing_trail_indices,
+                        u16(previous_ring + ring_side), u16(current_ring + ring_side), u16(current_ring + next),
+                        u16(previous_ring + ring_side), u16(current_ring + next), u16(previous_ring + next),
+                    )
+                }
+            }
+            ring_count += 1
         }
+    }
+    if len(world_renderer.wing_trail_indices) > 0 {
+        resize(&world_renderer.wing_trail_optimized_indices, len(world_renderer.wing_trail_indices))
+        adriatic_optimize_index_buffer(
+            raw_data(world_renderer.wing_trail_optimized_indices),
+            raw_data(world_renderer.wing_trail_indices),
+            u32(len(world_renderer.wing_trail_indices)),
+            u32(len(world_renderer.wing_trail_vertices)),
+        )
     }
 }
 
@@ -7464,7 +7474,232 @@ world_wind_streaks :: proc(editor: ^Editor) {
     }
 }
 
+vehicle_paint_atlas_create :: proc(ctx: ^engine.Vk_Context, out: ^resources.Image) -> bool {
+    if ctx == nil || out == nil do return false
+    if !resources.image_array_create(
+        ctx,
+        VEHICLE_PAINT_TEXTURE_WIDTH,
+        VEHICLE_PAINT_TEXTURE_HEIGHT,
+        VEHICLE_PAINT_AIRCRAFT_COUNT,
+        .R8G8B8A8_SRGB,
+        {.TRANSFER_DST, .SAMPLED},
+        {.COLOR},
+        .D2_ARRAY,
+        false,
+        out,
+        "vehicle paint texture array",
+    ) {
+        return false
+    }
+    staging: engine.Vk_Buffer
+    total_size := VEHICLE_PAINT_TEXTURE_BYTE_COUNT * VEHICLE_PAINT_AIRCRAFT_COUNT
+    if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(total_size), {.TRANSFER_SRC}, &staging) {
+        resources.image_destroy(out, ctx)
+        return false
+    }
+    defer engine.vk_destroy_buffer(ctx, &staging)
+    pixels := mem.slice_ptr(cast([^]u8)staging.mapped, total_size)
+    for &pixel in pixels do pixel = 0
+    cmd, begun := engine.vk_begin_upload_commands(ctx)
+    if !begun {
+        resources.image_destroy(out, ctx)
+        return false
+    }
+    barrier := vk.ImageMemoryBarrier2 {
+        sType               = .IMAGE_MEMORY_BARRIER_2,
+        srcStageMask        = {.TOP_OF_PIPE},
+        dstStageMask        = {.TRANSFER},
+        dstAccessMask       = {.TRANSFER_WRITE},
+        oldLayout           = .UNDEFINED,
+        newLayout           = .TRANSFER_DST_OPTIMAL,
+        srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+        dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+        image               = out.image,
+        subresourceRange    = {
+            aspectMask     = {.COLOR},
+            baseMipLevel   = 0,
+            levelCount     = 1,
+            baseArrayLayer = 0,
+            layerCount     = VEHICLE_PAINT_AIRCRAFT_COUNT,
+        },
+    }
+    dependency := vk.DependencyInfo {
+        sType                   = .DEPENDENCY_INFO,
+        imageMemoryBarrierCount = 1,
+        pImageMemoryBarriers    = &barrier,
+    }
+    vk.CmdPipelineBarrier2(cmd, &dependency)
+    region := vk.BufferImageCopy {
+        imageSubresource = {
+            aspectMask     = {.COLOR},
+            mipLevel       = 0,
+            baseArrayLayer = 0,
+            layerCount     = VEHICLE_PAINT_AIRCRAFT_COUNT,
+        },
+        imageExtent = {
+            VEHICLE_PAINT_TEXTURE_WIDTH,
+            VEHICLE_PAINT_TEXTURE_HEIGHT,
+            1,
+        },
+    }
+    vk.CmdCopyBufferToImage(cmd, staging.handle, out.image, .TRANSFER_DST_OPTIMAL, 1, &region)
+    barrier.srcStageMask = {.TRANSFER}
+    barrier.srcAccessMask = {.TRANSFER_WRITE}
+    barrier.dstStageMask = {.FRAGMENT_SHADER}
+    barrier.dstAccessMask = {.SHADER_READ}
+    barrier.oldLayout = .TRANSFER_DST_OPTIMAL
+    barrier.newLayout = .SHADER_READ_ONLY_OPTIMAL
+    vk.CmdPipelineBarrier2(cmd, &dependency)
+    if !engine.vk_submit_upload_commands(ctx) {
+        resources.image_destroy(out, ctx)
+        return false
+    }
+    sampler_info := vk.SamplerCreateInfo {
+        sType        = .SAMPLER_CREATE_INFO,
+        magFilter    = .LINEAR,
+        minFilter    = .LINEAR,
+        mipmapMode   = .LINEAR,
+        addressModeU = .CLAMP_TO_EDGE,
+        addressModeV = .CLAMP_TO_EDGE,
+        addressModeW = .CLAMP_TO_EDGE,
+        minLod       = 0,
+        maxLod       = 0,
+    }
+    if vk.CreateSampler(ctx.device, &sampler_info, nil, &out.sampler) != .SUCCESS {
+        resources.image_destroy(out, ctx)
+        return false
+    }
+    return true
+}
+
+vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_index: int) {
+    if editor == nil ||
+       !editor.vehicle_paint_texture_dirty ||
+       cmd == nil ||
+       frame_index < 0 ||
+       frame_index >= engine.MAX_FRAMES_IN_FLIGHT {
+        return
+    }
+    staging := &world_renderer.vehicle_paint_staging[frame_index]
+    if staging.handle == vk.Buffer(0) || staging.mapped == nil do return
+    mem.copy_non_overlapping(
+        staging.mapped,
+        raw_data(vehicle_paint_pixels(editor)),
+        VEHICLE_PAINT_TEXTURE_BYTE_COUNT,
+    )
+    layer := u32(vehicle_paint_layer_index(editor.aircraft.active))
+    barrier := vk.ImageMemoryBarrier2 {
+        sType               = .IMAGE_MEMORY_BARRIER_2,
+        srcStageMask        = {.FRAGMENT_SHADER},
+        srcAccessMask       = {.SHADER_READ},
+        dstStageMask        = {.TRANSFER},
+        dstAccessMask       = {.TRANSFER_WRITE},
+        oldLayout           = .SHADER_READ_ONLY_OPTIMAL,
+        newLayout           = .TRANSFER_DST_OPTIMAL,
+        srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+        dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+        image               = world_renderer.vehicle_paint_atlas.image,
+        subresourceRange    = {
+            aspectMask     = {.COLOR},
+            baseMipLevel   = 0,
+            levelCount     = 1,
+            baseArrayLayer = layer,
+            layerCount     = 1,
+        },
+    }
+    dependency := vk.DependencyInfo {
+        sType                   = .DEPENDENCY_INFO,
+        imageMemoryBarrierCount = 1,
+        pImageMemoryBarriers    = &barrier,
+    }
+    vk.CmdPipelineBarrier2(cmd, &dependency)
+    region := vk.BufferImageCopy {
+        imageSubresource = {
+            aspectMask     = {.COLOR},
+            mipLevel       = 0,
+            baseArrayLayer = layer,
+            layerCount     = 1,
+        },
+        imageExtent = {
+            VEHICLE_PAINT_TEXTURE_WIDTH,
+            VEHICLE_PAINT_TEXTURE_HEIGHT,
+            1,
+        },
+    }
+    vk.CmdCopyBufferToImage(
+        cmd,
+        staging.handle,
+        world_renderer.vehicle_paint_atlas.image,
+        .TRANSFER_DST_OPTIMAL,
+        1,
+        &region,
+    )
+    barrier.srcStageMask = {.TRANSFER}
+    barrier.srcAccessMask = {.TRANSFER_WRITE}
+    barrier.dstStageMask = {.FRAGMENT_SHADER}
+    barrier.dstAccessMask = {.SHADER_READ}
+    barrier.oldLayout = .TRANSFER_DST_OPTIMAL
+    barrier.newLayout = .SHADER_READ_ONLY_OPTIMAL
+    vk.CmdPipelineBarrier2(cmd, &dependency)
+    editor.vehicle_paint_texture_dirty = false
+}
+
 world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
+    paint_bindings := [2]vk.DescriptorSetLayoutBinding {
+        {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+    }
+    paint_layout_info := vk.DescriptorSetLayoutCreateInfo {
+        sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        bindingCount = 2,
+        pBindings    = raw_data(paint_bindings[:]),
+    }
+    if vk.CreateDescriptorSetLayout(ctx.device, &paint_layout_info, nil, &world_renderer.vehicle_paint_descriptor_layout) != .SUCCESS do return false
+    paint_pool_sizes := [2]vk.DescriptorPoolSize {
+        {type = .SAMPLED_IMAGE, descriptorCount = 1},
+        {type = .SAMPLER, descriptorCount = 1},
+    }
+    paint_pool_info := vk.DescriptorPoolCreateInfo {
+        sType         = .DESCRIPTOR_POOL_CREATE_INFO,
+        maxSets       = 1,
+        poolSizeCount = 2,
+        pPoolSizes    = raw_data(paint_pool_sizes[:]),
+    }
+    if vk.CreateDescriptorPool(ctx.device, &paint_pool_info, nil, &world_renderer.vehicle_paint_descriptor_pool) != .SUCCESS do return false
+    paint_allocate := vk.DescriptorSetAllocateInfo {
+        sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
+        descriptorPool     = world_renderer.vehicle_paint_descriptor_pool,
+        descriptorSetCount = 1,
+        pSetLayouts        = &world_renderer.vehicle_paint_descriptor_layout,
+    }
+    if vk.AllocateDescriptorSets(ctx.device, &paint_allocate, &world_renderer.vehicle_paint_descriptor) != .SUCCESS do return false
+    if !vehicle_paint_atlas_create(ctx, &world_renderer.vehicle_paint_atlas) do return false
+    paint_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.vehicle_paint_atlas.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    paint_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.vehicle_paint_atlas.sampler,
+    }
+    paint_writes := [2]vk.WriteDescriptorSet {
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.vehicle_paint_descriptor,
+            dstBinding = 0,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &paint_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.vehicle_paint_descriptor,
+            dstBinding = 1,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &paint_sampler_info,
+        },
+    }
+    vk.UpdateDescriptorSets(ctx.device, 2, raw_data(paint_writes[:]), 0, nil)
     pr := vk.PushConstantRange {
         stageFlags = {.VERTEX, .FRAGMENT},
         size       = u32(size_of(World_Push)),
@@ -7473,6 +7708,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
         pushConstantRangeCount = 1,
         pPushConstantRanges    = &pr,
+        setLayoutCount         = 1,
+        pSetLayouts            = &world_renderer.vehicle_paint_descriptor_layout,
     }
     if vk.CreatePipelineLayout(ctx.device, &li, nil, &world_renderer.layout) != .SUCCESS do return false
     foliage_bindings := [2]vk.DescriptorSetLayoutBinding {
@@ -7579,18 +7816,19 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         stride    = u32(size_of(World_Vertex)),
         inputRate = .VERTEX,
     }
-    attrs := [5]vk.VertexInputAttributeDescription {
+    attrs := [6]vk.VertexInputAttributeDescription {
         {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, position))},
         {location = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Vertex, color))},
         {location = 2, format = .R32_SFLOAT, offset = u32(offset_of(World_Vertex, kind))},
         {location = 3, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, normal))},
         {location = 4, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, material))},
+        {location = 5, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, uv))},
     }
     vi := vk.PipelineVertexInputStateCreateInfo {
         sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         vertexBindingDescriptionCount   = 1,
         pVertexBindingDescriptions      = &binding,
-        vertexAttributeDescriptionCount = 5,
+        vertexAttributeDescriptionCount = 6,
         pVertexAttributeDescriptions    = raw_data(attrs[:]),
     }
     ia := vk.PipelineInputAssemblyStateCreateInfo {
@@ -7831,6 +8069,20 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             return false
         }
     }
+    for &buffer in world_renderer.vehicle_paint_staging {
+        if !engine.vk_create_host_buffer(
+            ctx,
+            vk.DeviceSize(VEHICLE_PAINT_TEXTURE_BYTE_COUNT),
+            {.TRANSFER_SRC},
+            &buffer,
+        ) {
+            return false
+        }
+    }
+    for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+        if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WING_TRAIL_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &world_renderer.wing_trail_vertex[frame]) do return false
+        if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WING_TRAIL_INDEX_CAPACITY * size_of(u16)), {.INDEX_BUFFER}, &world_renderer.wing_trail_index[frame]) do return false
+    }
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
             if !engine.vk_create_host_buffer(
@@ -7847,6 +8099,9 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
     world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_CAPACITY)
     world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_CAPACITY)
+    world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
+    world_renderer.wing_trail_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
+    world_renderer.wing_trail_optimized_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
     world_renderer.ctx = ctx
     world_renderer.initialized = true
     return true
@@ -7861,6 +8116,8 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     buffer := &world_renderer.vertex[pass.frame.frame_index]
     road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
     foliage_buffer := &world_renderer.foliage_vertex[pass.frame.frame_index]
+    wing_trail_vertex_buffer := &world_renderer.wing_trail_vertex[pass.frame.frame_index]
+    wing_trail_index_buffer := &world_renderer.wing_trail_index[pass.frame.frame_index]
     if len(world_renderer.vertices) > 0 {
         mem.copy_non_overlapping(
             buffer.mapped,
@@ -7882,6 +8139,10 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             len(world_renderer.foliage_vertices) * size_of(Foliage_Vertex),
         )
     }
+    if len(world_renderer.wing_trail_vertices) > 0 {
+        mem.copy_non_overlapping(wing_trail_vertex_buffer.mapped, raw_data(world_renderer.wing_trail_vertices), len(world_renderer.wing_trail_vertices) * size_of(World_Vertex))
+        mem.copy_non_overlapping(wing_trail_index_buffer.mapped, raw_data(world_renderer.wing_trail_optimized_indices), len(world_renderer.wing_trail_optimized_indices) * size_of(u16))
+    }
     viewport := vk.Viewport {
         width    = f32(pass.framebuffer_extent.width),
         height   = f32(pass.framebuffer_extent.height),
@@ -7896,8 +8157,8 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
     render_camera_pose :=
         editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
-    focal_length := editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH :
-        (editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35)
+    focal_length :=
+        editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH : (editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35)
     camera := perspective_camera(render_camera_pose, focal_length)
     sky := atmosphere.sample(&editor.atmosphere)
     fog := world_sky_horizon_color(sky)
@@ -7914,7 +8175,7 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         },
         fog_color       = world_color(fog),
         water           = {sky.cloud_time_seconds, sky.weather.severity, sky.weather.wind[0], sky.weather.wind[1]},
-        sun             = {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], sky.daylight},
+        sun             = world_scene_sun(editor, sky),
     }
     sky_push := Sky_Push {
         camera_right   = {
@@ -7946,6 +8207,16 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     vk.CmdBindPipeline(pass.frame.command_buffer, .GRAPHICS, world_renderer.sky_pipelines[pipeline_index])
     vk.CmdDraw(pass.frame.command_buffer, 3, 1, 0, 0)
     vk.CmdBindPipeline(pass.frame.command_buffer, .GRAPHICS, world_renderer.pipelines[pipeline_index])
+    vk.CmdBindDescriptorSets(
+        pass.frame.command_buffer,
+        .GRAPHICS,
+        world_renderer.layout,
+        0,
+        1,
+        &world_renderer.vehicle_paint_descriptor,
+        0,
+        nil,
+    )
     vk.CmdPushConstants(
         pass.frame.command_buffer,
         world_renderer.layout,
@@ -7972,6 +8243,16 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     // The particle pass uses a vertex-id-only pipeline. Rebind the terrain
     // pipeline before submitting indexed clipmap vertices.
     vk.CmdBindPipeline(pass.frame.command_buffer, .GRAPHICS, world_renderer.pipelines[pipeline_index])
+    vk.CmdBindDescriptorSets(
+        pass.frame.command_buffer,
+        .GRAPHICS,
+        world_renderer.layout,
+        0,
+        1,
+        &world_renderer.vehicle_paint_descriptor,
+        0,
+        nil,
+    )
     vk.CmdPushConstants(
         pass.frame.command_buffer,
         world_renderer.layout,
@@ -7981,23 +8262,23 @@ world_pass_legacy :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         &world_push,
     )
     if !editor.vehicle_showcase_scene {
-    vk.CmdBindIndexBuffer(pass.frame.command_buffer, world_renderer.clipmap_index.handle, 0, .UINT32)
-    for level in 0 ..< terrain.CLIPMAP_LEVELS {
-        level_buffer := &world_renderer.clipmap_vertex[pass.frame.frame_index][level]
-        vk.CmdBindVertexBuffers(pass.frame.command_buffer, 0, 1, &level_buffer.handle, &offset)
-        if level == 0 {
-            vk.CmdDrawIndexed(pass.frame.command_buffer, world_renderer.clipmap_full_indices, 1, 0, 0, 0)
-        } else {
-            vk.CmdDrawIndexed(
-                pass.frame.command_buffer,
-                world_renderer.clipmap_ring_indices,
-                1,
-                world_renderer.clipmap_ring_first,
-                0,
-                0,
-            )
+        vk.CmdBindIndexBuffer(pass.frame.command_buffer, world_renderer.clipmap_index.handle, 0, .UINT32)
+        for level in 0 ..< terrain.CLIPMAP_LEVELS {
+            level_buffer := &world_renderer.clipmap_vertex[pass.frame.frame_index][level]
+            vk.CmdBindVertexBuffers(pass.frame.command_buffer, 0, 1, &level_buffer.handle, &offset)
+            if level == 0 {
+                vk.CmdDrawIndexed(pass.frame.command_buffer, world_renderer.clipmap_full_indices, 1, 0, 0, 0)
+            } else {
+                vk.CmdDrawIndexed(
+                    pass.frame.command_buffer,
+                    world_renderer.clipmap_ring_indices,
+                    1,
+                    world_renderer.clipmap_ring_first,
+                    0,
+                    0,
+                )
+            }
         }
-    }
     }
 }
 
@@ -8005,11 +8286,14 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
     editor := world_renderer.editor
     if editor == nil do return
+    vehicle_paint_atlas_flush(editor, pass.frame.command_buffer, int(pass.frame.frame_index))
     world_build(editor)
     if !editor.vehicle_showcase_scene do clipmap_update(editor, int(pass.frame.frame_index))
     buffer := &world_renderer.vertex[pass.frame.frame_index]
     road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
     foliage_buffer := &world_renderer.foliage_vertex[pass.frame.frame_index]
+    wing_trail_vertex_buffer := &world_renderer.wing_trail_vertex[pass.frame.frame_index]
+    wing_trail_index_buffer := &world_renderer.wing_trail_index[pass.frame.frame_index]
     if len(world_renderer.vertices) > 0 {
         mem.copy_non_overlapping(
             buffer.mapped,
@@ -8031,6 +8315,10 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             len(world_renderer.foliage_vertices) * size_of(Foliage_Vertex),
         )
     }
+    if len(world_renderer.wing_trail_vertices) > 0 {
+        mem.copy_non_overlapping(wing_trail_vertex_buffer.mapped, raw_data(world_renderer.wing_trail_vertices), len(world_renderer.wing_trail_vertices) * size_of(World_Vertex))
+        mem.copy_non_overlapping(wing_trail_index_buffer.mapped, raw_data(world_renderer.wing_trail_optimized_indices), len(world_renderer.wing_trail_optimized_indices) * size_of(u16))
+    }
     viewport := vk.Viewport {
         width    = f32(pass.framebuffer_extent.width),
         height   = f32(pass.framebuffer_extent.height),
@@ -8045,8 +8333,8 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
     render_camera_pose :=
         editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
-    focal_length := editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH :
-        (editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35)
+    focal_length :=
+        editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH : (editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35)
     camera := perspective_camera(render_camera_pose, focal_length)
     sky := atmosphere.sample(&editor.atmosphere)
     fog := world_sky_horizon_color(sky)
@@ -8063,7 +8351,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         },
         fog_color       = world_color(fog),
         water           = {sky.cloud_time_seconds, sky.weather.severity, sky.weather.wind[0], sky.weather.wind[1]},
-        sun             = {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], sky.daylight},
+        sun             = world_scene_sun(editor, sky),
     }
     sky_push := Sky_Push {
         camera_right   = {
@@ -8090,6 +8378,8 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         buffer         = buffer,
         road_buffer    = road_buffer,
         foliage_buffer = foliage_buffer,
+        wing_trail_vertex_buffer = wing_trail_vertex_buffer,
+        wing_trail_index_buffer = wing_trail_index_buffer,
         offset         = offset,
         pipeline_index = pipeline_index,
         world_push     = world_push,
@@ -8114,6 +8404,9 @@ world_renderer_destroy :: proc() {
     for &buffer in world_renderer.vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.road_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.foliage_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.vehicle_paint_staging do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.wing_trail_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.wing_trail_index do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
             engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_vertex[frame][level])
@@ -8128,6 +8421,7 @@ world_renderer_destroy :: proc() {
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.particle_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.foliage_pipelines)
     resources.image_destroy(&world_renderer.foliage_atlas, world_renderer.ctx)
+    resources.image_destroy(&world_renderer.vehicle_paint_atlas, world_renderer.ctx)
     if world_renderer.layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.layout, nil)
     if world_renderer.sky_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.sky_layout, nil)
     if world_renderer.foliage_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.foliage_layout, nil)
@@ -8137,8 +8431,17 @@ world_renderer_destroy :: proc() {
     if world_renderer.foliage_descriptor_layout != vk.DescriptorSetLayout(0) {
         vk.DestroyDescriptorSetLayout(world_renderer.ctx.device, world_renderer.foliage_descriptor_layout, nil)
     }
+    if world_renderer.vehicle_paint_descriptor_pool != vk.DescriptorPool(0) {
+        vk.DestroyDescriptorPool(world_renderer.ctx.device, world_renderer.vehicle_paint_descriptor_pool, nil)
+    }
+    if world_renderer.vehicle_paint_descriptor_layout != vk.DescriptorSetLayout(0) {
+        vk.DestroyDescriptorSetLayout(world_renderer.ctx.device, world_renderer.vehicle_paint_descriptor_layout, nil)
+    }
     delete(world_renderer.vertices)
     delete(world_renderer.road_vertices)
     delete(world_renderer.foliage_vertices)
+    delete(world_renderer.wing_trail_vertices)
+    delete(world_renderer.wing_trail_indices)
+    delete(world_renderer.wing_trail_optimized_indices)
     world_renderer = {}
 }

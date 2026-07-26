@@ -10,12 +10,16 @@ struct Push {
 };
 [[vk::push_constant]] ConstantBuffer<Push> push;
 
+[[vk::binding(0, 0)]] Texture2DArray<float4> vehicle_paint_atlas;
+[[vk::binding(1, 0)]] SamplerState vehicle_paint_sampler;
+
 struct VertexInput {
     float3 position : POSITION;
     float4 color : COLOR0;
     float kind : TEXCOORD0;
     float3 normal : NORMAL0;
     float2 material : TEXCOORD1;
+    float2 uv : TEXCOORD5;
 };
 
 struct VertexOutput {
@@ -26,6 +30,7 @@ struct VertexOutput {
     float kind : TEXCOORD2;
     float3 normal : TEXCOORD3;
     float2 material : TEXCOORD4;
+    float2 uv : TEXCOORD5;
 };
 
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
@@ -75,6 +80,7 @@ VertexOutput vertex_main(VertexInput input) {
     output.kind = input.kind;
     output.normal = input.normal;
     output.material = input.material;
+    output.uv = input.uv;
     return output;
 }
 
@@ -105,6 +111,7 @@ VertexOutput shadow_vertex(VertexInput input) {
     output.kind = 0;
     output.normal = float3(0, 1, 0);
     output.material = 0;
+    output.uv = 0;
     return output;
 }
 
@@ -115,12 +122,19 @@ float4 shadow_fragment(VertexOutput input) : SV_Target {
 
 float3 shade_imported_material(VertexOutput input) {
     float3 base_color = input.color.rgb;
+    if (input.kind > 6.5 && input.kind < 7.5) {
+        float4 paint = vehicle_paint_atlas.Sample(
+            vehicle_paint_sampler,
+            float3(input.uv, input.material.y)
+        );
+        base_color = lerp(base_color, srgb_to_linear(paint.rgb), paint.a);
+    }
     float3 normal = normalize(input.normal);
     float3 sun_direction = normalize(push.sun.xyz);
     float3 view_direction = normalize(push.camera_position.xyz - input.world_position);
     float3 half_direction = normalize(sun_direction + view_direction);
-    float metallic = saturate(input.material.x);
-    float roughness = clamp(input.material.y, .04, 1.0);
+    float metallic = input.kind > 6.5 && input.kind < 7.5 ? 0 : saturate(input.material.x);
+    float roughness = input.kind > 6.5 && input.kind < 7.5 ? .04 : clamp(input.material.y, .04, 1.0);
 
     float direct = saturate(dot(normal, sun_direction));
     float sky = saturate(normal.y * .5 + .5);
@@ -497,7 +511,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
                    shade_foliage(input) :
                    (input.kind > 3.5 && input.kind < 4.5 ?
                     shade_road(input) :
-                    (input.kind > 4.5 && input.kind < 5.5 ?
+                    (input.kind > 4.5 && input.kind < 5.5 || input.kind > 6.5 && input.kind < 7.5 ?
                      shade_imported_material(input) : input.color.rgb))));
     return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), input.color.a);
 }

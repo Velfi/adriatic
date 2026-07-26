@@ -42,7 +42,7 @@ aircraft_wireframes_animate_flaps_and_propellers :: proc(t: ^testing.T) {
 valid_triangle_mesh :: proc(t: ^testing.T, mesh: ^$Mesh) {
     testing.expect(t, mesh.vertex_count > 0)
     testing.expect(t, mesh.triangle_count > 0)
-    testing.expect(t, mesh.vertex_count == mesh.triangle_count * 3)
+    testing.expect(t, mesh.vertex_count < mesh.triangle_count * 3)
     testing.expect(t, mesh.vertex_count < len(mesh.vertices))
     testing.expect(t, mesh.triangle_count < len(mesh.triangles))
     for triangle in vehicles.mesh_triangles(mesh) {
@@ -50,6 +50,15 @@ valid_triangle_mesh :: proc(t: ^testing.T, mesh: ^$Mesh) {
         testing.expect(t, int(triangle.b) < mesh.vertex_count)
         testing.expect(t, int(triangle.c) < mesh.vertex_count)
     }
+    uv_area := f32(0)
+    for triangle in vehicles.mesh_triangles(mesh) {
+        a := mesh.vertices[triangle.a].uv
+        b := mesh.vertices[triangle.b].uv
+        c := mesh.vertices[triangle.c].uv
+        testing.expect(t, a[0] >= 0 && a[0] <= 1 && a[1] >= 0 && a[1] <= 1)
+        uv_area += abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+    }
+    testing.expect(t, uv_area > .01)
 }
 
 triangle_normal :: proc(a, b, c: [3]f32) -> [3]f32 {
@@ -93,6 +102,36 @@ ring_mesh_winds_sides_and_caps_outward :: proc(t: ^testing.T) {
             mesh.vertices[rear_triangle.c].position,
         )
         testing.expect(t, rear_normal[2] > 0)
+    }
+}
+
+@(test)
+section_mesh_winds_sides_and_caps_outward :: proc(t: ^testing.T) {
+    mesh: vehicles.Aircraft_Mesh
+    sections := [2]vehicles.Mesh_Section {
+        {-1, -1, 1, .1},
+        {1, -1, 1, .1},
+    }
+    vehicles.add_section_mesh(&mesh, sections[:], 0, .Wing)
+
+    expected_axes := [12][2]int {
+        {1, -1}, {1, -1},
+        {1, 1}, {1, 1},
+        {2, 1}, {2, 1},
+        {2, -1}, {2, -1},
+        {0, -1}, {0, -1},
+        {0, 1}, {0, 1},
+    }
+    testing.expect(t, mesh.triangle_count == len(expected_axes))
+    for triangle_index in 0 ..< mesh.triangle_count {
+        triangle := mesh.triangles[triangle_index]
+        normal := triangle_normal(
+            mesh.vertices[triangle.a].position,
+            mesh.vertices[triangle.b].position,
+            mesh.vertices[triangle.c].position,
+        )
+        expected := expected_axes[triangle_index]
+        testing.expect(t, normal[expected[0]] * f32(expected[1]) > 0)
     }
 }
 

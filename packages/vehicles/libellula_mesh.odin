@@ -711,6 +711,14 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
         libellula_add_dynamic_beam(mesh, upper, sag, .018, part, cable_groups[index][0])
         libellula_add_dynamic_beam(mesh, sag, lower, .018, part, cable_groups[index][1])
     }
+    mesh_finalize(
+        mesh,
+        &libellula_mesh_cache,
+        libellula_uvs[:],
+        libellula_sources[:],
+        libellula_indices[:],
+        libellula_scratch[:],
+    )
 }
 
 libellula_mesh :: proc(allocator := context.allocator) -> Libellula_Mesh {
