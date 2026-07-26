@@ -16,9 +16,11 @@ jobs:
     runs-on: windows-latest
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
-      VCPKG_ROOT: C:\vcpkg
+      VCPKG_REF: a0400024711b283056538ac19ced80b91a83c24c
+      VCPKG_ROOT: ${{ github.workspace }}\.vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
-      VCPKG_BINARY_CACHE: ${{ github.workspace }}\.cache\vcpkg
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}\.cache\vcpkg\archives
+      VCPKG_DOWNLOADS: ${{ github.workspace }}\.cache\vcpkg\downloads
       ZELDA_ENGINE_REPOSITORY: ${{ vars.ZELDA_ENGINE_REPOSITORY || 'Velfi/zelda-engine' }}
       ZELDA_ENGINE_REF: ${{ vars.ZELDA_ENGINE_REF || 'main' }}
       ZELDA_ENGINE_ROOT: ${{ github.workspace }}\zelda-engine
@@ -27,6 +29,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.release_tag }}
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REF }}
+          path: .vcpkg
+          fetch-depth: 0
 
       - name: Check out Zelda Engine
         uses: actions/checkout@v6
@@ -40,6 +50,10 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: '& "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
 
       - name: Cache pinned tools
         id: tools-cache
@@ -72,21 +86,34 @@ jobs:
           path: .tools
           key: ${{ steps.tools-cache.outputs.cache-primary-key }}
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - name: Restore vcpkg caches
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
-            C:\vcpkg\installed
             ${{ env.VCPKG_BINARY_CACHE }}
-          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v1-${{ hashFiles('vcpkg.json') }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v2-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v2-${{ hashFiles('vcpkg.json') }}-
 
       - name: Install Windows dependencies
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path $env:VCPKG_BINARY_CACHE | Out-Null
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
           $env:VCPKG_BINARY_SOURCES = "clear;files,$env:VCPKG_BINARY_CACHE,readwrite"
           & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet $env:VCPKG_DEFAULT_TRIPLET --x-install-root "$env:VCPKG_ROOT\installed"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }
+
+      - name: Save vcpkg caches
+        if: always() && steps.vcpkg-cache.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Package Windows app
         shell: pwsh
