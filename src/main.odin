@@ -4933,26 +4933,25 @@ hot_state_header_valid :: proc(header: ^Hot_State_File_Header, payload_size: int
 hot_state_save :: proc(editor: ^Editor, path: string) -> bool {
     if editor == nil || path == "" do return false
 
-    saved_mesh := editor.libellula_visual_mesh
-    saved_faces := editor.libellula_projected_faces
-    saved_dialogue := editor.attendant_dialogue
-    saved_dialogue_open := editor.attendant_dialogue_open
-    defer {
-        editor.libellula_visual_mesh = saved_mesh
-        editor.libellula_projected_faces = saved_faces
-        editor.attendant_dialogue = saved_dialogue
-        editor.attendant_dialogue_open = saved_dialogue_open
-    }
+    state := editor^
+    state.pilot.vehicle = nil
+    state.car.driver = nil
+    state.car_physics_world = nil
+    state.car_physics_vehicle = nil
+    state.engine_audio.stream = nil
+    state.postale.vehicle.driver = nil
+    state.libellula.vehicle.driver = nil
+    for &slot in state.aircraft.slots do slot.vehicle = nil
 
     // These values belong to the loaded dylib or the GPU. Never preserve their
     // pointers across an unload. Canvas textures live in the host-owned canvas
     // state and are intentionally serialized with the editor.
-    editor.libellula_visual_mesh = {}
-    editor.libellula_projected_faces = {}
-    editor.attendant_dialogue = {}
-    editor.attendant_dialogue_open = false
+    state.libellula_visual_mesh = {}
+    state.libellula_projected_faces = {}
+    state.attendant_dialogue = {}
+    state.attendant_dialogue_open = false
 
-    payload := hs.serialize(editor, {.Dynamics}, context.allocator)
+    payload := hs.serialize(&state, {.Dynamics}, context.allocator)
     defer delete(payload)
     if len(payload) == 0 do return false
 

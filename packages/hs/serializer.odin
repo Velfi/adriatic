@@ -678,6 +678,14 @@ deserialize_raw :: proc(
                 return saved_type.identical
             }
 
+            // Opaque raw pointers have no element metadata and cannot cross a
+            // module unload. Treat them as transient instead of dereferencing
+            // foreign runtime state.
+            if v.elem == nil {
+                saved_type.identical = false
+                return saved_type.identical
+            }
+
             // rehydrate to local variable (don't modify source)
             elem_src := raw_src^ + header.data_base
 
@@ -867,6 +875,11 @@ munch :: proc(bytes: ^[dynamic]byte, bytes_start, index: int, type: ^rt.Type_Inf
         case rt.Type_Info_Pointer:
             raw := (^rawptr)(ptr)
             if raw^ == nil do continue
+
+            if info.elem == nil {
+                raw^ = nil
+                continue
+            }
 
             mark := len(bytes)
             local := raw^
