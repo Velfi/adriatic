@@ -475,7 +475,11 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
     length := f32(math.sqrt(f64(dx * dx + dz * dz)))
     if length <= .01 do return
     center := third_person.Vec3{(segment.a.x + segment.b.x) * .5, .18, (segment.a.z + segment.b.z) * .5}
-    yaw := math.atan2(dx, dz)
+    // world_box_rotated's local +Z axis becomes {-sin(yaw), cos(yaw)}.
+    // Negate dx so the rendered body follows the segment centerline instead
+    // of mirroring diagonal jetties across the world Z axis.
+    yaw := math.atan2(-dx, dz)
+    side_x, side_z := dz / length, -dx / length
     color := rl.Color{132, 105, 72, 255}
     height := f32(.42)
     switch segment.kind {
@@ -552,11 +556,11 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
             x := segment.a.x + dx * t
             z := segment.a.z + dz * t
             offset := index & 1 == 0 ? f32(-.28) : f32(.24)
-            side_x := math.cos(yaw) * offset
-            side_z := -math.sin(yaw) * offset
+            crown_x := side_x * offset
+            crown_z := side_z * offset
             shade := index % 3 == 0 ? rl.Color{151, 145, 125, 255} : rl.Color{132, 130, 116, 255}
             world_box_rotated(
-                {x + side_x, center.y + height * .5 + .10, z + side_z},
+                {x + crown_x, center.y + height * .5 + .10, z + crown_z},
                 {segment.width * .72, .24 + f32(index & 1) * .10, max(length / f32(steps) + .35, .8)},
                 yaw + (index & 1 == 0 ? f32(-.05) : f32(.04)),
                 shade,
@@ -580,7 +584,7 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
             along_z := segment.a.z + dz * t
             lateral_roll := markov_marina_breakwater_random(seed ~ 0x68bc21eb)
             lateral := (lateral_roll * 2 - 1) * segment.width * .48
-            side_x, side_z := math.cos(yaw) * lateral, -math.sin(yaw) * lateral
+            stone_x, stone_z := side_x * lateral, side_z * lateral
             toe_fraction := abs(lateral) / max(segment.width * .48, f32(.01))
             size_class_roll := markov_marina_breakwater_random(seed ~ 0x02e5be93)
             size_roll := markov_marina_breakwater_random(seed ~ 0x7f4a7c15)
@@ -599,8 +603,8 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
             rock_depth := rock_scale * (1.18 - aspect_roll * .35) * (.88 + depth_roll * .30)
             rock_height := .38 + rock_scale * (.24 + height_roll * .22)
             world_formation({
-                center_x = along_x + side_x,
-                center_z = along_z + side_z,
+                center_x = along_x + stone_x,
+                center_z = along_z + stone_z,
                 width    = rock_width,
                 depth    = rock_depth,
                 base_y   = .18 + (1 - toe_fraction) * .25,
