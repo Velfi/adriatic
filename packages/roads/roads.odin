@@ -248,7 +248,8 @@ remove_node :: proc(graph: ^Graph, index: int) -> bool {
     return true
 }
 
-edge_point :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
+@(no_instrumentation)
+edge_point :: #force_inline proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
     if graph == nil || edge.from < 0 || edge.to < 0 || edge.from >= graph.node_count || edge.to >= graph.node_count {
         return {}
     }

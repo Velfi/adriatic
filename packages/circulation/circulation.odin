@@ -56,7 +56,8 @@ plan_add :: proc(plan: ^Plan, area: Area) -> int {
     return index
 }
 
-area_local_point :: proc(area: Area, x, z: f32) -> (local_x, local_z: f32) {
+@(no_instrumentation)
+area_local_point :: #force_inline proc(area: Area, x, z: f32) -> (local_x, local_z: f32) {
     dx, dz := x - area.center_x, z - area.center_z
     cosine, sine := math.cos(area.rotation), math.sin(area.rotation)
     return dx * cosine + dz * sine, -dx * sine + dz * cosine
@@ -67,7 +68,8 @@ area_contains :: proc(area: Area, x, z: f32) -> bool {
     return math.abs(local_x) <= area.width * .5 && math.abs(local_z) <= area.length * .5
 }
 
-area_distance :: proc(area: Area, x, z: f32) -> f32 {
+@(no_instrumentation)
+area_distance :: #force_inline proc(area: Area, x, z: f32) -> f32 {
     local_x, local_z := area_local_point(area, x, z)
     outside_x := max(math.abs(local_x) - area.width * .5, f32(0))
     outside_z := max(math.abs(local_z) - area.length * .5, f32(0))

@@ -48,17 +48,20 @@ load_consumer_shader :: proc(
     )
 }
 
-to_color :: proc(c: Color) -> [4]f32 { return {f32(c.r) / 255, f32(c.g) / 255, f32(c.b) / 255, f32(c.a) / 255} }
+@(no_instrumentation)
+to_color :: #force_inline proc(c: Color) -> [4]f32 { return {f32(c.r) / 255, f32(c.g) / 255, f32(c.b) / 255, f32(c.a) / 255} }
 
 srgb_channel_to_linear :: proc(channel: u8) -> f32 {
     c := f32(channel) / 255
     if c <= 0.04045 do return c / 12.92
     return math.pow((c + 0.055) / 1.055, 2.4)
 }
-transform :: proc(p: Vector2) -> Vector2 {if !state.camera_active do return p; c := state.camera
+@(no_instrumentation)
+transform :: #force_inline proc(p: Vector2) -> Vector2 {if !state.camera_active do return p; c := state.camera
     return {(p.x - c.target.x) * c.zoom + c.offset.x, (p.y - c.target.y) * c.zoom + c.offset.y}}
 
-append_batch :: proc(first, count: u32, texture: int, hatch := HATCH_DISABLED, effect := Effect_Payload{}) {
+@(no_instrumentation)
+append_batch :: #force_inline proc(first, count: u32, texture: int, hatch := HATCH_DISABLED, effect := Effect_Payload{}) {
     if len(state.batches) > 0 {
         last := &state.batches[len(state.batches) - 1]
         if last.texture == texture &&
@@ -80,7 +83,8 @@ append_batch :: proc(first, count: u32, texture: int, hatch := HATCH_DISABLED, e
         clip_enabled = state.clip_enabled,
         clip         = state.clip,
     })}
-quad :: proc(
+@(no_instrumentation)
+quad :: #force_inline proc(
     a, b, c, d: Vector2,
     color: Color,
     uv0 := Vector2{},
@@ -333,7 +337,9 @@ ReloadShaders :: proc() -> bool {
 
 backend_init :: proc() -> bool {
     if !render2d.descriptor_valid(state.renderer_descriptor) do return false
-    ctx := &state.ctx; if !engine.vk_context_init(ctx, state.window, state.width, state.height, .7, true) do return false
+    ctx := &state.ctx
+    vsync_enabled := .VSYNC_HINT in state.config_flags
+    if !engine.vk_context_init(ctx, state.window, state.width, state.height, .7, true, vsync_enabled) do return false
     if !resources.depth_create(ctx, ctx.swapchain_extent.width, ctx.swapchain_extent.height, &state.depth) do return false
     state.vertices = make(
         [dynamic]Vertex,

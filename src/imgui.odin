@@ -122,7 +122,8 @@ imgui_init :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
     return true
 }
 
-imgui_add_key :: proc(key: im.Key, canvas_key: rl.KeyboardKey) {
+@(no_instrumentation)
+imgui_add_key :: #force_inline proc(key: im.Key, canvas_key: rl.KeyboardKey) {
     im.IO_AddKeyEvent(imgui.io, key, rl.IsKeyDown(canvas_key))
 }
 

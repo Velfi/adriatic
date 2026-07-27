@@ -312,11 +312,17 @@ world_water_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Col
     return {{point.x, point.y, point.z}, world_color(color), .Water, {0, 1, 0}, {}, {}}
 }
 
-world_foliage_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
+@(no_instrumentation)
+world_foliage_vertex :: #force_inline proc(
+    point: third_person.Vec3,
+    color: rl.Color,
+    normal: third_person.Vec3,
+) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Foliage, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
-world_eye_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
+@(no_instrumentation)
+world_eye_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Eye, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
@@ -395,7 +401,11 @@ world_aircraft_triangle_smooth :: #force_inline proc(
     append(&world_renderer.vertices, ..vertices[:])
 }
 
-world_triangle_colored :: proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
+@(no_instrumentation)
+world_triangle_colored :: #force_inline proc(
+    a, b, c: third_person.Vec3,
+    color_a, color_b, color_c: rl.Color,
+) {
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c))
 }
@@ -496,7 +506,8 @@ world_greek_assets :: proc(editor: ^Editor) {
     }
 }
 
-world_triangle_foliage :: proc(
+@(no_instrumentation)
+world_triangle_foliage :: #force_inline proc(
     a, b, c: third_person.Vec3,
     color_a, color_b, color_c: rl.Color,
     normal_a, normal_b, normal_c: third_person.Vec3,
@@ -510,7 +521,8 @@ world_triangle_foliage :: proc(
     )
 }
 
-world_quad :: proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
+@(no_instrumentation)
+world_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
     world_triangle(a, b, c, color)
     world_triangle(a, c, d, color)
 }
@@ -1017,7 +1029,8 @@ world_infrastructure :: proc(editor: ^Editor) {
     }
 }
 
-formation_face_color :: proc(base: rl.Color, angle: f32, layer: int) -> rl.Color {
+@(no_instrumentation)
+formation_face_color :: #force_inline proc(base: rl.Color, angle: f32, layer: int) -> rl.Color {
     light := math.cos(angle) * -.45 + math.sin(angle) * -.30
     if base.r > 175 && base.g > 165 && base.b > 135 {
         // Adriatic limestone is pale and cool, with stronger facet separation
@@ -1039,7 +1052,8 @@ formation_face_color :: proc(base: rl.Color, angle: f32, layer: int) -> rl.Color
     }
 }
 
-world_rotate_xz :: proc(center_x, center_z, x, z, rotation: f32) -> (f32, f32) {
+@(no_instrumentation)
+world_rotate_xz :: #force_inline proc(center_x, center_z, x, z, rotation: f32) -> (f32, f32) {
     cosine, sine := math.cos(rotation), math.sin(rotation)
     return center_x + x * cosine - z * sine, center_z + x * sine + z * cosine
 }
@@ -4024,6 +4038,7 @@ small_rock_template_distance :: proc(a, b: ^Small_Rock_Template) -> f32 {
     return distance
 }
 
+@(no_instrumentation)
 world_small_rock_templates_init :: proc() {
     if small_rock_templates_ready do return
     candidates: [SMALL_ROCK_CANDIDATE_COUNT]Small_Rock_Template
@@ -4247,6 +4262,7 @@ world_small_voronoi_formation :: proc(structure: terrain.Structure) {
     }
 }
 
+@(no_instrumentation)
 world_formation_sea_vegetation_band :: proc(structure: terrain.Structure, project: ^terrain.Project) {
     if project == nil || structure.base_y > project.sea_level + .04 do return
 
@@ -4834,7 +4850,8 @@ world_wildflower_lab :: proc() {
     }
 }
 
-world_foliage_vertex_color :: proc(ring, variation: int) -> rl.Color {
+@(no_instrumentation)
+world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Color {
     // Six broad Adriatic vegetation families: cypress, laurel, sunlit olive,
     // myrtle, silver olive, and warm Mediterranean scrub. Keeping each family
     // coherent from root pocket to crown gives the world postcard-scale color
@@ -4923,7 +4940,8 @@ world_foliage_vertex_color :: proc(ring, variation: int) -> rl.Color {
     return {78, 112, 53, 255}
 }
 
-world_foliage_clump_color :: proc(ring, variation: int, clump: f32) -> rl.Color {
+@(no_instrumentation)
+world_foliage_clump_color :: #force_inline proc(ring, variation: int, clump: f32) -> rl.Color {
     // Extend the ring palette with a clump-aligned temperature and value shift.
     // Troughs between the rounded bunches sink into a cooler, lower-value
     // pocket -- soft painted ambient occlusion in the crevices -- while the
@@ -6345,7 +6363,8 @@ world_formation_foliage :: proc(structure: terrain.Structure) {
     }
 }
 
-world_architecture_cypress_surface_color :: proc(
+@(no_instrumentation)
+world_architecture_cypress_surface_color :: #force_inline proc(
     base: rl.Color,
     angle, progress: f32,
     ring: int,
@@ -9054,7 +9073,8 @@ Mouse_Skin_Vertex :: struct {
     color:         rl.Color,
 }
 
-mouse_skin_vertex :: proc(vertex: Mouse_Skin_Vertex, skeleton: ^[5]Mouse_Bone_Pose) -> third_person.Vec3 {
+@(no_instrumentation)
+mouse_skin_vertex :: #force_inline proc(vertex: Mouse_Skin_Vertex, skeleton: ^[5]Mouse_Bone_Pose) -> third_person.Vec3 {
     skinned: third_person.Vec3
     weight_sum: f32
     for group in vertex.groups {
@@ -9258,7 +9278,11 @@ world_mouse_skinned_hull :: proc(
     }
 }
 
-mouse_ear_world_point :: proc(origin, center: third_person.Vec3, rotation, yaw, x, y, z: f32) -> third_person.Vec3 {
+@(no_instrumentation)
+mouse_ear_world_point :: #force_inline proc(
+    origin, center: third_person.Vec3,
+    rotation, yaw, x, y, z: f32,
+) -> third_person.Vec3 {
     cosine, sine := math.cos(yaw), math.sin(yaw)
     local_x := center.x + x * cosine + z * sine
     local_z := center.z - x * sine + z * cosine - y * .20
@@ -9768,7 +9792,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         p.y += mouse_surface_height(editor, p.x, p.z) - raw_height
     }
     rotation := model.rotation
-    local_point :: proc(origin: third_person.Vec3, rotation, x, y, z: f32) -> third_person.Vec3 {
+    @(no_instrumentation)
+    local_point :: #force_inline proc(origin: third_person.Vec3, rotation, x, y, z: f32) -> third_person.Vec3 {
         world_x, world_z := world_rotate_xz(origin.x, origin.z, x, z, rotation)
         return {world_x, origin.y + y, world_z}
     }

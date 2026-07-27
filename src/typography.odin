@@ -34,6 +34,7 @@ ui_draw_text :: proc(role: Ui_Typography_Role, text: cstring, position: rl.Vecto
     rl.DrawTextEx(rl.Font{}, text, position, max(ui_typography_size(role), UI_TYPOGRAPHY_MIN_SIZE), spacing, color)
 }
 
-ui_measure_text :: proc(role: Ui_Typography_Role, text: cstring, spacing: f32) -> rl.Vector2 {
+@(no_instrumentation)
+ui_measure_text :: #force_inline proc(role: Ui_Typography_Role, text: cstring, spacing: f32) -> rl.Vector2 {
     return rl.MeasureTextEx(rl.Font{}, text, max(ui_typography_size(role), UI_TYPOGRAPHY_MIN_SIZE), spacing)
 }

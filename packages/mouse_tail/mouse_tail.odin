@@ -73,7 +73,8 @@ reset :: proc(state: ^State, root, backward: third_person.Vec3, config: Config) 
     state.initialized = true
 }
 
-constrain_distance :: proc(a, b: ^Point, target, a_weight, b_weight: f32) {
+@(no_instrumentation)
+constrain_distance :: #force_inline proc(a, b: ^Point, target, a_weight, b_weight: f32) {
     delta := b.position - a.position
     distance_squared := linalg.dot(delta, delta)
     if distance_squared <= .0000001 do return
@@ -85,7 +86,8 @@ constrain_distance :: proc(a, b: ^Point, target, a_weight, b_weight: f32) {
     b.position -= correction * (b_weight / weight_sum)
 }
 
-constrain_bend :: proc(a, b: ^Point, target, stiffness: f32, a_fixed: bool) {
+@(no_instrumentation)
+constrain_bend :: #force_inline proc(a, b: ^Point, target, stiffness: f32, a_fixed: bool) {
     delta := b.position - a.position
     distance_squared := linalg.dot(delta, delta)
     if distance_squared <= .0000001 do return
@@ -123,7 +125,8 @@ resolve_terrain :: proc(point: ^Point, project: ^terrain.Project, radius, fricti
     if point.previous.y < point.position.y do point.previous.y = point.position.y
 }
 
-formation_is_solid :: proc(kind: terrain.Formation_Kind) -> bool {
+@(no_instrumentation)
+formation_is_solid :: #force_inline proc(kind: terrain.Formation_Kind) -> bool {
     switch kind {
     case .Foliage:
         return false
@@ -133,7 +136,8 @@ formation_is_solid :: proc(kind: terrain.Formation_Kind) -> bool {
     return false
 }
 
-resolve_structure :: proc(point: ^Point, structure: terrain.Structure, radius, friction: f32) {
+@(no_instrumentation)
+resolve_structure :: #force_inline proc(point: ^Point, structure: terrain.Structure, radius, friction: f32) {
     if !formation_is_solid(structure.kind) do return
     cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
     dx, dz := point.position.x - structure.center_x, point.position.z - structure.center_z

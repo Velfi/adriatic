@@ -33,7 +33,8 @@ Specifications :: struct {
     engine_power_kw:     f32,
 }
 
-specifications :: proc(class: Class) -> Specifications {
+@(no_instrumentation)
+specifications :: #force_inline proc(class: Class) -> Specifications {
     switch class {
     case .Dinghy:
         // A small rigid-hulled harbor tender for one or two mice.
@@ -101,7 +102,8 @@ triangles :: proc(mesh: ^Mesh) -> []Triangle {
     return mesh.triangles[:mesh.triangle_count]
 }
 
-triangle :: proc(mesh: ^Mesh, a, b, c: [3]f32, part: Part) {
+@(no_instrumentation)
+triangle :: #force_inline proc(mesh: ^Mesh, a, b, c: [3]f32, part: Part) {
     if mesh == nil || mesh.vertex_count + 3 > len(mesh.vertices) || mesh.triangle_count >= len(mesh.triangles) {
         return
     }
@@ -114,7 +116,8 @@ triangle :: proc(mesh: ^Mesh, a, b, c: [3]f32, part: Part) {
     mesh.triangle_count += 1
 }
 
-quad :: proc(mesh: ^Mesh, a, b, c, d: [3]f32, part: Part) {
+@(no_instrumentation)
+quad :: #force_inline proc(mesh: ^Mesh, a, b, c, d: [3]f32, part: Part) {
     triangle(mesh, a, b, c, part)
     triangle(mesh, a, c, d, part)
 }

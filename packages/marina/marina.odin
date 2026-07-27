@@ -192,11 +192,13 @@ Plan :: struct {
     valid:                     bool,
 }
 
-cell_index :: proc(x, z: int) -> int {
+@(no_instrumentation)
+cell_index :: #force_inline proc(x, z: int) -> int {
     return z * GRID_WIDTH + x
 }
 
-cell :: proc(plan: ^Plan, x, z: int) -> Cell {
+@(no_instrumentation)
+cell :: #force_inline proc(plan: ^Plan, x, z: int) -> Cell {
     if plan == nil || x < 0 || x >= GRID_WIDTH || z < 0 || z >= GRID_HEIGHT do return .Water
     return plan.cells[cell_index(x, z)]
 }

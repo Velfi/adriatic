@@ -13,7 +13,8 @@ LIBELLULA_REAR_HUB :: [3]f32{0, 1.17, 4.5425625}
 LIBELLULA_CENTROID :: [3]f32{0, 1.17, .8475208}
 LIBELLULA_SUSPENSION_CENTER_Z :: f32(1.8475208)
 LIBELLULA_CARRIAGE_OFFSET :: [3]f32{0, -1.1, 1.6475208}
-libellula_axis_basis :: proc(axis: [3]f32) -> (n, tangent, bitangent: [3]f32) {
+@(no_instrumentation)
+libellula_axis_basis :: #force_inline proc(axis: [3]f32) -> (n, tangent, bitangent: [3]f32) {
     n = linalg.normalize0(axis)
     if linalg.dot(n, n) < .0000000001 do n = {0, 1, 0}
     reference := [3]f32{0, 1, 0}

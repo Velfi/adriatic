@@ -16,7 +16,8 @@ metrics_begin_frame :: proc(metrics: ^Metrics) {
     metrics.current = {}
 }
 
-metrics_record_draw :: proc(metrics: ^Metrics, count: u64 = 1) {
+@(no_instrumentation)
+metrics_record_draw :: #force_inline proc(metrics: ^Metrics, count: u64 = 1) {
     metrics.current.draw_calls += count
 }
 

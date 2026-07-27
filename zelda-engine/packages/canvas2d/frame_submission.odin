@@ -59,7 +59,8 @@ upload_dynamic_textures :: proc(ctx: ^engine.Vk_Context, frame: engine.Vk_Frame)
     }
 }
 
-batch_scissor_rect :: proc(batch: Batch, extent: vk.Extent2D) -> vk.Rect2D {
+@(no_instrumentation)
+batch_scissor_rect :: #force_inline proc(batch: Batch, extent: vk.Extent2D) -> vk.Rect2D {
     result := vk.Rect2D {
         extent = extent,
     }
@@ -79,7 +80,8 @@ batch_scissor_rect :: proc(batch: Batch, extent: vk.Extent2D) -> vk.Rect2D {
     return result
 }
 
-batch_push_constants :: proc(batch: ^Batch) -> Push {
+@(no_instrumentation)
+batch_push_constants :: #force_inline proc(batch: ^Batch) -> Push {
     push := Push {
         viewport      = {
             f32(state.width),

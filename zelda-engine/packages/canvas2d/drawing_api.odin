@@ -14,6 +14,15 @@ import resources "zelda_engine:render_resources"
 import ui "zelda_engine:ui"
 
 SetConfigFlags :: proc(flags: ConfigFlags) { state_ensure().config_flags = flags }
+SetVSyncEnabled :: proc(enabled: bool) {
+    canvas := state_ensure()
+    if enabled {
+        canvas.config_flags += {.VSYNC_HINT}
+    } else {
+        canvas.config_flags -= {.VSYNC_HINT}
+    }
+    engine.vk_set_vsync_enabled(&canvas.ctx, enabled)
+}
 InitWindow :: proc(width, height: i32, title: cstring) {
     state_ensure()
     if state.initialized {
@@ -100,7 +109,8 @@ DrawEffectQuad :: proc(bounds: Rectangle, color: Color, effect: Effect_Payload, 
     )
 }
 GetRenderMetrics :: proc() -> render2d.Frame_Metrics { return state.metrics.last }
-GetMousePosition :: proc() -> Vector2 { return state.mouse }
+@(no_instrumentation)
+GetMousePosition :: #force_inline proc() -> Vector2 { return state.mouse }
 GetWorldMousePosition :: proc() -> (position: Vector2, inside: bool) {
     if state.world_render_width == 0 || state.world_render_height == 0 {
         return state.mouse, true
@@ -135,7 +145,8 @@ IsMouseButtonDown :: proc(button: MouseButton) -> bool { assert(button != .COUNT
 IsMouseButtonReleased :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return(
         state.mouse_released[int(button)] \
     )}
-keyboard_key_scancodes :: proc(key: KeyboardKey) -> (primary, alternate: sdl.Scancode) {assert(key != .COUNT)
+@(no_instrumentation)
+keyboard_key_scancodes :: #force_inline proc(key: KeyboardKey) -> (primary, alternate: sdl.Scancode) {assert(key != .COUNT)
     switch key {
     case .ESCAPE:
         return .ESCAPE, .UNKNOWN
@@ -223,9 +234,11 @@ keyboard_key_scancodes :: proc(key: KeyboardKey) -> (primary, alternate: sdl.Sca
         unreachable()
     }
     unreachable()}
-IsKeyPressed :: proc(key: KeyboardKey) -> bool {primary, alternate := keyboard_key_scancodes(key)
+@(no_instrumentation)
+IsKeyPressed :: #force_inline proc(key: KeyboardKey) -> bool {primary, alternate := keyboard_key_scancodes(key)
     return state.keys_pressed[int(primary)] || alternate != .UNKNOWN && state.keys_pressed[int(alternate)]}
-IsKeyDown :: proc(key: KeyboardKey) -> bool {primary, alternate := keyboard_key_scancodes(key)
+@(no_instrumentation)
+IsKeyDown :: #force_inline proc(key: KeyboardKey) -> bool {primary, alternate := keyboard_key_scancodes(key)
     return state.keys_down[int(primary)] || alternate != .UNKNOWN && state.keys_down[int(alternate)]}
 gamepad_sdl_button :: proc(button: Gamepad_Button) -> sdl.GamepadButton {switch button {case .South:
         return .SOUTH; case .East:

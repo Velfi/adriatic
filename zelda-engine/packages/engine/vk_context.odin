@@ -168,6 +168,7 @@ Vk_Context :: struct {
     swapchain_supports_transfer_src: bool,
     initialized:                     bool,
     capture_enabled:                 bool,
+    vsync_enabled:                   bool,
     supports_debug_utils:            bool,
     debug_acquire_log_count:         u32,
     debug_present_log_count:         u32,
@@ -199,16 +200,33 @@ vk_record_device_loss :: proc(ctx: ^Vk_Context, stage: string) {
     }
 }
 
+vk_set_vsync_enabled :: proc(ctx: ^Vk_Context, enabled: bool) {
+    if ctx == nil || ctx.vsync_enabled == enabled do return
+    ctx.vsync_enabled = enabled
+    if ctx.initialized do ctx.needs_swapchain_recreate = true
+}
+
 vk_context_init :: proc(
     ctx: ^Vk_Context,
     window: ^sdl.Window,
     width, height: i32,
     configured_ceiling_fraction: f32,
     capture_enabled := false,
+    vsync_enabled := true,
 ) -> bool {
     ctx^ = {}
     ctx.capture_enabled = capture_enabled
-    log_info("vk_context_init: requested_size=", width, "x", height, " capture_enabled=", capture_enabled)
+    ctx.vsync_enabled = vsync_enabled
+    log_info(
+        "vk_context_init: requested_size=",
+        width,
+        "x",
+        height,
+        " capture_enabled=",
+        capture_enabled,
+        " vsync_enabled=",
+        vsync_enabled,
+    )
 
     if !sdl.Vulkan_LoadLibrary(nil) {
         log_error("vk_context_init: SDL Vulkan_LoadLibrary failed")

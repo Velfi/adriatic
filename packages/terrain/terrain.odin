@@ -674,7 +674,8 @@ Ground_Surface :: enum u8 {
 //   - the soil->grass blend above .9m resolves to Grass once grass dominates.
 // Ground at or below sea level is shoreline; it classifies as Sand because
 // vehicles only ever contact the beach edge there, never open water.
-classify_ground :: proc(material, height, sea_level: f32) -> Ground_Surface {
+@(no_instrumentation)
+classify_ground :: #force_inline proc(material, height, sea_level: f32) -> Ground_Surface {
     if height <= sea_level do return .Sand
     if material > .5 do return .Dirt
     elevation := height - sea_level
@@ -686,7 +687,8 @@ classify_ground :: proc(material, height, sea_level: f32) -> Ground_Surface {
 
 // ground_surface_at samples the classified ground under a world position. It is
 // the sampling counterpart to classify_ground for callers that hold a project.
-ground_surface_at :: proc(project: ^Project, level: int, x, z: f32) -> Ground_Surface {
+@(no_instrumentation)
+ground_surface_at :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> Ground_Surface {
     if project == nil do return .Grass
     return classify_ground(
         sample_material(project, level, x, z),

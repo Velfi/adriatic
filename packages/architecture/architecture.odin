@@ -155,7 +155,8 @@ architecture_identity :: proc(ctx: Architecture_Context, seed: u32) -> buildings
     return identity
 }
 
-architecture_resolve_legacy_identity :: proc(structure: terrain.Structure) -> buildings.Identity {
+@(no_instrumentation)
+architecture_resolve_legacy_identity :: #force_inline proc(structure: terrain.Structure) -> buildings.Identity {
     if structure.building.archetype != .Legacy do return structure.building
     return architecture_identity(
         {
@@ -275,13 +276,15 @@ architecture_color :: proc(seed: u32, landmark: bool = false) -> [4]u8 {
     return palette[int(seed % u32(len(palette)))]
 }
 
-architecture_roof_color :: proc(seed: u32, landmark: bool = false) -> [4]u8 {
+@(no_instrumentation)
+architecture_roof_color :: #force_inline proc(seed: u32, landmark: bool = false) -> [4]u8 {
     if landmark do return {177, 92, 63, 255}
     palette := [4][4]u8{{184, 93, 61, 255}, {196, 108, 68, 255}, {171, 82, 62, 255}, {201, 119, 72, 255}}
     return palette[int(seed % u32(len(palette)))]
 }
 
-architecture_roof_tile_color :: proc(seed: u32, tone: int) -> [4]u8 {
+@(no_instrumentation)
+architecture_roof_tile_color :: #force_inline proc(seed: u32, tone: int) -> [4]u8 {
     palette := [4][5][4]u8 {
         {{201, 105, 70, 255}, {177, 76, 52, 255}, {187, 86, 56, 255}, {181, 82, 54, 255}, {213, 117, 76, 255}},
         {{211, 116, 73, 255}, {185, 82, 54, 255}, {198, 96, 59, 255}, {191, 90, 57, 255}, {220, 130, 80, 255}},
@@ -293,7 +296,8 @@ architecture_roof_tile_color :: proc(seed: u32, tone: int) -> [4]u8 {
     return palette[int(seed % 4)][tone_index]
 }
 
-roof_style_for_seed :: proc(seed: u32) -> Roof_Style {
+@(no_instrumentation)
+roof_style_for_seed :: #force_inline proc(seed: u32) -> Roof_Style {
     switch int(seed % 4) {
     case 0:
         return .Gable
@@ -307,26 +311,30 @@ roof_style_for_seed :: proc(seed: u32) -> Roof_Style {
     return .Gable
 }
 
-facade_style_for_seed :: proc(seed: u32) -> int {
+@(no_instrumentation)
+facade_style_for_seed :: #force_inline proc(seed: u32) -> int {
     // A separate hash prevents roof and façade variants from becoming locked
     // together while keeping the same seed fully reproducible.
     return int((seed ~ 0x9e3779b9) % 4)
 }
 
-architecture_has_chimney :: proc(seed: u32) -> bool {
+@(no_instrumentation)
+architecture_has_chimney :: #force_inline proc(seed: u32) -> bool {
     // Keep chimneys sparse so they punctuate the block silhouette instead of
     // turning every roof into a repetitive row of stacks.
     return seed % 3 == 0
 }
 
-facade_floor_count :: proc(height: f32) -> int {
+@(no_instrumentation)
+facade_floor_count :: #force_inline proc(height: f32) -> int {
     // Reserve a ground-floor band for entrances and a smaller cornice band,
     // then fill the remaining façade at a human-scale floor pitch.
     usable_height := max(height - 8, f32(0))
     return clamp(int(math.floor(f64(usable_height / 4.8 + .0001))) + 1, 1, 16)
 }
 
-facade_window_row_y :: proc(height: f32, row: int) -> f32 {
+@(no_instrumentation)
+facade_window_row_y :: #force_inline proc(height: f32, row: int) -> f32 {
     rows := facade_floor_count(height)
     // Ground-floor openings use a stable human-scale sill instead of being
     // centered in the full wall. This is especially important for broad
@@ -339,7 +347,8 @@ facade_window_row_y :: proc(height: f32, row: int) -> f32 {
     return first_y + (last_y - first_y) * f32(clamped_row) / f32(rows - 1)
 }
 
-facade_column_count :: proc(width: f32) -> int {
+@(no_instrumentation)
+facade_column_count :: #force_inline proc(width: f32) -> int {
     // Use even column counts on broad entrance façades. An odd center column
     // sits directly behind the centered door on the ground floor, making a
     // three-column wide building read as only two windows with a blank bay.
@@ -348,15 +357,18 @@ facade_column_count :: proc(width: f32) -> int {
     return 2
 }
 
-facade_window_width :: proc(width: f32) -> f32 {
+@(no_instrumentation)
+facade_window_width :: #force_inline proc(width: f32) -> f32 {
     return clamp(width * .13, f32(1.6), f32(2.6))
 }
 
-facade_window_height :: proc(height: f32) -> f32 {
+@(no_instrumentation)
+facade_window_height :: #force_inline proc(height: f32) -> f32 {
     return clamp(height * .06, f32(2.2), f32(3.2))
 }
 
-facade_window_column_x :: proc(width: f32, column: int) -> f32 {
+@(no_instrumentation)
+facade_window_column_x :: #force_inline proc(width: f32, column: int) -> f32 {
     columns := facade_column_count(width)
     window_width := facade_window_width(width)
     if columns % 2 == 0 {
@@ -559,12 +571,14 @@ architecture_frontage_rotation :: proc(tangent_x, tangent_z, frontage_side: f32)
     return rotation
 }
 
-bougainvillea_maturity :: proc(growth_density: f32) -> f32 {
+@(no_instrumentation)
+bougainvillea_maturity :: #force_inline proc(growth_density: f32) -> f32 {
     maturity := clamp((growth_density - .035) / (.72 - .035), 0, 1)
     return maturity * maturity * (3 - 2 * maturity)
 }
 
-bougainvillea_palette :: proc(seed: u32) -> int {
+@(no_instrumentation)
+bougainvillea_palette :: #force_inline proc(seed: u32) -> int {
     // Structure and vine seeds advance through related arithmetic sequences;
     // mix distant bits before selecting a palette so neighboring plants do
     // not become locked to one flower color.
@@ -572,7 +586,8 @@ bougainvillea_palette :: proc(seed: u32) -> int {
     return int(mixed % 3)
 }
 
-bougainvillea_training_habit :: proc(seed: u32) -> int {
+@(no_instrumentation)
+bougainvillea_training_habit :: #force_inline proc(seed: u32) -> int {
     // Alternate between a balanced wall fan and a dominant wind-swept leader.
     // Hashing avoids locking habit to palette or neighboring seed sequences.
     mixed := city_hash(int(seed & 0x0000ffff), int(seed >> 16), seed ~ 0x6d2b79f5)
@@ -583,11 +598,13 @@ bougainvillea_training_habit :: proc(seed: u32) -> int {
 // even split between planter-rooted and direct-soil plants.
 BOUGAINVILLEA_VALIDATION_SEEDS :: [6]u32{2, 15, 0, 4, 12, 8}
 
-bougainvillea_planter_rooted :: proc(seed: u32) -> bool {
+@(no_instrumentation)
+bougainvillea_planter_rooted :: #force_inline proc(seed: u32) -> bool {
     return seed % 3 != 0
 }
 
-bougainvillea_flower_tile_base :: proc(palette: int) -> int {
+@(no_instrumentation)
+bougainvillea_flower_tile_base :: #force_inline proc(palette: int) -> int {
     switch ((palette % 3) + 3) % 3 {
     case 0:
         return 8 // magenta
@@ -611,7 +628,8 @@ bougainvillea_bract_color :: proc(palette: int) -> [4]u8 {
     return {213, 65, 132, 255}
 }
 
-bougainvillea_bract_value :: proc(maturity, node_fraction: f32, variation: int) -> f32 {
+@(no_instrumentation)
+bougainvillea_bract_value :: #force_inline proc(maturity, node_fraction: f32, variation: int) -> f32 {
     // Protected, older bracts sit deeper in value while fresh terminal growth
     // catches more light. Keep the range narrow enough to preserve palette
     // identity and the source atlas's internal painted shading.
@@ -621,7 +639,8 @@ bougainvillea_bract_value :: proc(maturity, node_fraction: f32, variation: int) 
     return clamp(.895 + age_gradient * .075 + maturity_lift + variation_lift, .895, 1.01)
 }
 
-bougainvillea_active_branch_count :: proc(maturity: f32, available_branches: int) -> int {
+@(no_instrumentation)
+bougainvillea_active_branch_count :: #force_inline proc(maturity: f32, available_branches: int) -> int {
     if available_branches <= 0 do return 0
     return min(2 + int(clamp(maturity, 0, 1) * 4.0 + .5), available_branches)
 }
@@ -631,17 +650,20 @@ bougainvillea_thorn_count :: proc(maturity: f32, available_nodes: int) -> int {
     return min(1 + int((clamp(maturity, 0, 1) - .38) * 5.0), available_nodes)
 }
 
-bougainvillea_fallen_bract_count :: proc(maturity: f32) -> int {
+@(no_instrumentation)
+bougainvillea_fallen_bract_count :: #force_inline proc(maturity: f32) -> int {
     if maturity <= .62 do return 0
     return min(2 + int((clamp(maturity, 0, 1) - .62) * 8.0), 5)
 }
 
-bougainvillea_cascade_count :: proc(maturity: f32) -> int {
+@(no_instrumentation)
+bougainvillea_cascade_count :: #force_inline proc(maturity: f32) -> int {
     if maturity <= .56 do return 0
     return maturity < .84 ? 1 : 2
 }
 
-bougainvillea_secondary_leader_strength :: proc(maturity: f32) -> f32 {
+@(no_instrumentation)
+bougainvillea_secondary_leader_strength :: #force_inline proc(maturity: f32) -> f32 {
     strength := clamp((maturity - .46) / .34, 0, 1)
     return strength * strength * (3 - 2 * strength)
 }
@@ -652,7 +674,8 @@ bougainvillea_woody_compliance :: proc(maturity: f32) -> f32 {
     return 1 - clamp(maturity, 0, 1) * .86
 }
 
-bougainvillea_detail_tier :: proc(camera_distance: f32) -> int {
+@(no_instrumentation)
+bougainvillea_detail_tier :: #force_inline proc(camera_distance: f32) -> int {
     // Preserve the trained silhouette throughout the city, but reserve tiny
     // bark, support, and layered-card details for distances where they occupy
     // meaningful screen area.
@@ -661,14 +684,16 @@ bougainvillea_detail_tier :: proc(camera_distance: f32) -> int {
     return 0
 }
 
-bougainvillea_crown_detail_fade :: proc(camera_distance: f32) -> f32 {
+@(no_instrumentation)
+bougainvillea_crown_detail_fade :: #force_inline proc(camera_distance: f32) -> f32 {
     // Secondary card layers are fully present through the middle distance,
     // then contract smoothly before the far silhouette-only tier begins.
     fade := clamp((112 - camera_distance) / 24, 0, 1)
     return fade * fade * (3 - 2 * fade)
 }
 
-bougainvillea_branch_flowering :: proc(maturity, node_fraction: f32, seed: u32, branch_index: int) -> bool {
+@(no_instrumentation)
+bougainvillea_branch_flowering :: #force_inline proc(maturity, node_fraction: f32, seed: u32, branch_index: int) -> bool {
     clamped_maturity := clamp(maturity, 0, 1)
     bloom_threshold := .82 - clamped_maturity * .26
     if clamped_maturity <= .16 || node_fraction <= bloom_threshold do return false
@@ -687,7 +712,8 @@ bougainvillea_branch_flowering :: proc(maturity, node_fraction: f32, seed: u32, 
     return int(mixed % 5) < bloom_slots
 }
 
-bougainvillea_basal_shoot_count :: proc(maturity: f32) -> int {
+@(no_instrumentation)
+bougainvillea_basal_shoot_count :: #force_inline proc(maturity: f32) -> int {
     if maturity <= .34 do return 0
     return maturity < .78 ? 1 : 2
 }
@@ -697,7 +723,8 @@ bougainvillea_pruned_stub_count :: proc(maturity: f32) -> int {
     return min(1 + int((clamp(maturity, 0, 1) - .52) * 5.0), 3)
 }
 
-bougainvillea_root_attachment_x :: proc(structure: terrain.Structure, preferred_x: f32, seed: u32) -> f32 {
+@(no_instrumentation)
+bougainvillea_root_attachment_x :: #force_inline proc(structure: terrain.Structure, preferred_x: f32, seed: u32) -> f32 {
     if structure.kind != .Architecture do return preferred_x
     // Keep the planter or soil pocket outside the central entrance and its
     // immediate approach. Preserve the painted side preference whenever it is
@@ -713,7 +740,8 @@ bougainvillea_root_attachment_x :: proc(structure: terrain.Structure, preferred_
     return clamp(resolved, -structure.width * .58, structure.width * .58)
 }
 
-bougainvillea_height_fraction :: proc(maturity: f32) -> f32 {
+@(no_instrumentation)
+bougainvillea_height_fraction :: #force_inline proc(maturity: f32) -> f32 {
     return .24 + clamp(maturity, 0, 1) * .60
 }
 
@@ -735,7 +763,8 @@ bougainvillea_density_at_structure :: proc(
     return density_sum / 5
 }
 
-bougainvillea_laundry_conflict :: proc(structure: terrain.Structure, growth_density, line_world_y: f32) -> bool {
+@(no_instrumentation)
+bougainvillea_laundry_conflict :: #force_inline proc(structure: terrain.Structure, growth_density, line_world_y: f32) -> bool {
     if structure.kind != .Architecture || growth_density < .035 do return false
     maturity := bougainvillea_maturity(growth_density)
     if maturity <= .16 do return false
@@ -751,7 +780,8 @@ bougainvillea_laundry_conflict :: proc(structure: terrain.Structure, growth_dens
     return line_world_y >= crown_floor && line_world_y - laundry_drop <= crown_ceiling
 }
 
-bougainvillea_laundry_span_conflict :: proc(
+@(no_instrumentation)
+bougainvillea_laundry_span_conflict :: #force_inline proc(
     structure: terrain.Structure,
     growth_density, line_world_y, start_x, start_z, finish_x, finish_z: f32,
 ) -> bool {
@@ -895,7 +925,8 @@ Architecture_Footprint :: struct {
     count:  int,
 }
 
-architecture_footprint :: proc(structure: terrain.Structure) -> Architecture_Footprint {
+@(no_instrumentation)
+architecture_footprint :: #force_inline proc(structure: terrain.Structure) -> Architecture_Footprint {
     result: Architecture_Footprint
     result.masses[0] = {0, 0, structure.width, structure.depth, 1}
     result.count = 1
@@ -1014,7 +1045,8 @@ architecture_footprint :: proc(structure: terrain.Structure) -> Architecture_Foo
     return result
 }
 
-architecture_frontage_mass_index :: proc(structure: terrain.Structure) -> int {
+@(no_instrumentation)
+architecture_frontage_mass_index :: #force_inline proc(structure: terrain.Structure) -> int {
     footprint := architecture_footprint(structure)
     if footprint.count <= 1 do return 0
     best_index := 0
@@ -1032,7 +1064,8 @@ architecture_frontage_mass_index :: proc(structure: terrain.Structure) -> int {
     return best_index
 }
 
-architecture_frontage_structure :: proc(structure: terrain.Structure) -> terrain.Structure {
+@(no_instrumentation)
+architecture_frontage_structure :: #force_inline proc(structure: terrain.Structure) -> terrain.Structure {
     result := structure
     if structure.kind != .Architecture do return result
     footprint := architecture_footprint(structure)
@@ -1066,7 +1099,8 @@ city_bounds_contains :: proc(bounds: City_Bounds, x, z: f32) -> bool {
     return bounds.valid && x >= bounds.min_x && x <= bounds.max_x && z >= bounds.min_z && z <= bounds.max_z
 }
 
-city_density_index :: proc(x, z: int) -> int {
+@(no_instrumentation)
+city_density_index :: #force_inline proc(x, z: int) -> int {
     return z * terrain.RING_RESOLUTION + x
 }
 
@@ -1090,7 +1124,8 @@ city_density_bounds :: proc(field: ^[terrain.CITY_DENSITY_SAMPLES]u8) -> City_Bo
     return bounds
 }
 
-city_density_sample :: proc(field: ^[terrain.CITY_DENSITY_SAMPLES]u8, world_x, world_z: f32) -> f32 {
+@(no_instrumentation)
+city_density_sample :: #force_inline proc(field: ^[terrain.CITY_DENSITY_SAMPLES]u8, world_x, world_z: f32) -> f32 {
     if field == nil do return 0
     half := f32(terrain.RING_RESOLUTION - 1) * .5
     gx := world_x / terrain.BASE_CELL_SIZE + half
@@ -1154,7 +1189,8 @@ city_density_stamp :: proc(
     return city_bounds_point(world_x, world_z, radius)
 }
 
-city_hash :: proc(x, z: int, seed: u32) -> u32 {
+@(no_instrumentation)
+city_hash :: #force_inline proc(x, z: int, seed: u32) -> u32 {
     value := seed ~ (u32(i32(x)) * 0x9e3779b9) ~ (u32(i32(z)) * 0x85ebca6b)
     value = (value ~ (value >> 16)) * 0x7feb352d
     value = (value ~ (value >> 15)) * 0x846ca68b
@@ -1231,7 +1267,8 @@ city_nearest_road :: proc(
     return
 }
 
-architecture_mass_world :: proc(structure: terrain.Structure, mass: Architecture_Mass) -> (x, z: f32) {
+@(no_instrumentation)
+architecture_mass_world :: #force_inline proc(structure: terrain.Structure, mass: Architecture_Mass) -> (x, z: f32) {
     cosine, sine := f32(math.cos(f64(structure.rotation))), f32(math.sin(f64(structure.rotation)))
     return structure.center_x + mass.local_x * cosine - mass.local_z * sine,
         structure.center_z + mass.local_x * sine + mass.local_z * cosine

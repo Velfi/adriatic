@@ -218,16 +218,19 @@ DrawEllipseRingHatched :: proc(
         append_batch(first, 18, -1, ring_config)
     }
 }
-CheckCollisionPointRec :: proc(p: Vector2, r: Rectangle) -> bool {return(
+@(no_instrumentation)
+CheckCollisionPointRec :: #force_inline proc(p: Vector2, r: Rectangle) -> bool {return(
         p.x >= r.x &&
         p.x <= r.x + r.width &&
         p.y >= r.y &&
         p.y <= r.y + r.height \
     )}
 LoadFontEx :: proc(path: cstring, size: i32, codepoints: [^]rune, count: i32) -> Font { return {state.initialized} }
-FontAdvanceEm :: proc() -> f32 { return state.font_advance_em }
+@(no_instrumentation)
+FontAdvanceEm :: #force_inline proc() -> f32 { return state.font_advance_em }
 UnloadFont :: proc(font: Font) {  }
-font_glyph_slot :: proc(ch: rune) -> int {
+@(no_instrumentation)
+font_glyph_slot :: #force_inline proc(ch: rune) -> int {
     if ch >= FONT_FIRST && ch <= FONT_LAST do return int(ch) - FONT_FIRST
     for fallback, index in FONT_FALLBACK_RUNES do if ch == fallback do return FONT_COUNT + index
     switch ch {case '·':
@@ -239,7 +242,8 @@ font_glyph_slot :: proc(ch: rune) -> int {
         return int('"') - FONT_FIRST}
     return int('?') - FONT_FIRST
 }
-MeasureTextEx :: proc(font: Font, text: cstring, size, spacing: f32) -> Vector2 {count := 0; for _ in string(text) do count += 1
+@(no_instrumentation)
+MeasureTextEx :: #force_inline proc(font: Font, text: cstring, size, spacing: f32) -> Vector2 {count := 0; for _ in string(text) do count += 1
     // Measurement is in logical UI units; atlas oversampling must not alter layout.
     return{f32(count) * (size * FontAdvanceEm() + spacing), max(size, f32(32))}}
 DrawTextEx :: proc(font: Font, text: cstring, position: Vector2, size, spacing: f32, color: Color) {

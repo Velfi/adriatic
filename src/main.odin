@@ -427,7 +427,8 @@ Editor :: struct {
     quit_requested:               bool,
 }
 
-editor_circulation_plan :: proc(editor: ^Editor) -> ^circulation.Plan {
+@(no_instrumentation)
+editor_circulation_plan :: #force_inline proc(editor: ^Editor) -> ^circulation.Plan {
     if editor == nil do return nil
     if !editor.circulation_plan_valid || editor.circulation_revision != editor.project.revision {
         editor.circulation_plan = architecture.circulation_plan(&editor.project)
@@ -4495,7 +4496,8 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
     }
 }
 
-perspective_camera :: proc(pose: third_person.Camera_Pose, focal_length: f32 = 1.35) -> Perspective_Camera {
+@(no_instrumentation)
+perspective_camera :: #force_inline proc(pose: third_person.Camera_Pose, focal_length: f32 = 1.35) -> Perspective_Camera {
     forward := linalg.normalize0((pose.target - pose.position))
     right := linalg.normalize0(linalg.cross(forward, third_person.Vec3{0, 1, 0}))
     return {
@@ -6809,7 +6811,9 @@ adriatic_run :: proc(
     )
     defer delete(editor.libellula_projected_faces)
     terrain.init_project(&editor.project)
-    if !capture_mode && !benchmark_mode && !interactive_lab_mode {
+    if !capture_mode &&
+       !interactive_lab_mode &&
+       (!benchmark_mode || benchmark_scenario == "editor") {
         seed_default_island_towns(editor)
         seed_default_island_marinas(editor)
     }

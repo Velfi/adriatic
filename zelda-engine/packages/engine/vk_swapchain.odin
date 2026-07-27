@@ -14,7 +14,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
         log_error("vk_create_swapchain: an 8-bit sRGB nonlinear surface format is required")
         return false
     }
-    present_mode := vk_choose_present_mode(ctx.physical_device, ctx.surface, ctx.capture_enabled)
+    present_mode := vk_choose_present_mode(ctx.physical_device, ctx.surface, ctx.vsync_enabled)
     extent := vk_choose_extent(caps, width, height)
     usage := vk_swapchain_image_usage(ctx, caps)
 
@@ -68,6 +68,8 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
         caps.supportedUsageFlags,
         " capture_enabled=",
         ctx.capture_enabled,
+        " vsync_enabled=",
+        ctx.vsync_enabled,
     )
 
     queue_indices := [?]u32{u32(ctx.caps.queue_families.graphics), u32(ctx.caps.queue_families.present)}
@@ -338,10 +340,38 @@ vk_choose_surface_format :: proc(device: vk.PhysicalDevice, surface: vk.SurfaceK
     return {}, false
 }
 
+vk_select_present_mode :: proc(modes: []vk.PresentModeKHR, vsync_enabled: bool) -> vk.PresentModeKHR {
+    if vsync_enabled {
+        for mode in modes {
+            if mode == .FIFO {
+                return .FIFO
+            }
+        }
+        return .FIFO
+    }
+    for mode in modes {
+        if mode == .IMMEDIATE {
+            return .IMMEDIATE
+        }
+    }
+    for mode in modes {
+        if mode == .MAILBOX {
+            return .MAILBOX
+        }
+    }
+    for mode in modes {
+        if mode == .FIFO {
+            return .FIFO
+        }
+    }
+    if len(modes) > 0 do return modes[0]
+    return .FIFO
+}
+
 vk_choose_present_mode :: proc(
     device: vk.PhysicalDevice,
     surface: vk.SurfaceKHR,
-    profiling_capture: bool,
+    vsync_enabled: bool,
 ) -> vk.PresentModeKHR {
     count: u32
     _ = vk.GetPhysicalDeviceSurfacePresentModesKHR(device, surface, &count, nil)
@@ -355,24 +385,7 @@ vk_choose_present_mode :: proc(
     if vk.GetPhysicalDeviceSurfacePresentModesKHR(device, surface, &count, raw_data(modes)) != .SUCCESS {
         return .FIFO
     }
-    if profiling_capture {
-        for mode in modes {
-            if mode == .FIFO {
-                return .FIFO
-            }
-        }
-    }
-    for mode in modes {
-        if mode == .MAILBOX {
-            return .MAILBOX
-        }
-    }
-    for mode in modes {
-        if mode == .IMMEDIATE {
-            return .IMMEDIATE
-        }
-    }
-    return modes[0]
+    return vk_select_present_mode(modes, vsync_enabled)
 }
 
 vk_present_mode_name :: proc(mode: vk.PresentModeKHR) -> string {

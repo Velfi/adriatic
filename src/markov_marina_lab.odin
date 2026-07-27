@@ -21,7 +21,8 @@ markov_marina_plan: marina.Plan
 markov_marina_breakwater_focus_active: bool
 markov_marina_world_site_score: f32
 
-markov_marina_breakwater_random :: proc(input: u32) -> f32 {
+@(no_instrumentation)
+markov_marina_breakwater_random :: #force_inline proc(input: u32) -> f32 {
     value := input
     value = (value ~ (value >> 16)) * 0x7feb352d
     value = (value ~ (value >> 15)) * 0x846ca68b

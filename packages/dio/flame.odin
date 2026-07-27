@@ -461,8 +461,16 @@ flame_graph_set_current :: proc(graph: ^Flame_Graph) {
         if cap(_flame_graph_auto_handles) < FLAME_AUTO_DEPTH_CAP {
             reserve(&_flame_graph_auto_handles, FLAME_AUTO_DEPTH_CAP)
         }
-        if cap(graph.slots) < FLAME_GRAPH_SLOT_CAPACITY_DEFAULT {
-            reserve(&graph.slots, FLAME_GRAPH_SLOT_CAPACITY_DEFAULT)
+        when FLAME_AUTO_INSTRUMENT {
+            // Instrumentation can fire while the allocator lock is held.
+            // Reserve the hard cap before enabling callbacks so append never re-enters it.
+            if cap(graph.slots) < FLAME_AUTO_SLOT_CAP {
+                reserve(&graph.slots, FLAME_AUTO_SLOT_CAP)
+            }
+        } else {
+            if cap(graph.slots) < FLAME_GRAPH_SLOT_CAPACITY_DEFAULT {
+                reserve(&graph.slots, FLAME_GRAPH_SLOT_CAPACITY_DEFAULT)
+            }
         }
     }
 }
