@@ -4933,7 +4933,8 @@ hot_state_header_valid :: proc(header: ^Hot_State_File_Header, payload_size: int
 hot_state_save :: proc(editor: ^Editor, path: string) -> bool {
     if editor == nil || path == "" do return false
 
-    state := editor^
+    state := new(Editor, context.temp_allocator)
+    state^ = editor^
     state.pilot.vehicle = nil
     state.car.driver = nil
     state.car_physics_world = nil
@@ -4951,7 +4952,7 @@ hot_state_save :: proc(editor: ^Editor, path: string) -> bool {
     state.attendant_dialogue = {}
     state.attendant_dialogue_open = false
 
-    payload := hs.serialize(&state, {.Dynamics}, context.allocator)
+    payload := hs.serialize(state, {.Dynamics}, context.allocator)
     defer delete(payload)
     if len(payload) == 0 do return false
 

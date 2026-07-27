@@ -46,6 +46,22 @@ ZELDA_ENGINE_PACKAGES := $(abspath $(ZELDA_ENGINE_ROOT))/packages
 ZELDA_ENGINE_COLLECTION := -collection:zelda_engine=$(ZELDA_ENGINE_PACKAGES)
 TEXTSHAPE_DIR := $(abspath $(ZELDA_ENGINE_ROOT))/third_party/textshape
 TEXTSHAPE_LIB := $(TEXTSHAPE_DIR)/libtextshape.a
+CGLTF_DIR := $(ZELDA_ENGINE_PACKAGES)/cgltf
+CGLTF_SOURCE := $(CGLTF_DIR)/src/cgltf.c
+CGLTF_HEADER := $(CGLTF_DIR)/src/cgltf.h
+CGLTF_BUILD_DIR := $(BUILD_DIR)/cgltf
+
+ifeq ($(shell uname -s),Darwin)
+CGLTF_LIB := $(CGLTF_DIR)/lib/darwin/cgltf.a
+CGLTF_X86_OBJECT := $(CGLTF_BUILD_DIR)/cgltf-x86_64.o
+CGLTF_ARM_OBJECT := $(CGLTF_BUILD_DIR)/cgltf-arm64.o
+else ifeq ($(shell uname -s),Linux)
+CGLTF_LIB := $(CGLTF_DIR)/lib/cgltf.a
+CGLTF_OBJECT := $(CGLTF_BUILD_DIR)/cgltf.o
+else
+CGLTF_LIB := $(CGLTF_DIR)/lib/cgltf.lib
+CGLTF_OBJECT := $(CGLTF_BUILD_DIR)/cgltf.o
+endif
 
 LOCAL_ODIN := $(TOOLS_DIR)/odin/$(ODIN_FORK_VERSION)/odin
 LOCAL_SLANGC := $(TOOLS_DIR)/slang/$(SLANG_VERSION)/slangc
@@ -115,7 +131,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor textshape-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
+.PHONY: all bootstrap bootstrap-fork doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
 
 all: build
 
@@ -447,7 +463,7 @@ $(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
 	@mkdir -p $(@D)
 	touch $@
 
-$(HOT_APP): $(HOT_PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a
+$(HOT_APP): $(HOT_PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_hot) -build-mode:shared $(PROFILE_DEFINE_FLAGS_hot) -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
 
@@ -477,6 +493,21 @@ $(TEXTSHAPE_LIB): $(TEXTSHAPE_DIR)/textshape.c
 	$(MAKE) -C "$(ZELDA_ENGINE_ROOT)" textshape-build
 
 textshape-build: doctor $(TEXTSHAPE_LIB)
+
+ifeq ($(shell uname -s),Darwin)
+$(CGLTF_LIB): $(CGLTF_SOURCE) $(CGLTF_HEADER) Makefile
+	@mkdir -p "$(CGLTF_BUILD_DIR)" "$(@D)"
+	$(CC) -arch x86_64 -O2 -fPIC -c "$(CGLTF_SOURCE)" -o "$(CGLTF_X86_OBJECT)"
+	$(CC) -arch arm64 -O2 -fPIC -c "$(CGLTF_SOURCE)" -o "$(CGLTF_ARM_OBJECT)"
+	lipo -create "$(CGLTF_X86_OBJECT)" "$(CGLTF_ARM_OBJECT)" -output "$@"
+else
+$(CGLTF_LIB): $(CGLTF_SOURCE) $(CGLTF_HEADER) Makefile
+	@mkdir -p "$(CGLTF_BUILD_DIR)" "$(@D)"
+	$(CC) -O2 -fPIC -c "$(CGLTF_SOURCE)" -o "$(CGLTF_OBJECT)"
+	$(AR) rcs "$@" "$(CGLTF_OBJECT)"
+endif
+
+cgltf-build: doctor $(CGLTF_LIB)
 
 profile-info:
 	@case "$(PROFILE)" in \
@@ -565,15 +596,15 @@ $(VALIDATION_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_sign
 	$(CC) -O2 -c $< -o $(VALIDATION_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(VALIDATION_DIR)/gfx_signposts.o
 
-$(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
+$(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_debug) $(PROFILE_DEFINE_FLAGS_debug) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
-$(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
+$(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_release) $(PROFILE_DEFINE_FLAGS_release) -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 
-$(VALIDATION_APP): physics-build $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(VALIDATION_DIR)/libgfx_signposts.a
+$(VALIDATION_APP): physics-build $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(VALIDATION_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_validation) $(PROFILE_DEFINE_FLAGS_validation) -out:$@ -extra-linker-flags:"$(call link_flags,$(VALIDATION_DIR))"
 
