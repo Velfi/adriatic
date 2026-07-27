@@ -764,7 +764,6 @@ settlement_lab_configure :: proc(
     decorative_budget := profile.scale == .City ? 12 : (profile.scale == .Town ? 8 : 4)
     decorative_commit_count := min(editor.settlement_plan.decorative_foliage_count, decorative_budget)
     for structure in editor.settlement_plan.decorative_foliage[:decorative_commit_count] {
-        if editor.project.structure_count >= terrain.STRUCTURE_CAPACITY do break
         _ = terrain.add_structure(&editor.project, structure)
     }
     editor.architecture_city_plan = plan

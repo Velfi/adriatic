@@ -9,7 +9,7 @@ import "core:testing"
 @(test)
 terrain_strokes_propagate_through_every_clipmap_level :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     revision := project.revision
     terrain.apply_stroke(project, .Raise, 0, 0, 8, 1, 1)
     testing.expect(t, project.revision == revision + 1)
@@ -19,7 +19,7 @@ terrain_strokes_propagate_through_every_clipmap_level :: proc(t: ^testing.T) {
 @(test)
 terrain_sculpting_changes_building_level :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     building := terrain.structure_make(0, 0, 8, 8, terrain.sample_height(project, 0, 0, 0), 12)
     building.kind = .Architecture
     index := terrain.add_structure(project, building)
@@ -37,7 +37,7 @@ terrain_sculpting_changes_building_level :: proc(t: ^testing.T) {
 @(test)
 terrain_material_is_bounded :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     terrain.apply_stroke(project, .Paint, 0, 0, 8, 10, 1)
     for level in 0 ..< terrain.CLIPMAP_LEVELS {
         material := terrain.sample_material(project, level, 0, 0)
@@ -50,8 +50,8 @@ terrain_material_is_bounded :: proc(t: ^testing.T) {
 terrain_brush_hardness_controls_edge_falloff :: proc(t: ^testing.T) {
     soft := terrain.new_project()
     hard := terrain.new_project()
-    defer free(soft)
-    defer free(hard)
+    defer terrain.free_project(soft)
+    defer terrain.free_project(hard)
     center_x := soft.levels[0].origin_x + f32(terrain.RING_RESOLUTION / 2) * soft.levels[0].cell_size
     center_z := soft.levels[0].origin_z + f32(terrain.RING_RESOLUTION / 2) * soft.levels[0].cell_size
     terrain.apply_stroke_with_hardness(soft, .Raise, center_x, center_z, 100, 1, 1, 0)
@@ -90,7 +90,7 @@ terrain_ground_classifier_mirrors_renderer_bands :: proc(t: ^testing.T) {
 @(test)
 terrain_ground_surface_at_tracks_painted_material :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     // A default island top is unpainted upland: it should read as grass.
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     offset := half_extent * terrain.DEFAULT_ISLAND_OFFSET
@@ -121,8 +121,8 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
     defer os.remove(path)
     source := terrain.new_project()
     loaded := terrain.new_project()
-    defer free(source)
-    defer free(loaded)
+    defer terrain.free_project(source)
+    defer terrain.free_project(loaded)
     terrain.apply_stroke_with_hardness(source, .Raise, 0, 0, 100, 1, 1, .8)
     terrain.apply_stroke_with_hardness(source, .Paint, 0, 0, 100, 1, 1, .8)
     foliage := terrain.structure_make(20, -30, 40, 50, 0, 60)
@@ -158,9 +158,48 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
 }
 
 @(test)
+terrain_project_grows_and_round_trips_beyond_legacy_structure_limit :: proc(t: ^testing.T) {
+    path := "build/terrain_project_growable_test.bin"
+    defer os.remove(path)
+    source := terrain.new_project()
+    loaded := terrain.new_project()
+    defer terrain.free_project(source)
+    defer terrain.free_project(loaded)
+    count := terrain.LEGACY_STRUCTURE_CAPACITY + 144
+    for index in 0 ..< count {
+        structure := terrain.structure_make(f32(index), f32(-index), 4, 5, 1, 6)
+        testing.expect_value(t, terrain.add_structure(source, structure), index)
+    }
+    testing.expect_value(t, source.structure_count, count)
+    testing.expect(t, len(source.structures) >= count)
+    testing.expect(t, terrain.save_project(source, path))
+    testing.expect(t, terrain.load_project(loaded, path))
+    testing.expect_value(t, loaded.structure_count, count)
+    testing.expect_value(t, loaded.structures[count - 1].center_x, f32(count - 1))
+    testing.expect_value(t, loaded.structures[count - 1].center_z, f32(-(count - 1)))
+}
+
+@(test)
+terrain_v4_project_migration_copies_fixed_structures_into_growable_storage :: proc(t: ^testing.T) {
+    legacy := new(terrain.Project_V4)
+    defer free(legacy)
+    legacy.structure_count = 2
+    legacy.next_structure_id = 19
+    legacy.structures[0] = terrain.structure_make(4, 5, 6, 7, 8, 9)
+    legacy.structures[1] = terrain.structure_make(10, 11, 12, 13, 14, 15)
+    migrated := new(terrain.Project)
+    defer terrain.free_project(migrated)
+    testing.expect(t, terrain.project_migrate_v4(migrated, legacy))
+    testing.expect_value(t, migrated.structure_count, 2)
+    testing.expect_value(t, len(migrated.structures), 2)
+    testing.expect_value(t, migrated.next_structure_id, u64(19))
+    testing.expect_value(t, migrated.structures[1].center_x, f32(10))
+}
+
+@(test)
 default_terrain_has_two_opposite_corner_islands :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     offset := half_extent * terrain.DEFAULT_ISLAND_OFFSET
     testing.expect(t, terrain.sample_height(project, 0, -offset, -offset) > project.sea_level)
@@ -172,7 +211,7 @@ default_terrain_has_two_opposite_corner_islands :: proc(t: ^testing.T) {
 @(test)
 clipmap_levels_are_nested_without_scaled_world_features :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     authored_half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for level in 0 ..< terrain.CLIPMAP_LEVELS {
         testing.expect(t, project.levels[level].cell_size == terrain.FINE_CELL_SIZE * f32(u32(1) << u32(level)))
@@ -192,7 +231,7 @@ clipmap_levels_are_nested_without_scaled_world_features :: proc(t: ^testing.T) {
 @(test)
 default_islands_support_the_full_runway :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
@@ -225,7 +264,7 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
 @(test)
 default_towns_have_foundation_test_topography :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
@@ -242,7 +281,7 @@ default_towns_have_foundation_test_topography :: proc(t: ^testing.T) {
 @(test)
 default_town_hills_blend_smoothly_into_runway_constraints :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
@@ -281,7 +320,7 @@ terrain_constraints_compose_additive_landscape_before_level_surfaces :: proc(t: 
 @(test)
 default_islands_are_aircraft_scale :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     diameter := half_extent * terrain.DEFAULT_ISLAND_RADIUS * 2
     runway_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH * 2
@@ -292,7 +331,7 @@ default_islands_are_aircraft_scale :: proc(t: ^testing.T) {
 @(test)
 terrain_levels_progress_from_one_meter_to_world_scale :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     testing.expect(t, project.levels[0].cell_size == 1)
     testing.expect(t, project.levels[4].cell_size == 16)
     span := f32(terrain.RING_RESOLUTION - 1) * project.levels[4].cell_size
@@ -302,7 +341,7 @@ terrain_levels_progress_from_one_meter_to_world_scale :: proc(t: ^testing.T) {
 @(test)
 terrain_edits_downsample_into_coarser_overlaps :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     fine := &project.levels[0]
     center_x := fine.origin_x + 128 * fine.cell_size
     center_z := fine.origin_z + 128 * fine.cell_size
@@ -325,7 +364,7 @@ terrain_edits_downsample_into_coarser_overlaps :: proc(t: ^testing.T) {
 @(test)
 structure_placement_snaps_and_follows_terrain :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     cell := project.levels[0].cell_size
     structure := terrain.structure_make(13.2, -8.7, 1, 1, 999, 24)
     structure.center_x = terrain.snap_to_grid(structure.center_x, cell)
@@ -343,7 +382,7 @@ structure_placement_snaps_and_follows_terrain :: proc(t: ^testing.T) {
 @(test)
 structure_hit_testing_prefers_the_topmost_structure :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     first := terrain.add_structure(project, terrain.structure_make(0, 0, 20, 20, 0, 10))
     second := terrain.add_structure(project, terrain.structure_make(0, 0, 8, 8, 0, 10))
     testing.expect(t, first == 0)
@@ -356,7 +395,7 @@ structure_hit_testing_prefers_the_topmost_structure :: proc(t: ^testing.T) {
 @(test)
 structure_duplicate_and_remove_preserve_ids :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     original := terrain.add_structure(project, terrain.structure_make(0, 0, 10, 10, 0, 10))
     duplicate := terrain.duplicate_structure(project, original, 20, 0)
     original_id := project.structures[original].id
@@ -371,7 +410,7 @@ structure_duplicate_and_remove_preserve_ids :: proc(t: ^testing.T) {
 @(test)
 overlapping_foliage_nodes_merge_without_spending_structure_budget :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     cell := terrain.BASE_CELL_SIZE
     first := terrain.structure_make(0, 0, cell * 2, cell, 3, cell)
     first.kind = .Foliage
@@ -400,7 +439,7 @@ overlapping_foliage_nodes_merge_without_spending_structure_budget :: proc(t: ^te
 @(test)
 formation_density_stroke_merges_into_a_range :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     cell := terrain.BASE_CELL_SIZE
     group_id := project.next_structure_id
     for index in 0 ..< 5 {
@@ -418,7 +457,7 @@ formation_density_stroke_merges_into_a_range :: proc(t: ^testing.T) {
 @(test)
 formation_density_strokes_do_not_merge_across_edit_groups :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     cell := terrain.BASE_CELL_SIZE
     first := terrain.structure_make(0, 0, cell * 2, cell, 0, cell)
     first.kind = .Rock

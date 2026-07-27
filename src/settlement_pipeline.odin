@@ -574,8 +574,8 @@ settlement_fabric_route_reachable :: proc(scale: Settlement_Scale, distance: f32
 
 settlement_city_prune_to_largest_component :: proc(city_plan: ^architecture.City_Plan, link_distance: f32) {
     if city_plan == nil || city_plan.count <= 1 do return
-    component: [terrain.STRUCTURE_CAPACITY]int
-    queue: [terrain.STRUCTURE_CAPACITY]int
+    component: [architecture.CITY_PLAN_CAPACITY]int
+    queue: [architecture.CITY_PLAN_CAPACITY]int
     component_count, largest_component, largest_size := 0, -1, 0
     for index in 0 ..< city_plan.count do component[index] = -1
     for root in 0 ..< city_plan.count {

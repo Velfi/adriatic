@@ -183,7 +183,7 @@ SETTLEMENT_NEIGHBORHOOD_CAPACITY :: 96
 SETTLEMENT_MACRO_CELL_CAPACITY :: 192
 SETTLEMENT_PLANNED_ROUTE_CAPACITY :: 48
 SETTLEMENT_BLOCK_CAPACITY :: 128
-SETTLEMENT_SITE_CAPACITY :: terrain.STRUCTURE_CAPACITY
+SETTLEMENT_SITE_CAPACITY :: 256
 SETTLEMENT_TERRAIN_EDIT_CAPACITY :: 192
 SETTLEMENT_ROUTE_CLASS_COUNT :: 8
 SETTLEMENT_LANDMARK_SEED_MASK :: u32(0xffff0000)
@@ -628,8 +628,7 @@ settlement_plan_acceptance_failure :: proc(
 ) -> Settlement_Acceptance_Failure {
     if plan == nil || project == nil do return .Capacity
     if project.road_graph.node_count > roads.MAX_NODES ||
-       project.road_graph.edge_count > roads.MAX_EDGES ||
-       project.structure_count > terrain.STRUCTURE_CAPACITY {
+       project.road_graph.edge_count > roads.MAX_EDGES {
         return .Capacity
     }
     if plan.metrics.wide_route_share > .1201 do return .Wide_Route_Share

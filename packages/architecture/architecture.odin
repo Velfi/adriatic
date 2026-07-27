@@ -266,28 +266,29 @@ circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
     plan: circulation.Plan
     if project == nil do return plan
 
-    candidates: [terrain.STRUCTURE_CAPACITY]int
-    candidate_count := 0
+    candidates := make([dynamic]int, 0, project.structure_count)
+    defer delete(candidates)
     for structure, structure_index in project.structures[:project.structure_count] {
         if structure.kind != .Architecture || structure.height > 60 do continue
-        candidates[candidate_count] = structure_index
-        candidate_count += 1
+        append(&candidates, structure_index)
     }
 
     // Buildings connected through a 320 m neighborhood belong to one town.
     // The threshold comfortably spans a painted settlement while keeping the
     // two default islands, and other distant settlements, independent.
     CLUSTER_DISTANCE :: f32(320)
-    assigned: [terrain.STRUCTURE_CAPACITY]bool
-    cluster: [terrain.STRUCTURE_CAPACITY]int
-    for candidate_index in 0 ..< candidate_count {
+    assigned := make([]bool, len(candidates))
+    cluster := make([]int, len(candidates))
+    defer delete(assigned)
+    defer delete(cluster)
+    for candidate_index in 0 ..< len(candidates) {
         if assigned[candidate_index] do continue
         assigned[candidate_index] = true
         cluster[0] = candidates[candidate_index]
         cluster_count := 1
         for cursor := 0; cursor < cluster_count; cursor += 1 {
             anchor := project.structures[cluster[cursor]]
-            for other_index in 0 ..< candidate_count {
+            for other_index in 0 ..< len(candidates) {
                 if assigned[other_index] do continue
                 other := project.structures[candidates[other_index]]
                 dx, dz := other.center_x - anchor.center_x, other.center_z - anchor.center_z
@@ -953,10 +954,12 @@ City_Bounds :: struct {
     valid:                      bool,
 }
 
+CITY_PLAN_CAPACITY :: 256
+
 City_Plan :: struct {
-    structures:   [terrain.STRUCTURE_CAPACITY]terrain.Structure,
+    structures:   [CITY_PLAN_CAPACITY]terrain.Structure,
     count:        int,
-    parcels:      [terrain.STRUCTURE_CAPACITY]City_Parcel,
+    parcels:      [CITY_PLAN_CAPACITY]City_Parcel,
     parcel_count: int,
     alleys:       [128]City_Alley,
     alley_count:  int,

@@ -8,7 +8,7 @@ import "core:testing"
 @(test)
 circulation_plan_keeps_distant_towns_independent :: proc(t: ^testing.T) {
     project := new(terrain.Project)
-    defer free(project)
+    defer terrain.free_project(project)
     centers := [2]f32{-1200, 1200}
     for center in centers {
         for index in 0 ..< 4 {
@@ -21,8 +21,7 @@ circulation_plan_keeps_distant_towns_independent :: proc(t: ^testing.T) {
                 18,
             )
             structure.kind = .Architecture
-            project.structures[project.structure_count] = structure
-            project.structure_count += 1
+            _ = terrain.add_structure(project, structure)
         }
     }
 

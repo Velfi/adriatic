@@ -51,9 +51,10 @@ Formation_Kind :: enum {
     Architecture,
 }
 
-STRUCTURE_CAPACITY :: 256
+LEGACY_STRUCTURE_CAPACITY :: 256
 CITY_DENSITY_SAMPLES :: SAMPLES_PER_LEVEL
-PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '4'}
+PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '5'}
+PROJECT_FILE_MAGIC_V4 :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '4'}
 PROJECT_FILE_MAGIC_V3 :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '3'}
 
 Project_File_Header :: struct {
@@ -89,7 +90,30 @@ Project :: struct {
     levels:                [CLIPMAP_LEVELS]Clipmap_Level,
     sea_level:             f32,
     revision:              u64,
-    structures:            [STRUCTURE_CAPACITY]Structure,
+    structures:            [dynamic]Structure,
+    structure_count:       int,
+    next_structure_id:     u64,
+    road_graph:            roads.Graph,
+    city_density:          [CITY_DENSITY_SAMPLES]u8,
+    climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
+}
+
+Project_File_Payload :: struct {
+    levels:                [CLIPMAP_LEVELS]Clipmap_Level,
+    sea_level:             f32,
+    revision:              u64,
+    structure_count:       u64,
+    next_structure_id:     u64,
+    road_graph:            roads.Graph,
+    city_density:          [CITY_DENSITY_SAMPLES]u8,
+    climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
+}
+
+Project_V4 :: struct {
+    levels:                [CLIPMAP_LEVELS]Clipmap_Level,
+    sea_level:             f32,
+    revision:              u64,
+    structures:            [LEGACY_STRUCTURE_CAPACITY]Structure,
     structure_count:       int,
     next_structure_id:     u64,
     road_graph:            roads.Graph,
@@ -116,7 +140,7 @@ Project_V3 :: struct {
     levels:                [CLIPMAP_LEVELS]Clipmap_Level,
     sea_level:             f32,
     revision:              u64,
-    structures:            [STRUCTURE_CAPACITY]Structure_V3,
+    structures:            [LEGACY_STRUCTURE_CAPACITY]Structure_V3,
     structure_count:       int,
     next_structure_id:     u64,
     road_graph:            roads.Graph,
@@ -132,19 +156,52 @@ project_file_magic_is :: proc(header: ^Project_File_Header, magic: [8]u8) -> boo
     return true
 }
 
+project_replace :: proc(project, loaded: ^Project) {
+    if project == nil || loaded == nil do return
+    delete(project.structures)
+    project^ = loaded^
+    loaded.structures = nil
+}
+
+project_migrate_v4 :: proc(project: ^Project, legacy: ^Project_V4) -> bool {
+    if project == nil ||
+       legacy == nil ||
+       legacy.structure_count < 0 ||
+       legacy.structure_count > LEGACY_STRUCTURE_CAPACITY {
+        return false
+    }
+    loaded := new(Project)
+    defer free(loaded)
+    loaded.levels = legacy.levels
+    loaded.sea_level = legacy.sea_level
+    loaded.revision = legacy.revision
+    loaded.structure_count = legacy.structure_count
+    loaded.next_structure_id = legacy.next_structure_id
+    loaded.road_graph = legacy.road_graph
+    loaded.city_density = legacy.city_density
+    loaded.climbing_leaf_density = legacy.climbing_leaf_density
+    resize(&loaded.structures, loaded.structure_count)
+    copy(loaded.structures[:], legacy.structures[:loaded.structure_count])
+    project_replace(project, loaded)
+    return true
+}
+
 project_migrate_v3 :: proc(project: ^Project, legacy: ^Project_V3) -> bool {
     if project == nil || legacy == nil do return false
-    project^ = {}
-    project.levels = legacy.levels
-    project.sea_level = legacy.sea_level
-    project.revision = legacy.revision
-    project.structure_count = legacy.structure_count
-    project.next_structure_id = legacy.next_structure_id
-    project.road_graph = legacy.road_graph
-    project.city_density = legacy.city_density
-    project.climbing_leaf_density = legacy.climbing_leaf_density
-    for source, index in legacy.structures {
-        target := &project.structures[index]
+    if legacy.structure_count < 0 || legacy.structure_count > LEGACY_STRUCTURE_CAPACITY do return false
+    loaded := new(Project)
+    defer free(loaded)
+    loaded.levels = legacy.levels
+    loaded.sea_level = legacy.sea_level
+    loaded.revision = legacy.revision
+    loaded.structure_count = legacy.structure_count
+    loaded.next_structure_id = legacy.next_structure_id
+    loaded.road_graph = legacy.road_graph
+    loaded.city_density = legacy.city_density
+    loaded.climbing_leaf_density = legacy.climbing_leaf_density
+    resize(&loaded.structures, loaded.structure_count)
+    for source, index in legacy.structures[:legacy.structure_count] {
+        target := &loaded.structures[index]
         target.id = source.id
         target.group_id = source.group_id
         target.center_x = source.center_x
@@ -159,20 +216,45 @@ project_migrate_v3 :: proc(project: ^Project, legacy: ^Project_V3) -> bool {
         target.seed = source.seed
         if source.kind == .Architecture do target.building.archetype = .Legacy
     }
+    project_replace(project, loaded)
     return true
 }
 
 save_project :: proc(project: ^Project, filename: string) -> bool {
-    if project == nil || filename == "" do return false
+    if project == nil ||
+       filename == "" ||
+       project.structure_count < 0 ||
+       project.structure_count > len(project.structures) {
+        return false
+    }
     header_size := size_of(Project_File_Header)
-    data := make([]byte, header_size + size_of(Project))
+    payload_size := size_of(Project_File_Payload) + project.structure_count * size_of(Structure)
+    data := make([]byte, header_size + payload_size)
     defer delete(data)
     header := cast(^Project_File_Header)raw_data(data)
     header^ = {
         magic        = PROJECT_FILE_MAGIC,
-        payload_size = size_of(Project),
+        payload_size = u64(payload_size),
     }
-    runtime.mem_copy_non_overlapping(raw_data(data[header_size:]), cast(rawptr)project, size_of(Project))
+    payload := cast(^Project_File_Payload)raw_data(data[header_size:])
+    payload^ = {
+        levels                = project.levels,
+        sea_level             = project.sea_level,
+        revision              = project.revision,
+        structure_count       = u64(project.structure_count),
+        next_structure_id     = project.next_structure_id,
+        road_graph            = project.road_graph,
+        city_density          = project.city_density,
+        climbing_leaf_density = project.climbing_leaf_density,
+    }
+    if project.structure_count > 0 {
+        structure_data := data[header_size + size_of(Project_File_Payload):]
+        runtime.mem_copy_non_overlapping(
+            raw_data(structure_data),
+            raw_data(project.structures),
+            project.structure_count * size_of(Structure),
+        )
+    }
     return os.write_entire_file(filename, data) == nil
 }
 
@@ -185,11 +267,39 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
     if len(data) < header_size do return false
     header := cast(^Project_File_Header)raw_data(data)
     if project_file_magic_is(header, PROJECT_FILE_MAGIC) {
-        if header.payload_size != size_of(Project) || len(data) != header_size + size_of(Project) {
+        if header.payload_size != u64(len(data) - header_size) ||
+           len(data) < header_size + size_of(Project_File_Payload) {
             return false
         }
-        runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
+        payload := cast(^Project_File_Payload)raw_data(data[header_size:])
+        structure_bytes := len(data) - header_size - size_of(Project_File_Payload)
+        if payload.structure_count > u64(structure_bytes / size_of(Structure)) ||
+           int(payload.structure_count) * size_of(Structure) != structure_bytes {
+            return false
+        }
+        loaded := new(Project)
+        defer free(loaded)
+        loaded.levels = payload.levels
+        loaded.sea_level = payload.sea_level
+        loaded.revision = payload.revision
+        loaded.structure_count = int(payload.structure_count)
+        loaded.next_structure_id = payload.next_structure_id
+        loaded.road_graph = payload.road_graph
+        loaded.city_density = payload.city_density
+        loaded.climbing_leaf_density = payload.climbing_leaf_density
+        resize(&loaded.structures, loaded.structure_count)
+        if loaded.structure_count > 0 {
+            structure_data := data[header_size + size_of(Project_File_Payload):]
+            runtime.mem_copy_non_overlapping(raw_data(loaded.structures), raw_data(structure_data), structure_bytes)
+        }
+        project_replace(project, loaded)
         return true
+    }
+    if project_file_magic_is(header, PROJECT_FILE_MAGIC_V4) {
+        if header.payload_size != size_of(Project_V4) || len(data) != header_size + size_of(Project_V4) {
+            return false
+        }
+        return project_migrate_v4(project, cast(^Project_V4)raw_data(data[header_size:]))
     }
     if !project_file_magic_is(header, PROJECT_FILE_MAGIC_V3) ||
        header.payload_size != size_of(Project_V3) ||
@@ -224,6 +334,7 @@ add_default_runways :: proc(project: ^Project) -> bool {
 
 init_project :: proc(result: ^Project) {
     if result == nil do return
+    delete(result.structures)
     result^ = {}
     result.sea_level = 0
     result.revision = 1
@@ -335,14 +446,18 @@ structure_index_at :: proc(project: ^Project, x, z: f32) -> int {
 }
 
 add_structure :: proc(project: ^Project, structure: Structure) -> int {
-    if project == nil || project.structure_count >= STRUCTURE_CAPACITY do return -1
+    if project == nil do return -1
     value := structure
     value.id = project.next_structure_id
     project.next_structure_id += 1
     if value.group_id == 0 do value.group_id = value.id
     value.seed = u32(value.id * 747796405)
-    project.structures[project.structure_count] = value
     index := project.structure_count
+    if index < len(project.structures) {
+        project.structures[index] = value
+    } else {
+        append(&project.structures, value)
+    }
     project.structure_count += 1
     project.revision += 1
     return index
@@ -446,6 +561,19 @@ new_project :: proc() -> ^Project {
     result := new(Project)
     init_project(result)
     return result
+}
+
+destroy_project :: proc(project: ^Project) {
+    if project == nil do return
+    delete(project.structures)
+    project.structures = nil
+    project.structure_count = 0
+}
+
+free_project :: proc(project: ^Project) {
+    if project == nil do return
+    destroy_project(project)
+    free(project)
 }
 
 @(no_instrumentation)
@@ -610,7 +738,10 @@ level_contains_bounds :: proc(data: ^Clipmap_Level, min_x, min_z, max_x, max_z: 
 level_sample_bounds :: #force_inline proc(
     data: ^Clipmap_Level,
     min_x, min_z, max_x, max_z: f32,
-) -> (min_sample_x, min_sample_z, max_sample_x, max_sample_z: int, overlaps: bool) {
+) -> (
+    min_sample_x, min_sample_z, max_sample_x, max_sample_z: int,
+    overlaps: bool,
+) {
     if data == nil do return
     extent := f32(RING_RESOLUTION - 1) * data.cell_size
     if max_x < data.origin_x ||

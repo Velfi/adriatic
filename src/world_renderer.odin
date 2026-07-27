@@ -20,6 +20,7 @@ import vehicles "../packages/vehicles"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
+import "core:slice"
 import "core:testing"
 import vk "vendor:vulkan"
 import rl "zelda_engine:canvas2d"
@@ -102,6 +103,11 @@ Static_Visibility_Stats :: struct {
     atlas_foliage_used:  u32,
     atlas_bougainvillea_used: u32,
     atlas_fragmentation: f32,
+}
+
+Structure_Visibility_Order :: struct {
+    index:            int,
+    distance_squared: f32,
 }
 
 structure_lod_forced: i32 = -1
@@ -510,9 +516,9 @@ World_Renderer :: struct {
     pavement_query_graph:            roads.Graph,
     pavement_query_graph_valid:      bool,
     pavement_query_revision:         u64,
-    foliage_geometry_cache:          [terrain.STRUCTURE_CAPACITY]Foliage_Geometry_Cache_Entry,
-    static_geometry_cache:           [terrain.STRUCTURE_CAPACITY]Static_Geometry_Cache_Entry,
-    climbing_leaf_geometry_cache:    [terrain.STRUCTURE_CAPACITY]Climbing_Leaf_Geometry_Cache_Entry,
+    foliage_geometry_cache:          [dynamic]Foliage_Geometry_Cache_Entry,
+    static_geometry_cache:           [dynamic]Static_Geometry_Cache_Entry,
+    climbing_leaf_geometry_cache:    [dynamic]Climbing_Leaf_Geometry_Cache_Entry,
     town_mouse_geometry_cache:        [TOWN_MOUSE_CACHE_COUNT]Town_Mouse_Geometry_Cache_Entry,
     marina_geometry_cache:           [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
     structure_lod_counts:             [3]int,
@@ -520,7 +526,10 @@ World_Renderer :: struct {
     structure_lod_world_vertices:     int,
     structure_lod_foliage_vertices:   int,
     static_visibility:                Static_Visibility_Stats,
-    static_visibility_classification: [terrain.STRUCTURE_CAPACITY]Static_Visibility_Classification,
+    static_visibility_classification: [dynamic]Static_Visibility_Classification,
+    structure_visibility_order:       [dynamic]Structure_Visibility_Order,
+    structure_building_spans:         [dynamic]u8,
+    structure_candidates:             [dynamic]int,
     initialized:                     bool,
 }
 
@@ -1360,6 +1369,17 @@ world_terrain_invalidate_all :: proc(editor: ^Editor) {
     for &entry in world_renderer.static_geometry_cache do entry.valid = false
     for &entry in world_renderer.climbing_leaf_geometry_cache do entry.valid = false
     for &entry in world_renderer.town_mouse_geometry_cache do entry.valid = false
+}
+
+world_structure_storage_ensure :: proc(count: int) {
+    if count <= len(world_renderer.static_geometry_cache) do return
+    resize(&world_renderer.foliage_geometry_cache, count)
+    resize(&world_renderer.static_geometry_cache, count)
+    resize(&world_renderer.climbing_leaf_geometry_cache, count)
+    resize(&world_renderer.static_visibility_classification, count)
+    reserve(&world_renderer.structure_visibility_order, count)
+    resize(&world_renderer.structure_building_spans, count)
+    reserve(&world_renderer.structure_candidates, count)
 }
 
 clipmap_update :: proc(editor: ^Editor, frame_index: int) {
@@ -5018,7 +5038,7 @@ world_foliage_formation_cached :: proc(
     structure_index: int,
     force_near := false,
 ) {
-    if structure_index < 0 || structure_index >= terrain.STRUCTURE_CAPACITY {
+    if structure_index < 0 || structure_index >= len(world_renderer.foliage_geometry_cache) {
         world_foliage_formation(structure)
         return
     }
@@ -5094,7 +5114,9 @@ world_static_formation_cached :: proc(
     project: ^terrain.Project,
     force_near := false,
 ) {
-    if project == nil || structure_index < 0 || structure_index >= terrain.STRUCTURE_CAPACITY {
+    if project == nil ||
+       structure_index < 0 ||
+       structure_index >= len(world_renderer.static_geometry_cache) {
         world_formation(structure, project)
         return
     }
@@ -7417,8 +7439,9 @@ world_architecture_laundry_webbing :: proc(editor: ^Editor) {
     if editor == nil do return
     webbing_count := 0
     webbing_limit := 8
-    building_spans: [terrain.STRUCTURE_CAPACITY]u8
     structures := editor.project.structures[:editor.project.structure_count]
+    building_spans := world_renderer.structure_building_spans[:len(structures)]
+    for &span in building_spans do span = 0
     cloth_colors := [4]rl.Color{{235, 224, 188, 255}, {112, 157, 171, 255}, {191, 94, 72, 255}, {205, 157, 177, 255}}
     for first, first_index in structures {
         if first.kind != .Architecture || first.height > 52 do continue
@@ -7754,9 +7777,7 @@ world_structures :: proc(editor: ^Editor) {
     // Geometry buffers are capacity bounded, so storage order must not decide
     // visibility. Traverse structures from the camera outward; each structure
     // contributes its mass and climbing growth together at its current LOD.
-    ordered_indices: [terrain.STRUCTURE_CAPACITY]int
-    ordered_distances: [terrain.STRUCTURE_CAPACITY]f32
-    ordered_count := 0
+    clear(&world_renderer.structure_visibility_order)
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
     screen_width := max(rl.GetScreenWidth(), 1)
@@ -7785,18 +7806,20 @@ world_structures :: proc(editor: ^Editor) {
         dx, dz := structure.center_x - view_camera.position.x, structure.center_z - view_camera.position.z
         distance_squared := dx * dx + dz * dz
         if force_visible do distance_squared = -1
-        insert_at := ordered_count
-        for insert_at > 0 && ordered_distances[insert_at - 1] > distance_squared {
-            ordered_indices[insert_at] = ordered_indices[insert_at - 1]
-            ordered_distances[insert_at] = ordered_distances[insert_at - 1]
-            insert_at -= 1
-        }
-        ordered_indices[insert_at] = index
-        ordered_distances[insert_at] = distance_squared
-        ordered_count += 1
+        append(
+            &world_renderer.structure_visibility_order,
+            Structure_Visibility_Order{index, distance_squared},
+        )
     }
-    for order_index in 0 ..< ordered_count {
-        index := ordered_indices[order_index]
+    slice.sort_by(
+        world_renderer.structure_visibility_order[:],
+        proc(a, b: Structure_Visibility_Order) -> bool {
+            if a.distance_squared != b.distance_squared do return a.distance_squared < b.distance_squared
+            return a.index < b.index
+        },
+    )
+    for ordered in world_renderer.structure_visibility_order {
+        index := ordered.index
         structure := editor.project.structures[index]
         if editor.architecture_painting &&
            structure.kind == .Architecture &&
@@ -12273,19 +12296,20 @@ world_story_resident_home_pose :: proc(
     island_index, resident_index, mapped := story_resident_town_slot(resident)
     if !mapped do return {}, 0, false
     structures := editor.project.structures[:editor.project.structure_count]
+    world_structure_storage_ensure(len(structures))
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     island_signs := terrain.DEFAULT_ISLAND_SIGNS
     island_center := island_signs[island_index] * half_extent * terrain.DEFAULT_ISLAND_OFFSET
     island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
-    candidates: [terrain.STRUCTURE_CAPACITY]int
-    candidate_count := 0
+    clear(&world_renderer.structure_candidates)
     for structure, structure_index in structures {
         if structure.kind != .Architecture || structure.height > 60 do continue
         dx, dz := structure.center_x - island_center, structure.center_z - island_center
         if dx * dx + dz * dz > island_radius * island_radius do continue
-        candidates[candidate_count] = structure_index
-        candidate_count += 1
+        append(&world_renderer.structure_candidates, structure_index)
     }
+    candidates := world_renderer.structure_candidates[:]
+    candidate_count := len(candidates)
     if candidate_count == 0 do return {}, 0, false
 
     lateral := [7]f32{-1.0, .8, -1.3, 1.1, -.7, 1.4, -.9}
@@ -12407,19 +12431,20 @@ world_town_mice :: proc(editor: ^Editor) {
         {-.9, 2.3, .20, .98, .Goggles, .Chestnut, .Hooded, false, {}},
     }
     structures := editor.project.structures[:editor.project.structure_count]
+    world_structure_storage_ensure(len(structures))
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
     for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        candidates: [terrain.STRUCTURE_CAPACITY]int
-        candidate_count := 0
+        clear(&world_renderer.structure_candidates)
         for structure, structure_index in structures {
             if structure.kind != .Architecture || structure.height > 60 do continue
             dx, dz := structure.center_x - island_center, structure.center_z - island_center
             if dx * dx + dz * dz > island_radius * island_radius do continue
-            candidates[candidate_count] = structure_index
-            candidate_count += 1
+            append(&world_renderer.structure_candidates, structure_index)
         }
+        candidates := world_renderer.structure_candidates[:]
+        candidate_count := len(candidates)
         if candidate_count == 0 do continue
 
         // Sparse towns still receive the complete cast. When there are fewer
@@ -12676,6 +12701,7 @@ world_ground_grass :: proc(editor: ^Editor) {
 }
 
 world_build :: proc(editor: ^Editor) {
+    world_structure_storage_ensure(editor.project.structure_count)
     clear(&world_renderer.vertices)
     clear(&world_renderer.static_vertices)
     clear(&world_renderer.static_indices)
@@ -14189,16 +14215,23 @@ world_renderer_destroy :: proc() {
         delete(entry.world_vertices)
         delete(entry.foliage_vertices)
     }
+    delete(world_renderer.foliage_geometry_cache)
     for &entry in world_renderer.static_geometry_cache {
         delete(entry.world_vertices)
         delete(entry.world_indices)
         delete(entry.foliage_vertices)
         delete(entry.bougainvillea_vertices)
     }
+    delete(world_renderer.static_geometry_cache)
     for &entry in world_renderer.climbing_leaf_geometry_cache {
         delete(entry.world_vertices)
         delete(entry.bougainvillea_vertices)
     }
+    delete(world_renderer.climbing_leaf_geometry_cache)
+    delete(world_renderer.static_visibility_classification)
+    delete(world_renderer.structure_visibility_order)
+    delete(world_renderer.structure_building_spans)
+    delete(world_renderer.structure_candidates)
     for &entry in world_renderer.town_mouse_geometry_cache {
         delete(entry.vertices)
     }

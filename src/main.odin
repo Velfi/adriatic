@@ -54,7 +54,7 @@ ADRIATIC_WORLD_WIDTH :: 854
 ADRIATIC_WORLD_HEIGHT :: 480
 STRUCTURE_HISTORY_CAPACITY :: 24
 TERRAIN_HISTORY_CAPACITY :: 12
-FORMATION_EDIT_BENCHMARK_STRUCTURES :: 256
+FORMATION_EDIT_BENCHMARK_STRUCTURES :: terrain.LEGACY_STRUCTURE_CAPACITY + 144
 TERRAIN_PROJECT_PATH :: "adriatic.terrain"
 MARINA_BRUSH_MINIMUM_SUITABILITY :: f32(.70)
 VEHICLE_SHOWCASE_FOCAL_LENGTH :: f32(2.0)
@@ -62,7 +62,7 @@ AIRCRAFT_FIXED_STEP :: f64(1.0 / 120.0)
 AIRCRAFT_MAX_CATCH_UP :: f64(.1)
 
 Structure_History_State :: struct {
-    structures:            [terrain.STRUCTURE_CAPACITY]terrain.Structure,
+    structures:            [dynamic]terrain.Structure,
     count:                 int,
     next_id:               u64,
     road_graph:            roads.Graph,
@@ -102,7 +102,7 @@ Fixture :: struct {
     circulation_plan:                               circulation.Plan,
     circulation_revision:                           u64,
     circulation_plan_valid:                         bool,
-    circulation_structures:                         [terrain.STRUCTURE_CAPACITY]terrain.Structure,
+    circulation_structures:                         [dynamic]terrain.Structure,
     circulation_structure_count:                    int,
     authoring_tool:                                 Authoring_Tool,
     editor_ui:                                      Editor_UI_State,
@@ -445,9 +445,14 @@ editor_circulation_plan :: #force_inline proc(editor: ^Editor) -> ^circulation.P
                editor.circulation_structures[count] != structure {
                 changed = true
             }
-            editor.circulation_structures[count] = structure
+            if count < len(editor.circulation_structures) {
+                editor.circulation_structures[count] = structure
+            } else {
+                append(&editor.circulation_structures, structure)
+            }
             count += 1
         }
+        resize(&editor.circulation_structures, count)
         if count != editor.circulation_structure_count do changed = true
         editor.circulation_structure_count = count
         if changed do editor.circulation_plan = architecture.circulation_plan(&editor.project)
@@ -578,9 +583,8 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.landing_wheel_speed = 0
 }
 
-structure_history_capture :: proc(editor: ^Editor) -> Structure_History_State {
-    state: Structure_History_State
-    if editor == nil do return state
+structure_history_capture :: proc(editor: ^Editor, state: ^Structure_History_State) {
+    if editor == nil || state == nil do return
     state.count = editor.project.structure_count
     state.next_id = editor.project.next_structure_id
     state.road_graph = editor.project.road_graph
@@ -590,17 +594,14 @@ structure_history_capture :: proc(editor: ^Editor) -> Structure_History_State {
     state.marina_authored = editor.marina_authored
     state.farms = editor.farms
     state.farm_count = editor.farm_count
-    for index in 0 ..< terrain.STRUCTURE_CAPACITY {
-        state.structures[index] = editor.project.structures[index]
-    }
-    return state
+    resize(&state.structures, state.count)
+    copy(state.structures[:], editor.project.structures[:state.count])
 }
 
-structure_history_restore :: proc(editor: ^Editor, state: Structure_History_State) {
-    if editor == nil do return
-    for index in 0 ..< terrain.STRUCTURE_CAPACITY {
-        editor.project.structures[index] = state.structures[index]
-    }
+structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_State) {
+    if editor == nil || state == nil do return
+    resize(&editor.project.structures, state.count)
+    copy(editor.project.structures[:], state.structures[:state.count])
     editor.project.structure_count = state.count
     editor.project.next_structure_id = state.next_id
     editor.project.road_graph = state.road_graph
@@ -615,38 +616,41 @@ structure_history_restore :: proc(editor: ^Editor, state: Structure_History_Stat
     if editor.road_selected_node >= editor.project.road_graph.node_count do editor.road_selected_node = -1
 }
 
+structure_history_push :: proc(
+    history: ^[STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
+    count: ^int,
+    editor: ^Editor,
+) {
+    if history == nil || count == nil || editor == nil do return
+    if count^ < STRUCTURE_HISTORY_CAPACITY {
+        structure_history_capture(editor, &history[count^])
+        count^ += 1
+        return
+    }
+    oldest := history[0]
+    for index in 1 ..< STRUCTURE_HISTORY_CAPACITY {
+        history[index - 1] = history[index]
+    }
+    history[STRUCTURE_HISTORY_CAPACITY - 1] = oldest
+    structure_history_capture(editor, &history[STRUCTURE_HISTORY_CAPACITY - 1])
+}
+
 structure_history_push_undo :: proc(editor: ^Editor) {
     if editor == nil do return
-    if editor.structure_undo_count < STRUCTURE_HISTORY_CAPACITY {
-        editor.structure_undo[editor.structure_undo_count] = structure_history_capture(editor)
-        editor.structure_undo_count += 1
-    } else {
-        for index in 1 ..< STRUCTURE_HISTORY_CAPACITY {
-            editor.structure_undo[index - 1] = editor.structure_undo[index]
-        }
-        editor.structure_undo[STRUCTURE_HISTORY_CAPACITY - 1] = structure_history_capture(editor)
-    }
+    structure_history_push(&editor.structure_undo, &editor.structure_undo_count, editor)
     editor.structure_redo_count = 0
 }
 
 structure_history_push_redo :: proc(editor: ^Editor) {
     if editor == nil do return
-    if editor.structure_redo_count < STRUCTURE_HISTORY_CAPACITY {
-        editor.structure_redo[editor.structure_redo_count] = structure_history_capture(editor)
-        editor.structure_redo_count += 1
-    } else {
-        for index in 1 ..< STRUCTURE_HISTORY_CAPACITY {
-            editor.structure_redo[index - 1] = editor.structure_redo[index]
-        }
-        editor.structure_redo[STRUCTURE_HISTORY_CAPACITY - 1] = structure_history_capture(editor)
-    }
+    structure_history_push(&editor.structure_redo, &editor.structure_redo_count, editor)
 }
 
 structure_undo :: proc(editor: ^Editor) {
     if editor == nil || editor.structure_undo_count <= 0 do return
     structure_history_push_redo(editor)
     editor.structure_undo_count -= 1
-    structure_history_restore(editor, editor.structure_undo[editor.structure_undo_count])
+    structure_history_restore(editor, &editor.structure_undo[editor.structure_undo_count])
     if editor.structure_selected >= 0 && editor.structure_selected >= editor.project.structure_count {
         editor.structure_selected = -1
     }
@@ -654,17 +658,18 @@ structure_undo :: proc(editor: ^Editor) {
 
 structure_redo :: proc(editor: ^Editor) {
     if editor == nil || editor.structure_redo_count <= 0 do return
-    if editor.structure_undo_count < STRUCTURE_HISTORY_CAPACITY {
-        editor.structure_undo[editor.structure_undo_count] = structure_history_capture(editor)
-        editor.structure_undo_count += 1
-    } else {
-        for index in 1 ..< STRUCTURE_HISTORY_CAPACITY {
-            editor.structure_undo[index - 1] = editor.structure_undo[index]
-        }
-        editor.structure_undo[STRUCTURE_HISTORY_CAPACITY - 1] = structure_history_capture(editor)
-    }
+    structure_history_push(&editor.structure_undo, &editor.structure_undo_count, editor)
     editor.structure_redo_count -= 1
-    structure_history_restore(editor, editor.structure_redo[editor.structure_redo_count])
+    structure_history_restore(editor, &editor.structure_redo[editor.structure_redo_count])
+}
+
+structure_storage_destroy :: proc(editor: ^Editor) {
+    if editor == nil do return
+    terrain.destroy_project(&editor.project)
+    delete(editor.circulation_structures)
+    editor.circulation_structures = nil
+    for &state in editor.structure_undo do delete(state.structures)
+    for &state in editor.structure_redo do delete(state.structures)
 }
 
 terrain_history_capture :: proc(editor: ^Editor, state: ^Terrain_History_State) {
@@ -6815,6 +6820,7 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
     // the blob, so release these before it replaces their descriptors.
     vehicles.libellula_mesh_destroy(&editor.libellula_visual_mesh)
     delete(editor.libellula_projected_faces)
+    structure_storage_destroy(editor)
     editor.attendant_dialogue = {}
     editor.attendant_dialogue_open = false
 
@@ -7047,6 +7053,7 @@ adriatic_run :: proc(
     }
     editor := new(Editor)
     defer free(editor)
+    defer structure_storage_destroy(editor)
     defer dio.flame_graph_destroy(&editor.flame_graph)
     defer greek_asset_destroy(editor)
     story.init_catalog(&editor.story_catalog)

@@ -84,7 +84,7 @@ settlement_village_program_is_complete_and_reason_specific :: proc(t: ^testing.T
 @(test)
 settlement_village_reason_responds_to_terrain_and_tissue :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
     plan := Settlement_Plan {
         request = {region = .Adriatic, scale = .Village, seed = 7, center = {center, center}, radius = 100},
@@ -148,7 +148,7 @@ settlement_block_presets_hold_across_seed_suite :: proc(t: ^testing.T) {
 @(test)
 settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     project.sea_level = -100
     project.road_graph = {}
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
@@ -401,7 +401,7 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
 @(test)
 settlement_village_occupies_multiple_route_arms :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     project.sea_level = -100
     project.road_graph = {}
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
@@ -497,7 +497,7 @@ settlement_village_landmark_reinforces_composed_core :: proc(t: ^testing.T) {
     plan.neighborhoods[1] = {center = {90, 70}, age = .1}
     plan.neighborhood_count = 2
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     testing.expect_value(t, settlement_landmark_anchor_index(&plan, project, 0), 0)
 }
 
@@ -580,7 +580,7 @@ settlement_metrics_are_idempotent :: proc(t: ^testing.T) {
 @(test)
 settlement_building_clearance_rejects_crowding :: proc(t: ^testing.T) {
     project := new(terrain.Project)
-    defer free(project)
+    defer terrain.free_project(project)
     city: architecture.City_Plan
     city.structures[0] = terrain.structure_make(0, 0, 9, 16, 0, 8)
     city.count = 1
@@ -588,7 +588,7 @@ settlement_building_clearance_rejects_crowding :: proc(t: ^testing.T) {
     testing.expect(t, settlement_structure_clear(project, &city, 28, 0, 9, 16, 0, .8))
 
     road_project := new(terrain.Project)
-    defer free(road_project)
+    defer terrain.free_project(road_project)
     from := roads.add_node(&road_project.road_graph, {-20, 0, 0}, 2)
     to := roads.add_node(&road_project.road_graph, {20, 0, 0}, 2)
     _ = roads.add_edge(&road_project.road_graph, from, to, {-7, 0, 0}, {7, 0, 0}, 3, .8, .Cobblestone)
@@ -613,7 +613,7 @@ settlement_rejected_candidates_are_bounded_and_measured :: proc(t: ^testing.T) {
 @(test)
 settlement_import_classifies_wide_pedestrian_access_as_lane :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     plan: Settlement_Plan
     city: architecture.City_Plan
     city.alleys[0] = {
@@ -663,7 +663,7 @@ settlement_blocks_describe_built_groups :: proc(t: ^testing.T) {
 @(test)
 settlement_parks_do_not_consume_civic_frontage :: proc(t: ^testing.T) {
     project := new(terrain.Project)
-    defer free(project)
+    defer terrain.free_project(project)
     landmark := terrain.structure_make(0, 0, 12, 10, 0, 24)
     landmark.kind = .Architecture
     _ = terrain.add_structure(project, landmark)
@@ -750,7 +750,7 @@ settlement_pedestrian_access_is_sparse_and_bounded :: proc(t: ^testing.T) {
 @(test)
 settlement_acceptance_rejects_wide_roads_and_height_outliers :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     project.sea_level = -100
     plan: Settlement_Plan
     plan.request = {
@@ -811,7 +811,7 @@ settlement_acceptance_rejects_wide_roads_and_height_outliers :: proc(t: ^testing
 @(test)
 settlement_acceptance_requires_urban_grouping :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     project.sea_level = -100
     plan: Settlement_Plan
     plan.request = {
@@ -942,7 +942,7 @@ settlement_route_intersections_are_split_before_commit :: proc(t: ^testing.T) {
 @(test)
 settlement_short_routes_remain_explicit_segments :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     project.sea_level = -100
     route := settlement_route_find(project, 100, 100, 106, 104, .Civic_Spine)
     testing.expect_value(t, route.count, 2)
@@ -987,7 +987,7 @@ settlement_required_anchors_must_share_one_route_component :: proc(t: ^testing.T
 @(test)
 settlement_route_submersion_checks_segments_not_only_vertices :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     project.sea_level = 0
     terrain.apply_stroke_with_hardness(project, .Raise, -30, 0, 9, 8, 1, .8)
     terrain.apply_stroke_with_hardness(project, .Raise, 30, 0, 9, 8, 1, .8)
@@ -1032,12 +1032,13 @@ settlement_lab_targets_select_deterministic_fixtures :: proc(t: ^testing.T) {
 @(test)
 settlement_map_frame_follows_constructed_bounds :: proc(t: ^testing.T) {
     project := new(terrain.Project)
-    defer free(project)
-    project.structures[0] = terrain.structure_make(0, 0, 10, 10, 0, 8)
-    project.structures[0].kind = .Architecture
-    project.structures[1] = terrain.structure_make(100, 20, 10, 10, 0, 8)
-    project.structures[1].kind = .Architecture
-    project.structure_count = 2
+    defer terrain.free_project(project)
+    first := terrain.structure_make(0, 0, 10, 10, 0, 8)
+    first.kind = .Architecture
+    second := terrain.structure_make(100, 20, 10, 10, 0, 8)
+    second.kind = .Architecture
+    _ = terrain.add_structure(project, first)
+    _ = terrain.add_structure(project, second)
     focus, height := settlement_map_frame(project, {500, 500}, 50)
     testing.expect(t, math.abs(focus[0] - 50) < .01)
     testing.expect(t, math.abs(focus[1] - 10) < .01)
@@ -1055,7 +1056,7 @@ settlement_terrain_edits_measure_cut_and_fill :: proc(t: ^testing.T) {
 @(test)
 settlement_terrain_strokes_refresh_finer_lod_overlaps :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
     before := terrain.sample_height(project, 0, center, center)
     terrain.apply_stroke_with_hardness(project, .Raise, center, center, 20, 5, 1, .5)

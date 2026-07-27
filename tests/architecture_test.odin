@@ -24,7 +24,7 @@ adriatic_graph_is_seed_stable_and_has_a_landmark :: proc(t: ^testing.T) {
 @(test)
 architecture_palette_keeps_landmark_distinct :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     architecture.generate(project, 1300, 1300, 0xA71D3)
     found_landmark := false
     found_variant := false
@@ -87,7 +87,7 @@ architecture_roof_tiles_vary_by_seed_and_tone :: proc(t: ^testing.T) {
 @(test)
 architecture_generation_rejects_sea_level_sites :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     created := architecture.generate(project, 0, 0, 0xA71D3)
     testing.expect(t, created == 0)
     testing.expect(t, project.structure_count == 0)
@@ -96,7 +96,7 @@ architecture_generation_rejects_sea_level_sites :: proc(t: ^testing.T) {
 @(test)
 architecture_regeneration_preserves_seeded_styles :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     architecture.generate(project, 1300, 1300, 0xA71D3)
     first_seed := project.structures[0].seed
     first_color := project.structures[0].color
@@ -108,7 +108,7 @@ architecture_regeneration_preserves_seeded_styles :: proc(t: ^testing.T) {
 @(test)
 architecture_append_generation_keeps_both_island_towns :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     first_created := architecture.generate_append(project, -1300, -1418, 0xA71D3)
     second_created := architecture.generate_append(project, 1300, 1418, 0xD911C)
     testing.expect(t, first_created >= 12)
@@ -129,8 +129,8 @@ architecture_append_generation_keeps_both_island_towns :: proc(t: ^testing.T) {
 architecture_append_density_removes_buildings_without_scaling_survivors :: proc(t: ^testing.T) {
     full := terrain.new_project()
     sparse := terrain.new_project()
-    defer free(full)
-    defer free(sparse)
+    defer terrain.free_project(full)
+    defer terrain.free_project(sparse)
     full_created := architecture.generate_append(full, 1300, 1418, 0xA71D3)
     sparse_created := architecture.generate_append(sparse, 1300, 1418, 0xA71D3, .52)
     testing.expect(t, sparse_created >= 4)
@@ -196,7 +196,7 @@ architecture_chimney_variation_is_sparse_and_seed_stable :: proc(t: ^testing.T) 
 @(test)
 architecture_accent_sites_respect_rotated_building_footprints :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     building := terrain.structure_make(100, 200, 30, 18, 4, 24)
     building.kind = .Architecture
     building.rotation = math.PI / 4
@@ -556,7 +556,7 @@ city_density_clamps_after_repeated_strokes :: proc(t: ^testing.T) {
 @(test)
 city_plan_is_deterministic_and_density_controls_massing :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     low, high: [terrain.CITY_DENSITY_SAMPLES]u8
     bounds := architecture.City_Bounds{1120, 1120, 1480, 1480, true}
     _ = architecture.city_density_stamp(&low, 1300, 1300, 175, .34, .8)
@@ -614,7 +614,7 @@ city_road_clearance_uses_the_rotated_footprint_instead_of_its_bounding_circle ::
 @(test)
 city_site_validation_rejects_water_and_uses_high_foundation :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     water := terrain.structure_make(0, 0, 20, 20, 0, 12)
     testing.expect(t, !architecture.city_structure_site_valid(project, &water))
     land := terrain.structure_make(1300, 1300, 20, 20, 0, 12)
@@ -625,7 +625,7 @@ city_site_validation_rejects_water_and_uses_high_foundation :: proc(t: ^testing.
 @(test)
 architecture_foundation_spans_uneven_rotated_footprint :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     building := terrain.structure_make(1300, 1300, 30, 18, 0, 20)
     building.kind = .Architecture
     building.rotation = math.PI / 4
@@ -642,7 +642,7 @@ architecture_foundation_spans_uneven_rotated_footprint :: proc(t: ^testing.T) {
 @(test)
 city_commit_replaces_architecture_but_preserves_other_formations :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     building := terrain.structure_make(1300, 1300, 20, 20, 4.5, 20)
     building.kind = .Architecture
     _ = terrain.add_structure(project, building)
@@ -660,7 +660,7 @@ city_commit_replaces_architecture_but_preserves_other_formations :: proc(t: ^tes
 @(test)
 city_preview_plan_matches_committed_structures :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     field: [terrain.CITY_DENSITY_SAMPLES]u8
     bounds := architecture.City_Bounds{1160, 1160, 1440, 1440, true}
     _ = architecture.city_density_stamp(&field, 1300, 1300, 130, .8, .7)
@@ -692,7 +692,7 @@ city_plan_region_can_distinguish_default_island_architecture :: proc(t: ^testing
 @(test)
 city_planner_builds_accessible_frontage_parcels_and_deep_alleys :: proc(t: ^testing.T) {
     project := terrain.new_project()
-    defer free(project)
+    defer terrain.free_project(project)
     field: [terrain.CITY_DENSITY_SAMPLES]u8
     bounds := architecture.City_Bounds{1120, 1120, 1480, 1480, true}
     _ = architecture.city_density_stamp(&field, 1300, 1300, 185, 1, 1)
@@ -897,7 +897,7 @@ terrain_v3_migration_preserves_structure_identity_and_marks_architecture_legacy 
         seed     = 5678,
     }
     migrated := new(terrain.Project)
-    defer free(migrated)
+    defer terrain.free_project(migrated)
     testing.expect(t, terrain.project_migrate_v3(migrated, legacy))
     testing.expect(t, migrated.structure_count == 2)
     testing.expect(t, migrated.next_structure_id == 9)

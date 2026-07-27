@@ -44,7 +44,7 @@ mouse_tail_bend_stiffness_is_iteration_independent :: proc(t: ^testing.T) {
 @(test)
 mouse_tail_keeps_its_segments_connected :: proc(t: ^testing.T) {
     project := new(terrain.Project)
-    defer free(project)
+    defer terrain.free_project(project)
     terrain.init_project(project)
     state: mouse_tail.State
     config := mouse_tail.default_config()
@@ -61,7 +61,7 @@ mouse_tail_keeps_its_segments_connected :: proc(t: ^testing.T) {
 @(test)
 mouse_tail_collides_with_terrain :: proc(t: ^testing.T) {
     project := new(terrain.Project)
-    defer free(project)
+    defer terrain.free_project(project)
     terrain.init_project(project)
     config := mouse_tail.default_config()
     root := third_person.Vec3{0, .5, 0}
@@ -82,7 +82,7 @@ mouse_tail_collides_with_terrain :: proc(t: ^testing.T) {
 @(test)
 mouse_tail_rests_on_rendered_road_crown :: proc(t: ^testing.T) {
     project := new(terrain.Project)
-    defer free(project)
+    defer terrain.free_project(project)
     terrain.init_project(project)
     from := roads.add_node(&project.road_graph, {-4, 0, 0})
     to := roads.add_node(&project.road_graph, {4, 0, 0})
@@ -103,7 +103,7 @@ mouse_tail_rests_on_rendered_road_crown :: proc(t: ^testing.T) {
 @(test)
 mouse_tail_collides_with_solid_formations :: proc(t: ^testing.T) {
     project := new(terrain.Project)
-    defer free(project)
+    defer terrain.free_project(project)
     terrain.init_project(project)
     structure := terrain.structure_make(0, 0, 2, 2, 0, 1)
     structure.kind = .Box
