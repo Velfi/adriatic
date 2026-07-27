@@ -482,6 +482,102 @@ editor_spawn_into_world :: proc(editor: ^Editor) {
     set_pointer_locked(true)
 }
 
+game_state_reset :: proc(editor: ^Editor) {
+    if editor == nil do return
+
+    spawn := runway_spawn_position(editor)
+    editor.player = {
+        position = spawn,
+        grounded = true,
+    }
+    editor.player_stride_phase = 0
+    editor.player_gait_weight = 0
+    editor.player_airborne_weight = 0
+    editor.player_vertical_pose = 0
+    editor.player_turn_pose = 0
+    editor.player_brake_pose = 0
+    editor.player_posted_idle_seconds = 0
+    editor.player_posted_weight = 0
+    editor.player_scurry_weight = 0
+    editor.player_scurry_lean = 0
+    editor.player_scurry_lean_velocity = 0
+    editor.player_scurry_compression = 0
+    editor.player_scurry_compression_velocity = 0
+    editor.player_animation_previous_speed = 0
+    editor.player_paws = {}
+    editor.player_tail = {}
+
+    editor.pilot = {position = spawn}
+    editor.camera = third_person.default_camera()
+    editor.cameras = {}
+    editor.flight_camera = {}
+    editor.flight_control = {}
+    editor.camera_target_lock = false
+    editor.aircraft_fixed_accumulator = 0
+    editor.aircraft_previous_body = {}
+    editor.aircraft_previous_body_valid = false
+    editor.flight_throttle_overlay_value = 0
+    editor.flight_throttle_overlay_changed_at = 0
+    editor.flight_throttle_overlay_initialized = false
+
+    editor.postale = postale_game.new_runtime(postale_spawn_position(editor))
+    libellula_spawn := libellula_spawn_position(editor)
+    editor.libellula = libellula_game.new_runtime({
+        libellula_spawn.x,
+        libellula_spawn.y,
+        libellula_spawn.z,
+    })
+    editor.aircraft = {}
+    vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
+    vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
+    vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula_Mk2, "Libellula Mk2", &editor.libellula.vehicle, false)
+    editor.postale_visible = true
+    editor.libellula_visible = true
+    editor.libellula.vehicle.locked = true
+
+    editor.car = vehicles.default_vehicle(car_spawn_position(editor))
+    editor.car.interaction_radius = 2.2
+    editor.car.exit_distance = 1.1
+    editor.car.yaw_radians = -math.PI * .5
+    editor.car_drive = {}
+    editor.car_wheels = {}
+    editor.car_impact_detector = {}
+    editor.car_audio_damage = 0
+    editor.car_audio_gearbox = {}
+    editor.car_physics_accumulator = 0
+    car_physics_teleport(editor)
+    editor.car_trailer = {}
+    editor.car_trailer_attached = true
+    editor.car_trailer_position = editor.car.position
+    editor.car_trailer_yaw = editor.car.yaw_radians
+
+    editor.story_state = {}
+    editor.dialogue_resident = {}
+    editor.attendant_position = attendant_spawn_position(editor, editor.libellula.vehicle.position)
+    editor.gerta_position = gerta_spawn_position(editor)
+    editor.attendant_dialogue = {}
+    editor.attendant_dialogue_open = false
+    editor.attendant_dialogue_focus = 0
+    editor.attendant_dialogue_action = .None
+    editor.attendant_dialogue_vehicle_target = {}
+    editor.attendant_dialogue_vehicle_choices = {}
+    editor.attendant_dialogue_vehicle_choice_count = 0
+    editor.marina_dinghy_borrowed = false
+    editor.cinematic_playback = {}
+    editor.story_cinematic_restore_pose = {}
+    editor.story_meeting_cinematic_pending = false
+    editor.story_cinematic_active = false
+
+    markov_marina_buoy_physics_destroy(editor)
+    editor.boat_traffic = boats.new_traffic()
+    editor.atmosphere = atmosphere.new(0x41c10)
+    editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
+    editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
+    editor.petal_effects = particle_systems.new_petal_effects(0x6a09e667)
+    editor.landing_wheel_squeal = 0
+    editor.landing_wheel_speed = 0
+}
+
 structure_history_capture :: proc(editor: ^Editor) -> Structure_History_State {
     state: Structure_History_State
     if editor == nil do return state
@@ -2671,9 +2767,11 @@ structure_adjust_with_wheel :: proc(editor: ^Editor, wheel: f32) {
             editor.structure_preview.width = max(cell, editor.structure_preview.width + wheel * cell * 2)
             editor.structure_preview.depth = max(cell, editor.structure_preview.depth + wheel * cell * 2)
         } else {
-            editor.structure_preview.height = max(cell, editor.structure_preview.height + wheel * cell * 2)
             if editor.structure_preview.kind == .Architecture {
-                editor.structure_preview.height = architecture.facade_fitted_height(editor.structure_preview.height)
+                editor.structure_preview.height =
+                    architecture.facade_step_height(editor.structure_preview.height, wheel > 0 ? 1 : -1)
+            } else {
+                editor.structure_preview.height = max(cell, editor.structure_preview.height + wheel * cell * 2)
             }
         }
     } else if editor.structure_selected >= 0 {
@@ -2690,9 +2788,10 @@ structure_adjust_with_wheel :: proc(editor: ^Editor, wheel: f32) {
             for index in 0 ..< editor.project.structure_count {
                 structure := &editor.project.structures[index]
                 if structure.group_id != selected_group do continue
-                structure.height = max(cell, structure.height + wheel * cell * 2)
                 if structure.kind == .Architecture {
-                    structure.height = architecture.facade_fitted_height(structure.height)
+                    structure.height = architecture.facade_step_height(structure.height, wheel > 0 ? 1 : -1)
+                } else {
+                    structure.height = max(cell, structure.height + wheel * cell * 2)
                 }
             }
         }
@@ -4327,14 +4426,30 @@ compass_tick_label :: proc(degrees: int) -> cstring {
     switch heading {
     case 0:
         return "N"
+    case 30:
+        return "03"
+    case 60:
+        return "06"
     case 90:
         return "E"
+    case 120:
+        return "12"
+    case 150:
+        return "15"
     case 180:
         return "S"
+    case 210:
+        return "21"
+    case 240:
+        return "24"
     case 270:
         return "W"
+    case 300:
+        return "30"
+    case 330:
+        return "33"
     case:
-        return fmt.ctprintf("%02d", heading / 10)
+        return ""
     }
 }
 
@@ -6816,6 +6931,7 @@ adriatic_run :: proc(
     if capture_kind == .Shadow_Lab do capture_lab_name = "shadow"
     if capture_wildflower_lab_mode do capture_lab_name = "wildflower"
     if capture_kind == .Boat_Lab do capture_lab_name = "boat"
+    if capture_kind == .Mouse_Gait_Lab do capture_lab_name = "mouse-gait"
     if capture_kind == .Markov_Wreck do capture_lab_name = "markov-wreck"
     if capture_kind == .Markov_Marina do capture_lab_name = "markov-marina"
     if capture_kind == .Markov_Farmland do capture_lab_name = "markov-farmland"
@@ -6827,6 +6943,7 @@ adriatic_run :: proc(
         capture_markov_town_mode ||
         capture_kind == .Shadow_Lab ||
         capture_kind == .Boat_Lab ||
+        capture_kind == .Mouse_Gait_Lab ||
         capture_kind == .Markov_Wreck ||
         capture_kind == .Markov_Marina ||
         capture_kind == .Markov_Farmland
@@ -8122,6 +8239,19 @@ adriatic_run :: proc(
                 editor.strength = clamp(editor.strength + viewport_wheel * .02, 0, 1)
             }
         }
+        // Cursor picking and rendering must use the same editor camera pose.
+        // At close zooms the orbit camera can dip below uneven terrain; if we
+        // correct it only later in the frame, the brush is applied at the ray
+        // from the old pose but drawn at the ray from the corrected pose.
+        if !editor.in_map {
+            camera_ground := terrain.sample_height(
+                &editor.project,
+                0,
+                editor.camera_pose.position.x,
+                editor.camera_pose.position.z,
+            )
+            editor.camera_pose = third_person.camera_above_height(editor.camera_pose, camera_ground, .35)
+        }
         focal_length := editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH : f32(1.35)
         if !editor.vehicle_showcase_scene && editor.in_map && driving_aircraft(editor) {
             focal_length = editor.flight_camera.focal_length
@@ -8206,7 +8336,10 @@ adriatic_run :: proc(
                         chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
                     }
                     if input_action_pressed(.Vehicle_Reset) {
-                        if editor.aircraft.active != .Postale {
+                        if lab_scene_is_active(editor, "markov-wreck") &&
+                           editor.aircraft.active == .Postale {
+                            _ = markov_wreck_reset_postale(editor)
+                        } else if editor.aircraft.active != .Postale {
                             ground := terrain.sample_height(
                                 &editor.project,
                                 0,
@@ -8226,9 +8359,11 @@ adriatic_run :: proc(
                             )
                             postale_game.reset(&editor.postale, ground)
                         }
-                        editor.aircraft_fixed_accumulator = 0
-                        editor.aircraft_previous_body_valid = false
-                        vehicles.sync_driver(&editor.pilot)
+                        if !lab_scene_is_active(editor, "markov-wreck") {
+                            editor.aircraft_fixed_accumulator = 0
+                            editor.aircraft_previous_body_valid = false
+                            vehicles.sync_driver(&editor.pilot)
+                        }
                     }
                     control := postale_game.Control {
                         throttle_up   = rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT),
@@ -8538,6 +8673,7 @@ adriatic_run :: proc(
                         player_was_grounded := editor.player.grounded
                         player_vertical_speed_before := editor.player.velocity.y
                         third_person.step(&editor.player, input, editor.tweak.player, frame_seconds)
+                        player_resolve_world_collision(editor)
                         player_animation_update(editor, frame_seconds)
                         ground_height = terrain.sample_height(
                             &editor.project,
@@ -8681,7 +8817,7 @@ adriatic_run :: proc(
                 1,
             )
         }
-        if !editor.vehicle_showcase_scene && !driving_aircraft(editor) {
+        if editor.in_map && !editor.vehicle_showcase_scene && !driving_aircraft(editor) {
             camera_ground := terrain.sample_height(
                 &editor.project,
                 0,
@@ -8932,6 +9068,7 @@ adriatic_run :: proc(
             capture_player_mode ||
             capture_kind == .Shadow_Lab ||
             capture_kind == .Boat_Lab ||
+            capture_kind == .Mouse_Gait_Lab ||
             capture_kind == .Markov_Marina ? 20 : 2
         if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
         // Vulkan screenshot readback completes asynchronously; retain several

@@ -464,17 +464,7 @@ markov_wreck_spawn_postale :: proc(editor: ^Editor) -> bool {
     }
     editor.postale.spawn_position = spawn
     editor.postale.spawn_basis = basis
-    postale_game.reset(&editor.postale, 0)
-    editor.postale.body.position = spawn
-    editor.postale.body.basis = basis
-    editor.postale.body.velocity = basis.forward * 46
-    editor.postale.vehicle.position = {spawn.x, spawn.y, spawn.z}
-    editor.postale.vehicle.yaw_radians = postale_game.yaw_radians(basis)
-    editor.postale.vehicle.locked = false
-    editor.postale.grounded = false
-    editor.postale.was_grounded = false
-    editor.postale.takeoff_armed = false
-    editor.postale.throttle = .76
+    markov_wreck_reset_postale(editor)
     editor.postale_visible = true
     editor.libellula_visible = false
 
@@ -501,6 +491,29 @@ markov_wreck_spawn_postale :: proc(editor: ^Editor) -> bool {
     return true
 }
 
+markov_wreck_reset_postale :: proc(editor: ^Editor) -> bool {
+    if editor == nil || !lab_scene_is_active(editor, "markov-wreck") do return false
+    spawn := editor.postale.spawn_position
+    basis := editor.postale.spawn_basis
+    postale_game.reset(&editor.postale, 0)
+    editor.postale.body.position = spawn
+    editor.postale.body.basis = basis
+    editor.postale.body.velocity = basis.forward * 46
+    editor.postale.vehicle.position = {spawn.x, spawn.y, spawn.z}
+    editor.postale.vehicle.yaw_radians = postale_game.yaw_radians(basis)
+    editor.postale.vehicle.locked = false
+    editor.postale.grounded = false
+    editor.postale.was_grounded = false
+    editor.postale.takeoff_armed = false
+    editor.postale.throttle = .76
+    editor.aircraft_fixed_accumulator = 0
+    editor.aircraft_previous_body_valid = false
+    chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
+    editor.camera_pose = editor.flight_camera.pose
+    vehicles.sync_driver(&editor.pilot)
+    return true
+}
+
 markov_wreck_spawn_button_bounds :: proc(height: i32) -> rl.Rectangle {
     return {32, f32(height) - 78, 238, 46}
 }
@@ -514,6 +527,30 @@ markov_wreck_randomize :: proc(editor: ^Editor) -> bool {
     next_seed := markov_wreck_hash(markov_wreck_requested_seed ~ 0x6e657874)
     if next_seed == markov_wreck_requested_seed do next_seed += 1
     return markov_wreck_lab_configure(editor, fmt.tprintf("%d", next_seed))
+}
+
+markov_wreck_return_from_flight :: proc(editor: ^Editor) -> bool {
+    if editor == nil ||
+       !lab_scene_is_active(editor, "markov-wreck") ||
+       !markov_wreck_postale_spawned {
+        return false
+    }
+    if editor.pilot.mode == .Driving {
+        _ = vehicles.try_exit(&editor.pilot, true)
+    }
+    editor.postale_visible = false
+    editor.in_map = false
+    editor.pause_screen = .Closed
+    editor.capture_world_only = true
+    editor.camera_pose = third_person.camera_look_at({170, 82, 185}, {0, 24, 0})
+    editor.editor_focus = {0, 24, 0}
+    third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+    third_person.camera_set_active(&editor.cameras, .Inspection)
+    editor.map_time = f32(rl.GetTime())
+    markov_wreck_postale_spawned = false
+    set_pointer_locked(false)
+    _ = sdl.ShowCursor()
+    return true
 }
 
 markov_wreck_panel_color :: proc(seed: u32, fracture: bool) -> rl.Color {
@@ -1053,7 +1090,7 @@ markov_wreck_aircraft_collision_step :: proc(editor: ^Editor) -> bool {
     return false
 }
 
-world_markov_wreck :: proc(_: ^Editor) {
+world_markov_wreck :: proc(editor: ^Editor) {
     base_y := MARKOV_WRECK_HULL_CENTER_Y
 
     // The lab is an open-water wreck site. A low, broad water grid provides
@@ -1378,6 +1415,12 @@ world_markov_wreck :: proc(_: ^Editor) {
         markov_wreck_attached_box({30, deck_y + 5.15, 13}, {24, .4, 17}, {48, 56, 56, 255})
         markov_wreck_attached_box({-72, deck_y + 5.15, -13}, {21, .4, 17}, {48, 56, 56, 255})
     }
+
+    // This lab replaces the ordinary world, so the shared world pass returns
+    // before it submits gameplay vehicles. Keep the spawned flight-mode craft
+    // and its seated pilot in the lab's self-contained render pass.
+    world_aircraft(editor)
+    world_postale_pilot(editor)
 }
 
 markov_wreck_process_input :: proc(editor: ^Editor) {

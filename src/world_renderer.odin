@@ -6,6 +6,8 @@ import boats "../packages/boats"
 import buildings "../packages/buildings"
 import circulation "../packages/circulation"
 import flight "../packages/flight"
+import mouse_gait "../packages/mouse_gait"
+import mouse_kinematics "../packages/mouse_kinematics"
 import mouse_paws "../packages/mouse_paws"
 import mouse_tail "../packages/mouse_tail"
 import particles "../packages/particles"
@@ -885,8 +887,12 @@ world_boat_part_color :: proc(class: boats.Class, part: boats.Part) -> rl.Color 
 }
 
 @(no_instrumentation)
-world_boat_point :: #force_inline proc(local: [3]f32, position: third_person.Vec3, yaw: f32) -> third_person.Vec3 {
-    c, s := math.cos(yaw), math.sin(yaw)
+world_boat_point :: #force_inline proc(
+    local: [3]f32,
+    position: third_person.Vec3,
+    yaw_cos, yaw_sin: f32,
+) -> third_person.Vec3 {
+    c, s := yaw_cos, yaw_sin
     return {position.x + local.x * c - local.z * s, position.y + local.y, position.z + local.x * s + local.z * c}
 }
 
@@ -909,16 +915,18 @@ world_boat_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color, part: b
 }
 
 world_npc_boat :: proc(class: boats.Class, position: third_person.Vec3, yaw: f32, sails_raised: bool = true) {
-    mesh := boats.mesh(class)
-    for face in boats.triangles(&mesh) {
+    mesh := boats.cached_mesh(class)
+    if mesh == nil do return
+    yaw_cos, yaw_sin := math.cos(yaw), math.sin(yaw)
+    for face in boats.triangles(mesh) {
         a, b, c := mesh.vertices[face.a], mesh.vertices[face.b], mesh.vertices[face.c]
         if class == .Sail && !sails_raised && (a.part == .Sail || a.part == .Accent) {
             continue
         }
         world_boat_triangle(
-            world_boat_point(a.position, position, yaw),
-            world_boat_point(b.position, position, yaw),
-            world_boat_point(c.position, position, yaw),
+            world_boat_point(a.position, position, yaw_cos, yaw_sin),
+            world_boat_point(b.position, position, yaw_cos, yaw_sin),
+            world_boat_point(c.position, position, yaw_cos, yaw_sin),
             world_boat_part_color(class, a.part),
             a.part,
         )
@@ -9863,24 +9871,19 @@ player_animation_spring :: proc(value, velocity: ^f32, target, stiffness, dampin
     value^ += velocity^ * delta_seconds
 }
 
-Mouse_Gait_Weights :: struct {
-    walk:  f32,
-    trot:  f32,
-    bound: f32,
-}
-
 mouse_gait_weights :: proc(
     animation: ^Player_Animation_Tweak,
     horizontal_speed, airborne_weight: f32,
-) -> Mouse_Gait_Weights {
+) -> mouse_gait.Weights {
     if animation == nil do return {walk = 1}
-    walk_end := max(animation.walk_full_speed, f32(.1))
-    trot_end := max(animation.trot_full_speed, walk_end + .1)
-    bound_start := max(animation.bound_start_speed, trot_end)
-    bound_end := max(animation.bound_full_speed, bound_start + .1)
-    walk_to_trot := clamp((horizontal_speed - walk_end) / (trot_end - walk_end), 0, 1)
-    bound := max(clamp((horizontal_speed - bound_start) / (bound_end - bound_start), 0, 1), airborne_weight)
-    return {walk = (1 - walk_to_trot) * (1 - bound), trot = walk_to_trot * (1 - bound), bound = bound}
+    return mouse_gait.weights(
+        horizontal_speed,
+        animation.walk_full_speed,
+        animation.trot_full_speed,
+        animation.bound_start_speed,
+        animation.bound_full_speed,
+        airborne_weight,
+    )
 }
 
 Mouse_Bone :: enum u8 {
@@ -10316,91 +10319,6 @@ mouse_ground_contact :: proc(
     return result
 }
 
-Mouse_Paw_Cycle :: struct {
-    reach: f32,
-    lift:  f32,
-}
-
-// A planted paw travels backward relative to the body for most of a stride,
-// then follows a shorter, arcing recovery path forward. This asymmetric cycle
-// is what keeps slow mouse locomotion grounded instead of looking like four
-// feet pedaling through equal half-circles.
-mouse_paw_cycle :: proc(phase_radians, phase_offset, duty_factor: f32) -> Mouse_Paw_Cycle {
-    phase := phase_radians / (math.PI * 2) + phase_offset
-    phase -= f32(math.floor(f64(phase)))
-    duty := clamp(duty_factor, .05, .95)
-    if phase < duty {
-        stance := phase / duty
-        return {reach = 1 - stance * 2}
-    }
-    swing := (phase - duty) / (1 - duty)
-    smooth_swing := swing * swing * (3 - 2 * swing)
-    return {reach = -1 + smooth_swing * 2, lift = math.sin(swing * math.PI)}
-}
-
-mouse_paw_cycle_blend :: proc(
-    phase_radians: f32,
-    walk_offset, trot_offset, bound_offset: f32,
-    walk_weight, trot_weight, bound_weight: f32,
-) -> Mouse_Paw_Cycle {
-    // Walking mice retain three or four contacts for much of the cycle;
-    // stance shortens through trot and becomes shorter than swing in a bound.
-    walk := mouse_paw_cycle(phase_radians, walk_offset, .76)
-    trot := mouse_paw_cycle(phase_radians, trot_offset, .54)
-    bound := mouse_paw_cycle(phase_radians, bound_offset, .43)
-    return {
-        reach = walk.reach * walk_weight + trot.reach * trot_weight + bound.reach * bound_weight,
-        lift = walk.lift * walk_weight * .72 + trot.lift * trot_weight * .88 + bound.lift * bound_weight,
-    }
-}
-
-mouse_solve_two_bone_joint :: proc(
-    root, target, preferred_joint: third_person.Vec3,
-    root_length, tip_length: f32,
-) -> third_person.Vec3 {
-    delta := third_person.Vec3{target.x - root.x, target.y - root.y, target.z - root.z}
-    distance := linalg.length(delta)
-    axis: third_person.Vec3
-    if distance <= .0001 {
-        preferred_axis := third_person.Vec3 {
-            preferred_joint.x - root.x,
-            preferred_joint.y - root.y,
-            preferred_joint.z - root.z,
-        }
-        axis = linalg.normalize0(preferred_axis)
-        if linalg.dot(axis, axis) <= .0001 do axis = {0, 0, 1}
-        distance = math.abs(root_length - tip_length) + .0001
-    } else {
-        axis = {delta.x / distance, delta.y / distance, delta.z / distance}
-    }
-    solved_distance := clamp(distance, math.abs(root_length - tip_length) + .0001, root_length + tip_length - .0001)
-    along :=
-        (solved_distance * solved_distance + root_length * root_length - tip_length * tip_length) /
-        (2 * solved_distance)
-    height := f32(math.sqrt(f64(max(root_length * root_length - along * along, f32(0)))))
-    preferred_delta := third_person.Vec3 {
-        preferred_joint.x - root.x,
-        preferred_joint.y - root.y,
-        preferred_joint.z - root.z,
-    }
-    projection := linalg.dot(preferred_delta, axis)
-    pole := third_person.Vec3 {
-        preferred_delta.x - axis.x * projection,
-        preferred_delta.y - axis.y * projection,
-        preferred_delta.z - axis.z * projection,
-    }
-    if linalg.dot(pole, pole) <= .0001 {
-        pole = linalg.cross(axis, [3]f32{0, 0, 1})
-        if linalg.dot(pole, pole) <= .0001 do pole = linalg.cross(axis, [3]f32{1, 0, 0})
-    }
-    pole = linalg.normalize0(pole)
-    return {
-        root.x + axis.x * along + pole.x * height,
-        root.y + axis.y * along + pole.y * height,
-        root.z + axis.z * along + pole.z * height,
-    }
-}
-
 mouse_clamp_endpoint_reach :: proc(
     root: third_person.Vec3,
     target: ^third_person.Vec3,
@@ -10440,10 +10358,13 @@ mouse_clamp_ground_contact_reach :: proc(root: third_person.Vec3, target: ^third
     target.z = root.z + horizontal_delta[1] * scale
 }
 
-mouse_constrain_hind_chain :: proc(points: ^[4]third_person.Vec3, lengths: [3]f32) {
+mouse_constrain_hind_chain :: proc(
+    points: ^[4]third_person.Vec3,
+    lengths: [3]f32,
+    anatomical_forward: third_person.Vec3,
+) {
     if points == nil do return
     root, target := points[0], points[3]
-    preferred_knee, preferred_hock := points[1], points[2]
     root_to_target := third_person.Vec3{target.x - root.x, target.y - root.y, target.z - root.z}
     distance := linalg.length(root_to_target)
     total := lengths[0] + lengths[1] + lengths[2]
@@ -10452,26 +10373,29 @@ mouse_constrain_hind_chain :: proc(points: ^[4]third_person.Vec3, lengths: [3]f3
         root_to_target = {target.x - root.x, target.y - root.y, target.z - root.z}
         distance = linalg.length(root_to_target)
     }
-    preferred_remaining_delta := third_person.Vec3 {
-        target.x - preferred_knee.x,
-        target.y - preferred_knee.y,
-        target.z - preferred_knee.z,
-    }
-    preferred_remaining := linalg.length(preferred_remaining_delta)
-    distal_minimum := math.abs(lengths[1] - lengths[2]) + .0001
-    distal_maximum := lengths[1] + lengths[2] - .0001
-    triangle_minimum := math.abs(distance - lengths[0])
-    triangle_maximum := distance + lengths[0]
-    remaining := clamp(
-        preferred_remaining,
-        max(distal_minimum, triangle_minimum),
-        min(distal_maximum, triangle_maximum),
+    remaining := mouse_kinematics.stable_distal_span(
+        distance,
+        lengths[0],
+        lengths[1],
+        lengths[2],
     )
     // Two nested analytic solves preserve all three segment lengths and both
-    // endpoints exactly. The authored knee and hock are explicit pole vectors,
-    // so the chain retains its side-aware zig-zag through near-extension.
-    knee := mouse_solve_two_bone_joint(root, target, preferred_knee, lengths[0], remaining)
-    hock := mouse_solve_two_bone_joint(knee, target, preferred_hock, lengths[1], lengths[2])
+    // endpoints exactly. Stable anatomical poles retain the zig-zag topology,
+    // while the phase-independent distal span prevents knee/hock accordion.
+    knee := mouse_kinematics.solve_two_bone(
+        root,
+        target,
+        mouse_kinematics.hind_knee_pole(anatomical_forward),
+        lengths[0],
+        remaining,
+    )
+    hock := mouse_kinematics.solve_two_bone(
+        knee,
+        target,
+        mouse_kinematics.hind_hock_pole(anatomical_forward),
+        lengths[1],
+        lengths[2],
+    )
     points^ = {root, knee, hock, target}
 }
 
@@ -10552,6 +10476,9 @@ Mouse_Model :: struct {
     driving_pose:       bool,
     drive_steering:     f32,
     drive_acceleration: f32,
+    gait_preview:       bool,
+    gait_speed:         f32,
+    gait_phase:         f32,
 }
 
 // world_mouse_model builds geometry in a yaw-only frame because ordinary mice
@@ -10707,7 +10634,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     drive_reaction := model.driving_pose ? -clamp(model.drive_acceleration, -1, 1) : f32(0)
     spine_side := turn_pose * animation.turn_spine_offset
     brake_compression := brake_pose * animation.brake_compression
-    posted_weight := model.player_controlled ? clamp(editor.player_posted_weight, 0, 1) : f32(1)
+    posted_weight :=
+        model.player_controlled ? clamp(editor.player_posted_weight, 0, 1) : (model.gait_preview ? f32(0) : f32(1))
     if model.player_controlled && editor.capture_player_posted_pose do posted_weight = 1
 
     airborne_weight := model.player_controlled ? editor.player_airborne_weight : f32(0)
@@ -10715,13 +10643,18 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         model.player_controlled ? editor.player_gait_weight * (1 - airborne_weight) + .88 * airborne_weight : f32(0)
     stride_phase := model.player_controlled ? editor.player_stride_phase : f32(0)
     horizontal_speed := f32(
-        math.sqrt(
-            f64(
-                editor.player.velocity.x * editor.player.velocity.x +
-                editor.player.velocity.z * editor.player.velocity.z,
+            math.sqrt(
+                f64(
+                    editor.player.velocity.x * editor.player.velocity.x +
+                    editor.player.velocity.z * editor.player.velocity.z,
+                ),
             ),
-        ),
-    )
+        )
+    if model.gait_preview {
+        run_weight = 1
+        stride_phase = model.gait_phase
+        horizontal_speed = model.gait_speed
+    }
     gait := mouse_gait_weights(animation, horizontal_speed, airborne_weight)
     walk_weight, trot_weight, bound_weight := gait.walk, gait.trot, gait.bound
     if model.player_controlled && editor.capture_player_walk_pose {
@@ -10769,10 +10702,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     idle_phase := editor.map_time * 2.2
     // Sagittal spinal flexion is pronounced in a bound, but deliberately
     // restrained in alternating walk and trot gaits.
-    bound := math.sin(stride_phase) * run_weight * (.16 + .84 * bound_weight)
+    bound := math.sin(stride_phase) * run_weight * mouse_gait.axial_flex_scale(gait)
     spine_extension := -bound
     body_bob :=
-        (-bound * .018 + math.abs(math.sin(stride_phase * 2)) * .014) * run_weight +
+        (
+            -bound * .018 +
+            math.abs(math.sin(stride_phase * 2)) * mouse_gait.vertical_bob_scale(gait)
+        ) * run_weight +
         math.sin(idle_phase) * .006 * (1 - run_weight) +
         animation.run_body_lift * run_weight * (1 - airborne_weight)
     body_bob -= scurry_compression
@@ -11759,28 +11695,47 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         rear_walk_offset := left_side ? f32(.25) : f32(.75)
         front_trot_offset := left_side ? f32(0) : f32(.50)
         rear_trot_offset := left_side ? f32(.50) : f32(0)
-        bilateral_lag := side_f * .018
-        front_motion := mouse_paw_cycle_blend(
+        // Gallop and half-bound are brief transitional gaits in mice. During
+        // the trot-to-bound blend, retain a lead-limb split that closes only
+        // as full-bound synchronization takes over.
+        bilateral_lag := side_f * mouse_gait.bound_bilateral_lag(bound_weight)
+        front_motion := mouse_gait.blend_scaled(
             stride_phase,
             front_walk_offset,
             front_trot_offset,
             bilateral_lag,
-            walk_weight,
-            trot_weight,
-            bound_weight,
+            gait,
+            .68,
+            .56,
+            .34,
+            animation.stride_radians_per_meter,
+            animation.trot_stride_radians_per_meter,
+            animation.bound_stride_radians_per_meter,
         )
-        rear_motion := mouse_paw_cycle_blend(
+        rear_motion := mouse_gait.blend_scaled(
             stride_phase,
             rear_walk_offset,
             rear_trot_offset,
             .50 - bilateral_lag,
-            walk_weight,
-            trot_weight,
-            bound_weight,
+            gait,
+            .76,
+            .60,
+            .36,
+            animation.stride_radians_per_meter,
+            animation.trot_stride_radians_per_meter,
+            animation.bound_stride_radians_per_meter,
         )
         front_cycle := front_motion.reach * run_weight
         rear_cycle := rear_motion.reach * run_weight
-        front_lift := front_motion.lift * (.105 + scurry_weight * .035) * run_weight
+        front_lift_scale :=
+            .075 * walk_weight +
+            .088 * trot_weight +
+            .145 * bound_weight
+        hind_lift_scale :=
+            .090 * walk_weight +
+            .105 * trot_weight +
+            .165 * bound_weight
+        front_lift := front_motion.lift * front_lift_scale * run_weight
         scapula_slide := front_cycle * .038
         inside_turn := max(side_f * turn_pose, f32(0))
         outside_turn := max(-side_f * turn_pose, f32(0))
@@ -11834,7 +11789,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             posted_weight * .405
         fore_paw_z :=
             .29 * (1 - run_weight) +
-            (.235 + front_cycle * (.205 + scurry_weight * .055) + side_f * .014) * run_weight +
+            (.235 + front_cycle + side_f * .014) * run_weight +
             idle_groom * side_f * .55 +
             brake_pose * .12 -
             posted_weight * .095
@@ -11873,7 +11828,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // visibly blended lift. During acceleration run_weight starts near
         // zero; using front_lift here incorrectly pins both forepaws even
         // while one side's underlying gait is already in recovery.
-        fore_locomoting := horizontal_speed > .08
+        fore_locomoting := horizontal_speed > .08 || run_weight > .03
         fore_planted :=
             model.grounded &&
             posted_weight < .5 &&
@@ -11906,10 +11861,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 editor.player_paws.contacts[side_index * 2].anchor = fore_paw
             }
         }
-        fore_elbow = mouse_solve_two_bone_joint(
+        fore_elbow = mouse_kinematics.solve_two_bone(
             fore_shoulder,
             fore_paw,
-            fore_elbow,
+            mouse_kinematics.fore_elbow_pole(model_forward),
             FORE_UPPER_LENGTH,
             FORE_LOWER_LENGTH,
         )
@@ -11944,7 +11899,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         }
 
         hind_cycle := rear_cycle
-        hind_lift := rear_motion.lift * (.120 + scurry_weight * .045) * run_weight
+        hind_lift := rear_motion.lift * hind_lift_scale * run_weight
         pelvic_drive := hind_cycle * .028
         idle_hind_socket := third_person.Vec3{side_f * .16, .30, -.47}
         hind_socket_bind := third_person.Vec3 {
@@ -11981,7 +11936,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // balancing it on two vertical hocks.
         hind_paw_z :=
             -.16 +
-            hind_cycle * (.17 + scurry_weight * .065) * run_weight +
+            hind_cycle * run_weight +
             side_f * .018 * run_weight +
             brake_pose * .15 -
             posted_weight * .10
@@ -12018,7 +11973,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             }
         }
         hind_chain := [4]third_person.Vec3{hind_hip, hind_knee, hind_hock, hind_paw}
-        mouse_constrain_hind_chain(&hind_chain, HIND_LENGTHS)
+        mouse_constrain_hind_chain(&hind_chain, HIND_LENGTHS, model_forward)
         hind_hip, hind_knee, hind_hock, hind_paw = hind_chain[0], hind_chain[1], hind_chain[2], hind_chain[3]
         if model.hide_hind_feet {
             // Vehicle seats conceal the folded rear feet. Stop the visible
@@ -12116,10 +12071,11 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         tail_colors[0] = paw
         for tail_index in 1 ..= 8 {
             weight := f32(tail_index) / 8
+            gait_sway := model.gait_preview ? mouse_gait.tail_counter_sway(stride_phase, weight, gait) : f32(0)
             tail_points[tail_index] = local_point(
                 p,
                 rotation,
-                math.sin(weight * math.PI) * .13,
+                math.sin(weight * math.PI) * .13 + gait_sway,
                 .28 * (1 - weight) + .035 * weight,
                 -.78 - weight * .82,
             )

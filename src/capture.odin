@@ -29,6 +29,7 @@ Capture_Kind :: enum {
     Wildflower_Lab,
     Shadow_Lab,
     Boat_Lab,
+    Mouse_Gait_Lab,
     Markov_Wreck,
     Markov_Farmland,
     Markov_Marina,
@@ -132,6 +133,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Shadow_Lab, true
     case "boat-lab":
         return .Boat_Lab, true
+    case "mouse-gait-lab":
+        return .Mouse_Gait_Lab, true
     case "markov-wreck":
         return .Markov_Wreck, true
     case "markov-marina":

@@ -180,6 +180,18 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         replace_world = true,
         suppress_hud = true,
     },
+    {
+        name = "mouse-gait",
+        configure = mouse_gait_lab_configure,
+        world_overlay = world_mouse_gait_lab,
+        draw_ui = mouse_gait_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
 }
 
 lab_scene_find :: proc(name: string) -> ^Lab_Scene_Definition {

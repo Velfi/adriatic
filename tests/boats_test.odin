@@ -45,6 +45,18 @@ dockmaster_dinghy_is_a_small_complete_harbor_tender :: proc(t: ^testing.T) {
 }
 
 @(test)
+npc_boat_meshes_are_built_once_and_borrowed_by_class :: proc(t: ^testing.T) {
+    first := boats.cached_mesh(.Motor)
+    second := boats.cached_mesh(.Motor)
+    sail := boats.cached_mesh(.Sail)
+    testing.expect(t, first != nil)
+    testing.expect(t, first == second)
+    testing.expect(t, first != sail)
+    testing.expect(t, first.vertex_count > 0)
+    testing.expect(t, first.triangle_count > 0)
+}
+
+@(test)
 npc_boat_hulls_close_bow_and_stern_with_five_triangle_caps :: proc(t: ^testing.T) {
     classes := [4]boats.Class{.Motor, .Sail, .Fishing, .Tug}
     for class in classes {

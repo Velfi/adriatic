@@ -197,6 +197,7 @@ pause_menu_return_to_editor :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.pause_screen = .Closed
     editor.in_map = false
+    game_state_reset(editor)
     third_person.camera_set_active(&editor.cameras, .Player)
     editor.map_time = f32(rl.GetTime())
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
@@ -611,6 +612,9 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     case 2:
         if editor.vehicle_paint_scene {
             if vehicle_paint_close(editor) do editor.pause_screen = .Closed
+        } else if markov_wreck_return_from_flight(editor) {
+            // The wreck lab owns this flight session, so return to its
+            // inspection view instead of the ordinary terrain editor.
         } else {
             pause_menu_return_to_editor(editor)
         }
@@ -924,7 +928,12 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
     }
     pause_menu_button(pause_menu_button_bounds(panel, 0), "RESUME", true, editor.pause_focus == 0)
     pause_menu_button(pause_menu_button_bounds(panel, 1), "OPTIONS", false, editor.pause_focus == 1)
-    return_label: cstring = editor.vehicle_paint_scene ? "SAVE AND EXIT" : "RETURN TO EDITOR"
+    return_label: cstring = "RETURN TO EDITOR"
+    if editor.vehicle_paint_scene {
+        return_label = "SAVE AND EXIT"
+    } else if lab_scene_is_active(editor, "markov-wreck") && markov_wreck_postale_spawned {
+        return_label = "RETURN TO WRECK LAB"
+    }
     quit_label: cstring = editor.vehicle_paint_scene ? "DISCARD AND EXIT" : "QUIT TO DESKTOP"
     pause_menu_button(pause_menu_button_bounds(panel, 2), return_label, false, editor.pause_focus == 2)
     pause_menu_button(pause_menu_button_bounds(panel, 3), quit_label, false, editor.pause_focus == 3)

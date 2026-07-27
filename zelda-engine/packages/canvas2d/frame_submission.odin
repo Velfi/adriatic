@@ -326,6 +326,9 @@ EndDrawing :: proc() {
     frame, ok := engine.vk_begin_frame(ctx)
     gfx_profile_end(.Acquire_Frame, acquire_marker)
     if !ok do return
+    detailed_gfx := gfx_detailed_profile_enabled()
+    frame_setup_marker: u64
+    if detailed_gfx do frame_setup_marker = gfx_profile_begin(.Frame_Setup)
     upload_dynamic_textures(ctx, frame)
     extent := ctx.swapchain_extent
     world_extent := extent
@@ -432,6 +435,7 @@ EndDrawing :: proc() {
         framebuffer_extent = world_extent,
         logical_extent     = {state.width, state.height},
     }
+    if detailed_gfx do gfx_profile_end(.Frame_Setup, frame_setup_marker)
     if state.world_pre_pass != nil {
         state.world_pre_pass(&world_context, state.world_pre_pass_user_data)
     }
@@ -443,6 +447,8 @@ EndDrawing :: proc() {
     gfx_profile_end(.World_Pass, world_marker)
     vk.CmdEndRendering(frame.command_buffer)
     if world_resolve {
+        composite_marker: u64
+        if detailed_gfx do composite_marker = gfx_profile_begin(.World_Composite)
         engine.vk_cmd_image_barrier2(
             ctx,
             frame.command_buffer,
@@ -510,6 +516,7 @@ EndDrawing :: proc() {
         )
         vk.CmdDraw(frame.command_buffer, 3, 1, 0, 0)
         engine.vk_cmd_end_swapchain_render_pass(frame)
+        if detailed_gfx do gfx_profile_end(.World_Composite, composite_marker)
     }
     engine.vk_cmd_image_barrier2(
         ctx,
@@ -541,7 +548,6 @@ EndDrawing :: proc() {
         vk.CmdBeginRendering(frame.command_buffer, &hdr_rendering)
     } else { engine.vk_cmd_begin_swapchain_render_pass_load(ctx, frame) }
     ui_marker := gfx_profile_begin(.UI_Pass)
-    detailed_gfx := gfx_detailed_profile_enabled()
     engine.gpu_profiler_begin_pass(ctx, frame.command_buffer, frame, .Ui_Overlay)
     if detailed_gfx do engine.vk_cmd_label_begin(ctx, frame.command_buffer, "UI Geometry")
     if len(state.vertices) > 0 {vb := &state.vertex[frame.frame_index]; ib := &state.index[frame.frame_index]

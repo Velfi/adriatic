@@ -14,6 +14,8 @@ Gfx_Profile_Marker :: enum u32 {
     UI_Buffer_Upload,
     UI_Command_Setup,
     UI_Ordinary_Draw,
+    Frame_Setup,
+    World_Composite,
 }
 
 when ODIN_OS == .Darwin {

@@ -1,6 +1,7 @@
 package main
 
 import atmosphere "../packages/atmosphere"
+import architecture "../packages/architecture"
 import boats "../packages/boats"
 import dialogue "../packages/dialogue"
 import game_input "../packages/game_input"
@@ -694,6 +695,37 @@ markov_marina_buoy_model :: proc(center: third_person.Vec3, style: int, occupied
     world_box({center.x + .10, center.y + .52, center.z}, {.07, .16, .09}, metal)
 }
 
+markov_marina_office_structure :: proc(plan: ^marina.Plan) -> terrain.Structure {
+    if plan == nil do return {}
+    office := marina.plan_world_position(plan, plan.office)
+    seed := plan.layout_seed ~ 0x48415242
+    structure := terrain.structure_make(office.x, office.z, 8.2, 6.4, 0, 4.8)
+    // Marina footprints are intentionally more compact than settlement lots.
+    // Preserve that footprint after structure_make applies the terrain grid's
+    // minimum editing dimensions.
+    structure.width = 8.2
+    structure.depth = 6.4
+    structure.height = 4.8
+    structure.rotation = plan.world_yaw
+    structure.kind = .Architecture
+    structure.seed = seed
+    structure.building = architecture.architecture_identity(
+        {
+            region        = .Adriatic,
+            tissue        = .Harbor,
+            density       = .42,
+            frontage      = structure.width,
+            depth         = structure.depth,
+            route         = .Waterfront,
+            waterfront    = true,
+            landmark_kind = .Harbor_Office,
+        },
+        seed,
+    )
+    structure.color = architecture.architecture_color(seed, true)
+    return structure
+}
+
 world_markov_marina_static_geometry :: proc(plan: ^marina.Plan) {
     if plan == nil || !plan.valid do return
     if !plan.world_conditioned {
@@ -742,13 +774,8 @@ world_markov_marina_static_geometry :: proc(plan: ^marina.Plan) {
         markov_marina_segment(segment, plan)
     }
 
-    office := marina.plan_world_position(plan, plan.office)
-    office_yaw := plan.world_yaw
-    world_box_rotated({office.x, 2.25, office.z}, {8.2, 4.5, 6.4}, office_yaw, {226, 211, 173, 255})
-    world_box_rotated({office.x, 4.68, office.z}, {9.1, .42, 7.2}, office_yaw, {159, 75, 51, 255})
-    door_local := marina.Vec2{plan.office.x, plan.office.z + 3.22}
-    door := marina.plan_world_position(plan, door_local)
-    world_box_rotated({door.x, 2.0, door.z}, {1.6, 2.8, .16}, office_yaw, {68, 105, 111, 255})
+    office := markov_marina_office_structure(plan)
+    world_architecture(office, nil)
 
     for prop in plan.props[:plan.prop_count] {
         markov_marina_prop(prop, plan)

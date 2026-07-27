@@ -1097,8 +1097,7 @@ settlement_plan_generate_village_buildings :: proc(
             (minimum_height +
                 (maximum_height - minimum_height) * clamp(density * .62 + settlement_rng_unit(rng) * .28, 0, 1)) *
             purpose_height_scale
-        height = clamp(height, minimum_height, maximum_height)
-        height = clamp(architecture.facade_fitted_height(height), minimum_height, maximum_height)
+        height = architecture.facade_fitted_height_in_range(height, minimum_height, maximum_height)
         structure := terrain.structure_make(best_x, best_z, frontage, depth, 0, height)
         structure.kind = .Architecture
         structure.seed = seed
@@ -1431,7 +1430,7 @@ settlement_plan_generate_buildings :: proc(
             height :=
                 minimum_height +
                 (maximum_height - minimum_height) * clamp(density * .78 + settlement_rng_unit(rng) * .22, 0, 1)
-            height = clamp(architecture.facade_fitted_height(height), minimum_height, maximum_height)
+            height = architecture.facade_fitted_height_in_range(height, minimum_height, maximum_height)
             structure := terrain.structure_make(x, z, frontage, depth, 0, height)
             structure.kind = .Architecture
             structure.seed = seed

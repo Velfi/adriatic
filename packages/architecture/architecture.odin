@@ -359,21 +359,39 @@ architecture_has_chimney :: #force_inline proc(seed: u32) -> bool {
 
 @(no_instrumentation)
 facade_floor_count :: #force_inline proc(height: f32) -> int {
-    // Keep low workshops and halls deliberately single-storey. Above that
-    // range, derive rows from an actual 4.8 m storey module; the previous
-    // hidden 8 m reserve produced conspicuous blank bands between windows.
-    if height < 12.8 do return 1
-    return clamp(int(math.round(f64(height / 4.8))), 2, 16)
+    // Derive rows continuously from the storey module. Keeping the low-rise
+    // exception in this height-only function made two-storey buildings
+    // unreachable: the count jumped directly from one row to three.
+    return clamp(int(math.round(f64(max(height, f32(0)) / 4.8))), 1, 16)
 }
 
 @(no_instrumentation)
 facade_fitted_height :: #force_inline proc(height: f32) -> f32 {
-    // Snap ordinary multi-storey façades to the exact 4.8 m module represented
-    // by their window rows. Low halls use the center of their intentional
-    // single-storey band. Very tall structures retain their authored height.
-    if height > 60 do return height
+    // Snap ordinary façades to the exact 4.8 m module represented by their
+    // window rows. Very tall structures retain their authored height.
+    if height >= 60 do return height
     rows := facade_floor_count(height)
-    if rows == 1 do return 10.4
+    return f32(rows) * 4.8
+}
+
+@(no_instrumentation)
+facade_fitted_height_in_range :: #force_inline proc(height, minimum, maximum: f32) -> f32 {
+    lower, upper := min(minimum, maximum), max(minimum, maximum)
+    if height >= 60 do return clamp(height, lower, upper)
+    minimum_rows := clamp(int(math.ceil(f64(lower / 4.8))), 1, 16)
+    maximum_rows := clamp(int(math.floor(f64(upper / 4.8))), 1, 16)
+    if minimum_rows > maximum_rows {
+        return clamp(facade_fitted_height(height), lower, upper)
+    }
+    rows := clamp(facade_floor_count(height), minimum_rows, maximum_rows)
+    return f32(rows) * 4.8
+}
+
+@(no_instrumentation)
+facade_step_height :: #force_inline proc(height: f32, storey_delta: int) -> f32 {
+    if storey_delta == 0 do return facade_fitted_height(height)
+    if height >= 60 do return max(f32(4.8), height + f32(storey_delta) * 4.8)
+    rows := clamp(facade_floor_count(height) + storey_delta, 1, 16)
     return f32(rows) * 4.8
 }
 
@@ -1607,7 +1625,10 @@ city_building_height :: proc(width, depth, density: f32, seed: u32) -> f32 {
     broad_footprint := width >= 22 || width * depth >= 520
     single_floor_variant := ((seed >> 8) & 255) < 112
     if broad_footprint && single_floor_variant {
-        height = 9.5 + f32((seed >> 16) & 255) / 255 * 2.8
+        // A tall workshop/hall still uses one façade row. Keep its mass just
+        // below the two-storey rounding boundary instead of overloading the
+        // global height-to-row mapping with an archetype-specific exception.
+        return 7.1
     }
     return facade_fitted_height(height)
 }

@@ -1,0 +1,57 @@
+package main
+
+import boats "../packages/boats"
+import marina "../packages/marina"
+
+PLAYER_COLLISION_RADIUS :: f32(.24)
+
+player_resolve_world_collision :: proc(editor: ^Editor) -> bool {
+    if editor == nil do return false
+    position := marina.Vec2{editor.player.position.x, editor.player.position.z}
+    collided := false
+
+    if lab_scene_is_active(editor, "markov-marina") {
+        corrected, hit := marina.resolve_circle(&markov_marina_plan, position, PLAYER_COLLISION_RADIUS)
+        position, collided = corrected, collided || hit
+    } else {
+        for index in 0 ..< editor.default_marina_count {
+            corrected, hit := marina.resolve_circle(
+                &editor.default_marinas[index],
+                position,
+                PLAYER_COLLISION_RADIUS,
+            )
+            position, collided = corrected, collided || hit
+        }
+        if editor.marina_authored {
+            corrected, hit := marina.resolve_circle(
+                &editor.marina_authored_plan,
+                position,
+                PLAYER_COLLISION_RADIUS,
+            )
+            position, collided = corrected, collided || hit
+        }
+    }
+
+    for &agent in editor.boat_traffic.agents[:editor.boat_traffic.count] {
+        corrected, hit := boats.resolve_circle(
+            &agent,
+            {position.x, position.z},
+            PLAYER_COLLISION_RADIUS,
+        )
+        if hit {
+            position = {corrected.x, corrected.y}
+            collided = true
+        }
+    }
+
+    if collided {
+        editor.player.position.x = position.x
+        editor.player.position.z = position.z
+        // Stop the inward movement for this frame. The controller immediately
+        // rebuilds velocity from input, while position projection permits
+        // natural sliding on subsequent frames.
+        editor.player.velocity.x = 0
+        editor.player.velocity.z = 0
+    }
+    return collided
+}

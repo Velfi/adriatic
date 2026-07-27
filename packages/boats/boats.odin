@@ -92,6 +92,9 @@ Mesh :: struct {
     triangle_count: int,
 }
 
+mesh_cache: [len(Class)]Mesh
+mesh_cache_ready: [len(Class)]bool
+
 vertices :: proc(mesh: ^Mesh) -> []Vertex {
     if mesh == nil do return nil
     return mesh.vertices[:mesh.vertex_count]
@@ -290,4 +293,18 @@ mesh :: proc(class: Class) -> Mesh {
         return tug_mesh()
     }
     return {}
+}
+
+// NPC boat geometry is immutable after construction. Rendering used to rebuild
+// and return the entire fixed-capacity mesh for every visible boat, every
+// frame. Keep one canonical mesh per class and let callers borrow it instead.
+@(no_instrumentation)
+cached_mesh :: proc(class: Class) -> ^Mesh {
+    index := int(class)
+    if index < 0 || index >= len(mesh_cache) do return nil
+    if !mesh_cache_ready[index] {
+        mesh_cache[index] = mesh(class)
+        mesh_cache_ready[index] = true
+    }
+    return &mesh_cache[index]
 }
