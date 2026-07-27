@@ -295,11 +295,11 @@ world_aircraft_triangle :: #force_inline proc(
 ) {
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
+    normal := linalg.normalize0(linalg.cross((b - a), (c - a)))
     for &vertex in vertices {
         vertex.kind = .Vehicle
         vertex.material[0] = paintable ? 1 : 0
         vertex.material[1] = paint_layer
-        normal := linalg.normalize0(linalg.cross((b - a), (c - a)))
         vertex.normal = {normal.x, normal.y, normal.z}
     }
     vertices[0].uv = uv_a
@@ -1327,6 +1327,39 @@ world_vehicle_shadow_point :: #force_inline proc(
     return projected, ground > project.sea_level + .04
 }
 
+World_Vehicle_Shadow_Cache_Entry :: struct {
+    point:     third_person.Vec3,
+    projected: third_person.Vec3,
+    on_land:   bool,
+    valid:     bool,
+}
+
+World_Vehicle_Shadow_Cache :: struct {
+    entries: [4]World_Vehicle_Shadow_Cache_Entry,
+    next:    int,
+}
+
+@(no_instrumentation)
+world_vehicle_shadow_point_cached :: #force_inline proc(
+    point: third_person.Vec3,
+    sun_direction: [3]f32,
+    project: ^terrain.Project,
+    cache: ^World_Vehicle_Shadow_Cache,
+) -> (
+    projected: third_person.Vec3,
+    on_land: bool,
+) {
+    for entry in cache.entries {
+        if !entry.valid do continue
+        if entry.point.x != point.x || entry.point.y != point.y || entry.point.z != point.z do continue
+        return entry.projected, entry.on_land
+    }
+    projected, on_land = world_vehicle_shadow_point(point, sun_direction, project)
+    cache.entries[cache.next] = {point, projected, on_land, true}
+    cache.next = (cache.next + 1) % len(cache.entries)
+    return projected, on_land
+}
+
 @(no_instrumentation)
 world_vehicle_shadow_triangle :: #force_inline proc(
     a, b, c: third_person.Vec3,
@@ -1346,6 +1379,26 @@ world_vehicle_shadow_triangle :: #force_inline proc(
     // Opaque projected faces merge into one clean, hard-edged silhouette.
     // Vary the tone instead of alpha so overlapping mesh components cannot
     // create accidental dark facets inside the shadow.
+    world_triangle(projected_a, projected_b, projected_c, {shade, shade + 2, shade + 3, 255})
+}
+
+@(no_instrumentation)
+world_vehicle_shadow_triangle_cached :: #force_inline proc(
+    a, b, c: third_person.Vec3,
+    sun_direction: [3]f32,
+    cloud_cover: f32,
+    project: ^terrain.Project,
+    cache: ^World_Vehicle_Shadow_Cache,
+) {
+    daylight := clamp(sun_direction[1], 0, 1)
+    if daylight <= .08 do return
+    projected_a, land_a := world_vehicle_shadow_point_cached(a, sun_direction, project, cache)
+    projected_b, land_b := world_vehicle_shadow_point_cached(b, sun_direction, project, cache)
+    projected_c, land_c := world_vehicle_shadow_point_cached(c, sun_direction, project, cache)
+    if !land_a && !land_b && !land_c do return
+
+    cloud := clamp(cloud_cover, 0, 1)
+    shade := u8(clamp(17 + cloud * 28 + (1 - daylight) * 8, 17, 53))
     world_triangle(projected_a, projected_b, projected_c, {shade, shade + 2, shade + 3, 255})
 }
 
@@ -7165,6 +7218,8 @@ world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
 world_aircraft :: proc(editor: ^Editor) {
     sky := atmosphere.sample(&editor.atmosphere)
     if editor.postale_visible {
+        postale_paint_layer := f32(vehicle_paint_layer_index(.Postale))
+        postale_propeller_blur := aircraft_propeller_blur_amount(editor.postale.throttle)
         mesh := editor.postale_base_mesh
         vehicles.animate_postale_mesh(
             &mesh,
@@ -7189,7 +7244,7 @@ world_aircraft :: proc(editor: ^Editor) {
             a := mesh.vertices[triangle.a]
             b := mesh.vertices[triangle.b]
             c := mesh.vertices[triangle.c]
-            if a.part == .Propeller_Blur && aircraft_propeller_blur_amount(editor.postale.throttle) <= .01 do continue
+            if a.part == .Propeller_Blur && postale_propeller_blur <= .01 do continue
             if vehicles.aircraft_mesh_part_uses_smooth_normals(a.part) {
                 world_aircraft_triangle_smooth(
                     postale_vertex_world(&editor.postale, a.position, POSTALE_PRESENTATION_SCALE),
@@ -7202,7 +7257,7 @@ world_aircraft :: proc(editor: ^Editor) {
                     a.uv,
                     b.uv,
                     c.uv,
-                    f32(vehicle_paint_layer_index(.Postale)),
+                    postale_paint_layer,
                     vehicle_paint_part_is_paintable(a.part),
                 )
             } else {
@@ -7214,7 +7269,7 @@ world_aircraft :: proc(editor: ^Editor) {
                     a.uv,
                     b.uv,
                     c.uv,
-                    f32(vehicle_paint_layer_index(.Postale)),
+                    postale_paint_layer,
                     vehicle_paint_part_is_paintable(a.part),
                 )
             }
@@ -7244,6 +7299,7 @@ world_aircraft :: proc(editor: ^Editor) {
                 0,
             )
         }
+        libellula_paint_layer := f32(vehicle_paint_layer_index(editor.aircraft.active))
         for triangle in vehicles.mesh_triangles(libellula) {
             world_vehicle_shadow_triangle(
                 libellula_vertex_world(&editor.libellula, libellula.vertices[triangle.a].position, .72),
@@ -7266,7 +7322,7 @@ world_aircraft :: proc(editor: ^Editor) {
                 a.uv,
                 b.uv,
                 c.uv,
-                f32(vehicle_paint_layer_index(editor.aircraft.active)),
+                libellula_paint_layer,
                 vehicle_paint_part_is_paintable(a.part),
             )
         }
@@ -7320,9 +7376,78 @@ CAR_STEERING_WHEEL_Y :: f32(.59)
 CAR_STEERING_WHEEL_Z :: f32(-.25)
 CAR_STEERING_WHEEL_RADIUS :: f32(.17)
 
+World_Vehicle_Transform :: struct {
+    origin:        third_person.Vec3,
+    right_basis:   third_person.Vec3,
+    up_basis:      third_person.Vec3,
+    forward_basis: third_person.Vec3,
+}
+
+world_vehicle_transform :: #force_inline proc(
+    origin: third_person.Vec3,
+    yaw, pitch, roll: f32,
+) -> World_Vehicle_Transform {
+    pitch_cos, pitch_sin := math.cos(pitch), math.sin(pitch)
+    roll_cos, roll_sin := math.cos(roll), math.sin(roll)
+    heading_cos, heading_sin := math.cos(yaw), math.sin(yaw)
+    return {
+        origin = origin,
+        right_basis = {-roll_cos * heading_sin, roll_sin, roll_cos * heading_cos},
+        up_basis = {
+            -pitch_sin * heading_cos + pitch_cos * roll_sin * heading_sin,
+            pitch_cos * roll_cos,
+            -pitch_sin * heading_sin - pitch_cos * roll_sin * heading_cos,
+        },
+        forward_basis = {
+            pitch_cos * heading_cos + pitch_sin * roll_sin * heading_sin,
+            pitch_sin * roll_cos,
+            pitch_cos * heading_sin - pitch_sin * roll_sin * heading_cos,
+        },
+    }
+}
+
+world_car_transform :: #force_inline proc(editor: ^Editor) -> World_Vehicle_Transform {
+    return world_vehicle_transform(
+        editor.car.position,
+        editor.car.yaw_radians,
+        editor.car_drive.body_pitch,
+        editor.car_drive.body_roll,
+    )
+}
+
+world_trailer_transform :: #force_inline proc(editor: ^Editor) -> World_Vehicle_Transform {
+    return world_vehicle_transform(
+        editor.car_trailer_position,
+        editor.car_trailer_yaw,
+        editor.car_trailer.body_pitch,
+        editor.car_trailer.body_roll,
+    )
+}
+
+world_vehicle_vertex_world :: #force_inline proc(
+    transform: World_Vehicle_Transform,
+    position: [3]f32,
+) -> third_person.Vec3 {
+    return {
+        transform.origin.x +
+        position[0] * transform.right_basis.x +
+        position[1] * transform.up_basis.x -
+        position[2] * transform.forward_basis.x,
+        transform.origin.y +
+        position[0] * transform.right_basis.y +
+        position[1] * transform.up_basis.y -
+        position[2] * transform.forward_basis.y,
+        transform.origin.z +
+        position[0] * transform.right_basis.z +
+        position[1] * transform.up_basis.z -
+        position[2] * transform.forward_basis.z,
+    }
+}
+
 world_car_pilot_model :: proc(editor: ^Editor, steering, acceleration: f32) {
     rotation := editor.car.yaw_radians - math.PI * .5
-    seat := car_vertex_world(editor, {0, CAR_PILOT_SEAT_Y, CAR_PILOT_SEAT_Z})
+    car_transform := world_car_transform(editor)
+    seat := world_vehicle_vertex_world(car_transform, {0, CAR_PILOT_SEAT_Y, CAR_PILOT_SEAT_Z})
     world_mouse_model_scaled(
         editor,
         {
@@ -7352,41 +7477,6 @@ world_car_pilot :: proc(editor: ^Editor) {
 }
 
 @(no_instrumentation)
-car_vertex_world :: #force_inline proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3 {
-    origin := editor.car.position
-    // The authored car faces local -Z. Apply restrained pitch and roll feedback
-    // before rotating that axis onto the simulation's ground-plane heading.
-    right, up, forward := position[0], position[1], -position[2]
-    pitch_cos, pitch_sin := math.cos(editor.car_drive.body_pitch), math.sin(editor.car_drive.body_pitch)
-    forward, up = forward * pitch_cos - up * pitch_sin, forward * pitch_sin + up * pitch_cos
-    roll_cos, roll_sin := math.cos(editor.car_drive.body_roll), math.sin(editor.car_drive.body_roll)
-    right, up = right * roll_cos - up * roll_sin, right * roll_sin + up * roll_cos
-    heading_cos, heading_sin := math.cos(editor.car.yaw_radians), math.sin(editor.car.yaw_radians)
-    return {
-        origin.x + forward * heading_cos - right * heading_sin,
-        origin.y + up,
-        origin.z + forward * heading_sin + right * heading_cos,
-    }
-}
-
-@(no_instrumentation)
-trailer_vertex_world :: #force_inline proc(editor: ^Editor, position: [3]f32) -> third_person.Vec3 {
-    origin := editor.car_trailer_position
-    yaw := editor.car_trailer_yaw
-    right, up, forward := position[0], position[1], -position[2]
-    pitch_cos, pitch_sin := math.cos(editor.car_trailer.body_pitch), math.sin(editor.car_trailer.body_pitch)
-    forward, up = forward * pitch_cos - up * pitch_sin, forward * pitch_sin + up * pitch_cos
-    roll_cos, roll_sin := math.cos(editor.car_trailer.body_roll), math.sin(editor.car_trailer.body_roll)
-    right, up = right * roll_cos - up * roll_sin, right * roll_sin + up * roll_cos
-    heading_cos, heading_sin := math.cos(yaw), math.sin(yaw)
-    return {
-        origin.x + forward * heading_cos - right * heading_sin,
-        origin.y + up,
-        origin.z + forward * heading_sin + right * heading_cos,
-    }
-}
-
-@(no_instrumentation)
 trailer_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
     color := aircraft_part_color(part)
     if part == .Tail_Light {
@@ -7408,36 +7498,42 @@ world_car :: proc(editor: ^Editor) {
     )
     vehicles.animate_trailer_wheels(&trailer, editor.car_trailer.wheel_rotation)
     sky := atmosphere.sample(&editor.atmosphere)
+    car_transform := world_car_transform(editor)
+    trailer_transform := world_trailer_transform(editor)
+    car_shadow_cache: World_Vehicle_Shadow_Cache
     for triangle in vehicles.mesh_triangles(&mesh) {
-        world_vehicle_shadow_triangle(
-            car_vertex_world(editor, mesh.vertices[triangle.a].position),
-            car_vertex_world(editor, mesh.vertices[triangle.b].position),
-            car_vertex_world(editor, mesh.vertices[triangle.c].position),
+        world_vehicle_shadow_triangle_cached(
+            world_vehicle_vertex_world(car_transform, mesh.vertices[triangle.a].position),
+            world_vehicle_vertex_world(car_transform, mesh.vertices[triangle.b].position),
+            world_vehicle_vertex_world(car_transform, mesh.vertices[triangle.c].position),
             sky.sun_direction,
             sky.weather.cloud_cover,
             &editor.project,
+            &car_shadow_cache,
         )
     }
-    world_car_cockpit(editor)
+    world_car_cockpit(editor, car_transform)
     for triangle in vehicles.mesh_triangles(&mesh) {
         a := mesh.vertices[triangle.a]
         b := mesh.vertices[triangle.b]
         c := mesh.vertices[triangle.c]
         world_triangle(
-            car_vertex_world(editor, a.position),
-            car_vertex_world(editor, b.position),
-            car_vertex_world(editor, c.position),
+            world_vehicle_vertex_world(car_transform, a.position),
+            world_vehicle_vertex_world(car_transform, b.position),
+            world_vehicle_vertex_world(car_transform, c.position),
             aircraft_part_color(a.part),
         )
     }
+    trailer_shadow_cache: World_Vehicle_Shadow_Cache
     for triangle in vehicles.mesh_triangles(&trailer) {
-        world_vehicle_shadow_triangle(
-            trailer_vertex_world(editor, trailer.vertices[triangle.a].position),
-            trailer_vertex_world(editor, trailer.vertices[triangle.b].position),
-            trailer_vertex_world(editor, trailer.vertices[triangle.c].position),
+        world_vehicle_shadow_triangle_cached(
+            world_vehicle_vertex_world(trailer_transform, trailer.vertices[triangle.a].position),
+            world_vehicle_vertex_world(trailer_transform, trailer.vertices[triangle.b].position),
+            world_vehicle_vertex_world(trailer_transform, trailer.vertices[triangle.c].position),
             sky.sun_direction,
             sky.weather.cloud_cover,
             &editor.project,
+            &trailer_shadow_cache,
         )
     }
     for triangle in vehicles.mesh_triangles(&trailer) {
@@ -7445,23 +7541,23 @@ world_car :: proc(editor: ^Editor) {
         b := trailer.vertices[triangle.b]
         c := trailer.vertices[triangle.c]
         world_triangle(
-            trailer_vertex_world(editor, a.position),
-            trailer_vertex_world(editor, b.position),
-            trailer_vertex_world(editor, c.position),
+            world_vehicle_vertex_world(trailer_transform, a.position),
+            world_vehicle_vertex_world(trailer_transform, b.position),
+            world_vehicle_vertex_world(trailer_transform, c.position),
             trailer_part_color(editor, a.part),
         )
     }
 }
 
-world_car_cockpit :: proc(editor: ^Editor) {
+world_car_cockpit :: proc(editor: ^Editor, car_transform: World_Vehicle_Transform) {
     // Keep the wheel low enough for the mouse's forepaws to meet the rim
     // without lifting its elbows into the windscreen.
     wheel_center := [3]f32{0, CAR_STEERING_WHEEL_Y, CAR_STEERING_WHEEL_Z}
     wheel_radius := CAR_STEERING_WHEEL_RADIUS
     wheel_rotation := clamp(editor.car_drive.steering, -1, 1) * .55
     forward := linalg.normalize0(
-        (car_vertex_world(editor, {wheel_center.x, wheel_center.y, wheel_center.z - .1}) -
-            car_vertex_world(editor, wheel_center)),
+        (world_vehicle_vertex_world(car_transform, {wheel_center.x, wheel_center.y, wheel_center.z - .1}) -
+            world_vehicle_vertex_world(car_transform, wheel_center)),
     )
     leather := rl.Color{48, 39, 34, 255}
     spoke := rl.Color{104, 83, 65, 255}
@@ -7469,8 +7565,8 @@ world_car_cockpit :: proc(editor: ^Editor) {
     ring: [SEGMENTS]third_person.Vec3
     for segment in 0 ..< SEGMENTS {
         angle := f32(segment) * math.PI * 2 / f32(SEGMENTS) + wheel_rotation
-        ring[segment] = car_vertex_world(
-            editor,
+        ring[segment] = world_vehicle_vertex_world(
+            car_transform,
             {
                 wheel_center.x + math.cos(angle) * wheel_radius,
                 wheel_center.y + math.sin(angle) * wheel_radius,
@@ -7481,11 +7577,11 @@ world_car_cockpit :: proc(editor: ^Editor) {
     for segment in 0 ..< SEGMENTS {
         world_tube_between(ring[segment], ring[(segment + 1) % SEGMENTS], forward, .026, .026, leather)
     }
-    center := car_vertex_world(editor, wheel_center)
+    center := world_vehicle_vertex_world(car_transform, wheel_center)
     for segment in 0 ..< 3 {
         angle := f32(segment) * math.PI * 2 / 3 + wheel_rotation
-        rim := car_vertex_world(
-            editor,
+        rim := world_vehicle_vertex_world(
+            car_transform,
             {
                 wheel_center.x + math.cos(angle) * wheel_radius * .88,
                 wheel_center.y + math.sin(angle) * wheel_radius * .88,
@@ -7494,7 +7590,7 @@ world_car_cockpit :: proc(editor: ^Editor) {
         )
         world_tube_between(center, rim, forward, .018, .018, spoke)
     }
-    column := car_vertex_world(editor, {0, .47, .08})
+    column := world_vehicle_vertex_world(car_transform, {0, .47, .08})
     world_tube_between(column, center, forward, .035, .035, spoke)
 }
 
