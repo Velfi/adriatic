@@ -1886,11 +1886,7 @@ seed_default_island_towns :: proc(editor: ^Editor) {
         road_start_y := terrain.sample_height(&editor.project, 0, road_start_x, town_z)
         road_finish_y := terrain.sample_height(&editor.project, 0, road_finish_x, town_z)
         road_start := roads.add_node(&editor.project.road_graph, {road_start_x, road_start_y, town_z}, 0)
-        road_finish := roads.add_node(
-            &editor.project.road_graph,
-            {road_finish_x, road_finish_y, town_z},
-            0,
-        )
+        road_finish := roads.add_node(&editor.project.road_graph, {road_finish_x, road_finish_y, town_z}, 0)
         if road_start >= 0 && road_finish >= 0 {
             _ = roads.add_straight_edge(&editor.project.road_graph, road_start, road_finish, 5.5, 1.4, .Cobblestone)
         }
@@ -3135,14 +3131,11 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
     case .Marta, .Gerta:
         return false
     }
-    conversation, opened := dialogue.open(
-        definition,
-        {
-            data = rawptr(&editor.story_state),
-            location_id = resident == .Iva || resident == .Zora ? "east_island" : "west_island",
-            resident_index = int(resident),
-        },
-    )
+    conversation, opened := dialogue.open(definition, {
+        data           = rawptr(&editor.story_state),
+        location_id    = resident == .Iva || resident == .Zora ? "east_island" : "west_island",
+        resident_index = int(resident),
+    })
     if !opened do return false
     editor.attendant_dialogue = conversation
     editor.attendant_dialogue_open = true
@@ -3159,21 +3152,11 @@ attendant_dialogue_panel :: proc(editor: ^Editor, width, height: i32) -> rl.Rect
     choice_count := 1
     if editor != nil do choice_count = max(dialogue.available_count(&editor.attendant_dialogue), 1)
     panel_height := min(f32(height) - 96, 146 + f32(choice_count) * 42)
-    return {
-        x = f32(width) * .5 - 310,
-        y = f32(height) - panel_height - 48,
-        width = 620,
-        height = panel_height,
-    }
+    return {x = f32(width) * .5 - 310, y = f32(height) - panel_height - 48, width = 620, height = panel_height}
 }
 
 attendant_dialogue_choice_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
-    return {
-        x = panel.x + 24,
-        y = panel.y + 126 + f32(index) * 42,
-        width = panel.width - 48,
-        height = 34,
-    }
+    return {x = panel.x + 24, y = panel.y + 126 + f32(index) * 42, width = panel.width - 48, height = 34}
 }
 
 tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
@@ -4498,7 +4481,10 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
 }
 
 @(no_instrumentation)
-perspective_camera :: #force_inline proc(pose: third_person.Camera_Pose, focal_length: f32 = 1.35) -> Perspective_Camera {
+perspective_camera :: #force_inline proc(
+    pose: third_person.Camera_Pose,
+    focal_length: f32 = 1.35,
+) -> Perspective_Camera {
     forward := linalg.normalize0((pose.target - pose.position))
     right := linalg.normalize0(linalg.cross(forward, third_person.Vec3{0, 1, 0}))
     return {
@@ -6812,9 +6798,7 @@ adriatic_run :: proc(
     )
     defer delete(editor.libellula_projected_faces)
     terrain.init_project(&editor.project)
-    if !capture_mode &&
-       !interactive_lab_mode &&
-       (!benchmark_mode || benchmark_scenario == "editor") {
+    if !capture_mode && !interactive_lab_mode && (!benchmark_mode || benchmark_scenario == "editor") {
         seed_default_island_towns(editor)
         seed_default_island_marinas(editor)
     }
@@ -6947,21 +6931,9 @@ adriatic_run :: proc(
                 fmt.eprintln("story meeting capture could not find Niko's town façade")
                 return .Quit
             }
-            side := third_person.Vec3 {
-                math.cos(rotation),
-                0,
-                math.sin(rotation),
-            }
-            outward := third_person.Vec3 {
-                -math.sin(rotation),
-                0,
-                math.cos(rotation),
-            }
-            target := third_person.Vec3 {
-                (niko.x + iva.x) * .5,
-                max(niko.y, iva.y) + .72,
-                (niko.z + iva.z) * .5,
-            }
+            side := third_person.Vec3{math.cos(rotation), 0, math.sin(rotation)}
+            outward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
+            target := third_person.Vec3{(niko.x + iva.x) * .5, max(niko.y, iva.y) + .72, (niko.z + iva.z) * .5}
             editor.editor_focus = target
             editor.camera_pose = third_person.camera_look_at(
                 {
@@ -7157,11 +7129,7 @@ adriatic_run :: proc(
             // slopes, so retain matched on-foot and airborne verification
             // views instead of tuning the BRDF to either camera.
             eye_height := capture_target == "sun-air" ? f32(180) : f32(3.2)
-            eye := third_person.Vec3 {
-                0,
-                eye_height,
-                0,
-            }
+            eye := third_person.Vec3{0, eye_height, 0}
             view_sign := capture_target == "sun-away" ? f32(-1) : f32(1)
             view_direction := sky_capture.sun_direction
             if capture_target == "moon" do view_direction = sky_capture.moon_direction

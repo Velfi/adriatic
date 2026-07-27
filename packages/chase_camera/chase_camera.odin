@@ -142,7 +142,10 @@ desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_perso
     if follow_distance <= 0 do follow_distance = FOLLOW_DISTANCE
     if follow_height <= 0 do follow_height = FOLLOW_HEIGHT
     if focus_height == 0 do focus_height = FOCUS_HEIGHT
-    position := target.position + behind * follow_distance + flight.Vec3{0, follow_height + framing_camera + orbit_pitch * 8, 0}
+    position :=
+        target.position +
+        behind * follow_distance +
+        flight.Vec3{0, follow_height + framing_camera + orbit_pitch * 8, 0}
     right := target.basis.right
     right.y = 0
     right = linalg.normalize0(right)

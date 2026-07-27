@@ -1,8 +1,8 @@
 package tests
 
 import boats "../packages/boats"
-import "core:testing"
 import "core:math/linalg"
+import "core:testing"
 
 @(test)
 npc_boat_classes_have_researched_dimensions_and_one_mesh :: proc(t: ^testing.T) {
@@ -142,9 +142,9 @@ boat_avoidance_steers_apart_before_contact :: proc(t: ^testing.T) {
     traffic.agents[1].velocity = {-3, 0}
     first := boats.avoidance_vector(&traffic, 0)
     second := boats.avoidance_vector(&traffic, 1)
-        testing.expect(t, first.x < 0)
-        testing.expect(t, second.x > 0)
-        testing.expect(t, linalg.dot(first, second) < 0)
+    testing.expect(t, first.x < 0)
+    testing.expect(t, second.x > 0)
+    testing.expect(t, linalg.dot(first, second) < 0)
 }
 
 @(test)

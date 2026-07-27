@@ -143,7 +143,9 @@ set_lunar_age :: proc(state: ^Atmosphere, days_since_new_moon: f32) {
 sample :: proc(state: ^Atmosphere) -> Sky_State {
     if state == nil do return {}
     angle := (state.world_minutes / DAY_MINUTES - .25) * 2 * f32(math.PI)
-    sun := linalg.normalize0([3]f32{f32(math.cos(f64(angle))) * .72, f32(math.sin(f64(angle))), f32(math.cos(f64(angle))) * .38})
+    sun := linalg.normalize0(
+        [3]f32{f32(math.cos(f64(angle))) * .72, f32(math.sin(f64(angle))), f32(math.cos(f64(angle))) * .38},
+    )
     moon_phase := state.lunar_days / SYNODIC_MONTH_DAYS
     moon_angle := angle + moon_phase * 2 * f32(math.PI)
     // A modest orbital inclination keeps the moon from tracing the sun's

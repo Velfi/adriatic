@@ -16,6 +16,17 @@ import rl "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
 
 MARKOV_MARINA_DEFAULT_SEED :: u32(0x4d415249)
+MARINA_GEOMETRY_CACHE_DEFAULT_FIRST :: 0
+MARINA_GEOMETRY_CACHE_AUTHORED :: MARINA_GEOMETRY_CACHE_DEFAULT_FIRST + len(terrain.DEFAULT_ISLAND_SIGNS)
+MARINA_GEOMETRY_CACHE_PREVIEW :: MARINA_GEOMETRY_CACHE_AUTHORED + 1
+MARINA_GEOMETRY_CACHE_LAB :: MARINA_GEOMETRY_CACHE_PREVIEW + 1
+MARINA_GEOMETRY_CACHE_CAPACITY :: MARINA_GEOMETRY_CACHE_LAB + 1
+
+Marina_Geometry_Cache_Entry :: struct {
+    valid:          bool,
+    plan:           marina.Plan,
+    world_vertices: [dynamic]World_Vertex,
+}
 
 markov_marina_plan: marina.Plan
 markov_marina_breakwater_focus_active: bool
@@ -253,11 +264,7 @@ markov_marina_breakwater_camera :: proc() -> third_person.Camera_Pose {
         .95,
         b.z - direction_z * min(length * .25, f32(4)),
     }
-    eye := third_person.Vec3 {
-        focus.x + normal_x * 10 - direction_x * 3,
-        3.6,
-        focus.z + normal_z * 10 - direction_z * 3,
-    }
+    eye := third_person.Vec3{focus.x + normal_x * 10 - direction_x * 3, 3.6, focus.z + normal_z * 10 - direction_z * 3}
     return third_person.camera_look_at(eye, focus)
 }
 
@@ -467,11 +474,7 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
     dx, dz := segment.b.x - segment.a.x, segment.b.z - segment.a.z
     length := f32(math.sqrt(f64(dx * dx + dz * dz)))
     if length <= .01 do return
-    center := third_person.Vec3 {
-        (segment.a.x + segment.b.x) * .5,
-        .18,
-        (segment.a.z + segment.b.z) * .5,
-    }
+    center := third_person.Vec3{(segment.a.x + segment.b.x) * .5, .18, (segment.a.z + segment.b.z) * .5}
     yaw := math.atan2(dx, dz)
     color := rl.Color{132, 105, 72, 255}
     height := f32(.42)
@@ -595,20 +598,18 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
             rock_width := rock_scale * (.78 + aspect_roll * .48)
             rock_depth := rock_scale * (1.18 - aspect_roll * .35) * (.88 + depth_roll * .30)
             rock_height := .38 + rock_scale * (.24 + height_roll * .22)
-            world_formation(
-                {
-                    center_x = along_x + side_x,
-                    center_z = along_z + side_z,
-                    width = rock_width,
-                    depth = rock_depth,
-                    base_y = .18 + (1 - toe_fraction) * .25,
-                    height = rock_height + toe_fraction * .08,
-                    rotation = yaw + (rotation_roll * 2 - 1) * .42,
-                    color = {tone, tone + 2, tone, 255},
-                    kind = .Rock,
-                    seed = seed,
-                },
-            )
+            world_formation({
+                center_x = along_x + side_x,
+                center_z = along_z + side_z,
+                width    = rock_width,
+                depth    = rock_depth,
+                base_y   = .18 + (1 - toe_fraction) * .25,
+                height   = rock_height + toe_fraction * .08,
+                rotation = yaw + (rotation_roll * 2 - 1) * .42,
+                color    = {tone, tone + 2, tone, 255},
+                kind     = .Rock,
+                seed     = seed,
+            })
         }
     }
 }
@@ -689,8 +690,8 @@ markov_marina_buoy_model :: proc(center: third_person.Vec3, style: int, occupied
     world_box({center.x + .10, center.y + .52, center.z}, {.07, .16, .09}, metal)
 }
 
-world_markov_marina_facility :: proc(editor: ^Editor, plan: ^marina.Plan, include_actors: bool) {
-    if editor == nil || plan == nil || !plan.valid do return
+world_markov_marina_static_geometry :: proc(plan: ^marina.Plan) {
+    if plan == nil || !plan.valid do return
     if !plan.world_conditioned {
         extent_x := f32(marina.GRID_WIDTH) * marina.CELL_METERS * .5 + 24
         extent_z := f32(marina.GRID_HEIGHT) * marina.CELL_METERS * .5 + 28
@@ -748,7 +749,34 @@ world_markov_marina_facility :: proc(editor: ^Editor, plan: ^marina.Plan, includ
     for prop in plan.props[:plan.prop_count] {
         markov_marina_prop(prop, plan)
     }
+}
 
+world_markov_marina_static_geometry_cached :: proc(plan: ^marina.Plan, cache_slot: int) {
+    if cache_slot < 0 || cache_slot >= MARINA_GEOMETRY_CACHE_CAPACITY {
+        world_markov_marina_static_geometry(plan)
+        return
+    }
+
+    entry := &world_renderer.marina_geometry_cache[cache_slot]
+    if entry.valid && entry.plan == plan^ {
+        count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
+        if count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:count])
+        return
+    }
+
+    first := len(world_renderer.vertices)
+    world_markov_marina_static_geometry(plan)
+    clear(&entry.world_vertices)
+    if first < len(world_renderer.vertices) {
+        append(&entry.world_vertices, ..world_renderer.vertices[first:])
+    }
+    entry.plan = plan^
+    entry.valid = true
+}
+
+world_markov_marina_facility :: proc(editor: ^Editor, plan: ^marina.Plan, include_actors: bool, cache_slot: int = -1) {
+    if editor == nil || plan == nil || !plan.valid do return
+    world_markov_marina_static_geometry_cached(plan, cache_slot)
     if !include_actors {
         for slip, slip_index in plan.slips[:plan.slip_count] {
             position := marina.plan_world_position(plan, slip.position)
@@ -770,11 +798,7 @@ world_markov_marina_facility :: proc(editor: ^Editor, plan: ^marina.Plan, includ
     }
 
     dockmaster := markov_marina_dockmaster_position()
-    delta := third_person.Vec3 {
-        editor.player.position.x - dockmaster.x,
-        0,
-        editor.player.position.z - dockmaster.z,
-    }
+    delta := third_person.Vec3{editor.player.position.x - dockmaster.x, 0, editor.player.position.z - dockmaster.z}
     facing := math.atan2(-delta.x, -delta.z)
     world_mouse_model(
         editor,
@@ -794,7 +818,7 @@ world_markov_marina_facility :: proc(editor: ^Editor, plan: ^marina.Plan, includ
 }
 
 world_markov_marina :: proc(editor: ^Editor) {
-    world_markov_marina_facility(editor, &markov_marina_plan, true)
+    world_markov_marina_facility(editor, &markov_marina_plan, true, MARINA_GEOMETRY_CACHE_LAB)
 }
 
 markov_marina_draw_ui :: proc(_: ^Editor, width, height: i32) {

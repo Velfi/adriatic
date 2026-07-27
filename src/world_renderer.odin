@@ -115,12 +115,12 @@ Foliage_Geometry_Cache_Entry :: struct {
 }
 
 Static_Geometry_Cache_Entry :: struct {
-    valid:                   bool,
-    structure:               terrain.Structure,
-    project_revision:        u64,
-    world_vertices:          [dynamic]World_Vertex,
-    foliage_vertices:        [dynamic]Foliage_Vertex,
-    bougainvillea_vertices:  [dynamic]Foliage_Vertex,
+    valid:                  bool,
+    structure:              terrain.Structure,
+    project_revision:       u64,
+    world_vertices:         [dynamic]World_Vertex,
+    foliage_vertices:       [dynamic]Foliage_Vertex,
+    bougainvillea_vertices: [dynamic]Foliage_Vertex,
 }
 
 Climbing_Leaf_Geometry_Cache_Entry :: struct {
@@ -222,6 +222,7 @@ World_Renderer :: struct {
     foliage_geometry_cache:          [terrain.STRUCTURE_CAPACITY]Foliage_Geometry_Cache_Entry,
     static_geometry_cache:           [terrain.STRUCTURE_CAPACITY]Static_Geometry_Cache_Entry,
     climbing_leaf_geometry_cache:    [terrain.STRUCTURE_CAPACITY]Climbing_Leaf_Geometry_Cache_Entry,
+    marina_geometry_cache:           [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
     initialized:                     bool,
 }
 
@@ -327,7 +328,11 @@ world_foliage_vertex :: #force_inline proc(
 }
 
 @(no_instrumentation)
-world_eye_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color, normal: third_person.Vec3) -> World_Vertex {
+world_eye_vertex :: #force_inline proc(
+    point: third_person.Vec3,
+    color: rl.Color,
+    normal: third_person.Vec3,
+) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Eye, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
@@ -407,10 +412,7 @@ world_aircraft_triangle_smooth :: #force_inline proc(
 }
 
 @(no_instrumentation)
-world_triangle_colored :: #force_inline proc(
-    a, b, c: third_person.Vec3,
-    color_a, color_b, color_c: rl.Color,
-) {
+world_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c))
 }
@@ -588,11 +590,7 @@ world_boat_part_color :: proc(class: boats.Class, part: boats.Part) -> rl.Color 
 @(no_instrumentation)
 world_boat_point :: #force_inline proc(local: [3]f32, position: third_person.Vec3, yaw: f32) -> third_person.Vec3 {
     c, s := math.cos(yaw), math.sin(yaw)
-    return {
-        position.x + local.x * c - local.z * s,
-        position.y + local.y,
-        position.z + local.x * s + local.z * c,
-    }
+    return {position.x + local.x * c - local.z * s, position.y + local.y, position.z + local.x * s + local.z * c}
 }
 
 @(no_instrumentation)
@@ -1131,7 +1129,10 @@ world_land_surface_rotated :: proc(
             p10 := previous[column + 1]
             p11 := current[column + 1]
             p01 := current[column]
-            if p00.height <= land_threshold || p10.height <= land_threshold || p11.height <= land_threshold || p01.height <= land_threshold {
+            if p00.height <= land_threshold ||
+               p10.height <= land_threshold ||
+               p11.height <= land_threshold ||
+               p01.height <= land_threshold {
                 continue
             }
             world_quad(
@@ -1420,7 +1421,7 @@ world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: r
             rings[ring_index][segment] = {world_x, center.y + heights[ring_index], world_z}
             uvs[ring_index][segment] = {.5 + local_x / (.265 * 2), .5 + local_z / (.242 * 2)}
             local_normal := linalg.normalize0(
-                [3]f32{
+                [3]f32 {
                     local_x / max(radii_x[ring_index] * radii_x[ring_index], f32(.000001)),
                     ring_index >= 4 ? f32(1) : f32(.18),
                     local_z / max(radii_z[ring_index] * radii_z[ring_index], f32(.000001)),
@@ -3993,11 +3994,7 @@ world_radial_formation :: proc(
             )
         }
     }
-    top := third_person.Vec3 {
-        structure.center_x,
-        structure.base_y + structure.height * cap_height,
-        structure.center_z,
-    }
+    top := third_person.Vec3{structure.center_x, structure.base_y + structure.height * cap_height, structure.center_z}
     for segment in 0 ..< segments {
         next := (segment + 1) % segments
         world_triangle_smooth_lit(
@@ -4132,7 +4129,7 @@ world_small_rock_templates_init :: proc() {
     small_rock_templates_ready = true
 }
 
-world_small_voronoi_formation :: proc(structure: terrain.Structure) {
+world_small_faceted_rock :: proc(structure: terrain.Structure) {
     world_small_rock_templates_init()
     template := &small_rock_templates[int(structure.seed % SMALL_ROCK_VARIATION_COUNT)]
     base_color := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
@@ -4361,7 +4358,7 @@ world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project 
         )
     case .Rock:
         if max(structure.width, structure.depth, structure.height) <= 5 {
-            world_small_voronoi_formation(structure)
+            world_small_faceted_rock(structure)
         } else {
             world_radial_formation(structure, {1, .94, .62, .20}, {0, .24, .58, .88}, 1, .96)
         }
@@ -4437,19 +4434,13 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     entry.direction_bucket = direction_bucket
 }
 
-world_static_formation_cached :: proc(
-    structure: terrain.Structure,
-    structure_index: int,
-    project: ^terrain.Project,
-) {
+world_static_formation_cached :: proc(structure: terrain.Structure, structure_index: int, project: ^terrain.Project) {
     if project == nil || structure_index < 0 || structure_index >= terrain.STRUCTURE_CAPACITY {
         world_formation(structure, project)
         return
     }
     entry := &world_renderer.static_geometry_cache[structure_index]
-    if entry.valid &&
-       entry.structure == structure &&
-       entry.project_revision == project.revision {
+    if entry.valid && entry.structure == structure && entry.project_revision == project.revision {
         world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
         if world_count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:world_count])
         foliage_count := min(
@@ -4462,10 +4453,7 @@ world_static_formation_cached :: proc(
             BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices),
         )
         if bougainvillea_count > 0 {
-            append(
-                &world_renderer.bougainvillea_vertices,
-                ..entry.bougainvillea_vertices[:bougainvillea_count],
-            )
+            append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:bougainvillea_count])
         }
         return
     }
@@ -6859,37 +6847,30 @@ world_architecture_grass_footprints :: proc(
         footprint := architecture.architecture_footprint(structure)
         for mass in footprint.masses[:footprint.count] {
             center_x, center_z := architecture.architecture_mass_world(structure, mass)
-            append(
-                &footprints,
-                Architecture_Grass_Footprint {
-                    center_x = center_x,
-                    center_z = center_z,
-                    half_width = mass.width * .5,
-                    half_depth = mass.depth * .5,
-                    rotation = structure.rotation,
-                },
-            )
+            append(&footprints, Architecture_Grass_Footprint {
+                center_x   = center_x,
+                center_z   = center_z,
+                half_width = mass.width * .5,
+                half_depth = mass.depth * .5,
+                rotation   = structure.rotation,
+            })
         }
     }
     // The kiosks are procedural landmarks rather than authored Architecture
     // structures, so register their pads and approaches explicitly.
     kiosk_positions := [2]third_person.Vec3{editor.attendant_position, editor.gerta_position}
     for kiosk in kiosk_positions {
-        append(
-            &footprints,
-            Architecture_Grass_Footprint {
-                center_x = kiosk.x,
-                center_z = kiosk.z + .35,
-                half_width = 2.1,
-                half_depth = 1.9,
-            },
-            Architecture_Grass_Footprint {
-                center_x = kiosk.x,
-                center_z = kiosk.z - 2.65,
-                half_width = .825,
-                half_depth = 1.5,
-            },
-        )
+        append(&footprints, Architecture_Grass_Footprint {
+            center_x   = kiosk.x,
+            center_z   = kiosk.z + .35,
+            half_width = 2.1,
+            half_depth = 1.9,
+        }, Architecture_Grass_Footprint {
+            center_x   = kiosk.x,
+            center_z   = kiosk.z - 2.65,
+            half_width = .825,
+            half_depth = 1.5,
+        })
     }
     return footprints
 }
@@ -8569,8 +8550,7 @@ world_climbing_leaves :: proc(editor: ^Editor) {
         density := architecture.bougainvillea_density_at_structure(&editor.project.climbing_leaf_density, structure)
         if density < .035 do continue
         capture_seed_enabled :=
-            editor.capture_bougainvillea_seed_enabled &&
-            structure.id == editor.capture_bougainvillea_structure_id
+            editor.capture_bougainvillea_seed_enabled && structure.id == editor.capture_bougainvillea_structure_id
         capture_seed := capture_seed_enabled ? editor.capture_bougainvillea_seed : u32(0)
         entry := &world_renderer.climbing_leaf_geometry_cache[structure_index]
         if entry.valid &&
@@ -8586,10 +8566,7 @@ world_climbing_leaves :: proc(editor: ^Editor) {
                 BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices),
             )
             if bougainvillea_count > 0 {
-                append(
-                    &world_renderer.bougainvillea_vertices,
-                    ..entry.bougainvillea_vertices[:bougainvillea_count],
-                )
+                append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:bougainvillea_count])
             }
             continue
         }
@@ -8660,10 +8637,7 @@ world_climbing_leaves :: proc(editor: ^Editor) {
             append(&entry.world_vertices, ..world_renderer.vertices[world_first:])
         }
         if bougainvillea_first < len(world_renderer.bougainvillea_vertices) {
-            append(
-                &entry.bougainvillea_vertices,
-                ..world_renderer.bougainvillea_vertices[bougainvillea_first:],
-            )
+            append(&entry.bougainvillea_vertices, ..world_renderer.bougainvillea_vertices[bougainvillea_first:])
         }
         entry.valid = true
         entry.structure = structure
@@ -8695,10 +8669,58 @@ world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
     }
 }
 
+World_Aircraft_Transform :: struct {
+    origin:        third_person.Vec3,
+    right_basis:   third_person.Vec3,
+    up_basis:      third_person.Vec3,
+    forward_basis: third_person.Vec3,
+}
+
+world_aircraft_transform :: #force_inline proc(body: flight.Body_State, scale: f32) -> World_Aircraft_Transform {
+    return {
+        origin = {body.position.x, body.position.y, body.position.z},
+        right_basis = {body.basis.right.x * scale, body.basis.right.y * scale, body.basis.right.z * scale},
+        up_basis = {body.basis.up.x * scale, body.basis.up.y * scale, body.basis.up.z * scale},
+        forward_basis = {body.basis.forward.x * scale, body.basis.forward.y * scale, body.basis.forward.z * scale},
+    }
+}
+
+world_aircraft_vertex_world :: #force_inline proc(
+    transform: World_Aircraft_Transform,
+    position: [3]f32,
+) -> third_person.Vec3 {
+    return {
+        transform.origin.x +
+        transform.right_basis.x * position[0] +
+        transform.up_basis.x * position[1] -
+        transform.forward_basis.x * position[2],
+        transform.origin.y +
+        transform.right_basis.y * position[0] +
+        transform.up_basis.y * position[1] -
+        transform.forward_basis.y * position[2],
+        transform.origin.z +
+        transform.right_basis.z * position[0] +
+        transform.up_basis.z * position[1] -
+        transform.forward_basis.z * position[2],
+    }
+}
+
+world_aircraft_normal_world :: #force_inline proc(
+    transform: World_Aircraft_Transform,
+    normal: [3]f32,
+) -> third_person.Vec3 {
+    return {
+        transform.right_basis.x * normal[0] + transform.up_basis.x * normal[1] - transform.forward_basis.x * normal[2],
+        transform.right_basis.y * normal[0] + transform.up_basis.y * normal[1] - transform.forward_basis.y * normal[2],
+        transform.right_basis.z * normal[0] + transform.up_basis.z * normal[1] - transform.forward_basis.z * normal[2],
+    }
+}
+
 world_aircraft :: proc(editor: ^Editor) {
     if editor.postale_visible {
         postale_paint_layer := f32(vehicle_paint_layer_index(.Postale))
         postale_propeller_blur := aircraft_propeller_blur_amount(editor.postale.throttle)
+        postale_transform := world_aircraft_transform(editor.postale.body, POSTALE_PRESENTATION_SCALE)
         mesh := editor.postale_base_mesh
         vehicles.animate_postale_mesh(
             &mesh,
@@ -8716,12 +8738,12 @@ world_aircraft :: proc(editor: ^Editor) {
             if a.part == .Propeller_Blur && postale_propeller_blur <= .01 do continue
             if vehicles.aircraft_mesh_part_uses_smooth_normals(a.part) {
                 world_aircraft_triangle_smooth(
-                    postale_vertex_world(&editor.postale, a.position, POSTALE_PRESENTATION_SCALE),
-                    postale_vertex_world(&editor.postale, b.position, POSTALE_PRESENTATION_SCALE),
-                    postale_vertex_world(&editor.postale, c.position, POSTALE_PRESENTATION_SCALE),
-                    postale_normal_world(&editor.postale, a.normal),
-                    postale_normal_world(&editor.postale, b.normal),
-                    postale_normal_world(&editor.postale, c.normal),
+                    world_aircraft_vertex_world(postale_transform, a.position),
+                    world_aircraft_vertex_world(postale_transform, b.position),
+                    world_aircraft_vertex_world(postale_transform, c.position),
+                    world_aircraft_normal_world(postale_transform, a.normal),
+                    world_aircraft_normal_world(postale_transform, b.normal),
+                    world_aircraft_normal_world(postale_transform, c.normal),
                     aircraft_postale_part_color_with_paint(editor, a.part, editor.postale.throttle),
                     a.uv,
                     b.uv,
@@ -8731,9 +8753,9 @@ world_aircraft :: proc(editor: ^Editor) {
                 )
             } else {
                 world_aircraft_triangle(
-                    postale_vertex_world(&editor.postale, a.position, POSTALE_PRESENTATION_SCALE),
-                    postale_vertex_world(&editor.postale, b.position, POSTALE_PRESENTATION_SCALE),
-                    postale_vertex_world(&editor.postale, c.position, POSTALE_PRESENTATION_SCALE),
+                    world_aircraft_vertex_world(postale_transform, a.position),
+                    world_aircraft_vertex_world(postale_transform, b.position),
+                    world_aircraft_vertex_world(postale_transform, c.position),
                     aircraft_postale_part_color_with_paint(editor, a.part, editor.postale.throttle),
                     a.uv,
                     b.uv,
@@ -8769,14 +8791,15 @@ world_aircraft :: proc(editor: ^Editor) {
             )
         }
         libellula_paint_layer := f32(vehicle_paint_layer_index(editor.aircraft.active))
+        libellula_transform := world_aircraft_transform(editor.libellula.body, LIBELLULA_PRESENTATION_SCALE)
         for triangle in vehicles.mesh_triangles(libellula) {
             a := libellula.vertices[triangle.a]
             b := libellula.vertices[triangle.b]
             c := libellula.vertices[triangle.c]
             world_aircraft_triangle(
-                libellula_vertex_world(&editor.libellula, a.position, .72),
-                libellula_vertex_world(&editor.libellula, b.position, .72),
-                libellula_vertex_world(&editor.libellula, c.position, .72),
+                world_aircraft_vertex_world(libellula_transform, a.position),
+                world_aircraft_vertex_world(libellula_transform, b.position),
+                world_aircraft_vertex_world(libellula_transform, c.position),
                 aircraft_part_color(a.part),
                 a.uv,
                 b.uv,
@@ -8810,23 +8833,19 @@ world_showcase_aircraft_pilot :: proc(editor: ^Editor, position: flight.Vec3, ba
         position.y + basis.up.y * .55,
         position.z + basis.up.z * .55,
     }
-    world_mouse_model_parented(
-        editor,
-        {
-            position = seat_position,
-            rotation = rotation,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
+    world_mouse_model_parented(editor, {
+            position          = seat_position,
+            rotation          = rotation,
+            accessory         = editor.mouse_headgear,
+            fur               = editor.mouse_fur,
+            pattern           = editor.mouse_pattern,
+            scarf_enabled     = editor.mouse_scarf_enabled,
+            scarf_color       = editor.mouse_scarf_color,
             player_controlled = true,
-            grounded = false,
-            hide_tail = true,
-            hide_hind_feet = true,
-        },
-        basis,
-    )
+            grounded          = false,
+            hide_tail         = true,
+            hide_hind_feet    = true,
+        }, basis)
 }
 
 world_showcase_car_pilot :: proc(editor: ^Editor) {
@@ -9098,7 +9117,10 @@ Mouse_Skin_Vertex :: struct {
 }
 
 @(no_instrumentation)
-mouse_skin_vertex :: #force_inline proc(vertex: Mouse_Skin_Vertex, skeleton: ^[5]Mouse_Bone_Pose) -> third_person.Vec3 {
+mouse_skin_vertex :: #force_inline proc(
+    vertex: Mouse_Skin_Vertex,
+    skeleton: ^[5]Mouse_Bone_Pose,
+) -> third_person.Vec3 {
     skinned: third_person.Vec3
     weight_sum: f32
     for group in vertex.groups {
@@ -9283,14 +9305,11 @@ world_mouse_skinned_hull :: proc(
         {bind_position = {0, ring_y[0], ring_z[0]}, groups = {{.Pelvis, 1}, {.Spine, 0}}, color = fur},
         skeleton,
     )
-    nose_center_local := mouse_skin_vertex(
-        {
+    nose_center_local := mouse_skin_vertex({
             bind_position = {0, ring_y[RINGS - 1], ring_z[RINGS - 1]},
-            groups = {{.Head, 1}, {.Neck, 0}},
-            color = fur_light,
-        },
-        skeleton,
-    )
+            groups        = {{.Head, 1}, {.Neck, 0}},
+            color         = fur_light,
+        }, skeleton)
     rear_x, rear_z := world_rotate_xz(origin.x, origin.z, rear_center_local.x, rear_center_local.z, rotation)
     nose_x, nose_z := world_rotate_xz(origin.x, origin.z, nose_center_local.x, nose_center_local.z, rotation)
     rear_center := third_person.Vec3{rear_x, origin.y + rear_center_local.y, rear_z}
@@ -11289,21 +11308,18 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
 
 world_character :: proc(editor: ^Editor) {
     if !editor.in_map || editor.pilot.mode != .On_Foot do return
-    world_mouse_model(
-        editor,
-        {
-            position = editor.player.position,
-            rotation = math.PI - editor.player.facing_yaw_radians,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
-            player_controlled = true,
-            track_paw_plants = true,
-            grounded = editor.player.grounded,
-        },
-    )
+    world_mouse_model(editor, {
+        position          = editor.player.position,
+        rotation          = math.PI - editor.player.facing_yaw_radians,
+        accessory         = editor.mouse_headgear,
+        fur               = editor.mouse_fur,
+        pattern           = editor.mouse_pattern,
+        scarf_enabled     = editor.mouse_scarf_enabled,
+        scarf_color       = editor.mouse_scarf_color,
+        player_controlled = true,
+        track_paw_plants  = true,
+        grounded          = editor.player.grounded,
+    })
 }
 
 world_postale_pilot :: proc(editor: ^Editor) {
@@ -11317,23 +11333,19 @@ world_postale_pilot :: proc(editor: ^Editor) {
     seat_local := [3]f32{0, -.37, -.20}
     position := postale_vertex_world(&editor.postale, seat_local, POSTALE_PRESENTATION_SCALE)
     rotation := math.atan2(-body.basis.forward.x, -body.basis.forward.z)
-    world_mouse_model_parented(
-        editor,
-        {
-            position = position,
-            rotation = rotation,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
+    world_mouse_model_parented(editor, {
+            position          = position,
+            rotation          = rotation,
+            accessory         = editor.mouse_headgear,
+            fur               = editor.mouse_fur,
+            pattern           = editor.mouse_pattern,
+            scarf_enabled     = editor.mouse_scarf_enabled,
+            scarf_color       = editor.mouse_scarf_color,
             player_controlled = true,
-            grounded = false,
-            hide_tail = true,
-            hide_hind_feet = true,
-        },
-        body.basis,
-    )
+            grounded          = false,
+            hide_tail         = true,
+            hide_hind_feet    = true,
+        }, body.basis)
 }
 
 MARTA_STOOL_HEIGHT :: f32(.49)
@@ -11516,22 +11528,10 @@ world_story_meeting_pose :: proc(editor: ^Editor) -> (niko, iva, center: third_p
     // pair along the façade and lift the awning center slightly toward it.
     side_x, side_z := math.cos(frontage_rotation), math.sin(frontage_rotation)
     out_x, out_z := -math.sin(frontage_rotation), math.cos(frontage_rotation)
-    center = {
-        home.x - out_x * .28,
-        0,
-        home.z - out_z * .28,
-    }
+    center = {home.x - out_x * .28, 0, home.z - out_z * .28}
     center.y = terrain.sample_height(&editor.project, 0, center.x, center.z)
-    niko = {
-        center.x - side_x * .62,
-        0,
-        center.z - side_z * .62,
-    }
-    iva = {
-        center.x + side_x * .62,
-        0,
-        center.z + side_z * .62,
-    }
+    niko = {center.x - side_x * .62, 0, center.z - side_z * .62}
+    iva = {center.x + side_x * .62, 0, center.z + side_z * .62}
     niko.y = terrain.sample_height(&editor.project, 0, niko.x, niko.z)
     iva.y = terrain.sample_height(&editor.project, 0, iva.x, iva.z)
     return niko, iva, center, frontage_rotation, true
@@ -11584,32 +11584,24 @@ world_story_meeting :: proc(editor: ^Editor) {
 
     facing_niko := math.atan2(iva.x - niko.x, iva.z - niko.z)
     facing_iva := math.atan2(niko.x - iva.x, niko.z - iva.z)
-    world_mouse_model_scaled(
-        editor,
-        {
-            position = niko,
-            rotation = math.PI - facing_niko,
+    world_mouse_model_scaled(editor, {
+            position  = niko,
+            rotation  = math.PI - facing_niko,
             accessory = .Acorn_Cap,
-            fur = .Chestnut,
-            pattern = .Pale_Belly,
-            grounded = true,
-        },
-        1.02,
-    )
-    world_mouse_model_scaled(
-        editor,
-        {
-            position = iva,
-            rotation = math.PI - facing_iva,
-            accessory = .Flower,
-            fur = .Cream,
-            pattern = .Piebald,
+            fur       = .Chestnut,
+            pattern   = .Pale_Belly,
+            grounded  = true,
+        }, 1.02)
+    world_mouse_model_scaled(editor, {
+            position      = iva,
+            rotation      = math.PI - facing_iva,
+            accessory     = .Flower,
+            fur           = .Cream,
+            pattern       = .Piebald,
             scarf_enabled = true,
-            scarf_color = {177, 65, 73, 255},
-            grounded = true,
-        },
-        .96,
-    )
+            scarf_color   = {177, 65, 73, 255},
+            grounded      = true,
+        }, .96)
     if story.resident_has_action(&editor.story_state, .Niko) {
         world_mouse_interaction_indicator(editor, niko)
     }
@@ -11684,11 +11676,9 @@ world_town_mice :: proc(editor: ^Editor) {
                         fur           = resident.fur,
                         pattern       = resident.pattern,
                         scarf_enabled = resident.scarf,
-                        scarf_color = resident.scarf_color,
-                        grounded = true,
-                    },
-                    resident.scale,
-                )
+                        scarf_color   = resident.scarf_color,
+                        grounded      = true,
+                    }, resident.scale)
                 if named && story.resident_has_action(&editor.story_state, named_resident) {
                     world_mouse_interaction_indicator(editor, {x, ground_y, z})
                 }
@@ -11915,21 +11905,18 @@ world_build :: proc(editor: ^Editor) {
         // a second approximation of the mouse in the UI layer.
         world_ellipsoid_rotated({0, -.08, 0}, .72, .08, .72, 0, {40, 58, 61, 255})
         world_ellipsoid_rotated({0, -.025, 0}, .60, .035, .60, 0, {77, 112, 111, 255})
-        world_mouse_model(
-            editor,
-            {
-                position = {0, 0, 0},
-                rotation = editor.customization_preview_yaw + .65,
-                accessory = editor.mouse_headgear,
-                fur = editor.mouse_fur,
-                pattern = editor.mouse_pattern,
-                scarf_enabled = editor.mouse_scarf_enabled,
-                scarf_color = editor.mouse_scarf_color,
-                preview = true,
-                player_controlled = true,
-                grounded = false,
-            },
-        )
+        world_mouse_model(editor, {
+            position          = {0, 0, 0},
+            rotation          = editor.customization_preview_yaw + .65,
+            accessory         = editor.mouse_headgear,
+            fur               = editor.mouse_fur,
+            pattern           = editor.mouse_pattern,
+            scarf_enabled     = editor.mouse_scarf_enabled,
+            scarf_color       = editor.mouse_scarf_color,
+            preview           = true,
+            player_controlled = true,
+            grounded          = false,
+        })
         return
     }
     if editor.vehicle_showcase_scene {
@@ -11942,11 +11929,18 @@ world_build :: proc(editor: ^Editor) {
     // instead of silently dropping vehicles at the end of the frame.
     world_ocean(editor)
     for index in 0 ..< editor.default_marina_count {
-        world_markov_marina_facility(editor, &editor.default_marinas[index], false)
+        world_markov_marina_facility(
+            editor,
+            &editor.default_marinas[index],
+            false,
+            MARINA_GEOMETRY_CACHE_DEFAULT_FIRST + index,
+        )
     }
-    if editor.marina_authored do world_markov_marina_facility(editor, &editor.marina_authored_plan, false)
+    if editor.marina_authored {
+        world_markov_marina_facility(editor, &editor.marina_authored_plan, false, MARINA_GEOMETRY_CACHE_AUTHORED)
+    }
     if editor.marina_paint_mode && editor.marina_preview_valid {
-        world_markov_marina_facility(editor, &editor.marina_preview_plan, false)
+        world_markov_marina_facility(editor, &editor.marina_preview_plan, false, MARINA_GEOMETRY_CACHE_PREVIEW)
     }
     if !lab_scene_suppresses_infrastructure(editor) do world_infrastructure(editor)
     world_roads(editor)
@@ -13367,6 +13361,9 @@ world_renderer_destroy :: proc() {
     for &entry in world_renderer.climbing_leaf_geometry_cache {
         delete(entry.world_vertices)
         delete(entry.bougainvillea_vertices)
+    }
+    for &entry in world_renderer.marina_geometry_cache {
+        delete(entry.world_vertices)
     }
     world_renderer = {}
 }

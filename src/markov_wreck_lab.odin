@@ -233,11 +233,7 @@ markov_wreck_major_break_after :: proc(x_index: int) -> bool {
 
 markov_wreck_ring_center :: proc(x_index: int) -> third_person.Vec3 {
     center := f32(MARKOV_WRECK_LENGTH - 1) * .5
-    result := third_person.Vec3 {
-        (f32(x_index) - center) * MARKOV_WRECK_CELL,
-        MARKOV_WRECK_HULL_CENTER_Y,
-        0,
-    }
+    result := third_person.Vec3{(f32(x_index) - center) * MARKOV_WRECK_CELL, MARKOV_WRECK_HULL_CENTER_Y, 0}
     part := &markov_wreck_parts[markov_wreck_part_for_bay(x_index)]
     result.y += part.offset_y
     result.z += part.offset_z
@@ -409,11 +405,7 @@ markov_wreck_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     markov_wreck_collision_verified = false
 
     editor.camera_pose = third_person.camera_look_at({170, 82, 185}, {0, 24, 0})
-    editor.editor_focus = {
-        0,
-        24,
-        0,
-    }
+    editor.editor_focus = {0, 24, 0}
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
     editor.capture_world_only = true
@@ -452,11 +444,7 @@ markov_wreck_spawn_postale :: proc(editor: ^Editor) -> bool {
     // The wreck's keel runs along X. Spawn beyond the intact stern and point
     // down the torn hold or hangar, leaving several seconds to read the first gate.
     approach_center := markov_wreck_ring_center(markov_wreck_last_bay)
-    spawn := flight.Vec3 {
-        238,
-        approach_center.y + 2,
-        approach_center.z,
-    }
+    spawn := flight.Vec3{238, approach_center.y + 2, approach_center.z}
     aim := markov_wreck_ring_center(markov_wreck_break_index)
     forward := flight.Vec3{aim.x - spawn.x, aim.y - spawn.y, aim.z - spawn.z}
     forward_length := max(linalg.length(forward), f32(.001))
@@ -591,11 +579,7 @@ markov_wreck_local_point :: proc(x_index: int, local_y, local_z: f32) -> third_p
     center := markov_wreck_ring_center(x_index)
     _, _, roll := markov_wreck_ring_shape(x_index, markov_wreck_cells[x_index] == .Fracture)
     cosine, sine := math.cos(roll), math.sin(roll)
-    return {
-        center.x,
-        center.y + local_y * cosine - local_z * sine,
-        center.z + local_y * sine + local_z * cosine,
-    }
+    return {center.x, center.y + local_y * cosine - local_z * sine, center.z + local_y * sine + local_z * cosine}
 }
 
 // Bind authored family details to the generated hull section beneath them.
@@ -849,7 +833,7 @@ markov_wreck_build_colliders :: proc() {
             hazard_angle := (f32(hazard_segment) + .5) / 12 * math.TAU
             outer := markov_wreck_ring_point(x_index, hazard_angle, 3)
             radial := third_person.Vec3{0, outer.y - ring_center.y, outer.z - ring_center.z}
-            inner := third_person.Vec3{
+            inner := third_person.Vec3 {
                 x + (markov_wreck_random(ring_seed ~ 0x991) - .5) * 7,
                 ring_center.y + radial.y * .12,
                 ring_center.z + radial.z * .12,
@@ -995,7 +979,7 @@ markov_wreck_evaluate_routes :: proc() -> Markov_Wreck_Route_Quality {
         // without implausible snap turns.
         for route in 0 ..< 12 {
             angle := (f32(route) + .5) / 12 * math.TAU
-            point := third_person.Vec3{
+            point := third_person.Vec3 {
                 x,
                 bay_center.y + math.sin(angle) * route_radius_y,
                 bay_center.z + math.cos(angle) * route_radius_z,
@@ -1008,8 +992,8 @@ markov_wreck_evaluate_routes :: proc() -> Markov_Wreck_Route_Quality {
     result.valid =
         result.bays_evaluated >= 22 &&
         result.navigable_bays >= result.bays_evaluated - 4 &&
-        result.centerline_obstacles >= 2 &&// A wreck may contain a few completely collapsed bulkheads; the
-        result.centerline_obstacles <= 12 // surrounding open bays provide the alternate exterior route.
+        result.centerline_obstacles >= 2 &&
+        result.centerline_obstacles <= 12 // A wreck may contain a few completely collapsed bulkheads; the// surrounding open bays provide the alternate exterior route.
     return result
 }
 

@@ -29,12 +29,12 @@ Glb_Mesh :: struct {
 
 glb_mesh_destroy :: proc(mesh: ^Glb_Mesh, allocator := context.allocator) {
     if mesh == nil do return
-	delete(mesh.vertices)
-	delete(mesh.texcoords)
-	delete(mesh.indices)
-	delete(mesh.primitives)
-	delete(mesh.metallic_factors)
-	delete(mesh.roughness_factors)
+    delete(mesh.vertices)
+    delete(mesh.texcoords)
+    delete(mesh.indices)
+    delete(mesh.primitives)
+    delete(mesh.metallic_factors)
+    delete(mesh.roughness_factors)
     mesh^ = {}
 }
 

@@ -626,14 +626,11 @@ settlement_lab_configure :: proc(
             settlement_landmark_seed(region, landmark_index, u32(seed)),
         )
         if editor.project.structure_count <= previous_count do continue
-        editor.project.structures[editor.project.structure_count - 1].building = architecture.architecture_identity(
-            {
-                region = settlement_building_region(region),
-                landmark_kind = settlement_building_landmark(landmark_kind),
-                purpose_explicit = true,
-            },
-            settlement_landmark_seed(region, landmark_index, u32(seed)),
-        )
+        editor.project.structures[editor.project.structure_count - 1].building = architecture.architecture_identity({
+                    region           = settlement_building_region(region),
+                    landmark_kind    = settlement_building_landmark(landmark_kind),
+                    purpose_explicit = true,
+                }, settlement_landmark_seed(region, landmark_index, u32(seed)))
         if region == .Aegean {
             editor.project.structures[editor.project.structure_count - 1].color = {240, 235, 218, 255}
         }
@@ -880,7 +877,7 @@ settlement_lab_configure :: proc(
             look_y := terrain.sample_height(&editor.project, 0, look_x, look_z) + 4.2
             streetscape := third_person.Camera_Pose {
                 position = {camera_x, camera_y, camera_z},
-                target = {look_x, look_y, look_z},
+                target   = {look_x, look_y, look_z},
             }
             editor.editor_focus = streetscape.target
             editor.camera_pose = streetscape
@@ -893,7 +890,7 @@ settlement_lab_configure :: proc(
         focus := third_person.Vec3{map_focus[0], 0, map_focus[1]}
         overhead := third_person.Camera_Pose {
             position = {map_focus[0], map_height, map_focus[1] + map_height * .065},
-            target = focus,
+            target   = focus,
         }
         editor.settlement_diagnostic_layer = -1
         editor.editor_focus = focus
@@ -1095,21 +1092,17 @@ world_markov_town_wanderers :: proc(editor: ^Editor) {
         // Mouse model forward is {-sin(yaw), +cos(yaw)}.
         rotation := f32(math.atan2(f64(-dx), f64(dz)))
         y := terrain.sample_height(&editor.project, 0, x, z)
-        world_mouse_model_scaled(
-            editor,
-            {
-                position = {x, y, z},
-                rotation = rotation,
-                accessory = index % 2 == 0 ? Mouse_Accessory.Paper_Boat : Mouse_Accessory.None,
-                fur = index % 3 == 0 ? Mouse_Fur.Chestnut : Mouse_Fur.Cream,
-                pattern = index % 2 == 0 ? Mouse_Fur_Pattern.Piebald : Mouse_Fur_Pattern.Solid,
-                scarf_enabled = index % 3 == 1,
-                scarf_color = {180, 78, 58, 255},
-                grounded = true,
+        world_mouse_model_scaled(editor, {
+                position          = {x, y, z},
+                rotation          = rotation,
+                accessory         = index % 2 == 0 ? Mouse_Accessory.Paper_Boat : Mouse_Accessory.None,
+                fur               = index % 3 == 0 ? Mouse_Fur.Chestnut : Mouse_Fur.Cream,
+                pattern           = index % 2 == 0 ? Mouse_Fur_Pattern.Piebald : Mouse_Fur_Pattern.Solid,
+                scarf_enabled     = index % 3 == 1,
+                scarf_color       = {180, 78, 58, 255},
+                grounded          = true,
                 player_controlled = walking,
-            },
-            .92 + f32(index % 3) * .05,
-        )
+            }, .92 + f32(index % 3) * .05)
     }
 }
 

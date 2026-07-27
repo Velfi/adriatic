@@ -49,7 +49,12 @@ load_consumer_shader :: proc(
 }
 
 @(no_instrumentation)
-to_color :: #force_inline proc(c: Color) -> [4]f32 { return {f32(c.r) / 255, f32(c.g) / 255, f32(c.b) / 255, f32(c.a) / 255} }
+to_color :: #force_inline proc(c: Color) -> [4]f32 { return{
+        f32(c.r) / 255,
+        f32(c.g) / 255,
+        f32(c.b) / 255,
+        f32(c.a) / 255,
+    } }
 
 srgb_channel_to_linear :: proc(channel: u8) -> f32 {
     c := f32(channel) / 255
@@ -61,7 +66,12 @@ transform :: #force_inline proc(p: Vector2) -> Vector2 {if !state.camera_active 
     return {(p.x - c.target.x) * c.zoom + c.offset.x, (p.y - c.target.y) * c.zoom + c.offset.y}}
 
 @(no_instrumentation)
-append_batch :: #force_inline proc(first, count: u32, texture: int, hatch := HATCH_DISABLED, effect := Effect_Payload{}) {
+append_batch :: #force_inline proc(
+    first, count: u32,
+    texture: int,
+    hatch := HATCH_DISABLED,
+    effect := Effect_Payload{},
+) {
     if len(state.batches) > 0 {
         last := &state.batches[len(state.batches) - 1]
         if last.texture == texture &&

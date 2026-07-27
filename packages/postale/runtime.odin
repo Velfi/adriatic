@@ -254,7 +254,8 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
             1 - dt * (control.throttle_down ? runtime.tuning.ground_brake : runtime.tuning.ground_coast),
         )
         vertical_speed := runtime.body.velocity.y
-        runtime.body.velocity = runtime.body.basis.forward * max_f32(0, forward_speed) + flight.Vec3{0, vertical_speed, 0}
+        runtime.body.velocity =
+            runtime.body.basis.forward * max_f32(0, forward_speed) + flight.Vec3{0, vertical_speed, 0}
         runtime.body.angular_velocity.x = 0
         runtime.body.angular_velocity.z = 0
         steer :=

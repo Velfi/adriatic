@@ -24,21 +24,9 @@ story_meeting_cinematic_play :: proc(editor: ^Editor) -> bool {
     niko, iva, center, rotation, found := world_story_meeting_pose(editor)
     if !found do return false
 
-    side := third_person.Vec3 {
-        math.cos(rotation),
-        0,
-        math.sin(rotation),
-    }
-    outward := third_person.Vec3 {
-        -math.sin(rotation),
-        0,
-        math.cos(rotation),
-    }
-    target := third_person.Vec3 {
-        (niko.x + iva.x) * .5,
-        max(niko.y, iva.y) + .72,
-        (niko.z + iva.z) * .5,
-    }
+    side := third_person.Vec3{math.cos(rotation), 0, math.sin(rotation)}
+    outward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
+    target := third_person.Vec3{(niko.x + iva.x) * .5, max(niko.y, iva.y) + .72, (niko.z + iva.z) * .5}
     wide := third_person.Vec3 {
         center.x + outward.x * 2.85 + side.x * 1.25,
         center.y + 1.85,
@@ -77,7 +65,7 @@ cinematic_update :: proc(editor: ^Editor, delta_seconds: f32) {
     editor.cinematic_focal_length = value.camera.focal_length
     editor.camera_pose = third_person.Camera_Pose {
         position = {value.camera.position[0], value.camera.position[1], value.camera.position[2]},
-        target = {value.camera.target[0], value.camera.target[1], value.camera.target[2]},
+        target   = {value.camera.target[0], value.camera.target[1], value.camera.target[2]},
     }
     if editor.story_cinematic_active && editor.cinematic_playback.completed {
         editor.camera_pose = editor.story_cinematic_restore_pose

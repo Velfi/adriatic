@@ -62,11 +62,7 @@ sun_exposure_update :: proc(editor: ^Editor, pose: third_person.Camera_Pose) -> 
     }
     sky := atmosphere.sample(&editor.atmosphere)
     forward := linalg.normalize0(pose.target - pose.position)
-    sun := third_person.Vec3 {
-        sky.sun_direction[0],
-        sky.sun_direction[1],
-        sky.sun_direction[2],
-    }
+    sun := third_person.Vec3{sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2]}
     alignment := clamp(linalg.dot(forward, sun), f32(-1), f32(1))
     centered := sun_exposure_smoothstep(.88, .998, alignment)
     above_horizon := sun_exposure_smoothstep(-.025, .075, sky.sun_direction[1])

@@ -139,15 +139,16 @@ GetMousePinchScale :: proc() -> f32 { return state.mouse_pinch_scale }
 IsMouseButtonPressed :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return(
         state.mouse_pressed[int(button)] \
     )}
-IsMouseButtonDown :: proc(button: MouseButton) -> bool { assert(button != .COUNT); return(
-        state.mouse_down[int(button)] \
-    ) }
+IsMouseButtonDown :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return state.mouse_down[int(button)]}
 IsMouseButtonReleased :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return(
         state.mouse_released[int(button)] \
     )}
 @(no_instrumentation)
-keyboard_key_scancodes :: #force_inline proc(key: KeyboardKey) -> (primary, alternate: sdl.Scancode) {assert(key != .COUNT)
-    switch key {
+keyboard_key_scancodes :: #force_inline proc(key: KeyboardKey) -> (primary, alternate: sdl.Scancode) {assert(
+        key != .COUNT,
+    )
+    switch
+    key {
     case .ESCAPE:
         return .ESCAPE, .UNKNOWN
     case .ENTER:
@@ -370,8 +371,8 @@ GetTextInput :: proc() -> string {
 GetTextInputComposition :: proc() -> Text_Input_Composition {
     if state == nil do return {}
     return {
-        text             = string(state.text_composition[:state.text_composition_length]),
-        start            = state.text_composition_start,
+        text = string(state.text_composition[:state.text_composition_length]),
+        start = state.text_composition_start,
         selection_length = state.text_composition_selection_length,
     }
 }
@@ -422,10 +423,7 @@ EndScissorMode :: proc() { state.clip_enabled = false; state.clip = {} }
 ButtonBehavior :: proc(id: int, r: Rectangle, enabled: bool) -> Button_Interaction {gui_id := ui.Gui_Id(id + 1)
     activated := ui.gui_button_behavior(&state.gui, gui_id, {r.x, r.y, r.width, r.height}, enabled)
     return {activated, state.gui.hot == gui_id, state.gui.focused == gui_id}}
-DrawRectangle :: proc(x, y, width, height: i32, color: Color) { rect(
-        {f32(x), f32(y), f32(width), f32(height)},
-        color,
-    ) }
+DrawRectangle :: proc(x, y, width, height: i32, color: Color) {rect({f32(x), f32(y), f32(width), f32(height)}, color)}
 DrawRectangleRec :: proc(r: Rectangle, color: Color) { rect(r, color) }
 // A material-space quad for projected procedural geometry. UVs remain attached
 // to the supplied corners while the hatch offset/rotation can be aligned to a

@@ -158,18 +158,15 @@ architecture_identity :: proc(ctx: Architecture_Context, seed: u32) -> buildings
 @(no_instrumentation)
 architecture_resolve_legacy_identity :: #force_inline proc(structure: terrain.Structure) -> buildings.Identity {
     if structure.building.archetype != .Legacy do return structure.building
-    return architecture_identity(
-        {
-            purpose = .Dwelling,
-            density = clamp((structure.height - 8) / 36, 0, 1),
-            attached = structure.width < 18,
-            frontage = structure.width,
-            depth = structure.depth,
-            route = .Street,
+    return architecture_identity({
+            purpose          = .Dwelling,
+            density          = clamp((structure.height - 8) / 36, 0, 1),
+            attached         = structure.width < 18,
+            frontage         = structure.width,
+            depth            = structure.depth,
+            route            = .Street,
             purpose_explicit = false,
-        },
-        structure.seed,
-    )
+        }, structure.seed)
 }
 
 // Produces the complete circulation intent for an architecture settlement.
@@ -198,34 +195,28 @@ circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
     road_span := max(max_x - min_x + 36, f32(160))
     lanes := [2]f32{lane_a, lane_b}
     for lane_z in lanes {
-        _ = circulation.plan_add(
-            &plan,
-            {
-                center_x = center_x,
-                center_z = lane_z,
-                width = road_span,
-                length = 6.5,
-                kind = .Street,
-                source = .Generated,
-                pavement = .Cobblestone,
-                walkable = true,
-                driveable = true,
-            },
-        )
+        _ = circulation.plan_add(&plan, {
+            center_x  = center_x,
+            center_z  = lane_z,
+            width     = road_span,
+            length    = 6.5,
+            kind      = .Street,
+            source    = .Generated,
+            pavement  = .Cobblestone,
+            walkable  = true,
+            driveable = true,
+        })
     }
-    _ = circulation.plan_add(
-        &plan,
-        {
-            center_x = center_x,
-            center_z = center_z,
-            width = 28,
-            length = 18,
-            kind = .Plaza,
-            source = .Generated,
-            pavement = .Cobblestone,
-            walkable = true,
-        },
-    )
+    _ = circulation.plan_add(&plan, {
+        center_x = center_x,
+        center_z = center_z,
+        width    = 28,
+        length   = 18,
+        kind     = .Plaza,
+        source   = .Generated,
+        pavement = .Cobblestone,
+        walkable = true,
+    })
 
     for structure in project.structures[:project.structure_count] {
         if structure.kind != .Architecture || structure.height > 60 do continue
@@ -252,20 +243,17 @@ circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
         path_dx, path_dz := center_x - door_x, target_z - door_z
         path_length := f32(math.sqrt(f64(path_dx * path_dx + path_dz * path_dz)))
         if path_length <= 1.5 do continue
-        _ = circulation.plan_add(
-            &plan,
-            {
-                center_x = (door_x + center_x) * .5,
-                center_z = (door_z + target_z) * .5,
-                width = 3.6,
-                length = path_length,
-                rotation = math.atan2(path_dx, path_dz),
-                kind = .Path,
-                source = .Derived,
-                pavement = .Cobblestone,
-                walkable = true,
-            },
-        )
+        _ = circulation.plan_add(&plan, {
+            center_x = (door_x + center_x) * .5,
+            center_z = (door_z + target_z) * .5,
+            width    = 3.6,
+            length   = path_length,
+            rotation = math.atan2(path_dx, path_dz),
+            kind     = .Path,
+            source   = .Derived,
+            pavement = .Cobblestone,
+            walkable = true,
+        })
     }
     return plan
 }
@@ -502,18 +490,15 @@ architecture_opening_layout :: proc(
         if primary_face {
             door_width := clamp(span * .13, f32(1.8), f32(2.8))
             door_height := clamp(wall_height * .075, f32(3.0), f32(4.0))
-            _ = opening_layout_add(
-                &layout,
-                {
-                    face = face,
-                    kind = habitable ? Opening_Kind.Door : Opening_Kind.Service_Door,
-                    horizontal = 0,
-                    y = .20 + door_height * .5,
-                    width = door_width,
-                    height = door_height,
-                    primary = true,
-                },
-            )
+            _ = opening_layout_add(&layout, {
+                face       = face,
+                kind       = habitable ? Opening_Kind.Door : Opening_Kind.Service_Door,
+                horizontal = 0,
+                y          = .20 + door_height * .5,
+                width      = door_width,
+                height     = door_height,
+                primary    = true,
+            })
         }
 
         columns := facade_column_count(span)
@@ -542,20 +527,17 @@ architecture_opening_layout :: proc(
                     opening_height = clamp(window_height * .55, f32(.65), f32(1.4))
                     opening_y = max(opening_height * .5 + .55, f32(1.1))
                 }
-                _ = opening_layout_add(
-                    &layout,
-                    {
-                        face = face,
-                        kind = kind,
-                        horizontal = horizontal,
-                        y = opening_y,
-                        width = window_width,
-                        height = opening_height,
-                        row = row,
-                        column = column,
-                        primary = primary_face,
-                    },
-                )
+                _ = opening_layout_add(&layout, {
+                    face       = face,
+                    kind       = kind,
+                    horizontal = horizontal,
+                    y          = opening_y,
+                    width      = window_width,
+                    height     = opening_height,
+                    row        = row,
+                    column     = column,
+                    primary    = primary_face,
+                })
             }
         }
     }
@@ -693,7 +675,11 @@ bougainvillea_crown_detail_fade :: #force_inline proc(camera_distance: f32) -> f
 }
 
 @(no_instrumentation)
-bougainvillea_branch_flowering :: #force_inline proc(maturity, node_fraction: f32, seed: u32, branch_index: int) -> bool {
+bougainvillea_branch_flowering :: #force_inline proc(
+    maturity, node_fraction: f32,
+    seed: u32,
+    branch_index: int,
+) -> bool {
     clamped_maturity := clamp(maturity, 0, 1)
     bloom_threshold := .82 - clamped_maturity * .26
     if clamped_maturity <= .16 || node_fraction <= bloom_threshold do return false
@@ -724,7 +710,11 @@ bougainvillea_pruned_stub_count :: proc(maturity: f32) -> int {
 }
 
 @(no_instrumentation)
-bougainvillea_root_attachment_x :: #force_inline proc(structure: terrain.Structure, preferred_x: f32, seed: u32) -> f32 {
+bougainvillea_root_attachment_x :: #force_inline proc(
+    structure: terrain.Structure,
+    preferred_x: f32,
+    seed: u32,
+) -> f32 {
     if structure.kind != .Architecture do return preferred_x
     // Keep the planter or soil pocket outside the central entrance and its
     // immediate approach. Preserve the painted side preference whenever it is
@@ -764,7 +754,10 @@ bougainvillea_density_at_structure :: proc(
 }
 
 @(no_instrumentation)
-bougainvillea_laundry_conflict :: #force_inline proc(structure: terrain.Structure, growth_density, line_world_y: f32) -> bool {
+bougainvillea_laundry_conflict :: #force_inline proc(
+    structure: terrain.Structure,
+    growth_density, line_world_y: f32,
+) -> bool {
     if structure.kind != .Architecture || growth_density < .035 do return false
     maturity := bougainvillea_maturity(growth_density)
     if maturity <= .16 do return false
@@ -1498,18 +1491,15 @@ city_plan_density_grid :: proc(
                 structure.kind = .Architecture
                 structure.rotation = rotation
                 structure.seed = building_seed
-                structure.building = architecture_identity(
-                    {
-                        density = density,
-                        attached = density >= .68,
-                        frontage = width,
-                        depth = depth,
-                        route = frontage.found ? Context_Route.Street : Context_Route.Unspecified,
-                        landmark_kind = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
+                structure.building = architecture_identity({
+                        density          = density,
+                        attached         = density >= .68,
+                        frontage         = width,
+                        depth            = depth,
+                        route            = frontage.found ? Context_Route.Street : Context_Route.Unspecified,
+                        landmark_kind    = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
                         purpose_explicit = false,
-                    },
-                    building_seed,
-                )
+                    }, building_seed)
                 structure.color = architecture_color(structure.seed, anchor)
                 if !city_structure_road_clear(&project.road_graph, &structure) do continue
                 if !city_structure_site_valid(project, &structure) do continue
@@ -1587,19 +1577,16 @@ city_plan_add_parcel_building :: proc(
     structure.kind = .Architecture
     structure.rotation = rotation
     structure.seed = seed
-    structure.building = architecture_identity(
-        {
-            density = density,
-            attached = density > .72,
-            frontage = width,
-            depth = building_depth,
-            frontage_side = frontage_side,
-            route = alley_frontage ? Context_Route.Alley : Context_Route.Street,
-            landmark_kind = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
+    structure.building = architecture_identity({
+            density          = density,
+            attached         = density > .72,
+            frontage         = width,
+            depth            = building_depth,
+            frontage_side    = frontage_side,
+            route            = alley_frontage ? Context_Route.Alley : Context_Route.Street,
+            landmark_kind    = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
             purpose_explicit = false,
-        },
-        seed,
-    )
+        }, seed)
     structure.color = architecture_color(seed, anchor)
     if !city_structure_road_clear(&project.road_graph, &structure) do return
     if !city_structure_site_valid(project, &structure) do return
@@ -1868,16 +1855,13 @@ generate_poisson :: proc(
         structure.rotation = rotation
         structure_seed := u32(random01(&state) * f32(0xffffffff))
         structure.seed = structure_seed
-        structure.building = architecture_identity(
-            {
-                density = clamp((building_height - 8) / 42, 0, 1),
-                frontage = width,
-                depth = depth,
-                route = .Unspecified,
+        structure.building = architecture_identity({
+                density          = clamp((building_height - 8) / 42, 0, 1),
+                frontage         = width,
+                depth            = depth,
+                route            = .Unspecified,
                 purpose_explicit = false,
-            },
-            structure_seed,
-        )
+            }, structure_seed)
         structure.color = architecture_color(structure.seed)
         foundation_low, foundation_high := architecture_foundation_height_range(project, structure)
         if foundation_low <= project.sea_level do continue
@@ -1944,18 +1928,15 @@ generate_append :: proc(
         structure.kind = .Architecture
         structure.rotation = node.rotation
         structure.seed = structure_seed
-        structure.building = architecture_identity(
-            {
-                density = safe_density,
-                attached = safe_density >= .68,
-                frontage = node.width,
-                depth = node.depth,
-                route = .Street,
-                landmark_kind = node.kind == .Landmark ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
+        structure.building = architecture_identity({
+                density          = safe_density,
+                attached         = safe_density >= .68,
+                frontage         = node.width,
+                depth            = node.depth,
+                route            = .Street,
+                landmark_kind    = node.kind == .Landmark ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
                 purpose_explicit = false,
-            },
-            structure_seed,
-        )
+            }, structure_seed)
         structure.color = architecture_color(structure_seed, node.kind == .Landmark)
         foundation_low, foundation_high := architecture_foundation_height_range(project, structure)
         if foundation_low <= project.sea_level do continue
