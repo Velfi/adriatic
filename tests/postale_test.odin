@@ -26,19 +26,14 @@ Landing_Run :: struct {
 }
 
 run_scripted_landing :: proc(scenario: Landing_Scenario) -> Landing_Run {
-    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime := postale.new_runtime({0, postale.GROUND_CLEARANCE, 0})
     runtime.grounded = false
     runtime.was_grounded = false
     // Scenario distance is measured outward from the generated runway's
     // positive-X approach threshold.
-    runtime.body.position = {
-        x = TEST_RUNWAY_HALF_LENGTH + scenario.distance,
-        y = scenario.altitude,
-    }
-    runtime.body.velocity = flight.add(
-        flight.scale(runtime.body.basis.forward, scenario.airspeed),
-        {y = -scenario.sink_speed},
-    )
+    runtime.body.position = {TEST_RUNWAY_HALF_LENGTH + scenario.distance, scenario.altitude, 0}
+    runtime.body.velocity =
+        runtime.body.basis.forward * scenario.airspeed + flight.Vec3{0, -scenario.sink_speed, 0}
     runtime.throttle = .34
     runtime.flap_fraction = 1
     result: Landing_Run
@@ -70,7 +65,11 @@ run_scripted_landing :: proc(scenario: Landing_Scenario) -> Landing_Run {
         }
         if result.touched_down &&
            runtime.grounded &&
-           flight.length(runtime.body.velocity) < runtime.tuning.safe_exit_speed {
+           f32(math.sqrt(f64(
+               runtime.body.velocity.x * runtime.body.velocity.x +
+               runtime.body.velocity.y * runtime.body.velocity.y +
+               runtime.body.velocity.z * runtime.body.velocity.z,
+           ))) < runtime.tuning.safe_exit_speed {
             result.stopped = true
             result.stop_x = runtime.body.position.x
             break
@@ -174,7 +173,7 @@ postale_ground_contact_distinguishes_landings_from_crashes :: proc(t: ^testing.T
 
 @(test)
 postale_suspension_supports_aircraft_weight_at_static_sag :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime := postale.new_runtime({0, postale.GROUND_CLEARANCE, 0})
     force := postale.suspension_force(&runtime, runtime.gear_compression, 0)
     expected_weight := runtime.airframe.mass_kg * postale.GRAVITY
     testing.expect(t, math.abs(force - expected_weight) < .01)
@@ -182,7 +181,7 @@ postale_suspension_supports_aircraft_weight_at_static_sag :: proc(t: ^testing.T)
 
 @(test)
 postale_hard_landings_accumulate_structural_damage :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime := postale.new_runtime({0, postale.GROUND_CLEARANCE, 0})
     runtime.grounded = false
     runtime.was_grounded = false
     runtime.body.position.y = postale.GROUND_CLEARANCE - .01
@@ -234,7 +233,7 @@ postale_requires_rotation_input_to_take_off :: proc(t: ^testing.T) {
 
 @(test)
 postale_suspension_compresses_and_damps_a_touchdown :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime := postale.new_runtime({0, postale.GROUND_CLEARANCE, 0})
     runtime.grounded = false
     runtime.was_grounded = false
     runtime.body.velocity.y = -1

@@ -616,11 +616,7 @@ markov_marina_prop :: proc(source: marina.Prop, plan: ^marina.Plan) {
     prop := source
     prop.position = marina.plan_world_position(plan, prop.position)
     prop.yaw = marina.plan_world_yaw(plan, prop.yaw)
-    p := third_person.Vec3 {
-        x = prop.position.x,
-        y = .7,
-        z = prop.position.z,
-    }
+    p := third_person.Vec3{prop.position.x, .7, prop.position.z}
     switch prop.kind {
     case .Lamp:
         world_box({p.x, 1.75, p.z}, {.16, 3.5, .16}, {53, 59, 58, 255})

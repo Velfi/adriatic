@@ -634,7 +634,7 @@ markov_wreck_attached_run :: proc(x_min, x_max, y, z, depth, height: f32, color:
         world_box_between(
             markov_wreck_attached_point({x0, y, z}),
             markov_wreck_attached_point({x1, y, z}),
-            {y = 1},
+            third_person.Vec3{0, 1, 0},
             depth,
             height,
             color,
@@ -714,9 +714,9 @@ markov_wreck_breach :: proc(x_index, segment: int) -> bool {
 
 markov_wreck_fragment_size :: proc(fragment_seed: u32) -> third_person.Vec3 {
     return {
-        x = 6 + markov_wreck_random(fragment_seed ~ 0x101) * 7,
-        y = 2 + markov_wreck_random(fragment_seed ~ 0x202) * 3,
-        z = 8 + markov_wreck_random(fragment_seed ~ 0x303) * 7,
+        6 + markov_wreck_random(fragment_seed ~ 0x101) * 7,
+        2 + markov_wreck_random(fragment_seed ~ 0x202) * 3,
+        8 + markov_wreck_random(fragment_seed ~ 0x303) * 7,
     }
 }
 
@@ -735,10 +735,10 @@ markov_wreck_fragment_center :: proc(x_index, hazard_segment, fragment: int) -> 
     distance := 39 + f32(fragment) * 12 + markov_wreck_random(fragment_seed ~ 0xcafe) * 8
     size := markov_wreck_fragment_size(fragment_seed)
     return {
-        x = ring_center.x + (markov_wreck_random(fragment_seed ~ 0x3141) - .5) * 22,
+        ring_center.x + (markov_wreck_random(fragment_seed ~ 0x3141) - .5) * 22,
         // Float with roughly half the fragment submerged.
-        y = MARKOV_WRECK_WATERLINE + size.y * .18,
-        z = ring_center.z + outward_z * distance,
+        MARKOV_WRECK_WATERLINE + size.y * .18,
+        ring_center.z + outward_z * distance,
     }
 }
 
@@ -848,14 +848,11 @@ markov_wreck_build_colliders :: proc() {
             hazard_segment := int(markov_wreck_hash(ring_seed ~ 0xb34c3) % 12)
             hazard_angle := (f32(hazard_segment) + .5) / 12 * math.TAU
             outer := markov_wreck_ring_point(x_index, hazard_angle, 3)
-            radial := third_person.Vec3 {
-                y = outer.y - ring_center.y,
-                z = outer.z - ring_center.z,
-            }
+            radial := third_person.Vec3{0, outer.y - ring_center.y, outer.z - ring_center.z}
             inner := third_person.Vec3 {
-                x = x + (markov_wreck_random(ring_seed ~ 0x991) - .5) * 7,
-                y = ring_center.y + radial.y * .12,
-                z = ring_center.z + radial.z * .12,
+                x + (markov_wreck_random(ring_seed ~ 0x991) - .5) * 7,
+                ring_center.y + radial.y * .12,
+                ring_center.z + radial.z * .12,
             }
             markov_wreck_collider_add(outer, inner, 2)
 
@@ -999,9 +996,9 @@ markov_wreck_evaluate_routes :: proc() -> Markov_Wreck_Route_Quality {
         for route in 0 ..< 12 {
             angle := (f32(route) + .5) / 12 * math.TAU
             point := third_person.Vec3 {
-                x = x,
-                y = bay_center.y + math.sin(angle) * route_radius_y,
-                z = bay_center.z + math.cos(angle) * route_radius_z,
+                x,
+                bay_center.y + math.sin(angle) * route_radius_y,
+                bay_center.z + math.cos(angle) * route_radius_z,
             }
             if !markov_wreck_point_blocked(point, AIRCRAFT_RADIUS) do clear_routes += 1
         }

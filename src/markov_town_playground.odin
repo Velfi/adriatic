@@ -830,16 +830,8 @@ settlement_lab_configure :: proc(
 
     editor.capture_player_walk_pose = true
     editor.postale_visible = false
-    editor.car.position = {
-        x = center + 600,
-        y = 0,
-        z = town_z + 600,
-    }
-    editor.libellula.vehicle.position = {
-        x = center + 650,
-        y = 0,
-        z = town_z + 650,
-    }
+    editor.car.position = {center + 600, 0, town_z + 600}
+    editor.libellula.vehicle.position = {center + 650, 0, town_z + 650}
     editor.architecture_node_mode = true
     camera := third_person.default_camera()
     camera.yaw_radians = -.72
@@ -898,11 +890,7 @@ settlement_lab_configure :: proc(
     }
     if vertical_map {
         map_focus, map_height := settlement_map_frame(&editor.project, {core_x, core_z}, radius)
-        focus := third_person.Vec3 {
-            x = map_focus[0],
-            y = 0,
-            z = map_focus[1],
-        }
+        focus := third_person.Vec3{map_focus[0], 0, map_focus[1]}
         overhead := third_person.Camera_Pose {
             position = {map_focus[0], map_height, map_focus[1] + map_height * .065},
             target = focus,

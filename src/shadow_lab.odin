@@ -70,7 +70,7 @@ shadow_lab_configure :: proc(editor: ^Editor) {
     editor.project.revision += 1
     shadow_lab_apply_lighting(editor)
 
-    editor.camera_pose = third_person.camera_look_at({21, 10.5, 19}, {3.5, 3.2})
+    editor.camera_pose = third_person.camera_look_at({21, 10.5, 19}, {3.5, 3.2, 0})
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
 }
@@ -127,9 +127,7 @@ world_shadow_lab_playground :: proc(editor: ^Editor) {
     metal: rl.Color = {73, 126, 139, 255}
     yellow: rl.Color = {225, 177, 63, 255}
     slide: rl.Color = {184, 77, 62, 255}
-    forward := third_person.Vec3 {
-        z = 1,
-    }
+    forward := third_person.Vec3{0, 0, 1}
 
     // Four tall posts and two decks produce strong contact shadows and many
     // overlapping vertical/horizontal silhouettes.

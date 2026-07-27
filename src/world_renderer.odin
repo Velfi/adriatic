@@ -304,6 +304,24 @@ world_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color
     append(&world_renderer.vertices, world_vertex(a, color), world_vertex(b, color), world_vertex(c, color))
 }
 
+vec_sub :: #force_inline proc(a, b: third_person.Vec3) -> third_person.Vec3 {
+    return {a.x - b.x, a.y - b.y, a.z - b.z}
+}
+
+vec_dot :: #force_inline proc(a, b: third_person.Vec3) -> f32 {
+    return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+vec_cross :: #force_inline proc(a, b: third_person.Vec3) -> third_person.Vec3 {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}
+}
+
+vec_normalize :: #force_inline proc(v: third_person.Vec3) -> third_person.Vec3 {
+    length := f32(math.sqrt(f64(vec_dot(v, v))))
+    if length < .0001 do return {}
+    return {v.x / length, v.y / length, v.z / length}
+}
+
 world_triangle_smooth_lit :: proc(
     a, b, c: third_person.Vec3,
     normal_a, normal_b, normal_c: third_person.Vec3,
@@ -3578,7 +3596,7 @@ world_architecture_mass :: proc(
                     structure.rotation,
                 )
                 world_box_rotated({sign_x, sign_y, sign_z}, {1.15, .54, .10}, structure.rotation, {91, 119, 117, 255})
-                bracket_x, bracket_z := world_rotate_xz(
+                sign_bracket_x, sign_bracket_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
                     sign_local_x,
@@ -3586,7 +3604,7 @@ world_architecture_mass :: proc(
                     structure.rotation,
                 )
                 world_box_rotated(
-                    {bracket_x, sign_y + .36, bracket_z},
+                    {sign_bracket_x, sign_y + .36, sign_bracket_z},
                     {1.32, .07, .09},
                     structure.rotation,
                     {67, 61, 55, 255},
@@ -4324,9 +4342,9 @@ world_radial_formation :: proc(
                 structure.rotation,
             )
             vertices[layer][segment] = {
-                x = world_x,
-                y = structure.base_y + structure.height * heights[layer],
-                z = world_z,
+                world_x,
+                structure.base_y + structure.height * heights[layer],
+                world_z,
             }
             previous_layer := max(layer - 1, 0)
             next_layer := min(layer + 1, 3)
@@ -4384,9 +4402,9 @@ world_radial_formation :: proc(
         }
     }
     top := third_person.Vec3 {
-        x = structure.center_x,
-        y = structure.base_y + structure.height * cap_height,
-        z = structure.center_z,
+        structure.center_x,
+        structure.base_y + structure.height * cap_height,
+        structure.center_z,
     }
     for segment in 0 ..< segments {
         next := (segment + 1) % segments
@@ -9905,9 +9923,7 @@ mouse_solve_two_bone_joint :: proc(
             preferred_joint.z - root.z,
         }
         axis = vec_normalize(preferred_axis)
-        if vec_dot(axis, axis) <= .0001 do axis = {
-            z = 1,
-        }
+        if vec_dot(axis, axis) <= .0001 do axis = {0, 0, 1}
         distance = math.abs(root_length - tip_length) + .0001
     } else {
         axis = {delta.x / distance, delta.y / distance, delta.z / distance}
@@ -9929,8 +9945,8 @@ mouse_solve_two_bone_joint :: proc(
         preferred_delta.z - axis.z * projection,
     }
     if vec_dot(pole, pole) <= .0001 {
-        pole = vec_cross(axis, {z = 1})
-        if vec_dot(pole, pole) <= .0001 do pole = vec_cross(axis, {1})
+        pole = vec_cross(axis, {0, 0, 1})
+        if vec_dot(pole, pole) <= .0001 do pole = vec_cross(axis, {1, 0, 0})
     }
     pole = vec_normalize(pole)
     return {
@@ -10797,7 +10813,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         wool_dark := rl.Color{58, 41, 34, 255}
         fur_trim := rl.Color{181, 153, 119, 255}
         fur_shadow := rl.Color{137, 111, 86, 255}
-        fur_light := rl.Color{207, 184, 149, 255}
+        ushanka_fur_light := rl.Color{207, 184, 149, 255}
 
         // One radial hull replaces the former capped side-to-side extrusion.
         // Five horizontal rings round the crown in every camera direction.
@@ -10886,9 +10902,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 // A narrow raised-looking fur brow and the two lined flaps are
                 // material regions of the hull itself, not overlaid geometry.
                 if (ring == 2 || ring == 3) && front_weight > .62 {
-                    surface_color = fur_variant == 0 ? fur_light : (fur_variant == 2 ? fur_shadow : fur_trim)
+                    surface_color = fur_variant == 0 ? ushanka_fur_light : (fur_variant == 2 ? fur_shadow : fur_trim)
                 } else if ring >= 3 && side_weight > .28 {
-                    surface_color = fur_variant == 0 ? fur_light : (fur_variant < 3 ? fur_shadow : fur_trim)
+                    surface_color = fur_variant == 0 ? ushanka_fur_light : (fur_variant < 3 ? fur_shadow : fur_trim)
                 } else if ring == 2 && side_weight > .45 {
                     // A cloth welt makes the flap attachment look sewn into
                     // the crown rather than painted onto the same surface.
@@ -11734,8 +11750,9 @@ world_marta :: proc(editor: ^Editor) {
 world_gerta :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
     delta := third_person.Vec3 {
-        x = editor.player.position.x - editor.gerta_position.x,
-        z = editor.player.position.z - editor.gerta_position.z,
+        editor.player.position.x - editor.gerta_position.x,
+        0,
+        editor.player.position.z - editor.gerta_position.z,
     }
     facing := math.atan2(-delta.x, -delta.z)
     position := editor.gerta_position
@@ -11755,11 +11772,7 @@ world_mouse_interaction_indicator :: proc(editor: ^Editor, mouse_position: third
     // Crossed slabs keep the punctuation legible from every approach without
     // requiring a screen-space overlay or a camera-facing render path.
     bob := f32(math.sin(rl.GetTime() * 3.2)) * .055
-    center := third_person.Vec3 {
-        x = mouse_position.x,
-        y = mouse_position.y + 1.18 + bob,
-        z = mouse_position.z,
-    }
+    center := third_person.Vec3{mouse_position.x, mouse_position.y + 1.18 + bob, mouse_position.z}
     gold := rl.Color{247, 191, 54, 255}
     shadow := rl.Color{91, 57, 29, 255}
 

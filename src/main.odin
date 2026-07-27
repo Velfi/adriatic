@@ -2983,7 +2983,7 @@ gerta_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     // Mirror Marta's relationship to the runway on the opposite island.
     x := island_center - half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET - 5.5
     z := island_center - 10.5
-    return {x, terrain.sample_height(&editor.project, 0, x, z), z = z}
+    return {x, terrain.sample_height(&editor.project, 0, x, z), z}
 }
 
 attendant_speaker :: proc(_: ^dialogue.Context) -> string { return "MARTA" }
@@ -3157,11 +3157,11 @@ attendant_dialogue_panel :: proc(editor: ^Editor, width, height: i32) -> rl.Rect
     choice_count := 1
     if editor != nil do choice_count = max(dialogue.available_count(&editor.attendant_dialogue), 1)
     panel_height := min(f32(height) - 96, 146 + f32(choice_count) * 42)
-    return {f32(width) * .5 - 310, f32(height) - panel_height - 48, width = 620, height = panel_height}
+    return {f32(width) * .5 - 310, f32(height) - panel_height - 48, 620, panel_height}
 }
 
 attendant_dialogue_choice_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
-    return {panel.x + 24, panel.y + 126 + f32(index) * 42, width = panel.width - 48, height = 34}
+    return {panel.x + 24, panel.y + 126 + f32(index) * 42, panel.width - 48, 34}
 }
 
 tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
@@ -3929,7 +3929,7 @@ draw_rounded_inset :: proc(bounds: rl.Rectangle, corner_radius: f32, color: rl.C
 
 draw_rectangular_instrument_bezel :: proc(bounds: rl.Rectangle, radius: f32) -> rl.Rectangle {
     draw_rounded_inset(
-        {bounds.x + 1.5, bounds.y + 2, width = bounds.width, height = bounds.height},
+        {bounds.x + 1.5, bounds.y + 2, bounds.width, bounds.height},
         radius,
         {r = 2, g = 8, b = 11, a = 235},
     )
@@ -4377,7 +4377,7 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
     panel_left := f32(width) * .5 - panel_width * .5
     panel_top := f32(height) - panel_height - 14
     draw_flight_console_panel(
-        {panel_left, panel_top, width = panel_width, height = panel_height},
+        {panel_left, panel_top, panel_width, panel_height},
         112,
         {r = 10, g = 21, b = 21, a = 246},
     )
@@ -5170,7 +5170,7 @@ draw_infinite_ocean :: proc(width, height: i32, time: f32) {
 }
 
 editor_palette_bounds :: proc() -> rl.Rectangle {
-    return {20, 116, width = 830, height = 38}
+    return {20, 116, 830, 38}
 }
 
 editor_palette_button_bounds :: proc(index: int) -> rl.Rectangle {
@@ -5288,15 +5288,15 @@ draw_editor_palette :: proc(editor: ^Editor) {
     }
 }
 
-spawn_button_bounds :: proc() -> rl.Rectangle { return {20, 164, width = 170, height = 34} }
+spawn_button_bounds :: proc() -> rl.Rectangle { return {20, 164, 170, 34} }
 
 editor_overlay_hit :: proc(position: rl.Vector2, width, height: i32) -> bool {
     // These regions are drawn above the viewport and must be treated as UI even
     // when they contain only status text. Otherwise a press on the HUD can
     // begin a terrain stroke through the transparent parts of the overlay.
-    if rl.CheckCollisionPointRec(position, {14, 14, width = 826, height = 96}) do return true
-    if rl.CheckCollisionPointRec(position, {f32(width) - 560, 14, width = 546, height = 40}) do return true
-    if rl.CheckCollisionPointRec(position, {20, 210, width = 830, height = 30}) do return true
+    if rl.CheckCollisionPointRec(position, {14, 14, 826, 96}) do return true
+    if rl.CheckCollisionPointRec(position, {f32(width) - 560, 14, 546, 40}) do return true
+    if rl.CheckCollisionPointRec(position, {20, 210, 830, 30}) do return true
     return false
 }
 
