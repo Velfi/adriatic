@@ -110,6 +110,12 @@ Structure_Visibility_Order :: struct {
     distance_squared: f32,
 }
 
+@(no_instrumentation)
+structure_visibility_order_less :: #force_inline proc(a, b: Structure_Visibility_Order) -> bool {
+    if a.distance_squared != b.distance_squared do return a.distance_squared < b.distance_squared
+    return a.index < b.index
+}
+
 structure_lod_forced: i32 = -1
 
 window_flower_box_roll :: proc(structure_seed: u32, row, column: int) -> u32 {
@@ -528,6 +534,11 @@ World_Renderer :: struct {
     static_visibility:                Static_Visibility_Stats,
     static_visibility_classification: [dynamic]Static_Visibility_Classification,
     structure_visibility_order:       [dynamic]Structure_Visibility_Order,
+    structure_visibility_centers:     [dynamic][2]f32,
+    structure_visibility_camera:      [2]f32,
+    structure_visibility_selected:    int,
+    structure_visibility_hovered:     int,
+    structure_visibility_order_valid: bool,
     structure_building_spans:         [dynamic]u8,
     structure_candidates:             [dynamic]int,
     initialized:                     bool,
@@ -1377,6 +1388,7 @@ world_structure_storage_ensure :: proc(count: int) {
     resize(&world_renderer.static_geometry_cache, count)
     resize(&world_renderer.climbing_leaf_geometry_cache, count)
     resize(&world_renderer.static_visibility_classification, count)
+    resize(&world_renderer.structure_visibility_centers, count)
     reserve(&world_renderer.structure_visibility_order, count)
     resize(&world_renderer.structure_building_spans, count)
     reserve(&world_renderer.structure_candidates, count)
@@ -7777,7 +7789,6 @@ world_structures :: proc(editor: ^Editor) {
     // Geometry buffers are capacity bounded, so storage order must not decide
     // visibility. Traverse structures from the camera outward; each structure
     // contributes its mass and climbing growth together at its current LOD.
-    clear(&world_renderer.structure_visibility_order)
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
     screen_width := max(rl.GetScreenWidth(), 1)
@@ -7786,10 +7797,47 @@ world_structures :: proc(editor: ^Editor) {
     near_plane := world_camera_near_clip(editor)
     stats := &world_renderer.static_visibility
     stats^ = {}
-    for index in 0 ..< editor.project.structure_count {
+    selected_index := !editor.in_map ? editor.structure_selected : -1
+    camera_position := [2]f32{view_camera.position.x, view_camera.position.z}
+    order_dirty :=
+        !world_renderer.structure_visibility_order_valid ||
+        len(world_renderer.structure_visibility_order) != editor.project.structure_count ||
+        world_renderer.structure_visibility_camera != camera_position ||
+        world_renderer.structure_visibility_selected != selected_index ||
+        world_renderer.structure_visibility_hovered != hovered_index
+    if !order_dirty {
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            center := [2]f32{structure.center_x, structure.center_z}
+            if world_renderer.structure_visibility_centers[index] != center {
+                order_dirty = true
+                break
+            }
+        }
+    }
+    if order_dirty {
+        clear(&world_renderer.structure_visibility_order)
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            center := [2]f32{structure.center_x, structure.center_z}
+            world_renderer.structure_visibility_centers[index] = center
+            dx, dz := structure.center_x - view_camera.position.x, structure.center_z - view_camera.position.z
+            distance_squared := dx * dx + dz * dz
+            if index == selected_index || index == hovered_index do distance_squared = -1
+            append(
+                &world_renderer.structure_visibility_order,
+                Structure_Visibility_Order{index, distance_squared},
+            )
+        }
+        slice.sort_by(world_renderer.structure_visibility_order[:], structure_visibility_order_less)
+        world_renderer.structure_visibility_camera = camera_position
+        world_renderer.structure_visibility_selected = selected_index
+        world_renderer.structure_visibility_hovered = hovered_index
+        world_renderer.structure_visibility_order_valid = true
+    }
+    for ordered in world_renderer.structure_visibility_order {
+        index := ordered.index
         structure := editor.project.structures[index]
         stats.candidates += 1
-        force_visible := (index == editor.structure_selected && !editor.in_map) || index == hovered_index
+        force_visible := index == selected_index || index == hovered_index
         center, radius := structure_visibility_sphere(structure)
         if !force_visible &&
            !static_sphere_in_frustum(view_camera, center, radius, aspect, near_plane, WORLD_FAR_CLIP) {
@@ -7803,24 +7851,6 @@ world_structures :: proc(editor: ^Editor) {
         } else {
             world_renderer.static_visibility_classification[index] = .Visible
         }
-        dx, dz := structure.center_x - view_camera.position.x, structure.center_z - view_camera.position.z
-        distance_squared := dx * dx + dz * dz
-        if force_visible do distance_squared = -1
-        append(
-            &world_renderer.structure_visibility_order,
-            Structure_Visibility_Order{index, distance_squared},
-        )
-    }
-    slice.sort_by(
-        world_renderer.structure_visibility_order[:],
-        proc(a, b: Structure_Visibility_Order) -> bool {
-            if a.distance_squared != b.distance_squared do return a.distance_squared < b.distance_squared
-            return a.index < b.index
-        },
-    )
-    for ordered in world_renderer.structure_visibility_order {
-        index := ordered.index
-        structure := editor.project.structures[index]
         if editor.architecture_painting &&
            structure.kind == .Architecture &&
            architecture.city_bounds_contains(
@@ -14230,6 +14260,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.climbing_leaf_geometry_cache)
     delete(world_renderer.static_visibility_classification)
     delete(world_renderer.structure_visibility_order)
+    delete(world_renderer.structure_visibility_centers)
     delete(world_renderer.structure_building_spans)
     delete(world_renderer.structure_candidates)
     for &entry in world_renderer.town_mouse_geometry_cache {
