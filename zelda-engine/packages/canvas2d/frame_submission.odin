@@ -296,6 +296,10 @@ publish_screenshot_readback :: proc(
 }
 
 EndDrawing :: proc() {
+    // Callers may submit a loading frame immediately after InitWindow. If the
+    // backend could not initialize, leave that frame inert instead of invoking
+    // unloaded Vulkan device procedures through a nil context.
+    if state == nil || !state.initialized || state.ctx.device == nil do return
     defer gfx_profile_end(.Frame, state.gfx_frame_signpost)
     defer render2d.metrics_end_frame(&state.metrics)
     render2d.metrics_record_batches(&state.metrics, u64(len(state.batches)))
