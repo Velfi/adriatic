@@ -18,6 +18,7 @@ import hot_abi "../packages/hot_abi"
 import hs "../packages/hs"
 import libellula_game "../packages/libellula"
 import marina "../packages/marina"
+import mouse_paws "../packages/mouse_paws"
 import mouse_tail "../packages/mouse_tail"
 import ocean_audio "../packages/ocean_audio"
 import particle_systems "../packages/particles"
@@ -233,8 +234,7 @@ Fixture :: struct {
     player_scurry_compression:                      f32,
     player_scurry_compression_velocity:             f32,
     player_animation_previous_speed:                f32,
-    player_paw_plant_positions:                     [4]third_person.Vec3 `fixture:"-"`,
-    player_paw_planted:                             [4]bool `fixture:"-"`,
+    player_paws:                                    mouse_paws.Rig `fixture:"-"`,
     player_tail:                                    mouse_tail.State,
     camera:                                         third_person.Camera,
     camera_pose:                                    third_person.Camera_Pose,
@@ -754,6 +754,9 @@ capture_add_formation :: proc(editor: ^Editor, x, z, width, depth, height: f32, 
 
 structure_commit_placement :: proc(editor: ^Editor, end_x, end_z: f32) -> int {
     if editor == nil do return -1
+    if editor.structure_preview.kind == .Architecture {
+        editor.structure_preview.height = architecture.facade_fitted_height(editor.structure_preview.height)
+    }
     index := terrain.add_structure(&editor.project, editor.structure_preview)
     last_index := index
     if !editor.structure_scatter_mode || index < 0 do return index
@@ -1513,7 +1516,7 @@ benchmark_report :: proc(
     foliage_vertex_utilization := f64(foliage_vertex_count) / f64(max(foliage_vertex_capacity, 1))
     road_vertex_utilization := f64(road_vertex_count) / f64(max(ROAD_VERTEX_CAPACITY, 1))
     fmt.printf(
-        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d}}}}\n",
+        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"budget_rejected\":%d,\"nonresident\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}}}}}}\n",
         scenario,
         len(sorted),
         window_width,
@@ -1542,6 +1545,20 @@ benchmark_report :: proc(
         world_renderer.structure_lod_counts[1],
         world_renderer.structure_lod_counts[2],
         world_renderer.structure_lod_cache_rebuilds,
+        world_renderer.static_visibility.candidates,
+        world_renderer.static_visibility.frustum_culled,
+        world_renderer.static_visibility.occlusion_culled,
+        world_renderer.static_visibility.force_visible,
+        world_renderer.static_visibility.budget_rejected,
+        world_renderer.static_visibility.nonresident,
+        world_renderer.static_visibility.emitted_draws,
+        world_renderer.static_visibility.opaque_cost,
+        world_renderer.static_visibility.foliage_cost,
+        world_renderer.static_visibility.bougainvillea_cost,
+        world_renderer.static_visibility.atlas_opaque_used,
+        world_renderer.static_visibility.atlas_foliage_used,
+        world_renderer.static_visibility.atlas_bougainvillea_used,
+        world_renderer.static_visibility.atlas_fragmentation,
     )
 }
 
@@ -2593,6 +2610,9 @@ structure_adjust_with_wheel :: proc(editor: ^Editor, wheel: f32) {
             editor.structure_preview.depth = max(cell, editor.structure_preview.depth + wheel * cell * 2)
         } else {
             editor.structure_preview.height = max(cell, editor.structure_preview.height + wheel * cell * 2)
+            if editor.structure_preview.kind == .Architecture {
+                editor.structure_preview.height = architecture.facade_fitted_height(editor.structure_preview.height)
+            }
         }
     } else if editor.structure_selected >= 0 {
         structure_history_push_undo(editor)
@@ -2609,6 +2629,9 @@ structure_adjust_with_wheel :: proc(editor: ^Editor, wheel: f32) {
                 structure := &editor.project.structures[index]
                 if structure.group_id != selected_group do continue
                 structure.height = max(cell, structure.height + wheel * cell * 2)
+                if structure.kind == .Architecture {
+                    structure.height = architecture.facade_fitted_height(structure.height)
+                }
             }
         }
         editor.project.revision += 1
@@ -3141,11 +3164,11 @@ marta_menu_close :: proc(ctx: ^dialogue.Context) { marta_menu_set_action(ctx, .C
 open_attendant_dialogue :: proc(editor: ^Editor, resident: story.Resident = .Marta) {
     if editor == nil || (resident != .Marta && resident != .Gerta) do return
     menu_choices := make([]dialogue.Choice, 5)
-    menu_choices[0] = dialogue.choice("Peindre un aeroplano", dialogue.no_next_node, effect = marta_menu_paint)
-    menu_choices[1] = dialogue.choice("Choose un aeroplano", 1)
-    menu_choices[2] = dialogue.choice("Any novosti locale?", 2)
-    menu_choices[3] = dialogue.choice("How va il meteo?", 3)
-    menu_choices[4] = dialogue.choice("Niente, grazie", dialogue.no_next_node, effect = marta_menu_close)
+    menu_choices[0] = dialogue.choice("Paint an aeroplane", dialogue.no_next_node, effect = marta_menu_paint)
+    menu_choices[1] = dialogue.choice("Choose an aeroplane", 1)
+    menu_choices[2] = dialogue.choice("Any local news?", 2)
+    menu_choices[3] = dialogue.choice("How is the weather?", 3)
+    menu_choices[4] = dialogue.choice("Nothing, grazie.", dialogue.no_next_node, effect = marta_menu_close)
 
     editor.attendant_dialogue_vehicle_choice_count = 0
     aircraft_choices := make([]dialogue.Choice, editor.aircraft.count + 1)

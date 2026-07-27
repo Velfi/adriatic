@@ -6,6 +6,7 @@ import boats "../packages/boats"
 import buildings "../packages/buildings"
 import circulation "../packages/circulation"
 import flight "../packages/flight"
+import mouse_paws "../packages/mouse_paws"
 import mouse_tail "../packages/mouse_tail"
 import particles "../packages/particles"
 import render_graph "../packages/render_graph"
@@ -75,6 +76,32 @@ Structure_LOD_Result :: struct {
     transition:         f32,
 }
 
+Static_Visibility_Classification :: enum u8 {
+    Visible,
+    Frustum_Culled,
+    Occlusion_Culled,
+    Budget_Rejected,
+    Nonresident,
+    Force_Visible,
+}
+
+Static_Visibility_Stats :: struct {
+    candidates:          u32,
+    frustum_culled:      u32,
+    occlusion_culled:    u32,
+    force_visible:       u32,
+    budget_rejected:     u32,
+    nonresident:         u32,
+    emitted_draws:       u32,
+    opaque_cost:         u32,
+    foliage_cost:        u32,
+    bougainvillea_cost:  u32,
+    atlas_opaque_used:   u32,
+    atlas_foliage_used:  u32,
+    atlas_bougainvillea_used: u32,
+    atlas_fragmentation: f32,
+}
+
 structure_lod_forced: i32 = -1
 
 window_flower_box_roll :: proc(structure_seed: u32, row, column: int) -> u32 {
@@ -106,6 +133,45 @@ structure_lod_projected_diameter :: proc(
     if depth <= near_plane + radius do return f32(1e9)
     return max(radius, f32(0)) * 2 * max(camera.focal_length, f32(.01)) *
            max(viewport_height, f32(1)) * .5 / depth
+}
+
+// Conservative sphere/frustum test in the same camera basis and projection
+// convention used by the world shaders. A sphere intersecting any plane stays
+// visible; this deliberately prefers extra work over a visible false reject.
+static_sphere_in_frustum :: proc(
+    camera: Perspective_Camera,
+    center: third_person.Vec3,
+    radius, aspect, near_plane, far_plane: f32,
+) -> bool {
+    safe_radius := max(radius, f32(0))
+    safe_focal := max(camera.focal_length, f32(.01))
+    safe_aspect := max(aspect, f32(.01))
+    view := center - camera.position
+    depth := linalg.dot(view, camera.forward)
+    if depth + safe_radius < near_plane || depth - safe_radius > far_plane do return false
+
+    horizontal_scale := safe_focal / safe_aspect
+    horizontal := abs(linalg.dot(view, camera.right)) * horizontal_scale
+    horizontal_radius := safe_radius * f32(math.sqrt(f64(1 + horizontal_scale * horizontal_scale)))
+    if horizontal > depth + horizontal_radius do return false
+
+    vertical := abs(linalg.dot(view, camera.up)) * safe_focal
+    vertical_radius := safe_radius * f32(math.sqrt(f64(1 + safe_focal * safe_focal)))
+    return vertical <= depth + vertical_radius
+}
+
+structure_visibility_sphere :: proc(structure: terrain.Structure) -> (third_person.Vec3, f32) {
+    center := third_person.Vec3 {
+        structure.center_x,
+        structure.base_y + structure.height * .5,
+        structure.center_z,
+    }
+    radius := f32(math.sqrt(f64(
+        structure.width * structure.width +
+        structure.depth * structure.depth +
+        structure.height * structure.height,
+    ))) * .5
+    return center, radius
 }
 
 structure_lod_select :: proc(
@@ -226,6 +292,22 @@ when ODIN_TEST {
         camera.focal_length = 2
         testing.expect(t, math.abs(structure_lod_projected_diameter(camera, {0, 0, -10}, 1, 1000, .2) - 200) < .001)
         testing.expect(t, structure_lod_projected_diameter(camera, {0, 0, -.5}, 1, 1000, .2) >= 1e8)
+    }
+
+    @(test)
+    static_frustum_is_conservative_at_planes_and_rejects_clear_misses :: proc(t: ^testing.T) {
+        camera := Perspective_Camera {
+            position = {},
+            forward = {0, 0, -1},
+            right = {1, 0, 0},
+            up = {0, 1, 0},
+            focal_length = 1,
+        }
+        testing.expect(t, static_sphere_in_frustum(camera, {0, 0, -10}, 1, 16.0 / 9.0, .2, 100))
+        testing.expect(t, static_sphere_in_frustum(camera, {18.7, 0, -10}, 1, 16.0 / 9.0, .2, 100))
+        testing.expect(t, !static_sphere_in_frustum(camera, {30, 0, -10}, 1, 16.0 / 9.0, .2, 100))
+        testing.expect(t, !static_sphere_in_frustum(camera, {0, 0, 4}, 1, 16.0 / 9.0, .2, 100))
+        testing.expect(t, static_sphere_in_frustum(camera, {0, 0, -.1}, 1, 16.0 / 9.0, .2, 100))
     }
 }
 
@@ -417,6 +499,8 @@ World_Renderer :: struct {
     structure_lod_cache_rebuilds:     u64,
     structure_lod_world_vertices:     int,
     structure_lod_foliage_vertices:   int,
+    static_visibility:                Static_Visibility_Stats,
+    static_visibility_classification: [terrain.STRUCTURE_CAPACITY]Static_Visibility_Classification,
     initialized:                     bool,
 }
 
@@ -2654,6 +2738,51 @@ world_architecture_face_openings :: proc(
             structure.rotation + yaw_offset,
             color,
         )
+        if opening.kind == .Window {
+            glass_local_x, glass_local_z := local_x, local_z
+            switch opening.face {
+            case .Front:
+                glass_local_z += .125
+            case .Rear:
+                glass_local_z -= .125
+            case .Left:
+                glass_local_x -= .125
+            case .Right:
+                glass_local_x += .125
+            }
+            glass_x, glass_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                glass_local_x,
+                glass_local_z,
+                structure.rotation,
+            )
+            glass_tone := int((structure.seed + u32(opening.row * 11) + u32(opening.face) * 7) % 3)
+            glass := rl.Color{53, 77, 81, 255}
+            if glass_tone == 1 {
+                glass = {59, 84, 87, 255}
+            } else if glass_tone == 2 {
+                glass = {48, 73, 79, 255}
+            }
+            world_box_rotated(
+                {glass_x, structure.base_y + opening_y, glass_z},
+                {opening_width * .84, opening_height * .82, .035},
+                structure.rotation + yaw_offset,
+                glass,
+            )
+            world_box_rotated(
+                {glass_x, structure.base_y + opening_y, glass_z},
+                {.06, opening_height * .82, .05},
+                structure.rotation + yaw_offset,
+                trim,
+            )
+            world_box_rotated(
+                {glass_x, structure.base_y + opening_y + opening_height * .08, glass_z},
+                {opening_width * .84, .05, .05},
+                structure.rotation + yaw_offset,
+                trim,
+            )
+        }
         lintel_local_x, lintel_local_z := local_x, local_z
         switch opening.face {
         case .Front:
@@ -2801,9 +2930,11 @@ world_architecture_mass :: proc(
             structure.depth * .5 + .24,
             structure.rotation,
         )
+        // Carry the downspout all the way to the eave. Capping this detail at
+        // 10.4 m left it visibly stranded midway up taller façades.
         world_box_rotated(
-            {pipe_x, structure.base_y + min(structure.height * .32, f32(5.2)), pipe_z},
-            {.13, min(structure.height * .64, f32(10.4)), .13},
+            {pipe_x, structure.base_y + structure.height * .5, pipe_z},
+            {.13, structure.height, .13},
             structure.rotation,
             {82, 83, 76, 255},
         )
@@ -2923,6 +3054,35 @@ world_architecture_mass :: proc(
                     {window_width, window_height, .14},
                     structure.rotation,
                     window,
+                )
+                // Even at medium LOD, split the opening into glazed panes so
+                // it reads as a window rather than a black square.
+                glass := facade_style == 2 ? rl.Color{55, 94, 104, 255} : rl.Color{57, 80, 83, 255}
+                frame := facade_style == 2 ? rl.Color{170, 181, 166, 255} : rl.Color{174, 158, 134, 255}
+                glass_x, glass_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    local_x,
+                    structure.depth * .5 + .16,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {glass_x, window_y, glass_z},
+                    {window_width * .84, window_height * .82, .025},
+                    structure.rotation,
+                    glass,
+                )
+                world_box_rotated(
+                    {glass_x, window_y, glass_z},
+                    {.055, window_height * .82, .035},
+                    structure.rotation,
+                    frame,
+                )
+                world_box_rotated(
+                    {glass_x, window_y + window_height * .08, glass_z},
+                    {window_width * .84, .05, .035},
+                    structure.rotation,
+                    frame,
                 )
             }
         }
@@ -3628,7 +3788,7 @@ world_architecture_mass :: proc(
             local_z := structure.depth * .5 + .16
             wx, wz := world_rotate_xz(structure.center_x, structure.center_z, x, local_z, structure.rotation)
             world_box_rotated({wx, y, wz}, {window_width, window_height, .22}, structure.rotation, window)
-            if !landmark && row == 0 {
+            if !landmark {
                 glass_x, glass_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
@@ -3664,7 +3824,7 @@ world_architecture_mass :: proc(
                     structure.rotation,
                     glass,
                 )
-                if (structure.seed + u32(column)) % 4 == 0 {
+                if (structure.seed + u32(row * 11 + column)) % 4 == 0 {
                     curtain := facade_style == 2 ? rl.Color{205, 197, 170, 255} : rl.Color{190, 169, 145, 255}
                     for curtain_side in -1 ..= 1 {
                         if curtain_side == 0 do continue
@@ -3690,7 +3850,7 @@ world_architecture_mass :: proc(
                     structure.rotation,
                     mullion,
                 )
-                if structure.height < 15 && structure.seed % 3 == 1 {
+                if row == 0 && structure.height < 15 && structure.seed % 3 == 1 {
                     for shop_division in -1 ..= 1 {
                         if shop_division == 0 do continue
                         division_x, division_z := world_rotate_xz(
@@ -4834,13 +4994,13 @@ world_foliage_formation_cached :: proc(
        entry.lod == lod_result.tier &&
        entry.distance_bucket == distance_bucket &&
        entry.direction_bucket == direction_bucket {
-        world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices) - len(world_renderer.static_indices))
-        if world_count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:world_count])
-        foliage_count := min(
-            len(entry.foliage_vertices),
-            FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices),
-        )
-        if foliage_count > 0 do append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:foliage_count])
+        if len(entry.world_vertices) <=
+           WORLD_VERTEX_CAPACITY - len(world_renderer.vertices) - len(world_renderer.static_indices) {
+            append(&world_renderer.vertices, ..entry.world_vertices[:])
+        }
+        if len(entry.foliage_vertices) <= FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices) {
+            append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
+        }
         return
     }
 
@@ -4896,17 +5056,12 @@ world_static_formation_cached :: proc(
        entry.project_revision == project.revision &&
        entry.lod == lod_result.tier {
         world_static_mesh_append(entry)
-        foliage_count := min(
-            len(entry.foliage_vertices),
-            FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices),
-        )
-        if foliage_count > 0 do append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:foliage_count])
-        bougainvillea_count := min(
-            len(entry.bougainvillea_vertices),
-            BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices),
-        )
-        if bougainvillea_count > 0 {
-            append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:bougainvillea_count])
+        if len(entry.foliage_vertices) <= FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices) {
+            append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
+        }
+        if len(entry.bougainvillea_vertices) <=
+           BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices) {
+            append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
         }
         return
     }
@@ -7554,13 +7709,36 @@ world_structures :: proc(editor: ^Editor) {
     // contributes its mass and climbing growth together at its current LOD.
     ordered_indices: [terrain.STRUCTURE_CAPACITY]int
     ordered_distances: [terrain.STRUCTURE_CAPACITY]f32
-    camera := editor.camera_pose.position
+    ordered_count := 0
+    focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
+    view_camera := perspective_camera(editor.camera_pose, focal_length)
+    screen_width := max(rl.GetScreenWidth(), 1)
+    screen_height := max(rl.GetScreenHeight(), 1)
+    aspect := f32(screen_width) / f32(screen_height)
+    near_plane := world_camera_near_clip(editor)
+    stats := &world_renderer.static_visibility
+    stats^ = {}
     for index in 0 ..< editor.project.structure_count {
         structure := editor.project.structures[index]
-        dx, dz := structure.center_x - camera.x, structure.center_z - camera.z
+        stats.candidates += 1
+        force_visible := (index == editor.structure_selected && !editor.in_map) || index == hovered_index
+        center, radius := structure_visibility_sphere(structure)
+        if !force_visible &&
+           !static_sphere_in_frustum(view_camera, center, radius, aspect, near_plane, WORLD_FAR_CLIP) {
+            world_renderer.static_visibility_classification[index] = .Frustum_Culled
+            stats.frustum_culled += 1
+            continue
+        }
+        if force_visible {
+            world_renderer.static_visibility_classification[index] = .Force_Visible
+            stats.force_visible += 1
+        } else {
+            world_renderer.static_visibility_classification[index] = .Visible
+        }
+        dx, dz := structure.center_x - view_camera.position.x, structure.center_z - view_camera.position.z
         distance_squared := dx * dx + dz * dz
-        if index == editor.structure_selected && !editor.in_map do distance_squared = -1
-        insert_at := index
+        if force_visible do distance_squared = -1
+        insert_at := ordered_count
         for insert_at > 0 && ordered_distances[insert_at - 1] > distance_squared {
             ordered_indices[insert_at] = ordered_indices[insert_at - 1]
             ordered_distances[insert_at] = ordered_distances[insert_at - 1]
@@ -7568,8 +7746,9 @@ world_structures :: proc(editor: ^Editor) {
         }
         ordered_indices[insert_at] = index
         ordered_distances[insert_at] = distance_squared
+        ordered_count += 1
     }
-    for order_index in 0 ..< editor.project.structure_count {
+    for order_index in 0 ..< ordered_count {
         index := ordered_indices[order_index]
         structure := editor.project.structures[index]
         if editor.architecture_painting &&
@@ -7583,7 +7762,8 @@ world_structures :: proc(editor: ^Editor) {
         }
         force_near := index == editor.structure_selected && !editor.in_map
         world_before := len(world_renderer.vertices) + len(world_renderer.static_indices)
-        foliage_before := len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)
+        foliage_vertices_before := len(world_renderer.foliage_vertices)
+        bougainvillea_vertices_before := len(world_renderer.bougainvillea_vertices)
         if structure.kind == .Foliage {
             world_foliage_formation_cached(structure, index, force_near)
             world_renderer.structure_lod_counts[int(world_renderer.foliage_geometry_cache[index].lod)] += 1
@@ -7595,13 +7775,28 @@ world_structures :: proc(editor: ^Editor) {
         world_renderer.structure_lod_world_vertices +=
             len(world_renderer.vertices) + len(world_renderer.static_indices) - world_before
         world_renderer.structure_lod_foliage_vertices +=
-            len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices) - foliage_before
+            len(world_renderer.foliage_vertices) - foliage_vertices_before +
+            len(world_renderer.bougainvillea_vertices) - bougainvillea_vertices_before
+        world_added := len(world_renderer.vertices) + len(world_renderer.static_indices) - world_before
+        foliage_added := len(world_renderer.foliage_vertices) - foliage_vertices_before
+        bougainvillea_added := len(world_renderer.bougainvillea_vertices) - bougainvillea_vertices_before
+        if world_added > 0 || foliage_added > 0 || bougainvillea_added > 0 {
+            stats.opaque_cost += u32(max(world_added, 0))
+            stats.foliage_cost += u32(max(foliage_added, 0))
+            stats.bougainvillea_cost += u32(max(bougainvillea_added, 0))
+        } else {
+            world_renderer.static_visibility_classification[index] = .Budget_Rejected
+            stats.budget_rejected += 1
+        }
         if index == editor.structure_selected && !editor.in_map && !editor.road_mode {
             world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
         } else if index == hovered_index && !editor.in_map {
             world_structure_frame(structure, structure.base_y + structure.height + .02, {168, 239, 220, 255})
         }
     }
+    if stats.opaque_cost > 0 do stats.emitted_draws += 1
+    if stats.foliage_cost > 0 do stats.emitted_draws += 1
+    if stats.bougainvillea_cost > 0 do stats.emitted_draws += 1
     if editor.structure_placing {
         world_structure_preview_cluster(editor)
     }
@@ -9122,14 +9317,13 @@ world_climbing_leaves_for_structure :: proc(
            entry.detail_tier == detail_tier &&
            entry.capture_seed_enabled == capture_seed_enabled &&
            entry.capture_seed == capture_seed {
-            world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices) - len(world_renderer.static_indices))
-            if world_count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:world_count])
-            bougainvillea_count := min(
-                len(entry.bougainvillea_vertices),
-                BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices),
-            )
-            if bougainvillea_count > 0 {
-                append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:bougainvillea_count])
+            if len(entry.world_vertices) <=
+               WORLD_VERTEX_CAPACITY - len(world_renderer.vertices) - len(world_renderer.static_indices) {
+                append(&world_renderer.vertices, ..entry.world_vertices[:])
+            }
+            if len(entry.bougainvillea_vertices) <=
+               BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices) {
+                append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
             }
             return
         }
@@ -10106,35 +10300,6 @@ mouse_paw_cycle_blend :: proc(
         reach = walk.reach * walk_weight + trot.reach * trot_weight + bound.reach * bound_weight,
         lift = walk.lift * walk_weight * .72 + trot.lift * trot_weight * .88 + bound.lift * bound_weight,
     }
-}
-
-mouse_pin_player_paw :: proc(
-    editor: ^Editor,
-    paw_index: int,
-    socket: third_person.Vec3,
-    desired: third_person.Vec3,
-    planted: bool,
-    maximum_reach: f32,
-) -> third_person.Vec3 {
-    if editor == nil || paw_index < 0 || paw_index >= len(editor.player_paw_planted) do return desired
-    if !planted {
-        editor.player_paw_planted[paw_index] = false
-        return desired
-    }
-    cached := editor.player_paw_plant_positions[paw_index]
-    dx, dz := desired.x - cached.x, desired.z - cached.z
-    teleported := dx * dx + dz * dz > 4
-    reach_x, reach_y, reach_z := cached.x - socket.x, cached.y - socket.y, cached.z - socket.z
-    overextended := reach_x * reach_x + reach_y * reach_y + reach_z * reach_z > maximum_reach * maximum_reach * .9025
-    if !editor.player_paw_planted[paw_index] || teleported || overextended {
-        editor.player_paw_plant_positions[paw_index] = desired
-        editor.player_paw_planted[paw_index] = true
-        return desired
-    }
-    result := desired
-    result.x = cached.x
-    result.z = cached.z
-    return result
 }
 
 mouse_solve_two_bone_joint :: proc(
@@ -11533,23 +11698,22 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         paw_turn_reach := animation.turn_paw_offset * (outside_turn - inside_turn * .45)
         idle_fore_shoulder := third_person.Vec3{side_f * .12, .31, .04}
         run_fore_shoulder := third_person.Vec3{side_f * .13, .31, .075}
+        fore_socket_bind := third_person.Vec3 {
+            idle_fore_shoulder.x +
+                (run_fore_shoulder.x - idle_fore_shoulder.x) * run_weight +
+                side_f * paw_turn_reach * .35 -
+                side_f * posted_weight * .020,
+            idle_fore_shoulder.y - inside_turn * .025 + posted_weight * .065,
+            idle_fore_shoulder.z +
+                (run_fore_shoulder.z - idle_fore_shoulder.z) * run_weight +
+                scapula_slide +
+                posted_weight * .090,
+        }
         posed_fore_socket := mouse_skin_vertex(
-            {bind_position = idle_fore_shoulder, groups = {{.Chest, .68}, {.Spine, .32}}},
+            {bind_position = fore_socket_bind, groups = {{.Chest, .68}, {.Spine, .32}}},
             &skeleton,
         )
-        fore_shoulder := local_point(
-            p,
-            rotation,
-            posed_fore_socket.x +
-            (run_fore_shoulder.x - idle_fore_shoulder.x) * run_weight +
-            side_f * paw_turn_reach * .35 -
-            side_f * posted_weight * .020,
-            posed_fore_socket.y - inside_turn * .025 + posted_weight * .065,
-            posed_fore_socket.z +
-            (run_fore_shoulder.z - idle_fore_shoulder.z) * run_weight +
-            scapula_slide +
-            posted_weight * .090,
-        )
+        fore_shoulder := local_point(p, rotation, posed_fore_socket.x, posed_fore_socket.y, posed_fore_socket.z)
         fore_elbow := local_point(
             p,
             rotation,
@@ -11616,7 +11780,15 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // curve. During deceleration run_weight lowers the visible paw before
         // the source cycle reaches stance; using the source lift here made a
         // visibly grounded paw slide with the body.
-        fore_planted := model.grounded && front_lift < .003 && posted_weight < .5
+        // Contact phase comes from the unattenuated gait cycle, not the
+        // visibly blended lift. During acceleration run_weight starts near
+        // zero; using front_lift here incorrectly pins both forepaws even
+        // while one side's underlying gait is already in recovery.
+        fore_locomoting := horizontal_speed > .08
+        fore_planted :=
+            model.grounded &&
+            posted_weight < .5 &&
+            (!fore_locomoting || front_motion.lift < .025)
         FORE_UPPER_LENGTH :: f32(.255)
         FORE_LOWER_LENGTH :: f32(.245)
         fore_minimum_reach := math.abs(FORE_UPPER_LENGTH - FORE_LOWER_LENGTH) + .0001
@@ -11628,20 +11800,21 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             mouse_clamp_endpoint_reach(fore_shoulder, &fore_paw, fore_minimum_reach, fore_maximum_reach)
         }
         if model.track_paw_plants {
-            fore_paw = mouse_pin_player_paw(
-                editor,
-                side_index * 2,
+            fore_contact := mouse_paws.resolve(
+                &editor.player_paws.contacts[side_index * 2],
                 fore_shoulder,
                 fore_paw,
                 fore_planted,
                 fore_maximum_reach,
+                rotation,
             )
+            fore_paw = fore_contact.position
         }
         if model.grounded {
             fore_paw = mouse_ground_contact(editor, fore_paw, .024, fore_planted)
             mouse_clamp_ground_contact_reach(fore_shoulder, &fore_paw, fore_maximum_reach)
             if model.track_paw_plants && fore_planted {
-                editor.player_paw_plant_positions[side_index * 2] = fore_paw
+                editor.player_paws.contacts[side_index * 2].anchor = fore_paw
             }
         }
         fore_elbow = mouse_solve_two_bone_joint(
@@ -11660,7 +11833,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         fore_radii := [4]f32{.044, .035, .024, .017}
         fore_socket_color := mouse_limb_socket_color(model.pattern, fur, fur_dark, fur_light, side_f, false)
         fore_colors := [4]rl.Color{fore_socket_color, fur_dark, paw, paw}
-        world_mouse_limb_hull(fore_points[:], fore_radii[:], fore_colors[:], model_forward, false)
+        // Close the shoulder ring. The socket is slightly embedded in the
+        // skinned chest, so this inward-facing cap seals the limb/hull seam
+        // without presenting a separate disc on the body surface.
+        world_mouse_limb_hull(fore_points[:], fore_radii[:], fore_colors[:], model_forward)
         // Paws are low pads lying in the ground plane. The former vertical
         // discs presented their extrusion as a rectangular bar in profile.
         world_vertical_prism(fore_paw, .044, .041, .030, rotation, paw)
@@ -11682,17 +11858,16 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         hind_lift := rear_motion.lift * (.120 + scurry_weight * .045) * run_weight
         pelvic_drive := hind_cycle * .028
         idle_hind_socket := third_person.Vec3{side_f * .16, .30, -.47}
+        hind_socket_bind := third_person.Vec3 {
+            idle_hind_socket.x + side_f * (paw_turn_reach * .25 + posted_weight * .030),
+            idle_hind_socket.y - inside_turn * .025,
+            idle_hind_socket.z + pelvic_drive,
+        }
         posed_hind_socket := mouse_skin_vertex(
-            {bind_position = idle_hind_socket, groups = {{.Pelvis, .82}, {.Spine, .18}}},
+            {bind_position = hind_socket_bind, groups = {{.Pelvis, .82}, {.Spine, .18}}},
             &skeleton,
         )
-        hind_hip := local_point(
-            p,
-            rotation,
-            posed_hind_socket.x + side_f * (paw_turn_reach * .25 + posted_weight * .030),
-            posed_hind_socket.y - inside_turn * .025,
-            posed_hind_socket.z + pelvic_drive,
-        )
+        hind_hip := local_point(p, rotation, posed_hind_socket.x, posed_hind_socket.y, posed_hind_socket.z)
         // The hind leg needs both a forward knee and a rear hock. Collapsing
         // those joints into one segment hides the entire chain inside the
         // haunch in side views and makes the paw appear disconnected.
@@ -11737,17 +11912,21 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         hind_planted := model.grounded && hind_lift < .003 && posted_weight < .5
         HIND_LENGTHS :: [3]f32{.255, .210, .275}
         if model.track_paw_plants {
-            hind_paw = mouse_pin_player_paw(
-                editor,
-                side_index * 2 + 1,
+            hind_contact := mouse_paws.resolve(
+                &editor.player_paws.contacts[side_index * 2 + 1],
                 hind_hip,
                 hind_paw,
                 hind_planted,
                 HIND_LENGTHS[0] + HIND_LENGTHS[1] + HIND_LENGTHS[2],
+                rotation,
             )
+            hind_paw = hind_contact.position
         }
         if model.grounded {
             hind_paw = mouse_ground_contact(editor, hind_paw, .024, hind_planted)
+            if model.track_paw_plants && hind_planted {
+                editor.player_paws.contacts[side_index * 2 + 1].anchor = hind_paw
+            }
         }
         hind_chain := [4]third_person.Vec3{hind_hip, hind_knee, hind_hock, hind_paw}
         mouse_constrain_hind_chain(&hind_chain, HIND_LENGTHS)

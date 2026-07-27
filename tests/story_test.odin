@@ -18,6 +18,13 @@ complete_current_delivery :: proc(t: ^testing.T, state: ^story.State, recipient:
     testing.expect(t, story.complete_delivery(state, recipient))
 }
 
+expect_choice_texts :: proc(t: ^testing.T, actual: []dialogue.Choice, expected: []string) {
+    testing.expect(t, len(actual) == len(expected))
+    for choice, index in actual {
+        testing.expect(t, choice.text == expected[index])
+    }
+}
+
 @(test)
 two_island_story_advances_on_completion_and_becomes_repeatable :: proc(t: ^testing.T) {
     state: story.State
@@ -115,6 +122,63 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
     testing.expect(t, dialogue.validate(&catalog.iva))
     testing.expect(t, dialogue.validate(&catalog.bojan))
     testing.expect(t, dialogue.validate(&catalog.zora))
+    expect_choice_texts(
+        t,
+        catalog.niko_root_choices[:],
+        []string {
+            "Give Niko the sealed letter.",
+            "Yes. I'll carry it across the sea.",
+            "Stay under the awning.",
+            "I'll leave you to your work.",
+        },
+    )
+    expect_choice_texts(
+        t,
+        catalog.niko_reaction_choices[:],
+        []string{"You could try to look a little less pleased.", "The letter stayed sealed."},
+    )
+    expect_choice_texts(t, catalog.niko_warm_choices[:], []string{"Safe crossing, Niko."})
+    expect_choice_texts(t, catalog.niko_discreet_choices[:], []string{"Not a word from me."})
+    expect_choice_texts(
+        t,
+        catalog.meeting_choices[:],
+        []string{"The awning suits you both.", "I saw only an ordinary arrival."},
+    )
+    expect_choice_texts(t, catalog.meeting_finish_choices[:], []string{"Enjoy the regatta."})
+    expect_choice_texts(
+        t,
+        catalog.iva_root_choices[:],
+        []string{"Give Iva the sealed letter.", "I'll carry your reply.", "I'll leave you to tend the lamp."},
+    )
+    expect_choice_texts(
+        t,
+        catalog.iva_reaction_choices[:],
+        []string{"The lamp seems especially cheerful.", "The letter stayed sealed."},
+    )
+    expect_choice_texts(t, catalog.iva_warm_choices[:], []string{"Keep the light burning, Iva."})
+    expect_choice_texts(t, catalog.iva_discreet_choices[:], []string{"Not a word from me."})
+    expect_choice_texts(
+        t,
+        catalog.bojan_choices[:],
+        []string {
+            "I saw the whole thing.",
+            "Let's inspect the wing.",
+            "Apply the canvas patch.",
+            "Turn the propeller.",
+            "I'll leave you to it.",
+        },
+    )
+    expect_choice_texts(
+        t,
+        catalog.zora_choices[:],
+        []string {
+            "Just tell me which way the wind is blowing today.",
+            "Where I came from, where I am, and where I might go.",
+            "I have time. Lay out the full cross.",
+            "Another time, grazie.",
+        },
+    )
+    expect_choice_texts(t, catalog.zora_return_choices[:], []string{"Enough cards. I'll watch the real sky."})
 
     state := story.State {
         romance = .Meeting,
@@ -215,8 +279,8 @@ dialogue_text_and_choices_follow_story_and_repair_state :: proc(t: ^testing.T) {
     )
     testing.expect(t, opened)
     testing.expect(t, dialogue.available_count(&iva_conversation) == 2)
-    testing.expect(t, dialogue.available_at(&iva_conversation, 0).text == "I'll porter ta risposta.")
-    testing.expect(t, dialogue.available_at(&iva_conversation, 1).text == "Ti lascio tend the lampe.")
+    testing.expect(t, dialogue.available_at(&iva_conversation, 0).text == "I'll carry your reply.")
+    testing.expect(t, dialogue.available_at(&iva_conversation, 1).text == "I'll leave you to tend the lamp.")
 }
 
 @(test)

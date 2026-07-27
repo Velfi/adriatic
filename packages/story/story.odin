@@ -639,22 +639,26 @@ init_catalog :: proc(catalog: ^Catalog) {
     catalog^ = {}
 
     catalog.niko_root_choices = {
-        dialogue.choice("Dai a Niko la lettre sigillata.", 1, can_complete_niko_delivery, complete_niko_delivery),
-        dialogue.choice("Yes, porto-la preko il mare.", condition = can_begin_niko_delivery, effect = accept_delivery),
-        dialogue.choice("Restez sous la tenda.", 4, can_hold_meeting),
-        dialogue.choice("Ti lascio à your lavoro."),
+        dialogue.choice("Give Niko the sealed letter.", 1, can_complete_niko_delivery, complete_niko_delivery),
+        dialogue.choice(
+            "Yes. I'll carry it across the sea.",
+            condition = can_begin_niko_delivery,
+            effect = accept_delivery,
+        ),
+        dialogue.choice("Stay under the awning.", 4, can_hold_meeting),
+        dialogue.choice("I'll leave you to your work."),
     }
     catalog.niko_reaction_choices = {
-        dialogue.choice("Potresti essayer de sembler weniger content.", 2),
-        dialogue.choice("La lettre stayed sigillata.", 3),
+        dialogue.choice("You could try to look a little less pleased.", 2),
+        dialogue.choice("The letter stayed sealed.", 3),
     }
-    catalog.niko_warm_choices[0] = dialogue.choice("Buona traversée, Niko.")
-    catalog.niko_discreet_choices[0] = dialogue.choice("Pas una parola de moi.")
+    catalog.niko_warm_choices[0] = dialogue.choice("Safe crossing, Niko.")
+    catalog.niko_discreet_choices[0] = dialogue.choice("Not a word from me.")
     catalog.meeting_choices = {
-        dialogue.choice("La tenda vous va bene à tous deux.", 5),
-        dialogue.choice("Ho visto seulement un'arrivée routine.", 6),
+        dialogue.choice("The awning suits you both.", 5),
+        dialogue.choice("I saw only an ordinary arrival.", 6),
     }
-    catalog.meeting_finish_choices[0] = dialogue.choice("Genießt la regatta.", effect = finish_meeting)
+    catalog.meeting_finish_choices[0] = dialogue.choice("Enjoy the regatta.", effect = finish_meeting)
     catalog.niko_nodes = {
         dialogue.node("niko", niko_text, catalog.niko_root_choices[:], niko_speaker),
         dialogue.node("niko-reaction", niko_delivery_reaction, catalog.niko_reaction_choices[:], niko_speaker),
@@ -670,16 +674,16 @@ init_catalog :: proc(catalog: ^Catalog) {
     }
 
     catalog.iva_root_choices = {
-        dialogue.choice("Dai a Iva la lettre sigillata.", 1, can_complete_iva_delivery, complete_iva_delivery),
-        dialogue.choice("I'll porter ta risposta.", condition = can_begin_iva_delivery, effect = accept_delivery),
-        dialogue.choice("Ti lascio tend the lampe."),
+        dialogue.choice("Give Iva the sealed letter.", 1, can_complete_iva_delivery, complete_iva_delivery),
+        dialogue.choice("I'll carry your reply.", condition = can_begin_iva_delivery, effect = accept_delivery),
+        dialogue.choice("I'll leave you to tend the lamp."),
     }
     catalog.iva_reaction_choices = {
-        dialogue.choice("La lampe semble vraiment allegra.", 2),
-        dialogue.choice("La lettre stayed sigillata.", 3),
+        dialogue.choice("The lamp seems especially cheerful.", 2),
+        dialogue.choice("The letter stayed sealed.", 3),
     }
-    catalog.iva_warm_choices[0] = dialogue.choice("Buona lumière, Iva.")
-    catalog.iva_discreet_choices[0] = dialogue.choice("Pas una parola de moi.")
+    catalog.iva_warm_choices[0] = dialogue.choice("Keep the light burning, Iva.")
+    catalog.iva_discreet_choices[0] = dialogue.choice("Not a word from me.")
     catalog.iva_nodes = {
         dialogue.node("iva", iva_text, catalog.iva_root_choices[:], iva_speaker),
         dialogue.node("iva-reaction", iva_delivery_reaction, catalog.iva_reaction_choices[:], iva_speaker),
@@ -692,11 +696,11 @@ init_catalog :: proc(catalog: ^Catalog) {
     }
 
     catalog.bojan_choices = {
-        dialogue.choice("Ho visto toute la chose.", condition = can_report_crash, effect = note_crash),
-        dialogue.choice("Let's inspect die ala.", condition = can_inspect_crash, effect = inspect_crash),
-        dialogue.choice("Place le patch de tela.", condition = can_patch_wing, effect = patch_wing),
-        dialogue.choice("Turn die propeller.", condition = can_verify_repair, effect = confirm_repair),
-        dialogue.choice("Je te laisse continuar."),
+        dialogue.choice("I saw the whole thing.", condition = can_report_crash, effect = note_crash),
+        dialogue.choice("Let's inspect the wing.", condition = can_inspect_crash, effect = inspect_crash),
+        dialogue.choice("Apply the canvas patch.", condition = can_patch_wing, effect = patch_wing),
+        dialogue.choice("Turn the propeller.", condition = can_verify_repair, effect = confirm_repair),
+        dialogue.choice("I'll leave you to it."),
     }
     catalog.bojan_nodes[0] = dialogue.node("bojan", bojan_text, catalog.bojan_choices[:], bojan_speaker)
     catalog.bojan = {
@@ -705,12 +709,12 @@ init_catalog :: proc(catalog: ^Catalog) {
     }
 
     catalog.zora_choices = {
-        dialogue.choice("Dimmi soltanto che vento tira oggi.", 1, can_deal_tarot, deal_single),
-        dialogue.choice("Da dove vengo, dove sono, dove potrei andare.", 1, can_deal_tarot, deal_three),
-        dialogue.choice("Ho tempo. Stendi tutta la croce.", 1, can_deal_tarot, deal_cross),
-        dialogue.choice("Un'altra volta, grazie."),
+        dialogue.choice("Just tell me which way the wind is blowing today.", 1, can_deal_tarot, deal_single),
+        dialogue.choice("Where I came from, where I am, and where I might go.", 1, can_deal_tarot, deal_three),
+        dialogue.choice("I have time. Lay out the full cross.", 1, can_deal_tarot, deal_cross),
+        dialogue.choice("Another time, grazie."),
     }
-    catalog.zora_return_choices[0] = dialogue.choice("Basta carte. Guardo il cielo vero.")
+    catalog.zora_return_choices[0] = dialogue.choice("Enough cards. I'll watch the real sky.")
     catalog.zora_nodes = {
         dialogue.node("zora", zora_text, catalog.zora_choices[:], zora_speaker),
         dialogue.node("zora-reading", zora_reading_text, catalog.zora_return_choices[:], zora_speaker),

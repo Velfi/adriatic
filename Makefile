@@ -117,6 +117,11 @@ VALIDATION_APP := $(VALIDATION_DIR)/$(APP)
 INSTRUMENT_APP := $(INSTRUMENT_DIR)/$(APP)
 INSTRUMENT_RUNTIME_STAMP := $(INSTRUMENT_DIR)/runtime-assets.stamp
 INSTRUMENT_ASSET_SOURCES := $(shell find assets -type f 2>/dev/null)
+PHYSICS_STAMP := $(BUILD_DIR)/physics.stamp
+PHYSICS_SOURCES := \
+	$(ZELDA_ENGINE_ROOT)/Makefile \
+	$(ZELDA_ENGINE_ROOT)/third_party/jolt/CMakeLists.txt \
+	$(ZELDA_ENGINE_ROOT)/third_party/jolt/physics.cpp
 ifeq ($(shell uname -s),Darwin)
 SHARED_EXT := dylib
 else ifeq ($(shell uname -s),Linux)
@@ -128,7 +133,6 @@ HOT_DIR := $(BUILD_DIR)/hot
 HOT_APP := $(HOT_DIR)/$(APP).$(SHARED_EXT)
 HOT_HOST := $(HOT_DIR)/$(APP)-hot
 HOT_SHADER_DIR := $(HOT_DIR)/shaders
-HOT_PHYSICS_STAMP := $(HOT_DIR)/physics.stamp
 HOT_APP_STAMP := $(HOT_DIR)/app.stamp
 HOT_SHADER_STAMP := $(HOT_DIR)/shader.stamp
 LIVE_CAPTURE_PATH ?= $(abspath $(BUILD_DIR)/captures/$(APP)-live.png)
@@ -434,7 +438,7 @@ $(RELEASE_DIR)/shaders/foliage.frag.spv: build/generated/shaders/foliage.frag.sp
 
 release: doctor assets-release $(RELEASE_APP)
 
-$(HOT_PHYSICS_STAMP): Makefile
+$(PHYSICS_STAMP): $(PHYSICS_SOURCES)
 	@mkdir -p $(@D)
 	$(MAKE) -C "$(ZELDA_ENGINE_ROOT)" physics-build
 	touch $@
@@ -520,7 +524,7 @@ $(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
 	@mkdir -p $(@D)
 	touch $@
 
-$(HOT_APP): $(HOT_PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a
+$(HOT_APP): $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_hot) -build-mode:shared $(PROFILE_DEFINE_FLAGS_hot) -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
 
@@ -538,7 +542,7 @@ hot-host: $(HOT_HOST)
 
 hot-shaders: $(HOT_SHADER_STAMP)
 
-hot-build: doctor $(HOT_PHYSICS_STAMP) assets-hot hot-app hot-shaders hot-host
+hot-build: doctor $(PHYSICS_STAMP) assets-hot hot-app hot-shaders hot-host
 
 hot: hot-build
 	$(PROFILE_RUNTIME_ENV_hot) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" $(PYTHON) tools/hot_watch.py --root "$(CURDIR)" --engine-root "$(ZELDA_ENGINE_ROOT)" --host "$(abspath $(HOT_HOST))" --make "$(MAKE)"
@@ -602,8 +606,7 @@ debug: profile
 physics-deps: doctor
 	$(MAKE) -C "$(ZELDA_ENGINE_ROOT)" physics-deps
 
-physics-build: doctor
-	$(MAKE) -C "$(ZELDA_ENGINE_ROOT)" physics-build
+physics-build: doctor $(PHYSICS_STAMP)
 
 $(DEV_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c Makefile
 	@mkdir -p $(@D)
@@ -679,15 +682,15 @@ $(INSTRUMENT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_sign
 	$(CC) -O2 -c $< -o $(INSTRUMENT_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(INSTRUMENT_DIR)/gfx_signposts.o
 
-$(DEV_APP): physics-build $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
+$(DEV_APP): $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_debug) $(PROFILE_DEFINE_FLAGS_debug) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
-$(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
+$(RELEASE_APP): $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_release) $(PROFILE_DEFINE_FLAGS_release) -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 
-$(VALIDATION_APP): physics-build $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(VALIDATION_DIR)/libgfx_signposts.a $(VALIDATION_DIR)/libadriatic_mesh.a
+$(VALIDATION_APP): $(PHYSICS_STAMP) $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(VALIDATION_DIR)/libgfx_signposts.a $(VALIDATION_DIR)/libadriatic_mesh.a
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_validation) $(PROFILE_DEFINE_FLAGS_validation) -out:$@ -extra-linker-flags:"$(call link_flags,$(VALIDATION_DIR))"
 
@@ -701,7 +704,7 @@ lldb: validation-build assets-validation
 
 
 $(INSTRUMENT_APP): $(INSTRUMENT_DIR)/libadriatic_mesh.a
-$(INSTRUMENT_APP): physics-build $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(INSTRUMENT_DIR)/libgfx_signposts.a
+$(INSTRUMENT_APP): $(PHYSICS_STAMP) $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(INSTRUMENT_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_instrument) $(PROFILE_DEFINE_FLAGS_instrument) -out:$@ -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
 

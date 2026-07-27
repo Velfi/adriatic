@@ -315,22 +315,34 @@ architecture_has_chimney :: #force_inline proc(seed: u32) -> bool {
 
 @(no_instrumentation)
 facade_floor_count :: #force_inline proc(height: f32) -> int {
-    // Reserve a ground-floor band for entrances and a smaller cornice band,
-    // then fill the remaining façade at a human-scale floor pitch.
-    usable_height := max(height - 8, f32(0))
-    return clamp(int(math.floor(f64(usable_height / 4.8 + .0001))) + 1, 1, 16)
+    // Keep low workshops and halls deliberately single-storey. Above that
+    // range, derive rows from an actual 4.8 m storey module; the previous
+    // hidden 8 m reserve produced conspicuous blank bands between windows.
+    if height < 12.8 do return 1
+    return clamp(int(math.round(f64(height / 4.8))), 2, 16)
+}
+
+@(no_instrumentation)
+facade_fitted_height :: #force_inline proc(height: f32) -> f32 {
+    // Snap ordinary multi-storey façades to the exact 4.8 m module represented
+    // by their window rows. Low halls use the center of their intentional
+    // single-storey band. Very tall structures retain their authored height.
+    if height > 60 do return height
+    rows := facade_floor_count(height)
+    if rows == 1 do return 10.4
+    return f32(rows) * 4.8
 }
 
 @(no_instrumentation)
 facade_window_row_y :: #force_inline proc(height: f32, row: int) -> f32 {
     rows := facade_floor_count(height)
-    // Ground-floor openings use a stable human-scale sill instead of being
-    // centered in the full wall. This is especially important for broad
-    // single-floor buildings, whose only row otherwise floats far above the
-    // door.
-    first_y := facade_window_height(height) * .5 + 1.05
+    window_height := facade_window_height(height)
+    // Match the lower sill and upper head-room. The old 1.05 m sill combined
+    // with a fixed 3 m top offset, leaving the grid visibly bottom-heavy.
+    edge_clearance: f32 = 1.45
+    first_y := window_height * .5 + edge_clearance
     if rows <= 1 do return first_y
-    last_y := max(first_y, height - 3)
+    last_y := max(first_y, height - window_height * .5 - edge_clearance)
     clamped_row := clamp(row, 0, rows - 1)
     return first_y + (last_y - first_y) * f32(clamped_row) / f32(rows - 1)
 }
@@ -1553,7 +1565,7 @@ city_building_height :: proc(width, depth, density: f32, seed: u32) -> f32 {
     if broad_footprint && single_floor_variant {
         height = 9.5 + f32((seed >> 16) & 255) / 255 * 2.8
     }
-    return height
+    return facade_fitted_height(height)
 }
 
 city_plan_add_parcel_building :: proc(
