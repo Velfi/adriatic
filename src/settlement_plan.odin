@@ -323,7 +323,6 @@ Settlement_Plan :: struct {
     decorative_foliage_count: int,
     terrain_edits:            [SETTLEMENT_TERRAIN_EDIT_CAPACITY]Settlement_Terrain_Edit,
     terrain_edit_count:       int,
-    city_plan:                architecture.City_Plan,
     ordinary_purposes:        [SETTLEMENT_SITE_CAPACITY]Settlement_Building_Purpose,
     ordinary_purpose_count:   int,
     metrics:                  Settlement_Metrics,
@@ -627,8 +626,7 @@ settlement_plan_acceptance_failure :: proc(
     project: ^terrain.Project,
 ) -> Settlement_Acceptance_Failure {
     if plan == nil || project == nil do return .Capacity
-    if project.road_graph.node_count > roads.MAX_NODES ||
-       project.road_graph.edge_count > roads.MAX_EDGES {
+    if project.road_graph.node_count > roads.MAX_NODES || project.road_graph.edge_count > roads.MAX_EDGES {
         return .Capacity
     }
     if plan.metrics.wide_route_share > .1201 do return .Wide_Route_Share

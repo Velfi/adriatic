@@ -19,25 +19,19 @@ settlement_aegean_architecture_uses_flat_ordinary_roofs :: proc(t: ^testing.T) {
         aegean := terrain.structure_make(0, 0, 8, 10, 0, 6)
         aegean.kind = .Architecture
         aegean.seed = u32(seed)
-        aegean.building = architecture.architecture_identity(
-            {
+        aegean.building = architecture.architecture_identity({
                 region           = .Aegean,
                 purpose          = .Dwelling,
                 purpose_explicit = true,
-            },
-            aegean.seed,
-        )
+            }, aegean.seed)
         testing.expect_value(t, world_architecture_roof_style(aegean), architecture.Roof_Style.Parapet)
 
         adriatic := aegean
-        adriatic.building = architecture.architecture_identity(
-            {
+        adriatic.building = architecture.architecture_identity({
                 region           = .Adriatic,
                 purpose          = .Dwelling,
                 purpose_explicit = true,
-            },
-            adriatic.seed,
-        )
+            }, adriatic.seed)
         testing.expect_value(
             t,
             world_architecture_roof_style(adriatic),
@@ -267,18 +261,18 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
                            purpose == .Fishery {
                             continue
                         }
-                        _, route_tangent, _, _, _, route_distance, _, route_found :=
-                            settlement_nearest_route_frame(&plan, {structure.center_x, structure.center_z})
+                        _, route_tangent, _, _, _, route_distance, _, route_found := settlement_nearest_route_frame(
+                            &plan,
+                            {structure.center_x, structure.center_z},
+                        )
                         testing.expect(t, route_found)
                         structure_tangent := [2]f32 {
                             f32(math.cos(f64(structure.rotation))),
                             f32(math.sin(f64(structure.rotation))),
                         }
-                        alignment :=
-                            math.abs(
-                                structure_tangent[0] * route_tangent[0] +
-                                structure_tangent[1] * route_tangent[1],
-                            )
+                        alignment := math.abs(
+                            structure_tangent[0] * route_tangent[0] + structure_tangent[1] * route_tangent[1],
+                        )
                         testing.expect(t, alignment > .98)
                         frontage_distance_sum += route_distance
                         frontage_count += 1
@@ -289,8 +283,10 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
                         fmt.println("settlement village frontage mismatch", region, seed, average_frontage_distance)
                         for structure, structure_index in city.structures[:city.count] {
                             purpose := plan.ordinary_purposes[structure_index]
-                            _, _, _, _, _, route_distance, _, _ :=
-                                settlement_nearest_route_frame(&plan, {structure.center_x, structure.center_z})
+                            _, _, _, _, _, route_distance, _, _ := settlement_nearest_route_frame(
+                                &plan,
+                                {structure.center_x, structure.center_z},
+                            )
                             fmt.println("settlement village frontage site", purpose, route_distance)
                         }
                     }
@@ -361,6 +357,7 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
                     height_sum += structure.height
                     sample_count += 1
                 }
+                architecture.city_plan_destroy(&city)
             }
             testing.expect(t, sample_count > 512)
             frontage_target, depth_target := f32(8.5), f32(16)
@@ -442,14 +439,13 @@ settlement_village_occupies_multiple_route_arms :: proc(t: ^testing.T) {
             occupied: [3]bool
             for structure, structure_index in city.structures[:city.count] {
                 purpose := plan.ordinary_purposes[structure_index]
-                if purpose == .Barn_Granary ||
-                   purpose == .Storehouse ||
-                   purpose == .Mill ||
-                   purpose == .Fishery {
+                if purpose == .Barn_Granary || purpose == .Storehouse || purpose == .Mill || purpose == .Fishery {
                     continue
                 }
-                _, _, _, _, _, _, route_index, found :=
-                    settlement_nearest_route_frame(&plan, {structure.center_x, structure.center_z})
+                _, _, _, _, _, _, route_index, found := settlement_nearest_route_frame(
+                    &plan,
+                    {structure.center_x, structure.center_z},
+                )
                 if found && route_index >= 0 && route_index < len(occupied) {
                     occupied[route_index] = true
                 }
@@ -459,6 +455,7 @@ settlement_village_occupies_multiple_route_arms :: proc(t: ^testing.T) {
                 if present do occupied_count += 1
             }
             testing.expect(t, occupied_count >= 2)
+            architecture.city_plan_destroy(&city)
         }
     }
 }
@@ -493,8 +490,14 @@ settlement_landmark_sequences_are_region_specific :: proc(t: ^testing.T) {
 settlement_village_landmark_reinforces_composed_core :: proc(t: ^testing.T) {
     plan: Settlement_Plan
     plan.request.scale = .Village
-    plan.neighborhoods[0] = {center = {12, 8}, age = .8}
-    plan.neighborhoods[1] = {center = {90, 70}, age = .1}
+    plan.neighborhoods[0] = {
+        center = {12, 8},
+        age    = .8,
+    }
+    plan.neighborhoods[1] = {
+        center = {90, 70},
+        age    = .1,
+    }
     plan.neighborhood_count = 2
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -582,7 +585,8 @@ settlement_building_clearance_rejects_crowding :: proc(t: ^testing.T) {
     project := new(terrain.Project)
     defer terrain.free_project(project)
     city: architecture.City_Plan
-    city.structures[0] = terrain.structure_make(0, 0, 9, 16, 0, 8)
+    defer architecture.city_plan_destroy(&city)
+    append(&city.structures, terrain.structure_make(0, 0, 9, 16, 0, 8))
     city.count = 1
     testing.expect(t, !settlement_structure_clear(project, &city, 12, 0, 9, 16, 0, .8))
     testing.expect(t, settlement_structure_clear(project, &city, 28, 0, 9, 16, 0, .8))
@@ -616,13 +620,14 @@ settlement_import_classifies_wide_pedestrian_access_as_lane :: proc(t: ^testing.
     defer terrain.free_project(project)
     plan: Settlement_Plan
     city: architecture.City_Plan
-    city.alleys[0] = {
+    defer architecture.city_plan_destroy(&city)
+    append(&city.alleys, architecture.City_Alley {
         start_x    = 0,
         start_z    = 0,
         end_x      = 12,
         end_z      = 0,
         half_width = 1,
-    }
+    })
     city.alley_count = 1
     settlement_plan_import_city(&plan, &city, project)
     testing.expect_value(t, plan.route_count, 1)
@@ -646,8 +651,9 @@ settlement_attached_rows_use_footprints_not_bounding_circles :: proc(t: ^testing
 settlement_blocks_describe_built_groups :: proc(t: ^testing.T) {
     plan: Settlement_Plan
     city: architecture.City_Plan
-    city.parcels[0].corners = {{0, 0}, {8, 0}, {8, 18}, {0, 18}}
-    city.parcels[1].corners = {{9, 0}, {17, 0}, {17, 18}, {9, 18}}
+    defer architecture.city_plan_destroy(&city)
+    append(&city.parcels, architecture.City_Parcel{corners = {{0, 0}, {8, 0}, {8, 18}, {0, 18}}})
+    append(&city.parcels, architecture.City_Parcel{corners = {{9, 0}, {17, 0}, {17, 18}, {9, 18}}})
     city.parcel_count = 2
     settlement_plan_record_built_group(&plan, &city, 0, 2, .Dalmatian_Planned)
     testing.expect_value(t, plan.block_count, 1)
@@ -696,12 +702,13 @@ settlement_small_scale_fabric_remains_route_accessible :: proc(t: ^testing.T) {
 @(test)
 settlement_village_prunes_detached_building_islands :: proc(t: ^testing.T) {
     city: architecture.City_Plan
-    city.structures[0] = terrain.structure_make(0, 0, 8, 10, 0, 7)
-    city.structures[1] = terrain.structure_make(12, 0, 8, 10, 0, 7)
-    city.structures[2] = terrain.structure_make(80, 0, 8, 10, 0, 7)
-    city.parcels[0].seed = 1
-    city.parcels[1].seed = 2
-    city.parcels[2].seed = 3
+    defer architecture.city_plan_destroy(&city)
+    append(&city.structures, terrain.structure_make(0, 0, 8, 10, 0, 7))
+    append(&city.structures, terrain.structure_make(12, 0, 8, 10, 0, 7))
+    append(&city.structures, terrain.structure_make(80, 0, 8, 10, 0, 7))
+    append(&city.parcels, architecture.City_Parcel{seed = 1})
+    append(&city.parcels, architecture.City_Parcel{seed = 2})
+    append(&city.parcels, architecture.City_Parcel{seed = 3})
     city.count = 3
     city.parcel_count = 3
     settlement_city_prune_to_largest_component(&city, 28)
@@ -714,7 +721,8 @@ settlement_village_prunes_detached_building_islands :: proc(t: ^testing.T) {
 @(test)
 settlement_pedestrian_access_rejects_building_crossings :: proc(t: ^testing.T) {
     city: architecture.City_Plan
-    city.structures[0] = terrain.structure_make(10, 0, 8, 10, 0, 7)
+    defer architecture.city_plan_destroy(&city)
+    append(&city.structures, terrain.structure_make(10, 0, 8, 10, 0, 7))
     city.count = 1
     testing.expect(t, !settlement_pedestrian_segment_clear(&city, {0, 0}, {20, 0}))
     testing.expect(t, settlement_pedestrian_segment_clear(&city, {0, 10}, {20, 10}))
@@ -740,6 +748,7 @@ settlement_pedestrian_access_is_sparse_and_bounded :: proc(t: ^testing.T) {
     }
     plan.block_count = 8
     city: architecture.City_Plan
+    defer architecture.city_plan_destroy(&city)
     rng := settlement_rng_new(77)
     settlement_plan_generate_pedestrian_access(&plan, &city, &rng)
     testing.expect_value(t, city.alley_count, 1)

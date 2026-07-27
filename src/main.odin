@@ -441,8 +441,7 @@ editor_circulation_plan :: #force_inline proc(editor: ^Editor) -> ^circulation.P
         count := 0
         for structure in editor.project.structures[:editor.project.structure_count] {
             if structure.kind != .Architecture || structure.height > 60 do continue
-            if count >= editor.circulation_structure_count ||
-               editor.circulation_structures[count] != structure {
+            if count >= editor.circulation_structure_count || editor.circulation_structures[count] != structure {
                 changed = true
             }
             if count < len(editor.circulation_structures) {
@@ -512,7 +511,9 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.player_paws = {}
     editor.player_tail = {}
 
-    editor.pilot = {position = spawn}
+    editor.pilot = {
+        position = spawn,
+    }
     editor.camera = third_person.default_camera()
     editor.cameras = {}
     editor.flight_camera = {}
@@ -527,11 +528,7 @@ game_state_reset :: proc(editor: ^Editor) {
 
     editor.postale = postale_game.new_runtime(postale_spawn_position(editor))
     libellula_spawn := libellula_spawn_position(editor)
-    editor.libellula = libellula_game.new_runtime({
-        libellula_spawn.x,
-        libellula_spawn.y,
-        libellula_spawn.z,
-    })
+    editor.libellula = libellula_game.new_runtime({libellula_spawn.x, libellula_spawn.y, libellula_spawn.z})
     editor.aircraft = {}
     vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
@@ -666,6 +663,8 @@ structure_redo :: proc(editor: ^Editor) {
 structure_storage_destroy :: proc(editor: ^Editor) {
     if editor == nil do return
     terrain.destroy_project(&editor.project)
+    architecture.city_plan_destroy(&editor.architecture_preview_plan)
+    architecture.city_plan_destroy(&editor.architecture_city_plan)
     delete(editor.circulation_structures)
     editor.circulation_structures = nil
     for &state in editor.structure_undo do delete(state.structures)
@@ -761,12 +760,12 @@ architecture_regenerate_all :: proc(editor: ^Editor) {
     bounds := architecture.city_density_bounds(&editor.project.city_density)
     if !bounds.valid {
         architecture.clear_architecture(&editor.project)
-        editor.architecture_city_plan = {}
+        architecture.city_plan_destroy(&editor.architecture_city_plan)
         return
     }
     plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, bounds)
     _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
-    editor.architecture_city_plan = plan
+    architecture.city_plan_replace(&editor.architecture_city_plan, plan)
 }
 
 terrain_project_load :: proc(editor: ^Editor) {
@@ -782,7 +781,7 @@ terrain_project_load :: proc(editor: ^Editor) {
         editor.structure_placing = false
         editor.structure_moving = false
         editor.architecture_painting = false
-        editor.architecture_preview_plan = {}
+        architecture.city_plan_destroy(&editor.architecture_preview_plan)
         editor.architecture_dirty_bounds = {}
         curve_reset(editor)
         editor.structure_undo_count = 0
@@ -1255,7 +1254,7 @@ editor_cancel_interaction :: proc(editor: ^Editor) {
     editor.structure_placing = false
     editor.structure_moving = false
     editor.architecture_painting = false
-    editor.architecture_preview_plan = {}
+    architecture.city_plan_destroy(&editor.architecture_preview_plan)
     editor.architecture_dirty_bounds = {}
     editor.road_selected_node = -1
     editor.road_drag_edge = -1
@@ -2089,6 +2088,7 @@ seed_city_capture :: proc(editor: ^Editor) {
     _ = architecture.city_density_stamp(&editor.project.city_density, center + 92, center + 34, radius, 1, .72)
     bounds := architecture.City_Bounds{center - 190, center - 70, center + 190, center + 140, true}
     plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, bounds)
+    defer architecture.city_plan_destroy(&plan)
     _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
     // Give the architectural capture a restrained, deterministic vine pass so
     // surface attachment is visible without requiring interactive brush input.
@@ -2150,6 +2150,7 @@ seed_default_island_towns :: proc(editor: ^Editor) {
                 .68,
             )
         }
+        architecture.city_plan_destroy(&plan)
     }
     editor.architecture_node_mode = true
 }
@@ -2343,18 +2344,15 @@ architecture_paint_commit :: proc(editor: ^Editor) {
     // paint commit so previously generated districts remain visible.
     architecture_regenerate_all(editor)
     editor.architecture_painting = false
-    editor.architecture_preview_plan = {}
+    architecture.city_plan_destroy(&editor.architecture_preview_plan)
     editor.architecture_dirty_bounds = {}
 }
 
 architecture_paint_refresh_preview :: proc(editor: ^Editor) {
     if editor == nil do return
     rebuild_bounds := architecture.city_bounds_expand(editor.architecture_dirty_bounds, 48)
-    editor.architecture_preview_plan = architecture.city_plan_density(
-        &editor.project,
-        &editor.architecture_density_preview,
-        rebuild_bounds,
-    )
+    plan := architecture.city_plan_density(&editor.project, &editor.architecture_density_preview, rebuild_bounds)
+    architecture.city_plan_replace(&editor.architecture_preview_plan, plan)
 }
 
 architecture_paint_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: bool, refresh: bool = true) {
@@ -2383,7 +2381,7 @@ architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32,
     if pressed {
         editor.architecture_painting = true
         editor.architecture_density_preview = editor.project.city_density
-        editor.architecture_preview_plan = {}
+        architecture.city_plan_destroy(&editor.architecture_preview_plan)
         editor.architecture_dirty_bounds = {}
         editor.architecture_last_x, editor.architecture_last_z = world_x, world_z
         architecture_paint_stamp(editor, world_x, world_z, rl.IsMouseButtonDown(.RIGHT))
@@ -2773,8 +2771,10 @@ structure_adjust_with_wheel :: proc(editor: ^Editor, wheel: f32) {
             editor.structure_preview.depth = max(cell, editor.structure_preview.depth + wheel * cell * 2)
         } else {
             if editor.structure_preview.kind == .Architecture {
-                editor.structure_preview.height =
-                    architecture.facade_step_height(editor.structure_preview.height, wheel > 0 ? 1 : -1)
+                editor.structure_preview.height = architecture.facade_step_height(
+                    editor.structure_preview.height,
+                    wheel > 0 ? 1 : -1,
+                )
             } else {
                 editor.structure_preview.height = max(cell, editor.structure_preview.height + wheel * cell * 2)
             }
@@ -7089,9 +7089,9 @@ adriatic_run :: proc(
     if !capture_mode &&
        !interactive_lab_mode &&
        (!benchmark_mode ||
-        benchmark_scenario == "editor" ||
-        benchmark_scenario == "terrain_edit" ||
-        benchmark_scenario == "formation_edit") {
+               benchmark_scenario == "editor" ||
+               benchmark_scenario == "terrain_edit" ||
+               benchmark_scenario == "formation_edit") {
         seed_default_island_towns(editor)
         seed_default_island_marinas(editor)
     }
@@ -8343,8 +8343,7 @@ adriatic_run :: proc(
                         chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
                     }
                     if input_action_pressed(.Vehicle_Reset) {
-                        if lab_scene_is_active(editor, "markov-wreck") &&
-                           editor.aircraft.active == .Postale {
+                        if lab_scene_is_active(editor, "markov-wreck") && editor.aircraft.active == .Postale {
                             _ = markov_wreck_reset_postale(editor)
                         } else if editor.aircraft.active != .Postale {
                             ground := terrain.sample_height(
@@ -9071,12 +9070,7 @@ adriatic_run :: proc(
         // Player captures wait long enough for the Verlet tail and pose blends
         // to settle; frame two only showed the first few links as a short nub.
         capture_frame :=
-            capture_flight_mode ||
-            capture_player_mode ||
-            capture_kind == .Shadow_Lab ||
-            capture_kind == .Boat_Lab ||
-            capture_kind == .Mouse_Gait_Lab ||
-            capture_kind == .Markov_Marina ? 20 : 2
+            capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Markov_Marina ? 20 : 2
         if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.

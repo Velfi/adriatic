@@ -574,8 +574,10 @@ settlement_fabric_route_reachable :: proc(scale: Settlement_Scale, distance: f32
 
 settlement_city_prune_to_largest_component :: proc(city_plan: ^architecture.City_Plan, link_distance: f32) {
     if city_plan == nil || city_plan.count <= 1 do return
-    component: [architecture.CITY_PLAN_CAPACITY]int
-    queue: [architecture.CITY_PLAN_CAPACITY]int
+    component := make([]int, city_plan.count)
+    queue := make([]int, city_plan.count)
+    defer delete(component)
+    defer delete(queue)
     component_count, largest_component, largest_size := 0, -1, 0
     for index in 0 ..< city_plan.count do component[index] = -1
     for root in 0 ..< city_plan.count {
@@ -612,6 +614,8 @@ settlement_city_prune_to_largest_component :: proc(city_plan: ^architecture.City
     }
     city_plan.count = write
     city_plan.parcel_count = write
+    resize(&city_plan.structures, write)
+    resize(&city_plan.parcels, write)
 }
 
 settlement_pedestrian_segment_clear :: proc(city_plan: ^architecture.City_Plan, start, end: [2]f32) -> bool {
@@ -645,7 +649,7 @@ settlement_plan_generate_pedestrian_access :: proc(
         budget, maximum_length = 2, 32
     }
     for block in plan.blocks[:plan.block_count] {
-        if city_plan.alley_count >= min(budget, len(city_plan.alleys)) do break
+        if city_plan.alley_count >= budget do break
         origin, _, _, route_width, route_shoulder, route_distance, _, found := settlement_nearest_route_frame(
             plan,
             block.center,
@@ -671,13 +675,13 @@ settlement_plan_generate_pedestrian_access :: proc(
         }
         if duplicate || !settlement_pedestrian_segment_clear(city_plan, start, end) do continue
         width := settlement_route_width_sample(rng, .Alley)
-        city_plan.alleys[city_plan.alley_count] = {
+        append(&city_plan.alleys, architecture.City_Alley {
             start_x    = start[0],
             start_z    = start[1],
             end_x      = end[0],
             end_z      = end[1],
             half_width = width * .5,
-        }
+        })
         city_plan.alley_count += 1
     }
 }
@@ -719,17 +723,16 @@ settlement_plan_generate_lamps :: proc(plan: ^Settlement_Plan, city_plan: ^archi
             normal := [2]f32{-tangent.y, tangent.x}
             sample_count := int(length / spacing)
             for sample in 0 ..< sample_count {
-                if city_plan.lamp_count >= len(city_plan.lamps) do return
                 along := (f32(sample) + .5) / f32(sample_count)
                 side := ((sample + segment_index) & 1) == 0 ? f32(1) : f32(-1)
                 offset := route.width * .5 + route.shoulder + .65
                 point := a + delta * along + normal * (offset * side)
                 if !settlement_lamp_position_clear(city_plan, point.x, point.y) do continue
-                city_plan.lamps[city_plan.lamp_count] = {
+                append(&city_plan.lamps, architecture.City_Lamp {
                     x   = point.x,
                     z   = point.y,
                     yaw = math.atan2(tangent.x, tangent.y),
-                }
+                })
                 city_plan.lamp_count += 1
             }
         }
@@ -836,7 +839,7 @@ settlement_village_purpose_dimensions :: proc(
 }
 
 settlement_village_add_path :: proc(city_plan: ^architecture.City_Plan, start, end: [2]f32, width: f32) {
-    if city_plan == nil || city_plan.alley_count >= len(city_plan.alleys) do return
+    if city_plan == nil do return
     dx, dz := end[0] - start[0], end[1] - start[1]
     length_squared := dx * dx + dz * dz
     if length_squared < 5 * 5 ||
@@ -844,13 +847,13 @@ settlement_village_add_path :: proc(city_plan: ^architecture.City_Plan, start, e
        !settlement_pedestrian_segment_clear(city_plan, start, end) {
         return
     }
-    city_plan.alleys[city_plan.alley_count] = {
+    append(&city_plan.alleys, architecture.City_Alley {
         start_x    = start[0],
         start_z    = start[1],
         end_x      = end[0],
         end_z      = end[1],
         half_width = width * .5,
-    }
+    })
     city_plan.alley_count += 1
 }
 
@@ -946,20 +949,13 @@ settlement_plan_generate_village_buildings :: proc(
                 }
             }
             if plan.village_reason == .Harbor_Fishery && purpose == .Dwelling {
-                radius_low, radius_high =
-                    aegean_form ? f32(5) : f32(8),
-                    aegean_form ? f32(28) : f32(38)
+                radius_low, radius_high = aegean_form ? f32(5) : f32(8), aegean_form ? f32(28) : f32(38)
             }
-            if plan.village_reason == .Harbor_Fishery &&
-               (purpose == .Inn_Shop || purpose == .Workshop) {
-                radius_low, radius_high =
-                    aegean_form ? f32(7) : f32(9),
-                    aegean_form ? f32(24) : f32(27)
+            if plan.village_reason == .Harbor_Fishery && (purpose == .Inn_Shop || purpose == .Workshop) {
+                radius_low, radius_high = aegean_form ? f32(7) : f32(9), aegean_form ? f32(24) : f32(27)
             }
             if plan.village_reason == .Agricultural_Terrace && purpose == .Farmstead {
-                radius_low, radius_high =
-                    aegean_form ? f32(18) : f32(25),
-                    aegean_form ? f32(38) : f32(44)
+                radius_low, radius_high = aegean_form ? f32(18) : f32(25), aegean_form ? f32(38) : f32(44)
             }
             resource_purpose :=
                 purpose == .Barn_Granary || purpose == .Storehouse || purpose == .Mill || purpose == .Fishery
@@ -980,21 +976,16 @@ settlement_plan_generate_village_buildings :: proc(
             }
             x := placement_center[0] + f32(math.cos(f64(angle))) * radius
             z := placement_center[1] + f32(math.sin(f64(angle))) * radius
-            candidate_route_origin,
-            candidate_route_tangent,
-            candidate_route_normal,
-            candidate_route_width,
-            candidate_route_shoulder,
-            candidate_route_distance,
-            candidate_route_index,
-            candidate_route_found := settlement_nearest_route_frame(plan, {x, z})
+            candidate_route_origin, candidate_route_tangent, candidate_route_normal, candidate_route_width, candidate_route_shoulder, candidate_route_distance, candidate_route_index, candidate_route_found :=
+                settlement_nearest_route_frame(plan, {x, z})
             if candidate_route_found && !resource_purpose && purpose != .Farmstead {
                 desired_setback :=
-                    candidate_route_width * .5 + candidate_route_shoulder + depth * .5 +
+                    candidate_route_width * .5 +
+                    candidate_route_shoulder +
+                    depth * .5 +
                     (aegean_form ? f32(1.2) : f32(1.8))
                 side :=
-                    (x - candidate_route_origin[0]) * candidate_route_normal[0] +
-                    (z - candidate_route_origin[1]) * candidate_route_normal[1] >= 0 ? f32(1) : f32(-1)
+                    (x - candidate_route_origin[0]) * candidate_route_normal[0] + (z - candidate_route_origin[1]) * candidate_route_normal[1] >= 0 ? f32(1) : f32(-1)
                 frontage_x := candidate_route_origin[0] + candidate_route_normal[0] * desired_setback * side
                 frontage_z := candidate_route_origin[1] + candidate_route_normal[1] * desired_setback * side
                 frontage_pull := aegean_form ? f32(.30) : f32(.50)
@@ -1003,14 +994,8 @@ settlement_plan_generate_village_buildings :: proc(
                 }
                 x += (frontage_x - x) * frontage_pull
                 z += (frontage_z - z) * frontage_pull
-                candidate_route_origin,
-                candidate_route_tangent,
-                candidate_route_normal,
-                candidate_route_width,
-                candidate_route_shoulder,
-                candidate_route_distance,
-                candidate_route_index,
-                candidate_route_found = settlement_nearest_route_frame(plan, {x, z})
+                candidate_route_origin, candidate_route_tangent, candidate_route_normal, candidate_route_width, candidate_route_shoulder, candidate_route_distance, candidate_route_index, candidate_route_found =
+                    settlement_nearest_route_frame(plan, {x, z})
             }
             height_at_site := terrain.sample_height(project, 0, x, z)
             if height_at_site <= project.sea_level + .6 do continue
@@ -1037,7 +1022,9 @@ settlement_plan_generate_village_buildings :: proc(
                 // Frontage is measured from the building center, so include
                 // half its depth when choosing the desired setback.
                 desired_setback :=
-                    candidate_route_width * .5 + candidate_route_shoulder + depth * .5 +
+                    candidate_route_width * .5 +
+                    candidate_route_shoulder +
+                    depth * .5 +
                     (plan.request.region == .Aegean ? f32(1.2) : f32(1.8))
                 frontage_error := math.abs(candidate_route_distance - desired_setback)
                 switch purpose {
@@ -1055,9 +1042,7 @@ settlement_plan_generate_village_buildings :: proc(
                         radius * (aegean_form ? f32(.72) : f32(.52))
                 case .Barn_Granary, .Storehouse, .Mill, .Fishery:
                 }
-                if !resource_purpose &&
-                   candidate_route_index >= 0 &&
-                   candidate_route_index < plan.route_count {
+                if !resource_purpose && candidate_route_index >= 0 && candidate_route_index < plan.route_count {
                     candidate_route := plan.routes[candidate_route_index]
                     route_length := f32(0)
                     for segment_index in 0 ..< candidate_route.geometry.count - 1 {
@@ -1070,8 +1055,7 @@ settlement_plan_generate_village_buildings :: proc(
                         // Once one arm has a frontage, make an equally viable
                         // empty arm preferable. This distributes the civic and
                         // domestic cluster without imposing a rigid quota.
-                        score += f32(route_occupancy[candidate_route_index]) *
-                            (aegean_form ? f32(3.2) : f32(4.5))
+                        score += f32(route_occupancy[candidate_route_index]) * (aegean_form ? f32(3.2) : f32(4.5))
                     }
                 }
             }
@@ -1104,17 +1088,17 @@ settlement_plan_generate_village_buildings :: proc(
         structure.width, structure.depth, structure.height = frontage, depth, height
         structure.rotation = best_rotation
         structure.building = architecture.architecture_identity({
-                region           = settlement_building_region(plan.request.region),
-                purpose          = settlement_building_purpose(purpose),
-                tissue           = settlement_architecture_tissue(tissue),
-                density          = density,
-                attached         = false,
-                frontage         = frontage,
-                depth            = depth,
-                route            = purpose == .Inn_Shop ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
-                waterfront       = plan.village_reason == .Harbor_Fishery,
-                purpose_explicit = true,
-            }, seed)
+                    region           = settlement_building_region(plan.request.region),
+                    purpose          = settlement_building_purpose(purpose),
+                    tissue           = settlement_architecture_tissue(tissue),
+                    density          = density,
+                    attached         = false,
+                    frontage         = frontage,
+                    depth            = depth,
+                    route            = purpose == .Inn_Shop ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
+                    waterfront       = plan.village_reason == .Harbor_Fishery,
+                    purpose_explicit = true,
+                }, seed)
         structure.color = architecture.architecture_color(seed, false)
         if plan.request.region == .Aegean do structure.color = {236, 232, 216, 255}
         parcel := architecture.City_Parcel {
@@ -1145,18 +1129,15 @@ settlement_plan_generate_village_buildings :: proc(
                 best_z - tangent[1] * half_frontage + normal[1] * half_depth,
             },
         }
-        result.structures[result.count] = structure
-        result.parcels[result.parcel_count] = parcel
+        append(&result.structures, structure)
+        append(&result.parcels, parcel)
         if purpose == .Inn_Shop do inn_index = result.count
         if purpose == .Fishery || purpose == .Mill || purpose == .Storehouse do resource_index = result.count
         plan.ordinary_purposes[plan.ordinary_purpose_count] = purpose
         plan.ordinary_purpose_count += 1
-        if best_route_index >= 0 && best_route_index < plan.route_count && !(
-            purpose == .Barn_Granary ||
-            purpose == .Storehouse ||
-            purpose == .Mill ||
-            purpose == .Fishery
-        ) {
+        if best_route_index >= 0 &&
+           best_route_index < plan.route_count &&
+           !(purpose == .Barn_Granary || purpose == .Storehouse || purpose == .Mill || purpose == .Fishery) {
             route_occupancy[best_route_index] += 1
         }
         result.count += 1
@@ -1181,27 +1162,12 @@ settlement_plan_generate_village_buildings :: proc(
         settlement_village_add_path(&result, common, {resource.center_x, resource.center_z}, 1.25)
     }
     core_half_x, core_half_z := aegean_form ? f32(6) : f32(8), aegean_form ? f32(5) : f32(6)
-    settlement_plan_record_terrain_edit(
-        plan,
-        project,
-        .Plaza,
-        common[0],
-        common[1],
-        core_half_x,
-        core_half_z,
-        2.5,
-    )
+    settlement_plan_record_terrain_edit(plan, project, .Plaza, common[0], common[1], core_half_x, core_half_z, 2.5)
     if aegean_form && route_found {
         // A short, broad alley renders as the paved Cycladic court. Adriatic
         // villages retain the smoothed but grassy common as a village green.
-        court_start := [2]f32 {
-            common[0] - route_tangent[0] * core_half_x,
-            common[1] - route_tangent[1] * core_half_x,
-        }
-        court_end := [2]f32 {
-            common[0] + route_tangent[0] * core_half_x,
-            common[1] + route_tangent[1] * core_half_x,
-        }
+        court_start := [2]f32{common[0] - route_tangent[0] * core_half_x, common[1] - route_tangent[1] * core_half_x}
+        court_end := [2]f32{common[0] + route_tangent[0] * core_half_x, common[1] + route_tangent[1] * core_half_x}
         settlement_village_add_path(&result, court_start, court_end, core_half_z * 1.45)
     }
     return result
@@ -1250,7 +1216,7 @@ settlement_plan_generate_buildings :: proc(
             continue
         }
         for slot in 0 ..< target * 5 {
-            if result.count >= len(result.structures) || result.count - district_start >= target do break
+            if result.count - district_start >= target do break
             placement_index := result.count - district_start
             layout_index := slot
             if settlement.request.scale == .Village {
@@ -1480,7 +1446,7 @@ settlement_plan_generate_buildings :: proc(
                     z - tangent[1] * half_frontage + normal[1] * half_depth,
                 },
             }
-            result.structures[result.count] = structure
+            append(&result.structures, structure)
             if settlement.ordinary_purpose_count < len(settlement.ordinary_purposes) {
                 switch identity.purpose {
                 case .Dwelling:
@@ -1503,7 +1469,7 @@ settlement_plan_generate_buildings :: proc(
                 settlement.ordinary_purpose_count += 1
             }
             result.count += 1
-            result.parcels[result.parcel_count] = parcel
+            append(&result.parcels, parcel)
             result.parcel_count += 1
         }
         settlement_plan_record_built_group(
@@ -1584,7 +1550,6 @@ settlement_plan_import_city :: proc(
     project: ^terrain.Project,
 ) {
     if plan == nil || city_plan == nil || project == nil do return
-    plan.city_plan = city_plan^
     count := min(city_plan.count, city_plan.parcel_count)
     for index in 0 ..< count {
         if plan.site_count >= len(plan.sites) do break
@@ -1638,10 +1603,7 @@ settlement_plan_import_city :: proc(
     }
 }
 
-settlement_plan_seat_city :: proc(
-    city_plan: ^architecture.City_Plan,
-    project: ^terrain.Project,
-) {
+settlement_plan_seat_city :: proc(city_plan: ^architecture.City_Plan, project: ^terrain.Project) {
     if city_plan == nil || project == nil do return
     for &structure in city_plan.structures[:city_plan.count] {
         _, foundation_high := architecture.architecture_foundation_height_range(project, structure)

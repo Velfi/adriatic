@@ -1,5 +1,6 @@
 package main
 
+import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import farmland "../packages/farmland"
 import roads "../packages/roads"
@@ -119,7 +120,7 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     if editor == nil do return
     editor.authoring_tool = selected
     editor.architecture_painting = false
-    editor.architecture_preview_plan = {}
+    architecture.city_plan_destroy(&editor.architecture_preview_plan)
     editor.architecture_dirty_bounds = {}
     editor.architecture_node_mode = false
     editor.architecture_paint_mode = false
@@ -657,7 +658,13 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         width_m := int(editor.farm_brush_radius * 2 + .5)
         depth_m := int(editor.farm_brush_radius * 2 * f32(farmland.GRID_HEIGHT) / f32(farmland.GRID_WIDTH) + .5)
         ui_draw_text(.Label, "FOOTPRINT", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        ui_draw_text(.Data, fmt.ctprintf("%d x %d m", width_m, depth_m), {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
+        ui_draw_text(
+            .Data,
+            fmt.ctprintf("%d x %d m", width_m, depth_m),
+            {bounds.x + 104, bounds.y},
+            .5,
+            {134, 224, 216, 255},
+        )
         preview_label: cstring = editor.farm_preview_valid ? "CLICK TO PLACE BEST CANDIDATE" : "NO SUITABLE CANDIDATE"
         preview_color := editor.farm_preview_valid ? rl.Color{134, 224, 216, 255} : rl.Color{224, 126, 108, 255}
         ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)

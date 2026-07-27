@@ -1,5 +1,6 @@
 package main
 
+import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import third_person "../packages/third_person"
 
@@ -215,7 +216,7 @@ lab_scene_reset_content :: proc(editor: ^Editor) {
     editor.project.road_graph = {}
     editor.project.city_density = {}
     editor.project.climbing_leaf_density = {}
-    editor.architecture_city_plan = {}
+    architecture.city_plan_destroy(&editor.architecture_city_plan)
     editor.farm_count = 0
     editor.circulation_plan_valid = false
 }

@@ -172,11 +172,7 @@ architecture_resolve_legacy_identity :: #force_inline proc(structure: terrain.St
 // Adds one connected settlement to the shared circulation plan. Keeping this
 // local prevents distant towns from receiving kilometer-long streets and
 // doorway paths through the sea.
-circulation_plan_add_town :: proc(
-    plan: ^circulation.Plan,
-    project: ^terrain.Project,
-    structure_indices: []int,
-) {
+circulation_plan_add_town :: proc(plan: ^circulation.Plan, project: ^terrain.Project, structure_indices: []int) {
     if plan == nil || project == nil do return
     min_x, max_x := f32(1e9), f32(-1e9)
     min_z, max_z := f32(1e9), f32(-1e9)
@@ -954,17 +950,30 @@ City_Bounds :: struct {
     valid:                      bool,
 }
 
-CITY_PLAN_CAPACITY :: 256
-
 City_Plan :: struct {
-    structures:   [CITY_PLAN_CAPACITY]terrain.Structure,
+    structures:   [dynamic]terrain.Structure,
     count:        int,
-    parcels:      [CITY_PLAN_CAPACITY]City_Parcel,
+    parcels:      [dynamic]City_Parcel,
     parcel_count: int,
-    alleys:       [128]City_Alley,
+    alleys:       [dynamic]City_Alley,
     alley_count:  int,
-    lamps:        [256]City_Lamp,
+    lamps:        [dynamic]City_Lamp,
     lamp_count:   int,
+}
+
+city_plan_destroy :: proc(plan: ^City_Plan) {
+    if plan == nil do return
+    delete(plan.structures)
+    delete(plan.parcels)
+    delete(plan.alleys)
+    delete(plan.lamps)
+    plan^ = {}
+}
+
+city_plan_replace :: proc(target: ^City_Plan, source: City_Plan) {
+    if target == nil do return
+    city_plan_destroy(target)
+    target^ = source
 }
 
 city_plan_set_region :: proc(plan: ^City_Plan, region: buildings.Region) {
@@ -1511,7 +1520,7 @@ city_plan_density_grid :: proc(
     min_z := int(math.floor(f64(rebuild_bounds.min_z / cell))) - 1
     max_z := int(math.ceil(f64(rebuild_bounds.max_z / cell))) + 1
 
-    // Visit dense candidates first so a full structure budget preserves the
+    // Visit dense candidates first so contested footprints belong to the
     // strongest town centers rather than whichever grid coordinate came first.
     for band in 0 ..< 4 {
         band_low := f32(3 - band) * .25
@@ -1609,8 +1618,7 @@ city_plan_density_grid :: proc(
                     }
                 }
                 if overlaps do continue
-                if plan.count >= len(plan.structures) do return plan
-                plan.structures[plan.count] = structure
+                append(&plan.structures, structure)
                 plan.count += 1
             }
         }
@@ -1644,7 +1652,7 @@ city_plan_add_parcel_building :: proc(
     seed: u32,
     alley_frontage: bool,
 ) {
-    if plan == nil || project == nil || plan.count >= len(plan.structures) do return
+    if plan == nil || project == nil do return
     if density < .08 || !city_bounds_contains(bounds, center_x, center_z) do return
     tangent_length := f32(math.sqrt(f64(tangent_x * tangent_x + tangent_z * tangent_z)))
     if tangent_length <= .001 do return
@@ -1688,37 +1696,23 @@ city_plan_add_parcel_building :: proc(
         if city_structure_overlaps(structure, existing, separation) do return
     }
 
-    if plan.parcel_count < len(plan.parcels) {
-        half_frontage, half_depth := lot_frontage * .5, lot_depth * .5
-        parcel := City_Parcel {
-            frontage_width = lot_frontage,
-            depth          = lot_depth,
-            density        = density,
-            seed           = seed,
-            alley_frontage = alley_frontage,
-        }
-        parcel.corners = {
-            {
-                center_x - tx * half_frontage - normal_x * half_depth,
-                center_z - tz * half_frontage - normal_z * half_depth,
-            },
-            {
-                center_x + tx * half_frontage - normal_x * half_depth,
-                center_z + tz * half_frontage - normal_z * half_depth,
-            },
-            {
-                center_x + tx * half_frontage + normal_x * half_depth,
-                center_z + tz * half_frontage + normal_z * half_depth,
-            },
-            {
-                center_x - tx * half_frontage + normal_x * half_depth,
-                center_z - tz * half_frontage + normal_z * half_depth,
-            },
-        }
-        plan.parcels[plan.parcel_count] = parcel
-        plan.parcel_count += 1
+    half_frontage, half_depth := lot_frontage * .5, lot_depth * .5
+    parcel := City_Parcel {
+        frontage_width = lot_frontage,
+        depth          = lot_depth,
+        density        = density,
+        seed           = seed,
+        alley_frontage = alley_frontage,
     }
-    plan.structures[plan.count] = structure
+    parcel.corners = {
+        {center_x - tx * half_frontage - normal_x * half_depth, center_z - tz * half_frontage - normal_z * half_depth},
+        {center_x + tx * half_frontage - normal_x * half_depth, center_z + tz * half_frontage - normal_z * half_depth},
+        {center_x + tx * half_frontage + normal_x * half_depth, center_z + tz * half_frontage + normal_z * half_depth},
+        {center_x - tx * half_frontage + normal_x * half_depth, center_z - tz * half_frontage + normal_z * half_depth},
+    }
+    append(&plan.parcels, parcel)
+    plan.parcel_count += 1
+    append(&plan.structures, structure)
     plan.count += 1
 }
 
@@ -1782,7 +1776,7 @@ city_plan_density :: proc(
                             current.x + normal_x * side * (edge.half_width + edge.shoulder_width + 62),
                             current.z + normal_z * side * (edge.half_width + edge.shoulder_width + 62),
                         )
-                        if deep_density > .18 && (lot_seed & 7) == 0 && plan.alley_count < len(plan.alleys) {
+                        if deep_density > .18 && (lot_seed & 7) == 0 {
                             alley_start := edge.half_width + edge.shoulder_width + 3
                             alley_length := 62 + deep_density * 22
                             alley := City_Alley {
@@ -1792,7 +1786,7 @@ city_plan_density :: proc(
                                 end_z      = current.z + normal_z * side * (alley_start + alley_length),
                                 half_width = 2.2,
                             }
-                            plan.alleys[plan.alley_count] = alley
+                            append(&plan.alleys, alley)
                             plan.alley_count += 1
                             for alley_step in 0 ..< 3 {
                                 along := 22 + f32(alley_step) * 18

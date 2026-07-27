@@ -667,10 +667,8 @@ settlement_lab_configure :: proc(
             if suitability <= .12 do continue
             if cell_kind == .Foliage {
                 if foliage_index < park_target {
-                    grove_width :=
-                        (12 + f32((foliage_index * 7) % 7)) * (.7 + .3 * scale) * grove_footprint_scale
-                    grove_depth :=
-                        (11 + f32((foliage_index * 5) % 6)) * (.7 + .3 * scale) * grove_footprint_scale
+                    grove_width := (12 + f32((foliage_index * 7) % 7)) * (.7 + .3 * scale) * grove_footprint_scale
+                    grove_depth := (11 + f32((foliage_index * 5) % 6)) * (.7 + .3 * scale) * grove_footprint_scale
                     if !settlement_park_site_clear(&editor.project, x, z, grove_width, grove_depth) {
                         foliage_index += 1
                         continue
@@ -695,10 +693,8 @@ settlement_lab_configure :: proc(
                 } else if editor.settlement_plan.decorative_foliage_count <
                    len(editor.settlement_plan.decorative_foliage) {
                     decorative_index := editor.settlement_plan.decorative_foliage_count
-                    grove_width :=
-                        (8 + f32((decorative_index * 5) % 8)) * (.7 + .3 * scale) * grove_footprint_scale
-                    grove_depth :=
-                        (7 + f32((decorative_index * 3) % 7)) * (.7 + .3 * scale) * grove_footprint_scale
+                    grove_width := (8 + f32((decorative_index * 5) % 8)) * (.7 + .3 * scale) * grove_footprint_scale
+                    grove_depth := (7 + f32((decorative_index * 3) % 7)) * (.7 + .3 * scale) * grove_footprint_scale
                     grove := terrain.structure_make(x, z, grove_width, grove_depth, 0, grove_height)
                     grove.kind = .Foliage
                     grove.width = grove_width
@@ -766,8 +762,8 @@ settlement_lab_configure :: proc(
     for structure in editor.settlement_plan.decorative_foliage[:decorative_commit_count] {
         _ = terrain.add_structure(&editor.project, structure)
     }
-    editor.architecture_city_plan = plan
     settlement_plan_import_city(&editor.settlement_plan, &plan, &editor.project)
+    architecture.city_plan_replace(&editor.architecture_city_plan, plan)
     _ = settlement_village_attach_farmland(editor)
     settlement_plan_measure(&editor.settlement_plan)
     editor.settlement_plan.acceptance_failure = settlement_plan_acceptance_failure(
@@ -881,9 +877,7 @@ settlement_lab_configure :: proc(
                     (second[0] - core_x) * (second[0] - core_x) + (second[1] - core_z) * (second[1] - core_z)
                 outer := first_core_distance > second_core_distance ? first : second
                 inner := first_core_distance > second_core_distance ? second : first
-                inward_x, inward_z :=
-                    (inner[0] - outer[0]) / segment_length,
-                    (inner[1] - outer[1]) / segment_length
+                inward_x, inward_z := (inner[0] - outer[0]) / segment_length, (inner[1] - outer[1]) / segment_length
                 candidate_camera_x := look_x - inward_x * camera.distance
                 candidate_camera_z := look_z - inward_z * camera.distance
                 obstruction := f32(0)
@@ -900,8 +894,7 @@ settlement_lab_configure :: proc(
                     clearance := structure.kind == .Foliage ? f32(4) : f32(2)
                     if lateral_distance < crown_radius + clearance {
                         kind_weight := structure.kind == .Architecture ? f32(1.8) : f32(1)
-                        obstruction +=
-                            (crown_radius + clearance - lateral_distance) * (1.15 - along) * kind_weight
+                        obstruction += (crown_radius + clearance - lateral_distance) * (1.15 - along) * kind_weight
                     }
                 }
                 if obstruction > selected_obstruction + .01 ||

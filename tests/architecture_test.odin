@@ -224,8 +224,15 @@ architecture_facade_floor_count_tracks_height :: proc(t: ^testing.T) {
     testing.expect(t, architecture.facade_floor_count(14.4) == 3)
     testing.expect(t, architecture.facade_fitted_height(9) == 9.6)
     testing.expect(t, architecture.facade_fitted_height(18) == 19.2)
-    testing.expect(t, architecture.facade_floor_count(architecture.facade_fitted_height(33)) == architecture.facade_floor_count(33))
-    testing.expect(t, architecture.facade_fitted_height(architecture.facade_fitted_height(33)) == architecture.facade_fitted_height(33))
+    testing.expect(
+        t,
+        architecture.facade_floor_count(architecture.facade_fitted_height(33)) == architecture.facade_floor_count(33),
+    )
+    testing.expect(
+        t,
+        architecture.facade_fitted_height(architecture.facade_fitted_height(33)) ==
+        architecture.facade_fitted_height(33),
+    )
     testing.expect(t, architecture.facade_fitted_height(64) == 64)
     testing.expect(t, architecture.facade_fitted_height_in_range(5, 4, 11) == 4.8)
     testing.expect(t, architecture.facade_fitted_height_in_range(10, 4, 11) == 9.6)
@@ -562,8 +569,11 @@ city_plan_is_deterministic_and_density_controls_massing :: proc(t: ^testing.T) {
     _ = architecture.city_density_stamp(&low, 1300, 1300, 175, .34, .8)
     _ = architecture.city_density_stamp(&high, 1300, 1300, 175, 1, .8)
     low_plan := architecture.city_plan_density(project, &low, bounds)
+    defer architecture.city_plan_destroy(&low_plan)
     high_plan := architecture.city_plan_density(project, &high, bounds)
+    defer architecture.city_plan_destroy(&high_plan)
     repeat := architecture.city_plan_density(project, &high, bounds)
+    defer architecture.city_plan_destroy(&repeat)
     testing.expect(t, low_plan.count > 0)
     testing.expect(t, high_plan.count >= low_plan.count)
     testing.expect(t, repeat.count == high_plan.count)
@@ -665,6 +675,7 @@ city_preview_plan_matches_committed_structures :: proc(t: ^testing.T) {
     bounds := architecture.City_Bounds{1160, 1160, 1440, 1440, true}
     _ = architecture.city_density_stamp(&field, 1300, 1300, 130, .8, .7)
     plan := architecture.city_plan_density(project, &field, bounds)
+    defer architecture.city_plan_destroy(&plan)
     created := architecture.city_commit_plan(project, &field, bounds, &plan)
     testing.expect(t, created == plan.count)
     testing.expect(t, project.structure_count == plan.count)
@@ -681,12 +692,38 @@ city_plan_region_can_distinguish_default_island_architecture :: proc(t: ^testing
     plan: architecture.City_Plan
     west := terrain.structure_make(-1300, -1418, 20, 20, 4.5, 20)
     west.kind = .Architecture
-    plan.structures[0] = west
+    append(&plan.structures, west)
     plan.count = 1
+    defer architecture.city_plan_destroy(&plan)
 
     architecture.city_plan_set_region(&plan, .Aegean)
 
     testing.expect(t, plan.structures[0].building.region == buildings.Region.Aegean)
+}
+
+@(test)
+city_plan_storage_grows_past_legacy_limit :: proc(t: ^testing.T) {
+    plan: architecture.City_Plan
+    defer architecture.city_plan_destroy(&plan)
+    for index in 0 ..< 400 {
+        append(&plan.structures, terrain.structure_make(f32(index), 0, 8, 10, 0, 7))
+        append(&plan.parcels, architecture.City_Parcel{seed = u32(index)})
+        append(&plan.alleys, architecture.City_Alley{start_x = f32(index)})
+        append(&plan.lamps, architecture.City_Lamp{x = f32(index)})
+        plan.count += 1
+        plan.parcel_count += 1
+        plan.alley_count += 1
+        plan.lamp_count += 1
+    }
+    testing.expect_value(t, plan.count, 400)
+    testing.expect_value(t, len(plan.structures), 400)
+    testing.expect_value(t, plan.parcel_count, 400)
+    testing.expect_value(t, len(plan.parcels), 400)
+    testing.expect_value(t, plan.alley_count, 400)
+    testing.expect_value(t, len(plan.alleys), 400)
+    testing.expect_value(t, plan.lamp_count, 400)
+    testing.expect_value(t, len(plan.lamps), 400)
+    testing.expect_value(t, plan.parcels[399].seed, u32(399))
 }
 
 @(test)
@@ -697,6 +734,7 @@ city_planner_builds_accessible_frontage_parcels_and_deep_alleys :: proc(t: ^test
     bounds := architecture.City_Bounds{1120, 1120, 1480, 1480, true}
     _ = architecture.city_density_stamp(&field, 1300, 1300, 185, 1, 1)
     plan := architecture.city_plan_density(project, &field, bounds)
+    defer architecture.city_plan_destroy(&plan)
     testing.expect(t, plan.count > 0)
     testing.expect(t, plan.parcel_count == plan.count)
     testing.expect(t, plan.alley_count > 0)
