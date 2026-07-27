@@ -673,7 +673,8 @@ world_box :: proc(center, size: third_person.Vec3, color: rl.Color) {
     world_quad(p[0], p[1], p[5], p[4], color)
 }
 
-clipmap_vertex_color :: proc(editor: ^Editor, level: int, x, z, height: f32) -> rl.Color {
+@(no_instrumentation)
+clipmap_vertex_color :: #force_inline proc(editor: ^Editor, level: int, x, z, height: f32) -> rl.Color {
     cell := editor.project.levels[level].cell_size
     left := terrain.sample_height(&editor.project, level, x - cell, z)
     right := terrain.sample_height(&editor.project, level, x + cell, z)
@@ -743,7 +744,8 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int) {
     world_renderer.clipmap_revision[frame_index] = editor.project.revision
 }
 
-clipmap_append_cell :: proc(indices: ^[dynamic]u32, x, z: int) {
+@(no_instrumentation)
+clipmap_append_cell :: #force_inline proc(indices: ^[dynamic]u32, x, z: int) {
     row := CLIPMAP_GRID_RESOLUTION
     a := u32(z * row + x)
     b := u32(z * row + x + 1)

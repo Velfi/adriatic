@@ -422,7 +422,8 @@ sample_level_height :: #force_inline proc(data: ^Clipmap_Level, x, z: f32) -> f3
     return a * (1 - tz) + b * tz
 }
 
-sample_level_material :: proc(data: ^Clipmap_Level, x, z: f32) -> f32 {
+@(no_instrumentation)
+sample_level_material :: #force_inline proc(data: ^Clipmap_Level, x, z: f32) -> f32 {
     if data == nil || !level_contains(data, x, z) do return 0
     grid_x := clamp(int(math.round(f64((x - data.origin_x) / data.cell_size))), 0, RING_RESOLUTION - 1)
     grid_z := clamp(int(math.round(f64((z - data.origin_z) / data.cell_size))), 0, RING_RESOLUTION - 1)
@@ -442,7 +443,8 @@ sample_height :: #force_inline proc(project: ^Project, level: int, x, z: f32) ->
     return 0
 }
 
-sample_material :: proc(project: ^Project, level: int, x, z: f32) -> f32 {
+@(no_instrumentation)
+sample_material :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> f32 {
     if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return 0
     for candidate in level ..< CLIPMAP_LEVELS {
         data := &project.levels[candidate]

@@ -4,9 +4,8 @@
 
 Current phase: **Phase 3 — Verify**
 
-Plan state: draft approved for checkpoint creation. Milestone 1 is ready for
-execution. Later milestones must not begin until Milestone 1 evidence is
-recorded and accepted.
+Plan state: Milestones 1 and 2 are accepted. Milestone 3 is ready but has not
+started.
 
 ## Feature
 
@@ -453,4 +452,165 @@ Do not create a code commit when M1 only records evidence in this plan.
   confirmed from the performance handoff and repository contract.
 - Phase 2 milestone ordering confirmed.
 - Checkpoint draft created.
-- Milestone 1 awaiting execution.
+- Milestone 1 executed with three timed editor captures on clean jj child
+  `xmnzlnnk` (parent `wvpnnkqr`). Evidence is recorded in current jj change
+  `xoxkmwsq` after concurrent repository operations moved the workspace base.
+
+### Milestone 1 evidence — 2026-07-27
+
+All runs used the same staged instrument binary and assets, with 10 warmup
+frames and 30 measured frames at 1280×720 and an 854×480 world render. Each
+run emitted one `BENCHMARK_RESULT`, exited with status 0, and completed the
+flame export normally. Raw sidecar analysis used only frame IDs 10 through 39.
+
+| Field | Run 1 | Run 2 | Run 3 |
+|---|---:|---:|---:|
+| jj parent change ID | `wvpnnkqr` | `wvpnnkqr` | `wvpnnkqr` |
+| wall median ms | 40.8560 | 40.5773 | 41.2105 |
+| wall p95 ms | 45.6898 | 49.4268 | 47.6035 |
+| wall p99 ms | 47.4700 | 83.7277 | 49.9908 |
+| wall max ms | 47.4700 | 83.7277 | 49.9908 |
+| raw median ms | 21.9572 | 21.9651 | 21.9391 |
+| raw p95 ms | 22.2209 | 22.4953 | 22.6712 |
+| raw max ms | 22.3404 | 22.6137 | 22.9792 |
+| GPU average ms | 0.9556 | 0.9340 | 1.1881 |
+| GPU p95 ms | 2.5856 | 2.1759 | 2.3919 |
+| slots/frame average | 5959.00 | 5959.00 | 5959.00 |
+| slots/frame maximum | 5959 | 5959 | 5959 |
+| `world_aircraft` average ms | 18.0094 | 18.0575 | 18.1090 |
+| export duration seconds | 5.385204 | 5.394681 | 5.609026 |
+| frames sidecar size | 168008125 | 168008125 | 168008123 |
+| folded sidecar size | 79027713 | 79029930 | 79027911 |
+
+Accepted baseline:
+
+```text
+Milestone 1: PASS
+Verified change ID: xmnzlnnk
+Accepted wall median/p95: 40.8560 ms / 49.4268 ms
+Accepted raw median/p95: 21.9572 ms / 22.6712 ms
+Accepted GPU p95: 2.5856 ms
+Accepted slot average/max: 5959.00 / 5959
+Top three product scopes: world_aircraft 18.0575 ms; world_car 1.3642 ms; animate_libellula_mesh_pose 1.3118 ms
+Export duration: 5.394681 s median, 5.609026 s maximum
+Measurement caveats: wall medians span 1.56%; run 2 has an 83.7277 ms wall spike while raw measured max is 22.6137 ms; raw wall overhead is approximately 18.9 ms at the accepted medians; macOS reports duplicate MoltenVK class names.
+Next milestone: Milestone 2 — Batch profiler session writes
+```
+
+M1 checks passed: all three runs used identical arguments and current staged
+assets; measured frames contain no `world_renderer_create` or
+`vehicle_paint_atlas_create`; no frame reached the 262,144 automatic-slot cap;
+all three required sidecars were fresh and non-empty. Fresh data confirms
+`world_aircraft` as the main product scope and shows profiler/session overhead
+as the large wall-versus-raw gap. The 60 FPS budget is not yet met; that is
+work for later milestones.
+
+### Milestone 2 evidence — 2026-07-27
+
+Implementation is in jj change `mnzqlqtm` (`profiling: batch session frame
+writes`), with `xoxkmwsq` sealed as its parent. `Flame_Graph` owns one reusable
+`[dynamic]byte` buffer. Session recording validates all string lengths before
+opening/writing, clears the buffer without releasing capacity, appends the
+record/slot/name/path bytes in the existing order, performs one payload write,
+and increments `session_frame_count` only after that write succeeds. The buffer
+is deleted only during graph destruction.
+
+Three exact editor captures used the M1 protocol after the implementation.
+Each emitted one result, exited normally, produced fresh non-empty sidecars,
+and was read successfully by `tools/flame_dump.py`:
+
+| Field | Run 1 | Run 2 | Run 3 |
+|---|---:|---:|---:|
+| wall median ms | 22.5525 | 22.6057 | 22.5211 |
+| raw median ms | 21.8690 | 21.9407 | 21.8921 |
+| wall minus raw ms | 0.6835 | 0.6650 | 0.6290 |
+| raw p95 ms | 22.3461 | 23.9808 | 22.4657 |
+| GPU p95 ms | 2.0608 | 1.9550 | 0.5441 |
+| slots/frame | 5959 | 5959 | 5959 |
+| export duration seconds | 5.467021 | 6.629994 | 5.390063 |
+
+Independent final-dump checks found 30 measured frames (`10..39`), 178,770
+non-empty paths, 178,770 positive source lines, and 30 GPU-valid frames.
+Frame IDs, nesting depth, names, paths, lines, timings, and GPU fields survived
+the unchanged reader/export path. Static diff inspection finds exactly one
+`flame_graph_session_write_bytes` call in `flame_graph_session_record`, outside
+the slot loop. `make check` and all 319 `make test` tests pass.
+
+M2 status: NOT ACCEPTED — implementation and wall/raw gate pass, but all three
+export-to-exit measurements exceed the `5 s` acceptance limit (median
+`5.467021 s`, maximum `6.629994 s`). The exporter/reader path was intentionally
+left unchanged by scope, so no M3 work starts until this gate is resolved.
+
+### Milestone 2 arena correction — 2026-07-27
+
+The exporter now owns a local growing `virtual.Arena` initialized with a 1 MiB
+first block. Session strings are read directly into the arena and returned as
+strings without cloning. The arena resets only after frame, scopes, and folded
+writers finish; slot names and paths are no longer individually deleted. The
+dynamic slot buffer is deleted once at function exit, and the arena is destroyed
+by defer on every export-thread exit path.
+
+Corrected captures repeated the exact M1 protocol:
+
+| Field | Run 1 | Run 2 | Run 3 |
+|---|---:|---:|---:|
+| wall median ms | 22.8800 | 22.4395 | 22.4688 |
+| raw median ms | 22.2176 | 21.8025 | 21.8057 |
+| wall minus raw ms | 0.6624 | 0.6370 | 0.6631 |
+| raw p95 ms | 29.7108 | 22.4639 | 22.0560 |
+| GPU p95 ms | 2.0482 | 4.6273 | 1.7303 |
+| slots/frame | 5959 | 5959 | 5959 |
+| export duration seconds | 6.543771 | 5.265456 | 5.231588 |
+
+All corrected sidecars passed analyzer and independent checks: 30 measured
+frames (`10..39`), max nesting depth 9, 178,770 non-empty paths, 178,770
+positive source lines, and 5,959 slots per frame. `make check` and all 319
+tests pass. M2 remains NOT ACCEPTED solely because corrected export-to-exit
+measurements still exceed 5 seconds; median is `5.265456 s`, maximum is
+`6.543771 s`. No M3 work starts.
+
+### Milestone 2 leaf-scope correction — 2026-07-27
+
+Fresh full-session analysis showed the remaining export load came from
+automatic instrumentation of seven tiny terrain-clipmap leaves during startup.
+Frames 1 and 2 each reached the 262,144-slot cap even though those warmup
+frames were not part of the benchmark sample window. The functions now use
+both `@(no_instrumentation)` and `#force_inline`:
+
+- `clipmap_append_cell`;
+- `clipmap_vertex_color`;
+- `sample_material`;
+- `sample_level_material`;
+- `terrain_color`;
+- `terrain_color_variation`;
+- `color_lerp`.
+
+Useful parent scopes remain visible: `world_renderer_create`,
+`clipmap_create_indices`, `clipmap_update`, and `clipmap_update_level`.
+A 3-warmup/7-measured diagnostic capture reduced frame 1 from 262,144 to
+15,605 slots and frame 2 from 262,144 to 5,958 slots. Its export-to-exit time
+was 0.555034 seconds.
+
+Three exact M1 captures then passed every M2 gate:
+
+| Field | Run 1 | Run 2 | Run 3 |
+|---|---:|---:|---:|
+| wall median ms | 22.4939 | 22.8741 | 22.5744 |
+| wall p95 ms | 23.5613 | 29.0705 | 27.1890 |
+| raw median ms | 21.851480 | 22.117438 | 21.951064 |
+| raw p95 ms | 22.180980 | 24.380828 | 22.095337 |
+| wall minus raw ms | 0.642420 | 0.756662 | 0.623337 |
+| GPU p95 ms | 3.180706 | 2.801121 | 4.302167 |
+| measured slots/frame | 5,956 | 5,956 | 5,956 |
+| maximum slots, all frames | 15,605 | 15,605 | 15,605 |
+| export duration seconds | 1.812440 | 1.787006 | 1.777243 |
+| total sidecar bytes | 82,089,319 | 82,084,029 | 82,085,008 |
+
+All captures exited normally, produced analyzer-readable sidecars, retained
+frames 10 through 39 as the 30-frame measured range, and contained no measured
+renderer initialization. `make check` passes, and all 319 tests pass.
+
+M2 status: PASS — one session payload write is performed per frame, the
+wall/raw gap remains below 3 ms, no frame reaches the automatic-slot cap, and
+all three 30-frame exports finish below 5 seconds. Next milestone is
+Milestone 3 — Hoist invariant vehicle math; it has not started.

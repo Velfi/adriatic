@@ -6,6 +6,8 @@ import im "../imgui"
 import "base:runtime"
 import "core:fmt"
 import "core:hash"
+import "core:mem"
+import virtual "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -136,30 +138,31 @@ Flame_Export_Job :: struct {
 Flame_Slot_Handle :: distinct int
 
 Flame_Graph :: struct {
-    slots:               [dynamic]Flame_Slot,
-    curr_depth:          int,
-    current_frame:       Flame_Slot_Handle,
-    history:             [FLAME_GRAPH_HISTORY_SAMPLES]Flame_Frame_History,
-    history_head:        int,
-    history_count:       int,
-    next_frame_id:       u64,
-    selected_frame_id:   u64,
-    selected_range_a:    u64,
-    selected_range_b:    u64,
-    drag_anchor_id:      u64,
-    dragging_timeline:   bool,
-    paused:              bool,
-    next_wait_ms:        f32,
-    next_cpu_ms:         f32,
-    next_gpu_ms:         f32,
-    next_gpu_valid:      bool,
-    session_file:        ^os.File,
-    session_path:        string,
-    session_frame_count: int,
-    export_thread:       ^thread.Thread,
-    export_job:          ^Flame_Export_Job,
-    export_ok:           bool,
-    export_message:      string,
+    slots:                [dynamic]Flame_Slot,
+    curr_depth:           int,
+    current_frame:        Flame_Slot_Handle,
+    history:              [FLAME_GRAPH_HISTORY_SAMPLES]Flame_Frame_History,
+    history_head:         int,
+    history_count:        int,
+    next_frame_id:        u64,
+    selected_frame_id:    u64,
+    selected_range_a:     u64,
+    selected_range_b:     u64,
+    drag_anchor_id:       u64,
+    dragging_timeline:    bool,
+    paused:               bool,
+    next_wait_ms:         f32,
+    next_cpu_ms:          f32,
+    next_gpu_ms:          f32,
+    next_gpu_valid:       bool,
+    session_file:         ^os.File,
+    session_frame_buffer: [dynamic]byte,
+    session_path:         string,
+    session_frame_count:  int,
+    export_thread:        ^thread.Thread,
+    export_job:           ^Flame_Export_Job,
+    export_ok:            bool,
+    export_message:       string,
 }
 
 @(thread_local)
@@ -540,22 +543,11 @@ flame_graph_session_write_bytes :: proc(file: ^os.File, bytes: []byte) -> bool {
 }
 
 @(no_instrumentation)
-flame_graph_session_release_slots :: proc(slots: []Flame_Slot) {
-    for slot in slots {
-        delete(slot.name)
-        delete(slot.file_path)
-    }
-}
-
-@(no_instrumentation)
-flame_graph_session_read_string :: proc(file: ^os.File, length: u32) -> (string, bool) {
+flame_graph_session_read_string :: proc(file: ^os.File, length: u32, allocator: mem.Allocator) -> (string, bool) {
     if file == nil || length > FLAME_SESSION_STRING_CAP do return "", false
-    bytes := make([]byte, int(length))
-    defer delete(bytes)
+    bytes := make([]byte, int(length), allocator)
     if !flame_graph_session_read_bytes(file, bytes) do return "", false
-    value, err := strings.clone(transmute(string)bytes)
-    if err != nil do return "", false
-    return value, true
+    return string(bytes), true
 }
 
 @(no_instrumentation)
@@ -570,8 +562,16 @@ flame_graph_session_read_bytes :: proc(file: ^os.File, bytes: []byte) -> bool {
 flame_graph_session_record :: proc(graph: ^Flame_Graph, entry: ^Flame_Frame_History) {
     when !FLAME_AUTO_INSTRUMENT do return
     if graph == nil || entry == nil || len(entry.slots) == 0 do return
+
+    for slot in entry.slots {
+        if len(slot.name) > int(FLAME_SESSION_STRING_CAP) || len(slot.file_path) > int(FLAME_SESSION_STRING_CAP) {
+            flame_graph_session_close(graph, true)
+            return
+        }
+    }
     if !flame_graph_session_ensure_open(graph) do return
 
+    clear(&graph.session_frame_buffer)
     record := Flame_Graph_Session_Record {
         frame_id   = entry.frame_id,
         total_ms   = entry.total_ms,
@@ -583,15 +583,8 @@ flame_graph_session_record :: proc(graph: ^Flame_Graph, entry: ^Flame_Frame_Hist
     }
     record_array := [1]Flame_Graph_Session_Record{record}
     record_bytes := slice.reinterpret([]byte, record_array[:])
-    if !flame_graph_session_write_bytes(graph.session_file, record_bytes) {
-        flame_graph_session_close(graph, true)
-        return
-    }
+    append(&graph.session_frame_buffer, ..record_bytes)
     for slot in entry.slots {
-        if len(slot.name) > int(FLAME_SESSION_STRING_CAP) || len(slot.file_path) > int(FLAME_SESSION_STRING_CAP) {
-            flame_graph_session_close(graph, true)
-            return
-        }
         session_slot := Flame_Graph_Session_Slot {
             name_len      = u32(len(slot.name)),
             file_path_len = u32(len(slot.file_path)),
@@ -604,12 +597,13 @@ flame_graph_session_record :: proc(graph: ^Flame_Graph, entry: ^Flame_Frame_Hist
         }
         session_slot_array := [1]Flame_Graph_Session_Slot{session_slot}
         session_slot_bytes := slice.reinterpret([]byte, session_slot_array[:])
-        if !flame_graph_session_write_bytes(graph.session_file, session_slot_bytes) ||
-           !flame_graph_session_write_bytes(graph.session_file, transmute([]byte)slot.name) ||
-           !flame_graph_session_write_bytes(graph.session_file, transmute([]byte)slot.file_path) {
-            flame_graph_session_close(graph, true)
-            return
-        }
+        append(&graph.session_frame_buffer, ..session_slot_bytes)
+        append(&graph.session_frame_buffer, ..transmute([]byte)slot.name)
+        append(&graph.session_frame_buffer, ..transmute([]byte)slot.file_path)
+    }
+    if !flame_graph_session_write_bytes(graph.session_file, graph.session_frame_buffer[:]) {
+        flame_graph_session_close(graph, true)
+        return
     }
     graph.session_frame_count += 1
 }
@@ -754,6 +748,7 @@ flame_graph_destroy :: proc(graph: ^Flame_Graph) {
     if _flame_graph_current == graph do flame_graph_set_current(nil)
     delete(graph.export_message)
     delete(graph.slots)
+    delete(graph.session_frame_buffer)
     for &entry in graph.history {
         delete(entry.slots)
     }
@@ -1218,6 +1213,14 @@ flame_graph_export_job_destroy :: proc(job: ^Flame_Export_Job) {
 flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
     if job == nil || len(job.session_path) == 0 || job.session_frames <= 0 do return false
 
+    arena: virtual.Arena
+    if virtual.arena_init_growing(&arena, mem.Megabyte) != nil {
+        flame_graph_export_job_error(job, "failed to initialize flame export arena")
+        return false
+    }
+    defer virtual.arena_destroy(&arena)
+    arena_allocator := virtual.arena_allocator(&arena)
+
     session, err := os.open(job.session_path, {.Read}, os.Permissions_Default_File)
     if err != nil {
         flame_graph_export_job_error(job, "failed to open flame session")
@@ -1268,6 +1271,7 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
 
     record_arr: [1]Flame_Graph_Session_Record
     slots: [dynamic]Flame_Slot
+    defer delete(slots)
     entry: Flame_Frame_History
     for _ in 0 ..< job.session_frames {
         record_bytes := slice.reinterpret([]byte, record_arr[:])
@@ -1291,11 +1295,13 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
                 return false
             }
             session_slot := session_slot_array[0]
-            name, name_ok := flame_graph_session_read_string(session, session_slot.name_len)
-            file_path, file_path_ok := flame_graph_session_read_string(session, session_slot.file_path_len)
+            name, name_ok := flame_graph_session_read_string(session, session_slot.name_len, arena_allocator)
+            file_path, file_path_ok := flame_graph_session_read_string(
+                session,
+                session_slot.file_path_len,
+                arena_allocator,
+            )
             if !name_ok || !file_path_ok {
-                delete(name)
-                delete(file_path)
                 flame_graph_export_job_error(job, "flame session string truncated")
                 return false
             }
@@ -1325,7 +1331,6 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
         strings.builder_reset(&builder)
         if !flame_graph_write_source_frame(&builder, &entry) ||
            !flame_graph_export_file_write(frames_file, strings.to_string(builder)) {
-            flame_graph_session_release_slots(slots[:])
             flame_graph_export_job_error(job, "failed to write flame frames export")
             return false
         }
@@ -1333,7 +1338,6 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
         strings.builder_reset(&builder)
         if !flame_graph_write_source_scopes(&builder, &entry) ||
            !flame_graph_export_file_write(scopes_file, strings.to_string(builder)) {
-            flame_graph_session_release_slots(slots[:])
             flame_graph_export_job_error(job, "failed to write flame scopes export")
             return false
         }
@@ -1341,11 +1345,10 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
         strings.builder_reset(&builder)
         flame_graph_write_folded_slots(&builder, slots[:])
         if !flame_graph_export_file_write(folded_file, strings.to_string(builder)) {
-            flame_graph_session_release_slots(slots[:])
             flame_graph_export_job_error(job, "failed to write flame folded export")
             return false
         }
-        flame_graph_session_release_slots(slots[:])
+        virtual.arena_free_all(&arena)
         sync.atomic_add_explicit(&job.progress_done, 1, .Acq_Rel)
     }
 

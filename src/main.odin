@@ -3078,7 +3078,8 @@ aircraft_postale_part_color_with_paint :: #force_inline proc(
     return color
 }
 
-color_lerp :: proc(a, b: rl.Color, amount: f32) -> rl.Color {
+@(no_instrumentation)
+color_lerp :: #force_inline proc(a, b: rl.Color, amount: f32) -> rl.Color {
     t := clamp(amount, 0, 1)
     return {
         r = u8(f32(a.r) + (f32(b.r) - f32(a.r)) * t),
@@ -3506,7 +3507,8 @@ world_under_cursor :: proc(mouse, center: rl.Vector2, scale: f32) -> (f32, f32) 
     return (a + b) * .5, (b - a) * .5
 }
 
-terrain_color_variation :: proc(color: rl.Color, x, z: f32) -> rl.Color {
+@(no_instrumentation)
+terrain_color_variation :: #force_inline proc(color: rl.Color, x, z: f32) -> rl.Color {
     // Broad, overlapping waves read as irregular patches instead of a repeated
     // per-cell pattern. World-space sampling keeps the color stable as clipmap
     // levels and the camera move.
@@ -3527,7 +3529,8 @@ terrain_color_variation :: proc(color: rl.Color, x, z: f32) -> rl.Color {
     }
 }
 
-terrain_color :: proc(height, painted, sea_level, x, z: f32) -> rl.Color {
+@(no_instrumentation)
+terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> rl.Color {
     water := rl.Color {
         r = 26,
         g = 80,
