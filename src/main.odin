@@ -54,6 +54,7 @@ ADRIATIC_WORLD_WIDTH :: 854
 ADRIATIC_WORLD_HEIGHT :: 480
 STRUCTURE_HISTORY_CAPACITY :: 24
 TERRAIN_HISTORY_CAPACITY :: 12
+FORMATION_EDIT_BENCHMARK_STRUCTURES :: 256
 TERRAIN_PROJECT_PATH :: "adriatic.terrain"
 MARINA_BRUSH_MINIMUM_SUITABILITY :: f32(.70)
 VEHICLE_SHOWCASE_FOCAL_LENGTH :: f32(2.0)
@@ -97,9 +98,12 @@ Curve_Point :: struct {
 
 Fixture :: struct {
     project:                                        terrain.Project,
+    terrain_revision:                               u64,
     circulation_plan:                               circulation.Plan,
     circulation_revision:                           u64,
     circulation_plan_valid:                         bool,
+    circulation_structures:                         [terrain.STRUCTURE_CAPACITY]terrain.Structure,
+    circulation_structure_count:                    int,
     authoring_tool:                                 Authoring_Tool,
     editor_ui:                                      Editor_UI_State,
     tool:                                           terrain.Tool,
@@ -433,7 +437,20 @@ Editor :: struct {
 editor_circulation_plan :: #force_inline proc(editor: ^Editor) -> ^circulation.Plan {
     if editor == nil do return nil
     if !editor.circulation_plan_valid || editor.circulation_revision != editor.project.revision {
-        editor.circulation_plan = architecture.circulation_plan(&editor.project)
+        changed := !editor.circulation_plan_valid
+        count := 0
+        for structure in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind != .Architecture || structure.height > 60 do continue
+            if count >= editor.circulation_structure_count ||
+               editor.circulation_structures[count] != structure {
+                changed = true
+            }
+            editor.circulation_structures[count] = structure
+            count += 1
+        }
+        if count != editor.circulation_structure_count do changed = true
+        editor.circulation_structure_count = count
+        if changed do editor.circulation_plan = architecture.circulation_plan(&editor.project)
         editor.circulation_revision = editor.project.revision
         editor.circulation_plan_valid = true
     }
@@ -570,6 +587,7 @@ terrain_history_restore :: proc(editor: ^Editor, state: ^Terrain_History_State) 
     }
     editor.project.sea_level = state.sea_level
     editor.project.revision = max(editor.project.revision, state.revision) + 1
+    world_terrain_invalidate_all(editor)
 }
 
 terrain_history_push_undo :: proc(editor: ^Editor) {
@@ -657,9 +675,8 @@ terrain_project_load :: proc(editor: ^Editor) {
         // the saved roads and density instead of persisting product-specific
         // lot data in terrain.Project.
         architecture_regenerate_all(editor)
-        // Loading can restore the same authored revision number as the current
-        // project. Advance it so revision-keyed render caches always rebuild.
         editor.project.revision += 1
+        world_terrain_invalidate_all(editor)
         editor.structure_selected = -1
         editor.structure_placing = false
         editor.structure_moving = false
@@ -1423,6 +1440,26 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
     switch scenario {
     case "editor", "terrain_edit":
         return true
+    case "formation_edit":
+        for editor.project.structure_count < FORMATION_EDIT_BENCHMARK_STRUCTURES {
+            index := editor.project.structure_count
+            column := index % 16
+            row := index / 16
+            structure := terrain.structure_make(
+                editor.editor_focus.x + (f32(column) - 7.5) * 12,
+                editor.editor_focus.z + (f32(row) - 7.5) * 12,
+                7,
+                7,
+                terrain.sample_height(
+                    &editor.project,
+                    0,
+                    editor.editor_focus.x + (f32(column) - 7.5) * 12,
+                    editor.editor_focus.z + (f32(row) - 7.5) * 12,
+                ),
+                8,
+            )
+            if terrain.add_structure(&editor.project, structure) < 0 do break
+        }
     case "foliage":
         seed_foliage_capture(editor)
     case "foliage_forest":
@@ -1495,6 +1532,13 @@ benchmark_terrain_edit_step :: proc(editor: ^Editor, edit_frame: int) {
         editor.hardness,
     )
     world_terrain_changed(editor, world_x, world_z, editor.radius)
+}
+
+benchmark_formation_edit_step :: proc(editor: ^Editor, edit_frame: int) {
+    if editor == nil || edit_frame < 0 || editor.project.structure_count <= 0 do return
+    structure := &editor.project.structures[editor.project.structure_count - 1]
+    structure.height = 8 + math.sin(f32(edit_frame) * .17) * .5
+    editor.project.revision += 1
 }
 
 benchmark_percentile :: proc(sorted_samples: []f64, fraction: f64) -> f64 {
@@ -5587,7 +5631,7 @@ car_physics_create :: proc(editor: ^Editor) {
             return
         }
     }
-    editor.car_physics_terrain_revision = editor.project.revision
+    editor.car_physics_terrain_revision = editor.terrain_revision
     editor.car_physics_vehicle = physics.create_vehicle(editor.car_physics_world, {
             half_width              = .67,
             half_height             = .25,
@@ -5681,7 +5725,7 @@ car_physics_step :: proc(
         surface.lateral_grip * (handbrake ? f32(.22) : f32(1)),
     )
 
-    if editor.project.revision != editor.car_physics_terrain_revision {
+    if editor.terrain_revision != editor.car_physics_terrain_revision {
         updated := true
         collision_heights := make([]f32, terrain.SAMPLES_PER_LEVEL)
         defer delete(collision_heights)
@@ -5702,7 +5746,7 @@ car_physics_step :: proc(
                 updated
         }
         if updated {
-            editor.car_physics_terrain_revision = editor.project.revision
+            editor.car_physics_terrain_revision = editor.terrain_revision
         }
     }
     editor.car_physics_accumulator = min(editor.car_physics_accumulator + f64(delta_seconds), f64(.1))
@@ -6917,9 +6961,13 @@ adriatic_run :: proc(
     )
     defer delete(editor.libellula_projected_faces)
     terrain.init_project(&editor.project)
+    editor.terrain_revision = 1
     if !capture_mode &&
        !interactive_lab_mode &&
-       (!benchmark_mode || benchmark_scenario == "editor" || benchmark_scenario == "terrain_edit") {
+       (!benchmark_mode ||
+        benchmark_scenario == "editor" ||
+        benchmark_scenario == "terrain_edit" ||
+        benchmark_scenario == "formation_edit") {
         seed_default_island_towns(editor)
         seed_default_island_marinas(editor)
     }
@@ -8646,6 +8694,9 @@ adriatic_run :: proc(
             edit_frame := frame - benchmark_warmup
             if edit_frame == 0 do terrain_history_push_undo(editor)
             benchmark_terrain_edit_step(editor, edit_frame)
+        }
+        if benchmark_scenario == "formation_edit" && frame >= benchmark_warmup {
+            benchmark_formation_edit_step(editor, frame - benchmark_warmup)
         }
         if !editor.in_map && editor.tool != .Structure && cursor_hit && !ui_hit {
             if rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT) {

@@ -372,7 +372,6 @@ Foliage_Geometry_Cache_Entry :: struct {
 Static_Geometry_Cache_Entry :: struct {
     valid:                  bool,
     structure:              terrain.Structure,
-    project_revision:       u64,
     lod:                    Structure_LOD,
     lod_transition:         f32,
     world_vertices:         [dynamic]World_Vertex,
@@ -384,7 +383,6 @@ Static_Geometry_Cache_Entry :: struct {
 Climbing_Leaf_Geometry_Cache_Entry :: struct {
     valid:                  bool,
     structure:              terrain.Structure,
-    project_revision:       u64,
     density:                f32,
     detail_tier:            int,
     capture_seed_enabled:   bool,
@@ -401,7 +399,6 @@ Town_Mouse_Geometry_Cache_Entry :: struct {
     valid:            bool,
     model:            Mouse_Model,
     scale:            f32,
-    project_revision: u64,
     animation_bucket: i64,
     wind:             [2]f32,
     vertices:         [dynamic]World_Vertex,
@@ -504,8 +501,12 @@ World_Renderer :: struct {
     clipmap_valid:                   [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
     clipmap_dirty:                   [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
     road_mesh:                       roads.Mesh,
+    road_graph:                      roads.Graph,
+    road_graph_valid:                bool,
     road_revision:                   u64,
     pavement_query:                  roads.Pavement_Query,
+    pavement_query_graph:            roads.Graph,
+    pavement_query_graph_valid:      bool,
     pavement_query_revision:         u64,
     foliage_geometry_cache:          [terrain.STRUCTURE_CAPACITY]Foliage_Geometry_Cache_Entry,
     static_geometry_cache:           [terrain.STRUCTURE_CAPACITY]Static_Geometry_Cache_Entry,
@@ -1095,9 +1096,13 @@ world_road_triangle_colored :: #force_inline proc(
 world_roads :: proc(editor: ^Editor) {
     if editor == nil do return
     graph := &editor.project.road_graph
-    if world_renderer.road_revision != editor.project.revision {
-        roads.mesh_destroy(&world_renderer.road_mesh)
-        if graph.edge_count > 0 do world_renderer.road_mesh = roads.bake(graph)
+    if !world_renderer.road_graph_valid || world_renderer.road_revision != editor.project.revision {
+        if !world_renderer.road_graph_valid || world_renderer.road_graph != graph^ {
+            roads.mesh_destroy(&world_renderer.road_mesh)
+            if graph.edge_count > 0 do world_renderer.road_mesh = roads.bake(graph)
+            world_renderer.road_graph = graph^
+            world_renderer.road_graph_valid = true
+        }
         world_renderer.road_revision = editor.project.revision
     }
     mesh := &world_renderer.road_mesh
@@ -1290,7 +1295,8 @@ world_terrain_structure_intersects :: #force_inline proc(
 
 world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
     if editor == nil do return
-    revision := editor.project.revision
+    editor.terrain_revision += 1
+    revision := editor.terrain_revision
     changed := Terrain_Dirty_Bounds {
         valid    = true,
         revision = revision,
@@ -1311,24 +1317,14 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
             dirty = changed
         }
     }
-    if world_renderer.road_revision != 0 do world_renderer.road_revision = revision
-    if world_renderer.pavement_query_revision != 0 do world_renderer.pavement_query_revision = revision
-    if editor.circulation_plan_valid do editor.circulation_revision = revision
+    if world_renderer.road_revision != 0 do world_renderer.road_revision = editor.project.revision
+    if world_renderer.pavement_query_revision != 0 {
+        world_renderer.pavement_query_revision = editor.project.revision
+    }
     for &entry in world_renderer.static_geometry_cache {
         if !entry.valid do continue
         if world_terrain_structure_intersects(entry.structure, changed) {
             entry.valid = false
-        } else {
-            entry.project_revision = revision
-        }
-    }
-    for &entry, structure_index in world_renderer.climbing_leaf_geometry_cache {
-        if !entry.valid do continue
-        if structure_index >= editor.project.structure_count ||
-           entry.structure != editor.project.structures[structure_index] {
-            entry.valid = false
-        } else {
-            entry.project_revision = revision
         }
     }
     for &entry in world_renderer.town_mouse_geometry_cache {
@@ -1339,20 +1335,33 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
         influence_radius := TOWN_MOUSE_TERRAIN_RADIUS * entry.scale
         if dx * dx + dz * dz <= influence_radius * influence_radius {
             entry.valid = false
-        } else {
-            entry.project_revision = revision
         }
     }
 }
 
+world_terrain_invalidate_all :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.terrain_revision += 1
+    for &dirty in world_renderer.clipmap_dirty {
+        dirty = {
+            valid        = true,
+            full_rebuild = true,
+            revision     = editor.terrain_revision,
+        }
+    }
+    for &entry in world_renderer.static_geometry_cache do entry.valid = false
+    for &entry in world_renderer.climbing_leaf_geometry_cache do entry.valid = false
+    for &entry in world_renderer.town_mouse_geometry_cache do entry.valid = false
+}
+
 clipmap_update :: proc(editor: ^Editor, frame_index: int) {
-    revision_changed := world_renderer.clipmap_revision[frame_index] != editor.project.revision
+    revision_changed := world_renderer.clipmap_revision[frame_index] != editor.terrain_revision
     dirty := &world_renderer.clipmap_dirty[frame_index]
     localized_revision :=
         revision_changed &&
         dirty.valid &&
         !dirty.full_rebuild &&
-        dirty.revision == editor.project.revision
+        dirty.revision == editor.terrain_revision
     snap := editor.project.levels[0].cell_size * 2
     center := [2]f32 {
         f32(math.round(f64(editor.camera_pose.target.x / snap))) * snap,
@@ -1376,7 +1385,7 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int) {
             world_renderer.clipmap_valid[frame_index][level] = true
         }
     }
-    world_renderer.clipmap_revision[frame_index] = editor.project.revision
+    world_renderer.clipmap_revision[frame_index] = editor.terrain_revision
     dirty^ = {}
 }
 
@@ -5085,7 +5094,6 @@ world_static_formation_cached :: proc(
     lod_result := structure_lod_for(structure, entry.lod, force_near)
     if entry.valid &&
        entry.structure == structure &&
-       entry.project_revision == project.revision &&
        entry.lod == lod_result.tier {
         world_static_mesh_append(entry)
         if len(entry.foliage_vertices) <= FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices) {
@@ -5135,7 +5143,6 @@ world_static_formation_cached :: proc(
     }
     entry.valid = true
     entry.structure = structure
-    entry.project_revision = project.revision
     entry.lod = lod_result.tier
     entry.lod_transition = lod_result.transition
 }
@@ -9344,7 +9351,6 @@ world_climbing_leaves_for_structure :: proc(
         entry := &world_renderer.climbing_leaf_geometry_cache[structure_index]
         if entry.valid &&
            entry.structure == structure &&
-           entry.project_revision == editor.project.revision &&
            entry.density == density &&
            entry.detail_tier == detail_tier &&
            entry.capture_seed_enabled == capture_seed_enabled &&
@@ -9430,7 +9436,6 @@ world_climbing_leaves_for_structure :: proc(
         }
         entry.valid = true
         entry.structure = structure
-        entry.project_revision = editor.project.revision
         entry.density = density
         entry.detail_tier = detail_tier
         entry.capture_seed_enabled = capture_seed_enabled
@@ -10277,8 +10282,14 @@ player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
 mouse_surface_height :: proc(editor: ^Editor, x, z: f32) -> f32 {
     height := terrain.sample_height(&editor.project, 0, x, z)
     plan := editor_circulation_plan(editor)
-    if world_renderer.pavement_query_revision != editor.project.revision {
-        roads.pavement_query_build(&editor.project.road_graph, &world_renderer.pavement_query)
+    if !world_renderer.pavement_query_graph_valid ||
+       world_renderer.pavement_query_revision != editor.project.revision {
+        if !world_renderer.pavement_query_graph_valid ||
+           world_renderer.pavement_query_graph != editor.project.road_graph {
+            roads.pavement_query_build(&editor.project.road_graph, &world_renderer.pavement_query)
+            world_renderer.pavement_query_graph = editor.project.road_graph
+            world_renderer.pavement_query_graph_valid = true
+        }
         world_renderer.pavement_query_revision = editor.project.revision
     }
     surface := circulation.surface_at_cached(
@@ -10614,7 +10625,6 @@ world_town_mouse_model_scaled_cached :: proc(
     if entry.valid &&
        entry.model == model &&
        entry.scale == scale &&
-       entry.project_revision == editor.project.revision &&
        entry.animation_bucket == animation_bucket &&
        entry.wind == wind {
         count := min(len(entry.vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
@@ -10631,7 +10641,6 @@ world_town_mouse_model_scaled_cached :: proc(
     entry.valid = true
     entry.model = model
     entry.scale = scale
-    entry.project_revision = editor.project.revision
     entry.animation_bucket = animation_bucket
     entry.wind = wind
 }
