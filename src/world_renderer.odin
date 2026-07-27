@@ -81,6 +81,10 @@ World_Vertex :: struct {
     uv:       [2]f32,
 }
 
+World_Land_Surface_Sample :: struct {
+    x, z, height: f32,
+}
+
 Foliage_Vertex :: struct {
     position: [3]f32,
     uv:       [2]f32,
@@ -201,6 +205,7 @@ World_Renderer :: struct {
     wing_trail_vertices:             [dynamic]World_Vertex,
     wing_trail_indices:              [dynamic]u16,
     wing_trail_optimized_indices:    [dynamic]u16,
+    land_surface_samples:            [dynamic]World_Land_Surface_Sample,
     player_vertex_first:             int,
     player_vertex_count:             int,
     player_shadow_receiver:          f32,
@@ -1058,6 +1063,16 @@ world_rotate_xz :: #force_inline proc(center_x, center_z, x, z, rotation: f32) -
     return center_x + x * cosine - z * sine, center_z + x * sine + z * cosine
 }
 
+@(no_instrumentation)
+world_land_surface_sample :: #force_inline proc(
+    editor: ^Editor,
+    center_x, center_z, local_x, local_z, cosine, sine: f32,
+) -> World_Land_Surface_Sample {
+    x := center_x + local_x * cosine - local_z * sine
+    z := center_z + local_x * sine + local_z * cosine
+    return {x, z, terrain.sample_height(&editor.project, 0, x, z)}
+}
+
 world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, rotation: f32, color: rl.Color) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
     p: [8]third_person.Vec3
@@ -1094,31 +1109,40 @@ world_land_surface_rotated :: proc(
     columns := max(1, int(math.ceil(f64(width / 2))))
     rows := max(1, int(math.ceil(f64(length / 2))))
     land_threshold := editor.project.sea_level + .04
+    cosine, sine := math.cos(rotation), math.sin(rotation)
+    samples_per_row := columns + 1
+    resize(&world_renderer.land_surface_samples, samples_per_row * 2)
+    previous := world_renderer.land_surface_samples[:samples_per_row]
+    current := world_renderer.land_surface_samples[samples_per_row:]
+
+    local_z0 := -length * .5
+    for column in 0 ..= columns {
+        local_x := -width * .5 + width * f32(column) / f32(columns)
+        previous[column] = world_land_surface_sample(editor, center_x, center_z, local_x, local_z0, cosine, sine)
+    }
     for row in 0 ..< rows {
-        local_z0 := -length * .5 + length * f32(row) / f32(rows)
         local_z1 := -length * .5 + length * f32(row + 1) / f32(rows)
+        for column in 0 ..= columns {
+            local_x := -width * .5 + width * f32(column) / f32(columns)
+            current[column] = world_land_surface_sample(editor, center_x, center_z, local_x, local_z1, cosine, sine)
+        }
         for column in 0 ..< columns {
-            local_x0 := -width * .5 + width * f32(column) / f32(columns)
-            local_x1 := -width * .5 + width * f32(column + 1) / f32(columns)
-            x00, z00 := world_rotate_xz(center_x, center_z, local_x0, local_z0, rotation)
-            x10, z10 := world_rotate_xz(center_x, center_z, local_x1, local_z0, rotation)
-            x11, z11 := world_rotate_xz(center_x, center_z, local_x1, local_z1, rotation)
-            x01, z01 := world_rotate_xz(center_x, center_z, local_x0, local_z1, rotation)
-            h00 := terrain.sample_height(&editor.project, 0, x00, z00)
-            h10 := terrain.sample_height(&editor.project, 0, x10, z10)
-            h11 := terrain.sample_height(&editor.project, 0, x11, z11)
-            h01 := terrain.sample_height(&editor.project, 0, x01, z01)
-            if h00 <= land_threshold || h10 <= land_threshold || h11 <= land_threshold || h01 <= land_threshold {
+            p00 := previous[column]
+            p10 := previous[column + 1]
+            p11 := current[column + 1]
+            p01 := current[column]
+            if p00.height <= land_threshold || p10.height <= land_threshold || p11.height <= land_threshold || p01.height <= land_threshold {
                 continue
             }
             world_quad(
-                {x00, h00 + lift, z00},
-                {x01, h01 + lift, z01},
-                {x11, h11 + lift, z11},
-                {x10, h10 + lift, z10},
+                {p00.x, p00.height + lift, p00.z},
+                {p01.x, p01.height + lift, p01.z},
+                {p11.x, p11.height + lift, p11.z},
+                {p10.x, p10.height + lift, p10.z},
                 color,
             )
         }
+        previous, current = current, previous
     }
 }
 
@@ -13077,6 +13101,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
     world_renderer.wing_trail_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
     world_renderer.wing_trail_optimized_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
+    world_renderer.land_surface_samples = make([dynamic]World_Land_Surface_Sample, 0, 256)
     world_renderer.shadow_vertices = make([dynamic]World_Vertex, 0, SHADOW_VERTEX_CAPACITY)
     world_renderer.ctx = ctx
     world_renderer.initialized = true
@@ -13328,6 +13353,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.wing_trail_vertices)
     delete(world_renderer.wing_trail_indices)
     delete(world_renderer.wing_trail_optimized_indices)
+    delete(world_renderer.land_surface_samples)
     delete(world_renderer.shadow_vertices)
     for &entry in world_renderer.foliage_geometry_cache {
         delete(entry.world_vertices)

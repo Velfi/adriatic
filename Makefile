@@ -22,7 +22,7 @@ PROFILE_VULKAN_VALIDATION_debug := false
 PROFILE_ASAN_debug := false
 
 PROFILE_ODIN_FLAGS_release := -dynamic-map-calls -o:speed -debug
-PROFILE_DEFINE_FLAGS_release :=
+PROFILE_DEFINE_FLAGS_release := -define:SHOW_STARTUP_MENU=true
 PROFILE_CONFIG_release := release
 PROFILE_ENTRY_release := cold
 PROFILE_LINK_MODE_release := system

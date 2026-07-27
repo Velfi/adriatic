@@ -45,6 +45,7 @@ import rl "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
 
 HOT_RELOAD :: #config(HOT_RELOAD, false)
+SHOW_STARTUP_MENU :: #config(SHOW_STARTUP_MENU, false)
 HOT_LIBRARY_ENV :: "ADRIATIC_HOT_LIBRARY"
 
 ADRIATIC_WORLD_WIDTH :: 854
@@ -6704,7 +6705,7 @@ adriatic_run :: proc(
     if capture_kind == .Narrow do initial_width = 1000
     if capture_kind == .Compact do initial_width = 760
     rl.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring")
-    show_loading_screen := first_start && !capture_mode && !benchmark_mode
+    show_loading_screen := SHOW_STARTUP_MENU && first_start && !capture_mode && !benchmark_mode
     postcard: rl.Texture
     if loading_lab_mode || loading_preview_mode || show_loading_screen {
         postcard_period := loading_postcard_period_for_hour(loading_postcard_local_hour())
