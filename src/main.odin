@@ -1421,7 +1421,7 @@ seed_player_benchmark :: proc(editor: ^Editor) {
 benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
     if editor == nil do return false
     switch scenario {
-    case "editor":
+    case "editor", "terrain_edit":
         return true
     case "foliage":
         seed_foliage_capture(editor)
@@ -1477,6 +1477,24 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     }
     return true
+}
+
+benchmark_terrain_edit_step :: proc(editor: ^Editor, edit_frame: int) {
+    if editor == nil || edit_frame < 0 do return
+    phase := f32(edit_frame)
+    world_x := editor.editor_focus.x + math.sin(phase * .037) * 72
+    world_z := editor.editor_focus.z + math.sin(phase * .023) * 56
+    terrain.apply_stroke_with_hardness(
+        &editor.project,
+        editor.tool,
+        world_x,
+        world_z,
+        editor.radius,
+        editor.strength * (f32(1) / 60) * 4,
+        1,
+        editor.hardness,
+    )
+    world_terrain_changed(editor, world_x, world_z, editor.radius)
 }
 
 benchmark_percentile :: proc(sorted_samples: []f64, fraction: f64) -> f64 {
@@ -6899,7 +6917,9 @@ adriatic_run :: proc(
     )
     defer delete(editor.libellula_projected_faces)
     terrain.init_project(&editor.project)
-    if !capture_mode && !interactive_lab_mode && (!benchmark_mode || benchmark_scenario == "editor") {
+    if !capture_mode &&
+       !interactive_lab_mode &&
+       (!benchmark_mode || benchmark_scenario == "editor" || benchmark_scenario == "terrain_edit") {
         seed_default_island_towns(editor)
         seed_default_island_marinas(editor)
     }
@@ -8621,6 +8641,11 @@ adriatic_run :: proc(
                 editor.camera_pose.position.z,
             )
             editor.camera_pose = third_person.camera_above_height(editor.camera_pose, camera_ground, .35)
+        }
+        if benchmark_scenario == "terrain_edit" && frame >= benchmark_warmup {
+            edit_frame := frame - benchmark_warmup
+            if edit_frame == 0 do terrain_history_push_undo(editor)
+            benchmark_terrain_edit_step(editor, edit_frame)
         }
         if !editor.in_map && editor.tool != .Structure && cursor_hit && !ui_hit {
             if rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT) {

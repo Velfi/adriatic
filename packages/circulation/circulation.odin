@@ -79,13 +79,16 @@ area_distance :: #force_inline proc(area: Area, x, z: f32) -> f32 {
 // Authored curved roads and generated planar circulation areas intentionally
 // share one query result. Callers no longer need to know how a visible surface
 // was produced in order to suppress vegetation or classify movement.
-surface_at :: proc(graph: ^roads.Graph, plan: ^Plan, position: roads.Vec3) -> Surface_Hit {
+surface_at_with_pavement :: proc(
+    plan: ^Plan,
+    position: roads.Vec3,
+    authored: roads.Pavement_Hit,
+) -> Surface_Hit {
     result := Surface_Hit {
         area_index = -1,
         edge_index = -1,
         distance   = f32(1e9),
     }
-    authored := roads.pavement_at(graph, position)
     if authored.edge_index >= 0 {
         result = {
             found         = true,
@@ -120,4 +123,17 @@ surface_at :: proc(graph: ^roads.Graph, plan: ^Plan, position: roads.Vec3) -> Su
         }
     }
     return result
+}
+
+surface_at :: proc(graph: ^roads.Graph, plan: ^Plan, position: roads.Vec3) -> Surface_Hit {
+    return surface_at_with_pavement(plan, position, roads.pavement_at(graph, position))
+}
+
+surface_at_cached :: proc(
+    graph: ^roads.Graph,
+    plan: ^Plan,
+    query: ^roads.Pavement_Query,
+    position: roads.Vec3,
+) -> Surface_Hit {
+    return surface_at_with_pavement(plan, position, roads.pavement_at_cached(graph, query, position))
 }

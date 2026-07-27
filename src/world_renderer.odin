@@ -393,6 +393,20 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
     bougainvillea_vertices: [dynamic]Foliage_Vertex,
 }
 
+TOWN_MOUSE_CACHE_COUNT :: len(terrain.DEFAULT_ISLAND_SIGNS) * 7 + 2
+TOWN_MOUSE_ANIMATION_HZ :: f32(30)
+TOWN_MOUSE_TERRAIN_RADIUS :: f32(2.5)
+
+Town_Mouse_Geometry_Cache_Entry :: struct {
+    valid:            bool,
+    model:            Mouse_Model,
+    scale:            f32,
+    project_revision: u64,
+    animation_bucket: i64,
+    wind:             [2]f32,
+    vertices:         [dynamic]World_Vertex,
+}
+
 Terrain_Dirty_Bounds :: struct {
     valid:        bool,
     full_rebuild: bool,
@@ -491,9 +505,12 @@ World_Renderer :: struct {
     clipmap_dirty:                   [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
     road_mesh:                       roads.Mesh,
     road_revision:                   u64,
+    pavement_query:                  roads.Pavement_Query,
+    pavement_query_revision:         u64,
     foliage_geometry_cache:          [terrain.STRUCTURE_CAPACITY]Foliage_Geometry_Cache_Entry,
     static_geometry_cache:           [terrain.STRUCTURE_CAPACITY]Static_Geometry_Cache_Entry,
     climbing_leaf_geometry_cache:    [terrain.STRUCTURE_CAPACITY]Climbing_Leaf_Geometry_Cache_Entry,
+    town_mouse_geometry_cache:        [TOWN_MOUSE_CACHE_COUNT]Town_Mouse_Geometry_Cache_Entry,
     marina_geometry_cache:           [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
     structure_lod_counts:             [3]int,
     structure_lod_cache_rebuilds:     u64,
@@ -1295,6 +1312,8 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
         }
     }
     if world_renderer.road_revision != 0 do world_renderer.road_revision = revision
+    if world_renderer.pavement_query_revision != 0 do world_renderer.pavement_query_revision = revision
+    if editor.circulation_plan_valid do editor.circulation_revision = revision
     for &entry in world_renderer.static_geometry_cache {
         if !entry.valid do continue
         if world_terrain_structure_intersects(entry.structure, changed) {
@@ -1303,9 +1322,22 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
             entry.project_revision = revision
         }
     }
-    for &entry in world_renderer.climbing_leaf_geometry_cache {
+    for &entry, structure_index in world_renderer.climbing_leaf_geometry_cache {
         if !entry.valid do continue
-        if world_terrain_structure_intersects(entry.structure, changed) {
+        if structure_index >= editor.project.structure_count ||
+           entry.structure != editor.project.structures[structure_index] {
+            entry.valid = false
+        } else {
+            entry.project_revision = revision
+        }
+    }
+    for &entry in world_renderer.town_mouse_geometry_cache {
+        if !entry.valid do continue
+        closest_x := clamp(entry.model.position.x, changed.min_x, changed.max_x)
+        closest_z := clamp(entry.model.position.z, changed.min_z, changed.max_z)
+        dx, dz := entry.model.position.x - closest_x, entry.model.position.z - closest_z
+        influence_radius := TOWN_MOUSE_TERRAIN_RADIUS * entry.scale
+        if dx * dx + dz * dz <= influence_radius * influence_radius {
             entry.valid = false
         } else {
             entry.project_revision = revision
@@ -10245,7 +10277,16 @@ player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
 mouse_surface_height :: proc(editor: ^Editor, x, z: f32) -> f32 {
     height := terrain.sample_height(&editor.project, 0, x, z)
     plan := editor_circulation_plan(editor)
-    surface := circulation.surface_at(&editor.project.road_graph, plan, {x, height, z})
+    if world_renderer.pavement_query_revision != editor.project.revision {
+        roads.pavement_query_build(&editor.project.road_graph, &world_renderer.pavement_query)
+        world_renderer.pavement_query_revision = editor.project.revision
+    }
+    surface := circulation.surface_at_cached(
+        &editor.project.road_graph,
+        plan,
+        &world_renderer.pavement_query,
+        {x, height, z},
+    )
     if surface.on_surface do height = max(height + .12, surface.height + .12)
     return height
 }
@@ -10554,6 +10595,45 @@ world_mouse_model_scaled :: proc(editor: ^Editor, model: Mouse_Model, scale: f32
             model.position.z + (vertex.position[2] - model.position.z) * safe_scale,
         }
     }
+}
+
+world_town_mouse_model_scaled_cached :: proc(
+    editor: ^Editor,
+    model: Mouse_Model,
+    scale: f32,
+    cache_index: int,
+) {
+    if editor == nil || cache_index < 0 || cache_index >= TOWN_MOUSE_CACHE_COUNT {
+        world_mouse_model_scaled(editor, model, scale)
+        return
+    }
+    entry := &world_renderer.town_mouse_geometry_cache[cache_index]
+    phase := f32(cache_index) / TOWN_MOUSE_CACHE_COUNT
+    animation_bucket := i64(math.floor(f64(editor.map_time * TOWN_MOUSE_ANIMATION_HZ + phase)))
+    wind := model.scarf_enabled ? editor.atmosphere.weather.wind : [2]f32{}
+    if entry.valid &&
+       entry.model == model &&
+       entry.scale == scale &&
+       entry.project_revision == editor.project.revision &&
+       entry.animation_bucket == animation_bucket &&
+       entry.wind == wind {
+        count := min(len(entry.vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
+        if count > 0 do append(&world_renderer.vertices, ..entry.vertices[:count])
+        return
+    }
+
+    first := len(world_renderer.vertices)
+    world_mouse_model_scaled(editor, model, scale)
+    clear(&entry.vertices)
+    if first < len(world_renderer.vertices) {
+        append(&entry.vertices, ..world_renderer.vertices[first:])
+    }
+    entry.valid = true
+    entry.model = model
+    entry.scale = scale
+    entry.project_revision = editor.project.revision
+    entry.animation_bucket = animation_bucket
+    entry.wind = wind
 }
 
 world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
@@ -12326,15 +12406,15 @@ world_story_meeting :: proc(editor: ^Editor) {
 
     facing_niko := math.atan2(iva.x - niko.x, iva.z - niko.z)
     facing_iva := math.atan2(niko.x - iva.x, niko.z - iva.z)
-    world_mouse_model_scaled(editor, {
+    world_town_mouse_model_scaled_cached(editor, {
             position  = niko,
             rotation  = math.PI - facing_niko,
             accessory = .Acorn_Cap,
             fur       = .Chestnut,
             pattern   = .Pale_Belly,
             grounded  = true,
-        }, 1.02)
-    world_mouse_model_scaled(editor, {
+        }, 1.02, TOWN_MOUSE_CACHE_COUNT - 2)
+    world_town_mouse_model_scaled_cached(editor, {
             position      = iva,
             rotation      = math.PI - facing_iva,
             accessory     = .Flower,
@@ -12343,7 +12423,7 @@ world_story_meeting :: proc(editor: ^Editor) {
             scarf_enabled = true,
             scarf_color   = {177, 65, 73, 255},
             grounded      = true,
-        }, .96)
+        }, .96, TOWN_MOUSE_CACHE_COUNT - 1)
     if story.resident_has_action(&editor.story_state, .Niko) {
         world_mouse_interaction_indicator(editor, niko)
     }
@@ -12411,7 +12491,7 @@ world_town_mice :: proc(editor: ^Editor) {
                     break
                 }
                 rotation := frontage.rotation + math.PI * .5 + resident.facing
-                world_mouse_model_scaled(
+                world_town_mouse_model_scaled_cached(
                     editor,
                     {
                         position = {x, ground_y, z},
@@ -12422,7 +12502,7 @@ world_town_mice :: proc(editor: ^Editor) {
                         scarf_enabled = resident.scarf,
                         scarf_color   = resident.scarf_color,
                         grounded      = true,
-                    }, resident.scale)
+                    }, resident.scale, island_index * len(residents) + resident_index)
                 if named && story.resident_has_action(&editor.story_state, named_resident) {
                     world_mouse_interaction_indicator(editor, {x, ground_y, z})
                 }
@@ -14153,6 +14233,9 @@ world_renderer_destroy :: proc() {
     for &entry in world_renderer.climbing_leaf_geometry_cache {
         delete(entry.world_vertices)
         delete(entry.bougainvillea_vertices)
+    }
+    for &entry in world_renderer.town_mouse_geometry_cache {
+        delete(entry.vertices)
     }
     for &entry in world_renderer.marina_geometry_cache {
         delete(entry.world_vertices)

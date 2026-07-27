@@ -9,6 +9,7 @@ MAX_EDGES :: 128
 MAX_JUNCTION_POINTS :: MAX_EDGES * 2
 EDGE_LANE_COUNT :: 6
 END_CAP_SEGMENTS :: 8
+PAVEMENT_QUERY_SEGMENTS :: 12
 
 Vec3 :: [3]f32
 
@@ -53,6 +54,11 @@ Pavement_Hit :: struct {
     distance:   f32,
     height:     f32,
     on_surface: bool,
+}
+
+Pavement_Query :: struct {
+    points:     [MAX_EDGES][PAVEMENT_QUERY_SEGMENTS + 1]Vec3,
+    edge_count: int,
 }
 
 Grip_Profile :: struct {
@@ -286,22 +292,30 @@ edge_tangent :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
     return tangent
 }
 
-pavement_at :: proc(graph: ^Graph, position: Vec3) -> Pavement_Hit {
+pavement_query_build :: proc(graph: ^Graph, query: ^Pavement_Query) {
+    if query == nil do return
+    query^ = {}
+    if graph == nil do return
+    query.edge_count = graph.edge_count
+    for edge, edge_index in graph.edges[:graph.edge_count] {
+        for segment in 0 ..= PAVEMENT_QUERY_SEGMENTS {
+            query.points[edge_index][segment] =
+                edge_point(graph, edge, f32(segment) / PAVEMENT_QUERY_SEGMENTS)
+        }
+    }
+}
+
+pavement_at_cached :: proc(graph: ^Graph, query: ^Pavement_Query, position: Vec3) -> Pavement_Hit {
     hit := Pavement_Hit {
         edge_index = -1,
         distance   = f32(1e9),
     }
-    if graph == nil do return hit
-
-    // A short polyline approximation keeps the driving query allocation-free.
-    // Twelve spans are enough to classify a wheel contact while the bake path
-    // remains the authoritative high-detail curve.
-    QUERY_SEGMENTS :: 12
+    if graph == nil || query == nil || query.edge_count != graph.edge_count do return hit
     best_distance_squared := f32(1e18)
     for edge, edge_index in graph.edges[:graph.edge_count] {
-        previous := edge_point(graph, edge, 0)
-        for segment in 1 ..= QUERY_SEGMENTS {
-            current := edge_point(graph, edge, f32(segment) / QUERY_SEGMENTS)
+        previous := query.points[edge_index][0]
+        for segment in 1 ..= PAVEMENT_QUERY_SEGMENTS {
+            current := query.points[edge_index][segment]
             segment_x := current.x - previous.x
             segment_z := current.z - previous.z
             length_squared := segment_x * segment_x + segment_z * segment_z
@@ -333,6 +347,12 @@ pavement_at :: proc(graph: ^Graph, position: Vec3) -> Pavement_Hit {
     }
     if hit.edge_index >= 0 do hit.distance = f32(math.sqrt(f64(best_distance_squared)))
     return hit
+}
+
+pavement_at :: proc(graph: ^Graph, position: Vec3) -> Pavement_Hit {
+    query: Pavement_Query
+    pavement_query_build(graph, &query)
+    return pavement_at_cached(graph, &query, position)
 }
 
 edge_control_polygon_length :: proc(graph: ^Graph, edge: Edge) -> f32 {

@@ -169,24 +169,27 @@ architecture_resolve_legacy_identity :: #force_inline proc(structure: terrain.St
         }, structure.seed)
 }
 
-// Produces the complete circulation intent for an architecture settlement.
-// Rendering, vegetation, and gameplay queries consume this same plan.
-circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
-    plan: circulation.Plan
-    if project == nil do return plan
-
+// Adds one connected settlement to the shared circulation plan. Keeping this
+// local prevents distant towns from receiving kilometer-long streets and
+// doorway paths through the sea.
+circulation_plan_add_town :: proc(
+    plan: ^circulation.Plan,
+    project: ^terrain.Project,
+    structure_indices: []int,
+) {
+    if plan == nil || project == nil do return
     min_x, max_x := f32(1e9), f32(-1e9)
     min_z, max_z := f32(1e9), f32(-1e9)
     buildings := 0
-    for structure in project.structures[:project.structure_count] {
-        if structure.kind != .Architecture || structure.height > 60 do continue
+    for structure_index in structure_indices {
+        structure := project.structures[structure_index]
         min_x = min(min_x, structure.center_x)
         max_x = max(max_x, structure.center_x)
         min_z = min(min_z, structure.center_z)
         max_z = max(max_z, structure.center_z)
         buildings += 1
     }
-    if buildings < 4 || max_z <= min_z do return plan
+    if buildings < 4 || max_z <= min_z do return
 
     center_x := (min_x + max_x) * .5
     center_z := (min_z + max_z) * .5
@@ -195,7 +198,7 @@ circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
     road_span := max(max_x - min_x + 36, f32(160))
     lanes := [2]f32{lane_a, lane_b}
     for lane_z in lanes {
-        _ = circulation.plan_add(&plan, {
+        _ = circulation.plan_add(plan, {
             center_x  = center_x,
             center_z  = lane_z,
             width     = road_span,
@@ -207,7 +210,7 @@ circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
             driveable = true,
         })
     }
-    _ = circulation.plan_add(&plan, {
+    _ = circulation.plan_add(plan, {
         center_x = center_x,
         center_z = center_z,
         width    = 28,
@@ -218,8 +221,8 @@ circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
         walkable = true,
     })
 
-    for structure in project.structures[:project.structure_count] {
-        if structure.kind != .Architecture || structure.height > 60 do continue
+    for structure_index in structure_indices {
+        structure := project.structures[structure_index]
         frontage := architecture_frontage_structure(structure)
         sine, cosine := math.sin(frontage.rotation), math.cos(frontage.rotation)
         door_x := frontage.center_x - sine * (frontage.depth * .5 + .22)
@@ -243,7 +246,7 @@ circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
         path_dx, path_dz := center_x - door_x, target_z - door_z
         path_length := f32(math.sqrt(f64(path_dx * path_dx + path_dz * path_dz)))
         if path_length <= 1.5 do continue
-        _ = circulation.plan_add(&plan, {
+        _ = circulation.plan_add(plan, {
             center_x = (door_x + center_x) * .5,
             center_z = (door_z + target_z) * .5,
             width    = 3.6,
@@ -254,6 +257,47 @@ circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
             pavement = .Cobblestone,
             walkable = true,
         })
+    }
+}
+
+// Produces the complete circulation intent for every architecture settlement.
+// Rendering, vegetation, and gameplay queries consume this same plan.
+circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
+    plan: circulation.Plan
+    if project == nil do return plan
+
+    candidates: [terrain.STRUCTURE_CAPACITY]int
+    candidate_count := 0
+    for structure, structure_index in project.structures[:project.structure_count] {
+        if structure.kind != .Architecture || structure.height > 60 do continue
+        candidates[candidate_count] = structure_index
+        candidate_count += 1
+    }
+
+    // Buildings connected through a 320 m neighborhood belong to one town.
+    // The threshold comfortably spans a painted settlement while keeping the
+    // two default islands, and other distant settlements, independent.
+    CLUSTER_DISTANCE :: f32(320)
+    assigned: [terrain.STRUCTURE_CAPACITY]bool
+    cluster: [terrain.STRUCTURE_CAPACITY]int
+    for candidate_index in 0 ..< candidate_count {
+        if assigned[candidate_index] do continue
+        assigned[candidate_index] = true
+        cluster[0] = candidates[candidate_index]
+        cluster_count := 1
+        for cursor := 0; cursor < cluster_count; cursor += 1 {
+            anchor := project.structures[cluster[cursor]]
+            for other_index in 0 ..< candidate_count {
+                if assigned[other_index] do continue
+                other := project.structures[candidates[other_index]]
+                dx, dz := other.center_x - anchor.center_x, other.center_z - anchor.center_z
+                if dx * dx + dz * dz > CLUSTER_DISTANCE * CLUSTER_DISTANCE do continue
+                assigned[other_index] = true
+                cluster[cluster_count] = candidates[other_index]
+                cluster_count += 1
+            }
+        }
+        circulation_plan_add_town(&plan, project, cluster[:cluster_count])
     }
     return plan
 }
