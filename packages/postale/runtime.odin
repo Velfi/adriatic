@@ -4,6 +4,7 @@ import flight "../flight"
 import third_person "../third_person"
 import vehicles "../vehicles"
 import "core:math"
+import "core:math/linalg"
 
 // The generated Postale mesh includes exposed main wheels. Their tire bottoms
 // sit roughly 1.12 world units below the body origin at presentation scale,
@@ -157,7 +158,7 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
     if runtime == nil || delta_seconds <= 0 do return {}
     dt := min_f32(delta_seconds, .05)
     if runtime.crashed {
-        runtime.body.velocity = flight.scale(runtime.body.velocity, max_f32(0, 1 - dt * 5))
+        runtime.body.velocity *= max_f32(0, 1 - dt * 5)
         sync_vehicle(runtime)
         return {grounded = runtime.grounded, crashed = true}
     }
@@ -167,7 +168,7 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
     if control.throttle_down do throttle_target -= dt * runtime.tuning.throttle_down_rate
     runtime.throttle = clamp(throttle_target, 0, 1)
 
-    speed := flight.length(runtime.body.velocity)
+    speed := linalg.length(runtime.body.velocity)
     pitch_rate := runtime.tuning.pitch_rate_decrease
     if math.abs(control.pitch) < math.abs(runtime.pitch) do pitch_rate = runtime.tuning.pitch_rate_increase
     roll_rate := runtime.tuning.roll_rate_decrease
@@ -210,12 +211,12 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
             runtime.grounded_time = 0
         }
         // Wheels remove lateral slip and make low-speed runway steering forgiving.
-        forward_speed := flight.dot(runtime.body.velocity, runtime.body.basis.forward)
+        forward_speed := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
         forward_speed *= max_f32(
             0,
             1 - dt * (control.throttle_down ? runtime.tuning.ground_brake : runtime.tuning.ground_coast),
         )
-        runtime.body.velocity = flight.scale(runtime.body.basis.forward, max_f32(0, forward_speed))
+        runtime.body.velocity = runtime.body.basis.forward * max_f32(0, forward_speed)
         runtime.body.angular_velocity.x = 0
         runtime.body.angular_velocity.z = 0
         steer :=
@@ -278,7 +279,7 @@ can_exit :: proc(runtime: ^Runtime) -> bool {
         runtime != nil &&
         runtime.grounded &&
         !runtime.crashed &&
-        flight.length(runtime.body.velocity) < runtime.tuning.safe_exit_speed \
+        linalg.length(runtime.body.velocity) < runtime.tuning.safe_exit_speed \
     )
 }
 
@@ -306,17 +307,14 @@ yaw_radians :: proc(basis: flight.Basis) -> f32 {
 }
 
 bank_radians :: proc(basis: flight.Basis) -> f32 {
-    return math.atan2(flight.dot(basis.right, {y = 1}), flight.dot(basis.up, {y = 1}))
+    return math.atan2(linalg.dot(basis.right, flight.Vec3{0, 1, 0}), linalg.dot(basis.up, flight.Vec3{0, 1, 0}))
 }
 
 rotate_ground_heading :: proc(basis: ^flight.Basis, radians: f32) {
     if basis == nil || radians == 0 do return
     c, s := math.cos(radians), math.sin(radians)
     forward := basis.forward
-    basis.forward = {
-        x = forward.x * c - forward.z * s,
-        z = forward.x * s + forward.z * c,
-    }
+    basis.forward = {forward.x * c - forward.z * s, 0, forward.x * s + forward.z * c}
     basis.up = {0, 1, 0}
     basis^ = flight.orthonormalize(basis^)
 }

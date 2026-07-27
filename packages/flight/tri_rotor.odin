@@ -1,6 +1,7 @@
 package flight
 
 import "core:math"
+import "core:math/linalg"
 
 // Asteria TR-3 Libellula's fixed triangular rotor frame.  Rotor force is
 // allocated physically at the mounts; a failed or saturated rotor is never
@@ -60,10 +61,9 @@ solve_tri_rotor :: proc(
 ) -> Tri_Rotor_Solution {
     // Solve the three equations directly: collective, pitch, and roll. The rotor
     // triangle is symmetric so the resulting coefficients remain easy to audit.
-    left := sub(
-        tri_rotor_left_mount,
-        center_of_mass,
-    ); right := sub(tri_rotor_right_mount, center_of_mass); rear := sub(tri_rotor_rear_mount, center_of_mass)
+    left := tri_rotor_left_mount - center_of_mass
+    right := tri_rotor_right_mount - center_of_mass
+    rear := tri_rotor_rear_mount - center_of_mass
     a11, a12, a13 := f32(1), f32(1), f32(1)
     a21, a22, a23 := -left.z, -right.z, -rear.z
     a31, a32, a33 := left.x, right.x, rear.x
@@ -73,11 +73,11 @@ solve_tri_rotor :: proc(
     l := (b1 * (a22 * a33 - a23 * a32) - a12 * (b2 * a33 - a23 * b3) + a13 * (b2 * a32 - a22 * b3)) / det
     r := (a11 * (b2 * a33 - a23 * b3) - b1 * (a21 * a33 - a23 * a31) + a13 * (a21 * b3 - b2 * a31)) / det
     re := (a11 * (a22 * b3 - b2 * a32) - a12 * (a21 * b3 - b2 * a31) + b1 * (a21 * a32 - a22 * a31)) / det
-    forces := vec3(
+    forces := Vec3 {
         clamp(l, 0, max_f32(0, maximum_forces.x)),
         clamp(r, 0, max_f32(0, maximum_forces.y)),
         clamp(re, 0, max_f32(0, maximum_forces.z)),
-    )
+    }
     return {
         thrusts = forces,
         total_thrust = forces.x + forces.y + forces.z,
@@ -103,15 +103,15 @@ step_tri_rotor :: proc(
         command_input; command.pitch = clamp(command.pitch, -1, 1); command.roll = clamp(command.roll, -1, 1); command.yaw = clamp(command.yaw, -1, 1); command.throttle = clamp(command.throttle, 0, 1)
     state.basis = orthonormalize(
         state.basis,
-    ); mass := max_f32(airframe.mass_kg, 1); caps := scale(vec3(clamp(runtime.left_engine_output, 0, 1), clamp(runtime.right_engine_output, 0, 1), clamp(runtime.rear_engine_output, 0, 1)), airframe.maximum_collective_force / 3)
+    ); mass := max_f32(airframe.mass_kg, 1); caps := Vec3{clamp(runtime.left_engine_output, 0, 1), clamp(runtime.right_engine_output, 0, 1), clamp(runtime.rear_engine_output, 0, 1)} * (airframe.maximum_collective_force / 3)
     collective :=
         command.throttle *
         (caps.x +
                 caps.y +
                 caps.z); local_rate := world_to_local(state.basis, state.angular_velocity); authority := clamp(collective / (mass * 9.81), .62, 1)
-    level_axis := cross(
+    level_axis := linalg.cross(
         state.basis.up,
-        {y = 1},
+        Vec3{0, 1, 0},
     ); local_level := world_to_local(state.basis, level_axis); damping := airframe.angular_damping
     pitch_moment, roll_moment: f32
     if runtime.auto_level {
@@ -136,10 +136,10 @@ step_tri_rotor :: proc(
         {},
         caps,
     ); ground_bonus := f32(0); if runtime.ground_distance < airframe.ground_effect_height do ground_bonus = airframe.ground_effect_bonus * (1 - clamp(runtime.ground_distance / max_f32(airframe.ground_effect_height, .01), 0, 1))
-    up_force := scale(
-        state.basis.up,
-        solution.total_thrust * (1 + ground_bonus),
-    ); total := add(up_force, {y = -9.81 * mass}); state.velocity = add(state.velocity, scale(total, delta_seconds / mass)); state.position = add(state.position, scale(state.velocity, delta_seconds))
+    up_force := state.basis.up * (solution.total_thrust * (1 + ground_bonus))
+    total := up_force + {0, -9.81 * mass, 0}
+    state.velocity += total * (delta_seconds / mass)
+    state.position += state.velocity * delta_seconds
     yaw_damping := damping; if runtime.auto_level do yaw_damping *= 1.4
     yaw := vtol_yaw_reaction(
         command.yaw,
@@ -147,15 +147,15 @@ step_tri_rotor :: proc(
         yaw_damping,
         authority,
         airframe.yaw_torque,
-    ); torque_local := vec3(solution.pitch_moment, yaw, solution.roll_moment); state.angular_velocity = add(state.angular_velocity, scale(local_to_world(state.basis, torque_local), delta_seconds / (mass * 12))); state.basis.forward = add(state.basis.forward, scale(cross(state.angular_velocity, state.basis.forward), delta_seconds)); state.basis.up = add(state.basis.up, scale(cross(state.angular_velocity, state.basis.up), delta_seconds)); state.basis = orthonormalize(state.basis)
+    ); torque_local := Vec3{solution.pitch_moment, yaw, solution.roll_moment}; state.angular_velocity += local_to_world(state.basis, torque_local) * (delta_seconds / (mass * 12)); state.basis.forward += linalg.cross(state.angular_velocity, state.basis.forward) * delta_seconds; state.basis.up += linalg.cross(state.angular_velocity, state.basis.up) * delta_seconds; state.basis = orthonormalize(state.basis)
     per_rotor := airframe.maximum_collective_force / 3
     return {
         rotor_thrusts = solution.thrusts,
-        rotor_rpm_normalized = vec3(
+        rotor_rpm_normalized = Vec3 {
             math.sqrt(solution.thrusts.x / per_rotor),
             math.sqrt(solution.thrusts.y / per_rotor),
             math.sqrt(solution.thrusts.z / per_rotor),
-        ),
+        },
         total_thrust = solution.total_thrust,
     }
 }

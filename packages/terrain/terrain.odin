@@ -139,11 +139,7 @@ add_default_runways :: proc(project: ^Project) -> bool {
     for sign in DEFAULT_ISLAND_SIGNS {
         center := sign * half_extent * DEFAULT_ISLAND_OFFSET
         runway_height := sample_height(project, 0, center, center)
-        from := roads.add_node(
-            &project.road_graph,
-            {center - runway_half_length, runway_height, center},
-            0,
-        )
+        from := roads.add_node(&project.road_graph, {center - runway_half_length, runway_height, center}, 0)
         to := roads.add_node(&project.road_graph, {center + runway_half_length, runway_height, center}, 0)
         if from < 0 ||
            to < 0 ||

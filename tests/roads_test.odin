@@ -127,6 +127,38 @@ road_t_junction_bakes_one_merged_cap_at_shared_node :: proc(t: ^testing.T) {
 }
 
 @(test)
+road_equal_angle_rings_keep_edge_insertion_order :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    junction := roads.add_node(&graph, {0, 0, 0}, 5)
+    first := roads.add_node(&graph, {20, 0, 0})
+    second := roads.add_node(&graph, {20, 0, 0})
+    roads.add_straight_edge(&graph, junction, first, 6, 1, .Asphalt)
+    roads.add_straight_edge(&graph, junction, second, 6, 1, .Dirt)
+    mesh := roads.bake(&graph)
+    defer roads.mesh_destroy(&mesh)
+
+    center_index := -1
+    for vertex, index in mesh.vertices {
+        if vertex.surface == .Junction && vertex.position.x == 0 && vertex.position.z == 0 {
+            center_index = index
+            break
+        }
+    }
+    testing.expect(t, center_index >= 0)
+
+    center_use := -1
+    for index, value in mesh.indices {
+        if int(value) == center_index {
+            center_use = int(index)
+            break
+        }
+    }
+    testing.expect(t, center_use >= 0)
+    first_ring_vertex := mesh.vertices[mesh.indices[center_use + 1]]
+    testing.expect(t, first_ring_vertex.pavement == .Asphalt)
+}
+
+@(test)
 road_graph_rejects_invalid_topology :: proc(t: ^testing.T) {
     graph: roads.Graph
     only := roads.add_node(&graph, {0, 0, 0})

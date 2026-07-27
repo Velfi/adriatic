@@ -1,6 +1,7 @@
 package tests
 
 import vehicles "../packages/vehicles"
+import "core:math/linalg"
 import "core:testing"
 
 valid_edges :: proc(t: ^testing.T, model: vehicles.Aircraft_Wireframe) {
@@ -64,7 +65,7 @@ valid_triangle_mesh :: proc(t: ^testing.T, mesh: ^$Mesh) {
 triangle_normal :: proc(a, b, c: [3]f32) -> [3]f32 {
     ab := b - a
     ac := c - a
-    return {ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
+    return linalg.cross(ab, ac)
 }
 
 @(test)
@@ -275,11 +276,14 @@ Mesh_Edge_State :: struct {
     balance, count: int,
 }
 
+// Independently rotated shared vertices differ by a few floating-point ULPs.
+MESH_EDGE_QUANTIZATION_SCALE :: f32(100_000)
+
 quantized_position :: proc(value: [3]f32) -> [3]i64 {
     return {
-        i64(value[0] * 1_000_000 + (value[0] >= 0 ? .5 : -.5)),
-        i64(value[1] * 1_000_000 + (value[1] >= 0 ? .5 : -.5)),
-        i64(value[2] * 1_000_000 + (value[2] >= 0 ? .5 : -.5)),
+        i64(value[0] * MESH_EDGE_QUANTIZATION_SCALE + (value[0] >= 0 ? .5 : -.5)),
+        i64(value[1] * MESH_EDGE_QUANTIZATION_SCALE + (value[1] >= 0 ? .5 : -.5)),
+        i64(value[2] * MESH_EDGE_QUANTIZATION_SCALE + (value[2] >= 0 ? .5 : -.5)),
     }
 }
 
@@ -322,8 +326,8 @@ full_libellula_mesh_is_non_degenerate_and_consistently_wound :: proc(t: ^testing
         c := mesh.vertices[triangle.c].position
         ab := b - a
         ac := c - a
-        normal := [3]f32{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
-        testing.expect(t, normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2] > 1e-12)
+        normal := linalg.cross(ab, ac)
+        testing.expect(t, linalg.dot(normal, normal) > 1e-12)
         if mesh.vertices[triangle.a].part == .Marking do continue
         record_mesh_edge(&edges, a, b)
         record_mesh_edge(&edges, b, c)

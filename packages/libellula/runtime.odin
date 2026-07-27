@@ -4,6 +4,7 @@ import flight "../flight"
 import third_person "../third_person"
 import vehicles "../vehicles"
 import "core:math"
+import "core:math/linalg"
 
 // Full TriRotorVisual geometry reaches 2.725 local metres below the frame
 // origin. At Adriatic's .72 presentation scale, 1.98 keeps its skid pads clear.
@@ -112,7 +113,7 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
     if runtime == nil || delta_seconds <= 0 do return
     dt := min_f32(delta_seconds, .05)
     if runtime.crashed {
-        runtime.body.velocity = flight.scale(runtime.body.velocity, max_f32(0, 1 - dt * 5))
+        runtime.body.velocity *= max_f32(0, 1 - dt * 5)
         sync_vehicle(runtime)
         return
     }
@@ -129,7 +130,7 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
         } else if control.throttle_down && !control.throttle_up {
             desired_vertical_speed = -runtime.tuning.descent_speed
         }
-        upright := clamp(flight.dot(runtime.body.basis.up, {y = 1}), .55, 1)
+        upright := clamp(linalg.dot(runtime.body.basis.up, flight.Vec3{0, 1, 0}), .55, 1)
         ground_effect := f32(1)
         if runtime.flight_runtime.ground_distance < runtime.airframe.ground_effect_height {
             ground_effect +=
@@ -200,8 +201,8 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
         }
         runtime.body.position.y = floor
         if runtime.body.velocity.y < 0 do runtime.body.velocity.y = 0
-        horizontal := flight.Vec3 {runtime.body.velocity.x, 0, runtime.body.velocity.z}
-        horizontal = flight.scale(horizontal, max_f32(0, 1 - runtime.tuning.ground_friction * dt))
+        horizontal := flight.Vec3{runtime.body.velocity.x, 0, runtime.body.velocity.z}
+        horizontal *= max_f32(0, 1 - runtime.tuning.ground_friction * dt)
         runtime.body.velocity.x = horizontal.x
         runtime.body.velocity.z = horizontal.z
         runtime.body.angular_velocity.x = 0
@@ -226,7 +227,7 @@ can_exit :: proc(runtime: ^Runtime) -> bool {
         runtime != nil &&
         runtime.grounded &&
         !runtime.crashed &&
-        flight.length(runtime.body.velocity) < runtime.tuning.safe_exit_speed \
+        linalg.length(runtime.body.velocity) < runtime.tuning.safe_exit_speed \
     )
 }
 
@@ -245,7 +246,7 @@ yaw_radians :: proc(basis: flight.Basis) -> f32 {
 }
 
 bank_radians :: proc(basis: flight.Basis) -> f32 {
-    return math.atan2(flight.dot(basis.right, {y = 1}), flight.dot(basis.up, {y = 1}))
+    return math.atan2(linalg.dot(basis.right, flight.Vec3{0, 1, 0}), linalg.dot(basis.up, flight.Vec3{0, 1, 0}))
 }
 
 slew :: proc(value, target: f32, tuning: Tuning, delta_seconds: f32) -> f32 {

@@ -2,6 +2,7 @@ package vehicles
 
 import third_person "../../packages/third_person"
 import "core:math"
+import "core:math/linalg"
 
 // The occupancy layer deliberately has no physics dependency. The game owns
 // collision queries, then calls try_exit with whether the door-side spot is
@@ -39,8 +40,8 @@ try_enter_nearest :: proc(character: ^Character, vehicles: []^Vehicle) -> (vehic
     closest_distance_squared := f32(0)
     for candidate in vehicles {
         if candidate == nil || candidate.locked || candidate.driver != nil do continue
-        delta := subtract(character.position, candidate.position)
-        distance_squared := dot(delta, delta)
+        delta := character.position - candidate.position
+        distance_squared := linalg.dot(delta, delta)
         radius := candidate.interaction_radius
         if radius <= 0 do radius = 2.5
         if distance_squared > radius * radius do continue
@@ -73,20 +74,11 @@ try_exit :: proc(character: ^Character, exit_position_clear: bool) -> (exited: b
     vehicle := character.vehicle
     distance := vehicle.exit_distance
     if distance <= 0 do distance = 1.8
-    left := third_person.Vec3 {-math.cos(vehicle.yaw_radians), 0, math.sin(vehicle.yaw_radians)}
-    character.position = add(vehicle.position, scale(left, distance))
+    left := third_person.Vec3{-math.cos(vehicle.yaw_radians), 0, math.sin(vehicle.yaw_radians)}
+    character.position = vehicle.position + left * distance
     character.facing_yaw_radians = vehicle.yaw_radians
     character.vehicle = nil
     character.mode = .On_Foot
     vehicle.driver = nil
     return true
 }
-
-subtract :: proc(a, b: third_person.Vec3) -> third_person.Vec3 { return {a.x - b.x, a.y - b.y, a.z - b.z} }
-add :: proc(a, b: third_person.Vec3) -> third_person.Vec3 { return {a.x + b.x, a.y + b.y, a.z + b.z} }
-scale :: proc(value: third_person.Vec3, amount: f32) -> third_person.Vec3 {return{
-        value.x * amount,
-        value.y * amount,
-        value.z * amount,
-    }}
-dot :: proc(a, b: third_person.Vec3) -> f32 { return a.x * b.x + a.y * b.y + a.z * b.z }

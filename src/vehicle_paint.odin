@@ -208,15 +208,19 @@ vehicle_paint_open :: proc(editor: ^Editor) {
     editor.postale_visible = editor.aircraft.active == .Postale
     editor.libellula_visible = editor.aircraft.active != .Postale
     if editor.aircraft.active == .Postale {
-        editor.postale.body.position = {
-            y = postale_game.GROUND_CLEARANCE,
+        editor.postale.body.position = {0, postale_game.GROUND_CLEARANCE, 0}
+        editor.postale.vehicle.position = {
+            editor.postale.body.position.x,
+            editor.postale.body.position.y,
+            editor.postale.body.position.z,
         }
-        editor.postale.vehicle.position = {editor.postale.body.position.x, editor.postale.body.position.y, editor.postale.body.position.z}
     } else {
-        editor.libellula.body.position = {
-            y = libellula_game.GROUND_CLEARANCE,
+        editor.libellula.body.position = {0, libellula_game.GROUND_CLEARANCE, 0}
+        editor.libellula.vehicle.position = {
+            editor.libellula.body.position.x,
+            editor.libellula.body.position.y,
+            editor.libellula.body.position.z,
         }
-        editor.libellula.vehicle.position = {editor.libellula.body.position.x, editor.libellula.body.position.y, editor.libellula.body.position.z}
     }
     editor.camera_pose = third_person.camera_pose({0, 1, 0}, {
         yaw_radians   = editor.vehicle_paint_yaw,
@@ -284,8 +288,8 @@ vehicle_paint_component_mask_activate :: proc(editor: ^Editor, index: int, solo:
 vehicle_paint_face_normal :: proc(a, b, c: [3]f32) -> [3]f32 {
     ab := b - a
     ac := c - a
-    normal := [3]f32{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
-    length := f32(math.sqrt(f64(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2])))
+    normal := linalg.cross(ab, ac)
+    length := linalg.length(normal)
     if length <= .0001 do return {0, 1, 0}
     return normal / length
 }
@@ -1250,9 +1254,17 @@ vehicle_paint_close :: proc(editor: ^Editor) -> bool {
     }
     editor.vehicle_paint_save_failed = false
     editor.postale.body.position = editor.vehicle_paint_saved_postale_position
-    editor.postale.vehicle.position = {editor.postale.body.position.x, editor.postale.body.position.y, editor.postale.body.position.z}
+    editor.postale.vehicle.position = {
+        editor.postale.body.position.x,
+        editor.postale.body.position.y,
+        editor.postale.body.position.z,
+    }
     editor.libellula.body.position = editor.vehicle_paint_saved_libellula_position
-    editor.libellula.vehicle.position = {editor.libellula.body.position.x, editor.libellula.body.position.y, editor.libellula.body.position.z}
+    editor.libellula.vehicle.position = {
+        editor.libellula.body.position.x,
+        editor.libellula.body.position.y,
+        editor.libellula.body.position.z,
+    }
     editor.vehicle_paint_scene = false
     editor.vehicle_paint_sound_until = 0
     editor.vehicle_showcase_scene = false
@@ -1379,11 +1391,19 @@ vehicle_paint_camera_ray :: proc(
     screen_x := (mouse.x / f32(width) - .5) * 2
     screen_y := (.5 - mouse.y / f32(height)) * 2
     aspect := f32(width) / f32(height)
-    direction := linalg.normalize0(third_person.Vec3 {
-        camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
-        camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
-        camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
-    })
+    direction := linalg.normalize0(
+        third_person.Vec3 {
+            camera.forward.x +
+            camera.right.x * screen_x * aspect / camera.focal_length +
+            camera.up.x * screen_y / camera.focal_length,
+            camera.forward.y +
+            camera.right.y * screen_x * aspect / camera.focal_length +
+            camera.up.y * screen_y / camera.focal_length,
+            camera.forward.z +
+            camera.right.z * screen_x * aspect / camera.focal_length +
+            camera.up.z * screen_y / camera.focal_length,
+        },
+    )
     return {camera.position.x, camera.position.y, camera.position.z}, {direction.x, direction.y, direction.z}
 }
 
@@ -1424,10 +1444,10 @@ vehicle_paint_ray_to_local :: proc(
     offset := flight.Vec3{origin[0] - position.x, origin[1] - position.y, origin[2] - position.z}
     ray := flight.Vec3{direction[0], direction[1], direction[2]}
     return {
-        flight.dot(offset, basis.right) / scale,
-        flight.dot(offset, basis.up) / scale,
-        -flight.dot(offset, basis.forward) / scale,
-    }, {flight.dot(ray, basis.right) / scale, flight.dot(ray, basis.up) / scale, -flight.dot(ray, basis.forward) / scale}
+        linalg.dot(offset, basis.right) / scale,
+        linalg.dot(offset, basis.up) / scale,
+        -linalg.dot(offset, basis.forward) / scale,
+    }, {linalg.dot(ray, basis.right) / scale, linalg.dot(ray, basis.up) / scale, -linalg.dot(ray, basis.forward) / scale}
 }
 
 vehicle_paint_projected_hit_libellula :: proc(

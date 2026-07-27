@@ -6,7 +6,7 @@ import "core:testing"
 @(test)
 aircraft_fleet_switches_only_to_available_slots :: proc(t: ^testing.T) {
     postale := vehicles.default_vehicle({})
-    libellula := vehicles.default_vehicle({x = 10})
+    libellula := vehicles.default_vehicle({10, 0, 0})
     fleet: vehicles.Aircraft_Fleet
     testing.expect(t, vehicles.aircraft_fleet_add(&fleet, .Postale, "Postale", &postale, true))
     testing.expect(t, vehicles.aircraft_fleet_add(&fleet, .Libellula, "Libellula", &libellula, false))

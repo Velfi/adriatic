@@ -13,20 +13,15 @@ LIBELLULA_REAR_HUB :: [3]f32{0, 1.17, 4.5425625}
 LIBELLULA_CENTROID :: [3]f32{0, 1.17, .8475208}
 LIBELLULA_SUSPENSION_CENTER_Z :: f32(1.8475208)
 LIBELLULA_CARRIAGE_OFFSET :: [3]f32{0, -1.1, 1.6475208}
-@(no_instrumentation)
-lib_vnormalize :: #force_inline proc(value: [3]f32) -> [3]f32 {
-    length := linalg.length(value)
-    if length < .00001 do return {0, 1, 0}
-    return value / length
-}
-
-
 libellula_axis_basis :: proc(axis: [3]f32) -> (n, tangent, bitangent: [3]f32) {
-    n = lib_vnormalize(axis)
+    n = linalg.normalize0(axis)
+    if linalg.dot(n, n) < .0000000001 do n = {0, 1, 0}
     reference := [3]f32{0, 1, 0}
     if math.abs(linalg.dot(n, reference)) > .92 do reference = {1, 0, 0}
-    tangent = lib_vnormalize(linalg.cross(reference, n))
-    bitangent = lib_vnormalize(linalg.cross(n, tangent))
+    tangent = linalg.normalize0(linalg.cross(reference, n))
+    if linalg.dot(tangent, tangent) < .0000000001 do tangent = {0, 1, 0}
+    bitangent = linalg.normalize0(linalg.cross(n, tangent))
+    if linalg.dot(bitangent, bitangent) < .0000000001 do bitangent = {0, 1, 0}
     return
 }
 
@@ -561,8 +556,12 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
         libellula_add_beam(mesh, lower_nodes[index], lower_nodes[next], .082, .Lift_Frame)
         libellula_add_beam(mesh, top_nodes[index], lower_nodes[next], .06, .Lift_Frame)
         libellula_add_beam(mesh, top_nodes[index], lower_nodes[index], .074, .Lift_Frame)
-        inward := lib_vnormalize(({LIBELLULA_CENTROID[0], hubs[index][1], LIBELLULA_CENTROID[2]} - hubs[index]))
-        lateral := lib_vnormalize(linalg.cross([3]f32{0, 1, 0}, inward))
+        inward := linalg.normalize0(
+            ([3]f32{LIBELLULA_CENTROID[0], hubs[index][1], LIBELLULA_CENTROID[2]} - hubs[index]),
+        )
+        if linalg.dot(inward, inward) < .0000000001 do inward = {0, 1, 0}
+        lateral := linalg.normalize0(linalg.cross([3]f32{0, 1, 0}, inward))
+        if linalg.dot(lateral, lateral) < .0000000001 do lateral = {0, 1, 0}
         fork_sides := [2]f32{-.16, .16}
         for side in fork_sides {
             libellula_add_beam(
@@ -584,8 +583,10 @@ libellula_mesh_build :: proc(mesh: ^Libellula_Mesh) {
     libellula_add_cylinder(mesh, (manifold + {0, .15, 0}), {0, 1, 0}, .08, .08, .04, 8, .Red_Paint)
     for hub in hubs {
         target := [3]f32{hub[0], .82, hub[2]}
-        direction := lib_vnormalize(target - manifold)
-        side := (lib_vnormalize(linalg.cross([3]f32{0, 1, 0}, direction)) * .045)
+        direction := linalg.normalize0(target - manifold)
+        if linalg.dot(direction, direction) < .0000000001 do direction = {0, 1, 0}
+        side := (linalg.normalize0(linalg.cross([3]f32{0, 1, 0}, direction)) * .045)
+        if linalg.dot(side, side) < .0000000001 do side = {0, 1, 0} * .045
         elbow := ((manifold + (target - manifold) * .54) + {0, -.07, 0})
         libellula_add_beam(mesh, (manifold + side), (elbow + side), .018, .Red_Paint)
         libellula_add_beam(mesh, (elbow + side), (target + side), .018, .Red_Paint)

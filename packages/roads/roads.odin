@@ -1,6 +1,8 @@
 package roads
 
 import "core:math"
+import "core:math/linalg"
+import "core:slice"
 
 MAX_NODES :: 64
 MAX_EDGES :: 128
@@ -8,9 +10,7 @@ MAX_JUNCTION_POINTS :: MAX_EDGES * 2
 EDGE_LANE_COUNT :: 6
 END_CAP_SEGMENTS :: 8
 
-Vec3 :: struct {
-    x, y, z: f32,
-}
+Vec3 :: [3]f32
 
 Node :: struct {
     position:        Vec3,
@@ -94,46 +94,14 @@ default_bake_settings :: proc() -> Bake_Settings {
     return DEFAULT_BAKE_SETTINGS
 }
 
-vec_add :: proc(a, b: Vec3) -> Vec3 {
-    return {a.x + b.x, a.y + b.y, a.z + b.z}
-}
-
-vec_sub :: proc(a, b: Vec3) -> Vec3 {
-    return {a.x - b.x, a.y - b.y, a.z - b.z}
-}
-
-vec_scale :: proc(value: Vec3, scale: f32) -> Vec3 {
-    return {value.x * scale, value.y * scale, value.z * scale}
-}
-
-vec_dot :: proc(a, b: Vec3) -> f32 {
-    return a.x * b.x + a.y * b.y + a.z * b.z
-}
-
-vec_cross :: proc(a, b: Vec3) -> Vec3 {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}
-}
-
-vec_length :: proc(value: Vec3) -> f32 {
-    return f32(math.sqrt(f64(vec_dot(value, value))))
-}
-
-vec_normalize_or :: proc(value, fallback: Vec3) -> Vec3 {
-    length := vec_length(value)
-    if length <= 0.00001 do return fallback
-    return vec_scale(value, 1 / length)
-}
-
-lerp_vec :: proc(a, b: Vec3, amount: f32) -> Vec3 {
-    return vec_add(a, vec_scale(vec_sub(b, a), amount))
-}
-
 add_node :: proc(graph: ^Graph, position: Vec3, junction_radius: f32 = 4, up: Vec3 = {0, 1, 0}) -> int {
     if graph == nil || graph.node_count >= MAX_NODES do return -1
     index := graph.node_count
+    ground_normal := linalg.normalize0(up)
+    if linalg.dot(ground_normal, ground_normal) <= .000001 do ground_normal = {0, 1, 0}
     graph.nodes[index] = {
         position        = position,
-        up              = vec_normalize_or(up, {0, 1, 0}),
+        up              = ground_normal,
         junction_radius = max(junction_radius, f32(0)),
     }
     graph.node_count += 1
@@ -186,8 +154,8 @@ add_straight_edge :: proc(
         graph,
         from,
         to,
-        lerp_vec(start, end, f32(1.0 / 3.0)),
-        lerp_vec(start, end, f32(2.0 / 3.0)),
+        linalg.lerp(start, end, f32(1.0 / 3.0)),
+        linalg.lerp(start, end, f32(2.0 / 3.0)),
         width,
         shoulder_width,
         pavement,
@@ -290,9 +258,11 @@ edge_point :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
     p3 := graph.nodes[edge.to].position
     amount := clamp(t, 0, 1)
     u := 1 - amount
-    return vec_add(
-        vec_add(vec_scale(p0, u * u * u), vec_scale(p1, 3 * u * u * amount)),
-        vec_add(vec_scale(p2, 3 * u * amount * amount), vec_scale(p3, amount * amount * amount)),
+    return(
+        p0 * (u * u * u) +
+        p1 * (3 * u * u * amount) +
+        p2 * (3 * u * amount * amount) +
+        p3 * (amount * amount * amount) \
     )
 }
 
@@ -306,11 +276,13 @@ edge_tangent :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
     p3 := graph.nodes[edge.to].position
     amount := clamp(t, 0, 1)
     u := 1 - amount
-    derivative := vec_add(
-        vec_add(vec_scale(vec_sub(p1, p0), 3 * u * u), vec_scale(vec_sub(p2, p1), 6 * u * amount)),
-        vec_scale(vec_sub(p3, p2), 3 * amount * amount),
-    )
-    return vec_normalize_or(derivative, vec_normalize_or(vec_sub(p3, p0), {1, 0, 0}))
+    derivative := (p1 - p0) * (3 * u * u) + (p2 - p1) * (6 * u * amount) + (p3 - p2) * (3 * amount * amount)
+    tangent := linalg.normalize0(derivative)
+    if linalg.dot(tangent, tangent) <= .000001 {
+        tangent = linalg.normalize0(p3 - p0)
+        if linalg.dot(tangent, tangent) <= .000001 do tangent = {1, 0, 0}
+    }
+    return tangent
 }
 
 pavement_at :: proc(graph: ^Graph, position: Vec3) -> Pavement_Hit {
@@ -366,9 +338,9 @@ edge_control_polygon_length :: proc(graph: ^Graph, edge: Edge) -> f32 {
     p0 := graph.nodes[edge.from].position
     p3 := graph.nodes[edge.to].position
     return(
-        vec_length(vec_sub(edge.control_from, p0)) +
-        vec_length(vec_sub(edge.control_to, edge.control_from)) +
-        vec_length(vec_sub(p3, edge.control_to)) \
+        linalg.length(edge.control_from - p0) +
+        linalg.length(edge.control_to - edge.control_from) +
+        linalg.length(p3 - edge.control_to) \
     )
 }
 
@@ -412,9 +384,12 @@ mesh_quad :: proc(mesh: ^Mesh, a, b, c, d: u32) {
 edge_frame :: proc(graph: ^Graph, edge: Edge, t: f32) -> (center, side, normal: Vec3) {
     center = edge_point(graph, edge, t)
     tangent := edge_tangent(graph, edge, t)
-    up := vec_normalize_or(lerp_vec(graph.nodes[edge.from].up, graph.nodes[edge.to].up, t), {0, 1, 0})
-    side = vec_normalize_or(vec_cross(up, tangent), {-tangent.z, 0, tangent.x})
-    normal = vec_normalize_or(vec_cross(tangent, side), up)
+    up := linalg.normalize0(linalg.lerp(graph.nodes[edge.from].up, graph.nodes[edge.to].up, t))
+    if linalg.dot(up, up) <= .000001 do up = {0, 1, 0}
+    side = linalg.normalize0(linalg.cross(up, tangent))
+    if linalg.dot(side, side) <= .000001 do side = {-tangent.z, 0, tangent.x}
+    normal = linalg.normalize0(linalg.cross(tangent, side))
+    if linalg.dot(normal, normal) <= .000001 do normal = up
     return
 }
 
@@ -448,8 +423,8 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
         fraction := f32(sample) / f32(segment_count)
         t := start_t + (end_t - start_t) * fraction
         center, side, normal := edge_frame(graph, edge, t)
-        center = vec_add(center, vec_scale(normal, settings.surface_lift))
-        if sample > 0 do distance_along += vec_length(vec_sub(center, previous_center))
+        center = center + normal * settings.surface_lift
+        if sample > 0 do distance_along += linalg.length(center - previous_center)
         // A pair of incommensurate waves gives the verge a restrained,
         // hand-shaped silhouette. Only the outer shoulder moves appreciably;
         // the carriageway remains stable for driving and junction welding.
@@ -465,18 +440,12 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
             f32(math.sin(f64(distance_along * .71 + edge_phase * .73))) * min(verge_width * .07, f32(.06))
         sample_fringe_width := sample_outer_width + verge_width + fringe_wobble
         positions := [EDGE_LANE_COUNT]Vec3 {
-            vec_add(
-                vec_sub(center, vec_scale(side, sample_fringe_width)),
-                vec_scale(normal, -settings.shoulder_drop * 1.35),
-            ),
-            vec_add(vec_sub(center, vec_scale(side, sample_outer_width)), vec_scale(normal, -settings.shoulder_drop)),
-            vec_sub(center, vec_scale(side, sample_road_width)),
-            vec_add(center, vec_scale(side, sample_road_width)),
-            vec_add(vec_add(center, vec_scale(side, sample_outer_width)), vec_scale(normal, -settings.shoulder_drop)),
-            vec_add(
-                vec_add(center, vec_scale(side, sample_fringe_width)),
-                vec_scale(normal, -settings.shoulder_drop * 1.35),
-            ),
+            center - side * sample_fringe_width - normal * (settings.shoulder_drop * 1.35),
+            center - side * sample_outer_width - normal * settings.shoulder_drop,
+            center - side * sample_road_width,
+            center + side * sample_road_width,
+            center + side * sample_outer_width - normal * settings.shoulder_drop,
+            center + side * sample_fringe_width - normal * (settings.shoulder_drop * 1.35),
         }
         current: [EDGE_LANE_COUNT]u32
         for lane in 0 ..< EDGE_LANE_COUNT {
@@ -539,7 +508,7 @@ junction_add_edge_points :: proc(
         // Matching angular order lets the junction extend the carriageway,
         // shoulder, and feathered verge through the same welded topology.
         point := mesh.vertices[road_index].position
-        delta := vec_sub(point, graph.nodes[node_index].position)
+        delta := point - graph.nodes[node_index].position
         points[count^] = {
             position       = point,
             angle          = math.atan2(delta.z, delta.x),
@@ -564,20 +533,22 @@ bake_end_cap :: proc(
     endpoint := at_start ? 0 : 1
     boundary := boundaries[endpoint]
     node := graph.nodes[node_index]
-    normal := vec_normalize_or(node.up, {0, 1, 0})
-    center_position := vec_add(node.position, vec_scale(normal, settings.surface_lift + .002))
+    normal := linalg.normalize0(node.up)
+    if linalg.dot(normal, normal) <= .000001 do normal = {0, 1, 0}
+    center_position := node.position + normal * (settings.surface_lift + .002)
     tangent := edge_tangent(graph, edge, at_start ? 0 : 1)
-    outward := at_start ? vec_scale(tangent, -1) : tangent
+    outward := at_start ? -tangent : tangent
     left_road := mesh.vertices[boundary[2]].position
     right_road := mesh.vertices[boundary[3]].position
-    side := vec_normalize_or(vec_sub(right_road, left_road), {0, 0, 1})
+    side := linalg.normalize0(right_road - left_road)
+    if linalg.dot(side, side) <= .000001 do side = {0, 0, 1}
 
-    left_road_radius := vec_length(vec_sub(left_road, center_position))
-    right_road_radius := vec_length(vec_sub(right_road, center_position))
-    left_shoulder_radius := vec_length(vec_sub(mesh.vertices[boundary[1]].position, center_position))
-    right_shoulder_radius := vec_length(vec_sub(mesh.vertices[boundary[4]].position, center_position))
-    left_verge_radius := vec_length(vec_sub(mesh.vertices[boundary[0]].position, center_position))
-    right_verge_radius := vec_length(vec_sub(mesh.vertices[boundary[5]].position, center_position))
+    left_road_radius := linalg.length(left_road - center_position)
+    right_road_radius := linalg.length(right_road - center_position)
+    left_shoulder_radius := linalg.length(mesh.vertices[boundary[1]].position - center_position)
+    right_shoulder_radius := linalg.length(mesh.vertices[boundary[4]].position - center_position)
+    left_verge_radius := linalg.length(mesh.vertices[boundary[0]].position - center_position)
+    right_verge_radius := linalg.length(mesh.vertices[boundary[5]].position - center_position)
 
     road_arc: [END_CAP_SEGMENTS + 1]u32
     shoulder_arc: [END_CAP_SEGMENTS + 1]u32
@@ -585,7 +556,7 @@ bake_end_cap :: proc(
     for sample in 0 ..= END_CAP_SEGMENTS {
         fraction := f32(sample) / f32(END_CAP_SEGMENTS)
         angle := fraction * math.PI
-        direction := vec_add(vec_scale(side, -math.cos(angle)), vec_scale(outward, math.sin(angle)))
+        direction := side * -math.cos(angle) + outward * math.sin(angle)
         if sample == 0 {
             road_arc[sample] = boundary[2]
             shoulder_arc[sample] = boundary[1]
@@ -599,21 +570,21 @@ bake_end_cap :: proc(
             shoulder_radius := left_shoulder_radius + (right_shoulder_radius - left_shoulder_radius) * fraction
             verge_radius := left_verge_radius + (right_verge_radius - left_verge_radius) * fraction
             road_arc[sample] = mesh_vertex(mesh, {
-                position = vec_add(center_position, vec_scale(direction, road_radius)),
+                position = center_position + direction * road_radius,
                 normal   = normal,
                 uv       = {.335 + fraction * .33, 0},
                 surface  = .Road,
                 pavement = edge.pavement,
             })
             shoulder_arc[sample] = mesh_vertex(mesh, {
-                position = vec_add(center_position, vec_scale(direction, shoulder_radius)),
+                position = center_position + direction * shoulder_radius,
                 normal   = normal,
                 uv       = {.20 + fraction * .60, 0},
                 surface  = .Shoulder,
                 pavement = edge.pavement,
             })
             verge_arc[sample] = mesh_vertex(mesh, {
-                position = vec_add(center_position, vec_scale(direction, verge_radius)),
+                position = center_position + direction * verge_radius,
                 normal   = normal,
                 uv       = {fraction, 0},
                 surface  = .Verge,
@@ -630,18 +601,6 @@ bake_end_cap :: proc(
         mesh_triangle(mesh, center, road_arc[segment], road_arc[segment + 1])
         mesh_quad(mesh, road_arc[segment], shoulder_arc[segment], shoulder_arc[segment + 1], road_arc[segment + 1])
         mesh_quad(mesh, shoulder_arc[segment], verge_arc[segment], verge_arc[segment + 1], shoulder_arc[segment + 1])
-    }
-}
-
-junction_sort :: proc(points: ^[MAX_JUNCTION_POINTS]Junction_Point, count: int) {
-    for index in 1 ..< count {
-        value := points[index]
-        cursor := index
-        for cursor > 0 && points[cursor - 1].angle > value.angle {
-            points[cursor] = points[cursor - 1]
-            cursor -= 1
-        }
-        points[cursor] = value
     }
 }
 
@@ -668,9 +627,10 @@ bake_junction :: proc(
         }
     }
     if point_count < 2 do return
-    junction_sort(&points, point_count)
+    slice.stable_sort_by(points[:point_count], proc(a, b: Junction_Point) -> bool { return a.angle < b.angle })
     node := graph.nodes[node_index]
-    normal := vec_normalize_or(node.up, {0, 1, 0})
+    normal := linalg.normalize0(node.up)
+    if linalg.dot(normal, normal) <= .000001 do normal = {0, 1, 0}
     pavement := Pavement.Asphalt
     widest: f32 = -1
     for edge in graph.edges[:graph.edge_count] {
@@ -679,7 +639,7 @@ bake_junction :: proc(
             pavement = edge.pavement
         }
     }
-    center_position := vec_add(node.position, vec_scale(normal, settings.surface_lift + .002))
+    center_position := node.position + normal * (settings.surface_lift + .002)
     center := mesh_vertex(
         mesh,
         {position = center_position, normal = normal, uv = {.5, .5}, surface = .Junction, pavement = pavement},

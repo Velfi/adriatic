@@ -1,6 +1,7 @@
 package wireframe
 
 import "core:math"
+import "core:math/linalg"
 
 Color :: struct {
     r, g, b: u8,
@@ -34,8 +35,6 @@ Screen_Vertex :: struct {
 clamp_f32 :: proc(value, low, high: f32) -> f32 {if value < low do return low; if value > high do return high
     return value}
 lerp :: proc(a, b, t: f32) -> f32 { return a + (b - a) * clamp_f32(t, 0, 1) }
-dot :: proc(a, b: [3]f32) -> f32 { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
-sub :: proc(a, b: [3]f32) -> [3]f32 { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]} }
 abs_f32 :: proc(value: f32) -> f32 { if value < 0 do return -value; return value }
 round_i32 :: proc(value: f32) -> int { if value >= 0 do return int(value + .5); return int(value - .5) }
 
@@ -60,11 +59,11 @@ clear :: proc(target: ^Target, color: Color) {
 }
 
 project :: proc(camera: Camera, vertex: Vertex, width, height: int) -> Screen_Vertex {
-    view := sub(vertex.position, camera.position)
-    depth := dot(view, camera.forward)
+    view := vertex.position - camera.position
+    depth := linalg.dot(view, camera.forward)
     if depth <= max_f32(camera.near_plane, .0001) do return {}
-    x := dot(view, camera.right) * camera.focal_length / depth
-    y := dot(view, camera.up) * camera.focal_length / depth
+    x := linalg.dot(view, camera.right) * camera.focal_length / depth
+    y := linalg.dot(view, camera.up) * camera.focal_length / depth
     return {
         x = (x * .5 + .5) * f32(width - 1),
         y = (.5 - y * .5) * f32(height - 1),

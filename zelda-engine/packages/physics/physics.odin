@@ -221,7 +221,7 @@ create_vehicle :: proc(
     return zelda_physics_vehicle_create(world, &settings_value, &position_value, &rotation_value, user_data)
 }
 
-destroy_vehicle :: proc(world: World, vehicle: Vehicle) {zelda_physics_vehicle_destroy(world, vehicle)}
+destroy_vehicle :: proc(world: World, vehicle: Vehicle) { zelda_physics_vehicle_destroy(world, vehicle) }
 set_vehicle_input :: proc(world: World, vehicle: Vehicle, forward, steering, brake, handbrake: f32) {
     zelda_physics_vehicle_set_input(world, vehicle, forward, steering, brake, handbrake)
 }

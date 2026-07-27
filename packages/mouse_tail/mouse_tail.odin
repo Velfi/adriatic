@@ -4,6 +4,7 @@ import roads "../roads"
 import terrain "../terrain"
 import third_person "../third_person"
 import "core:math"
+import "core:math/linalg"
 
 // Thirteen shorter links preserve the original 2.04 m authored length while
 // giving the rendered centerline enough resolution to form a smooth curve.
@@ -49,40 +50,18 @@ default_config :: proc() -> Config {
     }
 }
 
-add :: proc(a, b: third_person.Vec3) -> third_person.Vec3 {
-    return {a.x + b.x, a.y + b.y, a.z + b.z}
-}
-
-subtract :: proc(a, b: third_person.Vec3) -> third_person.Vec3 {
-    return {a.x - b.x, a.y - b.y, a.z - b.z}
-}
-
-scale :: proc(value: third_person.Vec3, amount: f32) -> third_person.Vec3 {
-    return {value.x * amount, value.y * amount, value.z * amount}
-}
-
-length_squared :: proc(value: third_person.Vec3) -> f32 {
-    return value.x * value.x + value.y * value.y + value.z * value.z
-}
-
-normalize_or :: proc(value, fallback: third_person.Vec3) -> third_person.Vec3 {
-    squared := length_squared(value)
-    if squared <= .000001 do return fallback
-    inverse := 1 / f32(math.sqrt(f64(squared)))
-    return scale(value, inverse)
-}
-
 reset :: proc(state: ^State, root, backward: third_person.Vec3, config: Config) {
     if state == nil do return
-    direction := normalize_or({backward.x, -.22, backward.z}, third_person.Vec3{0, 0, 1})
-    side := third_person.Vec3 {direction.z, 0, -direction.x}
+    direction := linalg.normalize0(third_person.Vec3{backward.x, -.22, backward.z})
+    if linalg.dot(direction, direction) <= .000001 do direction = {0, 0, 1}
+    side := third_person.Vec3{direction.z, 0, -direction.x}
     segment_length := max(config.segment_length, f32(.02))
     for index in 0 ..< POINT_COUNT {
         distance := f32(index) * segment_length
         weight := f32(index) / f32(POINT_COUNT - 1)
         authored_length := segment_length * f32(POINT_COUNT - 1)
         curl := math.sin(weight * 3.36) * authored_length * .04 * weight
-        position := add(add(root, scale(direction, distance)), scale(side, curl))
+        position := root + direction * distance + side * curl
         state.points[index] = {
             position = position,
             previous = position,
@@ -93,37 +72,34 @@ reset :: proc(state: ^State, root, backward: third_person.Vec3, config: Config) 
 }
 
 constrain_distance :: proc(a, b: ^Point, target, a_weight, b_weight: f32) {
-    delta := subtract(b.position, a.position)
-    distance_squared := length_squared(delta)
+    delta := b.position - a.position
+    distance_squared := linalg.dot(delta, delta)
     if distance_squared <= .0000001 do return
-    distance := f32(math.sqrt(f64(distance_squared)))
-    correction := scale(delta, (distance - target) / distance)
+    distance := linalg.length(delta)
+    correction := delta * ((distance - target) / distance)
     weight_sum := a_weight + b_weight
     if weight_sum <= 0 do return
-    a.position = add(a.position, scale(correction, a_weight / weight_sum))
-    b.position = subtract(b.position, scale(correction, b_weight / weight_sum))
+    a.position += correction * (a_weight / weight_sum)
+    b.position -= correction * (b_weight / weight_sum)
 }
 
 constrain_bend :: proc(a, b: ^Point, target, stiffness: f32, a_fixed: bool) {
-    delta := subtract(b.position, a.position)
-    distance_squared := length_squared(delta)
+    delta := b.position - a.position
+    distance_squared := linalg.dot(delta, delta)
     if distance_squared <= .0000001 do return
-    distance := f32(math.sqrt(f64(distance_squared)))
-    correction := scale(delta, (distance - target) / distance * clamp(stiffness, 0, 1))
+    distance := linalg.length(delta)
+    correction := delta * ((distance - target) / distance * clamp(stiffness, 0, 1))
     if a_fixed {
-        b.position = subtract(b.position, correction)
+        b.position -= correction
     } else {
-        a.position = add(a.position, scale(correction, .5))
-        b.position = subtract(b.position, scale(correction, .5))
+        a.position += correction * .5
+        b.position -= correction * .5
     }
 }
 
 resolve_terrain :: proc(point: ^Point, project: ^terrain.Project, radius, friction: f32) {
     surface_height := terrain.sample_height(project, 0, point.position.x, point.position.z)
-    pavement := roads.pavement_at(
-        &project.road_graph,
-        {point.position.x, point.position.y, point.position.z},
-    )
+    pavement := roads.pavement_at(&project.road_graph, {point.position.x, point.position.y, point.position.z})
     // Rendered road crowns sit 12 cm above the terrain heightfield. Treat that
     // presentation lift as physical support so a grounded tail rests on the
     // pavement instead of disappearing beneath it.
@@ -204,7 +180,7 @@ step :: proc(
     delta_seconds: f32,
 ) {
     if state == nil || project == nil do return
-    if !state.initialized || length_squared(subtract(root, state.last_root)) > 4 {
+    if !state.initialized || linalg.dot(root - state.last_root, root - state.last_root) > 4 {
         reset(state, root, backward, config)
     }
     if delta_seconds <= 0 {
@@ -222,7 +198,8 @@ step :: proc(
     dt_squared := dt * dt
     damping := clamp(config.damping, 0, 1)
     segment_length := max(config.segment_length, f32(.02))
-    backward_direction := normalize_or({backward.x, 0, backward.z}, third_person.Vec3{0, 0, 1})
+    backward_direction := linalg.normalize0(third_person.Vec3{backward.x, 0, backward.z})
+    if linalg.dot(backward_direction, backward_direction) <= .000001 do backward_direction = {0, 0, 1}
 
     for _ in 0 ..< substeps {
         state.points[0] = {
@@ -235,20 +212,17 @@ step :: proc(
             // it a separate damper so running does not excite a visible
             // high-frequency shake through the rest of the chain.
             point_damping := index == 1 ? clamp(config.root_damping, 0, 1) : damping
-            velocity := scale(subtract(point.position, point.previous), point_damping)
+            velocity := (point.position - point.previous) * point_damping
             point.previous = point.position
-            point.position = add(add(point.position, velocity), {0, -max(config.gravity, f32(0)) * dt_squared, 0})
+            point.position += velocity + {0, -max(config.gravity, f32(0)) * dt_squared, 0}
         }
 
         // Apply the rump's heading once per substep. Reapplying this inside
         // every solver iteration makes the first link snap toward the target
         // repeatedly and shows up as a shake while running.
-        desired_first := add(root, scale(backward_direction, segment_length))
+        desired_first := root + backward_direction * segment_length
         root_stiffness := clamp(config.root_stiffness, 0, 1)
-        state.points[1].position = add(
-            state.points[1].position,
-            scale(subtract(desired_first, state.points[1].position), root_stiffness),
-        )
+        state.points[1].position += (desired_first - state.points[1].position) * root_stiffness
 
         for _ in 0 ..< iterations {
             state.points[0].position = root

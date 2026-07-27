@@ -13,14 +13,14 @@ postale_ocean_is_a_drivable_surface_for_now :: proc(t: ^testing.T) {
 
 @(test)
 postale_throttle_and_automatic_flaps_are_smoothed :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     postale.step(&runtime, {throttle_up = true}, 0, .5)
     testing.expect(t, runtime.throttle > 0 && runtime.throttle < 1)
     testing.expect(t, runtime.flap_fraction == 1)
     runtime.grounded = false
     runtime.body.position.y = 20
     runtime.throttle = 1
-    runtime.body.velocity = flight.scale(runtime.body.basis.forward, 35)
+    runtime.body.velocity = runtime.body.basis.forward * 35
     postale.step(&runtime, {}, 0, .5)
     testing.expect(t, runtime.flap_fraction < 1)
 }
@@ -34,7 +34,7 @@ postale_virtual_yoke_has_a_dead_zone_and_clamps :: proc(t: ^testing.T) {
 
 @(test)
 postale_ground_contact_distinguishes_landings_from_crashes :: proc(t: ^testing.T) {
-    safe := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    safe := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     safe.was_grounded = false
     safe.grounded = false
     safe.body.position.y = 0
@@ -43,7 +43,7 @@ postale_ground_contact_distinguishes_landings_from_crashes :: proc(t: ^testing.T
     testing.expect(t, result.touched_down && result.grounded && !result.crashed)
     testing.expect(t, safe.body.position.y == postale.GROUND_CLEARANCE)
 
-    hard := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    hard := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     hard.was_grounded = false
     hard.grounded = false
     hard.body.position.y = 0
@@ -54,11 +54,9 @@ postale_ground_contact_distinguishes_landings_from_crashes :: proc(t: ^testing.T
 
 @(test)
 postale_exit_requires_a_safe_stop :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     testing.expect(t, postale.can_exit(&runtime))
-    runtime.body.velocity = {
-        x = 2,
-    }
+    runtime.body.velocity = {2, 0, 0}
     testing.expect(t, !postale.can_exit(&runtime))
     runtime.body.velocity = {}
     runtime.grounded = false
@@ -67,7 +65,7 @@ postale_exit_requires_a_safe_stop :: proc(t: ^testing.T) {
 
 @(test)
 postale_accelerates_and_leaves_the_short_runway :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     takeoff_distance: f32
     took_off := false
     for _ in 0 ..< 420 {
@@ -84,7 +82,7 @@ postale_accelerates_and_leaves_the_short_runway :: proc(t: ^testing.T) {
 
 @(test)
 postale_requires_rotation_input_to_take_off :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     for _ in 0 ..< 360 {
         postale.step(&runtime, {throttle_up = true}, 0, 1.0 / 60.0)
     }
@@ -94,12 +92,12 @@ postale_requires_rotation_input_to_take_off :: proc(t: ^testing.T) {
 
 @(test)
 postale_does_not_bounce_back_into_flight_on_touchdown :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = postale.GROUND_CLEARANCE})
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     runtime.grounded = false
     runtime.was_grounded = false
     runtime.throttle = 1
     runtime.pitch = 1
-    runtime.body.velocity = flight.scale(runtime.body.basis.forward, 30)
+    runtime.body.velocity = runtime.body.basis.forward * 30
     runtime.body.velocity.y = -1
     runtime.body.position.y = postale.GROUND_CLEARANCE
 
@@ -117,10 +115,10 @@ postale_does_not_bounce_back_into_flight_on_touchdown :: proc(t: ^testing.T) {
 
 @(test)
 postale_sustained_roll_input_establishes_a_bank :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = 80})
+    runtime := postale.new_runtime(flight.Vec3{0, 80, 0})
     runtime.grounded = false
     runtime.was_grounded = false
-    runtime.body.velocity = flight.scale(runtime.body.basis.forward, 42)
+    runtime.body.velocity = runtime.body.basis.forward * 42
     for _ in 0 ..< 45 {
         postale.step(&runtime, {roll = .7}, 0, 1.0 / 60.0)
     }
@@ -129,10 +127,10 @@ postale_sustained_roll_input_establishes_a_bank :: proc(t: ^testing.T) {
 
 @(test)
 postale_rudder_engages_and_releases_without_snapping :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({y = 80})
+    runtime := postale.new_runtime(flight.Vec3{0, 80, 0})
     runtime.grounded = false
     runtime.was_grounded = false
-    runtime.body.velocity = flight.scale(runtime.body.basis.forward, 42)
+    runtime.body.velocity = runtime.body.basis.forward * 42
     postale.step(&runtime, {yaw = 1}, 0, 1.0 / 60.0)
     engaged := runtime.yaw
     testing.expect(t, engaged > 0 && engaged < 1)
@@ -142,14 +140,9 @@ postale_rudder_engages_and_releases_without_snapping :: proc(t: ^testing.T) {
 
 @(test)
 postale_reset_restores_the_runway_state :: proc(t: ^testing.T) {
-    runtime := postale.new_runtime({x = 4, y = postale.GROUND_CLEARANCE, z = 2})
-    runtime.body.position = {
-        x = 99,
-        y = -5,
-    }
-    runtime.body.velocity = {
-        x = 12,
-    }
+    runtime := postale.new_runtime(flight.Vec3{4, postale.GROUND_CLEARANCE, 2})
+    runtime.body.position = {99, -5, 0}
+    runtime.body.velocity = {12, 0, 0}
     runtime.throttle = 1
     runtime.crashed = true
     postale.reset(&runtime, 3)

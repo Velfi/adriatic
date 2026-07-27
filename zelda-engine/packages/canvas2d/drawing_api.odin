@@ -51,7 +51,7 @@ SetWindowMinSize :: proc(width, height: i32) {_ = render2d.sdl_window_set_minimu
         width,
         height,
     )}
-SetWindowSize :: proc(width, height: i32) {_ = render2d.sdl_window_set_size(&state.platform_window, width, height)}
+SetWindowSize :: proc(width, height: i32) { _ = render2d.sdl_window_set_size(&state.platform_window, width, height) }
 SetTargetFPS :: proc(fps: i32) {  }
 GetScreenWidth :: proc() -> i32 {if width, height, ok := render2d.sdl_window_size(&state.platform_window); ok do state.width, state.height = width, height
     return state.width}
@@ -123,7 +123,9 @@ GetMousePinchScale :: proc() -> f32 { return state.mouse_pinch_scale }
 IsMouseButtonPressed :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return(
         state.mouse_pressed[int(button)] \
     )}
-IsMouseButtonDown :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return state.mouse_down[int(button)]}
+IsMouseButtonDown :: proc(button: MouseButton) -> bool { assert(button != .COUNT); return(
+        state.mouse_down[int(button)] \
+    ) }
 IsMouseButtonReleased :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return(
         state.mouse_released[int(button)] \
     )}
@@ -341,7 +343,10 @@ EndScissorMode :: proc() { state.clip_enabled = false; state.clip = {} }
 ButtonBehavior :: proc(id: int, r: Rectangle, enabled: bool) -> Button_Interaction {gui_id := ui.Gui_Id(id + 1)
     activated := ui.gui_button_behavior(&state.gui, gui_id, {r.x, r.y, r.width, r.height}, enabled)
     return {activated, state.gui.hot == gui_id, state.gui.focused == gui_id}}
-DrawRectangle :: proc(x, y, width, height: i32, color: Color) {rect({f32(x), f32(y), f32(width), f32(height)}, color)}
+DrawRectangle :: proc(x, y, width, height: i32, color: Color) { rect(
+        {f32(x), f32(y), f32(width), f32(height)},
+        color,
+    ) }
 DrawRectangleRec :: proc(r: Rectangle, color: Color) { rect(r, color) }
 // A material-space quad for projected procedural geometry. UVs remain attached
 // to the supplied corners while the hatch offset/rotation can be aligned to a
@@ -354,7 +359,7 @@ DrawQuadHatched :: proc(a, b, c, d: Vector2, color: Color, config := default_hat
     quad_config.edge_softness = 0
     quad(transform(a), transform(b), transform(c), transform(d), color, {0, 0}, {1, 1}, -1, quad_config)
 }
-DrawRectangleRounded :: proc(r: Rectangle, roundness: f32, segments: i32, color: Color) {rect(r, color)}
+DrawRectangleRounded :: proc(r: Rectangle, roundness: f32, segments: i32, color: Color) { rect(r, color) }
 DrawRectangleRoundedLinesEx :: proc(r: Rectangle, roundness: f32, segments: i32, thickness: f32, color: Color) {rect(
         {r.x, r.y, r.width, thickness},
         color,

@@ -5,11 +5,11 @@ import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
+import "core:math/linalg"
 import "core:testing"
 
 tail_distance :: proc(a, b: third_person.Vec3) -> f32 {
-    dx, dy, dz := b.x - a.x, b.y - a.y, b.z - a.z
-    return math.sqrt(dx * dx + dy * dy + dz * dz)
+    return linalg.length(b - a)
 }
 
 @(test)
@@ -27,13 +27,9 @@ mouse_tail_keeps_its_segments_connected :: proc(t: ^testing.T) {
     terrain.init_project(project)
     state: mouse_tail.State
     config := mouse_tail.default_config()
-    root := third_person.Vec3 {
-        x = 0,
-        y = 8,
-        z = 0,
-    }
+    root := third_person.Vec3{0, 8, 0}
     for _ in 0 ..< 90 {
-        mouse_tail.step(&state, root, {z = 1}, project, config, 1.0 / 60.0)
+        mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
     }
     for index in 0 ..< mouse_tail.POINT_COUNT - 1 {
         distance := tail_distance(state.points[index].position, state.points[index + 1].position)
@@ -47,18 +43,14 @@ mouse_tail_collides_with_terrain :: proc(t: ^testing.T) {
     defer free(project)
     terrain.init_project(project)
     config := mouse_tail.default_config()
-    root := third_person.Vec3 {
-        x = 0,
-        y = .5,
-        z = 0,
-    }
+    root := third_person.Vec3{0, .5, 0}
     state: mouse_tail.State
-    mouse_tail.reset(&state, root, {z = 1}, config)
+    mouse_tail.reset(&state, root, {0, 0, 1}, config)
     for index in 1 ..< mouse_tail.POINT_COUNT {
         state.points[index].position.y = -10
         state.points[index].previous.y = -10
     }
-    mouse_tail.step(&state, root, {z = 1}, project, config, 1.0 / 60.0)
+    mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
     for index in 1 ..< mouse_tail.POINT_COUNT {
         point := state.points[index].position
         floor := terrain.sample_height(project, 0, point.x, point.z) + config.radius + mouse_tail.TERRAIN_CONTACT_SKIN
@@ -76,8 +68,8 @@ mouse_tail_rests_on_rendered_road_crown :: proc(t: ^testing.T) {
     _ = roads.add_straight_edge(&project.road_graph, from, to, 2)
     config := mouse_tail.default_config()
     point := mouse_tail.Point {
-        position = {x = 0, y = -1, z = 0},
-        previous = {x = 0, y = -1, z = 0},
+        position = {0, -1, 0},
+        previous = {0, -1, 0},
     }
     mouse_tail.resolve_terrain(&point, project, config.radius, config.surface_friction)
     terrain_height := terrain.sample_height(project, 0, 0, 0)
@@ -96,22 +88,14 @@ mouse_tail_collides_with_solid_formations :: proc(t: ^testing.T) {
     structure.kind = .Box
     _ = terrain.add_structure(project, structure)
     config := mouse_tail.default_config()
-    root := third_person.Vec3 {
-        x = 0,
-        y = 1.5,
-        z = -1.2,
-    }
+    root := third_person.Vec3{0, 1.5, -1.2}
     state: mouse_tail.State
-    mouse_tail.reset(&state, root, {z = 1}, config)
+    mouse_tail.reset(&state, root, {0, 0, 1}, config)
     for index in 1 ..< mouse_tail.POINT_COUNT {
-        state.points[index].position = {
-            x = 0,
-            y = .5,
-            z = 0,
-        }
+        state.points[index].position = {0, .5, 0}
         state.points[index].previous = state.points[index].position
     }
-    mouse_tail.step(&state, root, {z = 1}, project, config, 1.0 / 60.0)
+    mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
     for index in 1 ..< mouse_tail.POINT_COUNT {
         point := state.points[index].position
         inside :=

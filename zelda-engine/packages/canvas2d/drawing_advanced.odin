@@ -224,7 +224,7 @@ CheckCollisionPointRec :: proc(p: Vector2, r: Rectangle) -> bool {return(
         p.y >= r.y &&
         p.y <= r.y + r.height \
     )}
-LoadFontEx :: proc(path: cstring, size: i32, codepoints: [^]rune, count: i32) -> Font {return {state.initialized}}
+LoadFontEx :: proc(path: cstring, size: i32, codepoints: [^]rune, count: i32) -> Font { return {state.initialized} }
 FontAdvanceEm :: proc() -> f32 { return state.font_advance_em }
 UnloadFont :: proc(font: Font) {  }
 font_glyph_slot :: proc(ch: rune) -> int {
@@ -391,7 +391,7 @@ DrawTextureProRotated :: proc(
         destination.x +
         destination.width *
             .5; cy := destination.y + destination.height * .5; hw := destination.width * .5; hh := destination.height * .5; c := f32(math.cos(f64(rotation))); s := f32(math.sin(f64(rotation)))
-    rotate_point :: proc(x, y, cx, cy, c, s: f32) -> Vector2 {return {cx + x * c - y * s, cy + x * s + y * c}}
+    rotate_point :: proc(x, y, cx, cy, c, s: f32) -> Vector2 { return {cx + x * c - y * s, cy + x * s + y * c} }
     a := transform(
         rotate_point(-hw, -hh, cx, cy, c, s),
     ); b := transform(rotate_point(hw, -hh, cx, cy, c, s)); cc := transform(rotate_point(hw, hh, cx, cy, c, s)); d := transform(rotate_point(-hw, hh, cx, cy, c, s)); quad(a, b, cc, d, tint, uv0, uv1, texture.id)

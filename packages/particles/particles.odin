@@ -339,7 +339,11 @@ step_wing_trails :: proc(
     strength := clamp((airspeed - 12) / 34, 0, 1) * (1 + wind_speed * .025)
     trails.spawn += dt * strength * 72
     trails_curve := wind.x * forward.z - wind.z * forward.x
-    trails_right := Vec3 {forward.y * up.z - forward.z * up.y, forward.z * up.x - forward.x * up.z, forward.x * up.y - forward.y * up.x}
+    trails_right := Vec3 {
+        forward.y * up.z - forward.z * up.y,
+        forward.z * up.x - forward.x * up.z,
+        forward.x * up.y - forward.y * up.x,
+    }
     for trails.spawn >= 1 {
         for side in 0 ..< 2 {
             if trails.count >= MAX_WING_TRAIL_PARTICLES do break

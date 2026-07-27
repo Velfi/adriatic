@@ -115,19 +115,17 @@ mock_create :: proc(data: rawptr, width, height: i32) -> bool {
     state.created = width > 0 && height > 0
     return state.created
 }
-mock_resize :: proc(data: rawptr, width, height: i32) -> bool { state := cast(^Mock_Backend_State)data; state.resized =
+mock_resize :: proc(data: rawptr, width, height: i32) -> bool {state := cast(^Mock_Backend_State)data; state.resized =
         true
-    return true }
+    return true}
 mock_begin :: proc(data: rawptr) -> bool { state := cast(^Mock_Backend_State)data; state.begun = true; return true }
-mock_submit :: proc(data: rawptr) -> bool { state := cast(^Mock_Backend_State)data; state.submitted = true; return(
-        true \
-    ) }
-mock_texture :: proc(data: rawptr, texture: Texture, pixels: []u8) -> bool { state := cast(^Mock_Backend_State)data
+mock_submit :: proc(data: rawptr) -> bool {state := cast(^Mock_Backend_State)data; state.submitted = true; return true}
+mock_texture :: proc(data: rawptr, texture: Texture, pixels: []u8) -> bool {state := cast(^Mock_Backend_State)data
     state.texture_updated = true
-    return true }
-mock_screenshot :: proc(data: rawptr, path: string) -> bool { state := cast(^Mock_Backend_State)data
+    return true}
+mock_screenshot :: proc(data: rawptr, path: string) -> bool {state := cast(^Mock_Backend_State)data
     state.screenshot = true
-    return true }
+    return true}
 mock_destroy :: proc(data: rawptr) { state := cast(^Mock_Backend_State)data; state.destroyed = true }
 
 @(test)

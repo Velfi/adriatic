@@ -3,6 +3,7 @@ package chase_camera
 import flight "../flight"
 import third_person "../third_person"
 import "core:math"
+import "core:math/linalg"
 
 FOLLOW_DISTANCE :: f32(6.5)
 FOLLOW_HEIGHT :: f32(7.5)
@@ -104,14 +105,8 @@ shake_pose :: proc(pose: third_person.Camera_Pose, target: Target, phase, intens
     side := f32(math.sin(f64(phase * 1.73))) * amplitude
     lift := f32(math.sin(f64(phase * 2.41 + 1.2))) * amplitude * .62
     pulse := f32(math.sin(f64(phase * .79 + .4))) * amplitude * .18
-    position_offset := flight.add(
-        flight.add(flight.scale(target.basis.right, side), flight.scale(target.basis.up, lift)),
-        flight.scale(target.basis.forward, pulse),
-    )
-    target_offset := flight.add(
-        flight.scale(target.basis.right, side * .28),
-        flight.scale(target.basis.up, lift * .22),
-    )
+    position_offset := target.basis.right * side + target.basis.up * lift + target.basis.forward * pulse
+    target_offset := target.basis.right * (side * .28) + target.basis.up * (lift * .22)
     result := pose
     result.position = result.position + to_third_person(position_offset)
     result.target = result.target + to_third_person(target_offset)
@@ -136,23 +131,18 @@ box_flyby_strength :: proc(position, center, half_extent: flight.Vec3, rotation,
 
 desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_person.Camera_Pose {
     forward := horizontal_forward(target.basis)
-    behind := rotate_y(flight.scale(forward, -1), orbit_yaw)
+    behind := rotate_y(-forward, orbit_yaw)
     framing_camera, framing_focus := vertical_framing(target.basis.forward.y)
-    position := flight.add(
-        flight.add(target.position, flight.scale(behind, FOLLOW_DISTANCE)),
-        {y = FOLLOW_HEIGHT + framing_camera + orbit_pitch * 8},
-    )
+    position := target.position + behind * FOLLOW_DISTANCE + {0, FOLLOW_HEIGHT + framing_camera + orbit_pitch * 8, 0}
     right := target.basis.right
     right.y = 0
-    right = flight.normalize(right)
+    right = linalg.normalize0(right)
     look_ahead := LOOK_AHEAD + clamp(target.airspeed / 18, 0, 4)
-    focus := flight.add(
-        flight.add(target.position, flight.scale(forward, look_ahead)),
-        flight.add(
-            flight.scale(right, clamp(-target.roll_input * 3.2, -3.2, 3.2)),
-            {y = FOCUS_HEIGHT + framing_focus + (target.grounded ? -.35 : 0)},
-        ),
-    )
+    focus :=
+        target.position +
+        forward * look_ahead +
+        right * clamp(-target.roll_input * 3.2, -3.2, 3.2) +
+        {0, FOCUS_HEIGHT + framing_focus + (target.grounded ? -.35 : 0), 0}
     return {position = to_third_person(position), target = to_third_person(focus)}
 }
 
@@ -174,11 +164,11 @@ focal_length_for_fov :: proc(fov_degrees: f32) -> f32 {
 horizontal_forward :: proc(basis: flight.Basis) -> flight.Vec3 {
     forward := basis.forward
     forward.y = 0
-    if flight.length(forward) > .001 do return flight.normalize(forward)
+    if linalg.length(forward) > .001 do return linalg.normalize0(forward)
     right := basis.right
     right.y = 0
-    if flight.length(right) <= .001 do return {z = -1}
-    right = flight.normalize(right)
+    if linalg.length(right) <= .001 do return {0, 0, -1}
+    right = linalg.normalize0(right)
     return {-right.z, 0, right.x}
 }
 

@@ -27,6 +27,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:time"
 import sdl "vendor:sdl3"
@@ -294,43 +295,43 @@ Fixture :: struct {
 }
 
 Editor :: struct {
-    using fixture:                      Fixture,
-    flame_graph:                        dio.Flame_Graph,
-    last_frame_time:                    f64,
-    aircraft_fixed_accumulator:         f64,
-    aircraft_previous_body:             flight.Body_State,
-    aircraft_previous_body_valid:       bool,
-    greek_assets:                       [GREEK_ASSET_CAPACITY]Greek_Asset,
-    greek_asset_count:                  int,
-    car_physics_world:                  physics.World,
-    car_physics_vehicle:                physics.Vehicle,
-    car_physics_terrain:                [terrain.CLIPMAP_LEVELS]physics.Body_ID,
-    car_physics_terrain_revision:       u64,
-    car_physics_accumulator:            f64,
-    car_wheels:                         [4]physics.Wheel_State,
-    car_impact_detector:                engine_sound.Vehicle_Impact_Detector,
-    car_audio_damage:                   f32,
-    engine_audio:                       engine_sound.Device,
-    car_audio_gearbox:                  engine_sound.Car_Gearbox,
-    landing_wheel_squeal:               f32,
-    landing_wheel_speed:                f32,
-    libellula_visual_mesh:              vehicles.Libellula_Mesh,
-    libellula_mk2_visual_mesh:          vehicles.Libellula_Mesh,
-    libellula_base_mesh:                vehicles.Libellula_Mesh,
-    libellula_mk2_base_mesh:            vehicles.Libellula_Mesh,
-    postale_base_mesh:                  vehicles.Aircraft_Mesh,
-    libellula_projected_faces:          [dynamic]Projected_Aircraft_Face,
-    gameplay_options:                   Gameplay_Options,
-    runtime_input:                      game_input.State,
-    control_hint_atlases:               Control_Hint_Atlases,
-    vehicle_paint_tool_icons:           rl.Texture,
-    controller_disconnect_notice:       bool,
-    pause_focus:                        int,
-    options_focus:                      int,
-    options_scroll_y:                   f32,
-    options_scroll_dragging:            bool,
-    options_scroll_drag_offset:         f32,
-    quit_requested:                     bool,
+    using fixture:                Fixture,
+    flame_graph:                  dio.Flame_Graph,
+    last_frame_time:              f64,
+    aircraft_fixed_accumulator:   f64,
+    aircraft_previous_body:       flight.Body_State,
+    aircraft_previous_body_valid: bool,
+    greek_assets:                 [GREEK_ASSET_CAPACITY]Greek_Asset,
+    greek_asset_count:            int,
+    car_physics_world:            physics.World,
+    car_physics_vehicle:          physics.Vehicle,
+    car_physics_terrain:          [terrain.CLIPMAP_LEVELS]physics.Body_ID,
+    car_physics_terrain_revision: u64,
+    car_physics_accumulator:      f64,
+    car_wheels:                   [4]physics.Wheel_State,
+    car_impact_detector:          engine_sound.Vehicle_Impact_Detector,
+    car_audio_damage:             f32,
+    engine_audio:                 engine_sound.Device,
+    car_audio_gearbox:            engine_sound.Car_Gearbox,
+    landing_wheel_squeal:         f32,
+    landing_wheel_speed:          f32,
+    libellula_visual_mesh:        vehicles.Libellula_Mesh,
+    libellula_mk2_visual_mesh:    vehicles.Libellula_Mesh,
+    libellula_base_mesh:          vehicles.Libellula_Mesh,
+    libellula_mk2_base_mesh:      vehicles.Libellula_Mesh,
+    postale_base_mesh:            vehicles.Aircraft_Mesh,
+    libellula_projected_faces:    [dynamic]Projected_Aircraft_Face,
+    gameplay_options:             Gameplay_Options,
+    runtime_input:                game_input.State,
+    control_hint_atlases:         Control_Hint_Atlases,
+    vehicle_paint_tool_icons:     rl.Texture,
+    controller_disconnect_notice: bool,
+    pause_focus:                  int,
+    options_focus:                int,
+    options_scroll_y:             f32,
+    options_scroll_dragging:      bool,
+    options_scroll_drag_offset:   f32,
+    quit_requested:               bool,
 }
 
 Marta_Menu_Action :: enum {
@@ -1325,15 +1326,7 @@ benchmark_report :: proc(
     sorted := make([]f64, len(samples))
     defer delete(sorted)
     copy(sorted, samples)
-    for index in 1 ..< len(sorted) {
-        value := sorted[index]
-        cursor := index
-        for cursor > 0 && sorted[cursor - 1] > value {
-            sorted[cursor] = sorted[cursor - 1]
-            cursor -= 1
-        }
-        sorted[cursor] = value
-    }
+    slice.sort(sorted)
     total := f64(0)
     for sample in sorted do total += sample
     median := benchmark_percentile(sorted, .50)
@@ -1770,12 +1763,8 @@ seed_default_island_towns :: proc(editor: ^Editor) {
         road_start_x, road_finish_x := island_center - 78, island_center + 78
         road_start_y := terrain.sample_height(&editor.project, 0, road_start_x, town_z)
         road_finish_y := terrain.sample_height(&editor.project, 0, road_finish_x, town_z)
-        road_start := roads.add_node(&editor.project.road_graph, {x = road_start_x, y = road_start_y, z = town_z}, 0)
-        road_finish := roads.add_node(
-            &editor.project.road_graph,
-            {x = road_finish_x, y = road_finish_y, z = town_z},
-            0,
-        )
+        road_start := roads.add_node(&editor.project.road_graph, {road_start_x, road_start_y, town_z}, 0)
+        road_finish := roads.add_node(&editor.project.road_graph, {road_finish_x, road_finish_y, town_z}, 0)
         if road_start >= 0 && road_finish >= 0 {
             _ = roads.add_straight_edge(&editor.project.road_graph, road_start, road_finish, 5.5, 1.4, .Cobblestone)
         }
@@ -2502,7 +2491,7 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
         return {
             position = body.position,
             basis = body.basis,
-            airspeed = flight.length(body.velocity),
+            airspeed = linalg.length(body.velocity),
             roll_input = editor.flight_control.roll,
             grounded = editor.libellula.grounded,
         }
@@ -2522,18 +2511,12 @@ aircraft_render_body :: proc(editor: ^Editor) -> flight.Body_State {
     alpha := f32(editor.aircraft_fixed_accumulator / AIRCRAFT_FIXED_STEP)
     previous := editor.aircraft_previous_body
     result := body
-    result.position = flight.add(previous.position, flight.scale(flight.sub(body.position, previous.position), alpha))
-    result.velocity = flight.add(previous.velocity, flight.scale(flight.sub(body.velocity, previous.velocity), alpha))
-    result.angular_velocity = flight.add(
-        previous.angular_velocity,
-        flight.scale(flight.sub(body.angular_velocity, previous.angular_velocity), alpha),
-    )
+    result.position = linalg.lerp(previous.position, body.position, alpha)
+    result.velocity = linalg.lerp(previous.velocity, body.velocity, alpha)
+    result.angular_velocity = linalg.lerp(previous.angular_velocity, body.angular_velocity, alpha)
     result.basis = flight.orthonormalize({
-        forward = flight.add(
-            previous.basis.forward,
-            flight.scale(flight.sub(body.basis.forward, previous.basis.forward), alpha),
-        ),
-        up      = flight.add(previous.basis.up, flight.scale(flight.sub(body.basis.up, previous.basis.up), alpha)),
+        forward = linalg.lerp(previous.basis.forward, body.basis.forward, alpha),
+        up      = linalg.lerp(previous.basis.up, body.basis.up, alpha),
     })
     return result
 }
@@ -2559,7 +2542,7 @@ active_aircraft_throttle :: proc(editor: ^Editor) -> f32 {
 }
 
 active_aircraft_airspeed :: proc(editor: ^Editor) -> f32 {
-    if editor != nil && editor.aircraft.active != .Postale do return flight.length(editor.libellula.body.velocity)
+    if editor != nil && editor.aircraft.active != .Postale do return linalg.length(editor.libellula.body.velocity)
     if editor == nil do return 0
     return editor.postale.telemetry.airspeed
 }
@@ -2874,15 +2857,7 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
     }
     faces := editor.libellula_projected_faces[:]
     face_count := len(faces)
-    for index in 1 ..< face_count {
-        face := faces[index]
-        cursor := index
-        for cursor > 0 && faces[cursor - 1].depth < face.depth {
-            faces[cursor] = faces[cursor - 1]
-            cursor -= 1
-        }
-        faces[cursor] = face
-    }
+    slice.stable_sort_by(faces, proc(a, b: Projected_Aircraft_Face) -> bool { return a.depth > b.depth })
     for face in faces[:face_count] {
         rl.DrawQuadHatched(face.a, face.b, face.c, face.c, face.color, rl.HATCH_DISABLED)
     }
@@ -2942,15 +2917,7 @@ draw_postale_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, heig
         }
         face_count += 1
     }
-    for index in 1 ..< face_count {
-        face := faces[index]
-        cursor := index
-        for cursor > 0 && faces[cursor - 1].depth < face.depth {
-            faces[cursor] = faces[cursor - 1]
-            cursor -= 1
-        }
-        faces[cursor] = face
-    }
+    slice.stable_sort_by(faces[:face_count], proc(a, b: Projected_Aircraft_Face) -> bool { return a.depth > b.depth })
     for face in faces[:face_count] {
         rl.DrawQuadHatched(face.a, face.b, face.c, face.c, face.color, rl.HATCH_DISABLED)
     }
@@ -5360,7 +5327,7 @@ adriatic_run :: proc(
                 // Give the flight capture a reproducible airborne state so visual
                 // verification exercises the wing-trail and wind-response systems.
                 editor.postale.body.position.y += 85
-                editor.postale.body.velocity = flight.scale(editor.postale.body.basis.forward, 58)
+                editor.postale.body.velocity = editor.postale.body.basis.forward * 58
                 editor.postale.grounded = false
                 editor.postale.was_grounded = false
                 editor.postale.throttle = .82
@@ -5554,15 +5521,10 @@ adriatic_run :: proc(
                 editor.player.position.z,
             )
             editor.pilot.position = editor.player.position
-            grass_pose := third_person.camera_look_at({
-                editor.player.position.x + 8,
-                editor.player.position.y + 1.65,
-                editor.player.position.z + 15,
-            }, {
-                editor.player.position.x - 2,
-                editor.player.position.y + .55,
-                editor.player.position.z - 9,
-            })
+            grass_pose := third_person.camera_look_at(
+                {editor.player.position.x + 8, editor.player.position.y + 1.65, editor.player.position.z + 15},
+                {editor.player.position.x - 2, editor.player.position.y + .55, editor.player.position.z - 9},
+            )
             third_person.camera_set_pose(&editor.cameras, .Inspection, grass_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = grass_pose

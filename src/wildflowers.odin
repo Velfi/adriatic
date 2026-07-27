@@ -42,7 +42,7 @@ wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32) -> bool {
     if editor == nil do return false
     ground_height := terrain.sample_height(&editor.project, 0, x, z)
     if terrain.ground_surface_at(&editor.project, 0, x, z) != .Grass do return false
-    pavement := roads.pavement_at(&editor.project.road_graph, {x = x, y = ground_height, z = z})
+    pavement := roads.pavement_at(&editor.project.road_graph, {x, ground_height, z})
     return !pavement.on_surface
 }
 

@@ -1,6 +1,7 @@
 package vehicles
 
 import "core:math"
+import "core:math/linalg"
 import "core:mem"
 
 // Product-local triangle meshes ported from Archipelago's procedural player
@@ -162,9 +163,9 @@ mesh_generate_smooth_normals :: proc(mesh: ^$Mesh) {
             if !shares_position do continue
             ab := b.position - a.position
             ac := c.position - a.position
-            sum += [3]f32{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
+            sum += linalg.cross(ab, ac)
         }
-        length := f32(math.sqrt(f64(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2])))
+        length := linalg.length(sum)
         if length > .0001 do vertex.normal = sum / length
     }
 }
@@ -542,26 +543,16 @@ add_horizontal_beam :: proc(mesh: ^Aircraft_Mesh, a, b: [3]f32, width: f32, part
 }
 
 add_strut :: proc(mesh: ^Aircraft_Mesh, a, b: [3]f32, width: f32, part: Aircraft_Mesh_Part) {
-    dx := b[0] - a[0]
-    dy := b[1] - a[1]
-    dz := b[2] - a[2]
-    length := f32(math.sqrt(f64(dx * dx + dy * dy + dz * dz)))
+    delta := b - a
+    length := linalg.length(delta)
     if length < .0001 do return
-    direction := [3]f32{dx / length, dy / length, dz / length}
+    direction := delta / length
     reference := [3]f32{0, 1, 0}
     if abs(direction[1]) > .92 do reference = {0, 0, 1}
-    side := [3]f32 {
-        direction[1] * reference[2] - direction[2] * reference[1],
-        direction[2] * reference[0] - direction[0] * reference[2],
-        direction[0] * reference[1] - direction[1] * reference[0],
-    }
-    side_length := f32(math.sqrt(f64(side[0] * side[0] + side[1] * side[1] + side[2] * side[2])))
+    side := linalg.cross(direction, reference)
+    side_length := linalg.length(side)
     side *= width * .5 / side_length
-    up := [3]f32 {
-        direction[1] * side[2] - direction[2] * side[1],
-        direction[2] * side[0] - direction[0] * side[2],
-        direction[0] * side[1] - direction[1] * side[0],
-    }
+    up := linalg.cross(direction, side)
     up *= width * .5
     p := [8][3]f32 {
         a - side - up,

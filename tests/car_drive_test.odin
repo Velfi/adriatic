@@ -24,7 +24,7 @@ car_drive_has_progressive_forward_and_reverse_motion :: proc(t: ^testing.T) {
 car_drive_steers_with_travel_and_handbrake_releases_lateral_grip :: proc(t: ^testing.T) {
     normal_car := vehicles.default_vehicle({})
     normal := vehicles.Car_Drive_State {
-        velocity = {x = 12, z = 5},
+        velocity    = {12, 0, 5},
         wheel_speed = 12,
     }
     loose_car := normal_car
@@ -103,7 +103,7 @@ car_drive_surface_grip_changes_acceleration_and_lateral_slip :: proc(t: ^testing
     asphalt_slide_car := vehicles.default_vehicle({})
     loose_slide_car := vehicles.default_vehicle({})
     asphalt_slide := vehicles.Car_Drive_State {
-        velocity = {x = 8, z = 4},
+        velocity    = {8, 0, 4},
         wheel_speed = 8,
     }
     loose_slide := asphalt_slide
@@ -143,7 +143,7 @@ car_trailer_keeps_the_tow_ball_connected_without_spring_bounce :: proc(t: ^testi
 
     for _ in 0 ..< 120 {
         car_position.x += 8.0 / 60
-        vehicles.car_trailer_step(&state, &position, &yaw, car_position, 0, 0, {x = 8}, true, 0, 1.0 / 60)
+        vehicles.car_trailer_step(&state, &position, &yaw, car_position, 0, 0, {8, 0, 0}, true, 0, 1.0 / 60)
         car_hitch_x := car_position.x - 1.48
         trailer_hitch_x := position.x - math.cos(yaw) * 1.36
         trailer_hitch_z := position.z - math.sin(yaw) * 1.36
@@ -166,10 +166,7 @@ car_trailer_turns_from_tow_ball_motion_and_cuts_inside :: proc(t: ^testing.T) {
 
     for _ in 0 ..< 90 {
         car_yaw += yaw_rate / 60
-        car_velocity := third_person.Vec3 {
-            x = math.cos(car_yaw) * speed,
-            z = math.sin(car_yaw) * speed,
-        }
+        car_velocity := third_person.Vec3{math.cos(car_yaw) * speed, 0, math.sin(car_yaw) * speed}
         car_position.x += car_velocity.x / 60
         car_position.z += car_velocity.z / 60
         vehicles.car_trailer_step(

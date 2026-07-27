@@ -1,6 +1,7 @@
 package flight
 
 import "core:math"
+import "core:math/linalg"
 
 // Product-owned airframe tuning. Units: kg, m, seconds, Newtons, and degrees.
 Airframe :: struct {
@@ -195,11 +196,11 @@ calculate_forces :: proc(
     Forces,
     Telemetry,
 ) {
-    speed := length(air_velocity); stall := effective_stall_speed(mass, airframe) * lerp(1, .88, flap)
+    speed := linalg.length(air_velocity); stall := effective_stall_speed(mass, airframe) * lerp(1, .88, flap)
     if speed < .5 do return {}, {effective_stall_speed = stall}
     basis := orthonormalize(
         basis_input,
-    ); forward_speed := dot(air_velocity, basis.forward); vertical_speed := dot(air_velocity, basis.up)
+    ); forward_speed := linalg.dot(air_velocity, basis.forward); vertical_speed := linalg.dot(air_velocity, basis.up)
     aoa := degrees(
         math.atan2(-vertical_speed, forward_speed),
     ); if aoa > 90 { aoa = 180 - aoa } else if aoa < -90 { aoa = -180 - aoa }
@@ -208,22 +209,20 @@ calculate_forces :: proc(
     ); effective_aoa := aoa + airframe.wing_incidence_degrees + flap * 5.2
     cl :=
         lift_coefficient(effective_aoa, airframe) * (1 + flap * .12); pressure := .5 * 1.225 * wing_speed * wing_speed
-    lift_direction := normalize(
-        sub(scale(basis.up, forward_speed), scale(basis.forward, vertical_speed)),
-    ); if length(lift_direction) < .01 do lift_direction = basis.up
-    velocity_direction := normalize(
-        air_velocity,
-    ); parasitic := drag_force_at_speed(speed, airframe) * drag_multiplier * (1 + flap * .34)
+    lift_direction := linalg.normalize0(basis.up * forward_speed - basis.forward * vertical_speed)
+    if linalg.dot(lift_direction, lift_direction) < .0001 do lift_direction = basis.up
+    velocity_direction := linalg.normalize0(air_velocity)
+    parasitic := drag_force_at_speed(speed, airframe) * drag_multiplier * (1 + flap * .34)
     induced := pressure * airframe.wing_area * airframe.induced_drag_factor * cl * cl * drag_multiplier
-    lateral_speed := dot(
+    lateral_speed := linalg.dot(
         air_velocity,
         basis.right,
     ); lateral := drag_force_at_speed(math.abs(lateral_speed), airframe) * 3.2 * drag_multiplier
     forces := Forces {
-        lift           = scale(lift_direction, pressure * airframe.wing_area * cl * airframe.lift_scale),
-        parasitic_drag = scale(velocity_direction, -parasitic),
-        induced_drag   = scale(velocity_direction, -induced),
-        lateral_drag   = scale(basis.right, -sign(lateral_speed) * lateral),
+        lift           = lift_direction * (pressure * airframe.wing_area * cl * airframe.lift_scale),
+        parasitic_drag = velocity_direction * -parasitic,
+        induced_drag   = velocity_direction * -induced,
+        lateral_drag   = basis.right * (-sign(lateral_speed) * lateral),
     }
     return forces, {
         airspeed = speed,
@@ -253,16 +252,16 @@ step :: proc(
     tuned_airframe.stall_speed *= max_f32(runtime.stall_speed_modifier, .1)
     state.basis = orthonormalize(
         state.basis,
-    ); air_velocity := sub(state.velocity, wind); mass := max_f32(tuned_airframe.mass_kg, 1); forces, telemetry := calculate_forces(air_velocity, state.basis, mass, tuned_airframe, max_f32(runtime.drag_multiplier, .1), flap)
+    ); air_velocity := state.velocity - wind; mass := max_f32(tuned_airframe.mass_kg, 1); forces, telemetry := calculate_forces(air_velocity, state.basis, mass, tuned_airframe, max_f32(runtime.drag_multiplier, .1), flap)
     shaft_power :=
         airframe.rated_power_per_engine_kw *
         1000 *
         airframe.propeller_efficiency *
         command.throttle; thrust_per_engine := min_f32(airframe.static_thrust_per_engine, shaft_power / max_f32(telemetry.airspeed, 12)); thrust := thrust_per_engine * max_f32(1, airframe.engine_count) * clamp(runtime.engine_output, 0, 1)
-    total := add(
-        add(add(forces.lift, forces.parasitic_drag), add(forces.induced_drag, forces.lateral_drag)),
-        scale(state.basis.forward, thrust),
-    ); state.velocity = add(state.velocity, scale(add(total, {y = -9.81 * mass}), delta_seconds / mass)); state.position = add(state.position, scale(state.velocity, delta_seconds))
+    total :=
+        forces.lift + forces.parasitic_drag + forces.induced_drag + forces.lateral_drag + state.basis.forward * thrust
+    state.velocity += (total + {0, -9.81 * mass, 0}) * (delta_seconds / mass)
+    state.position += state.velocity * delta_seconds
     local_rate := world_to_local(
         state.basis,
         state.angular_velocity,
@@ -277,20 +276,21 @@ step :: proc(
         runtime.control_authority,
         0,
         1,
-    ); target := vec3(target_pitch * handling, (-command.yaw * airframe.yaw_control_scale * .72 - command.roll * airframe.roll_control_scale * .34 * clamp(speed_ratio, 0, 1.2)) * bite * handling, command.roll * airframe.roll_control_scale * 2.05 * handling)
-    damage: f32 = 1; if runtime.controls_damaged do damage = .55; torque_local := vec3((target.x - local_rate.x) * 52000 * pitch_bite * damage, target.y * 39000 * damage, (target.z - local_rate.z) * 47000 * bite * damage)
+    ); target := Vec3{target_pitch * handling, (-command.yaw * airframe.yaw_control_scale * .72 - command.roll * airframe.roll_control_scale * .34 * clamp(speed_ratio, 0, 1.2)) * bite * handling, command.roll * airframe.roll_control_scale * 2.05 * handling}
+    damage: f32 = 1; if runtime.controls_damaged do damage = .55; torque_local := Vec3{(target.x - local_rate.x) * 52000 * pitch_bite * damage, target.y * 39000 * damage, (target.z - local_rate.z) * 47000 * bite * damage}
     roll_angle := math.atan2(
-        dot(state.basis.right, {y = 1}),
-        dot(state.basis.up, {y = 1}),
-    ); authority := clamp(speed_ratio * speed_ratio, 0, 1.8); trim := airframe.trim_angle_of_attack_degrees; stability := vec3((degrees_to_radians(clamp(trim - telemetry.angle_of_attack_degrees, -18, 18)) * airframe.pitch_stability - local_rate.x * airframe.pitch_damping) * authority, (-degrees_to_radians(clamp(degrees(math.asin(clamp(dot(normalize(air_velocity), state.basis.right), -1, 1))), -35, 35)) * airframe.yaw_stability - local_rate.y * airframe.yaw_damping) * authority, (-sign(roll_angle) * max_f32(0, math.abs(roll_angle) - .95993) * airframe.roll_stability - local_rate.z * airframe.roll_damping) * authority)
-    torque_local = add(
-        torque_local,
-        vec3(stability.x * assistance_scale(command.pitch), stability.y, stability.z * assistance_scale(command.roll)),
-    ); state.angular_velocity = add(state.angular_velocity, scale(local_to_world(state.basis, torque_local), delta_seconds / (mass * 12)))
-    state.basis.forward = add(
-        state.basis.forward,
-        scale(cross(state.angular_velocity, state.basis.forward), delta_seconds),
-    ); state.basis.up = add(state.basis.up, scale(cross(state.angular_velocity, state.basis.up), delta_seconds)); state.basis = orthonormalize(state.basis)
+        linalg.dot(state.basis.right, Vec3{0, 1, 0}),
+        linalg.dot(state.basis.up, Vec3{0, 1, 0}),
+    ); authority := clamp(speed_ratio * speed_ratio, 0, 1.8); trim := airframe.trim_angle_of_attack_degrees; stability := Vec3{(degrees_to_radians(clamp(trim - telemetry.angle_of_attack_degrees, -18, 18)) * airframe.pitch_stability - local_rate.x * airframe.pitch_damping) * authority, (-degrees_to_radians(clamp(degrees(math.asin(clamp(linalg.dot(linalg.normalize0(air_velocity), state.basis.right), -1, 1))), -35, 35)) * airframe.yaw_stability - local_rate.y * airframe.yaw_damping) * authority, (-sign(roll_angle) * max_f32(0, math.abs(roll_angle) - .95993) * airframe.roll_stability - local_rate.z * airframe.roll_damping) * authority}
+    torque_local += Vec3 {
+        stability.x * assistance_scale(command.pitch),
+        stability.y,
+        stability.z * assistance_scale(command.roll),
+    }
+    state.angular_velocity += local_to_world(state.basis, torque_local) * (delta_seconds / (mass * 12))
+    state.basis.forward += linalg.cross(state.angular_velocity, state.basis.forward) * delta_seconds
+    state.basis.up += linalg.cross(state.angular_velocity, state.basis.up) * delta_seconds
+    state.basis = orthonormalize(state.basis)
     return telemetry
 }
 

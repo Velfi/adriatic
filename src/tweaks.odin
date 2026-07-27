@@ -333,7 +333,11 @@ tweak_default_state :: proc() -> Tweak_State {
         },
         camera = {
             editor_camera = {yaw_radians = math.PI * .25, pitch_radians = .58, distance = 900},
-            editor_focus = {terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET, 0, terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET},
+            editor_focus = {
+                terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET,
+                0,
+                terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET,
+            },
             player_camera = third_person.default_camera(),
         },
         world = tweak_default_world(),

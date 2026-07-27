@@ -2,6 +2,7 @@ package tests
 
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
+import "core:math/linalg"
 import "core:testing"
 
 @(test)
@@ -42,8 +43,8 @@ simple_car_solid_mesh_is_nondegenerate_with_kei_proportions :: proc(t: ^testing.
         c := mesh.vertices[triangle.c].position
         ab := b - a
         ac := c - a
-        normal := [3]f32{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]}
-        area_squared := normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]
+        normal := linalg.cross(ab, ac)
+        area_squared := linalg.dot(normal, normal)
         testing.expect(t, area_squared > .0000001)
     }
     testing.expect(t, vehicles.CAR_WHEEL_TRACK_HALF >= .67)
@@ -57,16 +58,12 @@ simple_car_solid_mesh_is_nondegenerate_with_kei_proportions :: proc(t: ^testing.
 
 @(test)
 car_spawns_in_entry_range_and_is_selected_before_the_postale :: proc(t: ^testing.T) {
-    player_spawn := third_person.Vec3 {
-        x = 20,
-        y = 4.5,
-        z = 30,
-    }
+    player_spawn := third_person.Vec3{20, 4.5, 30}
     car := vehicles.default_vehicle(vehicles.car_spawn_near(player_spawn))
     car.interaction_radius = 3
     testing.expect(t, car.position.x == player_spawn.x)
     testing.expect(t, car.position.z > player_spawn.z)
-    postale := vehicles.default_vehicle({x = player_spawn.x, y = player_spawn.y, z = player_spawn.z - 2.2})
+    postale := vehicles.default_vehicle({player_spawn.x, player_spawn.y, player_spawn.z - 2.2})
     character := vehicles.Character {
         position = player_spawn,
     }

@@ -557,7 +557,11 @@ world_road_vertex :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex, c
 }
 
 @(no_instrumentation)
-world_road_triangle_colored :: #force_inline proc(editor: ^Editor, a, b, c: roads.Vertex, color_a, color_b, color_c: rl.Color) {
+world_road_triangle_colored :: #force_inline proc(
+    editor: ^Editor,
+    a, b, c: roads.Vertex,
+    color_a, color_b, color_c: rl.Color,
+) {
     if len(world_renderer.road_vertices) + 3 > ROAD_VERTEX_CAPACITY do return
     land_threshold := editor.project.sea_level + .04
     if terrain.sample_height(&editor.project, 0, a.position.x, a.position.z) <= land_threshold ||
@@ -1118,7 +1122,7 @@ world_tapered_disc_depth_rotated :: proc(
 world_tube_between :: proc(a, b, forward: third_person.Vec3, radius_x, radius_z: f32, color: rl.Color) {
     SEGMENTS :: 8
     delta := third_person.Vec3{b.x - a.x, b.y - a.y, b.z - a.z}
-    length := f32(math.sqrt(f64(linalg.dot(delta, delta))))
+    length := linalg.length(delta)
     if length <= .0001 do return
     axis_y := third_person.Vec3{delta.x / length, delta.y / length, delta.z / length}
     reference := linalg.normalize0(forward)
@@ -1248,15 +1252,15 @@ world_mouse_limb_hull :: proc(
 
 world_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, color: rl.Color) {
     delta := third_person.Vec3{b.x - a.x, b.y - a.y, b.z - a.z}
-    length := f32(math.sqrt(f64(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z)))
+    length := linalg.length(delta)
     if length <= .0001 do return
     axis_y := third_person.Vec3{delta.x / length, delta.y / length, delta.z / length}
     axis_z := linalg.normalize0(forward)
     axis_x := linalg.cross(axis_y, axis_z)
-    axis_x_length := f32(math.sqrt(f64(axis_x.x * axis_x.x + axis_x.y * axis_x.y + axis_x.z * axis_x.z)))
+    axis_x_length := linalg.length(axis_x)
     if axis_x_length <= .0001 {
         axis_x = linalg.cross(axis_y, third_person.Vec3{0, 1, 0})
-        axis_x_length = f32(math.sqrt(f64(axis_x.x * axis_x.x + axis_x.y * axis_x.y + axis_x.z * axis_x.z)))
+        axis_x_length = linalg.length(axis_x)
     }
     if axis_x_length > .0001 {
         axis_x = {axis_x.x / axis_x_length, axis_x.y / axis_x_length, axis_x.z / axis_x_length}
@@ -1655,10 +1659,6 @@ world_structure_shadow :: proc(
     world_structure_shadow_layer(structure, project, 0, 0, 1.02, .075, {40, 36, 33, inner_alpha})
 }
 
-world_roof_lerp :: proc(a, b: third_person.Vec3, fraction: f32) -> third_person.Vec3 {
-    return {a.x + (b.x - a.x) * fraction, a.y + (b.y - a.y) * fraction, a.z + (b.z - a.z) * fraction}
-}
-
 world_roof_raise :: proc(point: third_person.Vec3, amount: f32) -> third_person.Vec3 {
     return {point.x, point.y + amount, point.z}
 }
@@ -1682,12 +1682,12 @@ world_architecture_tile_slope :: proc(
             segment_start = clamp(segment_start + offset, 0, 1)
             segment_end = clamp(segment_end + offset, 0, 1)
 
-            outer_a := world_roof_lerp(edge_a, edge_b, segment_start)
-            outer_b := world_roof_lerp(edge_a, edge_b, segment_end)
-            inner_a := world_roof_lerp(outer_a, ridge_a, course_start)
-            inner_b := world_roof_lerp(outer_b, ridge_b, course_start)
-            next_a := world_roof_lerp(outer_a, ridge_a, course_end)
-            next_b := world_roof_lerp(outer_b, ridge_b, course_end)
+            outer_a := linalg.lerp(edge_a, edge_b, segment_start)
+            outer_b := linalg.lerp(edge_a, edge_b, segment_end)
+            inner_a := linalg.lerp(outer_a, ridge_a, course_start)
+            inner_b := linalg.lerp(outer_b, ridge_b, course_start)
+            next_a := linalg.lerp(outer_a, ridge_a, course_end)
+            next_b := linalg.lerp(outer_b, ridge_b, course_end)
             inner_a = world_roof_raise(inner_a, relief)
             inner_b = world_roof_raise(inner_b, relief)
             next_a = world_roof_raise(next_a, relief)
@@ -3065,10 +3065,6 @@ world_foliage_card :: proc(
     )
 }
 
-bougainvillea_card_lerp :: proc(a, b: third_person.Vec3, amount: f32) -> third_person.Vec3 {
-    return {a.x + (b.x - a.x) * amount, a.y + (b.y - a.y) * amount, a.z + (b.z - a.z) * amount}
-}
-
 world_bougainvillea_card :: proc(
     center: third_person.Vec3,
     width, height: f32,
@@ -3194,9 +3190,9 @@ world_bougainvillea_card :: proc(
     // Three marks bronze-flushed new growth; two marks established foliage.
     native_color := [4]f32{value, texture_anchor_x, anchor_y, young_growth ? f32(3) : f32(2)}
     positions: [3][3]third_person.Vec3
-    positions[0] = {p3, bougainvillea_card_lerp(p3, p2, anchor_x), p2}
-    positions[1] = {bougainvillea_card_lerp(p3, p0, anchor_y), center, bougainvillea_card_lerp(p2, p1, anchor_y)}
-    positions[2] = {p0, bougainvillea_card_lerp(p0, p1, anchor_x), p1}
+    positions[0] = {p3, linalg.lerp(p3, p2, anchor_x), p2}
+    positions[1] = {linalg.lerp(p3, p0, anchor_y), center, linalg.lerp(p2, p1, anchor_y)}
+    positions[2] = {p0, linalg.lerp(p0, p1, anchor_x), p1}
     card_u := [3]f32{u0, anchor_u, u1}
     card_v := [3]f32{v0, anchor_v, v1}
     for card_row in 0 ..< 2 {
@@ -9241,14 +9237,14 @@ world_town_mice :: proc(editor: ^Editor) {
                 if ground_y <= editor.project.sea_level + .35 do continue
                 rotation := frontage.rotation + math.PI * .5 + resident.facing
                 world_mouse_model_scaled(editor, {
-                        position = {x, ground_y, z},
-                        rotation = rotation,
-                        accessory = resident.accessory,
-                        fur = resident.fur,
-                        pattern = resident.pattern,
+                        position      = {x, ground_y, z},
+                        rotation      = rotation,
+                        accessory     = resident.accessory,
+                        fur           = resident.fur,
+                        pattern       = resident.pattern,
                         scarf_enabled = resident.scarf,
-                        scarf_color = resident.scarf_color,
-                        grounded = true,
+                        scarf_color   = resident.scarf_color,
+                        grounded      = true,
                     }, resident.scale)
                 break
             }

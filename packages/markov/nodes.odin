@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math"
 import "core:math/rand"
 import "core:mem"
+import "core:slice"
 
 // Dispatch functions for polymorphic node operations
 
@@ -532,18 +533,7 @@ all_go :: proc(node: ^Node) -> bool {
             append(&ranked, Ranked_Match{m_idx, key})
         }
 
-        // Sort descending by key
-        for i in 0 ..< len(ranked) {
-            best := i
-            for j := i + 1; j < len(ranked); j += 1 {
-                if ranked[j].key > ranked[best].key {
-                    best = j
-                }
-            }
-            if best != i {
-                ranked[i], ranked[best] = ranked[best], ranked[i]
-            }
-        }
+        slice.sort_by(ranked[:], proc(a, b: Ranked_Match) -> bool { return a.key > b.key })
 
         for rmatch in ranked {
             m := rn.matches[rmatch.match_idx]

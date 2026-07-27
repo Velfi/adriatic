@@ -7,7 +7,7 @@ import "core:testing"
 @(test)
 fixed_wing_aerodynamics :: proc(t: ^testing.T) {
     airframe := flight.default_airframe(); mass := airframe.maximum_gross_mass_kg
-    forces, telemetry := flight.calculate_forces({z = -40}, flight.identity_basis(), mass, airframe, 1, 0)
+    forces, telemetry := flight.calculate_forces(flight.Vec3{0, 0, -40}, flight.identity_basis(), mass, airframe, 1, 0)
     testing.expect(t, telemetry.airspeed == 40)
     testing.expect(t, forces.parasitic_drag.z > 0)
     testing.expect(t, !telemetry.is_stalling)
@@ -25,15 +25,15 @@ fixed_wing_step_produces_thrust :: proc(t: ^testing.T) {
 @(test)
 fixed_wing_runtime_stall_modifier_changes_effective_stall_speed :: proc(t: ^testing.T) {
     state := flight.Body_State {
-        velocity = {z = -20},
-        basis = flight.identity_basis(),
+        velocity = {0, 0, -20},
+        basis    = flight.identity_basis(),
     }
     airframe := flight.postale_airframe()
     runtime := flight.default_runtime()
     baseline := flight.step(&state, {}, airframe, runtime, {}, 1.0 / 60.0)
     state = {
-        velocity = {z = -20},
-        basis = flight.identity_basis(),
+        velocity = {0, 0, -20},
+        basis    = flight.identity_basis(),
     }
     runtime.stall_speed_modifier = .5
     assisted := flight.step(&state, {}, airframe, runtime, {}, 1.0 / 60.0)
@@ -53,7 +53,7 @@ postale_and_pelican_tuning :: proc(t: ^testing.T) {
 libellula_rotors_allocate_collective :: proc(t: ^testing.T) {
     airframe := flight.libellula_airframe(
         
-    ); caps := flight.vec3(airframe.maximum_collective_force / 3, airframe.maximum_collective_force / 3, airframe.maximum_collective_force / 3)
+    ); caps := flight.Vec3{airframe.maximum_collective_force / 3, airframe.maximum_collective_force / 3, airframe.maximum_collective_force / 3}
     solution := flight.solve_tri_rotor(18000, 0, 0, {}, caps)
     testing.expect(t, solution.total_thrust == 18000)
     testing.expect(t, solution.thrusts.x == solution.thrusts.y && solution.thrusts.z > 0)
@@ -72,7 +72,7 @@ libellula_rotors_allocate_collective :: proc(t: ^testing.T) {
 @(test)
 libellula_runtime_takes_off_and_syncs_occupancy_vehicle :: proc(t: ^testing.T) {
     ground := f32(10)
-    runtime := libellula.new_runtime({x = 4, y = ground + libellula.GROUND_CLEARANCE, z = 7})
+    runtime := libellula.new_runtime(flight.Vec3{4, ground + libellula.GROUND_CLEARANCE, 7})
     for _ in 0 ..< 240 {
         libellula.step(&runtime, {throttle_up = true}, ground, 1.0 / 60.0)
     }
@@ -86,7 +86,7 @@ libellula_runtime_takes_off_and_syncs_occupancy_vehicle :: proc(t: ^testing.T) {
 @(test)
 libellula_runtime_resolves_ground_and_allows_safe_exit :: proc(t: ^testing.T) {
     ground := f32(3)
-    runtime := libellula.new_runtime({y = ground + libellula.GROUND_CLEARANCE})
+    runtime := libellula.new_runtime(flight.Vec3{0, ground + libellula.GROUND_CLEARANCE, 0})
     libellula.step(&runtime, {}, ground, 1.0 / 60.0)
     testing.expect(t, runtime.grounded)
     testing.expect(t, runtime.body.position.y == ground + libellula.GROUND_CLEARANCE)
@@ -96,8 +96,8 @@ libellula_runtime_resolves_ground_and_allows_safe_exit :: proc(t: ^testing.T) {
 @(test)
 libellula_auto_level_preserves_pilot_cyclic_input :: proc(t: ^testing.T) {
     state := flight.Body_State {
-        position = {y = 50},
-        basis = flight.identity_basis(),
+        position = {0, 50, 0},
+        basis    = flight.identity_basis(),
     }
     runtime := flight.default_tri_rotor_runtime()
     for _ in 0 ..< 30 {
