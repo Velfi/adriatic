@@ -12,11 +12,19 @@ Occupancy_Mode :: enum {
     Driving,
 }
 
+Fixture_Occupant :: enum u8 {
+    On_Foot       = 0,
+    Car           = 1,
+    Postale       = 2,
+    Libellula     = 3,
+    Libellula_Mk2 = 4,
+}
+
 Character :: struct {
     position:           third_person.Vec3,
     facing_yaw_radians: f32,
     mode:               Occupancy_Mode,
-    vehicle:            ^Vehicle,
+    vehicle:            ^Vehicle `fixture:"-"`,
 }
 
 Vehicle :: struct {
@@ -25,11 +33,81 @@ Vehicle :: struct {
     interaction_radius: f32,
     exit_distance:      f32,
     locked:             bool,
-    driver:             ^Character,
+    driver:             ^Character `fixture:"-"`,
 }
 
 default_vehicle :: proc(position: third_person.Vec3) -> Vehicle {
     return {position = position, interaction_radius = 2.5, exit_distance = 1.8}
+}
+
+fixture_occupant_derive :: proc(
+    character: ^Character,
+    car, postale, libellula, rondine: ^Vehicle,
+    active_aircraft: Aircraft_Kind,
+) -> (
+    Fixture_Occupant,
+    bool,
+) {
+    if character == nil || car == nil || postale == nil || libellula == nil || rondine == nil do return {}, false
+    if car == postale ||
+       car == libellula ||
+       car == rondine ||
+       postale == libellula ||
+       postale == rondine ||
+       libellula == rondine {
+        return {}, false
+    }
+
+    switch active_aircraft {
+    case .Postale, .Libellula, .Libellula_Mk2, .Rondine:
+    case:
+        return {}, false
+    }
+
+    if character.mode == .On_Foot {
+        if character.vehicle == nil &&
+           car.driver == nil &&
+           postale.driver == nil &&
+           libellula.driver == nil &&
+           rondine.driver == nil {
+            return .On_Foot, true
+        }
+        return {}, false
+    }
+    if character.mode != .Driving do return {}, false
+
+    if character.vehicle == car &&
+       car.driver == character &&
+       postale.driver == nil &&
+       libellula.driver == nil &&
+       rondine.driver == nil {
+        return .Car, true
+    }
+    if character.vehicle == postale &&
+       postale.driver == character &&
+       car.driver == nil &&
+       libellula.driver == nil &&
+       rondine.driver == nil &&
+       active_aircraft == .Postale {
+        return .Postale, true
+    }
+    if character.vehicle == libellula &&
+       libellula.driver == character &&
+       car.driver == nil &&
+       postale.driver == nil &&
+       rondine.driver == nil {
+        switch active_aircraft {
+        case .Postale:
+            return {}, false
+        case .Libellula:
+            return .Libellula, true
+        case .Libellula_Mk2:
+            return .Libellula_Mk2, true
+        case .Rondine:
+            return {}, false
+        }
+    }
+    return {}, false
 }
 
 // try_enter_nearest seats an on-foot character in the closest unlocked,

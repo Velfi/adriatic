@@ -14,7 +14,7 @@ Aircraft_Kind :: enum u8 {
 Aircraft_Slot :: struct {
     kind:      Aircraft_Kind,
     name:      string,
-    vehicle:   ^Vehicle,
+    vehicle:   ^Vehicle `fixture:"-"`,
     available: bool,
 }
 

@@ -142,6 +142,10 @@ HOT_SHADER_STAMP := $(HOT_DIR)/shader.stamp
 LIVE_CAPTURE_PATH ?= $(abspath $(BUILD_DIR)/captures/$(APP)-live.png)
 LIVE_CAPTURE_TIMEOUT ?= 30
 LIVE_CAPTURE_REQUEST_PATH := $(abspath $(BUILD_DIR)/live-capture.request)
+FIXTURE_HISTORY_VERSION ?= 1
+FIXTURE_MIGRATION_FROM_VERSION ?= 1
+FIXTURE_MIGRATION_TO_VERSION ?= 2
+FIXTURE_HISTORY_PACKAGE := packages/fixture_history/v$(shell printf '%04d' "$(FIXTURE_HISTORY_VERSION)")
 ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/null)
 HOT_ODIN_SOURCES := $(shell find src packages "$(ZELDA_ENGINE_PACKAGES)" -type f -name '*.odin' 2>/dev/null)
 HOT_SHADER_OUTPUTS := \
@@ -166,7 +170,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fmt check test test-src test-rondine clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-migration-test fmt check test test-src test-rondine clean
 
 all: build
 
@@ -782,6 +786,25 @@ capture-live:
 mcp:
 	$(PYTHON) tools/adriatic_mcp.py
 
+fixture-schema-generate: doctor
+	$(ODIN) run tools/fixture_schema $(ZELDA_ENGINE_COLLECTION) -- generate "$(CURDIR)" "$(ZELDA_ENGINE_PACKAGES)"
+
+fixture-schema-check: doctor
+	$(ODIN) run tools/fixture_schema $(ZELDA_ENGINE_COLLECTION) -- check "$(CURDIR)" "$(ZELDA_ENGINE_PACKAGES)"
+
+fixture-migration-scaffold: doctor
+	$(ODIN) run tools/fixture_schema $(ZELDA_ENGINE_COLLECTION) -- migration-scaffold $(FIXTURE_MIGRATION_FROM_VERSION) $(FIXTURE_MIGRATION_TO_VERSION) "$(CURDIR)" "$(ZELDA_ENGINE_PACKAGES)"
+
+fixture-migration-scaffold-check: doctor
+	$(ODIN) run tools/fixture_schema $(ZELDA_ENGINE_COLLECTION) -- migration-scaffold-check $(FIXTURE_MIGRATION_FROM_VERSION) $(FIXTURE_MIGRATION_TO_VERSION) "$(CURDIR)" "$(ZELDA_ENGINE_PACKAGES)"
+
+fixture-history-generate: doctor
+	$(ODIN) run tools/fixture_schema $(ZELDA_ENGINE_COLLECTION) -- history-generate $(FIXTURE_HISTORY_VERSION) "$(CURDIR)"
+
+fixture-history-check: doctor
+	$(ODIN) run tools/fixture_schema $(ZELDA_ENGINE_COLLECTION) -- history-check $(FIXTURE_HISTORY_VERSION) "$(CURDIR)"
+	$(ODIN) check $(FIXTURE_HISTORY_PACKAGE) $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+
 fmt:
 	@command -v $(ODINFMT) >/dev/null || { echo "odinfmt is required" >&2; exit 1; }
 	@# odinfmt cannot parse the fork-only #scope_exit syntax in this file yet.
@@ -812,6 +835,12 @@ test-src: $(DEV_APP)
 
 test: doctor $(DEV_DIR)/libadriatic_mesh.a test-rondine test-src
 	$(ODIN) test tests $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -lc++"
+
+fixture-codec-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.fixture_codec_real_fixture_round_trip_and_failures,main.fixture_codec_owned_decode_allocation_failures_and_preflight -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
+
+fixture-migration-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.fixture_migration_transaction_paths_and_ownership,main.fixture_migration_rejects_invalid_registries_before_decode,main.fixture_migration_caller_allocation_failures_dispose_everything,main.fixture_migration_structural_migration_and_boundaries,main.fixture_migration_story_golden_matrix_and_failures,main.fixture_migration_v0002_to_v0003_direct_chained_and_failures -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 
 clean:
 	rm -rf "$(BUILD_DIR)"

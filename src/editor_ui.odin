@@ -36,8 +36,8 @@ EDITOR_UI_BUTTON_TEXT_Y_OFFSET :: f32(3)
 Editor_UI_State :: struct {
     left_collapsed:      bool,
     inspector_collapsed: bool,
-    active_slider:       int,
-    debug_key_down:      bool,
+    active_slider:       int `fixture:"-"`,
+    debug_key_down:      bool `fixture:"-"`,
 }
 
 Editor_UI_Layout :: struct {

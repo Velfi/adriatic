@@ -2,10 +2,13 @@ package main
 
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
+import hs "../packages/hs"
 import marina "../packages/marina"
 import story "../packages/story"
 import terrain "../packages/terrain"
 import vehicles "../packages/vehicles"
+import "core:os"
+import "core:strings"
 import "core:testing"
 import sdl "vendor:sdl3"
 
@@ -208,6 +211,58 @@ when ODIN_TEST {
         testing.expect(t, rondine.vehicle == &editor.rondine.vehicle)
         testing.expect(t, !rondine.available)
         testing.expect(t, editor.rondine.vehicle.locked)
+    }
+
+    @(test)
+    hot_state_save_strips_all_vehicle_driver_pointers :: proc(t: ^testing.T) {
+        directory, directory_error := os.make_directory_temp("", "adriatic-hot-state-*", context.allocator)
+        testing.expect(t, directory_error == nil)
+        if directory_error != nil do return
+        path, path_error := strings.concatenate({directory, "/state.bin"}, context.allocator)
+        testing.expect(t, path_error == nil)
+        if path_error != nil do return
+        defer {
+            _ = os.remove(path)
+            _ = os.remove(directory)
+            delete(path)
+            delete(directory)
+        }
+
+        source := new(Editor)
+        restored := new(Editor)
+        defer free(source)
+        defer free(restored)
+        source.pilot.mode = .Driving
+        source.pilot.vehicle = &source.rondine.vehicle
+        source.car.driver = &source.pilot
+        source.postale.vehicle.driver = &source.pilot
+        source.libellula.vehicle.driver = &source.pilot
+        source.rondine.vehicle.driver = &source.pilot
+
+        testing.expect(t, hot_state_save(source, path))
+        testing.expect(t, source.pilot.vehicle == &source.rondine.vehicle)
+        testing.expect(t, source.car.driver == &source.pilot)
+        testing.expect(t, source.postale.vehicle.driver == &source.pilot)
+        testing.expect(t, source.libellula.vehicle.driver == &source.pilot)
+        testing.expect(t, source.rondine.vehicle.driver == &source.pilot)
+
+        data, read_error := os.read_entire_file(path, context.allocator)
+        testing.expect(t, read_error == nil)
+        if read_error != nil do return
+        defer delete(data)
+        testing.expect(t, len(data) > size_of(Hot_State_File_Header))
+        if len(data) <= size_of(Hot_State_File_Header) do return
+        header := cast(^Hot_State_File_Header)(&data[0])
+        payload := data[size_of(Hot_State_File_Header):]
+        header_valid := hot_state_header_valid(header, len(payload))
+        testing.expect(t, header_valid)
+        if !header_valid do return
+        _ = hs.deserialize(restored, payload, {.Dynamics}, context.allocator)
+        testing.expect(t, restored.pilot.vehicle == nil)
+        testing.expect(t, restored.car.driver == nil)
+        testing.expect(t, restored.postale.vehicle.driver == nil)
+        testing.expect(t, restored.libellula.vehicle.driver == nil)
+        testing.expect(t, restored.rondine.vehicle.driver == nil)
     }
 
     @(test)
