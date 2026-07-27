@@ -162,7 +162,26 @@ formation_is_solid :: #force_inline proc(kind: terrain.Formation_Kind) -> bool {
 }
 
 @(no_instrumentation)
-resolve_structure :: #force_inline proc(point: ^Point, structure: terrain.Structure, radius, friction: f32) {
+apply_bounded_structure_correction :: #force_inline proc(
+    point: ^Point,
+    target: third_person.Vec3,
+    maximum_correction: f32,
+) {
+    correction := target - point.position
+    distance_squared := linalg.dot(correction, correction)
+    limit := max(maximum_correction, f32(.001))
+    if distance_squared > limit * limit {
+        correction *= limit / linalg.length(correction)
+    }
+    point.position += correction
+}
+
+@(no_instrumentation)
+resolve_structure :: #force_inline proc(
+    point: ^Point,
+    structure: terrain.Structure,
+    radius, friction, maximum_correction: f32,
+) {
     if !formation_is_solid(structure.kind) do return
     cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
     dx, dz := point.position.x - structure.center_x, point.position.z - structure.center_z
@@ -183,7 +202,11 @@ resolve_structure :: #force_inline proc(point: ^Point, structure: terrain.Struct
     penetration_z := half_depth - math.abs(local_z)
     penetration_top := top - point.position.y
     if penetration_top <= penetration_x && penetration_top <= penetration_z {
-        point.position.y = top
+        apply_bounded_structure_correction(
+            point,
+            {point.position.x, top, point.position.z},
+            maximum_correction,
+        )
         if point.previous.y < point.position.y do point.previous.y = point.position.y
         point.previous.x += (point.position.x - point.previous.x) * clamp(friction, 0, 1)
         point.previous.z += (point.position.z - point.previous.z) * clamp(friction, 0, 1)
@@ -194,15 +217,35 @@ resolve_structure :: #force_inline proc(point: ^Point, structure: terrain.Struct
     } else {
         local_z = local_z < 0 ? -half_depth : half_depth
     }
-    point.position.x = structure.center_x + local_x * cosine - local_z * sine
-    point.position.z = structure.center_z + local_x * sine + local_z * cosine
+    apply_bounded_structure_correction(
+        point,
+        {
+            structure.center_x + local_x * cosine - local_z * sine,
+            point.position.y,
+            structure.center_z + local_x * sine + local_z * cosine,
+        },
+        maximum_correction,
+    )
 }
 
 resolve_world :: proc(point: ^Point, project: ^terrain.Project, config: Config) {
     radius := max(config.radius, f32(0))
     resolve_terrain(point, project, radius, config.surface_friction)
     for index in 0 ..< project.structure_count {
-        resolve_structure(point, project.structures[index], radius, config.surface_friction)
+        structure := project.structures[index]
+        // Any authored solid can have a large enclosing volume. Never let a
+        // single collision projection stretch a tail link by metres in the
+        // final solver iteration; repeated iterations still move genuinely
+        // embedded points out of the obstacle. Small props cannot produce
+        // the failure-sized correction and retain exact same-frame escape.
+        maximum_correction := max(config.segment_length, f32(.02))
+        resolve_structure(
+            point,
+            structure,
+            radius,
+            config.surface_friction,
+            maximum_correction,
+        )
     }
     // A side projection can put a point over a different patch of terrain.
     resolve_terrain(point, project, radius, config.surface_friction)
