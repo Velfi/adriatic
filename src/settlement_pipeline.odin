@@ -1012,7 +1012,6 @@ settlement_plan_generate_village_buildings :: proc(
                 candidate_route_index,
                 candidate_route_found = settlement_nearest_route_frame(plan, {x, z})
             }
-            x, z := point.x, point.y
             height_at_site := terrain.sample_height(project, 0, x, z)
             if height_at_site <= project.sea_level + .6 do continue
             rotation := angle + f32(math.PI * .5)
