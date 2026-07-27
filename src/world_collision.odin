@@ -1,5 +1,6 @@
 package main
 
+import architecture "../packages/architecture"
 import boats "../packages/boats"
 import marina "../packages/marina"
 
@@ -10,34 +11,43 @@ player_resolve_world_collision :: proc(editor: ^Editor) -> bool {
     position := marina.Vec2{editor.player.position.x, editor.player.position.z}
     collided := false
 
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        corrected, hit := architecture.resolve_structure_circle(
+            structure,
+            {position.x, position.z},
+            PLAYER_COLLISION_RADIUS,
+        )
+        if hit {
+            position = {corrected.x, corrected.y}
+            collided = true
+        }
+    }
+    city_position, city_hit := architecture.resolve_city_circle(
+        &editor.architecture_city_plan,
+        {position.x, position.z},
+        PLAYER_COLLISION_RADIUS,
+    )
+    if city_hit {
+        position = {city_position.x, city_position.y}
+        collided = true
+    }
+
     if lab_scene_is_active(editor, "markov-marina") {
         corrected, hit := marina.resolve_circle(&markov_marina_plan, position, PLAYER_COLLISION_RADIUS)
         position, collided = corrected, collided || hit
     } else {
         for index in 0 ..< editor.default_marina_count {
-            corrected, hit := marina.resolve_circle(
-                &editor.default_marinas[index],
-                position,
-                PLAYER_COLLISION_RADIUS,
-            )
+            corrected, hit := marina.resolve_circle(&editor.default_marinas[index], position, PLAYER_COLLISION_RADIUS)
             position, collided = corrected, collided || hit
         }
         if editor.marina_authored {
-            corrected, hit := marina.resolve_circle(
-                &editor.marina_authored_plan,
-                position,
-                PLAYER_COLLISION_RADIUS,
-            )
+            corrected, hit := marina.resolve_circle(&editor.marina_authored_plan, position, PLAYER_COLLISION_RADIUS)
             position, collided = corrected, collided || hit
         }
     }
 
     for &agent in editor.boat_traffic.agents[:editor.boat_traffic.count] {
-        corrected, hit := boats.resolve_circle(
-            &agent,
-            {position.x, position.z},
-            PLAYER_COLLISION_RADIUS,
-        )
+        corrected, hit := boats.resolve_circle(&agent, {position.x, position.z}, PLAYER_COLLISION_RADIUS)
         if hit {
             position = {corrected.x, corrected.y}
             collided = true

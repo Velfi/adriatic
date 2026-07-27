@@ -1,12 +1,19 @@
 package tests
 
+import architecture "../packages/architecture"
 import boats "../packages/boats"
 import marina "../packages/marina"
+import terrain "../packages/terrain"
+import "core:math"
 import "core:testing"
 
 @(test)
 boat_collision_uses_the_hull_capsule :: proc(t: ^testing.T) {
-    agent := boats.Agent{class = .Motor, position = {10, 20}, yaw = 0}
+    agent := boats.Agent {
+        class    = .Motor,
+        position = {10, 20},
+        yaw      = 0,
+    }
     corrected, hit := boats.resolve_circle(&agent, {10, 20}, .25)
     testing.expect(t, hit)
     testing.expect(t, abs(corrected.x - 10) > 1.5)
@@ -41,4 +48,24 @@ marina_collision_covers_segments_office_and_moored_boats :: proc(t: ^testing.T) 
     boat_position, boat_hit := marina.resolve_circle(&plan, {0, 10}, .25)
     testing.expect(t, boat_hit)
     testing.expect(t, abs(boat_position.x) >= 1.51)
+}
+
+@(test)
+building_collision_uses_rotated_rendered_footprint :: proc(t: ^testing.T) {
+    structure := terrain.Structure {
+        center_x = 10,
+        center_z = 20,
+        width    = 8,
+        depth    = 4,
+        rotation = math.PI / 2,
+        kind     = .Architecture,
+    }
+
+    corrected, hit := architecture.resolve_structure_circle(structure, {10, 20}, .25)
+    testing.expect(t, hit)
+    testing.expect(t, abs(corrected.x - 10) >= 2.24)
+
+    unchanged, hit_far := architecture.resolve_structure_circle(structure, {20, 20}, .25)
+    testing.expect(t, !hit_far)
+    testing.expect_value(t, unchanged, [2]f32{20, 20})
 }
