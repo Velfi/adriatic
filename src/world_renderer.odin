@@ -941,15 +941,11 @@ clipmap_update_level :: proc(editor: ^Editor, frame_index, level: int, center: [
 }
 
 clipmap_update :: proc(editor: ^Editor, frame_index: int) {
-    camera := perspective_camera(
-        editor.camera_pose,
-        editor.in_map && editor.pilot.mode == .Driving ? editor.flight_camera.focal_length : 1.35,
-    )
     revision_changed := world_renderer.clipmap_revision[frame_index] != editor.project.revision
     snap := editor.project.levels[0].cell_size * 2
     center := [2]f32 {
-        f32(math.round(f64(camera.position.x / snap))) * snap,
-        f32(math.round(f64(camera.position.z / snap))) * snap,
+        f32(math.round(f64(editor.camera_pose.target.x / snap))) * snap,
+        f32(math.round(f64(editor.camera_pose.target.z / snap))) * snap,
     }
     for level in 0 ..< terrain.CLIPMAP_LEVELS {
         if revision_changed ||
