@@ -38,8 +38,13 @@ Takeoff_Run :: struct {
     peak_ground_pitch: f32,
 }
 
-run_takeoff :: proc(mass_kg: f32, wind: flight.Vec3 = {}) -> Takeoff_Run {
+run_takeoff :: proc(
+    mass_kg: f32,
+    wind: flight.Vec3 = {},
+    model: postale.Flight_Model = .Current_Aero,
+) -> Takeoff_Run {
     runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
+    runtime.flight_model = model
     runtime.airframe.mass_kg = mass_kg
     start := runtime.body.position
     result: Takeoff_Run
@@ -52,7 +57,7 @@ run_takeoff :: proc(mass_kg: f32, wind: flight.Vec3 = {}) -> Takeoff_Run {
                 flight.Vec3{runtime.body.position.x - start.x, 0, runtime.body.position.z - start.z},
             )
             result.seconds = f32(step_index + 1) / 60
-            result.liftoff_speed = runtime.telemetry.airspeed
+            result.liftoff_speed = postale.selected_airspeed(&runtime)
             break
         }
         if runtime.crashed do break
@@ -69,7 +74,8 @@ run_scripted_landing :: proc(scenario: Landing_Scenario, mass_kg: f32 = 3300, wi
     // Scenario distance is measured outward from the generated runway's
     // positive-X approach threshold.
     runtime.body.position = {TEST_RUNWAY_HALF_LENGTH + scenario.distance, scenario.altitude, 0}
-    runtime.body.velocity = runtime.body.basis.forward * scenario.airspeed + flight.Vec3{0, -scenario.sink_speed, 0}
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    runtime.body.velocity = basis.forward * scenario.airspeed + flight.Vec3{0, -scenario.sink_speed, 0}
     runtime.throttle = .34
     runtime.flap_fraction = 1
     result: Landing_Run
@@ -111,7 +117,10 @@ run_scripted_landing :: proc(scenario: Landing_Scenario, mass_kg: f32 = 3300, wi
     result.crashed = runtime.crashed
     result.structural_damage = runtime.structural_damage
     result.final_speed = linalg.length(runtime.body.velocity)
-    result.final_forward = linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    result.final_forward = linalg.dot(
+        runtime.body.velocity,
+        flight.basis_from_orientation(runtime.body.orientation).forward,
+    )
     result.final_vertical = runtime.body.velocity.y
     result.grounded = runtime.grounded
     return result
@@ -121,6 +130,245 @@ run_scripted_landing :: proc(scenario: Landing_Scenario, mass_kg: f32 = 3300, wi
 postale_ocean_is_a_drivable_surface_for_now :: proc(t: ^testing.T) {
     testing.expect(t, postale.drivable_surface_height(-12, 0) == 0)
     testing.expect(t, postale.drivable_surface_height(4.5, 0) == 4.5)
+}
+
+@(test)
+postale_defaults_to_the_current_aero_model :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({})
+    testing.expect(t, runtime.flight_model == .Current_Aero)
+    testing.expect(t, runtime.ace_tuning == postale.ace_tuning_preset())
+    testing.expect(t, flight.ace_tuning_is_valid(runtime.ace_tuning))
+}
+
+@(test)
+postale_current_aero_dispatch_leaves_ace_state_unchanged :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({0, 80, 0})
+    runtime.body.velocity = flight.basis_from_orientation(runtime.body.orientation).forward * 42
+    runtime.ace_runtime = {
+        energy       = .73,
+        edge_state   = .Hang,
+        edge_seconds = 1.25,
+        local_rate   = {1, 2, 3},
+    }
+    runtime.ace_telemetry = {
+        pace                 = .8,
+        energy               = .6,
+        track_grip           = .4,
+        attitude_track_angle = .2,
+        edge_state           = .Warning,
+    }
+    ace_runtime_before := runtime.ace_runtime
+    ace_telemetry_before := runtime.ace_telemetry
+    position_before := runtime.body.position
+
+    postale.step_airborne_model(&runtime, {throttle = .7}, .25)
+
+    testing.expect(t, runtime.ace_runtime == ace_runtime_before)
+    testing.expect(t, runtime.ace_telemetry == ace_telemetry_before)
+    testing.expect(t, runtime.body.position != position_before)
+    testing.expect(t, runtime.telemetry.airspeed > 0)
+}
+
+@(test)
+postale_ace_dispatch_leaves_current_aero_state_unchanged :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({0, 80, 0})
+    runtime.flight_model = .Ace_Arcade
+    runtime.body.velocity = flight.basis_from_orientation(runtime.body.orientation).forward * 42
+    runtime.ace_runtime.energy = .63
+    runtime.flight_runtime = {
+        engine_output     = .4,
+        control_authority = .3,
+        drag_multiplier   = 1.2,
+        controls_damaged  = true,
+    }
+    runtime.telemetry = {
+        airspeed                = 37,
+        angle_of_attack_degrees = .2,
+        effective_stall_speed   = 18,
+        lift_coefficient        = .7,
+        is_stalling             = true,
+    }
+    flight_runtime_before := runtime.flight_runtime
+    telemetry_before := runtime.telemetry
+    position_before := runtime.body.position
+    ace_runtime_before := runtime.ace_runtime
+
+    postale.step_airborne_model(&runtime, {roll = 1, throttle = 1}, 1.0 / 120.0)
+
+    testing.expect(t, runtime.flight_runtime == flight_runtime_before)
+    testing.expect(t, runtime.telemetry == telemetry_before)
+    testing.expect(t, runtime.body.position != position_before)
+    testing.expect(t, runtime.ace_runtime != ace_runtime_before)
+    testing.expect(t, runtime.ace_runtime.local_rate.z > 0)
+    testing.expect(t, runtime.ace_telemetry.pace > 0)
+    testing.expect(t, runtime.ace_telemetry.energy == runtime.ace_runtime.energy)
+}
+
+@(test)
+postale_airborne_dispatch_rejects_invalid_delta_without_mutation :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({0, 80, 0})
+    runtime.flight_model = .Ace_Arcade
+    runtime.body.velocity = {4, -1, 2}
+    runtime.ace_runtime.energy = .63
+    runtime_before := runtime
+
+    postale.step_airborne_model(&runtime, {pitch = 1}, 0)
+    postale.step_airborne_model(&runtime, {pitch = 1}, -1)
+
+    testing.expect(t, runtime == runtime_before)
+}
+
+@(test)
+postale_normalized_seam_matches_equivalent_prepared_legacy_step :: proc(t: ^testing.T) {
+    raw := postale.new_runtime({0, 80, 0})
+    raw.grounded = false
+    raw.was_grounded = false
+    raw.body.position = {3, 80, -5}
+    raw.body.velocity = flight.basis_from_orientation(raw.body.orientation).forward * 42
+    raw.throttle = .65
+    raw.flap_fraction = 0
+    raw.pitch = .12
+    raw.roll = -.08
+    raw.yaw = .04
+    raw.landing_feedback_seconds = .4
+    normalized := raw
+    control := postale.Control {
+        pitch = raw.pitch,
+        roll  = raw.roll,
+        yaw   = raw.yaw,
+    }
+    command := flight.Control_Command {
+        pitch         = normalized.pitch,
+        roll          = normalized.roll,
+        yaw           = normalized.yaw,
+        throttle      = normalized.throttle,
+        flap_fraction = normalized.flap_fraction,
+    }
+    wind := flight.Vec3{1, 0, -.5}
+
+    raw_result := postale.step(&raw, control, 0, 1.0 / 60.0, wind)
+    normalized_result := postale.step_normalized_command(&normalized, command, 0, 1.0 / 60.0, wind)
+
+    testing.expect(t, normalized_result == raw_result)
+    testing.expect(t, normalized == raw)
+}
+
+@(test)
+postale_normalized_seam_rejects_nil_and_invalid_delta_without_mutation :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({0, 80, 0})
+    runtime_before := runtime
+
+    result := postale.step_normalized_command(nil, {}, 0, 1.0 / 60.0)
+    testing.expect(t, result == postale.Ground_Result{})
+    result = postale.step_normalized_command(&runtime, {pitch = 1}, 0, 0)
+    testing.expect(t, result == postale.Ground_Result{})
+    result = postale.step_normalized_command(&runtime, {pitch = 1}, 0, -1)
+    testing.expect(t, result == postale.Ground_Result{})
+    testing.expect(t, runtime == runtime_before)
+}
+
+@(test)
+postale_selected_airspeed_follows_active_model :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({})
+    runtime.telemetry.airspeed = 37
+    runtime.ace_telemetry.pace = 52
+
+    testing.expect(t, postale.selected_airspeed(nil) == 0)
+    testing.expect(t, postale.selected_airspeed(&runtime) == 37)
+    runtime.flight_model = .Ace_Arcade
+    testing.expect(t, postale.selected_airspeed(&runtime) == 52)
+}
+
+@(test)
+postale_normalized_seam_clamps_command_and_syncs_complete_ace_step :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({0, 80, 0})
+    runtime.flight_model = .Ace_Arcade
+    runtime.grounded = false
+    runtime.was_grounded = false
+    runtime.body.position = {3, 80, -5}
+    runtime.body.velocity = flight.basis_from_orientation(runtime.body.orientation).forward * 42
+    runtime.ace_runtime.energy = 1
+    flight_runtime_before := runtime.flight_runtime
+    telemetry_before := runtime.telemetry
+    position_before := runtime.body.position
+
+    postale.step_normalized_command(
+        &runtime,
+        {pitch = 2, roll = -2, yaw = 2, throttle = 2, flap_fraction = -1},
+        0,
+        1.0 / 120.0,
+    )
+
+    testing.expect(t, runtime.pitch == 1)
+    testing.expect(t, runtime.roll == -1)
+    testing.expect(t, runtime.yaw == 1)
+    testing.expect(t, runtime.throttle == 1)
+    testing.expect(t, runtime.flap_fraction == 0)
+    testing.expect(t, runtime.flight_runtime == flight_runtime_before)
+    testing.expect(t, runtime.telemetry == telemetry_before)
+    testing.expect(t, runtime.body.position != position_before)
+    testing.expect(t, runtime.ace_telemetry.pace > 0)
+    testing.expect(t, runtime.ace_telemetry.energy == runtime.ace_runtime.energy)
+    testing.expect(t, runtime.vehicle.position.x == runtime.body.position.x)
+    testing.expect(t, runtime.vehicle.position.y == runtime.body.position.y)
+    testing.expect(t, runtime.vehicle.position.z == runtime.body.position.z)
+}
+
+@(test)
+postale_shared_damage_modifiers_reduce_ace_control_response :: proc(t: ^testing.T) {
+    healthy := postale.new_runtime({0, 80, 0})
+    healthy.flight_model = .Ace_Arcade
+    healthy.grounded = false
+    healthy.was_grounded = false
+    healthy.body.velocity = flight.basis_from_orientation(healthy.body.orientation).forward * 42
+    healthy.ace_runtime.energy = 1
+    damaged := healthy
+    damaged.flight_runtime.engine_output = .4
+    damaged.flight_runtime.control_authority = .25
+    damaged.flight_runtime.controls_damaged = true
+    command := flight.Control_Command {
+        roll     = 1,
+        throttle = 1,
+    }
+
+    postale.step_normalized_command(&healthy, command, 0, 1.0 / 120.0)
+    postale.step_normalized_command(&damaged, command, 0, 1.0 / 120.0)
+
+    testing.expect(t, healthy.ace_runtime.local_rate.z > 0)
+    testing.expect(t, damaged.ace_runtime.local_rate.z > 0)
+    testing.expect(t, damaged.ace_runtime.local_rate.z < healthy.ace_runtime.local_rate.z)
+    testing.expect(t, damaged.ace_telemetry.pace < healthy.ace_telemetry.pace)
+}
+
+@(test)
+postale_ace_safe_and_unsafe_touchdown_use_shared_ground_policy :: proc(t: ^testing.T) {
+    safe := postale.new_runtime({0, postale.GROUND_CLEARANCE, 0})
+    safe.flight_model = .Ace_Arcade
+    safe.grounded = false
+    safe.was_grounded = false
+    safe.body.position.y = postale.GROUND_CLEARANCE - .01
+    safe.body.velocity = flight.basis_from_orientation(safe.body.orientation).forward * 25 + flight.Vec3{0, -1, 0}
+    safe.ace_runtime.energy = 1
+
+    safe_result := postale.step_normalized_command(&safe, {throttle = .3}, 0, 1.0 / 120.0)
+    testing.expect(t, safe_result.touched_down)
+    testing.expect(t, safe.grounded)
+    testing.expect(t, !safe.crashed)
+    testing.expect(t, safe.vehicle.position.y == safe.body.position.y)
+
+    unsafe := postale.new_runtime({0, postale.GROUND_CLEARANCE, 0})
+    unsafe.flight_model = .Ace_Arcade
+    unsafe.grounded = false
+    unsafe.was_grounded = false
+    unsafe.body.position.y = postale.GROUND_CLEARANCE - .01
+    unsafe.body.velocity = flight.basis_from_orientation(unsafe.body.orientation).forward * 25 + flight.Vec3{0, -20, 0}
+    unsafe.ace_runtime.energy = 1
+
+    unsafe_result := postale.step_normalized_command(&unsafe, {throttle = .3}, 0, 1.0 / 120.0)
+    testing.expect(t, unsafe_result.touched_down)
+    testing.expect(t, unsafe.grounded)
+    testing.expect(t, unsafe_result.crashed)
+    testing.expect(t, unsafe.crashed)
 }
 
 @(test)
@@ -236,7 +484,7 @@ postale_throttle_and_automatic_flaps_are_smoothed :: proc(t: ^testing.T) {
     runtime.grounded = false
     runtime.body.position.y = 20
     runtime.throttle = 1
-    runtime.body.velocity = runtime.body.basis.forward * 35
+    runtime.body.velocity = flight.basis_from_orientation(runtime.body.orientation).forward * 35
     postale.step(&runtime, {}, 0, .5)
     testing.expect(t, runtime.flap_fraction < 1)
 }
@@ -247,7 +495,8 @@ postale_landing_intent_requires_a_stable_sustained_approach :: proc(t: ^testing.
     runtime.grounded = false
     runtime.was_grounded = false
     runtime.body.position.y = postale.GROUND_CLEARANCE + 12
-    runtime.body.velocity = runtime.body.basis.forward * 27.5 + flight.Vec3{0, -1.2, 0}
+    runtime.body.velocity =
+        flight.basis_from_orientation(runtime.body.orientation).forward * 27.5 + flight.Vec3{0, -1.2, 0}
     runtime.throttle = .3
 
     testing.expect(t, postale.landing_intent_candidate(&runtime, 0))
@@ -265,15 +514,17 @@ postale_landing_intent_requires_a_stable_sustained_approach :: proc(t: ^testing.
 postale_landing_intent_rejects_takeoff_and_stunt_motion :: proc(t: ^testing.T) {
     takeoff := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     takeoff.throttle = 1
-    takeoff.body.velocity = takeoff.body.basis.forward * 24
+    takeoff_basis := flight.basis_from_orientation(takeoff.body.orientation)
+    takeoff.body.velocity = takeoff_basis.forward * 24
     testing.expect(t, !postale.landing_intent_candidate(&takeoff, 0))
 
     stunt := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE + 10, 0})
     stunt.grounded = false
     stunt.was_grounded = false
     stunt.throttle = .25
-    stunt.body.velocity = stunt.body.basis.forward * 28 + flight.Vec3{0, -1, 0}
-    stunt.body.angular_velocity = stunt.body.basis.forward * .9
+    stunt_basis := flight.basis_from_orientation(stunt.body.orientation)
+    stunt.body.velocity = stunt_basis.forward * 28 + flight.Vec3{0, -1, 0}
+    stunt.body.angular_velocity_world = stunt_basis.forward * .9
     testing.expect(t, !postale.landing_intent_candidate(&stunt, 0))
     for _ in 0 ..< 60 {
         postale.update_landing_intent(&stunt, 0, 1.0 / 60.0)
@@ -286,7 +537,8 @@ postale_go_around_cancels_landing_intent_immediately :: proc(t: ^testing.T) {
     runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE + 10, 0})
     runtime.grounded = false
     runtime.was_grounded = false
-    runtime.body.velocity = runtime.body.basis.forward * 28 + flight.Vec3{0, -1, 0}
+    runtime.body.velocity =
+        flight.basis_from_orientation(runtime.body.orientation).forward * 28 + flight.Vec3{0, -1, 0}
     runtime.throttle = .3
     runtime.landing_intent = true
     runtime.landing_intent_seconds = postale.LANDING_INTENT_CONFIRM_SECONDS
@@ -361,7 +613,7 @@ postale_exit_requires_a_safe_stop :: proc(t: ^testing.T) {
 @(test)
 postale_braking_requires_a_deliberate_rollout :: proc(t: ^testing.T) {
     runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
-    runtime.body.velocity = runtime.body.basis.forward * 30
+    runtime.body.velocity = flight.basis_from_orientation(runtime.body.orientation).forward * 30
     start := runtime.body.position
 
     for _ in 0 ..< 60 {
@@ -385,16 +637,23 @@ postale_throttle_down_held_at_touchdown_applies_brakes_progressively :: proc(t: 
     runtime.grounded = false
     runtime.was_grounded = false
     runtime.body.position.y = postale.GROUND_CLEARANCE
-    runtime.body.velocity = runtime.body.basis.forward * 30 + flight.Vec3{0, -1, 0}
+    runtime.body.velocity =
+        flight.basis_from_orientation(runtime.body.orientation).forward * 30 + flight.Vec3{0, -1, 0}
 
     result := postale.step(&runtime, {throttle_down = true}, 0, 1.0 / 60.0)
-    speed_at_touchdown := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    speed_at_touchdown := linalg.dot(
+        runtime.body.velocity,
+        flight.basis_from_orientation(runtime.body.orientation).forward,
+    )
     testing.expect(t, result.touched_down && runtime.grounded)
 
     for _ in 0 ..< 20 {
         postale.step(&runtime, {throttle_down = true}, 0, 1.0 / 60.0)
     }
-    speed_after_hold := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    speed_after_hold := linalg.dot(
+        runtime.body.velocity,
+        flight.basis_from_orientation(runtime.body.orientation).forward,
+    )
     testing.expectf(
         t,
         speed_after_hold > speed_at_touchdown - 3,
@@ -403,11 +662,17 @@ postale_throttle_down_held_at_touchdown_applies_brakes_progressively :: proc(t: 
         speed_after_hold,
     )
 
-    speed_before_braking := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    speed_before_braking := linalg.dot(
+        runtime.body.velocity,
+        flight.basis_from_orientation(runtime.body.orientation).forward,
+    )
     for _ in 0 ..< 120 {
         postale.step(&runtime, {throttle_down = true}, 0, 1.0 / 60.0)
     }
-    speed_after_braking := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    speed_after_braking := linalg.dot(
+        runtime.body.velocity,
+        flight.basis_from_orientation(runtime.body.orientation).forward,
+    )
     testing.expectf(
         t,
         speed_after_braking < speed_before_braking - 2,
@@ -442,6 +707,22 @@ postale_accelerates_and_leaves_the_short_runway :: proc(t: ^testing.T) {
         "expected visible aerodynamic rotation before liftoff, got %.3f radians",
         run.peak_ground_pitch,
     )
+}
+
+@(test)
+postale_ace_uses_shared_takeoff_policy :: proc(t: ^testing.T) {
+    run := run_takeoff(3300, model = .Ace_Arcade)
+    testing.expectf(
+        t,
+        run.took_off && !run.crashed,
+        "Ace takeoff result: took_off=%v crashed=%v speed=%.2f distance=%.2f",
+        run.took_off,
+        run.crashed,
+        run.liftoff_speed,
+        run.distance,
+    )
+    testing.expect(t, run.distance > 0 && run.distance < 500)
+    testing.expect(t, run.peak_ground_pitch > .0174533)
 }
 
 @(test)
@@ -521,11 +802,12 @@ postale_sustained_roll_input_establishes_a_bank :: proc(t: ^testing.T) {
     runtime := postale.new_runtime(flight.Vec3{0, 80, 0})
     runtime.grounded = false
     runtime.was_grounded = false
-    runtime.body.velocity = runtime.body.basis.forward * 42
+    runtime.body.velocity = flight.basis_from_orientation(runtime.body.orientation).forward * 42
     for _ in 0 ..< 45 {
         postale.step(&runtime, {roll = .7}, 0, 1.0 / 60.0)
     }
-    testing.expect(t, math.abs(postale.bank_radians(runtime.body.basis)) > .35)
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    testing.expect(t, math.abs(postale.bank_radians(basis)) > .35)
 }
 
 @(test)
@@ -533,7 +815,7 @@ postale_rudder_engages_and_releases_without_snapping :: proc(t: ^testing.T) {
     runtime := postale.new_runtime(flight.Vec3{0, 80, 0})
     runtime.grounded = false
     runtime.was_grounded = false
-    runtime.body.velocity = runtime.body.basis.forward * 42
+    runtime.body.velocity = flight.basis_from_orientation(runtime.body.orientation).forward * 42
     postale.step(&runtime, {yaw = 1}, 0, 1.0 / 60.0)
     engaged := runtime.yaw
     testing.expect(t, engaged > 0 && engaged < 1)
@@ -544,6 +826,22 @@ postale_rudder_engages_and_releases_without_snapping :: proc(t: ^testing.T) {
 @(test)
 postale_reset_restores_the_runway_state :: proc(t: ^testing.T) {
     runtime := postale.new_runtime(flight.Vec3{4, postale.GROUND_CLEARANCE, 2})
+    runtime.flight_model = .Ace_Arcade
+    runtime.ace_tuning.pace = .73
+    runtime.ace_runtime = {
+        energy       = .9,
+        edge_state   = .Break,
+        edge_seconds = 2,
+        local_rate   = {1, 2, 3},
+    }
+    runtime.ace_telemetry = {
+        pace                 = .8,
+        energy               = .6,
+        track_grip           = .4,
+        attitude_track_angle = .2,
+        edge_state           = .Hang,
+    }
+    ace_tuning := runtime.ace_tuning
     runtime.body.position = {99, -5, 0}
     runtime.body.velocity = {12, 0, 0}
     runtime.throttle = 1
@@ -558,5 +856,9 @@ postale_reset_restores_the_runway_state :: proc(t: ^testing.T) {
     testing.expect(t, runtime.flight_runtime.engine_output == 1)
     testing.expect(t, runtime.flight_runtime.control_authority == 1)
     testing.expect(t, !runtime.flight_runtime.controls_damaged)
+    testing.expect(t, runtime.flight_model == .Ace_Arcade)
+    testing.expect(t, runtime.ace_tuning == ace_tuning)
+    testing.expect(t, runtime.ace_runtime == flight.default_ace_runtime(runtime.body, ace_tuning))
+    testing.expect(t, runtime.ace_telemetry == flight.Ace_Telemetry{})
     testing.expect(t, runtime.grounded && !runtime.crashed)
 }

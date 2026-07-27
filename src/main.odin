@@ -3951,25 +3951,26 @@ postale_vertex_world :: #force_inline proc(
     scale: f32,
 ) -> third_person.Vec3 {
     body := runtime.body
+    basis := flight.basis_from_orientation(body.orientation)
     return {
         body.position.x +
-        body.basis.right.x * position[0] * scale +
-        body.basis.up.x * position[1] * scale -
-        body.basis.forward.x * position[2] * scale,
+        basis.right.x * position[0] * scale +
+        basis.up.x * position[1] * scale -
+        basis.forward.x * position[2] * scale,
         body.position.y +
-        body.basis.right.y * position[0] * scale +
-        body.basis.up.y * position[1] * scale -
-        body.basis.forward.y * position[2] * scale,
+        basis.right.y * position[0] * scale +
+        basis.up.y * position[1] * scale -
+        basis.forward.y * position[2] * scale,
         body.position.z +
-        body.basis.right.z * position[0] * scale +
-        body.basis.up.z * position[1] * scale -
-        body.basis.forward.z * position[2] * scale,
+        basis.right.z * position[0] * scale +
+        basis.up.z * position[1] * scale -
+        basis.forward.z * position[2] * scale,
     }
 }
 
 @(no_instrumentation)
 postale_normal_world :: #force_inline proc(runtime: ^postale_game.Runtime, normal: [3]f32) -> third_person.Vec3 {
-    basis := runtime.body.basis
+    basis := flight.basis_from_orientation(runtime.body.orientation)
     return {
         basis.right.x * normal[0] + basis.up.x * normal[1] - basis.forward.x * normal[2],
         basis.right.y * normal[0] + basis.up.y * normal[1] - basis.forward.y * normal[2],
@@ -3979,10 +3980,11 @@ postale_normal_world :: #force_inline proc(runtime: ^postale_game.Runtime, norma
 
 aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
     body := aircraft_render_body(editor)
+    basis := flight.basis_from_orientation(body.orientation)
     if editor.aircraft.active == .Rondine {
         return {
             position = body.position,
-            basis = body.basis,
+            basis = basis,
             airspeed = editor.rondine.telemetry.speed,
             roll_input = editor.flight_control.roll,
             grounded = editor.rondine.grounded,
@@ -3994,7 +3996,7 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
     } else if editor.aircraft.active != .Postale {
         return {
             position = body.position,
-            basis = body.basis,
+            basis = basis,
             airspeed = linalg.length(body.velocity),
             roll_input = editor.flight_control.roll,
             grounded = editor.libellula.grounded,
@@ -4003,8 +4005,8 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
     }
     return {
         position        = body.position,
-        basis           = body.basis,
-        airspeed        = editor.postale.telemetry.airspeed,
+        basis           = basis,
+        airspeed        = postale_game.selected_airspeed(&editor.postale),
         roll_input      = editor.flight_control.roll,
         grounded        = editor.postale.grounded,
         // The Postale's broad parasol wing needs a low, long-lens-like rear
@@ -4024,13 +4026,12 @@ aircraft_render_body :: proc(editor: ^Editor) -> flight.Body_State {
     result := body
     result.position = linalg.lerp(previous.position, body.position, alpha)
     result.velocity = linalg.lerp(previous.velocity, body.velocity, alpha)
-    result.angular_velocity = linalg.lerp(previous.angular_velocity, body.angular_velocity, alpha)
-    result.basis = flight.orthonormalize(
-        {
-            forward = linalg.lerp(previous.basis.forward, body.basis.forward, alpha),
-            up = linalg.lerp(previous.basis.up, body.basis.up, alpha),
-        },
+    result.angular_velocity_world = linalg.lerp(
+        previous.angular_velocity_world,
+        body.angular_velocity_world,
+        alpha,
     )
+    result.orientation = flight.interpolate_orientation(previous.orientation, body.orientation, alpha)
     return result
 }
 
@@ -4060,14 +4061,14 @@ active_aircraft_airspeed :: proc(editor: ^Editor) -> f32 {
     if editor != nil && editor.aircraft.active == .Rondine do return editor.rondine.telemetry.speed
     if editor != nil && editor.aircraft.active != .Postale do return linalg.length(editor.libellula.body.velocity)
     if editor == nil do return 0
-    return editor.postale.telemetry.airspeed
+    return postale_game.selected_airspeed(&editor.postale)
 }
 
 postale_flyby_shake :: proc(editor: ^Editor) -> f32 {
     if editor == nil || editor.aircraft.active != .Postale || editor.postale.grounded || editor.postale.crashed {
         return 0
     }
-    speed_strength := clamp((editor.postale.telemetry.airspeed - 32) / 30, 0, 1)
+    speed_strength := clamp((postale_game.selected_airspeed(&editor.postale) - 32) / 30, 0, 1)
     if speed_strength <= 0 do return 0
     position := editor.postale.body.position
     strongest := f32(0)
@@ -4126,19 +4127,20 @@ libellula_vertex_world :: #force_inline proc(
     scale: f32,
 ) -> third_person.Vec3 {
     body := runtime.body
+    basis := flight.basis_from_orientation(body.orientation)
     return {
         body.position.x +
-        body.basis.right.x * position[0] * scale +
-        body.basis.up.x * position[1] * scale -
-        body.basis.forward.x * position[2] * scale,
+        basis.right.x * position[0] * scale +
+        basis.up.x * position[1] * scale -
+        basis.forward.x * position[2] * scale,
         body.position.y +
-        body.basis.right.y * position[0] * scale +
-        body.basis.up.y * position[1] * scale -
-        body.basis.forward.y * position[2] * scale,
+        basis.right.y * position[0] * scale +
+        basis.up.y * position[1] * scale -
+        basis.forward.y * position[2] * scale,
         body.position.z +
-        body.basis.right.z * position[0] * scale +
-        body.basis.up.z * position[1] * scale -
-        body.basis.forward.z * position[2] * scale,
+        basis.right.z * position[0] * scale +
+        basis.up.z * position[1] * scale -
+        basis.forward.z * position[2] * scale,
     }
 }
 
@@ -6043,11 +6045,12 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
         {r = 10, g = 21, b = 21, a = 246},
     )
     body := active_aircraft_body(editor)
+    basis := flight.basis_from_orientation(body.orientation)
     airspeed := active_aircraft_airspeed(editor)
     vertical_speed := body.velocity.y
-    bank := postale_game.bank_radians(body.basis)
-    pitch := math.asin(clamp(body.basis.forward.y, -1, 1))
-    heading := postale_game.yaw_radians(body.basis) * 180 / math.PI
+    bank := postale_game.bank_radians(basis)
+    pitch := math.asin(clamp(basis.forward.y, -1, 1))
+    heading := postale_game.yaw_radians(basis) * 180 / math.PI
     if heading < 0 do heading += 360
     dial_spacing := panel_width / 3
     dial_radius := clamp(dial_spacing * .30, 54, 64)
@@ -6090,7 +6093,7 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
        editor.postale.crashed {
         return
     }
-    intensity := clamp((editor.postale.telemetry.airspeed - 34) / 34, 0, 1)
+    intensity := clamp((postale_game.selected_airspeed(&editor.postale) - 34) / 34, 0, 1)
     if intensity <= .001 do return
 
     center := rl.Vector2 {
@@ -9183,7 +9186,8 @@ adriatic_run :: proc(
                     }
                 } else {
                     editor.postale.body.position.y += 85
-                    editor.postale.body.velocity = editor.postale.body.basis.forward * 58
+                    basis := flight.basis_from_orientation(editor.postale.body.orientation)
+                    editor.postale.body.velocity = basis.forward * 58
                     editor.postale.grounded = false
                     editor.postale.was_grounded = false
                     editor.postale.throttle = .82
@@ -10129,14 +10133,15 @@ adriatic_run :: proc(
                 // let the showcase vehicle outrun its deliberately composed
                 // camera while the capture frames settle.
                 editor.rondine.body.velocity = {}
-                editor.rondine.body.angular_velocity = {}
+                editor.rondine.body.angular_velocity_world = {}
             }
             editor.pilot.position = editor.rondine.vehicle.position
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.rondine.vehicle})
             if !entered do return .Quit
             p := editor.rondine.body.position
-            forward := editor.rondine.body.basis.forward
-            right := editor.rondine.body.basis.right
+            basis := flight.basis_from_orientation(editor.rondine.body.orientation)
+            forward := basis.forward
+            right := basis.right
             if showcase_view == "rondine-overhead" {
                 editor.camera_pose = third_person.camera_look_at({p.x + .01, p.y + 24, p.z - .12}, {p.x, p.y, p.z})
             } else if showcase_view == "rondine-drift" {
@@ -10713,7 +10718,7 @@ adriatic_run :: proc(
                             if !rondine_footprint_is_clear_water(
                                    editor,
                                    editor.rondine.body.position,
-                                   editor.rondine.body.basis,
+                                   flight.basis_from_orientation(editor.rondine.body.orientation),
                                ) &&
                                editor.rondine.telemetry.speed > 8 {
                                 rondine_game.crash(&editor.rondine)
@@ -10779,6 +10784,7 @@ adriatic_run :: proc(
                         editor.aircraft_fixed_accumulator -= AIRCRAFT_FIXED_STEP
                     }
                     if editor.aircraft.active == .Postale {
+                        basis := flight.basis_from_orientation(editor.postale.body.orientation)
                         left_tip := postale_vertex_world(
                             &editor.postale,
                             {-POSTALE_WING_TRAIL_LOCAL_X, POSTALE_WING_TRAIL_LOCAL_Y, POSTALE_WING_TRAIL_LOCAL_Z},
@@ -10795,21 +10801,21 @@ adriatic_run :: proc(
                             particle_systems.Vec3{left_tip.x, left_tip.y, left_tip.z},
                             particle_systems.Vec3{right_tip.x, right_tip.y, right_tip.z},
                             particle_systems.Vec3 {
-                                editor.postale.body.basis.forward.x,
-                                editor.postale.body.basis.forward.y,
-                                editor.postale.body.basis.forward.z,
+                                basis.forward.x,
+                                basis.forward.y,
+                                basis.forward.z,
                             },
                             particle_systems.Vec3 {
-                                editor.postale.body.basis.up.x,
-                                editor.postale.body.basis.up.y,
-                                editor.postale.body.basis.up.z,
+                                basis.up.x,
+                                basis.up.y,
+                                basis.up.z,
                             },
                             particle_systems.Vec3 {
                                 editor.atmosphere.weather.wind[0],
                                 0,
                                 editor.atmosphere.weather.wind[1],
                             },
-                            editor.postale.telemetry.airspeed,
+                            postale_game.selected_airspeed(&editor.postale),
                         )
                     }
                     vehicles.sync_driver(&editor.pilot)
@@ -11276,7 +11282,8 @@ adriatic_run :: proc(
                     engine_controls.power =
                         editor.postale.throttle * clamp(editor.postale.flight_runtime.engine_output, 0, 1)
                     engine_controls.propeller_mix = 1
-                    engine_controls.propeller_airspeed = clamp(editor.postale.telemetry.airspeed / 65, 0, 1)
+                    engine_controls.propeller_airspeed =
+                        clamp(postale_game.selected_airspeed(&editor.postale) / 65, 0, 1)
                     engine_controls.damage = editor.postale.structural_damage
                 } else if editor.aircraft.active == .Rondine {
                     engine_controls.rate = .14 + editor.rondine.throttle * .86
@@ -11398,7 +11405,7 @@ adriatic_run :: proc(
                 tire_roll_controls.active = true
                 tire_roll_controls.wetness = tire_wetness
                 tire_roll_controls.damage = editor.postale.structural_damage
-                tire_roll_controls.speed = clamp(editor.postale.telemetry.airspeed / 45, 0, 1)
+                tire_roll_controls.speed = clamp(postale_game.selected_airspeed(&editor.postale) / 45, 0, 1)
                 tire_roll_controls.surface = footstep_surface_from_dust(tire_surface)
                 tire_roll_controls.roughness = tire_roughness_from_dust(tire_surface)
             }

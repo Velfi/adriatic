@@ -128,12 +128,12 @@ new_runtime :: proc(spawn_position: flight.Vec3) -> Runtime {
 reset :: proc(runtime: ^Runtime, sea_level: f32) {
     if runtime == nil do return
     runtime.body = {
-        position = runtime.spawn_position,
-        basis    = runtime.spawn_basis,
+        position    = runtime.spawn_position,
+        orientation = flight.orientation_from_basis(runtime.spawn_basis),
     }
     runtime.body.position.y = sea_level + GROUND_CLEARANCE
     runtime.body.velocity = {}
-    runtime.body.angular_velocity = {}
+    runtime.body.angular_velocity_world = {}
     runtime.throttle = 0
     runtime.propeller_turns = 0
     runtime.steering = 0
@@ -185,8 +185,9 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
     runtime.steering = approach(runtime.steering, clamp(control.roll + control.yaw * .35, -1, 1), dt * 2.8)
     runtime.target_height = clamp(runtime.target_height - control.pitch * dt * 2.4, f32(1.5), f32(6))
 
-    forward := runtime.body.basis.forward
-    right := runtime.body.basis.right
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    forward := basis.forward
+    right := basis.right
     forward_speed := linalg.dot(runtime.body.velocity, forward)
     lateral_speed := linalg.dot(runtime.body.velocity, right)
     speed_fraction := clamp(math.abs(forward_speed) / runtime.tuning.maximum_speed, 0, 1)
@@ -199,9 +200,10 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
     // Positive roll/yaw input is pilot-right. The Rondine basis has right =
     // cross(forward, up), so a right turn is a negative world-yaw rotation.
     yaw_delta := -runtime.steering * runtime.tuning.turn_rate * turn_authority * (1 + drift_input * .7) * dt
-    rotate_yaw(&runtime.body.basis, yaw_delta)
-    forward = runtime.body.basis.forward
-    right = runtime.body.basis.right
+    runtime.body.orientation = flight.rotate_level_heading(runtime.body.orientation, yaw_delta)
+    basis = flight.basis_from_orientation(runtime.body.orientation)
+    forward = basis.forward
+    right = basis.right
 
     thrust := runtime.throttle * runtime.tuning.thrust_acceleration
     overspeed := clamp(
@@ -259,8 +261,8 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
         }
     }
 
-    forward_speed = linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
-    lateral_speed = linalg.dot(runtime.body.velocity, runtime.body.basis.right)
+    forward_speed = linalg.dot(runtime.body.velocity, basis.forward)
+    lateral_speed = linalg.dot(runtime.body.velocity, basis.right)
     longitudinal_acceleration :=
         (forward_speed - previous_forward_speed) / dt
     surge_target :=
@@ -339,7 +341,7 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
         runtime.slip_side = 0
     }
     if drift_intensity < .18 do runtime.kick_marker_armed = true
-    runtime.body.angular_velocity = {0, yaw_delta / dt, 0}
+    runtime.body.angular_velocity_world = {0, yaw_delta / dt, 0}
     runtime.telemetry = {
         speed           = linalg.length(runtime.body.velocity),
         forward_speed   = forward_speed,
@@ -355,7 +357,7 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
         hookup_kick     = runtime.hookup_kick,
         surface_impact  = runtime.surface_impact,
         surface_release = runtime.surface_release,
-        turn_rate       = runtime.body.angular_velocity.y,
+        turn_rate       = runtime.body.angular_velocity_world.y,
         height          = max(f32(0), runtime.body.position.y - sea_level - GROUND_CLEARANCE),
         wake_intensity  = clamp(
             (math.abs(forward_speed) - 12) / 48 + drift_intensity * .42,
@@ -395,7 +397,8 @@ maybe_spawn_wake :: proc(runtime: ^Runtime, dt: f32) {
                 ),
             ),
         )
-    travel_direction := runtime.body.basis.forward
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    travel_direction := basis.forward
     if horizontal_speed > .01 {
         travel_direction = {
             runtime.body.velocity.x / horizontal_speed,
@@ -459,8 +462,8 @@ maybe_spawn_wake :: proc(runtime: ^Runtime, dt: f32) {
         runtime.wake[runtime.wake_count] = {
             serial   = runtime.wake_serial,
             position = position,
-            forward  = runtime.body.basis.forward,
-            right    = runtime.body.basis.right,
+            forward  = basis.forward,
+            right    = basis.right,
             lifetime = lifetime,
             strength = strength,
             slip     = runtime.telemetry.slip,
@@ -491,16 +494,8 @@ step_wake :: proc(runtime: ^Runtime, dt: f32) {
 
 sync_vehicle :: proc(runtime: ^Runtime) {
     runtime.vehicle.position = {runtime.body.position.x, runtime.body.position.y, runtime.body.position.z}
-    runtime.vehicle.yaw_radians = math.atan2(-runtime.body.basis.forward.z, -runtime.body.basis.forward.x)
-}
-
-rotate_yaw :: proc(basis: ^flight.Basis, radians: f32) {
-    c, s := math.cos(radians), math.sin(radians)
-    forward := basis.forward
-    basis.forward = flight.Vec3{forward.x * c + forward.z * s, 0, -forward.x * s + forward.z * c}
-    basis.forward = linalg.normalize(basis.forward)
-    basis.up = {0, 1, 0}
-    basis.right = linalg.cross(basis.forward, basis.up)
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    runtime.vehicle.yaw_radians = math.atan2(-basis.forward.z, -basis.forward.x)
 }
 
 approach :: proc(value, target, amount: f32) -> f32 {

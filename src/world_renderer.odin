@@ -13423,11 +13423,12 @@ World_Aircraft_Transform :: struct {
 }
 
 world_aircraft_transform :: #force_inline proc(body: flight.Body_State, scale: f32) -> World_Aircraft_Transform {
+    basis := flight.basis_from_orientation(body.orientation)
     return {
         origin = {body.position.x, body.position.y, body.position.z},
-        right_basis = {body.basis.right.x * scale, body.basis.right.y * scale, body.basis.right.z * scale},
-        up_basis = {body.basis.up.x * scale, body.basis.up.y * scale, body.basis.up.z * scale},
-        forward_basis = {body.basis.forward.x * scale, body.basis.forward.y * scale, body.basis.forward.z * scale},
+        right_basis = {basis.right.x * scale, basis.right.y * scale, basis.right.z * scale},
+        up_basis = {basis.up.x * scale, basis.up.y * scale, basis.up.z * scale},
+        forward_basis = {basis.forward.x * scale, basis.forward.y * scale, basis.forward.z * scale},
     }
 }
 
@@ -13479,7 +13480,7 @@ world_aircraft_in_view :: proc(editor: ^Editor, position: flight.Vec3, radius: f
 }
 
 world_rondine_presentation_basis :: #force_inline proc(editor: ^Editor) -> flight.Basis {
-    basis := editor.rondine.body.basis
+    basis := flight.basis_from_orientation(editor.rondine.body.orientation)
     pitch := clamp(-editor.flight_control.pitch * .075 + editor.rondine.body.velocity.y * .018, -.1, .1)
     pitch_c, pitch_s := math.cos(pitch), math.sin(pitch)
     forward := basis.forward
@@ -13503,7 +13504,7 @@ world_rondine_presentation_basis :: #force_inline proc(editor: ^Editor) -> fligh
 
 world_rondine_local :: #force_inline proc(editor: ^Editor, p: [3]f32) -> third_person.Vec3 {
     body := editor.rondine.body
-    body.basis = world_rondine_presentation_basis(editor)
+    body.orientation = flight.orientation_from_basis(world_rondine_presentation_basis(editor))
     transform := world_aircraft_transform(body, 1)
     return world_aircraft_vertex_world(transform, p)
 }
@@ -14103,10 +14104,11 @@ world_rondine_live_variation :: proc(epoch: u32, blend: f32, pressure_role, salt
 
 world_rondine_surface_heading :: proc(editor: ^Editor) -> third_person.Vec3 {
     if editor == nil do return {0, 0, -1}
+    basis := flight.basis_from_orientation(editor.rondine.body.orientation)
     body_forward := third_person.Vec3 {
-        editor.rondine.body.basis.forward.x,
+        basis.forward.x,
         0,
-        editor.rondine.body.basis.forward.z,
+        basis.forward.z,
     }
     horizontal_velocity := third_person.Vec3 {
         editor.rondine.body.velocity.x,
@@ -14134,6 +14136,7 @@ world_rondine_surface_heading :: proc(editor: ^Editor) -> third_person.Vec3 {
 
 world_rondine_wake_fans :: proc(editor: ^Editor) {
     if editor == nil || !editor.rondine_visible do return
+    rondine_basis := flight.basis_from_orientation(editor.rondine.body.orientation)
     sea_y := editor.project.sea_level + .06
     camera := perspective_camera(
         editor.camera_pose,
@@ -14174,12 +14177,12 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     if contact_strength > .02 {
         contact_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
         body_forward := third_person.Vec3 {
-            editor.rondine.body.basis.forward.x,
+            rondine_basis.forward.x,
             0,
-            editor.rondine.body.basis.forward.z,
+            rondine_basis.forward.z,
         }
         contact_forward := world_rondine_surface_heading(editor)
-        contact_right := third_person.Vec3{editor.rondine.body.basis.right.x, 0, editor.rondine.body.basis.right.z}
+        contact_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
         contact_back := -contact_forward
         body_back := -body_forward
         stern := contact_base + body_back * 3.7
@@ -15221,9 +15224,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         spark_back := -world_rondine_surface_heading(editor)
         spark_right :=
             third_person.Vec3 {
-                editor.rondine.body.basis.right.x,
+                rondine_basis.right.x,
                 0,
-                editor.rondine.body.basis.right.z,
+                rondine_basis.right.z,
             }
         planing_spark_visibility :=
             f32(math.sqrt(f64(planing_spark_strength)))
@@ -15289,9 +15292,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         prop_tick_back := -world_rondine_surface_heading(editor)
         prop_tick_right :=
             third_person.Vec3 {
-                editor.rondine.body.basis.right.x,
+                rondine_basis.right.x,
                 0,
-                editor.rondine.body.basis.right.z,
+                rondine_basis.right.z,
             }
         prop_tick_visibility :=
             f32(math.sqrt(f64(prop_tick_strength)))
@@ -15381,9 +15384,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         surge_back := -world_rondine_surface_heading(editor)
         surge_right :=
             third_person.Vec3 {
-                editor.rondine.body.basis.right.x,
+                rondine_basis.right.x,
                 0,
-                editor.rondine.body.basis.right.z,
+                rondine_basis.right.z,
             }
         surge_visibility := f32(math.sqrt(f64(surge_strength)))
         for bar in 0 ..< 3 {
@@ -15437,9 +15440,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         power_back := -world_rondine_surface_heading(editor)
         power_right :=
             third_person.Vec3 {
-                editor.rondine.body.basis.right.x,
+                rondine_basis.right.x,
                 0,
-                editor.rondine.body.basis.right.z,
+                rondine_basis.right.z,
             }
         power_side := math.sign(editor.rondine.steering)
         if math.abs(editor.rondine.telemetry.slip) > .025 {
@@ -15571,9 +15574,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         transition_back := -world_rondine_surface_heading(editor)
         transition_right :=
             third_person.Vec3 {
-                editor.rondine.body.basis.right.x,
+                rondine_basis.right.x,
                 0,
-                editor.rondine.body.basis.right.z,
+                rondine_basis.right.z,
             }
         transition_side := editor.rondine.slip_side
         if transition_side == 0 do transition_side = math.sign(editor.rondine.steering)
@@ -15615,9 +15618,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         brake_back := -world_rondine_surface_heading(editor)
         brake_right :=
             third_person.Vec3 {
-                editor.rondine.body.basis.right.x,
+                rondine_basis.right.x,
                 0,
-                editor.rondine.body.basis.right.z,
+                rondine_basis.right.z,
             }
         brake_visibility := f32(math.sqrt(f64(brake_strength)))
         pocket_alpha := u8(clamp(76 * brake_visibility, 0, 82))
@@ -15688,9 +15691,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         flick_back := -world_rondine_surface_heading(editor)
         flick_right :=
             third_person.Vec3 {
-                editor.rondine.body.basis.right.x,
+                rondine_basis.right.x,
                 0,
-                editor.rondine.body.basis.right.z,
+                rondine_basis.right.z,
             }
         flick_side := editor.rondine.steering >= 0 ? f32(1) : f32(-1)
         sheet_root :=
@@ -15762,7 +15765,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     if live_strength > .02 {
         live_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
         live_forward := world_rondine_surface_heading(editor)
-        live_right := third_person.Vec3{editor.rondine.body.basis.right.x, 0, editor.rondine.body.basis.right.z}
+        live_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
         live_back := -live_forward
         live_turn := clamp(editor.rondine.telemetry.turn_rate * 3 + editor.rondine.telemetry.slip * 1.8, -1, 1)
         for side in 0 ..< 2 {
@@ -17815,7 +17818,8 @@ world_vehicle_showcase :: proc(editor: ^Editor) {
         world_postale_pilot(editor)
     } else if editor.vehicle_showcase_target == "libellula" || editor.vehicle_showcase_target == "libellula-mk2" {
         world_aircraft(editor)
-        world_showcase_aircraft_pilot(editor, editor.libellula.body.position, editor.libellula.body.basis)
+        basis := flight.basis_from_orientation(editor.libellula.body.orientation)
+        world_showcase_aircraft_pilot(editor, editor.libellula.body.position, basis)
     } else if editor.vehicle_showcase_target == "rondine" {
         p := editor.rondine.body.position
         y := editor.project.sea_level
@@ -20516,12 +20520,13 @@ world_postale_pilot :: proc(editor: ^Editor) {
     if editor.pilot.vehicle != &editor.postale.vehicle do return
 
     body := editor.postale.body
+    basis := flight.basis_from_orientation(body.orientation)
     // Parent the pilot to a fixed seat in Postale mesh-local space. The mouse
     // model's origin is at its feet, so the seat belongs below the high wing,
     // inside the forward fuselage—not on top of the aircraft.
     seat_local := [3]f32{0, -.37, -.20}
     position := postale_vertex_world(&editor.postale, seat_local, POSTALE_PRESENTATION_SCALE)
-    rotation := math.atan2(-body.basis.forward.x, -body.basis.forward.z)
+    rotation := math.atan2(-basis.forward.x, -basis.forward.z)
     world_mouse_model_parented(
         editor,
         {
@@ -20537,7 +20542,7 @@ world_postale_pilot :: proc(editor: ^Editor) {
             hide_tail = true,
             hide_hind_feet = true,
         },
-        body.basis,
+        basis,
     )
 }
 

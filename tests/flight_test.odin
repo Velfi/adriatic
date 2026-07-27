@@ -17,7 +17,7 @@ fixed_wing_aerodynamics :: proc(t: ^testing.T) {
 @(test)
 fixed_wing_step_produces_thrust :: proc(t: ^testing.T) {
     state := flight.Body_State {
-        basis = flight.identity_basis(),
+        orientation = flight.identity_orientation(),
     }; airframe := flight.default_airframe(); runtime := flight.default_runtime()
     flight.step(&state, {throttle = 1}, airframe, runtime, {}, 1.0 / 60.0)
     testing.expect(t, state.velocity.z < 0)
@@ -73,7 +73,7 @@ libellula_rotors_allocate_collective :: proc(t: ^testing.T) {
     testing.expect(t, solution.total_thrust == 18000)
     testing.expect(t, solution.thrusts.x == solution.thrusts.y && solution.thrusts.z > 0)
     state := flight.Body_State {
-        basis = flight.identity_basis(),
+        orientation = flight.identity_orientation(),
     }; telemetry := flight.step_tri_rotor(
         &state,
         {throttle = 1},
@@ -111,12 +111,12 @@ libellula_runtime_resolves_ground_and_allows_safe_exit :: proc(t: ^testing.T) {
 @(test)
 libellula_auto_level_preserves_pilot_cyclic_input :: proc(t: ^testing.T) {
     state := flight.Body_State {
-        position = {0, 50, 0},
-        basis    = flight.identity_basis(),
+        position    = {0, 50, 0},
+        orientation = flight.identity_orientation(),
     }
     runtime := flight.default_tri_rotor_runtime()
     for _ in 0 ..< 30 {
         flight.step_tri_rotor(&state, {throttle = .7, pitch = 1}, flight.libellula_airframe(), runtime, 1.0 / 60.0)
     }
-    testing.expect(t, state.basis.forward.y != 0)
+    testing.expect(t, flight.basis_from_orientation(state.orientation).forward.y != 0)
 }

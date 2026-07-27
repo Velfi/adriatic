@@ -12,6 +12,7 @@ import tweak_package "../packages/tweak"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
 
 TWEAK_FILE_PATH :: "adriatic.tweak.toml"
 TWEAK_FILE_VERSION :: i64(1)
@@ -838,6 +839,20 @@ tweak_draw_car :: proc(editor: ^Editor) {
 tweak_draw_postale :: proc(editor: ^Editor) {
     a := &editor.tweak.postale_airframe
     if im.Button("Reset active aircraft") do aircraft_reset(editor)
+    if im.RadioButton("Current Aero", editor.postale.flight_model == .Current_Aero) {
+        editor.postale.flight_model = .Current_Aero
+    }
+    im.SameLine()
+    if im.RadioButton("Ace Arcade", editor.postale.flight_model == .Ace_Arcade) {
+        editor.postale.flight_model = .Ace_Arcade
+        editor.postale.ace_runtime = flight.default_ace_runtime(editor.postale.body, editor.postale.ace_tuning)
+        editor.postale.ace_runtime.energy = .75
+        editor.postale.ace_telemetry = {
+            pace       = linalg.length(editor.postale.body.velocity),
+            energy     = editor.postale.ace_runtime.energy,
+            edge_state = editor.postale.ace_runtime.edge_state,
+        }
+    }
     im.Separator()
     im.Text("Layout: fixed wing (%d)", a.flight_layout)
     tweak_drag_f32("Mass kg", &a.mass_kg, 1, 50000, 1)
@@ -912,7 +927,7 @@ tweak_draw_postale :: proc(editor: ^Editor) {
     tweak_drag_f32("Propeller base rate", &editor.tweak.postale_tuning.propeller_base_rate, 0, 50, .01)
     tweak_drag_f32("Propeller throttle rate", &editor.tweak.postale_tuning.propeller_throttle_rate, 0, 100, .1)
     im.SeparatorText("Diagnostics")
-    im.Text("Airspeed: %.2f", editor.postale.telemetry.airspeed)
+    im.Text("Airspeed: %.2f", postale_game.selected_airspeed(&editor.postale))
     im.Text("AoA: %.2f deg", editor.postale.telemetry.angle_of_attack_degrees)
     im.Text("Stalling: %s", editor.postale.telemetry.is_stalling ? "yes" : "no")
 }

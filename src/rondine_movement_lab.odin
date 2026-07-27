@@ -76,13 +76,12 @@ rondine_movement_lab_rotate_y :: proc(vector: flight.Vec3, radians: f32) -> flig
 
 rondine_movement_lab_orient :: proc(runtime: ^rondine_game.Runtime, desired_forward: flight.Vec3) {
     if runtime == nil do return
-    forward := runtime.body.basis.forward
+    forward := flight.basis_from_orientation(runtime.body.orientation).forward
     dot := forward.x * desired_forward.x + forward.z * desired_forward.z
     cross := forward.z * desired_forward.x - forward.x * desired_forward.z
     radians := math.atan2(cross, dot)
     center := runtime.body.position
-    runtime.body.basis.forward = rondine_movement_lab_rotate_y(runtime.body.basis.forward, radians)
-    runtime.body.basis.right = rondine_movement_lab_rotate_y(runtime.body.basis.right, radians)
+    runtime.body.orientation = flight.rotate_level_heading(runtime.body.orientation, radians)
     runtime.body.velocity = rondine_movement_lab_rotate_y(runtime.body.velocity, radians)
     for &sample in runtime.wake[:runtime.wake_count] {
         sample.position = center + rondine_movement_lab_rotate_y(sample.position - center, radians)

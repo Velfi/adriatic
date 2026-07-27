@@ -117,6 +117,10 @@ Runtime :: struct {
     airframe:                 flight.Airframe,
     flight_runtime:           flight.Runtime,
     telemetry:                flight.Telemetry,
+    flight_model:             Flight_Model,
+    ace_tuning:               flight.Ace_Tuning,
+    ace_runtime:              flight.Ace_Runtime,
+    ace_telemetry:            flight.Ace_Telemetry,
     throttle:                 f32,
     flap_fraction:            f32,
     propeller_turns:          f32,
@@ -137,7 +141,7 @@ Runtime :: struct {
     landing_intent_seconds:   f32,
     landing_intent:           bool,
     spawn_position:           flight.Vec3,
-    spawn_basis:              flight.Basis,
+    spawn_orientation:        quaternion128,
     tuning:                   Tuning,
 }
 
@@ -153,11 +157,12 @@ Ground_Result :: struct {
 
 new_runtime :: proc(spawn_position: flight.Vec3) -> Runtime {
     result := Runtime {
-        airframe = flight.postale_airframe(),
-        flight_runtime = flight.default_runtime(),
-        tuning = default_tuning(),
-        spawn_position = spawn_position,
-        spawn_basis = {forward = {-1, 0, 0}, up = {0, 1, 0}, right = {0, 0, -1}},
+        airframe          = flight.postale_airframe(),
+        flight_runtime    = flight.default_runtime(),
+        ace_tuning        = ace_tuning_preset(),
+        tuning            = default_tuning(),
+        spawn_position    = spawn_position,
+        spawn_orientation = flight.orientation_from_forward_and_up({-1, 0, 0}, {0, 1, 0}),
     }
     reset(&result, spawn_position.y - result.tuning.ground_clearance)
     return result
@@ -170,14 +175,19 @@ reset :: proc(runtime: ^Runtime, ground_height: f32) {
     // aircraft can still have zero elevator, aileron, and throttle authority.
     runtime.flight_runtime = flight.default_runtime()
     runtime.body = {
-        position = runtime.spawn_position,
-        basis    = runtime.spawn_basis,
+        position    = runtime.spawn_position,
+        orientation = runtime.spawn_orientation,
+    }
+    if runtime.flight_model != .Current_Aero && runtime.flight_model != .Ace_Arcade {
+        runtime.flight_model = .Current_Aero
     }
     runtime.gear_compression = static_gear_compression(runtime)
     runtime.gear_force = runtime.airframe.mass_kg * GRAVITY
     runtime.body.position.y = ground_height + runtime.tuning.ground_clearance - runtime.gear_compression
+    runtime.ace_runtime = flight.default_ace_runtime(runtime.body, runtime.ace_tuning)
+    runtime.ace_telemetry = {}
     runtime.vehicle.position = to_third_person(runtime.body.position)
-    runtime.vehicle.yaw_radians = yaw_radians(runtime.body.basis)
+    runtime.vehicle.yaw_radians = yaw_radians(flight.basis_from_orientation(runtime.body.orientation))
     runtime.vehicle.interaction_radius = 2.5
     runtime.vehicle.exit_distance = 2.2
     runtime.telemetry = {}
@@ -212,15 +222,16 @@ landing_intent_candidate :: proc(runtime: ^Runtime, ground_height: f32) -> bool 
     if airspeed < stall_speed * 1.05 || airspeed > max_f32(runtime.tuning.flap_auto_speed, stall_speed * 1.75) {
         return false
     }
-    if math.abs(bank_radians(runtime.body.basis)) > runtime.tuning.safe_bank_radians do return false
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    if math.abs(bank_radians(basis)) > runtime.tuning.safe_bank_radians do return false
     // A genuine approach points mostly along the airframe and remains settled.
     // Loops, spins, inverted passes, and tailslides fail one or more of these
     // tests even when they briefly pass through the landing altitude band.
-    pitch_radians := math.asin(clamp(runtime.body.basis.forward.y, -1, 1))
+    pitch_radians := math.asin(clamp(basis.forward.y, -1, 1))
     if math.abs(pitch_radians) > .4363323 do return false
-    local_velocity := flight.world_to_local(runtime.body.basis, runtime.body.velocity)
+    local_velocity := flight.world_to_local(basis, runtime.body.velocity)
     if local_velocity.z <= 0 || local_velocity.z < airspeed * .72 do return false
-    local_rate := flight.world_to_local(runtime.body.basis, runtime.body.angular_velocity)
+    local_rate := flight.world_to_local(basis, runtime.body.angular_velocity_world)
     if math.abs(local_rate.x) > .6 || math.abs(local_rate.y) > .6 || math.abs(local_rate.z) > .6 {
         return false
     }
@@ -246,11 +257,53 @@ update_landing_intent :: proc(runtime: ^Runtime, ground_height, delta_seconds: f
     runtime.landing_intent = runtime.landing_intent_seconds >= LANDING_INTENT_CONFIRM_SECONDS
 }
 
-step :: proc(
+step_airborne_model :: proc(
     runtime: ^Runtime,
-    control: Control,
+    command: flight.Control_Command,
+    delta_seconds: f32,
+    wind: flight.Vec3 = {},
+) {
+    if runtime == nil || delta_seconds <= 0 do return
+    modifiers := flight.model_modifiers_from_runtime(runtime.flight_runtime)
+    switch runtime.flight_model {
+    case .Current_Aero:
+        runtime.telemetry = flight.step(
+            &runtime.body,
+            command,
+            runtime.airframe,
+            runtime.flight_runtime,
+            wind,
+            delta_seconds,
+        )
+    case .Ace_Arcade:
+        runtime.ace_telemetry = flight.ace_step(
+            &runtime.body,
+            command,
+            runtime.ace_tuning,
+            &runtime.ace_runtime,
+            modifiers,
+            delta_seconds,
+        )
+    }
+}
+
+selected_airspeed :: proc(runtime: ^Runtime) -> f32 {
+    if runtime == nil do return 0
+    switch runtime.flight_model {
+    case .Current_Aero:
+        return runtime.telemetry.airspeed
+    case .Ace_Arcade:
+        return runtime.ace_telemetry.pace
+    }
+    return 0
+}
+
+step_normalized_command :: proc(
+    runtime: ^Runtime,
+    raw_command: flight.Control_Command,
     ground_height, delta_seconds: f32,
     wind: flight.Vec3 = {},
+    ground_brake_requested: bool = false,
 ) -> Ground_Result {
     if runtime == nil || delta_seconds <= 0 do return {}
     dt := min_f32(delta_seconds, .05)
@@ -259,6 +312,84 @@ step :: proc(
         runtime.body.velocity *= max_f32(0, 1 - dt * 5)
         sync_vehicle(runtime)
         return {grounded = runtime.grounded, crashed = true}
+    }
+
+    command := flight.Control_Command {
+        pitch         = clamp(raw_command.pitch, -1, 1),
+        roll          = clamp(raw_command.roll, -1, 1),
+        yaw           = clamp(raw_command.yaw, -1, 1),
+        throttle      = clamp(raw_command.throttle, 0, 1),
+        flap_fraction = clamp(raw_command.flap_fraction, 0, 1),
+    }
+    runtime.pitch = command.pitch
+    runtime.roll = command.roll
+    runtime.yaw = command.yaw
+    runtime.throttle = command.throttle
+    runtime.flap_fraction = command.flap_fraction
+
+    runtime.was_grounded = runtime.grounded
+    vertical_before := runtime.body.velocity.y
+    step_airborne_model(runtime, command, dt, wind)
+
+    result := resolve_ground_contact(runtime, ground_height, vertical_before, dt)
+    brake_target := runtime.grounded && ground_brake_requested ? f32(1) : f32(0)
+    // Hydraulic pressure and tire loading build over a fraction of a second:
+    // enough to avoid a touchdown impulse without sacrificing the short
+    // runway's usable braking distance.
+    brake_response := brake_target > runtime.ground_brake_amount ? f32(8) : f32(5)
+    runtime.ground_brake_amount = approach(runtime.ground_brake_amount, brake_target, dt * brake_response)
+    if runtime.grounded {
+        if runtime.was_grounded {
+            runtime.grounded_time += dt
+        } else {
+            runtime.grounded_time = 0
+        }
+        // Tires remove slip through finite forces rather than deleting lateral
+        // velocity on contact.
+        ground_basis := flight.basis_from_orientation(runtime.body.orientation)
+        forward_speed := linalg.dot(runtime.body.velocity, ground_basis.forward)
+        lateral_speed := linalg.dot(runtime.body.velocity, ground_basis.right)
+        // Treat rollout resistance as a constant acceleration. Multiplying
+        // speed by a damping factor made the brakes strongest at touchdown
+        // and could erase landing speed in about a second.
+        forward_speed = approach(
+            forward_speed,
+            0,
+            dt * lerp(runtime.tuning.ground_coast, runtime.tuning.ground_brake, runtime.ground_brake_amount),
+        )
+        lateral_speed = approach(lateral_speed, 0, dt * 7.5)
+        vertical_speed := runtime.body.velocity.y
+        runtime.body.velocity =
+            ground_basis.forward * forward_speed +
+            ground_basis.right * lateral_speed +
+            flight.Vec3{0, vertical_speed, 0}
+        runtime.body.angular_velocity_world.x *= max_f32(0, 1 - dt * 8)
+        runtime.body.angular_velocity_world.z *= max_f32(0, 1 - dt * 8)
+        steer :=
+            runtime.yaw *
+            dt *
+            lerp(runtime.tuning.ground_steer_fast, runtime.tuning.ground_steer_slow, clamp(forward_speed / 20, 0, 1))
+        runtime.body.orientation = rotate_ground_heading(runtime.body.orientation, steer)
+    } else {
+        runtime.grounded_time = 0
+    }
+    runtime.propeller_turns +=
+        dt * (runtime.tuning.propeller_base_rate + runtime.throttle * runtime.tuning.propeller_throttle_rate)
+    sync_vehicle(runtime)
+    result.crashed = runtime.crashed
+    return result
+}
+
+step :: proc(
+    runtime: ^Runtime,
+    control: Control,
+    ground_height, delta_seconds: f32,
+    wind: flight.Vec3 = {},
+) -> Ground_Result {
+    if runtime == nil || delta_seconds <= 0 do return {}
+    dt := min_f32(delta_seconds, .05)
+    if runtime.crashed {
+        return step_normalized_command(runtime, {}, ground_height, dt, wind)
     }
 
     throttle_target := runtime.throttle
@@ -295,7 +426,8 @@ step :: proc(
     runtime.flap_fraction = approach(runtime.flap_fraction, flap_target, dt * runtime.tuning.flap_response)
 
     if runtime.grounded {
-        forward_speed := math.abs(linalg.dot(runtime.body.velocity, runtime.body.basis.forward))
+        ground_basis := flight.basis_from_orientation(runtime.body.orientation)
+        forward_speed := math.abs(linalg.dot(runtime.body.velocity, ground_basis.forward))
         rotation_speed :=
             flight.effective_stall_speed(runtime.airframe.mass_kg, runtime.airframe, runtime.flap_fraction) *
             runtime.tuning.takeoff_speed_scale
@@ -314,7 +446,7 @@ step :: proc(
             ground_pitch_target,
             GROUND_PITCH_RATE * dt,
         )
-        set_ground_pitch(&runtime.body.basis, runtime.ground_pitch_radians)
+        runtime.body.orientation = set_ground_pitch(runtime.body.orientation, runtime.ground_pitch_radians)
     }
 
     command := flight.Control_Command {
@@ -324,56 +456,7 @@ step :: proc(
         throttle      = runtime.throttle,
         flap_fraction = runtime.flap_fraction,
     }
-    runtime.was_grounded = runtime.grounded
-    vertical_before := runtime.body.velocity.y
-    runtime.telemetry = flight.step(&runtime.body, command, runtime.airframe, runtime.flight_runtime, wind, dt)
-
-    result := resolve_ground_contact(runtime, ground_height, vertical_before, dt)
-    brake_target := runtime.grounded && control.throttle_down ? f32(1) : f32(0)
-    // Hydraulic pressure and tire loading build over a fraction of a second:
-    // enough to avoid a touchdown impulse without sacrificing the short
-    // runway's usable braking distance.
-    brake_response := brake_target > runtime.ground_brake_amount ? f32(8) : f32(5)
-    runtime.ground_brake_amount = approach(runtime.ground_brake_amount, brake_target, dt * brake_response)
-    if runtime.grounded {
-        if runtime.was_grounded {
-            runtime.grounded_time += dt
-        } else {
-            runtime.grounded_time = 0
-        }
-        // Tires remove slip through finite forces rather than deleting lateral
-        // velocity on contact.
-        forward_speed := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
-        lateral_speed := linalg.dot(runtime.body.velocity, runtime.body.basis.right)
-        // Treat rollout resistance as a constant acceleration. Multiplying
-        // speed by a damping factor made the brakes strongest at touchdown
-        // and could erase landing speed in about a second.
-        forward_speed = approach(
-            forward_speed,
-            0,
-            dt * lerp(runtime.tuning.ground_coast, runtime.tuning.ground_brake, runtime.ground_brake_amount),
-        )
-        lateral_speed = approach(lateral_speed, 0, dt * 7.5)
-        vertical_speed := runtime.body.velocity.y
-        runtime.body.velocity =
-            runtime.body.basis.forward * forward_speed +
-            runtime.body.basis.right * lateral_speed +
-            flight.Vec3{0, vertical_speed, 0}
-        runtime.body.angular_velocity.x *= max_f32(0, 1 - dt * 8)
-        runtime.body.angular_velocity.z *= max_f32(0, 1 - dt * 8)
-        steer :=
-            runtime.yaw *
-            dt *
-            lerp(runtime.tuning.ground_steer_fast, runtime.tuning.ground_steer_slow, clamp(forward_speed / 20, 0, 1))
-        rotate_ground_heading(&runtime.body.basis, steer)
-    } else {
-        runtime.grounded_time = 0
-    }
-    runtime.propeller_turns +=
-        dt * (runtime.tuning.propeller_base_rate + runtime.throttle * runtime.tuning.propeller_throttle_rate)
-    sync_vehicle(runtime)
-    result.crashed = runtime.crashed
-    return result
+    return step_normalized_command(runtime, command, ground_height, dt, wind, control.throttle_down)
 }
 
 resolve_ground_contact :: proc(
@@ -397,7 +480,8 @@ resolve_ground_contact :: proc(
             weight_force = runtime.airframe.mass_kg * GRAVITY,
         }
         runtime.landing_feedback_seconds = 4
-        if math.abs(bank_radians(runtime.body.basis)) > runtime.tuning.safe_bank_radians {
+        basis := flight.basis_from_orientation(runtime.body.orientation)
+        if math.abs(bank_radians(basis)) > runtime.tuning.safe_bank_radians {
             runtime.last_landing.outcome = .Crash
             runtime.last_landing.damage = 1
         }
@@ -443,7 +527,7 @@ resolve_ground_contact :: proc(
         runtime.throttle > runtime.tuning.takeoff_throttle &&
         runtime.pitch > runtime.tuning.takeoff_pitch &&
         runtime.ground_pitch_radians > .0174533 &&
-        runtime.telemetry.airspeed >= takeoff_speed &&
+        selected_airspeed(runtime) >= takeoff_speed &&
         runtime.grounded_time >= runtime.tuning.takeoff_ground_time
     if compression <= .001 && runtime.body.velocity.y > 0 && takeoff_intent && !runtime.crashed {
         runtime.grounded = false
@@ -456,7 +540,7 @@ resolve_ground_contact :: proc(
     }
 
     runtime.grounded = true
-    set_ground_pitch(&runtime.body.basis, runtime.ground_pitch_radians)
+    runtime.body.orientation = set_ground_pitch(runtime.body.orientation, runtime.ground_pitch_radians)
     return {grounded = true, crashed = runtime.crashed, touched_down = touched_down, landing = landing}
 }
 
@@ -531,7 +615,7 @@ virtual_yoke_axis :: proc(displacement, dead_zone, full_deflection: f32) -> f32 
 
 sync_vehicle :: proc(runtime: ^Runtime) {
     runtime.vehicle.position = to_third_person(runtime.body.position)
-    runtime.vehicle.yaw_radians = yaw_radians(runtime.body.basis)
+    runtime.vehicle.yaw_radians = yaw_radians(flight.basis_from_orientation(runtime.body.orientation))
 }
 
 to_third_person :: proc(value: flight.Vec3) -> third_person.Vec3 {
@@ -550,29 +634,25 @@ bank_radians :: proc(basis: flight.Basis) -> f32 {
     return math.atan2(linalg.dot(basis.right, flight.Vec3{0, 1, 0}), linalg.dot(basis.up, flight.Vec3{0, 1, 0}))
 }
 
-rotate_ground_heading :: proc(basis: ^flight.Basis, radians: f32) {
-    if basis == nil || radians == 0 do return
+rotate_ground_heading :: proc(orientation: quaternion128, radians: f32) -> quaternion128 {
+    if radians == 0 do return orientation
+    basis := flight.basis_from_orientation(orientation)
     pitch := math.asin(clamp(basis.forward.y, -1, 1))
-    c, s := math.cos(radians), math.sin(radians)
-    horizontal := linalg.normalize0(flight.Vec3{basis.forward.x, 0, basis.forward.z})
-    rotated := flight.Vec3{horizontal.x * c - horizontal.z * s, 0, horizontal.x * s + horizontal.z * c}
-    basis.forward = rotated
-    set_ground_pitch(basis, pitch)
+    return set_ground_pitch(flight.rotate_level_heading(orientation, radians), pitch)
 }
 
-set_ground_pitch :: proc(basis: ^flight.Basis, pitch_radians: f32) {
-    if basis == nil do return
+set_ground_pitch :: proc(orientation: quaternion128, pitch_radians: f32) -> quaternion128 {
+    basis := flight.basis_from_orientation(orientation)
     horizontal := linalg.normalize0(flight.Vec3{basis.forward.x, 0, basis.forward.z})
     if linalg.dot(horizontal, horizontal) < .001 {
         horizontal = {0, 0, -1}
     }
     pitch := clamp(pitch_radians, -MAX_GROUND_PITCH_RADIANS, MAX_GROUND_PITCH_RADIANS)
     c, s := math.cos(pitch), math.sin(pitch)
-    basis.forward = horizontal * c + flight.Vec3{0, s, 0}
-    basis.up = flight.Vec3{0, c, 0} - horizontal * s
-    basis^ = flight.orthonormalize(basis^)
+    forward := horizontal * c + flight.Vec3{0, s, 0}
+    up := flight.Vec3{0, c, 0} - horizontal * s
+    return flight.orientation_from_forward_and_up(forward, up)
 }
-
 approach :: proc(value, target, maximum_delta: f32) -> f32 {
     if value < target do return min_f32(value + maximum_delta, target)
     return max_f32(value - maximum_delta, target)

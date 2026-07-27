@@ -31,8 +31,8 @@ Runtime :: struct {
     controls_damaged:                                  bool,
 }
 Body_State :: struct {
-    position, velocity, angular_velocity: Vec3,
-    basis:                                Basis,
+    position, velocity, angular_velocity_world: Vec3,
+    orientation:                                quaternion128,
 }
 Telemetry :: struct {
     airspeed, angle_of_attack_degrees, effective_stall_speed, lift_coefficient: f32,
@@ -247,9 +247,18 @@ step :: proc(
     if state == nil || delta_seconds <= 0 do return {}
     command :=
         command_input; command.pitch = clamp(command.pitch, -1, 1); command.roll = clamp(command.roll, -1, 1); command.yaw = clamp(command.yaw, -1, 1); command.throttle = clamp(command.throttle, 0, 1); flap := clamp(command.flap_fraction, 0, 1)
-    state.basis = orthonormalize(
-        state.basis,
-    ); air_velocity := state.velocity - wind; mass := max_f32(airframe.mass_kg, 1); forces, telemetry := calculate_forces(air_velocity, state.basis, mass, airframe, max_f32(runtime.drag_multiplier, .1), flap)
+    state.orientation = normalize_orientation(state.orientation)
+    basis := basis_from_orientation(state.orientation)
+    air_velocity := state.velocity - wind
+    mass := max_f32(airframe.mass_kg, 1)
+    forces, telemetry := calculate_forces(
+        air_velocity,
+        basis,
+        mass,
+        airframe,
+        max_f32(runtime.drag_multiplier, .1),
+        flap,
+    )
     thrust_per_engine := propeller_thrust(
         airframe.rated_power_per_engine_kw * 1000,
         airframe.propeller_efficiency,
@@ -258,13 +267,12 @@ step :: proc(
         command.throttle,
     )
     thrust := thrust_per_engine * max_f32(1, airframe.engine_count) * clamp(runtime.engine_output, 0, 1)
-    total :=
-        forces.lift + forces.parasitic_drag + forces.induced_drag + forces.lateral_drag + state.basis.forward * thrust
+    total := forces.lift + forces.parasitic_drag + forces.induced_drag + forces.lateral_drag + basis.forward * thrust
     state.velocity += (total + {0, -9.81 * mass, 0}) * (delta_seconds / mass)
     state.position += state.velocity * delta_seconds
     local_rate := world_to_local(
-        state.basis,
-        state.angular_velocity,
+        basis,
+        state.angular_velocity_world,
     ); speed_ratio := telemetry.airspeed / max_f32(telemetry.effective_stall_speed, 1); bite := clamp(speed_ratio * speed_ratio, 0, 1.25); propwash := math.sqrt(command.throttle * clamp(runtime.engine_output, 0, 1)) * 15; pitch_bite := clamp(max_f32(telemetry.airspeed, propwash) / max_f32(telemetry.effective_stall_speed, 1), 0, 1.25); pitch_bite *= pitch_bite
     protection :=
         clamp((1.08 - speed_ratio) / .32, 0, 1) *
@@ -279,18 +287,16 @@ step :: proc(
     ); target := Vec3{target_pitch * handling, (-command.yaw * airframe.yaw_control_scale * .72 - command.roll * airframe.roll_control_scale * .34 * clamp(speed_ratio, 0, 1.2)) * bite * handling, command.roll * airframe.roll_control_scale * 2.05 * handling}
     damage: f32 = 1; if runtime.controls_damaged do damage = .55; torque_local := Vec3{(target.x - local_rate.x) * 52000 * pitch_bite * damage, target.y * 39000 * damage, (target.z - local_rate.z) * 47000 * bite * damage}
     roll_angle := math.atan2(
-        linalg.dot(state.basis.right, Vec3{0, 1, 0}),
-        linalg.dot(state.basis.up, Vec3{0, 1, 0}),
-    ); authority := clamp(speed_ratio * speed_ratio, 0, 1.8); trim := airframe.trim_angle_of_attack_degrees; stability := Vec3{(degrees_to_radians(clamp(trim - telemetry.angle_of_attack_degrees, -18, 18)) * airframe.pitch_stability - local_rate.x * airframe.pitch_damping) * authority, (-degrees_to_radians(clamp(degrees(math.asin(clamp(linalg.dot(linalg.normalize0(air_velocity), state.basis.right), -1, 1))), -35, 35)) * airframe.yaw_stability - local_rate.y * airframe.yaw_damping) * authority, (-sign(roll_angle) * max_f32(0, math.abs(roll_angle) - .95993) * airframe.roll_stability - local_rate.z * airframe.roll_damping) * authority}
+        linalg.dot(basis.right, Vec3{0, 1, 0}),
+        linalg.dot(basis.up, Vec3{0, 1, 0}),
+    ); authority := clamp(speed_ratio * speed_ratio, 0, 1.8); trim := airframe.trim_angle_of_attack_degrees; stability := Vec3{(degrees_to_radians(clamp(trim - telemetry.angle_of_attack_degrees, -18, 18)) * airframe.pitch_stability - local_rate.x * airframe.pitch_damping) * authority, (-degrees_to_radians(clamp(degrees(math.asin(clamp(linalg.dot(linalg.normalize0(air_velocity), basis.right), -1, 1))), -35, 35)) * airframe.yaw_stability - local_rate.y * airframe.yaw_damping) * authority, (-sign(roll_angle) * max_f32(0, math.abs(roll_angle) - .95993) * airframe.roll_stability - local_rate.z * airframe.roll_damping) * authority}
     torque_local += Vec3 {
         stability.x * assistance_scale(command.pitch),
         stability.y,
         stability.z * assistance_scale(command.roll),
     }
-    state.angular_velocity += local_to_world(state.basis, torque_local) * (delta_seconds / (mass * 12))
-    state.basis.forward += linalg.cross(state.angular_velocity, state.basis.forward) * delta_seconds
-    state.basis.up += linalg.cross(state.angular_velocity, state.basis.up) * delta_seconds
-    state.basis = orthonormalize(state.basis)
+    state.angular_velocity_world += local_to_world(basis, torque_local) * (delta_seconds / (mass * 12))
+    state.orientation = integrate_orientation(state.orientation, state.angular_velocity_world, delta_seconds)
     return telemetry
 }
 

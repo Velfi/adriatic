@@ -101,18 +101,25 @@ step_tri_rotor :: proc(
     if state == nil || delta_seconds <= 0 do return {}
     command :=
         command_input; command.pitch = clamp(command.pitch, -1, 1); command.roll = clamp(command.roll, -1, 1); command.yaw = clamp(command.yaw, -1, 1); command.throttle = clamp(command.throttle, 0, 1)
-    state.basis = orthonormalize(
-        state.basis,
-    ); mass := max_f32(airframe.mass_kg, 1); caps := Vec3{clamp(runtime.left_engine_output, 0, 1), clamp(runtime.right_engine_output, 0, 1), clamp(runtime.rear_engine_output, 0, 1)} * (airframe.maximum_collective_force / 3)
+    state.orientation = normalize_orientation(state.orientation)
+    basis := basis_from_orientation(state.orientation)
+    mass := max_f32(airframe.mass_kg, 1)
+    caps :=
+        Vec3 {
+            clamp(runtime.left_engine_output, 0, 1),
+            clamp(runtime.right_engine_output, 0, 1),
+            clamp(runtime.rear_engine_output, 0, 1),
+        } *
+        (airframe.maximum_collective_force / 3)
     collective :=
         command.throttle *
         (caps.x +
                 caps.y +
-                caps.z); local_rate := world_to_local(state.basis, state.angular_velocity); authority := clamp(collective / (mass * 9.81), .62, 1)
+                caps.z); local_rate := world_to_local(basis, state.angular_velocity_world); authority := clamp(collective / (mass * 9.81), .62, 1)
     level_axis := linalg.cross(
-        state.basis.up,
+        basis.up,
         Vec3{0, 1, 0},
-    ); local_level := world_to_local(state.basis, level_axis); damping := airframe.angular_damping
+    ); local_level := world_to_local(basis, level_axis); damping := airframe.angular_damping
     pitch_moment, roll_moment: f32
     if runtime.auto_level {
         // Assisted cyclic commands a bounded lean angle rather than a raw
@@ -136,7 +143,7 @@ step_tri_rotor :: proc(
         {},
         caps,
     ); ground_bonus := f32(0); if runtime.ground_distance < airframe.ground_effect_height do ground_bonus = airframe.ground_effect_bonus * (1 - clamp(runtime.ground_distance / max_f32(airframe.ground_effect_height, .01), 0, 1))
-    up_force := state.basis.up * (solution.total_thrust * (1 + ground_bonus))
+    up_force := basis.up * (solution.total_thrust * (1 + ground_bonus))
     total := up_force + {0, -9.81 * mass, 0}
     state.velocity += total * (delta_seconds / mass)
     state.position += state.velocity * delta_seconds
@@ -147,7 +154,7 @@ step_tri_rotor :: proc(
         yaw_damping,
         authority,
         airframe.yaw_torque,
-    ); torque_local := Vec3{solution.pitch_moment, yaw, solution.roll_moment}; state.angular_velocity += local_to_world(state.basis, torque_local) * (delta_seconds / (mass * 12)); state.basis.forward += linalg.cross(state.angular_velocity, state.basis.forward) * delta_seconds; state.basis.up += linalg.cross(state.angular_velocity, state.basis.up) * delta_seconds; state.basis = orthonormalize(state.basis)
+    ); torque_local := Vec3{solution.pitch_moment, yaw, solution.roll_moment}; state.angular_velocity_world += local_to_world(basis, torque_local) * (delta_seconds / (mass * 12)); state.orientation = integrate_orientation(state.orientation, state.angular_velocity_world, delta_seconds)
     per_rotor := airframe.maximum_collective_force / 3
     return {
         rotor_thrusts = solution.thrusts,

@@ -30,21 +30,21 @@ Tuning :: struct {
 }
 
 Runtime :: struct {
-    body:             flight.Body_State,
-    vehicle:          vehicles.Vehicle,
-    airframe:         flight.Tri_Rotor_Airframe,
-    flight_runtime:   flight.Tri_Rotor_Runtime,
-    telemetry:        flight.Tri_Rotor_Telemetry,
-    tuning:           Tuning,
-    spawn_position:   flight.Vec3,
-    spawn_basis:      flight.Basis,
-    throttle:         f32,
-    pitch, roll, yaw: f32,
-    rotor_turns:      flight.Vec3,
-    grounded:         bool,
-    was_grounded:     bool,
-    crashed:          bool,
-    lift_active:      bool,
+    body:              flight.Body_State,
+    vehicle:           vehicles.Vehicle,
+    airframe:          flight.Tri_Rotor_Airframe,
+    flight_runtime:    flight.Tri_Rotor_Runtime,
+    telemetry:         flight.Tri_Rotor_Telemetry,
+    tuning:            Tuning,
+    spawn_position:    flight.Vec3,
+    spawn_orientation: quaternion128,
+    throttle:          f32,
+    pitch, roll, yaw:  f32,
+    rotor_turns:       flight.Vec3,
+    grounded:          bool,
+    was_grounded:      bool,
+    crashed:           bool,
+    lift_active:       bool,
 }
 
 default_tuning :: proc() -> Tuning {
@@ -73,11 +73,11 @@ default_tuning :: proc() -> Tuning {
 
 new_runtime :: proc(spawn_position: flight.Vec3) -> Runtime {
     result := Runtime {
-        airframe = flight.libellula_airframe(),
-        flight_runtime = flight.default_tri_rotor_runtime(),
-        tuning = default_tuning(),
-        spawn_position = spawn_position,
-        spawn_basis = {forward = {-1, 0, 0}, up = {0, 1, 0}, right = {0, 0, -1}},
+        airframe          = flight.libellula_airframe(),
+        flight_runtime    = flight.default_tri_rotor_runtime(),
+        tuning            = default_tuning(),
+        spawn_position    = spawn_position,
+        spawn_orientation = flight.orientation_from_forward_and_up({-1, 0, 0}, {0, 1, 0}),
     }
     // Product assistance owns pitch and roll attitude hold. The force model
     // still allocates the requested moments physically across all three rotors.
@@ -89,8 +89,8 @@ new_runtime :: proc(spawn_position: flight.Vec3) -> Runtime {
 reset :: proc(runtime: ^Runtime, ground_height: f32) {
     if runtime == nil do return
     runtime.body = {
-        position = runtime.spawn_position,
-        basis    = runtime.spawn_basis,
+        position    = runtime.spawn_position,
+        orientation = runtime.spawn_orientation,
     }
     runtime.body.position.y = ground_height + runtime.tuning.ground_clearance
     runtime.telemetry = {}
@@ -121,6 +121,7 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
     floor := ground_height + runtime.tuning.ground_clearance
     runtime.flight_runtime.ground_distance = max_f32(0, runtime.body.position.y - floor)
     if control.throttle_up do runtime.lift_active = true
+    basis := flight.basis_from_orientation(runtime.body.orientation)
 
     throttle_target := f32(0)
     if runtime.lift_active {
@@ -130,7 +131,7 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
         } else if control.throttle_down && !control.throttle_up {
             desired_vertical_speed = -runtime.tuning.descent_speed
         }
-        upright := clamp(linalg.dot(runtime.body.basis.up, flight.Vec3{0, 1, 0}), .55, 1)
+        upright := clamp(linalg.dot(basis.up, flight.Vec3{0, 1, 0}), .55, 1)
         ground_effect := f32(1)
         if runtime.flight_runtime.ground_distance < runtime.airframe.ground_effect_height {
             ground_effect +=
@@ -156,9 +157,9 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
     roll_input := assisted_axis(control.roll, 1, runtime.tuning.cyclic_expo)
     desired_pitch := pitch_input * runtime.tuning.maximum_tilt_radians
     desired_bank := -roll_input * runtime.tuning.maximum_tilt_radians
-    current_pitch := math.asin(clamp(runtime.body.basis.forward.y, -1, 1))
-    current_bank := bank_radians(runtime.body.basis)
-    local_rate := flight.world_to_local(runtime.body.basis, runtime.body.angular_velocity)
+    current_pitch := math.asin(clamp(basis.forward.y, -1, 1))
+    current_bank := bank_radians(basis)
+    local_rate := flight.world_to_local(basis, runtime.body.angular_velocity_world)
     pitch_target := clamp(
         (desired_pitch - current_pitch) * runtime.tuning.attitude_gain -
         local_rate.x * runtime.tuning.attitude_rate_gain,
@@ -205,11 +206,9 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
         horizontal *= max_f32(0, 1 - runtime.tuning.ground_friction * dt)
         runtime.body.velocity.x = horizontal.x
         runtime.body.velocity.z = horizontal.z
-        runtime.body.angular_velocity.x = 0
-        runtime.body.angular_velocity.z = 0
-        runtime.body.basis.up = {0, 1, 0}
-        runtime.body.basis.forward.y = 0
-        runtime.body.basis = flight.orthonormalize(runtime.body.basis)
+        runtime.body.angular_velocity_world.x = 0
+        runtime.body.angular_velocity_world.z = 0
+        runtime.body.orientation = flight.level_preserving_heading(runtime.body.orientation)
         if !control.throttle_up {
             runtime.lift_active = false
         }
@@ -234,7 +233,7 @@ can_exit :: proc(runtime: ^Runtime) -> bool {
 sync_vehicle :: proc(runtime: ^Runtime) {
     if runtime == nil do return
     runtime.vehicle.position = to_third_person(runtime.body.position)
-    runtime.vehicle.yaw_radians = yaw_radians(runtime.body.basis)
+    runtime.vehicle.yaw_radians = yaw_radians(flight.basis_from_orientation(runtime.body.orientation))
 }
 
 to_third_person :: proc(value: flight.Vec3) -> third_person.Vec3 {

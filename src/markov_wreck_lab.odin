@@ -534,7 +534,8 @@ markov_wreck_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
             if markov_wreck_collider_count == 0 do return false
             probe := markov_wreck_colliders[0].a
             editor.postale.body.position = {probe.x, probe.y, probe.z}
-            editor.postale.body.velocity = editor.postale.body.basis.forward * 46
+            basis := flight.basis_from_orientation(editor.postale.body.orientation)
+            editor.postale.body.velocity = basis.forward * 46
             editor.postale.vehicle.position = probe
             markov_wreck_collision_verified = markov_wreck_aircraft_collision_step(editor)
             if !markov_wreck_collision_verified || !editor.postale.crashed || editor.postale.structural_damage < 1 {
@@ -577,7 +578,7 @@ markov_wreck_spawn_postale :: proc(editor: ^Editor) -> bool {
         right   = right,
     }
     editor.postale.spawn_position = spawn
-    editor.postale.spawn_basis = basis
+    editor.postale.spawn_orientation = flight.orientation_from_basis(basis)
     markov_wreck_reset_postale(editor)
     editor.postale_visible = true
     editor.libellula_visible = false
@@ -633,10 +634,11 @@ markov_wreck_ensure_flight_control :: proc(editor: ^Editor) -> bool {
 markov_wreck_reset_postale :: proc(editor: ^Editor) -> bool {
     if editor == nil || !lab_scene_is_active(editor, "markov-wreck") do return false
     spawn := editor.postale.spawn_position
-    basis := editor.postale.spawn_basis
+    orientation := editor.postale.spawn_orientation
+    basis := flight.basis_from_orientation(orientation)
     postale_game.reset(&editor.postale, 0)
     editor.postale.body.position = spawn
-    editor.postale.body.basis = basis
+    editor.postale.body.orientation = orientation
     editor.postale.body.velocity = basis.forward * 46
     editor.postale.vehicle.position = {spawn.x, spawn.y, spawn.z}
     editor.postale.vehicle.yaw_radians = postale_game.yaw_radians(basis)
@@ -1205,6 +1207,7 @@ markov_wreck_aircraft_collision_step :: proc(editor: ^Editor) -> bool {
         editor.postale.body.position.y,
         editor.postale.body.position.z,
     }
+    basis := flight.basis_from_orientation(editor.postale.body.orientation)
     for collider in markov_wreck_colliders[:markov_wreck_collider_count] {
         origin_distance_squared, _ := markov_wreck_point_segment_distance_squared(origin, collider.a, collider.b)
         broadphase_radius := MARKOV_WRECK_POSTALE_BROADPHASE_RADIUS + collider.radius
@@ -1232,11 +1235,7 @@ markov_wreck_aircraft_collision_step :: proc(editor: ^Editor) -> bool {
         distance := f32(math.sqrt(f64(max(hit_distance_squared, .000001))))
         normal_length := distance
         if normal_length <= .001 {
-            normal = {
-                -editor.postale.body.basis.forward.x,
-                -editor.postale.body.basis.forward.y,
-                -editor.postale.body.basis.forward.z,
-            }
+            normal = {-basis.forward.x, -basis.forward.y, -basis.forward.z}
         } else {
             normal.x /= normal_length
             normal.y /= normal_length
@@ -1263,7 +1262,7 @@ markov_wreck_aircraft_collision_step :: proc(editor: ^Editor) -> bool {
         editor.postale.grounded = false
         editor.postale.crashed = true
         editor.postale.vehicle.position = origin
-        editor.postale.vehicle.yaw_radians = postale_game.yaw_radians(editor.postale.body.basis)
+        editor.postale.vehicle.yaw_radians = postale_game.yaw_radians(basis)
         return true
     }
     return false

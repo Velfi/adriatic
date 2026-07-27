@@ -56,16 +56,19 @@ holding_forward_commands_a_bounded_tilt_instead_of_tipping_over :: proc(t: ^test
         step(&runtime, {pitch = -1}, 0, 1.0 / 60.0)
     }
 
-    pitch := math.asin(clamp(runtime.body.basis.forward.y, -1, 1))
-    forward_speed := linalg.dot(runtime.body.velocity, runtime.spawn_basis.forward)
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    spawn_basis := flight.basis_from_orientation(runtime.spawn_orientation)
+    pitch := math.asin(clamp(basis.forward.y, -1, 1))
+    forward_speed := linalg.dot(runtime.body.velocity, spawn_basis.forward)
     testing.expect(t, pitch < -.1)
     testing.expect(t, math.abs(pitch) < runtime.tuning.maximum_tilt_radians + .08)
-    testing.expect(t, linalg.dot(runtime.body.basis.up, flight.Vec3{0, 1, 0}) > .9)
+    testing.expect(t, linalg.dot(basis.up, flight.Vec3{0, 1, 0}) > .9)
     testing.expect(t, forward_speed > 1)
 
     for _ in 0 ..< 240 {
         step(&runtime, {}, 0, 1.0 / 60.0)
     }
-    released_pitch := math.asin(clamp(runtime.body.basis.forward.y, -1, 1))
+    released_basis := flight.basis_from_orientation(runtime.body.orientation)
+    released_pitch := math.asin(clamp(released_basis.forward.y, -1, 1))
     testing.expect(t, math.abs(released_pitch) < .05)
 }

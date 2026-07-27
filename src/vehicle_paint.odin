@@ -1476,7 +1476,7 @@ vehicle_paint_projected_hit_libellula :: proc(
         origin,
         direction,
         editor.libellula.body.position,
-        editor.libellula.body.basis,
+        flight.basis_from_orientation(editor.libellula.body.orientation),
         LIBELLULA_PRESENTATION_SCALE,
     )
     mesh := &editor.libellula_visual_mesh
@@ -1524,7 +1524,7 @@ vehicle_paint_projected_hit :: proc(
         origin,
         direction,
         editor.postale.body.position,
-        editor.postale.body.basis,
+        flight.basis_from_orientation(editor.postale.body.orientation),
         POSTALE_PRESENTATION_SCALE,
     )
     mesh := &editor.vehicle_paint_postale_mesh

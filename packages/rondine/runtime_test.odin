@@ -1,22 +1,25 @@
 package rondine
 
+import flight "../flight"
 import "core:math"
 import "core:testing"
 
 @(test)
 rondine_turns_and_generates_asymmetric_wake :: proc(t: ^testing.T) {
     runtime := new_runtime({0, GROUND_CLEARANCE, 0})
-    initial_forward := runtime.body.basis.forward
-    initial_right := runtime.body.basis.right
+    initial_basis := flight.basis_from_orientation(runtime.body.orientation)
+    initial_forward := initial_basis.forward
+    initial_right := initial_basis.right
     for _ in 0 ..< 600 {
         step(&runtime, {throttle_up = true, roll = 1}, 0, 1.0 / 120.0)
     }
     testing.expect(t, runtime.telemetry.speed > 25)
     testing.expect(t, math.abs(runtime.telemetry.turn_rate) > .01)
     testing.expect(t, runtime.telemetry.turn_rate < 0)
+    basis := flight.basis_from_orientation(runtime.body.orientation)
     testing.expect(
         t,
-        runtime.body.basis.forward.x * initial_right.x + runtime.body.basis.forward.z * initial_right.z >
+        basis.forward.x * initial_right.x + basis.forward.z * initial_right.z >
         initial_forward.x * initial_right.x + initial_forward.z * initial_right.z,
     )
     testing.expect(t, runtime.wake_count > 0)
@@ -87,8 +90,7 @@ rondine_drift_hooks_up_when_the_pilot_straightens :: proc(t: ^testing.T) {
     for _ in 0 ..< 360 {
         step(&runtime, {throttle_up = true}, 0, 1.0 / 120.0)
         peak_hookup = max(peak_hookup, runtime.telemetry.hookup_kick)
-        if runtime.wake_count > 0 &&
-           runtime.wake[runtime.wake_count - 1].hookup > .1 {
+        if runtime.wake_count > 0 && runtime.wake[runtime.wake_count - 1].hookup > .1 {
             recorded_hookup = true
         }
     }
@@ -113,8 +115,7 @@ rondine_countersteer_reads_only_when_input_opposes_established_slip :: proc(t: ^
     for _ in 0 ..< 90 {
         step(&runtime, {throttle_up = true, roll = -1}, 0, 1.0 / 120.0)
         peak_countersteer = max(peak_countersteer, runtime.telemetry.countersteer)
-        if runtime.wake_count > 0 &&
-           runtime.wake[runtime.wake_count - 1].countersteer > .1 {
+        if runtime.wake_count > 0 && runtime.wake[runtime.wake_count - 1].countersteer > .1 {
             recorded_countersteer = true
         }
     }
@@ -229,7 +230,7 @@ rondine_surface_impact_is_sampled_on_landing_and_decays :: proc(t: ^testing.T) {
     runtime := new_runtime({0, GROUND_CLEARANCE, 0})
     runtime.tuning.takeoff_speed = 200
     runtime.body.position.y = GROUND_CLEARANCE + .2
-    runtime.body.velocity = runtime.body.basis.forward * 35
+    runtime.body.velocity = flight.basis_from_orientation(runtime.body.orientation).forward * 35
     runtime.body.velocity.y = -8
     runtime.grounded = false
     runtime.wake_distance = 1.2
@@ -351,12 +352,7 @@ rondine_power_over_combines_acceleration_and_drift :: proc(t: ^testing.T) {
     peak_power_over := f32(0)
     for _ in 0 ..< 72 {
         step(&runtime, {throttle_up = true, roll = 1}, 0, 1.0 / 120.0)
-        peak_power_over =
-            max(
-                peak_power_over,
-                runtime.telemetry.surge_intensity *
-                runtime.telemetry.drift_intensity,
-            )
+        peak_power_over = max(peak_power_over, runtime.telemetry.surge_intensity * runtime.telemetry.drift_intensity)
     }
     testing.expect(t, runtime.telemetry.acceleration > 4)
     testing.expect(t, runtime.telemetry.drift_intensity > .2)
@@ -376,8 +372,7 @@ rondine_switchback_pulses_when_loaded_slip_changes_side :: proc(t: ^testing.T) {
     marker_x, marker_z: f32
     for _ in 0 ..< 360 {
         step(&runtime, {throttle_up = true, roll = -1}, 0, 1.0 / 120.0)
-        peak_transition =
-            max(peak_transition, runtime.telemetry.drift_transition)
+        peak_transition = max(peak_transition, runtime.telemetry.drift_transition)
         for sample in runtime.wake[:runtime.wake_count] {
             if sample.transition <= 0 do continue
             marker_serial = sample.serial
