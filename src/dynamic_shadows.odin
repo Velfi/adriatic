@@ -345,7 +345,6 @@ dynamic_shadow_destroy :: proc(state: ^Dynamic_Shadow_State, ctx: ^engine.Vk_Con
 }
 
 shadow_append_triangle :: proc(a, b, c: third_person.Vec3) {
-    if len(world_renderer.shadow_vertices) + 3 > SHADOW_VERTEX_CAPACITY do return
     color := world_color(rl.Color{255, 255, 255, 255})
     append(
         &world_renderer.shadow_vertices,
@@ -410,13 +409,7 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
     first := world_renderer.dynamic_caster_first
     count := world_renderer.dynamic_caster_count
     if first >= 0 && count > 0 && first + count <= len(world_renderer.vertices) {
-        available := max(SHADOW_VERTEX_CAPACITY - len(world_renderer.shadow_vertices), 0)
-        bounded_count := min(count, available)
-        // Preserve triangle-list integrity if the fixed shadow budget fills.
-        bounded_count -= bounded_count % 3
-        if bounded_count > 0 {
-            append(&world_renderer.shadow_vertices, ..world_renderer.vertices[first:first + bounded_count])
-        }
+        append(&world_renderer.shadow_vertices, ..world_renderer.vertices[first:first + count])
     }
     sky := atmosphere.sample(&editor.atmosphere)
     inverse_sun_y := 1 / max(sky.sun_direction[1], f32(.08))

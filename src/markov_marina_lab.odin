@@ -790,8 +790,7 @@ world_markov_marina_static_geometry_cached :: proc(plan: ^marina.Plan, cache_slo
 
     entry := &world_renderer.marina_geometry_cache[cache_slot]
     if entry.valid && entry.plan == plan^ {
-        count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
-        if count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:count])
+        append(&world_renderer.vertices, ..entry.world_vertices[:])
         return
     }
 

@@ -10,6 +10,7 @@ import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import tweak_package "../packages/tweak"
 import vehicles "../packages/vehicles"
+import "core:fmt"
 import "core:math"
 
 TWEAK_FILE_PATH :: "adriatic.tweak.toml"
@@ -929,6 +930,31 @@ tweak_draw_presentation :: proc(editor: ^Editor) {
 
 tweak_draw_performance :: proc(editor: ^Editor) {
     when !dio.FLAME_GRAPH do return
+    world_dynamic := world_buffer_total_size(world_renderer.vertex[:])
+    world_static_vertices := world_buffer_total_size(world_renderer.static_vertex[:])
+    world_static_indices := world_buffer_total_size(world_renderer.static_index[:])
+    roads := world_buffer_total_size(world_renderer.road_vertex[:])
+    foliage := world_buffer_total_size(world_renderer.foliage_vertex[:])
+    grass := world_buffer_total_size(world_renderer.grass_instance[:])
+    shadows := world_buffer_total_size(world_renderer.shadow_vertex[:])
+    total :=
+        world_dynamic +
+        world_static_vertices +
+        world_static_indices +
+        roads +
+        foliage +
+        grass +
+        shadows
+    im.SeparatorText("Geometry buffers - all frame slots")
+    im.TextUnformatted(fmt.ctprintf("World dynamic: %M", world_dynamic))
+    im.TextUnformatted(fmt.ctprintf("World static vertices: %M", world_static_vertices))
+    im.TextUnformatted(fmt.ctprintf("World static indices: %M", world_static_indices))
+    im.TextUnformatted(fmt.ctprintf("Roads: %M", roads))
+    im.TextUnformatted(fmt.ctprintf("Foliage: %M", foliage))
+    im.TextUnformatted(fmt.ctprintf("Grass: %M", grass))
+    im.TextUnformatted(fmt.ctprintf("Shadows: %M", shadows))
+    im.TextUnformatted(fmt.ctprintf("Total: %M", total))
+    im.Separator()
     im.TextUnformatted("Frame instrumentation")
     dio.flame_graph_widget(&editor.flame_graph)
 }

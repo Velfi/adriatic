@@ -28,21 +28,20 @@ import engine "zelda_engine:engine"
 import render3d "zelda_engine:render3d"
 import resources "zelda_engine:render_resources"
 
-// Keep the hard ceiling representative of the target handheld budget. Critical
-// characters and landmarks submit first; environment range/LOD must fit in the
-// remaining space instead of normalizing an oversized world buffer.
-WORLD_VERTEX_CAPACITY :: 600_000
-ROAD_VERTEX_CAPACITY :: 320_000
-FOLIAGE_VERTEX_CAPACITY :: 24_000
+// Initial host-buffer and CPU-array reserves. Frame-slot buffers grow when a
+// larger authored world needs them.
+WORLD_VERTEX_INITIAL_CAPACITY :: 600_000
+ROAD_VERTEX_INITIAL_CAPACITY :: 320_000
+FOLIAGE_VERTEX_INITIAL_CAPACITY :: 24_000
 // Bougainvillea cards use four anchor-centered sub-quads (24 vertices) so
 // their painted roots remain fixed under wind. Preserve the former effective
 // budget of 2,000 cards after that fourfold tessellation.
-BOUGAINVILLEA_VERTEX_CAPACITY :: 48_000
-GRASS_INSTANCE_CAPACITY :: 18_000
-WILDFLOWER_INSTANCE_CAPACITY :: 4_000
+BOUGAINVILLEA_VERTEX_INITIAL_CAPACITY :: 48_000
+GRASS_INSTANCE_INITIAL_CAPACITY :: 18_000
+WILDFLOWER_INSTANCE_INITIAL_CAPACITY :: 4_000
 WING_TRAIL_VERTEX_CAPACITY :: particles.MAX_WING_TRAIL_PARTICLES * 8
 WING_TRAIL_INDEX_CAPACITY :: (particles.MAX_WING_TRAIL_PARTICLES - 2) * 8 * 6 + 8 * 6
-SHADOW_VERTEX_CAPACITY :: 180_000
+SHADOW_VERTEX_INITIAL_CAPACITY :: 180_000
 CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
 CLIPMAP_VERTEX_COUNT :: CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLUTION - 1) * 6
@@ -83,8 +82,7 @@ Static_Visibility_Classification :: enum u8 {
     Visible,
     Frustum_Culled,
     Occlusion_Culled,
-    Budget_Rejected,
-    Nonresident,
+    Empty,
     Force_Visible,
 }
 
@@ -93,8 +91,7 @@ Static_Visibility_Stats :: struct {
     frustum_culled:      u32,
     occlusion_culled:    u32,
     force_visible:       u32,
-    budget_rejected:     u32,
-    nonresident:         u32,
+    empty:               u32,
     emitted_draws:       u32,
     opaque_cost:         u32,
     foliage_cost:        u32,
@@ -344,6 +341,14 @@ when ODIN_TEST {
         testing.expect(t, !static_sphere_in_frustum(camera, {0, 0, 4}, 1, 16.0 / 9.0, .2, 100))
         testing.expect(t, static_sphere_in_frustum(camera, {0, 0, -.1}, 1, 16.0 / 9.0, .2, 100))
     }
+
+    @(test)
+    world_host_buffer_growth_covers_required_bytes :: proc(t: ^testing.T) {
+        testing.expect_value(t, world_host_buffer_growth_size(0, 64), vk.DeviceSize(64))
+        testing.expect_value(t, world_host_buffer_growth_size(64, 32), vk.DeviceSize(64))
+        testing.expect_value(t, world_host_buffer_growth_size(64, 65), vk.DeviceSize(128))
+        testing.expect_value(t, world_host_buffer_growth_size(64, 256), vk.DeviceSize(256))
+    }
 }
 
 World_Material_Kind :: enum u32 {
@@ -585,6 +590,118 @@ foreign adriatic_mesh {
 #assert(offset_of(Sky_Push, wind_cloud) == 96)
 #assert(offset_of(Sky_Push, haze_severity) == 112)
 
+world_host_buffer_growth_size :: proc(current, required: vk.DeviceSize) -> vk.DeviceSize {
+    if required <= current do return current
+    if current == 0 do return required
+    return max(current * 2, required)
+}
+
+world_host_buffer_create :: proc(
+    ctx: ^engine.Vk_Context,
+    size: vk.DeviceSize,
+    usage: vk.BufferUsageFlags,
+    buffer: ^engine.Vk_Buffer,
+    name: string,
+) -> bool {
+    if !engine.vk_create_host_buffer(ctx, size, usage, buffer) do return false
+    engine.vk_set_debug_name(ctx, .BUFFER, auto_cast buffer.handle, name)
+    engine.vk_set_debug_name(ctx, .DEVICE_MEMORY, auto_cast buffer.memory, name)
+    return true
+}
+
+world_host_buffer_ensure :: proc(
+    ctx: ^engine.Vk_Context,
+    buffer: ^engine.Vk_Buffer,
+    required: vk.DeviceSize,
+    usage: vk.BufferUsageFlags,
+    name: string,
+) -> bool {
+    if ctx == nil || buffer == nil do return false
+    if required <= buffer.size do return true
+    replacement: engine.Vk_Buffer
+    size := world_host_buffer_growth_size(buffer.size, required)
+    if !world_host_buffer_create(ctx, size, usage, &replacement, name) do return false
+    engine.vk_destroy_buffer(ctx, buffer)
+    buffer^ = replacement
+    return true
+}
+
+world_frame_geometry_buffers_ensure :: proc(frame: int) -> bool {
+    if frame < 0 || frame >= engine.MAX_FRAMES_IN_FLIGHT do return false
+    ctx := world_renderer.ctx
+    if ctx == nil do return false
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.vertex[frame],
+        vk.DeviceSize(len(world_renderer.vertices) * size_of(World_Vertex)),
+        {.VERTEX_BUFFER},
+        "world dynamic vertex buffer",
+    ) {
+        return false
+    }
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.static_vertex[frame],
+        vk.DeviceSize(len(world_renderer.static_vertices) * size_of(World_Vertex)),
+        {.VERTEX_BUFFER},
+        "world static vertex buffer",
+    ) {
+        return false
+    }
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.static_index[frame],
+        vk.DeviceSize(len(world_renderer.static_indices) * size_of(u32)),
+        {.INDEX_BUFFER},
+        "world static index buffer",
+    ) {
+        return false
+    }
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.road_vertex[frame],
+        vk.DeviceSize(len(world_renderer.road_vertices) * size_of(World_Vertex)),
+        {.VERTEX_BUFFER},
+        "world road vertex buffer",
+    ) {
+        return false
+    }
+    foliage_count := len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.foliage_vertex[frame],
+        vk.DeviceSize(foliage_count * size_of(Foliage_Vertex)),
+        {.VERTEX_BUFFER},
+        "world foliage vertex buffer",
+    ) {
+        return false
+    }
+    grass_count := len(world_renderer.grass_instances) + len(world_renderer.wildflower_instances)
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.grass_instance[frame],
+        vk.DeviceSize(grass_count * size_of(Grass_Instance)),
+        {.VERTEX_BUFFER},
+        "world grass instance buffer",
+    ) {
+        return false
+    }
+    return true
+}
+
+world_buffer_total_size :: proc(buffers: []engine.Vk_Buffer) -> u64 {
+    total: u64
+    for buffer in buffers do total += u64(buffer.size)
+    return total
+}
+
+world_buffer_min_size :: proc(buffers: []engine.Vk_Buffer) -> u64 {
+    if len(buffers) == 0 do return 0
+    minimum := u64(buffers[0].size)
+    for buffer in buffers[1:] do minimum = min(minimum, u64(buffer.size))
+    return minimum
+}
+
 @(no_instrumentation)
 world_color :: #force_inline proc(color: rl.Color) -> [4]f32 {
     return {f32(color.r) / 255, f32(color.g) / 255, f32(color.b) / 255, f32(color.a) / 255}
@@ -678,7 +795,6 @@ world_eye_vertex :: #force_inline proc(
 
 @(no_instrumentation)
 world_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color) {
-    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color), world_vertex(b, color), world_vertex(c, color))
 }
 
@@ -689,7 +805,6 @@ world_triangle_smooth_lit :: #force_inline proc(
     color_a, color_b, color_c: rl.Color,
     roughness: f32 = .9,
 ) {
-    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     points := [3]third_person.Vec3{a, b, c}
     normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
     colors := [3]rl.Color{color_a, color_b, color_c}
@@ -712,7 +827,6 @@ world_aircraft_triangle :: #force_inline proc(
     paint_layer: f32,
     paintable := true,
 ) {
-    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
     normal := linalg.normalize0(linalg.cross((b - a), (c - a)))
     for &vertex in vertices {
@@ -736,7 +850,6 @@ world_aircraft_triangle_smooth :: #force_inline proc(
     paint_layer: f32,
     paintable := true,
 ) {
-    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
     normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
     uvs := [3][2]f32{uv_a, uv_b, uv_c}
@@ -753,7 +866,6 @@ world_aircraft_triangle_smooth :: #force_inline proc(
 
 @(no_instrumentation)
 world_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
-    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c))
 }
 
@@ -793,7 +905,6 @@ world_greek_asset_primitive :: proc(
                 third_person.Vec3{c.x - a.x, c.y - a.y, c.z - a.z},
             ),
         )
-        if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
         append(
             &world_renderer.vertices,
             world_greek_asset_vertex(a, color, normal, metallic, roughness),
@@ -859,7 +970,6 @@ world_triangle_foliage :: #force_inline proc(
     color_a, color_b, color_c: rl.Color,
     normal_a, normal_b, normal_c: third_person.Vec3,
 ) {
-    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(
         &world_renderer.vertices,
         world_foliage_vertex(a, color_a, normal_a),
@@ -881,7 +991,6 @@ world_quad_colored :: proc(a, b, c, d: third_person.Vec3, color_a, color_b, colo
 
 @(no_instrumentation)
 world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
-    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 6 > WORLD_VERTEX_CAPACITY do return
     append(
         &world_renderer.vertices,
         world_water_vertex(a, color),
@@ -939,7 +1048,6 @@ world_boat_point :: #force_inline proc(
 
 @(no_instrumentation)
 world_boat_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color, part: boats.Part) {
-    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     metallic := part == .Metal ? f32(.62) : f32(0)
     roughness := part == .Glass ? f32(.24) : f32(.78)
@@ -1127,7 +1235,6 @@ world_road_triangle_colored :: #force_inline proc(
     a, b, c: roads.Vertex,
     color_a, color_b, color_c: rl.Color,
 ) {
-    if len(world_renderer.road_vertices) + 3 > ROAD_VERTEX_CAPACITY do return
     land_threshold := editor.project.sea_level + .04
     if terrain.sample_height(&editor.project, 0, a.position.x, a.position.z) <= land_threshold ||
        terrain.sample_height(&editor.project, 0, b.position.x, b.position.z) <= land_threshold ||
@@ -1800,7 +1907,6 @@ world_ellipsoid_rotated :: proc(
     for latitude in 0 ..< LATITUDE_SEGMENTS {
         for longitude in 0 ..< LONGITUDE_SEGMENTS {
             next := (longitude + 1) % LONGITUDE_SEGMENTS
-            if len(world_renderer.vertices) + len(world_renderer.static_indices) + 6 > WORLD_VERTEX_CAPACITY do return
             vertex_coordinates := [6][2]int {
                 {latitude, longitude},
                 {latitude + 1, longitude},
@@ -1923,7 +2029,6 @@ world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: r
     for ring_index in 0 ..< RING_COUNT - 1 {
         for segment in 0 ..< SEGMENTS {
             next := (segment + 1) % SEGMENTS
-            if len(world_renderer.vertices) + len(world_renderer.static_indices) + 6 > WORLD_VERTEX_CAPACITY do return
             coordinates := [6][2]int {
                 {ring_index, segment},
                 {ring_index + 1, segment},
@@ -1945,7 +2050,6 @@ world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: r
     bottom := third_person.Vec3{center.x, center.y + heights[0], center.z}
     for segment in 0 ..< SEGMENTS {
         next := (segment + 1) % SEGMENTS
-        if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
         bottom_coordinates := [3]int{segment, next, -1}
         for coordinate in bottom_coordinates {
             point := coordinate < 0 ? bottom : rings[0][coordinate]
@@ -5098,13 +5202,8 @@ world_foliage_formation_cached :: proc(
        entry.lod == lod_result.tier &&
        entry.distance_bucket == distance_bucket &&
        entry.direction_bucket == direction_bucket {
-        if len(entry.world_vertices) <=
-           WORLD_VERTEX_CAPACITY - len(world_renderer.vertices) - len(world_renderer.static_indices) {
-            append(&world_renderer.vertices, ..entry.world_vertices[:])
-        }
-        if len(entry.foliage_vertices) <= FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices) {
-            append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
-        }
+        append(&world_renderer.vertices, ..entry.world_vertices[:])
+        append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
         return
     }
 
@@ -5130,11 +5229,6 @@ world_foliage_formation_cached :: proc(
 
 world_static_mesh_append :: proc(entry: ^Static_Geometry_Cache_Entry) {
     if entry == nil || len(entry.world_vertices) == 0 || len(entry.world_indices) == 0 do return
-    if len(world_renderer.vertices) + len(world_renderer.static_indices) + len(entry.world_indices) >
-           WORLD_VERTEX_CAPACITY ||
-       len(world_renderer.static_vertices) + len(entry.world_vertices) > WORLD_VERTEX_CAPACITY {
-        return
-    }
     vertex_base := u32(len(world_renderer.static_vertices))
     append(&world_renderer.static_vertices, ..entry.world_vertices[:])
     reserve(&world_renderer.static_indices, len(world_renderer.static_indices) + len(entry.world_indices))
@@ -5161,13 +5255,8 @@ world_static_formation_cached :: proc(
        entry.structure == structure &&
        entry.lod == lod_result.tier {
         world_static_mesh_append(entry)
-        if len(entry.foliage_vertices) <= FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices) {
-            append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
-        }
-        if len(entry.bougainvillea_vertices) <=
-           BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices) {
-            append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
-        }
+        append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
+        append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
         return
     }
 
@@ -5339,7 +5428,6 @@ world_foliage_card :: proc(
     mirror: bool,
     flip_vertical := false,
 ) {
-    if len(world_renderer.foliage_vertices) + 6 > FOLIAGE_VERTEX_CAPACITY do return
     editor := world_renderer.editor
     if editor == nil do return
     camera := perspective_camera(
@@ -5390,7 +5478,6 @@ world_bougainvillea_card :: proc(
     young_growth: bool = false,
     yaw_bias: f32 = 0,
 ) {
-    if len(world_renderer.bougainvillea_vertices) + 24 > BOUGAINVILLEA_VERTEX_CAPACITY do return
     editor := world_renderer.editor
     if editor == nil do return
     atlas_tile := ((tile % 16) + 16) % 16
@@ -5564,7 +5651,6 @@ world_window_flower_bunch_billboard :: proc(
 }
 
 world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: int, color: rl.Color) {
-    if len(world_renderer.grass_instances) >= GRASS_INSTANCE_CAPACITY do return
     append(
         &world_renderer.grass_instances,
         Grass_Instance {
@@ -5577,7 +5663,6 @@ world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: in
 }
 
 world_wildflower_card :: proc(center: third_person.Vec3, width, height: f32, tile: int) {
-    if len(world_renderer.wildflower_instances) >= WILDFLOWER_INSTANCE_CAPACITY do return
     append(
         &world_renderer.wildflower_instances,
         Grass_Instance {
@@ -7809,9 +7894,8 @@ world_structures :: proc(editor: ^Editor) {
        !editor.structure_moving {
         hovered_index = terrain.structure_index_at(&editor.project, editor.cursor_world_x, editor.cursor_world_z)
     }
-    // Geometry buffers are capacity bounded, so storage order must not decide
-    // visibility. Traverse structures from the camera outward; each structure
-    // contributes its mass and climbing growth together at its current LOD.
+    // Traverse structures from the camera outward so LOD and cache work stay
+    // stable while each structure contributes its mass and climbing growth.
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
     screen_width := max(rl.GetScreenWidth(), 1)
@@ -7918,8 +8002,8 @@ world_structures :: proc(editor: ^Editor) {
             stats.foliage_cost += u32(max(foliage_added, 0))
             stats.bougainvillea_cost += u32(max(bougainvillea_added, 0))
         } else {
-            world_renderer.static_visibility_classification[index] = .Budget_Rejected
-            stats.budget_rejected += 1
+            world_renderer.static_visibility_classification[index] = .Empty
+            stats.empty += 1
         }
         if index == editor.structure_selected && !editor.in_map && !editor.road_mode {
             world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
@@ -7954,14 +8038,10 @@ world_city_density_overlay :: proc(editor: ^Editor) {
     if editor.architecture_painting do field = &editor.architecture_density_preview
     cell := terrain.BASE_CELL_SIZE
     half := f32(terrain.RING_RESOLUTION - 1) * .5
-    // Reserve enough geometry for buildings and vehicles even when the whole
-    // authored world has been painted.
-    overlay_limit := WORLD_VERTEX_CAPACITY - 120_000
     for z in 0 ..< terrain.RING_RESOLUTION - 1 {
         for x in 0 ..< terrain.RING_RESOLUTION - 1 {
             density := f32(field[z * terrain.RING_RESOLUTION + x]) / 255
             if density <= .01 do continue
-            if len(world_renderer.vertices) + len(world_renderer.static_indices) + 6 > overlay_limit do return
             x0, z0 := (f32(x) - half) * cell, (f32(z) - half) * cell
             x1, z1 := x0 + cell, z0 + cell
             lift := f32(.115)
@@ -9449,14 +9529,8 @@ world_climbing_leaves_for_structure :: proc(
            entry.detail_tier == detail_tier &&
            entry.capture_seed_enabled == capture_seed_enabled &&
            entry.capture_seed == capture_seed {
-            if len(entry.world_vertices) <=
-               WORLD_VERTEX_CAPACITY - len(world_renderer.vertices) - len(world_renderer.static_indices) {
-                append(&world_renderer.vertices, ..entry.world_vertices[:])
-            }
-            if len(entry.bougainvillea_vertices) <=
-               BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices) {
-                append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
-            }
+            append(&world_renderer.vertices, ..entry.world_vertices[:])
+            append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
             return
         }
         world_first := len(world_renderer.vertices)
@@ -10644,8 +10718,7 @@ world_town_mouse_model_scaled_cached :: proc(
        entry.scale == scale &&
        entry.animation_bucket == animation_bucket &&
        entry.wind == wind {
-        count := min(len(entry.vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
-        if count > 0 do append(&world_renderer.vertices, ..entry.vertices[:count])
+        append(&world_renderer.vertices, ..entry.vertices[:])
         return
     }
 
@@ -14027,97 +14100,143 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     sky_info.layout = world_renderer.sky_layout
     if !render3d.create_color_pipeline_variants(ctx, &sky_info, .D32_SFLOAT, &world_renderer.sky_pipelines) do return false
     for &buffer in world_renderer.vertex {
-        if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
-    }
-    for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
-        if !engine.vk_create_host_buffer(
+        if !world_host_buffer_create(
             ctx,
-            vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(World_Vertex)),
+            vk.DeviceSize(WORLD_VERTEX_INITIAL_CAPACITY * size_of(World_Vertex)),
             {.VERTEX_BUFFER},
-            &world_renderer.static_vertex[frame],
+            &buffer,
+            "world dynamic vertex buffer",
         ) {
             return false
         }
-        if !engine.vk_create_host_buffer(
+    }
+    for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+        if !world_host_buffer_create(
             ctx,
-            vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(u32)),
+            vk.DeviceSize(WORLD_VERTEX_INITIAL_CAPACITY * size_of(World_Vertex)),
+            {.VERTEX_BUFFER},
+            &world_renderer.static_vertex[frame],
+            "world static vertex buffer",
+        ) {
+            return false
+        }
+        if !world_host_buffer_create(
+            ctx,
+            vk.DeviceSize(WORLD_VERTEX_INITIAL_CAPACITY * size_of(u32)),
             {.INDEX_BUFFER},
             &world_renderer.static_index[frame],
+            "world static index buffer",
         ) {
             return false
         }
     }
     for &buffer in world_renderer.road_vertex {
-        if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(ROAD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
-    }
-    for &buffer in world_renderer.foliage_vertex {
-        if !engine.vk_create_host_buffer(
+        if !world_host_buffer_create(
             ctx,
-            vk.DeviceSize((FOLIAGE_VERTEX_CAPACITY + BOUGAINVILLEA_VERTEX_CAPACITY) * size_of(Foliage_Vertex)),
+            vk.DeviceSize(ROAD_VERTEX_INITIAL_CAPACITY * size_of(World_Vertex)),
             {.VERTEX_BUFFER},
             &buffer,
+            "world road vertex buffer",
+        ) {
+            return false
+        }
+    }
+    for &buffer in world_renderer.foliage_vertex {
+        if !world_host_buffer_create(
+            ctx,
+            vk.DeviceSize(
+                (FOLIAGE_VERTEX_INITIAL_CAPACITY + BOUGAINVILLEA_VERTEX_INITIAL_CAPACITY) *
+                size_of(Foliage_Vertex),
+            ),
+            {.VERTEX_BUFFER},
+            &buffer,
+            "world foliage vertex buffer",
         ) {
             return false
         }
     }
     for &buffer in world_renderer.grass_instance {
-        if !engine.vk_create_host_buffer(
+        if !world_host_buffer_create(
             ctx,
-            vk.DeviceSize((GRASS_INSTANCE_CAPACITY + WILDFLOWER_INSTANCE_CAPACITY) * size_of(Grass_Instance)),
+            vk.DeviceSize(
+                (GRASS_INSTANCE_INITIAL_CAPACITY + WILDFLOWER_INSTANCE_INITIAL_CAPACITY) *
+                size_of(Grass_Instance),
+            ),
             {.VERTEX_BUFFER},
             &buffer,
+            "world grass instance buffer",
         ) {
             return false
         }
     }
     for &buffer in world_renderer.vehicle_paint_staging {
-        if !engine.vk_create_host_buffer(
+        if !world_host_buffer_create(
             ctx,
             vk.DeviceSize(VEHICLE_PAINT_TEXTURE_BYTE_COUNT),
             {.TRANSFER_SRC},
             &buffer,
+            "vehicle paint staging buffer",
         ) {
             return false
         }
     }
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
-        if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WING_TRAIL_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &world_renderer.wing_trail_vertex[frame]) do return false
-        if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WING_TRAIL_INDEX_CAPACITY * size_of(u16)), {.INDEX_BUFFER}, &world_renderer.wing_trail_index[frame]) do return false
-        if !engine.vk_create_host_buffer(
+        if !world_host_buffer_create(
             ctx,
-            vk.DeviceSize(SHADOW_VERTEX_CAPACITY * size_of(World_Vertex)),
+            vk.DeviceSize(WING_TRAIL_VERTEX_CAPACITY * size_of(World_Vertex)),
+            {.VERTEX_BUFFER},
+            &world_renderer.wing_trail_vertex[frame],
+            "wing trail vertex buffer",
+        ) {
+            return false
+        }
+        if !world_host_buffer_create(
+            ctx,
+            vk.DeviceSize(WING_TRAIL_INDEX_CAPACITY * size_of(u16)),
+            {.INDEX_BUFFER},
+            &world_renderer.wing_trail_index[frame],
+            "wing trail index buffer",
+        ) {
+            return false
+        }
+        if !world_host_buffer_create(
+            ctx,
+            vk.DeviceSize(SHADOW_VERTEX_INITIAL_CAPACITY * size_of(World_Vertex)),
             {.VERTEX_BUFFER},
             &world_renderer.shadow_vertex[frame],
+            "world shadow vertex buffer",
         ) {
             return false
         }
     }
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
-            if !engine.vk_create_host_buffer(
+            if !world_host_buffer_create(
                 ctx,
                 vk.DeviceSize(CLIPMAP_VERTEX_COUNT * size_of(World_Vertex)),
                 {.VERTEX_BUFFER},
                 &world_renderer.clipmap_vertex[frame][level],
+                "world clipmap vertex buffer",
             ) {
                 return false
             }
         }
     }
     if !clipmap_create_indices(ctx) do return false
-    world_renderer.vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
-    world_renderer.static_vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
-    world_renderer.static_indices = make([dynamic]u32, 0, WORLD_VERTEX_CAPACITY)
-    world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_CAPACITY)
-    world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_CAPACITY)
-    world_renderer.bougainvillea_vertices = make([dynamic]Foliage_Vertex, 0, BOUGAINVILLEA_VERTEX_CAPACITY)
-    world_renderer.grass_instances = make([dynamic]Grass_Instance, 0, GRASS_INSTANCE_CAPACITY)
-    world_renderer.wildflower_instances = make([dynamic]Grass_Instance, 0, WILDFLOWER_INSTANCE_CAPACITY)
+    world_renderer.vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_INITIAL_CAPACITY)
+    world_renderer.static_vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_INITIAL_CAPACITY)
+    world_renderer.static_indices = make([dynamic]u32, 0, WORLD_VERTEX_INITIAL_CAPACITY)
+    world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_INITIAL_CAPACITY)
+    world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_INITIAL_CAPACITY)
+    world_renderer.bougainvillea_vertices =
+        make([dynamic]Foliage_Vertex, 0, BOUGAINVILLEA_VERTEX_INITIAL_CAPACITY)
+    world_renderer.grass_instances = make([dynamic]Grass_Instance, 0, GRASS_INSTANCE_INITIAL_CAPACITY)
+    world_renderer.wildflower_instances = make([dynamic]Grass_Instance, 0, WILDFLOWER_INSTANCE_INITIAL_CAPACITY)
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
     world_renderer.wing_trail_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
     world_renderer.wing_trail_optimized_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
     world_renderer.land_surface_samples = make([dynamic]World_Land_Surface_Sample, 0, 256)
-    world_renderer.shadow_vertices = make([dynamic]World_Vertex, 0, SHADOW_VERTEX_CAPACITY)
+    world_renderer.shadow_vertices = make([dynamic]World_Vertex, 0, SHADOW_VERTEX_INITIAL_CAPACITY)
     world_renderer.ctx = ctx
     world_renderer.initialized = true
     return true
@@ -14137,16 +14256,21 @@ world_pre_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     dynamic_shadow_build_casters(editor)
     dynamic_shadow_update_transform(editor, frame_index)
     if len(world_renderer.shadow_vertices) > 0 {
-        shadow_vertex_count := min(len(world_renderer.shadow_vertices), SHADOW_VERTEX_CAPACITY)
-        shadow_vertex_count -= shadow_vertex_count % 3
+        required := vk.DeviceSize(len(world_renderer.shadow_vertices) * size_of(World_Vertex))
+        if !world_host_buffer_ensure(
+            world_renderer.ctx,
+            &world_renderer.shadow_vertex[frame_index],
+            required,
+            {.VERTEX_BUFFER},
+            "world shadow vertex buffer",
+        ) {
+            return
+        }
         mem.copy_non_overlapping(
             world_renderer.shadow_vertex[frame_index].mapped,
             raw_data(world_renderer.shadow_vertices[:]),
-            shadow_vertex_count * size_of(World_Vertex),
+            int(required),
         )
-        if shadow_vertex_count < len(world_renderer.shadow_vertices) {
-            resize(&world_renderer.shadow_vertices, shadow_vertex_count)
-        }
     }
     dynamic_shadow_render(pass, frame_index)
     world_renderer.dynamic_shadow.frame_prepared = true
@@ -14163,14 +14287,16 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     if !editor.vehicle_showcase_scene && !lab_scene_replaces_world(editor) {
         clipmap_update(editor, int(pass.frame.frame_index))
     }
-    buffer := &world_renderer.vertex[pass.frame.frame_index]
-    static_vertex_buffer := &world_renderer.static_vertex[pass.frame.frame_index]
-    static_index_buffer := &world_renderer.static_index[pass.frame.frame_index]
-    road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
-    foliage_buffer := &world_renderer.foliage_vertex[pass.frame.frame_index]
-    grass_instance_buffer := &world_renderer.grass_instance[pass.frame.frame_index]
-    wing_trail_vertex_buffer := &world_renderer.wing_trail_vertex[pass.frame.frame_index]
-    wing_trail_index_buffer := &world_renderer.wing_trail_index[pass.frame.frame_index]
+    frame_index := int(pass.frame.frame_index)
+    if !world_frame_geometry_buffers_ensure(frame_index) do return
+    buffer := &world_renderer.vertex[frame_index]
+    static_vertex_buffer := &world_renderer.static_vertex[frame_index]
+    static_index_buffer := &world_renderer.static_index[frame_index]
+    road_buffer := &world_renderer.road_vertex[frame_index]
+    foliage_buffer := &world_renderer.foliage_vertex[frame_index]
+    grass_instance_buffer := &world_renderer.grass_instance[frame_index]
+    wing_trail_vertex_buffer := &world_renderer.wing_trail_vertex[frame_index]
+    wing_trail_index_buffer := &world_renderer.wing_trail_index[frame_index]
     if len(world_renderer.vertices) > 0 {
         mem.copy_non_overlapping(
             buffer.mapped,

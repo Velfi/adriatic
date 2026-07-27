@@ -1670,15 +1670,18 @@ benchmark_report :: proc(
         len(world_renderer.foliage_vertices) +
         len(world_renderer.bougainvillea_vertices) +
         (len(world_renderer.grass_instances) + len(world_renderer.wildflower_instances)) * 6
-    world_vertex_utilization := f64(world_vertex_count) / f64(max(WORLD_VERTEX_CAPACITY, 1))
+    world_vertex_capacity :=
+        int(world_buffer_min_size(world_renderer.vertex[:]) / size_of(World_Vertex)) +
+        int(world_buffer_min_size(world_renderer.static_index[:]) / size_of(u32))
+    world_vertex_utilization := f64(world_vertex_count) / f64(max(world_vertex_capacity, 1))
     foliage_vertex_capacity :=
-        FOLIAGE_VERTEX_CAPACITY +
-        BOUGAINVILLEA_VERTEX_CAPACITY +
-        (GRASS_INSTANCE_CAPACITY + WILDFLOWER_INSTANCE_CAPACITY) * 6
+        int(world_buffer_min_size(world_renderer.foliage_vertex[:]) / size_of(Foliage_Vertex)) +
+        int(world_buffer_min_size(world_renderer.grass_instance[:]) / size_of(Grass_Instance)) * 6
     foliage_vertex_utilization := f64(foliage_vertex_count) / f64(max(foliage_vertex_capacity, 1))
-    road_vertex_utilization := f64(road_vertex_count) / f64(max(ROAD_VERTEX_CAPACITY, 1))
+    road_vertex_capacity := int(world_buffer_min_size(world_renderer.road_vertex[:]) / size_of(World_Vertex))
+    road_vertex_utilization := f64(road_vertex_count) / f64(max(road_vertex_capacity, 1))
     fmt.printf(
-        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"budget_rejected\":%d,\"nonresident\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}}}}}}\n",
+        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"empty\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}}}}}}\n",
         scenario,
         len(sorted),
         window_width,
@@ -1693,10 +1696,10 @@ benchmark_report :: proc(
         1 / max(median, f64(.000001)),
         world_vertex_count,
         world_unique_vertex_count,
-        WORLD_VERTEX_CAPACITY,
+        world_vertex_capacity,
         world_vertex_utilization,
         road_vertex_count,
-        ROAD_VERTEX_CAPACITY,
+        road_vertex_capacity,
         road_vertex_utilization,
         foliage_vertex_count,
         foliage_vertex_capacity,
@@ -1711,8 +1714,7 @@ benchmark_report :: proc(
         world_renderer.static_visibility.frustum_culled,
         world_renderer.static_visibility.occlusion_culled,
         world_renderer.static_visibility.force_visible,
-        world_renderer.static_visibility.budget_rejected,
-        world_renderer.static_visibility.nonresident,
+        world_renderer.static_visibility.empty,
         world_renderer.static_visibility.emitted_draws,
         world_renderer.static_visibility.opaque_cost,
         world_renderer.static_visibility.foliage_cost,
