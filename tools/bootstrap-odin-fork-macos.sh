@@ -25,7 +25,7 @@ fi
 git -C "$SOURCE_DIR" fetch --quiet origin "$ODIN_FORK_COMMIT"
 git -C "$SOURCE_DIR" checkout --quiet --detach "$ODIN_FORK_COMMIT"
 
-if [ ! -x "$SOURCE_DIR/odin" ]; then
+if [ ! -x "$SOURCE_DIR/odin" ] || ! "$SOURCE_DIR/odin" version | grep -q "$ODIN_VERSION_OUTPUT"; then
 	(
 		cd "$SOURCE_DIR"
 		./build_odin.sh release-native

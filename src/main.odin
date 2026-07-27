@@ -5934,19 +5934,19 @@ loading_postcard_period_from_name :: proc(name: string) -> (Loading_Postcard_Per
 loading_postcard_path :: proc(period: Loading_Postcard_Period) -> string {
     switch period {
     case .Dawn:
-        return "assets/textures/ui/loading-postcard-dawn.jpg"
+        return "assets/textures/ui/loading-postcard-dawn.png"
     case .Morning:
-        return "assets/textures/ui/loading-postcard-morning.jpg"
+        return "assets/textures/ui/loading-postcard-morning.png"
     case .Midday:
-        return "assets/textures/ui/loading-postcard-midday.jpg"
+        return "assets/textures/ui/loading-postcard-midday.png"
     case .Golden_Hour:
-        return "assets/textures/ui/loading-postcard-golden-hour.jpg"
+        return "assets/textures/ui/loading-postcard-golden-hour.png"
     case .Dusk:
-        return "assets/textures/ui/loading-postcard-dusk.jpg"
+        return "assets/textures/ui/loading-postcard-dusk.png"
     case .Night:
-        return "assets/textures/ui/loading-postcard-night.jpg"
+        return "assets/textures/ui/loading-postcard-night.png"
     }
-    return "assets/textures/ui/loading-postcard-midday.jpg"
+    return "assets/textures/ui/loading-postcard-midday.png"
 }
 
 loading_postcard_local_hour :: proc() -> int {
