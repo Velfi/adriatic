@@ -76,6 +76,44 @@ bound_tail_counter_sway_exceeds_walk :: proc(t: ^testing.T) {
 }
 
 @(test)
+procedural_tail_follows_the_pelvis_most_at_its_root :: proc(t: ^testing.T) {
+    testing.expect_value(t, mouse_gait.tail_root_follow(0), f32(1))
+    testing.expect(t, mouse_gait.tail_root_follow(.5) < 1)
+    testing.expect(t, mouse_gait.tail_root_follow(1) > 0)
+    testing.expect(t, mouse_gait.tail_root_follow(1) < mouse_gait.tail_root_follow(.5))
+}
+
+@(test)
+full_bound_has_two_aerial_intervals :: proc(t: ^testing.T) {
+    first_flight := mouse_gait.bound_aerial_weight(f32(.42 * math.PI * 2))
+    second_flight := mouse_gait.bound_aerial_weight(f32(.93 * math.PI * 2))
+    testing.expect(t, first_flight > .9)
+    testing.expect(t, second_flight > .9)
+    testing.expect_value(t, mouse_gait.bound_aerial_weight(0), f32(0))
+    testing.expect_value(t, mouse_gait.bound_aerial_weight(math.PI), f32(0))
+}
+
+@(test)
+bound_aerial_weight_loops_continuously :: proc(t: ^testing.T) {
+    epsilon := f32(.00001)
+    before := mouse_gait.bound_aerial_weight(math.PI * 2 - epsilon)
+    after := mouse_gait.bound_aerial_weight(epsilon)
+    testing.expect(t, math.abs(before - after) < .001)
+}
+
+@(test)
+eight_frame_bound_samples_land_on_key_phases :: proc(t: ^testing.T) {
+    fore_support := mouse_gait.bound_aerial_weight(mouse_gait.bound_animation_phase(0))
+    first_flight := mouse_gait.bound_aerial_weight(mouse_gait.bound_animation_phase(f32(3) / 8 * math.PI * 2))
+    hind_support := mouse_gait.bound_aerial_weight(mouse_gait.bound_animation_phase(math.PI))
+    second_flight := mouse_gait.bound_aerial_weight(mouse_gait.bound_animation_phase(f32(7) / 8 * math.PI * 2))
+    testing.expect_value(t, fore_support, f32(0))
+    testing.expect(t, first_flight > .9)
+    testing.expect_value(t, hind_support, f32(0))
+    testing.expect(t, second_flight > .9)
+}
+
+@(test)
 mouse_gait_weights_have_distinct_speed_regimes :: proc(t: ^testing.T) {
     walk := mouse_gait.weights(3, 4.2, 6.4, 8.4, 10.5)
     trot := mouse_gait.weights(7, 4.2, 6.4, 8.4, 10.5)

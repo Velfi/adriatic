@@ -29,6 +29,7 @@ mouse_gait_lab_frozen: bool
 mouse_gait_lab_phase: f32
 mouse_gait_lab_focus_lane: int
 mouse_gait_lab_oblique: bool
+mouse_gait_lab_show_paths: bool
 
 mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
@@ -36,6 +37,7 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     mouse_gait_lab_phase = 0
     mouse_gait_lab_focus_lane = -1
     mouse_gait_lab_oblique = false
+    mouse_gait_lab_show_paths = false
     phase_targets := [8]string{"phase-0", "phase-1", "phase-2", "phase-3", "phase-4", "phase-5", "phase-6", "phase-7"}
     for phase_target, index in phase_targets {
         if target == phase_target {
@@ -45,6 +47,14 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         }
     }
     for gait_target, lane in MOUSE_GAIT_LAB_TARGET_NAMES {
+        for phase_index in 0 ..< 16 {
+            if target == fmt.tprintf("%s-phase16-%d", gait_target, phase_index) {
+                mouse_gait_lab_frozen = true
+                mouse_gait_lab_phase = f32(phase_index) / 16
+                mouse_gait_lab_focus_lane = lane
+                break
+            }
+        }
         for phase_index in 0 ..< 8 {
             if target == fmt.tprintf("%s-phase-%d", gait_target, phase_index) {
                 mouse_gait_lab_frozen = true
@@ -57,6 +67,21 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
                 mouse_gait_lab_phase = f32(phase_index) / 8
                 mouse_gait_lab_focus_lane = lane
                 mouse_gait_lab_oblique = true
+                break
+            }
+            if target == fmt.tprintf("%s-paths-phase-%d", gait_target, phase_index) {
+                mouse_gait_lab_frozen = true
+                mouse_gait_lab_phase = f32(phase_index) / 8
+                mouse_gait_lab_focus_lane = lane
+                mouse_gait_lab_show_paths = true
+                break
+            }
+            if target == fmt.tprintf("%s-oblique-paths-phase-%d", gait_target, phase_index) {
+                mouse_gait_lab_frozen = true
+                mouse_gait_lab_phase = f32(phase_index) / 8
+                mouse_gait_lab_focus_lane = lane
+                mouse_gait_lab_oblique = true
+                mouse_gait_lab_show_paths = true
                 break
             }
         }
@@ -108,7 +133,8 @@ mouse_gait_lab_paw_path_point :: proc(
         trot_offset = left_side ? f32(0) : f32(.50)
     }
     lag := side * mouse_gait.bound_bilateral_lag(gait.bound)
-    bound_offset := front ? lag : .50 - lag
+    bound_offset := .50 + mouse_gait.BOUND_PHASE_OFFSET - lag
+    if front do bound_offset = mouse_gait.BOUND_PHASE_OFFSET + lag
     motion := mouse_gait.blend_scaled(
         phase,
         walk_offset,
@@ -196,7 +222,7 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
                 lane % 2 == 0 ? rl.Color{111, 121, 119, 255} : rl.Color{103, 115, 113, 255},
             )
         }
-        if mouse_gait_lab_focus_lane >= 0 {
+        if mouse_gait_lab_focus_lane >= 0 && mouse_gait_lab_show_paths {
             world_mouse_gait_paw_paths(editor, speed, z, -math.PI * .5)
         }
         world_mouse_model(editor, {
@@ -214,7 +240,11 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
 
 mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     focused := mouse_gait_lab_focus_lane >= 0
-    panel := rl.Rectangle{x = 22, y = 22, width = 430, height = focused ? f32(118) : f32(190)}
+    panel_height := f32(190)
+    if focused {
+        panel_height = mouse_gait_lab_show_paths ? f32(118) : f32(92)
+    }
+    panel := rl.Rectangle{x = 22, y = 22, width = 430, height = panel_height}
     rl.DrawRectangleRounded(panel, .08, 8, {12, 24, 30, 232})
     rl.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {116, 174, 183, 255})
     rl.DrawTextEx(rl.Font{}, "MOUSE GAIT COMPARISON", {38, 38}, 20, 1, {245, 238, 197, 255})
@@ -222,7 +252,7 @@ mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         phase_label := fmt.ctprintf("FROZEN STRIDE PHASE %.0f%%", mouse_gait_lab_phase * 100)
         rl.DrawTextEx(rl.Font{}, phase_label, {244, 42}, 12, 1, {184, 211, 218, 255})
     }
-    if focused {
+    if focused && mouse_gait_lab_show_paths {
         for path_name, index in MOUSE_GAIT_PATH_NAMES {
             legend_x := 38 + f32(index) * 72
             rl.DrawRectangle(i32(legend_x), 116, 12, 4, MOUSE_GAIT_PATH_COLORS[index])

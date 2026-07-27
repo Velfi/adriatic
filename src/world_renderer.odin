@@ -1816,8 +1816,8 @@ world_ellipsoid_rotated :: proc(
                     color,
                     normals[point_latitude][point_longitude],
                 )
+                vertex.kind = material_kind
                 if material_kind == .Acorn {
-                    vertex.kind = .Acorn
                     vertex.uv = {
                         f32(point_longitude) / f32(LONGITUDE_SEGMENTS),
                         f32(point_latitude) / f32(LATITUDE_SEGMENTS),
@@ -10547,6 +10547,10 @@ mouse_limb_socket_color :: proc(
 Mouse_Model :: struct {
     position:           third_person.Vec3,
     rotation:           f32,
+    // Zero retains the canonical proportions so existing call sites do not
+    // need to opt in. Town residents use these to keep distinct silhouettes.
+    build:              f32,
+    snout_length:       f32,
     accessory:          Mouse_Accessory,
     accessory_side:     f32,
     fur:                Mouse_Fur,
@@ -10659,6 +10663,11 @@ world_town_mouse_model_scaled_cached :: proc(
 }
 
 world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
+    first_vertex := len(world_renderer.vertices)
+    build := model.build
+    if build <= 0 do build = 1
+    snout_length := model.snout_length
+    if snout_length <= 0 do snout_length = 1
     p := model.position
     if model.grounded {
         raw_height := terrain.sample_height(&editor.project, 0, p.x, p.z)
@@ -10788,12 +10797,19 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     idle_phase := editor.map_time * 2.2
     // Sagittal spinal flexion is pronounced in a bound, but deliberately
     // restrained in alternating walk and trot gaits.
-    bound := math.sin(stride_phase) * run_weight * mouse_gait.axial_flex_scale(gait)
+    bound_phase := mouse_gait.bound_animation_phase(stride_phase, bound_weight)
+    bound := math.sin(bound_phase) * run_weight * mouse_gait.axial_flex_scale(gait)
     spine_extension := -bound
+    bound_aerial_lift :=
+        mouse_gait.bound_aerial_weight(bound_phase) *
+        bound_weight *
+        run_weight *
+        .085
     body_bob :=
         (
             -bound * .018 +
-            math.abs(math.sin(stride_phase * 2)) * mouse_gait.vertical_bob_scale(gait)
+            math.abs(math.sin(stride_phase * 2)) * mouse_gait.vertical_bob_scale(gait) +
+            bound_aerial_lift
         ) * run_weight +
         math.sin(idle_phase) * .006 * (1 - run_weight) +
         animation.run_body_lift * run_weight * (1 - airborne_weight)
@@ -10812,7 +10828,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     head_y :=
         .57 -
         run_weight * .17 -
-        spine_extension * .010 * run_weight +
+        spine_extension * .018 * run_weight -
+        bound * .012 +
         body_bob +
         airborne_weight * .015 -
         brake_compression * .72 +
@@ -10820,7 +10837,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     head_z :=
         .02 +
         run_weight * .18 +
-        spine_extension * .055 * run_weight -
+        spine_extension * .150 * run_weight -
         brake_pose * .025 -
         posted_weight * .035 +
         scurry_lean * .18
@@ -10838,10 +10855,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             bind_position = {0, .40, -.48},
             position = {
                 spine_side * .18,
-                .36 - run_weight * .010 + body_bob - brake_compression * .48 - posted_weight * .015,
-                -.48 - spine_extension * .035 * run_weight + brake_pose * .035,
+                .36 - run_weight * .010 + body_bob - bound * .018 - brake_compression * .48 - posted_weight * .015,
+                -.48 - spine_extension * .070 * run_weight + brake_pose * .035,
             },
-            pitch = bound * .035 + slope_pitch * .65 - posted_weight * .05 + scurry_lean * .45,
+            pitch = bound * .075 + slope_pitch * .65 - posted_weight * .05 + scurry_lean * .45,
             roll = body_roll * .82,
         },
         {
@@ -10849,14 +10866,14 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             bind_position = {0, .43, -.25},
             position = {
                 spine_side * .48,
-                .39 - run_weight * .035 + body_bob - brake_compression * .64 + posted_weight * .15,
+                .39 - run_weight * .035 + body_bob + bound * .025 - brake_compression * .64 + posted_weight * .15,
                 -.25 +
-                spine_extension * .018 * run_weight +
+                spine_extension * .035 * run_weight +
                 brake_pose * .025 -
                 posted_weight * .035 +
                 drive_reaction * .018,
             },
-            pitch = run_weight * .055 + bound * .045 + slope_pitch * .82 - posted_weight * .10 + scurry_lean * .72,
+            pitch = run_weight * .055 + bound * .085 + slope_pitch * .82 - posted_weight * .10 + scurry_lean * .72,
             roll = body_roll,
         },
         {
@@ -10864,15 +10881,15 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             bind_position = {0, .50, -.04},
             position = {
                 spine_side,
-                .44 - run_weight * .085 + body_bob - brake_compression + posted_weight * .25,
+                .44 - run_weight * .085 + body_bob + bound * .055 - brake_compression + posted_weight * .25,
                 -.04 +
                 run_weight * .06 +
-                spine_extension * .040 * run_weight -
+                spine_extension * .080 * run_weight -
                 brake_pose * .015 -
                 posted_weight * .055 +
                 drive_reaction * .035,
             },
-            pitch = run_weight * .075 + bound * .055 + slope_pitch - posted_weight * .14 + scurry_lean,
+            pitch = run_weight * .075 + bound * .110 + slope_pitch - posted_weight * .14 + scurry_lean,
             roll = body_roll,
         },
         {
@@ -10880,22 +10897,22 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             bind_position = {0, .58, .10},
             position = {
                 head_sway * .25 + spine_side * .62,
-                .50 - run_weight * .135 + body_bob - brake_compression * .82 + posted_weight * .27,
+                .50 - run_weight * .135 + body_bob + bound * .025 - brake_compression * .82 + posted_weight * .27,
                 .10 +
                 run_weight * .10 +
-                spine_extension * .050 * run_weight -
+                spine_extension * .110 * run_weight -
                 brake_pose * .02 -
                 posted_weight * .055 +
                 drive_reaction * .050,
             },
-            pitch = run_weight * .085 + bound * .035 + slope_pitch * .72 - posted_weight * .08 + scurry_lean * .82,
+            pitch = run_weight * .085 + bound * .070 + slope_pitch * .72 - posted_weight * .08 + scurry_lean * .82,
             roll = body_roll * .58,
         },
         {
             parent = 3,
             bind_position = {0, .69, .20},
             position = {head_sway + head_turn_x, head_y, head_z + .20},
-            pitch = run_weight * .055 - bound * .025 + slope_pitch * .42 + scurry_lean * .42,
+            pitch = run_weight * .055 - bound * .060 + slope_pitch * .42 + scurry_lean * .42,
             roll = body_roll * .22,
         },
     }
@@ -10930,10 +10947,21 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
     }
 
-    muzzle_y := head_y - .045
-    muzzle_z := head_z + .39 + sniff
+    // Bind the muzzle features to the same skinned head tip that closes the
+    // hull. Reconstructing this point from head_y/head_z ignored head pitch,
+    // so the nose floated above the snout during the gathered bound pose.
+    posed_muzzle_tip := mouse_skin_vertex(
+        {
+            bind_position = {0, .62, .58},
+            groups = {{.Head, 1}, {.Neck, 0}},
+        },
+        &skeleton,
+    )
+    muzzle_x := posed_muzzle_tip.x
+    muzzle_y := posed_muzzle_tip.y + .010
+    muzzle_z := posed_muzzle_tip.z + sniff
     world_tapered_disc_depth_rotated(
-        local_point(p, rotation, head_sway + head_turn_x, muzzle_y, muzzle_z + .19),
+        local_point(p, rotation, muzzle_x, muzzle_y, muzzle_z + .012),
         .028,
         .022,
         .018,
@@ -10945,7 +10973,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     nostril_offsets := [2]f32{-.011, .011}
     for nostril_x in nostril_offsets {
         world_vertical_disc_rotated(
-            local_point(p, rotation, nostril_x + head_sway + head_turn_x, muzzle_y + .003, muzzle_z + .213),
+            local_point(p, rotation, nostril_x + muzzle_x, muzzle_y + .003, muzzle_z + .025),
             .0045,
             .0035,
             .004,
@@ -11727,13 +11755,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     }
 
     world_box_rotated(
-        local_point(p, rotation, -.008 + head_sway + head_turn_x, muzzle_y - .066, muzzle_z + .150),
+        local_point(p, rotation, -.008 + muzzle_x, muzzle_y - .066, muzzle_z - .040),
         {.007, .010, .008},
         rotation,
         tooth,
     )
     world_box_rotated(
-        local_point(p, rotation, .008 + head_sway + head_turn_x, muzzle_y - .066, muzzle_z + .150),
+        local_point(p, rotation, .008 + muzzle_x, muzzle_y - .066, muzzle_z - .040),
         {.007, .010, .008},
         rotation,
         tooth,
@@ -11742,7 +11770,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     sides := [2]f32{-1, 1}
     whisker_scale := model.preview ? f32(.38) : f32(1)
     for side_f in sides {
-        whisker_root := local_point(p, rotation, side_f * .035 + head_sway + head_turn_x, muzzle_y, muzzle_z + .165)
+        whisker_root := local_point(p, rotation, side_f * .035 + muzzle_x, muzzle_y, muzzle_z - .025)
         for whisker_index in 0 ..< 3 {
             whisker_phase := editor.map_time * 4.2 + f32(whisker_index) * .82 + side_f * .38 + stride_phase * .18
             whisker_flex := math.sin(whisker_phase) * (.010 + .005 * run_weight)
@@ -11750,19 +11778,18 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             whisker_mid := local_point(
                 p,
                 rotation,
-                side_f * (.19 * whisker_scale + f32(whisker_index) * .012 * whisker_scale) + head_sway + head_turn_x,
+                side_f * (.19 * whisker_scale + f32(whisker_index) * .012 * whisker_scale) + muzzle_x,
                 (muzzle_y + whisker_y) * .5 + whisker_flex,
-                muzzle_z + .13,
+                muzzle_z - .060,
             )
             whisker_tip := local_point(
                 p,
                 rotation,
                 side_f *
                     (.36 * whisker_scale + f32(whisker_index) * .022 * whisker_scale + whisker_flex * whisker_scale) +
-                head_sway +
-                head_turn_x,
+                muzzle_x,
                 whisker_y + whisker_flex,
-                muzzle_z + .07 - f32(whisker_index) * .012,
+                muzzle_z - .120 - f32(whisker_index) * .012,
             )
             world_box_between(whisker_root, whisker_mid, model_forward, .006, .006, fur_light)
             world_box_between(whisker_mid, whisker_tip, model_forward, .005, .005, fur_light)
@@ -11789,7 +11816,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             stride_phase,
             front_walk_offset,
             front_trot_offset,
-            bilateral_lag,
+            mouse_gait.BOUND_PHASE_OFFSET + bilateral_lag,
             gait,
             .68,
             .56,
@@ -11802,7 +11829,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             stride_phase,
             rear_walk_offset,
             rear_trot_offset,
-            .50 - bilateral_lag,
+            .50 + mouse_gait.BOUND_PHASE_OFFSET - bilateral_lag,
             gait,
             .76,
             .60,
@@ -11919,8 +11946,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             model.grounded &&
             posted_weight < .5 &&
             (!fore_locomoting || front_motion.lift < .025)
-        FORE_UPPER_LENGTH :: f32(.255)
-        FORE_LOWER_LENGTH :: f32(.245)
+        // Mouse forearms are approximately as long as, or slightly longer
+        // than, the humerus. Keep the complete chain compact so the proximal
+        // limb remains tucked inside the chest silhouette instead of reading
+        // as a long, human-like arm.
+        FORE_UPPER_LENGTH :: f32(.235)
+        FORE_LOWER_LENGTH :: f32(.235)
         fore_minimum_reach := math.abs(FORE_UPPER_LENGTH - FORE_LOWER_LENGTH) + .0001
         fore_maximum_reach := FORE_UPPER_LENGTH + FORE_LOWER_LENGTH - .0001
         if model.grounded {
@@ -11963,9 +11994,20 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         fore_radii := [4]f32{.044, .035, .024, .017}
         fore_socket_color := mouse_limb_socket_color(model.pattern, fur, fur_dark, fur_light, side_f, false)
         fore_colors := [4]rl.Color{fore_socket_color, fur_dark, paw, paw}
-        // Close the shoulder ring. The socket is slightly embedded in the
-        // skinned chest, so this inward-facing cap seals the limb/hull seam
-        // without presenting a separate disc on the body surface.
+        // A compact shoulder bulb overlaps both the skinned chest and the
+        // capped limb root. A flat cap alone cannot cover the wedge that
+        // opens between those independently posed surfaces at deep flexion.
+        shoulder_socket_center := fore_shoulder
+        shoulder_socket_center.y += .018
+        world_ellipsoid_rotated(
+            shoulder_socket_center,
+            .046,
+            .050,
+            .052,
+            rotation,
+            fore_socket_color,
+            .Plain,
+        )
         world_mouse_limb_hull(fore_points[:], fore_radii[:], fore_colors[:], model_forward)
         // Paws are low pads lying in the ground plane. The former vertical
         // discs presented their extrusion as a rectangular bar in profile.
@@ -12040,7 +12082,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // authored hind-foot shift stretches back toward the last locomotion
         // contact cached in world space.
         hind_planted := model.grounded && hind_lift < .003 && posted_weight < .5
-        HIND_LENGTHS :: [3]f32{.255, .210, .275}
+        // Preserve the authored .74 total reach while using mouse-like
+        // proportions: a tibia longer than the femur and a long, but not
+        // dominant, hock-to-paw segment.
+        HIND_LENGTHS :: [3]f32{.220, .270, .250}
         if model.track_paw_plants {
             hind_contact := mouse_paws.resolve(
                 &editor.player_paws.contacts[side_index * 2 + 1],
@@ -12152,18 +12197,25 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         tail_points: [9]third_person.Vec3
         tail_radii: [9]f32
         tail_colors: [9]rl.Color
-        tail_points[0] = local_point(p, rotation, 0, .28, -.78)
+        tail_bind_root := third_person.Vec3{0, .28, -.78}
+        tail_posed_root := mouse_skin_vertex(
+            {bind_position = tail_bind_root, groups = {{.Pelvis, 1}, {.Spine, 0}}},
+            &skeleton,
+        )
+        tail_root_delta := tail_posed_root - tail_bind_root
+        tail_points[0] = local_point(p, rotation, tail_posed_root.x, tail_posed_root.y, tail_posed_root.z)
         tail_radii[0] = .027
         tail_colors[0] = paw
         for tail_index in 1 ..= 8 {
             weight := f32(tail_index) / 8
             gait_sway := model.gait_preview ? mouse_gait.tail_counter_sway(stride_phase, weight, gait) : f32(0)
+            root_follow := mouse_gait.tail_root_follow(weight)
             tail_points[tail_index] = local_point(
                 p,
                 rotation,
-                math.sin(weight * math.PI) * .13 + gait_sway,
-                .28 * (1 - weight) + .035 * weight,
-                -.78 - weight * .82,
+                math.sin(weight * math.PI) * .13 + gait_sway + tail_root_delta.x * root_follow,
+                .28 * (1 - weight) + .035 * weight + tail_root_delta.y * root_follow,
+                -.78 - weight * .82 + tail_root_delta.z * root_follow,
             )
             tail_radii[tail_index] = .027 * (1 - weight * .58)
             tail_colors[tail_index] = paw
@@ -12176,6 +12228,49 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             }
         }
         world_mouse_limb_hull(tail_points[:], tail_radii[:], tail_colors[:], model_forward)
+    }
+
+    // Apply identity-preserving physiognomy after assembling the complete
+    // mouse so facial features, accessories, limbs, and clothing remain
+    // attached. Build changes lateral breadth; snout length affects only the
+    // face in front of the head joint instead of lengthening the whole torso.
+    if math.abs(build - 1) > .0001 || math.abs(snout_length - 1) > .0001 {
+        yaw_right := third_person.Vec3{math.cos(rotation), 0, math.sin(rotation)}
+        yaw_forward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
+        snout_root := f32(.20)
+        for index in first_vertex ..< len(world_renderer.vertices) {
+            vertex := &world_renderer.vertices[index]
+            delta := third_person.Vec3 {
+                vertex.position[0] - p.x,
+                vertex.position[1] - p.y,
+                vertex.position[2] - p.z,
+            }
+            local_x := delta.x * yaw_right.x + delta.z * yaw_right.z
+            local_z := delta.x * yaw_forward.x + delta.z * yaw_forward.z
+            local_x *= build
+            if local_z > snout_root {
+                local_z = snout_root + (local_z - snout_root) * snout_length
+            }
+            vertex.position[0] = p.x + yaw_right.x * local_x + yaw_forward.x * local_z
+            vertex.position[2] = p.z + yaw_right.z * local_x + yaw_forward.z * local_z
+
+            normal := third_person.Vec3{vertex.normal[0], vertex.normal[1], vertex.normal[2]}
+            normal_x := (normal.x * yaw_right.x + normal.z * yaw_right.z) / build
+            normal_y := normal.y
+            normal_z := normal.x * yaw_forward.x + normal.z * yaw_forward.z
+            if local_z > snout_root do normal_z /= snout_length
+            length := f32(math.sqrt(f64(normal_x * normal_x + normal_y * normal_y + normal_z * normal_z)))
+            if length > .0001 {
+                normal_x /= length
+                normal_y /= length
+                normal_z /= length
+                vertex.normal = {
+                    yaw_right.x * normal_x + yaw_forward.x * normal_z,
+                    normal_y,
+                    yaw_right.z * normal_x + yaw_forward.z * normal_z,
+                }
+            }
+        }
     }
 }
 
@@ -12274,7 +12369,14 @@ world_marta :: proc(editor: ^Editor) {
     position.y += MARTA_STOOL_HEIGHT
     world_mouse_model(
         editor,
-        {position = position, rotation = math.PI - facing, accessory = .Flower, grounded = false},
+        {
+            position = position,
+            rotation = math.PI - facing,
+            build = .88,
+            snout_length = 1.12,
+            accessory = .Flower,
+            grounded = false,
+        },
     )
     world_mouse_interaction_indicator(editor, position)
 }
@@ -12291,7 +12393,15 @@ world_gerta :: proc(editor: ^Editor) {
     position.y += MARTA_STOOL_HEIGHT
     world_mouse_model(
         editor,
-        {position = position, rotation = math.PI - facing, accessory = .Flower, accessory_side = 1, grounded = false},
+        {
+            position = position,
+            rotation = math.PI - facing,
+            build = 1.16,
+            snout_length = .92,
+            accessory = .Flower,
+            accessory_side = 1,
+            grounded = false,
+        },
     )
     world_mouse_interaction_indicator(editor, position)
 }
@@ -12322,6 +12432,8 @@ Town_Mouse :: struct {
     outward:     f32,
     facing:      f32,
     scale:       f32,
+    build:       f32,
+    snout_length: f32,
     accessory:   Mouse_Accessory,
     fur:         Mouse_Fur,
     pattern:     Mouse_Fur_Pattern,
@@ -12461,6 +12573,8 @@ world_story_meeting :: proc(editor: ^Editor) {
     world_town_mouse_model_scaled_cached(editor, {
             position  = niko,
             rotation  = math.PI - facing_niko,
+            build     = 1.12,
+            snout_length = .94,
             accessory = .Acorn_Cap,
             fur       = .Chestnut,
             pattern   = .Pale_Belly,
@@ -12469,6 +12583,8 @@ world_story_meeting :: proc(editor: ^Editor) {
     world_town_mouse_model_scaled_cached(editor, {
             position      = iva,
             rotation      = math.PI - facing_iva,
+            build         = .86,
+            snout_length  = 1.16,
             accessory     = .Flower,
             fur           = .Cream,
             pattern       = .Piebald,
@@ -12485,13 +12601,13 @@ world_town_mice :: proc(editor: ^Editor) {
     if editor == nil do return
 
     residents := [7]Town_Mouse {
-        {-1.0, 2.5, .18, 1.02, .Acorn_Cap, .Chestnut, .Pale_Belly, false, {}},
-        {.8, 2.2, -.22, .96, .Flower, .Cream, .Piebald, true, {177, 65, 73, 255}},
-        {-1.3, 2.7, .12, 1.05, .Bottle_Cap, .Soot, .Solid, true, {61, 112, 139, 255}},
-        {1.1, 2.4, -.16, 1.00, .Paper_Boat, .Silver, .Hooded, false, {}},
-        {-.7, 2.2, .24, .95, .Chef_Hat, .White, .Pale_Belly, false, {}},
-        {1.4, 2.6, -.10, 1.04, .None, .Russet, .Piebald, true, {205, 151, 52, 255}},
-        {-.9, 2.3, .20, .98, .Goggles, .Chestnut, .Hooded, false, {}},
+        {-1.0, 2.5, .18, 1.08, 1.12, .94, .Acorn_Cap, .Chestnut, .Pale_Belly, false, {}},
+        {.8, 2.2, -.22, .91, .86, 1.16, .Flower, .Cream, .Piebald, true, {177, 65, 73, 255}},
+        {-1.3, 2.7, .12, 1.14, 1.22, .88, .Bottle_Cap, .Soot, .Solid, true, {61, 112, 139, 255}},
+        {1.1, 2.4, -.16, 1.00, .94, 1.22, .Paper_Boat, .Silver, .Hooded, false, {}},
+        {-.7, 2.2, .24, .86, 1.08, 1.02, .Chef_Hat, .White, .Pale_Belly, false, {}},
+        {1.4, 2.6, -.10, 1.05, 1.18, 1.10, .None, .Russet, .Piebald, true, {205, 151, 52, 255}},
+        {-.9, 2.3, .20, .96, .82, .90, .Goggles, .Chestnut, .Hooded, false, {}},
     }
     structures := editor.project.structures[:editor.project.structure_count]
     world_structure_storage_ensure(len(structures))
@@ -12549,6 +12665,8 @@ world_town_mice :: proc(editor: ^Editor) {
                     {
                         position = {x, ground_y, z},
                         rotation = rotation,
+                        build = resident.build,
+                        snout_length = resident.snout_length,
                         accessory = resident.accessory,
                         fur = resident.fur,
                         pattern = resident.pattern,

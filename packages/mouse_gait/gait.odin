@@ -8,6 +8,12 @@ Weights :: struct {
     bound: f32,
 }
 
+BOUND_PHASE_OFFSET :: f32(.05)
+
+bound_animation_phase :: proc(phase_radians: f32, bound_weight: f32 = 1) -> f32 {
+    return phase_radians + BOUND_PHASE_OFFSET * math.PI * 2 * clamp(bound_weight, 0, 1)
+}
+
 Cycle :: struct {
     reach: f32,
     lift:  f32,
@@ -41,6 +47,31 @@ tail_counter_sway :: proc(phase_radians, chain_weight: f32, gait: Weights) -> f3
     weight := clamp(chain_weight, 0, 1)
     amplitude := gait.walk * .035 + gait.trot * .050 + gait.bound * .075
     return math.sin(phase_radians + weight * .9) * weight * amplitude
+}
+
+tail_root_follow :: proc(chain_weight: f32) -> f32 {
+    return 1 - clamp(chain_weight, 0, 1) * .85
+}
+
+bound_aerial_weight :: proc(
+    phase_radians: f32,
+    fore_duty: f32 = .34,
+    hind_duty: f32 = .36,
+) -> f32 {
+    phase := phase_radians / (math.PI * 2)
+    phase -= f32(math.floor(f64(phase)))
+    fore_end := clamp(fore_duty, .05, .49)
+    hind_start := f32(.5)
+    hind_end := hind_start + clamp(hind_duty, .05, .49)
+    if phase > fore_end && phase < hind_start {
+        amount := (phase - fore_end) / (hind_start - fore_end)
+        return math.sin(amount * math.PI)
+    }
+    if phase > hind_end {
+        amount := (phase - hind_end) / (1 - hind_end)
+        return math.sin(amount * math.PI)
+    }
+    return 0
 }
 
 smooth_unit :: proc(value: f32) -> f32 {
