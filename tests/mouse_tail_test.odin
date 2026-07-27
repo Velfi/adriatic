@@ -21,6 +21,27 @@ mouse_tail_default_resolution_preserves_authored_length :: proc(t: ^testing.T) {
 }
 
 @(test)
+mouse_tail_bend_rigidity_tapers_toward_tip :: proc(t: ^testing.T) {
+    base := mouse_tail.bend_rigidity_profile(0)
+    middle := mouse_tail.bend_rigidity_profile(.5)
+    tip := mouse_tail.bend_rigidity_profile(1)
+    testing.expect(t, base > middle)
+    testing.expect(t, middle > tip)
+    testing.expect(t, tip >= .08)
+}
+
+@(test)
+mouse_tail_bend_stiffness_is_iteration_independent :: proc(t: ^testing.T) {
+    requested := f32(.8)
+    for iteration_count in 1 ..= 12 {
+        per_iteration := mouse_tail.bend_iteration_stiffness(requested, iteration_count)
+        remaining := f32(1)
+        for _ in 0 ..< iteration_count do remaining *= 1 - per_iteration
+        testing.expect(t, math.abs((1 - remaining) - requested) < .0001)
+    }
+}
+
+@(test)
 mouse_tail_keeps_its_segments_connected :: proc(t: ^testing.T) {
     project := new(terrain.Project)
     defer free(project)

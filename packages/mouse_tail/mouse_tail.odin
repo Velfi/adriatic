@@ -47,7 +47,11 @@ default_config :: proc() -> Config {
         substeps = 3,
         root_stiffness = .42,
         root_damping = .72,
-        bend_stiffness = .18,
+        // This is the total bend correction for one solver pass. The actual
+        // rigidity tapers with the fourth power of the rendered radius, like
+        // a slender elastic rod, so the muscular base carries its shape while
+        // the narrow tip remains lively.
+        bend_stiffness = .80,
         surface_friction = .22,
     }
 }
@@ -99,6 +103,27 @@ constrain_bend :: #force_inline proc(a, b: ^Point, target, stiffness: f32, a_fix
         a.position += correction * .5
         b.position -= correction * .5
     }
+}
+
+// Flexural rigidity for a round section is proportional to radius^4. Match
+// the tail's visible 48% radius taper, retaining a small floor so the last
+// vertebrae cannot fold into a numerical hinge.
+@(no_instrumentation)
+bend_rigidity_profile :: #force_inline proc(chain_weight: f32) -> f32 {
+    radius_ratio := 1 - clamp(chain_weight, 0, 1) * .48
+    radius_squared := radius_ratio * radius_ratio
+    return max(radius_squared * radius_squared, f32(.08))
+}
+
+// Convert a user-facing per-pass stiffness into a per-iteration correction.
+// Without this conversion, increasing the collision solver's iteration count
+// silently makes the tail more rigid.
+@(no_instrumentation)
+bend_iteration_stiffness :: #force_inline proc(stiffness: f32, iterations: int) -> f32 {
+    clamped := clamp(stiffness, 0, 1)
+    if clamped <= 0 || iterations <= 0 do return 0
+    if clamped >= 1 do return 1
+    return 1 - f32(math.pow(f64(1 - clamped), 1.0 / f64(iterations)))
 }
 
 resolve_terrain :: proc(point: ^Point, project: ^terrain.Project, radius, friction: f32) {
@@ -211,6 +236,12 @@ step :: proc(
     segment_length := max(config.segment_length, f32(.02))
     backward_direction := linalg.normalize0(third_person.Vec3{backward.x, 0, backward.z})
     if linalg.dot(backward_direction, backward_direction) <= .000001 do backward_direction = {0, 0, 1}
+    bend_iteration_weights: [POINT_COUNT - 2]f32
+    for index in 0 ..< POINT_COUNT - 2 {
+        chain_weight := f32(index + 1) / f32(POINT_COUNT - 1)
+        pass_stiffness := clamp(config.bend_stiffness, 0, 1) * bend_rigidity_profile(chain_weight)
+        bend_iteration_weights[index] = bend_iteration_stiffness(pass_stiffness, iterations)
+    }
 
     for _ in 0 ..< substeps {
         state.points[0] = {
@@ -238,9 +269,18 @@ step :: proc(
         for _ in 0 ..< iterations {
             state.points[0].position = root
             bend_target := segment_length * 1.94
-            bend_weight := clamp(config.bend_stiffness, 0, 1)
             for index in 0 ..< POINT_COUNT - 2 {
-                constrain_bend(&state.points[index], &state.points[index + 2], bend_target, bend_weight, index == 0)
+                // Use the middle vertebra's position along the chain. The
+                // radius-derived profile produces a firm, load-bearing base
+                // and progressively more compliant tip instead of a chain
+                // with the same artificial hinge strength everywhere.
+                constrain_bend(
+                    &state.points[index],
+                    &state.points[index + 2],
+                    bend_target,
+                    bend_iteration_weights[index],
+                    index == 0,
+                )
             }
             for index in 0 ..< POINT_COUNT - 1 {
                 a_weight := index == 0 ? f32(0) : f32(1)
