@@ -110,6 +110,26 @@ Foliage_Geometry_Cache_Entry :: struct {
     foliage_vertices: [dynamic]Foliage_Vertex,
 }
 
+Static_Geometry_Cache_Entry :: struct {
+    valid:                   bool,
+    structure:               terrain.Structure,
+    project_revision:        u64,
+    world_vertices:          [dynamic]World_Vertex,
+    foliage_vertices:        [dynamic]Foliage_Vertex,
+    bougainvillea_vertices:  [dynamic]Foliage_Vertex,
+}
+
+Climbing_Leaf_Geometry_Cache_Entry :: struct {
+    valid:                  bool,
+    structure:              terrain.Structure,
+    project_revision:       u64,
+    density:                f32,
+    capture_seed_enabled:   bool,
+    capture_seed:           u32,
+    world_vertices:         [dynamic]World_Vertex,
+    bougainvillea_vertices: [dynamic]Foliage_Vertex,
+}
+
 World_Push :: struct {
     camera_position: [4]f32,
     camera_right:    [4]f32,
@@ -195,6 +215,8 @@ World_Renderer :: struct {
     road_mesh:                       roads.Mesh,
     road_revision:                   u64,
     foliage_geometry_cache:          [terrain.STRUCTURE_CAPACITY]Foliage_Geometry_Cache_Entry,
+    static_geometry_cache:           [terrain.STRUCTURE_CAPACITY]Static_Geometry_Cache_Entry,
+    climbing_leaf_geometry_cache:    [terrain.STRUCTURE_CAPACITY]Climbing_Leaf_Geometry_Cache_Entry,
     initialized:                     bool,
 }
 
@@ -1841,440 +1863,6 @@ world_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, c
     world_quad(p[1], p[2], p[6], p[5], color)
     world_quad(p[3], p[7], p[6], p[2], color)
     world_quad(p[0], p[1], p[5], p[4], color)
-}
-
-world_shadow_fade :: proc(color: rl.Color, factor: f32) -> rl.Color {
-    return {color.r, color.g, color.b, u8(clamp(f32(color.a) * factor, 0, 255))}
-}
-
-@(no_instrumentation)
-world_vehicle_shadow_point :: #force_inline proc(
-    point: third_person.Vec3,
-    sun_direction: [3]f32,
-    project: ^terrain.Project,
-) -> (
-    projected: third_person.Vec3,
-    on_land: bool,
-) {
-    projected = point
-    sun_y := max(sun_direction[1], f32(.12))
-    // Refine the receiver height because the ray can cross several terrain
-    // cells before it reaches the ground.
-    for _ in 0 ..< 3 {
-        ground := terrain.sample_height(project, 0, projected.x, projected.z)
-        ray_distance := min(max(point.y - ground, f32(0)) / sun_y, f32(300))
-        projected.x = point.x - sun_direction[0] * ray_distance
-        projected.z = point.z - sun_direction[2] * ray_distance
-    }
-    ground := terrain.sample_height(project, 0, projected.x, projected.z)
-    projected.y = ground + .145
-    return projected, ground > project.sea_level + .04
-}
-
-World_Vehicle_Shadow_Cache_Entry :: struct {
-    point:     third_person.Vec3,
-    projected: third_person.Vec3,
-    on_land:   bool,
-    valid:     bool,
-}
-
-World_Vehicle_Shadow_Cache :: struct {
-    entries: [4]World_Vehicle_Shadow_Cache_Entry,
-    next:    int,
-}
-
-@(no_instrumentation)
-world_vehicle_shadow_point_cached :: #force_inline proc(
-    point: third_person.Vec3,
-    sun_direction: [3]f32,
-    project: ^terrain.Project,
-    cache: ^World_Vehicle_Shadow_Cache,
-) -> (
-    projected: third_person.Vec3,
-    on_land: bool,
-) {
-    for entry in cache.entries {
-        if !entry.valid do continue
-        if entry.point.x != point.x || entry.point.y != point.y || entry.point.z != point.z do continue
-        return entry.projected, entry.on_land
-    }
-    projected, on_land = world_vehicle_shadow_point(point, sun_direction, project)
-    cache.entries[cache.next] = {point, projected, on_land, true}
-    cache.next = (cache.next + 1) % len(cache.entries)
-    return projected, on_land
-}
-
-@(no_instrumentation)
-world_vehicle_shadow_triangle :: #force_inline proc(
-    a, b, c: third_person.Vec3,
-    sun_direction: [3]f32,
-    cloud_cover: f32,
-    project: ^terrain.Project,
-) {
-    // Dynamic vehicles are exact casters in the near-field shadow map. Never
-    // layer the former CPU-projected mesh over that result.
-    if world_renderer.dynamic_shadow.enabled do return
-    fallback_alpha := f32(1)
-    daylight := clamp(sun_direction[1], 0, 1)
-    if daylight <= .08 do return
-    projected_a, land_a := world_vehicle_shadow_point(a, sun_direction, project)
-    projected_b, land_b := world_vehicle_shadow_point(b, sun_direction, project)
-    projected_c, land_c := world_vehicle_shadow_point(c, sun_direction, project)
-    if !land_a && !land_b && !land_c do return
-
-    cloud := clamp(cloud_cover, 0, 1)
-    shade := u8(clamp(17 + cloud * 28 + (1 - daylight) * 8, 17, 53))
-    // Opaque projected faces merge into one clean, hard-edged silhouette.
-    // Vary the tone instead of alpha so overlapping mesh components cannot
-    // create accidental dark facets inside the shadow.
-    world_triangle(
-        projected_a,
-        projected_b,
-        projected_c,
-        {shade, shade + 2, shade + 3, u8(clamp(fallback_alpha * 255, 0, 255))},
-    )
-}
-
-@(no_instrumentation)
-world_vehicle_shadow_triangle_cached :: #force_inline proc(
-    a, b, c: third_person.Vec3,
-    sun_direction: [3]f32,
-    cloud_cover: f32,
-    project: ^terrain.Project,
-    cache: ^World_Vehicle_Shadow_Cache,
-) {
-    daylight := clamp(sun_direction[1], 0, 1)
-    if daylight <= .08 do return
-    projected_a, land_a := world_vehicle_shadow_point_cached(a, sun_direction, project, cache)
-    projected_b, land_b := world_vehicle_shadow_point_cached(b, sun_direction, project, cache)
-    projected_c, land_c := world_vehicle_shadow_point_cached(c, sun_direction, project, cache)
-    if !land_a && !land_b && !land_c do return
-
-    cloud := clamp(cloud_cover, 0, 1)
-    shade := u8(clamp(17 + cloud * 28 + (1 - daylight) * 8, 17, 53))
-    world_triangle(projected_a, projected_b, projected_c, {shade, shade + 2, shade + 3, 255})
-}
-
-world_structure_shadow_layer :: proc(
-    structure: terrain.Structure,
-    project: ^terrain.Project,
-    offset_x, offset_z, footprint_scale: f32,
-    lift: f32,
-    shadow: rl.Color,
-) {
-    local_corners := [4][2]f32 {
-        {-structure.width * footprint_scale * .5, -structure.depth * footprint_scale * .5},
-        {structure.width * footprint_scale * .5, -structure.depth * footprint_scale * .5},
-        {structure.width * footprint_scale * .5, structure.depth * footprint_scale * .5},
-        {-structure.width * footprint_scale * .5, structure.depth * footprint_scale * .5},
-    }
-    base: [4]third_person.Vec3
-    projected: [4]third_person.Vec3
-    land_threshold := project.sea_level + .04
-    projected_land := false
-    for index in 0 ..< 4 {
-        x, z := world_rotate_xz(
-            structure.center_x,
-            structure.center_z,
-            local_corners[index][0],
-            local_corners[index][1],
-            structure.rotation,
-        )
-        base[index] = {x, terrain.sample_height(project, 0, x, z) + lift, z}
-        projected[index] = {
-            x + offset_x,
-            terrain.sample_height(project, 0, x + offset_x, z + offset_z) + lift,
-            z + offset_z,
-        }
-        if projected[index].y > land_threshold do projected_land = true
-    }
-    far_shadow := world_shadow_fade(shadow, f32(.48))
-    for index in 0 ..< 4 {
-        next := (index + 1) % 4
-        base_on_land := base[index].y > land_threshold || base[next].y > land_threshold
-        projected_on_land := projected[index].y > land_threshold || projected[next].y > land_threshold
-        if !base_on_land && !projected_on_land do continue
-        // Shadow decals lie flat on the ground; wind them so the upward face is
-        // the front (CCW) face and they survive back-face culling from above.
-        world_quad_colored(
-            projected[index],
-            projected[next],
-            base[next],
-            base[index],
-            far_shadow,
-            far_shadow,
-            shadow,
-            shadow,
-        )
-    }
-    if projected_land {
-        center_x := (projected[0].x + projected[1].x + projected[2].x + projected[3].x) * .25
-        center_z := (projected[0].z + projected[1].z + projected[2].z + projected[3].z) * .25
-        center := third_person.Vec3{center_x, terrain.sample_height(project, 0, center_x, center_z) + lift, center_z}
-        for index in 0 ..< 4 {
-            next := (index + 1) % 4
-            world_triangle_colored(projected[next], projected[index], center, far_shadow, far_shadow, shadow)
-        }
-    }
-}
-
-world_foliage_shadow_layer :: proc(
-    structure: terrain.Structure,
-    project: ^terrain.Project,
-    offset_x, offset_z, footprint_scale: f32,
-    lift: f32,
-    shadow: rl.Color,
-    segments: int,
-) {
-    // The silhouette resolution is picked per structure by camera distance in
-    // world_structure_shadow: near canopies round out their penumbra while
-    // distant ones shed segments once the projected footprint covers only a
-    // few ground pixels.
-    MAX_SEGMENTS :: 16
-    seg := clamp(segments, 6, MAX_SEGMENTS)
-    base: [MAX_SEGMENTS]third_person.Vec3
-    projected: [MAX_SEGMENTS]third_person.Vec3
-    land_threshold := project.sea_level + .04
-    projected_land := false
-    center_x, center_z := f32(0), f32(0)
-
-    for index in 0 ..< seg {
-        angle := f32(index) * math.PI * 2 / f32(seg)
-        irregularity := 1 + f32(math.sin(f64(f32(structure.seed) * .009 + f32(index) * 2.23))) * .075
-        local_x := math.cos(angle) * structure.width * footprint_scale * .5 * irregularity
-        local_z := math.sin(angle) * structure.depth * footprint_scale * .5 * irregularity
-        x, z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
-        base[index] = {x, terrain.sample_height(project, 0, x, z) + lift, z}
-        projected[index] = {
-            x + offset_x,
-            terrain.sample_height(project, 0, x + offset_x, z + offset_z) + lift,
-            z + offset_z,
-        }
-        center_x += projected[index].x
-        center_z += projected[index].z
-        if projected[index].y > land_threshold do projected_land = true
-    }
-
-    far_shadow := world_shadow_fade(shadow, f32(.42))
-    for index in 0 ..< seg {
-        next := (index + 1) % seg
-        base_on_land := base[index].y > land_threshold || base[next].y > land_threshold
-        projected_on_land := projected[index].y > land_threshold || projected[next].y > land_threshold
-        if !base_on_land && !projected_on_land do continue
-        // Flat ground decal: wind the upward face as front (CCW) so culling keeps it.
-        world_quad_colored(
-            projected[index],
-            projected[next],
-            base[next],
-            base[index],
-            far_shadow,
-            far_shadow,
-            shadow,
-            shadow,
-        )
-    }
-    if projected_land {
-        center_x /= f32(seg)
-        center_z /= f32(seg)
-        center := third_person.Vec3{center_x, terrain.sample_height(project, 0, center_x, center_z) + lift, center_z}
-        // The cap fills the projected silhouette. Contact layers (no sun
-        // offset) sit directly under the plant, so a dark center reads as the
-        // grounded core of the shadow. Offset body/penumbra layers put this
-        // cap at the far tip, where the walls already faded to far_shadow;
-        // darkening the tip center there leaves an unnatural dark blob past a
-        // lighter waist, so the tip must keep fading outward instead.
-        is_contact := abs(offset_x) < .001 && abs(offset_z) < .001
-        cap_center := is_contact ? shadow : far_shadow
-        for index in 0 ..< seg {
-            next := (index + 1) % seg
-            world_triangle_colored(projected[next], projected[index], center, far_shadow, far_shadow, cap_center)
-        }
-    }
-}
-
-world_structure_shadow :: proc(
-    structure: terrain.Structure,
-    sun_direction: [3]f32,
-    cloud_cover: f32,
-    project: ^terrain.Project,
-) {
-    // Environment structures use coarse geometry in the mapped caster stream.
-    // The old layered footprint extrusion caused doubled shadows and severe
-    // low-sun triangulation artifacts.
-    if world_renderer.dynamic_shadow.enabled do return
-    daylight := clamp(sun_direction[1], 0, 1)
-    if daylight <= .08 do return
-
-    horizontal_length := f32(math.sqrt(f64(sun_direction[0] * sun_direction[0] + sun_direction[2] * sun_direction[2])))
-    shadow_height := structure.height
-    if structure.kind == .Architecture {
-        roof_rise := structure.width * .34
-        if structure.height > 60 || settlement_structure_is_landmark(structure) {
-            roof_rise = structure.width * .72
-        } else if architecture.roof_style_for_seed(structure.seed) == .Low_Gable {
-            roof_rise = structure.width * .24
-        }
-        shadow_height += roof_rise
-    }
-    shadow_length := min(shadow_height / max(sun_direction[1], f32(.18)), max(structure.width, structure.depth) * 3.5)
-    offset_x, offset_z := f32(0), f32(0)
-    // At exact solar noon the horizontal component collapses, but the shadow
-    // becomes a compact footprint rather than disappearing. Avoid normalizing
-    // the zero vector and retain the existing contact/penumbra layers.
-    if horizontal_length > .01 {
-        offset_x = -sun_direction[0] / horizontal_length * shadow_length
-        offset_z = -sun_direction[2] / horizontal_length * shadow_length
-    }
-
-    // A translucent penumbra around a denser core keeps the shadow from
-    // reading as a hard rectangular decal at the editor's wide camera range.
-    cloud := clamp(cloud_cover, 0, 1)
-    // Heavy cloud softens contrast without erasing grounded contact.
-    shadow_visibility := 1 - cloud * .55
-    outer_alpha := u8(clamp((24 + daylight * 24) * (1 + cloud * .65), 24, 62))
-    inner_alpha := u8(clamp((64 + daylight * 46) * shadow_visibility, 18, 110))
-    // Draw the broad penumbra first. Each layer gets a small, increasing lift
-    // above the terrain so the translucent passes never fight for the same
-    // depth value on flat ground or at the cap of a shadow.
-    if structure.kind == .Foliage {
-        // Match the canopy geometry's distance LOD (see world_foliage_lobe):
-        // near shadows gain a rounder silhouette and an extra soft penumbra,
-        // while distant shadows shed segments, split patches, and the contact
-        // core once they resolve to a few pixels. The near-quality cost is
-        // paid back by the distant savings, so the dense-forest frame budget
-        // holds against the 60 FPS contract.
-        camera_position := world_renderer.editor.camera_pose.position
-        camera_delta_x := camera_position.x - structure.center_x
-        camera_delta_z := camera_position.z - structure.center_z
-        camera_distance := f32(math.sqrt(f64(camera_delta_x * camera_delta_x + camera_delta_z * camera_delta_z)))
-
-        // Detail bands never drop below the previous fixed quality inside the
-        // range where a shadow reads as a shape (< 260 m); they only add near
-        // and subtract far.
-        outer_segments := 12
-        patch_segments := 12
-        draw_contact := true
-        soft_penumbra := false
-        if camera_distance < 145 {
-            outer_segments = 16
-            patch_segments = 14
-            soft_penumbra = true
-        } else if camera_distance < 260 {
-            outer_segments = 12
-            patch_segments = 12
-        } else if camera_distance < 520 {
-            outer_segments = 10
-            patch_segments = 8
-        } else {
-            outer_segments = 8
-            patch_segments = 6
-            draw_contact = false
-        }
-
-        // A wide, very translucent halo drawn only near the camera turns the
-        // single hard penumbra step into a graduated soft edge, reading as a
-        // diffuse leaf-shadow boundary instead of a scaled decal ring.
-        if soft_penumbra {
-            world_foliage_shadow_layer(
-                structure,
-                project,
-                offset_x * 1.16,
-                offset_z * 1.16,
-                1.24,
-                .028,
-                {41, 57, 44, u8(f32(outer_alpha) * .55)},
-                outer_segments,
-            )
-        }
-
-        world_foliage_shadow_layer(
-            structure,
-            project,
-            offset_x * 1.08,
-            offset_z * 1.08,
-            1.12,
-            .035,
-            {39, 55, 42, outer_alpha},
-            outer_segments,
-        )
-        // Dense foliage shadow is composed from overlapping canopy lobes, not
-        // two more copies of the full formation footprint. The shared outer
-        // penumbra keeps the plant grounded; these smaller cores create broken
-        // leafy edges and naturally darker overlap pockets.
-        wide, narrow := max(structure.width, structure.depth), min(structure.width, structure.depth)
-        hedge_shadow := wide / max(narrow, f32(.01)) >= 1.8
-        patch_count := hedge_shadow ? 5 : 4
-        // Distant clumps collapse to sub-pixel blotches; fewer patch lobes keep
-        // the grounding read without paying for detail nobody can resolve.
-        if camera_distance >= 520 do patch_count = hedge_shadow ? 3 : 2
-        patch_inner_alpha := u8(f32(inner_alpha) * .70)
-        patch_contact_alpha := u8(f32(inner_alpha) * .60)
-        for patch_index in 0 ..< patch_count {
-            patch := structure
-            local_x, local_z := f32(0), f32(0)
-            if hedge_shadow {
-                fraction := (f32(patch_index) + .5) / f32(patch_count)
-                along := (fraction - .5) * wide * .76
-                cross := f32(math.sin(f64(f32(structure.seed) * .013 + f32(patch_index) * 2.17))) * narrow * .11
-                local_x, local_z = along, cross
-                patch.width = wide / f32(patch_count) * 1.62
-                patch.depth = narrow * .86
-                if structure.depth > structure.width {
-                    local_x, local_z = cross, along
-                    patch.width, patch.depth = patch.depth, patch.width
-                }
-            } else {
-                angle := f32(patch_index) * 2.399963 + f32(structure.seed % 101) * .027
-                radial := .16 + f32(patch_index % 2) * .10
-                local_x = math.cos(angle) * structure.width * radial
-                local_z = math.sin(angle) * structure.depth * radial
-                patch.width = structure.width * (.50 + f32(patch_index % 2) * .06)
-                patch.depth = structure.depth * (.48 + f32((patch_index + 1) % 2) * .07)
-            }
-            patch.center_x, patch.center_z = world_rotate_xz(
-                structure.center_x,
-                structure.center_z,
-                local_x,
-                local_z,
-                structure.rotation,
-            )
-            patch.seed += u32(patch_index * 733 + 97)
-            world_foliage_shadow_layer(
-                patch,
-                project,
-                offset_x,
-                offset_z,
-                .96,
-                .055 + f32(patch_index) * .001,
-                {34, 49, 38, patch_inner_alpha},
-                patch_segments,
-            )
-            if draw_contact {
-                world_foliage_shadow_layer(
-                    patch,
-                    project,
-                    0,
-                    0,
-                    .94,
-                    .075 + f32(patch_index) * .001,
-                    {30, 45, 35, patch_contact_alpha},
-                    patch_segments,
-                )
-            }
-        }
-        return
-    }
-    world_structure_shadow_layer(
-        structure,
-        project,
-        offset_x * 1.08,
-        offset_z * 1.08,
-        1.16,
-        .035,
-        {50, 45, 40, outer_alpha},
-    )
-    world_structure_shadow_layer(structure, project, offset_x, offset_z, 1, .055, {45, 40, 36, inner_alpha})
-    world_structure_shadow_layer(structure, project, 0, 0, 1.02, .075, {40, 36, 33, inner_alpha})
 }
 
 world_roof_raise :: proc(point: third_person.Vec3, amount: f32) -> third_person.Vec3 {
@@ -4843,6 +4431,60 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     entry.direction_bucket = direction_bucket
 }
 
+world_static_formation_cached :: proc(
+    structure: terrain.Structure,
+    structure_index: int,
+    project: ^terrain.Project,
+) {
+    if project == nil || structure_index < 0 || structure_index >= terrain.STRUCTURE_CAPACITY {
+        world_formation(structure, project)
+        return
+    }
+    entry := &world_renderer.static_geometry_cache[structure_index]
+    if entry.valid &&
+       entry.structure == structure &&
+       entry.project_revision == project.revision {
+        world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
+        if world_count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:world_count])
+        foliage_count := min(
+            len(entry.foliage_vertices),
+            FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices),
+        )
+        if foliage_count > 0 do append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:foliage_count])
+        bougainvillea_count := min(
+            len(entry.bougainvillea_vertices),
+            BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices),
+        )
+        if bougainvillea_count > 0 {
+            append(
+                &world_renderer.bougainvillea_vertices,
+                ..entry.bougainvillea_vertices[:bougainvillea_count],
+            )
+        }
+        return
+    }
+
+    world_first := len(world_renderer.vertices)
+    foliage_first := len(world_renderer.foliage_vertices)
+    bougainvillea_first := len(world_renderer.bougainvillea_vertices)
+    world_formation(structure, project)
+    clear(&entry.world_vertices)
+    clear(&entry.foliage_vertices)
+    clear(&entry.bougainvillea_vertices)
+    if world_first < len(world_renderer.vertices) {
+        append(&entry.world_vertices, ..world_renderer.vertices[world_first:])
+    }
+    if foliage_first < len(world_renderer.foliage_vertices) {
+        append(&entry.foliage_vertices, ..world_renderer.foliage_vertices[foliage_first:])
+    }
+    if bougainvillea_first < len(world_renderer.bougainvillea_vertices) {
+        append(&entry.bougainvillea_vertices, ..world_renderer.bougainvillea_vertices[bougainvillea_first:])
+    }
+    entry.valid = true
+    entry.structure = structure
+    entry.project_revision = project.revision
+}
+
 world_structure_preview_cluster :: proc(editor: ^Editor) {
     if editor == nil do return
     preview := editor.structure_preview
@@ -7368,12 +7010,6 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
             tree_base := terrain.sample_height(&editor.project, 0, tree_x, tree_z)
             tree_seed := u32((x_side + 2) * 37 + (z_side + 2) * 11 + buildings * 5)
             world_architecture_cypress(tree_x, tree_z, tree_base, tree_seed)
-            tree_width := 9.3 + f32((tree_seed / 997) % 991) / 990 * 2
-            tree_height := 40.5 + f32(tree_seed % 997) / 996 * 5.5
-            tree := terrain.structure_make(tree_x, tree_z, tree_width, tree_width * .9, tree_base, tree_height)
-            tree.kind = .Foliage
-            tree.seed = tree_seed
-            world_structure_shadow(tree, sun_direction, cloud_cover, &editor.project)
             if (x_side == -1 && z_side == 1) || (x_side == 1 && z_side == -1) {
                 olive_x := tree_x - f32(x_side) * 8
                 olive_z := tree_z - f32(z_side) * 5
@@ -7415,7 +7051,7 @@ world_structures :: proc(editor: ^Editor) {
         if structure.kind == .Foliage {
             world_foliage_formation_cached(structure, index)
         } else {
-            world_formation(structure, &editor.project)
+            world_static_formation_cached(structure, index, &editor.project)
         }
         if index == editor.structure_selected && !editor.in_map && !editor.road_mode {
             world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
@@ -8912,7 +8548,6 @@ world_climbing_leaf_vine :: proc(
 
 world_climbing_leaves :: proc(editor: ^Editor) {
     if editor == nil do return
-    sky := atmosphere.sample(&editor.atmosphere)
     for structure, structure_index in editor.project.structures[:editor.project.structure_count] {
         eligible :=
             structure.kind == .Architecture ||
@@ -8924,6 +8559,33 @@ world_climbing_leaves :: proc(editor: ^Editor) {
         if !eligible do continue
         density := architecture.bougainvillea_density_at_structure(&editor.project.climbing_leaf_density, structure)
         if density < .035 do continue
+        capture_seed_enabled :=
+            editor.capture_bougainvillea_seed_enabled &&
+            structure.id == editor.capture_bougainvillea_structure_id
+        capture_seed := capture_seed_enabled ? editor.capture_bougainvillea_seed : u32(0)
+        entry := &world_renderer.climbing_leaf_geometry_cache[structure_index]
+        if entry.valid &&
+           entry.structure == structure &&
+           entry.project_revision == editor.project.revision &&
+           entry.density == density &&
+           entry.capture_seed_enabled == capture_seed_enabled &&
+           entry.capture_seed == capture_seed {
+            world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
+            if world_count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:world_count])
+            bougainvillea_count := min(
+                len(entry.bougainvillea_vertices),
+                BOUGAINVILLEA_VERTEX_CAPACITY - len(world_renderer.bougainvillea_vertices),
+            )
+            if bougainvillea_count > 0 {
+                append(
+                    &world_renderer.bougainvillea_vertices,
+                    ..entry.bougainvillea_vertices[:bougainvillea_count],
+                )
+            }
+            continue
+        }
+        world_first := len(world_renderer.vertices)
+        bougainvillea_first := len(world_renderer.bougainvillea_vertices)
         // Compound buildings, laundry anchors, and climbing growth all share
         // the same frontmost rendered mass.
         growth_structure := architecture.architecture_frontage_structure(structure)
@@ -8943,8 +8605,8 @@ world_climbing_leaves :: proc(editor: ^Editor) {
             height_fraction = architecture.bougainvillea_height_fraction(maturity)
         }
         plant_seed := structure.seed + u32(structure_index * 19)
-        if editor.capture_bougainvillea_seed_enabled && structure.id == editor.capture_bougainvillea_structure_id {
-            plant_seed = editor.capture_bougainvillea_seed
+        if capture_seed_enabled {
+            plant_seed = capture_seed
         }
         root_spread := f32(math.sin(f64(f32(plant_seed) * .17))) * .38
         root_attachment_x := architecture.bougainvillea_root_attachment_x(
@@ -8983,6 +8645,23 @@ world_climbing_leaves :: proc(editor: ^Editor) {
                 vine == 0,
             )
         }
+        clear(&entry.world_vertices)
+        clear(&entry.bougainvillea_vertices)
+        if world_first < len(world_renderer.vertices) {
+            append(&entry.world_vertices, ..world_renderer.vertices[world_first:])
+        }
+        if bougainvillea_first < len(world_renderer.bougainvillea_vertices) {
+            append(
+                &entry.bougainvillea_vertices,
+                ..world_renderer.bougainvillea_vertices[bougainvillea_first:],
+            )
+        }
+        entry.valid = true
+        entry.structure = structure
+        entry.project_revision = editor.project.revision
+        entry.density = density
+        entry.capture_seed_enabled = capture_seed_enabled
+        entry.capture_seed = capture_seed
     }
 }
 
@@ -9008,7 +8687,6 @@ world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
 }
 
 world_aircraft :: proc(editor: ^Editor) {
-    sky := atmosphere.sample(&editor.atmosphere)
     if editor.postale_visible {
         postale_paint_layer := f32(vehicle_paint_layer_index(.Postale))
         postale_propeller_blur := aircraft_propeller_blur_amount(editor.postale.throttle)
@@ -9022,17 +8700,6 @@ world_aircraft :: proc(editor: ^Editor) {
             editor.postale.propeller_turns,
             editor.postale.gear_compression / POSTALE_PRESENTATION_SCALE,
         )
-        for triangle in vehicles.mesh_triangles(&mesh) {
-            if mesh.vertices[triangle.a].part == .Propeller_Blur do continue
-            world_vehicle_shadow_triangle(
-                postale_vertex_world(&editor.postale, mesh.vertices[triangle.a].position, POSTALE_PRESENTATION_SCALE),
-                postale_vertex_world(&editor.postale, mesh.vertices[triangle.b].position, POSTALE_PRESENTATION_SCALE),
-                postale_vertex_world(&editor.postale, mesh.vertices[triangle.c].position, POSTALE_PRESENTATION_SCALE),
-                sky.sun_direction,
-                sky.weather.cloud_cover,
-                &editor.project,
-            )
-        }
         for triangle in vehicles.mesh_triangles(&mesh) {
             a := mesh.vertices[triangle.a]
             b := mesh.vertices[triangle.b]
@@ -9093,16 +8760,6 @@ world_aircraft :: proc(editor: ^Editor) {
             )
         }
         libellula_paint_layer := f32(vehicle_paint_layer_index(editor.aircraft.active))
-        for triangle in vehicles.mesh_triangles(libellula) {
-            world_vehicle_shadow_triangle(
-                libellula_vertex_world(&editor.libellula, libellula.vertices[triangle.a].position, .72),
-                libellula_vertex_world(&editor.libellula, libellula.vertices[triangle.b].position, .72),
-                libellula_vertex_world(&editor.libellula, libellula.vertices[triangle.c].position, .72),
-                sky.sun_direction,
-                sky.weather.cloud_cover,
-                &editor.project,
-            )
-        }
         for triangle in vehicles.mesh_triangles(libellula) {
             a := libellula.vertices[triangle.a]
             b := libellula.vertices[triangle.b]
@@ -9296,21 +8953,8 @@ world_car :: proc(editor: ^Editor) {
         !editor.car_trailer_attached && trailer_speed_squared < .25,
     )
     vehicles.animate_trailer_wheels(&trailer, editor.car_trailer.wheel_rotation)
-    sky := atmosphere.sample(&editor.atmosphere)
     car_transform := world_car_transform(editor)
     trailer_transform := world_trailer_transform(editor)
-    car_shadow_cache: World_Vehicle_Shadow_Cache
-    for triangle in vehicles.mesh_triangles(&mesh) {
-        world_vehicle_shadow_triangle_cached(
-            world_vehicle_vertex_world(car_transform, mesh.vertices[triangle.a].position),
-            world_vehicle_vertex_world(car_transform, mesh.vertices[triangle.b].position),
-            world_vehicle_vertex_world(car_transform, mesh.vertices[triangle.c].position),
-            sky.sun_direction,
-            sky.weather.cloud_cover,
-            &editor.project,
-            &car_shadow_cache,
-        )
-    }
     world_car_cockpit(editor, car_transform)
     for triangle in vehicles.mesh_triangles(&mesh) {
         a := mesh.vertices[triangle.a]
@@ -9321,18 +8965,6 @@ world_car :: proc(editor: ^Editor) {
             world_vehicle_vertex_world(car_transform, b.position),
             world_vehicle_vertex_world(car_transform, c.position),
             aircraft_part_color(a.part),
-        )
-    }
-    trailer_shadow_cache: World_Vehicle_Shadow_Cache
-    for triangle in vehicles.mesh_triangles(&trailer) {
-        world_vehicle_shadow_triangle_cached(
-            world_vehicle_vertex_world(trailer_transform, trailer.vertices[triangle.a].position),
-            world_vehicle_vertex_world(trailer_transform, trailer.vertices[triangle.b].position),
-            world_vehicle_vertex_world(trailer_transform, trailer.vertices[triangle.c].position),
-            sky.sun_direction,
-            sky.weather.cloud_cover,
-            &editor.project,
-            &trailer_shadow_cache,
         )
     }
     for triangle in vehicles.mesh_triangles(&trailer) {
@@ -12306,21 +11938,6 @@ world_build :: proc(editor: ^Editor) {
     world_boat_wakes(editor)
     world_city_density_overlay(editor)
     world_climbing_leaf_density_overlay(editor)
-    sky := atmosphere.sample(&editor.atmosphere)
-    if !lab_scene_suppresses_shadows(editor) {
-        for structure in editor.project.structures[:editor.project.structure_count] {
-            world_structure_shadow(structure, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
-        }
-    }
-
-    if editor.in_map && editor.libellula_visible {
-        attendant_positions := [2]third_person.Vec3{editor.attendant_position, editor.gerta_position}
-        for attendant in attendant_positions {
-            attendant_ground := terrain.sample_height(&editor.project, 0, attendant.x, attendant.z)
-            attendant_shadow := terrain.structure_make(attendant.x, attendant.z, .72, 1.72, attendant_ground, .78)
-            world_structure_shadow(attendant_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
-        }
-    }
     // The player and vehicles are gameplay-critical. Submit them before any
     // capacity-limited environment detail so a dense scene can never cull the
     // controlled character or the vehicle they occupy. Keeping all vehicles
@@ -13724,6 +13341,15 @@ world_renderer_destroy :: proc() {
     for &entry in world_renderer.foliage_geometry_cache {
         delete(entry.world_vertices)
         delete(entry.foliage_vertices)
+    }
+    for &entry in world_renderer.static_geometry_cache {
+        delete(entry.world_vertices)
+        delete(entry.foliage_vertices)
+        delete(entry.bougainvillea_vertices)
+    }
+    for &entry in world_renderer.climbing_leaf_geometry_cache {
+        delete(entry.world_vertices)
+        delete(entry.bougainvillea_vertices)
     }
     world_renderer = {}
 }

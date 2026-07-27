@@ -156,7 +156,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
 
 all: build
 
@@ -167,17 +167,30 @@ bootstrap:
 bootstrap-fork:
 	./tools/bootstrap-odin-fork-macos.sh
 
-doctor:
+check-odin-version:
 	@set -eu; \
-	if [ ! -d "$(ZELDA_ENGINE_PACKAGES)" ]; then \
-		echo "error: Zelda Engine packages not found at $(ZELDA_ENGINE_PACKAGES)" >&2; exit 1; \
-	fi; \
 	if [ ! -x "$(ODIN)" ] && ! command -v "$(ODIN)" >/dev/null 2>&1; then \
 		echo "error: Odin is missing; run make bootstrap or set ODIN=/path/to/odin" >&2; exit 1; \
 	fi; \
 	actual="$$($(ODIN) version 2>/dev/null || true)"; \
+	case "$$actual" in \
+		*"$(ODIN_VERSION_OUTPUT)"*) ;; \
+		*) \
+			echo "error: wrong Odin compiler version" >&2; \
+			echo "  expected: $(ODIN_VERSION_OUTPUT)" >&2; \
+			echo "  actual:   $${actual:-<no version output>}" >&2; \
+			echo "run 'make bootstrap-fork' or set ODIN=/path/to/the/locked/odin" >&2; \
+			exit 1 ;; \
+	esac; \
+	echo "Odin: $$actual"
+
+doctor: check-odin-version
+	@set -eu; \
+	if [ ! -d "$(ZELDA_ENGINE_PACKAGES)" ]; then \
+		echo "error: Zelda Engine packages not found at $(ZELDA_ENGINE_PACKAGES)" >&2; exit 1; \
+	fi; \
 	echo "Zelda Engine: $$(git -C "$(ZELDA_ENGINE_ROOT)" rev-parse --short HEAD 2>/dev/null || echo unversioned)"; \
-	echo "Toolchain: $$actual"
+	echo "Toolchain lock: $(ODIN_FORK_VERSION)"
 
 assets-dev:
 	@mkdir -p "$(DEV_DIR)/assets"

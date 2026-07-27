@@ -111,14 +111,12 @@ shadow_lab_structure :: proc(
 }
 
 world_shadow_lab_item :: proc(editor: ^Editor, structure: terrain.Structure) {
-    sky := atmosphere.sample(&editor.atmosphere)
-    world_structure_shadow(structure, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
     world_formation(structure)
 }
 
 world_shadow_lab_shadow_only :: proc(editor: ^Editor, structure: terrain.Structure) {
-    sky := atmosphere.sample(&editor.atmosphere)
-    world_structure_shadow(structure, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+    // Shadow-only CPU projection fixtures were removed with the legacy shadow
+    // path. Dynamic shadow casters come from submitted world geometry.
 }
 
 world_shadow_lab_playground :: proc(editor: ^Editor) {
