@@ -116,6 +116,27 @@ structure_visibility_order_less :: #force_inline proc(a, b: Structure_Visibility
     return a.index < b.index
 }
 
+@(no_instrumentation)
+structure_visibility_order_repair :: proc(order: []Structure_Visibility_Order) -> bool {
+    move_limit := len(order) * 8
+    moves := 0
+    for index in 1 ..< len(order) {
+        entry := order[index]
+        insertion := index
+        for insertion > 0 && structure_visibility_order_less(entry, order[insertion - 1]) {
+            order[insertion] = order[insertion - 1]
+            insertion -= 1
+            moves += 1
+            if moves >= move_limit {
+                order[insertion] = entry
+                return false
+            }
+        }
+        order[insertion] = entry
+    }
+    return true
+}
+
 structure_lod_forced: i32 = -1
 
 window_flower_box_roll :: proc(structure_seed: u32, row, column: int) -> u32 {
@@ -1384,14 +1405,16 @@ world_terrain_invalidate_all :: proc(editor: ^Editor) {
 
 world_structure_storage_ensure :: proc(count: int) {
     if count <= len(world_renderer.static_geometry_cache) do return
-    resize(&world_renderer.foliage_geometry_cache, count)
-    resize(&world_renderer.static_geometry_cache, count)
-    resize(&world_renderer.climbing_leaf_geometry_cache, count)
-    resize(&world_renderer.static_visibility_classification, count)
-    resize(&world_renderer.structure_visibility_centers, count)
-    reserve(&world_renderer.structure_visibility_order, count)
-    resize(&world_renderer.structure_building_spans, count)
-    reserve(&world_renderer.structure_candidates, count)
+    MINIMUM_CAPACITY :: 64
+    capacity := max(count, max(MINIMUM_CAPACITY, len(world_renderer.static_geometry_cache) * 2))
+    resize(&world_renderer.foliage_geometry_cache, capacity)
+    resize(&world_renderer.static_geometry_cache, capacity)
+    resize(&world_renderer.climbing_leaf_geometry_cache, capacity)
+    resize(&world_renderer.static_visibility_classification, capacity)
+    resize(&world_renderer.structure_visibility_centers, capacity)
+    reserve(&world_renderer.structure_visibility_order, capacity)
+    resize(&world_renderer.structure_building_spans, capacity)
+    reserve(&world_renderer.structure_candidates, capacity)
 }
 
 clipmap_update :: proc(editor: ^Editor, frame_index: int) {
@@ -7799,9 +7822,11 @@ world_structures :: proc(editor: ^Editor) {
     stats^ = {}
     selected_index := !editor.in_map ? editor.structure_selected : -1
     camera_position := [2]f32{view_camera.position.x, view_camera.position.z}
-    order_dirty :=
+    order_rebuild :=
         !world_renderer.structure_visibility_order_valid ||
-        len(world_renderer.structure_visibility_order) != editor.project.structure_count ||
+        len(world_renderer.structure_visibility_order) != editor.project.structure_count
+    order_dirty :=
+        order_rebuild ||
         world_renderer.structure_visibility_camera != camera_position ||
         world_renderer.structure_visibility_selected != selected_index ||
         world_renderer.structure_visibility_hovered != hovered_index
@@ -7815,19 +7840,27 @@ world_structures :: proc(editor: ^Editor) {
         }
     }
     if order_dirty {
-        clear(&world_renderer.structure_visibility_order)
-        for structure, index in editor.project.structures[:editor.project.structure_count] {
-            center := [2]f32{structure.center_x, structure.center_z}
-            world_renderer.structure_visibility_centers[index] = center
-            dx, dz := structure.center_x - view_camera.position.x, structure.center_z - view_camera.position.z
-            distance_squared := dx * dx + dz * dz
-            if index == selected_index || index == hovered_index do distance_squared = -1
-            append(
-                &world_renderer.structure_visibility_order,
-                Structure_Visibility_Order{index, distance_squared},
-            )
+        if order_rebuild {
+            clear(&world_renderer.structure_visibility_order)
+            for index in 0 ..< editor.project.structure_count {
+                append(&world_renderer.structure_visibility_order, Structure_Visibility_Order{index = index})
+            }
         }
-        slice.sort_by(world_renderer.structure_visibility_order[:], structure_visibility_order_less)
+        for &ordered in world_renderer.structure_visibility_order {
+            structure := editor.project.structures[ordered.index]
+            world_renderer.structure_visibility_centers[ordered.index] = {
+                structure.center_x,
+                structure.center_z,
+            }
+            dx, dz := structure.center_x - view_camera.position.x, structure.center_z - view_camera.position.z
+            ordered.distance_squared = dx * dx + dz * dz
+            if ordered.index == selected_index || ordered.index == hovered_index {
+                ordered.distance_squared = -1
+            }
+        }
+        if !structure_visibility_order_repair(world_renderer.structure_visibility_order[:]) {
+            slice.sort_by(world_renderer.structure_visibility_order[:], structure_visibility_order_less)
+        }
         world_renderer.structure_visibility_camera = camera_position
         world_renderer.structure_visibility_selected = selected_index
         world_renderer.structure_visibility_hovered = hovered_index
