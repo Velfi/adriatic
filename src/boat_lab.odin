@@ -24,11 +24,11 @@ boat_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
         radius := radii[index]
         agent.loiter_center = center
         agent.loiter_radius = radius * .45
-        agent.position = {center.x + radius, center.z}
+        agent.position = {center.x + radius, center.y}
         agent.route_index = 0
         for route_index in 0 ..< agent.route_count {
             angle := f32(route_index) * math.PI * 2 / f32(agent.route_count) + f32(index) * .27
-            agent.route[route_index] = {center.x + math.cos(angle) * radius, center.z + math.sin(angle) * radius * .68}
+            agent.route[route_index] = {center.x + math.cos(angle) * radius, center.y + math.sin(angle) * radius * .68}
         }
         agent.speed = boats.specifications(agent.class).cruise_speed_mps * (agent.class == .Tug ? f32(.34) : f32(.62))
     }

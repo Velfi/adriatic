@@ -3,6 +3,7 @@ package main
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
+import "core:math/linalg"
 
 SETTLEMENT_ROUTE_GRID :: 25
 SETTLEMENT_ROUTE_CAPACITY :: 12
@@ -20,8 +21,8 @@ Settlement_Route_Topology :: struct {
 }
 
 settlement_route_point_near :: proc(a, b: [2]f32, epsilon: f32 = .05) -> bool {
-    dx, dz := a[0] - b[0], a[1] - b[1]
-    return dx * dx + dz * dz <= epsilon * epsilon
+    delta := a - b
+    return linalg.dot(delta, delta) <= epsilon * epsilon
 }
 
 settlement_route_segment_intersection :: proc(
@@ -249,13 +250,13 @@ settlement_route_crosses_sea :: proc(
     if project == nil || route.count < 2 do return true
     for segment_index in 0 ..< route.count - 1 {
         a, b := route.points[segment_index], route.points[segment_index + 1]
-        dx, dz := b[0] - a[0], b[1] - a[1]
-        length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+        delta := b - a
+        length := linalg.length(delta)
         samples := max(int(math.ceil(f64(length / 4))), 1)
         for sample_index in 0 ..= samples {
             amount := f32(sample_index) / f32(samples)
-            x, z := a[0] + dx * amount, a[1] + dz * amount
-            if terrain.sample_height(project, 0, x, z) <= project.sea_level + clearance {
+            point := a + delta * amount
+            if terrain.sample_height(project, 0, point.x, point.y) <= project.sea_level + clearance {
                 return true
             }
         }
@@ -324,8 +325,7 @@ settlement_plan_extract_route_faces :: proc(plan: ^Settlement_Plan) -> int {
             a := topology.nodes[face_nodes[index]]
             b := topology.nodes[face_nodes[(index + 1) % face_count]]
             signed_double_area += a[0] * b[1] - b[0] * a[1]
-            dx, dz := b[0] - a[0], b[1] - a[1]
-            perimeter += f32(math.sqrt(f64(dx * dx + dz * dz)))
+            perimeter += linalg.length(b - a)
             minimum_x, minimum_z = min(minimum_x, a[0]), min(minimum_z, a[1])
             maximum_x, maximum_z = max(maximum_x, a[0]), max(maximum_z, a[1])
             center += a
@@ -400,7 +400,7 @@ settlement_route_find :: proc(
     if project == nil do return result
 
     span_x, span_z := math.abs(finish_x - start_x), math.abs(finish_z - start_z)
-    direct_length := f32(math.sqrt(f64(span_x * span_x + span_z * span_z)))
+    direct_length := linalg.length([2]f32{finish_x - start_x, finish_z - start_z})
     if direct_length <= 12 {
         result.points[0] = {start_x, start_z}
         result.points[1] = {finish_x, finish_z}
@@ -494,8 +494,7 @@ settlement_route_find :: proc(
             if candidate >= costs[neighbor] do continue
             costs[neighbor] = candidate
             parents[neighbor] = current
-            remaining_x, remaining_z := f32(finish_gx - nx), f32(finish_gz - nz)
-            heuristic := f32(math.sqrt(f64(remaining_x * remaining_x + remaining_z * remaining_z)))
+            heuristic := linalg.length([2]f32{f32(finish_gx - nx), f32(finish_gz - nz)})
             estimates[neighbor] = candidate + heuristic
             open[neighbor] = true
         }

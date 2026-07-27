@@ -6,6 +6,8 @@ import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
+import "core:slice"
 
 Settlement_Region :: enum {
     Adriatic,
@@ -449,9 +451,7 @@ settlement_route_width_sample :: proc(rng: ^Settlement_Rng, class: Settlement_Ro
 settlement_route_length :: proc(route: Settlement_Route) -> f32 {
     total: f32
     for index in 0 ..< route.count - 1 {
-        dx := route.points[index + 1][0] - route.points[index][0]
-        dz := route.points[index + 1][1] - route.points[index][1]
-        total += f32(math.sqrt(f64(dx * dx + dz * dz)))
+        total += linalg.length(route.points[index + 1] - route.points[index])
     }
     return total
 }
@@ -461,15 +461,7 @@ settlement_stats :: proc(values: []f32) -> Settlement_Scalar_Stats {
     if len(values) == 0 do return result
     sorted := make([]f32, len(values), context.temp_allocator)
     copy(sorted, values)
-    for index in 1 ..< len(sorted) {
-        value := sorted[index]
-        cursor := index - 1
-        for cursor >= 0 && sorted[cursor] > value {
-            sorted[cursor + 1] = sorted[cursor]
-            cursor -= 1
-        }
-        sorted[cursor + 1] = value
-    }
+    slice.sort(sorted)
     sum: f32
     for value in sorted do sum += value
     result = {
@@ -586,8 +578,7 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
         for other_index in 0 ..< intersection_count {
             if other_index == intersection_index do continue
             other := topology.nodes[intersection_nodes[other_index]]
-            dx, dz := other[0] - point[0], other[1] - point[1]
-            nearest = min(nearest, f32(math.sqrt(f64(dx * dx + dz * dz))))
+            nearest = min(nearest, linalg.length(other - point))
         }
         if nearest < f32(1e29) do append(&intersection_spacings, nearest)
     }

@@ -3,6 +3,7 @@ package main
 import markov "../packages/markov"
 import terrain "../packages/terrain"
 import "core:math"
+import "core:math/linalg"
 
 Settlement_Scale :: enum {
     City,
@@ -166,7 +167,7 @@ settlement_terrain_slope :: proc(project: ^terrain.Project, x, z: f32) -> f32 {
     SAMPLE :: f32(8)
     dx := terrain.sample_height(project, 0, x + SAMPLE, z) - terrain.sample_height(project, 0, x - SAMPLE, z)
     dz := terrain.sample_height(project, 0, x, z + SAMPLE) - terrain.sample_height(project, 0, x, z - SAMPLE)
-    return f32(math.sqrt(f64(dx * dx + dz * dz))) / (SAMPLE * 2)
+    return linalg.length([2]f32{dx, dz}) / (SAMPLE * 2)
 }
 
 settlement_site_suitability :: proc(project: ^terrain.Project, x, z: f32, profile: Settlement_Profile) -> f32 {

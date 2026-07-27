@@ -133,7 +133,8 @@ ease_value :: proc(kind: Ease, value: f32) -> f32 {
     return t
 }
 
-lerp_vec3 :: proc(a, b: Vec3, t: f32) -> Vec3 {
+@(no_instrumentation)
+lerp_vec3 :: #force_inline proc(a, b: Vec3, t: f32) -> Vec3 {
     return a + (b - a) * t
 }
 

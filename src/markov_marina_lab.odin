@@ -383,7 +383,7 @@ markov_marina_dockmaster_near :: proc(editor: ^Editor) -> bool {
     if editor == nil || !lab_scene_is_active(editor, "markov-marina") || editor.pilot.mode != .On_Foot {
         return false
     }
-    delta := vec_sub(editor.player.position, markov_marina_dockmaster_position())
+    delta := editor.player.position - markov_marina_dockmaster_position()
     return delta.x * delta.x + delta.z * delta.z <= 2.5 * 2.5
 }
 

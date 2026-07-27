@@ -1,6 +1,7 @@
 package boats
 
 import "core:math"
+import "core:math/linalg"
 
 TRAFFIC_CAPACITY :: 32
 DEFAULT_TRAFFIC_COUNT :: 4
@@ -8,9 +9,7 @@ ROUTE_CAPACITY :: 8
 SCHEDULE_CAPACITY :: 5
 WAKE_CAPACITY :: 48
 
-Vec2 :: struct {
-    x, z: f32,
-}
+Vec2 :: [2]f32
 
 Behavior :: enum u8 {
     Transit,
@@ -64,17 +63,8 @@ Traffic :: struct {
     clock:  f32,
 }
 
-vec_add :: proc(a, b: Vec2) -> Vec2 { return {a.x + b.x, a.z + b.z} }
-vec_sub :: proc(a, b: Vec2) -> Vec2 { return {a.x - b.x, a.z - b.z} }
-vec_scale :: proc(a: Vec2, scale: f32) -> Vec2 { return {a.x * scale, a.z * scale} }
-vec_dot :: proc(a, b: Vec2) -> f32 { return a.x * b.x + a.z * b.z }
-vec_length :: proc(a: Vec2) -> f32 { return f32(math.sqrt(f64(vec_dot(a, a)))) }
-vec_normalize :: proc(a: Vec2) -> Vec2 {
-    length := vec_length(a)
-    return length > .0001 ? vec_scale(a, 1 / length) : Vec2{}
-}
-
-agent_forward :: proc(agent: Agent) -> Vec2 {
+@(no_instrumentation)
+agent_forward :: #force_inline proc(agent: Agent) -> Vec2 {
     return {math.sin(agent.yaw), -math.cos(agent.yaw)}
 }
 
@@ -158,7 +148,7 @@ new_traffic :: proc() -> Traffic {
         schedule := agent_schedule(class)
         agent := &traffic.agents[index]
         agent.class = class
-        agent.position = {center.x + radius, center.z}
+        agent.position = {center.x + radius, center.y}
         agent.yaw = math.PI * .5
         agent.loiter_center = center
         agent.loiter_radius = radius * .34
@@ -168,7 +158,7 @@ new_traffic :: proc() -> Traffic {
         agent.route_count = 6
         for route_index in 0 ..< agent.route_count {
             angle := f32(route_index) * math.PI * 2 / f32(agent.route_count) + f32(index) * .31
-            agent.route[route_index] = {center.x + math.cos(angle) * radius, center.z + math.sin(angle) * radius * .72}
+            agent.route[route_index] = {center.x + math.cos(angle) * radius, center.y + math.sin(angle) * radius * .72}
         }
     }
     traffic.count = len(classes)
@@ -203,12 +193,12 @@ agent_target :: proc(agent: ^Agent, dt: f32) -> Vec2 {
         agent.loiter_phase += dt * rate
         return {
             agent.loiter_center.x + math.cos(agent.loiter_phase) * agent.loiter_radius,
-            agent.loiter_center.z + math.sin(agent.loiter_phase) * agent.loiter_radius,
+            agent.loiter_center.y + math.sin(agent.loiter_phase) * agent.loiter_radius,
         }
     }
     target := agent.route[agent.route_index]
     threshold := max(specifications(agent.class).length * .75, f32(8))
-    if vec_length(vec_sub(target, agent.position)) < threshold {
+    if linalg.length(target - agent.position) < threshold {
         if agent.behavior == .Patrol {
             agent.route_index = (agent.route_index + 1) % agent.route_count
         } else {
@@ -224,13 +214,13 @@ avoidance_vector :: proc(traffic: ^Traffic, agent_index: int) -> Vec2 {
     result: Vec2
     for other, other_index in traffic.agents[:traffic.count] {
         if other_index == agent_index do continue
-        separation := vec_sub(agent.position, other.position)
-        distance := vec_length(separation)
+        separation := agent.position - other.position
+        distance := linalg.length(separation)
         safe_distance := (specifications(agent.class).length + specifications(other.class).length) * .65 + 8
         if distance <= .001 || distance >= safe_distance do continue
-        closing := vec_dot(vec_sub(agent.velocity, other.velocity), vec_normalize(separation))
+        closing := linalg.dot(agent.velocity - other.velocity, linalg.normalize0(separation))
         urgency := (1 - distance / safe_distance) * (closing < 0 ? f32(1.35) : f32(.72))
-        result = vec_add(result, vec_scale(vec_normalize(separation), urgency))
+        result += linalg.normalize0(separation) * urgency
     }
     return result
 }
@@ -258,7 +248,7 @@ wake_step :: proc(agent: ^Agent, distance_travelled, dt: f32) {
     }
     spec := specifications(agent.class)
     forward := agent_forward(agent^)
-    stern := vec_sub(agent.position, vec_scale(forward, spec.length * .43))
+    stern := agent.position - forward * (spec.length * .43)
     tonnes := spec.displacement_kg / 1000
     lifetime := 4.2 + clamp(f32(math.sqrt(f64(tonnes))), 1, 7) * .48
     agent.wake[agent.wake_count] = {
@@ -291,27 +281,27 @@ step :: proc(traffic: ^Traffic, delta_seconds, world_minutes: f32) {
         behavior, schedule_speed := schedule_behavior(agent, world_minutes)
         agent.behavior = behavior
         target := agent_target(agent, dt)
-        desired := vec_normalize(vec_sub(target, agent.position))
+        desired := linalg.normalize0(target - agent.position)
         avoidance := avoidance_vector(traffic, index)
-        desired = vec_normalize(vec_add(desired, vec_scale(avoidance, 2.6)))
+        desired = linalg.normalize0(desired + avoidance * 2.6)
 
         spec := specifications(agent.class)
         target_speed := spec.cruise_speed_mps * schedule_speed
-        if vec_length(avoidance) > .2 do target_speed *= clamp(1 - vec_length(avoidance) * .45, .25, 1)
+        if linalg.length(avoidance) > .2 do target_speed *= clamp(1 - linalg.length(avoidance) * .45, .25, 1)
         acceleration := agent.class == .Tug ? f32(.42) : f32(1.25)
         agent.speed += clamp(target_speed - agent.speed, -acceleration * dt, acceleration * dt)
         agent.throttle = target_speed > .01 ? clamp(agent.speed / target_speed, 0, 1) : 0
 
-        desired_yaw := math.atan2(desired.x, -desired.z)
+        desired_yaw := math.atan2(desired.x, -desired.y)
         yaw_delta := desired_yaw - agent.yaw
         for yaw_delta > math.PI do yaw_delta -= math.PI * 2
         for yaw_delta < -math.PI do yaw_delta += math.PI * 2
         turn_rate := agent.class == .Tug ? f32(.22) : f32(.55)
         agent.yaw += clamp(yaw_delta, -turn_rate * dt, turn_rate * dt)
         forward := agent_forward(agent^)
-        agent.velocity = vec_scale(forward, agent.speed)
+        agent.velocity = forward * agent.speed
         distance := agent.speed * dt
-        agent.position = vec_add(agent.position, vec_scale(agent.velocity, dt))
+        agent.position += agent.velocity * dt
         wake_step(agent, distance, dt)
     }
 }

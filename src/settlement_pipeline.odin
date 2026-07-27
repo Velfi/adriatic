@@ -4,6 +4,7 @@ import architecture "../packages/architecture"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
+import "core:math/linalg"
 
 settlement_plan_add_route :: proc(
     plan: ^Settlement_Plan,
@@ -19,7 +20,7 @@ settlement_plan_add_route :: proc(
     grade_count := 0
     for index in 0 ..< geometry.count - 1 {
         a, b := geometry.points[index], geometry.points[index + 1]
-        distance := f32(math.sqrt(f64((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]))))
+        distance := linalg.length(b - a)
         if distance <= .01 do continue
         grade :=
             math.abs(terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1])) /
@@ -76,13 +77,12 @@ settlement_plan_add_segmented_spine :: proc(
     rng: ^Settlement_Rng,
 ) {
     if plan == nil || project == nil do return
-    dx, dz := finish[0] - start[0], finish[1] - start[1]
-    length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    direction := linalg.normalize0(finish - start)
+    length := linalg.length(finish - start)
     if length <= .01 do return
-    dx, dz = dx / length, dz / length
     central_half_length := min(max(plan.request.radius * .055, f32(8)), f32(14))
-    central_start := [2]f32{center[0] - dx * central_half_length, center[1] - dz * central_half_length}
-    central_finish := [2]f32{center[0] + dx * central_half_length, center[1] + dz * central_half_length}
+    central_start := center - direction * central_half_length
+    central_finish := center + direction * central_half_length
     central_start[0], central_start[1] = settlement_fit_landscape_point(
         project,
         central_start[0],
@@ -190,12 +190,11 @@ settlement_plan_build_macro_routes :: proc(plan: ^Settlement_Plan, project: ^ter
             accepted_count += 1
             point := plan.macro_cells[endpoint].center
             if accepted_count == 1 {
-                dx, dz := core_point[0] - point[0], core_point[1] - point[1]
-                length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+                direction := linalg.normalize0(core_point - point)
+                length := linalg.length(core_point - point)
                 if length <= .01 do continue
-                dx, dz = dx / length, dz / length
                 civic_length := min(max(radius * .06, f32(5)), f32(8))
-                civic_start := [2]f32{core_point[0] - dx * civic_length, core_point[1] - dz * civic_length}
+                civic_start := core_point - direction * civic_length
                 approach := settlement_route_find(project, point[0], point[1], civic_start[0], civic_start[1], .Street)
                 civic := settlement_route_find(
                     project,
@@ -361,8 +360,8 @@ settlement_plan_add_neighborhood :: proc(
 settlement_nearest_tissue :: proc(plan: ^Settlement_Plan, x, z: f32) -> Settlement_Tissue {
     best, best_distance := Settlement_Tissue.Later_Extension, f32(1e30)
     for neighborhood in plan.neighborhoods[:plan.neighborhood_count] {
-        dx, dz := x - neighborhood.center[0], z - neighborhood.center[1]
-        distance := dx * dx + dz * dz
+        delta := [2]f32{x - neighborhood.center.x, z - neighborhood.center.y}
+        distance := linalg.dot(delta, delta)
         if distance < best_distance {
             best, best_distance = neighborhood.tissue, distance
         }
@@ -383,21 +382,21 @@ settlement_nearest_route_frame :: proc(
         if !route.drivable do continue
         for index in 0 ..< route.geometry.count - 1 {
             a, b := route.geometry.points[index], route.geometry.points[index + 1]
-            dx, dz := b[0] - a[0], b[1] - a[1]
-            length_squared := dx * dx + dz * dz
+            delta := b - a
+            length_squared := linalg.dot(delta, delta)
             if length_squared <= .001 do continue
-            along := clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dz) / length_squared, 0, 1)
-            candidate := [2]f32{a[0] + dx * along, a[1] + dz * along}
-            ox, oz := point[0] - candidate[0], point[1] - candidate[1]
-            distance := ox * ox + oz * oz
+            along := clamp(linalg.dot(point - a, delta) / length_squared, 0, 1)
+            candidate := a + delta * along
+            offset := point - candidate
+            distance := linalg.dot(offset, offset)
             if distance >= best_distance do continue
-            length := f32(math.sqrt(f64(length_squared)))
+            length := linalg.length(delta)
             origin = candidate
-            tangent = {dx / length, dz / length}
-            normal = {-tangent[1], tangent[0]}
+            tangent = delta / length
+            normal = {-tangent.y, tangent.x}
             width = route.width
             shoulder = route.shoulder
-            distance_to_route = f32(math.sqrt(f64(distance)))
+            distance_to_route = linalg.length(offset)
             found = true
             best_distance = distance
         }
@@ -411,28 +410,27 @@ settlement_structure_clear :: proc(
     x, z, width, depth, rotation, separation: f32,
 ) -> bool {
     tangent := [2]f32{f32(math.cos(f64(rotation))), f32(math.sin(f64(rotation)))}
-    building_normal := [2]f32{-tangent[1], tangent[0]}
+    building_normal := [2]f32{-tangent.y, tangent.x}
     graph := &project.road_graph
     for edge in graph.edges[:graph.edge_count] {
         previous := roads.edge_point(graph, edge, 0)
         for segment in 1 ..= 12 {
             current := roads.edge_point(graph, edge, f32(segment) / 12)
             segment_x, segment_z := current.x - previous.x, current.z - previous.z
-            length_squared := segment_x * segment_x + segment_z * segment_z
+            segment_delta := [2]f32{segment_x, segment_z}
+            length_squared := linalg.dot(segment_delta, segment_delta)
             if length_squared <= .00001 {
                 previous = current
                 continue
             }
-            amount := clamp(((x - previous.x) * segment_x + (z - previous.z) * segment_z) / length_squared, 0, 1)
-            closest_x := previous.x + segment_x * amount
-            closest_z := previous.z + segment_z * amount
-            dx, dz := x - closest_x, z - closest_z
-            distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
-            segment_length := f32(math.sqrt(f64(length_squared)))
-            road_normal := [2]f32{-segment_z / segment_length, segment_x / segment_length}
+            offset := [2]f32{x - previous.x, z - previous.z}
+            amount := clamp(linalg.dot(offset, segment_delta) / length_squared, 0, 1)
+            distance := linalg.length(offset - segment_delta * amount)
+            segment_length := linalg.length(segment_delta)
+            road_normal := [2]f32{-segment_delta.y / segment_length, segment_delta.x / segment_length}
             projected_half_extent :=
-                math.abs(road_normal[0] * tangent[0] + road_normal[1] * tangent[1]) * width * .5 +
-                math.abs(road_normal[0] * building_normal[0] + road_normal[1] * building_normal[1]) * depth * .5
+                math.abs(linalg.dot(road_normal, tangent)) * width * .5 +
+                math.abs(linalg.dot(road_normal, building_normal)) * depth * .5
             required_distance := edge.half_width + edge.shoulder_width + projected_half_extent + .6
             if distance < required_distance do return false
             previous = current
@@ -617,12 +615,11 @@ settlement_pedestrian_segment_clear :: proc(city_plan: ^architecture.City_Plan, 
     if city_plan == nil do return false
     for sample in 1 ..< 10 {
         amount := f32(sample) / 10
-        x := start[0] + (end[0] - start[0]) * amount
-        z := start[1] + (end[1] - start[1]) * amount
+        point := start + (end - start) * amount
         for structure in city_plan.structures[:city_plan.count] {
-            dx, dz := x - structure.center_x, z - structure.center_z
+            delta := point - [2]f32{structure.center_x, structure.center_z}
             clearance := min(structure.width, structure.depth) * .42 + .8
-            if dx * dx + dz * dz < clearance * clearance do return false
+            if linalg.dot(delta, delta) < clearance * clearance do return false
         }
     }
     return true
@@ -654,17 +651,17 @@ settlement_plan_generate_pedestrian_access :: proc(
         approach_depth := min(block.short_side, block.long_side) * .5 + 1.2
         length := route_distance - route_width * .5 - route_shoulder - approach_depth
         if length < 4 || length > maximum_length do continue
-        dx, dz := block.center[0] - origin[0], block.center[1] - origin[1]
-        distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+        delta := block.center - origin
+        distance := linalg.length(delta)
         if distance <= .01 do continue
-        dx, dz = dx / distance, dz / distance
+        direction := delta / distance
         start_offset := route_width * .5 + route_shoulder + .45
-        start := [2]f32{origin[0] + dx * start_offset, origin[1] + dz * start_offset}
-        end := [2]f32{block.center[0] - dx * approach_depth, block.center[1] - dz * approach_depth}
+        start := origin + direction * start_offset
+        end := block.center - direction * approach_depth
         duplicate := false
         for alley in city_plan.alleys[:city_plan.alley_count] {
-            previous_dx, previous_dz := alley.start_x - start[0], alley.start_z - start[1]
-            if previous_dx * previous_dx + previous_dz * previous_dz < 14 * 14 {
+            previous := [2]f32{alley.start_x, alley.start_z}
+            if linalg.length(previous - start) < 14 {
                 duplicate = true
                 break
             }
@@ -712,24 +709,23 @@ settlement_plan_generate_lamps :: proc(plan: ^Settlement_Plan, city_plan: ^archi
         }
         for segment_index in 0 ..< route.geometry.count - 1 {
             a, b := route.geometry.points[segment_index], route.geometry.points[segment_index + 1]
-            dx, dz := b[0] - a[0], b[1] - a[1]
-            length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            delta := b - a
+            length := linalg.length(delta)
             if length < spacing * .65 do continue
-            tangent_x, tangent_z := dx / length, dz / length
-            normal_x, normal_z := -tangent_z, tangent_x
+            tangent := delta / length
+            normal := [2]f32{-tangent.y, tangent.x}
             sample_count := int(length / spacing)
             for sample in 0 ..< sample_count {
                 if city_plan.lamp_count >= len(city_plan.lamps) do return
                 along := (f32(sample) + .5) / f32(sample_count)
                 side := ((sample + segment_index) & 1) == 0 ? f32(1) : f32(-1)
                 offset := route.width * .5 + route.shoulder + .65
-                x := a[0] + dx * along + normal_x * offset * side
-                z := a[1] + dz * along + normal_z * offset * side
-                if !settlement_lamp_position_clear(city_plan, x, z) do continue
+                point := a + delta * along + normal * (offset * side)
+                if !settlement_lamp_position_clear(city_plan, point.x, point.y) do continue
                 city_plan.lamps[city_plan.lamp_count] = {
-                    x   = x,
-                    z   = z,
-                    yaw = math.atan2(tangent_x, tangent_z),
+                    x   = point.x,
+                    z   = point.y,
+                    yaw = math.atan2(tangent.x, tangent.y),
                 }
                 city_plan.lamp_count += 1
             }
@@ -753,7 +749,7 @@ settlement_village_reason_pick :: proc(plan: ^Settlement_Plan, project: ^terrain
     dz :=
         terrain.sample_height(project, 0, anchor[0], anchor[1] + sample) -
         terrain.sample_height(project, 0, anchor[0], anchor[1] - sample)
-    slope := f32(math.sqrt(f64(dx * dx + dz * dz))) / (sample * 2)
+    slope := linalg.length([2]f32{dx, dz}) / (sample * 2)
     if tissue == .Harbor || height <= project.sea_level + 5 do return .Harbor_Fishery
     if tissue == .Contour_Terrace || tissue == .Hillside_Accretion || slope >= .09 {
         if height > project.sea_level + 20 do return .Upland_Pastoral
@@ -873,12 +869,9 @@ settlement_plan_generate_village_buildings :: proc(
     common := anchor
     if route_found {
         side := ((plan.request.seed >> 9) & 1) == 0 ? f32(-1) : f32(1)
-        common = {
-            route_origin[0] + route_normal[0] * (route_width * .5 + route_shoulder + 18) * side,
-            route_origin[1] + route_normal[1] * (route_width * .5 + route_shoulder + 18) * side,
-        }
+        common = route_origin + route_normal * ((route_width * .5 + route_shoulder + 18) * side)
     }
-    resource_direction := [2]f32{route_normal[0], route_normal[1]}
+    resource_direction := route_normal
     sample := f32(12)
     gradient := [2]f32 {
         terrain.sample_height(project, 0, common[0] + sample, common[1]) -
@@ -886,10 +879,10 @@ settlement_plan_generate_village_buildings :: proc(
         terrain.sample_height(project, 0, common[0], common[1] + sample) -
         terrain.sample_height(project, 0, common[0], common[1] - sample),
     }
-    gradient_length := f32(math.sqrt(f64(gradient[0] * gradient[0] + gradient[1] * gradient[1])))
+    gradient_length := linalg.length(gradient)
     if gradient_length > .001 {
         sign := plan.village_reason == .Harbor_Fishery ? f32(-1) : f32(1)
-        resource_direction = {gradient[0] / gradient_length * sign, gradient[1] / gradient_length * sign}
+        resource_direction = gradient / gradient_length * sign
     }
     minimum_height, maximum_height := settlement_height_band(plan.request.region, .Village)
     resource_index, inn_index := -1, -1
@@ -913,14 +906,13 @@ settlement_plan_generate_village_buildings :: proc(
             }
             amount := f32(candidate_index / 8) / 6
             radius := radius_low + (radius_high - radius_low) * clamp(amount, 0, 1)
-            x := common[0] + f32(math.cos(f64(angle))) * radius
-            z := common[1] + f32(math.sin(f64(angle))) * radius
+            point := common + [2]f32{f32(math.cos(f64(angle))), f32(math.sin(f64(angle)))} * radius
             resource_purpose :=
                 purpose == .Barn_Granary || purpose == .Storehouse || purpose == .Mill || purpose == .Fishery
             if resource_purpose {
-                x += resource_direction[0] * radius * .45
-                z += resource_direction[1] * radius * .45
+                point += resource_direction * (radius * .45)
             }
+            x, z := point.x, point.y
             height_at_site := terrain.sample_height(project, 0, x, z)
             if height_at_site <= project.sea_level + .6 do continue
             rotation := angle + f32(math.PI * .5)
@@ -1025,10 +1017,10 @@ settlement_plan_generate_village_buildings :: proc(
             destination = {result.structures[inn_index].center_x, result.structures[inn_index].center_z}
         }
         start_offset := route_width * .5 + route_shoulder + .5
-        dx, dz := destination[0] - route_origin[0], destination[1] - route_origin[1]
-        length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+        delta := destination - route_origin
+        length := linalg.length(delta)
         if length > .01 {
-            start := [2]f32{route_origin[0] + dx / length * start_offset, route_origin[1] + dz / length * start_offset}
+            start := route_origin + delta / length * start_offset
             settlement_village_add_path(&result, start, destination, 1.6)
         }
     }
@@ -1167,14 +1159,14 @@ settlement_plan_generate_buildings :: proc(
                 gradient_z :=
                     terrain.sample_height(project, 0, district.center[0], district.center[1] + sample) -
                     terrain.sample_height(project, 0, district.center[0], district.center[1] - sample)
-                gradient_length := f32(math.sqrt(f64(gradient_x * gradient_x + gradient_z * gradient_z)))
+                gradient_length := linalg.length([2]f32{gradient_x, gradient_z})
                 tangent := [2]f32{1, 0}
                 if route_found && (settlement.request.region == .Adriatic || settlement.request.scale == .Village) {
                     tangent = route_tangent
                 } else if gradient_length > .001 {
                     tangent = {-gradient_z / gradient_length, gradient_x / gradient_length}
                 }
-                normal := [2]f32{-tangent[1], tangent[0]}
+                normal := [2]f32{-tangent.y, tangent.x}
                 row_count := max((target + columns - 1) / columns, 1)
                 centered_row := f32(row) - f32(row_count - 1) * .5
                 centered_column := f32(layout_index % columns) - f32(columns - 1) * .5
@@ -1439,8 +1431,7 @@ settlement_plan_import_city :: proc(
         geometry.points[0] = {alley.start_x, alley.start_z}
         geometry.points[1] = {alley.end_x, alley.end_z}
         geometry.count = 2
-        dx, dz := alley.end_x - alley.start_x, alley.end_z - alley.start_z
-        length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+        length := linalg.length([2]f32{alley.end_x - alley.start_x, alley.end_z - alley.start_z})
         start_height := terrain.sample_height(project, 0, alley.start_x, alley.start_z)
         end_height := terrain.sample_height(project, 0, alley.end_x, alley.end_z)
         grade := length > .01 ? math.abs(end_height - start_height) / length : f32(0)

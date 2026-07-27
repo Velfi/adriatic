@@ -1,6 +1,7 @@
 package atmosphere
 
 import "core:math"
+import "core:math/linalg"
 
 DAY_MINUTES :: f32(1440)
 WORLD_MINUTES_PER_SECOND :: f32(4)
@@ -96,7 +97,7 @@ lerp_weather :: proc(a, b: Weather_State, amount: f32) -> Weather_State {
         precipitation = a.precipitation + (b.precipitation - a.precipitation) * t,
         haze = a.haze + (b.haze - a.haze) * t,
         severity = a.severity + (b.severity - a.severity) * t,
-        wind = {a.wind[0] + (b.wind[0] - a.wind[0]) * t, a.wind[1] + (b.wind[1] - a.wind[1]) * t},
+        wind = linalg.lerp(a.wind, b.wind, t),
     }
 }
 
@@ -142,9 +143,7 @@ set_lunar_age :: proc(state: ^Atmosphere, days_since_new_moon: f32) {
 sample :: proc(state: ^Atmosphere) -> Sky_State {
     if state == nil do return {}
     angle := (state.world_minutes / DAY_MINUTES - .25) * 2 * f32(math.PI)
-    sun := [3]f32{f32(math.cos(f64(angle))) * .72, f32(math.sin(f64(angle))), f32(math.cos(f64(angle))) * .38}
-    length := f32(math.sqrt(f64(sun[0] * sun[0] + sun[1] * sun[1] + sun[2] * sun[2])))
-    for &component in sun do component /= max(length, f32(.0001))
+    sun := linalg.normalize0([3]f32{f32(math.cos(f64(angle))) * .72, f32(math.sin(f64(angle))), f32(math.cos(f64(angle))) * .38})
     moon_phase := state.lunar_days / SYNODIC_MONTH_DAYS
     moon_angle := angle + moon_phase * 2 * f32(math.PI)
     // A modest orbital inclination keeps the moon from tracing the sun's
@@ -155,11 +154,10 @@ sample :: proc(state: ^Atmosphere) -> Sky_State {
         f32(math.sin(f64(moon_angle))) + inclination,
         f32(math.cos(f64(moon_angle))) * .38,
     }
-    moon_length := f32(math.sqrt(f64(moon[0] * moon[0] + moon[1] * moon[1] + moon[2] * moon[2])))
-    for &component in moon do component /= max(moon_length, f32(.0001))
+    moon = linalg.normalize0(moon)
     moon_illumination := (1 - f32(math.cos(f64(moon_phase * 2 * f32(math.PI))))) * .5
-    daylight := clamp((sun[1] + .10) / .30, 0, 1)
-    twilight := clamp(1 - abs(sun[1]) / .34, 0, 1) * (1 - daylight * .35)
+    daylight := clamp((sun.y + .10) / .30, 0, 1)
+    twilight := clamp(1 - abs(sun.y) / .34, 0, 1) * (1 - daylight * .35)
     return {
         world_minutes = state.world_minutes,
         world_days = state.world_days,

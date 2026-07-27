@@ -4,6 +4,7 @@ import flight "../packages/flight"
 import postale "../packages/postale"
 import terrain "../packages/terrain"
 import "core:math"
+import "core:math/linalg"
 import "core:testing"
 
 TEST_RUNWAY_HALF_LENGTH :: terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_RUNWAY_HALF_LENGTH
@@ -32,8 +33,7 @@ run_scripted_landing :: proc(scenario: Landing_Scenario) -> Landing_Run {
     // Scenario distance is measured outward from the generated runway's
     // positive-X approach threshold.
     runtime.body.position = {TEST_RUNWAY_HALF_LENGTH + scenario.distance, scenario.altitude, 0}
-    runtime.body.velocity =
-        runtime.body.basis.forward * scenario.airspeed + flight.Vec3{0, -scenario.sink_speed, 0}
+    runtime.body.velocity = runtime.body.basis.forward * scenario.airspeed + flight.Vec3{0, -scenario.sink_speed, 0}
     runtime.throttle = .34
     runtime.flap_fraction = 1
     result: Landing_Run
@@ -65,11 +65,7 @@ run_scripted_landing :: proc(scenario: Landing_Scenario) -> Landing_Run {
         }
         if result.touched_down &&
            runtime.grounded &&
-           f32(math.sqrt(f64(
-               runtime.body.velocity.x * runtime.body.velocity.x +
-               runtime.body.velocity.y * runtime.body.velocity.y +
-               runtime.body.velocity.z * runtime.body.velocity.z,
-           ))) < runtime.tuning.safe_exit_speed {
+           linalg.length(runtime.body.velocity) < runtime.tuning.safe_exit_speed {
             result.stopped = true
             result.stop_x = runtime.body.position.x
             break

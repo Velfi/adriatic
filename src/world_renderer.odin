@@ -326,25 +326,8 @@ world_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color
     append(&world_renderer.vertices, world_vertex(a, color), world_vertex(b, color), world_vertex(c, color))
 }
 
-vec_sub :: #force_inline proc(a, b: third_person.Vec3) -> third_person.Vec3 {
-    return {a.x - b.x, a.y - b.y, a.z - b.z}
-}
-
-vec_dot :: #force_inline proc(a, b: third_person.Vec3) -> f32 {
-    return a.x * b.x + a.y * b.y + a.z * b.z
-}
-
-vec_cross :: #force_inline proc(a, b: third_person.Vec3) -> third_person.Vec3 {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}
-}
-
-vec_normalize :: #force_inline proc(v: third_person.Vec3) -> third_person.Vec3 {
-    length := f32(math.sqrt(f64(vec_dot(v, v))))
-    if length < .0001 do return {}
-    return {v.x / length, v.y / length, v.z / length}
-}
-
-world_triangle_smooth_lit :: proc(
+@(no_instrumentation)
+world_triangle_smooth_lit :: #force_inline proc(
     a, b, c: third_person.Vec3,
     normal_a, normal_b, normal_c: third_person.Vec3,
     color_a, color_b, color_c: rl.Color,
@@ -358,7 +341,7 @@ world_triangle_smooth_lit :: proc(
     for index in 0 ..< 3 {
         vertices[index] = world_vertex(points[index], colors[index])
         vertices[index].kind = .Lit
-        normal := vec_normalize(normals[index])
+        normal := linalg.normalize0(normals[index])
         vertices[index].normal = {normal.x, normal.y, normal.z}
         vertices[index].material = {0, clamp(roughness, .04, 1)}
     }
@@ -551,6 +534,7 @@ world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.
     )
 }
 
+@(no_instrumentation)
 world_boat_part_color :: proc(class: boats.Class, part: boats.Part) -> rl.Color {
     switch part {
     case .Hull:
@@ -584,15 +568,17 @@ world_boat_part_color :: proc(class: boats.Class, part: boats.Part) -> rl.Color 
     return {220, 220, 210, 255}
 }
 
-world_boat_point :: proc(local: [3]f32, position: third_person.Vec3, yaw: f32) -> third_person.Vec3 {
+@(no_instrumentation)
+world_boat_point :: #force_inline proc(local: [3]f32, position: third_person.Vec3, yaw: f32) -> third_person.Vec3 {
     c, s := math.cos(yaw), math.sin(yaw)
     return {
-        position.x + local[0] * c - local[2] * s,
-        position.y + local[1],
-        position.z + local[0] * s + local[2] * c,
+        position.x + local.x * c - local.z * s,
+        position.y + local.y,
+        position.z + local.x * s + local.z * c,
     }
 }
 
+@(no_instrumentation)
 world_boat_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color, part: boats.Part) {
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
@@ -630,11 +616,7 @@ world_npc_boat :: proc(class: boats.Class, position: third_person.Vec3, yaw: f32
 world_npc_boats :: proc(editor: ^Editor) {
     if editor == nil do return
     for agent in editor.boat_traffic.agents[:editor.boat_traffic.count] {
-        position := third_person.Vec3 {
-            agent.position.x,
-            editor.project.sea_level + .03,
-            agent.position.z,
-        }
+        position := third_person.Vec3{agent.position.x, editor.project.sea_level + .03, agent.position.y}
         bob := math.sin(editor.map_time * .72 + f32(agent.class) * 1.31) * (.025 + agent.speed * .004)
         position.y += bob
         world_npc_boat(agent.class, position, agent.yaw, agent.behavior != .Moored)
@@ -648,25 +630,13 @@ world_boat_wake_quad :: proc(
     color: rl.Color,
     y: f32,
 ) {
-    right := boats.Vec2{-direction.z, direction.x}
-    p0 := boats.vec_sub(
-        boats.vec_sub(center, boats.vec_scale(right, half_width)),
-        boats.vec_scale(direction, half_length),
-    )
-    p1 := boats.vec_add(
-        boats.vec_sub(center, boats.vec_scale(right, half_width)),
-        boats.vec_scale(direction, half_length),
-    )
-    p2 := boats.vec_add(
-        boats.vec_add(center, boats.vec_scale(right, half_width)),
-        boats.vec_scale(direction, half_length),
-    )
-    p3 := boats.vec_sub(
-        boats.vec_add(center, boats.vec_scale(right, half_width)),
-        boats.vec_scale(direction, half_length),
-    )
+    right := boats.Vec2{-direction.y, direction.x}
+    p0 := center - right * half_width - direction * half_length
+    p1 := center - right * half_width + direction * half_length
+    p2 := center + right * half_width + direction * half_length
+    p3 := center + right * half_width - direction * half_length
     // Reverse the planar order so the foam faces upward under CCW culling.
-    world_quad({p0.x, y, p0.z}, {p3.x, y, p3.z}, {p2.x, y, p2.z}, {p1.x, y, p1.z}, color)
+    world_quad({p0.x, y, p0.y}, {p3.x, y, p3.y}, {p2.x, y, p2.y}, {p1.x, y, p1.y}, color)
 }
 
 world_boat_wakes :: proc(editor: ^Editor) {
@@ -679,14 +649,14 @@ world_boat_wakes :: proc(editor: ^Editor) {
             fade := clamp(1 - sample.age / sample.lifetime, 0, 1)
             if fade <= .01 do continue
             age_spread := sample.age * (.18 + sample.strength * .32)
-            right := boats.Vec2{-sample.direction.z, sample.direction.x}
+            right := boats.Vec2{-sample.direction.y, sample.direction.x}
             arm_offset := sample.width * .48 + age_spread
             arm_width := clamp(sample.width * (.045 + fade * .045), f32(.055), f32(.46))
             arm_length := clamp(spec.beam * (.10 + sample.strength * .12), f32(.22), f32(1.75))
             alpha := u8(clamp(92 * sample.strength * fade * fade, 0, 92))
             foam := rl.Color{210, 237, 232, alpha}
-            port := boats.vec_add(sample.position, boats.vec_scale(right, arm_offset))
-            starboard := boats.vec_sub(sample.position, boats.vec_scale(right, arm_offset))
+            port := sample.position + right * arm_offset
+            starboard := sample.position - right * arm_offset
             world_boat_wake_quad(port, sample.direction, arm_width, arm_length, foam, y)
             world_boat_wake_quad(starboard, sample.direction, arm_width, arm_length, foam, y)
             // Heavy displacement leaves a softer centerline boil; high-power
@@ -1411,8 +1381,8 @@ world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: r
             world_x, world_z := world_rotate_xz(center.x, center.z, local_x, local_z, rotation)
             rings[ring_index][segment] = {world_x, center.y + heights[ring_index], world_z}
             uvs[ring_index][segment] = {.5 + local_x / (.265 * 2), .5 + local_z / (.242 * 2)}
-            local_normal := vec_normalize(
-                {
+            local_normal := linalg.normalize0(
+                [3]f32{
                     local_x / max(radii_x[ring_index] * radii_x[ring_index], f32(.000001)),
                     ring_index >= 4 ? f32(1) : f32(.18),
                     local_z / max(radii_z[ring_index] * radii_z[ring_index], f32(.000001)),
@@ -3929,19 +3899,15 @@ world_radial_formation :: proc(
                 local_z,
                 structure.rotation,
             )
-            vertices[layer][segment] = {
-                world_x,
-                structure.base_y + structure.height * heights[layer],
-                world_z,
-            }
+            vertices[layer][segment] = {world_x, structure.base_y + structure.height * heights[layer], world_z}
             previous_layer := max(layer - 1, 0)
             next_layer := min(layer + 1, 3)
             height_delta := max(heights[next_layer] - heights[previous_layer], f32(.001))
             radius_delta := radii[next_layer] - radii[previous_layer]
             average_radius := (structure.width + structure.depth * z_scale) * .25
             slope := radius_delta * average_radius / max(height_delta * structure.height, f32(.001))
-            local_normal := vec_normalize(
-                {math.cos(angle), clamp(-slope, f32(.04), f32(2.5)), math.sin(angle) / max(z_scale, f32(.05))},
+            local_normal := linalg.normalize0(
+                [3]f32{math.cos(angle), clamp(-slope, f32(.04), f32(2.5)), math.sin(angle) / max(z_scale, f32(.05))},
             )
             normal_x, normal_z := world_rotate_xz(0, 0, local_normal.x, local_normal.z, structure.rotation)
             normals[layer][segment] = {normal_x, local_normal.y, normal_z}
@@ -4190,7 +4156,7 @@ world_small_voronoi_formation :: proc(structure: terrain.Structure) {
             math.sin(angle) / max(radius_z, f32(.01)),
             structure.rotation,
         )
-        side_normal[side] = vec_normalize({normal_x, .22, normal_z})
+        side_normal[side] = linalg.normalize0([3]f32{normal_x, .22, normal_z})
     }
     tone := f32(int(structure.seed & 7) - 3) * 1.7
     rock_color := rl.Color {
@@ -9546,7 +9512,7 @@ mouse_solve_two_bone_joint :: proc(
     root_length, tip_length: f32,
 ) -> third_person.Vec3 {
     delta := third_person.Vec3{target.x - root.x, target.y - root.y, target.z - root.z}
-    distance := f32(math.sqrt(f64(vec_dot(delta, delta))))
+    distance := linalg.length(delta)
     axis: third_person.Vec3
     if distance <= .0001 {
         preferred_axis := third_person.Vec3 {
@@ -9554,8 +9520,8 @@ mouse_solve_two_bone_joint :: proc(
             preferred_joint.y - root.y,
             preferred_joint.z - root.z,
         }
-        axis = vec_normalize(preferred_axis)
-        if vec_dot(axis, axis) <= .0001 do axis = {0, 0, 1}
+        axis = linalg.normalize0(preferred_axis)
+        if linalg.dot(axis, axis) <= .0001 do axis = {0, 0, 1}
         distance = math.abs(root_length - tip_length) + .0001
     } else {
         axis = {delta.x / distance, delta.y / distance, delta.z / distance}
@@ -9570,17 +9536,17 @@ mouse_solve_two_bone_joint :: proc(
         preferred_joint.y - root.y,
         preferred_joint.z - root.z,
     }
-    projection := vec_dot(preferred_delta, axis)
+    projection := linalg.dot(preferred_delta, axis)
     pole := third_person.Vec3 {
         preferred_delta.x - axis.x * projection,
         preferred_delta.y - axis.y * projection,
         preferred_delta.z - axis.z * projection,
     }
-    if vec_dot(pole, pole) <= .0001 {
-        pole = vec_cross(axis, {0, 0, 1})
-        if vec_dot(pole, pole) <= .0001 do pole = vec_cross(axis, {1, 0, 0})
+    if linalg.dot(pole, pole) <= .0001 {
+        pole = linalg.cross(axis, [3]f32{0, 0, 1})
+        if linalg.dot(pole, pole) <= .0001 do pole = linalg.cross(axis, [3]f32{1, 0, 0})
     }
-    pole = vec_normalize(pole)
+    pole = linalg.normalize0(pole)
     return {
         root.x + axis.x * along + pole.x * height,
         root.y + axis.y * along + pole.y * height,
@@ -9595,7 +9561,7 @@ mouse_clamp_endpoint_reach :: proc(
 ) {
     if target == nil do return
     delta := third_person.Vec3{target.x - root.x, target.y - root.y, target.z - root.z}
-    distance := f32(math.sqrt(f64(vec_dot(delta, delta))))
+    distance := linalg.length(delta)
     if distance <= .0001 {
         if minimum_reach > .0001 {
             target^ = {root.x, root.y, root.z + minimum_reach}
@@ -9618,13 +9584,13 @@ mouse_clamp_ground_contact_reach :: proc(root: third_person.Vec3, target: ^third
         target.z = root.z
         return
     }
-    dx, dz := target.x - root.x, target.z - root.z
-    horizontal_distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    horizontal_delta := [2]f32{target.x - root.x, target.z - root.z}
+    horizontal_distance := linalg.length(horizontal_delta)
     horizontal_limit := f32(math.sqrt(f64(max(maximum_reach * maximum_reach - dy * dy, f32(0)))))
     if horizontal_distance <= horizontal_limit || horizontal_distance <= .0001 do return
     scale := horizontal_limit / horizontal_distance
-    target.x = root.x + dx * scale
-    target.z = root.z + dz * scale
+    target.x = root.x + horizontal_delta[0] * scale
+    target.z = root.z + horizontal_delta[1] * scale
 }
 
 mouse_constrain_hind_chain :: proc(points: ^[4]third_person.Vec3, lengths: [3]f32) {
@@ -9632,19 +9598,19 @@ mouse_constrain_hind_chain :: proc(points: ^[4]third_person.Vec3, lengths: [3]f3
     root, target := points[0], points[3]
     preferred_knee, preferred_hock := points[1], points[2]
     root_to_target := third_person.Vec3{target.x - root.x, target.y - root.y, target.z - root.z}
-    distance := f32(math.sqrt(f64(vec_dot(root_to_target, root_to_target))))
+    distance := linalg.length(root_to_target)
     total := lengths[0] + lengths[1] + lengths[2]
     if distance > total - .0001 {
         mouse_clamp_endpoint_reach(root, &target, 0, total - .0001)
         root_to_target = {target.x - root.x, target.y - root.y, target.z - root.z}
-        distance = f32(math.sqrt(f64(vec_dot(root_to_target, root_to_target))))
+        distance = linalg.length(root_to_target)
     }
     preferred_remaining_delta := third_person.Vec3 {
         target.x - preferred_knee.x,
         target.y - preferred_knee.y,
         target.z - preferred_knee.z,
     }
-    preferred_remaining := f32(math.sqrt(f64(vec_dot(preferred_remaining_delta, preferred_remaining_delta))))
+    preferred_remaining := linalg.length(preferred_remaining_delta)
     distal_minimum := math.abs(lengths[1] - lengths[2]) + .0001
     distal_maximum := lengths[1] + lengths[2] - .0001
     triangle_minimum := math.abs(distance - lengths[0])

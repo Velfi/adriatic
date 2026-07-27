@@ -849,7 +849,7 @@ markov_wreck_build_colliders :: proc() {
             hazard_angle := (f32(hazard_segment) + .5) / 12 * math.TAU
             outer := markov_wreck_ring_point(x_index, hazard_angle, 3)
             radial := third_person.Vec3{0, outer.y - ring_center.y, outer.z - ring_center.z}
-            inner := third_person.Vec3 {
+            inner := third_person.Vec3{
                 x + (markov_wreck_random(ring_seed ~ 0x991) - .5) * 7,
                 ring_center.y + radial.y * .12,
                 ring_center.z + radial.z * .12,
@@ -995,7 +995,7 @@ markov_wreck_evaluate_routes :: proc() -> Markov_Wreck_Route_Quality {
         // without implausible snap turns.
         for route in 0 ..< 12 {
             angle := (f32(route) + .5) / 12 * math.TAU
-            point := third_person.Vec3 {
+            point := third_person.Vec3{
                 x,
                 bay_center.y + math.sin(angle) * route_radius_y,
                 bay_center.z + math.cos(angle) * route_radius_z,
