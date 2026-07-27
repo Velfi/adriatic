@@ -130,9 +130,18 @@ sdl_process_event :: proc(input: ^SDL_Input_State, event: ^sdl.Event) {
             down := event.type == .MOUSE_BUTTON_DOWN
             input.mouse = {event.button.x, event.button.y}
             input.mouse_down[index] = down
-            input.mouse_pressed[index] = down
-            input.mouse_released[index] = !down
+            if down {
+                input.mouse_pressed[index] = true
+            } else {
+                input.mouse_released[index] = true
+            }
         }
+    case .WINDOW_FOCUS_LOST:
+        for index in 0 ..< len(input.mouse_down) {
+            if input.mouse_down[index] do input.mouse_released[index] = true
+        }
+        input.mouse_down = {}
+        input.keys_down = {}
     case .PINCH_UPDATE:
         input.mouse_pinch_scale *= event.pinch.scale
     case .KEY_DOWN, .KEY_UP:

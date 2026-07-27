@@ -168,6 +168,7 @@ sdl_mouse_keyboard_pinch_and_frame_edges_translate_deterministically :: proc(t: 
     key_up := key_down
     key_up.type = .KEY_UP
     translate_sdl_event(&key_up)
+    testing.expect(t, IsMouseButtonPressed(.LEFT))
     testing.expect(t, IsMouseButtonReleased(.LEFT))
     testing.expect(t, !IsMouseButtonDown(.LEFT))
     testing.expect(t, !IsKeyDown(.ENTER))
@@ -177,6 +178,32 @@ sdl_mouse_keyboard_pinch_and_frame_edges_translate_deterministically :: proc(t: 
     testing.expect(t, !IsMouseButtonReleased(.LEFT))
     testing.expect(t, !IsKeyPressed(.ENTER))
     testing.expect_value(t, GetMousePinchScale(), f32(1))
+}
+
+@(test)
+sdl_focus_loss_releases_held_mouse_and_keyboard_input :: proc(t: ^testing.T) {
+    characterization_begin()
+    defer characterization_end()
+
+    input_begin_frame()
+    button_down: sdl.Event
+    button_down.type = .MOUSE_BUTTON_DOWN
+    button_down.button.button = 1
+    translate_sdl_event(&button_down)
+    key_down: sdl.Event
+    key_down.type = .KEY_DOWN
+    key_down.key.scancode = .RETURN
+    translate_sdl_event(&key_down)
+
+    focus_lost: sdl.Event
+    focus_lost.type = .WINDOW_FOCUS_LOST
+    translate_sdl_event(&focus_lost)
+
+    testing.expect(t, IsMouseButtonPressed(.LEFT))
+    testing.expect(t, IsMouseButtonReleased(.LEFT))
+    testing.expect(t, !IsMouseButtonDown(.LEFT))
+    testing.expect(t, IsKeyPressed(.ENTER))
+    testing.expect(t, !IsKeyDown(.ENTER))
 }
 
 @(test)
