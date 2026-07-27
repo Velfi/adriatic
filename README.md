@@ -80,13 +80,43 @@ shadow, spacing, offset, wave, shake, pulse, drift, and typewriter properties;
 the package supplies deterministic reveal timing while leaving glyph drawing
 to the game's canvas/UI layer.
 
+## Cinematics
+
+`packages/cinematic` provides renderer-independent shot scripting and
+deterministic playback. Shots animate position, target, and focal length with
+linear, smooth, or smoother easing, and may cut through left, right, up, down,
+iris, clockwise, blinds, or checker wipes. `src/cinematic.odin` adapts camera
+samples to the game and draws transitions above the fully composed frame.
+
+```odin
+shots := [?]cinematic.Shot {
+    cinematic.move(
+        "arrival",
+        4,
+        cinematic.camera({24, 8, 40}, {0, 3, 0}),
+        cinematic.camera({12, 5, 18}, {0, 3, 0}),
+        .Smoother,
+        cinematic.wipe(.Iris, .8),
+    ),
+    cinematic.hold(
+        "reveal",
+        2,
+        cinematic.camera({-10, 4, 12}, {0, 2, 0}),
+    ),
+}
+script := cinematic.Script{id = "arrival", shots = shots[:]}
+_ = cinematic_play(editor, &script)
+```
+
 ## Two-island story
 
 `packages/story` contains the first narrative campaign and its dialogue
 catalog. Niko, a west-island baker, and Iva, the east-island lighthouse keeper,
-fall in love through a sequence of deliveries. Bojan's courier-plane crash
-temporarily gates their final invitation behind a diagnose, patch, and
-verification repair sequence. Once they meet, the same route continues as an
+fall in love through a sequence of sealed deliveries. Iva plans to fly to the
+regatta in Bojan's courier plane, so diagnosing, patching, and verifying its
+torn wing makes their meeting possible; repairing it early is preserved as a
+useful act of foresight. Her arrival plays as a short cinematic before their
+joint conversation beneath a blue awning. Afterward, the route continues as an
 alternating repeatable mail job that awards one stamp per completed delivery.
 
 ## Wireframe renderer

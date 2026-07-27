@@ -1,0 +1,55 @@
+{
+  "image": "tarot-atlas.png",
+  "source": "tarot-atlas-source.png",
+  "width": 1512,
+  "height": 1080,
+  "columns": 14,
+  "rows": 6,
+  "cell_width": 108,
+  "cell_height": 180,
+  "padding": 0,
+  "card_count": 78,
+  "order": [
+    {
+      "cards": "major_arcana_0_through_13",
+      "row": 0,
+      "first_column": 0,
+      "count": 14
+    },
+    {
+      "cards": "major_arcana_14_through_21",
+      "row": 1,
+      "first_column": 0,
+      "count": 8
+    },
+    {
+      "cards": "wands_ace_through_king",
+      "row": 2,
+      "first_column": 0,
+      "count": 14
+    },
+    {
+      "cards": "cups_ace_through_king",
+      "row": 3,
+      "first_column": 0,
+      "count": 14
+    },
+    {
+      "cards": "swords_ace_through_king",
+      "row": 4,
+      "first_column": 0,
+      "count": 14
+    },
+    {
+      "cards": "pentacles_ace_through_king",
+      "row": 5,
+      "first_column": 0,
+      "count": 14
+    }
+  ],
+  "unused_cells": {
+    "row": 1,
+    "first_column": 8,
+    "count": 6
+  }
+}

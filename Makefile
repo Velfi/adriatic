@@ -141,6 +141,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/world.frag.spv \
 	$(HOT_SHADER_DIR)/player-shadow.vert.spv \
 	$(HOT_SHADER_DIR)/player-shadow.frag.spv \
+	$(HOT_SHADER_DIR)/dynamic-shadow.vert.spv \
 	$(HOT_SHADER_DIR)/world-sky.vert.spv \
 	$(HOT_SHADER_DIR)/world-sky.frag.spv \
 	$(HOT_SHADER_DIR)/wireframe.vert.spv \
@@ -197,7 +198,7 @@ assets-validation: shaders
 
 build: doctor assets-dev $(DEV_APP)
 
-shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
+shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/dynamic-shadow.vert.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
 
 build/generated/shaders/foliage.vert.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)
@@ -230,6 +231,10 @@ build/generated/shaders/world.frag.spv: assets/shaders/world.slang
 build/generated/shaders/player-shadow.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry shadow_vertex -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+build/generated/shaders/dynamic-shadow.vert.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry dynamic_shadow_vertex -stage vertex -target spirv -profile spirv_1_5 -o $@
 
 build/generated/shaders/player-shadow.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
@@ -284,6 +289,10 @@ $(DEV_DIR)/shaders/player-shadow.vert.spv: build/generated/shaders/player-shadow
 	cp $< $@
 
 $(DEV_DIR)/shaders/player-shadow.frag.spv: build/generated/shaders/player-shadow.frag.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(DEV_DIR)/shaders/dynamic-shadow.vert.spv: build/generated/shaders/dynamic-shadow.vert.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -354,6 +363,13 @@ $(RELEASE_DIR)/shaders/player-shadow.vert.spv: build/generated/shaders/player-sh
 $(RELEASE_DIR)/shaders/player-shadow.frag.spv: build/generated/shaders/player-shadow.frag.spv
 	@mkdir -p $(@D)
 	cp $< $@
+
+$(RELEASE_DIR)/shaders/dynamic-shadow.vert.spv: build/generated/shaders/dynamic-shadow.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(DEV_APP): $(DEV_DIR)/shaders/dynamic-shadow.vert.spv
+$(RELEASE_APP): $(RELEASE_DIR)/shaders/dynamic-shadow.vert.spv
 
 $(RELEASE_DIR)/shaders/world-sky.vert.spv: build/generated/shaders/world-sky.vert.spv
 	@mkdir -p $(@D)
@@ -426,6 +442,10 @@ $(HOT_SHADER_DIR)/world.frag.spv: assets/shaders/world.slang
 $(HOT_SHADER_DIR)/player-shadow.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry shadow_vertex -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/dynamic-shadow.vert.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry dynamic_shadow_vertex -stage vertex -target spirv -profile spirv_1_5 -o $@
 
 $(HOT_SHADER_DIR)/player-shadow.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
@@ -699,6 +719,7 @@ check: doctor
 	$(ODIN) check packages/postale $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/libellula $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/atmosphere $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/cinematic $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 
 test: doctor $(DEV_DIR)/libadriatic_mesh.a
 	$(ODIN) test tests $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -lc++"

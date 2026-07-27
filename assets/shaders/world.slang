@@ -12,6 +12,29 @@ struct Push {
 
 [[vk::binding(0, 0)]] Texture2DArray<float4> vehicle_paint_atlas;
 [[vk::binding(1, 0)]] SamplerState vehicle_paint_sampler;
+[[vk::binding(2, 0)]] Texture2D<float4> soda_cap_logo;
+[[vk::binding(3, 0)]] SamplerState soda_cap_logo_sampler;
+
+struct DynamicShadowCascade {
+    // Light-space basis vectors. The fourth components contain the snapped
+    // anchor coordinates (right/up) and minimum light depth (forward).
+    float4 right;
+    float4 up;
+    float4 forward;
+    // coverage, inverse depth range, enabled strength, inverse resolution
+    float4 params;
+};
+struct DynamicShadow {
+    DynamicShadowCascade cascades[3];
+    // Origin-distance limits for cascades 0..2, final shadow strength.
+    float4 settings;
+    float4 origin;
+};
+[[vk::binding(0, 1)]] ConstantBuffer<DynamicShadow> dynamic_shadow;
+[[vk::binding(1, 1)]] Texture2D<float> dynamic_shadow_map_0;
+[[vk::binding(2, 1)]] Texture2D<float> dynamic_shadow_map_1;
+[[vk::binding(3, 1)]] Texture2D<float> dynamic_shadow_map_2;
+[[vk::binding(4, 1)]] SamplerComparisonState dynamic_shadow_sampler;
 
 struct VertexInput {
     float3 position : POSITION;
@@ -41,6 +64,8 @@ static const uint MATERIAL_ROAD = 4;
 static const uint MATERIAL_LIT = 5;
 static const uint MATERIAL_EYE = 6;
 static const uint MATERIAL_VEHICLE = 7;
+static const uint MATERIAL_ACORN = 8;
+static const uint MATERIAL_BOTTLE_CAP = 9;
 
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
 // Decode them before interpolation, lighting, and fog blending; the sRGB
@@ -124,6 +149,18 @@ VertexOutput shadow_vertex(VertexInput input) {
     return output;
 }
 
+[shader("vertex")]
+float4 dynamic_shadow_vertex(VertexInput input, uint cascade : SV_InstanceID) : SV_Position {
+    DynamicShadowCascade shadow = dynamic_shadow.cascades[min(cascade, 2)];
+    float x = (dot(input.position, shadow.right.xyz) - shadow.right.w) /
+              shadow.params.x;
+    float y = (dot(input.position, shadow.up.xyz) - shadow.up.w) /
+              shadow.params.x;
+    float z = (dot(input.position, shadow.forward.xyz) - shadow.forward.w) *
+              shadow.params.y;
+    return float4(x * 2.0, -y * 2.0, saturate(z), 1.0);
+}
+
 [shader("fragment")]
 float4 shadow_fragment(VertexOutput input) : SV_Target {
     return float4(.030, .036, .039, 1.0);
@@ -134,6 +171,106 @@ struct BrdfMaterial {
     float metallic;
     float roughness;
 };
+
+float dynamic_shadow_compare(uint cascade, float2 uv, float depth) {
+    if (cascade == 0) {
+        return dynamic_shadow_map_0.SampleCmpLevelZero(dynamic_shadow_sampler, uv, depth);
+    }
+    if (cascade == 1) {
+        return dynamic_shadow_map_1.SampleCmpLevelZero(dynamic_shadow_sampler, uv, depth);
+    }
+    return dynamic_shadow_map_2.SampleCmpLevelZero(dynamic_shadow_sampler, uv, depth);
+}
+
+bool dynamic_shadow_cascade_contains(uint cascade, float3 world_position) {
+    DynamicShadowCascade shadow = dynamic_shadow.cascades[cascade];
+    float2 uv = float2(
+        (dot(world_position, shadow.right.xyz) - shadow.right.w) /
+            shadow.params.x + .5,
+        .5 - (dot(world_position, shadow.up.xyz) - shadow.up.w) /
+            shadow.params.x
+    );
+    return max(abs(uv.x - .5), abs(uv.y - .5)) < .5;
+}
+
+float dynamic_shadow_cascade_visibility(
+    uint cascade,
+    float3 world_position,
+    float3 normal
+) {
+    DynamicShadowCascade shadow = dynamic_shadow.cascades[cascade];
+    float2 uv = float2(
+        (dot(world_position, shadow.right.xyz) - shadow.right.w) /
+            shadow.params.x + .5,
+        .5 - (dot(world_position, shadow.up.xyz) - shadow.up.w) /
+            shadow.params.x
+    );
+    float edge = max(abs(uv.x - .5), abs(uv.y - .5));
+    if (edge >= .5) {
+        return 1.0;
+    }
+    float receiver_depth =
+        (dot(world_position, shadow.forward.xyz) - shadow.forward.w) *
+        shadow.params.y;
+    float cascade_scale = 1.0 + float(cascade) * .65;
+    float normal_bias =
+        (1.0 - saturate(dot(normalize(normal), normalize(push.sun.xyz)))) *
+        .00040 * cascade_scale;
+    receiver_depth -= .00012 * cascade_scale + normal_bias;
+    float texel = shadow.params.w;
+    float visibility = 0.0;
+    [unroll]
+    for (int y = -1; y <= 1; ++y) {
+        [unroll]
+        for (int x = -1; x <= 1; ++x) {
+            visibility += dynamic_shadow_compare(
+                cascade,
+                uv + float2(x, y) * texel,
+                receiver_depth
+            );
+        }
+    }
+    visibility /= 9.0;
+    return visibility;
+}
+
+float dynamic_shadow_visibility(float3 world_position, float3 normal) {
+    if (dynamic_shadow.settings.w <= 0.0) {
+        return 1.0;
+    }
+    float origin_distance = length(world_position.xz - dynamic_shadow.origin.xz);
+    uint cascade =
+        origin_distance < dynamic_shadow.settings.x ? 0 :
+        origin_distance < dynamic_shadow.settings.y ? 1 : 2;
+    // Horizontal distance is only an estimate of light-space coverage. Tall
+    // receivers and low sun angles can move an otherwise-near point outside
+    // the inner projection, so fall outward until a cascade actually contains
+    // the receiver.
+    if (cascade == 0 && !dynamic_shadow_cascade_contains(0, world_position)) {
+        cascade = 1;
+    }
+    if (cascade == 1 && !dynamic_shadow_cascade_contains(1, world_position)) {
+        cascade = 2;
+    }
+    float visibility = dynamic_shadow_cascade_visibility(cascade, world_position, normal);
+    // Blend the final 10% of each inner cascade into the next one. Both
+    // projections are texel-stabilized, so this hides resolution transitions
+    // without introducing camera-motion shimmer.
+    if (cascade < 2) {
+        float limit = cascade == 0 ? dynamic_shadow.settings.x : dynamic_shadow.settings.y;
+        float blend = smoothstep(limit * .90, limit, origin_distance);
+        if (blend > 0.0 && dynamic_shadow_cascade_contains(cascade + 1, world_position)) {
+            float outer = dynamic_shadow_cascade_visibility(cascade + 1, world_position, normal);
+            visibility = lerp(visibility, outer, blend);
+        }
+    }
+    float far_fade = 1.0 - smoothstep(
+        dynamic_shadow.settings.z * .90,
+        dynamic_shadow.settings.z,
+        origin_distance
+    );
+    return lerp(1.0, visibility, far_fade * dynamic_shadow.settings.w);
+}
 
 // Shared opaque-surface response. Product materials supply only base color,
 // metallic, and roughness; scene lighting and presentation exposure stay here.
@@ -146,13 +283,14 @@ float3 shade_brdf(BrdfMaterial material, float3 normal, float3 world_position) {
     float roughness = clamp(material.roughness, .04, 1.0);
 
     float direct = saturate(dot(normal, sun_direction));
+    float shadow_visibility = dynamic_shadow_visibility(world_position, normal);
     float sky = saturate(normal.y * .5 + .5);
     float daylight = saturate(push.sun.w);
     // Values above ordinary daylight are reserved for presentation scenes and
     // act as overall daylight exposure, brightening ambient and direct light.
     float daylight_intensity = max(push.sun.w, 1.0);
     float diffuse_light =
-        (.22 + sky * .16 + direct * lerp(.26, .78, daylight)) *
+        (.22 + sky * .16 + direct * shadow_visibility * lerp(.26, .78, daylight)) *
         daylight_intensity;
     float3 diffuse = material.base_color * diffuse_light * (1.0 - metallic * .72);
 
@@ -164,7 +302,7 @@ float3 shade_brdf(BrdfMaterial material, float3 normal, float3 world_position) {
     float specular_strength = pow(saturate(dot(normal, half_direction)), specular_power);
     specular_strength *=
         lerp(.72, .09, roughness) *
-        direct *
+        direct * shadow_visibility *
         lerp(.18, 1.0, daylight) *
         daylight_intensity;
     return saturate(diffuse + f0 * specular_strength);
@@ -207,6 +345,83 @@ float3 shade_eye(VertexOutput input) {
     float3 body = shade_brdf(material, normal, input.world_position);
     return saturate(body * (1.0 + rim) +
                     highlight_color * (broad_gloss + sharp_glint));
+}
+
+float3 shade_acorn(VertexOutput input) {
+    float3 normal = normalize(input.normal);
+    float rows = 10.0;
+    float columns = 18.0;
+    float row = floor(input.uv.y * rows);
+    float2 cell = float2(
+        frac(input.uv.x * columns + fmod(row, 2.0) * .5) - .5,
+        frac(input.uv.y * rows) - .5
+    );
+    // Acorn cups are covered in overlapping scutes rather than circular
+    // dimples. Widen each cell toward its upper edge and taper it toward the
+    // lower edge to produce a small shield/teardrop shape.
+    float vertical = cell.y + .5;
+    float half_width = lerp(.12, .43, smoothstep(0.0, .72, vertical));
+    float2 shield = float2(
+        cell.x / max(half_width, .001),
+        cell.y / .48
+    );
+    float shield_radius_squared = dot(shield, shield);
+    float inside = saturate(1.0 - shield_radius_squared);
+    inside = inside * inside * (3.0 - 2.0 * inside);
+    // A rounded raised center suggests one woody scute overlapping the next
+    // row without changing any vertex positions.
+    float2 slope = float2(
+        -shield.x * inside * columns * .070,
+        -shield.y * inside * rows * .090
+    );
+    float3 tangent = normalize(float3(-normal.z, 0.0, normal.x));
+    float3 bitangent = normalize(cross(normal, tangent));
+    normal = normalize(normal + tangent * slope.x + bitangent * slope.y);
+
+    BrdfMaterial material;
+    material.base_color = input.color.rgb;
+    material.metallic = 0;
+    material.roughness = .64;
+    float3 body = shade_brdf(material, normal, input.world_position);
+    float3 view_direction =
+        normalize(push.camera_position.xyz - input.world_position);
+    float3 soft_key_direction = normalize(
+        view_direction + push.camera_up.xyz * .78 -
+        push.camera_right.xyz * .58
+    );
+    float soft_key = saturate(dot(normal, soft_key_direction));
+    return body * (.82 + soft_key * .48);
+}
+
+float3 shade_bottle_cap(VertexOutput input) {
+    float3 normal = normalize(input.normal);
+    float circumference = atan2(normal.z, normal.x) * (21.0 / 6.2831853);
+    float flute = pow(abs(cos(circumference * 3.14159265)), 5.0);
+    float skirt = 1.0 - smoothstep(.38, .58, input.material.x);
+    float shoulder = smoothstep(.32, .50, input.material.x) *
+                     (1.0 - smoothstep(.62, .78, input.material.x));
+    float pressed = sin(circumference * 6.2831853) * skirt * .13;
+    float3 tangent = normalize(float3(-normal.z, 0.0, normal.x));
+    normal = normalize(normal + tangent * pressed);
+
+    // Closely spaced rolled-metal striations and a calmer stamped crown give
+    // the connected mesh surface detail without adding decal geometry.
+    float fine_ridges = .86 + .14 * pow(abs(sin(circumference * 12.56637)), 7.0);
+    float crown_brush = .97;
+    float texture_value = lerp(crown_brush, fine_ridges, skirt);
+    texture_value *= lerp(.90, 1.12, flute * skirt);
+    texture_value *= lerp(1.0, 1.08, shoulder);
+
+    float3 metal_color = input.color.rgb * texture_value;
+    float3 logo_color = soda_cap_logo.Sample(soda_cap_logo_sampler, input.uv).rgb;
+    float top_print = smoothstep(.52, .66, input.material.x);
+    float3 base_color = lerp(metal_color, logo_color, top_print);
+
+    BrdfMaterial material;
+    material.base_color = base_color;
+    material.metallic = .34;
+    material.roughness = .42;
+    return shade_brdf(material, normal, input.world_position);
 }
 
 float hash12(float2 p) {
@@ -510,8 +725,26 @@ float3 shade_water(VertexOutput input) {
     float phase_a = dot(p, axis) * .043 - time * (.42 + sea_state * .24);
     float2 diagonal = normalize(axis + across * .55);
     float phase_b = dot(p, diagonal) * .091 - time * (.73 + sea_state * .31);
+
     float2 slope = axis * cos(phase_a) * (.035 + sea_state * .055) +
                    diagonal * cos(phase_b) * (.018 + sea_state * .032);
+
+    // At eye level, add long wind ripples that break up the otherwise planar
+    // near field. They fade before map/editor overview heights and toward the
+    // horizon, preserving the existing large-scale painted ocean treatment.
+    float camera_height = abs(push.camera_position.y - input.world_position.y);
+    float eye_level = 1.0 - smoothstep(18.0, 72.0, camera_height);
+    float camera_distance = length(push.camera_position.xz - p);
+    float near_detail = eye_level * (1.0 - smoothstep(180.0, 900.0, camera_distance));
+    float ripple_phase =
+        dot(p, axis) * .31 +
+        sin(dot(p, across) * .045 + time * .09) * .72 -
+        time * (1.05 + sea_state * .42);
+    float ripple_wave = sin(ripple_phase);
+    float ripple_crest = smoothstep(.80, .97, ripple_wave) * near_detail;
+    color = lerp(color, color * 1.16 + foam_color * .025, ripple_crest * .34);
+    slope += axis * cos(ripple_phase) * (.026 + sea_state * .030) * near_detail;
+
     float3 normal = normalize(float3(-slope.x, 1, -slope.y));
     float3 view = normalize(push.camera_position.xyz - input.world_position);
     float facing = saturate(dot(normal, view));
@@ -520,10 +753,124 @@ float3 shade_water(VertexOutput input) {
     color = lerp(color, sky_tint, fresnel * .31);
 
     float3 sun_dir = normalize(push.sun.xyz);
-    float glint_core = max(dot(reflect(-sun_dir, normal), view), 0.0);
-    float dry_glint = smoothstep(.67, .88, value_noise(p / 13.0 + time * float2(.03, -.01)));
-    float glint = pow(glint_core, lerp(22.0, 10.0, sea_state)) * dry_glint * push.sun.w;
-    color = lerp(color, glint_color, glint * .42);
+    float n_dot_l = saturate(dot(normal, sun_dir));
+    float n_dot_v = max(dot(normal, view), .0001);
+    float3 half_vector = normalize(sun_dir + view);
+    float n_dot_h = max(dot(normal, half_vector), .0001);
+
+    // Cox-Munk ocean glitter is the probability that an unresolved water
+    // facet has the half-vector normal required to reflect the Sun into the
+    // camera. Approximate that measured slope distribution with an
+    // anisotropic Beckmann NDF aligned to the wind.
+    float3 wind_seed = float3(axis.x, 0, axis.y);
+    float3 wind_tangent = normalize(
+        wind_seed - normal * dot(wind_seed, normal)
+    );
+    float3 wind_bitangent = normalize(cross(normal, wind_tangent));
+    float h_wind = dot(half_vector, wind_tangent);
+    float h_crosswind = dot(half_vector, wind_bitangent);
+    float wind_roughness = saturate(wind_length / 14.0);
+    float alpha_wind = .195 + wind_roughness * .120 + sea_state * .065;
+    float alpha_crosswind = .125 + wind_roughness * .082 + sea_state * .047;
+    float inverse_h_y_squared = 1.0 / max(n_dot_h * n_dot_h, .000001);
+    float slope_exponent = -(
+        h_wind * h_wind / (alpha_wind * alpha_wind) +
+        h_crosswind * h_crosswind /
+            (alpha_crosswind * alpha_crosswind)
+    ) * inverse_h_y_squared;
+    float beckmann = exp(max(slope_exponent, -80.0)) /
+        max(
+            3.14159265 *
+            alpha_wind *
+            alpha_crosswind *
+            n_dot_h * n_dot_h * n_dot_h * n_dot_h,
+            .00001
+        );
+
+    // Water is a dielectric with F0 ~= 2%. At grazing angles Fresnel makes the
+    // low-Sun path much brighter without an authored horizon multiplier.
+    float v_dot_h = saturate(dot(view, half_vector));
+    float water_f0 = .02037;
+    float sun_fresnel =
+        water_f0 + (1.0 - water_f0) * pow(1.0 - v_dot_h, 5.0);
+    float smith_alpha = sqrt(alpha_wind * alpha_crosswind);
+    float smith_alpha_squared = smith_alpha * smith_alpha;
+    float smith_v = 2.0 * n_dot_v /
+        max(
+            n_dot_v +
+            sqrt(
+                smith_alpha_squared +
+                (1.0 - smith_alpha_squared) * n_dot_v * n_dot_v
+            ),
+            .0001
+        );
+    // At grazing incidence the unresolved facets still see the Sun even when
+    // the resolved macro normal is almost perpendicular to it. Retain a small
+    // effective cosine here; the Smith term then models partial horizon
+    // shadowing without incorrectly extinguishing the whole glitter path.
+    float effective_n_dot_l = max(
+        n_dot_l,
+        alpha_crosswind * .18
+    );
+    float smith_l = 2.0 * effective_n_dot_l /
+        max(
+            effective_n_dot_l +
+            sqrt(
+                smith_alpha_squared +
+                (1.0 - smith_alpha_squared) *
+                effective_n_dot_l * effective_n_dot_l
+            ),
+            .0001
+        );
+    float masking_shadowing = smith_v * smith_l;
+
+    // Nearby capillary facets resolve into individual flashes. In the
+    // distance their sub-pixel contributions converge to the smooth NDF.
+    float capillary_a = value_noise(
+        p * .71 + time * float2(.29, -.12)
+    );
+    float capillary_b = value_noise(
+        rotate2(p, .83) * 1.27 + time * float2(-.18, .34)
+    );
+    float2 capillary_cell = floor(
+        p * 18.5 +
+        floor(time * 12.0) * float2(.37, -.23)
+    );
+    float capillary_flash = smoothstep(
+        .74,
+        .965,
+        hash12(capillary_cell)
+    );
+    float capillary_cluster = smoothstep(
+        .46,
+        .84,
+        capillary_a * .62 + capillary_b * .38
+    );
+    float resolved_capillaries =
+        1.0 - smoothstep(480.0, 2400.0, camera_distance);
+    float facet_sampling = lerp(
+        1.0,
+        lerp(.16, 3.4, capillary_flash) *
+        lerp(.58, 1.32, capillary_cluster),
+        resolved_capillaries
+    );
+    float sun_above_horizon = smoothstep(-.012, .025, sun_dir.y);
+    float sun_specular =
+        sun_fresnel *
+        beckmann *
+        masking_shadowing /
+        max(4.0 * n_dot_v, .0001) *
+        facet_sampling *
+        sun_above_horizon *
+        .18;
+    float3 sunset_gold = float3(1.0, .47, .12);
+    float3 noon_sun = float3(1.0, .93, .72);
+    float3 sun_reflection_color = lerp(
+        sunset_gold,
+        noon_sun,
+        smoothstep(.025, .42, sun_dir.y)
+    );
+    color += sun_reflection_color * min(sun_specular, 2.4);
 
     // A narrow, broken aerated edge keeps foam attached to the coastline.
     float foam_band = 1.0 - smoothstep(5.0, 31.0, coast_distance);
@@ -562,6 +909,29 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         case MATERIAL_EYE:
             base = shade_eye(input);
             break;
+        case MATERIAL_ACORN:
+            base = shade_acorn(input);
+            break;
+        case MATERIAL_BOTTLE_CAP:
+            base = shade_bottle_cap(input);
+            break;
+    }
+    if (input.kind == MATERIAL_PLAIN ||
+        input.kind == MATERIAL_TERRAIN ||
+        input.kind == MATERIAL_FOLIAGE ||
+        input.kind == MATERIAL_ROAD) {
+        float visibility = dynamic_shadow_visibility(input.world_position, input.normal);
+        // These palette-authored materials already contain their ambient/key
+        // value grouping. Remove only the direct-looking portion so mapped
+        // shadows do not crush that authored ambient illumination.
+        base *= lerp(.72, 1.0, visibility);
+    }
+    if (input.kind == MATERIAL_WATER) {
+        // Nearby boats and aircraft use the mapped caster pass. Let the water
+        // receive their softened silhouettes without crushing its animated
+        // pigment and glint response.
+        float visibility = dynamic_shadow_visibility(input.world_position, input.normal);
+        base *= lerp(.80, 1.0, visibility);
     }
     return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), input.color.a);
 }

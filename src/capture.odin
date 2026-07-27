@@ -14,6 +14,7 @@ Capture_Kind :: enum {
     Road_Grip,
     Terrain_Grip,
     Building,
+    Story_Meeting,
     Foliage,
     Foliage_Forest,
     Foliage_Forest_Low,
@@ -26,6 +27,17 @@ Capture_Kind :: enum {
     Foliage_Stress,
     Grass_Wind,
     Wildflower_Lab,
+    Shadow_Lab,
+    Boat_Lab,
+    Markov_Wreck,
+    Markov_Farmland,
+    Markov_Marina,
+    Markov_Town,
+    Markov_City,
+    Markov_Village,
+    Aegean_City,
+    Aegean_Town,
+    Aegean_Village,
     Narrow,
     Compact,
     Sky_Noon,
@@ -90,6 +102,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Terrain_Grip, true
     case "building":
         return .Building, true
+    case "story-meeting":
+        return .Story_Meeting, true
     case "foliage":
         return .Foliage, true
     case "foliage-forest":
@@ -114,6 +128,28 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Grass_Wind, true
     case "wildflower-lab":
         return .Wildflower_Lab, true
+    case "shadow-lab":
+        return .Shadow_Lab, true
+    case "boat-lab":
+        return .Boat_Lab, true
+    case "markov-wreck":
+        return .Markov_Wreck, true
+    case "markov-marina":
+        return .Markov_Marina, true
+    case "markov-farmland":
+        return .Markov_Farmland, true
+    case "markov-town":
+        return .Markov_Town, true
+    case "markov-city":
+        return .Markov_City, true
+    case "markov-village":
+        return .Markov_Village, true
+    case "aegean-city":
+        return .Aegean_City, true
+    case "aegean-town":
+        return .Aegean_Town, true
+    case "aegean-village":
+        return .Aegean_Village, true
     case "narrow":
         return .Narrow, true
     case "compact":

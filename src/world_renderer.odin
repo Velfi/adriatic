@@ -2,11 +2,15 @@ package main
 
 import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
+import boats "../packages/boats"
+import buildings "../packages/buildings"
+import circulation "../packages/circulation"
 import flight "../packages/flight"
 import mouse_tail "../packages/mouse_tail"
 import particles "../packages/particles"
 import render_graph "../packages/render_graph"
 import roads "../packages/roads"
+import story "../packages/story"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
@@ -30,8 +34,10 @@ FOLIAGE_VERTEX_CAPACITY :: 24_000
 // budget of 2,000 cards after that fourfold tessellation.
 BOUGAINVILLEA_VERTEX_CAPACITY :: 48_000
 GRASS_INSTANCE_CAPACITY :: 18_000
+WILDFLOWER_INSTANCE_CAPACITY :: 4_000
 WING_TRAIL_VERTEX_CAPACITY :: particles.MAX_WING_TRAIL_PARTICLES * 8
 WING_TRAIL_INDEX_CAPACITY :: (particles.MAX_WING_TRAIL_PARTICLES - 2) * 8 * 6 + 8 * 6
+SHADOW_VERTEX_CAPACITY :: 180_000
 CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
 CLIPMAP_VERTEX_COUNT :: CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLUTION - 1) * 6
@@ -40,7 +46,13 @@ CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLU
 // clipmap already provides this coverage; these values prevent the camera
 // projection, fog, and ocean fallback from hiding it prematurely.
 WORLD_FAR_CLIP :: f32(12000)
-WORLD_PLAY_NEAR_CLIP :: f32(.08)
+// Eight centimeters lets a nearby posted mouse's broad torso triangles cross
+// almost through the camera before homogeneous clipping. Their intersections
+// are then perspective-divided into screen-spanning wedges. A conventional
+// gameplay near plane clips those occluders before the projection becomes
+// numerically and visually extreme while remaining well inside the player's
+// chase-camera distance.
+WORLD_PLAY_NEAR_CLIP :: f32(.20)
 WORLD_FLIGHT_NEAR_CLIP :: f32(.5)
 WORLD_EDITOR_NEAR_CLIP :: f32(100)
 WORLD_FOG_START :: f32(4500)
@@ -55,6 +67,8 @@ World_Material_Kind :: enum u32 {
     Lit,
     Eye,
     Vehicle,
+    Acorn,
+    Bottle_Cap,
 }
 
 World_Vertex :: struct {
@@ -79,12 +93,6 @@ Grass_Instance :: struct {
     size:   [2]f32,
     tile:   u32,
     color:  [4]f32,
-}
-
-Architecture_Path_Footprint :: struct {
-    center_x, center_z: f32,
-    width, length:      f32,
-    rotation:           f32,
 }
 
 Architecture_Grass_Footprint :: struct {
@@ -118,6 +126,7 @@ Sky_Push :: struct {
     camera_up:      [4]f32,
     camera_forward: [4]f32,
     sun_direction:  [4]f32,
+    moon_direction: [4]f32,
     time_light:     [4]f32,
     wind_cloud:     [4]f32,
     haze_severity:  [4]f32,
@@ -128,6 +137,11 @@ World_Renderer :: struct {
     ctx:                             ^engine.Vk_Context,
     pipelines:                       [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     shadow_pipelines:                [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    dynamic_shadow:                  Dynamic_Shadow_State,
+    shadow_vertex:                   [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    shadow_vertices:                 [dynamic]World_Vertex,
+    dynamic_caster_first:            int,
+    dynamic_caster_count:            int,
     road_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     sky_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     particle_pipelines:              [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
@@ -141,10 +155,13 @@ World_Renderer :: struct {
     foliage_descriptor:              vk.DescriptorSet,
     bougainvillea_descriptor:        vk.DescriptorSet,
     grass_descriptor:                vk.DescriptorSet,
+    wildflower_descriptor:           vk.DescriptorSet,
     foliage_atlas:                   resources.Image,
     bougainvillea_atlas:             resources.Image,
     grass_atlas:                     resources.Image,
+    wildflower_atlas:                resources.Image,
     vehicle_paint_atlas:             resources.Image,
+    soda_cap_logo:                   resources.Image,
     vehicle_paint_staging:           [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vehicle_paint_descriptor_layout: vk.DescriptorSetLayout,
     vehicle_paint_descriptor_pool:   vk.DescriptorPool,
@@ -160,6 +177,7 @@ World_Renderer :: struct {
     foliage_vertices:                [dynamic]Foliage_Vertex,
     bougainvillea_vertices:          [dynamic]Foliage_Vertex,
     grass_instances:                 [dynamic]Grass_Instance,
+    wildflower_instances:            [dynamic]Grass_Instance,
     wing_trail_vertices:             [dynamic]World_Vertex,
     wing_trail_indices:              [dynamic]u16,
     wing_trail_optimized_indices:    [dynamic]u16,
@@ -192,11 +210,12 @@ foreign adriatic_mesh {
 }
 
 #assert(size_of(World_Push) == 128)
-#assert(size_of(Sky_Push) == 112)
+#assert(size_of(Sky_Push) == 128)
 #assert(offset_of(Sky_Push, sun_direction) == 48)
-#assert(offset_of(Sky_Push, time_light) == 64)
-#assert(offset_of(Sky_Push, wind_cloud) == 80)
-#assert(offset_of(Sky_Push, haze_severity) == 96)
+#assert(offset_of(Sky_Push, moon_direction) == 64)
+#assert(offset_of(Sky_Push, time_light) == 80)
+#assert(offset_of(Sky_Push, wind_cloud) == 96)
+#assert(offset_of(Sky_Push, haze_severity) == 112)
 
 @(no_instrumentation)
 world_color :: #force_inline proc(color: rl.Color) -> [4]f32 {
@@ -283,6 +302,27 @@ world_eye_vertex :: proc(point: third_person.Vec3, color: rl.Color, normal: thir
 world_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color) {
     if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color), world_vertex(b, color), world_vertex(c, color))
+}
+
+world_triangle_smooth_lit :: proc(
+    a, b, c: third_person.Vec3,
+    normal_a, normal_b, normal_c: third_person.Vec3,
+    color_a, color_b, color_c: rl.Color,
+    roughness: f32 = .9,
+) {
+    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    points := [3]third_person.Vec3{a, b, c}
+    normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
+    colors := [3]rl.Color{color_a, color_b, color_c}
+    vertices: [3]World_Vertex
+    for index in 0 ..< 3 {
+        vertices[index] = world_vertex(points[index], colors[index])
+        vertices[index].kind = .Lit
+        normal := vec_normalize(normals[index])
+        vertices[index].normal = {normal.x, normal.y, normal.z}
+        vertices[index].material = {0, clamp(roughness, .04, 1)}
+    }
+    append(&world_renderer.vertices, ..vertices[:])
 }
 
 @(no_instrumentation)
@@ -469,6 +509,160 @@ world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.
         world_water_vertex(c, color),
         world_water_vertex(d, color),
     )
+}
+
+world_boat_part_color :: proc(class: boats.Class, part: boats.Part) -> rl.Color {
+    switch part {
+    case .Hull:
+        switch class {
+        case .Dinghy:
+            return {211, 204, 169, 255}
+        case .Motor:
+            return {226, 231, 220, 255}
+        case .Sail:
+            return {215, 224, 217, 255}
+        case .Fishing:
+            return {56, 115, 129, 255}
+        case .Tug:
+            return {151, 48, 37, 255}
+        }
+    case .Deck:
+        return {214, 199, 166, 255}
+    case .Cabin:
+        return class == .Tug ? rl.Color{235, 205, 119, 255} : rl.Color{225, 224, 205, 255}
+    case .Glass:
+        return {67, 115, 133, 255}
+    case .Metal:
+        return {68, 73, 71, 255}
+    case .Sail:
+        return {241, 233, 205, 255}
+    case .Accent:
+        return class == .Sail ? rl.Color{189, 74, 51, 255} : rl.Color{204, 119, 50, 255}
+    case .Tire:
+        return {35, 39, 38, 255}
+    }
+    return {220, 220, 210, 255}
+}
+
+world_boat_point :: proc(local: [3]f32, position: third_person.Vec3, yaw: f32) -> third_person.Vec3 {
+    c, s := math.cos(yaw), math.sin(yaw)
+    return {
+        position.x + local[0] * c - local[2] * s,
+        position.y + local[1],
+        position.z + local[0] * s + local[2] * c,
+    }
+}
+
+world_boat_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color, part: boats.Part) {
+    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    normal := linalg.normalize0(linalg.cross(b - a, c - a))
+    metallic := part == .Metal ? f32(.62) : f32(0)
+    roughness := part == .Glass ? f32(.24) : f32(.78)
+    vertex_a := world_vertex(a, color)
+    vertex_b := world_vertex(b, color)
+    vertex_c := world_vertex(c, color)
+    vertices := [3]^World_Vertex{&vertex_a, &vertex_b, &vertex_c}
+    for vertex in vertices {
+        vertex.kind = .Lit
+        vertex.normal = {normal.x, normal.y, normal.z}
+        vertex.material = {metallic, roughness}
+    }
+    append(&world_renderer.vertices, vertex_a, vertex_b, vertex_c)
+}
+
+world_npc_boat :: proc(class: boats.Class, position: third_person.Vec3, yaw: f32, sails_raised: bool = true) {
+    mesh := boats.mesh(class)
+    for face in boats.triangles(&mesh) {
+        a, b, c := mesh.vertices[face.a], mesh.vertices[face.b], mesh.vertices[face.c]
+        if class == .Sail && !sails_raised && (a.part == .Sail || a.part == .Accent) {
+            continue
+        }
+        world_boat_triangle(
+            world_boat_point(a.position, position, yaw),
+            world_boat_point(b.position, position, yaw),
+            world_boat_point(c.position, position, yaw),
+            world_boat_part_color(class, a.part),
+            a.part,
+        )
+    }
+}
+
+world_npc_boats :: proc(editor: ^Editor) {
+    if editor == nil do return
+    for agent in editor.boat_traffic.agents[:editor.boat_traffic.count] {
+        position := third_person.Vec3 {
+            agent.position.x,
+            editor.project.sea_level + .03,
+            agent.position.z,
+        }
+        bob := math.sin(editor.map_time * .72 + f32(agent.class) * 1.31) * (.025 + agent.speed * .004)
+        position.y += bob
+        world_npc_boat(agent.class, position, agent.yaw, agent.behavior != .Moored)
+    }
+}
+
+world_boat_wake_quad :: proc(
+    center: boats.Vec2,
+    direction: boats.Vec2,
+    half_width, half_length: f32,
+    color: rl.Color,
+    y: f32,
+) {
+    right := boats.Vec2{-direction.z, direction.x}
+    p0 := boats.vec_sub(
+        boats.vec_sub(center, boats.vec_scale(right, half_width)),
+        boats.vec_scale(direction, half_length),
+    )
+    p1 := boats.vec_add(
+        boats.vec_sub(center, boats.vec_scale(right, half_width)),
+        boats.vec_scale(direction, half_length),
+    )
+    p2 := boats.vec_add(
+        boats.vec_add(center, boats.vec_scale(right, half_width)),
+        boats.vec_scale(direction, half_length),
+    )
+    p3 := boats.vec_sub(
+        boats.vec_add(center, boats.vec_scale(right, half_width)),
+        boats.vec_scale(direction, half_length),
+    )
+    // Reverse the planar order so the foam faces upward under CCW culling.
+    world_quad({p0.x, y, p0.z}, {p3.x, y, p3.z}, {p2.x, y, p2.z}, {p1.x, y, p1.z}, color)
+}
+
+world_boat_wakes :: proc(editor: ^Editor) {
+    if editor == nil do return
+    y := editor.project.sea_level + .055
+    for agent in editor.boat_traffic.agents[:editor.boat_traffic.count] {
+        spec := boats.specifications(agent.class)
+        for sample_index in 0 ..< agent.wake_count {
+            sample := agent.wake[sample_index]
+            fade := clamp(1 - sample.age / sample.lifetime, 0, 1)
+            if fade <= .01 do continue
+            age_spread := sample.age * (.18 + sample.strength * .32)
+            right := boats.Vec2{-sample.direction.z, sample.direction.x}
+            arm_offset := sample.width * .48 + age_spread
+            arm_width := clamp(sample.width * (.045 + fade * .045), f32(.055), f32(.46))
+            arm_length := clamp(spec.beam * (.10 + sample.strength * .12), f32(.22), f32(1.75))
+            alpha := u8(clamp(92 * sample.strength * fade * fade, 0, 92))
+            foam := rl.Color{210, 237, 232, alpha}
+            port := boats.vec_add(sample.position, boats.vec_scale(right, arm_offset))
+            starboard := boats.vec_sub(sample.position, boats.vec_scale(right, arm_offset))
+            world_boat_wake_quad(port, sample.direction, arm_width, arm_length, foam, y)
+            world_boat_wake_quad(starboard, sample.direction, arm_width, arm_length, foam, y)
+            // Heavy displacement leaves a softer centerline boil; high-power
+            // planing craft emphasize the divergent arms instead.
+            displacement_mix := clamp(spec.displacement_kg / 350000, 0, 1)
+            center_alpha := u8(f32(alpha) * (.12 + displacement_mix * .24))
+            world_boat_wake_quad(
+                sample.position,
+                sample.direction,
+                min(arm_width * (1.1 + displacement_mix * .45), f32(.62)),
+                min(arm_length * .62, f32(1.05)),
+                {220, 240, 235, center_alpha},
+                y + .002,
+            )
+        }
+    }
 }
 
 @(no_instrumentation)
@@ -1038,6 +1232,7 @@ world_ellipsoid_rotated :: proc(
     center: third_person.Vec3,
     radius_x, radius_y, radius_z, rotation: f32,
     color: rl.Color,
+    material_kind: World_Material_Kind = .Eye,
 ) {
     LATITUDE_SEGMENTS :: 6
     LONGITUDE_SEGMENTS :: 10
@@ -1068,16 +1263,344 @@ world_ellipsoid_rotated :: proc(
         for longitude in 0 ..< LONGITUDE_SEGMENTS {
             next := (longitude + 1) % LONGITUDE_SEGMENTS
             if len(world_renderer.vertices) + 6 > WORLD_VERTEX_CAPACITY do return
-            append(
-                &world_renderer.vertices,
-                world_eye_vertex(points[latitude][longitude], color, normals[latitude][longitude]),
-                world_eye_vertex(points[latitude + 1][longitude], color, normals[latitude + 1][longitude]),
-                world_eye_vertex(points[latitude + 1][next], color, normals[latitude + 1][next]),
-                world_eye_vertex(points[latitude][longitude], color, normals[latitude][longitude]),
-                world_eye_vertex(points[latitude + 1][next], color, normals[latitude + 1][next]),
-                world_eye_vertex(points[latitude][next], color, normals[latitude][next]),
+            vertex_coordinates := [6][2]int {
+                {latitude, longitude},
+                {latitude + 1, longitude},
+                {latitude + 1, next},
+                {latitude, longitude},
+                {latitude + 1, next},
+                {latitude, next},
+            }
+            for coordinate in vertex_coordinates {
+                point_latitude, point_longitude := coordinate[0], coordinate[1]
+                vertex := world_eye_vertex(
+                    points[point_latitude][point_longitude],
+                    color,
+                    normals[point_latitude][point_longitude],
+                )
+                if material_kind == .Acorn {
+                    vertex.kind = .Acorn
+                    vertex.uv = {
+                        f32(point_longitude) / f32(LONGITUDE_SEGMENTS),
+                        f32(point_latitude) / f32(LATITUDE_SEGMENTS),
+                    }
+                    // Unwrap triangles that cross the longitude seam instead
+                    // of interpolating through the entire texture domain.
+                    if longitude == LONGITUDE_SEGMENTS - 1 && point_longitude == 0 {
+                        vertex.uv[0] = 1
+                    }
+                }
+                append(&world_renderer.vertices, vertex)
+            }
+        }
+    }
+}
+
+// A softly faceted ellipsoid for cloth and other matte props. Unlike the eye
+// ellipsoid it deliberately uses the plain material, avoiding hard wet-looking
+// highlights on pale fabric.
+world_ellipsoid_plain_oriented :: proc(
+    center: third_person.Vec3,
+    radius_x, radius_y, radius_z, rotation, roll: f32,
+    color: rl.Color,
+) {
+    LATITUDE_SEGMENTS :: 6
+    LONGITUDE_SEGMENTS :: 10
+    points: [LATITUDE_SEGMENTS + 1][LONGITUDE_SEGMENTS]third_person.Vec3
+    roll_cos, roll_sin := math.cos(roll), math.sin(roll)
+    for latitude in 0 ..= LATITUDE_SEGMENTS {
+        latitude_angle := -math.PI * .5 + f32(latitude) * math.PI / f32(LATITUDE_SEGMENTS)
+        latitude_radius := math.cos(latitude_angle)
+        local_y := math.sin(latitude_angle) * radius_y
+        for longitude in 0 ..< LONGITUDE_SEGMENTS {
+            longitude_angle := f32(longitude) * math.PI * 2 / f32(LONGITUDE_SEGMENTS)
+            local_x := math.cos(longitude_angle) * latitude_radius * radius_x
+            local_z := math.sin(longitude_angle) * latitude_radius * radius_z
+            rolled_x := local_x * roll_cos - local_y * roll_sin
+            rolled_y := local_x * roll_sin + local_y * roll_cos
+            world_x, world_z := world_rotate_xz(center.x, center.z, rolled_x, local_z, rotation)
+            points[latitude][longitude] = {world_x, center.y + rolled_y, world_z}
+        }
+    }
+    for latitude in 0 ..< LATITUDE_SEGMENTS {
+        for longitude in 0 ..< LONGITUDE_SEGMENTS {
+            next := (longitude + 1) % LONGITUDE_SEGMENTS
+            world_triangle(
+                points[latitude][longitude],
+                points[latitude + 1][longitude],
+                points[latitude + 1][next],
+                color,
+            )
+            world_triangle(points[latitude][longitude], points[latitude + 1][next], points[latitude][next], color)
+        }
+    }
+}
+
+world_ellipsoid_plain_rotated :: proc(
+    center: third_person.Vec3,
+    radius_x, radius_y, radius_z, rotation: f32,
+    color: rl.Color,
+) {
+    world_ellipsoid_plain_oriented(center, radius_x, radius_y, radius_z, rotation, 0, color)
+}
+
+// One closed, connected shell for the bottle-cap hat. The alternating outer
+// radius is part of the hull itself, so the crimped edge no longer depends on
+// detached blocks. UVs drive the pressed-metal finish in the world shader.
+world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: rl.Color) {
+    // Forty-two vertices give the perimeter twenty-one crown-cap teeth.
+    SEGMENTS :: 42
+    RING_COUNT :: 7
+    // Keep the top broad and almost planar. The former domed transition made
+    // the cap read as a soft beret despite its ribbed edge.
+    heights := [RING_COUNT]f32{-.060, -.045, .010, .045, .061, .066, .068}
+    radii_x := [RING_COUNT]f32{.205, .265, .258, .232, .204, .115, 0}
+    radii_z := [RING_COUNT]f32{.185, .242, .235, .210, .184, .104, 0}
+    rings: [RING_COUNT][SEGMENTS]third_person.Vec3
+    normals: [RING_COUNT][SEGMENTS]third_person.Vec3
+    uvs: [RING_COUNT][SEGMENTS][2]f32
+    for ring_index in 0 ..< RING_COUNT {
+        for segment in 0 ..< SEGMENTS {
+            angle := f32(segment) * math.PI * 2 / f32(SEGMENTS)
+            // Twenty-one sharp flutes around the rolled skirt, carried by the
+            // first three rings so each crimp remains joined to the crown.
+            crimp := ring_index <= 2 ? (1 + math.cos(angle * 21)) * .5 : f32(0)
+            crimp_scale := 1 + crimp * (ring_index == 1 ? f32(.075) : f32(.032))
+            local_x := math.cos(angle) * radii_x[ring_index] * crimp_scale
+            local_z := math.sin(angle) * radii_z[ring_index] * crimp_scale
+            world_x, world_z := world_rotate_xz(center.x, center.z, local_x, local_z, rotation)
+            rings[ring_index][segment] = {world_x, center.y + heights[ring_index], world_z}
+            uvs[ring_index][segment] = {.5 + local_x / (.265 * 2), .5 + local_z / (.242 * 2)}
+            local_normal := vec_normalize(
+                {
+                    local_x / max(radii_x[ring_index] * radii_x[ring_index], f32(.000001)),
+                    ring_index >= 4 ? f32(1) : f32(.18),
+                    local_z / max(radii_z[ring_index] * radii_z[ring_index], f32(.000001)),
+                },
+            )
+            normal_x, normal_z := world_rotate_xz(0, 0, local_normal.x, local_normal.z, rotation)
+            normals[ring_index][segment] = {normal_x, local_normal.y, normal_z}
+        }
+    }
+    for ring_index in 0 ..< RING_COUNT - 1 {
+        for segment in 0 ..< SEGMENTS {
+            next := (segment + 1) % SEGMENTS
+            if len(world_renderer.vertices) + 6 > WORLD_VERTEX_CAPACITY do return
+            coordinates := [6][2]int {
+                {ring_index, segment},
+                {ring_index + 1, segment},
+                {ring_index + 1, next},
+                {ring_index, segment},
+                {ring_index + 1, next},
+                {ring_index, next},
+            }
+            for coordinate in coordinates {
+                ring, point := coordinate[0], coordinate[1]
+                vertex := world_eye_vertex(rings[ring][point], color, normals[ring][point])
+                vertex.kind = .Bottle_Cap
+                vertex.uv = uvs[ring][point]
+                vertex.material[0] = f32(ring) / f32(RING_COUNT - 1)
+                append(&world_renderer.vertices, vertex)
+            }
+        }
+    }
+    bottom := third_person.Vec3{center.x, center.y + heights[0], center.z}
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+        bottom_coordinates := [3]int{segment, next, -1}
+        for coordinate in bottom_coordinates {
+            point := coordinate < 0 ? bottom : rings[0][coordinate]
+            vertex := world_eye_vertex(point, color, {0, -1, 0})
+            vertex.kind = .Bottle_Cap
+            vertex.uv =
+                coordinate < 0 ? [2]f32{.5, 0} : [2]f32{.5 + math.cos(f32(coordinate) * math.PI * 2 / f32(SEGMENTS)) * .5, .5 + math.sin(f32(coordinate) * math.PI * 2 / f32(SEGMENTS)) * .5}
+            vertex.material[0] = 0
+            append(&world_renderer.vertices, vertex)
+        }
+    }
+}
+
+// A single connected felt shell for the Tyrolean hat. Its radial profile
+// travels from the closed underside, around the brim, and continuously up the
+// tapered crown; every visible felt contour therefore belongs to one hull.
+world_alpine_hat_hull :: proc(center: third_person.Vec3, rotation: f32, felt_dark, felt, felt_light: rl.Color) {
+    SEGMENTS :: 14
+    RING_COUNT :: 7
+    heights := [RING_COUNT]f32{-.045, -.020, .010, .045, .135, .205, .225}
+    radii_x := [RING_COUNT]f32{.305, .325, .238, .225, .195, .148, .112}
+    radii_z := [RING_COUNT]f32{.215, .235, .190, .180, .150, .112, .080}
+    offsets_x := [RING_COUNT]f32{0, 0, 0, 0, -.010, -.030, -.040}
+    offsets_z := [RING_COUNT]f32{0, .010, 0, -.005, -.010, 0, .012}
+    colors := [RING_COUNT]rl.Color{felt_dark, felt_dark, felt, felt, felt, felt_light, felt_light}
+    rings: [RING_COUNT][SEGMENTS]third_person.Vec3
+    for ring_index in 0 ..< RING_COUNT {
+        for segment in 0 ..< SEGMENTS {
+            angle := f32(segment) * math.PI * 2 / f32(SEGMENTS)
+            local_x := offsets_x[ring_index] + math.cos(angle) * radii_x[ring_index]
+            local_z := offsets_z[ring_index] + math.sin(angle) * radii_z[ring_index]
+            ring_height := heights[ring_index]
+            if ring_index <= 1 {
+                // Lift only the feather side of both brim surfaces. Keeping
+                // the underside and upper edge together preserves hull
+                // thickness while breaking the perfectly level bowler line.
+                ring_height += max(math.cos(angle), f32(0)) * .030
+            }
+            world_x, world_z := world_rotate_xz(center.x, center.z, local_x, local_z, rotation)
+            rings[ring_index][segment] = {world_x, center.y + ring_height, world_z}
+        }
+    }
+    for ring_index in 0 ..< RING_COUNT - 1 {
+        for segment in 0 ..< SEGMENTS {
+            next := (segment + 1) % SEGMENTS
+            world_triangle_colored(
+                rings[ring_index][segment],
+                rings[ring_index + 1][segment],
+                rings[ring_index + 1][next],
+                colors[ring_index],
+                colors[ring_index + 1],
+                colors[ring_index + 1],
+            )
+            world_triangle_colored(
+                rings[ring_index][segment],
+                rings[ring_index + 1][next],
+                rings[ring_index][next],
+                colors[ring_index],
+                colors[ring_index + 1],
+                colors[ring_index],
             )
         }
+    }
+    bottom_x, bottom_z := world_rotate_xz(center.x, center.z, 0, 0, rotation)
+    top_x, top_z := world_rotate_xz(
+        center.x,
+        center.z,
+        offsets_x[RING_COUNT - 1] - .015,
+        offsets_z[RING_COUNT - 1],
+        rotation,
+    )
+    bottom_center := third_person.Vec3{bottom_x, center.y + heights[0], bottom_z}
+    // Sink the cap center below its final ring to press a shallow crease into
+    // the crown while retaining one continuous watertight shell.
+    top_center := third_person.Vec3{top_x, center.y + heights[RING_COUNT - 1] - .018, top_z}
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        world_triangle(bottom_center, rings[0][next], rings[0][segment], felt_dark)
+        world_triangle(top_center, rings[RING_COUNT - 1][segment], rings[RING_COUNT - 1][next], felt_light)
+    }
+}
+
+// One closed cloth shell for the flat cap. The first rings travel from the
+// fitted underside out around the asymmetric forward peak; successive rings
+// pull back over the skull into the low crown. Crown and brim therefore share
+// vertices instead of intersecting as separate primitives.
+world_flat_cap_hull :: proc(
+    center: third_person.Vec3,
+    rotation: f32,
+    tweed_dark, tweed, tweed_front, tweed_light: rl.Color,
+) {
+    SEGMENTS :: 18
+    RING_COUNT :: 7
+    heights := [RING_COUNT]f32{-.045, -.030, -.012, 0, .055, .100, .122}
+    radii_x := [RING_COUNT]f32{.190, .205, .205, .235, .238, .205, .120}
+    radii_z := [RING_COUNT]f32{.150, .205, .205, .205, .200, .160, .090}
+    offsets_z := [RING_COUNT]f32{-.020, .090, .090, -.025, -.045, -.055, -.060}
+    front_drop := [RING_COUNT]f32{0, .002, .004, .010, .024, .034, .025}
+    colors := [RING_COUNT]rl.Color{tweed_dark, tweed_dark, tweed_front, tweed_front, tweed, tweed, tweed_light}
+
+    rings: [RING_COUNT][SEGMENTS]third_person.Vec3
+    vertex_colors: [RING_COUNT][SEGMENTS]rl.Color
+    for ring_index in 0 ..< RING_COUNT {
+        for segment in 0 ..< SEGMENTS {
+            angle := f32(segment) * math.PI * 2 / f32(SEGMENTS)
+            local_x := math.cos(angle) * radii_x[ring_index]
+            local_z := offsets_z[ring_index] + math.sin(angle) * radii_z[ring_index]
+            local_y := heights[ring_index] - max(math.sin(angle), 0) * front_drop[ring_index]
+            world_x, world_z := world_rotate_xz(center.x, center.z, local_x, local_z, rotation)
+            rings[ring_index][segment] = {world_x, center.y + local_y, world_z}
+            vertex_colors[ring_index][segment] = colors[ring_index]
+            if ring_index >= 3 {
+                // Eighteen radial samples form six broad cloth panels. The
+                // restrained alternating value is visible at gameplay scale
+                // without turning the tweed into a striped helmet.
+                panel := (segment / 3) % 2
+                panel_tint := panel == 0 ? tweed_light : tweed_dark
+                vertex_colors[ring_index][segment] = color_lerp(colors[ring_index], panel_tint, .10)
+            }
+        }
+    }
+
+    for ring_index in 0 ..< RING_COUNT - 1 {
+        for segment in 0 ..< SEGMENTS {
+            next := (segment + 1) % SEGMENTS
+            world_triangle_colored(
+                rings[ring_index][segment],
+                rings[ring_index + 1][segment],
+                rings[ring_index + 1][next],
+                vertex_colors[ring_index][segment],
+                vertex_colors[ring_index + 1][segment],
+                vertex_colors[ring_index + 1][next],
+            )
+            world_triangle_colored(
+                rings[ring_index][segment],
+                rings[ring_index + 1][next],
+                rings[ring_index][next],
+                vertex_colors[ring_index][segment],
+                vertex_colors[ring_index + 1][next],
+                vertex_colors[ring_index][next],
+            )
+        }
+    }
+
+    bottom_x, bottom_z := world_rotate_xz(center.x, center.z, 0, offsets_z[0], rotation)
+    top_x, top_z := world_rotate_xz(center.x, center.z, 0, offsets_z[RING_COUNT - 1], rotation)
+    bottom_center := third_person.Vec3{bottom_x, center.y + heights[0], bottom_z}
+    // A shallow center depression keeps the non-planar crown fan outward
+    // facing after the forward drape and gives the cloth a tailored set.
+    top_center := third_person.Vec3{top_x, center.y + heights[RING_COUNT - 1] - .035, top_z}
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        world_triangle(bottom_center, rings[0][next], rings[0][segment], tweed_dark)
+        world_triangle_colored(
+            top_center,
+            rings[RING_COUNT - 1][segment],
+            rings[RING_COUNT - 1][next],
+            tweed,
+            vertex_colors[RING_COUNT - 1][segment],
+            vertex_colors[RING_COUNT - 1][next],
+        )
+    }
+}
+
+// A closed, pointed feather vane. The outline supplies the taper and swept
+// tip; shallow extrusion keeps it readable from both front and profile views.
+world_alpine_feather_hull :: proc(center: third_person.Vec3, rotation: f32, feather, feather_light: rl.Color) {
+    POINT_COUNT :: 8
+    outline := [POINT_COUNT][2]f32 {
+        {-.060, -.160},
+        {-.075, -.075},
+        {-.055, .035},
+        {-.020, .125},
+        {.030, .155},
+        {.042, .080},
+        {.032, -.025},
+        {-.015, -.125},
+    }
+    depths := [POINT_COUNT]f32{.008, .026, .040, .030, .004, .024, .040, .028}
+    back, front: [POINT_COUNT]third_person.Vec3
+    back_center := center
+    front_center := center
+    for index in 0 ..< POINT_COUNT {
+        back_world_x, back_world_z := world_rotate_xz(center.x, center.z, outline[index][0], -depths[index], rotation)
+        front_world_x, front_world_z := world_rotate_xz(center.x, center.z, outline[index][0], depths[index], rotation)
+        back[index] = {back_world_x, center.y + outline[index][1], back_world_z}
+        front[index] = {front_world_x, center.y + outline[index][1], front_world_z}
+    }
+    for index in 0 ..< POINT_COUNT {
+        next := (index + 1) % POINT_COUNT
+        world_triangle(back_center, back[next], back[index], feather)
+        world_triangle(front_center, front[index], front[next], feather_light)
+        world_quad(back[index], back[next], front[next], front[index], feather)
     }
 }
 
@@ -1175,6 +1698,7 @@ world_mouse_limb_hull :: proc(
     radii: []f32,
     colors: []rl.Color,
     forward: third_person.Vec3,
+    cap_root := true,
 ) {
     MAX_RINGS :: 16
     SEGMENTS :: 12
@@ -1247,7 +1771,9 @@ world_mouse_limb_hull :: proc(
     last := len(points) - 1
     for segment in 0 ..< SEGMENTS {
         next_segment := (segment + 1) % SEGMENTS
-        world_triangle(points[0], rings[0][segment], rings[0][next_segment], colors[0])
+        if cap_root {
+            world_triangle(points[0], rings[0][segment], rings[0][next_segment], colors[0])
+        }
         world_triangle(points[last], rings[last][next_segment], rings[last][segment], colors[last])
     }
 }
@@ -1367,6 +1893,10 @@ world_vehicle_shadow_triangle :: #force_inline proc(
     cloud_cover: f32,
     project: ^terrain.Project,
 ) {
+    // Dynamic vehicles are exact casters in the near-field shadow map. Never
+    // layer the former CPU-projected mesh over that result.
+    if world_renderer.dynamic_shadow.enabled do return
+    fallback_alpha := f32(1)
     daylight := clamp(sun_direction[1], 0, 1)
     if daylight <= .08 do return
     projected_a, land_a := world_vehicle_shadow_point(a, sun_direction, project)
@@ -1379,7 +1909,12 @@ world_vehicle_shadow_triangle :: #force_inline proc(
     // Opaque projected faces merge into one clean, hard-edged silhouette.
     // Vary the tone instead of alpha so overlapping mesh components cannot
     // create accidental dark facets inside the shadow.
-    world_triangle(projected_a, projected_b, projected_c, {shade, shade + 2, shade + 3, 255})
+    world_triangle(
+        projected_a,
+        projected_b,
+        projected_c,
+        {shade, shade + 2, shade + 3, u8(clamp(fallback_alpha * 255, 0, 255))},
+    )
 }
 
 @(no_instrumentation)
@@ -1545,15 +2080,18 @@ world_structure_shadow :: proc(
     cloud_cover: f32,
     project: ^terrain.Project,
 ) {
+    // Environment structures use coarse geometry in the mapped caster stream.
+    // The old layered footprint extrusion caused doubled shadows and severe
+    // low-sun triangulation artifacts.
+    if world_renderer.dynamic_shadow.enabled do return
     daylight := clamp(sun_direction[1], 0, 1)
     if daylight <= .08 do return
 
     horizontal_length := f32(math.sqrt(f64(sun_direction[0] * sun_direction[0] + sun_direction[2] * sun_direction[2])))
-    if horizontal_length <= .01 do return
     shadow_height := structure.height
     if structure.kind == .Architecture {
         roof_rise := structure.width * .34
-        if structure.height > 60 {
+        if structure.height > 60 || settlement_structure_is_landmark(structure) {
             roof_rise = structure.width * .72
         } else if architecture.roof_style_for_seed(structure.seed) == .Low_Gable {
             roof_rise = structure.width * .24
@@ -1561,13 +2099,20 @@ world_structure_shadow :: proc(
         shadow_height += roof_rise
     }
     shadow_length := min(shadow_height / max(sun_direction[1], f32(.18)), max(structure.width, structure.depth) * 3.5)
-    offset_x := -sun_direction[0] / horizontal_length * shadow_length
-    offset_z := -sun_direction[2] / horizontal_length * shadow_length
+    offset_x, offset_z := f32(0), f32(0)
+    // At exact solar noon the horizontal component collapses, but the shadow
+    // becomes a compact footprint rather than disappearing. Avoid normalizing
+    // the zero vector and retain the existing contact/penumbra layers.
+    if horizontal_length > .01 {
+        offset_x = -sun_direction[0] / horizontal_length * shadow_length
+        offset_z = -sun_direction[2] / horizontal_length * shadow_length
+    }
 
     // A translucent penumbra around a denser core keeps the shadow from
     // reading as a hard rectangular decal at the editor's wide camera range.
     cloud := clamp(cloud_cover, 0, 1)
-    shadow_visibility := 1 - cloud * .72
+    // Heavy cloud softens contrast without erasing grounded contact.
+    shadow_visibility := 1 - cloud * .55
     outer_alpha := u8(clamp((24 + daylight * 24) * (1 + cloud * .65), 24, 62))
     inner_alpha := u8(clamp((64 + daylight * 46) * shadow_visibility, 18, 110))
     // Draw the broad penumbra first. Each layer gets a small, increasing lift
@@ -1728,7 +2273,11 @@ world_architecture_tile_slope :: proc(
     for course in 0 ..< courses {
         course_start := f32(course) / f32(courses)
         course_end := min(course_start + .78 / f32(courses), 1)
-        relief := .035 + f32(course % 2) * .012
+        // Keep the decorative courses decisively in front of the continuous
+        // weatherproof roof plane.  The old 3.5 cm offset became effectively
+        // coplanar at town-scale camera distances and the depth buffer
+        // alternated between the tile and base surfaces.
+        relief := .12 + f32(course % 2) * .012
         for segment in 0 ..< segments {
             segment_start := f32(segment) / f32(segments)
             segment_end := f32(segment + 1) / f32(segments)
@@ -1763,7 +2312,10 @@ world_architecture_tile_face :: proc(edge_a, edge_b, ridge: third_person.Vec3, c
 world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
     eave_y := structure.base_y + structure.height
     roof_style := architecture.roof_style_for_seed(structure.seed)
-    if !landmark && roof_style == .Parapet {
+    identity := architecture.architecture_resolve_legacy_identity(structure)
+    tower_landmark := identity.archetype == .Campanile || identity.archetype == .Cycladic_Bell
+    ceremonial_roof := tower_landmark || identity.archetype == .Church
+    if !ceremonial_roof && roof_style == .Parapet {
         roof_bytes := architecture.architecture_roof_color(structure.seed)
         terracotta := rl.Color{roof_bytes[0], roof_bytes[1], roof_bytes[2], roof_bytes[3]}
         world_box_rotated(
@@ -1787,8 +2339,8 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
         )
         return
     }
-    rise := landmark ? structure.width * .72 : structure.width * .34
-    if !landmark && roof_style == .Low_Gable do rise = structure.width * .24
+    rise := ceremonial_roof ? structure.width * .72 : structure.width * .34
+    if !ceremonial_roof && roof_style == .Low_Gable do rise = structure.width * .24
     depth := structure.depth * .58
     left_front_x, left_front_z := world_rotate_xz(
         structure.center_x,
@@ -1914,7 +2466,7 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
         // from its corresponding end.
         world_triangle(wall_front_left, wall_front_apex, wall_front_right, wall)
         world_triangle(wall_back_right, wall_back_apex, wall_back_left, wall)
-    } else if roof_style == .Hip || landmark {
+    } else if roof_style == .Hip || ceremonial_roof {
         world_triangle(left_front, ridge_front, right_front, terracotta)
         world_triangle(right_back, ridge_back, left_back, formation_face_color(terracotta, 1.4, 0))
     }
@@ -2095,18 +2647,112 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
             {65, 55, 49, 255},
         )
     }
-    if landmark {
+    if tower_landmark {
         world_box_rotated(
             {structure.center_x, eave_y + rise + 3.5, structure.center_z},
             {3.5, 7, 3.5},
             structure.rotation,
             {224, 219, 196, 255},
         )
+    } else if identity.archetype == .Church {
+        world_box_rotated(
+            {structure.center_x, eave_y + rise + 1.9, structure.center_z},
+            {2.6, 3.8, 2.2},
+            structure.rotation,
+            {224, 219, 196, 255},
+        )
     }
 }
 
-world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool = true) {
-    landmark := structure.height > 60
+world_architecture_face_openings :: proc(
+    structure: terrain.Structure,
+    layout: ^architecture.Opening_Layout,
+    window, trim: rl.Color,
+) {
+    if layout == nil do return
+    for opening in layout.openings[:layout.count] {
+        // The existing primary façade pass owns its richer doors, shutters,
+        // balconies, and storefront details. This pass supplies the other
+        // independently generated mass faces.
+        if (opening.face == .Front && opening.kind == .Window) || opening.kind == .Door {
+            continue
+        }
+        face_span := opening.face == .Front || opening.face == .Rear ? structure.width : structure.depth
+        horizontal := opening.horizontal
+        opening_y := architecture.facade_window_row_y(structure.height, opening.row)
+        opening_width := architecture.facade_window_width(face_span)
+        opening_height := architecture.facade_window_height(structure.height)
+        if opening.kind == .Service_Door {
+            horizontal = 0
+            opening_width = clamp(face_span * .13, f32(1.8), f32(2.8))
+            opening_height = clamp(structure.height * .075, f32(3.0), f32(4.0))
+            opening_y = .20 + opening_height * .5
+        } else if opening.kind == .Vent {
+            opening_height = clamp(opening_height * .55, f32(.65), f32(1.4))
+            opening_y = max(opening_height * .5 + .55, f32(1.1))
+        }
+        // Keep the shallow panel wholly beyond the wall plane.  At long
+        // streetscape distances a half-embedded panel can lose the depth
+        // test to the wall because both surfaces quantize to the same depth.
+        // This is still ordinary surface geometry: no depth bias, sorting,
+        // or cross-mass visibility query is involved.
+        face_offset := f32(.28)
+        local_x, local_z, yaw_offset := f32(0), f32(0), f32(0)
+        switch opening.face {
+        case .Front:
+            local_x, local_z = horizontal, structure.depth * .5 + face_offset
+        case .Rear:
+            local_x, local_z, yaw_offset = -horizontal, -structure.depth * .5 - face_offset, math.PI
+        case .Left:
+            local_x, local_z, yaw_offset = -structure.width * .5 - face_offset, horizontal, -math.PI * .5
+        case .Right:
+            local_x, local_z, yaw_offset = structure.width * .5 + face_offset, -horizontal, math.PI * .5
+        }
+        wx, wz := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
+        color :=
+            opening.kind == .Vent ? rl.Color{62, 69, 66, 255} : (opening.kind == .Service_Door ? rl.Color{83, 70, 60, 255} : window)
+        world_box_rotated(
+            {wx, structure.base_y + opening_y, wz},
+            {opening_width, opening_height, .22},
+            structure.rotation + yaw_offset,
+            color,
+        )
+        lintel_local_x, lintel_local_z := local_x, local_z
+        switch opening.face {
+        case .Front:
+            lintel_local_z += .045
+        case .Rear:
+            lintel_local_z -= .045
+        case .Left:
+            lintel_local_x -= .045
+        case .Right:
+            lintel_local_x += .045
+        }
+        lintel_x, lintel_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            lintel_local_x,
+            lintel_local_z,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {lintel_x, structure.base_y + opening_y + opening_height * .5 + .12, lintel_z},
+            {opening_width + .36, .075, .16},
+            structure.rotation + yaw_offset,
+            trim,
+        )
+    }
+}
+
+world_architecture_mass :: proc(
+    structure: terrain.Structure,
+    project: ^terrain.Project,
+    has_entrance: bool = true,
+    opening_layout: ^architecture.Opening_Layout = nil,
+) {
+    identity := architecture.architecture_resolve_legacy_identity(structure)
+    habitable := buildings.is_habitable(identity.archetype)
+    landmark := structure.height > 60 || settlement_structure_is_landmark(structure) || buildings.is_landmark(identity)
     facade_style := architecture.facade_style_for_seed(structure.seed)
     roof_style := architecture.roof_style_for_seed(structure.seed)
     stone := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
@@ -2116,15 +2762,164 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
         structure.rotation,
         stone,
     )
+    ground_stone := formation_face_color(stone, f32((structure.seed >> 10) & 3) * .10 - .15, 0)
+    world_architecture_box_rotated(
+        {structure.center_x, structure.base_y + 1.45, structure.center_z},
+        {structure.width + .025, 2.90, structure.depth + .025},
+        structure.rotation,
+        ground_stone,
+    )
     // A shallow overhanging limestone plinth separates each façade from the
     // terrain and gives the compact blocks a believable masonry foundation.
     plinth := formation_face_color(stone, math.PI, 0)
+    plinth_height := .52 + f32((structure.seed >> 7) % 4) * .05
+    foundation_low, _ := architecture.architecture_mass_height_range(project, structure)
+    foundation_depth := max(structure.base_y - foundation_low + .18, f32(0))
+    if foundation_depth > .01 {
+        foundation_color := formation_face_color(plinth, math.PI * .45, 0)
+        world_architecture_box_rotated(
+            {structure.center_x, structure.base_y - foundation_depth * .5 + .02, structure.center_z},
+            {structure.width + .30, foundation_depth + .04, structure.depth + .30},
+            structure.rotation,
+            foundation_color,
+        )
+    }
     world_architecture_box_rotated(
-        {structure.center_x, structure.base_y + .30, structure.center_z},
-        {structure.width + .46, .60, structure.depth + .46},
+        {structure.center_x, structure.base_y + plinth_height * .5, structure.center_z},
+        {structure.width + .46, plinth_height, structure.depth + .46},
         structure.rotation,
         plinth,
     )
+    damp_course :=
+        facade_style == 2 ? rl.Color{92, 113, 110, 255} : facade_style == 3 ? rl.Color{139, 107, 83, 255} : formation_face_color(plinth, math.PI, 0)
+    world_architecture_box_rotated(
+        {structure.center_x, structure.base_y + plinth_height + .06, structure.center_z},
+        {structure.width + .22, .12, structure.depth + .22},
+        structure.rotation,
+        damp_course,
+    )
+    if !landmark {
+        for corner_side in -1 ..= 1 {
+            if corner_side == 0 do continue
+            corner_x, corner_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                f32(corner_side) * (structure.width * .5 - .28),
+                structure.depth * .5 + .20,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {corner_x, structure.base_y + .43, corner_z},
+                {.56, .86, .20},
+                structure.rotation,
+                formation_face_color(plinth, f32(corner_side) * .25, 0),
+            )
+        }
+        if structure.width >= 18 && structure.seed % 3 == 0 {
+            for vent_side in -1 ..= 1 {
+                if vent_side == 0 do continue
+                vent_x, vent_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    f32(vent_side) * structure.width * .30,
+                    structure.depth * .5 + .25,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {vent_x, structure.base_y + .32, vent_z},
+                    {.52, .20, .08},
+                    structure.rotation,
+                    {62, 69, 66, 255},
+                )
+            }
+        }
+        utility_side := (structure.seed & 2) == 0 ? f32(-1) : f32(1)
+        utility_offset := max(structure.width * .5 - .82, f32(2.4))
+        utility_local_x := utility_side * utility_offset
+        pipe_x, pipe_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            utility_local_x,
+            structure.depth * .5 + .24,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {pipe_x, structure.base_y + min(structure.height * .32, f32(5.2)), pipe_z},
+            {.13, min(structure.height * .64, f32(10.4)), .13},
+            structure.rotation,
+            {82, 83, 76, 255},
+        )
+        shoe_x, shoe_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            utility_local_x - utility_side * .16,
+            structure.depth * .5 + .36,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {shoe_x, structure.base_y + .20, shoe_z},
+            {.42, .16, .30},
+            structure.rotation,
+            {72, 73, 67, 255},
+        )
+        box_x, box_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            -utility_local_x,
+            structure.depth * .5 + .27,
+            structure.rotation,
+        )
+        box_y := structure.base_y + 1.05
+        world_box_rotated({box_x, box_y, box_z}, {.62, .72, .16}, structure.rotation, {113, 119, 111, 255})
+        world_box_rotated({box_x, box_y + 1.25, box_z - .02}, {.08, 1.80, .10}, structure.rotation, {96, 101, 94, 255})
+        if structure.seed % 4 == 0 {
+            patch_side := utility_side
+            patch_x, patch_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                patch_side * structure.width * .24,
+                structure.depth * .5 + .145,
+                structure.rotation,
+            )
+            patch_color := formation_face_color(stone, patch_side * .18, 0)
+            world_box_rotated(
+                {patch_x, structure.base_y + 1.45, patch_z},
+                {1.25, .72, .035},
+                structure.rotation,
+                patch_color,
+            )
+        }
+        gravel := rl.Color{136, 126, 108, 255}
+        gravel_x, gravel_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + .43,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {gravel_x, structure.base_y + .025, gravel_z},
+            {structure.width + .70, .05, .34},
+            structure.rotation,
+            gravel,
+        )
+        for side in -1 ..= 1 {
+            if side == 0 do continue
+            side_gravel_x, side_gravel_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                f32(side) * (structure.width * .5 + .39),
+                0,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {side_gravel_x, structure.base_y + .025, side_gravel_z},
+                {structure.depth + .70, .05, .28},
+                structure.rotation + math.PI * .5,
+                gravel,
+            )
+        }
+    }
     if !landmark && facade_style == 3 {
         wing_x, wing_z := world_rotate_xz(
             structure.center_x,
@@ -2155,7 +2950,7 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
         facade_style == 2 ? rl.Color{43, 102, 126, 255} : facade_style == 3 ? rl.Color{236, 218, 179, 255} : rl.Color{167, 61, 53, 255}
     rows := architecture.facade_floor_count(structure.height)
     columns := architecture.facade_column_count(structure.width)
-    if !landmark && has_entrance {
+    if has_entrance && habitable {
         door_x, door_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -2165,12 +2960,131 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
         )
         door :=
             facade_style == 2 ? rl.Color{54, 91, 99, 255} : facade_style == 3 ? rl.Color{109, 75, 57, 255} : rl.Color{92, 66, 57, 255}
+        if (structure.seed >> 11) & 3 == 1 {
+            door = {72, 104, 101, 255}
+        } else if (structure.seed >> 11) & 3 == 2 {
+            door = {119, 71, 55, 255}
+        }
         door_width := clamp(structure.width * .13, f32(1.8), f32(2.8))
         door_height := clamp(structure.height * .075, f32(3.0), f32(4.0))
         step_height: f32 = .20
         door_center_y := structure.base_y + step_height + door_height * .5
         world_box_rotated({door_x, door_center_y, door_z}, {door_width, door_height, .24}, structure.rotation, door)
+        panel_color := formation_face_color(door, math.PI, 0)
+        for panel in 0 ..< 2 {
+            panel_y := structure.base_y + step_height + (panel == 0 ? door_height * .28 : door_height * .70)
+            panel_height := panel == 0 ? door_height * .34 : door_height * .26
+            panel_x, panel_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .315,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {panel_x, panel_y, panel_z},
+                {door_width * .70, panel_height, .055},
+                structure.rotation,
+                panel_color,
+            )
+        }
+        if structure.height < 15 && structure.seed % 5 == 1 {
+            divider_x, divider_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .355,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {divider_x, door_center_y, divider_z},
+                {.08, door_height * .88, .07},
+                structure.rotation,
+                {183, 157, 119, 255},
+            )
+        }
+        if structure.height < 14 && structure.seed % 5 == 2 {
+            for loading_slat in 0 ..< 3 {
+                slat_x, slat_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    0,
+                    structure.depth * .5 + .355,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {slat_x, structure.base_y + step_height + door_height * (.25 + f32(loading_slat) * .25), slat_z},
+                    {door_width * .82, .07, .07},
+                    structure.rotation,
+                    {70, 63, 55, 255},
+                )
+            }
+        }
+        handle_x, handle_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            door_width * .28,
+            structure.depth * .5 + .365,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {handle_x, structure.base_y + step_height + door_height * .50, handle_z},
+            {.11, .11, .10},
+            structure.rotation,
+            {196, 157, 79, 255},
+        )
+        kick_x, kick_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + .37,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {kick_x, structure.base_y + step_height + .24, kick_z},
+            {door_width * .62, .18, .06},
+            structure.rotation,
+            {157, 124, 69, 255},
+        )
+        escutcheon_x, escutcheon_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            door_width * .28,
+            structure.depth * .5 + .425,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {escutcheon_x, structure.base_y + step_height + door_height * .40, escutcheon_z},
+            {.07, .14, .035},
+            structure.rotation,
+            {174, 139, 76, 255},
+        )
+        if structure.seed % 3 == 0 {
+            transom_x, transom_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .37,
+                structure.rotation,
+            )
+            transom_y := structure.base_y + step_height + door_height - .28
+            world_box_rotated(
+                {transom_x, transom_y, transom_z},
+                {door_width * .66, .38, .06},
+                structure.rotation,
+                {60, 87, 91, 255},
+            )
+            world_box_rotated(
+                {transom_x, transom_y, transom_z},
+                {.055, .38, .075},
+                structure.rotation,
+                {190, 171, 139, 255},
+            )
+        }
         surround := facade_style == 2 ? rl.Color{166, 171, 151, 255} : rl.Color{190, 166, 128, 255}
+        if (structure.seed >> 19) & 1 != 0 {
+            surround = facade_style == 2 ? rl.Color{178, 181, 158, 255} : rl.Color{205, 181, 143, 255}
+        }
         frame_width: f32 = .12
         frame_height := door_height + .30
         frame_offset := door_width * .5 + frame_width * .5
@@ -2213,6 +3127,27 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
             structure.rotation,
             surround,
         )
+        if structure.seed % 5 == 3 {
+            portal_x, portal_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .46,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {portal_x, structure.base_y + step_height + door_height + .42, portal_z},
+                {door_width + .88, .24, .42},
+                structure.rotation,
+                surround,
+            )
+            world_box_rotated(
+                {portal_x, structure.base_y + step_height + door_height + .57, portal_z},
+                {.34, .22, .46},
+                structure.rotation,
+                formation_face_color(surround, math.PI, 0),
+            )
+        }
         step_x, step_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -2222,12 +3157,344 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
         )
         step_color :=
             facade_style == 2 ? rl.Color{103, 130, 125, 255} : facade_style == 3 ? rl.Color{178, 127, 88, 255} : rl.Color{178, 127, 88, 255}
+        if (structure.seed >> 13) & 1 != 0 {
+            step_color = facade_style == 2 ? rl.Color{121, 137, 126, 255} : rl.Color{157, 137, 108, 255}
+        }
         world_box_rotated(
             {step_x, structure.base_y + step_height * .5, step_z},
             {door_width + .72, step_height, .42},
             structure.rotation,
             step_color,
         )
+        lower_step_x, lower_step_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + .52,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {lower_step_x, structure.base_y + .06, lower_step_z},
+            {door_width + 1.05, .12, .72},
+            structure.rotation,
+            formation_face_color(step_color, math.PI, 0),
+        )
+        for paver in 0 ..< 3 {
+            paver_x, paver_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .72 + f32(paver) * .36,
+                structure.rotation,
+            )
+            paver_tone := paver % 2 == 0 ? step_color : formation_face_color(step_color, math.PI, 0)
+            if (structure.seed >> 14) & 1 != 0 && paver == 1 {
+                paver_tone = facade_style == 2 ? rl.Color{116, 126, 116, 255} : rl.Color{149, 119, 91, 255}
+            }
+            world_box_rotated(
+                {paver_x, structure.base_y + .035, paver_z},
+                {door_width + .42 - f32(paver) * .08, .07, .42},
+                structure.rotation,
+                paver_tone,
+            )
+        }
+        wear_color := formation_face_color(stone, math.PI, 0)
+        for wear_side in -1 ..= 1 {
+            if wear_side == 0 do continue
+            wear_x, wear_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                f32(wear_side) * (door_width * .5 + .30),
+                structure.depth * .5 + .145,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {wear_x, structure.base_y + .42, wear_z},
+                {.34, .46 + f32((structure.seed >> 5) & 1) * .12, .035},
+                structure.rotation,
+                wear_color,
+            )
+        }
+        if structure.seed % 2 == 0 {
+            for pot_side in -1 ..= 1 {
+                if pot_side == 0 do continue
+                if (structure.seed >> 15) & 3 == 1 && pot_side > 0 do continue
+                if (structure.seed >> 15) & 3 == 2 && pot_side < 0 do continue
+                pot_height := .40 + f32((structure.seed >> u32(4 + pot_side + 1)) & 3) * .07
+                pot_local_x := f32(pot_side) * (door_width * .5 + .72)
+                pot_x, pot_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    pot_local_x,
+                    structure.depth * .5 + .70,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {pot_x, structure.base_y + pot_height * .5, pot_z},
+                    {.42, pot_height, .42},
+                    structure.rotation,
+                    {167, 91, 56, 255},
+                )
+                world_box_rotated(
+                    {pot_x, structure.base_y + pot_height + .18, pot_z},
+                    {.48, .34, .48},
+                    structure.rotation,
+                    pot_side < 0 ? rl.Color{79, 124, 73, 255} : rl.Color{97, 139, 77, 255},
+                )
+            }
+        }
+        if structure.seed % 5 == 2 {
+            crate_side := (structure.seed & 8) == 0 ? f32(-1) : f32(1)
+            crate_local_x := crate_side * min(structure.width * .34, door_width * .5 + 2.0)
+            crate_x, crate_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                crate_local_x,
+                structure.depth * .5 + .62,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {crate_x, structure.base_y + .30, crate_z},
+                {.82, .60, .64},
+                structure.rotation,
+                {139, 94, 57, 255},
+            )
+            for slat in -1 ..= 1 {
+                slat_x, slat_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    crate_local_x,
+                    structure.depth * .5 + .96,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {slat_x, structure.base_y + .30 + f32(slat) * .18, slat_z},
+                    {.74, .055, .04},
+                    structure.rotation,
+                    {102, 71, 48, 255},
+                )
+            }
+        }
+        if structure.width >= 18 && structure.seed % 7 == 3 {
+            bench_side := (structure.seed & 16) == 0 ? f32(-1) : f32(1)
+            bench_local_x := bench_side * min(structure.width * .32, door_width * .5 + 2.7)
+            bench_x, bench_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                bench_local_x,
+                structure.depth * .5 + .78,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {bench_x, structure.base_y + .52, bench_z},
+                {2.1, .16, .58},
+                structure.rotation,
+                {123, 83, 55, 255},
+            )
+            for leg_side in -1 ..= 1 {
+                if leg_side == 0 do continue
+                leg_x, leg_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    bench_local_x + f32(leg_side) * .72,
+                    structure.depth * .5 + .78,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {leg_x, structure.base_y + .25, leg_z},
+                    {.14, .50, .42},
+                    structure.rotation,
+                    {91, 68, 51, 255},
+                )
+            }
+            back_x, back_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                bench_local_x,
+                structure.depth * .5 + .55,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {back_x, structure.base_y + .92, back_z},
+                {2.1, .52, .12},
+                structure.rotation,
+                {112, 77, 53, 255},
+            )
+        }
+        mat_x, mat_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + 1.02,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {mat_x, structure.base_y + .075, mat_z},
+            {door_width * .78, .04, .48},
+            structure.rotation,
+            facade_style == 2 ? rl.Color{72, 103, 105, 255} : rl.Color{116, 73, 54, 255},
+        )
+        for curb_side in -1 ..= 1 {
+            if curb_side == 0 do continue
+            curb_x, curb_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                f32(curb_side) * (door_width * .5 + .38),
+                structure.depth * .5 + 1.10,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {curb_x, structure.base_y + .09, curb_z},
+                {.16, .18, 1.10},
+                structure.rotation,
+                formation_face_color(step_color, math.PI, 0),
+            )
+        }
+        if structure.height < 16 && structure.seed % 5 == 0 {
+            bollard_side := (structure.seed & 128) == 0 ? f32(-1) : f32(1)
+            bollard_local_x := bollard_side * min(structure.width * .34, door_width * .5 + 1.65)
+            bollard_x, bollard_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                bollard_local_x,
+                structure.depth * .5 + 1.02,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {bollard_x, structure.base_y + .46, bollard_z},
+                {.28, .92, .28},
+                structure.rotation,
+                {85, 80, 70, 255},
+            )
+            world_box_rotated(
+                {bollard_x, structure.base_y + .96, bollard_z},
+                {.38, .10, .38},
+                structure.rotation,
+                {104, 94, 76, 255},
+            )
+        }
+        if structure.seed % 6 == 1 {
+            broom_side := (structure.seed & 32) == 0 ? f32(-1) : f32(1)
+            broom_local_x := broom_side * (door_width * .5 + .52)
+            broom_x, broom_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                broom_local_x,
+                structure.depth * .5 + .48,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {broom_x, structure.base_y + .88, broom_z},
+                {.07, 1.62, .07},
+                structure.rotation,
+                {126, 91, 59, 255},
+            )
+            world_box_rotated(
+                {broom_x, structure.base_y + .15, broom_z},
+                {.52, .22, .18},
+                structure.rotation,
+                {160, 125, 72, 255},
+            )
+        }
+        lantern_side := (structure.seed & 1) == 0 ? f32(-1) : f32(1)
+        lantern_local_x := lantern_side * (door_width * .5 + .48)
+        lantern_y := structure.base_y + step_height + door_height * (.68 + f32((structure.seed >> 17) & 3) * .035)
+        bracket_x, bracket_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            lantern_local_x,
+            structure.depth * .5 + .29,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {bracket_x, lantern_y + .18, bracket_z},
+            {.08, .40, .10},
+            structure.rotation,
+            {65, 59, 52, 255},
+        )
+        lamp_x, lamp_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            lantern_local_x,
+            structure.depth * .5 + .40,
+            structure.rotation,
+        )
+        world_box_rotated({lamp_x, lantern_y, lamp_z}, {.34, .44, .22}, structure.rotation, {65, 59, 52, 255})
+        glass_x, glass_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            lantern_local_x,
+            structure.depth * .5 + .525,
+            structure.rotation,
+        )
+        world_box_rotated({glass_x, lantern_y, glass_z}, {.20, .26, .045}, structure.rotation, {224, 184, 105, 255})
+        world_box_rotated({glass_x, lantern_y + .25, glass_z}, {.38, .07, .075}, structure.rotation, {65, 59, 52, 255})
+        plaque_local_x := -lantern_side * (door_width * .5 + .40)
+        plaque_x, plaque_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            plaque_local_x,
+            structure.depth * .5 + .355,
+            structure.rotation,
+        )
+        plaque_y := structure.base_y + step_height + door_height * .62
+        world_box_rotated({plaque_x, plaque_y, plaque_z}, {.34, .22, .055}, structure.rotation, {202, 184, 145, 255})
+        plaque_marks := 1 + int((structure.seed >> 4) % 3)
+        for mark in 0 ..< plaque_marks {
+            mark_offset := (f32(mark) - f32(plaque_marks - 1) * .5) * .09
+            mark_x, mark_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                plaque_local_x + mark_offset,
+                structure.depth * .5 + .39,
+                structure.rotation,
+            )
+            world_box_rotated({mark_x, plaque_y, mark_z}, {.035, .11, .025}, structure.rotation, {75, 68, 58, 255})
+        }
+        if structure.seed % 4 == 1 {
+            mailbox_x, mailbox_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                plaque_local_x,
+                structure.depth * .5 + .40,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {mailbox_x, structure.base_y + step_height + door_height * .38, mailbox_z},
+                {.48, .34, .18},
+                structure.rotation,
+                {76, 91, 91, 255},
+            )
+            world_box_rotated(
+                {mailbox_x, structure.base_y + step_height + door_height * .44, mailbox_z},
+                {.34, .035, .20},
+                structure.rotation,
+                {189, 174, 143, 255},
+            )
+        }
+        if structure.seed % 8 == 5 {
+            urn_side := -lantern_side
+            urn_local_x := urn_side * min(structure.width * .30, door_width * .5 + 1.55)
+            urn_x, urn_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                urn_local_x,
+                structure.depth * .5 + .67,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {urn_x, structure.base_y + .28, urn_z},
+                {.46, .56, .46},
+                structure.rotation,
+                {151, 105, 66, 255},
+            )
+            world_box_rotated(
+                {urn_x, structure.base_y + .60, urn_z},
+                {.58, .10, .58},
+                structure.rotation,
+                {176, 122, 74, 255},
+            )
+        }
         // A handful of low-rise blocks read as village shops: a shallow
         // canvas canopy over the entrance adds the lived-in 1940s street
         // rhythm without turning every façade into a storefront.
@@ -2278,17 +3545,186 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
                 structure.rotation,
                 formation_face_color(awning_color, math.PI, 0),
             )
+            for support_side in -1 ..= 1 {
+                if support_side == 0 do continue
+                support_x, support_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    f32(support_side) * awning_width * .42,
+                    structure.depth * .5 + .39,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {support_x, structure.base_y + step_height + door_height + .40, support_z},
+                    {.07, .74, .08},
+                    structure.rotation,
+                    {77, 69, 60, 255},
+                )
+            }
+            commercial :=
+                identity.archetype == .Shop_House ||
+                identity.archetype == .Workshop ||
+                identity.archetype == .Harbor_Office ||
+                identity.archetype == .Market_Hall
+            if commercial && structure.height < 18 && structure.seed % 4 == 0 {
+                sign_side := (structure.seed & 64) == 0 ? f32(-1) : f32(1)
+                sign_local_x := sign_side * (door_width * .5 + .72)
+                sign_y := structure.base_y + step_height + door_height + 1.18
+                sign_x, sign_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    sign_local_x,
+                    structure.depth * .5 + .49,
+                    structure.rotation,
+                )
+                world_box_rotated({sign_x, sign_y, sign_z}, {1.15, .54, .10}, structure.rotation, {91, 119, 117, 255})
+                bracket_x, bracket_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    sign_local_x,
+                    structure.depth * .5 + .29,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {bracket_x, sign_y + .36, bracket_z},
+                    {1.32, .07, .09},
+                    structure.rotation,
+                    {67, 61, 55, 255},
+                )
+            }
         }
     }
     window_width := architecture.facade_window_width(structure.width)
     window_height := architecture.facade_window_height(structure.height)
+    rich_front := habitable
     for row in 0 ..< rows {
+        if !rich_front do break
         for column in 0 ..< columns {
+            if opening_layout != nil &&
+               !architecture.opening_layout_contains(opening_layout, .Front, .Window, row, column) {
+                continue
+            }
             x := architecture.facade_window_column_x(structure.width, column)
             y := structure.base_y + architecture.facade_window_row_y(structure.height, row)
             local_z := structure.depth * .5 + .16
             wx, wz := world_rotate_xz(structure.center_x, structure.center_z, x, local_z, structure.rotation)
             world_box_rotated({wx, y, wz}, {window_width, window_height, .22}, structure.rotation, window)
+            if !landmark && row == 0 {
+                glass_x, glass_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    x,
+                    local_z + .125,
+                    structure.rotation,
+                )
+                glass_tone := int((structure.seed + u32(column * 17)) % 3)
+                glass := rl.Color{48, 72, 78, 255}
+                if facade_style == 2 {
+                    if glass_tone == 0 {
+                        glass = {54, 94, 105, 255}
+                    } else if glass_tone == 1 {
+                        glass = {58, 99, 109, 255}
+                    } else {
+                        glass = {49, 87, 99, 255}
+                    }
+                } else if glass_tone == 0 {
+                    glass = {54, 78, 82, 255}
+                } else if glass_tone == 1 {
+                    glass = {60, 84, 86, 255}
+                }
+                reveal := formation_face_color(window, math.PI, 0)
+                world_box_rotated(
+                    {glass_x, y, glass_z},
+                    {window_width * .94, window_height * .92, .045},
+                    structure.rotation,
+                    reveal,
+                )
+                world_box_rotated(
+                    {glass_x, y, glass_z},
+                    {window_width * .84, window_height * .82, .035},
+                    structure.rotation,
+                    glass,
+                )
+                if (structure.seed + u32(column)) % 4 == 0 {
+                    curtain := facade_style == 2 ? rl.Color{205, 197, 170, 255} : rl.Color{190, 169, 145, 255}
+                    for curtain_side in -1 ..= 1 {
+                        if curtain_side == 0 do continue
+                        curtain_x, curtain_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x + f32(curtain_side) * window_width * .31,
+                            local_z + .095,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {curtain_x, y, curtain_z},
+                            {window_width * .10, window_height * .68, .025},
+                            structure.rotation,
+                            curtain,
+                        )
+                    }
+                }
+                mullion := facade_style == 2 ? rl.Color{183, 192, 174, 255} : rl.Color{177, 163, 137, 255}
+                world_box_rotated(
+                    {glass_x, y, glass_z},
+                    {.065, window_height * .82, .055},
+                    structure.rotation,
+                    mullion,
+                )
+                if structure.height < 15 && structure.seed % 3 == 1 {
+                    for shop_division in -1 ..= 1 {
+                        if shop_division == 0 do continue
+                        division_x, division_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x + f32(shop_division) * window_width * .25,
+                            local_z + .145,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {division_x, y, division_z},
+                            {.045, window_height * .82, .045},
+                            structure.rotation,
+                            mullion,
+                        )
+                    }
+                }
+                sill_x, sill_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    x,
+                    local_z + .18,
+                    structure.rotation,
+                )
+                sill := facade_style == 2 ? rl.Color{166, 171, 151, 255} : rl.Color{190, 166, 128, 255}
+                world_box_rotated(
+                    {sill_x, y - window_height * .5 - .11, sill_z},
+                    {window_width + .38, .10, .30},
+                    structure.rotation,
+                    sill,
+                )
+                if structure.height < 15 && structure.seed % 5 == 4 {
+                    apron_x, apron_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        local_z + .17,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {apron_x, y - window_height * .34, apron_z},
+                        {window_width * .88, window_height * .24, .08},
+                        structure.rotation,
+                        facade_style == 2 ? rl.Color{92, 119, 118, 255} : rl.Color{142, 103, 75, 255},
+                    )
+                }
+                world_box_rotated(
+                    {glass_x, y + window_height * .08, glass_z},
+                    {window_width * .84, .055, .055},
+                    structure.rotation,
+                    mullion,
+                )
+            }
             if !landmark && (facade_style == 0 || facade_style == 1) {
                 trim := facade_style == 1 ? rl.Color{205, 190, 157, 255} : rl.Color{190, 166, 128, 255}
                 trim_width := window_width + .40
@@ -2328,6 +3764,8 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
                     {178, 111, 73, 255},
                 )
                 for sprig in 0 ..< 3 {
+                    sprig_height := row == 0 ? f32(.28) : window_height * .62
+                    sprig_y := row == 0 ? y - window_height * .5 + .18 : y - window_height * .28
                     sprig_x, sprig_z := world_rotate_xz(
                         structure.center_x,
                         structure.center_z,
@@ -2336,8 +3774,8 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
                         structure.rotation,
                     )
                     world_box_rotated(
-                        {sprig_x, y - window_height * .28, sprig_z},
-                        {.055, window_height * .62, .08},
+                        {sprig_x, sprig_y, sprig_z},
+                        {row == 0 ? f32(.20) : f32(.055), sprig_height, row == 0 ? f32(.14) : f32(.08)},
                         structure.rotation,
                         sprig == 1 ? rl.Color{87, 132, 74, 255} : rl.Color{113, 151, 78, 255},
                     )
@@ -2363,30 +3801,32 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
                     guard_z,
                     structure.rotation,
                 )
-                world_box_rotated(
-                    {guard_x, y - window_height * .5 + guard_center_above_sill, guard_world_z},
-                    {guard_width, guard_height, .08},
-                    structure.rotation,
-                    guard_color,
-                )
-                for post in -2 ..= 2 {
-                    post_x, post_z := world_rotate_xz(
-                        structure.center_x,
-                        structure.center_z,
-                        x + f32(post) * post_center_span * .25,
-                        guard_z,
-                        structure.rotation,
-                    )
+                if row > 0 {
                     world_box_rotated(
-                        {post_x, y - window_height * .5 + post_center_above_sill, post_z},
-                        {post_width, post_height, .07},
+                        {guard_x, y - window_height * .5 + guard_center_above_sill, guard_world_z},
+                        {guard_width, guard_height, .08},
                         structure.rotation,
                         guard_color,
                     )
+                    for post in -2 ..= 2 {
+                        post_x, post_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x + f32(post) * post_center_span * .25,
+                            guard_z,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {post_x, y - window_height * .5 + post_center_above_sill, post_z},
+                            {post_width, post_height, .07},
+                            structure.rotation,
+                            guard_color,
+                        )
+                    }
                 }
             }
             if !landmark {
-                if facade_style == 1 {
+                if facade_style == 1 && row > 0 {
                     // A shallow balcony is a small silhouette break that reads
                     // clearly from the wide editor camera without needing a
                     // separate mesh asset.
@@ -2469,7 +3909,7 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
                         shutter,
                     )
                 } else {
-                    if facade_style == 0 && row % 2 == 0 {
+                    if facade_style == 0 && row > 0 && row % 2 == 0 {
                         // Alternating wrought-iron balconies give the warmer
                         // stucco façades a lived-in 1940s Mediterranean rhythm.
                         balcony_width := window_width + 1.20
@@ -2564,12 +4004,46 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
                                 structure.rotation,
                                 shutter,
                             )
+                            hinge_x, hinge_z := world_rotate_xz(sx, sz, 0, .17, structure.rotation)
+                            for hinge in -1 ..= 1 {
+                                if hinge == 0 do continue
+                                world_box_rotated(
+                                    {hinge_x, y + f32(hinge) * window_height * .28, hinge_z},
+                                    {shutter_width * .72, .055, .06},
+                                    structure.rotation,
+                                    {70, 65, 59, 255},
+                                )
+                            }
+                            holdback_x, holdback_z := world_rotate_xz(
+                                sx,
+                                sz,
+                                f32(side) * shutter_width * .34,
+                                .19,
+                                structure.rotation,
+                            )
+                            world_box_rotated(
+                                {holdback_x, y - window_height * .58, holdback_z},
+                                {.10, .18, .07},
+                                structure.rotation,
+                                {70, 65, 59, 255},
+                            )
+                            if row == 0 && structure.seed % 5 == 0 {
+                                world_box_rotated(
+                                    {hinge_x, y, hinge_z},
+                                    {shutter_width + .04, .12, .07},
+                                    structure.rotation,
+                                    {203, 174, 119, 255},
+                                )
+                            }
                         }
                     }
                 }
             }
         }
     }
+    face_trim :=
+        facade_style == 2 ? rl.Color{166, 171, 151, 255} : (facade_style == 1 ? rl.Color{205, 190, 157, 255} : rl.Color{190, 166, 128, 255})
+    world_architecture_face_openings(structure, opening_layout, window, face_trim)
     // Climbing foliage is authored exclusively through the density brush;
     // keep the legacy always-on planter vine disabled so it cannot overlap
     // the simulated growth with a second, unrelated stem.
@@ -2709,23 +4183,13 @@ world_architecture_mass :: proc(structure: terrain.Structure, has_entrance: bool
             }
         }
     }
-    side_window_width := clamp(structure.depth * .14, f32(1.6), f32(2.6))
-    for row in 0 ..< rows {
-        y := structure.base_y + architecture.facade_window_row_y(structure.height, row)
-        side_z := row % 2 == 0 ? -structure.depth * .16 : structure.depth * .16
-        for side in -1 ..= 1 {
-            if side == 0 do continue
-            side_x := f32(side) * (structure.width * .5 + .14)
-            wx, wz := world_rotate_xz(structure.center_x, structure.center_z, side_x, side_z, structure.rotation)
-            world_box_rotated({wx, y, wz}, {.22, window_height, side_window_width}, structure.rotation, window)
-        }
-    }
 }
 
-world_architecture :: proc(structure: terrain.Structure) {
+world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Project) {
     footprint := architecture.architecture_footprint(structure)
     if footprint.count <= 1 {
-        world_architecture_mass(structure)
+        layout := architecture.architecture_opening_layout(structure, 0, 0)
+        world_architecture_mass(structure, project, true, &layout)
         return
     }
     frontage_index := architecture.architecture_frontage_mass_index(structure)
@@ -2737,7 +4201,8 @@ world_architecture :: proc(structure: terrain.Structure) {
         child.height = max(terrain.BASE_CELL_SIZE, structure.height * mass.height_scale)
         // Keep palette identity while decoupling repeated openings and tiles.
         child.seed = structure.seed + u32(mass_index * 747796405)
-        world_architecture_mass(child, mass_index == frontage_index)
+        layout := architecture.architecture_opening_layout(structure, mass_index, frontage_index)
+        world_architecture_mass(child, project, mass_index == frontage_index, &layout)
     }
 }
 
@@ -2758,6 +4223,20 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
             .13,
             preview ? rl.Color{176, 161, 128, 150} : rl.Color{151, 137, 110, 255},
         )
+    }
+}
+
+world_architecture_lamps :: proc(editor: ^Editor, plan: ^architecture.City_Plan) {
+    if editor == nil || plan == nil do return
+    for lamp in plan.lamps[:plan.lamp_count] {
+        base_y := terrain.sample_height(&editor.project, 0, lamp.x, lamp.z)
+        metal := rl.Color{48, 54, 53, 255}
+        glass := rl.Color{235, 190, 102, 255}
+        world_box_rotated({lamp.x, base_y + .10, lamp.z}, {.48, .20, .48}, lamp.yaw, metal)
+        world_box_rotated({lamp.x, base_y + 1.70, lamp.z}, {.14, 3.20, .14}, lamp.yaw, metal)
+        world_box_rotated({lamp.x, base_y + 3.36, lamp.z}, {.58, .14, .58}, lamp.yaw, metal)
+        world_box_rotated({lamp.x, base_y + 3.62, lamp.z}, {.42, .42, .42}, lamp.yaw, glass)
+        world_box_rotated({lamp.x, base_y + 3.87, lamp.z}, {.54, .10, .54}, lamp.yaw, metal)
     }
 }
 
@@ -2828,6 +4307,9 @@ world_radial_formation :: proc(
     segments := 12
     color := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     vertices: [4][12]third_person.Vec3
+    normals: [4][12]third_person.Vec3
+    colors: [4][12]rl.Color
+    color_phase := f32(structure.seed & 0xffff) / 65535 * math.TAU
     for layer in 0 ..< 4 {
         for segment in 0 ..< segments {
             angle := f32(segment) * math.PI * 2 / f32(segments)
@@ -2841,36 +4323,422 @@ world_radial_formation :: proc(
                 local_z,
                 structure.rotation,
             )
-            vertices[layer][segment] = {world_x, structure.base_y + structure.height * heights[layer], world_z}
+            vertices[layer][segment] = {
+                x = world_x,
+                y = structure.base_y + structure.height * heights[layer],
+                z = world_z,
+            }
+            previous_layer := max(layer - 1, 0)
+            next_layer := min(layer + 1, 3)
+            height_delta := max(heights[next_layer] - heights[previous_layer], f32(.001))
+            radius_delta := radii[next_layer] - radii[previous_layer]
+            average_radius := (structure.width + structure.depth * z_scale) * .25
+            slope := radius_delta * average_radius / max(height_delta * structure.height, f32(.001))
+            local_normal := vec_normalize(
+                {math.cos(angle), clamp(-slope, f32(.04), f32(2.5)), math.sin(angle) / max(z_scale, f32(.05))},
+            )
+            normal_x, normal_z := world_rotate_xz(0, 0, local_normal.x, local_normal.z, structure.rotation)
+            normals[layer][segment] = {normal_x, local_normal.y, normal_z}
+            // Low-frequency color waves wrap continuously around the shared
+            // profile vertices. Warm mineral staining, cool grey variation,
+            // and a slight sun-bleached crest remain smooth across triangles.
+            warm := math.sin(angle + color_phase) * .5 + math.sin(angle * 2 - color_phase * .7) * .22
+            cool := math.cos(angle * 1.0 - color_phase * 1.3) * .38
+            height_lift := f32(layer) / 3 * 5
+            brightness := math.sin(angle * 2 + color_phase * .4) * 4 + height_lift
+            colors[layer][segment] = {
+                r = u8(clamp(f32(color.r) + brightness + warm * 11, 0, 255)),
+                g = u8(clamp(f32(color.g) + brightness + warm * 5 + cool * 2, 0, 255)),
+                b = u8(clamp(f32(color.b) + brightness - warm * 5 + cool * 9, 0, 255)),
+                a = color.a,
+            }
         }
     }
     for layer in 0 ..< 3 {
         for segment in 0 ..< segments {
             next := (segment + 1) % segments
-            angle := (f32(segment) + .5) * math.PI * 2 / f32(segments)
-            face_color := formation_face_color(color, angle, layer)
-            world_triangle(
+            world_triangle_smooth_lit(
                 vertices[layer][segment],
                 vertices[layer + 1][segment],
                 vertices[layer + 1][next],
-                face_color,
+                normals[layer][segment],
+                normals[layer + 1][segment],
+                normals[layer + 1][next],
+                colors[layer][segment],
+                colors[layer + 1][segment],
+                colors[layer + 1][next],
+                .94,
             )
-            world_triangle(vertices[layer][segment], vertices[layer + 1][next], vertices[layer][next], face_color)
+            world_triangle_smooth_lit(
+                vertices[layer][segment],
+                vertices[layer + 1][next],
+                vertices[layer][next],
+                normals[layer][segment],
+                normals[layer + 1][next],
+                normals[layer][next],
+                colors[layer][segment],
+                colors[layer + 1][next],
+                colors[layer][next],
+                .94,
+            )
         }
     }
-    top := third_person.Vec3{structure.center_x, structure.base_y + structure.height * cap_height, structure.center_z}
+    top := third_person.Vec3 {
+        x = structure.center_x,
+        y = structure.base_y + structure.height * cap_height,
+        z = structure.center_z,
+    }
     for segment in 0 ..< segments {
         next := (segment + 1) % segments
-        world_triangle(
+        world_triangle_smooth_lit(
             vertices[3][segment],
             top,
             vertices[3][next],
-            formation_face_color(color, f32(segment) * math.PI * 2 / f32(segments), 3),
+            normals[3][segment],
+            {0, 1, 0},
+            normals[3][next],
+            colors[3][segment],
+            {
+                r = u8(clamp(f32(color.r) + 7, 0, 255)),
+                g = u8(clamp(f32(color.g) + 6, 0, 255)),
+                b = u8(clamp(f32(color.b) + 4, 0, 255)),
+                a = color.a,
+            },
+            colors[3][next],
+            .94,
         )
     }
 }
 
-world_formation :: proc(structure: terrain.Structure) {
+SMALL_ROCK_VARIATION_COUNT :: 8
+SMALL_ROCK_CANDIDATE_COUNT :: 100
+SMALL_ROCK_SIDE_CAPACITY :: 8
+
+Small_Rock_Template :: struct {
+    side_count:                       int,
+    footprint_x, footprint_z:         f32,
+    height_scale:                     f32,
+    bottom_radius:                    [SMALL_ROCK_SIDE_CAPACITY]f32,
+    shoulder_radius, shoulder_height: [SMALL_ROCK_SIDE_CAPACITY]f32,
+    cap_mode:                         int,
+    cap_scale, cap_height:            f32,
+    cap_offset_x, cap_offset_z:       f32,
+    ridge_angle, ridge_length:        f32,
+    interest:                         f32,
+}
+
+small_rock_templates: [SMALL_ROCK_VARIATION_COUNT]Small_Rock_Template
+small_rock_templates_ready: bool
+
+small_rock_template_random :: proc(input: u32) -> f32 {
+    value := input
+    value = (value ~ (value >> 16)) * 0x7feb352d
+    value = (value ~ (value >> 15)) * 0x846ca68b
+    value = value ~ (value >> 16)
+    return f32(value & 0x00ff_ffff) / f32(0x0100_0000)
+}
+
+small_rock_template_distance :: proc(a, b: ^Small_Rock_Template) -> f32 {
+    if a == nil || b == nil do return 0
+    distance := abs(a.footprint_x - b.footprint_x) + abs(a.footprint_z - b.footprint_z)
+    distance += abs(a.height_scale - b.height_scale) * .8
+    distance += a.cap_mode != b.cap_mode ? f32(.9) : f32(0)
+    distance += f32(abs(a.side_count - b.side_count)) * .12
+    sample_count := min(a.side_count, b.side_count)
+    for side in 0 ..< sample_count {
+        distance += abs(a.bottom_radius[side] - b.bottom_radius[side]) * .12
+        distance += abs(a.shoulder_height[side] - b.shoulder_height[side]) * .10
+    }
+    return distance
+}
+
+world_small_rock_templates_init :: proc() {
+    if small_rock_templates_ready do return
+    candidates: [SMALL_ROCK_CANDIDATE_COUNT]Small_Rock_Template
+    for candidate_index in 0 ..< SMALL_ROCK_CANDIDATE_COUNT {
+        candidate := &candidates[candidate_index]
+        seed := u32(candidate_index + 1) * 0x9e3779b9
+        candidate.side_count = 5 + int(seed % 4)
+        candidate.footprint_x = .82 + small_rock_template_random(seed ~ 0x68bc21eb) * .34
+        candidate.footprint_z = .72 + small_rock_template_random(seed ~ 0x02e5be93) * .48
+        candidate.height_scale = .48 + small_rock_template_random(seed ~ 0x967a889b) * .46
+        candidate.cap_mode = int((seed >> 7) % 4)
+        candidate.cap_scale = .28 + small_rock_template_random(seed ~ 0x4f1bbcdc) * .44
+        candidate.cap_height = .66 + small_rock_template_random(seed ~ 0xb5297a4d) * .28
+        candidate.cap_offset_x = (small_rock_template_random(seed ~ 0x1b56c4e9) * 2 - 1) * .18
+        candidate.cap_offset_z = (small_rock_template_random(seed ~ 0xc2b2ae35) * 2 - 1) * .18
+        candidate.ridge_angle = small_rock_template_random(seed ~ 0x27d4eb2f) * math.TAU
+        candidate.ridge_length = .20 + small_rock_template_random(seed ~ 0x165667b1) * .42
+        radius_min, radius_max := f32(2), f32(-2)
+        height_min, height_max := f32(2), f32(-2)
+        for side in 0 ..< candidate.side_count {
+            side_seed := seed ~ u32(side + 1) * 0x85ebca6b
+            radius := .78 + small_rock_template_random(side_seed) * .43
+            shoulder := .56 + small_rock_template_random(side_seed ~ 0x9e3779b9) * .35
+            height := .50 + small_rock_template_random(side_seed ~ 0x7f4a7c15) * .31
+            candidate.bottom_radius[side] = radius
+            candidate.shoulder_radius[side] = shoulder
+            candidate.shoulder_height[side] = height
+            radius_min, radius_max = min(radius_min, radius), max(radius_max, radius)
+            height_min, height_max = min(height_min, height), max(height_max, height)
+        }
+        asymmetry := radius_max - radius_min + height_max - height_min
+        silhouette := abs(candidate.footprint_x - candidate.footprint_z)
+        crown_interest :=
+            candidate.cap_mode == 0 ? f32(.15) : candidate.cap_mode == 1 ? f32(.75) : candidate.cap_mode == 2 ? f32(.95) : f32(.60)
+        squat_bonus := 1 - abs(candidate.height_scale - .68)
+        candidate.interest = asymmetry * 1.8 + silhouette * .7 + crown_interest + squat_bonus * .35
+    }
+
+    selected: [SMALL_ROCK_CANDIDATE_COUNT]bool
+    for variation in 0 ..< SMALL_ROCK_VARIATION_COUNT {
+        best_index := -1
+        best_score := f32(-1)
+        for candidate_index in 0 ..< SMALL_ROCK_CANDIDATE_COUNT {
+            if selected[candidate_index] do continue
+            candidate := &candidates[candidate_index]
+            diversity := f32(1)
+            if variation > 0 {
+                diversity = f32(100)
+                for previous in 0 ..< variation {
+                    diversity = min(
+                        diversity,
+                        small_rock_template_distance(candidate, &small_rock_templates[previous]),
+                    )
+                }
+            }
+            score := candidate.interest + min(diversity, f32(2)) * .72
+            if score > best_score {
+                best_score = score
+                best_index = candidate_index
+            }
+        }
+        if best_index >= 0 {
+            selected[best_index] = true
+            small_rock_templates[variation] = candidates[best_index]
+        }
+    }
+    small_rock_templates_ready = true
+}
+
+world_small_voronoi_formation :: proc(structure: terrain.Structure) {
+    world_small_rock_templates_init()
+    template := &small_rock_templates[int(structure.seed % SMALL_ROCK_VARIATION_COUNT)]
+    base_color := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
+    radius_x := structure.width * .5 * template.footprint_x
+    radius_z := structure.depth * .5 * template.footprint_z
+    rock_height := structure.height * template.height_scale
+    bottom: [SMALL_ROCK_SIDE_CAPACITY]third_person.Vec3
+    shoulder: [SMALL_ROCK_SIDE_CAPACITY]third_person.Vec3
+    crest: [SMALL_ROCK_SIDE_CAPACITY]third_person.Vec3
+    side_normal: [SMALL_ROCK_SIDE_CAPACITY]third_person.Vec3
+    ridge_x, ridge_z := math.cos(template.ridge_angle), math.sin(template.ridge_angle)
+    for side in 0 ..< template.side_count {
+        angle := f32(side) * math.TAU / f32(template.side_count)
+        local_x := math.cos(angle) * radius_x * template.bottom_radius[side]
+        local_z := math.sin(angle) * radius_z * template.bottom_radius[side]
+        bottom_x, bottom_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            local_x,
+            local_z,
+            structure.rotation,
+        )
+        shoulder_x, shoulder_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            local_x * template.shoulder_radius[side],
+            local_z * template.shoulder_radius[side],
+            structure.rotation,
+        )
+        bottom[side] = {bottom_x, structure.base_y, bottom_z}
+        shoulder[side] = {shoulder_x, structure.base_y + rock_height * template.shoulder_height[side], shoulder_z}
+        if template.cap_mode == 1 || template.cap_mode == 2 {
+            projection := math.cos(angle - template.ridge_angle)
+            ridge_local_x := ridge_x * projection * radius_x * template.ridge_length
+            ridge_local_z := ridge_z * projection * radius_z * template.ridge_length
+            crest_x, crest_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                ridge_local_x + template.cap_offset_x * radius_x,
+                ridge_local_z + template.cap_offset_z * radius_z,
+                structure.rotation,
+            )
+            saddle := template.cap_mode == 2 ? abs(projection) * .12 - .05 : f32(0)
+            crest[side] = {crest_x, structure.base_y + rock_height * (template.cap_height + saddle), crest_z}
+        } else {
+            crest_x, crest_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                local_x * template.cap_scale + template.cap_offset_x * radius_x,
+                local_z * template.cap_scale + template.cap_offset_z * radius_z,
+                structure.rotation,
+            )
+            step := template.cap_mode == 3 && side & 1 == 0 ? f32(.09) : f32(0)
+            crest[side] = {crest_x, structure.base_y + rock_height * (template.cap_height + step), crest_z}
+        }
+        normal_x, normal_z := world_rotate_xz(
+            0,
+            0,
+            math.cos(angle) / max(radius_x, f32(.01)),
+            math.sin(angle) / max(radius_z, f32(.01)),
+            structure.rotation,
+        )
+        side_normal[side] = vec_normalize({normal_x, .22, normal_z})
+    }
+    tone := f32(int(structure.seed & 7) - 3) * 1.7
+    rock_color := rl.Color {
+        r = u8(clamp(f32(base_color.r) + tone, 0, 255)),
+        g = u8(clamp(f32(base_color.g) + tone * .65, 0, 255)),
+        b = u8(clamp(f32(base_color.b) - tone * .30, 0, 255)),
+        a = base_color.a,
+    }
+    for side in 0 ..< template.side_count {
+        next := (side + 1) % template.side_count
+        world_triangle_smooth_lit(
+            bottom[side],
+            shoulder[side],
+            shoulder[next],
+            side_normal[side],
+            side_normal[side],
+            side_normal[next],
+            rock_color,
+            rock_color,
+            rock_color,
+            .96,
+        )
+        world_triangle_smooth_lit(
+            bottom[side],
+            shoulder[next],
+            bottom[next],
+            side_normal[side],
+            side_normal[next],
+            side_normal[next],
+            rock_color,
+            rock_color,
+            rock_color,
+            .96,
+        )
+        world_triangle_smooth_lit(
+            shoulder[side],
+            crest[side],
+            crest[next],
+            {0, 1, 0},
+            {0, 1, 0},
+            {0, 1, 0},
+            rock_color,
+            rock_color,
+            rock_color,
+            .98,
+        )
+        world_triangle_smooth_lit(
+            shoulder[side],
+            crest[next],
+            shoulder[next],
+            {0, 1, 0},
+            {0, 1, 0},
+            {0, 1, 0},
+            rock_color,
+            rock_color,
+            rock_color,
+            .98,
+        )
+    }
+    if template.cap_mode == 0 || template.cap_mode == 3 {
+        cap_x, cap_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            template.cap_offset_x * radius_x,
+            template.cap_offset_z * radius_z,
+            structure.rotation,
+        )
+        cap := third_person.Vec3 {
+            cap_x,
+            structure.base_y + rock_height * (template.cap_height + (template.cap_mode == 3 ? f32(.04) : f32(0))),
+            cap_z,
+        }
+        for side in 0 ..< template.side_count {
+            next := (side + 1) % template.side_count
+            world_triangle_smooth_lit(
+                crest[side],
+                cap,
+                crest[next],
+                {0, 1, 0},
+                {0, 1, 0},
+                {0, 1, 0},
+                rock_color,
+                rock_color,
+                rock_color,
+                .98,
+            )
+        }
+    }
+}
+
+world_formation_sea_vegetation_band :: proc(structure: terrain.Structure, project: ^terrain.Project) {
+    if project == nil || structure.base_y > project.sea_level + .04 do return
+
+    footprint := max(structure.width, structure.depth)
+    band_height := clamp(footprint * .09, f32(.18), structure.height * .22)
+    if band_height <= .04 do return
+
+    // Larger sea stacks support a broader fringe, while the height cap keeps
+    // small, tall spires from turning green all the way up their faces.
+    color := rl.Color{76, 105, 73, 255}
+    if structure.kind == .Cliff {
+        band := structure
+        band.width += .035
+        band.depth += .035
+        band.height = band_height
+        band.color = {color.r, color.g, color.b, color.a}
+        world_cliff_formation(band)
+        return
+    }
+
+    segments := 16
+    lower: [16]third_person.Vec3
+    upper: [16]third_person.Vec3
+    fraction := clamp(band_height / max(structure.height, f32(.001)), 0, 1)
+    top_radius := f32(1)
+    switch structure.kind {
+    case .Rock:
+        top_radius = 1 - fraction * .25
+    case .Spire:
+        top_radius = 1 - fraction * .72
+    case .Mountain:
+        top_radius = 1 - fraction * .25
+    case .Ridge:
+        top_radius = 1 - fraction * .30
+    case .Box, .Cliff, .Foliage, .Architecture:
+        return
+    }
+    top_radius = max(top_radius, f32(.2))
+    for segment in 0 ..< segments {
+        angle := f32(segment) * math.PI * 2 / f32(segments)
+        lower_x, lower_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            math.cos(angle) * structure.width * .505,
+            math.sin(angle) * structure.depth * .505,
+            structure.rotation,
+        )
+        upper_x, upper_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            math.cos(angle) * structure.width * .5 * (top_radius + .01),
+            math.sin(angle) * structure.depth * .5 * (top_radius + .01),
+            structure.rotation,
+        )
+        lower[segment] = {lower_x, structure.base_y, lower_z}
+        upper[segment] = {upper_x, structure.base_y + band_height, upper_z}
+    }
+    for segment in 0 ..< segments {
+        next := (segment + 1) % segments
+        world_quad(lower[segment], upper[segment], upper[next], lower[next], color)
+    }
+}
+
+world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project = nil) {
     switch structure.kind {
     case .Box:
         world_box_rotated(
@@ -2880,7 +4748,11 @@ world_formation :: proc(structure: terrain.Structure) {
             rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]},
         )
     case .Rock:
-        world_radial_formation(structure, {1, .94, .62, .20}, {0, .24, .58, .88}, 1, .96)
+        if max(structure.width, structure.depth, structure.height) <= 5 {
+            world_small_voronoi_formation(structure)
+        } else {
+            world_radial_formation(structure, {1, .94, .62, .20}, {0, .24, .58, .88}, 1, .96)
+        }
     case .Spire:
         world_radial_formation(structure, {1, .62, .30, .07}, {0, .20, .46, .94}, 1, 1)
     case .Mountain:
@@ -2889,17 +4761,18 @@ world_formation :: proc(structure: terrain.Structure) {
         stone := structure
         stone.color = world_limestone_color(.Ridge)
         world_radial_formation(stone, {1, .92, .60, .14}, {0, .22, .50, .78}, .42, .90)
-        world_foliage_tufts(stone)
+        world_formation_foliage(stone)
     case .Cliff:
         stone := structure
         stone.color = world_limestone_color(.Cliff)
         world_cliff_formation(stone)
-        world_foliage_tufts(stone)
+        world_formation_foliage(stone)
     case .Foliage:
         world_foliage_formation(structure)
     case .Architecture:
-        world_architecture(structure)
+        world_architecture(structure, project)
     }
+    world_formation_sea_vegetation_band(structure, project)
 }
 
 world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_index: int) {
@@ -3281,36 +5154,144 @@ world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: in
     })
 }
 
+world_wildflower_card :: proc(center: third_person.Vec3, width, height: f32, tile: int) {
+    if len(world_renderer.wildflower_instances) >= WILDFLOWER_INSTANCE_CAPACITY do return
+    append(
+        &world_renderer.wildflower_instances,
+        Grass_Instance {
+            center = {center.x, center.y, center.z},
+            size   = {width, height},
+            tile   = u32(((tile % 16) + 16) % 16),
+            // Alpha above one marks a native-color wildflower atlas card.
+            color  = {1, 1, 1, 2},
+        },
+    )
+}
+
+world_wildflower_lab :: proc() {
+    // A self-contained meadow makes atlas, scale, density, and wind regressions
+    // visible without inheriting any gameplay-world state.
+    world_box({0, -.12, 0}, {32, .24, 24}, {62, 113, 72, 255})
+    SPACING :: f32(.52)
+    for grid_z in -20 ..= 20 {
+        for grid_x in -26 ..= 26 {
+            seed := grid_x * 73856093 + grid_z * 19349663
+            x := f32(grid_x) * SPACING + (wind_streak_hash(seed, 1) - .5) * SPACING * .72
+            z := f32(grid_z) * SPACING + (wind_streak_hash(seed, 2) - .5) * SPACING * .72
+            distance := f32(math.sqrt(f64(x * x + z * z)))
+            edge := clamp((11.5 - distance) / 2.5, 0, 1)
+            if wind_streak_hash(seed, 3) > edge do continue
+            height := .48 + wind_streak_hash(seed, 4) * .55
+            grass_color := color_lerp(
+                rl.Color{48, 113, 72, 255},
+                rl.Color{91, 137, 69, 255},
+                wind_streak_hash(seed, 5),
+            )
+            world_grass_card(
+                {x, height * .5, z},
+                height * (.58 + wind_streak_hash(seed, 6) * .34),
+                height,
+                abs(seed) % 16,
+                grass_color,
+            )
+            flower_chance := .16 + .34 * clamp(1 - distance / 12, 0, 1)
+            if wind_streak_hash(seed, 7) < flower_chance {
+                flower_height := .34 + wind_streak_hash(seed, 8) * .34
+                world_wildflower_card(
+                    {x, flower_height * .5 + .12, z},
+                    .22 + wind_streak_hash(seed, 9) * .18,
+                    flower_height,
+                    abs(seed / 11) % 16,
+                )
+            }
+        }
+    }
+}
+
 world_foliage_vertex_color :: proc(ring, variation: int) -> rl.Color {
-    palette := ((variation % 4) + 4) % 4
+    // Six broad Adriatic vegetation families: cypress, laurel, sunlit olive,
+    // myrtle, silver olive, and warm Mediterranean scrub. Keeping each family
+    // coherent from root pocket to crown gives the world postcard-scale color
+    // regions without turning individual trees into multicolored noise.
+    FOLIAGE_PALETTE_COUNT :: 6
+    palette := ((variation % FOLIAGE_PALETTE_COUNT) + FOLIAGE_PALETTE_COUNT) % FOLIAGE_PALETTE_COUNT
     switch ring {
     case 0:
-        colors := [4]rl.Color{{43, 72, 48, 255}, {48, 78, 44, 255}, {52, 82, 47, 255}, {45, 75, 52, 255}}
+        colors := [6]rl.Color {
+            {31, 65, 55, 255},
+            {47, 76, 42, 255},
+            {62, 76, 39, 255},
+            {40, 70, 55, 255},
+            {61, 75, 57, 255},
+            {52, 74, 42, 255},
+        }
         return colors[palette]
     case 1:
         // A deliberately cool, low-value shoulder remains visible in the
         // narrow gaps between overlapping lobes, acting as painted contact
         // shadow without another texture lookup or render pass.
-        colors := [4]rl.Color{{58, 92, 55, 255}, {64, 97, 47, 255}, {70, 101, 51, 255}, {60, 94, 60, 255}}
+        colors := [6]rl.Color {
+            {43, 84, 68, 255},
+            {62, 96, 48, 255},
+            {81, 99, 48, 255},
+            {52, 91, 69, 255},
+            {78, 94, 69, 255},
+            {70, 94, 49, 255},
+        }
         return colors[palette]
     case 2:
         // Upper crown rings stay within one restrained body-color family.
         // Broad value grouping belongs to the continuous foliage shader;
         // large per-ring jumps expose the triangulated construction as bright
         // ribbons when a tree is viewed near eye level.
-        colors := [4]rl.Color{{82, 121, 78, 255}, {100, 133, 64, 255}, {124, 150, 61, 255}, {88, 126, 85, 255}}
+        colors := [6]rl.Color {
+            {61, 111, 88, 255},
+            {94, 130, 61, 255},
+            {129, 145, 65, 255},
+            {75, 119, 88, 255},
+            {116, 128, 91, 255},
+            {111, 132, 64, 255},
+        }
         return colors[palette]
     case 3:
-        colors := [4]rl.Color{{88, 128, 82, 255}, {106, 139, 66, 255}, {133, 157, 64, 255}, {95, 133, 90, 255}}
+        colors := [6]rl.Color {
+            {66, 119, 94, 255},
+            {103, 140, 67, 255},
+            {143, 158, 71, 255},
+            {82, 128, 96, 255},
+            {126, 138, 99, 255},
+            {121, 143, 69, 255},
+        }
         return colors[palette]
     case 4:
-        colors := [4]rl.Color{{92, 132, 85, 255}, {111, 143, 68, 255}, {138, 162, 67, 255}, {99, 137, 94, 255}}
+        colors := [6]rl.Color {
+            {70, 124, 98, 255},
+            {108, 145, 70, 255},
+            {149, 164, 75, 255},
+            {87, 133, 101, 255},
+            {132, 143, 104, 255},
+            {127, 148, 73, 255},
+        }
         return colors[palette]
     case 5:
-        colors := [4]rl.Color{{96, 136, 88, 255}, {115, 146, 70, 255}, {142, 166, 70, 255}, {103, 141, 98, 255}}
+        colors := [6]rl.Color {
+            {73, 128, 101, 255},
+            {112, 149, 72, 255},
+            {154, 169, 79, 255},
+            {91, 137, 105, 255},
+            {137, 148, 109, 255},
+            {132, 153, 76, 255},
+        }
         return colors[palette]
     case 6:
-        colors := [4]rl.Color{{99, 139, 90, 255}, {118, 149, 72, 255}, {145, 169, 72, 255}, {106, 144, 101, 255}}
+        colors := [6]rl.Color {
+            {76, 132, 104, 255},
+            {116, 152, 75, 255},
+            {159, 173, 83, 255},
+            {95, 141, 109, 255},
+            {142, 153, 114, 255},
+            {137, 158, 80, 255},
+        }
         return colors[palette]
     }
     return {78, 112, 53, 255}
@@ -3835,6 +5816,13 @@ world_foliage_lobe :: proc(
     ring_count := PROFILE_RINGS
     if camera_distance < 260 do ring_count = 9
     if camera_distance < 145 do ring_count = MAX_RINGS
+    if is_hedge {
+        // Hedgerows can span an entire property edge. Keep their continuous
+        // silhouette cheap: the overlapping crown beats hide the coarser
+        // radial profile, so tree-quality tessellation buys little on screen.
+        segment_count = camera_distance < 145 ? 14 : 10
+        ring_count = camera_distance < 145 ? 6 : 5
+    }
     is_forest_lobe := !is_hedge && max(structure.width, structure.depth) >= 105 && structure.height >= 58
     if is_forest_lobe && camera_distance >= 260 {
         // Dense stands contain dozens of tree-scale crowns. Eight sides and
@@ -3943,12 +5931,13 @@ world_foliage_lobe :: proc(
     // cycling made close trees read as a patchwork of unrelated teal, olive,
     // and yellow polygons; lighting and brush marks already provide the
     // necessary internal variation.
-    color_variation := int(structure.seed % 4)
+    color_variation := int(structure.seed % 6)
     if is_hedge {
-        // Dense clipped laurel lives in the cool palette families. Excluding
-        // the hot yellow variant separates hedges from flowering bushes and
-        // keeps a long formation from becoming one fluorescent stripe.
-        color_variation = structure.seed % 2 == 0 ? 0 : 3
+        // Clipped hedges alternate between deep cypress/myrtle and laurel.
+        // They remain saturated enough to frame pale roads and stucco, while
+        // avoiding the silver and hot olive families used by open scrub.
+        hedge_palettes := [3]int{0, 3, 1}
+        color_variation = hedge_palettes[int(structure.seed % 3)]
     }
     if base_lift > 0 {
         // Mature woods need broad color regions, not a checkerboard of random
@@ -3961,14 +5950,16 @@ world_foliage_lobe :: proc(
         palette_field :=
             f32(math.sin(f64(structure.center_x * .0092 + structure.center_z * .0049))) +
             f32(math.sin(f64(structure.center_x * -.0037 + structure.center_z * .0081 + 1.7))) * .62
-        if palette_field < -.48 {
+        if palette_field < -.76 {
             color_variation = 0
-        } else if palette_field < .16 {
+        } else if palette_field < -.24 {
             color_variation = 3
-        } else if palette_field < .72 {
+        } else if palette_field < .28 {
+            color_variation = 4
+        } else if palette_field < .78 {
             color_variation = 1
         } else {
-            color_variation = 1
+            color_variation = 2
         }
     }
 
@@ -4334,9 +6325,12 @@ world_foliage_lobe :: proc(
     }
 }
 
-world_foliage_formation :: proc(structure: terrain.Structure) {
-    width := max(structure.width, terrain.BASE_CELL_SIZE)
-    depth := max(structure.depth, terrain.BASE_CELL_SIZE)
+world_foliage_formation :: proc(structure: terrain.Structure, minimum_footprint := terrain.BASE_CELL_SIZE) {
+    // Authored foliage retains the tool's one-cell minimum. Derived foliage,
+    // such as scrub placed on a ridge or cliff, can opt into its exact
+    // footprint while still using this same crown generator.
+    width := max(structure.width, minimum_footprint)
+    depth := max(structure.depth, minimum_footprint)
     wide, narrow := max(width, depth), min(width, depth)
     aspect := wide / max(narrow, f32(.01))
     is_forest := aspect < 1.8 && wide >= 105 && structure.height >= 58
@@ -4511,7 +6505,7 @@ world_foliage_formation :: proc(structure: terrain.Structure) {
         // Long gestures become hedges. Shorter, more numerous crowns overlap
         // into a continuous mass while exposing a readable scalloped rhythm;
         // the earlier four very long lobes merged into smooth sausages.
-        lobe_count := clamp(int(wide / max(narrow * 1.15, f32(1))) + 3, 4, 8)
+        lobe_count := clamp(int(wide / max(narrow * 1.6, f32(1))) + 2, 3, 6)
         // A low recessed binder closes the dark gaps between crown beats. Most
         // of it remains concealed by the scallops, preserving one continuous
         // hedge gesture without returning to a single exposed sausage.
@@ -4696,7 +6690,7 @@ world_formation_top_fraction :: proc(structure: terrain.Structure, local_x, loca
     return .78 + (.14 - radius) / .14 * .12
 }
 
-world_foliage_tufts :: proc(structure: terrain.Structure) {
+world_formation_foliage :: proc(structure: terrain.Structure) {
     tuft_count := clamp(int(structure.width / 14), 4, 20)
     for tuft in 0 ..< tuft_count {
         fraction := (f32(tuft) + .5) / f32(tuft_count)
@@ -4707,147 +6701,21 @@ world_foliage_tufts :: proc(structure: terrain.Structure) {
         bush_width := clamp(structure.depth * .50, 1.8, 10.0)
         bush_depth := clamp(structure.depth * .38, 1.3, 7.0)
         bush_height := clamp(structure.height * (.22 + f32(tuft % 3) * .035), 2.5, 10.0)
-        // Cliff and ridge tufts now share the canopy palette, foliage normals,
-        // and painterly lighting so a rocky shoulder reads with the same
-        // rounded, warm-crowned Ghibli bushes as the lowland crowns. The vertex
-        // count is unchanged from the former flat mound: six-sided shoulder and
-        // crown rings plus a cap and one taller blade.
-        variation := int((structure.seed + u32(tuft)) % 4)
-        bottom: [6]third_person.Vec3
-        top: [6]third_person.Vec3
-        bottom_normal: [6]third_person.Vec3
-        top_normal: [6]third_person.Vec3
-        clump: [6]f32
-        for segment in 0 ..< 6 {
-            angle := f32(segment) * math.PI * 2 / 6
-            // One rounded lobe wave per tuft carves the shoulder into a few
-            // soft bunches and drives the same crevice shading as the crowns.
-            lobe_wave := f32(math.sin(f64(f32(structure.seed) * .017 + f32(tuft) * 1.9 + angle * 2.0)))
-            clump[segment] = lobe_wave
-            jitter_scale := 1 + lobe_wave * .16
-            local_bx := local_x + math.cos(angle) * bush_width * jitter_scale
-            local_bz := local_z + math.sin(angle) * bush_depth * jitter_scale
-            world_bx, world_bz := world_rotate_xz(
-                structure.center_x,
-                structure.center_z,
-                local_bx,
-                local_bz,
-                structure.rotation,
-            )
-            bottom[segment] = {world_bx, base_y, world_bz}
-            // Keep the crown ring broad and let the crest lift it so the mound
-            // domes into a rounded bush instead of tapering toward a cone.
-            top_scale := .70 + lobe_wave * .06
-            world_tx, world_tz := world_rotate_xz(
-                structure.center_x,
-                structure.center_z,
-                local_x + math.cos(angle) * bush_width * top_scale,
-                local_z + math.sin(angle) * bush_depth * top_scale,
-                structure.rotation,
-            )
-            top[segment] = {world_tx, base_y + bush_height * (.60 + lobe_wave * .06), world_tz}
-            nx, nz := math.cos(angle), math.sin(angle)
-            // A near-horizontal shoulder normal keeps the base anchored (the
-            // canopy wind weight rides normal.y), while the crown ring faces up.
-            bottom_normal[segment] = linalg.normalize0(third_person.Vec3{nx, .06, nz})
-            top_normal[segment] = linalg.normalize0(third_person.Vec3{nx * .62, 1.0, nz * .62})
-        }
-        for segment in 0 ..< 6 {
-            next := (segment + 1) % 6
-            lower_here := world_foliage_clump_color(1, variation, clump[segment])
-            lower_next := world_foliage_clump_color(1, variation, clump[next])
-            upper_here := world_foliage_clump_color(4, variation, clump[segment])
-            upper_next := world_foliage_clump_color(4, variation, clump[next])
-            world_triangle_foliage(
-                bottom[segment],
-                bottom[next],
-                top[next],
-                lower_here,
-                lower_next,
-                upper_next,
-                bottom_normal[segment],
-                bottom_normal[next],
-                top_normal[next],
-            )
-            world_triangle_foliage(
-                bottom[segment],
-                top[next],
-                top[segment],
-                lower_here,
-                upper_next,
-                upper_here,
-                bottom_normal[segment],
-                top_normal[next],
-                top_normal[segment],
-            )
-        }
-        bush_cap := third_person.Vec3{0, base_y + bush_height, 0}
-        bush_cap.x, bush_cap.z = world_rotate_xz(
-            structure.center_x,
-            structure.center_z,
-            local_x,
-            local_z,
-            structure.rotation,
-        )
-        cap_color := world_foliage_vertex_color(6, variation)
-        for segment in 0 ..< 6 {
-            next := (segment + 1) % 6
-            world_triangle_foliage(
-                top[segment],
-                bush_cap,
-                top[next],
-                world_foliage_clump_color(5, variation, clump[segment]),
-                cap_color,
-                world_foliage_clump_color(5, variation, clump[next]),
-                top_normal[segment],
-                {0, 1, 0},
-                top_normal[next],
-            )
-        }
-
-        // A few taller blades break up the mound silhouette and keep the foliage
-        // readable when the formation is viewed from far away.
-        blade_width := clamp(structure.depth * .18, .45, 2.6)
-        blade_height := clamp(structure.height * (.16 + f32(tuft % 3) * .035), 1.5, 6.5)
-        left_x, left_z := world_rotate_xz(
-            structure.center_x,
-            structure.center_z,
-            local_x - blade_width,
-            local_z,
-            structure.rotation,
-        )
-        right_x, right_z := world_rotate_xz(
-            structure.center_x,
-            structure.center_z,
-            local_x + blade_width,
-            local_z,
-            structure.rotation,
-        )
-        tip_x, tip_z := world_rotate_xz(
-            structure.center_x,
-            structure.center_z,
-            local_x + jitter * blade_width * .5,
-            local_z,
-            structure.rotation,
-        )
-        base_left := third_person.Vec3{left_x, base_y, left_z}
-        base_right := third_person.Vec3{right_x, base_y, right_z}
-        tip := third_person.Vec3{tip_x, base_y + blade_height, tip_z}
-        blade_base := world_foliage_vertex_color(2, variation)
-        blade_tip := world_foliage_vertex_color(5, variation)
-        blade_base_normal := linalg.normalize0(third_person.Vec3{0, .25, -1})
-        blade_front_normal := linalg.normalize0(third_person.Vec3{0, .25, 1})
-        world_triangle_foliage(
-            base_left,
-            tip,
-            base_right,
-            blade_base,
-            blade_tip,
-            blade_base,
-            blade_base_normal,
-            {0, 1, 0},
-            blade_front_normal,
-        )
+        bush_x, bush_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
+        foliage := structure
+        foliage.kind = .Foliage
+        foliage.center_x = bush_x
+        foliage.center_z = bush_z
+        foliage.base_y = base_y
+        // The former tuft dimensions were radii. These compact footprints keep
+        // roughly the same occupied area after the shared generator adds its
+        // overlapping perimeter crowns.
+        foliage.width = bush_width * 1.55
+        foliage.depth = bush_depth * 1.55
+        foliage.height = bush_height
+        foliage.rotation += jitter * .18
+        foliage.seed += u32(tuft * 977 + 431)
+        world_foliage_formation(foliage, 0)
     }
 }
 
@@ -5055,7 +6923,10 @@ world_architecture_olive :: proc(x, z, base_y: f32, seed: u32) {
     crown := terrain.structure_make(x, z, 8.2, 6.8, base_y + 1.8, 7.2)
     crown.seed = seed + 71
     crown.color = {83, 108, 63, 255}
-    world_foliage_lobe(crown, 0, 0, crown.width, crown.depth, crown.height, 0, false, int(seed % 4), -.18, true)
+    // Architecture olives favor the two silvery families, distinguishing
+    // orchard planting from the greener spontaneous canopy.
+    olive_variation := seed % 2 == 0 ? 4 : 2
+    world_foliage_lobe(crown, 0, 0, crown.width, crown.depth, crown.height, 0, false, olive_variation, -.18, true)
     _ = trunk
 }
 
@@ -5308,123 +7179,48 @@ world_architecture_laundry_webbing :: proc(editor: ^Editor) {
     }
 }
 
-world_architecture_path_footprints :: proc(
-    editor: ^Editor,
-    allocator := context.temp_allocator,
-) -> [dynamic]Architecture_Path_Footprint {
-    paths := make([dynamic]Architecture_Path_Footprint, allocator)
-    if editor == nil || !editor.architecture_node_mode do return paths
-
-    min_x, max_x := f32(1e9), f32(-1e9)
-    min_z, max_z := f32(1e9), f32(-1e9)
-    buildings := 0
-    for structure in editor.project.structures[:editor.project.structure_count] {
-        if structure.kind != .Architecture || structure.height > 60 do continue
-        min_x = min(min_x, structure.center_x)
-        max_x = max(max_x, structure.center_x)
-        min_z = min(min_z, structure.center_z)
-        max_z = max(max_z, structure.center_z)
-        buildings += 1
-    }
-    if buildings < 4 || max_z <= min_z do return paths
-
-    center_x := (min_x + max_x) * .5
-    center_z := (min_z + max_z) * .5
-    lane_a := min_z + (max_z - min_z) / 3
-    lane_b := min_z + (max_z - min_z) * 2 / 3
-    road_span := max(max_x - min_x + 36, f32(160))
-    // These procedural town surfaces are overlays rather than authored road
-    // graph edges, so pavement_at cannot classify them. Mirror every broad
-    // street surface here to keep terrain grass below the visible paving.
-    street_lanes := [2]f32{lane_a, lane_b}
-    for lane_z in street_lanes {
-        append(&paths, Architecture_Path_Footprint {
-            center_x = center_x,
-            center_z = lane_z,
-            width    = road_span,
-            length   = 6.5,
-        })
-    }
-    append(&paths, Architecture_Path_Footprint {
-        center_x = center_x,
-        center_z = center_z,
-        width    = 28,
-        length   = 18,
-    })
-    approach_sign := editor.camera_pose.position.z >= center_z ? f32(1) : f32(-1)
-    edge_z := approach_sign > 0 ? max_z : min_z
-    append(&paths, Architecture_Path_Footprint {
-        center_x = center_x,
-        center_z = edge_z + approach_sign * 9,
-        width    = road_span,
-        length   = 18,
-    })
-    for structure in editor.project.structures[:editor.project.structure_count] {
-        if structure.kind != .Architecture || structure.height > 60 do continue
-        frontage := architecture.architecture_frontage_structure(structure)
-        door_x, door_z := world_rotate_xz(
-            frontage.center_x,
-            frontage.center_z,
-            0,
-            frontage.depth * .5 + .22,
-            frontage.rotation,
-        )
-        front_x := -math.sin(structure.rotation)
-        front_z := math.cos(structure.rotation)
-        target_lane := f32(1e9)
-        target_distance := f32(1e9)
-        lanes := [2]f32{lane_a, lane_b}
-        for candidate in lanes {
-            candidate_dx := center_x - door_x
-            candidate_dz := candidate - door_z
-            if candidate_dx * front_x + candidate_dz * front_z < 0 do continue
-            candidate_distance := candidate_dx * candidate_dx + candidate_dz * candidate_dz
-            if candidate_distance < target_distance {
-                target_lane = candidate
-                target_distance = candidate_distance
-            }
-        }
-        if target_distance >= 1e9 do continue
-        lane_direction := target_lane >= door_z ? f32(1) : f32(-1)
-        target_z := target_lane - lane_direction * 3.0
-        path_dx := center_x - door_x
-        path_dz := target_z - door_z
-        path_length := f32(math.sqrt(f64(path_dx * path_dx + path_dz * path_dz)))
-        if path_length <= 1.5 do continue
-        append(&paths, Architecture_Path_Footprint {
-            center_x = (door_x + center_x) * .5,
-            center_z = (door_z + target_z) * .5,
-            width    = 3.6,
-            length   = path_length,
-            rotation = math.atan2(path_dx, path_dz),
-        })
-    }
-    return paths
-}
-
-world_architecture_path_contains :: proc(path: Architecture_Path_Footprint, x, z: f32) -> bool {
-    dx, dz := x - path.center_x, z - path.center_z
-    cosine, sine := math.cos(path.rotation), math.sin(path.rotation)
-    local_x := dx * cosine + dz * sine
-    local_z := -dx * sine + dz * cosine
-    return math.abs(local_x) <= path.width * .5 && math.abs(local_z) <= path.length * .5
-}
-
 world_architecture_grass_footprints :: proc(
     editor: ^Editor,
     allocator := context.temp_allocator,
 ) -> [dynamic]Architecture_Grass_Footprint {
     footprints := make([dynamic]Architecture_Grass_Footprint, allocator)
-    if editor == nil || !editor.architecture_node_mode do return footprints
+    if editor == nil do return footprints
     for structure in editor.project.structures[:editor.project.structure_count] {
         if structure.kind != .Architecture || structure.height > 60 do continue
-        append(&footprints, Architecture_Grass_Footprint {
-            center_x   = structure.center_x,
-            center_z   = structure.center_z,
-            half_width = structure.width * .5,
-            half_depth = structure.depth * .5,
-            rotation   = structure.rotation,
-        })
+        footprint := architecture.architecture_footprint(structure)
+        for mass in footprint.masses[:footprint.count] {
+            center_x, center_z := architecture.architecture_mass_world(structure, mass)
+            append(
+                &footprints,
+                Architecture_Grass_Footprint {
+                    center_x = center_x,
+                    center_z = center_z,
+                    half_width = mass.width * .5,
+                    half_depth = mass.depth * .5,
+                    rotation = structure.rotation,
+                },
+            )
+        }
+    }
+    // The kiosks are procedural landmarks rather than authored Architecture
+    // structures, so register their pads and approaches explicitly.
+    kiosk_positions := [2]third_person.Vec3{editor.attendant_position, editor.gerta_position}
+    for kiosk in kiosk_positions {
+        append(
+            &footprints,
+            Architecture_Grass_Footprint {
+                center_x = kiosk.x,
+                center_z = kiosk.z + .35,
+                half_width = 2.1,
+                half_depth = 1.9,
+            },
+            Architecture_Grass_Footprint {
+                center_x = kiosk.x,
+                center_z = kiosk.z - 2.65,
+                half_width = .825,
+                half_depth = 1.5,
+            },
+        )
     }
     return footprints
 }
@@ -5438,6 +7234,7 @@ world_architecture_grass_height_scale :: proc(footprints: []Architecture_Grass_F
         local_z := math.abs(-dx * sine + dz * cosine)
         outside_x := max(local_x - footprint.half_width, f32(0))
         outside_z := max(local_z - footprint.half_depth, f32(0))
+        if outside_x == 0 && outside_z == 0 do return 0
         distance := f32(math.sqrt(f64(outside_x * outside_x + outside_z * outside_z)))
         // Read as intentionally maintained grass beside homes, blending back
         // to the wild field beyond the immediate building edge.
@@ -5449,7 +7246,7 @@ world_architecture_grass_height_scale :: proc(footprints: []Architecture_Grass_F
 }
 
 world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud_cover: f32) {
-    if editor == nil do return
+    if editor == nil || lab_scene_suppresses_procedural_circulation(editor) do return
     min_x, max_x := f32(1e9), f32(-1e9)
     min_z, max_z := f32(1e9), f32(-1e9)
     buildings := 0
@@ -5465,25 +7262,60 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     center_x := (min_x + max_x) * .5
     center_z := (min_z + max_z) * .5
     road_span := max(max_x - min_x + 36, 160)
+    plan := editor_circulation_plan(editor)
     road := rl.Color{117, 119, 110, 255}
     shoulder := rl.Color{177, 164, 135, 255}
-    for lane in 1 ..= 2 {
-        lane_z := min_z + (max_z - min_z) * f32(lane) / 3
-        world_land_surface_rotated(editor, center_x, lane_z, road_span, 5.5, 0, .12, road)
-        for side in -1 ..= 1 {
-            if side == 0 do continue
-            world_land_surface_rotated(editor, center_x, lane_z + f32(side) * 3.05, road_span, .35, 0, .15, shoulder)
+    path_color := rl.Color{194, 184, 157, 255}
+    for area in plan.areas[:plan.count] {
+        switch area.kind {
+        case .Street:
+            world_land_surface_rotated(editor, area.center_x, area.center_z, area.width, 5.5, area.rotation, .12, road)
+            for side in -1 ..= 1 {
+                if side == 0 do continue
+                offset_x := -math.sin(area.rotation) * f32(side) * 3.05
+                offset_z := math.cos(area.rotation) * f32(side) * 3.05
+                world_land_surface_rotated(
+                    editor,
+                    area.center_x + offset_x,
+                    area.center_z + offset_z,
+                    area.width,
+                    .35,
+                    area.rotation,
+                    .15,
+                    shoulder,
+                )
+            }
+        case .Plaza:
+            world_land_surface_rotated(
+                editor,
+                area.center_x,
+                area.center_z,
+                area.width,
+                area.length,
+                area.rotation,
+                .16,
+                {151, 144, 126, 255},
+            )
+        case .Path, .Forecourt:
+            world_land_surface_rotated(
+                editor,
+                area.center_x,
+                area.center_z,
+                area.width,
+                area.length,
+                area.rotation,
+                .20,
+                path_color,
+            )
         }
     }
-    world_land_surface_rotated(editor, center_x, center_z, 28, 18, 0, .16, {151, 144, 126, 255})
-    // Connect each frontage to the nearer lane so the generated streets read
-    // as a walkable town rather than two unrelated strips of pavement.
-    path_color := rl.Color{194, 184, 157, 255}
+
+    // Entrance decoration remains presentation-only, while the path beneath
+    // it now comes from the shared circulation plan above.
     for structure in editor.project.structures[:editor.project.structure_count] {
         if structure.kind != .Architecture || structure.height > 60 do continue
+        if structure.seed % 3 != 0 do continue
         frontage := architecture.architecture_frontage_structure(structure)
-        lane_a := min_z + (max_z - min_z) / 3
-        lane_b := min_z + (max_z - min_z) * 2 / 3
         door_x, door_z := world_rotate_xz(
             frontage.center_x,
             frontage.center_z,
@@ -5491,79 +7323,20 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
             frontage.depth * .5 + .22,
             frontage.rotation,
         )
-        front_x := -math.sin(structure.rotation)
-        front_z := math.cos(structure.rotation)
-        target_lane := f32(1e9)
-        target_distance := f32(1e9)
-        lanes := [2]f32{lane_a, lane_b}
-        for candidate in lanes {
-            candidate_dx := center_x - door_x
-            candidate_dz := candidate - door_z
-            // Only choose a lane in front of the actual entrance; a path to
-            // the opposite side would tunnel through the generated building.
-            if candidate_dx * front_x + candidate_dz * front_z < 0 do continue
-            candidate_distance := candidate_dx * candidate_dx + candidate_dz * candidate_dz
-            if candidate_distance < target_distance {
-                target_lane = candidate
-                target_distance = candidate_distance
-            }
-        }
-        if target_distance >= 1e9 do continue
-        lane_direction := target_lane >= door_z ? f32(1) : f32(-1)
-        target_z := target_lane - lane_direction * 3.0
-        path_dx := center_x - door_x
-        path_dz := target_z - door_z
-        path_length := f32(math.sqrt(f64(path_dx * path_dx + path_dz * path_dz)))
-        if path_length <= 1.5 do continue
-        path_center_x := (door_x + center_x) * .5
-        path_center_z := (door_z + target_z) * .5
-        world_land_surface_rotated(
-            editor,
-            path_center_x,
-            path_center_z,
-            3.6,
-            path_length,
-            math.atan2(path_dx, path_dz),
-            .20,
-            path_color,
-        )
-        // A few entrances get paired terracotta pots. They keep the lane
-        // human-scaled and add a quiet garden note without cluttering every
-        // procedural frontage.
-        if structure.seed % 3 == 0 {
-            for pot_side in -1 ..= 1 {
-                if pot_side == 0 do continue
-                pot_x, pot_z := world_rotate_xz(
-                    door_x,
-                    door_z,
-                    f32(pot_side) * frontage.width * .27,
-                    .88,
-                    frontage.rotation,
-                )
-                pot_y := terrain.sample_height(&editor.project, 0, pot_x, pot_z)
-                world_box_rotated({pot_x, pot_y + .22, pot_z}, {.32, .44, .32}, frontage.rotation, {169, 96, 61, 255})
-                world_box_rotated({pot_x, pot_y + .53, pot_z}, {.44, .18, .44}, frontage.rotation, {77, 111, 63, 255})
-            }
+        for pot_side in -1 ..= 1 {
+            if pot_side == 0 do continue
+            pot_x, pot_z := world_rotate_xz(
+                door_x,
+                door_z,
+                f32(pot_side) * frontage.width * .27,
+                .88,
+                frontage.rotation,
+            )
+            pot_y := terrain.sample_height(&editor.project, 0, pot_x, pot_z)
+            world_box_rotated({pot_x, pot_y + .22, pot_z}, {.32, .44, .32}, frontage.rotation, {169, 96, 61, 255})
+            world_box_rotated({pot_x, pot_y + .53, pot_z}, {.44, .18, .44}, frontage.rotation, {77, 111, 63, 255})
         }
     }
-    // Extend a shallow limestone forecourt from the camera-facing town edge.
-    // The sign is derived from the live pose so numeric building targets keep
-    // a readable lane even when their façade faces the opposite direction.
-    approach_sign := editor.camera_pose.position.z >= center_z ? f32(1) : f32(-1)
-    edge_z := approach_sign > 0 ? max_z : min_z
-    forecourt_depth := f32(18)
-    forecourt_z := edge_z + approach_sign * forecourt_depth * .5
-    world_land_surface_rotated(editor, center_x, forecourt_z, road_span, forecourt_depth, 0, .20, {194, 184, 157, 255})
-    world_land_surface_rotated(
-        editor,
-        center_x,
-        edge_z + approach_sign * 2.4,
-        road_span,
-        .38,
-        0,
-        .29,
-        {151, 132, 104, 255},
-    )
     world_architecture_laundry_webbing(editor)
     // Cypress accents mark the two lane intersections and give the graph town
     // a readable Mediterranean scale cue without changing terrain data.
@@ -5624,7 +7397,7 @@ world_structures :: proc(editor: ^Editor) {
         if structure.kind == .Foliage {
             world_foliage_formation_cached(structure, index)
         } else {
-            world_formation(structure)
+            world_formation(structure, &editor.project)
         }
         if index == editor.structure_selected && !editor.in_map && !editor.road_mode {
             world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
@@ -5637,12 +7410,13 @@ world_structures :: proc(editor: ^Editor) {
     }
     world_curve_preview(editor)
     world_architecture_alleys(editor, &editor.architecture_city_plan)
+    world_architecture_lamps(editor, &editor.architecture_city_plan)
     if editor.architecture_painting {
         world_architecture_alleys(editor, &editor.architecture_preview_plan, true)
         for candidate in editor.architecture_preview_plan.structures[:editor.architecture_preview_plan.count] {
             preview := candidate
             preview.color = {168, 239, 220, 210}
-            world_formation(preview)
+            world_formation(preview, &editor.project)
             world_structure_frame(preview, preview.base_y + .05, {190, 255, 229, 210})
         }
     }
@@ -7228,6 +9002,7 @@ world_aircraft :: proc(editor: ^Editor) {
             editor.flight_control.roll,
             editor.flight_control.yaw,
             editor.postale.propeller_turns,
+            editor.postale.gear_compression / POSTALE_PRESENTATION_SCALE,
         )
         for triangle in vehicles.mesh_triangles(&mesh) {
             if mesh.vertices[triangle.a].part == .Propeller_Blur do continue
@@ -7351,18 +9126,23 @@ world_showcase_aircraft_pilot :: proc(editor: ^Editor, position: flight.Vec3, ba
         position.y + basis.up.y * .55,
         position.z + basis.up.z * .55,
     }
-    world_mouse_model_parented(editor, {
-            position       = seat_position,
-            rotation       = rotation,
-            accessory      = editor.mouse_headgear,
-            fur            = editor.mouse_fur,
-            pattern        = editor.mouse_pattern,
-            scarf_enabled  = editor.mouse_scarf_enabled,
-            scarf_color    = editor.mouse_scarf_color,
-            grounded       = false,
-            hide_tail      = true,
+    world_mouse_model_parented(
+        editor,
+        {
+            position = seat_position,
+            rotation = rotation,
+            accessory = editor.mouse_headgear,
+            fur = editor.mouse_fur,
+            pattern = editor.mouse_pattern,
+            scarf_enabled = editor.mouse_scarf_enabled,
+            scarf_color = editor.mouse_scarf_color,
+            player_controlled = true,
+            grounded = false,
+            hide_tail = true,
             hide_hind_feet = true,
-        }, basis)
+        },
+        basis,
+    )
 }
 
 world_showcase_car_pilot :: proc(editor: ^Editor) {
@@ -7460,6 +9240,7 @@ world_car_pilot_model :: proc(editor: ^Editor, steering, acceleration: f32) {
             pattern            = editor.mouse_pattern,
             scarf_enabled      = editor.mouse_scarf_enabled,
             scarf_color        = editor.mouse_scarf_color,
+            player_controlled  = true,
             grounded           = false,
             hide_tail          = true,
             hide_hind_feet     = true,
@@ -7598,6 +9379,16 @@ player_animation_approach :: proc(current, target, rate, delta_seconds: f32) -> 
     maximum_delta := max(rate, f32(.1)) * delta_seconds
     if current < target do return min(current + maximum_delta, target)
     return max(current - maximum_delta, target)
+}
+
+// A semi-implicit damped spring gives the sprint pose mass: acceleration tips
+// the body forward and each bound loads the spine, then both settle without
+// being tied directly to a canned animation curve.
+player_animation_spring :: proc(value, velocity: ^f32, target, stiffness, damping, delta_seconds: f32) {
+    if value == nil || velocity == nil || delta_seconds <= 0 do return
+    acceleration := (target - value^) * max(stiffness, f32(1)) - velocity^ * max(damping, f32(0))
+    velocity^ += acceleration * delta_seconds
+    value^ += velocity^ * delta_seconds
 }
 
 Mouse_Gait_Weights :: struct {
@@ -7832,11 +9623,14 @@ world_mouse_skinned_hull :: proc(
         {bind_position = {0, ring_y[0], ring_z[0]}, groups = {{.Pelvis, 1}, {.Spine, 0}}, color = fur},
         skeleton,
     )
-    nose_center_local := mouse_skin_vertex({
+    nose_center_local := mouse_skin_vertex(
+        {
             bind_position = {0, ring_y[RINGS - 1], ring_z[RINGS - 1]},
-            groups        = {{.Head, 1}, {.Neck, 0}},
-            color         = fur_light,
-        }, skeleton)
+            groups = {{.Head, 1}, {.Neck, 0}},
+            color = fur_light,
+        },
+        skeleton,
+    )
     rear_x, rear_z := world_rotate_xz(origin.x, origin.z, rear_center_local.x, rear_center_local.z, rotation)
     nose_x, nose_z := world_rotate_xz(origin.x, origin.z, nose_center_local.x, nose_center_local.z, rotation)
     rear_center := third_person.Vec3{rear_x, origin.y + rear_center_local.y, rear_z}
@@ -7895,7 +9689,7 @@ world_mouse_ear :: proc(
         // The back cap faces away from the pink cup. Wind it outward so it
         // survives normal back-face culling and occludes the inner surfaces
         // when the far pinna is viewed from behind.
-        world_triangle(back_center, outer_back[segment], outer_back[next], back_color)
+        world_triangle(back_center, outer_back[next], outer_back[segment], back_color)
         world_quad(outer_back[segment], outer_back[next], outer_front[next], outer_front[segment], rim_color)
         world_quad(outer_front[segment], outer_front[next], inner_rim[next], inner_rim[segment], rim_color)
         world_triangle(cup_center, inner_rim[segment], inner_rim[next], inner_color)
@@ -7912,6 +9706,42 @@ player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
                 editor.player.velocity.z * editor.player.velocity.z,
             ),
         ),
+    )
+    speed_acceleration := clamp(
+        (horizontal_speed - editor.player_animation_previous_speed) / max(delta_seconds, f32(.001)),
+        -30,
+        30,
+    )
+    editor.player_animation_previous_speed = horizontal_speed
+    scurry_target :=
+        editor.player.running && editor.player.grounded && horizontal_speed > max(animation.walk_full_speed * .72, f32(.1)) ? f32(1) : f32(0)
+    if editor.player.boost_seconds > 0 && editor.player.grounded do scurry_target = 1
+    editor.player_scurry_weight = player_animation_approach(
+        editor.player_scurry_weight,
+        scurry_target,
+        animation.locomotion_blend_rate * .8,
+        delta_seconds,
+    )
+    scurry_lean_target :=
+        editor.player_scurry_weight *
+        (animation.scurry_lean_radians + speed_acceleration * animation.scurry_acceleration_lean)
+    compression_impulse := max(math.sin(editor.player_stride_phase), f32(0))
+    scurry_compression_target := editor.player_scurry_weight * compression_impulse * animation.scurry_compression
+    player_animation_spring(
+        &editor.player_scurry_lean,
+        &editor.player_scurry_lean_velocity,
+        scurry_lean_target,
+        animation.scurry_spring_stiffness,
+        animation.scurry_spring_damping,
+        delta_seconds,
+    )
+    player_animation_spring(
+        &editor.player_scurry_compression,
+        &editor.player_scurry_compression_velocity,
+        scurry_compression_target,
+        animation.scurry_spring_stiffness * 1.25,
+        animation.scurry_spring_damping,
+        delta_seconds,
     )
     gait_target := clamp(horizontal_speed / max(animation.walk_full_speed, f32(.1)), 0, 1)
     airborne_target := editor.player.grounded ? f32(0) : f32(1)
@@ -7974,8 +9804,9 @@ player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
 
 mouse_surface_height :: proc(editor: ^Editor, x, z: f32) -> f32 {
     height := terrain.sample_height(&editor.project, 0, x, z)
-    pavement := roads.pavement_at(&editor.project.road_graph, {x, height, z})
-    if pavement.on_surface do height = max(height + .12, pavement.height + .12)
+    plan := editor_circulation_plan(editor)
+    surface := circulation.surface_at(&editor.project.road_graph, plan, {x, height, z})
+    if surface.on_surface do height = max(height + .12, surface.height + .12)
     return height
 }
 
@@ -8034,8 +9865,10 @@ mouse_paw_cycle_blend :: proc(
 mouse_pin_player_paw :: proc(
     editor: ^Editor,
     paw_index: int,
+    socket: third_person.Vec3,
     desired: third_person.Vec3,
     planted: bool,
+    maximum_reach: f32,
 ) -> third_person.Vec3 {
     if editor == nil || paw_index < 0 || paw_index >= len(editor.player_paw_planted) do return desired
     if !planted {
@@ -8045,7 +9878,9 @@ mouse_pin_player_paw :: proc(
     cached := editor.player_paw_plant_positions[paw_index]
     dx, dz := desired.x - cached.x, desired.z - cached.z
     teleported := dx * dx + dz * dz > 4
-    if !editor.player_paw_planted[paw_index] || teleported {
+    reach_x, reach_y, reach_z := cached.x - socket.x, cached.y - socket.y, cached.z - socket.z
+    overextended := reach_x * reach_x + reach_y * reach_y + reach_z * reach_z > maximum_reach * maximum_reach * .9025
+    if !editor.player_paw_planted[paw_index] || teleported || overextended {
         editor.player_paw_plant_positions[paw_index] = desired
         editor.player_paw_planted[paw_index] = true
         return desired
@@ -8056,6 +9891,129 @@ mouse_pin_player_paw :: proc(
     return result
 }
 
+mouse_solve_two_bone_joint :: proc(
+    root, target, preferred_joint: third_person.Vec3,
+    root_length, tip_length: f32,
+) -> third_person.Vec3 {
+    delta := third_person.Vec3{target.x - root.x, target.y - root.y, target.z - root.z}
+    distance := f32(math.sqrt(f64(vec_dot(delta, delta))))
+    axis: third_person.Vec3
+    if distance <= .0001 {
+        preferred_axis := third_person.Vec3 {
+            preferred_joint.x - root.x,
+            preferred_joint.y - root.y,
+            preferred_joint.z - root.z,
+        }
+        axis = vec_normalize(preferred_axis)
+        if vec_dot(axis, axis) <= .0001 do axis = {
+            z = 1,
+        }
+        distance = math.abs(root_length - tip_length) + .0001
+    } else {
+        axis = {delta.x / distance, delta.y / distance, delta.z / distance}
+    }
+    solved_distance := clamp(distance, math.abs(root_length - tip_length) + .0001, root_length + tip_length - .0001)
+    along :=
+        (solved_distance * solved_distance + root_length * root_length - tip_length * tip_length) /
+        (2 * solved_distance)
+    height := f32(math.sqrt(f64(max(root_length * root_length - along * along, f32(0)))))
+    preferred_delta := third_person.Vec3 {
+        preferred_joint.x - root.x,
+        preferred_joint.y - root.y,
+        preferred_joint.z - root.z,
+    }
+    projection := vec_dot(preferred_delta, axis)
+    pole := third_person.Vec3 {
+        preferred_delta.x - axis.x * projection,
+        preferred_delta.y - axis.y * projection,
+        preferred_delta.z - axis.z * projection,
+    }
+    if vec_dot(pole, pole) <= .0001 {
+        pole = vec_cross(axis, {z = 1})
+        if vec_dot(pole, pole) <= .0001 do pole = vec_cross(axis, {1})
+    }
+    pole = vec_normalize(pole)
+    return {
+        root.x + axis.x * along + pole.x * height,
+        root.y + axis.y * along + pole.y * height,
+        root.z + axis.z * along + pole.z * height,
+    }
+}
+
+mouse_clamp_endpoint_reach :: proc(
+    root: third_person.Vec3,
+    target: ^third_person.Vec3,
+    minimum_reach, maximum_reach: f32,
+) {
+    if target == nil do return
+    delta := third_person.Vec3{target.x - root.x, target.y - root.y, target.z - root.z}
+    distance := f32(math.sqrt(f64(vec_dot(delta, delta))))
+    if distance <= .0001 {
+        if minimum_reach > .0001 {
+            target^ = {root.x, root.y, root.z + minimum_reach}
+        }
+        return
+    }
+    clamped_distance := clamp(distance, minimum_reach, maximum_reach)
+    if math.abs(clamped_distance - distance) <= .0001 do return
+    scale := clamped_distance / distance
+    target^ = {root.x + delta.x * scale, root.y + delta.y * scale, root.z + delta.z * scale}
+}
+
+mouse_clamp_ground_contact_reach :: proc(root: third_person.Vec3, target: ^third_person.Vec3, maximum_reach: f32) {
+    if target == nil do return
+    dy := target.y - root.y
+    if math.abs(dy) >= maximum_reach {
+        // Keep the terrain height authoritative even when the vertical span
+        // alone exhausts the chain.
+        target.x = root.x
+        target.z = root.z
+        return
+    }
+    dx, dz := target.x - root.x, target.z - root.z
+    horizontal_distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    horizontal_limit := f32(math.sqrt(f64(max(maximum_reach * maximum_reach - dy * dy, f32(0)))))
+    if horizontal_distance <= horizontal_limit || horizontal_distance <= .0001 do return
+    scale := horizontal_limit / horizontal_distance
+    target.x = root.x + dx * scale
+    target.z = root.z + dz * scale
+}
+
+mouse_constrain_hind_chain :: proc(points: ^[4]third_person.Vec3, lengths: [3]f32) {
+    if points == nil do return
+    root, target := points[0], points[3]
+    preferred_knee, preferred_hock := points[1], points[2]
+    root_to_target := third_person.Vec3{target.x - root.x, target.y - root.y, target.z - root.z}
+    distance := f32(math.sqrt(f64(vec_dot(root_to_target, root_to_target))))
+    total := lengths[0] + lengths[1] + lengths[2]
+    if distance > total - .0001 {
+        mouse_clamp_endpoint_reach(root, &target, 0, total - .0001)
+        root_to_target = {target.x - root.x, target.y - root.y, target.z - root.z}
+        distance = f32(math.sqrt(f64(vec_dot(root_to_target, root_to_target))))
+    }
+    preferred_remaining_delta := third_person.Vec3 {
+        target.x - preferred_knee.x,
+        target.y - preferred_knee.y,
+        target.z - preferred_knee.z,
+    }
+    preferred_remaining := f32(math.sqrt(f64(vec_dot(preferred_remaining_delta, preferred_remaining_delta))))
+    distal_minimum := math.abs(lengths[1] - lengths[2]) + .0001
+    distal_maximum := lengths[1] + lengths[2] - .0001
+    triangle_minimum := math.abs(distance - lengths[0])
+    triangle_maximum := distance + lengths[0]
+    remaining := clamp(
+        preferred_remaining,
+        max(distal_minimum, triangle_minimum),
+        min(distal_maximum, triangle_maximum),
+    )
+    // Two nested analytic solves preserve all three segment lengths and both
+    // endpoints exactly. The authored knee and hock are explicit pole vectors,
+    // so the chain retains its side-aware zig-zag through near-extension.
+    knee := mouse_solve_two_bone_joint(root, target, preferred_knee, lengths[0], remaining)
+    hock := mouse_solve_two_bone_joint(knee, target, preferred_hock, lengths[1], lengths[2])
+    points^ = {root, knee, hock, target}
+}
+
 Mouse_Accessory :: enum {
     None,
     Goggles,
@@ -8064,6 +10022,10 @@ Mouse_Accessory :: enum {
     Bottle_Cap,
     Paper_Boat,
     Chef_Hat,
+    Ushanka,
+    Beret,
+    Alpine_Hat,
+    Flat_Cap,
 }
 
 Mouse_Fur :: enum {
@@ -8084,16 +10046,45 @@ Mouse_Fur_Pattern :: enum {
     Masked,
 }
 
+// Approximate the coat immediately surrounding a limb socket. The torso has
+// denser per-vertex patterning, but carrying its dominant socket color into the
+// first limb ring prevents the appendage from beginning at a hard color seam.
+mouse_limb_socket_color :: proc(
+    pattern: Mouse_Fur_Pattern,
+    fur, fur_dark, fur_light: rl.Color,
+    side: f32,
+    hind: bool,
+) -> rl.Color {
+    marking := color_lerp(fur_light, {247, 239, 218, 255}, .72)
+    switch pattern {
+    case .Pale_Belly:
+        return color_lerp(fur, marking, hind ? f32(.76) : f32(.66))
+    case .Hooded:
+        return color_lerp(fur, marking, hind ? f32(.90) : f32(.72))
+    case .Piebald:
+        pale_socket := hind ? side > 0 : side < 0
+        if pale_socket do return color_lerp(fur, marking, .88)
+    case .Dorsal_Stripe:
+    // Limb sockets sit below the dorsal stripe.
+    case .Masked:
+    // The mask is confined to the head.
+    case .Solid:
+    }
+    return color_lerp(fur, fur_dark, hind ? f32(.04) : f32(.08))
+}
+
 Mouse_Model :: struct {
     position:           third_person.Vec3,
     rotation:           f32,
     accessory:          Mouse_Accessory,
+    accessory_side:     f32,
     fur:                Mouse_Fur,
     pattern:            Mouse_Fur_Pattern,
     scarf_enabled:      bool,
     scarf_color:        rl.Color,
     preview:            bool,
     player_controlled:  bool,
+    track_paw_plants:   bool,
     grounded:           bool,
     hide_tail:          bool,
     hide_hind_feet:     bool,
@@ -8210,6 +10201,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     slope_pitch := math.atan2(normal_forward, ground_normal.y) * animation.slope_alignment
     slope_roll := math.atan2(-normal_right, ground_normal.y) * animation.slope_alignment
     body_roll := slope_roll - turn_pose * animation.turn_lean_radians
+    scurry_weight := model.player_controlled ? clamp(editor.player_scurry_weight, 0, 1) : f32(0)
+    scurry_lean := model.player_controlled ? clamp(editor.player_scurry_lean, -.12, .32) : f32(0)
+    scurry_compression :=
+        model.player_controlled ? clamp(editor.player_scurry_compression, -.025, animation.scurry_compression * 1.35) : f32(0)
     drive_reaction := model.driving_pose ? -clamp(model.drive_acceleration, -1, 1) : f32(0)
     spine_side := turn_pose * animation.turn_spine_offset
     brake_compression := brake_pose * animation.brake_compression
@@ -8281,6 +10276,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         (-bound * .018 + math.abs(math.sin(stride_phase * 2)) * .014) * run_weight +
         math.sin(idle_phase) * .006 * (1 - run_weight) +
         animation.run_body_lift * run_weight * (1 - airborne_weight)
+    body_bob -= scurry_compression
     blink_period := f32(4.6)
     blink_time := editor.map_time - f32(math.floor(f64(editor.map_time / blink_period))) * blink_period
     blink_weight := clamp(1 - math.abs(blink_time - .10) / .10, 0, 1)
@@ -8300,7 +10296,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         airborne_weight * .015 -
         brake_compression * .72 +
         posted_weight * .27
-    head_z := .02 + run_weight * .18 + spine_extension * .055 * run_weight - brake_pose * .025 - posted_weight * .035
+    head_z :=
+        .02 +
+        run_weight * .18 +
+        spine_extension * .055 * run_weight -
+        brake_pose * .025 -
+        posted_weight * .035 +
+        scurry_lean * .18
     if model.driving_pose {
         // The driver reaches into the controls instead of holding the tall,
         // alert posted pose used by idle NPCs.
@@ -8318,7 +10320,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 .36 - run_weight * .010 + body_bob - brake_compression * .48 - posted_weight * .015,
                 -.48 - spine_extension * .035 * run_weight + brake_pose * .035,
             },
-            pitch = bound * .035 + slope_pitch * .65 - posted_weight * .05,
+            pitch = bound * .035 + slope_pitch * .65 - posted_weight * .05 + scurry_lean * .45,
             roll = body_roll * .82,
         },
         {
@@ -8333,7 +10335,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 posted_weight * .035 +
                 drive_reaction * .018,
             },
-            pitch = run_weight * .055 + bound * .045 + slope_pitch * .82 - posted_weight * .10,
+            pitch = run_weight * .055 + bound * .045 + slope_pitch * .82 - posted_weight * .10 + scurry_lean * .72,
             roll = body_roll,
         },
         {
@@ -8349,7 +10351,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 posted_weight * .055 +
                 drive_reaction * .035,
             },
-            pitch = run_weight * .075 + bound * .055 + slope_pitch - posted_weight * .14,
+            pitch = run_weight * .075 + bound * .055 + slope_pitch - posted_weight * .14 + scurry_lean,
             roll = body_roll,
         },
         {
@@ -8365,14 +10367,14 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 posted_weight * .055 +
                 drive_reaction * .050,
             },
-            pitch = run_weight * .085 + bound * .035 + slope_pitch * .72 - posted_weight * .08,
+            pitch = run_weight * .085 + bound * .035 + slope_pitch * .72 - posted_weight * .08 + scurry_lean * .82,
             roll = body_roll * .58,
         },
         {
             parent = 3,
             bind_position = {0, .69, .20},
             position = {head_sway + head_turn_x, head_y, head_z + .20},
-            pitch = run_weight * .055 - bound * .025 + slope_pitch * .42,
+            pitch = run_weight * .055 - bound * .025 + slope_pitch * .42 + scurry_lean * .42,
             roll = body_roll * .22,
         },
     }
@@ -8598,17 +10600,26 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             world_box_between(strap_crown, strap_back, model_forward, .018, .012, leather_dark)
         }
     } else if model.accessory == .Flower {
-        // Keep the flower tucked beside the left ear, but cant the whole bloom
+        // Keep the flower tucked beside one ear, but cant the whole bloom
         // outward so its petal plane clears the head instead of cutting
         // through it.
-        flower_center_x := -.115 + head_sway + head_turn_x
+        flower_side := model.accessory_side
+        if flower_side == 0 do flower_side = -1
+        flower_side = flower_side < 0 ? f32(-1) : f32(1)
+        flower_center_x := flower_side * .115 + head_sway + head_turn_x
         flower_center_y := head_y + .205
         flower_center_z := head_z + .095
-        flower_cant := f32(.95)
+        flower_cant := flower_side * -.95
         flower_yaw := rotation + flower_cant
         flower_plane_x := math.cos(flower_cant)
         flower_plane_z := math.sin(flower_cant)
-        stem_bottom := local_point(p, rotation, flower_center_x + .045, head_y + .105, flower_center_z - .025)
+        stem_bottom := local_point(
+            p,
+            rotation,
+            flower_center_x - flower_side * .045,
+            head_y + .105,
+            flower_center_z - .025,
+        )
         stem_top := local_point(p, rotation, flower_center_x, flower_center_y, flower_center_z)
         world_box_between(stem_bottom, stem_top, model_forward, .018, .012, {70, 123, 72, 255})
         petal_color: rl.Color = {238, 111, 137, 255}
@@ -8642,62 +10653,416 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             {232, 180, 62, 255},
         )
     } else if model.accessory == .Acorn_Cap {
-        crown := local_point(p, rotation, head_sway + head_turn_x, head_y + .205, head_z + .105)
-        world_ellipsoid_rotated(crown, .255, .105, .235, rotation, {112, 72, 38, 255})
-        world_box_rotated(
-            local_point(p, rotation, head_sway + head_turn_x, head_y + .310, head_z + .070),
-            {.025, .065, .025},
-            rotation,
-            {75, 49, 29, 255},
-        )
-    } else if model.accessory == .Bottle_Cap {
-        cap_center := local_point(p, rotation, head_sway + head_turn_x, head_y + .205, head_z + .105)
-        world_ellipsoid_rotated(cap_center, .245, .075, .225, rotation, {55, 139, 151, 255})
+        crown_x := head_sway + head_turn_x
+        crown_y := head_y + .135
+        crown_z := head_z + .105
+        shell := rl.Color{105, 69, 39, 255}
+        shell_dark := rl.Color{67, 43, 27, 255}
+        // Keep the fitted edge inside the crown silhouette. A broad lower
+        // flange reads as a brim; an acorn cup instead pinches gently around
+        // the head and swells into a taller woody dome.
         world_ellipsoid_rotated(
-            local_point(p, rotation, head_sway + head_turn_x, head_y + .257, head_z + .105),
-            .205,
-            .030,
-            .185,
+            local_point(p, rotation, crown_x, crown_y - .002, crown_z),
+            .202,
+            .026,
+            .188,
             rotation,
-            {91, 198, 202, 255},
+            color_lerp(shell_dark, shell, .62),
         )
+        world_ellipsoid_rotated(
+            local_point(p, rotation, crown_x, crown_y + .040, crown_z),
+            .218,
+            .115,
+            .203,
+            rotation,
+            shell,
+            .Acorn,
+        )
+        stem_bottom := local_point(p, rotation, crown_x + .018, crown_y + .150, crown_z - .022)
+        stem_top := local_point(p, rotation, crown_x + .045, crown_y + .210, crown_z - .080)
+        world_box_between(stem_bottom, stem_top, model_forward, .020, .018, shell_dark)
+    } else if model.accessory == .Bottle_Cap {
+        crown_x := head_sway + head_turn_x
+        crown_y := head_y + .205
+        crown_z := head_z + .105
+        cap := rl.Color{184, 39, 45, 255}
+        world_bottle_cap_hull(local_point(p, rotation, crown_x, crown_y - .013, crown_z), rotation, cap)
     } else if model.accessory == .Paper_Boat {
         paper := rl.Color{232, 224, 198, 255}
-        crown_y := head_y + .245
-        crown_z := head_z + .095
-        world_box_rotated(
-            local_point(p, rotation, -.10 + head_sway + head_turn_x, crown_y, crown_z),
-            {.13, .025, .19},
-            rotation + .28,
+        paper_shadow := rl.Color{190, 180, 157, 255}
+        paper_light := rl.Color{248, 241, 216, 255}
+        crown_x := head_sway + head_turn_x
+        crown_y := head_y + .220
+        crown_z := head_z + .105
+        front_z := crown_z + .115
+        back_z := crown_z - .085
+        left_front := local_point(p, rotation, crown_x - .135, crown_y + .005, front_z)
+        right_front := local_point(p, rotation, crown_x + .135, crown_y + .005, front_z)
+        keel_front := local_point(p, rotation, crown_x, crown_y - .055, front_z)
+        peak_front := local_point(p, rotation, crown_x - .018, crown_y + .115, front_z)
+        left_back := local_point(p, rotation, crown_x - .135, crown_y + .005, back_z)
+        right_back := local_point(p, rotation, crown_x + .135, crown_y + .005, back_z)
+        keel_back := local_point(p, rotation, crown_x, crown_y - .055, back_z)
+        peak_back := local_point(p, rotation, crown_x - .018, crown_y + .115, back_z)
+
+        // True folded triangular panels replace the former yawed boxes, which
+        // looked like a propeller because they never rose into a boat profile.
+        world_triangle(left_front, keel_front, peak_front, paper)
+        world_triangle(keel_front, right_front, peak_front, paper_light)
+        world_triangle(peak_back, keel_back, left_back, paper_shadow)
+        world_triangle(peak_back, right_back, keel_back, paper)
+        world_quad(left_back, left_front, peak_front, peak_back, paper_shadow)
+        world_quad(peak_back, peak_front, right_front, right_back, paper_light)
+        world_quad(left_front, left_back, keel_back, keel_front, paper_shadow)
+        world_quad(keel_front, keel_back, right_back, right_front, paper)
+
+        // A broad tapered hull separates the boat silhouette from the much
+        // narrower raised fold, avoiding the profile of a conical hat.
+        world_tapered_box_rotated(
+            local_point(p, rotation, crown_x, crown_y - .042, crown_z),
+            .095,
+            .380,
+            .165,
+            .535,
+            .205,
+            rotation,
             paper,
         )
+        // Contrasting gunwale and central crease remain readable when the
+        // mouse occupies only a small portion of the frame.
         world_box_rotated(
-            local_point(p, rotation, .10 + head_sway + head_turn_x, crown_y, crown_z),
-            {.13, .025, .19},
-            rotation - .28,
-            {210, 202, 178, 255},
+            local_point(p, rotation, crown_x, crown_y + .004, crown_z + .122),
+            {.525, .022, .026},
+            rotation,
+            paper_light,
+        )
+        world_box_rotated(
+            local_point(p, rotation, crown_x - .018, crown_y + .038, crown_z + .128),
+            {.016, .145, .018},
+            rotation,
+            paper_shadow,
         )
     } else if model.accessory == .Chef_Hat {
-        cloth := rl.Color{239, 237, 224, 255}
+        cloth := rl.Color{226, 224, 211, 255}
+        cloth_shadow := rl.Color{174, 174, 168, 255}
+        cloth_light := rl.Color{244, 241, 224, 255}
         crown_x := head_sway + head_turn_x
         crown_z := head_z + .085
+        // The double band hugs the skull and visually anchors the toque.
         world_box_rotated(
-            local_point(p, rotation, crown_x, head_y + .205, crown_z),
-            {.19, .055, .17},
+            local_point(p, rotation, crown_x, head_y + .190, crown_z),
+            {.205, .060, .180},
             rotation,
-            {207, 205, 195, 255},
+            cloth_shadow,
         )
-        puff_offsets := [3]f32{-.12, 0, .12}
+        world_box_rotated(
+            local_point(p, rotation, crown_x, head_y + .218, crown_z + .010),
+            {.190, .046, .172},
+            rotation,
+            cloth,
+        )
+        // Five overlapping matte lobes form one soft asymmetric crown without
+        // the glossy eye material's bulb-like white highlights.
+        puff_offsets := [5]f32{-.145, -.072, 0, .078, .150}
         for puff_x in puff_offsets {
-            world_ellipsoid_rotated(
-                local_point(p, rotation, crown_x + puff_x, head_y + .305 + math.abs(puff_x) * .08, crown_z),
-                .13,
-                .13,
-                .14,
+            side := puff_x / .150
+            world_ellipsoid_plain_rotated(
+                local_point(
+                    p,
+                    rotation,
+                    crown_x + puff_x,
+                    head_y + .305 + (1 - math.abs(side)) * .020 + side * .008,
+                    crown_z - math.abs(side) * .014,
+                ),
+                .105,
+                .118 + (1 - math.abs(side)) * .020,
+                .125,
                 rotation,
-                cloth,
+                side < -.25 ? cloth_shadow : (side > .45 ? cloth_light : cloth),
             )
         }
+        // A shallow crown seam adds a tailored center without competing with
+        // the scalloped outline.
+        world_box_rotated(
+            local_point(p, rotation, crown_x, head_y + .355, crown_z + .135),
+            {.010, .090, .024},
+            rotation,
+            cloth_shadow,
+        )
+    } else if model.accessory == .Ushanka {
+        crown_x := head_sway + head_turn_x
+        crown_y := head_y + .150
+        crown_z := head_z + .075
+        wool := rl.Color{101, 72, 55, 255}
+        wool_dark := rl.Color{58, 41, 34, 255}
+        fur_trim := rl.Color{181, 153, 119, 255}
+        fur_shadow := rl.Color{137, 111, 86, 255}
+        fur_light := rl.Color{207, 184, 149, 255}
+
+        // One radial hull replaces the former capped side-to-side extrusion.
+        // Five horizontal rings round the crown in every camera direction.
+        // The lowest two rings deform downward only near local +/-X, growing
+        // both ear flaps directly from the same continuous surface.
+        RINGS :: 7
+        SEGMENTS :: 24
+        ring_y := [RINGS]f32{.145, .105, .070, .040, .010, -.020, -.045}
+        ring_radius_x := [RINGS]f32{.135, .190, .215, .230, .245, .240, .225}
+        ring_radius_z := [RINGS]f32{.105, .145, .170, .185, .205, .210, .205}
+        hull: [RINGS][SEGMENTS]third_person.Vec3
+        side_weights: [SEGMENTS]f32
+        front_weights: [SEGMENTS]f32
+        for ring in 0 ..< RINGS {
+            for segment in 0 ..< SEGMENTS {
+                angle := f32(segment) * math.PI * 2 / f32(SEGMENTS)
+                cosine, sine := math.cos(angle), math.sin(angle)
+                side_weight := math.abs(cosine)
+                side_weight *= side_weight
+                front_weight := max(sine, f32(0))
+                side_weights[segment] = side_weight
+                front_weights[segment] = front_weight
+                flap_drop := f32(0)
+                if ring == RINGS - 4 do flap_drop = side_weight * .025
+                if ring == RINGS - 3 do flap_drop = side_weight * .055
+                if ring == RINGS - 2 do flap_drop = side_weight * .100
+                if ring == RINGS - 1 {
+                    // Hold the hem near full depth across a broad side arc
+                    // instead of converging to one low vertex in profile.
+                    // Alternate vertices retain a subtle fur scallop.
+                    flap_span := clamp(math.abs(cosine) / .72, 0, 1)
+                    tuft_drop := f32(0)
+                    if segment % 5 == 0 {
+                        tuft_drop = .012
+                    } else if segment % 5 == 3 {
+                        tuft_drop = .006
+                    }
+                    flap_drop = flap_span * (.160 + tuft_drop)
+                }
+                radius_x := ring_radius_x[ring]
+                radius_z := ring_radius_z[ring]
+                tuft_out := f32(.002)
+                if segment % 5 == 0 {
+                    tuft_out = .008
+                } else if segment % 5 == 2 {
+                    tuft_out = -.004
+                }
+                if ring >= RINGS - 4 && side_weight > .24 {
+                    radius_x += tuft_out * side_weight
+                    radius_z += tuft_out * side_weight
+                }
+                if ring >= 2 && ring <= 4 && front_weight > .35 {
+                    radius_z += tuft_out * front_weight
+                }
+                // The traditional raised forehead flap is part of this same
+                // surface: push only its central front vertices outward and
+                // ease the displacement to zero before the temples.
+                if ring >= 2 && ring <= 4 && front_weight > .55 {
+                    panel_weight := (front_weight - .55) / .45
+                    panel_depth := ring == 2 ? f32(.018) : (ring == 3 ? f32(.026) : f32(.016))
+                    radius_z += panel_weight * panel_depth
+                }
+                hull[ring][segment] = local_point(
+                    p,
+                    rotation,
+                    crown_x + cosine * radius_x,
+                    crown_y + ring_y[ring] - flap_drop,
+                    crown_z + sine * radius_z,
+                )
+            }
+        }
+
+        crown_top := local_point(p, rotation, crown_x, crown_y + .160, crown_z - .005)
+        for segment in 0 ..< SEGMENTS {
+            next := (segment + 1) % SEGMENTS
+            top_color := front_weights[segment] > .25 ? wool : wool_dark
+            world_triangle(crown_top, hull[0][segment], hull[0][next], top_color)
+        }
+        for ring in 0 ..< RINGS - 1 {
+            for segment in 0 ..< SEGMENTS {
+                next := (segment + 1) % SEGMENTS
+                front_weight := max(front_weights[segment], front_weights[next])
+                side_weight := max(side_weights[segment], side_weights[next])
+                surface_color := front_weight > .05 ? wool : wool_dark
+                fur_variant := (segment * 5 + ring * 3) % 7
+                // A narrow raised-looking fur brow and the two lined flaps are
+                // material regions of the hull itself, not overlaid geometry.
+                if (ring == 2 || ring == 3) && front_weight > .62 {
+                    surface_color = fur_variant == 0 ? fur_light : (fur_variant == 2 ? fur_shadow : fur_trim)
+                } else if ring >= 3 && side_weight > .28 {
+                    surface_color = fur_variant == 0 ? fur_light : (fur_variant < 3 ? fur_shadow : fur_trim)
+                } else if ring == 2 && side_weight > .45 {
+                    // A cloth welt makes the flap attachment look sewn into
+                    // the crown rather than painted onto the same surface.
+                    surface_color = wool_dark
+                } else if ring >= RINGS - 2 {
+                    surface_color = wool_dark
+                }
+                world_quad(
+                    hull[ring][segment],
+                    hull[ring][next],
+                    hull[ring + 1][next],
+                    hull[ring + 1][segment],
+                    surface_color,
+                )
+            }
+        }
+        // Close the underside so this remains one watertight hull. The cap is
+        // tucked into the skull and normally invisible.
+        hull_bottom := local_point(p, rotation, crown_x, crown_y - .058, crown_z)
+        for segment in 0 ..< SEGMENTS {
+            next := (segment + 1) % SEGMENTS
+            world_triangle(hull_bottom, hull[RINGS - 1][next], hull[RINGS - 1][segment], wool_dark)
+        }
+    } else if model.accessory == .Beret {
+        // Seat the band on the rear crown of the skull, just behind the ears.
+        // The head's local +Z points toward the muzzle, so a small negative
+        // depth offset is essential: centering this over the brow makes the
+        // hat float above the ear in profile and read like a visor in front.
+        crown_x := head_sway + head_turn_x - .020
+        crown_y := head_y + .195
+        crown_z := head_z + .015
+        felt := rl.Color{133, 38, 49, 255}
+        felt_fold := rl.Color{112, 31, 43, 255}
+        felt_dark := rl.Color{77, 26, 35, 255}
+        felt_light := rl.Color{178, 64, 70, 255}
+        // Preserve the deliberate jaunty cock while inheriting most of the
+        // animated head roll, so the band stays planted through turns and
+        // uneven-ground poses instead of remaining level in world space.
+        beret_roll := f32(.15) + body_roll * .65
+
+        // A close-fitting oval band seats the beret on the skull. Keeping this
+        // rounded avoids the rigid shelf and dangling corner of a box brim.
+        world_ellipsoid_plain_oriented(
+            local_point(p, rotation, crown_x + .010, crown_y - .006, crown_z - .004),
+            .202,
+            .026,
+            .168,
+            rotation,
+            beret_roll,
+            felt_dark,
+        )
+        // The crown leans to the mouse's left: a broad main disk establishes
+        // the silhouette while the overlapping lobe makes the drape feel soft.
+        world_ellipsoid_plain_oriented(
+            local_point(p, rotation, crown_x - .045, crown_y + .036, crown_z - .004),
+            .276,
+            .073,
+            .222,
+            rotation,
+            beret_roll,
+            felt,
+        )
+        world_ellipsoid_plain_oriented(
+            local_point(p, rotation, crown_x - .142, crown_y + .016, crown_z - .002),
+            .145,
+            .058,
+            .160,
+            rotation,
+            beret_roll,
+            felt_fold,
+        )
+        // A restrained highlight follows the upper fold instead of reading as
+        // a separate cap sitting on top.
+        world_ellipsoid_plain_oriented(
+            local_point(p, rotation, crown_x - .105, crown_y + .086, crown_z + .025),
+            .138,
+            .025,
+            .110,
+            rotation,
+            beret_roll,
+            felt_light,
+        )
+        // The short cabillou follows the rolled crown normal instead of
+        // remaining conspicuously vertical after the rest of the hat cocks.
+        cabillou_root := local_point(p, rotation, crown_x - .070, crown_y + .108, crown_z - .018)
+        cabillou_tip := local_point(
+            p,
+            rotation,
+            crown_x - .070 - math.sin(beret_roll) * .042,
+            crown_y + .108 + math.cos(beret_roll) * .042,
+            crown_z - .018,
+        )
+        world_box_between(cabillou_root, cabillou_tip, model_forward, .014, .014, felt_dark)
+    } else if model.accessory == .Alpine_Hat {
+        crown_x := head_sway + head_turn_x
+        // Seat the brim into the crown of the head instead of perching the
+        // whole assembly above the ears.
+        crown_y := head_y + .155
+        crown_z := head_z + .070
+        felt := rl.Color{67, 105, 71, 255}
+        felt_dark := rl.Color{38, 69, 48, 255}
+        felt_light := rl.Color{91, 125, 86, 255}
+        band := rl.Color{103, 61, 39, 255}
+        band_light := rl.Color{143, 91, 54, 255}
+        feather := rl.Color{190, 58, 43, 255}
+        feather_light := rl.Color{224, 86, 54, 255}
+
+        // Brim, crown, shoulder, and top are one continuous closed felt shell.
+        // The profile contracts and shifts rearward as it rises, producing the
+        // characteristic Alpine taper without stacked primitive intersections.
+        world_alpine_hat_hull(
+            local_point(p, rotation, crown_x, crown_y - .015, crown_z + .005),
+            rotation,
+            felt_dark,
+            felt,
+            felt_light,
+        )
+
+        // Build the hatband as an oval collar so it remains continuous in
+        // front and three-quarter views. The small buckle gives it a focal
+        // point without obscuring the face.
+        world_ellipsoid_plain_rotated(
+            local_point(p, rotation, crown_x, crown_y + .005, crown_z),
+            .250,
+            .038,
+            .201,
+            rotation,
+            band,
+        )
+        world_box_rotated(
+            local_point(p, rotation, crown_x + .135, crown_y + .010, crown_z + .172),
+            {.055, .066, .018},
+            rotation,
+            band_light,
+        )
+        // Continue the band along the feather side. The oval collar supplies
+        // the curved lower edge; this shallow strip keeps the leather legible
+        // in profile instead of collapsing to a small brown diamond.
+        world_box_rotated(
+            local_point(p, rotation, crown_x + .218, crown_y + .010, crown_z),
+            {.028, .058, .285},
+            rotation,
+            band,
+        )
+
+        // The plume is a single smooth vane with its broad face in the hat's
+        // side plane. This avoids both a twig-like front view and the blocky
+        // stepped profile produced by assembled vane segments.
+        feather_base := local_point(p, rotation, crown_x + .155, crown_y + .030, crown_z + .145)
+        feather_tip := local_point(p, rotation, crown_x + .280, crown_y + .365, crown_z + .108)
+        world_alpine_feather_hull(
+            local_point(p, rotation, crown_x + .225, crown_y + .205, crown_z + .122),
+            rotation,
+            feather,
+            feather_light,
+        )
+        world_box_between(feather_base, feather_tip, model_forward, .012, .020, feather)
+    } else if model.accessory == .Flat_Cap {
+        crown_x := head_sway + head_turn_x
+        crown_y := head_y + .155
+        crown_z := head_z + .070
+        tweed := rl.Color{118, 103, 82, 255}
+        tweed_dark := rl.Color{62, 54, 46, 255}
+        tweed_light := rl.Color{137, 120, 94, 255}
+        tweed_front := rl.Color{126, 110, 87, 255}
+
+        world_flat_cap_hull(
+            local_point(p, rotation, crown_x, crown_y, crown_z),
+            rotation,
+            tweed_dark,
+            tweed,
+            tweed_front,
+            tweed_light,
+        )
     }
 
     if model.scarf_enabled {
@@ -8715,7 +11080,17 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         speed_air := horizontal_speed * .42
         wind_air := wind_speed * .075
         flap := clamp(max(speed_air, wind_air), 0, 1)
-        flap_phase := editor.map_time * (5.2 + flap * 3.8) + wind_forward * .08
+        // Keep scarf animation local to the rendered mouse. Previously every
+        // collar read the player's rotation and every tail shared one phase,
+        // which made a group of scarf-wearing mice move as one object.
+        position_phase_seed := math.sin(f64(model.position.x) * 12.9898 + f64(model.position.z) * 78.233) * 43758.5453
+        scarf_phase_offset := f32(position_phase_seed - math.floor(position_phase_seed)) * math.PI * 2
+        scarf_rotation := scarf_phase_offset
+        if model.player_controlled {
+            scarf_phase_offset = 0
+            scarf_rotation = editor.mouse_scarf_rotation
+        }
+        flap_phase := editor.map_time * (5.2 + flap * 3.8) + wind_forward * .08 + scarf_phase_offset
         sway := math.sin(flap_phase) * (.018 + flap * .055)
         wind_sway := clamp(wind_right * .006, -.07, .07)
 
@@ -8733,7 +11108,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         collar_rear, collar_front: [SCARF_COLLAR_SEGMENTS]third_person.Vec3
         collar_color: [SCARF_COLLAR_SEGMENTS]rl.Color
         for segment in 0 ..< SCARF_COLLAR_SEGMENTS {
-            angle := f32(segment) * math.PI * 2 / f32(SCARF_COLLAR_SEGMENTS) + editor.mouse_scarf_rotation
+            angle := f32(segment) * math.PI * 2 / f32(SCARF_COLLAR_SEGMENTS) + scarf_rotation
             ring_x := math.cos(angle) * (SCARF_NECK_RADIUS_X + SCARF_SURFACE_CLEARANCE)
             ring_y := SCARF_NECK_CENTER_Y + math.sin(angle) * (SCARF_NECK_RADIUS_Y + SCARF_SURFACE_CLEARANCE)
             rear_vertex := Mouse_Skin_Vertex {
@@ -8906,30 +11281,29 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
         front_cycle := front_motion.reach * run_weight
         rear_cycle := rear_motion.reach * run_weight
-        front_lift := front_motion.lift * .105 * run_weight
+        front_lift := front_motion.lift * (.105 + scurry_weight * .035) * run_weight
         scapula_slide := front_cycle * .038
         inside_turn := max(side_f * turn_pose, f32(0))
         outside_turn := max(-side_f * turn_pose, f32(0))
         paw_turn_reach := animation.turn_paw_offset * (outside_turn - inside_turn * .45)
         idle_fore_shoulder := third_person.Vec3{side_f * .12, .31, .04}
         run_fore_shoulder := third_person.Vec3{side_f * .13, .31, .075}
+        posed_fore_socket := mouse_skin_vertex(
+            {bind_position = idle_fore_shoulder, groups = {{.Chest, .68}, {.Spine, .32}}},
+            &skeleton,
+        )
         fore_shoulder := local_point(
             p,
             rotation,
-            idle_fore_shoulder.x * (1 - run_weight) +
-            run_fore_shoulder.x * run_weight +
+            posed_fore_socket.x +
+            (run_fore_shoulder.x - idle_fore_shoulder.x) * run_weight +
             side_f * paw_turn_reach * .35 -
             side_f * posted_weight * .020,
-            idle_fore_shoulder.y * (1 - run_weight) +
-            run_fore_shoulder.y * run_weight +
-            body_bob -
-            brake_compression * .72 -
-            inside_turn * .025 +
-            posted_weight * .29,
-            idle_fore_shoulder.z * (1 - run_weight) +
-            run_fore_shoulder.z * run_weight +
+            posed_fore_socket.y - inside_turn * .025 + posted_weight * .065,
+            posed_fore_socket.z +
+            (run_fore_shoulder.z - idle_fore_shoulder.z) * run_weight +
             scapula_slide +
-            posted_weight * .055,
+            posted_weight * .090,
         )
         fore_elbow := local_point(
             p,
@@ -8962,7 +11336,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             posted_weight * .405
         fore_paw_z :=
             .29 * (1 - run_weight) +
-            (.235 + front_cycle * .205 + side_f * .014) * run_weight +
+            (.235 + front_cycle * (.205 + scurry_weight * .055) + side_f * .014) * run_weight +
             idle_groom * side_f * .55 +
             brake_pose * .12 -
             posted_weight * .095
@@ -8993,13 +11367,45 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 fore_shoulder.z * .56 + fore_paw.z * .44,
             }
         }
-        fore_planted := model.grounded && front_motion.lift < .025 && posted_weight < .5
-        if model.player_controlled {
-            fore_paw = mouse_pin_player_paw(editor, side_index * 2, fore_paw, fore_planted)
+        // Decide contact from the final posed height, rather than the raw gait
+        // curve. During deceleration run_weight lowers the visible paw before
+        // the source cycle reaches stance; using the source lift here made a
+        // visibly grounded paw slide with the body.
+        fore_planted := model.grounded && front_lift < .003 && posted_weight < .5
+        FORE_UPPER_LENGTH :: f32(.255)
+        FORE_LOWER_LENGTH :: f32(.245)
+        fore_minimum_reach := math.abs(FORE_UPPER_LENGTH - FORE_LOWER_LENGTH) + .0001
+        fore_maximum_reach := FORE_UPPER_LENGTH + FORE_LOWER_LENGTH - .0001
+        if model.grounded {
+            fore_paw = mouse_ground_contact(editor, fore_paw, .024, fore_planted)
+            mouse_clamp_ground_contact_reach(fore_shoulder, &fore_paw, fore_maximum_reach)
+        } else {
+            mouse_clamp_endpoint_reach(fore_shoulder, &fore_paw, fore_minimum_reach, fore_maximum_reach)
+        }
+        if model.track_paw_plants {
+            fore_paw = mouse_pin_player_paw(
+                editor,
+                side_index * 2,
+                fore_shoulder,
+                fore_paw,
+                fore_planted,
+                fore_maximum_reach,
+            )
         }
         if model.grounded {
             fore_paw = mouse_ground_contact(editor, fore_paw, .024, fore_planted)
+            mouse_clamp_ground_contact_reach(fore_shoulder, &fore_paw, fore_maximum_reach)
+            if model.track_paw_plants && fore_planted {
+                editor.player_paw_plant_positions[side_index * 2] = fore_paw
+            }
         }
+        fore_elbow = mouse_solve_two_bone_joint(
+            fore_shoulder,
+            fore_paw,
+            fore_elbow,
+            FORE_UPPER_LENGTH,
+            FORE_LOWER_LENGTH,
+        )
         fore_wrist := third_person.Vec3 {
             fore_elbow.x * .30 + fore_paw.x * .70,
             fore_elbow.y * .30 + fore_paw.y * .70,
@@ -9007,8 +11413,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         }
         fore_points := [4]third_person.Vec3{fore_shoulder, fore_elbow, fore_wrist, fore_paw}
         fore_radii := [4]f32{.044, .035, .024, .017}
-        fore_colors := [4]rl.Color{fur, fur_dark, paw, paw}
-        world_mouse_limb_hull(fore_points[:], fore_radii[:], fore_colors[:], model_forward)
+        fore_socket_color := mouse_limb_socket_color(model.pattern, fur, fur_dark, fur_light, side_f, false)
+        fore_colors := [4]rl.Color{fore_socket_color, fur_dark, paw, paw}
+        world_mouse_limb_hull(fore_points[:], fore_radii[:], fore_colors[:], model_forward, false)
         // Paws are low pads lying in the ground plane. The former vertical
         // discs presented their extrusion as a rectangular bar in profile.
         world_vertical_prism(fore_paw, .044, .041, .030, rotation, paw)
@@ -9027,14 +11434,19 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         }
 
         hind_cycle := rear_cycle
-        hind_lift := rear_motion.lift * .120 * run_weight
+        hind_lift := rear_motion.lift * (.120 + scurry_weight * .045) * run_weight
         pelvic_drive := hind_cycle * .028
+        idle_hind_socket := third_person.Vec3{side_f * .16, .30, -.47}
+        posed_hind_socket := mouse_skin_vertex(
+            {bind_position = idle_hind_socket, groups = {{.Pelvis, .82}, {.Spine, .18}}},
+            &skeleton,
+        )
         hind_hip := local_point(
             p,
             rotation,
-            side_f * (.16 + paw_turn_reach * .25 + posted_weight * .030),
-            .30 + body_bob - brake_compression * .48 - inside_turn * .025 - posted_weight * .010,
-            -.47 + pelvic_drive + brake_pose * .035,
+            posed_hind_socket.x + side_f * (paw_turn_reach * .25 + posted_weight * .030),
+            posed_hind_socket.y - inside_turn * .025,
+            posed_hind_socket.z + pelvic_drive,
         )
         // The hind leg needs both a forward knee and a rear hock. Collapsing
         // those joints into one segment hides the entire chain inside the
@@ -9059,7 +11471,11 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // this exposes the toes and supports the raised torso instead of
         // balancing it on two vertical hocks.
         hind_paw_z :=
-            -.16 + hind_cycle * .17 * run_weight + side_f * .018 * run_weight + brake_pose * .15 - posted_weight * .10
+            -.16 +
+            hind_cycle * (.17 + scurry_weight * .065) * run_weight +
+            side_f * .018 * run_weight +
+            brake_pose * .15 -
+            posted_weight * .10
         hind_paw := local_point(p, rotation, hind_paw_x, hind_paw_y, hind_paw_z)
         if model.driving_pose {
             // Fold the rear legs into the bucket seat. Keeping the hock behind
@@ -9070,20 +11486,35 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             hind_hock = local_point(p, rotation, side_f * .19, .105, -.36)
             hind_paw = local_point(p, rotation, side_f * .17, .095, -.11)
         }
-        hind_planted := model.grounded && rear_motion.lift < .025
-        if model.player_controlled {
-            hind_paw = mouse_pin_player_paw(editor, side_index * 2 + 1, hind_paw, hind_planted)
+        // Release both pairs while rising into the posted pose. Otherwise the
+        // authored hind-foot shift stretches back toward the last locomotion
+        // contact cached in world space.
+        hind_planted := model.grounded && hind_lift < .003 && posted_weight < .5
+        HIND_LENGTHS :: [3]f32{.255, .210, .275}
+        if model.track_paw_plants {
+            hind_paw = mouse_pin_player_paw(
+                editor,
+                side_index * 2 + 1,
+                hind_hip,
+                hind_paw,
+                hind_planted,
+                HIND_LENGTHS[0] + HIND_LENGTHS[1] + HIND_LENGTHS[2],
+            )
         }
         if model.grounded {
             hind_paw = mouse_ground_contact(editor, hind_paw, .024, hind_planted)
         }
+        hind_chain := [4]third_person.Vec3{hind_hip, hind_knee, hind_hock, hind_paw}
+        mouse_constrain_hind_chain(&hind_chain, HIND_LENGTHS)
+        hind_hip, hind_knee, hind_hock, hind_paw = hind_chain[0], hind_chain[1], hind_chain[2], hind_chain[3]
         if model.hide_hind_feet {
             // Vehicle seats conceal the folded rear feet. Stop the visible
             // limb at the hock so pads and toes cannot poke through bodywork.
             hind_points := [3]third_person.Vec3{hind_hip, hind_knee, hind_hock}
             hind_radii := [3]f32{.065, .052, .041}
-            hind_colors := [3]rl.Color{fur, fur, fur_dark}
-            world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward)
+            hind_socket_color := mouse_limb_socket_color(model.pattern, fur, fur_dark, fur_light, side_f, true)
+            hind_colors := [3]rl.Color{hind_socket_color, fur, fur_dark}
+            world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward, false)
         } else {
             hind_ankle := third_person.Vec3 {
                 hind_hock.x * .42 + hind_paw.x * .58,
@@ -9092,8 +11523,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             }
             hind_points := [5]third_person.Vec3{hind_hip, hind_knee, hind_hock, hind_ankle, hind_paw}
             hind_radii := [5]f32{.065, .052, .041, .030, .022}
-            hind_colors := [5]rl.Color{fur, fur, fur_dark, paw, paw}
-            world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward)
+            hind_socket_color := mouse_limb_socket_color(model.pattern, fur, fur_dark, fur_light, side_f, true)
+            hind_colors := [5]rl.Color{hind_socket_color, fur, fur_dark, paw, paw}
+            world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward, false)
             world_vertical_prism(hind_paw, .058, .058, .032, rotation, paw)
             for digit in 0 ..< 3 {
                 digit_tip := local_point(hind_paw, rotation, side_f * (f32(digit) - 1) * .017, -.008, .092)
@@ -9105,7 +11537,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         }
     }
 
-    if model.player_controlled {
+    // A freshly spawned player can be submitted before its first simulation
+    // step. The zero-initialized Verlet points live at world origin, so
+    // building a hull from them stretches the root ring across the map and
+    // produces a large triangle fan in capture-mode's early frames. Use the
+    // authored tail until physics has established a complete local chain.
+    if model.player_controlled && editor.player_tail.initialized {
         tail_points: [mouse_tail.POINT_COUNT]third_person.Vec3
         tail_radii: [mouse_tail.POINT_COUNT]f32
         tail_colors: [mouse_tail.POINT_COUNT]rl.Color
@@ -9189,17 +11626,21 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
 
 world_character :: proc(editor: ^Editor) {
     if !editor.in_map || editor.pilot.mode != .On_Foot do return
-    world_mouse_model(editor, {
-        position          = editor.player.position,
-        rotation          = math.PI - editor.player.facing_yaw_radians,
-        accessory         = editor.mouse_headgear,
-        fur               = editor.mouse_fur,
-        pattern           = editor.mouse_pattern,
-        scarf_enabled     = editor.mouse_scarf_enabled,
-        scarf_color       = editor.mouse_scarf_color,
-        player_controlled = true,
-        grounded          = editor.player.grounded,
-    })
+    world_mouse_model(
+        editor,
+        {
+            position = editor.player.position,
+            rotation = math.PI - editor.player.facing_yaw_radians,
+            accessory = editor.mouse_headgear,
+            fur = editor.mouse_fur,
+            pattern = editor.mouse_pattern,
+            scarf_enabled = editor.mouse_scarf_enabled,
+            scarf_color = editor.mouse_scarf_color,
+            player_controlled = true,
+            track_paw_plants = true,
+            grounded = editor.player.grounded,
+        },
+    )
 }
 
 world_postale_pilot :: proc(editor: ^Editor) {
@@ -9213,30 +11654,43 @@ world_postale_pilot :: proc(editor: ^Editor) {
     seat_local := [3]f32{0, -.37, -.20}
     position := postale_vertex_world(&editor.postale, seat_local, POSTALE_PRESENTATION_SCALE)
     rotation := math.atan2(-body.basis.forward.x, -body.basis.forward.z)
-    world_mouse_model_parented(editor, {
-            position       = position,
-            rotation       = rotation,
-            accessory      = editor.mouse_headgear,
-            fur            = editor.mouse_fur,
-            pattern        = editor.mouse_pattern,
-            scarf_enabled  = editor.mouse_scarf_enabled,
-            scarf_color    = editor.mouse_scarf_color,
-            grounded       = false,
-            hide_tail      = true,
+    world_mouse_model_parented(
+        editor,
+        {
+            position = position,
+            rotation = rotation,
+            accessory = editor.mouse_headgear,
+            fur = editor.mouse_fur,
+            pattern = editor.mouse_pattern,
+            scarf_enabled = editor.mouse_scarf_enabled,
+            scarf_color = editor.mouse_scarf_color,
+            player_controlled = true,
+            grounded = false,
+            hide_tail = true,
             hide_hind_feet = true,
-        }, body.basis)
+        },
+        body.basis,
+    )
 }
 
 MARTA_STOOL_HEIGHT :: f32(.49)
 
 world_attendant_kiosk :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
-    p := editor.attendant_position
+    world_attendant_kiosk_at(editor, editor.attendant_position)
+    world_attendant_kiosk_at(editor, editor.gerta_position)
+}
+
+world_attendant_kiosk_at :: proc(editor: ^Editor, p: third_person.Vec3) {
     ground := terrain.sample_height(&editor.project, 0, p.x, p.z)
     timber := rl.Color{92, 61, 38, 255}
     painted := rl.Color{188, 58, 48, 255}
     cream := rl.Color{232, 218, 181, 255}
     roof := rl.Color{55, 72, 76, 255}
+
+    // A maintained limestone apron keeps the service counter accessible.
+    world_land_surface_rotated(editor, p.x, p.z + .35, 4.2, 3.8, 0, .09, {181, 169, 137, 255})
+    world_land_surface_rotated(editor, p.x, p.z - 2.65, 1.65, 3.0, 0, .10, {194, 183, 153, 255})
 
     // Open-front runway kiosk: a raised deck, sheltered counter, rear wall,
     // and striped sign. The opening faces the runway along -Z.
@@ -9274,6 +11728,48 @@ world_marta :: proc(editor: ^Editor) {
         editor,
         {position = position, rotation = math.PI - facing, accessory = .Flower, grounded = false},
     )
+    world_mouse_interaction_indicator(editor, position)
+}
+
+world_gerta :: proc(editor: ^Editor) {
+    if !editor.in_map || !editor.libellula_visible do return
+    delta := third_person.Vec3 {
+        x = editor.player.position.x - editor.gerta_position.x,
+        z = editor.player.position.z - editor.gerta_position.z,
+    }
+    facing := math.atan2(-delta.x, -delta.z)
+    position := editor.gerta_position
+    position.y += MARTA_STOOL_HEIGHT
+    world_mouse_model(
+        editor,
+        {position = position, rotation = math.PI - facing, accessory = .Flower, accessory_side = 1, grounded = false},
+    )
+    world_mouse_interaction_indicator(editor, position)
+}
+
+world_mouse_interaction_indicator :: proc(editor: ^Editor, mouse_position: third_person.Vec3) {
+    if editor == nil || editor.pilot.mode != .On_Foot || editor.attendant_dialogue_open || pause_menu_is_open(editor) {
+        return
+    }
+
+    // Crossed slabs keep the punctuation legible from every approach without
+    // requiring a screen-space overlay or a camera-facing render path.
+    bob := f32(math.sin(rl.GetTime() * 3.2)) * .055
+    center := third_person.Vec3 {
+        x = mouse_position.x,
+        y = mouse_position.y + 1.18 + bob,
+        z = mouse_position.z,
+    }
+    gold := rl.Color{247, 191, 54, 255}
+    shadow := rl.Color{91, 57, 29, 255}
+
+    rotations := [2]f32{0, math.PI * .5}
+    for rotation in rotations {
+        world_box_rotated({center.x, center.y + .17, center.z}, {.105, .34, .045}, rotation, shadow)
+        world_box_rotated({center.x, center.y + .18, center.z}, {.065, .30, .065}, rotation, gold)
+        world_box_rotated({center.x, center.y - .10, center.z}, {.12, .12, .055}, rotation, shadow)
+        world_box_rotated({center.x, center.y - .10, center.z}, {.08, .08, .075}, rotation, gold)
+    }
 }
 
 Town_Mouse :: struct {
@@ -9286,6 +11782,177 @@ Town_Mouse :: struct {
     pattern:     Mouse_Fur_Pattern,
     scarf:       bool,
     scarf_color: rl.Color,
+}
+
+story_resident_town_slot :: proc(resident: story.Resident) -> (island_index, resident_index: int, ok: bool) {
+    switch resident {
+    case .Niko:
+        return 0, 0, true
+    case .Bojan:
+        return 0, 2, true
+    case .Iva:
+        return 1, 1, true
+    case .Zora:
+        return 1, 5, true
+    case .Marta:
+        return 0, 0, false
+    case .Gerta:
+        return 0, 0, false
+    }
+    return 0, 0, false
+}
+
+world_story_resident_home_pose :: proc(
+    editor: ^Editor,
+    resident: story.Resident,
+) -> (
+    position: third_person.Vec3,
+    rotation: f32,
+    ok: bool,
+) {
+    if editor == nil do return {}, 0, false
+    island_index, resident_index, mapped := story_resident_town_slot(resident)
+    if !mapped do return {}, 0, false
+    structures := editor.project.structures[:editor.project.structure_count]
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    island_signs := terrain.DEFAULT_ISLAND_SIGNS
+    island_center := island_signs[island_index] * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+    island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
+    candidates: [terrain.STRUCTURE_CAPACITY]int
+    candidate_count := 0
+    for structure, structure_index in structures {
+        if structure.kind != .Architecture || structure.height > 60 do continue
+        dx, dz := structure.center_x - island_center, structure.center_z - island_center
+        if dx * dx + dz * dz > island_radius * island_radius do continue
+        candidates[candidate_count] = structure_index
+        candidate_count += 1
+    }
+    if candidate_count == 0 do return {}, 0, false
+
+    lateral := [7]f32{-1.0, .8, -1.3, 1.1, -.7, 1.4, -.9}
+    outward := [7]f32{2.5, 2.2, 2.7, 2.4, 2.2, 2.6, 2.3}
+    for attempt in 0 ..< candidate_count {
+        candidate_index := candidates[(resident_index + attempt) % candidate_count]
+        frontage := architecture.architecture_frontage_structure(structures[candidate_index])
+        doorway_row := resident_index / candidate_count
+        x, z := world_rotate_xz(
+            frontage.center_x,
+            frontage.center_z,
+            lateral[resident_index],
+            frontage.depth * .5 + outward[resident_index] + f32(doorway_row) * 1.25,
+            frontage.rotation,
+        )
+        ground_y := terrain.sample_height(&editor.project, 0, x, z)
+        if ground_y <= editor.project.sea_level + .35 do continue
+        return {x, ground_y, z}, frontage.rotation, true
+    }
+    return {}, 0, false
+}
+
+world_story_meeting_pose :: proc(editor: ^Editor) -> (niko, iva, center: third_person.Vec3, rotation: f32, ok: bool) {
+    home, frontage_rotation, found := world_story_resident_home_pose(editor, .Niko)
+    if !found do return {}, {}, {}, 0, false
+    // The procedural resident point sits just beyond the doorway. Spread the
+    // pair along the façade and lift the awning center slightly toward it.
+    side_x, side_z := math.cos(frontage_rotation), math.sin(frontage_rotation)
+    out_x, out_z := -math.sin(frontage_rotation), math.cos(frontage_rotation)
+    center = {
+        home.x - out_x * .28,
+        0,
+        home.z - out_z * .28,
+    }
+    center.y = terrain.sample_height(&editor.project, 0, center.x, center.z)
+    niko = {
+        center.x - side_x * .62,
+        0,
+        center.z - side_z * .62,
+    }
+    iva = {
+        center.x + side_x * .62,
+        0,
+        center.z + side_z * .62,
+    }
+    niko.y = terrain.sample_height(&editor.project, 0, niko.x, niko.z)
+    iva.y = terrain.sample_height(&editor.project, 0, iva.x, iva.z)
+    return niko, iva, center, frontage_rotation, true
+}
+
+world_story_resident_position :: proc(
+    editor: ^Editor,
+    resident: story.Resident,
+) -> (
+    position: third_person.Vec3,
+    ok: bool,
+) {
+    if editor != nil && editor.story_state.romance == .Meeting && (resident == .Niko || resident == .Iva) {
+        niko, iva, _, _, found := world_story_meeting_pose(editor)
+        if !found do return {}, false
+        return resident == .Niko ? niko : iva, true
+    }
+    home_position, _, found := world_story_resident_home_pose(editor, resident)
+    return home_position, found
+}
+
+world_story_meeting :: proc(editor: ^Editor) {
+    if editor == nil || editor.story_state.romance != .Meeting do return
+    niko, iva, center, rotation, found := world_story_meeting_pose(editor)
+    if !found do return
+
+    // A temporary quay awning gives the meeting a readable landmark without
+    // requiring a hand-authored coordinate or a new asset.
+    blue := rl.Color{53, 103, 151, 255}
+    pale := rl.Color{219, 230, 220, 255}
+    timber := rl.Color{91, 63, 41, 255}
+    canopy_y := max(niko.y, iva.y) + 1.72
+    world_box_rotated({center.x, canopy_y, center.z}, {2.55, .12, 1.38}, rotation, blue)
+    for stripe in -2 ..= 2 {
+        if stripe & 1 != 0 do continue
+        stripe_x, stripe_z := world_rotate_xz(center.x, center.z, f32(stripe) * .45, 0, rotation)
+        world_box_rotated({stripe_x, canopy_y + .065, stripe_z}, {.34, .025, 1.40}, rotation, pale)
+    }
+    post_sides := [2]f32{-1, 1}
+    for side in post_sides {
+        post_x, post_z := world_rotate_xz(center.x, center.z, side * 1.13, -.54, rotation)
+        ground := terrain.sample_height(&editor.project, 0, post_x, post_z)
+        world_box_rotated(
+            {post_x, ground + (canopy_y - ground) * .5, post_z},
+            {.075, canopy_y - ground, .075},
+            rotation,
+            timber,
+        )
+    }
+
+    facing_niko := math.atan2(iva.x - niko.x, iva.z - niko.z)
+    facing_iva := math.atan2(niko.x - iva.x, niko.z - iva.z)
+    world_mouse_model_scaled(
+        editor,
+        {
+            position = niko,
+            rotation = math.PI - facing_niko,
+            accessory = .Acorn_Cap,
+            fur = .Chestnut,
+            pattern = .Pale_Belly,
+            grounded = true,
+        },
+        1.02,
+    )
+    world_mouse_model_scaled(
+        editor,
+        {
+            position = iva,
+            rotation = math.PI - facing_iva,
+            accessory = .Flower,
+            fur = .Cream,
+            pattern = .Piebald,
+            scarf_enabled = true,
+            scarf_color = {177, 65, 73, 255},
+            grounded = true,
+        },
+        .96,
+    )
+    if story.resident_has_action(&editor.story_state, .Niko) {
+        world_mouse_interaction_indicator(editor, niko)
+    }
 }
 
 world_town_mice :: proc(editor: ^Editor) {
@@ -9303,7 +11970,7 @@ world_town_mice :: proc(editor: ^Editor) {
     structures := editor.project.structures[:editor.project.structure_count]
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
-    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+    for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
         candidates: [terrain.STRUCTURE_CAPACITY]int
         candidate_count := 0
@@ -9333,6 +12000,22 @@ world_town_mice :: proc(editor: ^Editor) {
                 )
                 ground_y := terrain.sample_height(&editor.project, 0, x, z)
                 if ground_y <= editor.project.sea_level + .35 do continue
+                named_resident: story.Resident
+                named := false
+                if island_index == 0 && resident_index == 0 {
+                    named_resident, named = .Niko, true
+                } else if island_index == 0 && resident_index == 2 {
+                    named_resident, named = .Bojan, true
+                } else if island_index == 1 && resident_index == 1 {
+                    named_resident, named = .Iva, true
+                } else if island_index == 1 && resident_index == 5 {
+                    named_resident, named = .Zora, true
+                }
+                if named &&
+                   editor.story_state.romance == .Meeting &&
+                   (named_resident == .Niko || named_resident == .Iva) {
+                    break
+                }
                 rotation := frontage.rotation + math.PI * .5 + resident.facing
                 world_mouse_model_scaled(editor, {
                         position      = {x, ground_y, z},
@@ -9341,13 +12024,19 @@ world_town_mice :: proc(editor: ^Editor) {
                         fur           = resident.fur,
                         pattern       = resident.pattern,
                         scarf_enabled = resident.scarf,
-                        scarf_color   = resident.scarf_color,
-                        grounded      = true,
-                    }, resident.scale)
+                        scarf_color = resident.scarf_color,
+                        grounded = true,
+                    },
+                    resident.scale,
+                )
+                if named && story.resident_has_action(&editor.story_state, named_resident) {
+                    world_mouse_interaction_indicator(editor, {x, ground_y, z})
+                }
                 break
             }
         }
     }
+    world_story_meeting(editor)
 }
 
 world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: rl.Color) {
@@ -9368,7 +12057,15 @@ world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, colo
 
 world_brush :: proc(editor: ^Editor) {
     formation_brush := editor.authoring_tool == .Formations || editor.authoring_tool == .Foliage
-    if editor.in_map || (editor.tool == .Structure && !editor.architecture_paint_mode && !editor.climbing_leaf_paint_mode && !formation_brush) do return
+    if editor.in_map ||
+       (editor.tool == .Structure &&
+               !editor.architecture_paint_mode &&
+               !editor.marina_paint_mode &&
+               !editor.farm_paint_mode &&
+               !editor.climbing_leaf_paint_mode &&
+               !formation_brush) {
+        return
+    }
     camera := perspective_camera(
         editor.camera_pose,
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
@@ -9390,7 +12087,15 @@ world_brush :: proc(editor: ^Editor) {
         color = {90, 102, 112, 86}
         radius = editor.architecture_brush_radius
         hardness = editor.architecture_brush_hardness
-        if formation_brush {
+        if editor.marina_paint_mode {
+            color = {70, 170, 202, 92}
+            radius = editor.marina_brush_radius
+            hardness = .72
+        } else if editor.farm_paint_mode {
+            color = editor.farm_preview_valid ? rl.Color{153, 174, 76, 92} : rl.Color{218, 105, 86, 104}
+            radius = editor.farm_brush_radius
+            hardness = .68
+        } else if formation_brush {
             color = editor.authoring_tool == .Foliage ? rl.Color{105, 176, 92, 96} : rl.Color{172, 126, 84, 96}
             radius = editor.formation_brush_radius
             hardness = editor.formation_brush_hardness
@@ -9427,10 +12132,9 @@ world_ground_grass :: proc(editor: ^Editor) {
         return
     }
 
-    building_paths := world_architecture_path_footprints(editor)
-    defer delete(building_paths)
     building_footprints := world_architecture_grass_footprints(editor)
     defer delete(building_footprints)
+    circulation_plan := editor_circulation_plan(editor)
 
     // A snapped, deterministic field follows the camera without shimmer. Its
     // concentric density falloff keeps the near field lush while bounding CPU
@@ -9460,18 +12164,7 @@ world_ground_grass :: proc(editor: ^Editor) {
             // half the cards at the render limit and dropping them at once.
             if wind_streak_hash(seed_index, 3) > density do continue
             height_at := terrain.sample_height(&editor.project, 0, x, z)
-            if !wildflowers_renderable_at(editor, x, z) do continue
-            on_building_path := false
-            for path in building_paths {
-                if world_architecture_path_contains(path, x, z) {
-                    on_building_path = true
-                    break
-                }
-            }
-            if on_building_path do continue
-            pavement := roads.pavement_at(&editor.project.road_graph, {x, height_at, z})
-            if pavement.on_surface do continue
-
+            if !wildflowers_renderable_at(editor, x, z, circulation_plan) do continue
             variation := wind_streak_hash(seed_index, 4)
             // The atlas is sampled as luminance, so elevation can drive the
             // complete palette without additional texture variants. Moist,
@@ -9486,7 +12179,20 @@ world_ground_grass :: proc(editor: ^Editor) {
             if altitude < .52 {
                 color = color_lerp(low, middle, altitude / .52)
             }
-            color = color_lerp(color, {157, 164, 87, 255}, variation * .09)
+            // Large, stable patches echo the canopy families: cool sea-facing
+            // hollows, silvery herb grass, and dry gold-green exposed slopes.
+            // The low blend amount preserves terrain matching while producing
+            // visible postcard color regions from an overview camera.
+            temperature_field :=
+                f32(math.sin(f64(x * .018 + z * .007))) + f32(math.sin(f64(x * -.006 + z * .014 + 2.1))) * .55
+            if temperature_field < -.55 {
+                color = color_lerp(color, {49, 105, 84, 255}, .24)
+            } else if temperature_field > .58 {
+                color = color_lerp(color, {161, 153, 74, 255}, .27)
+            } else {
+                color = color_lerp(color, {111, 137, 91, 255}, .16)
+            }
+            color = color_lerp(color, {170, 166, 87, 255}, variation * .08)
             // Keep the authored grass hue, but match its value to the shaded
             // terrain beneath it. In the outer falloff, converge on the exact
             // terrain color so the final cards cannot form a dark cutoff ring.
@@ -9510,26 +12216,19 @@ world_ground_grass :: proc(editor: ^Editor) {
             } else if height_noise > .90 {
                 height *= 1.28
             }
-            height *= world_architecture_grass_height_scale(building_footprints[:], x, z)
+            architecture_height_scale := world_architecture_grass_height_scale(building_footprints[:], x, z)
+            if architecture_height_scale <= 0 do continue
+            height *= architecture_height_scale
             width := height * (.56 + width_noise * .48)
             world_grass_card({x, height_at + height * .5, z}, width, height, abs(seed_index) % 16, color)
             flower_density := wildflower_density_at(x, z)
             if flower_density > .18 && wind_streak_hash(seed_index, 12) < flower_density * .34 {
-                flower_colors := [5]rl.Color {
-                    {239, 198, 67, color.a},
-                    {238, 121, 151, color.a},
-                    {190, 142, 222, color.a},
-                    {238, 232, 205, color.a},
-                    {207, 77, 101, color.a},
-                }
-                flower_color := flower_colors[abs(seed_index / 7) % len(flower_colors)]
                 flower_height := .32 + wind_streak_hash(seed_index, 13) * .34
-                world_grass_card(
+                world_wildflower_card(
                     {x, height_at + flower_height * .5 + .12, z},
                     .22 + wind_streak_hash(seed_index, 14) * .18,
                     flower_height,
                     abs(seed_index / 11) % 16,
-                    flower_color,
                 )
             }
         }
@@ -9545,66 +12244,77 @@ world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.foliage_vertices)
     clear(&world_renderer.bougainvillea_vertices)
     clear(&world_renderer.grass_instances)
+    clear(&world_renderer.wildflower_instances)
     world_renderer.player_vertex_first = 0
     world_renderer.player_vertex_count = 0
+    world_renderer.dynamic_caster_first = 0
+    world_renderer.dynamic_caster_count = 0
     if editor.pause_screen == .Customization {
         // The customization screen gets a purpose-built miniature world pass.
         // It uses the exact gameplay model and materials, rather than maintaining
         // a second approximation of the mouse in the UI layer.
         world_ellipsoid_rotated({0, -.08, 0}, .72, .08, .72, 0, {40, 58, 61, 255})
         world_ellipsoid_rotated({0, -.025, 0}, .60, .035, .60, 0, {77, 112, 111, 255})
-        world_mouse_model(editor, {
-            position      = {0, 0, 0},
-            rotation      = f32(rl.GetTime()) * .32,
-            accessory     = editor.mouse_headgear,
-            fur           = editor.mouse_fur,
-            pattern       = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color   = editor.mouse_scarf_color,
-            preview       = true,
-            grounded      = false,
-        })
+        world_mouse_model(
+            editor,
+            {
+                position = {0, 0, 0},
+                rotation = editor.customization_preview_yaw + .65,
+                accessory = editor.mouse_headgear,
+                fur = editor.mouse_fur,
+                pattern = editor.mouse_pattern,
+                scarf_enabled = editor.mouse_scarf_enabled,
+                scarf_color = editor.mouse_scarf_color,
+                preview = true,
+                player_controlled = true,
+                grounded = false,
+            },
+        )
         return
     }
     if editor.vehicle_showcase_scene {
         world_vehicle_showcase(editor)
         return
     }
+    if lab_scene_draw_world(editor) do return
     // Depth testing makes submission order independent. Put authored gameplay
     // meshes first so dense terrain can consume only the remaining capacity
     // instead of silently dropping vehicles at the end of the frame.
     world_ocean(editor)
-    world_infrastructure(editor)
+    for index in 0 ..< editor.default_marina_count {
+        world_markov_marina_facility(editor, &editor.default_marinas[index], false)
+    }
+    if editor.marina_authored do world_markov_marina_facility(editor, &editor.marina_authored_plan, false)
+    if editor.marina_paint_mode && editor.marina_preview_valid {
+        world_markov_marina_facility(editor, &editor.marina_preview_plan, false)
+    }
+    if !lab_scene_suppresses_infrastructure(editor) do world_infrastructure(editor)
     world_roads(editor)
+    world_boat_wakes(editor)
     world_city_density_overlay(editor)
     world_climbing_leaf_density_overlay(editor)
     sky := atmosphere.sample(&editor.atmosphere)
-    for structure in editor.project.structures[:editor.project.structure_count] {
-        world_structure_shadow(structure, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+    if !lab_scene_suppresses_shadows(editor) {
+        for structure in editor.project.structures[:editor.project.structure_count] {
+            world_structure_shadow(structure, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+        }
     }
 
     if editor.in_map && editor.libellula_visible {
-        marta_ground := terrain.sample_height(
-            &editor.project,
-            0,
-            editor.attendant_position.x,
-            editor.attendant_position.z,
-        )
-        marta_shadow := terrain.structure_make(
-            editor.attendant_position.x,
-            editor.attendant_position.z,
-            .72,
-            1.72,
-            marta_ground,
-            .78,
-        )
-        world_structure_shadow(marta_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+        attendant_positions := [2]third_person.Vec3{editor.attendant_position, editor.gerta_position}
+        for attendant in attendant_positions {
+            attendant_ground := terrain.sample_height(&editor.project, 0, attendant.x, attendant.z)
+            attendant_shadow := terrain.structure_make(attendant.x, attendant.z, .72, 1.72, attendant_ground, .78)
+            world_structure_shadow(attendant_shadow, sky.sun_direction, sky.weather.cloud_cover, &editor.project)
+        }
     }
     // The player and vehicles are gameplay-critical. Submit them before any
     // capacity-limited environment detail so a dense scene can never cull the
     // controlled character or the vehicle they occupy. Keeping all vehicles
     // in this protected group also prevents an enter/exit transition from
     // exposing a one-frame ordering gap.
+    world_renderer.dynamic_caster_first = len(world_renderer.vertices)
+    world_npc_boats(editor)
     world_aircraft(editor)
     world_car(editor)
     world_car_pilot(editor)
@@ -9616,7 +12326,11 @@ world_build :: proc(editor: ^Editor) {
     // before the capacity-limited procedural town and vegetation passes.
     world_attendant_kiosk(editor)
     world_marta(editor)
+    world_gerta(editor)
     world_town_mice(editor)
+    world_authored_farmland(editor)
+    lab_scene_draw_world_overlay(editor)
+    world_renderer.dynamic_caster_count = len(world_renderer.vertices) - world_renderer.dynamic_caster_first
     world_structures(editor)
     world_climbing_leaves(editor)
     world_ground_grass(editor)
@@ -9658,7 +12372,7 @@ world_petal_particles :: proc(editor: ^Editor) {
 }
 
 customization_preview_camera_pose :: proc() -> third_person.Camera_Pose {
-    return {position = {2.35, 1.25, 3.2}, target = {1.90, .43, 0}}
+    return {position = {2.28, 1.18, 3.08}, target = {1.86, .38, 0}}
 }
 
 world_vehicle_particle :: proc(
@@ -10019,13 +12733,16 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
 }
 
 world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
-    paint_bindings := [2]vk.DescriptorSetLayoutBinding {
+    if !dynamic_shadow_create(&world_renderer.dynamic_shadow, ctx) do return false
+    paint_bindings := [4]vk.DescriptorSetLayoutBinding {
         {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 3, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
     }
     paint_layout_info := vk.DescriptorSetLayoutCreateInfo {
         sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        bindingCount = 2,
+        bindingCount = 4,
         pBindings    = raw_data(paint_bindings[:]),
     }
     if vk.CreateDescriptorSetLayout(ctx.device, &paint_layout_info, nil, &world_renderer.vehicle_paint_descriptor_layout) != .SUCCESS do return false
@@ -10036,8 +12753,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         "vehicle paint descriptor set layout",
     )
     paint_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = 1},
-        {type = .SAMPLER, descriptorCount = 1},
+        {type = .SAMPLED_IMAGE, descriptorCount = 2},
+        {type = .SAMPLER, descriptorCount = 2},
     }
     paint_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
@@ -10066,6 +12783,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         "vehicle paint descriptor set",
     )
     if !vehicle_paint_atlas_create(ctx, &world_renderer.vehicle_paint_atlas) do return false
+    if !resources.texture_load_file(
+        ctx,
+        "assets/textures/accessories/soda-cap-logo.png",
+        &world_renderer.soda_cap_logo,
+        {address_mode = .CLAMP_TO_EDGE},
+    ) {
+        return false
+    }
     paint_image_info := vk.DescriptorImageInfo {
         imageView   = world_renderer.vehicle_paint_atlas.view,
         imageLayout = .SHADER_READ_ONLY_OPTIMAL,
@@ -10073,7 +12798,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     paint_sampler_info := vk.DescriptorImageInfo {
         sampler = world_renderer.vehicle_paint_atlas.sampler,
     }
-    paint_writes := [2]vk.WriteDescriptorSet {
+    soda_logo_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.soda_cap_logo.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    soda_logo_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.soda_cap_logo.sampler,
+    }
+    paint_writes := [4]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
             dstSet = world_renderer.vehicle_paint_descriptor,
@@ -10090,18 +12822,38 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             descriptorType = .SAMPLER,
             pImageInfo = &paint_sampler_info,
         },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.vehicle_paint_descriptor,
+            dstBinding = 2,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &soda_logo_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.vehicle_paint_descriptor,
+            dstBinding = 3,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &soda_logo_sampler_info,
+        },
     }
-    vk.UpdateDescriptorSets(ctx.device, 2, raw_data(paint_writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(ctx.device, 4, raw_data(paint_writes[:]), 0, nil)
     pr := vk.PushConstantRange {
         stageFlags = {.VERTEX, .FRAGMENT},
         size       = u32(size_of(World_Push)),
+    }
+    world_set_layouts := [2]vk.DescriptorSetLayout {
+        world_renderer.vehicle_paint_descriptor_layout,
+        world_renderer.dynamic_shadow.descriptor_layout,
     }
     li := vk.PipelineLayoutCreateInfo {
         sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
         pushConstantRangeCount = 1,
         pPushConstantRanges    = &pr,
-        setLayoutCount         = 1,
-        pSetLayouts            = &world_renderer.vehicle_paint_descriptor_layout,
+        setLayoutCount         = 2,
+        pSetLayouts            = raw_data(world_set_layouts[:]),
     }
     if vk.CreatePipelineLayout(ctx.device, &li, nil, &world_renderer.layout) != .SUCCESS do return false
     engine.vk_set_debug_name(ctx, .PIPELINE_LAYOUT, auto_cast world_renderer.layout, "world pipeline layout")
@@ -10130,12 +12882,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         "foliage descriptor set layout",
     )
     foliage_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = 3},
-        {type = .SAMPLER, descriptorCount = 3},
+        {type = .SAMPLED_IMAGE, descriptorCount = 4},
+        {type = .SAMPLER, descriptorCount = 4},
     }
     foliage_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-        maxSets       = 3,
+        maxSets       = 4,
         poolSizeCount = 2,
         pPoolSizes    = raw_data(foliage_pool_sizes[:]),
     }
@@ -10149,16 +12901,17 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         auto_cast world_renderer.foliage_descriptor_pool,
         "foliage descriptor pool",
     )
-    foliage_layouts := [3]vk.DescriptorSetLayout {
+    foliage_layouts := [4]vk.DescriptorSetLayout {
+        world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
     }
-    foliage_descriptors: [3]vk.DescriptorSet
+    foliage_descriptors: [4]vk.DescriptorSet
     foliage_allocate := vk.DescriptorSetAllocateInfo {
         sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
         descriptorPool     = world_renderer.foliage_descriptor_pool,
-        descriptorSetCount = 3,
+        descriptorSetCount = 4,
         pSetLayouts        = raw_data(foliage_layouts[:]),
     }
     if vk.AllocateDescriptorSets(ctx.device, &foliage_allocate, raw_data(foliage_descriptors[:])) != .SUCCESS {
@@ -10167,6 +12920,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.foliage_descriptor = foliage_descriptors[0]
     world_renderer.bougainvillea_descriptor = foliage_descriptors[1]
     world_renderer.grass_descriptor = foliage_descriptors[2]
+    world_renderer.wildflower_descriptor = foliage_descriptors[3]
     engine.vk_set_debug_name(
         ctx,
         .DESCRIPTOR_SET,
@@ -10180,6 +12934,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         "bougainvillea descriptor set",
     )
     engine.vk_set_debug_name(ctx, .DESCRIPTOR_SET, auto_cast world_renderer.grass_descriptor, "grass descriptor set")
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_SET,
+        auto_cast world_renderer.wildflower_descriptor,
+        "wildflower descriptor set",
+    )
     if !resources.texture_load_file(
         ctx,
         "assets/textures/foliage/leaf-branches-atlas.png",
@@ -10200,6 +12960,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         ctx,
         "assets/textures/foliage/grass-tufts-atlas.png",
         &world_renderer.grass_atlas,
+        {address_mode = .CLAMP_TO_EDGE},
+    ) {
+        return false
+    }
+    if !resources.texture_load_file(
+        ctx,
+        "assets/textures/foliage/wildflower-billboards-atlas.png",
+        &world_renderer.wildflower_atlas,
         {address_mode = .CLAMP_TO_EDGE},
     ) {
         return false
@@ -10225,7 +12993,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     grass_sampler_info := vk.DescriptorImageInfo {
         sampler = world_renderer.grass_atlas.sampler,
     }
-    foliage_writes := [6]vk.WriteDescriptorSet {
+    wildflower_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.wildflower_atlas.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    wildflower_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.wildflower_atlas.sampler,
+    }
+    foliage_writes := [8]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
             dstSet = world_renderer.foliage_descriptor,
@@ -10274,11 +13049,32 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             descriptorType = .SAMPLER,
             pImageInfo = &grass_sampler_info,
         },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.wildflower_descriptor,
+            dstBinding = 0,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &wildflower_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.wildflower_descriptor,
+            dstBinding = 1,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &wildflower_sampler_info,
+        },
     }
-    vk.UpdateDescriptorSets(ctx.device, 6, raw_data(foliage_writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(ctx.device, 8, raw_data(foliage_writes[:]), 0, nil)
     foliage_layout_info := li
     foliage_layout_info.setLayoutCount = 1
-    foliage_layout_info.pSetLayouts = &world_renderer.foliage_descriptor_layout
+    foliage_set_layouts := [2]vk.DescriptorSetLayout {
+        world_renderer.foliage_descriptor_layout,
+        world_renderer.dynamic_shadow.descriptor_layout,
+    }
+    foliage_layout_info.setLayoutCount = 2
+    foliage_layout_info.pSetLayouts = raw_data(foliage_set_layouts[:])
     if vk.CreatePipelineLayout(ctx.device, &foliage_layout_info, nil, &world_renderer.foliage_layout) != .SUCCESS {
         return false
     }
@@ -10581,10 +13377,13 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     sky_ca.blendEnable = false
     sky_cb := cb
     sky_cb.pAttachments = &sky_ca
+    sky_rs := rs
+    sky_rs.cullMode = {}
     sky_info := info
     sky_info.pVertexInputState = &sky_vi
     sky_info.pDepthStencilState = &sky_depth
     sky_info.pColorBlendState = &sky_cb
+    sky_info.pRasterizationState = &sky_rs
     sky_info.layout = world_renderer.sky_layout
     if !render3d.create_color_pipeline_variants(ctx, &sky_info, .D32_SFLOAT, &world_renderer.sky_pipelines) do return false
     for &buffer in world_renderer.vertex {
@@ -10606,7 +13405,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     for &buffer in world_renderer.grass_instance {
         if !engine.vk_create_host_buffer(
             ctx,
-            vk.DeviceSize(GRASS_INSTANCE_CAPACITY * size_of(Grass_Instance)),
+            vk.DeviceSize((GRASS_INSTANCE_CAPACITY + WILDFLOWER_INSTANCE_CAPACITY) * size_of(Grass_Instance)),
             {.VERTEX_BUFFER},
             &buffer,
         ) {
@@ -10626,6 +13425,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WING_TRAIL_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &world_renderer.wing_trail_vertex[frame]) do return false
         if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WING_TRAIL_INDEX_CAPACITY * size_of(u16)), {.INDEX_BUFFER}, &world_renderer.wing_trail_index[frame]) do return false
+        if !engine.vk_create_host_buffer(
+            ctx,
+            vk.DeviceSize(SHADOW_VERTEX_CAPACITY * size_of(World_Vertex)),
+            {.VERTEX_BUFFER},
+            &world_renderer.shadow_vertex[frame],
+        ) {
+            return false
+        }
     }
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
@@ -10645,9 +13452,11 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_CAPACITY)
     world_renderer.bougainvillea_vertices = make([dynamic]Foliage_Vertex, 0, BOUGAINVILLEA_VERTEX_CAPACITY)
     world_renderer.grass_instances = make([dynamic]Grass_Instance, 0, GRASS_INSTANCE_CAPACITY)
+    world_renderer.wildflower_instances = make([dynamic]Grass_Instance, 0, WILDFLOWER_INSTANCE_CAPACITY)
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
     world_renderer.wing_trail_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
     world_renderer.wing_trail_optimized_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
+    world_renderer.shadow_vertices = make([dynamic]World_Vertex, 0, SHADOW_VERTEX_CAPACITY)
     world_renderer.ctx = ctx
     world_renderer.initialized = true
     return true
@@ -10658,14 +13467,41 @@ world_pre_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     editor := world_renderer.editor
     if editor == nil do return
     vehicle_paint_atlas_flush(editor, pass.frame.command_buffer, int(pass.frame.frame_index))
+    if !world_renderer.dynamic_shadow.enabled do return
+    frame_index := int(pass.frame.frame_index)
+    // Build before the canvas begins its color rendering scope so the same
+    // animated frame can be submitted to the independent depth-only pass.
+    world_renderer.dynamic_shadow.anchor = dynamic_shadow_resolve_anchor(editor)
+    world_build(editor)
+    dynamic_shadow_build_casters(editor)
+    dynamic_shadow_update_transform(editor, frame_index)
+    if len(world_renderer.shadow_vertices) > 0 {
+        shadow_vertex_count := min(len(world_renderer.shadow_vertices), SHADOW_VERTEX_CAPACITY)
+        shadow_vertex_count -= shadow_vertex_count % 3
+        mem.copy_non_overlapping(
+            world_renderer.shadow_vertex[frame_index].mapped,
+            raw_data(world_renderer.shadow_vertices[:]),
+            shadow_vertex_count * size_of(World_Vertex),
+        )
+        if shadow_vertex_count < len(world_renderer.shadow_vertices) {
+            resize(&world_renderer.shadow_vertices, shadow_vertex_count)
+        }
+    }
+    dynamic_shadow_render(pass, frame_index)
+    world_renderer.dynamic_shadow.frame_prepared = true
 }
 
 world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized do return
     editor := world_renderer.editor
     if editor == nil do return
-    world_build(editor)
-    if !editor.vehicle_showcase_scene do clipmap_update(editor, int(pass.frame.frame_index))
+    if !world_renderer.dynamic_shadow.frame_prepared {
+        world_build(editor)
+    }
+    world_renderer.dynamic_shadow.frame_prepared = false
+    if !editor.vehicle_showcase_scene && !lab_scene_replaces_world(editor) {
+        clipmap_update(editor, int(pass.frame.frame_index))
+    }
     buffer := &world_renderer.vertex[pass.frame.frame_index]
     road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
     foliage_buffer := &world_renderer.foliage_vertex[pass.frame.frame_index]
@@ -10709,6 +13545,15 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             len(world_renderer.grass_instances) * size_of(Grass_Instance),
         )
     }
+    if len(world_renderer.wildflower_instances) > 0 {
+        destination := cast(rawptr)(cast(uintptr)grass_instance_buffer.mapped +
+            uintptr(len(world_renderer.grass_instances) * size_of(Grass_Instance)))
+        mem.copy_non_overlapping(
+            destination,
+            raw_data(world_renderer.wildflower_instances[:]),
+            len(world_renderer.wildflower_instances) * size_of(Grass_Instance),
+        )
+    }
     if len(world_renderer.wing_trail_vertices) > 0 {
         mem.copy_non_overlapping(
             wing_trail_vertex_buffer.mapped,
@@ -10737,6 +13582,9 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
     focal_length :=
         editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH : (editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35)
+    if editor.cinematic_playback.script != nil {
+        focal_length = max(editor.cinematic_focal_length, f32(.01))
+    }
     camera := perspective_camera(render_camera_pose, focal_length)
     sky := atmosphere.sample(&editor.atmosphere)
     fog := world_sky_horizon_color(sky)
@@ -10765,6 +13613,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         camera_up      = {camera.up.x, camera.up.y, camera.up.z, camera.focal_length},
         camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
         sun_direction  = {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], f32(sky.cloud_seed)},
+        moon_direction = {sky.moon_direction[0], sky.moon_direction[1], sky.moon_direction[2], sky.moon_illumination},
         time_light     = {sky.world_minutes, sky.cloud_time_seconds, sky.daylight, sky.twilight},
         wind_cloud     = {
             sky.weather.wind[0],
@@ -10772,7 +13621,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             sky.weather.cloud_cover,
             sky.weather.precipitation,
         },
-        haze_severity  = {sky.weather.haze, sky.weather.severity, 0, 0},
+        haze_severity  = {sky.weather.haze, sky.weather.severity, sky.world_days, 0},
     }
     offset := vk.DeviceSize(0)
     graph_context := Render_Graph_Context {
@@ -10812,6 +13661,7 @@ world_renderer_destroy :: proc() {
     for &buffer in world_renderer.vehicle_paint_staging do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.wing_trail_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.wing_trail_index do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.shadow_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
             engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_vertex[frame][level])
@@ -10821,6 +13671,7 @@ world_renderer_destroy :: proc() {
     roads.mesh_destroy(&world_renderer.road_mesh)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.shadow_pipelines)
+    dynamic_shadow_destroy(&world_renderer.dynamic_shadow, world_renderer.ctx)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.road_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.sky_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.particle_pipelines)
@@ -10829,7 +13680,9 @@ world_renderer_destroy :: proc() {
     resources.image_destroy(&world_renderer.foliage_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.bougainvillea_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.grass_atlas, world_renderer.ctx)
+    resources.image_destroy(&world_renderer.wildflower_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.vehicle_paint_atlas, world_renderer.ctx)
+    resources.image_destroy(&world_renderer.soda_cap_logo, world_renderer.ctx)
     if world_renderer.layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.layout, nil)
     if world_renderer.sky_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.sky_layout, nil)
     if world_renderer.foliage_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.foliage_layout, nil)
@@ -10850,9 +13703,11 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)
     delete(world_renderer.grass_instances)
+    delete(world_renderer.wildflower_instances)
     delete(world_renderer.wing_trail_vertices)
     delete(world_renderer.wing_trail_indices)
     delete(world_renderer.wing_trail_optimized_indices)
+    delete(world_renderer.shadow_vertices)
     for &entry in world_renderer.foliage_geometry_cache {
         delete(entry.world_vertices)
         delete(entry.foliage_vertices)

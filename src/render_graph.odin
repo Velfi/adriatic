@@ -63,6 +63,16 @@ render_graph_geometry :: proc(user_data: rawptr) {
         0,
         nil,
     )
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        1,
+        1,
+        &world_renderer.dynamic_shadow.descriptors[ctx.pass.frame.frame_index],
+        0,
+        nil,
+    )
     vk.CmdPushConstants(
         cmd,
         world_renderer.layout,
@@ -87,12 +97,23 @@ render_graph_foliage :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
     if len(world_renderer.foliage_vertices) <= 0 &&
        len(world_renderer.bougainvillea_vertices) <= 0 &&
-       len(world_renderer.grass_instances) <= 0 {
+       len(world_renderer.grass_instances) <= 0 &&
+       len(world_renderer.wildflower_instances) <= 0 {
         return
     }
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / Foliage Atlas")
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.foliage_pipelines[ctx.pipeline_index])
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.foliage_layout,
+        1,
+        1,
+        &world_renderer.dynamic_shadow.descriptors[ctx.pass.frame.frame_index],
+        0,
+        nil,
+    )
     vk.CmdPushConstants(
         cmd,
         world_renderer.foliage_layout,
@@ -149,13 +170,31 @@ render_graph_foliage :: proc(user_data: rawptr) {
         )
         vk.CmdDraw(cmd, 6, u32(len(world_renderer.grass_instances)), 0, 0)
     }
+    if len(world_renderer.wildflower_instances) > 0 {
+        vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.grass_pipelines[ctx.pipeline_index])
+        vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.grass_instance_buffer.handle, &ctx.offset)
+        vk.CmdBindDescriptorSets(
+            cmd,
+            .GRAPHICS,
+            world_renderer.foliage_layout,
+            0,
+            1,
+            &world_renderer.wildflower_descriptor,
+            0,
+            nil,
+        )
+        vk.CmdDraw(cmd, 6, u32(len(world_renderer.wildflower_instances)), 0, u32(len(world_renderer.grass_instances)))
+    }
     render_graph_stage_end(ctx)
 }
 
 render_graph_terrain :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
     if world_renderer.editor != nil &&
-       (world_renderer.editor.pause_screen == .Customization || world_renderer.editor.vehicle_showcase_scene) {
+       (world_renderer.editor.pause_screen == .Customization ||
+               world_renderer.editor.vehicle_showcase_scene ||
+               world_renderer.editor.wildflower_lab_scene ||
+               lab_scene_replaces_world(world_renderer.editor)) {
         return
     }
     cmd := ctx.pass.frame.command_buffer
@@ -168,6 +207,16 @@ render_graph_terrain :: proc(user_data: rawptr) {
         0,
         1,
         &world_renderer.vehicle_paint_descriptor,
+        0,
+        nil,
+    )
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        1,
+        1,
+        &world_renderer.dynamic_shadow.descriptors[ctx.pass.frame.frame_index],
         0,
         nil,
     )
@@ -207,6 +256,16 @@ render_graph_roads :: proc(user_data: rawptr) {
         0,
         nil,
     )
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        1,
+        1,
+        &world_renderer.dynamic_shadow.descriptors[ctx.pass.frame.frame_index],
+        0,
+        nil,
+    )
     vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.road_pipelines[ctx.pipeline_index])
     vk.CmdPushConstants(
         cmd,
@@ -221,30 +280,6 @@ render_graph_roads :: proc(user_data: rawptr) {
     render_graph_stage_end(ctx)
 }
 
-render_graph_character_shadow :: proc(user_data: rawptr) {
-    ctx := cast(^Render_Graph_Context)user_data
-    if world_renderer.player_vertex_count <= 0 do return
-    cmd := ctx.pass.frame.command_buffer
-    render_graph_stage_label(ctx, "Adriatic / Character Shadow")
-    vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.shadow_pipelines[ctx.pipeline_index])
-    vk.CmdBindDescriptorSets(
-        cmd,
-        .GRAPHICS,
-        world_renderer.layout,
-        0,
-        1,
-        &world_renderer.vehicle_paint_descriptor,
-        0,
-        nil,
-    )
-    shadow_push := ctx.world_push
-    shadow_push.water[1] = world_renderer.player_shadow_receiver
-    vk.CmdPushConstants(cmd, world_renderer.layout, {.VERTEX, .FRAGMENT}, 0, u32(size_of(shadow_push)), &shadow_push)
-    vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.buffer.handle, &ctx.offset)
-    vk.CmdDraw(cmd, u32(world_renderer.player_vertex_count), 1, u32(world_renderer.player_vertex_first), 0)
-    render_graph_stage_end(ctx)
-}
-
 adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
     if graph == nil do return false
     render_graph.reset(graph)
@@ -253,12 +288,10 @@ adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
     foliage := render_graph.add_pass(graph, "foliage", render_graph_foliage)
     terrain := render_graph.add_pass(graph, "terrain", render_graph_terrain)
     roads := render_graph.add_pass(graph, "roads", render_graph_roads)
-    character_shadow := render_graph.add_pass(graph, "character_shadow", render_graph_character_shadow)
     return(
         render_graph.depends_on(graph, terrain, sky) &&
         render_graph.depends_on(graph, geometry, terrain) &&
         render_graph.depends_on(graph, foliage, geometry) &&
-        render_graph.depends_on(graph, roads, foliage) &&
-        render_graph.depends_on(graph, character_shadow, roads) \
+        render_graph.depends_on(graph, roads, foliage) \
     )
 }

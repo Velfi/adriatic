@@ -22,11 +22,14 @@ State :: struct {
 }
 
 Target :: struct {
-    position:   flight.Vec3,
-    basis:      flight.Basis,
-    airspeed:   f32,
-    roll_input: f32,
-    grounded:   bool,
+    position:        flight.Vec3,
+    basis:           flight.Basis,
+    airspeed:        f32,
+    roll_input:      f32,
+    grounded:        bool,
+    follow_distance: f32,
+    follow_height:   f32,
+    focus_height:    f32,
 }
 
 reset :: proc(state: ^State, target: Target) {
@@ -133,7 +136,13 @@ desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_perso
     forward := horizontal_forward(target.basis)
     behind := rotate_y(-forward, orbit_yaw)
     framing_camera, framing_focus := vertical_framing(target.basis.forward.y)
-    position := target.position + behind * FOLLOW_DISTANCE + {0, FOLLOW_HEIGHT + framing_camera + orbit_pitch * 8, 0}
+    follow_distance := target.follow_distance
+    follow_height := target.follow_height
+    focus_height := target.focus_height
+    if follow_distance <= 0 do follow_distance = FOLLOW_DISTANCE
+    if follow_height <= 0 do follow_height = FOLLOW_HEIGHT
+    if focus_height == 0 do focus_height = FOCUS_HEIGHT
+    position := target.position + behind * follow_distance + flight.Vec3{0, follow_height + framing_camera + orbit_pitch * 8, 0}
     right := target.basis.right
     right.y = 0
     right = linalg.normalize0(right)
@@ -142,7 +151,7 @@ desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_perso
         target.position +
         forward * look_ahead +
         right * clamp(-target.roll_input * 3.2, -3.2, 3.2) +
-        {0, FOCUS_HEIGHT + framing_focus + (target.grounded ? -.35 : 0), 0}
+        flight.Vec3{0, focus_height + framing_focus + (target.grounded ? -.35 : 0), 0}
     return {position = to_third_person(position), target = to_third_person(focus)}
 }
 

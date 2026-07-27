@@ -5,6 +5,7 @@ import "core:math"
 DAY_MINUTES :: f32(1440)
 WORLD_MINUTES_PER_SECOND :: f32(4)
 FRONT_SECONDS :: f32(95)
+SYNODIC_MONTH_DAYS :: f32(29.53059)
 
 Weather_Preset :: enum {
     Automatic,
@@ -23,9 +24,13 @@ Weather_State :: struct {
 
 Sky_State :: struct {
     world_minutes:      f32,
+    world_days:         f32,
     cloud_time_seconds: f32,
     cloud_seed:         u32,
     sun_direction:      [3]f32,
+    moon_direction:     [3]f32,
+    moon_phase:         f32,
+    moon_illumination:  f32,
     daylight:           f32,
     twilight:           f32,
     weather:            Weather_State,
@@ -34,6 +39,8 @@ Sky_State :: struct {
 Atmosphere :: struct {
     seed:          u32,
     world_minutes: f32,
+    world_days:    f32,
+    lunar_days:    f32,
     front_seconds: f32,
     weather:       Weather_State,
     override:      Weather_Preset,
@@ -41,7 +48,16 @@ Atmosphere :: struct {
 }
 
 new :: proc(seed: u32) -> Atmosphere {
-    return {seed = seed, world_minutes = 9.5 * 60, weather = weather_for(.Clear), override = .Automatic}
+    // The seed gives each world a stable starting age without changing the
+    // physical cycle length.
+    lunar_days := f32(hash(seed) % 10000) / 10000 * SYNODIC_MONTH_DAYS
+    return {
+        seed = seed,
+        world_minutes = 9.5 * 60,
+        lunar_days = lunar_days,
+        weather = weather_for(.Clear),
+        override = .Automatic,
+    }
 }
 
 @(no_instrumentation)
@@ -88,9 +104,16 @@ step :: proc(state: ^Atmosphere, delta_seconds: f32) {
     if state == nil || delta_seconds <= 0 do return
     delta := min(delta_seconds, f32(.1))
     if !state.paused {
-        state.world_minutes = f32(
-            math.mod(f64(state.world_minutes + delta * WORLD_MINUTES_PER_SECOND), f64(DAY_MINUTES)),
+        elapsed_minutes := delta * WORLD_MINUTES_PER_SECOND
+        state.world_minutes += elapsed_minutes
+        state.lunar_days = f32(
+            math.mod(f64(state.lunar_days + elapsed_minutes / DAY_MINUTES), f64(SYNODIC_MONTH_DAYS)),
         )
+        if state.world_minutes >= DAY_MINUTES {
+            elapsed_days := f32(math.floor(f64(state.world_minutes / DAY_MINUTES)))
+            state.world_minutes -= elapsed_days * DAY_MINUTES
+            state.world_days += elapsed_days
+        }
         state.front_seconds += delta
     }
     target_preset := state.override
@@ -110,19 +133,42 @@ set_world_minutes :: proc(state: ^Atmosphere, minutes: f32) {
     if state.world_minutes < 0 do state.world_minutes += DAY_MINUTES
 }
 
+set_lunar_age :: proc(state: ^Atmosphere, days_since_new_moon: f32) {
+    if state == nil do return
+    state.lunar_days = f32(math.mod(f64(days_since_new_moon), f64(SYNODIC_MONTH_DAYS)))
+    if state.lunar_days < 0 do state.lunar_days += SYNODIC_MONTH_DAYS
+}
+
 sample :: proc(state: ^Atmosphere) -> Sky_State {
     if state == nil do return {}
     angle := (state.world_minutes / DAY_MINUTES - .25) * 2 * f32(math.PI)
     sun := [3]f32{f32(math.cos(f64(angle))) * .72, f32(math.sin(f64(angle))), f32(math.cos(f64(angle))) * .38}
     length := f32(math.sqrt(f64(sun[0] * sun[0] + sun[1] * sun[1] + sun[2] * sun[2])))
     for &component in sun do component /= max(length, f32(.0001))
+    moon_phase := state.lunar_days / SYNODIC_MONTH_DAYS
+    moon_angle := angle + moon_phase * 2 * f32(math.PI)
+    // A modest orbital inclination keeps the moon from tracing the sun's
+    // exact path while retaining predictable rise and set times by phase.
+    inclination := f32(math.sin(f64(moon_phase * 2 * f32(math.PI) + .73))) * .089
+    moon := [3]f32 {
+        f32(math.cos(f64(moon_angle))) * .72,
+        f32(math.sin(f64(moon_angle))) + inclination,
+        f32(math.cos(f64(moon_angle))) * .38,
+    }
+    moon_length := f32(math.sqrt(f64(moon[0] * moon[0] + moon[1] * moon[1] + moon[2] * moon[2])))
+    for &component in moon do component /= max(moon_length, f32(.0001))
+    moon_illumination := (1 - f32(math.cos(f64(moon_phase * 2 * f32(math.PI))))) * .5
     daylight := clamp((sun[1] + .10) / .30, 0, 1)
     twilight := clamp(1 - abs(sun[1]) / .34, 0, 1) * (1 - daylight * .35)
     return {
         world_minutes = state.world_minutes,
+        world_days = state.world_days,
         cloud_time_seconds = state.front_seconds,
         cloud_seed = state.seed,
         sun_direction = sun,
+        moon_direction = moon,
+        moon_phase = moon_phase,
+        moon_illumination = moon_illumination,
         daylight = daylight,
         twilight = twilight,
         weather = state.weather,

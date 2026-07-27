@@ -1,0 +1,4 @@
+interface:
+  display_name: "Autowriter"
+  short_description: "Write grounded stories for Adriatic"
+  default_prompt: "Use $autowriter to write a new Adriatic story scene."

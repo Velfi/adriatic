@@ -1,5 +1,6 @@
 package main
 
+import atmosphere "../packages/atmosphere"
 import dither "../packages/dither"
 import third_person "../packages/third_person"
 import "core:math"
@@ -26,6 +27,10 @@ Dither_State :: struct {
     horizontal_phase:       f32,
     vertical_phase:         f32,
     previous_position:      third_person.Vec3,
+    exposure_initialized:   bool,
+    exposure:               f32,
+    sun_glare:              f32,
+    exposure_seconds:       f64,
 }
 
 dither_reset :: proc(editor: ^Editor) {
@@ -36,7 +41,56 @@ dither_reset :: proc(editor: ^Editor) {
 dither_apply :: proc(editor: ^Editor) {
     if editor == nil do return
     dither_reset(editor)
-    rl.SetWorldPostProcessEnabled(editor.gameplay_options.dither_mode != .Off)
+    // Exposure adaptation also lives in the world post pass and must remain
+    // active when palette dithering is disabled.
+    rl.SetWorldPostProcessEnabled(true)
+}
+
+sun_exposure_smoothstep :: proc(edge0, edge1, value: f32) -> f32 {
+    amount := clamp((value - edge0) / max(edge1 - edge0, f32(.0001)), f32(0), f32(1))
+    return amount * amount * (3 - 2 * amount)
+}
+
+sun_exposure_update :: proc(editor: ^Editor, pose: third_person.Camera_Pose) -> (exposure, glare: f32) {
+    if editor == nil do return 1, 0
+    state := &editor.dither_state
+    if !editor.gameplay_options.hdr_exposure {
+        state.exposure_initialized = false
+        state.exposure = 1
+        state.sun_glare = 0
+        return 1, 0
+    }
+    sky := atmosphere.sample(&editor.atmosphere)
+    forward := linalg.normalize0(pose.target - pose.position)
+    sun := third_person.Vec3 {
+        sky.sun_direction[0],
+        sky.sun_direction[1],
+        sky.sun_direction[2],
+    }
+    alignment := clamp(linalg.dot(forward, sun), f32(-1), f32(1))
+    centered := sun_exposure_smoothstep(.88, .998, alignment)
+    above_horizon := sun_exposure_smoothstep(-.025, .075, sky.sun_direction[1])
+    cloud_visibility := 1 - clamp(sky.weather.cloud_cover, f32(0), f32(1)) * .82
+    target_glare := centered * above_horizon * cloud_visibility
+    target_exposure := 1 - target_glare * .50
+
+    now := rl.GetTime()
+    if !state.exposure_initialized {
+        state.exposure_initialized = true
+        state.exposure = target_exposure
+        state.sun_glare = target_glare
+        state.exposure_seconds = now
+    } else {
+        delta := f32(clamp(now - state.exposure_seconds, f64(0), f64(.1)))
+        // Iris closure is quick; recovery after looking away is deliberately
+        // slower so the response reads as adaptation rather than a toggle.
+        rate := target_exposure < state.exposure ? f32(4.2) : f32(1.15)
+        blend := 1 - f32(math.exp(f64(-rate * delta)))
+        state.exposure += (target_exposure - state.exposure) * blend
+        state.sun_glare += (target_glare - state.sun_glare) * blend
+        state.exposure_seconds = now
+    }
+    return state.exposure, state.sun_glare
 }
 
 dither_camera_angles :: proc(pose: third_person.Camera_Pose) -> (yaw, pitch: f32) {
@@ -91,6 +145,7 @@ dither_update_tracking :: proc(
 dither_encode_world_post_push :: proc(destination: []u8, ctx: render2d.World_Post_Context, _: rawptr) -> bool {
     if len(destination) < size_of(rl.Push) do return false
     push := rl.Push{}
+    push.hatch_tone = {1, 0, 0, 0}
     editor := world_renderer.editor
     if editor != nil {
         mode := editor.gameplay_options.dither_mode
@@ -117,6 +172,8 @@ dither_encode_world_post_push :: proc(destination: []u8, ctx: render2d.World_Pos
         }
         push.texture_hatch = {f32(mode), f32(offset_x), f32(offset_y), 0}
         push.hatch_shape = {f32(ctx.source_extent[0]), f32(ctx.source_extent[1]), field_of_view, 0}
+        exposure, glare := sun_exposure_update(editor, render_pose)
+        push.hatch_tone = {exposure, glare, 0, 0}
     }
     mem.copy_non_overlapping(raw_data(destination), &push, size_of(push))
     return true

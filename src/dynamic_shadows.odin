@@ -1,0 +1,584 @@
+package main
+
+import atmosphere "../packages/atmosphere"
+import terrain "../packages/terrain"
+import third_person "../packages/third_person"
+import "core:math"
+import "core:mem"
+import vk "vendor:vulkan"
+import rl "zelda_engine:canvas2d"
+import engine "zelda_engine:engine"
+import resources "zelda_engine:render_resources"
+
+DYNAMIC_SHADOW_CASCADE_COUNT :: 3
+DYNAMIC_SHADOW_RESOLUTIONS := [DYNAMIC_SHADOW_CASCADE_COUNT]u32{2048, 1024, 1024}
+DYNAMIC_SHADOW_COVERAGES := [DYNAMIC_SHADOW_CASCADE_COUNT]f32{48, 128, 320}
+DYNAMIC_SHADOW_PROXY_RADIUS :: f32(160)
+
+Dynamic_Shadow_Cascade_Uniform :: struct {
+    right:   [4]f32,
+    up:      [4]f32,
+    forward: [4]f32,
+    params:  [4]f32,
+}
+
+Dynamic_Shadow_Uniform :: struct {
+    cascades: [DYNAMIC_SHADOW_CASCADE_COUNT]Dynamic_Shadow_Cascade_Uniform,
+    // Cascade selection distances from origin, final shadow strength.
+    settings: [4]f32,
+    // Authoritative world-space origin shared by caster culling and receivers.
+    origin:   [4]f32,
+}
+
+#assert(size_of(Dynamic_Shadow_Cascade_Uniform) == 64)
+#assert(offset_of(Dynamic_Shadow_Uniform, settings) == 192)
+#assert(offset_of(Dynamic_Shadow_Uniform, origin) == 208)
+#assert(size_of(Dynamic_Shadow_Uniform) == 224)
+
+Dynamic_Shadow_State :: struct {
+    images:            [engine.MAX_FRAMES_IN_FLIGHT][DYNAMIC_SHADOW_CASCADE_COUNT]resources.Image,
+    uniform:           [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    descriptors:       [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+    image_initialized: [engine.MAX_FRAMES_IN_FLIGHT][DYNAMIC_SHADOW_CASCADE_COUNT]bool,
+    descriptor_layout: vk.DescriptorSetLayout,
+    empty_layout:      vk.DescriptorSetLayout,
+    descriptor_pool:   vk.DescriptorPool,
+    sampler:           vk.Sampler,
+    pipeline_layout:   vk.PipelineLayout,
+    pipeline:          vk.Pipeline,
+    transform:         Dynamic_Shadow_Uniform,
+    anchor:            third_person.Vec3,
+    enabled:           bool,
+    frame_prepared:    bool,
+}
+
+dynamic_shadow_create_pipeline :: proc(state: ^Dynamic_Shadow_State, ctx: ^engine.Vk_Context) -> bool {
+    shader: engine.Vk_Shader_Module
+    if !engine.vk_load_shader_module_with_fallback(
+        ctx,
+        "assets/shaders/world.slang",
+        "shaders/dynamic-shadow.vert",
+        .Vertex,
+        "dynamic_shadow_vertex",
+        &shader,
+    ) {
+        return false
+    }
+    defer engine.vk_destroy_shader_module(ctx, &shader)
+
+    stage := vk.PipelineShaderStageCreateInfo {
+        sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+        stage  = {.VERTEX},
+        module = shader.handle,
+        pName  = "main",
+    }
+    binding := vk.VertexInputBindingDescription {
+        stride    = u32(size_of(World_Vertex)),
+        inputRate = .VERTEX,
+    }
+    attribute := vk.VertexInputAttributeDescription {
+        location = 0,
+        format   = .R32G32B32_SFLOAT,
+        offset   = u32(offset_of(World_Vertex, position)),
+    }
+    vertex_input := vk.PipelineVertexInputStateCreateInfo {
+        sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        vertexBindingDescriptionCount   = 1,
+        pVertexBindingDescriptions      = &binding,
+        vertexAttributeDescriptionCount = 1,
+        pVertexAttributeDescriptions    = &attribute,
+    }
+    input_assembly := vk.PipelineInputAssemblyStateCreateInfo {
+        sType    = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        topology = .TRIANGLE_LIST,
+    }
+    viewport_state := vk.PipelineViewportStateCreateInfo {
+        sType         = .PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        viewportCount = 1,
+        scissorCount  = 1,
+    }
+    raster := vk.PipelineRasterizationStateCreateInfo {
+        sType                   = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        polygonMode             = .FILL,
+        cullMode                = {.BACK},
+        frontFace               = .COUNTER_CLOCKWISE,
+        depthBiasEnable         = true,
+        // Keep the stored depth close to the caster. Receiver-side normal bias
+        // handles grazing surfaces; larger values here visibly detached feet,
+        // tires, posts, and swing chains from their shadows.
+        depthBiasConstantFactor = .35,
+        depthBiasSlopeFactor    = .75,
+        lineWidth               = 1,
+    }
+    multisample := vk.PipelineMultisampleStateCreateInfo {
+        sType                = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        rasterizationSamples = {._1},
+    }
+    depth := vk.PipelineDepthStencilStateCreateInfo {
+        sType            = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        depthTestEnable  = true,
+        depthWriteEnable = true,
+        depthCompareOp   = .LESS_OR_EQUAL,
+    }
+    dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
+    dynamic_state := vk.PipelineDynamicStateCreateInfo {
+        sType             = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        dynamicStateCount = 2,
+        pDynamicStates    = raw_data(dynamic_states[:]),
+    }
+    depth_format := vk.Format.D32_SFLOAT
+    rendering := vk.PipelineRenderingCreateInfo {
+        sType                 = .PIPELINE_RENDERING_CREATE_INFO,
+        colorAttachmentCount  = 0,
+        depthAttachmentFormat = depth_format,
+    }
+    info := vk.GraphicsPipelineCreateInfo {
+        sType               = .GRAPHICS_PIPELINE_CREATE_INFO,
+        pNext               = &rendering,
+        stageCount          = 1,
+        pStages             = &stage,
+        pVertexInputState   = &vertex_input,
+        pInputAssemblyState = &input_assembly,
+        pViewportState      = &viewport_state,
+        pRasterizationState = &raster,
+        pMultisampleState   = &multisample,
+        pDepthStencilState  = &depth,
+        pDynamicState       = &dynamic_state,
+        layout              = state.pipeline_layout,
+    }
+    if vk.CreateGraphicsPipelines(ctx.device, vk.PipelineCache(0), 1, &info, nil, &state.pipeline) != .SUCCESS {
+        return false
+    }
+    engine.vk_set_debug_name(ctx, .PIPELINE, auto_cast state.pipeline, "dynamic sun shadow depth pipeline")
+    return true
+}
+
+dynamic_shadow_create :: proc(state: ^Dynamic_Shadow_State, ctx: ^engine.Vk_Context) -> bool {
+    if state == nil || ctx == nil do return false
+    state^ = {}
+    bindings := [5]vk.DescriptorSetLayoutBinding {
+        {binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.VERTEX, .FRAGMENT}},
+        {binding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 3, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 4, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+    }
+    layout_info := vk.DescriptorSetLayoutCreateInfo {
+        sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        bindingCount = 5,
+        pBindings    = raw_data(bindings[:]),
+    }
+    if vk.CreateDescriptorSetLayout(ctx.device, &layout_info, nil, &state.descriptor_layout) != .SUCCESS {
+        return false
+    }
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_SET_LAYOUT,
+        auto_cast state.descriptor_layout,
+        "dynamic shadow descriptor layout",
+    )
+    pool_sizes := [3]vk.DescriptorPoolSize {
+        {type = .UNIFORM_BUFFER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT},
+        {type = .SAMPLED_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT * DYNAMIC_SHADOW_CASCADE_COUNT},
+        {type = .SAMPLER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT},
+    }
+    pool_info := vk.DescriptorPoolCreateInfo {
+        sType         = .DESCRIPTOR_POOL_CREATE_INFO,
+        maxSets       = engine.MAX_FRAMES_IN_FLIGHT,
+        poolSizeCount = 3,
+        pPoolSizes    = raw_data(pool_sizes[:]),
+    }
+    if vk.CreateDescriptorPool(ctx.device, &pool_info, nil, &state.descriptor_pool) != .SUCCESS {
+        dynamic_shadow_destroy(state, ctx)
+        return false
+    }
+    engine.vk_set_debug_name(ctx, .DESCRIPTOR_POOL, auto_cast state.descriptor_pool, "dynamic shadow descriptor pool")
+    layouts: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSetLayout
+    for &layout in layouts do layout = state.descriptor_layout
+    allocate := vk.DescriptorSetAllocateInfo {
+        sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
+        descriptorPool     = state.descriptor_pool,
+        descriptorSetCount = engine.MAX_FRAMES_IN_FLIGHT,
+        pSetLayouts        = raw_data(layouts[:]),
+    }
+    if vk.AllocateDescriptorSets(ctx.device, &allocate, raw_data(state.descriptors[:])) != .SUCCESS {
+        dynamic_shadow_destroy(state, ctx)
+        return false
+    }
+    sampler_info := vk.SamplerCreateInfo {
+        sType         = .SAMPLER_CREATE_INFO,
+        magFilter     = .LINEAR,
+        minFilter     = .LINEAR,
+        addressModeU  = .CLAMP_TO_BORDER,
+        addressModeV  = .CLAMP_TO_BORDER,
+        addressModeW  = .CLAMP_TO_BORDER,
+        borderColor   = .FLOAT_OPAQUE_WHITE,
+        compareEnable = true,
+        compareOp     = .LESS_OR_EQUAL,
+        minLod        = 0,
+        maxLod        = 0,
+    }
+    if vk.CreateSampler(ctx.device, &sampler_info, nil, &state.sampler) != .SUCCESS {
+        dynamic_shadow_destroy(state, ctx)
+        return false
+    }
+    engine.vk_set_debug_name(ctx, .SAMPLER, auto_cast state.sampler, "dynamic shadow comparison sampler")
+    for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+        for cascade in 0 ..< DYNAMIC_SHADOW_CASCADE_COUNT {
+            resolution := DYNAMIC_SHADOW_RESOLUTIONS[cascade]
+            if !resources.image_create(
+                ctx,
+                resolution,
+                resolution,
+                .D32_SFLOAT,
+                {.DEPTH_STENCIL_ATTACHMENT, .SAMPLED},
+                {.DEPTH},
+                {._1},
+                &state.images[frame][cascade],
+                "dynamic sun shadow cascade",
+            ) {
+                dynamic_shadow_destroy(state, ctx)
+                return false
+            }
+        }
+        if !engine.vk_create_host_buffer(
+            ctx,
+            vk.DeviceSize(size_of(Dynamic_Shadow_Uniform)),
+            {.UNIFORM_BUFFER},
+            &state.uniform[frame],
+        ) {
+            dynamic_shadow_destroy(state, ctx)
+            return false
+        }
+        engine.vk_set_debug_name(
+            ctx,
+            .DESCRIPTOR_SET,
+            auto_cast state.descriptors[frame],
+            "dynamic shadow descriptor set",
+        )
+        buffer_info := vk.DescriptorBufferInfo {
+            buffer = state.uniform[frame].handle,
+            range  = vk.DeviceSize(size_of(Dynamic_Shadow_Uniform)),
+        }
+        image_infos: [DYNAMIC_SHADOW_CASCADE_COUNT]vk.DescriptorImageInfo
+        for cascade in 0 ..< DYNAMIC_SHADOW_CASCADE_COUNT {
+            image_infos[cascade] = {
+                imageView   = state.images[frame][cascade].view,
+                imageLayout = .DEPTH_READ_ONLY_OPTIMAL,
+            }
+        }
+        sampler_descriptor := vk.DescriptorImageInfo {
+            sampler = state.sampler,
+        }
+        writes: [5]vk.WriteDescriptorSet
+        writes[0] = {
+            sType           = .WRITE_DESCRIPTOR_SET,
+            dstSet          = state.descriptors[frame],
+            dstBinding      = 0,
+            descriptorCount = 1,
+            descriptorType  = .UNIFORM_BUFFER,
+            pBufferInfo     = &buffer_info,
+        }
+        for cascade in 0 ..< DYNAMIC_SHADOW_CASCADE_COUNT {
+            writes[cascade + 1] = {
+                sType           = .WRITE_DESCRIPTOR_SET,
+                dstSet          = state.descriptors[frame],
+                dstBinding      = u32(cascade + 1),
+                descriptorCount = 1,
+                descriptorType  = .SAMPLED_IMAGE,
+                pImageInfo      = &image_infos[cascade],
+            }
+        }
+        writes[4] = {
+            sType           = .WRITE_DESCRIPTOR_SET,
+            dstSet          = state.descriptors[frame],
+            dstBinding      = 4,
+            descriptorCount = 1,
+            descriptorType  = .SAMPLER,
+            pImageInfo      = &sampler_descriptor,
+        }
+        vk.UpdateDescriptorSets(ctx.device, 5, raw_data(writes[:]), 0, nil)
+    }
+    pipeline_layout_info := vk.PipelineLayoutCreateInfo {
+        sType = .PIPELINE_LAYOUT_CREATE_INFO,
+    }
+    empty_layout_info := vk.DescriptorSetLayoutCreateInfo {
+        sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+    }
+    if vk.CreateDescriptorSetLayout(ctx.device, &empty_layout_info, nil, &state.empty_layout) != .SUCCESS {
+        dynamic_shadow_destroy(state, ctx)
+        return false
+    }
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_SET_LAYOUT,
+        auto_cast state.empty_layout,
+        "dynamic shadow empty set layout",
+    )
+    pipeline_set_layouts := [2]vk.DescriptorSetLayout{state.empty_layout, state.descriptor_layout}
+    pipeline_layout_info.setLayoutCount = 2
+    pipeline_layout_info.pSetLayouts = raw_data(pipeline_set_layouts[:])
+    if vk.CreatePipelineLayout(ctx.device, &pipeline_layout_info, nil, &state.pipeline_layout) != .SUCCESS {
+        dynamic_shadow_destroy(state, ctx)
+        return false
+    }
+    engine.vk_set_debug_name(ctx, .PIPELINE_LAYOUT, auto_cast state.pipeline_layout, "dynamic shadow pipeline layout")
+    state.enabled = dynamic_shadow_create_pipeline(state, ctx)
+    return true
+}
+
+dynamic_shadow_destroy :: proc(state: ^Dynamic_Shadow_State, ctx: ^engine.Vk_Context) {
+    if state == nil || ctx == nil do return
+    if state.pipeline != vk.Pipeline(0) do vk.DestroyPipeline(ctx.device, state.pipeline, nil)
+    if state.pipeline_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(ctx.device, state.pipeline_layout, nil)
+    for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+        for cascade in 0 ..< DYNAMIC_SHADOW_CASCADE_COUNT {
+            resources.image_destroy(&state.images[frame][cascade], ctx)
+        }
+        engine.vk_destroy_buffer(ctx, &state.uniform[frame])
+    }
+    if state.sampler != vk.Sampler(0) do vk.DestroySampler(ctx.device, state.sampler, nil)
+    if state.descriptor_pool != vk.DescriptorPool(0) do vk.DestroyDescriptorPool(ctx.device, state.descriptor_pool, nil)
+    if state.descriptor_layout != vk.DescriptorSetLayout(0) do vk.DestroyDescriptorSetLayout(ctx.device, state.descriptor_layout, nil)
+    if state.empty_layout != vk.DescriptorSetLayout(0) do vk.DestroyDescriptorSetLayout(ctx.device, state.empty_layout, nil)
+    state^ = {}
+}
+
+shadow_append_triangle :: proc(a, b, c: third_person.Vec3) {
+    if len(world_renderer.shadow_vertices) + 3 > SHADOW_VERTEX_CAPACITY do return
+    color := world_color(rl.Color{255, 255, 255, 255})
+    append(
+        &world_renderer.shadow_vertices,
+        World_Vertex{{a.x, a.y, a.z}, color, .Plain, {0, 1, 0}, {}, {}},
+        World_Vertex{{b.x, b.y, b.z}, color, .Plain, {0, 1, 0}, {}, {}},
+        World_Vertex{{c.x, c.y, c.z}, color, .Plain, {0, 1, 0}, {}, {}},
+    )
+}
+
+shadow_append_box :: proc(structure: terrain.Structure) {
+    center := third_person.Vec3{structure.center_x, structure.base_y + structure.height * .5, structure.center_z}
+    x, y, z := structure.width * .5, structure.height * .5, structure.depth * .5
+    cosine, sine := f32(math.cos(f64(structure.rotation))), f32(math.sin(f64(structure.rotation)))
+    local := [8]third_person.Vec3 {
+        {-x, -y, -z},
+        {x, -y, -z},
+        {x, y, -z},
+        {-x, y, -z},
+        {-x, -y, z},
+        {x, -y, z},
+        {x, y, z},
+        {-x, y, z},
+    }
+    p: [8]third_person.Vec3
+    for value, index in local {
+        p[index] = {
+            center.x + value.x * cosine - value.z * sine,
+            center.y + value.y,
+            center.z + value.x * sine + value.z * cosine,
+        }
+    }
+    faces := [12][3]int {
+        {0, 2, 1},
+        {0, 3, 2},
+        {4, 5, 6},
+        {4, 6, 7},
+        {0, 4, 7},
+        {0, 7, 3},
+        {1, 2, 6},
+        {1, 6, 5},
+        {3, 7, 6},
+        {3, 6, 2},
+        {0, 1, 5},
+        {0, 5, 4},
+    }
+    for face in faces do shadow_append_triangle(p[face[0]], p[face[1]], p[face[2]])
+}
+
+dynamic_shadow_resolve_anchor :: proc(editor: ^Editor) -> third_person.Vec3 {
+    if lab_scene_is_active(editor, "boat") {
+        // The inspection camera is outside the fleet. Keep shadow allocation,
+        // caster culling, and receiver cascade selection centered on the map.
+        return {0, editor.project.sea_level, 0}
+    }
+    anchor := editor.camera_pose.position
+    anchor.y = terrain.sample_height(&editor.project, 0, anchor.x, anchor.z)
+    return anchor
+}
+
+dynamic_shadow_build_casters :: proc(editor: ^Editor) {
+    clear(&world_renderer.shadow_vertices)
+    first := world_renderer.dynamic_caster_first
+    count := world_renderer.dynamic_caster_count
+    if first >= 0 && count > 0 && first + count <= len(world_renderer.vertices) {
+        available := max(SHADOW_VERTEX_CAPACITY - len(world_renderer.shadow_vertices), 0)
+        bounded_count := min(count, available)
+        // Preserve triangle-list integrity if the fixed shadow budget fills.
+        bounded_count -= bounded_count % 3
+        if bounded_count > 0 {
+            append(&world_renderer.shadow_vertices, ..world_renderer.vertices[first:first + bounded_count])
+        }
+    }
+    sky := atmosphere.sample(&editor.atmosphere)
+    inverse_sun_y := 1 / max(sky.sun_direction[1], f32(.08))
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if structure.kind != .Architecture &&
+           structure.kind != .Foliage &&
+           structure.kind != .Box &&
+           structure.kind != .Rock &&
+           structure.kind != .Spire {
+            continue
+        }
+        // Bound the complete ground-projected shadow segment, not merely the
+        // caster center. At low sun angles an off-map building can still cast
+        // well into the far receiver cascade.
+        shadow_x := -sky.sun_direction[0] * structure.height * inverse_sun_y
+        shadow_z := -sky.sun_direction[2] * structure.height * inverse_sun_y
+        shadow_mid_x := structure.center_x + shadow_x * .5
+        shadow_mid_z := structure.center_z + shadow_z * .5
+        half_shadow_length := f32(math.sqrt(f64(shadow_x * shadow_x + shadow_z * shadow_z))) * .5
+        caster_radius :=
+            f32(math.sqrt(f64(structure.width * structure.width + structure.depth * structure.depth))) * .5
+        conservative_radius := DYNAMIC_SHADOW_PROXY_RADIUS + half_shadow_length + caster_radius
+        dx := shadow_mid_x - world_renderer.dynamic_shadow.anchor.x
+        dz := shadow_mid_z - world_renderer.dynamic_shadow.anchor.z
+        if dx * dx + dz * dz > conservative_radius * conservative_radius do continue
+        proxy := structure
+        if proxy.kind == .Foliage {
+            proxy.width *= .72
+            proxy.depth *= .72
+            proxy.height *= .82
+        }
+        shadow_append_box(proxy)
+    }
+}
+
+dynamic_shadow_update_transform :: proc(editor: ^Editor, frame_index: int) {
+    state := &world_renderer.dynamic_shadow
+    sky := atmosphere.sample(&editor.atmosphere)
+    anchor := state.anchor
+    sun := third_person.Vec3{sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2]}
+    forward := third_person.Vec3{-sun.x, -sun.y, -sun.z}
+    forward_length := f32(math.sqrt(f64(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z)))
+    if forward_length > .0001 {
+        forward.x /= forward_length; forward.y /= forward_length; forward.z /= forward_length
+    }
+    right := third_person.Vec3{forward.z, 0, -forward.x}
+    right_length := f32(math.sqrt(f64(right.x * right.x + right.z * right.z)))
+    if right_length < .001 {
+        right = {1, 0, 0}
+    } else {
+        right.x /= right_length; right.z /= right_length
+    }
+    up := third_person.Vec3 {
+        forward.y * right.z - forward.z * right.y,
+        forward.z * right.x - forward.x * right.z,
+        forward.x * right.y - forward.y * right.x,
+    }
+    min_depth, max_depth := f32(1e30), f32(-1e30)
+    for vertex in world_renderer.shadow_vertices {
+        depth := vertex.position[0] * forward.x + vertex.position[1] * forward.y + vertex.position[2] * forward.z
+        min_depth = min(min_depth, depth)
+        max_depth = max(max_depth, depth)
+    }
+    if min_depth > max_depth {
+        min_depth, max_depth = -100, 100
+    }
+    min_depth -= 24
+    max_depth += 24
+    strength := f32(0)
+    if sky.sun_direction[1] > .08 do strength = (1 - clamp(sky.weather.cloud_cover, f32(0), f32(1)) * .72)
+    for cascade in 0 ..< DYNAMIC_SHADOW_CASCADE_COUNT {
+        coverage := DYNAMIC_SHADOW_COVERAGES[cascade]
+        resolution := DYNAMIC_SHADOW_RESOLUTIONS[cascade]
+        anchor_right := anchor.x * right.x + anchor.y * right.y + anchor.z * right.z
+        anchor_up := anchor.x * up.x + anchor.y * up.y + anchor.z * up.z
+        texel_world := coverage / f32(resolution)
+        anchor_right = math.floor(anchor_right / texel_world) * texel_world
+        anchor_up = math.floor(anchor_up / texel_world) * texel_world
+        state.transform.cascades[cascade] = {
+            right   = {right.x, right.y, right.z, anchor_right},
+            up      = {up.x, up.y, up.z, anchor_up},
+            forward = {forward.x, forward.y, forward.z, min_depth},
+            params  = {coverage, 1 / max(max_depth - min_depth, f32(1)), strength, 1 / f32(resolution)},
+        }
+    }
+    state.transform.settings = {
+        DYNAMIC_SHADOW_COVERAGES[0] * .42,
+        DYNAMIC_SHADOW_COVERAGES[1] * .42,
+        DYNAMIC_SHADOW_COVERAGES[2] * .42,
+        strength,
+    }
+    state.transform.origin = {anchor.x, anchor.y, anchor.z, 0}
+    mem.copy_non_overlapping(state.uniform[frame_index].mapped, &state.transform, size_of(Dynamic_Shadow_Uniform))
+}
+
+dynamic_shadow_render :: proc(pass: ^rl.World_Pass_Context, frame_index: int) {
+    state := &world_renderer.dynamic_shadow
+    if !state.enabled || state.transform.settings[3] <= 0 || len(world_renderer.shadow_vertices) == 0 do return
+    cmd := pass.frame.command_buffer
+    vk.CmdBindPipeline(cmd, .GRAPHICS, state.pipeline)
+    vk.CmdBindDescriptorSets(cmd, .GRAPHICS, state.pipeline_layout, 1, 1, &state.descriptors[frame_index], 0, nil)
+    offset := vk.DeviceSize(0)
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &world_renderer.shadow_vertex[frame_index].handle, &offset)
+    for cascade in 0 ..< DYNAMIC_SHADOW_CASCADE_COUNT {
+        image := &state.images[frame_index][cascade]
+        initialized := state.image_initialized[frame_index][cascade]
+        engine.vk_cmd_image_barrier2(
+            pass.ctx,
+            cmd,
+            image.image,
+            initialized ? vk.PipelineStageFlags2{.FRAGMENT_SHADER} : vk.PipelineStageFlags2{.TOP_OF_PIPE},
+            {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+            initialized ? vk.AccessFlags2{.SHADER_READ} : vk.AccessFlags2{},
+            {.DEPTH_STENCIL_ATTACHMENT_WRITE},
+            initialized ? vk.ImageLayout.DEPTH_READ_ONLY_OPTIMAL : vk.ImageLayout.UNDEFINED,
+            .DEPTH_ATTACHMENT_OPTIMAL,
+            {.DEPTH},
+        )
+        clear := vk.ClearValue {
+            depthStencil = {depth = 1},
+        }
+        attachment := vk.RenderingAttachmentInfo {
+            sType       = .RENDERING_ATTACHMENT_INFO,
+            imageView   = image.view,
+            imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
+            loadOp      = .CLEAR,
+            storeOp     = .STORE,
+            clearValue  = clear,
+        }
+        resolution := DYNAMIC_SHADOW_RESOLUTIONS[cascade]
+        rendering := vk.RenderingInfo {
+            sType = .RENDERING_INFO,
+            renderArea = {extent = {resolution, resolution}},
+            layerCount = 1,
+            pDepthAttachment = &attachment,
+        }
+        vk.CmdBeginRendering(cmd, &rendering)
+        viewport := vk.Viewport {
+            width    = f32(resolution),
+            height   = f32(resolution),
+            minDepth = 0,
+            maxDepth = 1,
+        }
+        scissor := vk.Rect2D {
+            extent = {resolution, resolution},
+        }
+        vk.CmdSetViewport(cmd, 0, 1, &viewport)
+        vk.CmdSetScissor(cmd, 0, 1, &scissor)
+        vk.CmdDraw(cmd, u32(len(world_renderer.shadow_vertices)), 1, 0, u32(cascade))
+        vk.CmdEndRendering(cmd)
+        engine.vk_cmd_image_barrier2(
+            pass.ctx,
+            cmd,
+            image.image,
+            {.LATE_FRAGMENT_TESTS},
+            {.FRAGMENT_SHADER},
+            {.DEPTH_STENCIL_ATTACHMENT_WRITE},
+            {.SHADER_READ},
+            .DEPTH_ATTACHMENT_OPTIMAL,
+            .DEPTH_READ_ONLY_OPTIMAL,
+            {.DEPTH},
+        )
+        state.image_initialized[frame_index][cascade] = true
+    }
+}

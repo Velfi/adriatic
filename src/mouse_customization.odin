@@ -7,12 +7,21 @@ import rl "zelda_engine:canvas2d"
 CUSTOMIZATION_COLOR_COUNT :: 6
 CUSTOMIZATION_PATTERN_COUNT :: 6
 CUSTOMIZATION_PATTERN_COLUMNS :: 3
-CUSTOMIZATION_HEADGEAR_COUNT :: 7
+CUSTOMIZATION_HEADGEAR_COUNT :: 11
 CUSTOMIZATION_SCARF_CONTROL_COUNT :: 4
 CUSTOMIZATION_PATTERN_START :: CUSTOMIZATION_COLOR_COUNT
 CUSTOMIZATION_HEADGEAR_START :: CUSTOMIZATION_PATTERN_START + CUSTOMIZATION_PATTERN_COUNT
 CUSTOMIZATION_SCARF_START :: CUSTOMIZATION_HEADGEAR_START + CUSTOMIZATION_HEADGEAR_COUNT
 CUSTOMIZATION_BACK_FOCUS :: CUSTOMIZATION_SCARF_START + CUSTOMIZATION_SCARF_CONTROL_COUNT
+CUSTOMIZATION_BASE_HEIGHT :: f32(620)
+
+customization_scale_y :: proc(panel: rl.Rectangle) -> f32 {
+    return panel.height / CUSTOMIZATION_BASE_HEIGHT
+}
+
+customization_y :: proc(panel: rl.Rectangle, offset: f32) -> f32 {
+    return panel.y + offset * customization_scale_y(panel)
+}
 
 mouse_fur_label :: proc(value: Mouse_Fur) -> cstring {
     switch value {
@@ -84,6 +93,14 @@ mouse_headgear_label :: proc(value: Mouse_Accessory) -> cstring {
         return "PAPER BOAT"
     case .Chef_Hat:
         return "CHEF HAT"
+    case .Ushanka:
+        return "USHANKA"
+    case .Beret:
+        return "BERET"
+    case .Alpine_Hat:
+        return "ALPINE HAT"
+    case .Flat_Cap:
+        return "FLAT CAP"
     }
     return "NONE"
 }
@@ -99,7 +116,13 @@ customization_color_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectan
     available := panel.width * .55
     gap := f32(8)
     card_width := (available - gap * 2) / 3
-    return {controls_x + f32(index % 3) * (card_width + gap), panel.y + 112 + f32(index / 3) * 52, card_width, 44}
+    scale_y := customization_scale_y(panel)
+    return {
+        controls_x + f32(index % 3) * (card_width + gap),
+        customization_y(panel, 106 + f32(index / 3) * 50),
+        card_width,
+        42 * scale_y,
+    }
 }
 
 customization_pattern_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
@@ -109,9 +132,9 @@ customization_pattern_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rect
     card_width := (available - gap * f32(CUSTOMIZATION_PATTERN_COLUMNS - 1)) / f32(CUSTOMIZATION_PATTERN_COLUMNS)
     return {
         controls_x + f32(index % CUSTOMIZATION_PATTERN_COLUMNS) * (card_width + gap),
-        panel.y + 252 + f32(index / CUSTOMIZATION_PATTERN_COLUMNS) * 50,
+        customization_y(panel, 240 + f32(index / CUSTOMIZATION_PATTERN_COLUMNS) * 47),
         card_width,
-        42,
+        39 * customization_scale_y(panel),
     }
 }
 
@@ -120,7 +143,13 @@ customization_headgear_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rec
     available := panel.width * .55
     gap := f32(8)
     card_width := (available - gap * 3) / 4
-    return {controls_x + f32(index % 4) * (card_width + gap), panel.y + 356 + f32(index / 4) * 50, card_width, 42}
+    scale_y := customization_scale_y(panel)
+    return {
+        controls_x + f32(index % 4) * (card_width + gap),
+        customization_y(panel, 346 + f32(index / 4) * 44),
+        card_width,
+        38 * scale_y,
+    }
 }
 
 customization_scarf_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
@@ -128,11 +157,88 @@ customization_scarf_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectan
     available := panel.width * .55
     gap := f32(8)
     card_width := (available - gap * 3) / 4
-    return {controls_x + f32(index) * (card_width + gap), panel.y + 482, card_width, 42}
+    return {
+        controls_x + f32(index) * (card_width + gap),
+        customization_y(panel, 500),
+        card_width,
+        38 * customization_scale_y(panel),
+    }
 }
 
 customization_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
-    return {panel.x + panel.width * .41, panel.y + panel.height - 58, panel.width * .55, 42}
+    return {
+        panel.x + panel.width * .41,
+        customization_y(panel, 554),
+        panel.width * .55,
+        42 * customization_scale_y(panel),
+    }
+}
+
+customization_preview_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
+    return {
+        panel.x + 22,
+        customization_y(panel, 92),
+        panel.width * .365,
+        panel.height - 110 * customization_scale_y(panel),
+    }
+}
+
+customization_rgb_to_hsv :: proc(color: rl.Color) -> (hue, saturation, lightness: f32) {
+    r, g, b := f32(color.r) / 255, f32(color.g) / 255, f32(color.b) / 255
+    high := max(r, max(g, b))
+    low := min(r, min(g, b))
+    delta := high - low
+    lightness = (high + low) * .5
+    if delta <= .0001 do return 0, 0, lightness
+    saturation = delta / (1 - math.abs(2 * lightness - 1))
+    if high == r {
+        hue = (g - b) / delta
+        if hue < 0 do hue += 6
+    } else if high == g {
+        hue = (b - r) / delta + 2
+    } else {
+        hue = (r - g) / delta + 4
+    }
+    return hue / 6, saturation, lightness
+}
+
+customization_hue_channel :: proc(p, q, t: f32) -> f32 {
+    wrapped := t
+    if wrapped < 0 do wrapped += 1
+    if wrapped > 1 do wrapped -= 1
+    if wrapped < 1.0 / 6 do return p + (q - p) * 6 * wrapped
+    if wrapped < .5 do return q
+    if wrapped < 2.0 / 3 do return p + (q - p) * (2.0 / 3 - wrapped) * 6
+    return p
+}
+
+customization_hsl_to_color :: proc(hue, saturation, lightness: f32) -> rl.Color {
+    if saturation <= .0001 {
+        value := u8(clamp(lightness, 0, 1) * 255)
+        return {value, value, value, 255}
+    }
+    q := lightness < .5 ? lightness * (1 + saturation) : lightness + saturation - lightness * saturation
+    p := 2 * lightness - q
+    return {
+        u8(clamp(customization_hue_channel(p, q, hue + 1.0 / 3), 0, 1) * 255),
+        u8(clamp(customization_hue_channel(p, q, hue), 0, 1) * 255),
+        u8(clamp(customization_hue_channel(p, q, hue - 1.0 / 3), 0, 1) * 255),
+        255,
+    }
+}
+
+customization_set_scarf_component :: proc(editor: ^Editor, component: int, normalized: f32) {
+    hue, saturation, lightness := customization_rgb_to_hsv(editor.mouse_scarf_color)
+    switch component {
+    case 0:
+        hue = clamp(normalized, 0, 1)
+    case 1:
+        saturation = clamp(normalized, 0, 1)
+    case:
+        lightness = clamp(normalized, .12, .88)
+    }
+    editor.mouse_scarf_color = customization_hsl_to_color(hue, saturation, lightness)
+    editor.mouse_scarf_enabled = true
 }
 
 customization_activate :: proc(editor: ^Editor, focus: int) {
@@ -147,17 +253,11 @@ customization_activate :: proc(editor: ^Editor, focus: int) {
         editor.mouse_scarf_enabled = !editor.mouse_scarf_enabled
     } else if focus > CUSTOMIZATION_SCARF_START && focus < CUSTOMIZATION_BACK_FOCUS {
         component := focus - CUSTOMIZATION_SCARF_START - 1
-        value :=
-            component == 0 ? editor.mouse_scarf_color.r : component == 1 ? editor.mouse_scarf_color.g : editor.mouse_scarf_color.b
-        next := u8((int(value) + 32) % 256)
-        if component == 0 {
-            editor.mouse_scarf_color.r = next
-        } else if component == 1 {
-            editor.mouse_scarf_color.g = next
-        } else {
-            editor.mouse_scarf_color.b = next
-        }
-        editor.mouse_scarf_enabled = true
+        hue, saturation, lightness := customization_rgb_to_hsv(editor.mouse_scarf_color)
+        current := component == 0 ? hue : (component == 1 ? saturation : lightness)
+        next := component == 0 ? current + .08 : clamp(current + .08, 0, 1)
+        if component == 0 && next > 1 do next -= 1
+        customization_set_scarf_component(editor, component, next)
     } else if focus == CUSTOMIZATION_BACK_FOCUS {
         editor.pause_screen = .Options
         changed = false
@@ -206,14 +306,19 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
                 CUSTOMIZATION_PATTERN_COLUMNS +
                 min(focus - CUSTOMIZATION_HEADGEAR_START, CUSTOMIZATION_PATTERN_COLUMNS - 1)
         } else if focus < CUSTOMIZATION_SCARF_START {
-            focus -= 4
+            headgear_index := focus - CUSTOMIZATION_HEADGEAR_START
+            if headgear_index < 4 {
+                focus =
+                    CUSTOMIZATION_PATTERN_START +
+                    CUSTOMIZATION_PATTERN_COLUMNS +
+                    min(headgear_index, CUSTOMIZATION_PATTERN_COLUMNS - 1)
+            } else {
+                focus -= 4
+            }
         } else if focus < CUSTOMIZATION_BACK_FOCUS {
             scarf_column := focus - CUSTOMIZATION_SCARF_START
-            if scarf_column < 3 {
-                focus = CUSTOMIZATION_HEADGEAR_START + 4 + scarf_column
-            } else {
-                focus = CUSTOMIZATION_HEADGEAR_START + 3
-            }
+            last_row_start := (CUSTOMIZATION_HEADGEAR_COUNT - 1) / 4 * 4
+            focus = CUSTOMIZATION_HEADGEAR_START + min(last_row_start + scarf_column, CUSTOMIZATION_HEADGEAR_COUNT - 1)
         } else {
             focus = CUSTOMIZATION_SCARF_START
         }
@@ -231,12 +336,10 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
             }
         } else if focus < CUSTOMIZATION_SCARF_START {
             headgear_index := focus - CUSTOMIZATION_HEADGEAR_START
-            if headgear_index < 3 {
+            if headgear_index + 4 < CUSTOMIZATION_HEADGEAR_COUNT {
                 focus += 4
-            } else if headgear_index == 3 {
-                focus = CUSTOMIZATION_SCARF_START + 3
             } else {
-                focus = CUSTOMIZATION_SCARF_START + min(headgear_index - 4, 2)
+                focus = CUSTOMIZATION_SCARF_START + min(headgear_index % 4, 3)
             }
         } else if focus < CUSTOMIZATION_BACK_FOCUS {
             focus = CUSTOMIZATION_BACK_FOCUS
@@ -249,6 +352,7 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
 
 customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     panel := customization_scene_panel(width, height)
+    preview := customization_preview_bounds(panel)
     stick_x, stick_y := game_input.menu_steps(
         &editor.runtime_input,
         gamepad_axis(.Left_X),
@@ -263,11 +367,38 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
     if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do vertical = 1
     if horizontal == 0 do horizontal = stick_x
     if vertical == 0 do vertical = stick_y
+    if horizontal != 0 &&
+       editor.customization_focus > CUSTOMIZATION_SCARF_START &&
+       editor.customization_focus < CUSTOMIZATION_BACK_FOCUS {
+        component := editor.customization_focus - CUSTOMIZATION_SCARF_START - 1
+        hue, saturation, lightness := customization_rgb_to_hsv(editor.mouse_scarf_color)
+        current := component == 0 ? hue : (component == 1 ? saturation : lightness)
+        next := component == 0 ? current + f32(horizontal) * .025 : clamp(current + f32(horizontal) * .04, 0, 1)
+        if component == 0 {
+            if next < 0 do next += 1
+            if next > 1 do next -= 1
+        }
+        customization_set_scarf_component(editor, component, next)
+        _ = mouse_preference_save(editor)
+        horizontal = 0
+    }
     if horizontal != 0 || vertical != 0 do customization_move_focus(editor, horizontal, vertical)
 
     mouse := rl.GetMousePosition()
     mouse_delta := rl.GetMouseDelta()
     mouse_active := rl.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    if rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(mouse, preview) {
+        editor.customization_preview_dragging = true
+        editor.customization_preview_drag_x = mouse.x
+    }
+    if editor.customization_preview_dragging && rl.IsMouseButtonDown(.LEFT) {
+        editor.customization_preview_yaw += (mouse.x - editor.customization_preview_drag_x) * .012
+        editor.customization_preview_drag_x = mouse.x
+    }
+    if rl.IsMouseButtonReleased(.LEFT) {
+        editor.customization_preview_dragging = false
+        editor.customization_slider_drag = 0
+    }
     pointer_focus := -1
     if mouse_active {
         for index in 0 ..< CUSTOMIZATION_COLOR_COUNT {
@@ -299,22 +430,18 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
     if rl.IsMouseButtonPressed(.LEFT) && pointer_focus >= 0 {
         if pointer_focus > CUSTOMIZATION_SCARF_START && pointer_focus < CUSTOMIZATION_BACK_FOCUS {
             component := pointer_focus - CUSTOMIZATION_SCARF_START - 1
-            bounds := customization_scarf_bounds(panel, component + 1)
-            track_x := bounds.x + 42
-            normalized := clamp((mouse.x - track_x) / max(bounds.width - 52, f32(1)), 0, 1)
-            value := u8(normalized * 255)
-            if component == 0 {
-                editor.mouse_scarf_color.r = value
-            } else if component == 1 {
-                editor.mouse_scarf_color.g = value
-            } else {
-                editor.mouse_scarf_color.b = value
-            }
-            editor.mouse_scarf_enabled = true
-            _ = mouse_preference_save(editor)
+            editor.customization_slider_drag = component + 1
         } else {
             customization_activate(editor, pointer_focus)
         }
+    }
+    if editor.customization_slider_drag > 0 && rl.IsMouseButtonDown(.LEFT) {
+        component := editor.customization_slider_drag - 1
+        bounds := customization_scarf_bounds(panel, component + 1)
+        track_x := bounds.x + 42
+        normalized := clamp((mouse.x - track_x) / max(bounds.width - 52, f32(1)), 0, 1)
+        customization_set_scarf_component(editor, component, normalized)
+        _ = mouse_preference_save(editor)
     }
 }
 
@@ -328,6 +455,12 @@ customization_card :: proc(bounds: rl.Rectangle, label: cstring, selected, focus
     }
     rl.DrawRectangleRounded(bounds, .12, 8, fill)
     rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, focused || selected ? 2 : 1, border)
+    if selected {
+        mark := rl.Vector2{bounds.x + bounds.width - 11, bounds.y + 10}
+        rl.DrawCircleV(mark, 5, {81, 205, 194, 255})
+        rl.DrawLineEx({mark.x - 2.5, mark.y}, {mark.x - .5, mark.y + 2}, 1.5, {15, 29, 31, 255})
+        rl.DrawLineEx({mark.x - .5, mark.y + 2}, {mark.x + 3, mark.y - 2}, 1.5, {15, 29, 31, 255})
+    }
     text_x := bounds.x + 10
     if swatch.a > 0 {
         rl.DrawCircleV({bounds.x + 18, bounds.y + bounds.height * .5}, 9, swatch)
@@ -337,19 +470,105 @@ customization_card :: proc(bounds: rl.Rectangle, label: cstring, selected, focus
     ui_draw_text(.Data, label, {text_x, bounds.y + (bounds.height - size.y) * .5 + 1}, .2, {229, 234, 238, 255})
 }
 
+customization_pattern_thumbnail :: proc(bounds: rl.Rectangle, pattern: Mouse_Fur_Pattern) {
+    center := rl.Vector2{bounds.x + bounds.width - 17, bounds.y + bounds.height * .5 + 4}
+    base := rl.Color{168, 119, 82, 255}
+    pale := rl.Color{231, 211, 182, 255}
+    rl.DrawCircleV(center, 8, base)
+    #partial switch pattern {
+    case .Pale_Belly:
+        rl.DrawCircleV({center.x, center.y + 3}, 5, pale)
+    case .Hooded:
+        rl.DrawCircleV({center.x, center.y - 3}, 5, {72, 62, 57, 255})
+    case .Piebald:
+        rl.DrawCircleV({center.x - 2, center.y - 2}, 3.5, pale)
+        rl.DrawCircleV({center.x + 3, center.y + 3}, 2.5, pale)
+    case .Dorsal_Stripe:
+        rl.DrawRectangleRounded({center.x - 1, center.y - 7, 3, 14}, .5, 3, {73, 58, 49, 255})
+    case .Masked:
+        rl.DrawRectangleRounded({center.x - 7, center.y - 3, 14, 6}, .5, 4, {67, 57, 52, 255})
+    case:
+    }
+}
+
+customization_headgear_thumbnail :: proc(bounds: rl.Rectangle, accessory: Mouse_Accessory) {
+    center := rl.Vector2{bounds.x + bounds.width - 15, bounds.y + bounds.height * .5 + 3}
+    color := rl.Color{208, 177, 111, 255}
+    #partial switch accessory {
+    case .None:
+        rl.DrawLineEx({center.x - 5, center.y - 5}, {center.x + 5, center.y + 5}, 2, {91, 102, 113, 255})
+    case .Goggles:
+        rl.DrawCircleV({center.x - 4, center.y}, 4, {132, 211, 215, 255})
+        rl.DrawCircleV({center.x - 4, center.y}, 2.5, {24, 33, 39, 255})
+        rl.DrawCircleV({center.x + 4, center.y}, 4, {132, 211, 215, 255})
+        rl.DrawCircleV({center.x + 4, center.y}, 2.5, {24, 33, 39, 255})
+    case .Flower:
+        for angle in 0 ..< 5 {
+            radians := f32(angle) * math.PI * .4
+            rl.DrawCircleV(
+                {center.x + math.cos(radians) * 5, center.y + math.sin(radians) * 5},
+                3,
+                {226, 126, 145, 255},
+            )
+        }
+        rl.DrawCircleV(center, 3, {247, 211, 83, 255})
+    case .Acorn_Cap:
+        rl.DrawCircleV({center.x, center.y - 2}, 7, {126, 83, 42, 255})
+        rl.DrawLineEx({center.x, center.y - 8}, {center.x + 3, center.y - 12}, 2, {76, 55, 34, 255})
+    case .Bottle_Cap:
+        rl.DrawRectangleRounded({center.x - 8, center.y - 5, 16, 10}, .2, 4, {187, 70, 61, 255})
+        for ridge in -2 ..= 2 do rl.DrawLineEx({center.x + f32(ridge) * 3, center.y - 4}, {center.x + f32(ridge) * 3, center.y + 4}, 1, {236, 132, 111, 255})
+    case .Paper_Boat:
+        rl.DrawRectangleRounded({center.x - 9, center.y, 18, 6}, .45, 5, {226, 221, 201, 255})
+        rl.DrawLineEx({center.x - 7, center.y}, {center.x, center.y - 8}, 3, {226, 221, 201, 255})
+        rl.DrawLineEx({center.x, center.y - 8}, {center.x + 7, center.y}, 3, {226, 221, 201, 255})
+    case .Chef_Hat:
+        rl.DrawCircleV({center.x - 5, center.y - 4}, 5, {238, 236, 220, 255})
+        rl.DrawCircleV({center.x, center.y - 6}, 6, {238, 236, 220, 255})
+        rl.DrawCircleV({center.x + 5, center.y - 4}, 5, {238, 236, 220, 255})
+        rl.DrawRectangleRounded({center.x - 8, center.y - 3, 16, 9}, .15, 3, {238, 236, 220, 255})
+    case .Ushanka:
+        rl.DrawRectangleRounded({center.x - 8, center.y - 7, 16, 12}, .35, 5, {106, 76, 57, 255})
+        rl.DrawCircleV({center.x - 8, center.y + 2}, 4, {126, 91, 66, 255})
+        rl.DrawCircleV({center.x + 8, center.y + 2}, 4, {126, 91, 66, 255})
+    case .Beret:
+        rl.DrawCircleV({center.x, center.y - 2}, 7, {155, 66, 73, 255})
+        rl.DrawRectangleRounded({center.x - 9, center.y - 2, 18, 5}, .5, 4, {155, 66, 73, 255})
+        rl.DrawLineEx({center.x + 1, center.y - 7}, {center.x + 3, center.y - 10}, 1.5, {155, 66, 73, 255})
+    case .Alpine_Hat:
+        rl.DrawRectangleRounded({center.x - 8, center.y, 16, 6}, .45, 5, {74, 124, 80, 255})
+        rl.DrawLineEx({center.x - 6, center.y}, {center.x + 2, center.y - 9}, 5, {74, 124, 80, 255})
+        rl.DrawLineEx({center.x + 2, center.y - 9}, {center.x + 7, center.y}, 5, {74, 124, 80, 255})
+        rl.DrawLineEx({center.x + 3, center.y - 5}, {center.x + 8, center.y - 11}, 1.5, {222, 91, 79, 255})
+    case .Flat_Cap:
+        rl.DrawRectangleRounded({center.x - 8, center.y - 2, 16, 8}, .35, 5, color)
+        rl.DrawCircleV({center.x - 1, center.y - 4}, 7, {113, 126, 104, 255})
+        rl.DrawRectangleRounded({center.x - 9, center.y - 4, 18, 5}, .5, 4, {113, 126, 104, 255})
+    }
+}
+
 customization_color_component :: proc(
     bounds: rl.Rectangle,
     label: cstring,
-    value: u8,
+    value: f32,
     focused: bool,
     color: rl.Color,
+    enabled: bool,
 ) {
     customization_card(bounds, label, false, focused)
     track := rl.Rectangle{bounds.x + 42, bounds.y + 16, bounds.width - 52, 10}
-    rl.DrawRectangleRounded(track, .45, 6, {12, 17, 21, 255})
+    opacity := enabled ? u8(255) : u8(95)
+    rl.DrawRectangleRounded(track, .45, 6, {12, 17, 21, opacity})
     fill := track
-    fill.width *= f32(value) / 255
-    if fill.width > 0 do rl.DrawRectangleRounded(fill, .45, 6, color)
+    fill.width *= clamp(value, 0, 1)
+    shade := rl.Color{color.r, color.g, color.b, opacity}
+    if fill.width > 0 do rl.DrawRectangleRounded(fill, .45, 6, shade)
+    handle_x := track.x + track.width * clamp(value, 0, 1)
+    rl.DrawCircleV({handle_x, track.y + track.height * .5}, 5, {235, 240, 242, opacity})
+    if !enabled {
+        rl.DrawRectangleRounded(bounds, .12, 8, {10, 14, 18, 86})
+        if focused do rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, 2, {118, 238, 226, 255})
+    }
 }
 
 customization_draw_3d_preview :: proc(_: ^Editor, bounds: rl.Rectangle) {
@@ -362,16 +581,31 @@ customization_draw_3d_preview :: proc(_: ^Editor, bounds: rl.Rectangle) {
 
 customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
     panel := customization_scene_panel(width, height)
-    header_panel := rl.Rectangle{panel.x, panel.y, panel.width, 108}
-    controls_panel := rl.Rectangle{panel.x + panel.width * .39, panel.y + 100, panel.width * .61, panel.height - 100}
+    header_panel := rl.Rectangle{panel.x, panel.y, panel.width, 108 * customization_scale_y(panel)}
+    controls_panel := rl.Rectangle {
+        panel.x + panel.width * .39,
+        customization_y(panel, 96),
+        panel.width * .61,
+        panel.height - 96 * customization_scale_y(panel),
+    }
     rl.DrawRectangleRounded(header_panel, .025, 12, {22, 26, 32, 252})
     rl.DrawRectangleRounded(controls_panel, .02, 10, {22, 26, 32, 252})
     rl.DrawRectangleRoundedLinesEx(panel, .025, 12, 1, {78, 88, 100, 255})
     pause_menu_draw_header(panel, "", "CUSTOMIZE MOUSE")
-    customization_draw_3d_preview(editor, {panel.x + 28, panel.y + 112, panel.width * .35, panel.height - 142})
+    hint: cstring = "SAVES AUTOMATICALLY  /  DRAG PREVIEW"
+    if controller_prompt_active(editor) do hint = "SAVES AUTOMATICALLY  /  D-PAD + A"
+    hint_size := ui_measure_text(.Data, hint, .2)
+    ui_draw_text(
+        .Data,
+        hint,
+        {panel.x + panel.width - hint_size.x - 40, customization_y(panel, 42)},
+        .2,
+        {137, 149, 160, 255},
+    )
+    customization_draw_3d_preview(editor, customization_preview_bounds(panel))
 
     controls_x := panel.x + panel.width * .41
-    ui_draw_text(.Label, "FUR COLOR", {controls_x, panel.y + 92}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "FUR COLOR", {controls_x, customization_y(panel, 84)}, .4, {225, 230, 235, 255})
     for index in 0 ..< CUSTOMIZATION_COLOR_COUNT {
         value := Mouse_Fur(index)
         customization_card(
@@ -383,7 +617,7 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
         )
     }
 
-    ui_draw_text(.Label, "FUR PATTERN", {controls_x, panel.y + 226}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "FUR PATTERN", {controls_x, customization_y(panel, 218)}, .4, {225, 230, 235, 255})
     for index in 0 ..< CUSTOMIZATION_PATTERN_COUNT {
         value := Mouse_Fur_Pattern(index)
         customization_card(
@@ -392,9 +626,10 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
             editor.mouse_pattern == value,
             editor.customization_focus == CUSTOMIZATION_PATTERN_START + index,
         )
+        customization_pattern_thumbnail(customization_pattern_bounds(panel, index), value)
     }
 
-    ui_draw_text(.Label, "HEADGEAR", {controls_x, panel.y + 330}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "HEADGEAR", {controls_x, customization_y(panel, 326)}, .4, {225, 230, 235, 255})
     for index in 0 ..< CUSTOMIZATION_HEADGEAR_COUNT {
         value := Mouse_Accessory(index)
         customization_card(
@@ -403,9 +638,10 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
             editor.mouse_headgear == value,
             editor.customization_focus == CUSTOMIZATION_HEADGEAR_START + index,
         )
+        customization_headgear_thumbnail(customization_headgear_bounds(panel, index), value)
     }
 
-    ui_draw_text(.Label, "SCARF", {controls_x, panel.y + 456}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "SCARF", {controls_x, customization_y(panel, 478)}, .4, {225, 230, 235, 255})
     customization_card(
         customization_scarf_bounds(panel, 0),
         editor.mouse_scarf_enabled ? "ON" : "OFF",
@@ -413,31 +649,35 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
         editor.customization_focus == CUSTOMIZATION_SCARF_START,
         editor.mouse_scarf_color,
     )
+    hue, saturation, lightness := customization_rgb_to_hsv(editor.mouse_scarf_color)
     customization_color_component(
         customization_scarf_bounds(panel, 1),
-        "R",
-        editor.mouse_scarf_color.r,
+        "HUE",
+        hue,
         editor.customization_focus == CUSTOMIZATION_SCARF_START + 1,
-        {235, 65, 65, 255},
+        customization_hsl_to_color(hue, 1, .5),
+        editor.mouse_scarf_enabled,
     )
     customization_color_component(
         customization_scarf_bounds(panel, 2),
-        "G",
-        editor.mouse_scarf_color.g,
+        "VIVID",
+        saturation,
         editor.customization_focus == CUSTOMIZATION_SCARF_START + 2,
-        {65, 218, 104, 255},
+        customization_hsl_to_color(hue, saturation, .5),
+        editor.mouse_scarf_enabled,
     )
     customization_color_component(
         customization_scarf_bounds(panel, 3),
-        "B",
-        editor.mouse_scarf_color.b,
+        "LIGHT",
+        lightness,
         editor.customization_focus == CUSTOMIZATION_SCARF_START + 3,
-        {74, 128, 239, 255},
+        customization_hsl_to_color(hue, saturation, lightness),
+        editor.mouse_scarf_enabled,
     )
 
     pause_menu_button(
         customization_back_bounds(panel),
-        "DONE",
+        "BACK",
         true,
         editor.customization_focus == CUSTOMIZATION_BACK_FOCUS,
     )

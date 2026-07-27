@@ -1,0 +1,575 @@
+{
+  "image": "tarot-atlas-v4.png",
+  "sources": [
+    "trumps-source.png",
+    "wands-source.png",
+    "cups-source.png",
+    "swords-source.png",
+    "pentacles-source.png"
+  ],
+  "width": 1512,
+  "height": 948,
+  "columns": 14,
+  "rows": 6,
+  "cell_width": 108,
+  "cell_height": 158,
+  "card_count": 78,
+  "source_geometry": {
+    "trumps-source.png": [
+      {
+        "index": 0,
+        "x": 6,
+        "y": 7,
+        "width": 197,
+        "height": 304
+      },
+      {
+        "index": 1,
+        "x": 219,
+        "y": 7,
+        "width": 195,
+        "height": 304
+      },
+      {
+        "index": 2,
+        "x": 427,
+        "y": 7,
+        "width": 199,
+        "height": 304
+      },
+      {
+        "index": 3,
+        "x": 643,
+        "y": 7,
+        "width": 197,
+        "height": 304
+      },
+      {
+        "index": 4,
+        "x": 853,
+        "y": 7,
+        "width": 198,
+        "height": 304
+      },
+      {
+        "index": 5,
+        "x": 1066,
+        "y": 8,
+        "width": 198,
+        "height": 303
+      },
+      {
+        "index": 6,
+        "x": 6,
+        "y": 325,
+        "width": 197,
+        "height": 291
+      },
+      {
+        "index": 7,
+        "x": 219,
+        "y": 325,
+        "width": 195,
+        "height": 290
+      },
+      {
+        "index": 8,
+        "x": 427,
+        "y": 325,
+        "width": 199,
+        "height": 290
+      },
+      {
+        "index": 9,
+        "x": 643,
+        "y": 325,
+        "width": 197,
+        "height": 290
+      },
+      {
+        "index": 10,
+        "x": 853,
+        "y": 325,
+        "width": 199,
+        "height": 290
+      },
+      {
+        "index": 11,
+        "x": 1066,
+        "y": 325,
+        "width": 197,
+        "height": 290
+      },
+      {
+        "index": 12,
+        "x": 6,
+        "y": 629,
+        "width": 197,
+        "height": 289
+      },
+      {
+        "index": 13,
+        "x": 219,
+        "y": 629,
+        "width": 195,
+        "height": 289
+      },
+      {
+        "index": 14,
+        "x": 427,
+        "y": 629,
+        "width": 199,
+        "height": 289
+      },
+      {
+        "index": 15,
+        "x": 642,
+        "y": 630,
+        "width": 197,
+        "height": 289
+      },
+      {
+        "index": 16,
+        "x": 853,
+        "y": 630,
+        "width": 198,
+        "height": 289
+      },
+      {
+        "index": 17,
+        "x": 1066,
+        "y": 630,
+        "width": 198,
+        "height": 289
+      },
+      {
+        "index": 18,
+        "x": 6,
+        "y": 931,
+        "width": 197,
+        "height": 299
+      },
+      {
+        "index": 19,
+        "x": 218,
+        "y": 931,
+        "width": 196,
+        "height": 299
+      },
+      {
+        "index": 20,
+        "x": 427,
+        "y": 931,
+        "width": 199,
+        "height": 299
+      },
+      {
+        "index": 21,
+        "x": 642,
+        "y": 932,
+        "width": 197,
+        "height": 298
+      }
+    ],
+    "wands-source.png": [
+      {
+        "index": 0,
+        "x": 5,
+        "y": 5,
+        "width": 255,
+        "height": 376
+      },
+      {
+        "index": 1,
+        "x": 273,
+        "y": 5,
+        "width": 255,
+        "height": 376
+      },
+      {
+        "index": 2,
+        "x": 542,
+        "y": 5,
+        "width": 254,
+        "height": 376
+      },
+      {
+        "index": 3,
+        "x": 809,
+        "y": 5,
+        "width": 254,
+        "height": 376
+      },
+      {
+        "index": 4,
+        "x": 1075,
+        "y": 5,
+        "width": 254,
+        "height": 376
+      },
+      {
+        "index": 5,
+        "x": 5,
+        "y": 398,
+        "width": 255,
+        "height": 362
+      },
+      {
+        "index": 6,
+        "x": 273,
+        "y": 398,
+        "width": 255,
+        "height": 362
+      },
+      {
+        "index": 7,
+        "x": 542,
+        "y": 398,
+        "width": 254,
+        "height": 362
+      },
+      {
+        "index": 8,
+        "x": 809,
+        "y": 398,
+        "width": 254,
+        "height": 362
+      },
+      {
+        "index": 9,
+        "x": 1075,
+        "y": 398,
+        "width": 254,
+        "height": 362
+      },
+      {
+        "index": 10,
+        "x": 5,
+        "y": 778,
+        "width": 255,
+        "height": 381
+      },
+      {
+        "index": 11,
+        "x": 273,
+        "y": 778,
+        "width": 255,
+        "height": 381
+      },
+      {
+        "index": 12,
+        "x": 542,
+        "y": 778,
+        "width": 254,
+        "height": 381
+      },
+      {
+        "index": 13,
+        "x": 809,
+        "y": 778,
+        "width": 254,
+        "height": 381
+      }
+    ],
+    "cups-source.png": [
+      {
+        "index": 0,
+        "x": 7,
+        "y": 4,
+        "width": 252,
+        "height": 380
+      },
+      {
+        "index": 1,
+        "x": 272,
+        "y": 4,
+        "width": 255,
+        "height": 380
+      },
+      {
+        "index": 2,
+        "x": 541,
+        "y": 4,
+        "width": 255,
+        "height": 380
+      },
+      {
+        "index": 3,
+        "x": 810,
+        "y": 4,
+        "width": 255,
+        "height": 380
+      },
+      {
+        "index": 4,
+        "x": 1078,
+        "y": 4,
+        "width": 254,
+        "height": 380
+      },
+      {
+        "index": 5,
+        "x": 7,
+        "y": 398,
+        "width": 252,
+        "height": 366
+      },
+      {
+        "index": 6,
+        "x": 272,
+        "y": 398,
+        "width": 255,
+        "height": 366
+      },
+      {
+        "index": 7,
+        "x": 541,
+        "y": 398,
+        "width": 255,
+        "height": 366
+      },
+      {
+        "index": 8,
+        "x": 810,
+        "y": 398,
+        "width": 255,
+        "height": 366
+      },
+      {
+        "index": 9,
+        "x": 1078,
+        "y": 398,
+        "width": 254,
+        "height": 366
+      },
+      {
+        "index": 10,
+        "x": 7,
+        "y": 778,
+        "width": 252,
+        "height": 389
+      },
+      {
+        "index": 11,
+        "x": 272,
+        "y": 778,
+        "width": 255,
+        "height": 389
+      },
+      {
+        "index": 12,
+        "x": 541,
+        "y": 778,
+        "width": 255,
+        "height": 389
+      },
+      {
+        "index": 13,
+        "x": 810,
+        "y": 778,
+        "width": 255,
+        "height": 389
+      }
+    ],
+    "swords-source.png": [
+      {
+        "index": 0,
+        "x": 6,
+        "y": 3,
+        "width": 252,
+        "height": 378
+      },
+      {
+        "index": 1,
+        "x": 272,
+        "y": 3,
+        "width": 252,
+        "height": 378
+      },
+      {
+        "index": 2,
+        "x": 538,
+        "y": 3,
+        "width": 254,
+        "height": 378
+      },
+      {
+        "index": 3,
+        "x": 806,
+        "y": 3,
+        "width": 252,
+        "height": 378
+      },
+      {
+        "index": 4,
+        "x": 1073,
+        "y": 3,
+        "width": 252,
+        "height": 378
+      },
+      {
+        "index": 5,
+        "x": 6,
+        "y": 399,
+        "width": 252,
+        "height": 377
+      },
+      {
+        "index": 6,
+        "x": 272,
+        "y": 399,
+        "width": 252,
+        "height": 377
+      },
+      {
+        "index": 7,
+        "x": 538,
+        "y": 399,
+        "width": 254,
+        "height": 377
+      },
+      {
+        "index": 8,
+        "x": 807,
+        "y": 399,
+        "width": 251,
+        "height": 377
+      },
+      {
+        "index": 9,
+        "x": 1073,
+        "y": 399,
+        "width": 252,
+        "height": 377
+      },
+      {
+        "index": 10,
+        "x": 6,
+        "y": 795,
+        "width": 252,
+        "height": 365
+      },
+      {
+        "index": 11,
+        "x": 272,
+        "y": 795,
+        "width": 252,
+        "height": 365
+      },
+      {
+        "index": 12,
+        "x": 538,
+        "y": 795,
+        "width": 254,
+        "height": 365
+      },
+      {
+        "index": 13,
+        "x": 807,
+        "y": 795,
+        "width": 250,
+        "height": 365
+      }
+    ],
+    "pentacles-source.png": [
+      {
+        "index": 0,
+        "x": 6,
+        "y": 3,
+        "width": 244,
+        "height": 383
+      },
+      {
+        "index": 1,
+        "x": 269,
+        "y": 2,
+        "width": 248,
+        "height": 383
+      },
+      {
+        "index": 2,
+        "x": 536,
+        "y": 2,
+        "width": 248,
+        "height": 383
+      },
+      {
+        "index": 3,
+        "x": 804,
+        "y": 2,
+        "width": 248,
+        "height": 382
+      },
+      {
+        "index": 4,
+        "x": 1072,
+        "y": 2,
+        "width": 247,
+        "height": 383
+      },
+      {
+        "index": 5,
+        "x": 6,
+        "y": 398,
+        "width": 244,
+        "height": 373
+      },
+      {
+        "index": 6,
+        "x": 269,
+        "y": 397,
+        "width": 248,
+        "height": 374
+      },
+      {
+        "index": 7,
+        "x": 536,
+        "y": 397,
+        "width": 248,
+        "height": 374
+      },
+      {
+        "index": 8,
+        "x": 804,
+        "y": 397,
+        "width": 248,
+        "height": 374
+      },
+      {
+        "index": 9,
+        "x": 1072,
+        "y": 397,
+        "width": 247,
+        "height": 374
+      },
+      {
+        "index": 10,
+        "x": 6,
+        "y": 785,
+        "width": 244,
+        "height": 377
+      },
+      {
+        "index": 11,
+        "x": 269,
+        "y": 785,
+        "width": 248,
+        "height": 377
+      },
+      {
+        "index": 12,
+        "x": 536,
+        "y": 785,
+        "width": 248,
+        "height": 377
+      },
+      {
+        "index": 13,
+        "x": 804,
+        "y": 785,
+        "width": 248,
+        "height": 377
+      }
+    ]
+  }
+}

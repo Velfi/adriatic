@@ -24,6 +24,7 @@ Gameplay_Options :: struct {
     show_hud:            bool,
     crunchiness:         Crunchiness,
     dither_mode:         Dither_Mode,
+    hdr_exposure:        bool,
 }
 
 Crunchiness :: enum {
@@ -42,6 +43,7 @@ gameplay_options_default :: proc() -> Gameplay_Options {
         show_hud = true,
         crunchiness = .P480,
         dither_mode = .Off,
+        hdr_exposure = true,
     }
 }
 
@@ -73,7 +75,7 @@ crunchiness_apply :: proc(value: Crunchiness) {
 }
 
 pause_menu_is_open :: proc(editor: ^Editor) -> bool {
-    return editor != nil && editor.pause_screen != .Closed
+    return editor != nil && (editor.console.open || editor.main_menu_active || editor.pause_screen != .Closed)
 }
 
 pause_menu_panel :: proc(width, height: i32, options: bool) -> rl.Rectangle {
@@ -87,10 +89,22 @@ pause_menu_button_bounds :: proc(panel: rl.Rectangle, row: int) -> rl.Rectangle 
     return {panel.x + 44, panel.y + 126 + f32(row) * 58, panel.width - 88, 46}
 }
 
-OPTIONS_ROW_COUNT :: 8
+MAIN_MENU_BUTTON_COUNT :: 3
+
+main_menu_panel :: proc(width, height: i32) -> rl.Rectangle {
+    panel_width := min(f32(430), f32(width) - 48)
+    panel_height := min(f32(360), f32(height) - 48)
+    return {f32(width) - panel_width - 54, (f32(height) - panel_height) * .5, panel_width, panel_height}
+}
+
+main_menu_button_bounds :: proc(panel: rl.Rectangle, row: int) -> rl.Rectangle {
+    return {panel.x + 42, panel.y + 128 + f32(row) * 62, panel.width - 84, 48}
+}
+
+OPTIONS_ROW_COUNT :: 9
 OPTIONS_RESTORE_FOCUS :: OPTIONS_ROW_COUNT
 OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
-OPTIONS_CONTENT_HEIGHT :: f32(642)
+OPTIONS_CONTENT_HEIGHT :: f32(714)
 
 options_menu_viewport :: proc(panel: rl.Rectangle) -> rl.Rectangle {
     return {panel.x + 30, panel.y + 108, panel.width - 54, max(panel.height - 178, f32(80))}
@@ -107,7 +121,7 @@ options_menu_row_bounds :: proc(panel: rl.Rectangle, row: int, scroll_y: f32 = 0
 
 options_menu_restore_bounds :: proc(panel: rl.Rectangle, scroll_y: f32 = 0) -> rl.Rectangle {
     viewport := options_menu_viewport(panel)
-    return {panel.x + 44, viewport.y + 586 - scroll_y, panel.width - 88, 46}
+    return {panel.x + 44, viewport.y + 658 - scroll_y, panel.width - 88, 46}
 }
 
 options_menu_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
@@ -234,6 +248,9 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
     case 6:
         editor.gameplay_options.dither_mode = dither_adjust_mode(editor.gameplay_options.dither_mode, direction)
         dither_apply(editor)
+    case 7:
+        editor.gameplay_options.hdr_exposure = direction > 0
+        dither_apply(editor)
     }
 }
 
@@ -290,18 +307,26 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         case 6:
             editor.gameplay_options.dither_mode = dither_next_mode(editor.gameplay_options.dither_mode)
             dither_apply(editor)
+        case 7:
+            editor.gameplay_options.hdr_exposure = !editor.gameplay_options.hdr_exposure
+            dither_apply(editor)
         case OPTIONS_RESTORE_FOCUS:
             editor.gameplay_options = gameplay_options_default()
             crunchiness_apply(editor.gameplay_options.crunchiness)
             dither_apply(editor)
-        case 7:
+        case 8:
             editor.pause_screen = .Customization
             editor.customization_focus = 0
         case OPTIONS_BACK_FOCUS:
-            editor.pause_screen = .Pause
+            editor.pause_screen = editor.main_menu_active ? .Closed : .Pause
             editor.options_scroll_dragging = false
         }
-        if editor.options_focus != 0 && editor.options_focus != 5 && editor.options_focus != 6 do return
+        if editor.options_focus != 0 &&
+           editor.options_focus != 5 &&
+           editor.options_focus != 6 &&
+           editor.options_focus != 7 {
+            return
+        }
     }
 
     if rl.CheckCollisionPointRec(mouse, viewport) {
@@ -427,19 +452,96 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     }
     if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 7, scroll_y)) {
         editor.options_focus = 7
+        editor.gameplay_options.hdr_exposure = !editor.gameplay_options.hdr_exposure
+        dither_apply(editor)
+        return
+    }
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 8, scroll_y)) {
+        editor.options_focus = 8
         editor.pause_screen = .Customization
         editor.customization_focus = 0
         return
     }
     if pressed && rl.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
         editor.options_focus = OPTIONS_BACK_FOCUS
-        editor.pause_screen = .Pause
+        editor.pause_screen = editor.main_menu_active ? .Closed : .Pause
         editor.options_scroll_dragging = false
     }
 }
 
+main_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
+    if editor == nil || !editor.main_menu_active do return
+    if editor.pause_screen == .Customization {
+        if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
+            editor.pause_screen = .Options
+            return
+        }
+        customization_scene_process_input(editor, width, height, delta_seconds)
+        return
+    }
+    if editor.pause_screen == .Options {
+        if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
+            editor.pause_screen = .Closed
+            editor.options_scroll_dragging = false
+            return
+        }
+        options_menu_process_input(editor, width, height, delta_seconds)
+        return
+    }
+
+    panel := main_menu_panel(width, height)
+    mouse := rl.GetMousePosition()
+    mouse_delta := rl.GetMouseDelta()
+    mouse_active := rl.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    focus_direction := 0
+    _, stick_y := game_input.menu_steps(
+        &editor.runtime_input,
+        gamepad_axis(.Left_X),
+        gamepad_axis(.Left_Y),
+        delta_seconds,
+    )
+    if rl.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do focus_direction -= 1
+    if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do focus_direction += 1
+    if focus_direction == 0 do focus_direction = stick_y
+    if focus_direction != 0 {
+        editor.main_menu_focus = clamp(editor.main_menu_focus + focus_direction, 0, MAIN_MENU_BUTTON_COUNT - 1)
+    }
+    if mouse_active {
+        for index in 0 ..< MAIN_MENU_BUTTON_COUNT {
+            if rl.CheckCollisionPointRec(mouse, main_menu_button_bounds(panel, index)) {
+                editor.main_menu_focus = index
+            }
+        }
+    }
+
+    activated := -1
+    if input_action_pressed(.Menu_Accept) do activated = editor.main_menu_focus
+    if rl.IsMouseButtonPressed(.LEFT) {
+        for index in 0 ..< MAIN_MENU_BUTTON_COUNT {
+            if rl.CheckCollisionPointRec(mouse, main_menu_button_bounds(panel, index)) do activated = index
+        }
+    }
+    switch activated {
+    case 0:
+        editor.main_menu_active = false
+        editor.pause_screen = .Closed
+        editor_spawn_into_world(editor)
+    case 1:
+        editor.pause_screen = .Options
+        editor.options_focus = 0
+        editor.options_scroll_y = 0
+    case 2:
+        editor.quit_requested = true
+    }
+}
+
 pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
-    if editor == nil || !editor.in_map do return
+    if editor == nil do return
+    if editor.main_menu_active {
+        main_menu_process_input(editor, width, height, delta_seconds)
+        return
+    }
+    if !editor.in_map do return
     if rl.GamepadAvailable() do editor.controller_disconnect_notice = false
 
     if editor.pause_screen == .Closed {
@@ -707,7 +809,14 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         )
     }
 
-    pause_menu_button(options_menu_row_bounds(panel, 7, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 7)
+    options_menu_draw_toggle(
+        options_menu_row_bounds(panel, 7, scroll_y),
+        "HDR EXPOSURE",
+        editor.gameplay_options.hdr_exposure,
+        editor.options_focus == 7,
+    )
+
+    pause_menu_button(options_menu_row_bounds(panel, 8, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 8)
 
     pause_menu_button(
         options_menu_restore_bounds(panel, scroll_y),
@@ -726,8 +835,67 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     pause_menu_button(options_menu_back_bounds(panel), "BACK", true, editor.options_focus == OPTIONS_BACK_FOCUS)
 }
 
-pause_menu_draw :: proc(editor: ^Editor, width, height: i32) {
-    if !pause_menu_is_open(editor) do return
+main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture) {
+    if editor == nil || !editor.main_menu_active do return
+    pause_menu_pointer_enabled = !controller_prompt_active(editor)
+
+    if postcard.ready {
+        rl.DrawTexturePro(
+            postcard,
+            {0, 0, f32(postcard.width), f32(postcard.height)},
+            {0, 0, f32(width), f32(height)},
+            {255, 255, 255, 255},
+        )
+    } else {
+        rl.ClearBackground({17, 63, 80, 255})
+    }
+    rl.DrawRectangle(0, 0, width, height, {6, 19, 27, 72})
+
+    frame_width := max(i32(8), i32(min(f32(width) / 1280, f32(height) / 720) * 10))
+    frame_color := rl.Color{238, 221, 181, 255}
+    rl.DrawRectangle(0, 0, width, frame_width, frame_color)
+    rl.DrawRectangle(0, height - frame_width, width, frame_width, frame_color)
+    rl.DrawRectangle(0, 0, frame_width, height, frame_color)
+    rl.DrawRectangle(width - frame_width, 0, frame_width, height, frame_color)
+
+    if editor.pause_screen == .Customization {
+        customization_scene_draw(editor, width, height)
+        return
+    }
+
+    options := editor.pause_screen == .Options
+    panel := options ? pause_menu_panel(width, height, true) : main_menu_panel(width, height)
+    rl.DrawRectangleRounded(panel, .035, 12, {17, 28, 34, 238})
+    rl.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, {225, 207, 162, 220})
+    if options {
+        options_menu_draw(editor, panel)
+        return
+    }
+
+    pause_menu_draw_header(panel, "GREETINGS FROM", "ADRIATIC")
+    pause_menu_button(main_menu_button_bounds(panel, 0), "PLAY", true, editor.main_menu_focus == 0)
+    pause_menu_button(main_menu_button_bounds(panel, 1), "OPTIONS", false, editor.main_menu_focus == 1)
+    pause_menu_button(main_menu_button_bounds(panel, 2), "QUIT", false, editor.main_menu_focus == 2)
+    hint: cstring = "ARROWS SELECT  |  ENTER CONFIRMS"
+    if controller_prompt_active(editor) {
+        hint = fmt.ctprintf("D-PAD / LS SELECTS  |  %s CONFIRMS", controller_face_label(editor, .South))
+    }
+    hint_size := ui_measure_text(.Data, hint, .2)
+    ui_draw_text(
+        .Data,
+        hint,
+        {panel.x + (panel.width - hint_size.x) * .5, panel.y + panel.height - 24},
+        .2,
+        {168, 180, 184, 255},
+    )
+}
+
+pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture = {}) {
+    if editor == nil || (!editor.main_menu_active && editor.pause_screen == .Closed) do return
+    if editor.main_menu_active {
+        main_menu_draw(editor, width, height, postcard)
+        return
+    }
     pause_menu_pointer_enabled = !controller_prompt_active(editor)
     overlay_alpha: u8 = editor.pause_screen == .Customization ? 58 : 190
     rl.DrawRectangle(0, 0, width, height, {7, 11, 15, overlay_alpha})

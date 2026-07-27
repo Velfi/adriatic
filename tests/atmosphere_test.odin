@@ -47,6 +47,7 @@ atmosphere_cloud_time_remains_continuous_across_midnight :: proc(t: ^testing.T) 
     testing.expect(t, after.world_minutes < before.world_minutes)
     testing.expect(t, after.cloud_time_seconds > before.cloud_time_seconds)
     testing.expect(t, after.cloud_seed == before.cloud_seed)
+    testing.expect(t, after.world_days > before.world_days)
 }
 
 @(test)
@@ -61,4 +62,26 @@ atmosphere_weather_transitions_are_bounded_and_gradual :: proc(t: ^testing.T) {
     testing.expect(t, after.precipitation >= 0 && after.precipitation <= 1)
     testing.expect(t, after.haze >= 0 && after.haze <= 1)
     testing.expect(t, after.severity >= 0 && after.severity <= 1)
+}
+
+@(test)
+atmosphere_moon_tracks_synodic_phase_and_midnight :: proc(t: ^testing.T) {
+    state := atmosphere.new(12)
+    atmosphere.set_lunar_age(&state, 0)
+    new_moon := atmosphere.sample(&state)
+    testing.expect(t, new_moon.moon_illumination < .001)
+
+    atmosphere.set_lunar_age(&state, atmosphere.SYNODIC_MONTH_DAYS * .5)
+    full_moon := atmosphere.sample(&state)
+    testing.expect(t, full_moon.moon_illumination > .999)
+    alignment :=
+        full_moon.sun_direction[0] * full_moon.moon_direction[0] +
+        full_moon.sun_direction[1] * full_moon.moon_direction[1] +
+        full_moon.sun_direction[2] * full_moon.moon_direction[2]
+    testing.expect(t, alignment < -.98)
+
+    atmosphere.set_world_minutes(&state, atmosphere.DAY_MINUTES - .1)
+    age_before := state.lunar_days
+    atmosphere.step(&state, .05)
+    testing.expect(t, state.lunar_days > age_before)
 }

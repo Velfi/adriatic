@@ -798,8 +798,9 @@ add_postale_hull :: proc(mesh: ^Aircraft_Mesh) {
         .Body,
     )
 
-    // A recessed tub and seat complete the single-place cockpit. These are
-    // interior fittings, not exterior hull primitives.
+    // Close the bottom of the opening with a recessed cockpit tub. The wing is
+    // split at the fuselage below, so the floor can remain aligned with the
+    // seated pilot without exposing a center wing slab or opening to the belly.
     mesh_quad(mesh, {-.42, -.48, -1.18}, {.42, -.48, -1.18}, {.42, -.48, .20}, {-.42, -.48, .20}, .Dark_Metal)
     // Carry the cushion beneath the pilot, but place the back against the
     // rear of the aperture so it supports rather than intersects the torso.
@@ -898,12 +899,15 @@ add_postale_hull :: proc(mesh: ^Aircraft_Mesh) {
 
 postale_mesh :: proc() -> Aircraft_Mesh {
     mesh: Aircraft_Mesh
-    wing := [9]Mesh_Section {
+    left_wing := [5]Mesh_Section {
         {-4.96, -.48, -.39, .025},
         {-4.86, -.82, -.10, .045},
         {-4.55, -1.12, .14, .07},
         {-2.05, -1.42, .39, .12},
-        {0, -1.48, .43, .15},
+        {-.52, -1.48, .43, .15},
+    }
+    right_wing := [5]Mesh_Section {
+        {.52, -1.48, .43, .15},
         {2.05, -1.42, .39, .12},
         {4.55, -1.12, .14, .07},
         {4.86, -.82, -.10, .045},
@@ -931,7 +935,10 @@ postale_mesh :: proc() -> Aircraft_Mesh {
 
     POSTALE_WING_Y :: f32(.08)
     wing_first := mesh.vertex_count
-    add_section_mesh(&mesh, wing[:], POSTALE_WING_Y, .Wing)
+    // The roots terminate at the fuselage skin; there is no center slab
+    // running through the cockpit.
+    add_section_mesh(&mesh, left_wing[:], POSTALE_WING_Y, .Wing)
+    add_section_mesh(&mesh, right_wing[:], POSTALE_WING_Y, .Wing)
     for index in wing_first ..< mesh.vertex_count {
         mesh.vertices[index].position[1] += abs(mesh.vertices[index].position[0]) * .045
     }

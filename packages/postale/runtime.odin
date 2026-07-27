@@ -11,15 +11,36 @@ import "core:math/linalg"
 // so ground contact must lift the airframe enough to keep the wheels above the
 // runway rather than burying them in it.
 GROUND_CLEARANCE :: f32(1.14)
-SAFE_TOUCHDOWN_SPEED :: f32(5)
 SAFE_BANK_RADIANS :: f32(.4363323)
 SAFE_EXIT_SPEED :: f32(1)
 TAKEOFF_STALL_SPEED_SCALE :: f32(.68)
+GRAVITY :: f32(9.81)
+
+Landing_Outcome :: enum {
+    None,
+    Smooth,
+    Landed,
+    Hard_Landing,
+    Crash,
+}
+
+Landing_Impact :: struct {
+    outcome:      Landing_Outcome,
+    sink_speed:   f32,
+    weight_force: f32,
+    impact_force: f32,
+    load_factor:  f32,
+    damage:       f32,
+}
 
 Tuning :: struct {
     ground_clearance:          f32,
-    safe_touchdown_speed:      f32,
     safe_bank_radians:         f32,
+    gear_compression_distance: f32,
+    gear_damping_ratio:        f32,
+    smooth_landing_load:       f32,
+    hard_landing_load:         f32,
+    ultimate_landing_load:     f32,
     safe_exit_speed:           f32,
     takeoff_stall_speed_scale: f32,
     throttle_up_rate:          f32,
@@ -49,8 +70,12 @@ Tuning :: struct {
 default_tuning :: proc() -> Tuning {
     return {
         ground_clearance = GROUND_CLEARANCE,
-        safe_touchdown_speed = SAFE_TOUCHDOWN_SPEED,
         safe_bank_radians = SAFE_BANK_RADIANS,
+        gear_compression_distance = .45,
+        gear_damping_ratio = .32,
+        smooth_landing_load = 1.8,
+        hard_landing_load = 3.0,
+        ultimate_landing_load = 5.0,
         safe_exit_speed = SAFE_EXIT_SPEED,
         takeoff_stall_speed_scale = TAKEOFF_STALL_SPEED_SCALE,
         throttle_up_rate = .45,
@@ -86,25 +111,30 @@ drivable_surface_height :: proc(terrain_height, sea_level: f32) -> f32 {
 }
 
 Runtime :: struct {
-    body:            flight.Body_State,
-    vehicle:         vehicles.Vehicle,
-    airframe:        flight.Airframe,
-    flight_runtime:  flight.Runtime,
-    telemetry:       flight.Telemetry,
-    throttle:        f32,
-    flap_fraction:   f32,
-    propeller_turns: f32,
-    pitch:           f32,
-    roll:            f32,
-    yaw:             f32,
-    grounded:        bool,
-    crashed:         bool,
-    was_grounded:    bool,
-    grounded_time:   f32,
-    takeoff_armed:   bool,
-    spawn_position:  flight.Vec3,
-    spawn_basis:     flight.Basis,
-    tuning:          Tuning,
+    body:                     flight.Body_State,
+    vehicle:                  vehicles.Vehicle,
+    airframe:                 flight.Airframe,
+    flight_runtime:           flight.Runtime,
+    telemetry:                flight.Telemetry,
+    throttle:                 f32,
+    flap_fraction:            f32,
+    propeller_turns:          f32,
+    pitch:                    f32,
+    roll:                     f32,
+    yaw:                      f32,
+    grounded:                 bool,
+    crashed:                  bool,
+    was_grounded:             bool,
+    grounded_time:            f32,
+    takeoff_armed:            bool,
+    gear_compression:         f32,
+    gear_force:               f32,
+    structural_damage:        f32,
+    last_landing:             Landing_Impact,
+    landing_feedback_seconds: f32,
+    spawn_position:           flight.Vec3,
+    spawn_basis:              flight.Basis,
+    tuning:                   Tuning,
 }
 
 Control :: struct {
@@ -114,6 +144,7 @@ Control :: struct {
 
 Ground_Result :: struct {
     grounded, crashed, touched_down: bool,
+    landing:                         Landing_Impact,
 }
 
 new_runtime :: proc(spawn_position: flight.Vec3) -> Runtime {
@@ -135,7 +166,9 @@ reset :: proc(runtime: ^Runtime, ground_height: f32) {
         position = runtime.spawn_position,
         basis    = runtime.spawn_basis,
     }
-    runtime.body.position.y = ground_height + runtime.tuning.ground_clearance
+    runtime.gear_compression = static_gear_compression(runtime)
+    runtime.gear_force = runtime.airframe.mass_kg * GRAVITY
+    runtime.body.position.y = ground_height + runtime.tuning.ground_clearance - runtime.gear_compression
     runtime.vehicle.position = to_third_person(runtime.body.position)
     runtime.vehicle.yaw_radians = yaw_radians(runtime.body.basis)
     runtime.vehicle.interaction_radius = 2.5
@@ -151,12 +184,16 @@ reset :: proc(runtime: ^Runtime, ground_height: f32) {
     runtime.was_grounded = true
     runtime.grounded_time = 0
     runtime.takeoff_armed = true
+    runtime.structural_damage = 0
+    runtime.last_landing = {}
+    runtime.landing_feedback_seconds = 0
     runtime.crashed = false
 }
 
 step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: f32) -> Ground_Result {
     if runtime == nil || delta_seconds <= 0 do return {}
     dt := min_f32(delta_seconds, .05)
+    runtime.landing_feedback_seconds = max_f32(0, runtime.landing_feedback_seconds - dt)
     if runtime.crashed {
         runtime.body.velocity *= max_f32(0, 1 - dt * 5)
         sync_vehicle(runtime)
@@ -200,15 +237,15 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
     vertical_before := runtime.body.velocity.y
     runtime.telemetry = flight.step(&runtime.body, command, runtime.airframe, runtime.flight_runtime, {}, dt)
 
-    result := resolve_ground_contact(runtime, ground_height, vertical_before)
+    result := resolve_ground_contact(runtime, ground_height, vertical_before, dt)
     if runtime.grounded {
-        if runtime.pitch <= runtime.tuning.takeoff_pitch {
-            runtime.takeoff_armed = true
-        }
         if runtime.was_grounded {
             runtime.grounded_time += dt
         } else {
             runtime.grounded_time = 0
+        }
+        if runtime.pitch <= runtime.tuning.takeoff_pitch && runtime.grounded_time >= .5 {
+            runtime.takeoff_armed = true
         }
         // Wheels remove lateral slip and make low-speed runway steering forgiving.
         forward_speed := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
@@ -216,7 +253,8 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
             0,
             1 - dt * (control.throttle_down ? runtime.tuning.ground_brake : runtime.tuning.ground_coast),
         )
-        runtime.body.velocity = runtime.body.basis.forward * max_f32(0, forward_speed)
+        vertical_speed := runtime.body.velocity.y
+        runtime.body.velocity = runtime.body.basis.forward * max_f32(0, forward_speed) + flight.Vec3{0, vertical_speed, 0}
         runtime.body.angular_velocity.x = 0
         runtime.body.angular_velocity.z = 0
         steer :=
@@ -234,10 +272,8 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
            runtime.takeoff_armed &&
            runtime.grounded_time >= runtime.tuning.takeoff_ground_time {
             runtime.body.velocity.y = max_f32(runtime.body.velocity.y, runtime.tuning.takeoff_vertical_assist)
-            runtime.grounded = false
             runtime.grounded_time = 0
             runtime.takeoff_armed = false
-            result.grounded = false
         }
     } else {
         runtime.grounded_time = 0
@@ -249,29 +285,137 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
     return result
 }
 
-resolve_ground_contact :: proc(runtime: ^Runtime, ground_height, vertical_speed_before: f32) -> Ground_Result {
+resolve_ground_contact :: proc(
+    runtime: ^Runtime,
+    ground_height, vertical_speed_before, delta_seconds: f32,
+) -> Ground_Result {
     if runtime == nil do return {}
-    floor := ground_height + runtime.tuning.ground_clearance
-    // A body that began the frame on its wheels stays constrained to the
-    // runway until the explicit rotation gate below releases it. Without this,
-    // aerodynamic lift can make the nominally grounded body hover and settle
-    // every few frames.
-    if runtime.body.position.y > floor && !runtime.was_grounded do return {}
-    touched_down := !runtime.was_grounded
-    if touched_down do runtime.takeoff_armed = false
-    bank := bank_radians(runtime.body.basis)
-    if touched_down &&
-       (-vertical_speed_before > runtime.tuning.safe_touchdown_speed ||
-               math.abs(bank) > runtime.tuning.safe_bank_radians) {
-        runtime.crashed = true
+    rest_height := ground_height + runtime.tuning.ground_clearance
+    if runtime.body.position.y > rest_height && !runtime.was_grounded {
+        runtime.gear_compression = 0
+        runtime.gear_force = 0
+        return {}
     }
-    runtime.body.position.y = floor
-    if runtime.body.velocity.y < 0 do runtime.body.velocity.y = 0
+
+    touched_down := !runtime.was_grounded
+    if touched_down {
+        runtime.takeoff_armed = false
+        runtime.last_landing = {
+            outcome      = .Smooth,
+            sink_speed   = max_f32(-vertical_speed_before, 0),
+            weight_force = runtime.airframe.mass_kg * GRAVITY,
+        }
+        runtime.landing_feedback_seconds = 4
+        if math.abs(bank_radians(runtime.body.basis)) > runtime.tuning.safe_bank_radians {
+            runtime.last_landing.outcome = .Crash
+            runtime.last_landing.damage = 1
+        }
+    }
+
+    travel := max_f32(runtime.tuning.gear_compression_distance, .05)
+    compression := clamp(rest_height - runtime.body.position.y, 0, travel)
+    force := suspension_force(runtime, compression, vertical_speed_before)
+    runtime.gear_compression = compression
+    runtime.gear_force = force
+    runtime.body.velocity.y += force / max_f32(runtime.airframe.mass_kg, 1) * delta_seconds
+
+    bottom := rest_height - travel
+    if runtime.body.position.y < bottom {
+        runtime.body.position.y = bottom
+        if runtime.body.velocity.y < 0 do runtime.body.velocity.y = 0
+        runtime.gear_compression = travel
+        runtime.gear_force = max_f32(
+            runtime.gear_force,
+            runtime.tuning.ultimate_landing_load * runtime.airframe.mass_kg * GRAVITY,
+        )
+    }
+
+    landing := runtime.last_landing
+    if landing.outcome != .None {
+        previous_damage := landing.damage
+        update_landing_impact(runtime, runtime.gear_force)
+        damage_delta := max_f32(runtime.last_landing.damage - previous_damage, 0)
+        runtime.structural_damage = clamp(
+            runtime.structural_damage + damage_delta * (1 - runtime.structural_damage),
+            0,
+            1,
+        )
+        runtime.crashed = runtime.last_landing.outcome == .Crash
+        runtime.flight_runtime.controls_damaged = runtime.structural_damage >= .2
+        runtime.flight_runtime.control_authority = lerp(1, .68, runtime.structural_damage)
+        runtime.flight_runtime.engine_output = lerp(1, .78, runtime.structural_damage)
+        landing = runtime.last_landing
+    }
+
+    if compression <= .001 && runtime.body.velocity.y > 0 && !runtime.takeoff_armed && !runtime.crashed {
+        runtime.grounded = false
+        runtime.gear_force = 0
+        return {touched_down = touched_down, landing = landing}
+    }
+    if compression <= .001 && runtime.body.velocity.y > 0 && runtime.takeoff_armed {
+        runtime.body.position.y = rest_height
+        runtime.body.velocity.y = 0
+    }
+
     runtime.grounded = true
     runtime.body.basis.up = {0, 1, 0}
     runtime.body.basis.forward.y = 0
     runtime.body.basis = flight.orthonormalize(runtime.body.basis)
-    return {grounded = true, crashed = runtime.crashed, touched_down = touched_down}
+    return {grounded = true, crashed = runtime.crashed, touched_down = touched_down, landing = landing}
+}
+
+static_gear_compression :: proc(runtime: ^Runtime) -> f32 {
+    if runtime == nil do return 0
+    travel := max_f32(runtime.tuning.gear_compression_distance, .05)
+    return travel / max_f32(runtime.tuning.ultimate_landing_load, 1)
+}
+
+suspension_force :: proc(runtime: ^Runtime, compression, vertical_speed: f32) -> f32 {
+    if runtime == nil do return 0
+    mass := max_f32(runtime.airframe.mass_kg, 1)
+    travel := max_f32(runtime.tuning.gear_compression_distance, .05)
+    spring_rate := runtime.tuning.ultimate_landing_load * mass * GRAVITY / travel
+    damping := 2 * clamp(runtime.tuning.gear_damping_ratio, 0, 2) * f32(math.sqrt(f64(spring_rate * mass)))
+    return max_f32(0, spring_rate * clamp(compression, 0, travel) - damping * vertical_speed)
+}
+
+update_landing_impact :: proc(runtime: ^Runtime, measured_force: f32) {
+    if runtime == nil || runtime.last_landing.outcome == .None do return
+    impact := &runtime.last_landing
+    impact.impact_force = max_f32(impact.impact_force, measured_force)
+    impact.load_factor = impact.impact_force / max_f32(impact.weight_force, 1)
+    if impact.load_factor >= runtime.tuning.ultimate_landing_load {
+        impact.outcome = .Crash
+        impact.damage = 1
+    } else if impact.load_factor >= runtime.tuning.hard_landing_load {
+        impact.outcome = .Hard_Landing
+        impact.damage = clamp(
+            (impact.load_factor - runtime.tuning.hard_landing_load) /
+            max_f32(runtime.tuning.ultimate_landing_load - runtime.tuning.hard_landing_load, .1),
+            .08,
+            .85,
+        )
+    } else if impact.load_factor > runtime.tuning.smooth_landing_load {
+        impact.outcome = .Landed
+    } else {
+        impact.outcome = .Smooth
+    }
+}
+
+landing_outcome_label :: proc(outcome: Landing_Outcome) -> cstring {
+    switch outcome {
+    case .Smooth:
+        return "SMOOTH LANDING"
+    case .Landed:
+        return "LANDED"
+    case .Hard_Landing:
+        return "HARD LANDING"
+    case .Crash:
+        return "CRASH"
+    case .None:
+        return ""
+    }
+    return ""
 }
 
 can_exit :: proc(runtime: ^Runtime) -> bool {

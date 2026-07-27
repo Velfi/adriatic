@@ -13,6 +13,23 @@ struct Push {
 [[vk::binding(0, 0)]] Texture2D<float4> foliage_atlas;
 [[vk::binding(1, 0)]] SamplerState foliage_sampler;
 
+struct DynamicShadowCascade {
+    float4 right;
+    float4 up;
+    float4 forward;
+    float4 params;
+};
+struct DynamicShadow {
+    DynamicShadowCascade cascades[3];
+    float4 settings;
+    float4 origin;
+};
+[[vk::binding(0, 1)]] ConstantBuffer<DynamicShadow> dynamic_shadow;
+[[vk::binding(1, 1)]] Texture2D<float> dynamic_shadow_map_0;
+[[vk::binding(2, 1)]] Texture2D<float> dynamic_shadow_map_1;
+[[vk::binding(3, 1)]] Texture2D<float> dynamic_shadow_map_2;
+[[vk::binding(4, 1)]] SamplerComparisonState dynamic_shadow_sampler;
+
 struct VertexInput {
     float3 position : POSITION;
     float2 uv : TEXCOORD0;
@@ -26,6 +43,7 @@ struct VertexOutput {
     float4 color : COLOR0;
     float depth : TEXCOORD1;
     nointerpolation uint kind : TEXCOORD2;
+    float3 world_position : TEXCOORD3;
 };
 
 // The atlas uses an sRGB image and is decoded by the sampler. Vertex tints and
@@ -78,7 +96,7 @@ VertexOutput foliage_vertex_transform(VertexInput input) {
     float bract_rustle = sin(push.water.x * (2.34 + wind_speed * .041) +
                              dot(input.position.xz, float2(.133, -.097)) +
                              tile_uv.x * 6.1 + tile_uv.y * 4.7);
-    if (input.kind == 1) {
+    if (input.kind == 1 || input.kind == 2) {
         // Advect several broad waves through world space. Their different
         // headings and wavelengths form irregular gust fronts that travel
         // across a field instead of making every tuft sway in unison.
@@ -148,6 +166,7 @@ VertexOutput foliage_vertex_transform(VertexInput input) {
     );
     output.depth = depth;
     output.kind = input.kind;
+    output.world_position = world_position;
     return output;
 }
 
@@ -195,22 +214,109 @@ VertexOutput grass_vertex_main(GrassInstance instance, uint vertex_id : SV_Verte
     input.position = position;
     input.uv = uv;
     input.color = instance.color;
-    input.kind = 1;
+    input.kind = instance.color.a > 1.5 ? 2 : 1;
     return foliage_vertex_transform(input);
+}
+
+float foliage_shadow_compare(uint cascade, float2 uv, float depth) {
+    if (cascade == 0) {
+        return dynamic_shadow_map_0.SampleCmpLevelZero(dynamic_shadow_sampler, uv, depth);
+    }
+    if (cascade == 1) {
+        return dynamic_shadow_map_1.SampleCmpLevelZero(dynamic_shadow_sampler, uv, depth);
+    }
+    return dynamic_shadow_map_2.SampleCmpLevelZero(dynamic_shadow_sampler, uv, depth);
+}
+
+bool foliage_shadow_cascade_contains(uint cascade, float3 world_position) {
+    DynamicShadowCascade shadow = dynamic_shadow.cascades[cascade];
+    float2 uv = float2(
+        (dot(world_position, shadow.right.xyz) - shadow.right.w) /
+            shadow.params.x + .5,
+        .5 - (dot(world_position, shadow.up.xyz) - shadow.up.w) /
+            shadow.params.x
+    );
+    return max(abs(uv.x - .5), abs(uv.y - .5)) < .5;
+}
+
+float foliage_shadow_cascade_visibility(uint cascade, float3 world_position) {
+    DynamicShadowCascade shadow = dynamic_shadow.cascades[cascade];
+    float2 shadow_uv = float2(
+        (dot(world_position, shadow.right.xyz) - shadow.right.w) /
+            shadow.params.x + .5,
+        .5 - (dot(world_position, shadow.up.xyz) - shadow.up.w) /
+            shadow.params.x
+    );
+    float edge = max(abs(shadow_uv.x - .5), abs(shadow_uv.y - .5));
+    if (edge >= .5) {
+        return 1.0;
+    }
+    float receiver_depth =
+        (dot(world_position, shadow.forward.xyz) - shadow.forward.w) *
+        shadow.params.y - .00035 * (1.0 + float(cascade) * .65);
+    float visibility = 0.0;
+    [unroll]
+    for (int sy = -1; sy <= 1; ++sy) {
+        [unroll]
+        for (int sx = -1; sx <= 1; ++sx) {
+            visibility += foliage_shadow_compare(
+                cascade,
+                shadow_uv + float2(sx, sy) * shadow.params.w,
+                receiver_depth
+            );
+        }
+    }
+    return visibility / 9.0;
+}
+
+float foliage_shadow_visibility(float3 world_position) {
+    if (dynamic_shadow.settings.w <= 0.0) {
+        return 1.0;
+    }
+    float origin_distance = length(world_position.xz - dynamic_shadow.origin.xz);
+    uint cascade =
+        origin_distance < dynamic_shadow.settings.x ? 0 :
+        origin_distance < dynamic_shadow.settings.y ? 1 : 2;
+    if (cascade == 0 && !foliage_shadow_cascade_contains(0, world_position)) {
+        cascade = 1;
+    }
+    if (cascade == 1 && !foliage_shadow_cascade_contains(1, world_position)) {
+        cascade = 2;
+    }
+    float visibility = foliage_shadow_cascade_visibility(cascade, world_position);
+    if (cascade < 2) {
+        float limit = cascade == 0 ? dynamic_shadow.settings.x : dynamic_shadow.settings.y;
+        float blend = smoothstep(limit * .90, limit, origin_distance);
+        if (blend > 0.0 && foliage_shadow_cascade_contains(cascade + 1, world_position)) {
+            visibility = lerp(
+                visibility,
+                foliage_shadow_cascade_visibility(cascade + 1, world_position),
+                blend
+            );
+        }
+    }
+    float far_fade = 1.0 - smoothstep(
+        dynamic_shadow.settings.z * .90,
+        dynamic_shadow.settings.z,
+        origin_distance
+    );
+    return lerp(1.0, visibility, far_fade * dynamic_shadow.settings.w);
 }
 
 [shader("fragment")]
 float4 fragment_main(VertexOutput input) : SV_Target {
     float4 texel = foliage_atlas.Sample(foliage_sampler, input.uv);
     bool native_atlas_color = input.kind == 0 && input.color.a > 1.5;
+    bool wildflower_atlas_color = input.kind == 2;
     bool young_native_growth = native_atlas_color && input.color.a > 2.5;
     // Cutout leaves remain crisp and depth-stable around overlapping blobs.
     // Generated bougainvillea contains much finer twigs and bract tips than
     // the painted foliage mask. Give those native-color cards a derivative-
     // aware coverage edge so distant mip levels do not shimmer or collapse
     // into dark, one-pixel outlines.
-    float alpha_threshold = native_atlas_color ? .24 : .16;
-    float alpha_width = native_atlas_color ? max(fwidth(texel.a) * .72, .025) : .001;
+    bool painted_atlas_color = native_atlas_color || wildflower_atlas_color;
+    float alpha_threshold = painted_atlas_color ? .24 : .16;
+    float alpha_width = painted_atlas_color ? max(fwidth(texel.a) * .72, .025) : .001;
     float coverage = smoothstep(
         alpha_threshold - alpha_width,
         alpha_threshold + alpha_width,
@@ -230,6 +336,8 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     float3 color = input.color.rgb * painted_value;
     if (native_atlas_color) {
         color = texel.rgb * input.color.rrr;
+    } else if (wildflower_atlas_color) {
+        color = texel.rgb;
     }
 
     // Leaf-sprig tips catch the same warm sunlight as the crown crests. A
@@ -240,9 +348,10 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     float2 tile_uv = frac(input.uv * 4.0);
     float tip = smoothstep(.30, .95, 1.0 - tile_uv.y) * smoothstep(.34, .80, luminance);
     float daylight = saturate(push.sun.w);
-    if (!native_atlas_color) {
-        color *= 1.0 + tip * daylight * .14;
-        color += float3(.055, .043, .010) * tip * daylight;
+    float shadow_visibility = foliage_shadow_visibility(input.world_position);
+    if (!native_atlas_color && !wildflower_atlas_color) {
+        color *= 1.0 + tip * daylight * shadow_visibility * .14;
+        color += float3(.055, .043, .010) * tip * daylight * shadow_visibility;
     } else if (native_atlas_color) {
         // Keep the generated botanical color, but seat it in the scene's
         // temperature story: cooler protected bases and gently warmer,
@@ -299,6 +408,10 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         float green_leaf = smoothstep(.006, .14, texel.g - max(texel.r, texel.b));
         float3 bronze_flush = color * float3(1.32, .68, .58) + float3(.055, .004, .001);
         color = lerp(color, bronze_flush, green_leaf * (young_native_growth ? .46 : 0.0));
+    } else if (wildflower_atlas_color) {
+        float3 flower_shadow = float3(.94, .97, 1.01);
+        float3 flower_sun = float3(1.04, 1.015, .94);
+        color *= lerp(flower_shadow, flower_sun, tip * daylight);
     }
     if (input.kind == 1) {
         // Grass uses the atlas strictly as a grayscale value/alpha mask. The
@@ -313,6 +426,6 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         color = input.color.rgb * lerp(1.0, grass_detail, input.color.a);
     }
 
-    float alpha = native_atlas_color ? coverage : texel.a * input.color.a;
+    float alpha = painted_atlas_color ? coverage : texel.a * input.color.a;
     return float4(lerp(color, srgb_to_linear(push.fog_color.rgb), fog), alpha);
 }

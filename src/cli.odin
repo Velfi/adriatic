@@ -9,17 +9,25 @@ import "core:strconv"
 adriatic_cli_usage :: proc() {
     fmt.println("usage:")
     fmt.println("  adriatic")
+    fmt.println("  adriatic --shadow-lab")
+    fmt.println("  adriatic --lab <name> [target]")
     fmt.println("  adriatic capture <mode> <output.png> [target]")
+    fmt.println("    building targets: <ordinal>, ground-<ordinal>, cypress, mouse-town")
     fmt.println("  adriatic capture bougainvillea [output-directory] [seed ...]")
     fmt.println("")
     fmt.println("modes:")
     fmt.println("  editor, formation, map, flight, car, vehicle-showcase, paint-mode")
-    fmt.println("  road, road-dust, road-grip, terrain-grip, building")
+    fmt.println("  road, road-dust, road-grip, terrain-grip, building, story-meeting")
     fmt.println("  foliage, foliage-forest, foliage-forest-low, foliage-understory")
     fmt.println("  foliage-forest-golden, foliage-forest-wind-a, foliage-forest-wind-b")
     fmt.println("  foliage-forest-low-wind-a, foliage-forest-low-wind-b, foliage-stress")
-    fmt.println("  grass-wind, wildflower-lab")
+    fmt.println("  grass-wind, wildflower-lab, shadow-lab, boat-lab, markov-wreck, markov-farmland, markov-marina")
+    fmt.println("  markov-city, markov-town, markov-village, aegean-city, aegean-town, aegean-village")
     fmt.println("  narrow, compact, sky-noon, sky-sunset, sky-storm, sky-night, player-*")
+    fmt.println("")
+    fmt.println("labs:")
+    fmt.println("  loading-screen")
+    for definition in LAB_SCENES do fmt.printf("  %s\n", definition.name)
 }
 
 adriatic_cli_child :: proc(command: []string) -> bool {

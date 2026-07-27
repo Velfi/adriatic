@@ -16,12 +16,14 @@ Authoring_Tool :: enum {
     Ridge,
     Cliff,
     Building,
+    Marina,
+    Farm,
     ClimbingLeaves,
     Roads,
     GreekAssets,
 }
 
-AUTHORING_TOOL_COUNT :: 11
+AUTHORING_TOOL_COUNT :: 13
 EDITOR_UI_TOP_HEIGHT :: f32(54)
 EDITOR_UI_RAIL_WIDTH :: f32(184)
 EDITOR_UI_INSPECTOR_WIDTH :: f32(292)
@@ -65,6 +67,10 @@ authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
         return "CLIFF"
     case .Building:
         return "CITY BRUSH"
+    case .Marina:
+        return "MARINA STAMP"
+    case .Farm:
+        return "FARM STAMP"
     case .ClimbingLeaves:
         return "CLIMBING LEAVES"
     case .Roads:
@@ -94,6 +100,10 @@ authoring_tool_shortcut :: #force_inline proc(tool: Authoring_Tool) -> cstring {
         return "C"
     case .Building:
         return "N"
+    case .Marina:
+        return "J"
+    case .Farm:
+        return "K"
     case .ClimbingLeaves:
         return "L"
     case .Roads:
@@ -112,6 +122,9 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.architecture_dirty_bounds = {}
     editor.architecture_node_mode = false
     editor.architecture_paint_mode = false
+    editor.marina_paint_mode = false
+    editor.marina_preview_valid = false
+    editor.farm_paint_mode = false
     editor.climbing_leaf_paint_mode = false
     editor.climbing_leaf_painting = false
     editor.formation_brush_painting = false
@@ -141,6 +154,12 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     case .Building:
         editor.tool = .Structure
         editor.architecture_paint_mode = true
+    case .Marina:
+        editor.tool = .Structure
+        editor.marina_paint_mode = true
+    case .Farm:
+        editor.tool = .Structure
+        editor.farm_paint_mode = true
     case .ClimbingLeaves:
         editor.tool = .Structure
         editor.climbing_leaf_paint_mode = true
@@ -318,6 +337,21 @@ editor_ui_small_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, in
 
 editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor == nil do return ""
+    if editor.marina_paint_mode {
+        switch editor.marina_brush_status {
+        case .Preview:
+            return "Preview ready. Right-click rerolls this site; left-click stamps the current marina."
+        case .Placed:
+            return "Marina stamped. Move to find another site, or undo to remove it."
+        case .Unsuitable:
+            return "No marina: this shoreline lacks suitable land and protected water."
+        case .No_Valid_Layout:
+            return "No marina: the site scored well, but no valid layout fit after the bounded search."
+        case .Removed:
+            return "Marina removed. Left-click near a shoreline to place one."
+        case .Idle:
+        }
+    }
     if editor.road_mode {
         if editor.road_drag_edge >= 0 do return "Drag the control handle to shape the road; release to commit."
         if editor.road_selected_node >= 0 do return "Extend or connect the selected node; right-click to end the chain."
@@ -338,6 +372,9 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Formations:
         return "Left stamps formations; right erases. Wheel zooms; Shift density; Alt hardness."
     case .Foliage:
+        if editor.foliage_hedgerow_mode {
+            return "Drag a cheap hedgerow. Radius controls its width and height."
+        }
         return "Left stamps foliage; right erases. Wheel zooms; Shift density; Alt hardness."
     case .Ridge:
         return "Draw a freehand ridge. Wheel zooms; Shift adjusts width and height."
@@ -345,6 +382,10 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         return "Draw a freehand cliff. Wheel zooms; Shift adjusts width and height."
     case .Building:
         return "Left darkens density; right lightens. Wheel zooms; Shift flow; Alt hardness."
+    case .Marina:
+        return "Left places a complete shoreline-oriented marina; right removes it."
+    case .Farm:
+        return "Left places the previewed farm; right generates a new seed."
     case .ClimbingLeaves:
         return "Left spreads climbing leaves; right erases. Wheel zooms; Shift spread; Alt hardness."
     case .Roads:
@@ -483,6 +524,12 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             )
         }
     case .Foliage:
+        bounds := editor_ui_slider_bounds(layout, row)
+        ui_draw_text(.Label, "MODE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        half := (bounds.width - 6) * .5
+        editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "MASS", !editor.foliage_hedgerow_mode)
+        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 24, half, 30}, "HEDGE", editor.foliage_hedgerow_mode)
+        row += 1
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
             "RADIUS (m)",
@@ -522,7 +569,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         } else {
             ui_draw_text(
                 .Data,
-                "DRAG TO PLACE FOLIAGE",
+                editor.foliage_hedgerow_mode ? "DRAG A HEDGEROW" : "DRAG TO PLACE FOLIAGE",
                 {panel.x + 14, panel.y + 82 + f32(row) * 48},
                 .4,
                 {139, 149, 160, 255},
@@ -575,6 +622,48 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             2,
         )
         row += 1
+    case .Marina:
+        bounds := editor_ui_slider_bounds(layout, row)
+        ui_draw_text(.Label, "FOOTPRINT", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        ui_draw_text(.Data, "108 x 84 m", {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
+        ui_draw_text(.Data, "CLICK NEAR A SHORELINE", {bounds.x, bounds.y + 38}, .4, {139, 149, 160, 255})
+        score_color := rl.Color{231, 150, 126, 255}
+        if editor.marina_brush_suitability >= MARINA_BRUSH_MINIMUM_SUITABILITY {
+            score_color = {134, 224, 216, 255}
+        }
+        ui_draw_text(
+            .Data,
+            fmt.ctprintf(
+                "LAST SCORE %d%%  TRIES %d",
+                int(editor.marina_brush_suitability * 100 + .5),
+                editor.marina_brush_attempts,
+            ),
+            {bounds.x, bounds.y + 66},
+            .4,
+            score_color,
+        )
+    case .Farm:
+        bounds := editor_ui_slider_bounds(layout, row)
+        ui_draw_text(.Label, "FOOTPRINT", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        ui_draw_text(.Data, "125 x 95 m", {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
+        preview_label: cstring = editor.farm_preview_valid ? "CLICK TO PLACE BEST CANDIDATE" : "NO SUITABLE CANDIDATE"
+        preview_color := editor.farm_preview_valid ? rl.Color{134, 224, 216, 255} : rl.Color{224, 126, 108, 255}
+        ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)
+        if editor.farm_preview_valid {
+            ui_draw_text(
+                .Data,
+                fmt.ctprintf(
+                    "SCORE %d%%  SITE %d%%  PLAN %d%%",
+                    int(editor.farm_preview_score * 100 + .5),
+                    int(editor.farm_preview_site_score * 100 + .5),
+                    int(editor.farm_preview_generation_score * 100 + .5),
+                ),
+                {bounds.x, bounds.y + 66},
+                .4,
+                {143, 190, 91, 255},
+            )
+            ui_draw_text(.Data, "RIGHT CLICK TO REROLL", {bounds.x, bounds.y + 88}, .4, {134, 224, 216, 255})
+        }
     case .ClimbingLeaves:
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
@@ -819,6 +908,16 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         _ = editor_ui_slider_input(editor, layout, 16, row, &editor.formation_brush_hardness, 0, 1, .01)
         row += 1
     case .Foliage:
+        bounds := editor_ui_slider_bounds(layout, row)
+        half := (bounds.width - 6) * .5
+        if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, half, 30}) {
+            editor.foliage_hedgerow_mode = false
+            editor.structure_placing = false
+        } else if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 24, half, 30}) {
+            editor.foliage_hedgerow_mode = true
+            editor.formation_brush_painting = false
+            editor.formation_brush_group_id = 0
+        }
         row += 1
         _ = editor_ui_slider_input(
             editor,
@@ -874,6 +973,11 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         row += 1
         _ = editor_ui_slider_input(editor, layout, 10, row, &editor.architecture_brush_hardness, 0, 1, .01)
         row += 1
+    case .Marina:
+        // The footprint is fixed by the real-size marina design.
+        row += 0
+    case .Farm:
+        row += 0
     case .ClimbingLeaves:
         _ = editor_ui_slider_input(
             editor,

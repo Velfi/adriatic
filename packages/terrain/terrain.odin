@@ -1,5 +1,6 @@
 package terrain
 
+import buildings "../buildings"
 import roads "../roads"
 import "base:runtime"
 import "core:math"
@@ -24,7 +25,13 @@ DEFAULT_ISLAND_SIGNS :: [2]f32{-1, 1}
 DEFAULT_RUNWAY_HALF_LENGTH :: 0.10
 DEFAULT_RUNWAY_HALF_WIDTH :: 0.012
 DEFAULT_RUNWAY_SPAWN_OFFSET :: 0.06
+DEFAULT_RUNWAY_SHOULDER :: f32(48)
+DEFAULT_RUNWAY_TERRAIN_FEATHER :: f32(32)
 DEFAULT_PIER_INNER_OFFSET :: 0.10
+DEFAULT_TOWN_OFFSET :: 118.0
+DEFAULT_TOWN_HILL_HEIGHT :: 5.5
+DEFAULT_TOWN_HILL_RADIUS_X :: 145.0
+DEFAULT_TOWN_HILL_RADIUS_Z :: 65.0
 
 Tool :: enum {
     Raise,
@@ -46,7 +53,8 @@ Formation_Kind :: enum {
 
 STRUCTURE_CAPACITY :: 256
 CITY_DENSITY_SAMPLES :: SAMPLES_PER_LEVEL
-PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '3'}
+PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '4'}
+PROJECT_FILE_MAGIC_V3 :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '3'}
 
 Project_File_Header :: struct {
     magic:        [8]u8,
@@ -66,6 +74,7 @@ Structure :: struct {
     color:    [4]u8,
     kind:     Formation_Kind,
     seed:     u32,
+    building: buildings.Identity,
 }
 
 Clipmap_Level :: struct {
@@ -88,11 +97,67 @@ Project :: struct {
     climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
 }
 
-project_file_magic_valid :: proc(header: ^Project_File_Header) -> bool {
+Structure_V3 :: struct {
+    id:       u64,
+    group_id: u64,
+    center_x: f32,
+    center_z: f32,
+    width:    f32,
+    depth:    f32,
+    base_y:   f32,
+    height:   f32,
+    rotation: f32,
+    color:    [4]u8,
+    kind:     Formation_Kind,
+    seed:     u32,
+}
+
+Project_V3 :: struct {
+    levels:                [CLIPMAP_LEVELS]Clipmap_Level,
+    sea_level:             f32,
+    revision:              u64,
+    structures:            [STRUCTURE_CAPACITY]Structure_V3,
+    structure_count:       int,
+    next_structure_id:     u64,
+    road_graph:            roads.Graph,
+    city_density:          [CITY_DENSITY_SAMPLES]u8,
+    climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
+}
+
+project_file_magic_is :: proc(header: ^Project_File_Header, magic: [8]u8) -> bool {
     if header == nil do return false
-    magic := PROJECT_FILE_MAGIC
-    for index in 0 ..< len(PROJECT_FILE_MAGIC) {
+    for index in 0 ..< len(magic) {
         if header.magic[index] != magic[index] do return false
+    }
+    return true
+}
+
+project_migrate_v3 :: proc(project: ^Project, legacy: ^Project_V3) -> bool {
+    if project == nil || legacy == nil do return false
+    project^ = {}
+    project.levels = legacy.levels
+    project.sea_level = legacy.sea_level
+    project.revision = legacy.revision
+    project.structure_count = legacy.structure_count
+    project.next_structure_id = legacy.next_structure_id
+    project.road_graph = legacy.road_graph
+    project.city_density = legacy.city_density
+    project.climbing_leaf_density = legacy.climbing_leaf_density
+    for source, index in legacy.structures {
+        target := &project.structures[index]
+        target.id = source.id
+        target.group_id = source.group_id
+        target.center_x = source.center_x
+        target.center_z = source.center_z
+        target.width = source.width
+        target.depth = source.depth
+        target.base_y = source.base_y
+        target.height = source.height
+        target.rotation = source.rotation
+        target.color = source.color
+        target.kind = source.kind
+        target.seed = source.seed
+        if source.kind == .Architecture do target.building.archetype = .Legacy
     }
     return true
 }
@@ -119,12 +184,19 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
     header_size := size_of(Project_File_Header)
     if len(data) < header_size do return false
     header := cast(^Project_File_Header)raw_data(data)
-    if !project_file_magic_valid(header) do return false
-    if header.payload_size != size_of(Project) || len(data) != header_size + size_of(Project) {
+    if project_file_magic_is(header, PROJECT_FILE_MAGIC) {
+        if header.payload_size != size_of(Project) || len(data) != header_size + size_of(Project) {
+            return false
+        }
+        runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
+        return true
+    }
+    if !project_file_magic_is(header, PROJECT_FILE_MAGIC_V3) ||
+       header.payload_size != size_of(Project_V3) ||
+       len(data) != header_size + size_of(Project_V3) {
         return false
     }
-    runtime.mem_copy_non_overlapping(cast(rawptr)project, raw_data(data[header_size:]), size_of(Project))
-    return true
+    return project_migrate_v3(project, cast(^Project_V3)raw_data(data[header_size:]))
 }
 
 add_default_runways :: proc(project: ^Project) -> bool {
@@ -378,21 +450,148 @@ new_project :: proc() -> ^Project {
 @(no_instrumentation)
 sample_index :: #force_inline proc(x, z: int) -> int { return z * RING_RESOLUTION + x }
 
-default_height :: proc(world_x, world_z, half_extent: f32) -> f32 {
-    radius := half_extent * DEFAULT_ISLAND_RADIUS
-    for sign in DEFAULT_ISLAND_SIGNS {
-        center_x := sign * half_extent * DEFAULT_ISLAND_OFFSET
-        center_z := sign * half_extent * DEFAULT_ISLAND_OFFSET
-        dx, dz := world_x - center_x, world_z - center_z
-        distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
-        if distance < radius {
-            // A broad, flat top leaves enough usable land for the runway while
-            // the outer third falls cleanly into the sea.
-            falloff := clamp((radius - distance) / (radius * .34), 0, 1)
-            return DEFAULT_ISLAND_HEIGHT * (.58 + falloff * .42)
+Terrain_Constraint_Mode :: enum u8 {
+    Add,
+    Set,
+}
+
+Terrain_Constraint_Shape :: enum u8 {
+    Ellipse,
+    Rectangle,
+}
+
+Terrain_Constraint_Curve :: enum u8 {
+    Smooth,
+    Quadratic,
+}
+
+// Generators describe the surface they need without knowing which other
+// generators overlap it. Constraints are composed in ascending priority:
+// natural land, additive topography, then infrastructure leveling.
+Terrain_Constraint :: struct {
+    mode:     Terrain_Constraint_Mode,
+    shape:    Terrain_Constraint_Shape,
+    curve:    Terrain_Constraint_Curve,
+    priority: i32,
+    center_x: f32,
+    center_z: f32,
+    half_x:   f32,
+    half_z:   f32,
+    feather:  f32,
+    target:   f32,
+}
+
+terrain_smooth_weight :: proc(value: f32) -> f32 {
+    t := clamp(value, 0, 1)
+    return t * t * (3 - 2 * t)
+}
+
+terrain_constraint_weight :: proc(constraint: Terrain_Constraint, world_x, world_z: f32) -> f32 {
+    if constraint.half_x <= 0 || constraint.half_z <= 0 do return 0
+    dx := math.abs(world_x - constraint.center_x)
+    dz := math.abs(world_z - constraint.center_z)
+    weight: f32
+    switch constraint.shape {
+    case .Ellipse:
+        normalized_x := dx / constraint.half_x
+        normalized_z := dz / constraint.half_z
+        distance := f32(math.sqrt(f64(normalized_x * normalized_x + normalized_z * normalized_z)))
+        if distance >= 1 do return 0
+        if constraint.curve == .Quadratic {
+            weight = 1 - distance * distance
+            return weight * weight
+        }
+        edge_fraction := constraint.feather / max(constraint.half_x, constraint.half_z)
+        weight = (1 - distance) / max(edge_fraction, .0001)
+    case .Rectangle:
+        outside_x := max(dx - constraint.half_x, 0)
+        outside_z := max(dz - constraint.half_z, 0)
+        outside_distance := f32(math.sqrt(f64(outside_x * outside_x + outside_z * outside_z)))
+        if outside_distance <= 0 do return 1
+        if constraint.feather <= 0 || outside_distance >= constraint.feather do return 0
+        weight = 1 - outside_distance / constraint.feather
+    }
+    return terrain_smooth_weight(weight)
+}
+
+terrain_apply_constraint :: proc(height: f32, constraint: Terrain_Constraint, world_x, world_z: f32) -> f32 {
+    weight := terrain_constraint_weight(constraint, world_x, world_z)
+    if weight <= 0 do return height
+    switch constraint.mode {
+    case .Add:
+        return height + constraint.target * weight
+    case .Set:
+        return height * (1 - weight) + constraint.target * weight
+    }
+    return height
+}
+
+default_terrain_constraints :: proc(half_extent: f32) -> [6]Terrain_Constraint {
+    constraints: [6]Terrain_Constraint
+    island_radius := half_extent * DEFAULT_ISLAND_RADIUS
+    runway_half_length := half_extent * DEFAULT_RUNWAY_HALF_LENGTH
+    runway_half_width := half_extent * DEFAULT_RUNWAY_HALF_WIDTH
+    for sign, island_index in DEFAULT_ISLAND_SIGNS {
+        center := sign * half_extent * DEFAULT_ISLAND_OFFSET
+        constraints[island_index] = {
+            mode     = .Set,
+            shape    = .Ellipse,
+            curve    = .Smooth,
+            priority = 0,
+            center_x = center,
+            center_z = center,
+            half_x   = island_radius,
+            half_z   = island_radius,
+            feather  = island_radius * .34,
+            target   = DEFAULT_ISLAND_HEIGHT,
+        }
+        constraints[2 + island_index] = {
+            mode     = .Add,
+            shape    = .Ellipse,
+            curve    = .Quadratic,
+            priority = 10,
+            center_x = center + sign * 25,
+            center_z = center + sign * DEFAULT_TOWN_OFFSET,
+            half_x   = DEFAULT_TOWN_HILL_RADIUS_X,
+            half_z   = DEFAULT_TOWN_HILL_RADIUS_Z,
+            target   = DEFAULT_TOWN_HILL_HEIGHT,
+        }
+        constraints[4 + island_index] = {
+            mode     = .Set,
+            shape    = .Rectangle,
+            curve    = .Smooth,
+            priority = 20,
+            center_x = center,
+            center_z = center,
+            half_x   = runway_half_length + DEFAULT_RUNWAY_SHOULDER,
+            half_z   = runway_half_width + DEFAULT_RUNWAY_SHOULDER,
+            feather  = DEFAULT_RUNWAY_TERRAIN_FEATHER,
+            target   = DEFAULT_ISLAND_HEIGHT,
         }
     }
-    return 0
+    return constraints
+}
+
+terrain_compose_constraints :: proc(
+    base_height: f32,
+    constraints: []Terrain_Constraint,
+    world_x, world_z: f32,
+) -> f32 {
+    height := base_height
+    // Constraint producers return priority-ordered lists. Keeping composition
+    // allocation-free matters because this runs for every clipmap sample.
+    previous_priority: i32 = -2_147_483_647
+    for constraint in constraints {
+        assert(constraint.priority >= previous_priority)
+        height = terrain_apply_constraint(height, constraint, world_x, world_z)
+        previous_priority = constraint.priority
+    }
+    return height
+}
+
+default_height :: proc(world_x, world_z, half_extent: f32) -> f32 {
+    constraints := default_terrain_constraints(half_extent)
+    return terrain_compose_constraints(0, constraints[:], world_x, world_z)
 }
 
 @(no_instrumentation)
@@ -563,6 +762,27 @@ apply_stroke_with_hardness :: proc(
             }
         }
     }
+    // A stroke may be authored at a coarser level when its bounds cross the
+    // edge of a finer resident level. Refresh the affected finer overlap from
+    // that authored source as well; otherwise the renderer exposes a square
+    // stale-height seam wherever its nested clipmap changes LOD.
+    for level in 0 ..< authored_level {
+        finer := &project.levels[level]
+        for z in 0 ..< RING_RESOLUTION {
+            sample_z := finer.origin_z + f32(z) * finer.cell_size
+            for x in 0 ..< RING_RESOLUTION {
+                sample_x := finer.origin_x + f32(x) * finer.cell_size
+                dx, dz := sample_x - world_x, sample_z - world_z
+                if dx * dx + dz * dz > effective_radius * effective_radius ||
+                   !level_contains(data, sample_x, sample_z) {
+                    continue
+                }
+                index := sample_index(x, z)
+                finer.heights[index] = sample_level_height(data, sample_x, sample_z)
+                finer.material[index] = sample_level_material(data, sample_x, sample_z)
+            }
+        }
+    }
     // Coarser overlaps are derived data. Cascading one level at a time keeps
     // height and material samples identical wherever sampling changes LOD.
     for level in authored_level + 1 ..< CLIPMAP_LEVELS {
@@ -577,6 +797,12 @@ apply_stroke_with_hardness :: proc(
                 coarse.heights[index] = sample_level_height(finer, sample_x, sample_z)
                 coarse.material[index] = sample_level_material(finer, sample_x, sample_z)
             }
+        }
+    }
+    if tool == .Raise || tool == .Smooth {
+        for index in 0 ..< project.structure_count {
+            structure := &project.structures[index]
+            structure.base_y = sample_height(project, 0, structure.center_x, structure.center_z)
         }
     }
     project.revision += 1

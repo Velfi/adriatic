@@ -216,6 +216,14 @@ PostOutput post_vertex(uint vertex_id : SV_VertexID) {
 float4 post_fragment(PostOutput input) : SV_Target {
     // Both the HDR intermediate and the world scene sample as linear values.
     float4 source = ui_texture.Sample(ui_sampler, input.uv);
+    float exposure = max(push.hatch_tone.x, .001);
+    float sun_glare = saturate(push.hatch_tone.y);
+    source.rgb *= exposure;
+    // Looking into the Sun lowers retinal/camera exposure while forward
+    // scattering lifts the black floor slightly. Keep this restrained and
+    // world-only; UI is composited after this pass and remains fully legible.
+    float3 warm_veil = float3(.62, .39, .19);
+    source.rgb = lerp(source.rgb, warm_veil, sun_glare * .075);
     int mode = int(round(push.texture_hatch.x));
     // The world pass preserves alpha as a cheap classification channel: sky is
     // alpha-zero, while world geometry is opaque. Keep the smooth sky gradient

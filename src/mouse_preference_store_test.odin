@@ -26,7 +26,9 @@ when ODIN_TEST {
         defer free(restored)
         source.mouse_fur = .Russet
         source.mouse_pattern = .Piebald
-        source.mouse_headgear = .Acorn_Cap
+        // Exercise the highest appended enum value so preference validation
+        // cannot silently reject newly added headgear.
+        source.mouse_headgear = .Flat_Cap
         source.mouse_scarf_enabled = true
         source.mouse_scarf_color = {17, 83, 241, 255}
 

@@ -3,21 +3,28 @@ package main
 import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import back "../packages/back"
+import boats "../packages/boats"
 import chase_camera "../packages/chase_camera"
+import cinematic "../packages/cinematic"
+import circulation "../packages/circulation"
 import dialogue "../packages/dialogue"
 import dio "../packages/dio"
 import engine_sound "../packages/engine_sound"
+import farmland "../packages/farmland"
 import flight "../packages/flight"
 import game_input "../packages/game_input"
 import hot_abi "../packages/hot_abi"
 import hs "../packages/hs"
 import libellula_game "../packages/libellula"
+import marina "../packages/marina"
 import mouse_tail "../packages/mouse_tail"
 import ocean_audio "../packages/ocean_audio"
 import particle_systems "../packages/particles"
 import postale_game "../packages/postale"
 import roads "../packages/roads"
 import spray_audio "../packages/spray_audio"
+import story "../packages/story"
+import tarot "../packages/tarot"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
@@ -30,7 +37,9 @@ import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:strconv"
+import "core:strings"
 import "core:time"
+import timezone "core:time/timezone"
 import sdl "vendor:sdl3"
 import rl "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
@@ -43,6 +52,7 @@ ADRIATIC_WORLD_HEIGHT :: 480
 STRUCTURE_HISTORY_CAPACITY :: 24
 TERRAIN_HISTORY_CAPACITY :: 12
 TERRAIN_PROJECT_PATH :: "adriatic.terrain"
+MARINA_BRUSH_MINIMUM_SUITABILITY :: f32(.70)
 VEHICLE_SHOWCASE_FOCAL_LENGTH :: f32(2.0)
 AIRCRAFT_FIXED_STEP :: f64(1.0 / 120.0)
 AIRCRAFT_MAX_CATCH_UP :: f64(.1)
@@ -54,12 +64,25 @@ Structure_History_State :: struct {
     road_graph:            roads.Graph,
     city_density:          [terrain.CITY_DENSITY_SAMPLES]u8,
     climbing_leaf_density: [terrain.CITY_DENSITY_SAMPLES]u8,
+    marina_plan:           marina.Plan,
+    marina_authored:       bool,
+    farms:                 [FARM_INSTANCE_CAPACITY]Farm_Instance,
+    farm_count:            int,
 }
 
 Terrain_History_State :: struct {
     levels:    [terrain.CLIPMAP_LEVELS]terrain.Clipmap_Level,
     sea_level: f32,
     revision:  u64,
+}
+
+Marina_Brush_Status :: enum {
+    Idle,
+    Preview,
+    Placed,
+    Unsuitable,
+    No_Valid_Layout,
+    Removed,
 }
 
 CURVE_POINT_CAPACITY :: 48
@@ -71,6 +94,9 @@ Curve_Point :: struct {
 
 Fixture :: struct {
     project:                                        terrain.Project,
+    circulation_plan:                               circulation.Plan,
+    circulation_revision:                           u64,
+    circulation_plan_valid:                         bool,
     authoring_tool:                                 Authoring_Tool,
     editor_ui:                                      Editor_UI_State,
     tool:                                           terrain.Tool,
@@ -99,6 +125,7 @@ Fixture :: struct {
     formation_brush_radius:                         f32,
     formation_brush_strength:                       f32,
     formation_brush_hardness:                       f32,
+    foliage_hedgerow_mode:                          bool,
     architecture_node_mode:                         bool,
     architecture_paint_mode:                        bool,
     architecture_painting:                          bool `fixture:"-"`,
@@ -110,6 +137,32 @@ Fixture :: struct {
     architecture_brush_radius:                      f32,
     architecture_brush_strength:                    f32,
     architecture_brush_hardness:                    f32,
+    marina_paint_mode:                              bool,
+    marina_authored:                                bool,
+    marina_authored_plan:                           marina.Plan,
+    marina_preview_plan:                            marina.Plan,
+    marina_preview_valid:                           bool,
+    marina_preview_x, marina_preview_z:             f32,
+    marina_preview_variation:                       u32,
+    marina_brush_radius:                            f32,
+    marina_brush_status:                            Marina_Brush_Status,
+    marina_brush_suitability:                       f32,
+    marina_brush_attempts:                          int,
+    farm_paint_mode:                                bool,
+    farm_brush_radius:                              f32,
+    farms:                                          [FARM_INSTANCE_CAPACITY]Farm_Instance,
+    farm_count:                                     int,
+    farm_preview:                                   Farm_Instance,
+    farm_preview_valid:                             bool,
+    farm_preview_score:                             f32,
+    farm_preview_site_score:                        f32,
+    farm_preview_generation_score:                  f32,
+    farm_preview_x:                                 f32,
+    farm_preview_z:                                 f32,
+    farm_preview_revision:                          u64,
+    farm_preview_seed_offset:                       u32,
+    default_marinas:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan,
+    default_marina_count:                           int,
     climbing_leaf_paint_mode:                       bool,
     climbing_leaf_painting:                         bool `fixture:"-"`,
     climbing_leaf_last_x, climbing_leaf_last_z:     f32 `fixture:"-"`,
@@ -172,19 +225,38 @@ Fixture :: struct {
     player_brake_pose:                              f32,
     player_posted_idle_seconds:                     f32,
     player_posted_weight:                           f32,
+    player_scurry_weight:                           f32,
+    player_scurry_lean:                             f32,
+    player_scurry_lean_velocity:                    f32,
+    player_scurry_compression:                      f32,
+    player_scurry_compression_velocity:             f32,
+    player_animation_previous_speed:                f32,
     player_paw_plant_positions:                     [4]third_person.Vec3 `fixture:"-"`,
     player_paw_planted:                             [4]bool `fixture:"-"`,
     player_tail:                                    mouse_tail.State,
     camera:                                         third_person.Camera,
     camera_pose:                                    third_person.Camera_Pose,
     cameras:                                        third_person.Camera_System,
+    cinematic_playback:                             cinematic.Playback,
+    cinematic_focal_length:                         f32,
+    story_cinematic_shots:                          [3]cinematic.Shot,
+    story_cinematic_script:                         cinematic.Script,
+    story_cinematic_restore_pose:                   third_person.Camera_Pose,
+    story_meeting_cinematic_pending:                bool,
+    story_cinematic_active:                         bool,
     flight_camera:                                  chase_camera.State,
+    flight_throttle_overlay_value:                  f32,
+    flight_throttle_overlay_changed_at:             f64,
+    flight_throttle_overlay_initialized:            bool,
     editor_camera:                                  third_person.Camera,
     editor_focus:                                   third_person.Vec3,
     cursor_world_x, cursor_world_z:                 f32 `fixture:"-"`,
     cursor_height, cursor_material:                 f32 `fixture:"-"`,
     cursor_hit:                                     bool `fixture:"-"`,
     map_time:                                       f32,
+    boat_traffic:                                   boats.Traffic,
+    marina_dinghy_borrowed:                         bool,
+    marina_buoys:                                   Marina_Buoy_Physics,
     pilot:                                          vehicles.Character,
     car:                                            vehicles.Vehicle,
     car_drive:                                      vehicles.Car_Drive_State,
@@ -198,7 +270,15 @@ Fixture :: struct {
     postale_visible:                                bool,
     libellula_visible:                              bool,
     vehicle_showcase_scene:                         bool,
+    wildflower_lab_scene:                           bool,
     vehicle_showcase_target:                        string,
+    shadow_lab_scene:                               bool,
+    active_lab_scene:                               string,
+    settlement_vertical_map:                        bool,
+    settlement_plan:                                Settlement_Plan,
+    settlement_diagnostic_layer:                    int,
+    shadow_lab_collection:                          int,
+    shadow_lab_lighting:                            int,
     vehicle_paint_scene:                            bool,
     vehicle_paint_yaw:                              f32,
     vehicle_paint_pitch:                            f32,
@@ -274,6 +354,10 @@ Fixture :: struct {
     attendant_dialogue_vehicle_target:              vehicles.Aircraft_Kind `fixture:"-"`,
     attendant_dialogue_vehicle_choices:             [8]vehicles.Aircraft_Kind `fixture:"-"`,
     attendant_dialogue_vehicle_choice_count:        int `fixture:"-"`,
+    gerta_position:                                 third_person.Vec3,
+    story_state:                                    story.State,
+    story_catalog:                                  story.Catalog,
+    dialogue_resident:                              story.Resident,
     camera_target_lock:                             bool,
     flight_control:                                 postale_game.Control `fixture:"-"`,
     atmosphere:                                     atmosphere.Atmosphere,
@@ -285,6 +369,9 @@ Fixture :: struct {
     tweak_panel_visible:                            bool `fixture:"-"`,
     pause_screen:                                   Pause_Screen `fixture:"-"`,
     dither_state:                                   Dither_State `fixture:"-"`,
+    main_menu_active:                               bool,
+    main_menu_focus:                                int,
+    console:                                        Game_Console,
     mouse_fur:                                      Mouse_Fur,
     mouse_pattern:                                  Mouse_Fur_Pattern,
     mouse_headgear:                                 Mouse_Accessory,
@@ -293,6 +380,10 @@ Fixture :: struct {
     mouse_scarf_rotation:                           f32,
     mouse_scarf_angular_velocity:                   f32,
     customization_focus:                            int `fixture:"-"`,
+    customization_slider_drag:                      int,
+    customization_preview_dragging:                 bool,
+    customization_preview_drag_x:                   f32,
+    customization_preview_yaw:                      f32,
 }
 
 Editor :: struct {
@@ -326,6 +417,7 @@ Editor :: struct {
     runtime_input:                game_input.State,
     control_hint_atlases:         Control_Hint_Atlases,
     vehicle_paint_tool_icons:     rl.Texture,
+    tarot_atlas:                  rl.Texture,
     controller_disconnect_notice: bool,
     pause_focus:                  int,
     options_focus:                int,
@@ -335,10 +427,21 @@ Editor :: struct {
     quit_requested:               bool,
 }
 
+editor_circulation_plan :: proc(editor: ^Editor) -> ^circulation.Plan {
+    if editor == nil do return nil
+    if !editor.circulation_plan_valid || editor.circulation_revision != editor.project.revision {
+        editor.circulation_plan = architecture.circulation_plan(&editor.project)
+        editor.circulation_revision = editor.project.revision
+        editor.circulation_plan_valid = true
+    }
+    return &editor.circulation_plan
+}
+
 Marta_Menu_Action :: enum {
     None,
     Paint_Aircraft,
     Select_Aircraft,
+    Borrow_Dinghy,
     Close,
 }
 
@@ -367,6 +470,10 @@ structure_history_capture :: proc(editor: ^Editor) -> Structure_History_State {
     state.road_graph = editor.project.road_graph
     state.city_density = editor.project.city_density
     state.climbing_leaf_density = editor.project.climbing_leaf_density
+    state.marina_plan = editor.marina_authored_plan
+    state.marina_authored = editor.marina_authored
+    state.farms = editor.farms
+    state.farm_count = editor.farm_count
     for index in 0 ..< terrain.STRUCTURE_CAPACITY {
         state.structures[index] = editor.project.structures[index]
     }
@@ -383,6 +490,10 @@ structure_history_restore :: proc(editor: ^Editor, state: Structure_History_Stat
     editor.project.road_graph = state.road_graph
     editor.project.city_density = state.city_density
     editor.project.climbing_leaf_density = state.climbing_leaf_density
+    editor.marina_authored_plan = state.marina_plan
+    editor.marina_authored = state.marina_authored
+    editor.farms = state.farms
+    editor.farm_count = state.farm_count
     editor.project.revision += 1
     if editor.structure_selected >= editor.project.structure_count do editor.structure_selected = -1
     if editor.road_selected_node >= editor.project.road_graph.node_count do editor.road_selected_node = -1
@@ -746,6 +857,7 @@ formation_brush_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: boo
 formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || editor.tool != .Structure do return
     if editor.authoring_tool != .Formations && editor.authoring_tool != .Foliage do return
+    if editor.authoring_tool == .Foliage && editor.foliage_hedgerow_mode do return
     if !cursor_hit {
         if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) {
             editor.formation_brush_painting = false
@@ -1295,6 +1407,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         editor.benchmark_ground_grass_disabled = true
     case "architecture":
         seed_city_capture(editor)
+    case "shadow_lab":
+        _ = lab_scene_load(editor, {definition = lab_scene_find("shadow")})
     case:
         return false
     }
@@ -1305,7 +1419,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "terrain_grip" &&
        scenario != "player" &&
        scenario != "grass" &&
-       scenario != "grass_disabled" {
+       scenario != "grass_disabled" &&
+       scenario != "shadow_lab" {
         editor.editor_camera.distance = 260
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     }
@@ -1339,9 +1454,12 @@ benchmark_report :: proc(
     foliage_vertex_count :=
         len(world_renderer.foliage_vertices) +
         len(world_renderer.bougainvillea_vertices) +
-        len(world_renderer.grass_instances) * 6
+        (len(world_renderer.grass_instances) + len(world_renderer.wildflower_instances)) * 6
     world_vertex_utilization := f64(world_vertex_count) / f64(max(WORLD_VERTEX_CAPACITY, 1))
-    foliage_vertex_capacity := FOLIAGE_VERTEX_CAPACITY + BOUGAINVILLEA_VERTEX_CAPACITY + GRASS_INSTANCE_CAPACITY * 6
+    foliage_vertex_capacity :=
+        FOLIAGE_VERTEX_CAPACITY +
+        BOUGAINVILLEA_VERTEX_CAPACITY +
+        (GRASS_INSTANCE_CAPACITY + WILDFLOWER_INSTANCE_CAPACITY) * 6
     foliage_vertex_utilization := f64(foliage_vertex_count) / f64(max(foliage_vertex_capacity, 1))
     road_vertex_utilization := f64(road_vertex_count) / f64(max(ROAD_VERTEX_CAPACITY, 1))
     fmt.printf(
@@ -1695,7 +1813,8 @@ road_car_surface :: proc(
     dust_surface := particle_systems.Dust_Surface.Grass
     grip := roads.offroad_grip()
     if editor != nil {
-        hit := roads.pavement_at(&editor.project.road_graph, position)
+        plan := editor_circulation_plan(editor)
+        hit := circulation.surface_at(&editor.project.road_graph, plan, position)
         if hit.on_surface {
             grip = roads.pavement_grip(hit.pavement)
             switch hit.pavement {
@@ -1759,13 +1878,17 @@ seed_default_island_towns :: proc(editor: ^Editor) {
     // the same street skeleton it receives from an authored road.
     for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        town_z := island_center + sign * 118
+        town_z := island_center + sign * terrain.DEFAULT_TOWN_OFFSET
         seed := u32(0xA71D3 + island_index * 0x31F29)
         road_start_x, road_finish_x := island_center - 78, island_center + 78
         road_start_y := terrain.sample_height(&editor.project, 0, road_start_x, town_z)
         road_finish_y := terrain.sample_height(&editor.project, 0, road_finish_x, town_z)
         road_start := roads.add_node(&editor.project.road_graph, {road_start_x, road_start_y, town_z}, 0)
-        road_finish := roads.add_node(&editor.project.road_graph, {road_finish_x, road_finish_y, town_z}, 0)
+        road_finish := roads.add_node(
+            &editor.project.road_graph,
+            {road_finish_x, road_finish_y, town_z},
+            0,
+        )
         if road_start >= 0 && road_finish >= 0 {
             _ = roads.add_straight_edge(&editor.project.road_graph, road_start, road_finish, 5.5, 1.4, .Cobblestone)
         }
@@ -1796,9 +1919,43 @@ seed_default_island_towns :: proc(editor: ^Editor) {
     editor.architecture_node_mode = true
 }
 
+seed_default_island_marinas :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.default_marina_count = 0
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
+    diagonal := f32(.70710678)
+    for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
+        center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        // Move from the island center toward the channel between the islands.
+        // The site search then rotates the full marina footprint to match the
+        // locally sampled shoreline rather than assuming a circular coast.
+        shoreline_anchor := markov_marina_find_shoreline_along_ray(
+            &editor.project,
+            {center, center},
+            {-sign * diagonal, -sign * diagonal},
+            island_radius * 1.8,
+        )
+        site, suitability := markov_marina_find_world_site(&editor.project, shoreline_anchor)
+        if suitability <= 0 do continue
+        seed := u32(0x4d415249 + island_index * 0x9e3779b9)
+        plan, _ := markov_marina_generate_valid_for_site(seed, &site)
+        if !plan.valid do continue
+        editor.default_marinas[editor.default_marina_count] = plan
+        editor.default_marina_count += 1
+    }
+}
+
 configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = "") -> bool {
     if editor == nil do return false
     bougainvillea_seed_override := -1
+    ground_level_capture := false
+    ordinal_arg := target_arg
+    ground_prefix := "ground-"
+    if len(target_arg) > len(ground_prefix) && target_arg[:len(ground_prefix)] == ground_prefix {
+        ground_level_capture = true
+        ordinal_arg = target_arg[len(ground_prefix):]
+    }
     bougainvillea_prefix := "bougainvillea-"
     if len(target_arg) > len(bougainvillea_prefix) && target_arg[:len(bougainvillea_prefix)] == bougainvillea_prefix {
         parsed, ok := strconv.parse_int(target_arg[len(bougainvillea_prefix):])
@@ -1843,8 +2000,8 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     // palette and habit comparisons from being confounded by camera/building
     // selection.
     requested_ordinal := bougainvillea_seed_override >= 0 ? 4 : -1
-    if target_arg != "" && bougainvillea_seed_override < 0 {
-        parsed, ok := strconv.parse_int(target_arg)
+    if ordinal_arg != "" && bougainvillea_seed_override < 0 {
+        parsed, ok := strconv.parse_int(ordinal_arg)
         if ok && parsed >= 0 do requested_ordinal = int(parsed)
     }
 
@@ -1894,6 +2051,9 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     // Move the architectural capture into the lane so balconies and laundry
     // read as the subject instead of small details in a town-wide shot.
     camera_distance := building.depth * .5 + max(f32(9), building.height * .54)
+    if ground_level_capture {
+        camera_distance = building.depth * .5 + max(f32(10), building.width * .48)
+    }
     minimum_distance := building.depth * .5 + 6
     for camera_distance > minimum_distance {
         dry_approach := true
@@ -1915,11 +2075,12 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     eye_z := building.center_z + facade_z * camera_distance
     // A modest lateral offset reveals the balcony depth instead of flattening
     // every railing into a line across the window.
-    side_offset := min(f32(8), building.width * .24)
+    side_offset := ground_level_capture ? min(f32(5), building.width * .16) : min(f32(8), building.width * .24)
     eye_x += facade_z * side_offset
     eye_z -= facade_x * side_offset
     eye_y := terrain.sample_height(&editor.project, 0, eye_x, eye_z) + 3.2
-    target_y := building.base_y + clamp(building.height * .50, f32(7), f32(18))
+    target_y :=
+        ground_level_capture ? building.base_y + 2.4 : building.base_y + clamp(building.height * .50, f32(7), f32(18))
     editor.capture_world_only = true
     // Keep the procedural street dressing in the architectural capture so
     // façades read as a walkable Mediterranean neighborhood, not isolated
@@ -2009,6 +2170,192 @@ architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32,
     if editor.architecture_painting && (rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)) {
         architecture_paint_commit(editor)
     }
+}
+
+marina_brush_refresh_preview :: proc(editor: ^Editor, world_x, world_z: f32, reroll: bool) {
+    if editor == nil do return
+    if reroll {
+        editor.marina_preview_variation += 1
+    } else {
+        editor.marina_preview_variation = 0
+    }
+    shoreline := marina.Vec2{world_x, world_z}
+    site, suitability := markov_marina_find_world_site(&editor.project, shoreline)
+    editor.marina_brush_suitability = suitability
+    editor.marina_brush_attempts = 0
+    editor.marina_preview_x, editor.marina_preview_z = world_x, world_z
+    editor.marina_preview_valid = false
+    editor.marina_preview_plan = {}
+    if suitability < MARINA_BRUSH_MINIMUM_SUITABILITY {
+        editor.marina_brush_status = .Unsuitable
+        return
+    }
+    seed := u32(abs(int(world_x * 17))) ~ u32(abs(int(world_z * 31))) ~ editor.marina_preview_variation * 0x85ebca6b
+    candidate, attempts := markov_marina_generate_valid_for_site(seed, &site)
+    editor.marina_brush_attempts = attempts
+    if !candidate.valid {
+        editor.marina_brush_status = .No_Valid_Layout
+        return
+    }
+    editor.marina_preview_plan = candidate
+    editor.marina_preview_valid = true
+    editor.marina_brush_status = .Preview
+}
+
+marina_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
+    if editor == nil || editor.in_map || !editor.marina_paint_mode || !cursor_hit do return
+    dx, dz := world_x - editor.marina_preview_x, world_z - editor.marina_preview_z
+    refresh_distance := editor.marina_brush_radius * .22
+    moved := dx * dx + dz * dz > refresh_distance * refresh_distance
+    if !editor.marina_preview_valid && editor.marina_brush_status == .Idle || moved {
+        marina_brush_refresh_preview(editor, world_x, world_z, false)
+    }
+    if rl.IsMouseButtonPressed(.RIGHT) {
+        marina_brush_refresh_preview(editor, editor.marina_preview_x, editor.marina_preview_z, true)
+        return
+    }
+    if !rl.IsMouseButtonPressed(.LEFT) || !editor.marina_preview_valid do return
+    structure_history_push_undo(editor)
+    editor.marina_authored_plan = editor.marina_preview_plan
+    editor.marina_authored = true
+    editor.marina_preview_valid = false
+    editor.project.revision += 1
+    editor.marina_brush_status = .Placed
+}
+
+farm_generation_score :: proc(plan: ^farmland.Plan) -> f32 {
+    if plan == nil || !plan.valid || plan.parcel_count <= 0 do return 0
+    crops: [5]bool
+    smallest_area, largest_area := 1 << 30, 0
+    elongated := 0
+    for parcel in plan.parcels[:plan.parcel_count] {
+        crops[int(parcel.crop)] = true
+        width, depth := parcel.max_x - parcel.min_x, parcel.max_z - parcel.min_z
+        area := width * depth
+        smallest_area = min(smallest_area, area)
+        largest_area = max(largest_area, area)
+        if max(width, depth) >= min(width, depth) * 2 do elongated += 1
+    }
+    crop_count := 0
+    for present in crops do if present do crop_count += 1
+    diversity := f32(crop_count) / f32(len(crops))
+    balance := f32(smallest_area) / f32(max(largest_area, 1))
+    shape_mix := 1 - math.abs(f32(elongated) / f32(plan.parcel_count) - .35)
+    return clamp(diversity * .46 + balance * .24 + shape_mix * .30, 0, 1)
+}
+
+farm_site_score :: proc(editor: ^Editor, origin_x, origin_z, yaw: f32) -> (f32, bool) {
+    if editor == nil do return 0, false
+    cosine, sine := math.cos(yaw), math.sin(yaw)
+    land, clear, samples := 0, 0, 0
+    slope_total := f32(0)
+    for z_index in -3 ..= 3 {
+        for x_index in -4 ..= 4 {
+            local_x := f32(x_index) / 4 * f32(farmland.GRID_WIDTH) * farmland.CELL_METERS * .48
+            local_z := f32(z_index) / 3 * f32(farmland.GRID_HEIGHT) * farmland.CELL_METERS * .48
+            x := origin_x + local_x * cosine - local_z * sine
+            z := origin_z + local_x * sine + local_z * cosine
+            height := terrain.sample_height(&editor.project, 0, x, z)
+            if height > editor.project.sea_level + .35 do land += 1
+            blocked := terrain.structure_index_at(&editor.project, x, z) >= 0
+            for farm in editor.farms[:editor.farm_count] {
+                farm_dx, farm_dz := x - farm.origin_x, z - farm.origin_z
+                if farm_dx * farm_dx + farm_dz * farm_dz < 68 * 68 {
+                    blocked = true
+                    break
+                }
+            }
+            pavement := roads.pavement_at(&editor.project.road_graph, {x, height, z})
+            if !blocked && !pavement.on_surface do clear += 1
+            sample := f32(4)
+            rise_x :=
+                terrain.sample_height(&editor.project, 0, x + sample, z) -
+                terrain.sample_height(&editor.project, 0, x - sample, z)
+            rise_z :=
+                terrain.sample_height(&editor.project, 0, x, z + sample) -
+                terrain.sample_height(&editor.project, 0, x, z - sample)
+            slope_total += f32(math.sqrt(f64(rise_x * rise_x + rise_z * rise_z))) / (sample * 2)
+            samples += 1
+        }
+    }
+    land_ratio := f32(land) / f32(samples)
+    clear_ratio := f32(clear) / f32(samples)
+    average_slope := slope_total / f32(samples)
+    slope_score := 1 - clamp((average_slope - .04) / .34, 0, 1)
+    score := land_ratio * .48 + clear_ratio * .27 + slope_score * .25
+    valid := land_ratio >= .94 && clear_ratio >= .88 && average_slope <= .34
+    return clamp(score, 0, 1), valid
+}
+
+farm_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
+    if editor == nil || !editor.farm_paint_mode || editor.in_map || !cursor_hit {
+        if editor != nil do editor.farm_preview_valid = false
+        return
+    }
+    snap := f32(8)
+    preview_x := f32(math.round(f64(world_x / snap))) * snap
+    preview_z := f32(math.round(f64(world_z / snap))) * snap
+    if preview_x != editor.farm_preview_x || preview_z != editor.farm_preview_z {
+        editor.farm_preview_seed_offset = 0
+    }
+    if preview_x == editor.farm_preview_x &&
+       preview_z == editor.farm_preview_z &&
+       editor.farm_preview_revision == editor.project.revision {
+        return
+    }
+    editor.farm_preview_x = preview_x
+    editor.farm_preview_z = preview_z
+    editor.farm_preview_revision = editor.project.revision
+    editor.farm_preview_valid = false
+    editor.farm_preview_score = 0
+    best_score := f32(-1)
+    base_seed :=
+        u32(abs(int(preview_x * 17))) ~
+        u32(abs(int(preview_z * 31))) ~
+        u32(editor.project.revision * 0x9e3779b9) ~
+        editor.farm_preview_seed_offset * u32(0x27d4eb2d)
+    for orientation in 0 ..< 8 {
+        yaw := f32(orientation) * math.PI / 8 - math.PI * .5
+        site_score, site_valid := farm_site_score(editor, preview_x, preview_z, yaw)
+        if !site_valid do continue
+        for variant in 0 ..< 2 {
+            seed := base_seed ~ u32(orientation + 1) * u32(0x85ebca6b) ~ u32(variant + 1) * u32(0xc2b2ae35)
+            candidate := farmland.generate(seed, context.temp_allocator)
+            generation_score := farm_generation_score(&candidate)
+            combined := site_score * .72 + generation_score * .28
+            if combined <= best_score do continue
+            best_score = combined
+            editor.farm_preview = {
+                plan     = candidate,
+                origin_x = preview_x,
+                origin_z = preview_z,
+                yaw      = yaw,
+            }
+            editor.farm_preview_valid = true
+            editor.farm_preview_score = combined
+            editor.farm_preview_site_score = site_score
+            editor.farm_preview_generation_score = generation_score
+        }
+    }
+}
+
+farm_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
+    if editor == nil || editor.in_map || !editor.farm_paint_mode || !cursor_hit do return
+    if rl.IsMouseButtonPressed(.RIGHT) {
+        editor.farm_preview_seed_offset += 1
+        editor.farm_preview_revision = 0
+        editor.farm_preview_valid = false
+        return
+    }
+    if !rl.IsMouseButtonPressed(.LEFT) || editor.farm_count >= FARM_INSTANCE_CAPACITY || !editor.farm_preview_valid {
+        return
+    }
+    structure_history_push_undo(editor)
+    editor.farms[editor.farm_count] = editor.farm_preview
+    editor.farm_count += 1
+    editor.project.revision += 1
+    editor.farm_preview_valid = false
+    editor.farm_preview_seed_offset = 0
 }
 
 climbing_leaf_paint_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: bool) {
@@ -2134,10 +2481,21 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
         end_z := structure_editor_snap(world_z, editor)
         editor.structure_preview_end_x = end_x
         editor.structure_preview_end_z = end_z
-        editor.structure_preview.center_x = (editor.structure_anchor_x + end_x) * .5
-        editor.structure_preview.center_z = (editor.structure_anchor_z + end_z) * .5
-        editor.structure_preview.width = max(math.abs(end_x - editor.structure_anchor_x), cell)
-        editor.structure_preview.depth = max(math.abs(end_z - editor.structure_anchor_z), cell)
+        if editor.authoring_tool == .Foliage && editor.foliage_hedgerow_mode {
+            dx, dz := end_x - editor.structure_anchor_x, end_z - editor.structure_anchor_z
+            length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            editor.structure_preview.center_x = (editor.structure_anchor_x + end_x) * .5
+            editor.structure_preview.center_z = (editor.structure_anchor_z + end_z) * .5
+            editor.structure_preview.width = max(length, cell)
+            editor.structure_preview.depth = clamp(editor.formation_brush_radius * .25, cell, cell * 3)
+            editor.structure_preview.height = clamp(editor.formation_brush_radius * .32, cell, cell * 4)
+            if length > .001 do editor.structure_preview.rotation = math.atan2(dz, dx)
+        } else {
+            editor.structure_preview.center_x = (editor.structure_anchor_x + end_x) * .5
+            editor.structure_preview.center_z = (editor.structure_anchor_z + end_z) * .5
+            editor.structure_preview.width = max(math.abs(end_x - editor.structure_anchor_x), cell)
+            editor.structure_preview.depth = max(math.abs(end_z - editor.structure_anchor_z), cell)
+        }
         structure_update_preview_kind(editor)
         structure_update_base(editor, &editor.structure_preview)
         if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) {
@@ -2377,7 +2735,7 @@ runtime_pointer_sync :: proc(editor: ^Editor) {
     if editor.vehicle_paint_scene {
         set_pointer_locked(false)
         _ = sdl.ShowCursor()
-    } else if pause_menu_is_open(editor) {
+    } else if editor.console.open || pause_menu_is_open(editor) {
         set_pointer_locked(false)
         if controller_prompt_active(editor) {
             _ = sdl.HideCursor()
@@ -2498,11 +2856,17 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
         }
     }
     return {
-        position = body.position,
-        basis = body.basis,
-        airspeed = editor.postale.telemetry.airspeed,
-        roll_input = editor.flight_control.roll,
-        grounded = editor.postale.grounded,
+        position        = body.position,
+        basis           = body.basis,
+        airspeed        = editor.postale.telemetry.airspeed,
+        roll_input      = editor.flight_control.roll,
+        grounded        = editor.postale.grounded,
+        // The Postale's broad parasol wing needs a low, long-lens-like rear
+        // view. The generic close/high framing flattened it into a top-down
+        // silhouette and made the aircraft read as a toy.
+        follow_distance = 12.5,
+        follow_height   = 3.35,
+        focus_height    = .65,
     }
 }
 
@@ -2613,12 +2977,87 @@ libellula_vertex_world :: #force_inline proc(
     }
 }
 
+gerta_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    island_center := -half_extent * terrain.DEFAULT_ISLAND_OFFSET
+    // Mirror Marta's relationship to the runway on the opposite island.
+    x := island_center - half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET - 5.5
+    z := island_center - 10.5
+    return {x, terrain.sample_height(&editor.project, 0, x, z), z = z}
+}
+
 attendant_speaker :: proc(_: ^dialogue.Context) -> string { return "MARTA" }
+gerta_speaker :: proc(_: ^dialogue.Context) -> string { return "GERTA" }
 attendant_menu_text :: proc(_: ^dialogue.Context) -> string {
-    return "What can I help you with?"
+    return "Ciao. How kann ich vous aider?"
+}
+gerta_menu_text :: proc(_: ^dialogue.Context) -> string {
+    return "Dobar dan. Marta gère l'apron est; what peut faire ihre Schwester pour toi?"
 }
 attendant_aircraft_text :: proc(_: ^dialogue.Context) -> string {
-    return "Which aircraft should I put on the line?"
+    return "Which aeroplano soll ich mettre sulla linea?"
+}
+
+attendant_context_editor :: proc(ctx: ^dialogue.Context) -> ^Editor {
+    if ctx == nil || ctx.data == nil do return nil
+    return cast(^Editor)ctx.data
+}
+
+attendant_local_news_text :: proc(ctx: ^dialogue.Context) -> string {
+    editor := attendant_context_editor(ctx)
+    if editor == nil do return "Les isole sono tranquille, ce qui niemals signifie que niemand ist occupé."
+    gerta := ctx.resident_index == int(story.Resident.Gerta)
+    switch editor.story_state.romance {
+    case .Unintroduced:
+        if gerta do return "Niko allume die forni avant les mouettes.\nÚltimamente il regarde la lampe est entre deux plateaux."
+        return "Iva prépare la lampe del faro muy tôt.\nDue lampi avant alba, réguliers wie una promessa."
+    case .First_Letter:
+        if gerta do return "Niko hat farina sulle manches, mais zéro sur la boîte de cardamomo.\nFais-en lo que quieras."
+        return "Iva ha reçu posta dall'isola west.\nLe phare n'est pas plus lumineux, obwohl sie insiste."
+    case .Corresponding:
+        if gerta do return "Les tende de la regatta gehen hoch.\nNiko inspecte la blu assez souvent pour appeler ça Wartung."
+        return(
+            "Le lettere cruzan la baia plus vite que les barche da pesca.\nIva les sigilla encore bene, avant que tu demandes." \
+        )
+    case .Invitation:
+        if editor.story_state.repair == .Repaired {
+            if gerta do return "L'aereo de Bojan ist wieder sano.\nHa pulito el asiento passagero, donc ce vol compte."
+            return(
+                "Iva peut faire la regatta, jetzt que l'ala de Bojan ist réparée.\nElle a contrôlé il meteo dreimal." \
+            )
+        }
+        if gerta do return "L'ala di tela de Bojan braucht lavoro honnête.\nLa spiegazione malhonnête, il l'a déjà fournie."
+        return "Iva doit être quelque part oltre il mare.\nL'aereo de Bojan porte encore daylight durch una ala."
+    case .Meeting:
+        if gerta do return "Iva ist arrivée sana e salva.\nNiko appelle l'extra pane un erreur de contabilità."
+        return "Iva dit que la vue sous la tenda blu dell'isola west\nist quasi assez belle pour remplacer sa lampe."
+    case .Together:
+        if gerta do return "Niko und Iva mandent encore pacchi oltre la baia.\nApparemment, rencontrer qualcuno améliore seulement la posta."
+        return "Pane va est, verre de lampe va west.\nSolo il corriere ne sait pas cosa dit la nota de cena."
+    }
+    return ""
+}
+
+attendant_weather_text :: proc(ctx: ^dialogue.Context) -> string {
+    editor := attendant_context_editor(ctx)
+    if editor == nil do return "Regarde il mare avant de croire irgendeine prévision."
+    weather := editor.atmosphere.weather
+    wind_speed := f32(math.sqrt(f64(weather.wind[0] * weather.wind[0] + weather.wind[1] * weather.wind[1])))
+    gerta := ctx.resident_index == int(story.Resident.Gerta)
+    if weather.precipitation > .55 || weather.severity > .72 {
+        if gerta do return "Un fronte duro attraversa la baia.\nBleib unter les nuages et laisse la fierté am apron."
+        return "La pluie de tempesta approche.\nLe phare travaille; eso ne signifie pas que tu dois le tester."
+    }
+    if wind_speed > 7 || weather.cloud_cover > .48 {
+        if gerta do return "Der vento ist vivant sopra la crête west.\nDonne spazio aux falaises et attends un crosswind au retour."
+        return "Nuages cassés und vento ferme sur la baia.\nVolable, si tu laisses l'aria dire l'ultima parola."
+    }
+    if editor.atmosphere.world_minutes < 6 * 60 || editor.atmosphere.world_minutes > 19 * 60 {
+        if gerta do return "Aria nocturna chiara; les lumières de pista verdienen ihr Geld.\nAttenzione alla brume sur il mare oscuro."
+        return "La notte ist calme.\nGarde la lampe d'Iva à gauche quando voli verso est."
+    }
+    if gerta do return "Assez clair pour voir l'isola est vom apron west.\nLa baia ist heute très coopérative."
+    return "Vento leggero und mare aperto.\nBuen día pour voler, aunque les mouettes prendront le crédit."
 }
 
 marta_menu_set_action :: proc(ctx: ^dialogue.Context, action: Marta_Menu_Action) {
@@ -2630,11 +3069,14 @@ marta_menu_set_action :: proc(ctx: ^dialogue.Context, action: Marta_Menu_Action)
 marta_menu_paint :: proc(ctx: ^dialogue.Context) { marta_menu_set_action(ctx, .Paint_Aircraft) }
 marta_menu_close :: proc(ctx: ^dialogue.Context) { marta_menu_set_action(ctx, .Close) }
 
-open_attendant_dialogue :: proc(editor: ^Editor) {
-    menu_choices := make([]dialogue.Choice, 3)
-    menu_choices[0] = dialogue.choice("Paint an aircraft", dialogue.no_next_node, effect = marta_menu_paint)
-    menu_choices[1] = dialogue.choice("Choose an aircraft", 1)
-    menu_choices[2] = dialogue.choice("Never mind", dialogue.no_next_node, effect = marta_menu_close)
+open_attendant_dialogue :: proc(editor: ^Editor, resident: story.Resident = .Marta) {
+    if editor == nil || (resident != .Marta && resident != .Gerta) do return
+    menu_choices := make([]dialogue.Choice, 5)
+    menu_choices[0] = dialogue.choice("Peindre un aeroplano", dialogue.no_next_node, effect = marta_menu_paint)
+    menu_choices[1] = dialogue.choice("Choose un aeroplano", 1)
+    menu_choices[2] = dialogue.choice("Any novosti locale?", 2)
+    menu_choices[3] = dialogue.choice("How va il meteo?", 3)
+    menu_choices[4] = dialogue.choice("Niente, grazie", dialogue.no_next_node, effect = marta_menu_close)
 
     editor.attendant_dialogue_vehicle_choice_count = 0
     aircraft_choices := make([]dialogue.Choice, editor.aircraft.count + 1)
@@ -2644,21 +3086,28 @@ open_attendant_dialogue :: proc(editor: ^Editor) {
         editor.attendant_dialogue_vehicle_choice_count += 1
     }
     aircraft_choices[editor.aircraft.count] = dialogue.choice("Back", 0)
+    back_choices := make([]dialogue.Choice, 1)
+    back_choices[0] = dialogue.choice("Grazie. Anything else?", 0)
 
-    nodes := make([]dialogue.Node, 2)
-    nodes[0] = dialogue.node("services", attendant_menu_text, menu_choices, attendant_speaker)
-    nodes[1] = dialogue.node("aircraft", attendant_aircraft_text, aircraft_choices, attendant_speaker)
+    nodes := make([]dialogue.Node, 4)
+    speaker := resident == .Gerta ? gerta_speaker : attendant_speaker
+    menu_text := resident == .Gerta ? gerta_menu_text : attendant_menu_text
+    nodes[0] = dialogue.node("services", menu_text, menu_choices, speaker)
+    nodes[1] = dialogue.node("aircraft", attendant_aircraft_text, aircraft_choices, speaker)
+    nodes[2] = dialogue.node("local-news", attendant_local_news_text, back_choices, speaker)
+    nodes[3] = dialogue.node("weather", attendant_weather_text, back_choices, speaker)
     definition := new(dialogue.Definition)
     definition^ = {
-        id         = "marta_services",
+        id         = resident == .Gerta ? "gerta_services" : "marta_services",
         start_node = 0,
         nodes      = nodes,
     }
     conversation, opened := dialogue.open(
         definition,
-        {data = rawptr(editor), location_id = "airfield", resident_index = 0},
+        {data = rawptr(editor), location_id = "airfield", resident_index = int(resident)},
     )
     if opened {
+        editor.dialogue_resident = resident
         editor.attendant_dialogue = conversation
         editor.attendant_dialogue_open = true
         editor.attendant_dialogue_focus = 0
@@ -2669,15 +3118,155 @@ open_attendant_dialogue :: proc(editor: ^Editor) {
     }
 }
 
+open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
+    if editor == nil || resident == .Marta || resident == .Gerta do return false
+    definition: ^dialogue.Definition
+    switch resident {
+    case .Niko:
+        definition = &editor.story_catalog.niko
+    case .Iva:
+        definition = &editor.story_catalog.iva
+    case .Bojan:
+        definition = &editor.story_catalog.bojan
+    case .Zora:
+        definition = &editor.story_catalog.zora
+    case .Marta, .Gerta:
+        return false
+    }
+    conversation, opened := dialogue.open(
+        definition,
+        {
+            data = rawptr(&editor.story_state),
+            location_id = resident == .Iva || resident == .Zora ? "east_island" : "west_island",
+            resident_index = int(resident),
+        },
+    )
+    if !opened do return false
+    editor.attendant_dialogue = conversation
+    editor.attendant_dialogue_open = true
+    editor.attendant_dialogue_focus = 0
+    editor.attendant_dialogue_action = .None
+    editor.dialogue_resident = resident
+    game_input.reset_menu_repeat(&editor.runtime_input)
+    set_pointer_locked(false)
+    _ = sdl.ShowCursor()
+    return true
+}
+
 attendant_dialogue_panel :: proc(editor: ^Editor, width, height: i32) -> rl.Rectangle {
     choice_count := 1
     if editor != nil do choice_count = max(dialogue.available_count(&editor.attendant_dialogue), 1)
-    panel_height := min(f32(height) - 96, 124 + f32(choice_count) * 42)
-    return {x = f32(width) * .5 - 310, y = f32(height) - panel_height - 48, width = 620, height = panel_height}
+    panel_height := min(f32(height) - 96, 146 + f32(choice_count) * 42)
+    return {f32(width) * .5 - 310, f32(height) - panel_height - 48, width = 620, height = panel_height}
 }
 
 attendant_dialogue_choice_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
-    return {x = panel.x + 24, y = panel.y + 104 + f32(index) * 42, width = panel.width - 48, height = 34}
+    return {panel.x + 24, panel.y + 126 + f32(index) * 42, width = panel.width - 48, height = 34}
+}
+
+tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
+    if editor == nil || editor.dialogue_resident != .Zora do return
+    current := dialogue.current(&editor.attendant_dialogue)
+    if current == nil || current.id != "zora-reading" do return
+    layout := &editor.story_state.tarot_layout
+    if layout.count == 0 do return
+    columns := layout.count <= 3 ? layout.count : 5
+    card_width := layout.count <= 3 ? f32(126) : f32(100)
+    art_height := card_width * 158 / 108
+    label_height := layout.count <= 3 ? f32(46) : f32(40)
+    gap := f32(10)
+    card_height := art_height + label_height
+    board_width := f32(columns) * card_width + f32(columns - 1) * gap + 24
+    rows := (layout.count + columns - 1) / columns
+    board_height := f32(rows) * card_height + f32(rows - 1) * gap + 42
+    board := rl.Rectangle {
+        x      = panel.x + (panel.width - board_width) * .5,
+        y      = max(f32(18), panel.y - board_height - 12),
+        width  = board_width,
+        height = board_height,
+    }
+    rl.DrawRectangleRounded(board, .06, 8, {24, 18, 42, 244})
+    rl.DrawRectangleRoundedLinesEx(board, .06, 8, 1, {185, 145, 77, 255})
+    title := fmt.ctprintf("%s", tarot.spread_name(layout.spread))
+    title_size := rl.MeasureTextEx(rl.Font{}, title, 14, 1)
+    rl.DrawTextEx(
+        rl.Font{},
+        title,
+        {board.x + (board.width - title_size.x) * .5, board.y + 10},
+        14,
+        1,
+        {245, 220, 151, 255},
+    )
+    for placement, index in layout.placements[:layout.count] {
+        column, row := index % columns, index / columns
+        bounds := rl.Rectangle {
+            x      = board.x + 12 + f32(column) * (card_width + gap),
+            y      = board.y + 32 + f32(row) * (card_height + gap),
+            width  = card_width,
+            height = card_height,
+        }
+        art_bounds := rl.Rectangle{bounds.x, bounds.y, bounds.width, art_height}
+        reversed := placement.orientation == .Reversed
+        if editor.tarot_atlas.ready {
+            card_id := int(placement.card)
+            atlas_row, atlas_column := 0, 0
+            if card_id < 14 {
+                atlas_column = card_id
+            } else if card_id < 22 {
+                atlas_row = 1
+                atlas_column = card_id - 14
+            } else {
+                minor := card_id - 22
+                atlas_row = 2 + minor / 14
+                atlas_column = minor % 14
+            }
+            source := rl.Rectangle {
+                x      = f32(atlas_column * 108),
+                y      = f32(atlas_row * 158),
+                width  = 108,
+                height = 158,
+            }
+            if reversed {
+                source.x += source.width
+                source.y += source.height
+                source.width = -source.width
+                source.height = -source.height
+            }
+            rl.DrawTexturePro(editor.tarot_atlas, source, art_bounds, {255, 255, 255, 255})
+        } else {
+            rl.DrawRectangleRounded(art_bounds, .08, 6, {240, 226, 186, 255})
+        }
+        position_label := fmt.ctprintf("%s%s", placement.position, reversed ? " · REVERSED" : "")
+        available_width := bounds.width - 8
+        position_font_size := layout.count <= 3 ? f32(11) : f32(9)
+        position_measured := rl.MeasureTextEx(rl.Font{}, position_label, position_font_size, .5)
+        if position_measured.x > available_width {
+            position_font_size *= available_width / position_measured.x
+        }
+        rl.DrawTextEx(
+            rl.Font{},
+            position_label,
+            {bounds.x + 4, bounds.y + art_height + 5},
+            position_font_size,
+            .5,
+            {181, 190, 183, 255},
+        )
+        card_label := fmt.ctprintf("%s", tarot.card_name(placement.card))
+        card_font_size := layout.count <= 3 ? f32(13) : f32(10)
+        measured := rl.MeasureTextEx(rl.Font{}, card_label, card_font_size, .5)
+        if measured.x > available_width {
+            card_font_size *= available_width / measured.x
+            card_font_size = max(card_font_size, layout.count <= 3 ? f32(10) : f32(8))
+        }
+        rl.DrawTextEx(
+            rl.Font{},
+            card_label,
+            {bounds.x + 4, bounds.y + art_height + 23},
+            card_font_size,
+            .5,
+            {245, 220, 151, 255},
+        )
+    }
 }
 
 attendant_dialogue_close :: proc(editor: ^Editor) {
@@ -2720,6 +3309,7 @@ marta_select_aircraft :: proc(editor: ^Editor, target: vehicles.Aircraft_Kind) {
 
 attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
     if editor == nil || !editor.attendant_dialogue_open do return
+    romance_before := editor.story_state.romance
     editor.attendant_dialogue_action = .None
     if editor.attendant_dialogue.current_node == 1 &&
        choice_index >= 0 &&
@@ -2728,9 +3318,20 @@ attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
         editor.attendant_dialogue_action = .Select_Aircraft
     }
     if !dialogue.choose(&editor.attendant_dialogue, choice_index) do return
+    if romance_before != .Meeting && editor.story_state.romance == .Meeting {
+        editor.story_meeting_cinematic_pending = true
+    }
 
     action := editor.attendant_dialogue_action
     if action == .None {
+        if editor.attendant_dialogue.ended {
+            attendant_dialogue_close(editor)
+            if editor.story_meeting_cinematic_pending {
+                editor.story_meeting_cinematic_pending = false
+                _ = story_meeting_cinematic_play(editor)
+            }
+            return
+        }
         // A submenu transition (including Back) keeps the conversation open.
         editor.attendant_dialogue_focus = 0
         return
@@ -2742,6 +3343,8 @@ attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
         vehicle_paint_open(editor)
     case .Select_Aircraft:
         marta_select_aircraft(editor, editor.attendant_dialogue_vehicle_target)
+    case .Borrow_Dinghy:
+        editor.marina_dinghy_borrowed = true
     case .None, .Close:
     }
 }
@@ -2795,9 +3398,47 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
 }
 
 libellula_attendant_near :: proc(editor: ^Editor) -> bool {
-    if editor == nil || editor.pilot.mode != .On_Foot do return false
-    delta := (editor.player.position - editor.attendant_position)
-    return linalg.dot(delta, delta) <= 2.25 * 2.25
+    _, _, found := nearest_service_attendant(editor)
+    return found
+}
+
+nearest_service_attendant :: proc(editor: ^Editor) -> (resident: story.Resident, distance_squared: f32, found: bool) {
+    if editor == nil || editor.pilot.mode != .On_Foot || !editor.libellula_visible do return {}, 0, false
+    positions := [2]third_person.Vec3{editor.attendant_position, editor.gerta_position}
+    residents := [2]story.Resident{.Marta, .Gerta}
+    best_distance := f32(2.25 * 2.25)
+    for position, index in positions {
+        delta := vec_sub(editor.player.position, position)
+        distance := vec_dot(delta, delta)
+        if distance <= best_distance {
+            resident, best_distance, found = residents[index], distance, true
+        }
+    }
+    return resident, best_distance, found
+}
+
+nearest_story_resident :: proc(
+    editor: ^Editor,
+    require_action := false,
+) -> (
+    resident: story.Resident,
+    distance_squared: f32,
+    found: bool,
+) {
+    if editor == nil || editor.pilot.mode != .On_Foot do return {}, 0, false
+    best_distance := f32(2.25 * 2.25)
+    candidates := [4]story.Resident{.Niko, .Iva, .Bojan, .Zora}
+    for candidate in candidates {
+        if require_action && !story.resident_has_action(&editor.story_state, candidate) do continue
+        position, placed := world_story_resident_position(editor, candidate)
+        if !placed do continue
+        delta := vec_sub(editor.player.position, position)
+        distance := vec_dot(delta, delta)
+        if distance <= best_distance {
+            resident, best_distance, found = candidate, distance, true
+        }
+    }
+    return resident, best_distance, found
 }
 
 draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
@@ -2880,6 +3521,7 @@ draw_postale_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, heig
         editor.flight_control.roll,
         editor.flight_control.yaw,
         editor.postale.propeller_turns,
+        editor.postale.gear_compression / POSTALE_PRESENTATION_SCALE,
     )
     // The canvas renderer is painter ordered, so submit the generated aircraft
     // faces back-to-front just like the terrain cells.
@@ -3112,7 +3754,7 @@ draw_instrument_text :: proc(text: cstring, position: rl.Vector2, size, spacing:
         r = 0,
         g = 7,
         b = 12,
-        a = 235,
+        a = u8(235 * f32(color.a) / 255),
     }
     rl.DrawTextEx(rl.Font{}, text, {position.x + 1.5, position.y + 1.5}, size, spacing, shadow)
     rl.DrawTextEx(rl.Font{}, text, position, size, spacing, color)
@@ -3132,6 +3774,181 @@ draw_flight_console_panel :: proc(bounds: rl.Rectangle, corner_radius: f32, colo
         draw_antialiased_line({bounds.x + inset, y}, {bounds.x + bounds.width - inset, y}, 1, color)
     }
     rl.DrawRectangle(i32(bounds.x), i32(bounds.y + radius), i32(bounds.width), i32(bounds.height - radius), color)
+
+    // Trace the curved shoulder as one continuous padded coaming. The warm
+    // leather edge ties the panel to the Postale's cockpit upholstery while a
+    // narrow cool highlight keeps the contour readable against dark scenery.
+    coaming := rl.Color {
+        r = 84,
+        g = 55,
+        b = 39,
+        a = 255,
+    }
+    edge := rl.Color {
+        r = 139,
+        g = 115,
+        b = 86,
+        a = 210,
+    }
+    previous_left := rl.Vector2{bounds.x + radius, bounds.y + .5}
+    previous_right := rl.Vector2{bounds.x + bounds.width - radius, bounds.y + .5}
+    draw_antialiased_line(previous_left, previous_right, 4.5, coaming)
+    draw_antialiased_line(previous_left, previous_right, 1.2, edge)
+    for row in 1 ..< rows {
+        vertical := radius - min(f32(row) + .5, radius)
+        horizontal := f32(math.sqrt(f64(max(radius * radius - vertical * vertical, 0))))
+        inset := radius - horizontal
+        y := bounds.y + f32(row) + .5
+        left := rl.Vector2{bounds.x + inset, y}
+        right := rl.Vector2{bounds.x + bounds.width - inset, y}
+        draw_antialiased_line(previous_left, left, 4.5, coaming)
+        draw_antialiased_line(previous_right, right, 4.5, coaming)
+        draw_antialiased_line(previous_left, left, 1.1, edge)
+        draw_antialiased_line(previous_right, right, 1.1, edge)
+        previous_left = left
+        previous_right = right
+    }
+    draw_antialiased_line(
+        {bounds.x + 18, bounds.y + bounds.height - 1},
+        {bounds.x + bounds.width - 18, bounds.y + bounds.height - 1},
+        1.2,
+        {r = 2, g = 8, b = 11, a = 230},
+    )
+    screw := rl.Color {
+        r = 151,
+        g = 160,
+        b = 149,
+        a = 230,
+    }
+    screw_shadow := rl.Color {
+        r = 3,
+        g = 9,
+        b = 11,
+        a = 240,
+    }
+    screw_positions := [4]rl.Vector2 {
+        {bounds.x + 18, bounds.y + bounds.height - 17},
+        {bounds.x + bounds.width - 18, bounds.y + bounds.height - 17},
+        {bounds.x + radius * .72, bounds.y + radius * .72},
+        {bounds.x + bounds.width - radius * .72, bounds.y + radius * .72},
+    }
+    for position in screw_positions {
+        draw_antialiased_disc(position, 3.2, screw_shadow)
+        draw_antialiased_disc(position, 1.8, screw)
+        draw_antialiased_line(
+            {position.x - 1.2, position.y + 1.2},
+            {position.x + 1.2, position.y - 1.2},
+            .8,
+            screw_shadow,
+        )
+    }
+}
+
+draw_instrument_bezel :: proc(center: rl.Vector2, radius: f32) {
+    shadow := rl.Color {
+        r = 2,
+        g = 8,
+        b = 11,
+        a = 235,
+    }
+    outer := rl.Color {
+        r = 42,
+        g = 57,
+        b = 59,
+        a = 255,
+    }
+    metal := rl.Color {
+        r = 104,
+        g = 132,
+        b = 132,
+        a = 235,
+    }
+    inner := rl.Color {
+        r = 19,
+        g = 31,
+        b = 37,
+        a = 255,
+    }
+    face := rl.Color {
+        r = 9,
+        g = 21,
+        b = 29,
+        a = 255,
+    }
+    draw_antialiased_disc({center.x + 1.5, center.y + 2}, radius + 7, shadow)
+    draw_antialiased_disc(center, radius + 6, outer)
+    draw_antialiased_disc(center, radius + 4, metal)
+    draw_antialiased_disc(center, radius + 1.5, inner)
+    draw_antialiased_disc(center, radius, face)
+}
+
+draw_instrument_glass :: proc(center: rl.Vector2, radius: f32) {
+    reflection := rl.Color {
+        r = 196,
+        g = 236,
+        b = 235,
+        a = 42,
+    }
+    // Restrained diagonal glints imply convex glass without washing out the
+    // markings or introducing a large translucent overlay.
+    draw_antialiased_line(
+        {center.x - radius * .56, center.y - radius * .58},
+        {center.x - radius * .18, center.y - radius * .78},
+        1.5,
+        reflection,
+    )
+    draw_antialiased_line(
+        {center.x - radius * .61, center.y - radius * .48},
+        {center.x - radius * .44, center.y - radius * .57},
+        1,
+        reflection,
+    )
+}
+
+draw_rounded_inset :: proc(bounds: rl.Rectangle, corner_radius: f32, color: rl.Color) {
+    radius := clamp(corner_radius, 0, min(bounds.width, bounds.height) * .5)
+    rows := max(1, int(math.ceil(f64(bounds.height))))
+    for row in 0 ..< rows {
+        y_local := min(f32(row) + .5, bounds.height - .5)
+        inset := f32(0)
+        if y_local < radius {
+            vertical := radius - y_local
+            inset = radius - f32(math.sqrt(f64(max(radius * radius - vertical * vertical, 0))))
+        } else if y_local > bounds.height - radius {
+            vertical := y_local - (bounds.height - radius)
+            inset = radius - f32(math.sqrt(f64(max(radius * radius - vertical * vertical, 0))))
+        }
+        rl.DrawLineEx(
+            {bounds.x + inset, bounds.y + y_local},
+            {bounds.x + bounds.width - inset, bounds.y + y_local},
+            1.2,
+            color,
+        )
+    }
+}
+
+draw_rectangular_instrument_bezel :: proc(bounds: rl.Rectangle, radius: f32) -> rl.Rectangle {
+    draw_rounded_inset(
+        {bounds.x + 1.5, bounds.y + 2, width = bounds.width, height = bounds.height},
+        radius,
+        {r = 2, g = 8, b = 11, a = 235},
+    )
+    draw_rounded_inset(bounds, radius, {r = 45, g = 60, b = 62, a = 255})
+    metal_bounds := rl.Rectangle {
+        x      = bounds.x + 2,
+        y      = bounds.y + 2,
+        width  = bounds.width - 4,
+        height = bounds.height - 4,
+    }
+    draw_rounded_inset(metal_bounds, max(radius - 2, f32(1)), {r = 104, g = 132, b = 132, a = 235})
+    face_bounds := rl.Rectangle {
+        x      = bounds.x + 4,
+        y      = bounds.y + 4,
+        width  = bounds.width - 8,
+        height = bounds.height - 8,
+    }
+    draw_rounded_inset(face_bounds, max(radius - 4, f32(1)), {r = 7, g = 19, b = 27, a = 255})
+    return face_bounds
 }
 
 draw_instrument_dial :: proc(
@@ -3141,13 +3958,9 @@ draw_instrument_dial :: proc(
     value, minimum, maximum: f32,
     value_text: cstring,
     value_y_offset: f32 = 27,
+    range_start: f32 = -1,
+    range_end: f32 = -1,
 ) {
-    dial := rl.Color {
-        r = 12,
-        g = 25,
-        b = 35,
-        a = 245,
-    }
     mark := rl.Color {
         r = 232,
         g = 247,
@@ -3160,54 +3973,109 @@ draw_instrument_dial :: proc(
         b = 111,
         a = 255,
     }
-    rim := rl.Color {
-        r = 83,
-        g = 118,
-        b = 125,
-        a = 220,
-    }
-    draw_antialiased_disc(center, radius + 3, rim)
-    draw_antialiased_disc(center, radius, dial)
+    draw_instrument_bezel(center, radius)
+    sweep_start := f32(math.PI * .75)
+    sweep_range := f32(math.PI * 1.5)
     for tick in 0 ..= 14 {
-        angle := -math.PI * .75 + f32(tick) / 14 * math.PI * 1.5
+        angle := sweep_start + f32(tick) / 14 * sweep_range
         outer := rl.Vector2{center.x + math.cos(angle) * (radius - 7), center.y + math.sin(angle) * (radius - 7)}
         major := tick % 7 == 0
         inner_radius := radius - (major ? f32(18) : f32(13))
         inner := rl.Vector2{center.x + math.cos(angle) * inner_radius, center.y + math.sin(angle) * inner_radius}
         draw_antialiased_line(inner, outer, major ? f32(2.6) : f32(1.5), mark)
     }
+    if range_start >= minimum && range_end > range_start {
+        start_fraction := clamp((range_start - minimum) / max(maximum - minimum, f32(.001)), 0, 1)
+        end_fraction := clamp((range_end - minimum) / max(maximum - minimum, f32(.001)), 0, 1)
+        band_radius := radius - 19
+        band_color := rl.Color {
+            r = 92,
+            g = 219,
+            b = 213,
+            a = 180,
+        }
+        previous_angle := sweep_start + start_fraction * sweep_range
+        previous := rl.Vector2 {
+            center.x + math.cos(previous_angle) * band_radius,
+            center.y + math.sin(previous_angle) * band_radius,
+        }
+        for segment in 1 ..= 14 {
+            fraction := start_fraction + (end_fraction - start_fraction) * f32(segment) / 14
+            angle := sweep_start + fraction * sweep_range
+            point := rl.Vector2{center.x + math.cos(angle) * band_radius, center.y + math.sin(angle) * band_radius}
+            draw_antialiased_line(previous, point, 2, band_color)
+            previous = point
+        }
+    }
+    // Three quiet scale anchors make needle position readable at a glance
+    // without crowding the compact face with a full ring of numerals.
+    scale_values := [3]f32{minimum, (minimum + maximum) * .5, maximum}
+    scale_fractions := [3]f32{0, .5, 1}
+    for index in 0 ..< len(scale_values) {
+        angle := sweep_start + scale_fractions[index] * sweep_range
+        anchor_radius := radius - 20
+        text := fmt.ctprintf("%.0f", scale_values[index])
+        size := rl.MeasureTextEx(rl.Font{}, text, 9, 0)
+        position := rl.Vector2 {
+            center.x + math.cos(angle) * anchor_radius - size.x * .5,
+            center.y + math.sin(angle) * anchor_radius - size.y * .5,
+        }
+        draw_instrument_text(text, position, 9, 0, {r = 182, g = 207, b = 205, a = 230})
+    }
     fraction := clamp((value - minimum) / max(f32(.001), maximum - minimum), 0, 1)
-    needle_angle := -math.PI * .75 + fraction * math.PI * 1.5
+    needle_angle := sweep_start + fraction * sweep_range
     needle_length := radius - 23
     needle_end := rl.Vector2 {
         center.x + math.cos(needle_angle) * needle_length,
         center.y + math.sin(needle_angle) * needle_length,
     }
+    needle_shadow := rl.Color {
+        r = 1,
+        g = 7,
+        b = 10,
+        a = 220,
+    }
+    draw_antialiased_line(
+        {center.x + 1.5, center.y + 1.5},
+        {needle_end.x + 1.5, needle_end.y + 1.5},
+        4.2,
+        needle_shadow,
+    )
     draw_antialiased_line(center, needle_end, 3.5, accent)
-    draw_antialiased_disc(center, 5, accent)
+    counterweight := rl.Vector2{center.x - math.cos(needle_angle) * 10, center.y - math.sin(needle_angle) * 10}
+    draw_antialiased_line(center, counterweight, 2.4, accent)
+    draw_antialiased_disc(center, 6.2, needle_shadow)
+    draw_antialiased_disc(center, 4.2, accent)
     label_size := rl.MeasureTextEx(rl.Font{}, label, 14, 1)
     value_size := rl.MeasureTextEx(rl.Font{}, value_text, 18, 1)
-    draw_instrument_text(label, {center.x - label_size.x * .5, center.y - 34}, 14, 1, mark)
+    draw_instrument_text(label, {center.x - label_size.x * .5, center.y - 18}, 14, 1, mark)
     draw_instrument_text(value_text, {center.x - value_size.x * .5, center.y + value_y_offset}, 18, 1, accent)
+    draw_instrument_glass(center, radius)
 }
 
 draw_attitude_indicator :: proc(center: rl.Vector2, radius, pitch, bank: f32) {
-    dial := rl.Color {
-        r = 12,
-        g = 25,
-        b = 35,
-        a = 245,
-    }
     sky := rl.Color {
-        r = 62,
-        g = 130,
-        b = 153,
+        r = 35,
+        g = 91,
+        b = 128,
+        a = 255,
+    }
+    sky_horizon := rl.Color {
+        r = 74,
+        g = 158,
+        b = 184,
         a = 255,
     }
     earth := rl.Color {
-        r = 127,
-        g = 91,
-        b = 57,
+        r = 91,
+        g = 57,
+        b = 37,
+        a = 255,
+    }
+    earth_horizon := rl.Color {
+        r = 163,
+        g = 111,
+        b = 62,
         a = 255,
     }
     mark := rl.Color {
@@ -3222,36 +4090,84 @@ draw_attitude_indicator :: proc(center: rl.Vector2, radius, pitch, bank: f32) {
         b = 111,
         a = 255,
     }
-    rim := rl.Color {
-        r = 83,
-        g = 118,
-        b = 125,
-        a = 220,
-    }
-    draw_antialiased_disc(center, radius + 3, rim)
-    draw_antialiased_disc(center, radius, dial)
-    // The moving horizon gives an immediate read of bank and pitch without
-    // obscuring the third-person view with a full-screen artificial horizon.
+    draw_instrument_bezel(center, radius)
+
+    // Rasterize the moving card as rotated chords. Each chord is constrained
+    // to the dial circle, so bank and pitch never produce the rectangular
+    // color bars that made the old indicator read like a placeholder.
     scale := radius / 48
-    pitch_offset := clamp(pitch * 34 * scale, -24 * scale, 24 * scale)
+    inner_radius := radius - 4
+    pitch_offset := clamp(pitch * 42 * scale, -inner_radius * .72, inner_radius * .72)
     c, s := math.cos(bank), math.sin(bank)
-    horizon_center := rl.Vector2{center.x + s * pitch_offset, center.y - c * pitch_offset}
-    horizon_left := rl.Vector2{horizon_center.x - c * 39 * scale, horizon_center.y - s * 39 * scale}
-    horizon_right := rl.Vector2{horizon_center.x + c * 39 * scale, horizon_center.y + s * 39 * scale}
-    draw_antialiased_line(horizon_left, horizon_right, 18 * scale, sky)
-    rl.DrawLineEx(
-        {horizon_left.x - s * 11 * scale, horizon_left.y + c * 11 * scale},
-        {horizon_right.x - s * 11 * scale, horizon_right.y + c * 11 * scale},
-        18 * scale,
-        earth,
+    scan_count := max(1, int(math.ceil(f64(inner_radius * 2))))
+    for scan in 0 ..< scan_count {
+        card_y := -inner_radius + (f32(scan) + .5) * inner_radius * 2 / f32(scan_count)
+        half_chord := f32(math.sqrt(f64(max(inner_radius * inner_radius - card_y * card_y, 0))))
+        line_center := rl.Vector2{center.x + s * card_y, center.y - c * card_y}
+        left := rl.Vector2{line_center.x - c * half_chord, line_center.y - s * half_chord}
+        right := rl.Vector2{line_center.x + c * half_chord, line_center.y + s * half_chord}
+        distance_from_horizon := clamp(math.abs(card_y - pitch_offset) / max(inner_radius * .85, f32(1)), 0, 1)
+        card_color := color_lerp(earth_horizon, earth, distance_from_horizon)
+        if card_y >= pitch_offset {
+            card_color = color_lerp(sky_horizon, sky, distance_from_horizon)
+        }
+        rl.DrawLineEx(left, right, 1.35, card_color)
+    }
+
+    tangent := rl.Vector2{c, s}
+    normal := rl.Vector2{s, -c}
+    horizon_center := rl.Vector2{center.x + normal.x * pitch_offset, center.y + normal.y * pitch_offset}
+    horizon_half := f32(math.sqrt(f64(max(inner_radius * inner_radius - pitch_offset * pitch_offset, 0))))
+    draw_antialiased_line(
+        {horizon_center.x - tangent.x * horizon_half, horizon_center.y - tangent.y * horizon_half},
+        {horizon_center.x + tangent.x * horizon_half, horizon_center.y + tangent.y * horizon_half},
+        2,
+        mark,
     )
-    draw_antialiased_line(horizon_left, horizon_right, 2.5, mark)
-    draw_antialiased_line({center.x - 28 * scale, center.y}, {center.x - 7 * scale, center.y}, 4, accent)
-    draw_antialiased_line({center.x + 7 * scale, center.y}, {center.x + 28 * scale, center.y}, 4, accent)
-    draw_antialiased_disc(center, 4, accent)
-    label: cstring = "ATTITUDE"
-    label_size := rl.MeasureTextEx(rl.Font{}, label, 14, 1)
-    draw_instrument_text(label, {center.x - label_size.x * .5, center.y - radius + 10}, 14, 1, mark)
+
+    // Ten-degree pitch ladder, attached to the moving card.
+    ladder_spacing := 10 * scale
+    for step in -2 ..= 2 {
+        if step == 0 do continue
+        ladder_y := pitch_offset + f32(step) * ladder_spacing
+        if math.abs(ladder_y) >= inner_radius - 8 do continue
+        ladder_half := (step % 2 == 0 ? f32(16) : f32(10)) * scale
+        ladder_center := rl.Vector2{center.x + normal.x * ladder_y, center.y + normal.y * ladder_y}
+        draw_antialiased_line(
+            {ladder_center.x - tangent.x * ladder_half, ladder_center.y - tangent.y * ladder_half},
+            {ladder_center.x + tangent.x * ladder_half, ladder_center.y + tangent.y * ladder_half},
+            1.3,
+            mark,
+        )
+    }
+
+    // Fixed bank scale and lubber pointer make roll readable even when the
+    // horizon is near the edge of the dial.
+    bank_marks := [5]f32{-60, -30, 0, 30, 60}
+    for degrees in bank_marks {
+        angle := -math.PI * .5 + degrees * math.PI / 180
+        outer := rl.Vector2{center.x + math.cos(angle) * (radius - 7), center.y + math.sin(angle) * (radius - 7)}
+        inner := rl.Vector2 {
+            center.x + math.cos(angle) * (radius - (degrees == 0 ? f32(16) : f32(12))),
+            center.y + math.sin(angle) * (radius - (degrees == 0 ? f32(16) : f32(12))),
+        }
+        draw_antialiased_line(inner, outer, degrees == 0 ? f32(2.5) : f32(1.5), mark)
+    }
+
+    // The white chevron belongs to the moving card. Against the fixed bank
+    // scale it gives an immediate, mechanical read of roll direction.
+    bank_tip := rl.Vector2{center.x + normal.x * (radius - 15), center.y + normal.y * (radius - 15)}
+    bank_base := rl.Vector2{center.x + normal.x * (radius - 23), center.y + normal.y * (radius - 23)}
+    draw_antialiased_line({bank_base.x - tangent.x * 4, bank_base.y - tangent.y * 4}, bank_tip, 1.8, mark)
+    draw_antialiased_line(bank_tip, {bank_base.x + tangent.x * 4, bank_base.y + tangent.y * 4}, 1.8, mark)
+
+    // Fixed miniature-aircraft symbol.
+    draw_antialiased_line({center.x - 29 * scale, center.y}, {center.x - 8 * scale, center.y}, 3.5, accent)
+    draw_antialiased_line({center.x + 8 * scale, center.y}, {center.x + 29 * scale, center.y}, 3.5, accent)
+    draw_antialiased_line({center.x - 8 * scale, center.y}, {center.x, center.y + 5 * scale}, 3, accent)
+    draw_antialiased_line({center.x + 8 * scale, center.y}, {center.x, center.y + 5 * scale}, 3, accent)
+    draw_antialiased_disc({center.x, center.y + 5 * scale}, 3.5 * scale, accent)
+    draw_instrument_glass(center, radius)
 }
 
 compass_tick_label :: proc(degrees: int) -> cstring {
@@ -3272,11 +4188,14 @@ compass_tick_label :: proc(degrees: int) -> cstring {
 }
 
 draw_heading_compass :: proc(center: rl.Vector2, width, heading_degrees: f32) {
-    height := f32(34)
-    left := center.x - width * .5
-    top := center.y - height * .5
-    rl.DrawRectangle(i32(left), i32(top), i32(width), i32(height), {r = 7, g = 20, b = 29, a = 238})
-
+    height := f32(42)
+    outer := rl.Rectangle {
+        x      = center.x - width * .5,
+        y      = center.y - height * .5,
+        width  = width,
+        height = height,
+    }
+    face := draw_rectangular_instrument_bezel(outer, 8)
     accent := rl.Color {
         r = 239,
         g = 203,
@@ -3291,53 +4210,137 @@ draw_heading_compass :: proc(center: rl.Vector2, width, heading_degrees: f32) {
         for delta > 180 do delta -= 360
         for delta < -180 do delta += 360
         if math.abs(delta) > half_range do continue
-        x := center.x + delta / half_range * (width * .46)
+        x := center.x + delta / half_range * (face.width * .46)
         major := tick_heading % 30 == 0
-        tick_top := top + (major ? f32(5) : f32(9))
-        draw_antialiased_line({x, tick_top}, {x, top + 15}, major ? f32(1.8) : f32(1), {220, 239, 238, 255})
+        tick_top := face.y + (major ? f32(3) : f32(7))
+        draw_antialiased_line({x, tick_top}, {x, face.y + 13}, major ? f32(1.8) : f32(1), {220, 239, 238, 255})
         if major {
             label := compass_tick_label(tick_heading)
             label_size := rl.MeasureTextEx(rl.Font{}, label, 11, 1)
             normalized := tick_heading % 360
             if normalized < 0 do normalized += 360
             label_color := normalized % 90 == 0 ? accent : rl.Color{235, 248, 246, 255}
-            draw_instrument_text(label, {x - label_size.x * .5, top + 15}, 11, 1, label_color)
+            draw_instrument_text(label, {x - label_size.x * .5, face.y + 15}, 11, 1, label_color)
         }
     }
 
-    draw_antialiased_line({center.x, top + 2}, {center.x, top + 11}, 2.5, accent)
-    draw_antialiased_line({center.x - 5, top + 3}, {center.x, top + 8}, 2, accent)
-    draw_antialiased_line({center.x + 5, top + 3}, {center.x, top + 8}, 2, accent)
+    // A fixed brass lubber index sits proud of the moving heading card.
+    pointer_top := outer.y + 1
+    draw_antialiased_line({center.x, pointer_top + 1}, {center.x, pointer_top + 12}, 2.5, accent)
+    draw_antialiased_line({center.x - 5, pointer_top + 3}, {center.x, pointer_top + 9}, 2, accent)
+    draw_antialiased_line({center.x + 5, pointer_top + 3}, {center.x, pointer_top + 9}, 2, accent)
+    draw_antialiased_line(
+        {face.x + 12, face.y + 3},
+        {face.x + face.width * .28, face.y + 3},
+        1,
+        {r = 196, g = 236, b = 235, a = 34},
+    )
 }
 
-draw_power_bar :: proc(right, top, height, power: f32) {
+draw_throttle_overlay :: proc(editor: ^Editor, width, height: i32, power: f32) {
+    if editor == nil do return
     normalized := clamp(power, 0, 1)
-    track_width := f32(14)
-    track_left := right - track_width
-    rl.DrawRectangle(i32(track_left), i32(top), i32(track_width), i32(height), {r = 7, g = 20, b = 29, a = 238})
-    fill_height := max(f32(0), (height - 4) * normalized)
-    rl.DrawRectangle(
-        i32(track_left + 2),
-        i32(top + height - 2 - fill_height),
-        i32(track_width - 4),
-        i32(fill_height),
-        {r = 239, g = 203, b = 111, a = 255},
-    )
-    draw_antialiased_line({track_left, top}, {right, top}, 1, {126, 164, 168, 220})
-    draw_antialiased_line({track_left, top + height}, {right, top + height}, 1, {126, 164, 168, 220})
-    draw_antialiased_line({track_left, top}, {track_left, top + height}, 1, {126, 164, 168, 220})
-    draw_antialiased_line({right, top}, {right, top + height}, 1, {126, 164, 168, 220})
+    now := rl.GetTime()
+    if !editor.flight_throttle_overlay_initialized {
+        editor.flight_throttle_overlay_value = normalized
+        editor.flight_throttle_overlay_changed_at = now
+        editor.flight_throttle_overlay_initialized = true
+    } else if math.abs(normalized - editor.flight_throttle_overlay_value) > .001 {
+        editor.flight_throttle_overlay_value = normalized
+        editor.flight_throttle_overlay_changed_at = now
+    }
 
-    label: cstring = "PWR"
+    age := f32(now - editor.flight_throttle_overlay_changed_at)
+    if age >= 3 do return
+    fade_in := clamp(age / .14, 0, 1)
+    fade_out := clamp((3 - age) / .65, 0, 1)
+    visibility := fade_in * fade_out
+    alpha := u8(clamp(255 * visibility, 0, 255))
+
+    overlay_height := min(f32(height) * .68, f32(500))
+    overlay_width := f32(52)
+    outer := rl.Rectangle {
+        x      = f32(width) - overlay_width - 22,
+        y      = (f32(height) - overlay_height) * .5,
+        width  = overlay_width,
+        height = overlay_height,
+    }
+    draw_rounded_inset(outer, 15, {r = 3, g = 12, b = 18, a = u8(f32(alpha) * .72)})
+    edge := rl.Color {
+        r = 104,
+        g = 132,
+        b = 132,
+        a = u8(f32(alpha) * .72),
+    }
+    draw_antialiased_line({outer.x + 10, outer.y + 1}, {outer.x + outer.width - 10, outer.y + 1}, 1.2, edge)
+
+    track_top := outer.y + 45
+    track_bottom := outer.y + outer.height - 30
+    track_x := outer.x + outer.width * .5
+    track_height := track_bottom - track_top
+    draw_antialiased_line(
+        {track_x, track_top},
+        {track_x, track_bottom},
+        8,
+        {r = 7, g = 20, b = 28, a = u8(f32(alpha) * .92)},
+    )
+    level_y := track_bottom - normalized * track_height
+    fill_color := color_lerp({r = 190, g = 132, b = 67, a = 255}, {r = 246, g = 211, b = 111, a = 255}, normalized)
+    fill_color.a = alpha
+    draw_antialiased_line({track_x, track_bottom}, {track_x, level_y}, 5, fill_color)
+    tick_color := rl.Color {
+        r = 190,
+        g = 211,
+        b = 207,
+        a = u8(f32(alpha) * .78),
+    }
+    for detent in 0 ..= 8 {
+        y := track_top + f32(detent) / 8 * track_height
+        major := detent % 2 == 0
+        draw_antialiased_line(
+            {track_x - (major ? f32(13) : f32(9)), y},
+            {track_x - 6, y},
+            major ? f32(1.3) : f32(.8),
+            tick_color,
+        )
+    }
+
+    // The bright sliding handle is the primary feedback; the percentage is a
+    // secondary confirmation and disappears with the rest of the overlay.
+    draw_antialiased_disc({track_x, level_y}, 8, {r = 6, g = 17, b = 22, a = alpha})
+    draw_antialiased_line({track_x - 12, level_y}, {track_x + 12, level_y}, 4, fill_color)
+    label: cstring = "THR"
     value := fmt.ctprintf("%.0f%%", normalized * 100)
-    value_size := rl.MeasureTextEx(rl.Font{}, value, 11, 1)
-    draw_instrument_text(label, {track_left - 36, top + 2}, 10, 1, {231, 245, 243, 255})
-    draw_instrument_text(value, {track_left - value_size.x - 7, top + 16}, 11, 1, {239, 203, 111, 255})
+    label_size := rl.MeasureTextEx(rl.Font{}, label, 11, 1)
+    value_size := rl.MeasureTextEx(rl.Font{}, value, 13, 1)
+    text_color := rl.Color {
+        r = 231,
+        g = 245,
+        b = 243,
+        a = alpha,
+    }
+    draw_instrument_text(label, {track_x - label_size.x * .5, outer.y + 13}, 11, 1, text_color)
+    draw_instrument_text(value, {track_x - value_size.x * .5, outer.y + outer.height - 21}, 13, 1, fill_color)
 }
 
 draw_vsi_inset :: proc(center: rl.Vector2, radius, vertical_speed: f32) {
     track_x := center.x + radius * .55
-    track_half_height := radius * .32
+    track_half_height := radius * .34
+    capsule := rl.Rectangle {
+        x      = track_x - 10,
+        y      = center.y - track_half_height - 5,
+        width  = 20,
+        height = track_half_height * 2 + 10,
+    }
+    draw_rounded_inset(capsule, 8, {r = 45, g = 60, b = 62, a = 245})
+    face := rl.Rectangle {
+        x      = capsule.x + 2,
+        y      = capsule.y + 2,
+        width  = capsule.width - 4,
+        height = capsule.height - 4,
+    }
+    draw_rounded_inset(face, 6, {r = 5, g = 17, b = 24, a = 255})
+
     track := rl.Color {
         r = 126,
         g = 164,
@@ -3350,15 +4353,22 @@ draw_vsi_inset :: proc(center: rl.Vector2, radius, vertical_speed: f32) {
         b = 213,
         a = 255,
     }
-    draw_antialiased_line({track_x, center.y - track_half_height}, {track_x, center.y + track_half_height}, 1.5, track)
-    draw_antialiased_line({track_x - 4, center.y}, {track_x + 4, center.y}, 1.5, track)
+    draw_antialiased_line({track_x, center.y - track_half_height}, {track_x, center.y + track_half_height}, 1.2, track)
+    for tick in -2 ..= 2 {
+        y := center.y + f32(tick) * track_half_height * .5
+        tick_half := tick == 0 ? f32(5) : f32(3)
+        draw_antialiased_line({track_x - tick_half, y}, {track_x + tick_half, y}, 1, track)
+    }
     end_y := center.y - clamp(vertical_speed / 10, -1, 1) * track_half_height
     draw_antialiased_line({track_x, center.y}, {track_x, end_y}, 3, climb)
-    draw_antialiased_disc({track_x, end_y}, 3.2, climb)
+    draw_antialiased_line({track_x - 6, end_y}, {track_x + 6, end_y}, 2.5, climb)
 
-    readout := fmt.ctprintf("VSI %+.1f", vertical_speed)
-    readout_size := rl.MeasureTextEx(rl.Font{}, readout, 10, 1)
-    draw_instrument_text(readout, {center.x - readout_size.x * .5, center.y + radius * .29}, 10, 1, climb)
+    // Keep the signed rate close to its pointer rather than laying a second
+    // line of text across the altimeter's main scale.
+    readout := fmt.ctprintf("%+.0f", vertical_speed)
+    readout_size := rl.MeasureTextEx(rl.Font{}, readout, 8, 0)
+    readout_y := clamp(end_y - 5, capsule.y + 5, capsule.y + capsule.height - 12)
+    draw_instrument_text(readout, {capsule.x - readout_size.x - 3, readout_y}, 8, 0, climb)
 }
 
 draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f32) {
@@ -3367,9 +4377,9 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
     panel_left := f32(width) * .5 - panel_width * .5
     panel_top := f32(height) - panel_height - 14
     draw_flight_console_panel(
-        {x = panel_left, y = panel_top, width = panel_width, height = panel_height},
+        {panel_left, panel_top, width = panel_width, height = panel_height},
         112,
-        {r = 5, g = 16, b = 25, a = 242},
+        {r = 10, g = 21, b = 21, a = 246},
     )
     body := active_aircraft_body(editor)
     airspeed := active_aircraft_airspeed(editor)
@@ -3389,6 +4399,8 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
         0,
         70,
         fmt.ctprintf("%.0f m/s", airspeed),
+        range_start = 24,
+        range_end = 70,
     )
     draw_attitude_indicator({panel_left + dial_spacing * 1.5, y}, dial_radius, pitch, bank)
     draw_instrument_dial(
@@ -3403,8 +4415,8 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
     )
     draw_vsi_inset({panel_left + dial_spacing * 2.5, y}, dial_radius, vertical_speed)
     compass_y := panel_top + 151
-    draw_heading_compass({f32(width) * .5, compass_y}, 290, heading)
-    draw_power_bar(panel_left + panel_width - 18, panel_top + 135, 40, active_aircraft_throttle(editor))
+    draw_heading_compass({f32(width) * .5, compass_y}, 276, heading)
+    draw_throttle_overlay(editor, width, height, active_aircraft_throttle(editor))
 }
 
 draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f32) {
@@ -3995,6 +5007,25 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", hud), {26, 68}, 13, 1, {r = 236, g = 239, b = 190, a = 255})
             draw_flight_instruments(editor, width, height, altitude)
             crashed := editor.aircraft.active != .Postale ? editor.libellula.crashed : editor.postale.crashed
+            if editor.aircraft.active == .Postale &&
+               editor.postale.landing_feedback_seconds > 0 &&
+               editor.postale.last_landing.outcome != .None {
+                landing := editor.postale.last_landing
+                color := rl.Color{92, 219, 213, 255}
+                if landing.outcome == .Landed do color = {239, 203, 111, 255}
+                if landing.outcome == .Hard_Landing do color = {255, 151, 83, 255}
+                label := postale_game.landing_outcome_label(landing.outcome)
+                detail := fmt.ctprintf(
+                    "%.1f g   %.0f kN   DAMAGE %.0f%%",
+                    landing.load_factor,
+                    landing.impact_force / 1000,
+                    editor.postale.structural_damage * 100,
+                )
+                label_size := rl.MeasureTextEx(rl.Font{}, label, 22, 1)
+                detail_size := rl.MeasureTextEx(rl.Font{}, detail, 13, 1)
+                rl.DrawTextEx(rl.Font{}, label, {f32(width) * .5 - label_size.x * .5, 28}, 22, 1, color)
+                rl.DrawTextEx(rl.Font{}, detail, {f32(width) * .5 - detail_size.x * .5, 54}, 13, 1, color)
+            }
             if crashed {
                 rl.DrawRectangle(width / 2 - 155, height / 2 - 35, 310, 70, {r = 71, g = 18, b = 20, a = 225})
                 reset_key: cstring = controller_prompt_active(editor) ? controller_face_label(editor, .North) : "R"
@@ -4139,7 +5170,7 @@ draw_infinite_ocean :: proc(width, height: i32, time: f32) {
 }
 
 editor_palette_bounds :: proc() -> rl.Rectangle {
-    return {x = 20, y = 116, width = 830, height = 38}
+    return {20, 116, width = 830, height = 38}
 }
 
 editor_palette_button_bounds :: proc(index: int) -> rl.Rectangle {
@@ -4257,15 +5288,15 @@ draw_editor_palette :: proc(editor: ^Editor) {
     }
 }
 
-spawn_button_bounds :: proc() -> rl.Rectangle { return {x = 20, y = 164, width = 170, height = 34} }
+spawn_button_bounds :: proc() -> rl.Rectangle { return {20, 164, width = 170, height = 34} }
 
 editor_overlay_hit :: proc(position: rl.Vector2, width, height: i32) -> bool {
     // These regions are drawn above the viewport and must be treated as UI even
     // when they contain only status text. Otherwise a press on the HUD can
     // begin a terrain stroke through the transparent parts of the overlay.
-    if rl.CheckCollisionPointRec(position, {x = 14, y = 14, width = 826, height = 96}) do return true
-    if rl.CheckCollisionPointRec(position, {x = f32(width) - 560, y = 14, width = 546, height = 40}) do return true
-    if rl.CheckCollisionPointRec(position, {x = 20, y = 210, width = 830, height = 30}) do return true
+    if rl.CheckCollisionPointRec(position, {14, 14, width = 826, height = 96}) do return true
+    if rl.CheckCollisionPointRec(position, {f32(width) - 560, 14, width = 546, height = 40}) do return true
+    if rl.CheckCollisionPointRec(position, {20, 210, width = 830, height = 30}) do return true
     return false
 }
 
@@ -4684,9 +5715,9 @@ vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
     aircraft_distance := linalg.dot(aircraft_delta, aircraft_delta)
     aircraft_radius := aircraft.interaction_radius
     if aircraft_radius <= 0 do aircraft_radius = 2.5
-    attendant_delta := (editor.player.position - editor.attendant_position)
-    attendant_distance := linalg.dot(attendant_delta, attendant_delta)
-    attendant_near := editor.libellula_visible && attendant_distance <= 2.25 * 2.25
+    attendant_resident, _, attendant_near := nearest_service_attendant(editor)
+    dockmaster_near := markov_marina_dockmaster_near(editor)
+    story_resident, _, story_near := nearest_story_resident(editor, require_action = true)
     trailer_near := car_trailer_interaction_near(editor)
     car_near := car_distance <= car_radius * car_radius
     aircraft_near := aircraft_distance <= aircraft_radius * aircraft_radius
@@ -4694,6 +5725,22 @@ vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
         if editor.car_trailer_attached do return "PRESS F TO DETACH TRAILER"
         if car_trailer_can_attach(editor) do return "PRESS F TO ATTACH TRAILER"
         return "ALIGN CAR TO ATTACH TRAILER"
+    }
+    if dockmaster_near {
+        if controller_prompt_active(editor) {
+            return fmt.ctprintf("PRESS %s TO TALK TO VESNA", controller_face_label(editor, .West))
+        }
+        return "PRESS F TO TALK TO VESNA"
+    }
+    if story_near {
+        if controller_prompt_active(editor) {
+            return fmt.ctprintf(
+                "PRESS %s TO TALK TO %s",
+                controller_face_label(editor, .West),
+                story.resident_name(story_resident),
+            )
+        }
+        return fmt.ctprintf("PRESS F TO TALK TO %s", story.resident_name(story_resident))
     }
     if car_near && (!aircraft_near || car_distance <= aircraft_distance) {
         if controller_prompt_active(editor) {
@@ -4713,9 +5760,13 @@ vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
     }
     if attendant_near {
         if controller_prompt_active(editor) {
-            return fmt.ctprintf("PRESS %s TO TALK TO MARTA", controller_face_label(editor, .West))
+            return fmt.ctprintf(
+                "PRESS %s TO TALK TO %s",
+                controller_face_label(editor, .West),
+                story.resident_name(attendant_resident),
+            )
         }
-        return "PRESS F TO TALK TO MARTA"
+        return fmt.ctprintf("PRESS F TO TALK TO %s", story.resident_name(attendant_resident))
     }
     return nil
 }
@@ -4750,6 +5801,7 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
         // cover occupants wherever they overlap the vehicle silhouette.
         return
     }
+    if lab_scene_draw_ui(editor, width, height) do return
     draw_postale_speed_effects(editor, width, height, time)
     control_hint_draw_gameplay_hud(editor, width)
     if editor.in_map {
@@ -4764,6 +5816,7 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
             draw_flight_instruments(editor, width, height, altitude)
         } else if editor.attendant_dialogue_open {
             panel := attendant_dialogue_panel(editor, width, height)
+            tarot_layout_draw(editor, panel)
             rl.DrawRectangleRounded(panel, .08, 10, {8, 28, 45, 238})
             rl.DrawRectangleRoundedLinesEx(panel, .08, 10, 1, {86, 153, 158, 255})
             conversation := &editor.attendant_dialogue
@@ -4830,6 +5883,586 @@ hot_reload_requested :: proc(library_path: string, loaded_mtime: i64) -> bool {
     if err != nil do return false
     modified_mtime := time.time_to_unix_nano(modified)
     return modified_mtime > loaded_mtime
+}
+
+Loading_Postcard_Period :: enum {
+    Dawn,
+    Morning,
+    Midday,
+    Golden_Hour,
+    Dusk,
+    Night,
+}
+
+loading_postcard_period_for_hour :: proc(hour: int) -> Loading_Postcard_Period {
+    normalized_hour := ((hour % 24) + 24) % 24
+    switch normalized_hour {
+    case 4 ..= 6:
+        return .Dawn
+    case 7 ..= 10:
+        return .Morning
+    case 11 ..= 15:
+        return .Midday
+    case 16 ..= 18:
+        return .Golden_Hour
+    case 19 ..= 21:
+        return .Dusk
+    case:
+        return .Night
+    }
+}
+
+loading_postcard_period_from_name :: proc(name: string) -> (Loading_Postcard_Period, bool) {
+    switch name {
+    case "dawn":
+        return .Dawn, true
+    case "morning":
+        return .Morning, true
+    case "midday":
+        return .Midday, true
+    case "golden-hour", "golden":
+        return .Golden_Hour, true
+    case "dusk":
+        return .Dusk, true
+    case "night":
+        return .Night, true
+    case:
+        return {}, false
+    }
+}
+
+loading_postcard_path :: proc(period: Loading_Postcard_Period) -> string {
+    switch period {
+    case .Dawn:
+        return "assets/textures/ui/loading-postcard-dawn.jpg"
+    case .Morning:
+        return "assets/textures/ui/loading-postcard-morning.jpg"
+    case .Midday:
+        return "assets/textures/ui/loading-postcard-midday.jpg"
+    case .Golden_Hour:
+        return "assets/textures/ui/loading-postcard-golden-hour.jpg"
+    case .Dusk:
+        return "assets/textures/ui/loading-postcard-dusk.jpg"
+    case .Night:
+        return "assets/textures/ui/loading-postcard-night.jpg"
+    }
+    return "assets/textures/ui/loading-postcard-midday.jpg"
+}
+
+loading_postcard_local_hour :: proc() -> int {
+    now := time.now()
+    utc_datetime, datetime_ok := time.time_to_datetime(now)
+    if !datetime_ok {
+        hour, _, _ := time.clock(now)
+        return hour
+    }
+    local_region, region_ok := timezone.region_load("local", context.temp_allocator)
+    if !region_ok {
+        hour, _, _ := time.clock(now)
+        return hour
+    }
+    defer timezone.region_destroy(local_region, context.temp_allocator)
+    local_datetime, local_ok := timezone.datetime_to_tz(utc_datetime, local_region)
+    if !local_ok {
+        hour, _, _ := time.clock(now)
+        return hour
+    }
+    return int(local_datetime.hour)
+}
+
+draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: cstring, postcard: rl.Texture = {}) {
+    w, h := f32(width), f32(height)
+    center := rl.Vector2{w * .5, h * .5}
+    scale := min(w / 1280, h / 720)
+    ui_scale := max(scale, f32(.85))
+    animation_time := f32(rl.GetTime())
+    normalized_progress := clamp(progress, 0, 1)
+    horizon := h * .52
+    sun := rl.Vector2{center.x + 178 * scale, horizon - 112 * scale}
+    title: cstring = "ADRIATIC"
+    greeting: cstring = "GREETINGS FROM"
+    title_font_size := max(48 * scale, f32(32))
+    greeting_font_size := max(14 * scale, f32(11))
+    message_font_size := max(14 * scale, f32(13))
+    title_size := rl.MeasureTextEx(rl.Font{}, title, title_font_size, 7 * scale)
+    greeting_size := rl.MeasureTextEx(rl.Font{}, greeting, greeting_font_size, 3 * scale)
+    message_size := rl.MeasureTextEx(rl.Font{}, message, message_font_size, 1)
+    track_width := min(w - 96, 420 * ui_scale)
+    track := rl.Rectangle {
+        x      = center.x - track_width * .5,
+        y      = h - 72 * ui_scale,
+        width  = track_width,
+        height = 7 * ui_scale,
+    }
+
+    if postcard.ready {
+        rl.BeginDrawing()
+        rl.DrawTexturePro(
+            postcard,
+            {0, 0, f32(postcard.width), f32(postcard.height)},
+            {0, 0, w, h},
+            {255, 255, 255, 255},
+        )
+
+        // Live ink strokes retain the gentle movement of the procedural
+        // version without competing with the illustrated background.
+        for ripple in 0 ..< 7 {
+            ripple_y := h * .73 + f32(ripple) * 18 * scale
+            ripple_x :=
+                center.x -
+                430 * scale +
+                f32((ripple * 149) % 710) * scale +
+                math.sin(animation_time * .8 + f32(ripple)) * 7 * scale
+            rl.DrawLineEx(
+                {ripple_x, ripple_y},
+                {ripple_x + (25 + f32(ripple % 3) * 11) * scale, ripple_y},
+                max(1, scale),
+                {225, 207, 155, 75},
+            )
+        }
+
+        boat_x := center.x - 390 * scale + normalized_progress * 245 * scale
+        boat_y := h * .73 + math.sin(animation_time * 1.7) * 2.5 * scale
+        rl.DrawLineEx({boat_x, boat_y - 42 * scale}, {boat_x, boat_y + 2 * scale}, 2 * scale, {54, 42, 36, 255})
+        for sail_row in 0 ..< 9 {
+            sail_y := boat_y - (38 - f32(sail_row) * 4) * scale
+            sail_width := (2 + f32(sail_row) * 2.1) * scale
+            rl.DrawLineEx(
+                {boat_x + 2 * scale, sail_y},
+                {boat_x + 2 * scale + sail_width, sail_y},
+                3.5 * scale,
+                {244, 224, 177, 245},
+            )
+        }
+        rl.DrawLineEx(
+            {boat_x - 16 * scale, boat_y + 4 * scale},
+            {boat_x + 22 * scale, boat_y + 4 * scale},
+            7 * scale,
+            {135, 59, 43, 255},
+        )
+        for wake in 0 ..< 3 {
+            wake_y := boat_y + (11 + f32(wake) * 6) * scale
+            wake_half_width := (16 + f32(wake) * 9) * scale
+            rl.DrawLineEx(
+                {boat_x - wake_half_width, wake_y},
+                {boat_x + wake_half_width, wake_y},
+                max(1, scale),
+                {226, 214, 174, u8(105 - wake * 22)},
+            )
+        }
+
+        rl.DrawTextEx(
+            rl.Font{},
+            greeting,
+            {center.x - greeting_size.x * .5, 55 * ui_scale},
+            greeting_font_size,
+            3 * scale,
+            {246, 222, 172, 230},
+        )
+        rl.DrawTextEx(
+            rl.Font{},
+            title,
+            {center.x - title_size.x * .5 + 2 * scale, 77 * ui_scale + 2 * scale},
+            title_font_size,
+            7 * scale,
+            {154, 58, 49, 210},
+        )
+        rl.DrawTextEx(
+            rl.Font{},
+            title,
+            {center.x - title_size.x * .5, 76 * ui_scale},
+            title_font_size,
+            7 * scale,
+            {248, 239, 203, 255},
+        )
+        rl.DrawTextEx(
+            rl.Font{},
+            message,
+            {center.x - message_size.x * .5, track.y - 29 * ui_scale},
+            message_font_size,
+            1,
+            {226, 226, 204, 255},
+        )
+        rl.DrawRectangleRounded(track, 1, 8, {5, 24, 34, 220})
+        if normalized_progress > 0 {
+            fill := track
+            fill.width *= normalized_progress
+            rl.DrawRectangleRounded(fill, 1, 8, {241, 188, 93, 255})
+            if fill.width > 24 * scale {
+                glint_phase := math.sin(animation_time * 1.1) * .5 + .5
+                glint_x := fill.x + 8 * scale + (fill.width - 16 * scale) * glint_phase
+                rl.DrawLineEx(
+                    {glint_x, fill.y + scale},
+                    {glint_x, fill.y + fill.height - scale},
+                    2 * scale,
+                    {255, 238, 177, 180},
+                )
+            }
+        }
+
+        frame_width := max(10 * scale, f32(8))
+        frame_color := rl.Color{238, 221, 181, 255}
+        rl.DrawRectangle(0, 0, width, i32(frame_width), frame_color)
+        rl.DrawRectangle(0, height - i32(frame_width), width, i32(frame_width), frame_color)
+        rl.DrawRectangle(0, 0, i32(frame_width), height, frame_color)
+        rl.DrawRectangle(width - i32(frame_width), 0, i32(frame_width), height, frame_color)
+        rl.DrawRectangleRoundedLinesEx(
+            {frame_width, frame_width, w - frame_width * 2, h - frame_width * 2},
+            .01,
+            2,
+            max(1, 2 * scale),
+            {104, 59, 49, 180},
+        )
+        rl.EndDrawing()
+        return
+    }
+
+    rl.BeginDrawing()
+
+    // A painted dawn built only from first-frame-safe primitives.
+    sky_colors := [8]rl.Color {
+        {8, 27, 43, 255},
+        {10, 37, 54, 255},
+        {15, 49, 64, 255},
+        {25, 65, 76, 255},
+        {53, 89, 91, 255},
+        {104, 121, 105, 255},
+        {166, 145, 112, 255},
+        {218, 174, 123, 255},
+    }
+    sky_band_height := horizon / f32(len(sky_colors))
+    for color, band in sky_colors {
+        rl.DrawRectangle(0, i32(f32(band) * sky_band_height), width, i32(sky_band_height + 2), color)
+    }
+
+    sun_pulse := 1 + math.sin(animation_time * 1.4) * .035
+    rl.DrawCircleV(sun, 52 * scale * sun_pulse, {239, 174, 93, 24})
+    rl.DrawCircleV(sun, 37 * scale * sun_pulse, {245, 188, 99, 45})
+    rl.DrawCircleV(sun, 21 * scale, {255, 213, 135, 255})
+
+    cloud_color := rl.Color{227, 214, 184, 72}
+    rl.DrawCircleV({center.x - 310 * scale, horizon - 176 * scale}, 18 * scale, cloud_color)
+    rl.DrawCircleV({center.x - 286 * scale, horizon - 181 * scale}, 25 * scale, cloud_color)
+    rl.DrawCircleV({center.x - 257 * scale, horizon - 174 * scale}, 17 * scale, cloud_color)
+    rl.DrawRectangle(
+        i32(center.x - 326 * scale),
+        i32(horizon - 180 * scale),
+        i32(88 * scale),
+        i32(20 * scale),
+        cloud_color,
+    )
+    bird_color := rl.Color{12, 43, 56, 150}
+    for bird in 0 ..< 3 {
+        bx := center.x - 58 * scale + f32(bird) * 37 * scale
+        by := horizon - (142 + f32(bird % 2) * 11) * scale + math.sin(animation_time * 1.1 + f32(bird)) * 2.5 * scale
+        rl.DrawLineEx({bx - 7 * scale, by}, {bx, by + 3 * scale}, 1.4 * scale, bird_color)
+        rl.DrawLineEx({bx, by + 3 * scale}, {bx + 7 * scale, by - scale}, 1.4 * scale, bird_color)
+    }
+
+    // Distant land is drawn before the sea, leaving only its soft ridgeline.
+    distant_island := rl.Color{29, 68, 70, 255}
+    rl.DrawCircleV({center.x - 350 * scale, horizon + 34 * scale}, 92 * scale, distant_island)
+    rl.DrawCircleV({center.x - 245 * scale, horizon + 55 * scale}, 118 * scale, distant_island)
+    rl.DrawCircleV({center.x + 410 * scale, horizon + 43 * scale}, 104 * scale, distant_island)
+    rl.DrawCircleV({center.x + 512 * scale, horizon + 62 * scale}, 128 * scale, distant_island)
+
+    sea_colors := [5]rl.Color {
+        {25, 88, 96, 255},
+        {20, 78, 89, 255},
+        {15, 65, 80, 255},
+        {11, 52, 70, 255},
+        {8, 40, 58, 255},
+    }
+    sea_band_height := (h - horizon) / f32(len(sea_colors))
+    for color, band in sea_colors {
+        rl.DrawRectangle(0, i32(horizon + f32(band) * sea_band_height), width, i32(sea_band_height + 2), color)
+    }
+    for reflection in 0 ..< 8 {
+        reflection_width := (18 + f32(reflection) * 7) * scale
+        reflection_y := horizon + (12 + f32(reflection) * 17) * scale
+        reflection_drift := math.sin(animation_time * 1.8 + f32(reflection) * .8) * 5 * scale
+        rl.DrawLineEx(
+            {sun.x - reflection_width * .5 + f32(reflection % 2) * 8 * scale + reflection_drift, reflection_y},
+            {sun.x + reflection_width * .5 + reflection_drift, reflection_y},
+            max(1, 1.8 * scale),
+            {246, 192, 111, u8(150 - reflection * 12)},
+        )
+    }
+    for wave in 0 ..< 9 {
+        wave_y := horizon + (34 + f32(wave) * 21) * scale
+        wave_x :=
+            center.x -
+            530 * scale +
+            f32((wave * 137) % 780) * scale +
+            math.sin(animation_time * .9 + f32(wave)) * 8 * scale
+        rl.DrawLineEx(
+            {wave_x, wave_y},
+            {wave_x + (28 + f32(wave % 3) * 12) * scale, wave_y},
+            max(1, scale),
+            {132, 190, 181, 80},
+        )
+    }
+
+    // A close island village gives the screen a recognizable coastal identity.
+    island_y := horizon + 52 * scale
+    island_color := rl.Color{12, 45, 52, 255}
+    rl.DrawCircleV({center.x - 118 * scale, island_y + 70 * scale}, 124 * scale, island_color)
+    rl.DrawCircleV({center.x + 12 * scale, island_y + 83 * scale}, 148 * scale, island_color)
+    rl.DrawCircleV({center.x + 148 * scale, island_y + 76 * scale}, 130 * scale, island_color)
+
+    // Sparse terrace marks break the foreground into cultivated slopes while
+    // retaining the bold silhouette of the screen-print layer.
+    terrace_color := rl.Color{45, 91, 76, 175}
+    terrace_specs := [5][3]f32{{-154, 32, 86}, {-86, 66, 128}, {48, 40, 104}, {72, 82, 142}, {-36, 112, 92}}
+    for terrace in terrace_specs {
+        terrace_x := center.x + terrace[0] * scale
+        terrace_y := island_y + terrace[1] * scale
+        terrace_width := terrace[2] * scale
+        rl.DrawLineEx(
+            {terrace_x - terrace_width * .5, terrace_y},
+            {terrace_x + terrace_width * .5, terrace_y},
+            max(1, 1.4 * scale),
+            terrace_color,
+        )
+    }
+
+    house_color := rl.Color{229, 212, 171, 255}
+    roof_color := rl.Color{168, 74, 54, 255}
+    window_dark := rl.Color{22, 62, 67, 255}
+
+    // Cypress spires break up the roofline and make the settlement read as
+    // Mediterranean at postcard scale.
+    cypress_color := rl.Color{18, 63, 58, 255}
+    cypress_positions := [5]f32{-172, -70, 44, 132, 202}
+    for offset, tree in cypress_positions {
+        tree_x := center.x + offset * scale
+        tree_base_y := island_y - (2 + f32(tree % 3) * 6) * scale
+        tree_height := (28 + f32((tree * 7) % 13)) * scale
+        rl.DrawLineEx({tree_x, tree_base_y}, {tree_x, tree_base_y - tree_height}, 7 * scale, cypress_color)
+        rl.DrawLineEx(
+            {tree_x, tree_base_y - tree_height * .72},
+            {tree_x, tree_base_y - tree_height},
+            3 * scale,
+            {26, 78, 66, 255},
+        )
+    }
+
+    // Two compact bougainvillea clusters introduce the saturated postcard ink
+    // accent without turning the quiet village into visual noise.
+    bougainvillea_centers := [2]rl.Vector2 {
+        {center.x - 185 * scale, island_y - 28 * scale},
+        {center.x + 129 * scale, island_y - 47 * scale},
+    }
+    for cluster, cluster_index in bougainvillea_centers {
+        sway := math.sin(animation_time * 1.3 + f32(cluster_index) * 1.7) * 1.2 * scale
+        rl.DrawLineEx(
+            {cluster.x, cluster.y + 18 * scale},
+            {cluster.x + sway, cluster.y - 8 * scale},
+            2 * scale,
+            {47, 91, 65, 210},
+        )
+        for blossom in 0 ..< 11 {
+            blossom_x := cluster.x + (f32((blossom * 11) % 27) - 13) * scale + sway * f32(blossom % 2)
+            blossom_y := cluster.y + (f32((blossom * 7) % 25) - 12) * scale
+            blossom_color := blossom % 3 == 0 ? rl.Color{232, 87, 112, 245} : rl.Color{190, 52, 91, 235}
+            rl.DrawCircleV({blossom_x, blossom_y}, (3.5 + f32(blossom % 2) * 1.2) * scale, blossom_color)
+        }
+    }
+
+    for house in 0 ..< 7 {
+        house_x := center.x - 210 * scale + f32(house) * 63 * scale
+        rise := f32((house * 17) % 38) * scale
+        house_y := island_y - (12 * scale + rise)
+        house_width := (34 + f32(house % 3) * 5) * scale
+        house_height := (32 + f32((house + 1) % 3) * 8) * scale
+        rl.DrawRectangle(i32(house_x), i32(house_y - house_height), i32(house_width), i32(house_height), house_color)
+        rl.DrawLineEx(
+            {house_x - 3 * scale, house_y - house_height},
+            {house_x + house_width * .5, house_y - house_height - 10 * scale},
+            5 * scale,
+            roof_color,
+        )
+        rl.DrawLineEx(
+            {house_x + house_width * .5, house_y - house_height - 10 * scale},
+            {house_x + house_width + 3 * scale, house_y - house_height},
+            5 * scale,
+            roof_color,
+        )
+        window_color := normalized_progress >= f32(house + 1) / 8 ? rl.Color{246, 190, 91, 255} : window_dark
+        rl.DrawRectangle(
+            i32(house_x + house_width * .5 - 3 * scale),
+            i32(house_y - house_height * .55),
+            i32(6 * scale),
+            i32(8 * scale),
+            window_color,
+        )
+    }
+
+    // A small campanile adds a vertical village landmark distinct from the
+    // harbor lighthouse.
+    campanile_x := center.x + 54 * scale
+    campanile_base_y := island_y - 28 * scale
+    rl.DrawRectangle(
+        i32(campanile_x),
+        i32(campanile_base_y - 55 * scale),
+        i32(22 * scale),
+        i32(55 * scale),
+        {220, 202, 161, 255},
+    )
+    rl.DrawLineEx(
+        {campanile_x - 3 * scale, campanile_base_y - 55 * scale},
+        {campanile_x + 11 * scale, campanile_base_y - 67 * scale},
+        5 * scale,
+        roof_color,
+    )
+    rl.DrawLineEx(
+        {campanile_x + 11 * scale, campanile_base_y - 67 * scale},
+        {campanile_x + 25 * scale, campanile_base_y - 55 * scale},
+        5 * scale,
+        roof_color,
+    )
+    rl.DrawCircleV({campanile_x + 11 * scale, campanile_base_y - 43 * scale}, 4 * scale, window_dark)
+
+    lighthouse_x := center.x + 223 * scale
+    lighthouse_base_y := island_y - 22 * scale
+    rl.DrawRectangle(
+        i32(lighthouse_x),
+        i32(lighthouse_base_y - 69 * scale),
+        i32(18 * scale),
+        i32(69 * scale),
+        {236, 220, 181, 255},
+    )
+    rl.DrawRectangle(
+        i32(lighthouse_x - 4 * scale),
+        i32(lighthouse_base_y - 75 * scale),
+        i32(26 * scale),
+        i32(8 * scale),
+        roof_color,
+    )
+    rl.DrawCircleV({lighthouse_x + 9 * scale, lighthouse_base_y - 71 * scale}, 4 * scale, {255, 211, 116, 255})
+    beam_alpha := u8(18 + (math.sin(animation_time * 1.2) * .5 + .5) * 18)
+    rl.DrawLineEx(
+        {lighthouse_x + 12 * scale, lighthouse_base_y - 71 * scale},
+        {lighthouse_x + 116 * scale, lighthouse_base_y - 88 * scale},
+        9 * scale,
+        {255, 221, 145, beam_alpha},
+    )
+
+    // The boat crosses the bay as work completes; the picture itself progresses.
+    boat_x := center.x - 390 * scale + normalized_progress * 245 * scale
+    boat_y := horizon + 88 * scale + math.sin(animation_time * 1.7) * 2.5 * scale
+    rl.DrawLineEx({boat_x, boat_y - 42 * scale}, {boat_x, boat_y + 2 * scale}, 2 * scale, {66, 49, 40, 255})
+    for sail_row in 0 ..< 9 {
+        sail_y := boat_y - (38 - f32(sail_row) * 4) * scale
+        sail_width := (2 + f32(sail_row) * 2.1) * scale
+        rl.DrawLineEx(
+            {boat_x + 2 * scale, sail_y},
+            {boat_x + 2 * scale + sail_width, sail_y},
+            3.5 * scale,
+            {241, 229, 201, 240},
+        )
+    }
+    rl.DrawLineEx(
+        {boat_x - 16 * scale, boat_y + 4 * scale},
+        {boat_x + 22 * scale, boat_y + 4 * scale},
+        7 * scale,
+        {117, 55, 43, 255},
+    )
+    for wake in 0 ..< 3 {
+        wake_y := boat_y + (11 + f32(wake) * 6) * scale
+        wake_half_width := (16 + f32(wake) * 9) * scale
+        rl.DrawLineEx(
+            {boat_x - wake_half_width, wake_y},
+            {boat_x + wake_half_width, wake_y},
+            max(1, scale),
+            {184, 213, 193, u8(100 - wake * 22)},
+        )
+    }
+
+    // A tiny quay visually ties the boat to the village instead of leaving it
+    // floating against an abstract silhouette.
+    quay_x := center.x - 246 * scale
+    quay_y := horizon + 111 * scale
+    rl.DrawLineEx({quay_x, quay_y}, {quay_x + 78 * scale, quay_y}, 7 * scale, {101, 70, 53, 255})
+    for post in 0 ..< 3 {
+        post_x := quay_x + f32(post) * 37 * scale
+        rl.DrawLineEx({post_x, quay_y - 4 * scale}, {post_x, quay_y + 13 * scale}, 3 * scale, {76, 55, 46, 255})
+    }
+
+    // Sparse, fixed flecks soften the digital bands into a lightly weathered
+    // screen-print surface without introducing an asset-loading dependency.
+    for fleck in 0 ..< 72 {
+        fleck_x := f32((fleck * 197 + 83) % max(int(width) - 28, 1) + 14)
+        fleck_y := f32((fleck * 109 + 47) % max(int(height) - 28, 1) + 14)
+        fleck_color := fleck % 3 == 0 ? rl.Color{244, 224, 184, 16} : rl.Color{5, 29, 38, 12}
+        rl.DrawCircleV({fleck_x, fleck_y}, max(.55, scale * .7), fleck_color)
+    }
+
+    // Slightly offset ink layers mimic imperfect registration on a vintage
+    // postcard, while the cream frame keeps the image feeling printed.
+    rl.DrawTextEx(
+        rl.Font{},
+        greeting,
+        {center.x - greeting_size.x * .5, 55 * ui_scale},
+        greeting_font_size,
+        3 * scale,
+        {246, 222, 172, 230},
+    )
+    rl.DrawTextEx(
+        rl.Font{},
+        title,
+        {center.x - title_size.x * .5 + 2 * scale, 77 * ui_scale + 2 * scale},
+        title_font_size,
+        7 * scale,
+        {154, 58, 49, 210},
+    )
+    rl.DrawTextEx(
+        rl.Font{},
+        title,
+        {center.x - title_size.x * .5, 76 * ui_scale},
+        title_font_size,
+        7 * scale,
+        {248, 239, 203, 255},
+    )
+    rl.DrawTextEx(
+        rl.Font{},
+        message,
+        {center.x - message_size.x * .5, track.y - 29 * ui_scale},
+        message_font_size,
+        1,
+        {194, 221, 215, 255},
+    )
+    rl.DrawRectangleRounded(track, 1, 8, {5, 24, 34, 210})
+    if normalized_progress > 0 {
+        fill := track
+        fill.width *= normalized_progress
+        rl.DrawRectangleRounded(fill, 1, 8, {241, 188, 93, 255})
+        if fill.width > 24 * scale {
+            glint_phase := math.sin(animation_time * 1.1) * .5 + .5
+            glint_x := fill.x + 8 * scale + (fill.width - 16 * scale) * glint_phase
+            rl.DrawLineEx(
+                {glint_x, fill.y + scale},
+                {glint_x, fill.y + fill.height - scale},
+                2 * scale,
+                {255, 238, 177, 180},
+            )
+        }
+    }
+
+    frame_width := max(10 * scale, f32(8))
+    frame_color := rl.Color{238, 221, 181, 255}
+    rl.DrawRectangle(0, 0, width, i32(frame_width), frame_color)
+    rl.DrawRectangle(0, height - i32(frame_width), width, i32(frame_width), frame_color)
+    rl.DrawRectangle(0, 0, i32(frame_width), height, frame_color)
+    rl.DrawRectangle(width - i32(frame_width), 0, i32(frame_width), height, frame_color)
+    rl.DrawRectangleRoundedLinesEx(
+        {frame_width, frame_width, w - frame_width * 2, h - frame_width * 2},
+        .01,
+        2,
+        max(1, 2 * scale),
+        {104, 59, 49, 180},
+    )
+    rl.EndDrawing()
 }
 
 Hot_State_File_Header :: struct {
@@ -4942,6 +6575,7 @@ adriatic_run :: proc(
     context.allocator = back.tracking_allocator(&tracking)
     defer back.tracking_allocator_print_results(&tracking)
 
+    first_start := persistent_canvas_state == nil
     rl.SetPersistentState(persistent_canvas_state)
     assert(rl.SetRendererDescriptor(ADRIATIC_RENDERER_DESCRIPTOR))
     benchmark_requested := len(args) >= 2 && args[1] == "--benchmark"
@@ -4952,6 +6586,9 @@ adriatic_run :: proc(
         return .Quit
     }
     benchmark_mode := benchmark_requested && len(args) >= 9
+    loading_preview_mode := len(args) >= 3 && args[1] == "--loading-preview"
+    loading_preview_output := loading_preview_mode ? args[2] : ""
+    loading_lab_mode := len(args) >= 3 && args[1] == "--lab" && args[2] == "loading-screen"
     benchmark_scenario := benchmark_mode ? args[2] : ""
     benchmark_warmup, benchmark_frames := 0, 0
     benchmark_window_width, benchmark_window_height := 1280, 720
@@ -4977,6 +6614,8 @@ adriatic_run :: proc(
     capture_mode := capture_kind != .None
     capture_editor_mode := capture_kind == .Editor
     showcase_interactive_mode := len(args) >= 2 && args[1] == "--vehicle-showcase"
+    interactive_lab_request, interactive_lab_mode := lab_scene_request_from_args(args)
+    legacy_shadow_lab_mode := len(args) >= 2 && args[1] == "--shadow-lab"
     capture_sky_mode := capture_kind in CAPTURE_SKY_KINDS
     capture_map_mode := capture_kind == .Map || capture_sky_mode
     capture_flight_mode := capture_kind == .Flight
@@ -4991,6 +6630,7 @@ adriatic_run :: proc(
     capture_road_grip_mode := capture_kind == .Road_Grip
     capture_terrain_grip_mode := capture_kind == .Terrain_Grip
     capture_building_mode := capture_kind == .Building
+    capture_story_meeting_mode := capture_kind == .Story_Meeting
     capture_foliage_mode := capture_kind == .Foliage
     capture_foliage_forest_mode := capture_kind in CAPTURE_FOLIAGE_FOREST_KINDS
     capture_foliage_motion_mode := capture_kind in CAPTURE_FOLIAGE_MOTION_KINDS
@@ -5000,13 +6640,48 @@ adriatic_run :: proc(
     capture_foliage_stress_mode := capture_kind == .Foliage_Stress
     capture_grass_wind_mode := capture_kind == .Grass_Wind
     capture_wildflower_lab_mode := capture_kind == .Wildflower_Lab
-    capture_map_mode = capture_map_mode || capture_grass_wind_mode || capture_wildflower_lab_mode
+    capture_markov_town_mode :=
+        capture_kind in
+        bit_set[Capture_Kind]{.Markov_Town, .Markov_City, .Markov_Village, .Aegean_City, .Aegean_Town, .Aegean_Village}
+    capture_lab_name := ""
+    #partial switch capture_kind {
+    case .Markov_Town:
+        capture_lab_name = "markov-town"
+    case .Markov_City:
+        capture_lab_name = "markov-city"
+    case .Markov_Village:
+        capture_lab_name = "markov-village"
+    case .Aegean_City:
+        capture_lab_name = "aegean-city"
+    case .Aegean_Town:
+        capture_lab_name = "aegean-town"
+    case .Aegean_Village:
+        capture_lab_name = "aegean-village"
+    }
+    if capture_kind == .Shadow_Lab do capture_lab_name = "shadow"
+    if capture_wildflower_lab_mode do capture_lab_name = "wildflower"
+    if capture_kind == .Boat_Lab do capture_lab_name = "boat"
+    if capture_kind == .Markov_Wreck do capture_lab_name = "markov-wreck"
+    if capture_kind == .Markov_Marina do capture_lab_name = "markov-marina"
+    if capture_kind == .Markov_Farmland do capture_lab_name = "markov-farmland"
+    capture_lab_mode := capture_lab_name != ""
+    capture_map_mode =
+        capture_map_mode ||
+        capture_grass_wind_mode ||
+        capture_wildflower_lab_mode ||
+        capture_markov_town_mode ||
+        capture_kind == .Shadow_Lab ||
+        capture_kind == .Boat_Lab ||
+        capture_kind == .Markov_Wreck ||
+        capture_kind == .Markov_Marina ||
+        capture_kind == .Markov_Farmland
     capture_target := request != nil ? request.target : (capture_mode && len(args) >= 4 ? args[3] : "")
     capture_output := request != nil ? request.output_path : (capture_mode && len(args) >= 3 ? args[2] : "")
     showcase_target := showcase_interactive_mode ? (len(args) >= 3 ? args[2] : "") : capture_target
     capture_player_mode := capture_kind == .Map && capture_target != ""
     if capture_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     if benchmark_mode do flags += {.WINDOW_NOT_FOCUSABLE}
+    if loading_preview_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     rl.SetConfigFlags(flags)
     rl.SetWorldRenderSize(
         u32(benchmark_mode ? benchmark_world_width : ADRIATIC_WORLD_WIDTH),
@@ -5017,6 +6692,45 @@ adriatic_run :: proc(
     if capture_kind == .Narrow do initial_width = 1000
     if capture_kind == .Compact do initial_width = 760
     rl.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring")
+    show_loading_screen := first_start && !capture_mode && !benchmark_mode
+    postcard: rl.Texture
+    if loading_lab_mode || loading_preview_mode || show_loading_screen {
+        postcard_period := loading_postcard_period_for_hour(loading_postcard_local_hour())
+        period_override := ""
+        if loading_lab_mode && len(args) >= 4 do period_override = args[3]
+        if loading_preview_mode && len(args) >= 4 do period_override = args[3]
+        if period_override != "" {
+            if override, known := loading_postcard_period_from_name(period_override); known {
+                postcard_period = override
+            } else {
+                fmt.eprintf(
+                    "unknown loading postcard period %s; expected dawn, morning, midday, golden-hour, dusk, or night\n",
+                    period_override,
+                )
+            }
+        }
+        draw_startup_loading_screen(initial_width, initial_height, .02, "Opening the harbor...")
+        postcard = rl.LoadTexture(loading_postcard_path(postcard_period))
+        if !postcard.ready do fmt.eprintln("loading postcard texture failed; using procedural fallback")
+    }
+    if loading_lab_mode {
+        defer rl.CloseWindow()
+        for !rl.WindowShouldClose() {
+            draw_startup_loading_screen(initial_width, initial_height, .62, "Wish you were here...", postcard)
+        }
+        return .Quit
+    }
+    if loading_preview_mode {
+        defer rl.CloseWindow()
+        for preview_frame in 0 ..< 33 {
+            draw_startup_loading_screen(initial_width, initial_height, .62, "Raising the islands...", postcard)
+            if preview_frame == 2 do rl.TakeScreenshot(fmt.ctprintf("%s", loading_preview_output))
+        }
+        return .Quit
+    }
+    if show_loading_screen {
+        draw_startup_loading_screen(initial_width, initial_height, .04, "Opening the harbor...", postcard)
+    }
     reload_requested := false
     defer if !reload_requested do rl.DestroyPersistentState()
     wind_sound: wind_audio.Runtime
@@ -5049,10 +6763,14 @@ adriatic_run :: proc(
             fmt.eprintf("spray audio unavailable: %s\n", sdl.GetError())
         }
     }
+    if show_loading_screen {
+        draw_startup_loading_screen(initial_width, initial_height, .20, "Tuning the sea and wind...", postcard)
+    }
     editor := new(Editor)
     defer free(editor)
     defer dio.flame_graph_destroy(&editor.flame_graph)
     defer greek_asset_destroy(editor)
+    story.init_catalog(&editor.story_catalog)
     engine_audio_ready := !capture_mode && !benchmark_mode && engine_sound.open(&editor.engine_audio)
     if engine_audio_ready do defer engine_sound.close(&editor.engine_audio)
     vehicle_paint_history_init(editor)
@@ -5071,6 +6789,9 @@ adriatic_run :: proc(
     vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
     editor.postale_base_mesh = vehicles.postale_mesh()
     vehicles.mesh_generate_smooth_normals(&editor.postale_base_mesh)
+    if show_loading_screen {
+        draw_startup_loading_screen(initial_width, initial_height, .42, "Preparing aircraft and boats...", postcard)
+    }
     editor.libellula_projected_faces = make(
         [dynamic]Projected_Aircraft_Face,
         0,
@@ -5078,7 +6799,13 @@ adriatic_run :: proc(
     )
     defer delete(editor.libellula_projected_faces)
     terrain.init_project(&editor.project)
-    if !capture_mode && !benchmark_mode do seed_default_island_towns(editor)
+    if !capture_mode && !benchmark_mode && !interactive_lab_mode {
+        seed_default_island_towns(editor)
+        seed_default_island_marinas(editor)
+    }
+    if show_loading_screen {
+        draw_startup_loading_screen(initial_width, initial_height, .62, "Raising the islands...", postcard)
+    }
     editor.authoring_tool = .Sculpt
     editor.tool = .Raise
     editor.radius = 48
@@ -5102,12 +6829,15 @@ adriatic_run :: proc(
     editor.architecture_brush_radius = terrain.BASE_CELL_SIZE * 4.0
     editor.architecture_brush_strength = .55
     editor.architecture_brush_hardness = .45
+    editor.marina_brush_radius = 60
+    editor.farm_brush_radius = 64
     editor.climbing_leaf_brush_radius = terrain.BASE_CELL_SIZE * 3.0
     editor.climbing_leaf_brush_strength = .55
     editor.climbing_leaf_brush_hardness = .50
     greek_asset_init(editor)
     editor.greek_placement_mode = false
     editor.atmosphere = atmosphere.new(0x41c10)
+    editor.boat_traffic = boats.new_traffic()
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
     editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
     editor.petal_effects = particle_systems.new_petal_effects(0x6a09e667)
@@ -5138,6 +6868,10 @@ adriatic_run :: proc(
     if !editor.vehicle_paint_tool_icons.ready {
         fmt.eprintln("vehicle paint tool icon atlas failed to load")
     }
+    editor.tarot_atlas = rl.LoadTexture("assets/textures/ui/tarot-atlas-v4.png")
+    if !editor.tarot_atlas.ready {
+        fmt.eprintln("tarot card atlas failed to load")
+    }
     control_hints_load(editor)
     _ = vehicle_paint_load(editor)
     island_center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
@@ -5152,6 +6886,7 @@ adriatic_run :: proc(
     libellula_spawn := libellula_spawn_position(editor)
     editor.libellula = libellula_game.new_runtime({libellula_spawn.x, libellula_spawn.y, libellula_spawn.z})
     editor.attendant_position = attendant_spawn_position(editor, editor.libellula.vehicle.position)
+    editor.gerta_position = gerta_spawn_position(editor)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula_Mk2, "Libellula Mk2", &editor.libellula.vehicle, false)
@@ -5163,7 +6898,11 @@ adriatic_run :: proc(
     editor.car.exit_distance = 1.1
     editor.car.yaw_radians = -math.PI * .5
     car_physics_create(editor)
+    if show_loading_screen {
+        draw_startup_loading_screen(initial_width, initial_height, .78, "Setting the world in motion...", postcard)
+    }
     defer car_physics_destroy(editor)
+    defer markov_marina_buoy_physics_destroy(editor)
     editor.car_trailer_attached = true
     editor.car_trailer_position = editor.car.position
     editor.car_trailer_yaw = editor.car.yaw_radians
@@ -5182,6 +6921,45 @@ adriatic_run :: proc(
         } else if capture_road_mode {
             seed_road_capture(editor)
             if capture_road_dust_mode do seed_road_dust_capture(editor)
+        } else if capture_story_meeting_mode {
+            seed_default_island_towns(editor)
+            editor.story_state = {
+                romance = .Meeting,
+                repair  = .Repaired,
+            }
+            niko, iva, center, rotation, found := world_story_meeting_pose(editor)
+            if !found {
+                fmt.eprintln("story meeting capture could not find Niko's town façade")
+                return .Quit
+            }
+            side := third_person.Vec3 {
+                math.cos(rotation),
+                0,
+                math.sin(rotation),
+            }
+            outward := third_person.Vec3 {
+                -math.sin(rotation),
+                0,
+                math.cos(rotation),
+            }
+            target := third_person.Vec3 {
+                (niko.x + iva.x) * .5,
+                max(niko.y, iva.y) + .72,
+                (niko.z + iva.z) * .5,
+            }
+            editor.editor_focus = target
+            editor.camera_pose = third_person.camera_look_at(
+                {
+                    center.x + outward.x * 2.55 + side.x * 1.05,
+                    center.y + 1.72,
+                    center.z + outward.z * 2.55 + side.z * 1.05,
+                },
+                target,
+            )
+            atmosphere.set_world_minutes(&editor.atmosphere, 17 * 60)
+            atmosphere.set_weather_override(&editor.atmosphere, .Clear)
+            editor.atmosphere.weather = atmosphere.weather_for(.Clear)
+            editor.atmosphere.paused = true
         } else if capture_building_mode {
             if capture_target == "mouse-town" {
                 seed_default_island_towns(editor)
@@ -5196,7 +6974,7 @@ adriatic_run :: proc(
             // as the chase camera climbs away from the authored island.
             if capture_flight_mode do seed_road_capture(editor)
         }
-        if !capture_foliage_stress_mode && !capture_foliage_forest_mode {
+        if !capture_foliage_stress_mode && !capture_foliage_forest_mode && !capture_story_meeting_mode {
             editor.editor_camera.distance = 260
             editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
         }
@@ -5215,6 +6993,21 @@ adriatic_run :: proc(
             configure_foliage_understory_camera(editor)
         }
     }
+    if capture_lab_mode {
+        _ = lab_scene_load(editor, {definition = lab_scene_find(capture_lab_name), target = capture_target})
+        if capture_markov_town_mode && capture_target == "night" {
+            editor.settlement_diagnostic_layer = -1
+            editor.capture_world_only = true
+            atmosphere.set_world_minutes(&editor.atmosphere, 0)
+            atmosphere.set_weather_override(&editor.atmosphere, .Clear)
+            editor.atmosphere.weather = atmosphere.weather_for(.Clear)
+            editor.atmosphere.paused = true
+        }
+    } else if interactive_lab_mode {
+        _ = lab_scene_load(editor, interactive_lab_request)
+    } else if legacy_shadow_lab_mode {
+        _ = lab_scene_load(editor, {definition = lab_scene_find("shadow")})
+    }
     if capture_sky_mode {
         preset := atmosphere.Weather_Preset.Clear
         minutes := f32(12 * 60)
@@ -5227,9 +7020,22 @@ adriatic_run :: proc(
         case .Sky_Night:
             minutes = 0
         }
+        if capture_target == "moon" do minutes = 2 * 60
         atmosphere.set_world_minutes(&editor.atmosphere, minutes)
+        if capture_target == "moon" {
+            atmosphere.set_lunar_age(&editor.atmosphere, atmosphere.SYNODIC_MONTH_DAYS * .5)
+        } else if capture_target == "stars" {
+            atmosphere.set_lunar_age(&editor.atmosphere, 0)
+        }
         atmosphere.set_weather_override(&editor.atmosphere, preset)
         editor.atmosphere.weather = atmosphere.weather_for(preset)
+        if capture_target == "sun" ||
+           capture_target == "sun-air" ||
+           capture_target == "sun-away" ||
+           capture_target == "moon" ||
+           capture_target == "stars" {
+            editor.atmosphere.weather.cloud_cover = 0
+        }
         editor.atmosphere.paused = true
     }
     if capture_foliage_motion_mode {
@@ -5247,13 +7053,6 @@ adriatic_run :: proc(
         atmosphere.set_weather_override(&editor.atmosphere, .Windy)
         editor.atmosphere.weather = atmosphere.weather_for(.Windy)
         editor.atmosphere.front_seconds = 2.4
-        editor.atmosphere.paused = true
-    }
-    if capture_wildflower_lab_mode {
-        atmosphere.set_world_minutes(&editor.atmosphere, 10 * 60 + 45)
-        atmosphere.set_weather_override(&editor.atmosphere, .Windy)
-        editor.atmosphere.weather = atmosphere.weather_for(.Windy)
-        editor.atmosphere.front_seconds = 1.6
         editor.atmosphere.paused = true
     }
     if capture_foliage_golden_mode {
@@ -5302,9 +7101,12 @@ adriatic_run :: proc(
         }
     }
     world_renderer_attach(editor)
+    if show_loading_screen {
+        draw_startup_loading_screen(initial_width, initial_height, .92, "Lighting the coast...", postcard)
+    }
     defer world_renderer_destroy()
     if capture_gameplay_mode {
-        if capture_map_mode || capture_flight_mode || capture_car_mode {
+        if (capture_map_mode && !capture_lab_mode) || capture_flight_mode || capture_car_mode {
             editor.player = {
                 position = runway_spawn_position(editor),
                 grounded = true,
@@ -5325,6 +7127,38 @@ adriatic_run :: proc(
                 grounded = true,
             }
             editor.camera = third_person.default_camera()
+            third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+            third_person.camera_set_active(&editor.cameras, .Inspection)
+            editor.capture_world_only = true
+        }
+        if capture_sky_mode &&
+           (capture_target == "sun" ||
+                   capture_target == "sun-air" ||
+                   capture_target == "sun-away" ||
+                   capture_target == "moon" ||
+                   capture_target == "stars") {
+            sky_capture := atmosphere.sample(&editor.atmosphere)
+            // Observer elevation materially changes the required reflecting
+            // slopes, so retain matched on-foot and airborne verification
+            // views instead of tuning the BRDF to either camera.
+            eye_height := capture_target == "sun-air" ? f32(180) : f32(3.2)
+            eye := third_person.Vec3 {
+                0,
+                eye_height,
+                0,
+            }
+            view_sign := capture_target == "sun-away" ? f32(-1) : f32(1)
+            view_direction := sky_capture.sun_direction
+            if capture_target == "moon" do view_direction = sky_capture.moon_direction
+            if capture_target == "stars" do view_direction = {0, .64, .77}
+            editor.camera_pose = third_person.camera_look_at(
+                eye,
+                {
+                    eye.x + view_direction[0] * 100 * view_sign,
+                    eye.y + view_direction[1] * 100 + 1.2,
+                    eye.z + view_direction[2] * 100 * view_sign,
+                },
+            )
             third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.capture_world_only = true
@@ -5400,27 +7234,61 @@ adriatic_run :: proc(
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
         }
-        if !capture_vehicle_showcase_mode && capture_target == "marta" {
+        if !capture_vehicle_showcase_mode && (capture_target == "marta" || capture_target == "gerta") {
             editor.camera_target_lock = false
             editor.postale_visible = false
+            attendant := capture_target == "gerta" ? editor.gerta_position : editor.attendant_position
             editor.player.position = {
-                editor.attendant_position.x + 20,
-                terrain.sample_height(
-                    &editor.project,
-                    0,
-                    editor.attendant_position.x + 20,
-                    editor.attendant_position.z,
-                ),
-                editor.attendant_position.z,
+                attendant.x + 20,
+                terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z),
+                attendant.z,
             }
             editor.pilot.position = editor.player.position
             inspection_pose := third_person.camera_near(
-                {editor.attendant_position.x, editor.attendant_position.y + .48, editor.attendant_position.z},
+                {attendant.x, attendant.y + .48, attendant.z},
                 {1.35, .62, 1.35},
             )
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
+        }
+        if capture_target == "niko" ||
+           capture_target == "iva" ||
+           capture_target == "bojan" ||
+           capture_target == "zora" ||
+           capture_target == "zora-reading" {
+            seed_default_island_towns(editor)
+            resident := story.Resident.Niko
+            switch capture_target {
+            case "iva":
+                resident = .Iva
+            case "bojan":
+                resident = .Bojan
+            case "zora", "zora-reading":
+                resident = .Zora
+            }
+            position, found := world_story_resident_position(editor, resident)
+            if found {
+                editor.camera_target_lock = false
+                editor.postale_visible = false
+                editor.libellula_visible = false
+                editor.player.position = {
+                    position.x + 20,
+                    terrain.sample_height(&editor.project, 0, position.x + 20, position.z),
+                    position.z,
+                }
+                editor.pilot.position = editor.player.position
+                inspection_pose := third_person.camera_near(
+                    {position.x, position.y + .48, position.z},
+                    {1.35, .62, 1.35},
+                )
+                third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
+                third_person.camera_set_active(&editor.cameras, .Inspection)
+                editor.camera_pose = inspection_pose
+            }
+            if capture_target == "zora-reading" && open_story_dialogue(editor, .Zora) {
+                _ = dialogue.choose(&editor.attendant_dialogue, 1)
+            }
         }
         if capture_target == "player" ||
            capture_target == "player-front" ||
@@ -5435,7 +7303,31 @@ adriatic_run :: proc(
            capture_target == "player-fall" ||
            capture_target == "player-blink" ||
            capture_target == "player-posted" ||
-           capture_target == "player-customization" {
+           capture_target == "player-customization" ||
+           capture_target == "player-hat-acorn" ||
+           capture_target == "player-hat-acorn-front" ||
+           capture_target == "player-hat-acorn-profile" ||
+           capture_target == "player-hat-bottle-cap" ||
+           capture_target == "player-hat-bottle-cap-front" ||
+           capture_target == "player-hat-bottle-cap-profile" ||
+           capture_target == "player-hat-bottle-cap-top" ||
+           capture_target == "player-hat-paper-boat" ||
+           capture_target == "player-hat-chef" ||
+           capture_target == "player-hat-ushanka" ||
+           capture_target == "player-hat-ushanka-three-quarter" ||
+           capture_target == "player-hat-ushanka-profile" ||
+           capture_target == "player-hat-beret" ||
+           capture_target == "player-hat-beret-front" ||
+           capture_target == "player-hat-beret-profile" ||
+           capture_target == "player-hat-beret-walk" ||
+           capture_target == "player-hat-beret-turn-left" ||
+           capture_target == "player-hat-alpine" ||
+           capture_target == "player-hat-alpine-front" ||
+           capture_target == "player-hat-alpine-profile" ||
+           capture_target == "player-hat-flat-cap" ||
+           capture_target == "player-hat-flat-cap-front" ||
+           capture_target == "player-hat-flat-cap-three-quarter" ||
+           capture_target == "player-hat-flat-cap-profile" {
             editor.camera_target_lock = false
             editor.postale_visible = false
             editor.libellula_visible = false
@@ -5450,19 +7342,72 @@ adriatic_run :: proc(
             editor.pilot.position = editor.player.position
             editor.player.facing_yaw_radians = -.70
             editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
-            editor.capture_player_walk_pose = capture_target == "player-walk"
+            editor.capture_player_walk_pose =
+                capture_target == "player-walk" || capture_target == "player-hat-beret-walk"
             editor.capture_player_run_compress_pose = capture_target == "player-run-compress"
-            editor.capture_player_turn_left_pose = capture_target == "player-turn-left"
+            editor.capture_player_turn_left_pose =
+                capture_target == "player-turn-left" || capture_target == "player-hat-beret-turn-left"
             editor.capture_player_turn_right_pose = capture_target == "player-turn-right"
             editor.capture_player_brake_pose = capture_target == "player-brake"
             editor.capture_player_jump_pose = capture_target == "player-jump"
             editor.capture_player_fall_pose = capture_target == "player-fall"
             editor.capture_player_blink_pose = capture_target == "player-blink"
             editor.capture_player_posted_pose = capture_target == "player-posted"
-            if capture_target == "player-customization" {
+            if capture_target == "player-customization" ||
+               capture_target == "player-hat-acorn" ||
+               capture_target == "player-hat-acorn-front" ||
+               capture_target == "player-hat-acorn-profile" ||
+               capture_target == "player-hat-bottle-cap" ||
+               capture_target == "player-hat-bottle-cap-front" ||
+               capture_target == "player-hat-bottle-cap-profile" ||
+               capture_target == "player-hat-bottle-cap-top" ||
+               capture_target == "player-hat-paper-boat" ||
+               capture_target == "player-hat-chef" ||
+               capture_target == "player-hat-ushanka" ||
+               capture_target == "player-hat-ushanka-three-quarter" ||
+               capture_target == "player-hat-ushanka-profile" ||
+               capture_target == "player-hat-beret" ||
+               capture_target == "player-hat-beret-front" ||
+               capture_target == "player-hat-beret-profile" ||
+               capture_target == "player-hat-beret-walk" ||
+               capture_target == "player-hat-beret-turn-left" ||
+               capture_target == "player-hat-alpine" ||
+               capture_target == "player-hat-alpine-front" ||
+               capture_target == "player-hat-alpine-profile" ||
+               capture_target == "player-hat-flat-cap" ||
+               capture_target == "player-hat-flat-cap-front" ||
+               capture_target == "player-hat-flat-cap-three-quarter" ||
+               capture_target == "player-hat-flat-cap-profile" {
                 editor.mouse_fur = .Silver
                 editor.mouse_pattern = .Piebald
-                editor.mouse_headgear = .Chef_Hat
+                switch capture_target {
+                case "player-hat-acorn", "player-hat-acorn-front", "player-hat-acorn-profile":
+                    editor.mouse_headgear = .Acorn_Cap
+                case "player-hat-bottle-cap",
+                     "player-hat-bottle-cap-front",
+                     "player-hat-bottle-cap-profile",
+                     "player-hat-bottle-cap-top":
+                    editor.mouse_headgear = .Bottle_Cap
+                case "player-hat-paper-boat":
+                    editor.mouse_headgear = .Paper_Boat
+                case "player-hat-ushanka", "player-hat-ushanka-three-quarter", "player-hat-ushanka-profile":
+                    editor.mouse_headgear = .Ushanka
+                case "player-hat-beret",
+                     "player-hat-beret-front",
+                     "player-hat-beret-profile",
+                     "player-hat-beret-walk",
+                     "player-hat-beret-turn-left":
+                    editor.mouse_headgear = .Beret
+                case "player-hat-alpine", "player-hat-alpine-front", "player-hat-alpine-profile":
+                    editor.mouse_headgear = .Alpine_Hat
+                case "player-hat-flat-cap",
+                     "player-hat-flat-cap-front",
+                     "player-hat-flat-cap-three-quarter",
+                     "player-hat-flat-cap-profile":
+                    editor.mouse_headgear = .Flat_Cap
+                case:
+                    editor.mouse_headgear = .Chef_Hat
+                }
             }
             if editor.capture_player_jump_pose || editor.capture_player_fall_pose {
                 editor.player.position.y += .42
@@ -5475,11 +7420,31 @@ adriatic_run :: proc(
                 0,
                 -math.cos(editor.player.facing_yaw_radians),
             }
-            capture_run_pose := capture_target == "player-walk" || capture_target == "player-run-compress"
+            capture_run_pose :=
+                capture_target == "player-walk" ||
+                capture_target == "player-run-compress" ||
+                capture_target == "player-hat-beret-walk"
             capture_posted_pose := capture_target == "player-posted"
-            capture_front_view := capture_target == "player-front"
-            capture_three_quarter_view := capture_target == "player-three-quarter"
-            capture_profile_view := capture_target == "player-profile"
+            capture_front_view :=
+                capture_target == "player-front" ||
+                capture_target == "player-hat-acorn-front" ||
+                capture_target == "player-hat-bottle-cap-front" ||
+                capture_target == "player-hat-beret-front" ||
+                capture_target == "player-hat-alpine-front" ||
+                capture_target == "player-hat-flat-cap-front"
+            capture_three_quarter_view :=
+                capture_target == "player-three-quarter" ||
+                capture_target == "player-hat-ushanka-three-quarter" ||
+                capture_target == "player-hat-flat-cap-three-quarter"
+            capture_profile_view :=
+                capture_target == "player-profile" ||
+                capture_target == "player-hat-acorn-profile" ||
+                capture_target == "player-hat-bottle-cap-profile" ||
+                capture_target == "player-hat-ushanka-profile" ||
+                capture_target == "player-hat-beret-profile" ||
+                capture_target == "player-hat-alpine-profile" ||
+                capture_target == "player-hat-flat-cap-profile"
+            capture_top_view := capture_target == "player-hat-bottle-cap-top"
             // Track the moving profile from its longitudinal center so the
             // body and body-length tail share one depth plane in the capture.
             capture_front_distance := capture_run_pose ? f32(-.45) : (capture_posted_pose ? f32(1.32) : f32(1.95))
@@ -5513,6 +7478,20 @@ adriatic_run :: proc(
                     editor.player.position.z - capture_forward.z * (capture_run_pose ? f32(.52) : f32(.18)),
                 },
             }
+            if capture_top_view {
+                // A slightly oblique overhead view avoids the camera-up
+                // singularity while keeping the printed crown face dominant.
+                inspection_pose.position = {
+                    editor.player.position.x - capture_forward.x * .22,
+                    editor.player.position.y + 2.05,
+                    editor.player.position.z - capture_forward.z * .22,
+                }
+                inspection_pose.target = {
+                    editor.player.position.x,
+                    editor.player.position.y + .54,
+                    editor.player.position.z,
+                }
+            }
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
@@ -5540,11 +7519,13 @@ adriatic_run :: proc(
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = grass_pose
         }
-        if capture_wildflower_lab_mode {
-            configure_wildflower_lab_capture(editor)
-        }
         if capture_target == "pause" do editor.pause_screen = .Pause
         if capture_target == "options" do editor.pause_screen = .Options
+        if capture_target == "options-hdr" {
+            editor.pause_screen = .Options
+            editor.options_focus = 7
+            editor.options_scroll_y = 300
+        }
         if capture_target == "customization" {
             editor.pause_screen = .Customization
             editor.mouse_fur = .Russet
@@ -5560,8 +7541,14 @@ adriatic_run :: proc(
     if vehicle_showcase_mode {
         target := showcase_target
         if target == "" do target = "postale"
+        showcase_view := target
+        if target == "postale-overhead" || target == "postale-overhead-front" || target == "postale-overhead-rear" {
+            target = "postale"
+        }
         if target != "postale" && target != "libellula" && target != "libellula-mk2" && target != "car" {
-            fmt.eprintf("vehicle showcase target must be postale, libellula, libellula-mk2, or car\n")
+            fmt.eprintf(
+                "vehicle showcase target must be postale, postale-overhead[-front|-rear], libellula, libellula-mk2, or car\n",
+            )
             return .Quit
         }
         editor.vehicle_showcase_scene = true
@@ -5596,7 +7583,19 @@ adriatic_run :: proc(
         if target == "postale" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
             if !entered do return .Quit
-            editor.camera_pose = third_person.camera_look_at({10.5, 5.7, 10.5}, {0, .45, 0})
+            switch showcase_view {
+            case "postale-overhead":
+                // A tiny longitudinal offset keeps the camera basis stable
+                // while remaining visually indistinguishable from a true
+                // orthographic-style plan view.
+                editor.camera_pose = third_person.camera_look_at({.01, 8.2, .35}, {0, .15, 0})
+            case "postale-overhead-front":
+                editor.camera_pose = third_person.camera_look_at({0, 7.5, -3.0}, {0, .15, 0})
+            case "postale-overhead-rear":
+                editor.camera_pose = third_person.camera_look_at({0, 7.5, 3.0}, {0, .15, 0})
+            case:
+                editor.camera_pose = third_person.camera_look_at({10.5, 5.7, 10.5}, {0, .45, 0})
+            }
         } else if target == "libellula" || target == "libellula-mk2" {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.libellula.vehicle})
             if !entered do return .Quit
@@ -5681,7 +7680,17 @@ adriatic_run :: proc(
         case .Missing:
         }
     }
+    // Catalog slices point into this Editor instance and must never retain
+    // addresses serialized from a previous hot-loaded dylib.
+    story.init_catalog(&editor.story_catalog)
     if !state_loaded do control_hints_load(editor)
+    if show_loading_screen {
+        draw_startup_loading_screen(initial_width, initial_height, 1, "Welcome to Adriatic", postcard)
+        editor.main_menu_active = true
+        editor.main_menu_focus = 0
+        editor.pause_screen = .Closed
+        set_pointer_locked(false)
+    }
     benchmark_samples: [4096]f64
     benchmark_sample_count := 0
     frame := 0
@@ -5705,11 +7714,14 @@ adriatic_run :: proc(
         }
         if !pause_menu_is_open(editor) do game_input.reset_menu_repeat(&editor.runtime_input)
         was_paused := pause_menu_is_open(editor)
-        pause_menu_process_input(editor, width, height, frame_delta)
+        console_process_input(editor, width, height)
+        if !editor.console.open do pause_menu_process_input(editor, width, height, frame_delta)
         runtime_pointer_sync(editor)
         attendant_dialogue_process_input(editor, width, height, frame_delta)
         simulation_delta := was_paused || pause_menu_is_open(editor) ? f32(0) : frame_delta
         atmosphere.step(&editor.atmosphere, simulation_delta)
+        boats.step(&editor.boat_traffic, simulation_delta, editor.atmosphere.world_minutes)
+        markov_marina_buoy_physics_step(editor, simulation_delta)
         wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
         wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
         listener_yaw := editor.in_map ? editor.camera.yaw_radians : editor.editor_camera.yaw_radians
@@ -5791,7 +7803,9 @@ adriatic_run :: proc(
             }
             spray_audio.update(&spray_sound, spray_active, spray_intensity, spray_pan, pause_menu_is_open(editor))
         }
-        if !pause_menu_is_open(editor) {
+        if !pause_menu_is_open(editor) && editor.active_lab_scene != "" {
+            _ = lab_scene_process_input(editor)
+        } else if !pause_menu_is_open(editor) {
             if rl.IsKeyPressed(.P) do editor.atmosphere.paused = !editor.atmosphere.paused
             if rl.IsKeyDown(.LEFT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes - frame_delta * 180)
             if rl.IsKeyDown(.RIGHT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes + frame_delta * 180)
@@ -5800,9 +7814,11 @@ adriatic_run :: proc(
             if rl.IsKeyPressed(.TWO) do atmosphere.set_weather_override(&editor.atmosphere, .Windy)
             if rl.IsKeyPressed(.THREE) do atmosphere.set_weather_override(&editor.atmosphere, .Storm)
         }
-        if editor_debug_toggle_pressed(editor) do editor.tweak_panel_visible = !editor.tweak_panel_visible
-        if !editor.in_map do editor_ui_process_input(editor, width, height)
-        if !editor.in_map {
+        if !pause_menu_is_open(editor) && editor_debug_toggle_pressed(editor) {
+            editor.tweak_panel_visible = !editor.tweak_panel_visible
+        }
+        if !editor.in_map && !pause_menu_is_open(editor) do editor_ui_process_input(editor, width, height)
+        if !editor.in_map && !pause_menu_is_open(editor) {
             if !imgui_captures_keyboard() && rl.IsKeyPressed(.ESCAPE) do editor_cancel_interaction(editor)
             if !imgui_captures_keyboard() {
                 if rl.IsKeyPressed(.T) do authoring_select_tool(editor, .Paint)
@@ -5811,6 +7827,8 @@ adriatic_run :: proc(
                 if !control_key_down() && rl.IsKeyPressed(.Z) do authoring_select_tool(editor, .Ridge)
                 if !control_key_down() && rl.IsKeyPressed(.C) do authoring_select_tool(editor, .Cliff)
                 if !control_key_down() && rl.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
+                if !control_key_down() && rl.IsKeyPressed(.J) do authoring_select_tool(editor, .Marina)
+                if !control_key_down() && rl.IsKeyPressed(.K) do authoring_select_tool(editor, .Farm)
                 if !control_key_down() && rl.IsKeyPressed(.L) do authoring_select_tool(editor, .ClimbingLeaves)
                 if rl.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)
                 if !control_key_down() && rl.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
@@ -5845,6 +7863,18 @@ adriatic_run :: proc(
                 structure_redo(editor)
                 editor.road_drag_edge = -1
                 editor.road_drag_handle = -1
+            }
+            if !imgui_captures_keyboard() &&
+               (editor.marina_paint_mode || editor.farm_paint_mode) &&
+               control_key_down() &&
+               rl.IsKeyPressed(.Z) {
+                structure_undo(editor)
+            }
+            if !imgui_captures_keyboard() &&
+               (editor.marina_paint_mode || editor.farm_paint_mode) &&
+               control_key_down() &&
+               rl.IsKeyPressed(.Y) {
+                structure_redo(editor)
             }
             if !imgui_captures_keyboard() && editor.authoring_tool == .Formations && rl.IsKeyPressed(.V) {
                 structure_cycle_kind(editor)
@@ -5959,15 +7989,20 @@ adriatic_run :: proc(
             editor.cursor_material = terrain.sample_material(&editor.project, 0, world_x, world_z)
         }
         architecture_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        marina_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        farm_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
+        farm_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         climbing_leaf_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         formation_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         greek_placement_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         curve_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         if !editor.architecture_paint_mode &&
+           !editor.marina_paint_mode &&
+           !editor.farm_paint_mode &&
            !editor.climbing_leaf_paint_mode &&
            editor.authoring_tool != .Formations &&
-           editor.authoring_tool != .Foliage &&
+           (editor.authoring_tool != .Foliage || editor.foliage_hedgerow_mode) &&
            !editor.greek_placement_mode &&
            !editor.road_mode &&
            !editor.curve_mode &&
@@ -5987,7 +8022,7 @@ adriatic_run :: proc(
         footstep_surface := engine_sound.Footstep_Surface.Grass
         footstep_landing := false
         footstep_slide := f32(0)
-        if editor.in_map && !pause_menu_is_open(editor) && !capture_car_mode {
+        if editor.in_map && !pause_menu_is_open(editor) && !capture_car_mode && !cinematic_is_playing(editor) {
             delta_seconds := frame_delta
             if editor.vehicle_paint_scene {
                 vehicle_paint_process_input(editor, width, height, min(delta_seconds, .05))
@@ -6103,6 +8138,7 @@ adriatic_run :: proc(
                                 )
                                 editor.landing_wheel_speed = touchdown_speed
                             }
+                            _ = markov_wreck_aircraft_collision_step(editor)
                         }
                         is_crashed := editor.postale.crashed
                         if editor.aircraft.active != .Postale {
@@ -6399,9 +8435,16 @@ adriatic_run :: proc(
                         editor.pilot.position = editor.player.position
                         editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
                         if input_action_pressed(.Interact) {
-                            trailer_interacted := car_trailer_interact(editor)
+                            dockmaster_interacted := open_markov_marina_dockmaster_dialogue(editor)
+                            resident, _, story_near := nearest_story_resident(editor, require_action = true)
+                            story_interacted :=
+                                !dockmaster_interacted && story_near && open_story_dialogue(editor, resident)
+                            trailer_interacted := false
                             entered := false
-                            if !trailer_interacted {
+                            if !dockmaster_interacted && !story_interacted {
+                                trailer_interacted = car_trailer_interact(editor)
+                            }
+                            if !dockmaster_interacted && !story_interacted && !trailer_interacted {
                                 _, entered = vehicles.try_enter_nearest(
                                     &editor.pilot,
                                     []^vehicles.Vehicle{&editor.car, active_aircraft_vehicle(editor)},
@@ -6413,8 +8456,12 @@ adriatic_run :: proc(
                                 if driving_aircraft(editor) {
                                     chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
                                 }
-                            } else if !trailer_interacted && libellula_attendant_near(editor) {
-                                open_attendant_dialogue(editor)
+                            } else if !dockmaster_interacted &&
+                               !story_interacted &&
+                               !trailer_interacted &&
+                               libellula_attendant_near(editor) {
+                                attendant, _, attendant_near := nearest_service_attendant(editor)
+                                if attendant_near do open_attendant_dialogue(editor, attendant)
                             }
                         }
                         if editor.camera_target_lock {
@@ -6496,6 +8543,7 @@ adriatic_run :: proc(
             if rl.IsMouseButtonDown(.RIGHT) do terrain.apply_stroke_with_hardness(&editor.project, editor.tool, world_x, world_z, editor.radius, stroke_strength, -1, editor.hardness)
         }
         saved_aircraft_body: flight.Body_State
+        cinematic_update(editor, simulation_delta)
         render_aircraft_body := active_aircraft_body(editor)
         interpolate_aircraft := driving_aircraft(editor) && editor.aircraft_previous_body_valid
         if interpolate_aircraft {
@@ -6504,7 +8552,9 @@ adriatic_run :: proc(
         }
         rl.BeginDrawing()
         draw_terrain(editor, width, height, f32(rl.GetTime()))
-        pause_menu_draw(editor, width, height)
+        pause_menu_draw(editor, width, height, postcard)
+        console_draw(editor, width, height)
+        cinematic_draw_wipe(editor, width, height)
         live_capture_poll()
         rl.EndDrawing()
         gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()
@@ -6549,7 +8599,7 @@ adriatic_run :: proc(
                     engine_controls.rotor_mix = 1
                 }
                 if editor.aircraft.active == .Postale {
-                    engine_controls.damage = editor.postale.crashed ? 1 : 0
+                    engine_controls.damage = editor.postale.structural_damage
                 } else {
                     engine_controls.damage = editor.libellula.crashed ? 1 : 0
                 }
@@ -6643,7 +8693,7 @@ adriatic_run :: proc(
             if postale_wheels_on_land {
                 tire_roll_controls.active = true
                 tire_roll_controls.wetness = tire_wetness
-                tire_roll_controls.damage = editor.postale.crashed ? 1 : 0
+                tire_roll_controls.damage = editor.postale.structural_damage
                 tire_roll_controls.speed = clamp(editor.postale.telemetry.airspeed / 45, 0, 1)
                 tire_roll_controls.surface = footstep_surface_from_dust(tire_surface)
                 tire_roll_controls.roughness = tire_roughness_from_dust(tire_surface)
@@ -6689,7 +8739,8 @@ adriatic_run :: proc(
         }
         // Player captures wait long enough for the Verlet tail and pose blends
         // to settle; frame two only showed the first few links as a short nub.
-        capture_frame := capture_flight_mode || capture_player_mode ? 20 : 2
+        capture_frame :=
+            capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Markov_Marina ? 20 : 2
         if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.

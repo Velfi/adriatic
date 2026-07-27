@@ -1,7 +1,8 @@
 package main
 
+import architecture "../packages/architecture"
+import circulation "../packages/circulation"
 import particle_systems "../packages/particles"
-import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
@@ -38,12 +39,18 @@ wildflower_density_at :: proc(x, z: f32) -> f32 {
     return density
 }
 
-wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32) -> bool {
+wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32, prepared_plan: ^circulation.Plan = nil) -> bool {
     if editor == nil do return false
     ground_height := terrain.sample_height(&editor.project, 0, x, z)
     if terrain.ground_surface_at(&editor.project, 0, x, z) != .Grass do return false
-    pavement := roads.pavement_at(&editor.project.road_graph, {x, ground_height, z})
-    return !pavement.on_surface
+    local_plan: circulation.Plan
+    plan := prepared_plan
+    if plan == nil {
+        local_plan = architecture.circulation_plan(&editor.project)
+        plan = &local_plan
+    }
+    surface := circulation.surface_at(&editor.project.road_graph, plan, {x, ground_height, z})
+    return !surface.on_surface
 }
 
 wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
@@ -84,35 +91,16 @@ wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
 }
 
 configure_wildflower_lab_capture :: proc(editor: ^Editor) {
-    // Locate a naturally generated dense patch on grass so the lab exercises
-    // the production distribution instead of a capture-only flower bed.
-    start := runway_spawn_position(editor)
-    best_x, best_z := start.x + 24, start.z + 60
-    best_density := f32(-1)
-    for gz in -48 ..= 48 {
-        for gx in -48 ..= 48 {
-            x := start.x + f32(gx) * 2
-            z := start.z + 56 + f32(gz) * 2
-            density := wildflower_density_at(x, z)
-            if density <= best_density do continue
-            if !wildflowers_renderable_at(editor, x, z) do continue
-            best_x, best_z, best_density = x, z, density
-        }
-    }
-
-    ground := terrain.sample_height(&editor.project, 0, best_x, best_z)
+    // This is an isolated renderer fixture, independent of gameplay-world
+    // terrain, circulation, structures, vehicles, and procedural placement.
     editor.capture_world_only = true
+    editor.wildflower_lab_scene = true
     editor.postale_visible = false
     editor.libellula_visible = false
-    editor.car.position.x += 300
-    editor.car.position.z += 300
-    editor.player.position = {best_x, ground, best_z}
-    editor.player.grounded = true
-    editor.pilot.position = editor.player.position
     editor.camera_target_lock = false
     pose := third_person.Camera_Pose {
-        position = {best_x - 8.4, ground + 2.55, best_z + 6.6},
-        target   = {best_x + 1.4, ground + .55, best_z},
+        position = {-8.4, 2.55, 6.6},
+        target   = {1.4, .55, 0},
     }
     third_person.camera_set_pose(&editor.cameras, .Inspection, pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)

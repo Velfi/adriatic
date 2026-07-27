@@ -70,6 +70,10 @@
     "architecture": {
       "enabled": false,
       "description": "Generated town with the architecture authoring tool active."
+    },
+    "shadow_lab": {
+      "enabled": false,
+      "description": "Playground shadow fixture with thin, broad, angled, overlapping, and elevated casters."
     }
   }
 }

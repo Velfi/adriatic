@@ -45,6 +45,13 @@ rotate_mesh_part_z :: proc(mesh: ^Aircraft_Mesh, part: Aircraft_Mesh_Part, pivot
     }
 }
 
+translate_mesh_part_y :: proc(mesh: ^Aircraft_Mesh, part: Aircraft_Mesh_Part, offset: f32) {
+    if mesh == nil || offset == 0 do return
+    for &vertex in mesh.vertices[:mesh.vertex_count] {
+        if vertex.part == part do vertex.position[1] += offset
+    }
+}
+
 rotate_mesh_group_y :: proc(mesh: ^Libellula_Mesh, group: Mesh_Animation_Group, pivot: [3]f32, angle: f32) {
     if mesh == nil do return
     c := math.cos(angle)
@@ -111,7 +118,11 @@ realign_mesh_group :: proc(
 @(no_instrumentation)
 degrees :: #force_inline proc(value: f32) -> f32 { return value * math.RAD_PER_DEG }
 
-animate_postale_mesh :: proc(mesh: ^Aircraft_Mesh, flap_fraction, pitch, roll, yaw, propeller_turns: f32) {
+animate_postale_mesh :: proc(
+    mesh: ^Aircraft_Mesh,
+    flap_fraction, pitch, roll, yaw, propeller_turns: f32,
+    gear_compression: f32 = 0,
+) {
     flap := degrees(clamp_unit(flap_fraction) * 35)
     rotate_mesh_part_x(
         mesh,
@@ -128,6 +139,7 @@ animate_postale_mesh :: proc(mesh: ^Aircraft_Mesh, flap_fraction, pitch, roll, y
     rotate_mesh_part_x(mesh, .Elevator, {0, .56, 2.78}, degrees(-pitch * 18))
     rotate_mesh_part_y(mesh, .Rudder, {0, 1.04, 2.78}, degrees(yaw * 22))
     rotate_mesh_part_z(mesh, .Propeller, {0, .12, -3.42}, propeller_turns * 2 * math.PI)
+    translate_mesh_part_y(mesh, .Wheel, max(gear_compression, f32(0)))
 }
 
 animate_pelican_mesh :: proc(

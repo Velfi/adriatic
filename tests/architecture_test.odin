@@ -1,6 +1,7 @@
 package tests
 
 import architecture "../packages/architecture"
+import buildings "../packages/buildings"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
@@ -212,13 +213,27 @@ architecture_facade_floor_count_tracks_height :: proc(t: ^testing.T) {
     testing.expect(t, architecture.facade_floor_count(33) == 6)
     testing.expect(t, architecture.facade_floor_count(50) == 9)
     testing.expect(t, architecture.facade_floor_count(80) == 16)
-    testing.expect(t, architecture.facade_window_row_y(50, 0) == 5)
+    testing.expect(t, architecture.facade_window_row_y(50, 0) == 2.55)
     testing.expect(t, architecture.facade_window_row_y(50, 8) == 47)
-    testing.expect(t, architecture.facade_column_count(24) == 2)
-    testing.expect(t, architecture.facade_column_count(32) == 3)
+    low_rise_window_height := architecture.facade_window_height(11)
+    low_rise_window_y := architecture.facade_window_row_y(11, 0)
+    testing.expect(t, low_rise_window_height == 2.2)
+    testing.expect(t, math.abs(low_rise_window_y - low_rise_window_height * .5 - 1.05) < .001)
+    testing.expect(t, architecture.facade_column_count(12) == 2)
+    testing.expect(t, architecture.facade_column_count(16) == 4)
+    testing.expect(t, architecture.facade_column_count(24) == 4)
+    testing.expect(t, architecture.facade_column_count(28) == 4)
+    testing.expect(t, architecture.facade_column_count(32) == 4)
+    testing.expect(t, architecture.facade_column_count(46) == 6)
     testing.expect(t, architecture.facade_window_column_x(24, 0) < 0)
-    testing.expect(t, architecture.facade_window_column_x(24, 1) > 0)
-    testing.expect(t, architecture.facade_window_column_x(32, 1) == 0)
+    testing.expect(t, architecture.facade_window_column_x(24, 1) < 0)
+    testing.expect(t, architecture.facade_window_column_x(24, 2) > 0)
+    testing.expect(t, architecture.facade_window_column_x(32, 1) < 0)
+    testing.expect(t, architecture.facade_window_column_x(32, 2) > 0)
+    narrow_door_width := clamp(f32(16) * .13, f32(1.8), f32(2.8))
+    narrow_window_width := architecture.facade_window_width(16)
+    inner_window_x := architecture.facade_window_column_x(16, 1)
+    testing.expect(t, -inner_window_x - narrow_window_width * .5 > narrow_door_width * .5)
 }
 
 @(test)
@@ -595,6 +610,23 @@ city_site_validation_rejects_water_and_uses_high_foundation :: proc(t: ^testing.
 }
 
 @(test)
+architecture_foundation_spans_uneven_rotated_footprint :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    building := terrain.structure_make(1300, 1300, 30, 18, 0, 20)
+    building.kind = .Architecture
+    building.rotation = math.PI / 4
+    corner_x := building.center_x + (building.width * .5 - building.depth * .5) * .70710678
+    corner_z := building.center_z + (building.width * .5 + building.depth * .5) * .70710678
+    terrain.apply_stroke(project, .Raise, corner_x, corner_z, 10, .8, 1)
+    lowest, highest := architecture.architecture_foundation_height_range(project, building)
+    testing.expect(t, highest >= lowest)
+    testing.expect(t, highest - lowest > .01)
+    testing.expect(t, architecture.city_structure_site_valid(project, &building))
+    testing.expect(t, building.base_y == highest)
+}
+
+@(test)
 city_commit_replaces_architecture_but_preserves_other_formations :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)
@@ -627,6 +659,7 @@ city_preview_plan_matches_committed_structures :: proc(t: ^testing.T) {
         testing.expect(t, project.structures[index].seed == plan.structures[index].seed)
         testing.expect(t, project.structures[index].height == plan.structures[index].height)
         testing.expect(t, project.structures[index].rotation == plan.structures[index].rotation)
+        testing.expect(t, project.structures[index].building == plan.structures[index].building)
     }
 }
 
@@ -642,8 +675,35 @@ city_planner_builds_accessible_frontage_parcels_and_deep_alleys :: proc(t: ^test
     testing.expect(t, plan.parcel_count == plan.count)
     testing.expect(t, plan.alley_count > 0)
     for parcel in plan.parcels[:plan.parcel_count] {
-        testing.expect(t, parcel.frontage_width >= 8 && parcel.frontage_width <= 20)
+        testing.expect(t, parcel.frontage_width >= 8 && parcel.frontage_width <= 32)
         testing.expect(t, parcel.depth >= 13 && parcel.depth <= 36)
+    }
+}
+
+@(test)
+ground_level_details_stay_clear_of_the_narrowest_alley_frontage :: proc(t: ^testing.T) {
+    testing.expect(t, architecture.GROUND_DETAIL_MAX_REACH < architecture.CITY_ALLEY_MIN_FRONT_CLEARANCE)
+}
+
+@(test)
+city_height_generation_includes_broad_single_floor_buildings :: proc(t: ^testing.T) {
+    found_single_floor := false
+    found_multi_floor := false
+    for seed in 0 ..< 1024 {
+        height := architecture.city_building_height(28, 24, .9, u32(seed * 747796405))
+        if architecture.facade_floor_count(height) == 1 {
+            found_single_floor = true
+        } else {
+            found_multi_floor = true
+        }
+    }
+    testing.expect(t, found_single_floor)
+    testing.expect(t, found_multi_floor)
+
+    // Narrow footprints retain the density-driven vertical massing.
+    for seed in 0 ..< 64 {
+        height := architecture.city_building_height(16, 18, .9, u32(seed * 747796405))
+        testing.expect(t, architecture.facade_floor_count(height) > 1)
     }
 }
 
@@ -685,6 +745,140 @@ architecture_frontage_mass_is_the_farthest_rendered_front_plane :: proc(t: ^test
         testing.expect(t, frontage_structure.width == selected_mass.width)
         testing.expect(t, frontage_structure.depth == selected_mass.depth)
     }
+}
+
+@(test)
+architecture_context_resolves_explicit_and_contextual_archetypes :: proc(t: ^testing.T) {
+    shop := architecture.architecture_identity(
+        {purpose = .Inn_Shop, density = .8, attached = true, route = .Civic, purpose_explicit = true},
+        42,
+    )
+    testing.expect_value(t, shop.archetype, buildings.Archetype.Shop_House)
+
+    townhouse := architecture.architecture_identity(
+        {purpose = .Dwelling, density = .72, attached = true, purpose_explicit = true},
+        42,
+    )
+    testing.expect_value(t, townhouse.archetype, buildings.Archetype.Townhouse)
+
+    waterfront := architecture.Architecture_Context {
+        density          = .45,
+        waterfront       = true,
+        route            = .Waterfront,
+        purpose_explicit = false,
+    }
+    testing.expect(
+        t,
+        architecture.architecture_identity(waterfront, 0) == architecture.architecture_identity(waterfront, 0),
+    )
+    testing.expect(t, architecture.architecture_identity(waterfront, 0).purpose != .Dwelling)
+}
+
+@(test)
+architecture_archetypes_constrain_compound_massing :: proc(t: ^testing.T) {
+    dwelling := terrain.structure_make(1300, 1300, 30, 24, 4, 24)
+    dwelling.kind = .Architecture
+    dwelling.seed = 3
+    dwelling.building.archetype = .Dwelling
+    dwelling_footprint := architecture.architecture_footprint(dwelling)
+    testing.expect(t, dwelling_footprint.count == 3)
+
+    townhouse := dwelling
+    townhouse.building.archetype = .Townhouse
+    townhouse.seed = 2
+    townhouse_footprint := architecture.architecture_footprint(townhouse)
+    testing.expect(t, townhouse_footprint.count == 2)
+
+    narrow := dwelling
+    narrow.width, narrow.depth = 10, 10
+    testing.expect(t, architecture.architecture_footprint(narrow).count == 1)
+
+    for mass in dwelling_footprint.masses[:dwelling_footprint.count] {
+        testing.expect(t, mass.width >= 4.5)
+        testing.expect(t, mass.depth >= 4.5)
+    }
+}
+
+@(test)
+architecture_openings_cover_every_mass_face_without_cross_mass_culling :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(1300, 1300, 30, 24, 4, 24)
+    structure.kind = .Architecture
+    structure.seed = 3
+    structure.building.archetype = .Dwelling
+    footprint := architecture.architecture_footprint(structure)
+    primary := architecture.architecture_frontage_mass_index(structure)
+
+    for _, mass_index in footprint.masses[:footprint.count] {
+        layout := architecture.architecture_opening_layout(structure, mass_index, primary)
+        face_counts: [4]int
+        doors := 0
+        for opening in layout.openings[:layout.count] {
+            face_counts[int(opening.face)] += 1
+            if opening.kind == .Door {
+                doors += 1
+                testing.expect(t, opening.face == .Front)
+                testing.expect(t, mass_index == primary)
+            }
+            span := architecture.face_span(footprint.masses[mass_index], opening.face)
+            testing.expect(
+                t,
+                math.abs(opening.horizontal) + opening.width * .5 <=
+                span * .5 - architecture.ARCHITECTURE_OPENING_CORNER_MARGIN + .001,
+            )
+        }
+        for count in face_counts do testing.expect(t, count > 0)
+        testing.expect(t, doors == (mass_index == primary ? 1 : 0))
+    }
+}
+
+@(test)
+architecture_service_faces_receive_sparse_vents :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(1300, 1300, 22, 18, 4, 10)
+    structure.kind = .Architecture
+    structure.seed = 7
+    structure.building.archetype = .Storehouse
+    primary := architecture.architecture_frontage_mass_index(structure)
+    layout := architecture.architecture_opening_layout(structure, 0, primary)
+    face_vents: [4]int
+    for opening in layout.openings[:layout.count] {
+        if opening.kind == .Vent do face_vents[int(opening.face)] += 1
+    }
+    for count in face_vents do testing.expect(t, count > 0)
+}
+
+@(test)
+terrain_v3_migration_preserves_structure_identity_and_marks_architecture_legacy :: proc(t: ^testing.T) {
+    legacy := new(terrain.Project_V3)
+    defer free(legacy)
+    legacy.structure_count = 2
+    legacy.next_structure_id = 9
+    legacy.structures[0] = {
+        id       = 7,
+        group_id = 7,
+        width    = 20,
+        depth    = 16,
+        height   = 12,
+        kind     = .Architecture,
+        seed     = 1234,
+    }
+    legacy.structures[1] = {
+        id       = 8,
+        group_id = 8,
+        width    = 4,
+        depth    = 4,
+        height   = 4,
+        kind     = .Rock,
+        seed     = 5678,
+    }
+    migrated := new(terrain.Project)
+    defer free(migrated)
+    testing.expect(t, terrain.project_migrate_v3(migrated, legacy))
+    testing.expect(t, migrated.structure_count == 2)
+    testing.expect(t, migrated.next_structure_id == 9)
+    testing.expect(t, migrated.structures[0].id == 7)
+    testing.expect(t, migrated.structures[0].seed == 1234)
+    testing.expect_value(t, migrated.structures[0].building.archetype, buildings.Archetype.Legacy)
+    testing.expect(t, migrated.structures[1].building == buildings.Identity{})
 }
 
 @(test)

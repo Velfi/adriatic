@@ -17,6 +17,24 @@ terrain_strokes_propagate_through_every_clipmap_level :: proc(t: ^testing.T) {
 }
 
 @(test)
+terrain_sculpting_changes_building_level :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    building := terrain.structure_make(0, 0, 8, 8, terrain.sample_height(project, 0, 0, 0), 12)
+    building.kind = .Architecture
+    index := terrain.add_structure(project, building)
+    original_level := project.structures[index].base_y
+
+    terrain.apply_stroke(project, .Raise, 0, 0, 8, 2, 1)
+
+    testing.expect(t, project.structures[index].base_y > original_level)
+    testing.expect(
+        t,
+        project.structures[index].base_y == terrain.sample_height(project, 0, building.center_x, building.center_z),
+    )
+}
+
+@(test)
 terrain_material_is_bounded :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)
@@ -110,6 +128,11 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
     foliage := terrain.structure_make(20, -30, 40, 50, 0, 60)
     foliage.kind = .Foliage
     terrain.add_structure(source, foliage)
+    building := terrain.structure_make(-20, 30, 18, 16, 0, 12)
+    building.kind = .Architecture
+    building.building.archetype = .Shop_House
+    building.building.purpose = .Inn_Shop
+    terrain.add_structure(source, building)
     source.city_density[terrain.RING_RESOLUTION / 2 * terrain.RING_RESOLUTION + terrain.RING_RESOLUTION / 2] = 203
     road_a := roads.add_node(&source.road_graph, {0, 2, 0})
     road_b := roads.add_node(&source.road_graph, {40, 3, 20})
@@ -118,10 +141,11 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
     testing.expect(t, terrain.load_project(loaded, path))
     testing.expect(t, terrain.sample_height(loaded, 0, 0, 0) == terrain.sample_height(source, 0, 0, 0))
     testing.expect(t, terrain.sample_material(loaded, 0, 0, 0) == terrain.sample_material(source, 0, 0, 0))
-    testing.expect(t, loaded.structure_count == 1)
+    testing.expect(t, loaded.structure_count == 2)
     testing.expect(t, loaded.structures[0].height == source.structures[0].height)
     testing.expect(t, loaded.structures[0].group_id == source.structures[0].group_id)
     testing.expect(t, loaded.structures[0].kind == .Foliage)
+    testing.expect(t, loaded.structures[1].building == source.structures[1].building)
     testing.expect(
         t,
         loaded.city_density[terrain.RING_RESOLUTION / 2 * terrain.RING_RESOLUTION + terrain.RING_RESOLUTION / 2] ==
@@ -191,7 +215,67 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
         to := project.road_graph.nodes[edge.to].position
         testing.expect(t, from.z == to.z)
         testing.expect(t, to.x - from.x == half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH * 2)
+        for sample_index in 0 ..= 8 {
+            sample_x := from.x + (to.x - from.x) * f32(sample_index) / 8
+            testing.expect(t, math.abs(terrain.sample_height(project, 0, sample_x, from.z) - from.y) < .001)
+        }
     }
+}
+
+@(test)
+default_towns_have_foundation_test_topography :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        town_x := island_center + sign * 25
+        town_z := island_center + sign * terrain.DEFAULT_TOWN_OFFSET
+        summit := terrain.sample_height(project, 0, town_x, town_z)
+        shoulder := terrain.sample_height(project, 0, town_x - sign * 80, town_z)
+        runway := terrain.sample_height(project, 0, island_center, island_center)
+        testing.expect(t, summit > shoulder + 1)
+        testing.expect(t, shoulder > runway + .5)
+    }
+}
+
+@(test)
+default_town_hills_blend_smoothly_into_runway_constraints :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        sample_x := island_center + sign * 25
+        previous := terrain.sample_height(project, 0, sample_x, island_center + sign * 48)
+        for offset in 49 ..= 118 {
+            current := terrain.sample_height(project, 0, sample_x, island_center + sign * f32(offset))
+            testing.expect(t, math.abs(current - previous) < .35)
+            previous = current
+        }
+    }
+}
+
+@(test)
+terrain_constraints_compose_additive_landscape_before_level_surfaces :: proc(t: ^testing.T) {
+    constraints := [2]terrain.Terrain_Constraint {
+        {mode = .Add, shape = .Ellipse, curve = .Quadratic, priority = 0, half_x = 10, half_z = 10, target = 8},
+        {
+            mode = .Set,
+            shape = .Rectangle,
+            curve = .Smooth,
+            priority = 10,
+            half_x = 2,
+            half_z = 2,
+            feather = 4,
+            target = 3,
+        },
+    }
+    testing.expect(t, terrain.terrain_compose_constraints(1, constraints[:], 0, 0) == 3)
+    transition := terrain.terrain_compose_constraints(1, constraints[:], 4, 0)
+    testing.expect(t, transition > 3 && transition < 9)
+    landscape := terrain.terrain_compose_constraints(1, constraints[:], 7, 0)
+    testing.expect(t, landscape > 1)
 }
 
 @(test)

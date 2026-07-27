@@ -62,6 +62,11 @@ Player_Animation_Tweak :: struct {
     turn_spine_offset:              f32 `tweak:"range=0..0.3;.005"`,
     turn_paw_offset:                f32 `tweak:"range=0..0.3;.005"`,
     run_body_lift:                  f32 `tweak:"range=0..0.2;.005"`,
+    scurry_lean_radians:            f32 `tweak:"range=0..0.5;.005"`,
+    scurry_acceleration_lean:       f32 `tweak:"range=0..0.05;.001"`,
+    scurry_compression:             f32 `tweak:"range=0..0.2;.005"`,
+    scurry_spring_stiffness:        f32 `tweak:"range=1..200;1"`,
+    scurry_spring_damping:          f32 `tweak:"range=0..40;.5"`,
     brake_compression:              f32 `tweak:"range=0..0.3;.005"`,
     tail_counterbalance:            f32 `tweak:"range=0..0.5;.005"`,
     slope_alignment:                f32 `tweak:"range=0..1;.01"`,
@@ -327,6 +332,11 @@ tweak_default_state :: proc() -> Tweak_State {
             turn_spine_offset = .08,
             turn_paw_offset = .075,
             run_body_lift = .065,
+            scurry_lean_radians = .11,
+            scurry_acceleration_lean = .009,
+            scurry_compression = .055,
+            scurry_spring_stiffness = 82,
+            scurry_spring_damping = 15,
             brake_compression = .075,
             tail_counterbalance = .22,
             slope_alignment = .55,
@@ -637,6 +647,11 @@ tweak_draw_player :: proc(editor: ^Editor) {
     tweak_drag_f32("Turn spine offset", &a.turn_spine_offset, 0, .3, .005)
     tweak_drag_f32("Turn paw offset", &a.turn_paw_offset, 0, .3, .005)
     tweak_drag_f32("Running body lift", &a.run_body_lift, 0, .2, .005)
+    tweak_drag_f32("Scurry lean radians", &a.scurry_lean_radians, 0, .5, .005)
+    tweak_drag_f32("Scurry acceleration lean", &a.scurry_acceleration_lean, 0, .05, .001)
+    tweak_drag_f32("Scurry compression", &a.scurry_compression, 0, .2, .005)
+    tweak_drag_f32("Scurry spring stiffness", &a.scurry_spring_stiffness, 1, 200, 1)
+    tweak_drag_f32("Scurry spring damping", &a.scurry_spring_damping, 0, 40, .5)
     tweak_drag_f32("Brake compression", &a.brake_compression, 0, .3, .005)
     tweak_drag_f32("Tail counterbalance", &a.tail_counterbalance, 0, .5, .005)
     tweak_drag_f32("Slope alignment", &a.slope_alignment, 0, 1, .01)
@@ -664,6 +679,12 @@ tweak_draw_player :: proc(editor: ^Editor) {
         editor.player_gait_weight,
         editor.player_airborne_weight,
         editor.player_vertical_pose,
+    )
+    im.Text(
+        "Scurry: %.2f  lean %+.3f  compression %.3f",
+        editor.player_scurry_weight,
+        editor.player_scurry_lean,
+        editor.player_scurry_compression,
     )
     im.Text(
         "Weight: turn %+.2f  brake %.2f  slope %.2f %.2f %.2f",
@@ -848,8 +869,12 @@ tweak_draw_postale :: proc(editor: ^Editor) {
     im.Checkbox("Controls damaged", &editor.tweak.postale_runtime.controls_damaged)
     im.SeparatorText("Safety")
     tweak_drag_f32("Ground clearance", &editor.tweak.postale_tuning.ground_clearance, 0, 5, .01)
-    tweak_drag_f32("Safe touchdown speed", &editor.tweak.postale_tuning.safe_touchdown_speed, 0, 50, .1)
     tweak_drag_f32("Safe bank radians", &editor.tweak.postale_tuning.safe_bank_radians, 0, math.PI, .01)
+    tweak_drag_f32("Gear compression distance", &editor.tweak.postale_tuning.gear_compression_distance, .05, 2, .01)
+    tweak_drag_f32("Gear damping ratio", &editor.tweak.postale_tuning.gear_damping_ratio, 0, 2, .01)
+    tweak_drag_f32("Smooth landing load", &editor.tweak.postale_tuning.smooth_landing_load, 1, 10, .1)
+    tweak_drag_f32("Hard landing load", &editor.tweak.postale_tuning.hard_landing_load, 1, 10, .1)
+    tweak_drag_f32("Ultimate landing load", &editor.tweak.postale_tuning.ultimate_landing_load, 1, 15, .1)
     tweak_drag_f32("Safe exit speed", &editor.tweak.postale_tuning.safe_exit_speed, 0, 20, .1)
     tweak_drag_f32("Takeoff stall scale", &editor.tweak.postale_tuning.takeoff_stall_speed_scale, .1, 1.5, .01)
     im.SeparatorText("Controls")

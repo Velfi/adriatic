@@ -1,5 +1,7 @@
 package mouse_tail
 
+import architecture "../architecture"
+import circulation "../circulation"
 import roads "../roads"
 import terrain "../terrain"
 import third_person "../third_person"
@@ -99,7 +101,12 @@ constrain_bend :: proc(a, b: ^Point, target, stiffness: f32, a_fixed: bool) {
 
 resolve_terrain :: proc(point: ^Point, project: ^terrain.Project, radius, friction: f32) {
     surface_height := terrain.sample_height(project, 0, point.position.x, point.position.z)
-    pavement := roads.pavement_at(&project.road_graph, {point.position.x, point.position.y, point.position.z})
+    plan := architecture.circulation_plan(project)
+    pavement := circulation.surface_at(
+        &project.road_graph,
+        &plan,
+        {point.position.x, point.position.y, point.position.z},
+    )
     // Rendered road crowns sit 12 cm above the terrain heightfield. Treat that
     // presentation lift as physical support so a grounded tail rests on the
     // pavement instead of disappearing beneath it.

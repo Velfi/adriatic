@@ -567,7 +567,7 @@ vehicle_paint_mix_color :: proc(a, b: rl.Color, amount: f32) -> rl.Color {
 vehicle_paint_shade_ramp :: proc(base: rl.Color) -> [5]rl.Color {
     cool_deep := rl.Color{12, 22, 39, 255}
     cool_shadow := rl.Color{24, 42, 61, 255}
-    warm_light := rl.Color{255, 226, 174, 255}
+    warm_light := rl.Color{255, 238, 205, 255}
     warm_glint := rl.Color{255, 248, 224, 255}
     return {
         vehicle_paint_mix_color(base, cool_deep, .72),
@@ -1089,9 +1089,12 @@ vehicle_paint_pattern_secondary_sample :: proc(pattern: int, x, y, tile: f32) ->
         // plaid
         return local_x < quarter || local_y < quarter || (local_x < half && local_y < half)
     }
-    // Original checkerboard.
-    tile_x := int(math.floor(f64(x / tile)))
-    tile_y := int(math.floor(f64(y / tile)))
+    // A tile contains a two-by-two checker repeat. Treating `tile` as the
+    // width of one whole square made the nominal checker size twice as large
+    // as every other pattern and left nearby samples in the same color.
+    checker_size := max(tile * .5, f32(2))
+    tile_x := int(math.floor(f64(x / checker_size)))
+    tile_y := int(math.floor(f64(y / checker_size)))
     return (tile_x + tile_y) % 2 != 0
 }
 
