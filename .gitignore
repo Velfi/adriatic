@@ -2,6 +2,7 @@
 /dist/
 /.tools/
 .DS_Store
+*.dSYM/
 
 # Python bytecode caches
 __pycache__/
