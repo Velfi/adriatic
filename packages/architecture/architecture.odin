@@ -890,6 +890,15 @@ City_Plan :: struct {
     lamp_count:   int,
 }
 
+city_plan_set_region :: proc(plan: ^City_Plan, region: buildings.Region) {
+    if plan == nil do return
+    for &structure in plan.structures[:plan.count] {
+        if structure.kind == .Architecture {
+            structure.building.region = region
+        }
+    }
+}
+
 City_Parcel :: struct {
     corners:               [4][2]f32,
     frontage_width, depth: f32,

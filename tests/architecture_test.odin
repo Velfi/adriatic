@@ -664,6 +664,19 @@ city_preview_plan_matches_committed_structures :: proc(t: ^testing.T) {
 }
 
 @(test)
+city_plan_region_can_distinguish_default_island_architecture :: proc(t: ^testing.T) {
+    plan: architecture.City_Plan
+    west := terrain.structure_make(-1300, -1418, 20, 20, 4.5, 20)
+    west.kind = .Architecture
+    plan.structures[0] = west
+    plan.count = 1
+
+    architecture.city_plan_set_region(&plan, .Aegean)
+
+    testing.expect(t, plan.structures[0].building.region == buildings.Region.Aegean)
+}
+
+@(test)
 city_planner_builds_accessible_frontage_parcels_and_deep_alleys :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer free(project)

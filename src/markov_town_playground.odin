@@ -164,8 +164,8 @@ settlement_park_site_clear :: proc(project: ^terrain.Project, x, z, width, depth
     return true
 }
 
-markov_town_add_grove :: proc(project: ^terrain.Project, x, z, width, depth: f32, seed: u32) {
-    structure := terrain.structure_make(x, z, width, depth, 0, 20)
+markov_town_add_grove :: proc(project: ^terrain.Project, x, z, width, depth, height: f32, seed: u32) {
+    structure := terrain.structure_make(x, z, width, depth, 0, height)
     structure.kind = .Foliage
     structure.width = width
     structure.depth = depth
@@ -598,7 +598,7 @@ settlement_lab_configure :: proc(
         x, z, rotation := anchor.center[0], anchor.center[1], f32(0)
         plaza_depth := profile.scale == .City ? f32(5) : (profile.scale == .Town ? f32(3.5) : f32(2.5))
         plaza_x, plaza_z := x, z
-        route_origin, route_tangent, route_normal, route_width, route_shoulder, _, route_found :=
+        route_origin, route_tangent, route_normal, route_width, route_shoulder, _, _, route_found :=
             settlement_nearest_route_frame(&editor.settlement_plan, anchor.center)
         if route_found {
             side := ((seed + landmark_index) & 1) == 0 ? f32(-1) : f32(1)
@@ -654,6 +654,8 @@ settlement_lab_configure :: proc(
 
     foliage_index := 0
     park_target := profile.scale == .City ? 3 : (profile.scale == .Town ? 2 : 1)
+    grove_height := profile.scale == .Village ? f32(7) : (profile.scale == .Town ? f32(15) : f32(20))
+    grove_footprint_scale := profile.scale == .Village ? f32(.52) : f32(1)
     for gz in 1 ..< MARKOV_TOWN_GRID - 1 {
         for gx in 1 ..< MARKOV_TOWN_GRID - 1 {
             linear := gz * MARKOV_TOWN_GRID + gx
@@ -665,8 +667,10 @@ settlement_lab_configure :: proc(
             if suitability <= .12 do continue
             if cell_kind == .Foliage {
                 if foliage_index < park_target {
-                    grove_width := (12 + f32((foliage_index * 7) % 7)) * (.7 + .3 * scale)
-                    grove_depth := (11 + f32((foliage_index * 5) % 6)) * (.7 + .3 * scale)
+                    grove_width :=
+                        (12 + f32((foliage_index * 7) % 7)) * (.7 + .3 * scale) * grove_footprint_scale
+                    grove_depth :=
+                        (11 + f32((foliage_index * 5) % 6)) * (.7 + .3 * scale) * grove_footprint_scale
                     if !settlement_park_site_clear(&editor.project, x, z, grove_width, grove_depth) {
                         foliage_index += 1
                         continue
@@ -678,6 +682,7 @@ settlement_lab_configure :: proc(
                         z,
                         grove_width,
                         grove_depth,
+                        grove_height,
                         u32(seed) ~ u32(0xa1 + foliage_index * 0x71),
                     )
                     if editor.project.structure_count > previous_count {
@@ -690,9 +695,11 @@ settlement_lab_configure :: proc(
                 } else if editor.settlement_plan.decorative_foliage_count <
                    len(editor.settlement_plan.decorative_foliage) {
                     decorative_index := editor.settlement_plan.decorative_foliage_count
-                    grove_width := (8 + f32((decorative_index * 5) % 8)) * (.7 + .3 * scale)
-                    grove_depth := (7 + f32((decorative_index * 3) % 7)) * (.7 + .3 * scale)
-                    grove := terrain.structure_make(x, z, grove_width, grove_depth, 0, 20)
+                    grove_width :=
+                        (8 + f32((decorative_index * 5) % 8)) * (.7 + .3 * scale) * grove_footprint_scale
+                    grove_depth :=
+                        (7 + f32((decorative_index * 3) % 7)) * (.7 + .3 * scale) * grove_footprint_scale
+                    grove := terrain.structure_make(x, z, grove_width, grove_depth, 0, grove_height)
                     grove.kind = .Foliage
                     grove.width = grove_width
                     grove.depth = grove_depth
@@ -706,8 +713,8 @@ settlement_lab_configure :: proc(
         }
     }
     if settlement_plan_reserved_kind_count(&editor.settlement_plan, .Park) == 0 {
-        fallback_width := f32(10) * (.7 + .3 * scale)
-        fallback_depth := f32(9) * (.7 + .3 * scale)
+        fallback_width := f32(10) * (.7 + .3 * scale) * grove_footprint_scale
+        fallback_depth := f32(9) * (.7 + .3 * scale) * grove_footprint_scale
         best_index, best_score := -1, f32(-1)
         for macro, macro_index in editor.settlement_plan.macro_cells[:editor.settlement_plan.macro_cell_count] {
             if !settlement_park_site_clear(
@@ -735,6 +742,7 @@ settlement_lab_configure :: proc(
                 point[1],
                 fallback_width,
                 fallback_depth,
+                grove_height,
                 u32(seed) ~ 0x7f4a7c15,
             )
             if editor.project.structure_count > previous_count {
@@ -750,6 +758,8 @@ settlement_lab_configure :: proc(
     // planned so a dense city cannot consume their structure capacity.
     plan := settlement_plan_generate_buildings(&editor.settlement_plan, &editor.project, &settlement_rng)
     settlement_plan_prepare_block_terrain(&editor.settlement_plan, &editor.project)
+    settlement_plan_seat_project_architecture(&editor.project)
+    settlement_plan_seat_city(&plan, &editor.project)
     _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
     decorative_budget := profile.scale == .City ? 12 : (profile.scale == .Town ? 8 : 4)
     decorative_commit_count := min(editor.settlement_plan.decorative_foliage_count, decorative_budget)
@@ -759,6 +769,7 @@ settlement_lab_configure :: proc(
     }
     editor.architecture_city_plan = plan
     settlement_plan_import_city(&editor.settlement_plan, &plan, &editor.project)
+    _ = settlement_village_attach_farmland(editor)
     settlement_plan_measure(&editor.settlement_plan)
     editor.settlement_plan.acceptance_failure = settlement_plan_acceptance_failure(
         &editor.settlement_plan,
@@ -839,12 +850,23 @@ settlement_lab_configure :: proc(
     case .Town:
         camera.distance = 72
     case .Village:
-        camera.distance = 54
+        camera.distance = 70
     }
     lab_scene_configure_camera(editor, {core_x, 6, core_z}, camera)
     if editor.settlement_plan.route_count > 0 {
+        look_x, look_z := core_x, core_z
+        if plan.count > 0 {
+            look_x, look_z = 0, 0
+            for structure in plan.structures[:plan.count] {
+                look_x += structure.center_x
+                look_z += structure.center_z
+            }
+            look_x /= f32(plan.count)
+            look_z /= f32(plan.count)
+        }
         selected_outer, selected_inner := [2]f32{}, [2]f32{}
         selected_length := f32(0)
+        selected_obstruction := f32(1e30)
         for planned_route in editor.settlement_plan.routes[:editor.settlement_plan.route_count] {
             if !planned_route.drivable do continue
             route := planned_route.geometry
@@ -853,14 +875,43 @@ settlement_lab_configure :: proc(
                 first, second := route.points[segment_index], route.points[segment_index + 1]
                 dx, dz := second[0] - first[0], second[1] - first[1]
                 segment_length := f32(math.sqrt(f64(dx * dx + dz * dz)))
-                if segment_length <= selected_length do continue
+                if segment_length <= .01 do continue
                 first_core_distance :=
                     (first[0] - core_x) * (first[0] - core_x) + (first[1] - core_z) * (first[1] - core_z)
                 second_core_distance :=
                     (second[0] - core_x) * (second[0] - core_x) + (second[1] - core_z) * (second[1] - core_z)
-                selected_outer = first_core_distance > second_core_distance ? first : second
-                selected_inner = first_core_distance > second_core_distance ? second : first
+                outer := first_core_distance > second_core_distance ? first : second
+                inner := first_core_distance > second_core_distance ? second : first
+                inward_x, inward_z :=
+                    (inner[0] - outer[0]) / segment_length,
+                    (inner[1] - outer[1]) / segment_length
+                candidate_camera_x := look_x - inward_x * camera.distance
+                candidate_camera_z := look_z - inward_z * camera.distance
+                obstruction := f32(0)
+                for structure in editor.project.structures[:editor.project.structure_count] {
+                    if structure.kind != .Foliage && structure.kind != .Architecture do continue
+                    relative_x := structure.center_x - candidate_camera_x
+                    relative_z := structure.center_z - candidate_camera_z
+                    along := (relative_x * inward_x + relative_z * inward_z) / camera.distance
+                    if along <= .06 || along >= .94 do continue
+                    lateral_x := relative_x - inward_x * along * camera.distance
+                    lateral_z := relative_z - inward_z * along * camera.distance
+                    lateral_distance := f32(math.sqrt(f64(lateral_x * lateral_x + lateral_z * lateral_z)))
+                    crown_radius := max(structure.width, structure.depth) * .5
+                    clearance := structure.kind == .Foliage ? f32(4) : f32(2)
+                    if lateral_distance < crown_radius + clearance {
+                        kind_weight := structure.kind == .Architecture ? f32(1.8) : f32(1)
+                        obstruction +=
+                            (crown_radius + clearance - lateral_distance) * (1.15 - along) * kind_weight
+                    }
+                }
+                if obstruction > selected_obstruction + .01 ||
+                   (math.abs(obstruction - selected_obstruction) <= .01 && segment_length <= selected_length) {
+                    continue
+                }
+                selected_outer, selected_inner = outer, inner
                 selected_length = segment_length
+                selected_obstruction = obstruction
             }
         }
         if selected_length > .01 {
@@ -869,12 +920,14 @@ settlement_lab_configure :: proc(
                 selected_length,
                 (selected_inner[1] - selected_outer[1]) /
                 selected_length
-            camera_advance := min(max(selected_length * .12, f32(3)), f32(10))
-            camera_x, camera_z := selected_outer[0] + dx * camera_advance, selected_outer[1] + dz * camera_advance
-            look_advance := min(max(selected_length * .62, f32(12)), f32(38))
-            look_x, look_z := selected_outer[0] + dx * look_advance, selected_outer[1] + dz * look_advance
-            camera_y := terrain.sample_height(&editor.project, 0, camera_x, camera_z) + 3.2
-            look_y := terrain.sample_height(&editor.project, 0, look_x, look_z) + 4.2
+            // Stand outside the complete form and look inward along the
+            // approach road. Using the route endpoint itself placed village
+            // captures only ~14 m from the common—inside the cluster—so most
+            // of the settlement was behind or beside the camera.
+            camera_x := look_x - dx * camera.distance
+            camera_z := look_z - dz * camera.distance
+            camera_y := terrain.sample_height(&editor.project, 0, camera_x, camera_z) + 2.4
+            look_y := terrain.sample_height(&editor.project, 0, look_x, look_z) + 3.4
             streetscape := third_person.Camera_Pose {
                 position = {camera_x, camera_y, camera_z},
                 target   = {look_x, look_y, look_z},

@@ -39,6 +39,14 @@
       "enabled": false,
       "description": "Generated town and formation rendering."
     },
+    "structure_lod": {
+      "enabled": false,
+      "description": "Dense mixed procedural buildings, foliage, and geological formations viewed from overview range."
+    },
+    "structure_lod_near": {
+      "enabled": false,
+      "description": "Matched mixed procedural scene with every structure forced to Near LOD."
+    },
     "roads": {
       "enabled": false,
       "description": "Seeded spline-road network."

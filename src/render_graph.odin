@@ -9,6 +9,8 @@ import engine "zelda_engine:engine"
 Render_Graph_Context :: struct {
     pass:                     ^rl.World_Pass_Context,
     buffer:                   ^engine.Vk_Buffer,
+    static_vertex_buffer:     ^engine.Vk_Buffer,
+    static_index_buffer:      ^engine.Vk_Buffer,
     road_buffer:              ^engine.Vk_Buffer,
     foliage_buffer:           ^engine.Vk_Buffer,
     grass_instance_buffer:    ^engine.Vk_Buffer,
@@ -84,6 +86,11 @@ render_graph_geometry :: proc(user_data: rawptr) {
     if len(world_renderer.vertices) > 0 {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.buffer.handle, &ctx.offset)
         vk.CmdDraw(cmd, u32(len(world_renderer.vertices)), 1, 0, 0)
+    }
+    if len(world_renderer.static_indices) > 0 {
+        vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.static_vertex_buffer.handle, &ctx.offset)
+        vk.CmdBindIndexBuffer(cmd, ctx.static_index_buffer.handle, 0, .UINT32)
+        vk.CmdDrawIndexed(cmd, u32(len(world_renderer.static_indices)), 1, 0, 0, 0)
     }
     if len(world_renderer.wing_trail_optimized_indices) > 0 {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.wing_trail_vertex_buffer.handle, &ctx.offset)

@@ -109,6 +109,10 @@ def summarize(runs: list[dict[str, Any]], budgets: dict[str, float]) -> dict[str
             "world_vertices_max": max(
                 geometry["world_vertices"] for geometry in geometry_runs
             ),
+            "world_unique_vertices_max": max(
+                geometry.get("world_unique_vertices", geometry["world_vertices"])
+                for geometry in geometry_runs
+            ),
             "world_utilization_max": max(
                 geometry["world_utilization"] for geometry in geometry_runs
             ),
@@ -184,7 +188,8 @@ def command_run(args: argparse.Namespace) -> int:
             geometry = summary["geometry"]
             print(
                 f"  geometry: world {geometry['world_vertices_max']:,} "
-                f"({geometry['world_utilization_max'] * 100:.1f}%), "
+                f"(unique {geometry['world_unique_vertices_max']:,}, "
+                f"{geometry['world_utilization_max'] * 100:.1f}%), "
                 f"cards {geometry['foliage_vertices_max']:,} "
                 f"({geometry['foliage_utilization_max'] * 100:.1f}%), "
                 f"roads {geometry['road_vertices_max']:,} "

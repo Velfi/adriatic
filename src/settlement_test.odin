@@ -14,26 +14,67 @@ settlement_rng_is_deterministic :: proc(t: ^testing.T) {
 }
 
 @(test)
+settlement_aegean_architecture_uses_flat_ordinary_roofs :: proc(t: ^testing.T) {
+    for seed in 0 ..< 16 {
+        aegean := terrain.structure_make(0, 0, 8, 10, 0, 6)
+        aegean.kind = .Architecture
+        aegean.seed = u32(seed)
+        aegean.building = architecture.architecture_identity(
+            {
+                region           = .Aegean,
+                purpose          = .Dwelling,
+                purpose_explicit = true,
+            },
+            aegean.seed,
+        )
+        testing.expect_value(t, world_architecture_roof_style(aegean), architecture.Roof_Style.Parapet)
+
+        adriatic := aegean
+        adriatic.building = architecture.architecture_identity(
+            {
+                region           = .Adriatic,
+                purpose          = .Dwelling,
+                purpose_explicit = true,
+            },
+            adriatic.seed,
+        )
+        testing.expect_value(
+            t,
+            world_architecture_roof_style(adriatic),
+            architecture.roof_style_for_seed(adriatic.seed),
+        )
+    }
+}
+
+@(test)
 settlement_village_program_is_complete_and_reason_specific :: proc(t: ^testing.T) {
     for reason in Village_Reason {
         for seed in 0 ..< 64 {
             program: [24]Settlement_Building_Purpose
             count := settlement_village_program(reason, u32(seed), &program)
-            testing.expect(t, count >= 14 && count <= 18)
+            testing.expect(t, count >= 12 && count <= 18)
             purpose_counts: [8]int
             for purpose in program[:count] do purpose_counts[int(purpose)] += 1
             testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Dwelling)] >= 7)
-            testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Farmstead)] >= 2)
-            testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Barn_Granary)] >= 2)
             testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Workshop)] == 1)
             testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Inn_Shop)] == 1)
             switch reason {
             case .Harbor_Fishery:
-                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Fishery)] == 1)
-                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Storehouse)] == 1)
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Farmstead)] == 0)
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Barn_Granary)] == 0)
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Fishery)] == 2)
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Storehouse)] == 2)
             case .Agricultural_Terrace:
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Farmstead)] == 2)
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Barn_Granary)] == 3)
                 testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Mill)] == 1)
-            case .Upland_Pastoral, .Route_Stop:
+            case .Upland_Pastoral:
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Farmstead)] == 1)
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Barn_Granary)] == 2)
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Storehouse)] == 1)
+            case .Route_Stop:
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Farmstead)] == 1)
+                testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Barn_Granary)] == 1)
                 testing.expect(t, purpose_counts[int(Settlement_Building_Purpose.Storehouse)] == 1)
             }
         }
@@ -179,9 +220,21 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
                 if scale == .Village {
                     expected_program: [24]Settlement_Building_Purpose
                     expected_count := settlement_village_program(plan.village_reason, u32(seed), &expected_program)
+                    if city.count != expected_count {
+                        fmt.println(
+                            "settlement village program mismatch",
+                            region,
+                            seed,
+                            city.count,
+                            expected_count,
+                            expected_program[:expected_count],
+                            plan.ordinary_purposes[:plan.ordinary_purpose_count],
+                        )
+                    }
                     testing.expect_value(t, city.count, expected_count)
                     testing.expect_value(t, plan.ordinary_purpose_count, expected_count)
-                    testing.expect(t, city.alley_count <= 2)
+                    maximum_alley_count := region == .Aegean ? 3 : 2
+                    testing.expect(t, city.alley_count <= maximum_alley_count)
                     for alley in city.alleys[:city.alley_count] {
                         dx, dz := alley.end_x - alley.start_x, alley.end_z - alley.start_z
                         testing.expect(t, dx * dx + dz * dz <= 55 * 55)
@@ -204,6 +257,87 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
                         if present do quadrant_count += 1
                     }
                     testing.expect(t, quadrant_count >= 3)
+                    frontage_distance_sum := f32(0)
+                    frontage_count := 0
+                    for structure, structure_index in city.structures[:city.count] {
+                        purpose := plan.ordinary_purposes[structure_index]
+                        if purpose == .Barn_Granary ||
+                           purpose == .Storehouse ||
+                           purpose == .Mill ||
+                           purpose == .Fishery {
+                            continue
+                        }
+                        _, route_tangent, _, _, _, route_distance, _, route_found :=
+                            settlement_nearest_route_frame(&plan, {structure.center_x, structure.center_z})
+                        testing.expect(t, route_found)
+                        structure_tangent := [2]f32 {
+                            f32(math.cos(f64(structure.rotation))),
+                            f32(math.sin(f64(structure.rotation))),
+                        }
+                        alignment :=
+                            math.abs(
+                                structure_tangent[0] * route_tangent[0] +
+                                structure_tangent[1] * route_tangent[1],
+                            )
+                        testing.expect(t, alignment > .98)
+                        frontage_distance_sum += route_distance
+                        frontage_count += 1
+                    }
+                    testing.expect(t, frontage_count > 0)
+                    average_frontage_distance := frontage_distance_sum / f32(frontage_count)
+                    if average_frontage_distance >= 16 {
+                        fmt.println("settlement village frontage mismatch", region, seed, average_frontage_distance)
+                        for structure, structure_index in city.structures[:city.count] {
+                            purpose := plan.ordinary_purposes[structure_index]
+                            _, _, _, _, _, route_distance, _, _ :=
+                                settlement_nearest_route_frame(&plan, {structure.center_x, structure.center_z})
+                            fmt.println("settlement village frontage site", purpose, route_distance)
+                        }
+                    }
+                    testing.expect(t, average_frontage_distance < 16)
+                    village_anchor := plan.neighborhoods[0].center
+                    for structure in city.structures[:city.count] {
+                        dx := structure.center_x - village_anchor[0]
+                        dz := structure.center_z - village_anchor[1]
+                        distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+                        maximum_radius := region == .Aegean ? f32(51) : f32(59)
+                        testing.expect(t, distance < maximum_radius)
+                    }
+                    resource_centers: [24][2]f32
+                    resource_count := 0
+                    for structure, structure_index in city.structures[:city.count] {
+                        purpose := plan.ordinary_purposes[structure_index]
+                        if purpose != .Barn_Granary &&
+                           purpose != .Storehouse &&
+                           purpose != .Mill &&
+                           purpose != .Fishery {
+                            continue
+                        }
+                        resource_centers[resource_count] = {structure.center_x, structure.center_z}
+                        resource_count += 1
+                    }
+                    testing.expect(t, resource_count >= 2)
+                    for first in 0 ..< resource_count {
+                        for second in first + 1 ..< resource_count {
+                            dx := resource_centers[second][0] - resource_centers[first][0]
+                            dz := resource_centers[second][1] - resource_centers[first][1]
+                            distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+                            testing.expect(t, distance < 50)
+                        }
+                    }
+                    core_plaza_found := false
+                    for edit in plan.terrain_edits[:plan.terrain_edit_count] {
+                        if edit.kind != .Plaza do continue
+                        dx := edit.center[0] - village_anchor[0]
+                        dz := edit.center[1] - village_anchor[1]
+                        if dx * dx + dz * dz > .01 do continue
+                        core_plaza_found = true
+                        expected_half_x := region == .Aegean ? f32(6) : f32(8)
+                        expected_half_z := region == .Aegean ? f32(5) : f32(6)
+                        testing.expect_value(t, edit.half_extent[0], expected_half_x)
+                        testing.expect_value(t, edit.half_extent[1], expected_half_z)
+                    }
+                    testing.expect(t, core_plaza_found)
                 }
                 for index in 0 ..< city.parcel_count {
                     parcel, structure := city.parcels[index], city.structures[index]
@@ -265,6 +399,71 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
 }
 
 @(test)
+settlement_village_occupies_multiple_route_arms :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer free(project)
+    project.sea_level = -100
+    project.road_graph = {}
+    center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
+    for region in Settlement_Region {
+        for seed in 0 ..< 16 {
+            plan: Settlement_Plan
+            plan.request = {
+                region = region,
+                scale  = .Village,
+                seed   = u32(seed),
+                center = {center, center},
+                radius = 100,
+            }
+            plan.neighborhoods[0] = {
+                center      = {center, center},
+                radius      = 24,
+                density     = .42,
+                suitability = 1,
+                tissue      = region == .Aegean ? .Cycladic_Accretion : .Dalmatian_Planned,
+            }
+            plan.neighborhood_count = 1
+            for route_index in 0 ..< 3 {
+                angle := f64(route_index) * math.TAU / 3
+                plan.routes[route_index].geometry.points[0] = {center, center}
+                plan.routes[route_index].geometry.points[1] = {
+                    center + f32(math.cos(angle)) * 90,
+                    center + f32(math.sin(angle)) * 90,
+                }
+                plan.routes[route_index].geometry.count = 2
+                plan.routes[route_index].class = .Street
+                plan.routes[route_index].width = 3.5
+                plan.routes[route_index].shoulder = .8
+                plan.routes[route_index].drivable = true
+            }
+            plan.route_count = 3
+            rng := settlement_rng_new(u32(seed) ~ u32(region) * 0x9e37)
+            city := settlement_plan_generate_buildings(&plan, project, &rng)
+            occupied: [3]bool
+            for structure, structure_index in city.structures[:city.count] {
+                purpose := plan.ordinary_purposes[structure_index]
+                if purpose == .Barn_Granary ||
+                   purpose == .Storehouse ||
+                   purpose == .Mill ||
+                   purpose == .Fishery {
+                    continue
+                }
+                _, _, _, _, _, _, route_index, found :=
+                    settlement_nearest_route_frame(&plan, {structure.center_x, structure.center_z})
+                if found && route_index >= 0 && route_index < len(occupied) {
+                    occupied[route_index] = true
+                }
+            }
+            occupied_count := 0
+            for present in occupied {
+                if present do occupied_count += 1
+            }
+            testing.expect(t, occupied_count >= 2)
+        }
+    }
+}
+
+@(test)
 settlement_tissue_weights_are_regional :: proc(t: ^testing.T) {
     adriatic: [9]int
     aegean: [9]int
@@ -288,6 +487,18 @@ settlement_landmark_sequences_are_region_specific :: proc(t: ^testing.T) {
     testing.expect_value(t, settlement_landmark_kind(.Adriatic, 1), Settlement_Landmark_Kind.Palace_Loggia)
     testing.expect_value(t, settlement_landmark_kind(.Aegean, 0), Settlement_Landmark_Kind.Cycladic_Bell)
     testing.expect_value(t, settlement_landmark_kind(.Aegean, 2), Settlement_Landmark_Kind.Monastery)
+}
+
+@(test)
+settlement_village_landmark_reinforces_composed_core :: proc(t: ^testing.T) {
+    plan: Settlement_Plan
+    plan.request.scale = .Village
+    plan.neighborhoods[0] = {center = {12, 8}, age = .8}
+    plan.neighborhoods[1] = {center = {90, 70}, age = .1}
+    plan.neighborhood_count = 2
+    project := terrain.new_project()
+    defer free(project)
+    testing.expect_value(t, settlement_landmark_anchor_index(&plan, project, 0), 0)
 }
 
 @(test)

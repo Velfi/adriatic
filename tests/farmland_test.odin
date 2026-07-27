@@ -43,3 +43,42 @@ markov_farmland_partitions_cover_the_grid_exactly :: proc(t: ^testing.T) {
         testing.expect(t, count == 1)
     }
 }
+
+@(test)
+farmland_layout_responds_to_footprint_size_and_aspect :: proc(t: ^testing.T) {
+    small := farmland.generate_sized(41, 10, 8)
+    wide := farmland.generate_sized(41, 38, 10)
+    tall := farmland.generate_sized(41, 10, 38)
+    testing.expect(t, farmland.validate(&small))
+    testing.expect(t, farmland.validate(&wide))
+    testing.expect(t, farmland.validate(&tall))
+    testing.expect(t, small.width == 10 && small.height == 8)
+    testing.expect(t, wide.width == 38 && wide.height == 10)
+    testing.expect(t, tall.width == 10 && tall.height == 38)
+    testing.expect(t, small.parcel_count < wide.parcel_count)
+    testing.expect(t, farmland_fingerprint(&wide) != farmland_fingerprint(&tall))
+}
+
+@(test)
+small_farmland_has_at_most_one_internal_hedge :: proc(t: ^testing.T) {
+    tiny := farmland.generate_sized(41, 7, 7)
+    aegean := farmland.generate_sized(41, 8, 8)
+    continental := farmland.generate_sized(41, 10, 9)
+    testing.expect(t, farmland.validate(&tiny))
+    testing.expect(t, farmland.validate(&aegean))
+    testing.expect(t, farmland.validate(&continental))
+    testing.expect(t, tiny.parcel_count == 1)
+    testing.expect(t, aegean.parcel_count == 1)
+    testing.expect(t, continental.parcel_count == 1)
+}
+
+@(test)
+farmland_traditions_produce_distinct_field_systems :: proc(t: ^testing.T) {
+    ancient := farmland.generate_sized_for_tradition(7123, 48, 36, .Ancient_Enclosure)
+    parliamentary := farmland.generate_sized_for_tradition(7123, 48, 36, .Parliamentary_Enclosure)
+    testing.expect(t, farmland.validate(&ancient))
+    testing.expect(t, farmland.validate(&parliamentary))
+    testing.expect(t, ancient.tradition == .Ancient_Enclosure)
+    testing.expect(t, parliamentary.tradition == .Parliamentary_Enclosure)
+    testing.expect(t, farmland_fingerprint(&ancient) != farmland_fingerprint(&parliamentary))
+}

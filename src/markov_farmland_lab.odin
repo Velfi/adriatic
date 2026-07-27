@@ -18,15 +18,29 @@ Farm_Instance :: struct {
     origin_x: f32,
     origin_z: f32,
     yaw:      f32,
+    scale_x:  f32,
+    scale_z:  f32,
 }
 
 markov_farmland_plan: farmland.Plan
 farmland_render_origin_x := MARKOV_FARMLAND_ORIGIN_X
 farmland_render_origin_z := MARKOV_FARMLAND_ORIGIN_Z
 farmland_render_yaw := f32(-.14)
+farmland_render_scale_x := f32(1)
+farmland_render_scale_z := f32(1)
 farmland_render_preview := false
+farmland_render_width := farmland.GRID_WIDTH
+farmland_render_height := farmland.GRID_HEIGHT
+farmland_render_tradition := farmland.Tradition.Ancient_Enclosure
 
 farmland_warp_grid :: proc(grid_x, grid_z: f32) -> (f32, f32) {
+    if farmland_render_tradition == .Parliamentary_Enclosure {
+        // Surveyed enclosure boundaries read as deliberately straight, with
+        // only a trace of terrain settlement to avoid synthetic perfection.
+        warp_x := math.sin(grid_z * .17 - grid_x * .05) * .07
+        warp_z := math.sin(grid_x * .15 + grid_z * .04) * .06
+        return grid_x + warp_x, grid_z + warp_z
+    }
     // Shared low-frequency displacement keeps adjacent parcels watertight
     // while bending their common boundaries. Two cross-coupled waves prevent
     // the result from becoming a uniformly sheared checkerboard.
@@ -55,8 +69,10 @@ farmland_color :: proc(crop: farmland.Crop, tint: f32) -> rl.Color {
 
 farmland_world_point :: proc(editor: ^Editor, grid_x, grid_z: f32, lift: f32) -> third_person.Vec3 {
     warped_x, warped_z := farmland_warp_grid(grid_x, grid_z)
-    local_x := (warped_x - f32(farmland.GRID_WIDTH) * .5) * farmland.CELL_METERS
-    local_z := (warped_z - f32(farmland.GRID_HEIGHT) * .5) * farmland.CELL_METERS
+    local_x :=
+        (warped_x - f32(farmland_render_width) * .5) * farmland.CELL_METERS * farmland_render_scale_x
+    local_z :=
+        (warped_z - f32(farmland_render_height) * .5) * farmland.CELL_METERS * farmland_render_scale_z
     // A slight landscape-scale yaw prevents the farm envelope from aligning
     // with the world axes even where the boundary displacement crosses zero.
     cosine, sine := math.cos(farmland_render_yaw), math.sin(farmland_render_yaw)
@@ -140,8 +156,104 @@ farmland_hedgerow :: proc(editor: ^Editor, x0, z0, x1, z1: f32, seed: u32, detai
     }
 }
 
+farmland_render_crops :: proc(
+    editor: ^Editor,
+    parcel: farmland.Parcel,
+    parcel_index: int,
+    plan_seed: u32,
+    detail_fade: f32,
+) {
+    if editor == nil || farmland_render_preview || detail_fade <= .12 || parcel.crop == .Fallow do return
+    subdivisions := 2
+    if parcel.crop == .Wheat do subdivisions = 3
+    for z in parcel.min_z ..< parcel.max_z {
+        for x in parcel.min_x ..< parcel.max_x {
+            for sub_z in 0 ..< subdivisions {
+                for sub_x in 0 ..< subdivisions {
+                    sample_index :=
+                        (parcel_index + 1) * 104729 +
+                        x * 73856093 +
+                        z * 19349663 +
+                        sub_x * 83492791 +
+                        sub_z * 265443576
+                    mixed := farmland.mix(plan_seed ~ u32(sample_index))
+                    jitter_x := (f32(mixed & 255) / 255 - .5) * .18
+                    jitter_z := (f32((mixed >> 8) & 255) / 255 - .5) * .18
+                    grid_x := f32(x) + (f32(sub_x) + .5) / f32(subdivisions) + jitter_x
+                    grid_z := f32(z) + (f32(sub_z) + .5) / f32(subdivisions) + jitter_z
+                    point := farmland_world_point(editor, grid_x, grid_z, .03)
+                    height, width := f32(.35), f32(.24)
+                    color := farmland_color(parcel.crop, parcel.tint)
+                    switch parcel.crop {
+                    case .Wheat:
+                        height = .72 + f32((mixed >> 16) & 255) / 255 * .42
+                        width = .30 + height * .18
+                        color = color_lerp(color, {226, 193, 91, 255}, .36)
+                    case .Clover:
+                        height = .18 + f32((mixed >> 16) & 255) / 255 * .18
+                        width = .30 + f32((mixed >> 24) & 255) / 255 * .20
+                        color = color_lerp(color, {75, 151, 67, 255}, .34)
+                    case .Vineyard:
+                        // Skip alternating sub-rows to leave visible cultivated
+                        // alleys between the vines.
+                        if sub_z & 1 != 0 do continue
+                        height = .82 + f32((mixed >> 16) & 255) / 255 * .40
+                        width = .52 + f32((mixed >> 24) & 255) / 255 * .24
+                        color = color_lerp(color, {62, 104, 48, 255}, .28)
+                    case .Olive:
+                        // Olive groves are open-spaced rather than carpeted.
+                        if x % 3 != 1 || z % 3 != 1 || sub_x != 0 || sub_z != 0 do continue
+                        height = 2.15 + f32((mixed >> 16) & 255) / 255 * .55
+                        width = 1.65 + f32((mixed >> 24) & 255) / 255 * .55
+                        color = color_lerp(color, {104, 123, 79, 255}, .48)
+                    case .Fallow:
+                        continue
+                    }
+                    color.a = u8(clamp(detail_fade * 255, 0, 255))
+                    world_grass_card(
+                        {point.x, point.y + height * .5, point.z},
+                        width,
+                        height,
+                        int(mixed % 16),
+                        color,
+                    )
+                }
+            }
+        }
+    }
+}
+
+farmland_instance_contains_world_point :: proc(farm: ^Farm_Instance, x, z: f32, margin: f32 = 0) -> bool {
+    if farm == nil || !farm.plan.valid do return false
+    scale_x := farm.scale_x > 0 ? farm.scale_x : f32(1)
+    scale_z := farm.scale_z > 0 ? farm.scale_z : f32(1)
+    dx, dz := x - farm.origin_x, z - farm.origin_z
+    cosine, sine := math.cos(farm.yaw), math.sin(farm.yaw)
+    local_x := dx * cosine + dz * sine
+    local_z := -dx * sine + dz * cosine
+    half_width := f32(farm.plan.width) * farmland.CELL_METERS * scale_x * .5 + margin
+    half_height := f32(farm.plan.height) * farmland.CELL_METERS * scale_z * .5 + margin
+    return abs(local_x) <= half_width && abs(local_z) <= half_height
+}
+
+farmland_excludes_ground_grass :: proc(editor: ^Editor, x, z: f32) -> bool {
+    if editor == nil do return false
+    for &farm in editor.farms[:editor.farm_count] {
+        if farmland_instance_contains_world_point(&farm, x, z, .8) do return true
+    }
+    if editor.farm_paint_mode &&
+       editor.farm_preview_valid &&
+       farmland_instance_contains_world_point(&editor.farm_preview, x, z, .8) {
+        return true
+    }
+    return false
+}
+
 farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
     if editor == nil || plan == nil || !plan.valid do return
+    farmland_render_width = plan.width
+    farmland_render_height = plan.height
+    farmland_render_tradition = plan.tradition
     center_height := terrain.sample_height(&editor.project, 0, farmland_render_origin_x, farmland_render_origin_z)
     altitude := max(editor.camera_pose.position.y - center_height, f32(0))
     detail_fade := 1 - clamp((altitude - 42) / 115, f32(0), f32(1))
@@ -152,7 +264,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
     verge := f32(.10)
     row_subdivisions := detail_fade > .62 ? 2 : 1
 
-    for parcel in plan.parcels[:plan.parcel_count] {
+    for parcel, parcel_index in plan.parcels[:plan.parcel_count] {
         solid := farmland_color(parcel.crop, parcel.tint)
         if farmland_render_preview {
             solid = color_lerp(solid, rl.Color{128, 211, 166, 255}, .42)
@@ -189,6 +301,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
                 }
             }
         }
+        farmland_render_crops(editor, parcel, parcel_index, plan.seed, detail_fade)
 
         // One narrow, terrain-sampled seam per parcel side gives the patchwork
         // depth at walking height. From the air these collapse into simple dark
@@ -239,7 +352,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
     // silhouette. Cards disappear before the aerial solid-color LOD.
     for parcel, parcel_index in plan.parcels[:plan.parcel_count] {
         hedge_seed := plan.seed ~ u32(parcel_index + 1) * u32(0x85ebca6b)
-        if farmland.mix(hedge_seed) & 3 != 0 {
+        if plan.tradition == .Parliamentary_Enclosure || farmland.mix(hedge_seed) & 3 != 0 {
             farmland_hedgerow(
                 editor,
                 f32(parcel.min_x),
@@ -250,7 +363,8 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
                 detail_fade,
             )
         }
-        if farmland.mix(hedge_seed ~ u32(0xc2b2ae35)) & 3 != 0 {
+        if plan.tradition == .Parliamentary_Enclosure ||
+           farmland.mix(hedge_seed ~ u32(0xc2b2ae35)) & 3 != 0 {
             farmland_hedgerow(
                 editor,
                 f32(parcel.min_x),
@@ -261,7 +375,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
                 detail_fade,
             )
         }
-        if parcel.max_x == farmland.GRID_WIDTH {
+        if parcel.max_x == plan.width {
             farmland_hedgerow(
                 editor,
                 f32(parcel.max_x),
@@ -272,7 +386,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
                 detail_fade,
             )
         }
-        if parcel.max_z == farmland.GRID_HEIGHT {
+        if parcel.max_z == plan.height {
             farmland_hedgerow(
                 editor,
                 f32(parcel.min_x),
@@ -285,33 +399,35 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
         }
     }
 
-    // A narrow L-shaped farm lane gives every composition a practical access
-    // spine. It stays just a handful of terrain-conforming quads at every LOD.
-    track := color_lerp(rl.Color{151, 119, 75, 255}, rl.Color{176, 151, 101, 255}, 1 - detail_fade)
-    track_half_width := f32(.16)
-    track_x := f32(farmland.GRID_WIDTH / 2)
-    track_z := f32(farmland.GRID_HEIGHT / 2)
-    for z := 0; z < farmland.GRID_HEIGHT; z += 5 {
-        farmland_patch(
-            editor,
-            track_x - track_half_width,
-            f32(z),
-            track_x + track_half_width,
-            f32(min(z + 5, farmland.GRID_HEIGHT)),
-            track,
-            .19,
-        )
-    }
-    for x := 0; x < farmland.GRID_WIDTH / 2; x += 5 {
-        farmland_patch(
-            editor,
-            f32(x),
-            track_z - track_half_width,
-            f32(min(x + 5, farmland.GRID_WIDTH / 2)),
-            track_z + track_half_width,
-            track,
-            .19,
-        )
+    // Only larger field systems need an internal access spine. On compact
+    // one- and two-field holdings it read as another arbitrary subdivision.
+    if plan.parcel_count >= 3 {
+        track := color_lerp(rl.Color{151, 119, 75, 255}, rl.Color{176, 151, 101, 255}, 1 - detail_fade)
+        track_half_width := f32(.16)
+        track_x := f32(plan.width / 2)
+        track_z := f32(plan.height / 2)
+        for z := 0; z < plan.height; z += 5 {
+            farmland_patch(
+                editor,
+                track_x - track_half_width,
+                f32(z),
+                track_x + track_half_width,
+                f32(min(z + 5, plan.height)),
+                track,
+                .19,
+            )
+        }
+        for x := 0; x < plan.width / 2; x += 5 {
+            farmland_patch(
+                editor,
+                f32(x),
+                track_z - track_half_width,
+                f32(min(x + 5, plan.width / 2)),
+                track_z + track_half_width,
+                track,
+                .19,
+            )
+        }
     }
 }
 
@@ -319,6 +435,8 @@ world_markov_farmland :: proc(editor: ^Editor) {
     farmland_render_origin_x = MARKOV_FARMLAND_ORIGIN_X
     farmland_render_origin_z = MARKOV_FARMLAND_ORIGIN_Z
     farmland_render_yaw = -.14
+    farmland_render_scale_x = 1
+    farmland_render_scale_z = 1
     farmland_render_preview = false
     farmland_render_plan(editor, &markov_farmland_plan)
 }
@@ -329,6 +447,8 @@ world_authored_farmland :: proc(editor: ^Editor) {
         farmland_render_origin_x = instance.origin_x
         farmland_render_origin_z = instance.origin_z
         farmland_render_yaw = instance.yaw
+        farmland_render_scale_x = instance.scale_x > 0 ? instance.scale_x : f32(1)
+        farmland_render_scale_z = instance.scale_z > 0 ? instance.scale_z : f32(1)
         farmland_render_preview = false
         farmland_render_plan(editor, &instance.plan)
     }
@@ -336,10 +456,63 @@ world_authored_farmland :: proc(editor: ^Editor) {
         farmland_render_origin_x = editor.farm_preview.origin_x
         farmland_render_origin_z = editor.farm_preview.origin_z
         farmland_render_yaw = editor.farm_preview.yaw
+        farmland_render_scale_x = editor.farm_preview.scale_x > 0 ? editor.farm_preview.scale_x : f32(1)
+        farmland_render_scale_z = editor.farm_preview.scale_z > 0 ? editor.farm_preview.scale_z : f32(1)
         farmland_render_preview = true
         farmland_render_plan(editor, &editor.farm_preview.plan)
         farmland_render_preview = false
     }
+}
+
+settlement_village_attach_farmland :: proc(editor: ^Editor) -> bool {
+    if editor == nil ||
+       editor.settlement_plan.request.scale != .Village ||
+       editor.settlement_plan.village_reason != .Agricultural_Terrace ||
+       editor.farm_count >= FARM_INSTANCE_CAPACITY {
+        return false
+    }
+    common := editor.settlement_plan.request.center
+    if editor.settlement_plan.neighborhood_count > 0 {
+        common = editor.settlement_plan.neighborhoods[0].center
+    }
+    farmstead_index := -1
+    farmstead_distance_squared := f32(-1)
+    for site, site_index in editor.settlement_plan.sites[:editor.settlement_plan.site_count] {
+        if !site.accepted || site.kind != .Ordinary || site.purpose != .Farmstead do continue
+        dx, dz := site.structure.center_x - common[0], site.structure.center_z - common[1]
+        distance_squared := dx * dx + dz * dz
+        if distance_squared > farmstead_distance_squared {
+            farmstead_index = site_index
+            farmstead_distance_squared = distance_squared
+        }
+    }
+    if farmstead_index < 0 do return false
+
+    farmstead := editor.settlement_plan.sites[farmstead_index].structure
+    outward_x, outward_z := farmstead.center_x - common[0], farmstead.center_z - common[1]
+    outward_length := f32(math.sqrt(f64(outward_x * outward_x + outward_z * outward_z)))
+    if outward_length < .01 {
+        outward_x, outward_z = f32(math.cos(f64(farmstead.rotation))), f32(math.sin(f64(farmstead.rotation)))
+    } else {
+        outward_x /= outward_length
+        outward_z /= outward_length
+    }
+    grid_width := editor.settlement_plan.request.region == .Aegean ? 8 : 10
+    grid_height := editor.settlement_plan.request.region == .Aegean ? 8 : 9
+    field_offset := f32(grid_width) * farmland.CELL_METERS * .5 + farmstead.depth * .5 + 3
+    seed := editor.settlement_plan.request.seed ~ farmstead.seed ~ u32(0x4641524d)
+    plan := farmland.generate_sized(seed, grid_width, grid_height, context.temp_allocator)
+    if !farmland.validate(&plan) do return false
+    editor.farms[editor.farm_count] = {
+        plan     = plan,
+        origin_x = farmstead.center_x + outward_x * field_offset,
+        origin_z = farmstead.center_z + outward_z * field_offset,
+        yaw      = farmstead.rotation,
+        scale_x  = 1,
+        scale_z  = 1,
+    }
+    editor.farm_count += 1
+    return true
 }
 
 markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
@@ -348,7 +521,16 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if parsed, ok := strconv.parse_int(target); ok && parsed >= 0 && parsed <= 0xffffffff {
         seed = u32(parsed)
     }
-    markov_farmland_plan = farmland.generate(seed, context.temp_allocator)
+    grid_width, grid_height := farmland.GRID_WIDTH, farmland.GRID_HEIGHT
+    switch target {
+    case "small":
+        grid_width, grid_height = 8, 8
+    case "medium":
+        grid_width, grid_height = farmland.GRID_WIDTH, farmland.GRID_HEIGHT
+    case "large":
+        grid_width, grid_height = 48, 36
+    }
+    markov_farmland_plan = farmland.generate_sized(seed, grid_width, grid_height, context.temp_allocator)
     if !farmland.validate(&markov_farmland_plan) do return false
 
     editor.in_map = true
@@ -366,8 +548,13 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
             {MARKOV_FARMLAND_ORIGIN_X, center_height, MARKOV_FARMLAND_ORIGIN_Z},
         )
     } else {
+        extent := f32(max(markov_farmland_plan.width, markov_farmland_plan.height)) * farmland.CELL_METERS
         editor.camera_pose = third_person.camera_look_at(
-            {MARKOV_FARMLAND_ORIGIN_X + 72, center_height + 48, MARKOV_FARMLAND_ORIGIN_Z + 82},
+            {
+                MARKOV_FARMLAND_ORIGIN_X + extent * .58,
+                center_height + extent * .40,
+                MARKOV_FARMLAND_ORIGIN_Z + extent * .66,
+            },
             {MARKOV_FARMLAND_ORIGIN_X, center_height, MARKOV_FARMLAND_ORIGIN_Z},
         )
     }

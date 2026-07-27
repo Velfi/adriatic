@@ -14,6 +14,41 @@ extern "C" void adriatic_optimize_index_buffer(
     meshopt_optimizeVertexCache(destination, indices, index_count, vertex_count);
 }
 
+extern "C" uint32_t adriatic_optimize_unindexed_mesh(
+    void *destination_vertices, uint32_t *destination_indices,
+    const void *source_vertices, uint32_t vertex_count, uint32_t vertex_stride)
+{
+    if (!destination_vertices || !destination_indices || !source_vertices ||
+        vertex_count == 0 || vertex_stride == 0 || vertex_count % 3 != 0)
+        return 0;
+
+    std::vector<unsigned int> remap(vertex_count);
+    const size_t optimized_vertex_count = meshopt_generateVertexRemap(
+        remap.data(), nullptr, vertex_count, source_vertices, vertex_count,
+        vertex_stride);
+    if (optimized_vertex_count == 0 || optimized_vertex_count > UINT32_MAX)
+        return 0;
+
+    std::vector<uint32_t> remapped_indices(vertex_count);
+    std::vector<uint32_t> cache_indices(vertex_count);
+    std::vector<uint8_t> remapped_vertices(optimized_vertex_count * vertex_stride);
+    meshopt_remapIndexBuffer(
+        remapped_indices.data(), nullptr, vertex_count, remap.data());
+    meshopt_remapVertexBuffer(
+        remapped_vertices.data(), source_vertices, vertex_count, vertex_stride,
+        remap.data());
+    meshopt_optimizeVertexCache(
+        cache_indices.data(), remapped_indices.data(), vertex_count,
+        optimized_vertex_count);
+    std::memcpy(
+        destination_indices, cache_indices.data(),
+        vertex_count * sizeof(uint32_t));
+    const size_t fetched_vertex_count = meshopt_optimizeVertexFetch(
+        destination_vertices, destination_indices, vertex_count,
+        remapped_vertices.data(), optimized_vertex_count, vertex_stride);
+    return static_cast<uint32_t>(fetched_vertex_count);
+}
+
 extern "C" uint32_t adriatic_generate_optimized_mesh(
     const void *vertices, uint32_t vertex_count, uint32_t vertex_stride,
     uint32_t position_offset, uint32_t uv_offset, uint32_t part_offset,

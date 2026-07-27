@@ -17,6 +17,7 @@ import vehicles "../packages/vehicles"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
+import "core:testing"
 import vk "vendor:vulkan"
 import rl "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
@@ -57,6 +58,176 @@ WORLD_FLIGHT_NEAR_CLIP :: f32(.5)
 WORLD_EDITOR_NEAR_CLIP :: f32(100)
 WORLD_FOG_START :: f32(4500)
 WORLD_FOG_END :: f32(11000)
+
+Structure_LOD :: enum u8 {
+    Near,
+    Medium,
+    Far,
+}
+
+STRUCTURE_LOD_NEAR_PIXELS :: f32(160)
+STRUCTURE_LOD_MEDIUM_PIXELS :: f32(48)
+STRUCTURE_LOD_HYSTERESIS :: f32(.15)
+
+Structure_LOD_Result :: struct {
+    tier:               Structure_LOD,
+    projected_diameter: f32,
+    transition:         f32,
+}
+
+structure_lod_forced: i32 = -1
+
+window_flower_box_roll :: proc(structure_seed: u32, row, column: int) -> u32 {
+    hash := structure_seed ~ u32(row + 1) * 0x9e3779b9 ~ u32(column + 1) * 0x85ebca6b
+    hash ~= hash >> 16
+    hash *= 0x7feb352d
+    hash ~= hash >> 15
+    hash *= 0x846ca68b
+    hash ~= hash >> 16
+    return hash % 100
+}
+
+window_has_flower_box :: proc(structure_seed: u32, row, column: int) -> bool {
+    return window_flower_box_roll(structure_seed, row, column) < 35
+}
+
+structure_lod_force :: proc(tier: i32) {
+    structure_lod_forced = clamp(tier, i32(-1), i32(2))
+}
+
+structure_lod_projected_diameter :: proc(
+    camera: Perspective_Camera,
+    center: third_person.Vec3,
+    radius: f32,
+    viewport_height: f32,
+    near_plane: f32,
+) -> f32 {
+    depth := linalg.dot(center - camera.position, camera.forward)
+    if depth <= near_plane + radius do return f32(1e9)
+    return max(radius, f32(0)) * 2 * max(camera.focal_length, f32(.01)) *
+           max(viewport_height, f32(1)) * .5 / depth
+}
+
+structure_lod_select :: proc(
+    projected_diameter: f32,
+    previous: Structure_LOD,
+    force_near := false,
+) -> Structure_LOD_Result {
+    if structure_lod_forced >= 0 {
+        return {
+            tier = Structure_LOD(structure_lod_forced),
+            projected_diameter = projected_diameter,
+            transition = 1,
+        }
+    }
+    if force_near || projected_diameter >= f32(1e8) {
+        return {tier = .Near, projected_diameter = projected_diameter, transition = 1}
+    }
+    tier := previous
+    near_enter := STRUCTURE_LOD_NEAR_PIXELS * (1 + STRUCTURE_LOD_HYSTERESIS)
+    near_exit := STRUCTURE_LOD_NEAR_PIXELS * (1 - STRUCTURE_LOD_HYSTERESIS)
+    medium_enter := STRUCTURE_LOD_MEDIUM_PIXELS * (1 + STRUCTURE_LOD_HYSTERESIS)
+    medium_exit := STRUCTURE_LOD_MEDIUM_PIXELS * (1 - STRUCTURE_LOD_HYSTERESIS)
+    switch previous {
+    case .Near:
+        if projected_diameter < near_exit do tier = projected_diameter < medium_exit ? .Far : .Medium
+    case .Medium:
+        if projected_diameter >= near_enter {
+            tier = .Near
+        } else if projected_diameter < medium_exit {
+            tier = .Far
+        }
+    case .Far:
+        if projected_diameter >= near_enter {
+            tier = .Near
+        } else if projected_diameter >= medium_enter {
+            tier = .Medium
+        }
+    }
+    lower, upper := STRUCTURE_LOD_MEDIUM_PIXELS, STRUCTURE_LOD_NEAR_PIXELS
+    if tier == .Far do lower, upper = 0, STRUCTURE_LOD_MEDIUM_PIXELS
+    transition := clamp((projected_diameter - lower) / max(upper - lower, f32(1)), 0, 1)
+    return {tier = tier, projected_diameter = projected_diameter, transition = transition}
+}
+
+structure_lod_for :: proc(
+    structure: terrain.Structure,
+    previous: Structure_LOD,
+    force_near := false,
+) -> Structure_LOD_Result {
+    editor := world_renderer.editor
+    if editor == nil do return {tier = .Near, projected_diameter = 1e9, transition = 1}
+    focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
+    camera := perspective_camera(editor.camera_pose, focal_length)
+    center := third_person.Vec3 {
+        structure.center_x,
+        structure.base_y + structure.height * .5,
+        structure.center_z,
+    }
+    radius := f32(math.sqrt(f64(
+        structure.width * structure.width +
+        structure.depth * structure.depth +
+        structure.height * structure.height,
+    ))) * .5
+    near_plane := editor.in_map && driving_aircraft(editor) ? WORLD_FLIGHT_NEAR_CLIP : WORLD_PLAY_NEAR_CLIP
+    diameter := structure_lod_projected_diameter(camera, center, radius, f32(rl.GetScreenHeight()), near_plane)
+    return structure_lod_select(diameter, previous, force_near)
+}
+
+when ODIN_TEST {
+    @(test)
+    window_flower_boxes_are_deterministic_varied_and_near_target_density :: proc(t: ^testing.T) {
+        testing.expect_value(t, window_has_flower_box(1234, 2, 3), window_has_flower_box(1234, 2, 3))
+
+        placements: int
+        samples: int
+        saw_box, saw_empty := false, false
+        for seed in 0 ..< 256 {
+            for row in 0 ..< 4 {
+                for column in 0 ..< 5 {
+                    placed := window_has_flower_box(u32(seed), row, column)
+                    placements += placed ? 1 : 0
+                    samples += 1
+                    saw_box = saw_box || placed
+                    saw_empty = saw_empty || !placed
+                }
+            }
+        }
+
+        density := f32(placements) / f32(samples)
+        testing.expect(t, saw_box && saw_empty)
+        testing.expect(t, density >= .33 && density <= .37)
+    }
+
+    @(test)
+    structure_lod_selector_uses_balanced_thresholds_and_hysteresis :: proc(t: ^testing.T) {
+        structure_lod_force(-1)
+        testing.expect_value(t, structure_lod_select(200, .Medium).tier, Structure_LOD.Near)
+        testing.expect_value(t, structure_lod_select(100, .Near).tier, Structure_LOD.Medium)
+        testing.expect_value(t, structure_lod_select(30, .Medium).tier, Structure_LOD.Far)
+        testing.expect_value(t, structure_lod_select(50, .Far).tier, Structure_LOD.Far)
+        testing.expect_value(t, structure_lod_select(60, .Far).tier, Structure_LOD.Medium)
+        testing.expect_value(t, structure_lod_select(150, .Near).tier, Structure_LOD.Near)
+        testing.expect_value(t, structure_lod_select(170, .Medium).tier, Structure_LOD.Medium)
+        testing.expect_value(t, structure_lod_select(1, .Far, true).tier, Structure_LOD.Near)
+    }
+
+    @(test)
+    structure_lod_projection_accounts_for_focal_length_and_near_plane :: proc(t: ^testing.T) {
+        camera := Perspective_Camera {
+            position = {0, 0, 0},
+            forward = {0, 0, -1},
+            right = {1, 0, 0},
+            up = {0, 1, 0},
+            focal_length = 1,
+        }
+        diameter := structure_lod_projected_diameter(camera, {0, 0, -10}, 1, 1000, .2)
+        testing.expect(t, math.abs(diameter - 100) < .001)
+        camera.focal_length = 2
+        testing.expect(t, math.abs(structure_lod_projected_diameter(camera, {0, 0, -10}, 1, 1000, .2) - 200) < .001)
+        testing.expect(t, structure_lod_projected_diameter(camera, {0, 0, -.5}, 1, 1000, .2) >= 1e8)
+    }
+}
 
 World_Material_Kind :: enum u32 {
     Plain,
@@ -110,6 +281,8 @@ Foliage_Geometry_Cache_Entry :: struct {
     structure:        terrain.Structure,
     distance_bucket:  i32,
     direction_bucket: i32,
+    lod:              Structure_LOD,
+    lod_transition:   f32,
     world_vertices:   [dynamic]World_Vertex,
     foliage_vertices: [dynamic]Foliage_Vertex,
 }
@@ -118,7 +291,10 @@ Static_Geometry_Cache_Entry :: struct {
     valid:                  bool,
     structure:              terrain.Structure,
     project_revision:       u64,
+    lod:                    Structure_LOD,
+    lod_transition:         f32,
     world_vertices:         [dynamic]World_Vertex,
+    world_indices:          [dynamic]u32,
     foliage_vertices:       [dynamic]Foliage_Vertex,
     bougainvillea_vertices: [dynamic]Foliage_Vertex,
 }
@@ -128,6 +304,7 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
     structure:              terrain.Structure,
     project_revision:       u64,
     density:                f32,
+    detail_tier:            int,
     capture_seed_enabled:   bool,
     capture_seed:           u32,
     world_vertices:         [dynamic]World_Vertex,
@@ -199,12 +376,16 @@ World_Renderer :: struct {
     vehicle_paint_descriptor_pool:   vk.DescriptorPool,
     vehicle_paint_descriptor:        vk.DescriptorSet,
     vertex:                          [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    static_vertex:                   [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    static_index:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     road_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     foliage_vertex:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     grass_instance:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     wing_trail_vertex:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     wing_trail_index:                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vertices:                        [dynamic]World_Vertex,
+    static_vertices:                 [dynamic]World_Vertex,
+    static_indices:                  [dynamic]u32,
     road_vertices:                   [dynamic]World_Vertex,
     foliage_vertices:                [dynamic]Foliage_Vertex,
     bougainvillea_vertices:          [dynamic]Foliage_Vertex,
@@ -232,6 +413,10 @@ World_Renderer :: struct {
     static_geometry_cache:           [terrain.STRUCTURE_CAPACITY]Static_Geometry_Cache_Entry,
     climbing_leaf_geometry_cache:    [terrain.STRUCTURE_CAPACITY]Climbing_Leaf_Geometry_Cache_Entry,
     marina_geometry_cache:           [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
+    structure_lod_counts:             [3]int,
+    structure_lod_cache_rebuilds:     u64,
+    structure_lod_world_vertices:     int,
+    structure_lod_foliage_vertices:   int,
     initialized:                     bool,
 }
 
@@ -244,6 +429,7 @@ when ODIN_OS == .Windows {
 }
 foreign adriatic_mesh {
     adriatic_optimize_index_buffer :: proc(destination, indices: ^u16, index_count, vertex_count: u32) ---
+    adriatic_optimize_unindexed_mesh :: proc(destination_vertices: rawptr, destination_indices: ^u32, source_vertices: rawptr, vertex_count, vertex_stride: u32) -> u32 ---
 }
 
 #assert(size_of(World_Push) == 128)
@@ -347,7 +533,7 @@ world_eye_vertex :: #force_inline proc(
 
 @(no_instrumentation)
 world_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color) {
-    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color), world_vertex(b, color), world_vertex(c, color))
 }
 
@@ -358,7 +544,7 @@ world_triangle_smooth_lit :: #force_inline proc(
     color_a, color_b, color_c: rl.Color,
     roughness: f32 = .9,
 ) {
-    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     points := [3]third_person.Vec3{a, b, c}
     normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
     colors := [3]rl.Color{color_a, color_b, color_c}
@@ -381,7 +567,7 @@ world_aircraft_triangle :: #force_inline proc(
     paint_layer: f32,
     paintable := true,
 ) {
-    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
     normal := linalg.normalize0(linalg.cross((b - a), (c - a)))
     for &vertex in vertices {
@@ -405,7 +591,7 @@ world_aircraft_triangle_smooth :: #force_inline proc(
     paint_layer: f32,
     paintable := true,
 ) {
-    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
     normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
     uvs := [3][2]f32{uv_a, uv_b, uv_c}
@@ -422,7 +608,7 @@ world_aircraft_triangle_smooth :: #force_inline proc(
 
 @(no_instrumentation)
 world_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
-    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(&world_renderer.vertices, world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c))
 }
 
@@ -462,7 +648,7 @@ world_greek_asset_primitive :: proc(
                 third_person.Vec3{c.x - a.x, c.y - a.y, c.z - a.z},
             ),
         )
-        if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+        if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
         append(
             &world_renderer.vertices,
             world_greek_asset_vertex(a, color, normal, metallic, roughness),
@@ -528,7 +714,7 @@ world_triangle_foliage :: #force_inline proc(
     color_a, color_b, color_c: rl.Color,
     normal_a, normal_b, normal_c: third_person.Vec3,
 ) {
-    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     append(
         &world_renderer.vertices,
         world_foliage_vertex(a, color_a, normal_a),
@@ -550,7 +736,7 @@ world_quad_colored :: proc(a, b, c, d: third_person.Vec3, color_a, color_b, colo
 
 @(no_instrumentation)
 world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
-    if len(world_renderer.vertices) + 6 > WORLD_VERTEX_CAPACITY do return
+    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 6 > WORLD_VERTEX_CAPACITY do return
     append(
         &world_renderer.vertices,
         world_water_vertex(a, color),
@@ -604,7 +790,7 @@ world_boat_point :: #force_inline proc(local: [3]f32, position: third_person.Vec
 
 @(no_instrumentation)
 world_boat_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color, part: boats.Part) {
-    if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+    if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     metallic := part == .Metal ? f32(.62) : f32(0)
     roughness := part == .Glass ? f32(.24) : f32(.78)
@@ -1426,7 +1612,7 @@ world_ellipsoid_rotated :: proc(
     for latitude in 0 ..< LATITUDE_SEGMENTS {
         for longitude in 0 ..< LONGITUDE_SEGMENTS {
             next := (longitude + 1) % LONGITUDE_SEGMENTS
-            if len(world_renderer.vertices) + 6 > WORLD_VERTEX_CAPACITY do return
+            if len(world_renderer.vertices) + len(world_renderer.static_indices) + 6 > WORLD_VERTEX_CAPACITY do return
             vertex_coordinates := [6][2]int {
                 {latitude, longitude},
                 {latitude + 1, longitude},
@@ -1549,7 +1735,7 @@ world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: r
     for ring_index in 0 ..< RING_COUNT - 1 {
         for segment in 0 ..< SEGMENTS {
             next := (segment + 1) % SEGMENTS
-            if len(world_renderer.vertices) + 6 > WORLD_VERTEX_CAPACITY do return
+            if len(world_renderer.vertices) + len(world_renderer.static_indices) + 6 > WORLD_VERTEX_CAPACITY do return
             coordinates := [6][2]int {
                 {ring_index, segment},
                 {ring_index + 1, segment},
@@ -1571,7 +1757,7 @@ world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: r
     bottom := third_person.Vec3{center.x, center.y + heights[0], center.z}
     for segment in 0 ..< SEGMENTS {
         next := (segment + 1) % SEGMENTS
-        if len(world_renderer.vertices) + 3 > WORLD_VERTEX_CAPACITY do return
+        if len(world_renderer.vertices) + len(world_renderer.static_indices) + 3 > WORLD_VERTEX_CAPACITY do return
         bottom_coordinates := [3]int{segment, next, -1}
         for coordinate in bottom_coordinates {
             point := coordinate < 0 ? bottom : rings[0][coordinate]
@@ -2039,20 +2225,39 @@ world_architecture_tile_face :: proc(edge_a, edge_b, ridge: third_person.Vec3, c
     world_architecture_tile_slope(edge_a, edge_b, ridge, ridge, courses, segments, seed)
 }
 
-world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
+world_architecture_roof_style :: proc(structure: terrain.Structure) -> architecture.Roof_Style {
+    identity := architecture.architecture_resolve_legacy_identity(structure)
+    if identity.region == .Aegean && !buildings.is_landmark(identity) {
+        return .Parapet
+    }
+    return architecture.roof_style_for_seed(structure.seed)
+}
+
+world_architecture_roof :: proc(
+    structure: terrain.Structure,
+    landmark: bool,
+    lod: Structure_LOD = .Near,
+) {
     eave_y := structure.base_y + structure.height
-    roof_style := architecture.roof_style_for_seed(structure.seed)
+    roof_style := world_architecture_roof_style(structure)
     identity := architecture.architecture_resolve_legacy_identity(structure)
     tower_landmark := identity.archetype == .Campanile || identity.archetype == .Cycladic_Bell
     ceremonial_roof := tower_landmark || identity.archetype == .Church
     if !ceremonial_roof && roof_style == .Parapet {
-        roof_bytes := architecture.architecture_roof_color(structure.seed)
-        terracotta := rl.Color{roof_bytes[0], roof_bytes[1], roof_bytes[2], roof_bytes[3]}
+        roof_color := rl.Color{229, 226, 211, 255}
+        chimney_color := rl.Color{221, 218, 203, 255}
+        chimney_width, chimney_height := f32(1.1), f32(1.3)
+        if identity.region != .Aegean {
+            roof_bytes := architecture.architecture_roof_color(structure.seed)
+            roof_color = {roof_bytes[0], roof_bytes[1], roof_bytes[2], roof_bytes[3]}
+            chimney_color = {157, 112, 86, 255}
+            chimney_width, chimney_height = 2.4, 2.0
+        }
         world_box_rotated(
             {structure.center_x, eave_y + .25, structure.center_z},
             {structure.width + .8, .50, structure.depth + .8},
             structure.rotation,
-            terracotta,
+            roof_color,
         )
         chimney_x, chimney_z := world_rotate_xz(
             structure.center_x,
@@ -2062,10 +2267,10 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
             structure.rotation,
         )
         world_box_rotated(
-            {chimney_x, eave_y + 1.25, chimney_z},
-            {2.4, 2.0, 2.4},
+            {chimney_x, eave_y + .50 + chimney_height * .5, chimney_z},
+            {chimney_width, chimney_height, chimney_width},
             structure.rotation,
-            {157, 112, 86, 255},
+            chimney_color,
         )
         return
     }
@@ -2297,48 +2502,50 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool) {
         }
     }
 
-    courses := clamp(int(structure.width / 5.5), 4, 7)
-    segments := clamp(int(structure.depth / 7), 3, 6)
-    world_architecture_tile_slope(
-        left_front,
-        left_back,
-        ridge_front,
-        ridge_back,
-        courses,
-        segments,
-        structure.seed + 3,
-    )
-    world_architecture_tile_slope(
-        right_back,
-        right_front,
-        ridge_back,
-        ridge_front,
-        courses,
-        segments,
-        structure.seed + 17,
-    )
-    if roof_style == .Hip {
-        side_courses := clamp(int(structure.depth / 5), 3, 5)
+    if lod == .Near {
+        courses := clamp(int(structure.width / 5.5), 4, 7)
+        segments := clamp(int(structure.depth / 7), 3, 6)
         world_architecture_tile_slope(
             left_front,
-            right_front,
+            left_back,
             ridge_front,
-            ridge_front,
-            side_courses,
-            2,
-            structure.seed + 29,
+            ridge_back,
+            courses,
+            segments,
+            structure.seed + 3,
         )
         world_architecture_tile_slope(
             right_back,
-            left_back,
+            right_front,
             ridge_back,
-            ridge_back,
-            side_courses,
-            2,
-            structure.seed + 41,
+            ridge_front,
+            courses,
+            segments,
+            structure.seed + 17,
         )
+        if roof_style == .Hip {
+            side_courses := clamp(int(structure.depth / 5), 3, 5)
+            world_architecture_tile_slope(
+                left_front,
+                right_front,
+                ridge_front,
+                ridge_front,
+                side_courses,
+                2,
+                structure.seed + 29,
+            )
+            world_architecture_tile_slope(
+                right_back,
+                left_back,
+                ridge_back,
+                ridge_back,
+                side_courses,
+                2,
+                structure.seed + 41,
+            )
+        }
     }
-    if !landmark && roof_style != .Parapet && architecture.architecture_has_chimney(structure.seed) {
+    if lod != .Far && !landmark && roof_style != .Parapet && architecture.architecture_has_chimney(structure.seed) {
         chimney_local_x := roof_style == .Hip ? structure.width * .12 : structure.width * .22
         chimney_local_z := -structure.depth * .12
         chimney_x, chimney_z := world_rotate_xz(
@@ -2479,12 +2686,13 @@ world_architecture_mass :: proc(
     project: ^terrain.Project,
     has_entrance: bool = true,
     opening_layout: ^architecture.Opening_Layout = nil,
+    lod: Structure_LOD = .Near,
 ) {
     identity := architecture.architecture_resolve_legacy_identity(structure)
     habitable := buildings.is_habitable(identity.archetype)
     landmark := structure.height > 60 || settlement_structure_is_landmark(structure) || buildings.is_landmark(identity)
     facade_style := architecture.facade_style_for_seed(structure.seed)
-    roof_style := architecture.roof_style_for_seed(structure.seed)
+    roof_style := world_architecture_roof_style(structure)
     stone := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     world_architecture_box_rotated(
         {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
@@ -2528,6 +2736,26 @@ world_architecture_mass :: proc(
         structure.rotation,
         damp_course,
     )
+    if lod == .Far {
+        world_architecture_roof(structure, landmark, lod)
+        panel := formation_face_color(stone, math.PI, 0)
+        panel_width := clamp(structure.width * .42, f32(2.4), structure.width * .72)
+        panel_height := clamp(structure.height * .26, f32(2.4), f32(6.0))
+        panel_x, panel_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + .07,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {panel_x, structure.base_y + structure.height * .48, panel_z},
+            {panel_width, panel_height, .12},
+            structure.rotation,
+            panel,
+        )
+        return
+    }
     if !landmark {
         for corner_side in -1 ..= 1 {
             if corner_side == 0 do continue
@@ -2672,7 +2900,68 @@ world_architecture_mass :: proc(
             {184, 93, 61, 255},
         )
     }
-    world_architecture_roof(structure, landmark)
+    world_architecture_roof(structure, landmark, lod)
+    if lod == .Medium {
+        window := facade_style == 2 ? rl.Color{42, 74, 82, 255} : rl.Color{48, 62, 64, 255}
+        rows := architecture.facade_floor_count(structure.height)
+        columns := architecture.facade_column_count(structure.width)
+        window_width := architecture.facade_window_width(structure.width)
+        window_height := architecture.facade_window_height(structure.height)
+        for row in 0 ..< rows {
+            for column in 0 ..< columns {
+                local_x := architecture.facade_window_column_x(structure.width, column)
+                window_y := structure.base_y + architecture.facade_window_row_y(structure.height, row)
+                window_x, window_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    local_x,
+                    structure.depth * .5 + .08,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {window_x, window_y, window_z},
+                    {window_width, window_height, .14},
+                    structure.rotation,
+                    window,
+                )
+            }
+        }
+        if has_entrance && habitable {
+            door_x, door_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .10,
+                structure.rotation,
+            )
+            door_width := clamp(structure.width * .13, f32(1.8), f32(2.8))
+            door_height := clamp(structure.height * .075, f32(3.0), f32(4.0))
+            world_box_rotated(
+                {door_x, structure.base_y + door_height * .5, door_z},
+                {door_width, door_height, .16},
+                structure.rotation,
+                {92, 66, 57, 255},
+            )
+        }
+        if !landmark && rows > 1 && structure.seed % 3 == 0 {
+            balcony_x, balcony_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .42,
+                structure.rotation,
+            )
+            balcony_y := structure.base_y + architecture.facade_window_row_y(structure.height, rows - 1) -
+                          window_height * .5
+            world_box_rotated(
+                {balcony_x, balcony_y, balcony_z},
+                {min(structure.width * .56, f32(7.5)), .14, .72},
+                structure.rotation,
+                {111, 94, 76, 255},
+            )
+        }
+        return
+    }
     // Dark inset windows and red shutters give the generated blocks a readable
     // Adriatic façade even at the editor's wide camera distance.
     window := facade_style == 2 ? rl.Color{42, 74, 82, 255} : rl.Color{48, 62, 64, 255}
@@ -3479,7 +3768,7 @@ world_architecture_mass :: proc(
                     formation_face_color(trim, math.PI, 0),
                 )
             }
-            if !landmark && (facade_style == 2 || (facade_style == 0 && row % 2 == 1)) && (row + column) % 2 == 0 {
+            if !landmark && window_has_flower_box(structure.seed, row, column) {
                 flower_x, flower_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
@@ -3493,23 +3782,15 @@ world_architecture_mass :: proc(
                     structure.rotation,
                     {178, 111, 73, 255},
                 )
-                for sprig in 0 ..< 3 {
-                    sprig_height := row == 0 ? f32(.28) : window_height * .62
-                    sprig_y := row == 0 ? y - window_height * .5 + .18 : y - window_height * .28
-                    sprig_x, sprig_z := world_rotate_xz(
-                        structure.center_x,
-                        structure.center_z,
-                        x + (f32(sprig) - 1) * window_width * .34,
-                        local_z + .34,
-                        structure.rotation,
-                    )
-                    world_box_rotated(
-                        {sprig_x, sprig_y, sprig_z},
-                        {row == 0 ? f32(.20) : f32(.055), sprig_height, row == 0 ? f32(.14) : f32(.08)},
-                        structure.rotation,
-                        sprig == 1 ? rl.Color{87, 132, 74, 255} : rl.Color{113, 151, 78, 255},
-                    )
-                }
+                world_window_flower_bunch_billboard(
+                    structure,
+                    x,
+                    y - window_height * .5 - .10,
+                    local_z + .35,
+                    window_width,
+                    row,
+                    column,
+                )
                 // Flower-box openings still need a small Juliet guard. Without
                 // it the planter lip reads as an unsupported balcony with its
                 // upper railing missing.
@@ -3915,11 +4196,15 @@ world_architecture_mass :: proc(
     }
 }
 
-world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Project) {
+world_architecture :: proc(
+    structure: terrain.Structure,
+    project: ^terrain.Project,
+    lod: Structure_LOD = .Near,
+) {
     footprint := architecture.architecture_footprint(structure)
     if footprint.count <= 1 {
         layout := architecture.architecture_opening_layout(structure, 0, 0)
-        world_architecture_mass(structure, project, true, &layout)
+        world_architecture_mass(structure, project, true, &layout, lod)
         return
     }
     frontage_index := architecture.architecture_frontage_mass_index(structure)
@@ -3932,7 +4217,7 @@ world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Proje
         // Keep palette identity while decoupling repeated openings and tiles.
         child.seed = structure.seed + u32(mass_index * 747796405)
         layout := architecture.architecture_opening_layout(structure, mass_index, frontage_index)
-        world_architecture_mass(child, project, mass_index == frontage_index, &layout)
+        world_architecture_mass(child, project, mass_index == frontage_index, &layout, lod)
     }
 }
 
@@ -4031,21 +4316,33 @@ world_radial_formation :: proc(
     radii: [4]f32,
     heights: [4]f32,
     z_scale, cap_height: f32,
+    lod: Structure_LOD = .Near,
 ) {
     // Twelve sides keep cypress crowns and other radial formations from
     // resolving as hard triangular prisms in eye-level architectural views.
-    segments := 12
+    segments := lod == .Near ? 12 : lod == .Medium ? 8 : 5
+    layer_count := lod == .Near ? 4 : lod == .Medium ? 3 : 2
     color := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     vertices: [4][12]third_person.Vec3
     normals: [4][12]third_person.Vec3
     colors: [4][12]rl.Color
+    sampled_radii: [4]f32
+    sampled_heights: [4]f32
+    for layer in 0 ..< layer_count {
+        profile_position := f32(layer) * 3 / f32(max(layer_count - 1, 1))
+        lower := clamp(int(profile_position), 0, 3)
+        upper := min(lower + 1, 3)
+        fraction := profile_position - f32(lower)
+        sampled_radii[layer] = radii[lower] + (radii[upper] - radii[lower]) * fraction
+        sampled_heights[layer] = heights[lower] + (heights[upper] - heights[lower]) * fraction
+    }
     color_phase := f32(structure.seed & 0xffff) / 65535 * math.TAU
-    for layer in 0 ..< 4 {
+    for layer in 0 ..< layer_count {
         for segment in 0 ..< segments {
             angle := f32(segment) * math.PI * 2 / f32(segments)
             jitter := 1 + f32(math.sin(f64(f32(structure.seed) * .001 + f32(segment) * 2.17 + f32(layer) * .71))) * .11
-            local_x := math.cos(angle) * structure.width * .5 * radii[layer] * jitter
-            local_z := math.sin(angle) * structure.depth * .5 * radii[layer] * z_scale * jitter
+            local_x := math.cos(angle) * structure.width * .5 * sampled_radii[layer] * jitter
+            local_z := math.sin(angle) * structure.depth * .5 * sampled_radii[layer] * z_scale * jitter
             world_x, world_z := world_rotate_xz(
                 structure.center_x,
                 structure.center_z,
@@ -4053,11 +4350,11 @@ world_radial_formation :: proc(
                 local_z,
                 structure.rotation,
             )
-            vertices[layer][segment] = {world_x, structure.base_y + structure.height * heights[layer], world_z}
+            vertices[layer][segment] = {world_x, structure.base_y + structure.height * sampled_heights[layer], world_z}
             previous_layer := max(layer - 1, 0)
-            next_layer := min(layer + 1, 3)
-            height_delta := max(heights[next_layer] - heights[previous_layer], f32(.001))
-            radius_delta := radii[next_layer] - radii[previous_layer]
+            next_layer := min(layer + 1, layer_count - 1)
+            height_delta := max(sampled_heights[next_layer] - sampled_heights[previous_layer], f32(.001))
+            radius_delta := sampled_radii[next_layer] - sampled_radii[previous_layer]
             average_radius := (structure.width + structure.depth * z_scale) * .25
             slope := radius_delta * average_radius / max(height_delta * structure.height, f32(.001))
             local_normal := linalg.normalize0(
@@ -4070,7 +4367,7 @@ world_radial_formation :: proc(
             // and a slight sun-bleached crest remain smooth across triangles.
             warm := math.sin(angle + color_phase) * .5 + math.sin(angle * 2 - color_phase * .7) * .22
             cool := math.cos(angle * 1.0 - color_phase * 1.3) * .38
-            height_lift := f32(layer) / 3 * 5
+            height_lift := f32(layer) / f32(max(layer_count - 1, 1)) * 5
             brightness := math.sin(angle * 2 + color_phase * .4) * 4 + height_lift
             colors[layer][segment] = {
                 r = u8(clamp(f32(color.r) + brightness + warm * 11, 0, 255)),
@@ -4080,7 +4377,7 @@ world_radial_formation :: proc(
             }
         }
     }
-    for layer in 0 ..< 3 {
+    for layer in 0 ..< layer_count - 1 {
         for segment in 0 ..< segments {
             next := (segment + 1) % segments
             world_triangle_smooth_lit(
@@ -4113,20 +4410,20 @@ world_radial_formation :: proc(
     for segment in 0 ..< segments {
         next := (segment + 1) % segments
         world_triangle_smooth_lit(
-            vertices[3][segment],
+            vertices[layer_count - 1][segment],
             top,
-            vertices[3][next],
-            normals[3][segment],
+            vertices[layer_count - 1][next],
+            normals[layer_count - 1][segment],
             {0, 1, 0},
-            normals[3][next],
-            colors[3][segment],
+            normals[layer_count - 1][next],
+            colors[layer_count - 1][segment],
             {
                 r = u8(clamp(f32(color.r) + 7, 0, 255)),
                 g = u8(clamp(f32(color.g) + 6, 0, 255)),
                 b = u8(clamp(f32(color.b) + 4, 0, 255)),
                 a = color.a,
             },
-            colors[3][next],
+            colors[layer_count - 1][next],
             .94,
         )
     }
@@ -4399,7 +4696,11 @@ world_small_faceted_rock :: proc(structure: terrain.Structure) {
 }
 
 @(no_instrumentation)
-world_formation_sea_vegetation_band :: proc(structure: terrain.Structure, project: ^terrain.Project) {
+world_formation_sea_vegetation_band :: proc(
+    structure: terrain.Structure,
+    project: ^terrain.Project,
+    lod: Structure_LOD = .Near,
+) {
     if project == nil || structure.base_y > project.sea_level + .04 do return
 
     footprint := max(structure.width, structure.depth)
@@ -4415,11 +4716,11 @@ world_formation_sea_vegetation_band :: proc(structure: terrain.Structure, projec
         band.depth += .035
         band.height = band_height
         band.color = {color.r, color.g, color.b, color.a}
-        world_cliff_formation(band)
+        world_cliff_formation(band, lod)
         return
     }
 
-    segments := 16
+    segments := lod == .Near ? 16 : lod == .Medium ? 10 : 6
     lower: [16]third_person.Vec3
     upper: [16]third_person.Vec3
     fraction := clamp(band_height / max(structure.height, f32(.001)), 0, 1)
@@ -4462,7 +4763,11 @@ world_formation_sea_vegetation_band :: proc(structure: terrain.Structure, projec
     }
 }
 
-world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project = nil) {
+world_formation :: proc(
+    structure: terrain.Structure,
+    project: ^terrain.Project = nil,
+    lod: Structure_LOD = .Near,
+) {
     switch structure.kind {
     case .Box:
         world_box_rotated(
@@ -4472,38 +4777,44 @@ world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project 
             rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]},
         )
     case .Rock:
-        if max(structure.width, structure.depth, structure.height) <= 5 {
+        if max(structure.width, structure.depth, structure.height) <= 5 && lod != .Far {
             world_small_faceted_rock(structure)
         } else {
-            world_radial_formation(structure, {1, .94, .62, .20}, {0, .24, .58, .88}, 1, .96)
+            world_radial_formation(structure, {1, .94, .62, .20}, {0, .24, .58, .88}, 1, .96, lod)
         }
     case .Spire:
-        world_radial_formation(structure, {1, .62, .30, .07}, {0, .20, .46, .94}, 1, 1)
+        world_radial_formation(structure, {1, .62, .30, .07}, {0, .20, .46, .94}, 1, 1, lod)
     case .Mountain:
-        world_radial_formation(structure, {1, .94, .68, .24}, {0, .22, .54, .86}, 1, .99)
+        world_radial_formation(structure, {1, .94, .68, .24}, {0, .22, .54, .86}, 1, .99, lod)
     case .Ridge:
         stone := structure
         stone.color = world_limestone_color(.Ridge)
-        world_radial_formation(stone, {1, .92, .60, .14}, {0, .22, .50, .78}, .42, .90)
-        world_formation_foliage(stone)
+        world_radial_formation(stone, {1, .92, .60, .14}, {0, .22, .50, .78}, .42, .90, lod)
+        world_formation_foliage(stone, lod)
     case .Cliff:
         stone := structure
         stone.color = world_limestone_color(.Cliff)
-        world_cliff_formation(stone)
-        world_formation_foliage(stone)
+        world_cliff_formation(stone, lod)
+        world_formation_foliage(stone, lod)
     case .Foliage:
-        world_foliage_formation(structure)
+        world_foliage_formation(structure, terrain.BASE_CELL_SIZE, lod)
     case .Architecture:
-        world_architecture(structure, project)
+        world_architecture(structure, project, lod)
     }
-    world_formation_sea_vegetation_band(structure, project)
+    world_formation_sea_vegetation_band(structure, project, lod)
 }
 
-world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_index: int) {
+world_foliage_formation_cached :: proc(
+    structure: terrain.Structure,
+    structure_index: int,
+    force_near := false,
+) {
     if structure_index < 0 || structure_index >= terrain.STRUCTURE_CAPACITY {
         world_foliage_formation(structure)
         return
     }
+    entry := &world_renderer.foliage_geometry_cache[structure_index]
+    lod_result := structure_lod_for(structure, entry.lod, force_near)
     camera := world_renderer.editor.camera_pose.position
     dx := camera.x - structure.center_x
     dz := camera.z - structure.center_z
@@ -4514,15 +4825,16 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     // rebuilding thousands of deterministic static vertices every frame.
     // Structure-relative buckets also stagger rebuilds naturally as the
     // player moves through a forest instead of invalidating the whole scene.
-    distance_bucket := i32(math.floor(distance / 16))
+    distance_bucket := lod_result.tier == .Far ? i32(0) : i32(math.floor(distance / 16))
     direction := math.atan2(dz, dx)
-    direction_bucket := i32(math.floor((direction + math.PI) * 16 / (math.PI * 2)))
-    entry := &world_renderer.foliage_geometry_cache[structure_index]
+    direction_bucket := lod_result.tier == .Far ? i32(0) :
+        i32(math.floor((direction + math.PI) * 16 / (math.PI * 2)))
     if entry.valid &&
        entry.structure == structure &&
+       entry.lod == lod_result.tier &&
        entry.distance_bucket == distance_bucket &&
        entry.direction_bucket == direction_bucket {
-        world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
+        world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices) - len(world_renderer.static_indices))
         if world_count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:world_count])
         foliage_count := min(
             len(entry.foliage_vertices),
@@ -4534,7 +4846,8 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
 
     world_first := len(world_renderer.vertices)
     foliage_first := len(world_renderer.foliage_vertices)
-    world_foliage_formation(structure)
+    world_foliage_formation(structure, terrain.BASE_CELL_SIZE, lod_result.tier)
+    world_renderer.structure_lod_cache_rebuilds += 1
     clear(&entry.world_vertices)
     clear(&entry.foliage_vertices)
     if world_first < len(world_renderer.vertices) {
@@ -4545,19 +4858,44 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     }
     entry.valid = true
     entry.structure = structure
+    entry.lod = lod_result.tier
+    entry.lod_transition = lod_result.transition
     entry.distance_bucket = distance_bucket
     entry.direction_bucket = direction_bucket
 }
 
-world_static_formation_cached :: proc(structure: terrain.Structure, structure_index: int, project: ^terrain.Project) {
+world_static_mesh_append :: proc(entry: ^Static_Geometry_Cache_Entry) {
+    if entry == nil || len(entry.world_vertices) == 0 || len(entry.world_indices) == 0 do return
+    if len(world_renderer.vertices) + len(world_renderer.static_indices) + len(entry.world_indices) >
+           WORLD_VERTEX_CAPACITY ||
+       len(world_renderer.static_vertices) + len(entry.world_vertices) > WORLD_VERTEX_CAPACITY {
+        return
+    }
+    vertex_base := u32(len(world_renderer.static_vertices))
+    append(&world_renderer.static_vertices, ..entry.world_vertices[:])
+    reserve(&world_renderer.static_indices, len(world_renderer.static_indices) + len(entry.world_indices))
+    for index in entry.world_indices {
+        append(&world_renderer.static_indices, vertex_base + index)
+    }
+}
+
+world_static_formation_cached :: proc(
+    structure: terrain.Structure,
+    structure_index: int,
+    project: ^terrain.Project,
+    force_near := false,
+) {
     if project == nil || structure_index < 0 || structure_index >= terrain.STRUCTURE_CAPACITY {
         world_formation(structure, project)
         return
     }
     entry := &world_renderer.static_geometry_cache[structure_index]
-    if entry.valid && entry.structure == structure && entry.project_revision == project.revision {
-        world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
-        if world_count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:world_count])
+    lod_result := structure_lod_for(structure, entry.lod, force_near)
+    if entry.valid &&
+       entry.structure == structure &&
+       entry.project_revision == project.revision &&
+       entry.lod == lod_result.tier {
+        world_static_mesh_append(entry)
         foliage_count := min(
             len(entry.foliage_vertices),
             FOLIAGE_VERTEX_CAPACITY - len(world_renderer.foliage_vertices),
@@ -4576,12 +4914,31 @@ world_static_formation_cached :: proc(structure: terrain.Structure, structure_in
     world_first := len(world_renderer.vertices)
     foliage_first := len(world_renderer.foliage_vertices)
     bougainvillea_first := len(world_renderer.bougainvillea_vertices)
-    world_formation(structure, project)
+    world_formation(structure, project, lod_result.tier)
+    world_renderer.structure_lod_cache_rebuilds += 1
     clear(&entry.world_vertices)
+    clear(&entry.world_indices)
     clear(&entry.foliage_vertices)
     clear(&entry.bougainvillea_vertices)
     if world_first < len(world_renderer.vertices) {
-        append(&entry.world_vertices, ..world_renderer.vertices[world_first:])
+        source := world_renderer.vertices[world_first:]
+        resize(&entry.world_vertices, len(source))
+        resize(&entry.world_indices, len(source))
+        optimized_count := adriatic_optimize_unindexed_mesh(
+            raw_data(entry.world_vertices),
+            raw_data(entry.world_indices),
+            raw_data(source),
+            u32(len(source)),
+            u32(size_of(World_Vertex)),
+        )
+        if optimized_count > 0 {
+            resize(&entry.world_vertices, int(optimized_count))
+            resize(&world_renderer.vertices, world_first)
+            world_static_mesh_append(entry)
+        } else {
+            clear(&entry.world_vertices)
+            clear(&entry.world_indices)
+        }
     }
     if foliage_first < len(world_renderer.foliage_vertices) {
         append(&entry.foliage_vertices, ..world_renderer.foliage_vertices[foliage_first:])
@@ -4592,6 +4949,8 @@ world_static_formation_cached :: proc(structure: terrain.Structure, structure_in
     entry.valid = true
     entry.structure = structure
     entry.project_revision = project.revision
+    entry.lod = lod_result.tier
+    entry.lod_transition = lod_result.transition
 }
 
 world_structure_preview_cluster :: proc(editor: ^Editor) {
@@ -4646,8 +5005,8 @@ world_curve_preview :: proc(editor: ^Editor) {
     }
 }
 
-world_cliff_formation :: proc(structure: terrain.Structure) {
-    segments := 6
+world_cliff_formation :: proc(structure: terrain.Structure, lod: Structure_LOD = .Near) {
+    segments := lod == .Near ? 6 : lod == .Medium ? 4 : 2
     color := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     front_bottom: [7]third_person.Vec3
     front_top: [7]third_person.Vec3
@@ -4913,14 +5272,49 @@ world_bougainvillea_card :: proc(
     }
 }
 
+world_window_flower_bunch_billboard :: proc(
+    structure: terrain.Structure,
+    local_x, root_y, local_z, window_width: f32,
+    row, column: int,
+) {
+    seed := structure.seed ~ u32(row + 1) * 0x9e3779b9 ~ u32(column + 1) * 0x85ebca6b
+    root_x, root_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        local_x,
+        local_z,
+        structure.rotation,
+    )
+    palette := architecture.bougainvillea_palette(seed)
+    flower_tile := architecture.bougainvillea_flower_tile_base(palette)
+    // Even atlas columns are upright, bottom-anchored clumps: a natural fit
+    // for a window box where the stems must visibly emerge from the planter.
+    variation := int((seed >> 8) & 1) * 2
+    width := window_width + .32
+    height := row == 0 ? f32(.58) : f32(.92)
+    roll := (f32(int((seed >> 12) % 7)) - 3) * .025
+    world_bougainvillea_card(
+        {root_x, root_y, root_z},
+        width,
+        height,
+        flower_tile + variation,
+        seed & 1 != 0,
+        roll,
+        .96,
+    )
+}
+
 world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: int, color: rl.Color) {
     if len(world_renderer.grass_instances) >= GRASS_INSTANCE_CAPACITY do return
-    append(&world_renderer.grass_instances, Grass_Instance {
-        center = {center.x, center.y, center.z},
-        size   = {width, height},
-        tile   = u32(((tile % 16) + 16) % 16),
-        color  = world_color(color),
-    })
+    append(
+        &world_renderer.grass_instances,
+        Grass_Instance {
+            center = {center.x, center.y, center.z},
+            size = {width, height},
+            tile = u32(((tile % 16) + 16) % 16),
+            color = world_color(color),
+        },
+    )
 }
 
 world_wildflower_card :: proc(center: third_person.Vec3, width, height: f32, tile: int) {
@@ -5558,6 +5952,7 @@ world_foliage_lobe :: proc(
     variation: int,
     outline_angle: f32,
     emit_outline: bool,
+    lod: Structure_LOD = .Near,
 ) {
     // Smooth normals cannot repair a faceted outer contour. Eighteen sides
     // keep the long crown ridge and hanging skirt from resolving into obvious
@@ -5568,7 +5963,7 @@ world_foliage_lobe :: proc(
     // retain the cheaper contour. This spends vertices where scallops occupy
     // multiple pixels instead of increasing every canopy in overview scenes.
     MAX_SEGMENTS :: 30
-    segment_count := 18
+    segment_count := lod == .Near ? 30 : lod == .Medium ? 18 : 8
     lobe_world_x, lobe_world_z := world_rotate_xz(
         structure.center_x,
         structure.center_z,
@@ -5576,26 +5971,18 @@ world_foliage_lobe :: proc(
         local_center_z,
         structure.rotation,
     )
-    camera_position := world_renderer.editor.camera_pose.position
-    camera_delta_x := camera_position.x - lobe_world_x
-    camera_delta_z := camera_position.z - lobe_world_z
-    camera_distance := f32(math.sqrt(f64(camera_delta_x * camera_delta_x + camera_delta_z * camera_delta_z)))
-    if camera_distance < 260 do segment_count = 24
-    if camera_distance < 145 do segment_count = MAX_SEGMENTS
     PROFILE_RINGS :: 7
     MAX_RINGS :: 10
-    ring_count := PROFILE_RINGS
-    if camera_distance < 260 do ring_count = 9
-    if camera_distance < 145 do ring_count = MAX_RINGS
+    ring_count := lod == .Near ? MAX_RINGS : lod == .Medium ? PROFILE_RINGS : 4
     if is_hedge {
         // Hedgerows can span an entire property edge. Keep their continuous
         // silhouette cheap: the overlapping crown beats hide the coarser
         // radial profile, so tree-quality tessellation buys little on screen.
-        segment_count = camera_distance < 145 ? 14 : 10
-        ring_count = camera_distance < 145 ? 6 : 5
+        segment_count = lod == .Near ? 14 : lod == .Medium ? 10 : 8
+        ring_count = lod == .Near ? 6 : lod == .Medium ? 5 : 4
     }
     is_forest_lobe := !is_hedge && max(structure.width, structure.depth) >= 105 && structure.height >= 58
-    if is_forest_lobe && camera_distance >= 260 {
+    if is_forest_lobe && lod == .Far {
         // Dense stands contain dozens of tree-scale crowns. Eight sides and
         // four sampled profile rings are enough once those crowns merge into
         // a distant forest silhouette, while keeping the aggregate affordable.
@@ -5606,7 +5993,7 @@ world_foliage_lobe :: proc(
     // shed it so their silhouette stays a calm, inexpensive composition of the
     // bold dominant bunches. The fade is continuous, so a crown morphs its
     // surface detail smoothly rather than popping at an LOD band boundary.
-    clump_detail_fade := clamp((320 - camera_distance) / 175, 0, 1)
+    clump_detail_fade := lod == .Near ? f32(1) : lod == .Medium ? f32(.45) : f32(0)
     // Canopy lobes are broad layered shelves, not inflated spheres. The
     // widest contour sits low, the upper shoulder stays full, and the shallow
     // cap produces a painted crown plane instead of a pointed balloon.
@@ -5949,7 +6336,7 @@ world_foliage_lobe :: proc(
     // The atlas is primarily a silhouette accent. Perimeter boughs carry the
     // large sprays; clipped hedges also receive a few much smaller translucent
     // face clusters below so their long front plane does not stay textureless.
-    if emit_outline {
+    if emit_outline && lod != .Far {
         local_x := local_center_x + math.cos(outline_angle) * profile_width * .64
         local_z := local_center_z + math.sin(outline_angle) * profile_depth * .64
         card_x, card_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
@@ -6096,7 +6483,11 @@ world_foliage_lobe :: proc(
     }
 }
 
-world_foliage_formation :: proc(structure: terrain.Structure, minimum_footprint := terrain.BASE_CELL_SIZE) {
+world_foliage_formation :: proc(
+    structure: terrain.Structure,
+    minimum_footprint := terrain.BASE_CELL_SIZE,
+    lod: Structure_LOD = .Near,
+) {
     // Authored foliage retains the tool's one-cell minimum. Derived foliage,
     // such as scrub placed on a ridge or cliff, can opt into its exact
     // footprint while still using this same crown generator.
@@ -6108,18 +6499,17 @@ world_foliage_formation :: proc(structure: terrain.Structure, minimum_footprint 
     // Keep forest patches dense by filling their area with tree-scale trees,
     // rather than stretching a handful of crowns across the footprint.
     forest_tree_count := is_forest ? clamp(int(width * depth / 460), 24, 36) : 0
+    if is_forest && lod == .Medium do forest_tree_count = min(forest_tree_count, 24)
+    if is_forest && lod == .Far do forest_tree_count = min(forest_tree_count, 12)
     // A forest formation is a grove footprint, not one gigantic tree. Keep
     // the leaf ceiling around four character heights while individual crown
     // clusters supply the remaining tree height.
     canopy_lift := is_forest ? structure.height * .11 : f32(0)
 
     if is_forest {
-        camera_position := world_renderer.editor.camera_pose.position
-        camera_dx := camera_position.x - structure.center_x
-        camera_dz := camera_position.z - structure.center_z
-        formation_distance := f32(math.sqrt(f64(camera_dx * camera_dx + camera_dz * camera_dz)))
-        walking_distance := formation_distance < 260
+        walking_distance := lod == .Near
         dapple_count := 7
+        if lod != .Near do dapple_count = 0
         for dapple in 0 ..< dapple_count {
             angle := f32(dapple) * 2.399963 + f32(structure.seed % 149) * .026
             radial := .12 + f32((dapple * 5 + 2) % 9) / 8 * .30
@@ -6162,7 +6552,7 @@ world_foliage_formation :: proc(structure: terrain.Structure, minimum_footprint 
             )
         }
 
-        understory_count := clamp(forest_tree_count * 2 / 3, 16, 24)
+        understory_count := lod == .Near ? clamp(forest_tree_count * 2 / 3, 16, 24) : 0
         if walking_distance {
             understory_count = clamp(forest_tree_count, 24, 32)
         }
@@ -6211,7 +6601,7 @@ world_foliage_formation :: proc(structure: terrain.Structure, minimum_footprint 
         // A quieter layer of low broadleaf rosettes bridges the empty ground
         // between fern fans. Their separate spiral and smaller radial range
         // produce loose colonies rather than a uniformly stamped carpet.
-        ground_cover_count := clamp(forest_tree_count * 3 / 4, 18, 27)
+        ground_cover_count := lod == .Near ? clamp(forest_tree_count * 3 / 4, 18, 27) : 0
         if walking_distance {
             ground_cover_count = clamp(forest_tree_count + 8, 30, 44)
         }
@@ -6240,7 +6630,7 @@ world_foliage_formation :: proc(structure: terrain.Structure, minimum_footprint 
         }
 
         // A low-discrepancy spiral makes a dense natural stand without rows.
-        trunk_count := forest_tree_count
+        trunk_count := lod == .Far ? max(4, forest_tree_count / 2) : forest_tree_count
         for trunk in 0 ..< trunk_count {
             angle := f32(trunk) * 2.399963 + f32(structure.seed % 91) * .041
             radial := .06 + .43 * f32(math.sqrt(f64((f32(trunk) + .5) / f32(max(trunk_count, 1)))))
@@ -6282,7 +6672,20 @@ world_foliage_formation :: proc(structure: terrain.Structure, minimum_footprint 
         // hedge gesture without returning to a single exposed sausage.
         binder_width, binder_depth := wide * .88, narrow * .76
         if depth > width do binder_width, binder_depth = binder_depth, binder_width
-        world_foliage_lobe(structure, 0, 0, binder_width, binder_depth, structure.height * .44, 0, true, 19, 0, false)
+        world_foliage_lobe(
+            structure,
+            0,
+            0,
+            binder_width,
+            binder_depth,
+            structure.height * .44,
+            0,
+            true,
+            19,
+            0,
+            false,
+            lod,
+        )
         for lobe in 0 ..< lobe_count {
             fraction := (f32(lobe) + .5) / f32(lobe_count)
             along :=
@@ -6320,6 +6723,7 @@ world_foliage_formation :: proc(structure: terrain.Structure, minimum_footprint 
                 lobe,
                 outward,
                 true,
+                lod,
             )
         }
         return
@@ -6439,6 +6843,7 @@ world_foliage_formation :: proc(structure: terrain.Structure, minimum_footprint 
             lobe,
             outward,
             lobe > 0,
+            lod,
         )
     }
 }
@@ -6461,8 +6866,10 @@ world_formation_top_fraction :: proc(structure: terrain.Structure, local_x, loca
     return .78 + (.14 - radius) / .14 * .12
 }
 
-world_formation_foliage :: proc(structure: terrain.Structure) {
+world_formation_foliage :: proc(structure: terrain.Structure, lod: Structure_LOD = .Near) {
+    if lod == .Far do return
     tuft_count := clamp(int(structure.width / 14), 4, 20)
+    if lod == .Medium do tuft_count = max(2, tuft_count / 2)
     for tuft in 0 ..< tuft_count {
         fraction := (f32(tuft) + .5) / f32(tuft_count)
         jitter := f32(math.sin(f64(f32(structure.seed) * .013 + f32(tuft) * 2.41)))
@@ -6486,7 +6893,7 @@ world_formation_foliage :: proc(structure: terrain.Structure) {
         foliage.height = bush_height
         foliage.rotation += jitter * .18
         foliage.seed += u32(tuft * 977 + 431)
-        world_foliage_formation(foliage, 0)
+        world_foliage_formation(foliage, 0, lod)
     }
 }
 
@@ -7142,7 +7549,28 @@ world_structures :: proc(editor: ^Editor) {
        !editor.structure_moving {
         hovered_index = terrain.structure_index_at(&editor.project, editor.cursor_world_x, editor.cursor_world_z)
     }
+    // Geometry buffers are capacity bounded, so storage order must not decide
+    // visibility. Traverse structures from the camera outward; each structure
+    // contributes its mass and climbing growth together at its current LOD.
+    ordered_indices: [terrain.STRUCTURE_CAPACITY]int
+    ordered_distances: [terrain.STRUCTURE_CAPACITY]f32
+    camera := editor.camera_pose.position
     for index in 0 ..< editor.project.structure_count {
+        structure := editor.project.structures[index]
+        dx, dz := structure.center_x - camera.x, structure.center_z - camera.z
+        distance_squared := dx * dx + dz * dz
+        if index == editor.structure_selected && !editor.in_map do distance_squared = -1
+        insert_at := index
+        for insert_at > 0 && ordered_distances[insert_at - 1] > distance_squared {
+            ordered_indices[insert_at] = ordered_indices[insert_at - 1]
+            ordered_distances[insert_at] = ordered_distances[insert_at - 1]
+            insert_at -= 1
+        }
+        ordered_indices[insert_at] = index
+        ordered_distances[insert_at] = distance_squared
+    }
+    for order_index in 0 ..< editor.project.structure_count {
+        index := ordered_indices[order_index]
         structure := editor.project.structures[index]
         if editor.architecture_painting &&
            structure.kind == .Architecture &&
@@ -7153,11 +7581,21 @@ world_structures :: proc(editor: ^Editor) {
            ) {
             continue
         }
+        force_near := index == editor.structure_selected && !editor.in_map
+        world_before := len(world_renderer.vertices) + len(world_renderer.static_indices)
+        foliage_before := len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)
         if structure.kind == .Foliage {
-            world_foliage_formation_cached(structure, index)
+            world_foliage_formation_cached(structure, index, force_near)
+            world_renderer.structure_lod_counts[int(world_renderer.foliage_geometry_cache[index].lod)] += 1
         } else {
-            world_static_formation_cached(structure, index, &editor.project)
+            world_static_formation_cached(structure, index, &editor.project, force_near)
+            world_renderer.structure_lod_counts[int(world_renderer.static_geometry_cache[index].lod)] += 1
         }
+        world_climbing_leaves_for_structure(editor, structure, index)
+        world_renderer.structure_lod_world_vertices +=
+            len(world_renderer.vertices) + len(world_renderer.static_indices) - world_before
+        world_renderer.structure_lod_foliage_vertices +=
+            len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices) - foliage_before
         if index == editor.structure_selected && !editor.in_map && !editor.road_mode {
             world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
         } else if index == hovered_index && !editor.in_map {
@@ -7195,7 +7633,7 @@ world_city_density_overlay :: proc(editor: ^Editor) {
         for x in 0 ..< terrain.RING_RESOLUTION - 1 {
             density := f32(field[z * terrain.RING_RESOLUTION + x]) / 255
             if density <= .01 do continue
-            if len(world_renderer.vertices) + 6 > overlay_limit do return
+            if len(world_renderer.vertices) + len(world_renderer.static_indices) + 6 > overlay_limit do return
             x0, z0 := (f32(x) - half) * cell, (f32(z) - half) * cell
             x1, z1 := x0 + cell, z0 + cell
             lift := f32(.115)
@@ -8651,19 +9089,28 @@ world_climbing_leaf_vine :: proc(
     }
 }
 
-world_climbing_leaves :: proc(editor: ^Editor) {
+world_climbing_leaves_for_structure :: proc(
+    editor: ^Editor,
+    structure: terrain.Structure,
+    structure_index: int,
+) {
     if editor == nil do return
-    for structure, structure_index in editor.project.structures[:editor.project.structure_count] {
-        eligible :=
-            structure.kind == .Architecture ||
-            structure.kind == .Rock ||
-            structure.kind == .Spire ||
-            structure.kind == .Mountain ||
-            structure.kind == .Ridge ||
-            structure.kind == .Cliff
-        if !eligible do continue
-        density := architecture.bougainvillea_density_at_structure(&editor.project.climbing_leaf_density, structure)
-        if density < .035 do continue
+    eligible :=
+        structure.kind == .Architecture ||
+        structure.kind == .Rock ||
+        structure.kind == .Spire ||
+        structure.kind == .Mountain ||
+        structure.kind == .Ridge ||
+        structure.kind == .Cliff
+    if !eligible do return
+    density := architecture.bougainvillea_density_at_structure(&editor.project.climbing_leaf_density, structure)
+    if density < .035 do return
+    detail_tier := 2
+    if structure.kind == .Architecture {
+        dx := editor.camera_pose.position.x - structure.center_x
+        dz := editor.camera_pose.position.z - structure.center_z
+        detail_tier = architecture.bougainvillea_detail_tier(f32(math.sqrt(f64(dx * dx + dz * dz))))
+    }
         capture_seed_enabled :=
             editor.capture_bougainvillea_seed_enabled && structure.id == editor.capture_bougainvillea_structure_id
         capture_seed := capture_seed_enabled ? editor.capture_bougainvillea_seed : u32(0)
@@ -8672,9 +9119,10 @@ world_climbing_leaves :: proc(editor: ^Editor) {
            entry.structure == structure &&
            entry.project_revision == editor.project.revision &&
            entry.density == density &&
+           entry.detail_tier == detail_tier &&
            entry.capture_seed_enabled == capture_seed_enabled &&
            entry.capture_seed == capture_seed {
-            world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices))
+            world_count := min(len(entry.world_vertices), WORLD_VERTEX_CAPACITY - len(world_renderer.vertices) - len(world_renderer.static_indices))
             if world_count > 0 do append(&world_renderer.vertices, ..entry.world_vertices[:world_count])
             bougainvillea_count := min(
                 len(entry.bougainvillea_vertices),
@@ -8683,7 +9131,7 @@ world_climbing_leaves :: proc(editor: ^Editor) {
             if bougainvillea_count > 0 {
                 append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:bougainvillea_count])
             }
-            continue
+            return
         }
         world_first := len(world_renderer.vertices)
         bougainvillea_first := len(world_renderer.bougainvillea_vertices)
@@ -8758,9 +9206,9 @@ world_climbing_leaves :: proc(editor: ^Editor) {
         entry.structure = structure
         entry.project_revision = editor.project.revision
         entry.density = density
+        entry.detail_tier = detail_tier
         entry.capture_seed_enabled = capture_seed_enabled
         entry.capture_seed = capture_seed
-    }
 }
 
 world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
@@ -11784,12 +12232,14 @@ world_town_mice :: proc(editor: ^Editor) {
                     break
                 }
                 rotation := frontage.rotation + math.PI * .5 + resident.facing
-                world_mouse_model_scaled(editor, {
-                        position      = {x, ground_y, z},
-                        rotation      = rotation,
-                        accessory     = resident.accessory,
-                        fur           = resident.fur,
-                        pattern       = resident.pattern,
+                world_mouse_model_scaled(
+                    editor,
+                    {
+                        position = {x, ground_y, z},
+                        rotation = rotation,
+                        accessory = resident.accessory,
+                        fur = resident.fur,
+                        pattern = resident.pattern,
                         scarf_enabled = resident.scarf,
                         scarf_color   = resident.scarf_color,
                         grounded      = true,
@@ -11929,6 +12379,7 @@ world_ground_grass :: proc(editor: ^Editor) {
             // half the cards at the render limit and dropping them at once.
             if wind_streak_hash(seed_index, 3) > density do continue
             height_at := terrain.sample_height(&editor.project, 0, x, z)
+            if farmland_excludes_ground_grass(editor, x, z) do continue
             if !wildflowers_renderable_at(editor, x, z, circulation_plan) do continue
             variation := wind_streak_hash(seed_index, 4)
             // The atlas is sampled as luminance, so elevation can drive the
@@ -12002,6 +12453,8 @@ world_ground_grass :: proc(editor: ^Editor) {
 
 world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.vertices)
+    clear(&world_renderer.static_vertices)
+    clear(&world_renderer.static_indices)
     clear(&world_renderer.wing_trail_vertices)
     clear(&world_renderer.wing_trail_indices)
     clear(&world_renderer.wing_trail_optimized_indices)
@@ -12010,6 +12463,9 @@ world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.bougainvillea_vertices)
     clear(&world_renderer.grass_instances)
     clear(&world_renderer.wildflower_instances)
+    world_renderer.structure_lod_counts = {}
+    world_renderer.structure_lod_world_vertices = 0
+    world_renderer.structure_lod_foliage_vertices = 0
     world_renderer.player_vertex_first = 0
     world_renderer.player_vertex_count = 0
     world_renderer.dynamic_caster_first = 0
@@ -12086,7 +12542,6 @@ world_build :: proc(editor: ^Editor) {
     lab_scene_draw_world_overlay(editor)
     world_renderer.dynamic_caster_count = len(world_renderer.vertices) - world_renderer.dynamic_caster_first
     world_structures(editor)
-    world_climbing_leaves(editor)
     world_ground_grass(editor)
     world_renderer.player_shadow_receiver = mouse_surface_height(
         editor,
@@ -13143,6 +13598,24 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     for &buffer in world_renderer.vertex {
         if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
     }
+    for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+        if !engine.vk_create_host_buffer(
+            ctx,
+            vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(World_Vertex)),
+            {.VERTEX_BUFFER},
+            &world_renderer.static_vertex[frame],
+        ) {
+            return false
+        }
+        if !engine.vk_create_host_buffer(
+            ctx,
+            vk.DeviceSize(WORLD_VERTEX_CAPACITY * size_of(u32)),
+            {.INDEX_BUFFER},
+            &world_renderer.static_index[frame],
+        ) {
+            return false
+        }
+    }
     for &buffer in world_renderer.road_vertex {
         if !engine.vk_create_host_buffer(ctx, vk.DeviceSize(ROAD_VERTEX_CAPACITY * size_of(World_Vertex)), {.VERTEX_BUFFER}, &buffer) do return false
     }
@@ -13202,6 +13675,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     }
     if !clipmap_create_indices(ctx) do return false
     world_renderer.vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
+    world_renderer.static_vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_CAPACITY)
+    world_renderer.static_indices = make([dynamic]u32, 0, WORLD_VERTEX_CAPACITY)
     world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_CAPACITY)
     world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_CAPACITY)
     world_renderer.bougainvillea_vertices = make([dynamic]Foliage_Vertex, 0, BOUGAINVILLEA_VERTEX_CAPACITY)
@@ -13258,6 +13733,8 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         clipmap_update(editor, int(pass.frame.frame_index))
     }
     buffer := &world_renderer.vertex[pass.frame.frame_index]
+    static_vertex_buffer := &world_renderer.static_vertex[pass.frame.frame_index]
+    static_index_buffer := &world_renderer.static_index[pass.frame.frame_index]
     road_buffer := &world_renderer.road_vertex[pass.frame.frame_index]
     foliage_buffer := &world_renderer.foliage_vertex[pass.frame.frame_index]
     grass_instance_buffer := &world_renderer.grass_instance[pass.frame.frame_index]
@@ -13268,6 +13745,20 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             buffer.mapped,
             raw_data(world_renderer.vertices[:]),
             len(world_renderer.vertices) * size_of(World_Vertex),
+        )
+    }
+    if len(world_renderer.static_vertices) > 0 {
+        mem.copy_non_overlapping(
+            static_vertex_buffer.mapped,
+            raw_data(world_renderer.static_vertices[:]),
+            len(world_renderer.static_vertices) * size_of(World_Vertex),
+        )
+    }
+    if len(world_renderer.static_indices) > 0 {
+        mem.copy_non_overlapping(
+            static_index_buffer.mapped,
+            raw_data(world_renderer.static_indices[:]),
+            len(world_renderer.static_indices) * size_of(u32),
         )
     }
     if len(world_renderer.road_vertices) > 0 {
@@ -13382,6 +13873,8 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     graph_context := Render_Graph_Context {
         pass                     = pass,
         buffer                   = buffer,
+        static_vertex_buffer     = static_vertex_buffer,
+        static_index_buffer      = static_index_buffer,
         road_buffer              = road_buffer,
         foliage_buffer           = foliage_buffer,
         grass_instance_buffer    = grass_instance_buffer,
@@ -13410,6 +13903,8 @@ world_renderer_destroy :: proc() {
     _ = vk.DeviceWaitIdle(world_renderer.ctx.device)
     imgui_destroy()
     for &buffer in world_renderer.vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.static_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.static_index do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.road_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.foliage_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.grass_instance do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
@@ -13454,6 +13949,8 @@ world_renderer_destroy :: proc() {
         vk.DestroyDescriptorSetLayout(world_renderer.ctx.device, world_renderer.vehicle_paint_descriptor_layout, nil)
     }
     delete(world_renderer.vertices)
+    delete(world_renderer.static_vertices)
+    delete(world_renderer.static_indices)
     delete(world_renderer.road_vertices)
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)
@@ -13470,6 +13967,7 @@ world_renderer_destroy :: proc() {
     }
     for &entry in world_renderer.static_geometry_cache {
         delete(entry.world_vertices)
+        delete(entry.world_indices)
         delete(entry.foliage_vertices)
         delete(entry.bougainvillea_vertices)
     }

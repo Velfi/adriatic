@@ -4,6 +4,7 @@ import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import back "../packages/back"
 import boats "../packages/boats"
+import buildings "../packages/buildings"
 import chase_camera "../packages/chase_camera"
 import cinematic "../packages/cinematic"
 import circulation "../packages/circulation"
@@ -1242,6 +1243,45 @@ seed_foliage_stress :: proc(editor: ^Editor) {
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
 }
 
+seed_structure_lod_benchmark :: proc(editor: ^Editor) {
+    if editor == nil do return
+    seed_city_capture(editor)
+    center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
+    kinds := [5]terrain.Formation_Kind{.Rock, .Spire, .Mountain, .Ridge, .Cliff}
+    for ring in 0 ..< 3 {
+        for item in 0 ..< 10 {
+            angle := f32(item) * math.TAU / 10 + f32(ring) * .31
+            radius := f32(180 + ring * 115)
+            kind := kinds[(item + ring) % len(kinds)]
+            _ = capture_add_formation(
+                editor,
+                center + math.cos(angle) * radius,
+                center + math.sin(angle) * radius,
+                f32(34 + (item % 4) * 13),
+                f32(28 + ((item + 2) % 4) * 11),
+                f32(24 + (item % 5) * 12),
+                kind,
+            )
+        }
+    }
+    for item in 0 ..< 12 {
+        angle := f32(item) * math.TAU / 12 + .17
+        radius := f32(245 + (item % 3) * 42)
+        _ = capture_add_formation(
+            editor,
+            center + math.cos(angle) * radius,
+            center + math.sin(angle) * radius,
+            f32(88 + (item % 4) * 12),
+            f32(76 + ((item + 1) % 4) * 10),
+            f32(48 + (item % 3) * 9),
+            .Foliage,
+        )
+    }
+    editor.structure_selected = -1
+    editor.editor_camera.distance = 760
+    editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+}
+
 seed_foliage_forest_capture :: proc(editor: ^Editor) {
     if editor == nil do return
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
@@ -1391,6 +1431,11 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         seed_foliage_stress(editor)
     case "formations":
         seed_formation_capture(editor)
+    case "structure_lod":
+        seed_structure_lod_benchmark(editor)
+    case "structure_lod_near":
+        seed_structure_lod_benchmark(editor)
+        structure_lod_force(i32(Structure_LOD.Near))
     case "roads":
         seed_road_capture(editor)
     case "road_dust":
@@ -1415,6 +1460,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         return false
     }
     if scenario != "foliage_stress" &&
+       scenario != "structure_lod" &&
+       scenario != "structure_lod_near" &&
        scenario != "foliage_forest" &&
        scenario != "foliage_understory" &&
        scenario != "road_grip" &&
@@ -1451,7 +1498,8 @@ benchmark_report :: proc(
     p95 := benchmark_percentile(sorted, .95)
     p99 := benchmark_percentile(sorted, .99)
     maximum := sorted[len(sorted) - 1]
-    world_vertex_count := len(world_renderer.vertices)
+    world_vertex_count := len(world_renderer.vertices) + len(world_renderer.static_indices)
+    world_unique_vertex_count := len(world_renderer.vertices) + len(world_renderer.static_vertices)
     road_vertex_count := len(world_renderer.road_vertices)
     foliage_vertex_count :=
         len(world_renderer.foliage_vertices) +
@@ -1465,7 +1513,7 @@ benchmark_report :: proc(
     foliage_vertex_utilization := f64(foliage_vertex_count) / f64(max(foliage_vertex_capacity, 1))
     road_vertex_utilization := f64(road_vertex_count) / f64(max(ROAD_VERTEX_CAPACITY, 1))
     fmt.printf(
-        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f}}}}\n",
+        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d}}}}\n",
         scenario,
         len(sorted),
         window_width,
@@ -1479,6 +1527,7 @@ benchmark_report :: proc(
         maximum * 1000,
         1 / max(median, f64(.000001)),
         world_vertex_count,
+        world_unique_vertex_count,
         WORLD_VERTEX_CAPACITY,
         world_vertex_utilization,
         road_vertex_count,
@@ -1487,6 +1536,12 @@ benchmark_report :: proc(
         foliage_vertex_count,
         foliage_vertex_capacity,
         foliage_vertex_utilization,
+        world_renderer.structure_lod_world_vertices,
+        world_renderer.structure_lod_foliage_vertices,
+        world_renderer.structure_lod_counts[0],
+        world_renderer.structure_lod_counts[1],
+        world_renderer.structure_lod_counts[2],
+        world_renderer.structure_lod_cache_rebuilds,
     )
 }
 
@@ -1900,6 +1955,8 @@ seed_default_island_towns :: proc(editor: ^Editor) {
         }
         _ = architecture.city_density_stamp(&editor.project.city_density, island_center, town_z, 82, .20, .70)
         plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, town_bounds, seed)
+        region := sign > 0 ? buildings.Region.Aegean : buildings.Region.Adriatic
+        architecture.city_plan_set_region(&plan, region)
         first_structure := editor.project.structure_count
         _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, town_bounds, &plan)
         for structure in editor.project.structures[first_structure:editor.project.structure_count] {
@@ -2242,15 +2299,15 @@ farm_generation_score :: proc(plan: ^farmland.Plan) -> f32 {
     return clamp(diversity * .46 + balance * .24 + shape_mix * .30, 0, 1)
 }
 
-farm_site_score :: proc(editor: ^Editor, origin_x, origin_z, yaw: f32) -> (f32, bool) {
+farm_site_score :: proc(editor: ^Editor, origin_x, origin_z, yaw: f32, grid_width, grid_height: int) -> (f32, bool) {
     if editor == nil do return 0, false
     cosine, sine := math.cos(yaw), math.sin(yaw)
     land, clear, samples := 0, 0, 0
     slope_total := f32(0)
     for z_index in -3 ..= 3 {
         for x_index in -4 ..= 4 {
-            local_x := f32(x_index) / 4 * f32(farmland.GRID_WIDTH) * farmland.CELL_METERS * .48
-            local_z := f32(z_index) / 3 * f32(farmland.GRID_HEIGHT) * farmland.CELL_METERS * .48
+            local_x := f32(x_index) / 4 * f32(grid_width) * farmland.CELL_METERS * .48
+            local_z := f32(z_index) / 3 * f32(grid_height) * farmland.CELL_METERS * .48
             x := origin_x + local_x * cosine - local_z * sine
             z := origin_z + local_x * sine + local_z * cosine
             height := terrain.sample_height(&editor.project, 0, x, z)
@@ -2312,13 +2369,25 @@ farm_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor
         u32(abs(int(preview_z * 31))) ~
         u32(editor.project.revision * 0x9e3779b9) ~
         editor.farm_preview_seed_offset * u32(0x27d4eb2d)
+    // Radius controls the major footprint. Preserve the traditional 25:19
+    // proportion while generating a genuinely different grid at each size.
+    grid_width := clamp(
+        int(math.round(f64(editor.farm_brush_radius * 2 / farmland.CELL_METERS))),
+        farmland.MIN_GRID_SPAN,
+        farmland.MAX_GRID_SPAN,
+    )
+    grid_height := clamp(
+        int(math.round(f64(f32(grid_width) * f32(farmland.GRID_HEIGHT) / f32(farmland.GRID_WIDTH)))),
+        farmland.MIN_GRID_SPAN,
+        farmland.MAX_GRID_SPAN,
+    )
     for orientation in 0 ..< 8 {
         yaw := f32(orientation) * math.PI / 8 - math.PI * .5
-        site_score, site_valid := farm_site_score(editor, preview_x, preview_z, yaw)
+        site_score, site_valid := farm_site_score(editor, preview_x, preview_z, yaw, grid_width, grid_height)
         if !site_valid do continue
         for variant in 0 ..< 2 {
             seed := base_seed ~ u32(orientation + 1) * u32(0x85ebca6b) ~ u32(variant + 1) * u32(0xc2b2ae35)
-            candidate := farmland.generate(seed, context.temp_allocator)
+            candidate := farmland.generate_sized(seed, grid_width, grid_height, context.temp_allocator)
             generation_score := farm_generation_score(&candidate)
             combined := site_score * .72 + generation_score * .28
             if combined <= best_score do continue
@@ -2328,6 +2397,8 @@ farm_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor
                 origin_x = preview_x,
                 origin_z = preview_z,
                 yaw      = yaw,
+                scale_x  = 1,
+                scale_z  = 1,
             }
             editor.farm_preview_valid = true
             editor.farm_preview_score = combined
@@ -6675,6 +6746,14 @@ adriatic_run :: proc(
         capture_kind == .Markov_Marina ||
         capture_kind == .Markov_Farmland
     capture_target := request != nil ? request.target : (capture_mode && len(args) >= 4 ? args[3] : "")
+    clean_settlement_capture := false
+    CLEAN_SETTLEMENT_CAPTURE_PREFIX :: "clean-"
+    if capture_markov_town_mode &&
+       len(capture_target) >= len(CLEAN_SETTLEMENT_CAPTURE_PREFIX) &&
+       capture_target[:len(CLEAN_SETTLEMENT_CAPTURE_PREFIX)] == CLEAN_SETTLEMENT_CAPTURE_PREFIX {
+        clean_settlement_capture = true
+        capture_target = capture_target[len(CLEAN_SETTLEMENT_CAPTURE_PREFIX):]
+    }
     capture_output := request != nil ? request.output_path : (capture_mode && len(args) >= 3 ? args[2] : "")
     showcase_target := showcase_interactive_mode ? (len(args) >= 3 ? args[2] : "") : capture_target
     capture_player_mode := capture_kind == .Map && capture_target != ""
@@ -6981,6 +7060,10 @@ adriatic_run :: proc(
     }
     if capture_lab_mode {
         _ = lab_scene_load(editor, {definition = lab_scene_find(capture_lab_name), target = capture_target})
+        if capture_markov_town_mode && clean_settlement_capture {
+            editor.settlement_diagnostic_layer = -1
+            editor.capture_world_only = true
+        }
         if capture_markov_town_mode && capture_target == "night" {
             editor.settlement_diagnostic_layer = -1
             editor.capture_world_only = true
@@ -8746,7 +8829,11 @@ adriatic_run :: proc(
         // Player captures wait long enough for the Verlet tail and pose blends
         // to settle; frame two only showed the first few links as a short nub.
         capture_frame :=
-            capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Markov_Marina ? 20 : 2
+            capture_flight_mode ||
+            capture_player_mode ||
+            capture_kind == .Shadow_Lab ||
+            capture_kind == .Boat_Lab ||
+            capture_kind == .Markov_Marina ? 20 : 2
         if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.

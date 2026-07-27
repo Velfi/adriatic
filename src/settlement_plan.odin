@@ -670,24 +670,33 @@ settlement_plan_acceptance_failure :: proc(
     if ordinary_count < minimum_buildings do return .Insufficient_Buildings
     if plan.request.scale == .Village {
         if village_purposes[int(Settlement_Building_Purpose.Dwelling)] < 7 ||
-           village_purposes[int(Settlement_Building_Purpose.Farmstead)] < 2 ||
-           village_purposes[int(Settlement_Building_Purpose.Barn_Granary)] < 2 ||
            village_purposes[int(Settlement_Building_Purpose.Workshop)] < 1 ||
            village_purposes[int(Settlement_Building_Purpose.Inn_Shop)] < 1 {
             return .Missing_Village_Program
         }
         switch plan.village_reason {
         case .Harbor_Fishery:
-            if village_purposes[int(Settlement_Building_Purpose.Fishery)] < 1 ||
-               village_purposes[int(Settlement_Building_Purpose.Storehouse)] < 1 {
+            if village_purposes[int(Settlement_Building_Purpose.Fishery)] < 2 ||
+               village_purposes[int(Settlement_Building_Purpose.Storehouse)] < 2 ||
+               village_purposes[int(Settlement_Building_Purpose.Farmstead)] > 0 {
                 return .Missing_Village_Program
             }
         case .Agricultural_Terrace:
-            if village_purposes[int(Settlement_Building_Purpose.Mill)] < 1 {
+            if village_purposes[int(Settlement_Building_Purpose.Farmstead)] < 2 ||
+               village_purposes[int(Settlement_Building_Purpose.Barn_Granary)] < 3 ||
+               village_purposes[int(Settlement_Building_Purpose.Mill)] < 1 {
                 return .Missing_Village_Program
             }
-        case .Upland_Pastoral, .Route_Stop:
-            if village_purposes[int(Settlement_Building_Purpose.Storehouse)] < 1 {
+        case .Upland_Pastoral:
+            if village_purposes[int(Settlement_Building_Purpose.Farmstead)] < 1 ||
+               village_purposes[int(Settlement_Building_Purpose.Barn_Granary)] < 2 ||
+               village_purposes[int(Settlement_Building_Purpose.Storehouse)] < 1 {
+                return .Missing_Village_Program
+            }
+        case .Route_Stop:
+            if village_purposes[int(Settlement_Building_Purpose.Farmstead)] < 1 ||
+               village_purposes[int(Settlement_Building_Purpose.Barn_Granary)] < 1 ||
+               village_purposes[int(Settlement_Building_Purpose.Storehouse)] < 1 {
                 return .Missing_Village_Program
             }
         }

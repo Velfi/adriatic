@@ -6,8 +6,14 @@ import "core:sync"
 
 GRID_WIDTH :: 25
 GRID_HEIGHT :: 19
+MIN_GRID_SPAN :: 6
+MAX_GRID_SPAN :: 64
 CELL_METERS :: f32(5)
 PARCEL_CAPACITY :: 24
+// A 5 m cell covers 25 m², so 300 cells are .75 ha. This is deliberately
+// smaller than modern English field averages (especially arable fields), but
+// still keeps these compact game-scale farm envelopes from becoming mazes.
+TARGET_PARCEL_CELLS :: 300
 
 Crop :: enum u8 {
     Wheat,
@@ -15,6 +21,11 @@ Crop :: enum u8 {
     Vineyard,
     Fallow,
     Clover,
+}
+
+Tradition :: enum u8 {
+    Ancient_Enclosure,
+    Parliamentary_Enclosure,
 }
 
 Parcel :: struct {
@@ -28,6 +39,9 @@ Parcel :: struct {
 
 Plan :: struct {
     seed:         u32,
+    width:        int,
+    height:       int,
+    tradition:    Tradition,
     parcels:      [PARCEL_CAPACITY]Parcel,
     parcel_count: int,
     valid:        bool,
@@ -79,7 +93,12 @@ append_parcel :: proc(plan: ^Plan, parcel: Parcel) {
     plan.parcel_count += 1
 }
 
-generate :: proc(seed: u32, allocator := context.temp_allocator) -> Plan {
+generate_sized_for_tradition :: proc(
+    seed: u32,
+    requested_width, requested_height: int,
+    tradition: Tradition,
+    allocator := context.temp_allocator,
+) -> Plan {
     previous_allocator := context.allocator
     context.allocator = allocator
     defer context.allocator = previous_allocator
@@ -108,11 +127,22 @@ generate :: proc(seed: u32, allocator := context.temp_allocator) -> Plan {
 
     plan: Plan
     plan.seed = seed
-    append_parcel(&plan, {min_x = 0, min_z = 0, max_x = GRID_WIDTH, max_z = GRID_HEIGHT})
+    plan.width = clamp(requested_width, MIN_GRID_SPAN, MAX_GRID_SPAN)
+    plan.height = clamp(requested_height, MIN_GRID_SPAN, MAX_GRID_SPAN)
+    plan.tradition = tradition
+    append_parcel(&plan, {min_x = 0, min_z = 0, max_x = plan.width, max_z = plan.height})
 
     // Repeatedly rewrite the largest rectangle. This is the macro grammar;
     // Markov Junior's state chooses split position and later crop accents.
-    for plan.parcel_count < 15 {
+    // Parcel density follows physical area instead of stamping the same
+    // topology into every footprint.
+    footprint_area := plan.width * plan.height
+    target_parcels := clamp(
+        (footprint_area + TARGET_PARCEL_CELLS - 1) / TARGET_PARCEL_CELLS,
+        1,
+        PARCEL_CAPACITY,
+    )
+    for plan.parcel_count < target_parcels {
         largest_index, largest_area := -1, 0
         for parcel, index in plan.parcels[:plan.parcel_count] {
             width, depth := parcel.max_x - parcel.min_x, parcel.max_z - parcel.min_z
@@ -129,7 +159,11 @@ generate :: proc(seed: u32, allocator := context.temp_allocator) -> Plan {
         if split_x && width < 7 do split_x = false
         if !split_x && depth < 7 do split_x = true
         span := split_x ? width : depth
-        inset := max(3, int(math.floor(f64(f32(span) * (.36 + roll * .28)))))
+        split_fraction := f32(.44 + roll * .12)
+        if plan.tradition == .Ancient_Enclosure {
+            split_fraction = .30 + roll * .40
+        }
+        inset := max(3, int(math.floor(f64(f32(span) * split_fraction))))
         inset = min(inset, span - 3)
         if inset < 3 do break
         a, b := source, source
@@ -152,23 +186,43 @@ generate :: proc(seed: u32, allocator := context.temp_allocator) -> Plan {
         parcel.phase = f32(roll & 255) / 255
         parcel.tint = accent
     }
-    plan.valid = plan.parcel_count >= 8
+    plan.valid = plan.parcel_count >= 1
     return plan
 }
 
+generate_sized :: proc(seed: u32, requested_width, requested_height: int, allocator := context.temp_allocator) -> Plan {
+    tradition := Tradition.Ancient_Enclosure
+    if (mix(seed ~ u32(0xa24baed5)) & 1) != 0 {
+        tradition = .Parliamentary_Enclosure
+    }
+    return generate_sized_for_tradition(seed, requested_width, requested_height, tradition, allocator)
+}
+
+generate :: proc(seed: u32, allocator := context.temp_allocator) -> Plan {
+    return generate_sized(seed, GRID_WIDTH, GRID_HEIGHT, allocator)
+}
+
 validate :: proc(plan: ^Plan) -> bool {
-    if plan == nil || !plan.valid || plan.parcel_count < 8 do return false
+    if plan == nil ||
+       !plan.valid ||
+       plan.parcel_count < 1 ||
+       plan.width < MIN_GRID_SPAN ||
+       plan.height < MIN_GRID_SPAN ||
+       plan.width > MAX_GRID_SPAN ||
+       plan.height > MAX_GRID_SPAN {
+        return false
+    }
     area := 0
     for parcel in plan.parcels[:plan.parcel_count] {
         if parcel.min_x < 0 ||
            parcel.min_z < 0 ||
-           parcel.max_x > GRID_WIDTH ||
-           parcel.max_z > GRID_HEIGHT ||
+           parcel.max_x > plan.width ||
+           parcel.max_z > plan.height ||
            parcel.max_x <= parcel.min_x ||
            parcel.max_z <= parcel.min_z {
             return false
         }
         area += (parcel.max_x - parcel.min_x) * (parcel.max_z - parcel.min_z)
     }
-    return area == GRID_WIDTH * GRID_HEIGHT
+    return area == plan.width * plan.height
 }

@@ -1,6 +1,7 @@
 package main
 
 import atmosphere "../packages/atmosphere"
+import farmland "../packages/farmland"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:fmt"
@@ -643,9 +644,20 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             score_color,
         )
     case .Farm:
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "SIZE (m)",
+            editor.farm_brush_radius * 2,
+            40,
+            240,
+            0,
+        )
+        row += 1
         bounds := editor_ui_slider_bounds(layout, row)
+        width_m := int(editor.farm_brush_radius * 2 + .5)
+        depth_m := int(editor.farm_brush_radius * 2 * f32(farmland.GRID_HEIGHT) / f32(farmland.GRID_WIDTH) + .5)
         ui_draw_text(.Label, "FOOTPRINT", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        ui_draw_text(.Data, "125 x 95 m", {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
+        ui_draw_text(.Data, fmt.ctprintf("%d x %d m", width_m, depth_m), {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
         preview_label: cstring = editor.farm_preview_valid ? "CLICK TO PLACE BEST CANDIDATE" : "NO SUITABLE CANDIDATE"
         preview_color := editor.farm_preview_valid ? rl.Color{134, 224, 216, 255} : rl.Color{224, 126, 108, 255}
         ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)
@@ -977,7 +989,13 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         // The footprint is fixed by the real-size marina design.
         row += 0
     case .Farm:
-        row += 0
+        previous_radius := editor.farm_brush_radius
+        _ = editor_ui_slider_input(editor, layout, 14, row, &editor.farm_brush_radius, 20, 120, 2.5)
+        if editor.farm_brush_radius != previous_radius {
+            editor.farm_preview_revision = 0
+            editor.farm_preview_valid = false
+        }
+        row += 1
     case .ClimbingLeaves:
         _ = editor_ui_slider_input(
             editor,

@@ -664,6 +664,16 @@ $(VALIDATION_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_sign
 	$(CC) -O2 -c $< -o $(VALIDATION_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(VALIDATION_DIR)/gfx_signposts.o
 
+$(VALIDATION_DIR)/libadriatic_mesh.a: native/adriatic_xatlas.cpp third_party/xatlas/source/xatlas/xatlas.cpp third_party/xatlas/source/xatlas/xatlas.h third_party/xatlas/source/xatlas/xatlas_c.h third_party/meshoptimizer/src/meshoptimizer.h third_party/meshoptimizer/src/allocator.cpp third_party/meshoptimizer/src/indexgenerator.cpp third_party/meshoptimizer/src/vcacheoptimizer.cpp third_party/meshoptimizer/src/vfetchoptimizer.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++11 -O2 -Ithird_party/xatlas/source/xatlas -Ithird_party/meshoptimizer/src -c native/adriatic_xatlas.cpp -o $(VALIDATION_DIR)/adriatic_mesh_bridge.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/xatlas/source/xatlas -c third_party/xatlas/source/xatlas/xatlas.cpp -o $(VALIDATION_DIR)/xatlas.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/allocator.cpp -o $(VALIDATION_DIR)/meshopt_allocator.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/indexgenerator.cpp -o $(VALIDATION_DIR)/meshopt_indexgenerator.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vcacheoptimizer.cpp -o $(VALIDATION_DIR)/meshopt_vcacheoptimizer.o
+	$(CXX) -std=c++11 -O2 -Ithird_party/meshoptimizer/src -c third_party/meshoptimizer/src/vfetchoptimizer.cpp -o $(VALIDATION_DIR)/meshopt_vfetchoptimizer.o
+	$(AR) rcs $@ $(VALIDATION_DIR)/adriatic_mesh_bridge.o $(VALIDATION_DIR)/xatlas.o $(VALIDATION_DIR)/meshopt_allocator.o $(VALIDATION_DIR)/meshopt_indexgenerator.o $(VALIDATION_DIR)/meshopt_vcacheoptimizer.o $(VALIDATION_DIR)/meshopt_vfetchoptimizer.o
+
 $(INSTRUMENT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c Makefile
 	@mkdir -p $(@D)
 	$(CC) -O2 -c $< -o $(INSTRUMENT_DIR)/gfx_signposts.o
@@ -677,7 +687,7 @@ $(RELEASE_APP): physics-build $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Make
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_release) $(PROFILE_DEFINE_FLAGS_release) -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 
-$(VALIDATION_APP): physics-build $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(VALIDATION_DIR)/libgfx_signposts.a
+$(VALIDATION_APP): physics-build $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(VALIDATION_DIR)/libgfx_signposts.a $(VALIDATION_DIR)/libadriatic_mesh.a
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_validation) $(PROFILE_DEFINE_FLAGS_validation) -out:$@ -extra-linker-flags:"$(call link_flags,$(VALIDATION_DIR))"
 
