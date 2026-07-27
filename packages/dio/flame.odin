@@ -745,7 +745,10 @@ flame_graph_destroy :: proc(graph: ^Flame_Graph) {
 
     flame_graph_export_stop(graph)
     flame_graph_session_close(graph, true)
-    if _flame_graph_current == graph do flame_graph_set_current(nil)
+    if _flame_graph_current == graph {
+        flame_graph_set_current(nil)
+    }
+    delete(_flame_graph_auto_handles)
     delete(graph.export_message)
     delete(graph.slots)
     delete(graph.session_frame_buffer)

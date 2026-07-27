@@ -46,6 +46,12 @@ InitWindow :: proc(width, height: i32, title: cstring) {
     state.initialized = backend_init()
     state.running = state.initialized}
 CloseWindow :: proc() { if state != nil do backend_destroy() }
+DestroyPersistentState :: proc() {
+    if state == nil do return
+    backend_destroy()
+    free(state)
+    state = nil
+}
 SetWindowMinSize :: proc(width, height: i32) {_ = render2d.sdl_window_set_minimum_size(
         &state.platform_window,
         width,

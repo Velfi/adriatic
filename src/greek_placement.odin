@@ -93,6 +93,15 @@ greek_asset_init :: proc(editor: ^Editor) {
     editor.greek_placement_selected = -1
 }
 
+greek_asset_destroy :: proc(editor: ^Editor) {
+    if editor == nil do return
+    for &asset in editor.greek_assets {
+        gltf.glb_mesh_destroy(&asset.mesh)
+        asset.ready = false
+    }
+    editor.greek_asset_count = 0
+}
+
 greek_asset_selected_ready :: proc(editor: ^Editor) -> bool {
     return(
         editor != nil &&

@@ -2,6 +2,7 @@ package main
 
 import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
+import back "../packages/back"
 import chase_camera "../packages/chase_camera"
 import dialogue "../packages/dialogue"
 import dio "../packages/dio"
@@ -4935,6 +4936,12 @@ adriatic_run :: proc(
     args: []string = os.args,
     request: ^Capture_Request = nil,
 ) -> hot_abi.Run_Result {
+    tracking: back.Tracking_Allocator
+    back.tracking_allocator_init(&tracking, context.allocator)
+    defer back.tracking_allocator_destroy(&tracking)
+    context.allocator = back.tracking_allocator(&tracking)
+    defer back.tracking_allocator_print_results(&tracking)
+
     rl.SetPersistentState(persistent_canvas_state)
     assert(rl.SetRendererDescriptor(ADRIATIC_RENDERER_DESCRIPTOR))
     benchmark_requested := len(args) >= 2 && args[1] == "--benchmark"
@@ -5011,7 +5018,7 @@ adriatic_run :: proc(
     if capture_kind == .Compact do initial_width = 760
     rl.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring")
     reload_requested := false
-    defer if !reload_requested do rl.CloseWindow()
+    defer if !reload_requested do rl.DestroyPersistentState()
     wind_sound: wind_audio.Runtime
     wind_audio_ready := false
     if !capture_mode && !benchmark_mode {
@@ -5045,6 +5052,7 @@ adriatic_run :: proc(
     editor := new(Editor)
     defer free(editor)
     defer dio.flame_graph_destroy(&editor.flame_graph)
+    defer greek_asset_destroy(editor)
     engine_audio_ready := !capture_mode && !benchmark_mode && engine_sound.open(&editor.engine_audio)
     if engine_audio_ready do defer engine_sound.close(&editor.engine_audio)
     vehicle_paint_history_init(editor)
@@ -6721,7 +6729,7 @@ canvas_state_abi_version :: proc() -> u64 {
 
 @(export)
 close_canvas :: proc() {
-    rl.CloseWindow()
+    rl.DestroyPersistentState()
 }
 
 when !HOT_RELOAD {

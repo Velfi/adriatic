@@ -27,6 +27,17 @@ Glb_Mesh :: struct {
     ready:             bool,
 }
 
+glb_mesh_destroy :: proc(mesh: ^Glb_Mesh, allocator := context.allocator) {
+    if mesh == nil do return
+	delete(mesh.vertices)
+	delete(mesh.texcoords)
+	delete(mesh.indices)
+	delete(mesh.primitives)
+	delete(mesh.metallic_factors)
+	delete(mesh.roughness_factors)
+    mesh^ = {}
+}
+
 gltf_identity :: proc() -> [16]f32 {
     return {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
 }
@@ -140,6 +151,8 @@ gltf_append_node :: proc(node: ^cgltf.node, result: ^Glb_Mesh) -> bool {
 
 glb_load :: proc(path: string, allocator := context.allocator) -> (Glb_Mesh, bool) {
     result: Glb_Mesh
+    load_ok := false
+    defer if !load_ok do glb_mesh_destroy(&result, allocator)
     path_cstr, path_error := strings.clone_to_cstring(path, context.temp_allocator)
     if path_error != nil do return result, false
 
@@ -176,6 +189,7 @@ glb_load :: proc(path: string, allocator := context.allocator) -> (Glb_Mesh, boo
     }
 
     result.ready = glb_mesh_ready(&result)
+    load_ok = result.ready
     return result, result.ready
 }
 
