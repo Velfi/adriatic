@@ -3,9 +3,9 @@ package vehicles
 import "core:sync"
 
 when ODIN_OS == .Windows {
-	foreign import adriatic_mesh "system:adriatic_mesh.lib"
+    foreign import adriatic_mesh "system:adriatic_mesh.lib"
 } else {
-	foreign import adriatic_mesh "system:adriatic_mesh"
+    foreign import adriatic_mesh "system:adriatic_mesh"
 }
 
 foreign adriatic_mesh {

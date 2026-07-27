@@ -224,15 +224,12 @@ vehicle_paint_open :: proc(editor: ^Editor) {
             z = editor.libellula.body.position.z,
         }
     }
-    editor.camera_pose = third_person.camera_pose(
-        {y = 1},
-        {
-            yaw_radians = editor.vehicle_paint_yaw,
-            pitch_radians = editor.vehicle_paint_pitch,
-            distance = editor.vehicle_paint_distance,
-            height = 0,
-        },
-    )
+    editor.camera_pose = third_person.camera_pose({y = 1}, {
+        yaw_radians   = editor.vehicle_paint_yaw,
+        pitch_radians = editor.vehicle_paint_pitch,
+        distance      = editor.vehicle_paint_distance,
+        height        = 0,
+    })
     editor.map_time = f32(rl.GetTime())
     vehicle_paint_upload_texture(editor)
     set_pointer_locked(false)
@@ -1353,15 +1350,12 @@ vehicle_paint_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
     if math.abs(pinch_scale - 1) > .001 {
         editor.vehicle_paint_distance = clamp(editor.vehicle_paint_distance / pinch_scale, 4.2, 9.5)
     }
-    editor.camera_pose = third_person.camera_pose(
-        {y = 1},
-        {
-            yaw_radians = editor.vehicle_paint_yaw,
-            pitch_radians = editor.vehicle_paint_pitch,
-            distance = editor.vehicle_paint_distance,
-            height = 0,
-        },
-    )
+    editor.camera_pose = third_person.camera_pose({y = 1}, {
+        yaw_radians   = editor.vehicle_paint_yaw,
+        pitch_radians = editor.vehicle_paint_pitch,
+        distance      = editor.vehicle_paint_distance,
+        height        = 0,
+    })
     _ = delta_seconds
 }
 
@@ -1398,19 +1392,11 @@ vehicle_paint_camera_ray :: proc(
     screen_x := (mouse.x / f32(width) - .5) * 2
     screen_y := (.5 - mouse.y / f32(height)) * 2
     aspect := f32(width) / f32(height)
-    direction := vec_normalize(
-        {
-            x = camera.forward.x +
-            camera.right.x * screen_x * aspect / camera.focal_length +
-            camera.up.x * screen_y / camera.focal_length,
-            y = camera.forward.y +
-            camera.right.y * screen_x * aspect / camera.focal_length +
-            camera.up.y * screen_y / camera.focal_length,
-            z = camera.forward.z +
-            camera.right.z * screen_x * aspect / camera.focal_length +
-            camera.up.z * screen_y / camera.focal_length,
-        },
-    )
+    direction := vec_normalize({
+        x = camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
+        y = camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
+        z = camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
+    })
     return {camera.position.x, camera.position.y, camera.position.z}, {direction.x, direction.y, direction.z}
 }
 

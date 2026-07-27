@@ -175,7 +175,8 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
             focus = row_start + clamp(focus + horizontal - row_start, 0, 2)
         } else if focus < CUSTOMIZATION_HEADGEAR_START {
             pattern_index := focus - CUSTOMIZATION_PATTERN_START
-            row_start := CUSTOMIZATION_PATTERN_START +
+            row_start :=
+                CUSTOMIZATION_PATTERN_START +
                 (pattern_index / CUSTOMIZATION_PATTERN_COLUMNS) * CUSTOMIZATION_PATTERN_COLUMNS
             row_end := min(row_start + CUSTOMIZATION_PATTERN_COLUMNS - 1, CUSTOMIZATION_HEADGEAR_START - 1)
             focus = clamp(focus + horizontal, row_start, row_end)
@@ -200,7 +201,9 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
                 focus -= CUSTOMIZATION_PATTERN_COLUMNS
             }
         } else if focus < CUSTOMIZATION_HEADGEAR_START + 4 {
-            focus = CUSTOMIZATION_PATTERN_START + CUSTOMIZATION_PATTERN_COLUMNS +
+            focus =
+                CUSTOMIZATION_PATTERN_START +
+                CUSTOMIZATION_PATTERN_COLUMNS +
                 min(focus - CUSTOMIZATION_HEADGEAR_START, CUSTOMIZATION_PATTERN_COLUMNS - 1)
         } else if focus < CUSTOMIZATION_SCARF_START {
             focus -= 4
@@ -224,8 +227,7 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
             if pattern_index < CUSTOMIZATION_PATTERN_COLUMNS {
                 focus += CUSTOMIZATION_PATTERN_COLUMNS
             } else {
-                focus = CUSTOMIZATION_HEADGEAR_START +
-                    min(pattern_index - CUSTOMIZATION_PATTERN_COLUMNS, 3)
+                focus = CUSTOMIZATION_HEADGEAR_START + min(pattern_index - CUSTOMIZATION_PATTERN_COLUMNS, 3)
             }
         } else if focus < CUSTOMIZATION_SCARF_START {
             headgear_index := focus - CUSTOMIZATION_HEADGEAR_START

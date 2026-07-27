@@ -12,12 +12,12 @@ HOT_LIBRARY_ENV :: "ADRIATIC_HOT_LIBRARY"
 HOT_STATE_ENV :: "ADRIATIC_HOT_STATE"
 
 Hot_API :: struct {
-    lib:                       dynlib.Library,
-    run:                       proc(rawptr) -> hot_abi.Run_Result,
-    abi_version:               proc() -> u64,
-    canvas_state:              proc() -> rawptr,
-    canvas_state_abi_version:  proc() -> u64,
-    close_canvas:              proc(),
+    lib:                      dynlib.Library,
+    run:                      proc(_: rawptr) -> hot_abi.Run_Result,
+    abi_version:              proc() -> u64,
+    canvas_state:             proc() -> rawptr,
+    canvas_state_abi_version: proc() -> u64,
+    close_canvas:             proc(),
 }
 
 hot_path :: proc(directory, name: string) -> string {
@@ -102,8 +102,8 @@ main :: proc() {
             executable_directory,
             fmt.tprintf("adriatic_%d.%s", api_version, dynlib.LIBRARY_FILE_EXTENSION),
         )
-        next_api, ok := hot_load(source_path, next_copy_path)
-        if !ok {
+        next_api, next_ok := hot_load(source_path, next_copy_path)
+        if !next_ok {
             api.close_canvas()
             hot_unload(&api, copy_path)
             return

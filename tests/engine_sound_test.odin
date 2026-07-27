@@ -75,32 +75,24 @@ engine_sound_vehicle_characters_are_distinct_and_smoothly_controlled :: proc(t: 
 tri_rotor_sound_uses_individual_rotor_rates :: proc(t: ^testing.T) {
     balanced, differential := engine_sound.new(73), engine_sound.new(73)
     balanced_samples, differential_samples: [engine_sound.SAMPLE_RATE / 2]f32
-    engine_sound.render(
-        &balanced,
-        {
-            rate = .62,
-            power = .76,
-            rotor_mix = 1,
+    engine_sound.render(&balanced, {
+            rate         = .62,
+            power        = .76,
+            rotor_mix    = 1,
             rotor_rate_a = .62,
             rotor_rate_b = .62,
             rotor_rate_c = .62,
-            active = true,
-        },
-        balanced_samples[:],
-    )
-    engine_sound.render(
-        &differential,
-        {
-            rate = .62,
-            power = .76,
-            rotor_mix = 1,
+            active       = true,
+        }, balanced_samples[:])
+    engine_sound.render(&differential, {
+            rate         = .62,
+            power        = .76,
+            rotor_mix    = 1,
             rotor_rate_a = .28,
             rotor_rate_b = .94,
             rotor_rate_c = .57,
-            active = true,
-        },
-        differential_samples[:],
-    )
+            active       = true,
+        }, differential_samples[:])
 
     difference := f64(0)
     for index in 0 ..< len(balanced_samples) {

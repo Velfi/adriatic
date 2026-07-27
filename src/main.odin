@@ -1779,25 +1779,14 @@ seed_default_island_towns :: proc(editor: ^Editor) {
         road_start_x, road_finish_x := island_center - 78, island_center + 78
         road_start_y := terrain.sample_height(&editor.project, 0, road_start_x, town_z)
         road_finish_y := terrain.sample_height(&editor.project, 0, road_finish_x, town_z)
-        road_start := roads.add_node(
-            &editor.project.road_graph,
-            {x = road_start_x, y = road_start_y, z = town_z},
-            0,
-        )
+        road_start := roads.add_node(&editor.project.road_graph, {x = road_start_x, y = road_start_y, z = town_z}, 0)
         road_finish := roads.add_node(
             &editor.project.road_graph,
             {x = road_finish_x, y = road_finish_y, z = town_z},
             0,
         )
         if road_start >= 0 && road_finish >= 0 {
-            _ = roads.add_straight_edge(
-                &editor.project.road_graph,
-                road_start,
-                road_finish,
-                5.5,
-                1.4,
-                .Cobblestone,
-            )
+            _ = roads.add_straight_edge(&editor.project.road_graph, road_start, road_finish, 5.5, 1.4, .Cobblestone)
         }
 
         town_bounds := architecture.City_Bounds {
@@ -1807,27 +1796,10 @@ seed_default_island_towns :: proc(editor: ^Editor) {
             town_z + 68,
             true,
         }
-        _ = architecture.city_density_stamp(
-            &editor.project.city_density,
-            island_center,
-            town_z,
-            82,
-            .20,
-            .70,
-        )
-        plan := architecture.city_plan_density(
-            &editor.project,
-            &editor.project.city_density,
-            town_bounds,
-            seed,
-        )
+        _ = architecture.city_density_stamp(&editor.project.city_density, island_center, town_z, 82, .20, .70)
+        plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, town_bounds, seed)
         first_structure := editor.project.structure_count
-        _ = architecture.city_commit_plan(
-            &editor.project,
-            &editor.project.city_density,
-            town_bounds,
-            &plan,
-        )
+        _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, town_bounds, &plan)
         for structure in editor.project.structures[first_structure:editor.project.structure_count] {
             if structure.kind != .Architecture || structure.height > 60 do continue
             _ = architecture.city_density_stamp(
@@ -2573,15 +2545,13 @@ aircraft_render_body :: proc(editor: ^Editor) -> flight.Body_State {
         previous.angular_velocity,
         flight.scale(flight.sub(body.angular_velocity, previous.angular_velocity), alpha),
     )
-    result.basis = flight.orthonormalize(
-        {
-            forward = flight.add(
-                previous.basis.forward,
-                flight.scale(flight.sub(body.basis.forward, previous.basis.forward), alpha),
-            ),
-            up = flight.add(previous.basis.up, flight.scale(flight.sub(body.basis.up, previous.basis.up), alpha)),
-        },
-    )
+    result.basis = flight.orthonormalize({
+        forward = flight.add(
+            previous.basis.forward,
+            flight.scale(flight.sub(body.basis.forward, previous.basis.forward), alpha),
+        ),
+        up      = flight.add(previous.basis.up, flight.scale(flight.sub(body.basis.up, previous.basis.up), alpha)),
+    })
     return result
 }
 
@@ -2921,16 +2891,13 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
             height,
         )
         if !(pa.visible && pb.visible && pc.visible) do continue
-        append(
-            &editor.libellula_projected_faces,
-            Projected_Aircraft_Face {
-                a = pa.position,
-                b = pb.position,
-                c = pc.position,
-                depth = (pa.depth + pb.depth + pc.depth) / 3,
-                color = aircraft_part_color(a.part),
-            },
-        )
+        append(&editor.libellula_projected_faces, Projected_Aircraft_Face {
+            a     = pa.position,
+            b     = pb.position,
+            c     = pc.position,
+            depth = (pa.depth + pb.depth + pc.depth) / 3,
+            color = aircraft_part_color(a.part),
+        })
     }
     faces := editor.libellula_projected_faces[:]
     face_count := len(faces)
@@ -2946,16 +2913,11 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
     for face in faces[:face_count] {
         rl.DrawQuadHatched(face.a, face.b, face.c, face.c, face.color, rl.HATCH_DISABLED)
     }
-    label := project_3d(
-        camera,
-        {
+    label := project_3d(camera, {
             x = editor.libellula.body.position.x,
             y = editor.libellula.body.position.y + 3.2,
             z = editor.libellula.body.position.z,
-        },
-        width,
-        height,
-    )
+        }, width, height)
     if label.visible do rl.DrawTextEx(rl.Font{}, "LIBELLULA", {label.position.x - 35, label.position.y - 12}, 13, 1, {r = 255, g = 239, b = 192, a = 255})
 }
 
@@ -3696,19 +3658,11 @@ world_under_cursor_3d :: proc(
     screen_x := (mouse.x / f32(width) - .5) * 2
     screen_y := (.5 - mouse.y / f32(height)) * 2
     aspect := f32(width) / f32(height)
-    direction := vec_normalize(
-        third_person.Vec3 {
-            x = camera.forward.x +
-            camera.right.x * screen_x * aspect / camera.focal_length +
-            camera.up.x * screen_y / camera.focal_length,
-            y = camera.forward.y +
-            camera.right.y * screen_x * aspect / camera.focal_length +
-            camera.up.y * screen_y / camera.focal_length,
-            z = camera.forward.z +
-            camera.right.z * screen_x * aspect / camera.focal_length +
-            camera.up.z * screen_y / camera.focal_length,
-        },
-    )
+    direction := vec_normalize(third_person.Vec3 {
+        x = camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
+        y = camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
+        z = camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
+    })
     if math.abs(direction.y) < .0001 do return 0, 0, false
     distance := (plane_height - camera.position.y) / direction.y
     if distance <= 0 do return 0, 0, false
@@ -3729,19 +3683,11 @@ terrain_under_cursor_3d :: proc(
     screen_x := (mouse.x / f32(width) - .5) * 2
     screen_y := (.5 - mouse.y / f32(height)) * 2
     aspect := f32(width) / f32(height)
-    direction := vec_normalize(
-        third_person.Vec3 {
-            x = camera.forward.x +
-            camera.right.x * screen_x * aspect / camera.focal_length +
-            camera.up.x * screen_y / camera.focal_length,
-            y = camera.forward.y +
-            camera.right.y * screen_x * aspect / camera.focal_length +
-            camera.up.y * screen_y / camera.focal_length,
-            z = camera.forward.z +
-            camera.right.z * screen_x * aspect / camera.focal_length +
-            camera.up.z * screen_y / camera.focal_length,
-        },
-    )
+    direction := vec_normalize(third_person.Vec3 {
+        x = camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
+        y = camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
+        z = camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
+    })
     step := max(f32(terrain.BASE_CELL_SIZE * .5), f32(2))
     half := f32(terrain.WORLD_SIZE_METERS * .5)
     previous_distance := f32(.1)
@@ -3912,16 +3858,11 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
     // stable painter's depth while each face is still perspective-projected.
     forward_flat := vec_normalize(third_person.Vec3{x = camera.forward.x, z = camera.forward.z})
     right_flat := vec_normalize(third_person.Vec3{x = camera.right.x, z = camera.right.z})
-    horizon := project_3d(
-        camera,
-        {
+    horizon := project_3d(camera, {
             x = camera.position.x + forward_flat.x * 10000,
             y = editor.project.sea_level,
             z = camera.position.z + forward_flat.z * 10000,
-        },
-        width,
-        height,
-    )
+        }, width, height)
     if horizon.visible {
         horizon_y := i32(clamp(horizon.position.y, 0, f32(height)))
         rl.DrawRectangle(0, 0, width, horizon_y + 1, sky_color)
@@ -4575,33 +4516,28 @@ car_physics_create :: proc(editor: ^Editor) {
         }
     }
     editor.car_physics_terrain_revision = editor.project.revision
-    editor.car_physics_vehicle = physics.create_vehicle(
-        editor.car_physics_world,
-        {
-            half_width = .67,
-            half_height = .25,
-            half_length = 1.22,
-            mass = 720,
+    editor.car_physics_vehicle = physics.create_vehicle(editor.car_physics_world, {
+            half_width              = .67,
+            half_height             = .25,
+            half_length             = 1.22,
+            mass                    = 720,
             center_of_mass_offset_y = -.18,
-            wheel_x = vehicles.CAR_WHEEL_TRACK_HALF,
-            front_wheel_z = vehicles.CAR_WHEELBASE_HALF,
-            rear_wheel_z = -vehicles.CAR_WHEELBASE_HALF,
-            wheel_y = -.20,
-            wheel_radius = vehicles.CAR_WHEEL_RADIUS,
-            wheel_width = vehicles.CAR_WHEEL_WIDTH,
-            suspension_min = .08,
-            suspension_max = .30,
-            suspension_frequency = 2.4,
-            suspension_damping = .9,
-            max_steer_angle = math.PI * .19,
-            max_engine_torque = 520,
-            max_brake_torque = 1100,
-            max_handbrake_torque = 1400,
-            four_wheel_drive = false,
-        },
-        {editor.car.position.x, ground + .74, editor.car.position.z},
-        car_physics_rotation(editor.car.yaw_radians),
-    )
+            wheel_x                 = vehicles.CAR_WHEEL_TRACK_HALF,
+            front_wheel_z           = vehicles.CAR_WHEELBASE_HALF,
+            rear_wheel_z            = -vehicles.CAR_WHEELBASE_HALF,
+            wheel_y                 = -.20,
+            wheel_radius            = vehicles.CAR_WHEEL_RADIUS,
+            wheel_width             = vehicles.CAR_WHEEL_WIDTH,
+            suspension_min          = .08,
+            suspension_max          = .30,
+            suspension_frequency    = 2.4,
+            suspension_damping      = .9,
+            max_steer_angle         = math.PI * .19,
+            max_engine_torque       = 520,
+            max_brake_torque        = 1100,
+            max_handbrake_torque    = 1400,
+            four_wheel_drive        = false,
+        }, {editor.car.position.x, ground + .74, editor.car.position.z}, car_physics_rotation(editor.car.yaw_radians))
     if editor.car_physics_vehicle == nil {
         physics.destroy_world(editor.car_physics_world)
         editor.car_physics_world = nil
@@ -5116,10 +5052,7 @@ adriatic_run :: proc(
     capture_paint_mode := capture_kind == .Paint_Mode
     vehicle_showcase_mode := capture_vehicle_showcase_mode || capture_paint_mode || showcase_interactive_mode
     capture_gameplay_mode :=
-        capture_mode &&
-        !capture_editor_mode &&
-        !capture_vehicle_showcase_mode &&
-        !capture_paint_mode
+        capture_mode && !capture_editor_mode && !capture_vehicle_showcase_mode && !capture_paint_mode
     capture_road_mode := capture_kind == .Road || capture_kind == .Road_Dust
     capture_road_dust_mode := capture_kind == .Road_Dust
     capture_road_grip_mode := capture_kind == .Road_Grip
@@ -5456,12 +5389,7 @@ adriatic_run :: proc(
             editor.player = {
                 position = {
                     x = editor.editor_focus.x,
-                    y = terrain.sample_height(
-                        &editor.project,
-                        0,
-                        editor.editor_focus.x,
-                        editor.editor_focus.z,
-                    ),
+                    y = terrain.sample_height(&editor.project, 0, editor.editor_focus.x, editor.editor_focus.z),
                     z = editor.editor_focus.z,
                 },
                 grounded = true,
@@ -5560,14 +5488,11 @@ adriatic_run :: proc(
                 z = editor.attendant_position.z,
             }
             editor.pilot.position = editor.player.position
-            inspection_pose := third_person.camera_near(
-                {
-                    x = editor.attendant_position.x,
-                    y = editor.attendant_position.y + .48,
-                    z = editor.attendant_position.z,
-                },
-                {x = 1.35, y = .62, z = 1.35},
-            )
+            inspection_pose := third_person.camera_near({
+                x = editor.attendant_position.x,
+                y = editor.attendant_position.y + .48,
+                z = editor.attendant_position.z,
+            }, {x = 1.35, y = .62, z = 1.35})
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
@@ -5681,18 +5606,15 @@ adriatic_run :: proc(
                 editor.player.position.z,
             )
             editor.pilot.position = editor.player.position
-            grass_pose := third_person.camera_look_at(
-                {
-                    x = editor.player.position.x + 8,
-                    y = editor.player.position.y + 1.65,
-                    z = editor.player.position.z + 15,
-                },
-                {
-                    x = editor.player.position.x - 2,
-                    y = editor.player.position.y + .55,
-                    z = editor.player.position.z - 9,
-                },
-            )
+            grass_pose := third_person.camera_look_at({
+                x = editor.player.position.x + 8,
+                y = editor.player.position.y + 1.65,
+                z = editor.player.position.z + 15,
+            }, {
+                x = editor.player.position.x - 2,
+                y = editor.player.position.y + .55,
+                z = editor.player.position.z - 9,
+            })
             third_person.camera_set_pose(&editor.cameras, .Inspection, grass_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = grass_pose
@@ -6258,18 +6180,13 @@ adriatic_run :: proc(
                         terrain_height := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
                         ground := postale_game.drivable_surface_height(terrain_height, editor.project.sea_level)
                         if editor.aircraft.active != .Postale {
-                            libellula_game.step(
-                                &editor.libellula,
-                                {
-                                    throttle_up = control.throttle_up,
+                            libellula_game.step(&editor.libellula, {
+                                    throttle_up   = control.throttle_up,
                                     throttle_down = control.throttle_down,
-                                    pitch = control.pitch,
-                                    roll = control.roll,
-                                    yaw = control.yaw,
-                                },
-                                ground,
-                                f32(AIRCRAFT_FIXED_STEP),
-                            )
+                                    pitch         = control.pitch,
+                                    roll          = control.roll,
+                                    yaw           = control.yaw,
+                                }, ground, f32(AIRCRAFT_FIXED_STEP))
                         } else {
                             ground_result := postale_game.step(
                                 &editor.postale,

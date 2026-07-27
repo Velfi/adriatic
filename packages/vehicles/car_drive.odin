@@ -291,11 +291,7 @@ car_trailer_step :: proc(
         // Rolling drag is reported back to the arcade car without disturbing
         // the constrained trailer pose.
         rolling_load := hitch_longitudinal * .11
-        state.reaction_force = {
-            -forward_x * rolling_load,
-            0,
-            -forward_z * rolling_load,
-        }
+        state.reaction_force = {-forward_x * rolling_load, 0, -forward_z * rolling_load}
     } else {
         state.reaction_force = {}
         // Passive axle friction: retain forward roll, scrub lateral motion.

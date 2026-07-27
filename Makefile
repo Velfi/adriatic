@@ -41,7 +41,7 @@ VALIDATION_PROFILE_RUNTIME_ENV := env \
 	VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
 	ASAN_OPTIONS=halt_on_error=1:abort_on_error=1
 
-ZELDA_ENGINE_ROOT ?= ../zelda-engine
+ZELDA_ENGINE_ROOT ?= $(CURDIR)/zelda-engine
 ZELDA_ENGINE_PACKAGES := $(abspath $(ZELDA_ENGINE_ROOT))/packages
 ZELDA_ENGINE_COLLECTION := -collection:zelda_engine=$(ZELDA_ENGINE_PACKAGES)
 TEXTSHAPE_DIR := $(abspath $(ZELDA_ENGINE_ROOT))/third_party/textshape
@@ -447,7 +447,7 @@ $(HOT_SHADER_STAMP): $(HOT_SHADER_OUTPUTS)
 	@mkdir -p $(@D)
 	touch $@
 
-$(HOT_APP): $(HOT_PHYSICS_STAMP) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a
+$(HOT_APP): $(HOT_PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(HOT_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(PROFILE_ODIN_FLAGS_hot) -build-mode:shared $(PROFILE_DEFINE_FLAGS_hot) -out:$@ -extra-linker-flags:"$(call link_flags,$(HOT_DIR))"
 

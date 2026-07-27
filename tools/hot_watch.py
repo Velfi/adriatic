@@ -93,7 +93,7 @@ def is_host(path: Path, root: Path) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--engine-root", type=Path, default=Path("../zelda-engine"))
+    parser.add_argument("--engine-root", type=Path, default=Path("zelda-engine"))
     parser.add_argument("--host", type=Path, required=True)
     parser.add_argument("--make", default="make")
     args = parser.parse_args()

@@ -33,7 +33,7 @@ ARCHIVE="$DIST/$APP_NAME-macos.zip"
 REAL_EXECUTABLE="adriatic-bin"
 REAL_BINARY="$RESOURCES/$REAL_EXECUTABLE"
 
-make -C "$ROOT" release ZELDA_ENGINE_ROOT="${ZELDA_ENGINE_ROOT:-$ROOT/../zelda-engine}"
+make -C "$ROOT" release ZELDA_ENGINE_ROOT="${ZELDA_ENGINE_ROOT:-$ROOT/zelda-engine}"
 
 rm -rf "$APP" "$ARCHIVE"
 mkdir -p "$MACOS" "$RESOURCES" "$FRAMEWORKS"
@@ -103,7 +103,7 @@ for spec in \
 	prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
 	[[ -n "$prefix" ]] && copy_library "$prefix/$relative"
 done
-copy_library "${ZELDA_ENGINE_ROOT:-$ROOT/../zelda-engine}/third_party/jolt/libzelda_physics.dylib"
+copy_library "${ZELDA_ENGINE_ROOT:-$ROOT/zelda-engine}/third_party/jolt/libzelda_physics.dylib"
 moltenvk_prefix="$(brew --prefix molten-vk 2>/dev/null || true)"
 moltenvk_icd=""
 for candidate in \

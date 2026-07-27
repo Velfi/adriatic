@@ -1,7 +1,7 @@
 package tests
 
-import vehicles "../packages/vehicles"
 import third_person "../packages/third_person"
+import vehicles "../packages/vehicles"
 import "core:math"
 import "core:testing"
 
@@ -143,18 +143,7 @@ car_trailer_keeps_the_tow_ball_connected_without_spring_bounce :: proc(t: ^testi
 
     for _ in 0 ..< 120 {
         car_position.x += 8.0 / 60
-        vehicles.car_trailer_step(
-            &state,
-            &position,
-            &yaw,
-            car_position,
-            0,
-            0,
-            {x = 8},
-            true,
-            0,
-            1.0 / 60,
-        )
+        vehicles.car_trailer_step(&state, &position, &yaw, car_position, 0, 0, {x = 8}, true, 0, 1.0 / 60)
         car_hitch_x := car_position.x - 1.48
         trailer_hitch_x := position.x - math.cos(yaw) * 1.36
         trailer_hitch_z := position.z - math.sin(yaw) * 1.36

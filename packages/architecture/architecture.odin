@@ -1267,8 +1267,7 @@ generate_append :: proc(
     created := 0
     for node, node_index in graph.nodes[:graph.count] {
         if node.kind == .Site do continue
-        if node.kind == .Street_Block &&
-           graph_unit(seed, u32(node_index) + 211) > safe_density {
+        if node.kind == .Street_Block && graph_unit(seed, u32(node_index) + 211) > safe_density {
             continue
         }
         if node.kind == .Street_Block && safe_density < 1 {

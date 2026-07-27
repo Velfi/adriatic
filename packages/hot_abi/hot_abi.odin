@@ -11,11 +11,11 @@ Run_Result :: enum {
 }
 
 Contract :: struct {
-    run:         proc(rawptr) -> Run_Result,
-    abi_version: proc() -> u64,
-    canvas_state: proc() -> rawptr,
+    run:                      proc(_: rawptr) -> Run_Result,
+    abi_version:              proc() -> u64,
+    canvas_state:             proc() -> rawptr,
     canvas_state_abi_version: proc() -> u64,
-    close_canvas: proc(),
+    close_canvas:             proc(),
 }
 
 ABI_Hash_State :: struct {

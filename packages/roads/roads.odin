@@ -486,16 +486,13 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
             } else if lane == 1 || lane == 4 {
                 surface = .Shoulder
             }
-            current[lane] = mesh_vertex(
-                mesh,
-                {
-                    position = positions[lane],
-                    normal = normal,
-                    uv = {lane_uv[lane], distance_along},
-                    surface = surface,
-                    pavement = edge.pavement,
-                },
-            )
+            current[lane] = mesh_vertex(mesh, {
+                position = positions[lane],
+                normal   = normal,
+                uv       = {lane_uv[lane], distance_along},
+                surface  = surface,
+                pavement = edge.pavement,
+            })
         }
         if sample > 0 {
             for strip in 0 ..< EDGE_LANE_COUNT - 1 {
@@ -601,36 +598,27 @@ bake_end_cap :: proc(
             road_radius := left_road_radius + (right_road_radius - left_road_radius) * fraction
             shoulder_radius := left_shoulder_radius + (right_shoulder_radius - left_shoulder_radius) * fraction
             verge_radius := left_verge_radius + (right_verge_radius - left_verge_radius) * fraction
-            road_arc[sample] = mesh_vertex(
-                mesh,
-                {
-                    position = vec_add(center_position, vec_scale(direction, road_radius)),
-                    normal = normal,
-                    uv = {.335 + fraction * .33, 0},
-                    surface = .Road,
-                    pavement = edge.pavement,
-                },
-            )
-            shoulder_arc[sample] = mesh_vertex(
-                mesh,
-                {
-                    position = vec_add(center_position, vec_scale(direction, shoulder_radius)),
-                    normal = normal,
-                    uv = {.20 + fraction * .60, 0},
-                    surface = .Shoulder,
-                    pavement = edge.pavement,
-                },
-            )
-            verge_arc[sample] = mesh_vertex(
-                mesh,
-                {
-                    position = vec_add(center_position, vec_scale(direction, verge_radius)),
-                    normal = normal,
-                    uv = {fraction, 0},
-                    surface = .Verge,
-                    pavement = edge.pavement,
-                },
-            )
+            road_arc[sample] = mesh_vertex(mesh, {
+                position = vec_add(center_position, vec_scale(direction, road_radius)),
+                normal   = normal,
+                uv       = {.335 + fraction * .33, 0},
+                surface  = .Road,
+                pavement = edge.pavement,
+            })
+            shoulder_arc[sample] = mesh_vertex(mesh, {
+                position = vec_add(center_position, vec_scale(direction, shoulder_radius)),
+                normal   = normal,
+                uv       = {.20 + fraction * .60, 0},
+                surface  = .Shoulder,
+                pavement = edge.pavement,
+            })
+            verge_arc[sample] = mesh_vertex(mesh, {
+                position = vec_add(center_position, vec_scale(direction, verge_radius)),
+                normal   = normal,
+                uv       = {fraction, 0},
+                surface  = .Verge,
+                pavement = edge.pavement,
+            })
         }
     }
 

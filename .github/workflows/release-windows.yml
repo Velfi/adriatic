@@ -21,8 +21,6 @@ jobs:
       VCPKG_DEFAULT_TRIPLET: x64-windows
       VCPKG_BINARY_CACHE: ${{ github.workspace }}\.cache\vcpkg\archives
       VCPKG_DOWNLOADS: ${{ github.workspace }}\.cache\vcpkg\downloads
-      ZELDA_ENGINE_REPOSITORY: ${{ vars.ZELDA_ENGINE_REPOSITORY || 'Velfi/zelda-engine' }}
-      ZELDA_ENGINE_REF: ${{ vars.ZELDA_ENGINE_REF || 'main' }}
       ZELDA_ENGINE_ROOT: ${{ github.workspace }}\zelda-engine
 
     steps:
@@ -37,15 +35,6 @@ jobs:
           ref: ${{ env.VCPKG_REF }}
           path: .vcpkg
           fetch-depth: 0
-
-      - name: Check out Zelda Engine
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ env.ZELDA_ENGINE_REPOSITORY }}
-          ref: ${{ env.ZELDA_ENGINE_REF }}
-          path: zelda-engine
-          submodules: recursive
-          token: ${{ secrets.ZELDA_ENGINE_TOKEN || github.token }}
 
       - uses: ilammy/msvc-dev-cmd@v1
         with:

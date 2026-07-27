@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
-if (-not $ZeldaEngineRoot) { $ZeldaEngineRoot = Join-Path $Root "../zelda-engine" }
+if (-not $ZeldaEngineRoot) { $ZeldaEngineRoot = Join-Path $Root "zelda-engine" }
 if (-not $VcpkgRoot) { $VcpkgRoot = "C:\vcpkg" }
 $ZeldaEngineRoot = [IO.Path]::GetFullPath($ZeldaEngineRoot)
 $Installed = Join-Path $VcpkgRoot "installed/$Triplet"

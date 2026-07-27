@@ -318,18 +318,13 @@ add_or_merge_formation :: proc(
     padding: f32 = 0,
     classify: bool = true,
 ) -> int {
-    if project == nil ||
-       structure.kind == .Foliage ||
-       structure.kind == .Architecture ||
-       structure.group_id == 0 {
+    if project == nil || structure.kind == .Foliage || structure.kind == .Architecture || structure.group_id == 0 {
         return add_structure(project, structure)
     }
 
     for index := project.structure_count - 1; index >= 0; index -= 1 {
         existing := &project.structures[index]
-        if existing.kind == .Foliage ||
-           existing.kind == .Architecture ||
-           existing.group_id != structure.group_id {
+        if existing.kind == .Foliage || existing.kind == .Architecture || existing.group_id != structure.group_id {
             continue
         }
         dx, dz := structure.center_x - existing.center_x, structure.center_z - existing.center_z
