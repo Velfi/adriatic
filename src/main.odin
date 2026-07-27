@@ -6679,7 +6679,6 @@ adriatic_run :: proc(
     showcase_target := showcase_interactive_mode ? (len(args) >= 3 ? args[2] : "") : capture_target
     capture_player_mode := capture_kind == .Map && capture_target != ""
     if capture_mode do flags += {.WINDOW_NOT_FOCUSABLE}
-    if benchmark_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     if loading_preview_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     rl.SetConfigFlags(flags)
     rl.SetWorldRenderSize(
@@ -8522,8 +8521,32 @@ adriatic_run :: proc(
                 terrain_history_push_undo(editor)
             }
             stroke_strength := editor.strength * min(frame_delta, f32(.05)) * 4
-            if rl.IsMouseButtonDown(.LEFT) do terrain.apply_stroke_with_hardness(&editor.project, editor.tool, world_x, world_z, editor.radius, stroke_strength, 1, editor.hardness)
-            if rl.IsMouseButtonDown(.RIGHT) do terrain.apply_stroke_with_hardness(&editor.project, editor.tool, world_x, world_z, editor.radius, stroke_strength, -1, editor.hardness)
+            if rl.IsMouseButtonDown(.LEFT) {
+                terrain.apply_stroke_with_hardness(
+                    &editor.project,
+                    editor.tool,
+                    world_x,
+                    world_z,
+                    editor.radius,
+                    stroke_strength,
+                    1,
+                    editor.hardness,
+                )
+                world_terrain_changed(editor, world_x, world_z, editor.radius)
+            }
+            if rl.IsMouseButtonDown(.RIGHT) {
+                terrain.apply_stroke_with_hardness(
+                    &editor.project,
+                    editor.tool,
+                    world_x,
+                    world_z,
+                    editor.radius,
+                    stroke_strength,
+                    -1,
+                    editor.hardness,
+                )
+                world_terrain_changed(editor, world_x, world_z, editor.radius)
+            }
         }
         saved_aircraft_body: flight.Body_State
         cinematic_update(editor, simulation_delta)

@@ -134,6 +134,14 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
     bougainvillea_vertices: [dynamic]Foliage_Vertex,
 }
 
+Terrain_Dirty_Bounds :: struct {
+    valid:        bool,
+    full_rebuild: bool,
+    revision:     u64,
+    min_x, min_z: f32,
+    max_x, max_z: f32,
+}
+
 World_Push :: struct {
     camera_position: [4]f32,
     camera_right:    [4]f32,
@@ -217,6 +225,7 @@ World_Renderer :: struct {
     clipmap_revision:                [engine.MAX_FRAMES_IN_FLIGHT]u64,
     clipmap_center:                  [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
     clipmap_valid:                   [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
+    clipmap_dirty:                   [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
     road_mesh:                       roads.Mesh,
     road_revision:                   u64,
     foliage_geometry_cache:          [terrain.STRUCTURE_CAPACITY]Foliage_Geometry_Cache_Entry,
@@ -919,15 +928,55 @@ clipmap_vertex_color :: #force_inline proc(editor: ^Editor, level: int, x, z, he
     }
 }
 
-clipmap_update_level :: proc(editor: ^Editor, frame_index, level: int, center: [2]f32) {
+clipmap_update_level :: proc(
+    editor: ^Editor,
+    frame_index, level: int,
+    center: [2]f32,
+    dirty: ^Terrain_Dirty_Bounds = nil,
+) {
     buffer := &world_renderer.clipmap_vertex[frame_index][level]
     vertices := cast([^]World_Vertex)buffer.mapped
     data := &editor.project.levels[level]
     grid_cell := data.cell_size * 2
     half_grid := f32(CLIPMAP_GRID_RESOLUTION - 1) * .5
-    for z in 0 ..< CLIPMAP_GRID_RESOLUTION {
+    min_x, min_z := 0, 0
+    max_x, max_z := CLIPMAP_GRID_RESOLUTION - 1, CLIPMAP_GRID_RESOLUTION - 1
+    if dirty != nil {
+        padding := data.cell_size * 2
+        grid_min_x := center[0] - half_grid * grid_cell
+        grid_min_z := center[1] - half_grid * grid_cell
+        grid_max_x := center[0] + half_grid * grid_cell
+        grid_max_z := center[1] + half_grid * grid_cell
+        if dirty.max_x + padding < grid_min_x ||
+           dirty.max_z + padding < grid_min_z ||
+           dirty.min_x - padding > grid_max_x ||
+           dirty.min_z - padding > grid_max_z {
+            return
+        }
+        min_x = clamp(
+            int(math.floor(f64((dirty.min_x - padding - grid_min_x) / grid_cell))),
+            0,
+            CLIPMAP_GRID_RESOLUTION - 1,
+        )
+        min_z = clamp(
+            int(math.floor(f64((dirty.min_z - padding - grid_min_z) / grid_cell))),
+            0,
+            CLIPMAP_GRID_RESOLUTION - 1,
+        )
+        max_x = clamp(
+            int(math.ceil(f64((dirty.max_x + padding - grid_min_x) / grid_cell))),
+            0,
+            CLIPMAP_GRID_RESOLUTION - 1,
+        )
+        max_z = clamp(
+            int(math.ceil(f64((dirty.max_z + padding - grid_min_z) / grid_cell))),
+            0,
+            CLIPMAP_GRID_RESOLUTION - 1,
+        )
+    }
+    for z in min_z ..= max_z {
         world_z := center[1] + (f32(z) - half_grid) * grid_cell
-        for x in 0 ..< CLIPMAP_GRID_RESOLUTION {
+        for x in min_x ..= max_x {
             world_x := center[0] + (f32(x) - half_grid) * grid_cell
             height := terrain.sample_height(&editor.project, level, world_x, world_z)
             vertex := world_vertex(
@@ -940,8 +989,68 @@ clipmap_update_level :: proc(editor: ^Editor, frame_index, level: int, center: [
     }
 }
 
+@(no_instrumentation)
+world_terrain_structure_intersects :: #force_inline proc(
+    structure: terrain.Structure,
+    dirty: Terrain_Dirty_Bounds,
+) -> bool {
+    closest_x := clamp(structure.center_x, dirty.min_x, dirty.max_x)
+    closest_z := clamp(structure.center_z, dirty.min_z, dirty.max_z)
+    dx, dz := structure.center_x - closest_x, structure.center_z - closest_z
+    radius_squared := (structure.width * structure.width + structure.depth * structure.depth) * .25
+    return dx * dx + dz * dz <= radius_squared
+}
+
+world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
+    if editor == nil do return
+    revision := editor.project.revision
+    changed := Terrain_Dirty_Bounds {
+        valid    = true,
+        revision = revision,
+        min_x    = x - radius,
+        min_z    = z - radius,
+        max_x    = x + radius,
+        max_z    = z + radius,
+    }
+    for &dirty in world_renderer.clipmap_dirty {
+        if dirty.valid {
+            if dirty.revision + 1 != revision do dirty.full_rebuild = true
+            dirty.min_x = min(dirty.min_x, changed.min_x)
+            dirty.min_z = min(dirty.min_z, changed.min_z)
+            dirty.max_x = max(dirty.max_x, changed.max_x)
+            dirty.max_z = max(dirty.max_z, changed.max_z)
+            dirty.revision = revision
+        } else {
+            dirty = changed
+        }
+    }
+    if world_renderer.road_revision != 0 do world_renderer.road_revision = revision
+    for &entry in world_renderer.static_geometry_cache {
+        if !entry.valid do continue
+        if world_terrain_structure_intersects(entry.structure, changed) {
+            entry.valid = false
+        } else {
+            entry.project_revision = revision
+        }
+    }
+    for &entry in world_renderer.climbing_leaf_geometry_cache {
+        if !entry.valid do continue
+        if world_terrain_structure_intersects(entry.structure, changed) {
+            entry.valid = false
+        } else {
+            entry.project_revision = revision
+        }
+    }
+}
+
 clipmap_update :: proc(editor: ^Editor, frame_index: int) {
     revision_changed := world_renderer.clipmap_revision[frame_index] != editor.project.revision
+    dirty := &world_renderer.clipmap_dirty[frame_index]
+    localized_revision :=
+        revision_changed &&
+        dirty.valid &&
+        !dirty.full_rebuild &&
+        dirty.revision == editor.project.revision
     snap := editor.project.levels[0].cell_size * 2
     center := [2]f32 {
         f32(math.round(f64(editor.camera_pose.target.x / snap))) * snap,
@@ -951,12 +1060,22 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int) {
         if revision_changed ||
            !world_renderer.clipmap_valid[frame_index][level] ||
            world_renderer.clipmap_center[frame_index][level] != center {
-            clipmap_update_level(editor, frame_index, level, center)
+            center_changed :=
+                !world_renderer.clipmap_valid[frame_index][level] ||
+                world_renderer.clipmap_center[frame_index][level] != center
+            clipmap_update_level(
+                editor,
+                frame_index,
+                level,
+                center,
+                localized_revision && !center_changed ? dirty : nil,
+            )
             world_renderer.clipmap_center[frame_index][level] = center
             world_renderer.clipmap_valid[frame_index][level] = true
         }
     }
     world_renderer.clipmap_revision[frame_index] = editor.project.revision
+    dirty^ = {}
 }
 
 @(no_instrumentation)

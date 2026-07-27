@@ -250,6 +250,7 @@ init_project :: proc(result: ^Project) {
         }
     }
     _ = add_default_runways(result)
+    refresh_derived_overlaps(result)
 }
 
 snap_to_grid :: proc(value, grid: f32) -> f32 {
@@ -606,6 +607,27 @@ level_contains_bounds :: proc(data: ^Clipmap_Level, min_x, min_z, max_x, max_z: 
 }
 
 @(no_instrumentation)
+level_sample_bounds :: #force_inline proc(
+    data: ^Clipmap_Level,
+    min_x, min_z, max_x, max_z: f32,
+) -> (min_sample_x, min_sample_z, max_sample_x, max_sample_z: int, overlaps: bool) {
+    if data == nil do return
+    extent := f32(RING_RESOLUTION - 1) * data.cell_size
+    if max_x < data.origin_x ||
+       max_z < data.origin_z ||
+       min_x > data.origin_x + extent ||
+       min_z > data.origin_z + extent {
+        return
+    }
+    min_sample_x = clamp(int(math.floor(f64((min_x - data.origin_x) / data.cell_size))), 0, RING_RESOLUTION - 1)
+    min_sample_z = clamp(int(math.floor(f64((min_z - data.origin_z) / data.cell_size))), 0, RING_RESOLUTION - 1)
+    max_sample_x = clamp(int(math.ceil(f64((max_x - data.origin_x) / data.cell_size))), 0, RING_RESOLUTION - 1)
+    max_sample_z = clamp(int(math.ceil(f64((max_z - data.origin_z) / data.cell_size))), 0, RING_RESOLUTION - 1)
+    overlaps = true
+    return
+}
+
+@(no_instrumentation)
 sample_level_height :: #force_inline proc(data: ^Clipmap_Level, x, z: f32) -> f32 {
     if data == nil || !level_contains(data, x, z) do return 0
     grid_x := (x - data.origin_x) / data.cell_size
@@ -711,6 +733,24 @@ ground_grip :: proc(surface: Ground_Surface) -> roads.Grip_Profile {
     return roads.offroad_grip()
 }
 
+refresh_derived_overlaps :: proc(project: ^Project) {
+    if project == nil do return
+    for level in 1 ..< CLIPMAP_LEVELS {
+        finer := &project.levels[level - 1]
+        coarse := &project.levels[level]
+        for z in 0 ..< RING_RESOLUTION {
+            sample_z := coarse.origin_z + f32(z) * coarse.cell_size
+            for x in 0 ..< RING_RESOLUTION {
+                sample_x := coarse.origin_x + f32(x) * coarse.cell_size
+                if !level_contains(finer, sample_x, sample_z) do continue
+                index := sample_index(x, z)
+                coarse.heights[index] = sample_level_height(finer, sample_x, sample_z)
+                coarse.material[index] = sample_level_material(finer, sample_x, sample_z)
+            }
+        }
+    }
+}
+
 // apply_stroke keeps the original soft brush behavior for callers that do not
 // need to expose falloff tuning. The editor uses apply_stroke_with_hardness.
 apply_stroke :: proc(project: ^Project, tool: Tool, world_x, world_z, radius, strength, direction: f32) {
@@ -739,8 +779,15 @@ apply_stroke_with_hardness :: proc(
     }
     data := &project.levels[authored_level]
     effective_radius := max(radius, data.cell_size * 1.5)
-    for z in 0 ..< RING_RESOLUTION {
-        for x in 0 ..< RING_RESOLUTION {
+    min_x, min_z, max_x, max_z, _ := level_sample_bounds(
+        data,
+        world_x - effective_radius,
+        world_z - effective_radius,
+        world_x + effective_radius,
+        world_z + effective_radius,
+    )
+    for z in min_z ..= max_z {
+        for x in min_x ..= max_x {
             world_sample_x := data.origin_x + f32(x) * data.cell_size
             world_sample_z := data.origin_z + f32(z) * data.cell_size
             dx, dz := world_sample_x - world_x, world_sample_z - world_z
@@ -770,9 +817,18 @@ apply_stroke_with_hardness :: proc(
     // stale-height seam wherever its nested clipmap changes LOD.
     for level in 0 ..< authored_level {
         finer := &project.levels[level]
-        for z in 0 ..< RING_RESOLUTION {
+        propagation_radius := effective_radius + data.cell_size * 2
+        fine_min_x, fine_min_z, fine_max_x, fine_max_z, overlaps := level_sample_bounds(
+            finer,
+            world_x - propagation_radius,
+            world_z - propagation_radius,
+            world_x + propagation_radius,
+            world_z + propagation_radius,
+        )
+        if !overlaps do continue
+        for z in fine_min_z ..= fine_max_z {
             sample_z := finer.origin_z + f32(z) * finer.cell_size
-            for x in 0 ..< RING_RESOLUTION {
+            for x in fine_min_x ..= fine_max_x {
                 sample_x := finer.origin_x + f32(x) * finer.cell_size
                 dx, dz := sample_x - world_x, sample_z - world_z
                 if dx * dx + dz * dz > effective_radius * effective_radius ||
@@ -790,9 +846,18 @@ apply_stroke_with_hardness :: proc(
     for level in authored_level + 1 ..< CLIPMAP_LEVELS {
         finer := &project.levels[level - 1]
         coarse := &project.levels[level]
-        for z in 0 ..< RING_RESOLUTION {
+        propagation_radius := effective_radius + finer.cell_size * 2
+        coarse_min_x, coarse_min_z, coarse_max_x, coarse_max_z, overlaps := level_sample_bounds(
+            coarse,
+            world_x - propagation_radius,
+            world_z - propagation_radius,
+            world_x + propagation_radius,
+            world_z + propagation_radius,
+        )
+        if !overlaps do continue
+        for z in coarse_min_z ..= coarse_max_z {
             sample_z := coarse.origin_z + f32(z) * coarse.cell_size
-            for x in 0 ..< RING_RESOLUTION {
+            for x in coarse_min_x ..= coarse_max_x {
                 sample_x := coarse.origin_x + f32(x) * coarse.cell_size
                 if !level_contains(finer, sample_x, sample_z) do continue
                 index := sample_index(x, z)
@@ -804,6 +869,8 @@ apply_stroke_with_hardness :: proc(
     if tool == .Raise || tool == .Smooth {
         for index in 0 ..< project.structure_count {
             structure := &project.structures[index]
+            dx, dz := structure.center_x - world_x, structure.center_z - world_z
+            if dx * dx + dz * dz > effective_radius * effective_radius do continue
             structure.base_y = sample_height(project, 0, structure.center_x, structure.center_z)
         }
     }
