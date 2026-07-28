@@ -272,29 +272,33 @@ dialogue_text_and_choices_follow_story_and_repair_state :: proc(t: ^testing.T) {
 
     testing.expect(
         t,
-        story.niko_text(&ctx) ==
-        "La lampe de l'isola est clignote twice avant alba. Iva veglia quando mes forni aussi.",
+        story.niko_text(&ctx) == "La lampe on l'isola est blinks twice avant alba. Iva veglia while meine forni warm.",
     )
     testing.expect(
         t,
         story.bojan_text(&ctx) ==
-        "L'atterraggio war perfekt. Le ground est arrivé trop tôt. Hai visto niente plus compliqué.",
+        "L'atterraggio war perfekt. The ground est arrivé trop tôt. Hai visto nothing plus compliqué.",
+    )
+    testing.expect(
+        t,
+        story.zora_text(&ctx) ==
+        "Ferme la persiana, piccolo corriere. The bura mescola déjà abbastanza. Le carte ne commandent pas il mare; they show seulement dove tira il vento.",
     )
 
     state.romance = .Invitation
     testing.expect(
         t,
-        story.iva_text(&ctx) == "Posso répondre à Niko, but l'ala rotta non peut me porter. Nema regatta todavía.",
+        story.iva_text(&ctx) == "Posso répondre à Niko, but l'ala rotta cannot carry me. Nema regatta yet.",
     )
     repair_aircraft(t, &state)
     testing.expect(
         t,
         story.iva_text(&ctx) ==
-        "Tu reparaste l'aereo de Bojan before che io lo necesitara. Grazie; jetzt puoi portare la regatta acceptance.",
+        "Tu repaired l'aereo de Bojan avant che io lo needed. Grazie; maintenant puoi portare la regatta acceptance.",
     )
     testing.expect(
         t,
-        story.bojan_text(&ctx) == "L'aereo ist pronto pour Iva. Ho même nettoyé el asiento qui non m'appartient.",
+        story.bojan_text(&ctx) == "L'aereo is pronto pour Iva. Ich habe même cleaned il seat qui non m'appartient.",
     )
 
     iva_conversation, opened := dialogue.open(

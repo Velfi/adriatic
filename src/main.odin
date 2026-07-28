@@ -467,6 +467,13 @@ Editor :: struct {
     tarot_atlas:                  rl.Texture,
     controller_disconnect_notice: bool,
     pause_focus:                  int,
+    photo_restore_pose:           third_person.Camera_Pose,
+    photo_restore_inspection:     third_person.Camera_Pose,
+    photo_restore_slot:           third_person.Camera_Slot,
+    photo_yaw:                    f32,
+    photo_pitch:                  f32,
+    photo_capture_pending:        bool,
+    photo_capture_notice_until:   f64,
     options_focus:                int,
     options_scroll_y:             f32,
     options_scroll_dragging:      bool,
@@ -6848,6 +6855,7 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     // Canvas commands from here onward are deliberately UI-only.
     rl.ClearBackground({r = 104, g = 154, b = 181, a = 255})
     if editor.pause_screen == .Customization do return
+    if editor.pause_screen == .Photo do return
     if editor.vehicle_paint_scene {
         vehicle_paint_draw(editor, width, height)
         return
@@ -9777,6 +9785,7 @@ adriatic_run :: proc(
         pause_menu_draw(editor, width, height, postcard)
         cinematic_draw_wipe(editor, width, height)
         crash_recovery_draw(editor, width, height)
+        photo_mode_capture_pending(editor)
         live_capture_poll()
         rl.EndDrawing()
         gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()

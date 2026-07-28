@@ -109,7 +109,7 @@ third_person_run_release_has_a_long_but_bounded_glide :: proc(t: ^testing.T) {
     }
     glide_distance := start_z - state.position.z
     testing.expect(t, elapsed > 2 && elapsed < 3)
-    testing.expect(t, glide_distance > 12 && glide_distance < 15)
+    testing.expect(t, glide_distance > 10.5 && glide_distance < 12.5)
 }
 
 @(test)

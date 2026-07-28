@@ -4,6 +4,8 @@ import game_input "../packages/game_input"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
+import "core:os"
+import "core:strings"
 import sdl "vendor:sdl3"
 import rl "zelda_engine:canvas2d"
 
@@ -13,9 +15,11 @@ Pause_Screen :: enum {
     Journal,
     Options,
     Customization,
+    Photo,
 }
 
 pause_menu_pointer_enabled := true
+PAUSE_MENU_BUTTON_COUNT :: 5
 
 Gameplay_Options :: struct {
     look_sensitivity:    f32,
@@ -83,7 +87,7 @@ pause_menu_is_open :: proc(editor: ^Editor) -> bool {
 
 pause_menu_panel :: proc(width, height: i32, options: bool) -> rl.Rectangle {
     panel_width := min(f32(500), f32(width) - 40)
-    panel_height := options ? f32(560) : f32(430)
+    panel_height := options ? f32(560) : f32(488)
     panel_height = min(panel_height, f32(height) - 32)
     return {(f32(width) - panel_width) * .5, (f32(height) - panel_height) * .5, panel_width, panel_height}
 }
@@ -194,6 +198,112 @@ pause_menu_resume :: proc(editor: ^Editor) {
     editor.controller_disconnect_notice = false
     editor.map_time = f32(rl.GetTime())
     set_pointer_locked(editor.in_map)
+}
+
+photo_mode_open :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.photo_restore_pose = editor.camera_pose
+    editor.photo_restore_inspection = editor.cameras.poses[third_person.Camera_Slot.Inspection]
+    editor.photo_restore_slot = editor.cameras.active
+    direction := editor.camera_pose.target - editor.camera_pose.position
+    length := f32(math.sqrt(f64(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)))
+    if length < .001 {
+        direction = {0, 0, -1}
+    } else {
+        direction /= length
+    }
+    editor.photo_yaw = f32(math.atan2(f64(-direction.x), f64(-direction.z)))
+    editor.photo_pitch = f32(math.asin(f64(clamp(direction.y, -1, 1))))
+    editor.pause_screen = .Photo
+    third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+    third_person.camera_set_active(&editor.cameras, .Inspection)
+    set_pointer_locked(true)
+}
+
+photo_mode_close :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.camera_pose = editor.photo_restore_pose
+    third_person.camera_set_pose(&editor.cameras, .Inspection, editor.photo_restore_inspection)
+    if editor.photo_restore_slot != .Inspection {
+        third_person.camera_set_pose(&editor.cameras, editor.photo_restore_slot, editor.photo_restore_pose)
+    }
+    third_person.camera_set_active(&editor.cameras, editor.photo_restore_slot)
+    editor.pause_screen = .Pause
+    editor.pause_focus = 0
+    editor.photo_capture_pending = false
+    set_pointer_locked(false)
+}
+
+photo_mode_process_input :: proc(editor: ^Editor, delta_seconds: f32) {
+    if editor == nil do return
+    if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
+        photo_mode_close(editor)
+        return
+    }
+
+    mouse := rl.GetMouseDelta()
+    look_x := editor.gameplay_options.invert_look_x ? -mouse.x : mouse.x
+    look_y := editor.gameplay_options.invert_look_y ? -mouse.y : mouse.y
+    look_x += gamepad_axis(.Right_X) * 180 * delta_seconds
+    look_y += gamepad_axis(.Right_Y) * 180 * delta_seconds
+    editor.photo_yaw += look_x * editor.gameplay_options.look_sensitivity
+    editor.photo_pitch = clamp(
+        editor.photo_pitch - look_y * editor.gameplay_options.look_sensitivity,
+        f32(-1.48),
+        f32(1.48),
+    )
+
+    cos_pitch := f32(math.cos(f64(editor.photo_pitch)))
+    forward := third_person.Vec3 {
+        -f32(math.sin(f64(editor.photo_yaw))) * cos_pitch,
+        f32(math.sin(f64(editor.photo_pitch))),
+        -f32(math.cos(f64(editor.photo_yaw))) * cos_pitch,
+    }
+    right := third_person.Vec3 {
+        f32(math.cos(f64(editor.photo_yaw))),
+        0,
+        -f32(math.sin(f64(editor.photo_yaw))),
+    }
+    move_x, move_y, move_z := f32(0), f32(0), f32(0)
+    if rl.IsKeyDown(.D) do move_x += 1
+    if rl.IsKeyDown(.A) do move_x -= 1
+    if rl.IsKeyDown(.W) do move_z += 1
+    if rl.IsKeyDown(.S) do move_z -= 1
+    if rl.IsKeyDown(.E) do move_y += 1
+    if rl.IsKeyDown(.Q) do move_y -= 1
+    move_x = stronger_axis(move_x, gamepad_axis(.Left_X))
+    move_z = stronger_axis(move_z, -gamepad_axis(.Left_Y))
+    if gamepad_down(.Right_Shoulder) do move_y += 1
+    if gamepad_down(.Left_Shoulder) do move_y -= 1
+    move_length_squared := move_x * move_x + move_y * move_y + move_z * move_z
+    if move_length_squared > 1 {
+        inverse_length := f32(1 / math.sqrt(f64(move_length_squared)))
+        move_x *= inverse_length
+        move_y *= inverse_length
+        move_z *= inverse_length
+    }
+    speed := (rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)) ? f32(18) : f32(6)
+    editor.camera_pose.position +=
+        (right * move_x + forward * move_z + third_person.Vec3{0, move_y, 0}) * speed * delta_seconds
+    editor.camera_pose.target = editor.camera_pose.position + forward
+    third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+
+    if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.F) || gamepad_pressed(.South) {
+        editor.photo_capture_pending = true
+    }
+}
+
+photo_mode_capture_pending :: proc(editor: ^Editor) {
+    if editor == nil || !editor.photo_capture_pending do return
+    editor.photo_capture_pending = false
+    pictures, pictures_error := os.user_pictures_dir(context.temp_allocator)
+    if pictures_error != nil || pictures == "" do pictures = "."
+    directory, directory_error := strings.concatenate({pictures, "/Adriatic"}, context.temp_allocator)
+    if directory_error != nil do return
+    if make_error := os.make_directory_all(directory); make_error != nil && make_error != .Exist do return
+    path := fmt.ctprintf("%s/adriatic-photo-%d.png", directory, i64(rl.GetTime() * 1000))
+    rl.TakeScreenshot(path)
+    editor.photo_capture_notice_until = rl.GetTime() + 2.5
 }
 
 pause_menu_return_to_editor :: proc(editor: ^Editor) {
@@ -588,6 +698,10 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         quest_log_process_input(editor, width, height, delta_seconds)
         return
     }
+    if editor.pause_screen == .Photo {
+        photo_mode_process_input(editor, delta_seconds)
+        return
+    }
 
     if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
         if editor.pause_screen == .Customization {
@@ -624,10 +738,10 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do focus_direction += 1
     if focus_direction == 0 do focus_direction = stick_y
     if focus_direction != 0 {
-        editor.pause_focus = clamp(editor.pause_focus + focus_direction, 0, 3)
+        editor.pause_focus = clamp(editor.pause_focus + focus_direction, 0, PAUSE_MENU_BUTTON_COUNT - 1)
     }
     if mouse_active {
-        for index in 0 ..< 4 {
+        for index in 0 ..< PAUSE_MENU_BUTTON_COUNT {
             if rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) {
                 editor.pause_focus = index
             }
@@ -636,7 +750,7 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     activated := -1
     if input_action_pressed(.Menu_Accept) do activated = editor.pause_focus
     if rl.IsMouseButtonPressed(.LEFT) {
-        for index in 0 ..< 4 {
+        for index in 0 ..< PAUSE_MENU_BUTTON_COUNT {
             if rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) do activated = index
         }
     }
@@ -644,9 +758,11 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     case 0:
         pause_menu_resume(editor)
     case 1:
+        photo_mode_open(editor)
+    case 2:
         editor.pause_screen = .Options
         editor.options_focus = 0
-    case 2:
+    case 3:
         if editor.vehicle_paint_scene {
             if vehicle_paint_close(editor) do editor.pause_screen = .Closed
         } else if markov_wreck_return_from_flight(editor) {
@@ -655,7 +771,7 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         } else {
             pause_menu_return_to_editor(editor)
         }
-    case 3:
+    case 4:
         if editor.vehicle_paint_scene {
             if vehicle_paint_discard(editor) do editor.pause_screen = .Closed
         } else {
@@ -949,6 +1065,24 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
         return
     }
     pause_menu_pointer_enabled = !controller_prompt_active(editor)
+    if editor.pause_screen == .Photo {
+        if editor.photo_capture_pending do return
+        hint: cstring = "WASD MOVE  |  Q/E DOWN/UP  |  MOUSE LOOK  |  SHIFT FAST  |  F CAPTURE  |  ESC BACK"
+        if controller_prompt_active(editor) {
+            hint = fmt.ctprintf(
+                "LS MOVE  |  RS LOOK  |  LB/RB DOWN/UP  |  %s CAPTURE  |  START BACK",
+                controller_face_label(editor, .South),
+            )
+        }
+        if rl.GetTime() < editor.photo_capture_notice_until {
+            hint = "PHOTO SAVED TO PICTURES / ADRIATIC"
+        }
+        size := ui_measure_text(.Data, hint, .25)
+        bounds := rl.Rectangle{(f32(width) - size.x) * .5 - 16, f32(height) - 48, size.x + 32, 30}
+        rl.DrawRectangleRounded(bounds, .2, 8, ui_theme_scrim(150))
+        ui_draw_text(.Data, hint, {(f32(width) - size.x) * .5, f32(height) - 40}, .25, {255, 255, 255, 255})
+        return
+    }
     overlay_alpha: u8 = editor.pause_screen == .Customization ? 58 : 190
     rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(overlay_alpha))
 
@@ -979,7 +1113,8 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
         pause_menu_draw_header(panel, "", "PAUSED")
     }
     pause_menu_button(pause_menu_button_bounds(panel, 0), "RESUME", true, editor.pause_focus == 0)
-    pause_menu_button(pause_menu_button_bounds(panel, 1), "OPTIONS", false, editor.pause_focus == 1)
+    pause_menu_button(pause_menu_button_bounds(panel, 1), "PHOTO MODE", false, editor.pause_focus == 1)
+    pause_menu_button(pause_menu_button_bounds(panel, 2), "OPTIONS", false, editor.pause_focus == 2)
     return_label: cstring = "RETURN TO EDITOR"
     if editor.vehicle_paint_scene {
         return_label = "SAVE AND EXIT"
@@ -987,8 +1122,8 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
         return_label = "RETURN TO WRECK LAB"
     }
     quit_label: cstring = editor.vehicle_paint_scene ? "DISCARD AND EXIT" : "QUIT TO DESKTOP"
-    pause_menu_button(pause_menu_button_bounds(panel, 2), return_label, false, editor.pause_focus == 2)
-    pause_menu_button(pause_menu_button_bounds(panel, 3), quit_label, false, editor.pause_focus == 3)
+    pause_menu_button(pause_menu_button_bounds(panel, 3), return_label, false, editor.pause_focus == 3)
+    pause_menu_button(pause_menu_button_bounds(panel, 4), quit_label, false, editor.pause_focus == 4)
     hint: cstring
     if editor.controller_disconnect_notice {
         hint = "Reconnect the controller or continue with keyboard and mouse"

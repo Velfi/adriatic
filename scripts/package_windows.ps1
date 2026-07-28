@@ -57,6 +57,17 @@ Invoke-Checked "cl" @(
 )
 Invoke-Checked "lib" @("/nologo", "/OUT:$SignpostLibrary", $SignpostObject)
 
+$CgltfSource = Join-Path $ZeldaEngineRoot "packages/cgltf/src/cgltf.c"
+$CgltfObject = Join-Path $Build "cgltf.obj"
+$CgltfLibrary = Join-Path $ZeldaEngineRoot "packages/cgltf/lib/cgltf.lib"
+New-Item -ItemType Directory -Force -Path (Split-Path $CgltfLibrary -Parent) | Out-Null
+Invoke-Checked "cl" @(
+	"/nologo", "/O2", "/DNDEBUG", "/MT", "/TC",
+	"/c", $CgltfSource,
+	"/Fo$CgltfObject"
+)
+Invoke-Checked "lib" @("/nologo", "/OUT:$CgltfLibrary", $CgltfObject)
+
 $TextshapeObject = Join-Path $Build "textshape.obj"
 $TextshapeLibrary = Join-Path $ZeldaEngineRoot "third_party/textshape/textshape.lib"
 $UnicodeRoot = Join-Path $ZeldaEngineRoot "third_party/unicode"

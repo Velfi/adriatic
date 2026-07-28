@@ -60,21 +60,24 @@ mouse_tail_keeps_its_segments_connected :: proc(t: ^testing.T) {
 }
 
 @(test)
-mouse_tail_rebuilds_jolt_body_when_physics_config_changes :: proc(t: ^testing.T) {
+mouse_tail_applies_physics_config_changes_without_resetting :: proc(t: ^testing.T) {
     project := new(terrain.Project)
     defer terrain.free_project(project)
     terrain.init_project(project)
-    state: mouse_tail.State
-    config := mouse_tail.default_config()
+    weightless_state, gravity_state: mouse_tail.State
+    weightless := mouse_tail.default_config()
+    weightless.gravity = 0
+    with_gravity := weightless
+    with_gravity.gravity = 15
     root := third_person.Vec3{0, 8, 0}
-    mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
-    testing.expect(t, state.applied_config_valid)
-    testing.expect(t, state.applied_config.gravity == config.gravity)
+    mouse_tail.reset(&weightless_state, root, {0, 0, 1}, weightless)
+    gravity_state = weightless_state
+    mouse_tail.step(&weightless_state, root, {0, 0, 1}, project, weightless, 1.0 / 30.0)
+    mouse_tail.step(&gravity_state, root, {0, 0, 1}, project, with_gravity, 1.0 / 30.0)
 
-    config.gravity += 3
-    mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
-    testing.expect(t, state.initialized)
-    testing.expect(t, state.applied_config.gravity == config.gravity)
+    tip := mouse_tail.POINT_COUNT - 1
+    testing.expect(t, weightless_state.initialized && gravity_state.initialized)
+    testing.expect(t, gravity_state.points[tip].position.y < weightless_state.points[tip].position.y)
 }
 
 @(test)

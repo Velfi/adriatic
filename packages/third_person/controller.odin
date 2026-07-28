@@ -111,8 +111,8 @@ camera_near :: proc(target, offset: Vec3) -> Camera_Pose {
 
 default_config :: proc() -> Config {
     return {
-        move_speed = 6,
-        run_speed = 11,
+        move_speed = 5.5,
+        run_speed = 10,
         ground_acceleration = 18,
         ground_deceleration = 10,
         run_acceleration = 8,
@@ -120,7 +120,7 @@ default_config :: proc() -> Config {
         run_steering_speed = 2.15,
         drift_min_speed = 7,
         drift_charge_seconds = .9,
-        boost_speed = 15,
+        boost_speed = 13.5,
         boost_acceleration = 28,
         boost_duration = .85,
         reversal_braking = 28,
