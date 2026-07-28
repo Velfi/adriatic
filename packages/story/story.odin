@@ -22,6 +22,7 @@ Resident :: enum {
     Zora,
     Vesna,
     Petar,
+    Anica,
 }
 
 Romance_Stage :: enum {
@@ -106,6 +107,8 @@ resident_name :: proc(resident: Resident) -> string {
         return "Dr Vesna"
     case .Petar:
         return "Petar"
+    case .Anica:
+        return "Anica"
     }
     return ""
 }
@@ -121,6 +124,8 @@ resident_island :: proc(resident: Resident) -> Island {
     case .Vesna:
         return .West
     case .Petar:
+        return .West
+    case .Anica:
         return .East
     }
     return .West
@@ -326,6 +331,7 @@ bojan_speaker :: proc(_: ^dialogue.Context) -> string { return "BOJAN" }
 zora_speaker :: proc(_: ^dialogue.Context) -> string { return "ZORA" }
 vesna_speaker :: proc(_: ^dialogue.Context) -> string { return "DR VESNA" }
 petar_speaker :: proc(_: ^dialogue.Context) -> string { return "PETAR" }
+anica_speaker :: proc(_: ^dialogue.Context) -> string { return "ANICA" }
 
 vesna_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
@@ -348,6 +354,24 @@ petar_text :: proc(ctx: ^dialogue.Context) -> string {
     }
     return(
         "Tes lunettes sont sul vassoio, le scarf est asciutta, und il tuo aeroplano aspetta all'airfield. In quest'ordine." \
+    )
+}
+
+anica_text :: proc(ctx: ^dialogue.Context) -> string {
+    state := state_from_context(ctx)
+    if state == nil || state.clinic_visits == 0 {
+        return(
+            "La clinica east guarda il mare. Dobro for finding boats; moins dobro quand un aeroplano arrive senza appuntamento." \
+        )
+    }
+    if state.clinic_visits == 1 {
+        return(
+            "Respira piano. Rien de cassé, samo un grande rumore. Ho messo acqua qui und il meteo là—scegli prima l'acqua." \
+        )
+    }
+    return fmt.tprintf(
+        "Ancora tu, visita numero %d. Il mare forgives beaucoup, aber non tiene il conto per me.",
+        state.clinic_visits,
     )
 }
 
@@ -763,7 +787,7 @@ resident_has_action :: proc(state: ^State, resident: Resident) -> bool {
         return can_report_crash(&ctx) || can_inspect_crash(&ctx) || can_patch_wing(&ctx) || can_verify_repair(&ctx)
     case .Zora:
         return true
-    case .Vesna, .Petar:
+    case .Vesna, .Petar, .Anica:
         return true
     }
     return false
@@ -822,18 +846,21 @@ Catalog :: struct {
     zora_return_choices:    [1]dialogue.Choice,
     vesna_choices:          [1]dialogue.Choice,
     petar_choices:          [1]dialogue.Choice,
+    anica_choices:          [1]dialogue.Choice,
     niko_nodes:             [7]dialogue.Node,
     iva_nodes:              [4]dialogue.Node,
     bojan_nodes:            [1]dialogue.Node,
     zora_nodes:             [2]dialogue.Node,
     vesna_nodes:            [1]dialogue.Node,
     petar_nodes:            [1]dialogue.Node,
+    anica_nodes:            [1]dialogue.Node,
     niko:                   dialogue.Definition,
     iva:                    dialogue.Definition,
     bojan:                  dialogue.Definition,
     zora:                   dialogue.Definition,
     vesna:                  dialogue.Definition,
     petar:                  dialogue.Definition,
+    anica:                  dialogue.Definition,
 }
 
 init_catalog :: proc(catalog: ^Catalog) {
@@ -972,5 +999,12 @@ init_catalog :: proc(catalog: ^Catalog) {
     catalog.petar = {
         id    = "petar",
         nodes = catalog.petar_nodes[:],
+    }
+
+    catalog.anica_choices[0] = dialogue.choice("Water first. Understood.")
+    catalog.anica_nodes[0] = dialogue.node("anica", anica_text, catalog.anica_choices[:], anica_speaker)
+    catalog.anica = {
+        id    = "anica",
+        nodes = catalog.anica_nodes[:],
     }
 }

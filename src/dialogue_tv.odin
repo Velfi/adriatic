@@ -103,6 +103,8 @@ dialogue_voice_profile :: proc(resident: story.Resident) -> engine_sound.Dialogu
         return {365, 145, .58, .52, .10}
     case .Petar:
         return {285, 115, .44, .74, .11}
+    case .Anica:
+        return {405, 165, .64, .46, .10}
     }
     return {340, 140, .55, .6, .1}
 }
@@ -354,6 +356,8 @@ dialogue_portrait_color :: proc(editor: ^Editor, resident: story.Resident, playe
         return {224, 219, 202, 255}
     case .Petar:
         return {169, 128, 91, 255}
+    case .Anica:
+        return {181, 169, 146, 255}
     }
     return {145, 125, 101, 255}
 }

@@ -15977,6 +15977,8 @@ story_resident_town_slot :: proc(resident: story.Resident) -> (island_index, res
     case .Vesna:
         return 0, 4, true
     case .Petar:
+        return 0, 6, true
+    case .Anica:
         return 1, 6, true
     case .Marta:
         return 0, 0, false
@@ -16156,7 +16158,7 @@ world_clinic_sign :: proc(editor: ^Editor, resident: story.Resident) {
 world_town_mice :: proc(editor: ^Editor) {
     if editor == nil do return
     world_clinic_sign(editor, .Vesna)
-    world_clinic_sign(editor, .Petar)
+    world_clinic_sign(editor, .Anica)
 
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
@@ -16219,8 +16221,10 @@ world_town_mice :: proc(editor: ^Editor) {
                     named_resident, named = .Zora, true
                 } else if island_index == 0 && resident_index == 4 {
                     named_resident, named = .Vesna, true
-                } else if island_index == 1 && resident_index == 6 {
+                } else if island_index == 0 && resident_index == 6 {
                     named_resident, named = .Petar, true
+                } else if island_index == 1 && resident_index == 6 {
+                    named_resident, named = .Anica, true
                 }
                 if named &&
                    editor.story_state.romance == .Meeting &&
@@ -18044,6 +18048,10 @@ dialogue_portrait_mouse_model :: proc(editor: ^Editor, resident: story.Resident,
     case .Petar:
         model.build, model.snout_length = .82, .90
         model.accessory, model.fur, model.pattern = .Goggles, .Chestnut, .Hooded
+    case .Anica:
+        model.build, model.snout_length = .96, 1.08
+        model.accessory, model.fur, model.pattern = .Flower, .Silver, .Pale_Belly
+        model.scarf_enabled, model.scarf_color = true, {73, 126, 132, 255}
     }
     return model
 }

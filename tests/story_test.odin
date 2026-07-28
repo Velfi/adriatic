@@ -136,6 +136,7 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
     testing.expect(t, dialogue.validate(&catalog.zora))
     testing.expect(t, dialogue.validate(&catalog.vesna))
     testing.expect(t, dialogue.validate(&catalog.petar))
+    testing.expect(t, dialogue.validate(&catalog.anica))
     expect_choice_texts(
         t,
         catalog.niko_root_choices[:],
@@ -322,8 +323,10 @@ resident_action_indicators_follow_campaign_progress :: proc(t: ^testing.T) {
     testing.expect(t, story.resident_name(.Gerta) == "Gerta")
     testing.expect(t, story.resident_name(.Vesna) == "Dr Vesna")
     testing.expect(t, story.resident_name(.Petar) == "Petar")
+    testing.expect(t, story.resident_name(.Anica) == "Anica")
     testing.expect(t, story.resident_island(.Vesna) == .West)
-    testing.expect(t, story.resident_island(.Petar) == .East)
+    testing.expect(t, story.resident_island(.Petar) == .West)
+    testing.expect(t, story.resident_island(.Anica) == .East)
     testing.expect(t, story.resident_island(.Gerta) == .West)
     testing.expect(t, story.resident_has_action(&state, .Marta))
     testing.expect(t, !story.resident_has_action(&state, .Gerta))

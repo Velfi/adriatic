@@ -4083,6 +4083,8 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
         definition = &editor.story_catalog.vesna
     case .Petar:
         definition = &editor.story_catalog.petar
+    case .Anica:
+        definition = &editor.story_catalog.anica
     case .Marta, .Gerta:
         return false
     }
@@ -4090,7 +4092,7 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
         definition,
         {
             data = rawptr(&editor.story_state),
-            location_id = resident == .Vesna || resident == .Petar ? "clinic" : (resident == .Iva || resident == .Zora ? "east_island" : "west_island"),
+            location_id = resident == .Vesna || resident == .Petar || resident == .Anica ? "clinic" : (resident == .Iva || resident == .Zora ? "east_island" : "west_island"),
             resident_index = int(resident),
         },
     )
@@ -4427,7 +4429,7 @@ nearest_story_resident :: proc(
 ) {
     if editor == nil || editor.pilot.mode != .On_Foot do return {}, 0, false
     best_distance := f32(2.25 * 2.25)
-    candidates := [6]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar}
+    candidates := [7]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica}
     for candidate in candidates {
         if require_action && !story.resident_has_action(&editor.story_state, candidate) do continue
         position, placed := world_story_resident_position(editor, candidate)
@@ -6444,7 +6446,7 @@ crash_recovery_relocate :: proc(editor: ^Editor) {
     }
 
     west_clinic, west_rotation, west_found := world_story_resident_home_pose(editor, .Vesna)
-    east_clinic, east_rotation, east_found := world_story_resident_home_pose(editor, .Petar)
+    east_clinic, east_rotation, east_found := world_story_resident_home_pose(editor, .Anica)
     clinic, clinic_rotation, clinic_found := west_clinic, west_rotation, west_found
     if east_found {
         west_distance := f32(3.402823e38)
