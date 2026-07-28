@@ -3190,6 +3190,7 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
             airspeed = linalg.length(body.velocity),
             roll_input = editor.flight_control.roll,
             grounded = editor.libellula.grounded,
+            fixed_framing = true,
         }
     }
     return {
@@ -7389,7 +7390,18 @@ adriatic_run :: proc(
     editor.mouse_headgear = .Goggles
     editor.mouse_scarf_enabled = false
     editor.mouse_scarf_color = {194, 35, 47, 255}
-    if !capture_mode do _ = mouse_preference_load(editor)
+    if !capture_mode {
+        _ = mouse_preference_load(editor)
+        // Persist the final in-memory values as a backstop for every exit path,
+        // including window close and hot reload. Individual controls still save
+        // immediately, but preference durability must not depend on a particular
+        // menu input path firing successfully.
+        defer {
+            if !mouse_preference_save(editor) {
+                fmt.eprintln("adriatic could not save gameplay preferences")
+            }
+        }
+    }
     crunchiness_apply(editor.gameplay_options.crunchiness)
     dither_apply(editor)
     ui_theme_set_mode(editor.gameplay_options.theme_mode)

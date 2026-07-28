@@ -628,7 +628,9 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         bounds := editor_ui_slider_bounds(layout, row)
         ui_draw_text(.Label, "FOOTPRINT", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
         ui_draw_text(.Data, "108 x 84 m", {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
-        ui_draw_text(.Data, "CLICK NEAR A SHORELINE", {bounds.x, bounds.y + 38}, .4, {139, 149, 160, 255})
+        preview_label: cstring = editor.marina_preview_valid ? "CLICK TO PLACE CURRENT MARINA" : "NO SUITABLE CANDIDATE"
+        preview_color := editor.marina_preview_valid ? rl.Color{134, 224, 216, 255} : rl.Color{224, 126, 108, 255}
+        ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)
         score_color := rl.Color{231, 150, 126, 255}
         if editor.marina_brush_suitability >= MARINA_BRUSH_MINIMUM_SUITABILITY {
             score_color = {134, 224, 216, 255}
@@ -644,6 +646,9 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             .4,
             score_color,
         )
+        if editor.marina_preview_valid {
+            ui_draw_text(.Data, "RIGHT CLICK TO REROLL", {bounds.x, bounds.y + 88}, .4, {134, 224, 216, 255})
+        }
     case .Farm:
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),

@@ -162,6 +162,11 @@ new_runtime :: proc(spawn_position: flight.Vec3) -> Runtime {
 
 reset :: proc(runtime: ^Runtime, ground_height: f32) {
     if runtime == nil do return
+    // Crash damage also disables the aerodynamic controls and engine. Reset
+    // that underlying state with the visible damage, otherwise a repaired
+    // aircraft can still have zero elevator, aileron, and throttle authority.
+    runtime.flight_runtime = flight.default_runtime()
+    runtime.flight_runtime.stall_speed_modifier = runtime.tuning.takeoff_stall_speed_scale
     runtime.body = {
         position = runtime.spawn_position,
         basis    = runtime.spawn_basis,

@@ -36,6 +36,7 @@ CITY_ALLEY_MIN_FRONT_CLEARANCE :: f32(1.80)
 ARCHITECTURE_MIN_OPENING_FACE_SPAN :: f32(4.5)
 ARCHITECTURE_MIN_OPENING_WALL_HEIGHT :: f32(5.5)
 ARCHITECTURE_OPENING_CORNER_MARGIN :: f32(.75)
+ARCHITECTURE_DOOR_WINDOW_MARGIN :: f32(.55)
 // Product-level tuning control for the archetype-specific façade grammar.
 // Individual structures still choose coherent complete bays, never random
 // holes in an otherwise aligned vertical stack.
@@ -728,7 +729,11 @@ architecture_opening_layout :: proc(
     footprint := architecture_footprint(structure)
     if mass_index < 0 || mass_index >= footprint.count do return layout
     mass := footprint.masses[mass_index]
-    wall_height := max(terrain.BASE_CELL_SIZE, structure.height * mass.height_scale)
+    // Opening grammar must follow the rendered mass height. BASE_CELL_SIZE is
+    // terrain sampling resolution (currently about 15.7 m), not a minimum
+    // building storey height; clamping to it put openings far above compact
+    // structures such as the 4.8 m marina office.
+    wall_height := max(f32(0), structure.height * mass.height_scale)
     if wall_height < ARCHITECTURE_MIN_OPENING_WALL_HEIGHT do return layout
 
     identity := architecture_resolve_legacy_identity(structure)
@@ -742,8 +747,9 @@ architecture_opening_layout :: proc(
         span := face_span(mass, face)
         if span < ARCHITECTURE_MIN_OPENING_FACE_SPAN do continue
         primary_face := primary_mass && face == .Front
+        door_width := f32(0)
         if primary_face {
-            door_width := clamp(span * .13, f32(1.8), f32(2.8))
+            door_width = clamp(span * .13, f32(1.8), f32(2.8))
             door_height := clamp(wall_height * .075, f32(3.0), f32(4.0))
             _ = opening_layout_add(
                 &layout,
@@ -788,6 +794,23 @@ architecture_opening_layout :: proc(
                     opening_width *= .90
                     opening_height *= .85
                     opening_y = facade_opening_row_y(wall_height, row, opening_height)
+                }
+                if primary_face && row == 0 {
+                    // Narrow frontage masses in compound footprints frequently
+                    // select two bays. Their minimum pitch can otherwise leave
+                    // a window touching or overlapping the centered entrance
+                    // surround, so push the pair outward before checking the
+                    // corner margin.
+                    minimum_center := door_width * .5 + opening_width * .5 + ARCHITECTURE_DOOR_WINDOW_MARGIN
+                    if horizontal < 0 {
+                        horizontal = min(horizontal, -minimum_center)
+                    } else {
+                        horizontal = max(horizontal, minimum_center)
+                    }
+                    if math.abs(horizontal) + opening_width * .5 >
+                       span * .5 - ARCHITECTURE_OPENING_CORNER_MARGIN {
+                        continue
+                    }
                 }
                 _ = opening_layout_add(
                     &layout,

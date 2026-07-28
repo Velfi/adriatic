@@ -896,6 +896,40 @@ architecture_openings_cover_every_mass_face_without_cross_mass_culling :: proc(t
 }
 
 @(test)
+architecture_compound_frontage_windows_clear_the_door :: proc(t: ^testing.T) {
+    for seed in 0 ..< 64 {
+        structure := terrain.structure_make(1300, 1300, 30, 24, 4, 24)
+        structure.kind = .Architecture
+        structure.seed = u32(seed)
+        structure.building.archetype = .Dwelling
+        footprint := architecture.architecture_footprint(structure)
+        if footprint.count <= 1 do continue
+
+        primary := architecture.architecture_frontage_mass_index(structure)
+        layout := architecture.architecture_opening_layout(structure, primary, primary)
+        door, found := architecture.opening_layout_find(&layout, .Front, .Door, 0, 0)
+        testing.expect(t, found)
+        if !found do continue
+
+        for opening in layout.openings[:layout.count] {
+            if opening.face != .Front || opening.kind != .Window || opening.row != 0 do continue
+            clearance := math.abs(opening.horizontal) - opening.width * .5 - door.width * .5
+            testing.expect(t, clearance >= architecture.ARCHITECTURE_DOOR_WINDOW_MARGIN - .001)
+        }
+    }
+}
+
+@(test)
+architecture_compact_masses_do_not_generate_floating_openings :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(0, 0, 8.2, 6.4, 0, 4.8)
+    structure.kind = .Architecture
+    structure.height = 4.8
+    structure.building.archetype = .Harbor_Office
+    layout := architecture.architecture_opening_layout(structure, 0, 0)
+    testing.expect_value(t, layout.count, 0)
+}
+
+@(test)
 architecture_facade_profiles_match_archetype_targets :: proc(t: ^testing.T) {
     dwelling := architecture.facade_profile(.Dwelling)
     testing.expect(t, dwelling.front_bays_min == 1 && dwelling.front_bays_max == 2)

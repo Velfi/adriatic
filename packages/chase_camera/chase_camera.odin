@@ -30,6 +30,7 @@ Target :: struct {
     follow_distance: f32,
     follow_height:   f32,
     focus_height:    f32,
+    fixed_framing:   bool,
 }
 
 reset :: proc(state: ^State, target: Target) {
@@ -135,7 +136,10 @@ box_flyby_strength :: proc(position, center, half_extent: flight.Vec3, rotation,
 desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_person.Camera_Pose {
     forward := horizontal_forward(target.basis)
     behind := rotate_y(-forward, orbit_yaw)
-    framing_camera, framing_focus := vertical_framing(target.basis.forward.y)
+    framing_camera, framing_focus: f32
+    if !target.fixed_framing {
+        framing_camera, framing_focus = vertical_framing(target.basis.forward.y)
+    }
     follow_distance := target.follow_distance
     follow_height := target.follow_height
     focus_height := target.focus_height
@@ -149,12 +153,18 @@ desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_perso
     right := target.basis.right
     right.y = 0
     right = linalg.normalize0(right)
-    look_ahead := LOOK_AHEAD + clamp(target.airspeed / 18, 0, 4)
+    look_ahead := LOOK_AHEAD
+    lateral_focus, grounded_focus: f32
+    if !target.fixed_framing {
+        look_ahead += clamp(target.airspeed / 18, 0, 4)
+        lateral_focus = clamp(-target.roll_input * 3.2, -3.2, 3.2)
+        grounded_focus = target.grounded ? -.35 : 0
+    }
     focus :=
         target.position +
         forward * look_ahead +
-        right * clamp(-target.roll_input * 3.2, -3.2, 3.2) +
-        flight.Vec3{0, focus_height + framing_focus + (target.grounded ? -.35 : 0), 0}
+        right * lateral_focus +
+        flight.Vec3{0, focus_height + framing_focus + grounded_focus, 0}
     return {position = to_third_person(position), target = to_third_person(focus)}
 }
 

@@ -2,6 +2,7 @@ package tests
 
 import architecture "../packages/architecture"
 import boats "../packages/boats"
+import kiosks "../packages/kiosks"
 import marina "../packages/marina"
 import terrain "../packages/terrain"
 import "core:math"
@@ -68,4 +69,26 @@ building_collision_uses_rotated_rendered_footprint :: proc(t: ^testing.T) {
     unchanged, hit_far := architecture.resolve_structure_circle(structure, {20, 20}, .25)
     testing.expect(t, !hit_far)
     testing.expect_value(t, unchanged, [2]f32{20, 20})
+}
+
+@(test)
+kiosk_collision_covers_walls_and_counter_but_not_the_approach :: proc(t: ^testing.T) {
+    center := kiosks.Vec2{10, 20}
+
+    counter_position, counter_hit := kiosks.resolve_circle(center, {10, 19.5}, .24)
+    testing.expect(t, counter_hit)
+    testing.expect(t, abs(counter_position.y - (center.y + kiosks.KIOSK_COUNTER_Z)) >= .479)
+
+    side_position, side_hit := kiosks.resolve_circle(center, {8.48, 20.5}, .24)
+    testing.expect(t, side_hit)
+    testing.expect(t, abs(side_position.x - (center.x - kiosks.KIOSK_SIDE_X)) >= .319)
+
+    rear_position, rear_hit := kiosks.resolve_circle(center, {10, 21.58}, .24)
+    testing.expect(t, rear_hit)
+    testing.expect(t, rear_position.y >= 21.9)
+
+    approach := kiosks.Vec2{10, 18.5}
+    unchanged, approach_hit := kiosks.resolve_circle(center, approach, .24)
+    testing.expect(t, !approach_hit)
+    testing.expect_value(t, unchanged, approach)
 }

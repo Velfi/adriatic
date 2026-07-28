@@ -33,6 +33,25 @@ aircraft_chase_camera_orbits_and_frames_vertical_attitudes :: proc(t: ^testing.T
 }
 
 @(test)
+libellula_chase_camera_has_no_dynamic_framing_offsets :: proc(t: ^testing.T) {
+    neutral := chase_camera.Target {
+        basis         = flight.identity_basis(),
+        fixed_framing = true,
+    }
+    offset := neutral
+    offset.basis.forward = {0, .9, -.1}
+    offset.basis.right = {1, 0, 0}
+    offset.airspeed = 70
+    offset.roll_input = 1
+    offset.grounded = true
+
+    neutral_pose := chase_camera.desired_pose(neutral, 0, 0)
+    offset_pose := chase_camera.desired_pose(offset, 0, 0)
+    testing.expect(t, offset_pose.position == neutral_pose.position)
+    testing.expect(t, offset_pose.target == neutral_pose.target)
+}
+
+@(test)
 aircraft_chase_camera_tracks_translation_exactly_and_smooths_speed_fov :: proc(t: ^testing.T) {
     state: chase_camera.State
     target := chase_camera.Target {

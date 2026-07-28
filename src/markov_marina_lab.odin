@@ -809,8 +809,25 @@ world_markov_marina_static_geometry_cached :: proc(plan: ^marina.Plan, cache_slo
     entry.valid = true
 }
 
-world_markov_marina_facility :: proc(editor: ^Editor, plan: ^marina.Plan, include_actors: bool, cache_slot: int = -1) {
+world_markov_marina_preview_tint :: proc(first: int) {
+    preview_color := world_color(rl.Color{128, 211, 166, 255})
+    for index in first ..< len(world_renderer.vertices) {
+        for channel in 0 ..< 3 {
+            world_renderer.vertices[index].color[channel] =
+                world_renderer.vertices[index].color[channel] * .58 + preview_color[channel] * .42
+        }
+    }
+}
+
+world_markov_marina_facility :: proc(
+    editor: ^Editor,
+    plan: ^marina.Plan,
+    include_actors: bool,
+    cache_slot: int = -1,
+    preview: bool = false,
+) {
     if editor == nil || plan == nil || !plan.valid do return
+    first := len(world_renderer.vertices)
     world_markov_marina_static_geometry_cached(plan, cache_slot)
     if !include_actors {
         for slip, slip_index in plan.slips[:plan.slip_count] {
@@ -822,6 +839,7 @@ world_markov_marina_facility :: proc(editor: ^Editor, plan: ^marina.Plan, includ
                 world_npc_boat(slip.class, {position.x, .18, position.z}, marina.plan_world_yaw(plan, slip.yaw))
             }
         }
+        if preview do world_markov_marina_preview_tint(first)
         return
     }
 

@@ -2,6 +2,7 @@ package main
 
 import architecture "../packages/architecture"
 import boats "../packages/boats"
+import kiosks "../packages/kiosks"
 import marina "../packages/marina"
 
 PLAYER_COLLISION_RADIUS :: f32(.24)
@@ -30,6 +31,20 @@ player_resolve_world_collision :: proc(editor: ^Editor) -> bool {
     if city_hit {
         position = {city_position.x, city_position.y}
         collided = true
+    }
+
+    if editor.in_map && editor.libellula_visible {
+        kiosk_positions := [2]kiosks.Vec2 {
+            {editor.attendant_position.x, editor.attendant_position.z},
+            {editor.gerta_position.x, editor.gerta_position.z},
+        }
+        for kiosk_position in kiosk_positions {
+            corrected, hit := kiosks.resolve_circle(kiosk_position, {position.x, position.z}, PLAYER_COLLISION_RADIUS)
+            if hit {
+                position = {corrected.x, corrected.y}
+                collided = true
+            }
+        }
     }
 
     if lab_scene_is_active(editor, "markov-marina") {

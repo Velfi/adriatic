@@ -264,7 +264,9 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
 options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     options_before := editor.gameplay_options
     defer {
-        if editor.gameplay_options != options_before do _ = mouse_preference_save(editor)
+        if editor.gameplay_options != options_before && !mouse_preference_save(editor) {
+            fmt.eprintln("adriatic could not save gameplay preferences")
+        }
     }
     panel := pause_menu_panel(width, height, true)
     mouse := rl.GetMousePosition()

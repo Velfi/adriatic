@@ -4713,7 +4713,7 @@ world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Proje
         child.center_x, child.center_z = architecture.architecture_mass_world(structure, mass)
         child.width = mass.width
         child.depth = mass.depth
-        child.height = max(terrain.BASE_CELL_SIZE, structure.height * mass.height_scale)
+        child.height = max(f32(0), structure.height * mass.height_scale)
         // Keep palette identity while decoupling repeated openings and tiles.
         child.seed = structure.seed + u32(mass_index * 747796405)
         layout := architecture.architecture_opening_layout(structure, mass_index, frontage_index)
@@ -13017,7 +13017,7 @@ world_brush :: proc(editor: ^Editor) {
         radius = editor.architecture_brush_radius
         hardness = editor.architecture_brush_hardness
         if editor.marina_paint_mode {
-            color = {70, 170, 202, 92}
+            color = editor.marina_preview_valid ? rl.Color{128, 211, 166, 92} : rl.Color{218, 105, 86, 104}
             radius = editor.marina_brush_radius
             hardness = .72
         } else if editor.farm_paint_mode {
@@ -13078,12 +13078,17 @@ world_ground_grass :: proc(editor: ^Editor) {
     // Half the spacing in both axes yields four times the card density.
     SPACING :: f32(.46)
     grid_radius := int(math.ceil(f64(field_radius / SPACING)))
-    center_x := f32(math.floor(f64(field_x / SPACING))) * SPACING
-    center_z := f32(math.floor(f64(field_z / SPACING))) * SPACING
+    // Keep the integer cell coordinates used for hashing. Recovering them
+    // later with int(center / SPACING) is unstable because the f32 multiply
+    // can round just below the original integer and shift every seed by one.
+    center_grid_x := int(math.floor(f64(field_x / SPACING)))
+    center_grid_z := int(math.floor(f64(field_z / SPACING)))
+    center_x := f32(center_grid_x) * SPACING
+    center_z := f32(center_grid_z) * SPACING
     for grid_z in -grid_radius ..= grid_radius {
         for grid_x in -grid_radius ..= grid_radius {
-            world_grid_x := grid_x + int(center_x / SPACING)
-            world_grid_z := grid_z + int(center_z / SPACING)
+            world_grid_x := grid_x + center_grid_x
+            world_grid_z := grid_z + center_grid_z
             seed_index := world_grid_x * 73856093 + world_grid_z * 19349663
             jitter_x := (wind_streak_hash(seed_index, 1) - .5) * SPACING * .76
             jitter_z := (wind_streak_hash(seed_index, 2) - .5) * SPACING * .76
@@ -13245,7 +13250,13 @@ world_build :: proc(editor: ^Editor) {
         world_markov_marina_facility(editor, &editor.marina_authored_plan, false, MARINA_GEOMETRY_CACHE_AUTHORED)
     }
     if editor.marina_paint_mode && editor.marina_preview_valid {
-        world_markov_marina_facility(editor, &editor.marina_preview_plan, false, MARINA_GEOMETRY_CACHE_PREVIEW)
+        world_markov_marina_facility(
+            editor,
+            &editor.marina_preview_plan,
+            false,
+            MARINA_GEOMETRY_CACHE_PREVIEW,
+            true,
+        )
     }
     if !lab_scene_suppresses_infrastructure(editor) do world_infrastructure(editor)
     world_roads(editor)

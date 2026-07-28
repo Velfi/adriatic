@@ -281,10 +281,17 @@ postale_reset_restores_the_runway_state :: proc(t: ^testing.T) {
     runtime.body.position = {99, -5, 0}
     runtime.body.velocity = {12, 0, 0}
     runtime.throttle = 1
+    runtime.flight_runtime.engine_output = 0
+    runtime.flight_runtime.control_authority = 0
+    runtime.flight_runtime.controls_damaged = true
     runtime.crashed = true
     postale.reset(&runtime, 3)
     expected_height := 3 + postale.GROUND_CLEARANCE - postale.static_gear_compression(&runtime)
     testing.expect(t, runtime.body.position.x == 4 && runtime.body.position.y == expected_height)
     testing.expect(t, runtime.body.velocity == flight.Vec3{} && runtime.throttle == 0)
+    testing.expect(t, runtime.flight_runtime.engine_output == 1)
+    testing.expect(t, runtime.flight_runtime.control_authority == 1)
+    testing.expect(t, !runtime.flight_runtime.controls_damaged)
+    testing.expect(t, runtime.flight_runtime.stall_speed_modifier == runtime.tuning.takeoff_stall_speed_scale)
     testing.expect(t, runtime.grounded && !runtime.crashed)
 }
