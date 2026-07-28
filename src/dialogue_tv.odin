@@ -1,6 +1,7 @@
 package main
 
 import dialogue "../packages/dialogue"
+import dialogue_glossary "../packages/dialogue_glossary"
 import engine_sound "../packages/engine_sound"
 import story "../packages/story"
 import "core:fmt"
@@ -69,16 +70,7 @@ dialogue_tv_layout :: proc(width, height: i32) -> Dialogue_Tv_Layout {
 
 dialogue_next_glyph_end :: proc(text: string, start: int) -> int {
     if start >= len(text) do return len(text)
-    lead := text[start]
-    count := 1
-    if lead & 0xe0 == 0xc0 {
-        count = 2
-    } else if lead & 0xf0 == 0xe0 {
-        count = 3
-    } else if lead & 0xf8 == 0xf0 {
-        count = 4
-    }
-    return min(start + count, len(text))
+    return min(start + rl.TextNextGrapheme(text[start:]), len(text))
 }
 
 dialogue_reveal_pause :: proc(glyph: u8) -> f32 {
@@ -197,37 +189,119 @@ dialogue_choice_bounds :: proc(layout: Dialogue_Tv_Layout, visible_row: int) -> 
 
 dialogue_draw_wrapped :: proc(text: string, bounds: rl.Rectangle, size, spacing, line_height: f32, color: rl.Color) {
     if len(text) == 0 do return
-    start, cursor, last_space := 0, 0, -1
-    y := bounds.y
-    for cursor < len(text) && y + line_height <= bounds.y + bounds.height {
-        if text[cursor] == '\n' {
-            line := text[start:cursor]
-            rl.DrawTextEx(dialogue_font(), fmt.ctprintf("%s", line), {bounds.x, y}, size, spacing, color)
-            cursor += 1
-            start, last_space = cursor, -1
-            y += line_height
-            continue
+    _ = rl.DrawTextWrappedEx(
+        dialogue_font(),
+        fmt.ctprintf("%s", text),
+        bounds,
+        size,
+        spacing,
+        line_height,
+        color,
+    )
+}
+
+dialogue_word_byte :: proc(byte: u8) -> bool {
+    return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') || byte >= 0x80
+}
+
+// Draws the same wrapped text as dialogue_draw_wrapped, but keeps word bounds
+// so Adriatic vocabulary can act as an unobtrusive language-learning aid.
+dialogue_draw_glossed_wrapped :: proc(
+    text: string,
+    bounds: rl.Rectangle,
+    size, spacing, line_height: f32,
+    color: rl.Color,
+    mouse: rl.Vector2,
+) -> string {
+    if len(text) == 0 do return ""
+    lines := make([dynamic]rl.Text_Wrapped_Line, 0, 8, context.temp_allocator)
+    rl.LayoutTextWrappedEx(
+        dialogue_font(),
+        fmt.ctprintf("%s", text),
+        size,
+        spacing,
+        bounds.width,
+        .Auto,
+        &lines,
+    )
+    hovered_english := ""
+    visible := min(len(lines), max(int(bounds.height / line_height), 0))
+    for line, line_index in lines[:visible] {
+        x := bounds.x
+        y := bounds.y + f32(line_index) * line_height
+        cursor := line.start
+        for cursor < line.end {
+        start := cursor
+        is_space := text[cursor] == ' '
+        if is_space {
+            for cursor < line.end && text[cursor] == ' ' do cursor += 1
+        } else {
+            for cursor < line.end && text[cursor] != ' ' do cursor += 1
         }
-        if text[cursor] == ' ' do last_space = cursor
-        next := dialogue_next_glyph_end(text, cursor)
-        candidate := text[start:next]
-        measured := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", candidate), size, spacing)
-        if measured.x > bounds.width && cursor > start {
-            end := cursor
-            if last_space >= start do end = last_space
-            rl.DrawTextEx(dialogue_font(), fmt.ctprintf("%s", text[start:end]), {bounds.x, y}, size, spacing, color)
-            start = end
-            for start < len(text) && text[start] == ' ' do start += 1
-            cursor = start
-            last_space = -1
+        token := text[start:cursor]
+        measured := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", token), size, spacing)
+        if !is_space && x > bounds.x && x + measured.x > bounds.x + bounds.width {
+            x = bounds.x
             y += line_height
-            continue
+            if y + line_height > bounds.y + bounds.height do break
         }
-        cursor = next
+        if is_space && x == bounds.x do continue
+
+        rl.DrawTextEx(dialogue_font(), fmt.ctprintf("%s", token), {x, y}, size, spacing, color)
+        if !is_space {
+            word_start, word_end := 0, len(token)
+            for word_start < word_end && !dialogue_word_byte(token[word_start]) do word_start += 1
+            for word_end > word_start && !dialogue_word_byte(token[word_end - 1]) do word_end -= 1
+            if word_start < word_end {
+                word := token[word_start:word_end]
+                if english, found := dialogue_glossary.english_for(word); found {
+                    prefix_width: f32
+                    if word_start > 0 {
+                        prefix := token[:word_start]
+                        prefix_width = rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", prefix), size, spacing).x
+                    }
+                    word_width := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", word), size, spacing).x
+                    word_bounds := rl.Rectangle{x + prefix_width, y, word_width, line_height}
+                    hovered := rl.CheckCollisionPointRec(mouse, word_bounds)
+                    underline_color := hovered ? ui_theme_focus() : ui_theme_accent(190)
+                    rl.DrawRectangle(
+                        i32(word_bounds.x),
+                        i32(y + size + 2),
+                        max(i32(word_bounds.width), 1),
+                        max(i32(hovered ? 3 : 2), 1),
+                        underline_color,
+                    )
+                    if hovered do hovered_english = english
+                }
+            }
+        }
+        x += measured.x
+        }
     }
-    if start < len(text) && y + line_height <= bounds.y + bounds.height {
-        rl.DrawTextEx(dialogue_font(), fmt.ctprintf("%s", text[start:cursor]), {bounds.x, y}, size, spacing, color)
+    return hovered_english
+}
+
+dialogue_draw_glossary_tooltip :: proc(english: string, mouse: rl.Vector2, width, height: i32, scale: f32) {
+    if len(english) == 0 do return
+    label := fmt.ctprintf("English: %s", english)
+    font_size := 20 * scale
+    measured := rl.MeasureTextEx(dialogue_font(), label, font_size, .8 * scale)
+    panel := rl.Rectangle {
+        clamp(mouse.x + 14 * scale, 8 * scale, f32(width) - measured.x - 32 * scale),
+        clamp(mouse.y - 48 * scale, 8 * scale, f32(height) - 42 * scale),
+        measured.x + 20 * scale,
+        34 * scale,
     }
+    rl.DrawRectangleRounded(panel, .22, 6, ui_theme_surface_elevated(250))
+    rl.DrawRectangleRoundedLinesEx(panel, .22, 6, 1 * scale, ui_theme_focus())
+    rl.DrawTextEx(
+        dialogue_font(),
+        label,
+        {panel.x + 10 * scale, panel.y + 7 * scale},
+        font_size,
+        .8 * scale,
+        ui_theme_text(),
+    )
 }
 
 dialogue_draw_tarot_strip :: proc(editor: ^Editor, bounds: rl.Rectangle, scale: f32) {
@@ -389,14 +463,22 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     speech_bounds := layout.speech
     current_is_tarot := current.id == "zora-reading" && editor.story_state.tarot_layout.count > 0
     if current_is_tarot do speech_bounds.height -= 108 * scale
-    dialogue_draw_wrapped(text[:visible_end], speech_bounds, 28 * scale, 1 * scale, 37 * scale, ui_theme_text())
+    mouse := rl.GetMousePosition()
+    hovered_english := dialogue_draw_glossed_wrapped(
+        text[:visible_end],
+        speech_bounds,
+        28 * scale,
+        1 * scale,
+        37 * scale,
+        ui_theme_text(),
+        mouse,
+    )
     dialogue_draw_tarot_strip(editor, layout.speech, scale)
     count := dialogue.available_count(conversation)
     visible_rows := dialogue_choice_visible_rows(layout)
     dialogue_choice_scroll_focus(editor, visible_rows)
     first := editor.attendant_dialogue_view.first_choice
     last := min(first + visible_rows, count)
-    mouse := rl.GetMousePosition()
     for choice_index in first ..< last {
         row := choice_index - first
         bounds := dialogue_choice_bounds(layout, row)
@@ -415,7 +497,16 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
                 bounds.width - 36 * scale,
                 bounds.height - 12 * scale,
             }
-            dialogue_draw_wrapped(response.text, text_bounds, 26 * scale, .8 * scale, 31 * scale, style.text)
+            choice_english := dialogue_draw_glossed_wrapped(
+                response.text,
+                text_bounds,
+                26 * scale,
+                .8 * scale,
+                31 * scale,
+                style.text,
+                mouse,
+            )
+            if len(choice_english) > 0 do hovered_english = choice_english
         }
     }
     if first > 0 {
@@ -441,4 +532,5 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
             ui_theme_text_muted(),
         )
     }
+    dialogue_draw_glossary_tooltip(hovered_english, mouse, width, height, scale)
 }

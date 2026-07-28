@@ -937,14 +937,7 @@ tweak_draw_performance :: proc(editor: ^Editor) {
     foliage := world_buffer_total_size(world_renderer.foliage_vertex[:])
     grass := world_buffer_total_size(world_renderer.grass_instance[:])
     shadows := world_buffer_total_size(world_renderer.shadow_vertex[:])
-    total :=
-        world_dynamic +
-        world_static_vertices +
-        world_static_indices +
-        roads +
-        foliage +
-        grass +
-        shadows
+    total := world_dynamic + world_static_vertices + world_static_indices + roads + foliage + grass + shadows
     im.SeparatorText("Geometry buffers - all frame slots")
     im.TextUnformatted(fmt.ctprintf("World dynamic: %M", world_dynamic))
     im.TextUnformatted(fmt.ctprintf("World static vertices: %M", world_static_vertices))

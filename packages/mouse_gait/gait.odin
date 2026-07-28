@@ -53,11 +53,7 @@ tail_root_follow :: proc(chain_weight: f32) -> f32 {
     return 1 - clamp(chain_weight, 0, 1) * .85
 }
 
-bound_aerial_weight :: proc(
-    phase_radians: f32,
-    fore_duty: f32 = .34,
-    hind_duty: f32 = .36,
-) -> f32 {
+bound_aerial_weight :: proc(phase_radians: f32, fore_duty: f32 = .34, hind_duty: f32 = .36) -> f32 {
     phase := phase_radians / (math.PI * 2)
     phase -= f32(math.floor(f64(phase)))
     fore_end := clamp(fore_duty, .05, .49)
@@ -89,12 +85,11 @@ weights :: proc(
     bound_start := max(bound_start_speed, trot_end)
     bound_end := max(bound_full_speed, bound_start + .1)
     walk_to_trot := smooth_unit((horizontal_speed - walk_end) / (trot_end - walk_end))
-    bound := max(smooth_unit((horizontal_speed - bound_start) / (bound_end - bound_start)), clamp(airborne_weight, 0, 1))
-    return {
-        walk  = (1 - walk_to_trot) * (1 - bound),
-        trot  = walk_to_trot * (1 - bound),
-        bound = bound,
-    }
+    bound := max(
+        smooth_unit((horizontal_speed - bound_start) / (bound_end - bound_start)),
+        clamp(airborne_weight, 0, 1),
+    )
+    return {walk = (1 - walk_to_trot) * (1 - bound), trot = walk_to_trot * (1 - bound), bound = bound}
 }
 
 cycle :: proc(phase_radians, phase_offset, duty_factor: f32) -> Cycle {
@@ -121,7 +116,7 @@ blend :: proc(
     bound := cycle(phase_radians, bound_offset, bound_duty)
     return {
         reach = walk.reach * gait.walk + trot.reach * gait.trot + bound.reach * gait.bound,
-        lift  = walk.lift * gait.walk + trot.lift * gait.trot + bound.lift * gait.bound,
+        lift = walk.lift * gait.walk + trot.lift * gait.trot + bound.lift * gait.bound,
     }
 }
 
@@ -136,10 +131,9 @@ blend_scaled :: proc(
     trot := cycle(phase_radians, trot_offset, trot_duty)
     bound := cycle(phase_radians, bound_offset, bound_duty)
     return {
-        reach =
-            walk.reach * stance_reach_amplitude(walk_duty, walk_radians_per_meter) * gait.walk +
-            trot.reach * stance_reach_amplitude(trot_duty, trot_radians_per_meter) * gait.trot +
-            bound.reach * stance_reach_amplitude(bound_duty, bound_radians_per_meter) * gait.bound,
+        reach = walk.reach * stance_reach_amplitude(walk_duty, walk_radians_per_meter) * gait.walk +
+        trot.reach * stance_reach_amplitude(trot_duty, trot_radians_per_meter) * gait.trot +
+        bound.reach * stance_reach_amplitude(bound_duty, bound_radians_per_meter) * gait.bound,
         lift = walk.lift * gait.walk + trot.lift * gait.trot + bound.lift * gait.bound,
     }
 }

@@ -17,9 +17,7 @@ hind_hock_pole :: proc(forward: Vec3) -> Vec3 {
     return -forward
 }
 
-stable_distal_span :: proc(
-    root_target_distance, proximal_length, middle_length, distal_length: f32,
-) -> f32 {
+stable_distal_span :: proc(root_target_distance, proximal_length, middle_length, distal_length: f32) -> f32 {
     distal_minimum := math.abs(middle_length - distal_length) + .0001
     distal_maximum := middle_length + distal_length - .0001
     triangle_minimum := math.abs(root_target_distance - proximal_length)
@@ -47,10 +45,7 @@ stable_pole :: proc(axis, anatomical_hint: Vec3) -> Vec3 {
     return linalg.normalize0(pole)
 }
 
-solve_two_bone :: proc(
-    root, target, anatomical_pole: Vec3,
-    root_length, tip_length: f32,
-) -> Vec3 {
+solve_two_bone :: proc(root, target, anatomical_pole: Vec3, root_length, tip_length: f32) -> Vec3 {
     delta := Vec3{target.x - root.x, target.y - root.y, target.z - root.z}
     distance := linalg.length(delta)
     axis: Vec3
@@ -60,11 +55,7 @@ solve_two_bone :: proc(
     } else {
         axis = delta / distance
     }
-    solved_distance := clamp(
-        distance,
-        math.abs(root_length - tip_length) + .0001,
-        root_length + tip_length - .0001,
-    )
+    solved_distance := clamp(distance, math.abs(root_length - tip_length) + .0001, root_length + tip_length - .0001)
     along :=
         (solved_distance * solved_distance + root_length * root_length - tip_length * tip_length) /
         (2 * solved_distance)

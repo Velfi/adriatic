@@ -76,22 +76,20 @@ gui_text_edit_insert_bytes :: proc(
         return false
     }
     changed := gui_text_edit_delete_selection(ctx, buffer, length)
-    for ch in bytes {
-        if ch < 32 {
-            continue
+    cursor := 0
+    for cursor < len(bytes) {
+        cluster_length := gui_text_next_grapheme(bytes[cursor:])
+        cluster := bytes[cursor:cursor + cluster_length]
+        cursor += cluster_length
+        if cluster[0] < 32 do continue
+        if numeric && (len(cluster) != 1 || !gui_numeric_edit_accepts_char(cluster[0])) do continue
+        if length^ + len(cluster) > len(buffer) do break
+        for i := length^ - 1; i >= ctx.text_edit_caret; i -= 1 {
+            buffer[i + len(cluster)] = buffer[i]
         }
-        if numeric && !gui_numeric_edit_accepts_char(ch) {
-            continue
-        }
-        if length^ >= len(buffer) {
-            break
-        }
-        for i := length^; i > ctx.text_edit_caret; i -= 1 {
-            buffer[i] = buffer[i - 1]
-        }
-        buffer[ctx.text_edit_caret] = ch
-        length^ += 1
-        ctx.text_edit_caret += 1
+        copy(buffer[ctx.text_edit_caret:], cluster)
+        length^ += len(cluster)
+        ctx.text_edit_caret += len(cluster)
         ctx.text_edit_anchor = ctx.text_edit_caret
         changed = true
     }
@@ -128,48 +126,62 @@ gui_text_edit_move_caret :: proc(ctx: ^Gui_Context, length: int, caret: int, ext
     ctx.text_edit_blink = 0
 }
 
-gui_text_edit_is_word_char :: proc(ch: u8) -> bool {
-    switch ch {
-    case 'a' ..= 'z', 'A' ..= 'Z', '0' ..= '9', '_':
-        return true
-    }
-    return false
-}
-
 gui_text_edit_prev_word_index :: proc(bytes: []u8, index: int) -> int {
-    i := gui_utf8_clamp_index(index, len(bytes))
-    for i > 0 {
-        prev := gui_utf8_prev_index(bytes, i)
-        if gui_text_edit_is_word_char(bytes[prev]) {
-            break
-        }
-        i = prev
+    target := gui_utf8_clamp_index(index, len(bytes))
+    cursor, previous := 0, 0
+    for cursor < target {
+        previous = cursor
+        cursor += gui_text_next_word(bytes[cursor:target])
     }
-    for i > 0 {
-        prev := gui_utf8_prev_index(bytes, i)
-        if !gui_text_edit_is_word_char(bytes[prev]) {
-            break
-        }
-        i = prev
-    }
-    return i
+    return previous
 }
 
 gui_text_edit_next_word_index :: proc(bytes: []u8, index: int) -> int {
     i := gui_utf8_clamp_index(index, len(bytes))
-    for i < len(bytes) {
-        if gui_text_edit_is_word_char(bytes[i]) {
+    if i >= len(bytes) do return len(bytes)
+    return min(i + gui_text_next_word(bytes[i:]), len(bytes))
+}
+
+gui_text_edit_visual_neighbor :: proc(
+    ctx: ^Gui_Context,
+    bytes: []u8,
+    index, direction: int,
+) -> int {
+    if len(bytes) == 0 do return 0
+    shaped := make([]Gui_Shaped_Glyph, len(bytes), context.temp_allocator)
+    count := gui_font_shape_text(.Body, bytes, ctx.style.body_text_scale, shaped)
+    if count <= 0 {
+        if direction < 0 do return gui_text_previous_grapheme(bytes, index)
+        return min(index + gui_text_next_grapheme(bytes[index:]), len(bytes))
+    }
+    carets := make([dynamic]int, 0, count + 1, context.temp_allocator)
+    previous_cluster := ~u32(0)
+    for glyph in shaped[:count] {
+        if glyph.cluster == previous_cluster do continue
+        if len(carets) == 0 {
+            append(
+                &carets,
+                glyph.direction == 2 ? int(glyph.cluster_end) : int(glyph.cluster),
+            )
+        }
+        append(
+            &carets,
+            glyph.direction == 2 ? int(glyph.cluster) : int(glyph.cluster_end),
+        )
+        previous_cluster = glyph.cluster
+    }
+    visual := -1
+    for caret, caret_index in carets {
+        if caret == index {
+            visual = caret_index
             break
         }
-        i = gui_utf8_next_index(bytes, i)
     }
-    for i < len(bytes) {
-        if !gui_text_edit_is_word_char(bytes[i]) {
-            break
-        }
-        i = gui_utf8_next_index(bytes, i)
+    if visual < 0 {
+        if direction < 0 do return gui_text_previous_grapheme(bytes, index)
+        return min(index + gui_text_next_grapheme(bytes[index:]), len(bytes))
     }
-    return i
+    return carets[clamp(visual + direction, 0, len(carets) - 1)]
 }
 
 gui_text_edit_process :: proc(ctx: ^Gui_Context, id: Gui_Id, buffer: []u8, length: ^int, numeric := false) -> bool {
@@ -233,7 +245,12 @@ gui_text_edit_process :: proc(ctx: ^Gui_Context, id: Gui_Id, buffer: []u8, lengt
             gui_text_edit_move_caret(
                 ctx,
                 length^,
-                gui_utf8_prev_index(buffer[:length^], ctx.text_edit_caret),
+                gui_text_edit_visual_neighbor(
+                    ctx,
+                    buffer[:length^],
+                    ctx.text_edit_caret,
+                    -1,
+                ),
                 ctx.input.key_shift,
             )
         }
@@ -255,7 +272,12 @@ gui_text_edit_process :: proc(ctx: ^Gui_Context, id: Gui_Id, buffer: []u8, lengt
             gui_text_edit_move_caret(
                 ctx,
                 length^,
-                gui_utf8_next_index(buffer[:length^], ctx.text_edit_caret),
+                gui_text_edit_visual_neighbor(
+                    ctx,
+                    buffer[:length^],
+                    ctx.text_edit_caret,
+                    1,
+                ),
                 ctx.input.key_shift,
             )
         }
@@ -278,7 +300,7 @@ gui_text_edit_process :: proc(ctx: ^Gui_Context, id: Gui_Id, buffer: []u8, lengt
                 changed = true
             }
         } else if ctx.text_edit_caret > 0 {
-            prev := gui_utf8_prev_index(buffer[:length^], ctx.text_edit_caret)
+            prev := gui_text_previous_grapheme(buffer[:length^], ctx.text_edit_caret)
             if gui_text_edit_delete_range(buffer, length, prev, ctx.text_edit_caret) {
                 ctx.text_edit_caret = prev
                 ctx.text_edit_anchor = prev
@@ -301,7 +323,7 @@ gui_text_edit_process :: proc(ctx: ^Gui_Context, id: Gui_Id, buffer: []u8, lengt
                 changed = true
             }
         } else if ctx.text_edit_caret < length^ {
-            next := gui_utf8_next_index(buffer[:length^], ctx.text_edit_caret)
+            next := ctx.text_edit_caret + gui_text_next_grapheme(buffer[ctx.text_edit_caret:length^])
             if gui_text_edit_delete_range(buffer, length, ctx.text_edit_caret, next) {
                 ctx.text_edit_anchor = ctx.text_edit_caret
                 changed = true
@@ -325,18 +347,25 @@ gui_text_edit_process :: proc(ctx: ^Gui_Context, id: Gui_Id, buffer: []u8, lengt
 }
 
 gui_text_edit_hit_test :: proc(ctx: ^Gui_Context, buffer: []u8, x: f32) -> int {
-    best := 0
+    if len(buffer) == 0 do return 0
+    shaped := make([]Gui_Shaped_Glyph, len(buffer), context.temp_allocator)
+    count := gui_font_shape_text(.Body, buffer, ctx.style.body_text_scale, shaped)
+    if count <= 0 do return 0
+    cursor: f32
+    first := shaped[0]
+    best := first.direction == 2 ? int(first.cluster_end) : int(first.cluster)
     best_distance := abs(x)
-    for i in 0 ..= len(buffer) {
-        if i > 0 && gui_utf8_is_continuation(buffer[i - 1]) {
-            continue
-        }
-        width := gui_text_width(ctx, string(buffer[:i]))
-        distance := abs(width - x)
+    previous_cluster := ~u32(0)
+    for glyph in shaped[:count] {
+        cursor += glyph.x_advance
+        if glyph.cluster == previous_cluster do continue
+        caret := glyph.direction == 2 ? int(glyph.cluster) : int(glyph.cluster_end)
+        distance := abs(cursor - x)
         if distance < best_distance {
-            best = i
+            best = caret
             best_distance = distance
         }
+        previous_cluster = glyph.cluster
     }
     return best
 }
@@ -367,8 +396,24 @@ gui_text_edit_handle_mouse :: proc(
     }
 }
 
+gui_text_edit_caret_x :: proc(ctx: ^Gui_Context, buffer: []u8, caret: int) -> f32 {
+    if len(buffer) == 0 do return 0
+    shaped := make([]Gui_Shaped_Glyph, len(buffer), context.temp_allocator)
+    count := gui_font_shape_text(.Body, buffer, ctx.style.body_text_scale, shaped)
+    if count <= 0 do return gui_text_width(ctx, string(buffer[:clamp(caret, 0, len(buffer))]))
+    cursor: f32
+    for glyph in shaped[:count] {
+        left := glyph.direction == 2 ? int(glyph.cluster_end) : int(glyph.cluster)
+        right := glyph.direction == 2 ? int(glyph.cluster) : int(glyph.cluster_end)
+        if caret == left do return cursor
+        cursor += glyph.x_advance
+        if caret == right do return cursor
+    }
+    return cursor
+}
+
 gui_text_edit_keep_caret_visible :: proc(ctx: ^Gui_Context, buffer: []u8, length: int, rect: Rect) {
-    caret_x := gui_text_width(ctx, string(buffer[:ctx.text_edit_caret]))
+    caret_x := gui_text_edit_caret_x(ctx, buffer[:length], ctx.text_edit_caret)
     padding := f32(8)
     if caret_x - ctx.text_edit_scroll_x > rect.w - padding {
         ctx.text_edit_scroll_x = caret_x - rect.w + padding
@@ -404,13 +449,26 @@ gui_text_edit_draw :: proc(
     draw_pos := Vec2{text_pos.x - ctx.text_edit_scroll_x, text_pos.y}
     if focused && length > 0 && gui_text_edit_has_selection(ctx) {
         start, end := gui_text_edit_selection(ctx)
-        x0 := draw_pos.x + gui_text_width(ctx, string(buffer[:start]))
-        x1 := draw_pos.x + gui_text_width(ctx, string(buffer[:end]))
-        gui_rect(
-            ctx,
-            {x0, rect.y + ctx.style.control_padding, max(x1 - x0, 1), max(rect.h - ctx.style.control_padding * 2, 1)},
-            {ctx.style.accent.r, ctx.style.accent.g, ctx.style.accent.b, 0.32},
-        )
+        shaped := make([]Gui_Shaped_Glyph, length, context.temp_allocator)
+        count := gui_font_shape_text(.Body, buffer[:length], ctx.style.body_text_scale, shaped)
+        cursor: f32
+        for glyph in shaped[:count] {
+            glyph_start := int(min(glyph.cluster, glyph.cluster_end))
+            glyph_end := int(max(glyph.cluster, glyph.cluster_end))
+            if glyph_end > start && glyph_start < end {
+                gui_rect(
+                    ctx,
+                    {
+                        draw_pos.x + cursor,
+                        rect.y + ctx.style.control_padding,
+                        max(glyph.x_advance, 1),
+                        max(rect.h - ctx.style.control_padding * 2, 1),
+                    },
+                    {ctx.style.accent.r, ctx.style.accent.g, ctx.style.accent.b, 0.32},
+                )
+            }
+            cursor += glyph.x_advance
+        }
     }
     gui_text_clipped(ctx, clip, draw_pos, display, text_color)
     if focused {
@@ -419,7 +477,11 @@ gui_text_edit_draw :: proc(
             ctx.text_edit_blink -= 1.0
         }
         if ctx.text_edit_blink < 0.55 {
-            caret_x := draw_pos.x + gui_text_width(ctx, string(buffer[:ctx.text_edit_caret]))
+            caret_x := draw_pos.x + gui_text_edit_caret_x(
+                ctx,
+                buffer[:length],
+                ctx.text_edit_caret,
+            )
             caret_w := max(ctx.style.border_width * 2, 2)
             caret_h := max(ctx.style.body_text_height, rect.h - ctx.style.control_padding * 2)
             caret_y := rect.y + max((rect.h - caret_h) * 0.5, 0)

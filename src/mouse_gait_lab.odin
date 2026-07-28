@@ -18,10 +18,10 @@ MOUSE_GAIT_LAB_COLORS := [5]rl.Color {
     {226, 224, 216, 255},
 }
 MOUSE_GAIT_PATH_COLORS := [4]rl.Color {
-    {64, 224, 238, 255},  // left fore
-    {255, 158, 64, 255},  // right fore
-    {236, 82, 190, 255},  // left hind
-    {139, 224, 78, 255},  // right hind
+    {64, 224, 238, 255}, // left fore
+    {255, 158, 64, 255}, // right fore
+    {236, 82, 190, 255}, // left hind
+    {139, 224, 78, 255}, // right hind
 }
 MOUSE_GAIT_PATH_NAMES := [4]string{"LF", "RF", "LH", "RH"}
 
@@ -113,16 +113,14 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 mouse_gait_lab_stride_rate :: proc(editor: ^Editor, speed: f32) -> f32 {
     animation := &editor.tweak.player_animation
     gait := mouse_gait_weights(animation, speed, 0)
-    return animation.stride_radians_per_meter * gait.walk +
+    return(
+        animation.stride_radians_per_meter * gait.walk +
         animation.trot_stride_radians_per_meter * gait.trot +
-        animation.bound_stride_radians_per_meter * gait.bound
+        animation.bound_stride_radians_per_meter * gait.bound \
+    )
 }
 
-mouse_gait_lab_paw_path_point :: proc(
-    editor: ^Editor,
-    speed, phase, side: f32,
-    front: bool,
-) -> third_person.Vec3 {
+mouse_gait_lab_paw_path_point :: proc(editor: ^Editor, speed, phase, side: f32, front: bool) -> third_person.Vec3 {
     animation := &editor.tweak.player_animation
     gait := mouse_gait_weights(animation, speed, 0)
     left_side := side < 0
@@ -225,16 +223,19 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
         if mouse_gait_lab_focus_lane >= 0 && mouse_gait_lab_show_paths {
             world_mouse_gait_paw_paths(editor, speed, z, -math.PI * .5)
         }
-        world_mouse_model(editor, {
-            position     = {0, 0, z},
-            rotation     = -math.PI * .5,
-            fur          = Mouse_Fur(lane),
-            pattern      = .Solid,
-            grounded     = true,
-            gait_preview = true,
-            gait_speed   = speed,
-            gait_phase   = phase,
-        })
+        world_mouse_model(
+            editor,
+            {
+                position = {0, 0, z},
+                rotation = -math.PI * .5,
+                fur = Mouse_Fur(lane),
+                pattern = .Solid,
+                grounded = true,
+                gait_preview = true,
+                gait_speed = speed,
+                gait_phase = phase,
+            },
+        )
     }
 }
 
@@ -244,7 +245,12 @@ mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     if focused {
         panel_height = mouse_gait_lab_show_paths ? f32(118) : f32(92)
     }
-    panel := rl.Rectangle{x = 22, y = 22, width = 430, height = panel_height}
+    panel := rl.Rectangle {
+        x      = 22,
+        y      = 22,
+        width  = 430,
+        height = panel_height,
+    }
     rl.DrawRectangleRounded(panel, .08, 8, {12, 24, 30, 232})
     rl.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {116, 174, 183, 255})
     rl.DrawTextEx(rl.Font{}, "MOUSE GAIT COMPARISON", {38, 38}, 20, 1, {245, 238, 197, 255})
@@ -256,7 +262,14 @@ mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         for path_name, index in MOUSE_GAIT_PATH_NAMES {
             legend_x := 38 + f32(index) * 72
             rl.DrawRectangle(i32(legend_x), 116, 12, 4, MOUSE_GAIT_PATH_COLORS[index])
-            rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s PATH", path_name), {legend_x + 17, 110}, 11, 1, MOUSE_GAIT_PATH_COLORS[index])
+            rl.DrawTextEx(
+                rl.Font{},
+                fmt.ctprintf("%s PATH", path_name),
+                {legend_x + 17, 110},
+                11,
+                1,
+                MOUSE_GAIT_PATH_COLORS[index],
+            )
         }
     }
     for speed, lane in MOUSE_GAIT_LAB_SPEEDS {

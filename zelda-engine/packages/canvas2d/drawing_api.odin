@@ -16,6 +16,24 @@ import ui "zelda_engine:ui"
 SetConfigFlags :: proc(flags: ConfigFlags) { state_ensure().config_flags = flags }
 SetBodyFontPath :: proc(path: cstring) -> bool { return ui.gui_set_body_font_path(path) }
 SetDisplayFontPath :: proc(path: cstring) -> bool { return ui.gui_set_display_font_path(path) }
+AddBodyFontFallbackPath :: proc(path: cstring) -> bool {
+    return ui.gui_add_font_fallback_path(.Body, path)
+}
+AddDisplayFontFallbackPath :: proc(path: cstring) -> bool {
+    return ui.gui_add_font_fallback_path(.Display, path)
+}
+TextNextGrapheme :: proc(text: string) -> int {
+    return ui.gui_text_next_grapheme(transmute([]u8)text)
+}
+TextPreviousGrapheme :: proc(text: string, offset: int) -> int {
+    return ui.gui_text_previous_grapheme(transmute([]u8)text, offset)
+}
+TextNextWord :: proc(text: string) -> int {
+    return ui.gui_text_next_word(transmute([]u8)text)
+}
+TextNextLineBreak :: proc(text: string) -> int {
+    return ui.gui_text_next_line_break(transmute([]u8)text)
+}
 SetVSyncEnabled :: proc(enabled: bool) {
     canvas := state_ensure()
     if enabled {
@@ -389,6 +407,7 @@ WindowShouldClose :: proc() -> bool {
     return !state.running}
 
 BeginDrawing :: proc() {
+    state.glyph_frame += 1
     render2d.metrics_begin_frame(&state.metrics)
     state.gfx_frame_signpost = gfx_profile_begin(.Frame)
     clear(&state.vertices); clear(&state.indices); clear(&state.batches)

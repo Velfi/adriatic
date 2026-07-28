@@ -174,14 +174,17 @@ append_agent :: proc(traffic: ^Traffic, agent: Agent) -> ^Agent {
 }
 
 add_moored_agent :: proc(traffic: ^Traffic, class: Class, position: Vec2, yaw: f32) -> ^Agent {
-    return append_agent(traffic, {
-        class            = class,
-        position         = position,
-        yaw              = yaw,
-        behavior         = .Moored,
-        mooring_position = position,
-        mooring_yaw      = yaw,
-    })
+    return append_agent(
+        traffic,
+        {
+            class = class,
+            position = position,
+            yaw = yaw,
+            behavior = .Moored,
+            mooring_position = position,
+            mooring_yaw = yaw,
+        },
+    )
 }
 
 agent_target :: proc(agent: ^Agent, dt: f32) -> Vec2 {

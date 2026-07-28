@@ -37,9 +37,9 @@ mouse_paw_contact_replants_before_full_extension :: proc(t: ^testing.T) {
 @(test)
 mouse_paw_contact_replants_when_the_body_turns_under_it :: proc(t: ^testing.T) {
     contact := mouse_paws.Contact {
-        anchor = {0, 0, -1},
+        anchor            = {0, 0, -1},
         plant_yaw_radians = 0,
-        phase  = .Stance,
+        phase             = .Stance,
     }
     result := mouse_paws.resolve(&contact, {}, {1, 0, 0}, true, 2, math.PI * .5)
     testing.expect(t, result.event == .Replanted_Turn)

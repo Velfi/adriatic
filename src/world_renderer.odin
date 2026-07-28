@@ -87,17 +87,17 @@ Static_Visibility_Classification :: enum u8 {
 }
 
 Static_Visibility_Stats :: struct {
-    candidates:          u32,
-    frustum_culled:      u32,
-    occlusion_culled:    u32,
-    force_visible:       u32,
-    empty:               u32,
-    emitted_draws:       u32,
-    opaque_cost:         u32,
-    foliage_cost:        u32,
-    bougainvillea_cost:  u32,
-    atlas_opaque_used:   u32,
-    atlas_foliage_used:  u32,
+    candidates:               u32,
+    frustum_culled:           u32,
+    occlusion_culled:         u32,
+    force_visible:            u32,
+    empty:                    u32,
+    emitted_draws:            u32,
+    opaque_cost:              u32,
+    foliage_cost:             u32,
+    bougainvillea_cost:       u32,
+    atlas_opaque_used:        u32,
+    atlas_foliage_used:       u32,
     atlas_bougainvillea_used: u32,
     atlas_fragmentation:      f32,
 }
@@ -377,6 +377,13 @@ World_Land_Surface_Sample :: struct {
     x, z, height: f32,
 }
 
+Road_Geometry_Cache_Chunk :: struct {
+    first_vertex: int,
+    vertex_count: int,
+    center:       third_person.Vec3,
+    radius:       f32,
+}
+
 Foliage_Vertex :: struct {
     position: [3]f32,
     uv:       [2]f32,
@@ -553,6 +560,7 @@ World_Renderer :: struct {
     road_graph_valid:                  bool,
     road_revision:                     u64,
     road_geometry_cache:               [dynamic]World_Vertex,
+    road_geometry_chunks:              [dynamic]Road_Geometry_Cache_Chunk,
     road_geometry_revision:            u64,
     road_geometry_terrain_revision:    u64,
     road_geometry_valid:               bool,
@@ -774,6 +782,27 @@ world_camera_near_clip :: proc(editor: ^Editor) -> f32 {
     return clamp(distance * distance / 720, f32(2), WORLD_EDITOR_NEAR_CLIP)
 }
 
+world_sphere_in_view :: proc(
+    editor: ^Editor,
+    center: third_person.Vec3,
+    radius: f32,
+    margin: f32 = 0,
+) -> bool {
+    if editor == nil do return false
+    focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
+    camera := perspective_camera(editor.camera_pose, focal_length)
+    width := max(rl.GetScreenWidth(), 1)
+    height := max(rl.GetScreenHeight(), 1)
+    return static_sphere_in_frustum(
+        camera,
+        center,
+        max(radius + margin, f32(0)),
+        f32(width) / f32(height),
+        world_camera_near_clip(editor),
+        WORLD_FAR_CLIP,
+    )
+}
+
 world_scene_sun :: proc(editor: ^Editor, sky: atmosphere.Sky_State) -> [4]f32 {
     if editor != nil && editor.vehicle_paint_scene {
         // The paint hangar uses a brighter studio key so colors and surface
@@ -963,11 +992,29 @@ world_greek_asset_mesh :: proc(asset: Greek_Asset, placement: Greek_Placement, a
     }
 }
 
+world_greek_asset_in_view :: proc(editor: ^Editor, asset: Greek_Asset, placement: Greek_Placement) -> bool {
+    if !asset.ready do return false
+    local_center := asset.mesh.min
+    local_center.x = (asset.mesh.min.x + asset.mesh.max.x) * .5
+    local_center.y = (asset.mesh.min.y + asset.mesh.max.y) * .5
+    local_center.z = (asset.mesh.min.z + asset.mesh.max.z) * .5
+    extent_x := asset.mesh.max.x - asset.mesh.min.x
+    extent_y := asset.mesh.max.y - asset.mesh.min.y
+    extent_z := asset.mesh.max.z - asset.mesh.min.z
+    radius :=
+        f32(math.sqrt(f64(extent_x * extent_x + extent_y * extent_y + extent_z * extent_z))) *
+        math.abs(placement.scale) *
+        .5
+    return world_sphere_in_view(editor, greek_asset_local_to_world(asset, placement, local_center), radius)
+}
+
 world_greek_assets :: proc(editor: ^Editor) {
     if editor == nil do return
     for placement in editor.greek_placements[:editor.greek_placement_count] {
         if placement.asset_index < 0 || placement.asset_index >= GREEK_ASSET_CAPACITY do continue
-        world_greek_asset_mesh(editor.greek_assets[placement.asset_index], placement, 255)
+        asset := editor.greek_assets[placement.asset_index]
+        if !world_greek_asset_in_view(editor, asset, placement) do continue
+        world_greek_asset_mesh(asset, placement, 255)
     }
     if editor.greek_placement_mode && editor.cursor_hit && greek_asset_selected_ready(editor) {
         preview := Greek_Placement {
@@ -1106,6 +1153,21 @@ world_npc_boats :: proc(editor: ^Editor) {
         position := third_person.Vec3{agent.position.x, editor.project.sea_level + .03, agent.position.y}
         bob := math.sin(editor.map_time * .72 + f32(agent.class) * 1.31) * (.025 + agent.speed * .004)
         position.y += bob
+        spec := boats.specifications(agent.class)
+        radius :=
+            f32(
+                math.sqrt(
+                    f64(
+                        spec.length * spec.length +
+                        spec.beam * spec.beam +
+                        spec.height_or_clearance * spec.height_or_clearance,
+                    ),
+                ),
+            ) *
+            .5
+        if !world_sphere_in_view(editor, {position.x, position.y + spec.height_or_clearance * .5, position.z}, radius) {
+            continue
+        }
         world_npc_boat(agent.class, position, agent.yaw, agent.behavior != .Moored)
     }
 }
@@ -1140,6 +1202,10 @@ world_boat_wakes :: proc(editor: ^Editor) {
             arm_offset := sample.width * .48 + age_spread
             arm_width := clamp(sample.width * (.045 + fade * .045), f32(.055), f32(.46))
             arm_length := clamp(spec.beam * (.10 + sample.strength * .12), f32(.22), f32(1.75))
+            wake_radius := arm_offset + arm_length + max(arm_width, f32(.62))
+            if !world_sphere_in_view(editor, {sample.position.x, y, sample.position.y}, wake_radius) {
+                continue
+            }
             alpha := u8(clamp(92 * sample.strength * fade * fade, 0, 92))
             foam := rl.Color{210, 237, 232, alpha}
             port := sample.position + right * arm_offset
@@ -1250,6 +1316,7 @@ world_road_vertex :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex, c
 @(no_instrumentation)
 world_road_triangle_colored :: #force_inline proc(
     editor: ^Editor,
+    destination: ^[dynamic]World_Vertex,
     a, b, c: roads.Vertex,
     color_a, color_b, color_c: rl.Color,
 ) {
@@ -1260,10 +1327,44 @@ world_road_triangle_colored :: #force_inline proc(
         return
     }
     append(
-        &world_renderer.road_vertices,
+        destination,
         world_road_vertex(editor, a, color_a),
         world_road_vertex(editor, b, color_b),
         world_road_vertex(editor, c, color_c),
+    )
+}
+
+world_road_cache_chunk_finish :: proc(first_vertex: int) {
+    vertex_count := len(world_renderer.road_geometry_cache) - first_vertex
+    if vertex_count <= 0 do return
+    first_position := world_renderer.road_geometry_cache[first_vertex].position
+    minimum, maximum := first_position, first_position
+    for vertex in world_renderer.road_geometry_cache[first_vertex + 1:first_vertex + vertex_count] {
+        for axis in 0 ..< 3 {
+            minimum[axis] = min(minimum[axis], vertex.position[axis])
+            maximum[axis] = max(maximum[axis], vertex.position[axis])
+        }
+    }
+    center := third_person.Vec3 {
+        (minimum[0] + maximum[0]) * .5,
+        (minimum[1] + maximum[1]) * .5,
+        (minimum[2] + maximum[2]) * .5,
+    }
+    radius_squared: f32
+    for vertex in world_renderer.road_geometry_cache[first_vertex:first_vertex + vertex_count] {
+        dx := vertex.position[0] - center.x
+        dy := vertex.position[1] - center.y
+        dz := vertex.position[2] - center.z
+        radius_squared = max(radius_squared, dx * dx + dy * dy + dz * dz)
+    }
+    append(
+        &world_renderer.road_geometry_chunks,
+        Road_Geometry_Cache_Chunk {
+            first_vertex = first_vertex,
+            vertex_count = vertex_count,
+            center       = center,
+            radius       = f32(math.sqrt(f64(radius_squared))),
+        },
     )
 }
 
@@ -1284,30 +1385,39 @@ world_roads :: proc(editor: ^Editor) {
         world_renderer.road_geometry_valid &&
         world_renderer.road_geometry_revision == editor.project.revision &&
         world_renderer.road_geometry_terrain_revision == editor.terrain_revision
-    if road_geometry_cached {
-        append(&world_renderer.road_vertices, ..world_renderer.road_geometry_cache[:])
-    } else if len(mesh.indices) > 0 {
-        for triangle in 0 ..< len(mesh.indices) / 3 {
-            a := mesh.vertices[mesh.indices[triangle * 3]]
-            b := mesh.vertices[mesh.indices[triangle * 3 + 1]]
-            c := mesh.vertices[mesh.indices[triangle * 3 + 2]]
-            world_road_triangle_colored(
-                editor,
-                a,
-                b,
-                c,
-                road_surface_color(a.surface, a.pavement),
-                road_surface_color(b.surface, b.pavement),
-                road_surface_color(c.surface, c.pavement),
-            )
-        }
-    }
     if !road_geometry_cached {
         clear(&world_renderer.road_geometry_cache)
-        append(&world_renderer.road_geometry_cache, ..world_renderer.road_vertices[:])
+        clear(&world_renderer.road_geometry_chunks)
+        for mesh_chunk in mesh.chunks {
+            first_vertex := len(world_renderer.road_geometry_cache)
+            triangle_end := mesh_chunk.first_index + mesh_chunk.index_count
+            for triangle_index := mesh_chunk.first_index; triangle_index < triangle_end; triangle_index += 3 {
+                a := mesh.vertices[mesh.indices[triangle_index]]
+                b := mesh.vertices[mesh.indices[triangle_index + 1]]
+                c := mesh.vertices[mesh.indices[triangle_index + 2]]
+                world_road_triangle_colored(
+                    editor,
+                    &world_renderer.road_geometry_cache,
+                    a,
+                    b,
+                    c,
+                    road_surface_color(a.surface, a.pavement),
+                    road_surface_color(b.surface, b.pavement),
+                    road_surface_color(c.surface, c.pavement),
+                )
+            }
+            world_road_cache_chunk_finish(first_vertex)
+        }
         world_renderer.road_geometry_revision = editor.project.revision
         world_renderer.road_geometry_terrain_revision = editor.terrain_revision
         world_renderer.road_geometry_valid = true
+    }
+    for chunk in world_renderer.road_geometry_chunks {
+        if !world_sphere_in_view(editor, chunk.center, chunk.radius, 1) do continue
+        append(
+            &world_renderer.road_vertices,
+            ..world_renderer.road_geometry_cache[chunk.first_vertex:chunk.first_vertex + chunk.vertex_count],
+        )
     }
     if editor.in_map || !editor.road_mode || editor.capture_world_only do return
     for node, index in graph.nodes[:graph.node_count] {
@@ -4619,6 +4729,10 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
         length := f32(math.sqrt(f64(dx * dx + dz * dz)))
         if length <= .01 do continue
         center_x, center_z := (alley.start_x + alley.end_x) * .5, (alley.start_z + alley.end_z) * .5
+        center_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
+        if !world_sphere_in_view(editor, {center_x, center_y, center_z}, length * .5 + alley.half_width + 1) {
+            continue
+        }
         world_land_surface_rotated(
             editor,
             center_x,
@@ -4636,6 +4750,7 @@ world_architecture_lamps :: proc(editor: ^Editor, plan: ^architecture.City_Plan)
     if editor == nil || plan == nil do return
     for lamp in plan.lamps[:plan.lamp_count] {
         base_y := terrain.sample_height(&editor.project, 0, lamp.x, lamp.z)
+        if !world_sphere_in_view(editor, {lamp.x, base_y + 2, lamp.z}, 2.25, 1) do continue
         metal := rl.Color{48, 54, 53, 255}
         glass := rl.Color{235, 190, 102, 255}
         world_box_rotated({lamp.x, base_y + .10, lamp.z}, {.48, .20, .48}, lamp.yaw, metal)
@@ -7817,6 +7932,12 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     shoulder := rl.Color{177, 164, 135, 255}
     path_color := rl.Color{194, 184, 157, 255}
     for area in plan.areas[:plan.count] {
+        area_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z)
+        area_radius :=
+            f32(math.sqrt(f64(area.width * area.width + area.length * area.length))) *
+            .5 +
+            2
+        if !world_sphere_in_view(editor, {area.center_x, area_y, area.center_z}, area_radius) do continue
         switch area.kind {
         case .Street:
             world_land_surface_rotated(editor, area.center_x, area.center_z, area.width, 5.5, area.rotation, .12, road)
@@ -7865,6 +7986,8 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     for structure in editor.project.structures[:editor.project.structure_count] {
         if structure.kind != .Architecture || structure.height > 60 do continue
         if structure.seed % 3 != 0 do continue
+        structure_center, structure_radius := structure_visibility_sphere(structure)
+        if !world_sphere_in_view(editor, structure_center, structure_radius, 2) do continue
         frontage := architecture.architecture_frontage_structure(structure)
         door_x, door_z := world_rotate_xz(
             frontage.center_x,
@@ -7896,8 +8019,9 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
             if z_side == 0 do continue
             tree_x := center_x + f32(x_side) * road_span * .42
             tree_z := center_z + f32(z_side) * ((max_z - min_z) * .5 + 7)
-            if !architecture.city_accent_site_clear(&editor.project, tree_x, tree_z, 5) do continue
             tree_base := terrain.sample_height(&editor.project, 0, tree_x, tree_z)
+            if !world_sphere_in_view(editor, {tree_x, tree_base + 7, tree_z}, 8, 2) do continue
+            if !architecture.city_accent_site_clear(&editor.project, tree_x, tree_z, 5) do continue
             tree_seed := u32((x_side + 2) * 37 + (z_side + 2) * 11 + buildings * 5)
             world_architecture_cypress(tree_x, tree_z, tree_base, tree_seed)
             if (x_side == -1 && z_side == 1) || (x_side == 1 && z_side == -1) {
@@ -10007,6 +10131,14 @@ trailer_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraf
 }
 
 world_car :: proc(editor: ^Editor) {
+    car_position := editor.car.position
+    trailer_position := editor.car_trailer_position
+    center := (car_position + trailer_position) * .5
+    separation := trailer_position - car_position
+    radius := f32(math.sqrt(f64(linalg.dot(separation, separation)))) * .5 + 6
+    // Retain near-frustum vehicles so their projected shadows cannot disappear
+    // while the body itself is just outside the camera.
+    if !world_sphere_in_view(editor, center, radius, 6) do return
     mesh := vehicles.simple_car_mesh()
     trailer_speed_squared :=
         editor.car_trailer.velocity.x * editor.car_trailer.velocity.x +
@@ -12383,6 +12515,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
 
 world_character :: proc(editor: ^Editor) {
     if !editor.in_map || editor.pilot.mode != .On_Foot do return
+    if !world_sphere_in_view(editor, editor.player.position + third_person.Vec3{0, .8, 0}, 2, 5) do return
     world_mouse_model(
         editor,
         {
@@ -12434,8 +12567,12 @@ MARTA_STOOL_HEIGHT :: f32(.49)
 
 world_attendant_kiosk :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
-    world_attendant_kiosk_at(editor, editor.attendant_position)
-    world_attendant_kiosk_at(editor, editor.gerta_position)
+    if world_sphere_in_view(editor, editor.attendant_position + third_person.Vec3{0, 1.5, 0}, 3.5, 4) {
+        world_attendant_kiosk_at(editor, editor.attendant_position)
+    }
+    if world_sphere_in_view(editor, editor.gerta_position + third_person.Vec3{0, 1.5, 0}, 3.5, 4) {
+        world_attendant_kiosk_at(editor, editor.gerta_position)
+    }
 }
 
 world_attendant_kiosk_at :: proc(editor: ^Editor, p: third_person.Vec3) {
@@ -12473,6 +12610,7 @@ world_attendant_kiosk_at :: proc(editor: ^Editor, p: third_person.Vec3) {
 
 world_marta :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
+    if !world_sphere_in_view(editor, editor.attendant_position + third_person.Vec3{0, 1.2, 0}, 2, 4) do return
     delta := third_person.Vec3 {
         editor.player.position.x - editor.attendant_position.x,
         0,
@@ -12497,6 +12635,7 @@ world_marta :: proc(editor: ^Editor) {
 
 world_gerta :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
+    if !world_sphere_in_view(editor, editor.gerta_position + third_person.Vec3{0, 1.2, 0}, 2, 4) do return
     delta := third_person.Vec3 {
         editor.player.position.x - editor.gerta_position.x,
         0,
@@ -12657,6 +12796,7 @@ world_story_meeting :: proc(editor: ^Editor) {
     if editor == nil || editor.story_state.romance != .Meeting do return
     niko, iva, center, rotation, found := world_story_meeting_pose(editor)
     if !found do return
+    if !world_sphere_in_view(editor, center + third_person.Vec3{0, 1.2, 0}, 3.5, 4) do return
 
     // A temporary quay awning gives the meeting a readable landmark without
     // requiring a hand-authored coordinate or a new asset.
@@ -12921,6 +13061,13 @@ world_ground_grass :: proc(editor: ^Editor) {
         return
     }
 
+    focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
+    view_camera := perspective_camera(editor.camera_pose, focal_length)
+    screen_width := max(rl.GetScreenWidth(), 1)
+    screen_height := max(rl.GetScreenHeight(), 1)
+    aspect := f32(screen_width) / f32(screen_height)
+    near_plane := world_camera_near_clip(editor)
+
     building_footprints := world_architecture_grass_footprints(editor)
     defer delete(building_footprints)
     circulation_plan := editor_circulation_plan(editor)
@@ -12953,6 +13100,22 @@ world_ground_grass :: proc(editor: ^Editor) {
             // half the cards at the render limit and dropping them at once.
             if wind_streak_hash(seed_index, 3) > density do continue
             height_at := terrain.sample_height(&editor.project, 0, x, z)
+            // The generated field surrounds the camera so walking and turning
+            // never expose an empty edge, but only the forward slice can reach
+            // the framebuffer. A deliberately generous sphere retains every
+            // potentially visible grass or wildflower card while rejecting
+            // the field behind and well outside the view before its expensive
+            // terrain/material classification.
+            if !static_sphere_in_frustum(
+                view_camera,
+                {x, height_at + .75, z},
+                2,
+                aspect,
+                near_plane,
+                WORLD_FAR_CLIP,
+            ) {
+                continue
+            }
             if farmland_excludes_ground_grass(editor, x, z) do continue
             if !wildflowers_renderable_at(editor, x, z, circulation_plan) do continue
             variation := wind_streak_hash(seed_index, 4)
@@ -13146,6 +13309,13 @@ world_petal_particles :: proc(editor: ^Editor) {
         {218, 78, 105, 230},
     }
     for particle in editor.petal_effects.particles[:editor.petal_effects.count] {
+        if !world_sphere_in_view(
+            editor,
+            {particle.position.x, particle.position.y, particle.position.z},
+            max(particle.size * 2, f32(.25)),
+        ) {
+            continue
+        }
         display := particles.Vehicle_Particle {
             position = particle.position,
             velocity = particle.velocity,
@@ -13211,6 +13381,13 @@ world_vehicle_particles :: proc(editor: ^Editor) {
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
     for particle in editor.vehicle_effects.dust[:editor.vehicle_effects.dust_count] {
+        if !world_sphere_in_view(
+            editor,
+            {particle.position.x, particle.position.y, particle.position.z},
+            max(particle.size * 2, f32(.25)),
+        ) {
+            continue
+        }
         color := rl.Color{112, 119, 116, 100}
         switch particle.surface {
         case .Asphalt:
@@ -13241,6 +13418,17 @@ world_wing_trails :: proc(editor: ^Editor) {
         ring_count := 0
         for particle in editor.wing_trails.particles[:editor.wing_trails.count] {
             if int(particle.side) != side do continue
+            if !world_sphere_in_view(
+                editor,
+                {particle.position.x, particle.position.y, particle.position.z},
+                max(particle.size * 2, f32(.5)),
+            ) {
+                // Restart topology after an offscreen gap; otherwise two
+                // retained rings could be joined across the culled interval.
+                first_ring = len(world_renderer.wing_trail_vertices)
+                ring_count = 0
+                continue
+            }
             fade := clamp(particle.life / particle.max_life, 0, 1)
             radius := particle.size * (.8 + fade * .35)
             opacity := fade * fade
@@ -13332,6 +13520,12 @@ world_wind_streaks :: proc(editor: ^Editor) {
             center.y,
             center.z - direction_z * streak_length,
         }
+        streak_center := third_person.Vec3 {
+            (center.x + tail.x) * .5,
+            (center.y + tail.y) * .5,
+            (center.z + tail.z) * .5,
+        }
+        if !world_sphere_in_view(editor, streak_center, streak_length * .5 + .15) do continue
         fade := math.sin(phase * math.PI)
         alpha := u8(clamp((22 + strength * 82) * fade, 0, 104))
         width := .018 + strength * .035
@@ -14219,8 +14413,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         if !world_host_buffer_create(
             ctx,
             vk.DeviceSize(
-                (FOLIAGE_VERTEX_INITIAL_CAPACITY + BOUGAINVILLEA_VERTEX_INITIAL_CAPACITY) *
-                size_of(Foliage_Vertex),
+                (FOLIAGE_VERTEX_INITIAL_CAPACITY + BOUGAINVILLEA_VERTEX_INITIAL_CAPACITY) * size_of(Foliage_Vertex),
             ),
             {.VERTEX_BUFFER},
             &buffer,
@@ -14233,8 +14426,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         if !world_host_buffer_create(
             ctx,
             vk.DeviceSize(
-                (GRASS_INSTANCE_INITIAL_CAPACITY + WILDFLOWER_INSTANCE_INITIAL_CAPACITY) *
-                size_of(Grass_Instance),
+                (GRASS_INSTANCE_INITIAL_CAPACITY + WILDFLOWER_INSTANCE_INITIAL_CAPACITY) * size_of(Grass_Instance),
             ),
             {.VERTEX_BUFFER},
             &buffer,
@@ -14302,8 +14494,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.static_indices = make([dynamic]u32, 0, WORLD_VERTEX_INITIAL_CAPACITY)
     world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_INITIAL_CAPACITY)
     world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_INITIAL_CAPACITY)
-    world_renderer.bougainvillea_vertices =
-        make([dynamic]Foliage_Vertex, 0, BOUGAINVILLEA_VERTEX_INITIAL_CAPACITY)
+    world_renderer.bougainvillea_vertices = make([dynamic]Foliage_Vertex, 0, BOUGAINVILLEA_VERTEX_INITIAL_CAPACITY)
     world_renderer.grass_instances = make([dynamic]Grass_Instance, 0, GRASS_INSTANCE_INITIAL_CAPACITY)
     world_renderer.wildflower_instances = make([dynamic]Grass_Instance, 0, WILDFLOWER_INSTANCE_INITIAL_CAPACITY)
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
@@ -14813,6 +15004,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.static_indices)
     delete(world_renderer.road_vertices)
     delete(world_renderer.road_geometry_cache)
+    delete(world_renderer.road_geometry_chunks)
     delete(world_renderer.laundry_geometry_cache)
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)

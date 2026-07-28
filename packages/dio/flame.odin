@@ -394,15 +394,18 @@ flame_graph_begin :: proc(graph: ^Flame_Graph, name: string, loc := #caller_loca
     when !FLAME_GRAPH do return Flame_Slot_Handle(-1)
     if graph == nil do return Flame_Slot_Handle(-1)
     if len(graph.slots) >= FLAME_AUTO_SLOT_CAP do return Flame_Slot_Handle(-1)
-    append(&graph.slots, Flame_Slot {
-        name      = name if len(name) > 0 else "?",
-        file_path = loc.file_path,
-        color     = flame_color(name),
-        depth     = graph.curr_depth,
-        line      = int(loc.line),
-        start     = time.tick_now(),
-        active    = true,
-    })
+    append(
+        &graph.slots,
+        Flame_Slot {
+            name = name if len(name) > 0 else "?",
+            file_path = loc.file_path,
+            color = flame_color(name),
+            depth = graph.curr_depth,
+            line = int(loc.line),
+            start = time.tick_now(),
+            active = true,
+        },
+    )
     graph.curr_depth += 1
     return Flame_Slot_Handle(len(graph.slots) - 1)
 }
@@ -658,11 +661,7 @@ flame_graph_refresh_history_entry :: proc(entry: ^Flame_Frame_History) {
         if found >= 0 {
             scope_sums[found].duration_ms += duration_ms
         } else {
-            append(&scope_sums, Flame_Frame_Scope {
-                name        = slot.name,
-                color       = slot.color,
-                duration_ms = duration_ms,
-            })
+            append(&scope_sums, Flame_Frame_Scope{name = slot.name, color = slot.color, duration_ms = duration_ms})
         }
     }
 

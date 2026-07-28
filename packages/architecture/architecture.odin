@@ -162,15 +162,18 @@ architecture_identity :: proc(ctx: Architecture_Context, seed: u32) -> buildings
 @(no_instrumentation)
 architecture_resolve_legacy_identity :: #force_inline proc(structure: terrain.Structure) -> buildings.Identity {
     if structure.building.archetype != .Legacy do return structure.building
-    return architecture_identity({
-            purpose          = .Dwelling,
-            density          = clamp((structure.height - 8) / 36, 0, 1),
-            attached         = structure.width < 18,
-            frontage         = structure.width,
-            depth            = structure.depth,
-            route            = .Street,
+    return architecture_identity(
+        {
+            purpose = .Dwelling,
+            density = clamp((structure.height - 8) / 36, 0, 1),
+            attached = structure.width < 18,
+            frontage = structure.width,
+            depth = structure.depth,
+            route = .Street,
             purpose_explicit = false,
-        }, structure.seed)
+        },
+        structure.seed,
+    )
 }
 
 // Adds one connected settlement to the shared circulation plan. Keeping this
@@ -198,28 +201,34 @@ circulation_plan_add_town :: proc(plan: ^circulation.Plan, project: ^terrain.Pro
     road_span := max(max_x - min_x + 36, f32(160))
     lanes := [2]f32{lane_a, lane_b}
     for lane_z in lanes {
-        _ = circulation.plan_add(plan, {
-            center_x  = center_x,
-            center_z  = lane_z,
-            width     = road_span,
-            length    = 6.5,
-            kind      = .Street,
-            source    = .Generated,
-            pavement  = .Cobblestone,
-            walkable  = true,
-            driveable = true,
-        })
+        _ = circulation.plan_add(
+            plan,
+            {
+                center_x = center_x,
+                center_z = lane_z,
+                width = road_span,
+                length = 6.5,
+                kind = .Street,
+                source = .Generated,
+                pavement = .Cobblestone,
+                walkable = true,
+                driveable = true,
+            },
+        )
     }
-    _ = circulation.plan_add(plan, {
-        center_x = center_x,
-        center_z = center_z,
-        width    = 28,
-        length   = 18,
-        kind     = .Plaza,
-        source   = .Generated,
-        pavement = .Cobblestone,
-        walkable = true,
-    })
+    _ = circulation.plan_add(
+        plan,
+        {
+            center_x = center_x,
+            center_z = center_z,
+            width = 28,
+            length = 18,
+            kind = .Plaza,
+            source = .Generated,
+            pavement = .Cobblestone,
+            walkable = true,
+        },
+    )
 
     for structure_index in structure_indices {
         structure := project.structures[structure_index]
@@ -246,17 +255,20 @@ circulation_plan_add_town :: proc(plan: ^circulation.Plan, project: ^terrain.Pro
         path_dx, path_dz := center_x - door_x, target_z - door_z
         path_length := f32(math.sqrt(f64(path_dx * path_dx + path_dz * path_dz)))
         if path_length <= 1.5 do continue
-        _ = circulation.plan_add(plan, {
-            center_x = (door_x + center_x) * .5,
-            center_z = (door_z + target_z) * .5,
-            width    = 3.6,
-            length   = path_length,
-            rotation = math.atan2(path_dx, path_dz),
-            kind     = .Path,
-            source   = .Derived,
-            pavement = .Cobblestone,
-            walkable = true,
-        })
+        _ = circulation.plan_add(
+            plan,
+            {
+                center_x = (door_x + center_x) * .5,
+                center_z = (door_z + target_z) * .5,
+                width = 3.6,
+                length = path_length,
+                rotation = math.atan2(path_dx, path_dz),
+                kind = .Path,
+                source = .Derived,
+                pavement = .Cobblestone,
+                walkable = true,
+            },
+        )
     }
 }
 
@@ -544,7 +556,10 @@ opening_layout_find :: proc(
     face: Face,
     kind: Opening_Kind,
     row, column: int,
-) -> (^Opening, bool) {
+) -> (
+    ^Opening,
+    bool,
+) {
     if layout == nil do return nil, false
     for opening, index in layout.openings[:layout.count] {
         if opening.face == face && opening.kind == kind && opening.row == row && opening.column == column {
@@ -555,9 +570,9 @@ opening_layout_find :: proc(
 }
 
 Facade_Profile :: struct {
-    front_bays_min, front_bays_max: int,
-    rear_bays_min, rear_bays_max:   int,
-    side_bays_min, side_bays_max:   int,
+    front_bays_min, front_bays_max:       int,
+    rear_bays_min, rear_bays_max:         int,
+    side_bays_min, side_bays_max:         int,
     window_width_min, window_width_max:   f32,
     window_height_min, window_height_max: f32,
     opening_ratio_min, opening_ratio_max: f32,
@@ -570,53 +585,83 @@ facade_profile :: proc(archetype: buildings.Archetype) -> Facade_Profile {
     switch archetype {
     case .Dwelling, .Farmstead, .Legacy:
         return {
-            front_bays_min = 1, front_bays_max = 2,
-            rear_bays_min = 1, rear_bays_max = 2,
-            side_bays_min = 0, side_bays_max = 1,
-            window_width_min = 1.05, window_width_max = 1.35,
-            window_height_min = 1.55, window_height_max = 1.90,
-            opening_ratio_min = .08, opening_ratio_max = .14,
+            front_bays_min = 1,
+            front_bays_max = 2,
+            rear_bays_min = 1,
+            rear_bays_max = 2,
+            side_bays_min = 0,
+            side_bays_max = 1,
+            window_width_min = 1.05,
+            window_width_max = 1.35,
+            window_height_min = 1.55,
+            window_height_max = 1.90,
+            opening_ratio_min = .08,
+            opening_ratio_max = .14,
             blank_sides = true,
         }
     case .Townhouse, .Shop_House:
         return {
-            front_bays_min = 2, front_bays_max = 3,
-            rear_bays_min = 1, rear_bays_max = 2,
-            side_bays_min = 0, side_bays_max = 2,
-            window_width_min = 1.15, window_width_max = 1.50,
-            window_height_min = 1.70, window_height_max = 2.20,
-            opening_ratio_min = .12, opening_ratio_max = .20,
+            front_bays_min = 2,
+            front_bays_max = 3,
+            rear_bays_min = 1,
+            rear_bays_max = 2,
+            side_bays_min = 0,
+            side_bays_max = 2,
+            window_width_min = 1.15,
+            window_width_max = 1.50,
+            window_height_min = 1.70,
+            window_height_max = 2.20,
+            opening_ratio_min = .12,
+            opening_ratio_max = .20,
             blank_sides = true,
             shop_ground_floor = archetype == .Shop_House,
         }
     case .Workshop, .Storehouse, .Fishery, .Barn_Granary, .Mill:
         return {
-            front_bays_min = 0, front_bays_max = 2,
-            rear_bays_min = 0, rear_bays_max = 1,
-            side_bays_min = 0, side_bays_max = 1,
-            window_width_min = .80, window_width_max = 1.35,
-            window_height_min = .65, window_height_max = 1.20,
-            opening_ratio_min = 0, opening_ratio_max = .08,
+            front_bays_min = 0,
+            front_bays_max = 2,
+            rear_bays_min = 0,
+            rear_bays_max = 1,
+            side_bays_min = 0,
+            side_bays_max = 1,
+            window_width_min = .80,
+            window_width_max = 1.35,
+            window_height_min = .65,
+            window_height_max = 1.20,
+            opening_ratio_min = 0,
+            opening_ratio_max = .08,
             blank_sides = true,
             service = true,
         }
     case .Palace_Loggia, .Harbor_Office, .Market_Hall, .Monastery, .Church:
         return {
-            front_bays_min = 3, front_bays_max = 5,
-            rear_bays_min = 1, rear_bays_max = 3,
-            side_bays_min = 1, side_bays_max = 3,
-            window_width_min = 1.20, window_width_max = 1.70,
-            window_height_min = 1.80, window_height_max = 2.35,
-            opening_ratio_min = .15, opening_ratio_max = .22,
+            front_bays_min = 3,
+            front_bays_max = 5,
+            rear_bays_min = 1,
+            rear_bays_max = 3,
+            side_bays_min = 1,
+            side_bays_max = 3,
+            window_width_min = 1.20,
+            window_width_max = 1.70,
+            window_height_min = 1.80,
+            window_height_max = 2.35,
+            opening_ratio_min = .15,
+            opening_ratio_max = .22,
         }
     case .Campanile, .Fortress_Gate, .Cycladic_Bell:
         return {
-            front_bays_min = 0, front_bays_max = 1,
-            rear_bays_min = 0, rear_bays_max = 1,
-            side_bays_min = 0, side_bays_max = 1,
-            window_width_min = .75, window_width_max = 1.10,
-            window_height_min = .75, window_height_max = 1.40,
-            opening_ratio_min = 0, opening_ratio_max = .06,
+            front_bays_min = 0,
+            front_bays_max = 1,
+            rear_bays_min = 0,
+            rear_bays_max = 1,
+            side_bays_min = 0,
+            side_bays_max = 1,
+            window_width_min = .75,
+            window_width_max = 1.10,
+            window_height_min = .75,
+            window_height_max = 1.40,
+            opening_ratio_min = 0,
+            opening_ratio_max = .06,
             blank_sides = true,
             service = true,
         }
@@ -653,15 +698,11 @@ facade_profile_bay_count :: proc(
     return clamp(count, 0, maximum_fit)
 }
 
-facade_profile_window_size :: proc(
-    profile: Facade_Profile,
-    structure: terrain.Structure,
-    face: Face,
-) -> (f32, f32) {
+facade_profile_window_size :: proc(profile: Facade_Profile, structure: terrain.Structure, face: Face) -> (f32, f32) {
     width_t := f32((structure.seed >> u32(3 + int(face) * 2)) & 31) / 31
     height_t := f32((structure.seed >> u32(5 + int(face) * 2)) & 31) / 31
     return profile.window_width_min + (profile.window_width_max - profile.window_width_min) * width_t,
-           profile.window_height_min + (profile.window_height_max - profile.window_height_min) * height_t
+        profile.window_height_min + (profile.window_height_max - profile.window_height_min) * height_t
 }
 
 facade_bay_center :: proc(span, window_width: f32, columns, column: int) -> f32 {
@@ -704,15 +745,18 @@ architecture_opening_layout :: proc(
         if primary_face {
             door_width := clamp(span * .13, f32(1.8), f32(2.8))
             door_height := clamp(wall_height * .075, f32(3.0), f32(4.0))
-            _ = opening_layout_add(&layout, {
-                face       = face,
-                kind       = habitable ? Opening_Kind.Door : Opening_Kind.Service_Door,
-                horizontal = 0,
-                y          = .20 + door_height * .5,
-                width      = door_width,
-                height     = door_height,
-                primary    = true,
-            })
+            _ = opening_layout_add(
+                &layout,
+                {
+                    face = face,
+                    kind = habitable ? Opening_Kind.Door : Opening_Kind.Service_Door,
+                    horizontal = 0,
+                    y = .20 + door_height * .5,
+                    width = door_width,
+                    height = door_height,
+                    primary = true,
+                },
+            )
         }
 
         columns := facade_profile_bay_count(profile, structure, face, primary_face, span)
@@ -745,17 +789,20 @@ architecture_opening_layout :: proc(
                     opening_height *= .85
                     opening_y = facade_opening_row_y(wall_height, row, opening_height)
                 }
-                _ = opening_layout_add(&layout, {
-                    face       = face,
-                    kind       = kind,
-                    horizontal = horizontal,
-                    y          = opening_y,
-                    width      = opening_width,
-                    height     = opening_height,
-                    row        = row,
-                    column     = column,
-                    primary    = primary_face,
-                })
+                _ = opening_layout_add(
+                    &layout,
+                    {
+                        face = face,
+                        kind = kind,
+                        horizontal = horizontal,
+                        y = opening_y,
+                        width = opening_width,
+                        height = opening_height,
+                        row = row,
+                        column = column,
+                        primary = primary_face,
+                    },
+                )
             }
         }
     }
@@ -1733,15 +1780,18 @@ city_plan_density_grid :: proc(
                 structure.kind = .Architecture
                 structure.rotation = rotation
                 structure.seed = building_seed
-                structure.building = architecture_identity({
-                        density          = density,
-                        attached         = density >= .68,
-                        frontage         = width,
-                        depth            = depth,
-                        route            = frontage.found ? Context_Route.Street : Context_Route.Unspecified,
-                        landmark_kind    = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
+                structure.building = architecture_identity(
+                    {
+                        density = density,
+                        attached = density >= .68,
+                        frontage = width,
+                        depth = depth,
+                        route = frontage.found ? Context_Route.Street : Context_Route.Unspecified,
+                        landmark_kind = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
                         purpose_explicit = false,
-                    }, building_seed)
+                    },
+                    building_seed,
+                )
                 structure.color = architecture_color(structure.seed, anchor)
                 if !city_structure_road_clear(&project.road_graph, &structure) do continue
                 if !city_structure_site_valid(project, &structure) do continue
@@ -1821,16 +1871,19 @@ city_plan_add_parcel_building :: proc(
     structure.kind = .Architecture
     structure.rotation = rotation
     structure.seed = seed
-    structure.building = architecture_identity({
-            density          = density,
-            attached         = density > .72,
-            frontage         = width,
-            depth            = building_depth,
-            frontage_side    = frontage_side,
-            route            = alley_frontage ? Context_Route.Alley : Context_Route.Street,
-            landmark_kind    = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
+    structure.building = architecture_identity(
+        {
+            density = density,
+            attached = density > .72,
+            frontage = width,
+            depth = building_depth,
+            frontage_side = frontage_side,
+            route = alley_frontage ? Context_Route.Alley : Context_Route.Street,
+            landmark_kind = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
             purpose_explicit = false,
-        }, seed)
+        },
+        seed,
+    )
     structure.color = architecture_color(seed, anchor)
     if !city_structure_road_clear(&project.road_graph, &structure) do return
     if !city_structure_site_valid(project, &structure) do return
@@ -2085,13 +2138,16 @@ generate_poisson :: proc(
         structure.rotation = rotation
         structure_seed := u32(random01(&state) * f32(0xffffffff))
         structure.seed = structure_seed
-        structure.building = architecture_identity({
-                density          = clamp((building_height - 8) / 42, 0, 1),
-                frontage         = width,
-                depth            = depth,
-                route            = .Unspecified,
+        structure.building = architecture_identity(
+            {
+                density = clamp((building_height - 8) / 42, 0, 1),
+                frontage = width,
+                depth = depth,
+                route = .Unspecified,
                 purpose_explicit = false,
-            }, structure_seed)
+            },
+            structure_seed,
+        )
         structure.color = architecture_color(structure.seed)
         foundation_low, foundation_high := architecture_foundation_height_range(project, structure)
         if foundation_low <= project.sea_level do continue
@@ -2158,15 +2214,18 @@ generate_append :: proc(
         structure.kind = .Architecture
         structure.rotation = node.rotation
         structure.seed = structure_seed
-        structure.building = architecture_identity({
-                density          = safe_density,
-                attached         = safe_density >= .68,
-                frontage         = node.width,
-                depth            = node.depth,
-                route            = .Street,
-                landmark_kind    = node.kind == .Landmark ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
+        structure.building = architecture_identity(
+            {
+                density = safe_density,
+                attached = safe_density >= .68,
+                frontage = node.width,
+                depth = node.depth,
+                route = .Street,
+                landmark_kind = node.kind == .Landmark ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
                 purpose_explicit = false,
-            }, structure_seed)
+            },
+            structure_seed,
+        )
         structure.color = architecture_color(structure_seed, node.kind == .Landmark)
         foundation_low, foundation_high := architecture_foundation_height_range(project, structure)
         if foundation_low <= project.sea_level do continue

@@ -137,11 +137,7 @@ generate_sized_for_tradition :: proc(
     // Parcel density follows physical area instead of stamping the same
     // topology into every footprint.
     footprint_area := plan.width * plan.height
-    target_parcels := clamp(
-        (footprint_area + TARGET_PARCEL_CELLS - 1) / TARGET_PARCEL_CELLS,
-        1,
-        PARCEL_CAPACITY,
-    )
+    target_parcels := clamp((footprint_area + TARGET_PARCEL_CELLS - 1) / TARGET_PARCEL_CELLS, 1, PARCEL_CAPACITY)
     for plan.parcel_count < target_parcels {
         largest_index, largest_area := -1, 0
         for parcel, index in plan.parcels[:plan.parcel_count] {
@@ -190,7 +186,11 @@ generate_sized_for_tradition :: proc(
     return plan
 }
 
-generate_sized :: proc(seed: u32, requested_width, requested_height: int, allocator := context.temp_allocator) -> Plan {
+generate_sized :: proc(
+    seed: u32,
+    requested_width, requested_height: int,
+    allocator := context.temp_allocator,
+) -> Plan {
     tradition := Tradition.Ancient_Enclosure
     if (mix(seed ~ u32(0xa24baed5)) & 1) != 0 {
         tradition = .Parliamentary_Enclosure

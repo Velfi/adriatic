@@ -530,9 +530,7 @@ markov_wreck_randomize :: proc(editor: ^Editor) -> bool {
 }
 
 markov_wreck_return_from_flight :: proc(editor: ^Editor) -> bool {
-    if editor == nil ||
-       !lab_scene_is_active(editor, "markov-wreck") ||
-       !markov_wreck_postale_spawned {
+    if editor == nil || !lab_scene_is_active(editor, "markov-wreck") || !markov_wreck_postale_spawned {
         return false
     }
     if editor.pilot.mode == .Driving {

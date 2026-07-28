@@ -13,15 +13,15 @@ Dialogue_Voice_Profile :: struct {
 }
 
 Dialogue_Voice :: struct {
-    phase_a:     f32,
-    phase_b:     f32,
-    phase_c:     f32,
-    age:         f32,
-    duration:    f32,
-    frequency:   f32,
-    brightness:  f32,
-    warmth:      f32,
-    gain:        f32,
+    phase_a:    f32,
+    phase_b:    f32,
+    phase_c:    f32,
+    age:        f32,
+    duration:   f32,
+    frequency:  f32,
+    brightness: f32,
+    warmth:     f32,
+    gain:       f32,
 }
 
 dialogue_voice_trigger :: proc(device: ^Device, glyph: u8, profile: Dialogue_Voice_Profile) {
@@ -62,8 +62,8 @@ render_dialogue_voice_add :: proc(voice: ^Dialogue_Voice, samples: []f32) {
         voice.phase_b = math.mod(voice.phase_b + frequency * 2.01 * seconds_per_sample, 1)
         voice.phase_c = math.mod(voice.phase_c + frequency * 3.97 * seconds_per_sample, 1)
         fundamental := f32(math.sin(f64(voice.phase_a * math.TAU)))
-        bright := f32(math.sin(f64(voice.phase_b * math.TAU))) * .34 +
-                  f32(math.sin(f64(voice.phase_c * math.TAU))) * .13
+        bright :=
+            f32(math.sin(f64(voice.phase_b * math.TAU))) * .34 + f32(math.sin(f64(voice.phase_c * math.TAU))) * .13
         body := fundamental * (1 - voice.brightness * .35) + bright * voice.brightness
         // A warm profile has a rounder envelope and less upper-partial energy.
         warmth_gain := .78 + voice.warmth * .22

@@ -24,10 +24,16 @@ upload_dynamic_textures :: proc(ctx: ^engine.Vk_Context, frame: engine.Vk_Frame)
         if !state.dynamic_pending[id] do continue
         image := &state.textures[id]
         staging := &state.dynamic_staging[id][frame.frame_index]
-        byte_count := int(image.width * image.height * 4)
+        bytes_per_pixel := max(state.dynamic_bytes_per_pixel[id], 1)
+        byte_count := int(image.width * image.height) * bytes_per_pixel
         if staging.handle == vk.Buffer(0) || len(state.dynamic_pixels[id]) < byte_count do continue
         mem.copy_non_overlapping(staging.mapped, raw_data(state.dynamic_pixels[id][:]), byte_count)
-        render2d.metrics_record_upload(&state.metrics, u64(byte_count))
+        dirty := state.dynamic_dirty[id]
+        x := clamp(int(dirty.x), 0, int(image.width))
+        y := clamp(int(dirty.y), 0, int(image.height))
+        width := clamp(int(dirty.width), 1, int(image.width) - x)
+        height := clamp(int(dirty.height), 1, int(image.height) - y)
+        render2d.metrics_record_upload(&state.metrics, u64(width * height * bytes_per_pixel))
         engine.vk_cmd_image_barrier2(
             ctx,
             frame.command_buffer,
@@ -40,8 +46,12 @@ upload_dynamic_textures :: proc(ctx: ^engine.Vk_Context, frame: engine.Vk_Frame)
             .TRANSFER_DST_OPTIMAL,
         )
         region := vk.BufferImageCopy {
+            bufferOffset = vk.DeviceSize((y * int(image.width) + x) * bytes_per_pixel),
+            bufferRowLength = image.width,
+            bufferImageHeight = image.height,
             imageSubresource = {aspectMask = {.COLOR}, mipLevel = 0, baseArrayLayer = 0, layerCount = 1},
-            imageExtent = {image.width, image.height, 1},
+            imageOffset = {i32(x), i32(y), 0},
+            imageExtent = {u32(width), u32(height), 1},
         }
         vk.CmdCopyBufferToImage(frame.command_buffer, staging.handle, image.image, .TRANSFER_DST_OPTIMAL, 1, &region)
         engine.vk_cmd_image_barrier2(
@@ -56,6 +66,7 @@ upload_dynamic_textures :: proc(ctx: ^engine.Vk_Context, frame: engine.Vk_Frame)
             .SHADER_READ_ONLY_OPTIMAL,
         )
         state.dynamic_pending[id] = false
+        state.dynamic_dirty[id] = {}
     }
 }
 
@@ -82,6 +93,13 @@ batch_scissor_rect :: #force_inline proc(batch: Batch, extent: vk.Extent2D) -> v
 
 @(no_instrumentation)
 batch_push_constants :: #force_inline proc(batch: ^Batch) -> Push {
+    texture_mode := f32(batch.texture >= 0 ? 1 : 0)
+    for page in state.glyph_pages {
+        if page.ready && batch.texture == page.id {
+            texture_mode = 2
+            break
+        }
+    }
     push := Push {
         viewport      = {
             f32(state.width),
@@ -89,7 +107,7 @@ batch_push_constants :: #force_inline proc(batch: ^Batch) -> Push {
             f32(state.framebuffer_width),
             f32(state.framebuffer_height),
         },
-        texture_hatch = {batch.texture >= 0 ? 1 : 0, 0, 0, 0},
+        texture_hatch = {texture_mode, 0, 0, 0},
     }
     if state.renderer_descriptor.encode_batch_payload != nil {
         destination := mem.slice_ptr(cast([^]u8)&push, size_of(Push))

@@ -1574,13 +1574,17 @@ seed_marta_benchmark :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.camera_target_lock = false
     editor.postale_visible = false
+    editor.libellula_visible = false
     attendant := editor.attendant_position
     editor.player.position = {
         attendant.x + 20,
         terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z),
         attendant.z,
     }
+    editor.player.grounded = true
     editor.pilot.position = editor.player.position
+    editor.in_map = true
+    editor.map_time = f32(rl.GetTime())
     inspection_pose := third_person.camera_near({attendant.x, attendant.y + .48, attendant.z}, {1.35, .62, 1.35})
     third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -7113,6 +7117,30 @@ adriatic_run :: proc(
     }
     _ = rl.SetBodyFontPath("assets/fonts/NotoSans-Regular.ttf")
     _ = rl.SetDisplayFontPath("assets/fonts/NotoSerif-Regular.ttf")
+    unicode_fallbacks := [?]cstring {
+        "assets/fonts/fallback/NotoSansArabic-Regular.ttf",
+        "assets/fonts/fallback/NotoSansHebrew-Regular.ttf",
+        "assets/fonts/fallback/NotoSansDevanagari-Regular.ttf",
+        "assets/fonts/fallback/NotoSansBengali-Regular.ttf",
+        "assets/fonts/fallback/NotoSansGurmukhi-Regular.ttf",
+        "assets/fonts/fallback/NotoSansGujarati-Regular.ttf",
+        "assets/fonts/fallback/NotoSansOriya-Regular.ttf",
+        "assets/fonts/fallback/NotoSansTamil-Regular.ttf",
+        "assets/fonts/fallback/NotoSansTelugu-Regular.ttf",
+        "assets/fonts/fallback/NotoSansKannada-Regular.ttf",
+        "assets/fonts/fallback/NotoSansMalayalam-Regular.ttf",
+        "assets/fonts/fallback/NotoSansSinhala-Regular.ttf",
+        "assets/fonts/fallback/NotoSansThai-Regular.ttf",
+        "assets/fonts/fallback/NotoSansLao-Regular.ttf",
+        "assets/fonts/fallback/NotoSansArmenian-Regular.ttf",
+        "assets/fonts/fallback/NotoSansGeorgian-Regular.ttf",
+        "assets/fonts/fallback/NotoSansEthiopic-Regular.ttf",
+        "assets/fonts/fallback/NotoSansSymbols2-Regular.ttf",
+    }
+    for path in unicode_fallbacks {
+        _ = rl.AddBodyFontFallbackPath(path)
+        _ = rl.AddDisplayFontFallbackPath(path)
+    }
     rl.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring")
     show_loading_screen := SHOW_STARTUP_MENU && first_start && !capture_mode && !benchmark_mode
     postcard: rl.Texture
@@ -7658,6 +7686,7 @@ adriatic_run :: proc(
            (capture_target == "marta" ||
                    capture_target == "gerta" ||
                    capture_target == "marta-dialogue" ||
+                   capture_target == "marta-dialogue-unicode" ||
                    capture_target == "marta-dialogue-dark" ||
                    capture_target == "gerta-dialogue") {
             editor.camera_target_lock = false
@@ -7670,6 +7699,15 @@ adriatic_run :: proc(
                 attendant.z,
             }
             editor.pilot.position = editor.player.position
+            // Dialogue captures render through the in-map presentation path.
+            if capture_target == "marta-dialogue" ||
+               capture_target == "marta-dialogue-unicode" ||
+               capture_target == "marta-dialogue-dark" ||
+               capture_target == "gerta-dialogue" {
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+            }
             inspection_pose := third_person.camera_near(
                 {attendant.x, attendant.y + .48, attendant.z},
                 {1.35, .62, 1.35},
@@ -7678,9 +7716,14 @@ adriatic_run :: proc(
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
             if capture_target == "marta-dialogue" ||
+               capture_target == "marta-dialogue-unicode" ||
                capture_target == "marta-dialogue-dark" ||
                capture_target == "gerta-dialogue" {
                 open_attendant_dialogue(editor, gerta_capture ? .Gerta : .Marta)
+                if capture_target == "marta-dialogue-unicode" {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 2)
+                    dialogue_view_complete_reveal(editor)
+                }
             }
         }
         if capture_target == "niko" ||

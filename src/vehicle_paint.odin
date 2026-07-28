@@ -222,12 +222,15 @@ vehicle_paint_open :: proc(editor: ^Editor) {
             editor.libellula.body.position.z,
         }
     }
-    editor.camera_pose = third_person.camera_pose({0, 1, 0}, {
-        yaw_radians   = editor.vehicle_paint_yaw,
-        pitch_radians = editor.vehicle_paint_pitch,
-        distance      = editor.vehicle_paint_distance,
-        height        = 0,
-    })
+    editor.camera_pose = third_person.camera_pose(
+        {0, 1, 0},
+        {
+            yaw_radians = editor.vehicle_paint_yaw,
+            pitch_radians = editor.vehicle_paint_pitch,
+            distance = editor.vehicle_paint_distance,
+            height = 0,
+        },
+    )
     editor.map_time = f32(rl.GetTime())
     vehicle_paint_upload_texture(editor)
     set_pointer_locked(false)
@@ -1352,12 +1355,15 @@ vehicle_paint_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
     if math.abs(pinch_scale - 1) > .001 {
         editor.vehicle_paint_distance = clamp(editor.vehicle_paint_distance / pinch_scale, 4.2, 9.5)
     }
-    editor.camera_pose = third_person.camera_pose(third_person.Vec3{0, 1, 0}, {
-        yaw_radians   = editor.vehicle_paint_yaw,
-        pitch_radians = editor.vehicle_paint_pitch,
-        distance      = editor.vehicle_paint_distance,
-        height        = 0,
-    })
+    editor.camera_pose = third_person.camera_pose(
+        third_person.Vec3{0, 1, 0},
+        {
+            yaw_radians = editor.vehicle_paint_yaw,
+            pitch_radians = editor.vehicle_paint_pitch,
+            distance = editor.vehicle_paint_distance,
+            height = 0,
+        },
+    )
     _ = delta_seconds
 }
 

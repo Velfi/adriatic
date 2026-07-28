@@ -146,18 +146,10 @@ gui_text_wrap_candidates :: proc(
     append(out, Gui_Wrap_Candidate{pos = start})
     cursor := start
     for cursor < end {
-        next := cursor
-        for next < end && !gui_is_wrap_space(bytes[next]) {
-            next += 1
-        }
-        if next > cursor {
-            word_width := gui_text_span_width(ctx, bytes, cursor, next)
-            if word_width > max_width {
-                gui_text_wrap_forced_candidates(ctx, bytes, cursor, next, max_width, out)
-            }
-        }
-        for next < end && gui_is_wrap_space(bytes[next]) {
-            next += 1
+        next := min(cursor + gui_text_next_line_break(bytes[cursor:end]), end)
+        segment_width := gui_text_span_width(ctx, bytes, cursor, next)
+        if segment_width > max_width {
+            gui_text_wrap_forced_candidates(ctx, bytes, cursor, next, max_width, out)
         }
         if next > start && next < end {
             gui_append_wrap_candidate(out, next, false)
@@ -177,14 +169,13 @@ gui_text_wrap_forced_candidates :: proc(
     cursor := start
     for cursor < end {
         next := cursor
-        width := f32(0)
         for next < end {
-            advance := gui_glyph_advance(ctx, bytes[next])
-            if next > cursor && width + advance > max_width {
+            candidate := min(next + gui_text_next_grapheme(bytes[next:end]), end)
+            width := gui_text_span_width(ctx, bytes, cursor, candidate)
+            if next > cursor && width > max_width {
                 break
             }
-            width += advance
-            next += 1
+            next = candidate
         }
         if next <= cursor {
             next = cursor + 1
@@ -217,14 +208,13 @@ gui_text_wrap_greedy_fallback :: proc(
     cursor := start
     for cursor < end {
         next := cursor
-        width := f32(0)
         for next < end {
-            advance := gui_glyph_advance(ctx, bytes[next])
-            if next > cursor && width + advance > max_width {
+            candidate := min(next + gui_text_next_grapheme(bytes[next:end]), end)
+            width := gui_text_span_width(ctx, bytes, cursor, candidate)
+            if next > cursor && width > max_width {
                 break
             }
-            width += advance
-            next += 1
+            next = candidate
         }
         if next == cursor {
             next += 1
@@ -344,6 +334,16 @@ gui_hash_f32 :: proc(hash: u64, value: f32) -> u64 {
 }
 
 gui_font_shape_text :: proc(font_kind: Gui_Font_Kind, bytes: []u8, scale: f32, out: []Gui_Shaped_Glyph) -> int {
+    return gui_font_shape_text_direction(font_kind, bytes, scale, .Auto, out)
+}
+
+gui_font_shape_text_direction :: proc(
+    font_kind: Gui_Font_Kind,
+    bytes: []u8,
+    scale: f32,
+    direction: Text_Direction,
+    out: []Gui_Shaped_Glyph,
+) -> int {
     profile_start := time.tick_now()
     defer {
         gui_profile.shape_calls += 1
@@ -354,17 +354,61 @@ gui_font_shape_text :: proc(font_kind: Gui_Font_Kind, bytes: []u8, scale: f32, o
         return 0
     }
     count := int(
-        vo_textshape_shape(
+        vo_textshape_shape_ex(
             i32(effective_font_kind),
             raw_data(bytes),
             i32(len(bytes)),
             scale,
+            i32(direction),
             raw_data(out),
             i32(len(out)),
         ),
     )
     gui_profile.shape_glyphs += u64(max(count, 0))
     return count
+}
+
+gui_font_rasterize_glyph :: proc(
+    face_id: u16,
+    glyph_id: u32,
+    pixel_height: int,
+    alpha: []u8,
+    out: ^Gui_Raster_Glyph,
+) -> int {
+    return int(vo_textshape_rasterize_glyph(
+        i32(face_id),
+        glyph_id,
+        i32(pixel_height),
+        len(alpha) > 0 ? raw_data(alpha) : nil,
+        i32(len(alpha)),
+        out,
+    ))
+}
+
+gui_text_next_grapheme :: proc(bytes: []u8) -> int {
+    if len(bytes) == 0 do return 0
+    return clamp(int(vo_textshape_next_grapheme(raw_data(bytes), i32(len(bytes)))), 1, len(bytes))
+}
+
+gui_text_previous_grapheme :: proc(bytes: []u8, offset: int) -> int {
+    target := clamp(offset, 0, len(bytes))
+    cursor := 0
+    previous := 0
+    for cursor < target {
+        previous = cursor
+        cursor += gui_text_next_grapheme(bytes[cursor:target])
+    }
+    return previous
+}
+
+gui_text_next_word :: proc(bytes: []u8) -> int {
+    if len(bytes) == 0 do return 0
+    return clamp(int(vo_textshape_next_word(raw_data(bytes), i32(len(bytes)))), 1, len(bytes))
+}
+
+gui_text_next_line_break :: proc(bytes: []u8) -> int {
+    if len(bytes) == 0 do return 0
+    return clamp(int(vo_textshape_next_line_break(raw_data(bytes), i32(len(bytes)))), 1, len(bytes))
 }
 
 gui_font_glyph_advance :: proc(font_kind: Gui_Font_Kind, ch: u8, scale, fallback: f32) -> f32 {

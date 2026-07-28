@@ -40,6 +40,32 @@ road_bake_outputs_indexed_road_shoulders_and_caps :: proc(t: ^testing.T) {
 }
 
 @(test)
+road_bake_chunks_group_edge_spans_and_keep_junctions_separate :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    start := roads.add_node(&graph, {0, 0, 0}, 2)
+    end := roads.add_node(&graph, {40, 0, 0}, 2)
+    roads.add_straight_edge(&graph, start, end, 6, 1.5)
+    settings := roads.default_bake_settings()
+    settings.target_segment_length = 4
+    settings.target_chunk_length = 12
+    settings.min_spans_per_chunk = 1
+    settings.max_spans_per_chunk = 3
+    mesh := roads.bake(&graph, settings)
+    defer roads.mesh_destroy(&mesh)
+
+    // Ten edge spans become 3+3+3+1, followed by one end-cap chunk per node.
+    testing.expect_value(t, len(mesh.chunks), 6)
+    next_index := 0
+    for chunk in mesh.chunks {
+        testing.expect_value(t, chunk.first_index, next_index)
+        testing.expect(t, chunk.index_count > 0)
+        testing.expect_value(t, chunk.index_count % 3, 0)
+        next_index += chunk.index_count
+    }
+    testing.expect_value(t, next_index, len(mesh.indices))
+}
+
+@(test)
 road_bake_feathers_an_outer_verge_beyond_each_shoulder :: proc(t: ^testing.T) {
     graph: roads.Graph
     start := roads.add_node(&graph, {0, 0, 0}, 2)

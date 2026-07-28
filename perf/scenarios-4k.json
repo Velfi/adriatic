@@ -19,6 +19,10 @@
       "enabled": true,
       "description": "Default terrain editor overview rendered directly at native 4K."
     },
+    "marta": {
+      "enabled": false,
+      "description": "Normal gameplay conversation with Marta rendered directly at native 4K."
+    },
     "foliage_understory": {
       "enabled": true,
       "description": "Geometry-heavy forest floor rendered directly at native 4K."

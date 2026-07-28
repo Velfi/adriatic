@@ -30,10 +30,15 @@ Dynamic_Shadow_Uniform :: struct {
     origin:   [4]f32,
 }
 
+Dynamic_Shadow_Push :: struct {
+    cascade: u32,
+}
+
 #assert(size_of(Dynamic_Shadow_Cascade_Uniform) == 64)
 #assert(offset_of(Dynamic_Shadow_Uniform, settings) == 192)
 #assert(offset_of(Dynamic_Shadow_Uniform, origin) == 208)
 #assert(size_of(Dynamic_Shadow_Uniform) == 224)
+#assert(size_of(Dynamic_Shadow_Push) == 4)
 
 Dynamic_Shadow_State :: struct {
     images:            [engine.MAX_FRAMES_IN_FLIGHT][DYNAMIC_SHADOW_CASCADE_COUNT]resources.Image,
@@ -299,8 +304,14 @@ dynamic_shadow_create :: proc(state: ^Dynamic_Shadow_State, ctx: ^engine.Vk_Cont
         }
         vk.UpdateDescriptorSets(ctx.device, 5, raw_data(writes[:]), 0, nil)
     }
+    push_range := vk.PushConstantRange {
+        stageFlags = {.VERTEX},
+        size       = u32(size_of(Dynamic_Shadow_Push)),
+    }
     pipeline_layout_info := vk.PipelineLayoutCreateInfo {
-        sType = .PIPELINE_LAYOUT_CREATE_INFO,
+        sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
+        pushConstantRangeCount = 1,
+        pPushConstantRanges    = &push_range,
     }
     empty_layout_info := vk.DescriptorSetLayoutCreateInfo {
         sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -558,7 +569,16 @@ dynamic_shadow_render :: proc(pass: ^rl.World_Pass_Context, frame_index: int) {
         }
         vk.CmdSetViewport(cmd, 0, 1, &viewport)
         vk.CmdSetScissor(cmd, 0, 1, &scissor)
-        vk.CmdDraw(cmd, u32(len(world_renderer.shadow_vertices)), 1, 0, u32(cascade))
+        push := Dynamic_Shadow_Push{cascade = u32(cascade)}
+        vk.CmdPushConstants(
+            cmd,
+            state.pipeline_layout,
+            {.VERTEX},
+            0,
+            u32(size_of(Dynamic_Shadow_Push)),
+            &push,
+        )
+        vk.CmdDraw(cmd, u32(len(world_renderer.shadow_vertices)), 1, 0, 0)
         vk.CmdEndRendering(cmd)
         engine.vk_cmd_image_barrier2(
             pass.ctx,

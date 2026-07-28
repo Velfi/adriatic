@@ -2,6 +2,7 @@ package canvas2d
 
 import "core:image"
 import _ "core:image/png"
+import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:os"
@@ -265,13 +266,22 @@ font_glyph_slot :: #force_inline proc(ch: rune) -> int {
 }
 @(no_instrumentation)
 MeasureTextEx :: #force_inline proc(font: Font, text: cstring, size, spacing: f32) -> Vector2 {
+    return MeasureTextExDirection(font, text, size, spacing, .Auto)
+}
+MeasureTextExDirection :: proc(
+    font: Font,
+    text: cstring,
+    size, spacing: f32,
+    direction: Text_Direction,
+) -> Vector2 {
     value := string(text)
     if len(value) == 0 do return {0, max(size, f32(32))}
     shaped := make([]ui.Gui_Shaped_Glyph, len(value), context.temp_allocator)
-    count := ui.gui_font_shape_text(
+    count := ui.gui_font_shape_text_direction(
         font_kind(font),
         transmute([]u8)value,
         font_shape_scale(size),
+        ui.Text_Direction(direction),
         shaped,
     )
     if count > 0 {
@@ -288,15 +298,26 @@ MeasureTextEx :: #force_inline proc(font: Font, text: cstring, size, spacing: f3
     return {width + f32(max(rune_count - 1, 0)) * spacing, max(size, f32(32))}
 }
 DrawTextEx :: proc(font: Font, text: cstring, position: Vector2, size, spacing: f32, color: Color) {
+    DrawTextExDirection(font, text, position, size, spacing, color, .Auto)
+}
+DrawTextExDirection :: proc(
+    font: Font,
+    text: cstring,
+    position: Vector2,
+    size, spacing: f32,
+    color: Color,
+    direction: Text_Direction,
+) {
     value := string(text)
     if len(value) == 0 do return
     scale := size / f32(FONT_LOGICAL_CELL_H)
     cursor := position.x
     shaped := make([]ui.Gui_Shaped_Glyph, len(value), context.temp_allocator)
-    count := ui.gui_font_shape_text(
+    count := ui.gui_font_shape_text_direction(
         font_kind(font),
         transmute([]u8)value,
         font_shape_scale(size),
+        ui.Text_Direction(direction),
         shaped,
     )
     if count <= 0 {
@@ -328,31 +349,190 @@ DrawTextEx :: proc(font: Font, text: cstring, position: Vector2, size, spacing: 
         return
     }
     for shaped_glyph in shaped[:count] {
-        glyph := font_glyph_slot(rune(shaped_glyph.glyph_id))
-        col := glyph % FONT_COLUMNS
-        row := glyph / FONT_COLUMNS + (font.display ? FONT_ROWS : 0)
+        tier := glyph_tier_for_size(size)
+        entry, cached := glyph_cache_load({
+            face_id = shaped_glyph.face_id,
+            tier = u16(tier),
+            glyph_id = shaped_glyph.glyph_id,
+        })
+        // Glyph zero is the selected face's deterministic monochrome
+        // replacement outline when rasterization or allocation fails.
+        if !cached && shaped_glyph.glyph_id != 0 {
+            entry, cached = glyph_cache_load({
+                face_id = shaped_glyph.face_id,
+                tier = u16(tier),
+                glyph_id = 0,
+            })
+        }
+        if !cached {
+            cursor += shaped_glyph.x_advance + spacing
+            continue
+        }
+        page := state.glyph_pages[int(entry.page)]
         uv0 := Vector2 {
-            f32(col * state.font_cell_width) / f32(state.texture_width),
-            f32(row * state.font_cell_height) / f32(state.texture_height),
+            f32(entry.x) / GLYPH_ATLAS_PAGE_SIZE,
+            f32(entry.y) / GLYPH_ATLAS_PAGE_SIZE,
         }
         uv1 := Vector2 {
-            f32((col + 1) * state.font_cell_width) / f32(state.texture_width),
-            f32((row + 1) * state.font_cell_height) / f32(state.texture_height),
+            f32(entry.x + entry.width) / GLYPH_ATLAS_PAGE_SIZE,
+            f32(entry.y + entry.height) / GLYPH_ATLAS_PAGE_SIZE,
         }
-        r := Rectangle{
-            cursor + shaped_glyph.x_offset - f32(state.font_origin_x) * scale,
-            position.y - shaped_glyph.y_offset,
-            f32(state.font_cell_width) * scale,
-            f32(state.font_cell_height) * scale,
+        glyph_scale := size / f32(tier)
+        baseline := position.y + size * .82
+        r := Rectangle {
+            cursor + shaped_glyph.x_offset + f32(entry.left) * glyph_scale,
+            baseline - shaped_glyph.y_offset - f32(entry.top) * glyph_scale,
+            f32(entry.width) * glyph_scale,
+            f32(entry.height) * glyph_scale,
         }
-        a := transform({r.x, r.y})
-        b := transform({r.x + r.width, r.y})
-        c := transform({r.x + r.width, r.y + r.height})
-        d := transform({r.x, r.y + r.height})
-        quad(a, b, c, d, color, uv0, uv1, 0)
+        if entry.width > 0 && entry.height > 0 {
+            a := transform({r.x, r.y})
+            b := transform({r.x + r.width, r.y})
+            c := transform({r.x + r.width, r.y + r.height})
+            d := transform({r.x, r.y + r.height})
+            quad(a, b, c, d, color, uv0, uv1, page.id)
+        }
         cursor += shaped_glyph.x_advance + spacing
     }
 }
+
+text_wrapped_lines :: proc(
+    font: Font,
+    value: string,
+    size, spacing, max_width: f32,
+    direction: Text_Direction,
+    lines: ^[dynamic]Text_Wrapped_Line,
+) {
+    paragraph_start := 0
+    for paragraph_start <= len(value) {
+        paragraph_end := paragraph_start
+        for paragraph_end < len(value) && value[paragraph_end] != '\n' do paragraph_end += 1
+        if paragraph_start == paragraph_end {
+            append(lines, Text_Wrapped_Line{paragraph_start, paragraph_end})
+        } else {
+            line_start := paragraph_start
+            for line_start < paragraph_end {
+                cursor := line_start
+                best := line_start
+                for cursor < paragraph_end {
+                    step := ui.gui_text_next_line_break(transmute([]u8)value[cursor:paragraph_end])
+                    candidate := min(cursor + step, paragraph_end)
+                    measured := MeasureTextExDirection(
+                        font,
+                        fmt.ctprintf("%s", value[line_start:candidate]),
+                        size,
+                        spacing,
+                        direction,
+                    )
+                    if measured.x > max_width && best > line_start do break
+                    if measured.x > max_width {
+                        forced := line_start
+                        for forced < candidate {
+                            glyph_step := ui.gui_text_next_grapheme(transmute([]u8)value[forced:candidate])
+                            next := forced + glyph_step
+                            forced_size := MeasureTextExDirection(
+                                font,
+                                fmt.ctprintf("%s", value[line_start:next]),
+                                size,
+                                spacing,
+                                direction,
+                            )
+                            if forced_size.x > max_width && forced > line_start do break
+                            forced = next
+                        }
+                        best = max(
+                            forced,
+                            line_start + ui.gui_text_next_grapheme(
+                                transmute([]u8)value[line_start:paragraph_end],
+                            ),
+                        )
+                        break
+                    }
+                    best = candidate
+                    cursor = candidate
+                }
+                if best <= line_start do best = paragraph_end
+                end := best
+                for end > line_start && value[end - 1] == ' ' do end -= 1
+                append(lines, Text_Wrapped_Line{line_start, end})
+                line_start = best
+                for line_start < paragraph_end && value[line_start] == ' ' do line_start += 1
+            }
+        }
+        if paragraph_end >= len(value) do break
+        paragraph_start = paragraph_end + 1
+    }
+}
+
+LayoutTextWrappedEx :: proc(
+    font: Font,
+    text: cstring,
+    size, spacing, max_width: f32,
+    direction: Text_Direction,
+    lines: ^[dynamic]Text_Wrapped_Line,
+) {
+    if lines == nil do return
+    clear(lines)
+    value := string(text)
+    if len(value) == 0 do return
+    text_wrapped_lines(font, value, size, spacing, max_width, direction, lines)
+}
+
+MeasureTextWrappedEx :: proc(
+    font: Font,
+    text: cstring,
+    size, spacing, max_width, line_height: f32,
+    direction: Text_Direction = .Auto,
+) -> Text_Wrap_Result {
+    value := string(text)
+    if len(value) == 0 do return {}
+    lines := make([dynamic]Text_Wrapped_Line, 0, 8, context.temp_allocator)
+    text_wrapped_lines(font, value, size, spacing, max_width, direction, &lines)
+    width: f32
+    for line in lines {
+        measured := MeasureTextExDirection(
+            font,
+            fmt.ctprintf("%s", value[line.start:line.end]),
+            size,
+            spacing,
+            direction,
+        )
+        width = max(width, measured.x)
+    }
+    return {{min(width, max_width), f32(len(lines)) * line_height}, len(lines)}
+}
+
+DrawTextWrappedEx :: proc(
+    font: Font,
+    text: cstring,
+    bounds: Rectangle,
+    size, spacing, line_height: f32,
+    color: Color,
+    direction: Text_Direction = .Auto,
+) -> Text_Wrap_Result {
+    value := string(text)
+    if len(value) == 0 do return {}
+    lines := make([dynamic]Text_Wrapped_Line, 0, 8, context.temp_allocator)
+    text_wrapped_lines(font, value, size, spacing, bounds.width, direction, &lines)
+    visible := min(len(lines), max(int(bounds.height / line_height), 0))
+    width: f32
+    for line, index in lines[:visible] {
+        line_text := fmt.ctprintf("%s", value[line.start:line.end])
+        measured := MeasureTextExDirection(font, line_text, size, spacing, direction)
+        width = max(width, measured.x)
+        DrawTextExDirection(
+            font,
+            line_text,
+            {bounds.x, bounds.y + f32(index) * line_height},
+            size,
+            spacing,
+            color,
+            direction,
+        )
+    }
+    return {{min(width, bounds.width), f32(visible) * line_height}, visible}
+}
+
 DrawIcon :: proc(index: int, destination: Rectangle, color := Color{255, 255, 255, 255}) {
     if index < 0 || index >= ICON_COLUMNS * ICON_ROWS || state.icon_width <= 0 do return
     col, row := index % ICON_COLUMNS, index / ICON_COLUMNS
@@ -441,6 +621,7 @@ CreateDynamicTextureRGBA :: proc(width, height: int, pixels: []u8) -> Texture {
     byte_count := width * height * 4
     state.dynamic_pixels[id] = make([dynamic]u8, byte_count)
     copy(state.dynamic_pixels[id][:], pixels[:byte_count])
+    state.dynamic_bytes_per_pixel[id] = 4
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT { if !engine.vk_create_host_buffer(&state.ctx, vk.DeviceSize(byte_count), {.TRANSFER_SRC}, &state.dynamic_staging[id][frame]) do return {} }
     state.texture_count += 1
     return {id = id, width = width, height = height, ready = true}
@@ -450,7 +631,87 @@ UpdateDynamicTextureRGBA :: proc(texture: Texture, pixels: []u8) -> bool {
     if !state.initialized || !texture.ready || texture.id <= 0 || texture.id >= state.texture_count || len(pixels) < texture.width * texture.height * 4 do return false
     byte_count := texture.width * texture.height * 4
     if len(state.dynamic_pixels[texture.id]) != byte_count do return false
-    copy(state.dynamic_pixels[texture.id][:], pixels[:byte_count]); state.dynamic_pending[texture.id] = true
+    copy(state.dynamic_pixels[texture.id][:], pixels[:byte_count])
+    state.dynamic_dirty[texture.id] = {0, 0, f32(texture.width), f32(texture.height)}
+    state.dynamic_pending[texture.id] = true
+    return true
+}
+
+create_dynamic_texture_r8 :: proc(width, height: int, pixels: []u8) -> Texture {
+    if state == nil || state.texture_count >= MAX_TEXTURES ||
+       width <= 0 || height <= 0 || len(pixels) < width * height {
+        return {}
+    }
+    id := state.texture_count
+    if !resources.texture_upload_r8(
+        &state.ctx,
+        pixels,
+        width,
+        height,
+        &state.textures[id],
+    ) {
+        return {}
+    }
+    texture := &state.textures[id]
+    ii := vk.DescriptorImageInfo{imageView = texture.view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    si := vk.DescriptorImageInfo{sampler = texture.sampler}
+    writes := [2]vk.WriteDescriptorSet {
+        {
+            sType = .WRITE_DESCRIPTOR_SET, dstSet = state.descriptors[id], dstBinding = 0,
+            descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &ii,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET, dstSet = state.descriptors[id], dstBinding = 1,
+            descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &si,
+        },
+    }
+    vk.UpdateDescriptorSets(state.ctx.device, 2, raw_data(writes[:]), 0, nil)
+    byte_count := width * height
+    state.dynamic_pixels[id] = make([dynamic]u8, byte_count)
+    copy(state.dynamic_pixels[id][:], pixels[:byte_count])
+    state.dynamic_bytes_per_pixel[id] = 1
+    for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+        if !engine.vk_create_host_buffer(
+            &state.ctx,
+            vk.DeviceSize(byte_count),
+            {.TRANSFER_SRC},
+            &state.dynamic_staging[id][frame],
+        ) {
+            return {}
+        }
+    }
+    state.texture_count += 1
+    return {id = id, width = width, height = height, ready = true}
+}
+
+update_dynamic_texture_r8_region :: proc(texture: Texture, pixels: []u8, region: Rectangle) -> bool {
+    if !state.initialized || !texture.ready || texture.id <= 0 ||
+       texture.id >= state.texture_count || state.dynamic_bytes_per_pixel[texture.id] != 1 {
+        return false
+    }
+    x := clamp(int(region.x), 0, texture.width)
+    y := clamp(int(region.y), 0, texture.height)
+    right := clamp(int(region.x + region.width), x, texture.width)
+    bottom := clamp(int(region.y + region.height), y, texture.height)
+    width, height := right - x, bottom - y
+    if width <= 0 || height <= 0 || len(pixels) < width * height do return false
+    for row in 0 ..< height {
+        destination := (y + row) * texture.width + x
+        source := row * width
+        copy(state.dynamic_pixels[texture.id][destination:destination + width], pixels[source:source + width])
+    }
+    dirty := &state.dynamic_dirty[texture.id]
+    if !state.dynamic_pending[texture.id] {
+        dirty^ = {f32(x), f32(y), f32(width), f32(height)}
+    } else {
+        dirty_right := max(dirty.x + dirty.width, f32(right))
+        dirty_bottom := max(dirty.y + dirty.height, f32(bottom))
+        dirty.x = min(dirty.x, f32(x))
+        dirty.y = min(dirty.y, f32(y))
+        dirty.width = dirty_right - dirty.x
+        dirty.height = dirty_bottom - dirty.y
+    }
+    state.dynamic_pending[texture.id] = true
     return true
 }
 

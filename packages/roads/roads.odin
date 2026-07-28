@@ -78,6 +78,12 @@ Vertex :: struct {
 Mesh :: struct {
     vertices: [dynamic]Vertex,
     indices:  [dynamic]u32,
+    chunks:   [dynamic]Mesh_Chunk,
+}
+
+Mesh_Chunk :: struct {
+    first_index: int,
+    index_count: int,
 }
 
 Edge_Boundaries :: [2][EDGE_LANE_COUNT]u32
@@ -85,6 +91,9 @@ Edge_Boundaries :: [2][EDGE_LANE_COUNT]u32
 Bake_Settings :: struct {
     target_segment_length: f32,
     max_segments_per_edge: int,
+    target_chunk_length:   f32,
+    min_spans_per_chunk:   int,
+    max_spans_per_chunk:   int,
     surface_lift:          f32,
     shoulder_drop:         f32,
 }
@@ -92,6 +101,9 @@ Bake_Settings :: struct {
 DEFAULT_BAKE_SETTINGS :: Bake_Settings {
     target_segment_length = 4,
     max_segments_per_edge = 96,
+    target_chunk_length   = 40,
+    min_spans_per_chunk   = 4,
+    max_spans_per_chunk   = 12,
     surface_lift          = .16,
     shoulder_drop         = .08,
 }
@@ -299,8 +311,7 @@ pavement_query_build :: proc(graph: ^Graph, query: ^Pavement_Query) {
     query.edge_count = graph.edge_count
     for edge, edge_index in graph.edges[:graph.edge_count] {
         for segment in 0 ..= PAVEMENT_QUERY_SEGMENTS {
-            query.points[edge_index][segment] =
-                edge_point(graph, edge, f32(segment) / PAVEMENT_QUERY_SEGMENTS)
+            query.points[edge_index][segment] = edge_point(graph, edge, f32(segment) / PAVEMENT_QUERY_SEGMENTS)
         }
     }
 }
@@ -384,6 +395,7 @@ mesh_destroy :: proc(mesh: ^Mesh) {
     if mesh == nil do return
     if mesh.vertices != nil do delete(mesh.vertices)
     if mesh.indices != nil do delete(mesh.indices)
+    if mesh.chunks != nil do delete(mesh.chunks)
     mesh^ = {}
 }
 
@@ -440,6 +452,9 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
     previous: [EDGE_LANE_COUNT]u32
     distance_along: f32
     previous_center: Vec3
+    chunk_first_index := len(mesh.indices)
+    chunk_span_count := 0
+    chunk_length: f32
     for sample in 0 ..= segment_count {
         fraction := f32(sample) / f32(segment_count)
         t := start_t + (end_t - start_t) * fraction
@@ -476,17 +491,39 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
             } else if lane == 1 || lane == 4 {
                 surface = .Shoulder
             }
-            current[lane] = mesh_vertex(mesh, {
-                position = positions[lane],
-                normal   = normal,
-                uv       = {lane_uv[lane], distance_along},
-                surface  = surface,
-                pavement = edge.pavement,
-            })
+            current[lane] = mesh_vertex(
+                mesh,
+                {
+                    position = positions[lane],
+                    normal = normal,
+                    uv = {lane_uv[lane], distance_along},
+                    surface = surface,
+                    pavement = edge.pavement,
+                },
+            )
         }
         if sample > 0 {
+            chunk_length += linalg.length(center - previous_center)
             for strip in 0 ..< EDGE_LANE_COUNT - 1 {
                 mesh_quad(mesh, previous[strip], previous[strip + 1], current[strip + 1], current[strip])
+            }
+            chunk_span_count += 1
+            minimum_spans := max(settings.min_spans_per_chunk, 1)
+            maximum_spans := max(settings.max_spans_per_chunk, minimum_spans)
+            reached_target :=
+                chunk_span_count >= minimum_spans &&
+                chunk_length >= max(settings.target_chunk_length, settings.target_segment_length)
+            if reached_target || chunk_span_count >= maximum_spans || sample == segment_count {
+                append(
+                    &mesh.chunks,
+                    Mesh_Chunk {
+                        first_index = chunk_first_index,
+                        index_count = len(mesh.indices) - chunk_first_index,
+                    },
+                )
+                chunk_first_index = len(mesh.indices)
+                chunk_span_count = 0
+                chunk_length = 0
             }
         }
         if sample == 0 {
@@ -590,27 +627,36 @@ bake_end_cap :: proc(
             road_radius := left_road_radius + (right_road_radius - left_road_radius) * fraction
             shoulder_radius := left_shoulder_radius + (right_shoulder_radius - left_shoulder_radius) * fraction
             verge_radius := left_verge_radius + (right_verge_radius - left_verge_radius) * fraction
-            road_arc[sample] = mesh_vertex(mesh, {
-                position = center_position + direction * road_radius,
-                normal   = normal,
-                uv       = {.335 + fraction * .33, 0},
-                surface  = .Road,
-                pavement = edge.pavement,
-            })
-            shoulder_arc[sample] = mesh_vertex(mesh, {
-                position = center_position + direction * shoulder_radius,
-                normal   = normal,
-                uv       = {.20 + fraction * .60, 0},
-                surface  = .Shoulder,
-                pavement = edge.pavement,
-            })
-            verge_arc[sample] = mesh_vertex(mesh, {
-                position = center_position + direction * verge_radius,
-                normal   = normal,
-                uv       = {fraction, 0},
-                surface  = .Verge,
-                pavement = edge.pavement,
-            })
+            road_arc[sample] = mesh_vertex(
+                mesh,
+                {
+                    position = center_position + direction * road_radius,
+                    normal = normal,
+                    uv = {.335 + fraction * .33, 0},
+                    surface = .Road,
+                    pavement = edge.pavement,
+                },
+            )
+            shoulder_arc[sample] = mesh_vertex(
+                mesh,
+                {
+                    position = center_position + direction * shoulder_radius,
+                    normal = normal,
+                    uv = {.20 + fraction * .60, 0},
+                    surface = .Shoulder,
+                    pavement = edge.pavement,
+                },
+            )
+            verge_arc[sample] = mesh_vertex(
+                mesh,
+                {
+                    position = center_position + direction * verge_radius,
+                    normal = normal,
+                    uv = {fraction, 0},
+                    surface = .Verge,
+                    pavement = edge.pavement,
+                },
+            )
         }
     }
 
@@ -690,12 +736,23 @@ bake :: proc(graph: ^Graph, settings: Bake_Settings = DEFAULT_BAKE_SETTINGS) -> 
     if graph == nil do return mesh
     mesh.vertices = make([dynamic]Vertex)
     mesh.indices = make([dynamic]u32)
+    mesh.chunks = make([dynamic]Mesh_Chunk)
     edge_boundaries: [MAX_EDGES]Edge_Boundaries
     for edge, edge_index in graph.edges[:graph.edge_count] {
         edge_boundaries[edge_index] = bake_edge(&mesh, graph, edge, settings)
     }
     for node_index in 0 ..< graph.node_count {
+        first_index := len(mesh.indices)
         bake_junction(&mesh, graph, &edge_boundaries, node_index, settings)
+        if len(mesh.indices) > first_index {
+            append(
+                &mesh.chunks,
+                Mesh_Chunk {
+                    first_index = first_index,
+                    index_count = len(mesh.indices) - first_index,
+                },
+            )
+        }
     }
     return mesh
 }

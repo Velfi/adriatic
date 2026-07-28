@@ -62,7 +62,9 @@ bound_vertical_excursion_exceeds_walk :: proc(t: ^testing.T) {
 
 @(test)
 gait_tail_sway_stays_attached_at_the_root :: proc(t: ^testing.T) {
-    gait := mouse_gait.Weights{walk = 1}
+    gait := mouse_gait.Weights {
+        walk = 1,
+    }
     testing.expect_value(t, mouse_gait.tail_counter_sway(1.2, 0, gait), f32(0))
     testing.expect(t, math.abs(mouse_gait.tail_counter_sway(1.2, 1, gait)) <= .035)
 }
@@ -138,7 +140,7 @@ mouse_gait_weights_remain_normalized_through_transitions :: proc(t: ^testing.T) 
 mouse_forelimb_enters_swing_before_hindlimb_during_walk :: proc(t: ^testing.T) {
     // At 70% of a cycle the shorter-duty forelimb has lifted while the
     // hindlimb remains in stance, preserving three-foot support.
-	phase := f32(math.PI * 2 * .70)
+    phase := f32(math.PI * 2 * .70)
     fore := mouse_gait.cycle(phase, 0, .68)
     hind := mouse_gait.cycle(phase, 0, .76)
     testing.expect(t, fore.lift > 0)
@@ -147,10 +149,12 @@ mouse_forelimb_enters_swing_before_hindlimb_during_walk :: proc(t: ^testing.T) {
 
 @(test)
 mouse_walk_uses_a_single_limb_swing_sequence :: proc(t: ^testing.T) {
-    gait := mouse_gait.Weights{walk = 1}
+    gait := mouse_gait.Weights {
+        walk = 1,
+    }
     // Midway through the right-hind recovery interval, the other three feet
     // remain in stance for the common LF-RH-RF-LH mouse walk sequence.
-	phase := f32(math.PI * 2 * .10)
+    phase := f32(math.PI * 2 * .10)
     left_fore := mouse_gait.blend(phase, 0, 0, 0, gait, .68, .56, .34)
     right_fore := mouse_gait.blend(phase, .50, .50, 0, gait, .68, .56, .34)
     left_hind := mouse_gait.blend(phase, .25, .50, 0, gait, .76, .60, .36)

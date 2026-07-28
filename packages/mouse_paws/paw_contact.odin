@@ -38,19 +38,19 @@ Config :: struct {
     // Replant before an analytic chain reaches full extension. The remaining
     // margin keeps the knee/elbow pole stable instead of letting the limb
     // flatten into a straight line for several frames.
-    reach_fraction: f32,
+    reach_fraction:                   f32,
     // A planted contact is no longer anatomically compatible after its
     // socket-to-paw direction rotates this far from the authored target.
     maximum_direction_change_radians: f32,
     // Desired contacts farther than this many limb lengths from their anchor
     // are teleports, not strides.
-    teleport_reach_scale: f32,
+    teleport_reach_scale:             f32,
 }
 
 DEFAULT_CONFIG :: Config {
-    reach_fraction                    = .82,
+    reach_fraction                   = .82,
     maximum_direction_change_radians = math.PI * .30,
-    teleport_reach_scale              = 3,
+    teleport_reach_scale             = 3,
 }
 
 default_config :: proc() -> Config { return DEFAULT_CONFIG }

@@ -55,6 +55,9 @@ VertexOutput vertex_main(VertexInput input) {
 [shader("fragment")]
 float4 fragment_main(VertexOutput input) : SV_Target {
     float4 texel = ui_texture.Sample(ui_sampler, input.uv);
+    if (push.texture_hatch.x > 1.5) {
+        return float4(input.color.rgb, input.color.a * texel.r);
+    }
     return push.texture_hatch.x > .5 ? input.color * texel : input.color;
 }
 

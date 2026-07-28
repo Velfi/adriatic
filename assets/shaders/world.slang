@@ -30,6 +30,10 @@ struct DynamicShadow {
     float4 settings;
     float4 origin;
 };
+struct DynamicShadowPush {
+    uint cascade;
+};
+[[vk::push_constant]] ConstantBuffer<DynamicShadowPush> dynamic_shadow_push;
 [[vk::binding(0, 1)]] ConstantBuffer<DynamicShadow> dynamic_shadow;
 [[vk::binding(1, 1)]] Texture2D<float> dynamic_shadow_map_0;
 [[vk::binding(2, 1)]] Texture2D<float> dynamic_shadow_map_1;
@@ -150,8 +154,8 @@ VertexOutput shadow_vertex(VertexInput input) {
 }
 
 [shader("vertex")]
-float4 dynamic_shadow_vertex(VertexInput input, uint cascade : SV_InstanceID) : SV_Position {
-    DynamicShadowCascade shadow = dynamic_shadow.cascades[min(cascade, 2)];
+float4 dynamic_shadow_vertex(VertexInput input) : SV_Position {
+    DynamicShadowCascade shadow = dynamic_shadow.cascades[min(dynamic_shadow_push.cascade, 2)];
     float x = (dot(input.position, shadow.right.xyz) - shadow.right.w) /
               shadow.params.x;
     float y = (dot(input.position, shadow.up.xyz) - shadow.up.w) /

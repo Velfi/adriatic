@@ -203,6 +203,7 @@ world_shadow_lab_playground :: proc(editor: ^Editor) {
     }
     world_box_between({13, 6.2, -3.2}, {15, 6.2, -3.2}, forward, .34, .34, timber_light)
     world_box_between({13, 6.2, 3.2}, {15, 6.2, 3.2}, forward, .34, .34, timber_light)
+    world_box_between({14, 6.2, -3.2}, {14, 6.2, 3.2}, {1, 0, 0}, .38, .38, timber_light)
     swing_seat_z := [2]f32{-1.5, 1.5}
     for z in swing_seat_z {
         world_box_between({13.6, 6.0, z}, {13.6, 1.25, z}, forward, .09, .09, metal)

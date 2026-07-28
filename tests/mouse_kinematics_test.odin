@@ -48,8 +48,8 @@ two_bone_solution_preserves_segment_lengths :: proc(t: ^testing.T) {
     joint := mouse_kinematics.solve_two_bone(root, target, {0, 0, 1}, .255, .245)
     root_delta := joint - root
     tip_delta := target - joint
-    root_length := math.sqrt(root_delta.x*root_delta.x + root_delta.y*root_delta.y + root_delta.z*root_delta.z)
-    tip_length := math.sqrt(tip_delta.x*tip_delta.x + tip_delta.y*tip_delta.y + tip_delta.z*tip_delta.z)
+    root_length := math.sqrt(root_delta.x * root_delta.x + root_delta.y * root_delta.y + root_delta.z * root_delta.z)
+    tip_length := math.sqrt(tip_delta.x * tip_delta.x + tip_delta.y * tip_delta.y + tip_delta.z * tip_delta.z)
     testing.expect(t, math.abs(root_length - .255) < .0001)
     testing.expect(t, math.abs(tip_length - .245) < .0001)
 }

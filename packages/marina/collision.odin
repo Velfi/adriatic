@@ -45,10 +45,7 @@ resolve_office_circle :: proc(plan: ^Plan, position: Vec2, radius: f32) -> (Vec2
     } else {
         local_z = local_z < 0 ? -half_z : half_z
     }
-    return {
-        center.x + local_x * cosine + local_z * sine,
-        center.z - local_x * sine + local_z * cosine,
-    }, true
+    return {center.x + local_x * cosine + local_z * sine, center.z - local_x * sine + local_z * cosine}, true
 }
 
 // resolve_circle derives collision directly from the generated plan. Occupied

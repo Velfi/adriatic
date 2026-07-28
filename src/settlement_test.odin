@@ -19,19 +19,17 @@ settlement_aegean_architecture_uses_flat_ordinary_roofs :: proc(t: ^testing.T) {
         aegean := terrain.structure_make(0, 0, 8, 10, 0, 6)
         aegean.kind = .Architecture
         aegean.seed = u32(seed)
-        aegean.building = architecture.architecture_identity({
-                region           = .Aegean,
-                purpose          = .Dwelling,
-                purpose_explicit = true,
-            }, aegean.seed)
+        aegean.building = architecture.architecture_identity(
+            {region = .Aegean, purpose = .Dwelling, purpose_explicit = true},
+            aegean.seed,
+        )
         testing.expect_value(t, world_architecture_roof_style(aegean), architecture.Roof_Style.Parapet)
 
         adriatic := aegean
-        adriatic.building = architecture.architecture_identity({
-                region           = .Adriatic,
-                purpose          = .Dwelling,
-                purpose_explicit = true,
-            }, adriatic.seed)
+        adriatic.building = architecture.architecture_identity(
+            {region = .Adriatic, purpose = .Dwelling, purpose_explicit = true},
+            adriatic.seed,
+        )
         testing.expect_value(
             t,
             world_architecture_roof_style(adriatic),
@@ -621,13 +619,7 @@ settlement_import_classifies_wide_pedestrian_access_as_lane :: proc(t: ^testing.
     plan: Settlement_Plan
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(&city.alleys, architecture.City_Alley {
-        start_x    = 0,
-        start_z    = 0,
-        end_x      = 12,
-        end_z      = 0,
-        half_width = 1,
-    })
+    append(&city.alleys, architecture.City_Alley{start_x = 0, start_z = 0, end_x = 12, end_z = 0, half_width = 1})
     city.alley_count = 1
     settlement_plan_import_city(&plan, &city, project)
     testing.expect_value(t, plan.route_count, 1)

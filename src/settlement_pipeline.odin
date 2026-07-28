@@ -675,13 +675,16 @@ settlement_plan_generate_pedestrian_access :: proc(
         }
         if duplicate || !settlement_pedestrian_segment_clear(city_plan, start, end) do continue
         width := settlement_route_width_sample(rng, .Alley)
-        append(&city_plan.alleys, architecture.City_Alley {
-            start_x    = start[0],
-            start_z    = start[1],
-            end_x      = end[0],
-            end_z      = end[1],
-            half_width = width * .5,
-        })
+        append(
+            &city_plan.alleys,
+            architecture.City_Alley {
+                start_x = start[0],
+                start_z = start[1],
+                end_x = end[0],
+                end_z = end[1],
+                half_width = width * .5,
+            },
+        )
         city_plan.alley_count += 1
     }
 }
@@ -728,11 +731,10 @@ settlement_plan_generate_lamps :: proc(plan: ^Settlement_Plan, city_plan: ^archi
                 offset := route.width * .5 + route.shoulder + .65
                 point := a + delta * along + normal * (offset * side)
                 if !settlement_lamp_position_clear(city_plan, point.x, point.y) do continue
-                append(&city_plan.lamps, architecture.City_Lamp {
-                    x   = point.x,
-                    z   = point.y,
-                    yaw = math.atan2(tangent.x, tangent.y),
-                })
+                append(
+                    &city_plan.lamps,
+                    architecture.City_Lamp{x = point.x, z = point.y, yaw = math.atan2(tangent.x, tangent.y)},
+                )
                 city_plan.lamp_count += 1
             }
         }
@@ -847,13 +849,16 @@ settlement_village_add_path :: proc(city_plan: ^architecture.City_Plan, start, e
        !settlement_pedestrian_segment_clear(city_plan, start, end) {
         return
     }
-    append(&city_plan.alleys, architecture.City_Alley {
-        start_x    = start[0],
-        start_z    = start[1],
-        end_x      = end[0],
-        end_z      = end[1],
-        half_width = width * .5,
-    })
+    append(
+        &city_plan.alleys,
+        architecture.City_Alley {
+            start_x = start[0],
+            start_z = start[1],
+            end_x = end[0],
+            end_z = end[1],
+            half_width = width * .5,
+        },
+    )
     city_plan.alley_count += 1
 }
 
@@ -1087,18 +1092,21 @@ settlement_plan_generate_village_buildings :: proc(
         structure.seed = seed
         structure.width, structure.depth, structure.height = frontage, depth, height
         structure.rotation = best_rotation
-        structure.building = architecture.architecture_identity({
-                    region           = settlement_building_region(plan.request.region),
-                    purpose          = settlement_building_purpose(purpose),
-                    tissue           = settlement_architecture_tissue(tissue),
-                    density          = density,
-                    attached         = false,
-                    frontage         = frontage,
-                    depth            = depth,
-                    route            = purpose == .Inn_Shop ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
-                    waterfront       = plan.village_reason == .Harbor_Fishery,
-                    purpose_explicit = true,
-                }, seed)
+        structure.building = architecture.architecture_identity(
+            {
+                region = settlement_building_region(plan.request.region),
+                purpose = settlement_building_purpose(purpose),
+                tissue = settlement_architecture_tissue(tissue),
+                density = density,
+                attached = false,
+                frontage = frontage,
+                depth = depth,
+                route = purpose == .Inn_Shop ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
+                waterfront = plan.village_reason == .Harbor_Fishery,
+                purpose_explicit = true,
+            },
+            seed,
+        )
         structure.color = architecture.architecture_color(seed, false)
         if plan.request.region == .Aegean do structure.color = {236, 232, 216, 255}
         parcel := architecture.City_Parcel {
@@ -1404,17 +1412,20 @@ settlement_plan_generate_buildings :: proc(
             structure.depth = depth
             structure.height = height
             structure.rotation = rotation
-            identity := architecture.architecture_identity({
-                    region           = settlement_building_region(settlement.request.region),
-                    tissue           = settlement_architecture_tissue(district.tissue),
-                    density          = density,
-                    attached         = attached,
-                    frontage         = frontage,
-                    depth            = depth,
-                    route            = route_found ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
-                    waterfront       = district.tissue == .Harbor,
+            identity := architecture.architecture_identity(
+                {
+                    region = settlement_building_region(settlement.request.region),
+                    tissue = settlement_architecture_tissue(district.tissue),
+                    density = density,
+                    attached = attached,
+                    frontage = frontage,
+                    depth = depth,
+                    route = route_found ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
+                    waterfront = district.tissue == .Harbor,
                     purpose_explicit = false,
-                }, seed)
+                },
+                seed,
+            )
             structure.building = identity
             structure.color = architecture.architecture_color(seed, false)
             if settlement.request.region == .Aegean do structure.color = {236, 232, 216, 255}

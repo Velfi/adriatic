@@ -173,6 +173,21 @@ Screen_Effect :: enum {
     Trinitron,
 }
 
+Text_Direction :: enum i32 {
+    Auto,
+    LTR,
+    RTL,
+}
+
+Text_Wrap_Result :: struct {
+    size:       Vector2,
+    line_count: int,
+}
+
+Text_Wrapped_Line :: struct {
+    start, end: int,
+}
+
 screen_effect: Screen_Effect
 screen_effect_reduced_motion: bool
 
@@ -235,8 +250,7 @@ MAX_INDICES :: MAX_VERTICES / 4 * 6
 FONT_FIRST :: 32
 FONT_LAST :: 126
 FONT_COUNT :: FONT_LAST - FONT_FIRST + 1
-// Common UI symbols are rasterized from the bundled Noto Sans Symbols 2 face.
-// Keep this compact: the primary Iosevka atlas remains the source for text.
+// Common UI symbols remain in the startup atlas for the no-shaper fallback.
 FONT_FALLBACK_RUNES :: [?]rune{'◆', '◇', '✓', '✕', '⚠'}
 FONT_FALLBACK_COUNT :: len(FONT_FALLBACK_RUNES)
 FONT_COLUMNS :: 16
@@ -250,8 +264,30 @@ FONT_ROWS :: (FONT_COUNT + FONT_FALLBACK_COUNT + FONT_COLUMNS - 1) / FONT_COLUMN
 ICON_COLUMNS :: 6
 ICON_ROWS :: 6
 MAX_TEXTURES :: 16
+GLYPH_ATLAS_PAGE_COUNT :: 4
+GLYPH_ATLAS_PAGE_SIZE :: 2048
+GLYPH_ATLAS_PADDING :: 2
+GLYPH_CACHE_SLOT_COUNT :: 4486
 TEXT_INPUT_CAPACITY :: 1024
 TEXT_COMPOSITION_CAPACITY :: 1024
+
+Glyph_Cache_Key :: struct {
+    face_id:  u16,
+    tier:     u16,
+    glyph_id: u32,
+}
+
+Glyph_Cache_Entry :: struct {
+    key:          Glyph_Cache_Key,
+    occupied:     bool,
+    page:         u8,
+    generation:   u32,
+    x, y:         i32,
+    width, height:i32,
+    left, top:    i32,
+    last_used:    u64,
+    pinned_until: u64,
+}
 
 State :: struct {
     renderer_descriptor:                       render2d.Renderer_Descriptor,
@@ -269,6 +305,15 @@ State :: struct {
     dynamic_staging:                           [MAX_TEXTURES][engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     dynamic_pixels:                            [MAX_TEXTURES][dynamic]u8,
     dynamic_pending:                           [MAX_TEXTURES]bool,
+    dynamic_bytes_per_pixel:                   [MAX_TEXTURES]int,
+    dynamic_dirty:                             [MAX_TEXTURES]Rectangle,
+    glyph_pages:                               [GLYPH_ATLAS_PAGE_COUNT]Texture,
+    glyph_entries:                             [GLYPH_CACHE_SLOT_COUNT]Glyph_Cache_Entry,
+    glyph_lookup:                              map[Glyph_Cache_Key]int,
+    glyph_frame:                               u64,
+    glyph_cache_misses:                        u64,
+    glyph_cache_evictions:                     u64,
+    glyph_cache_failures:                      u64,
     depth:                                     resources.Image,
     depth_initialized:                         bool,
     world_scene:                               resources.Image,

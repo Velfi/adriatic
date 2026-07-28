@@ -1,7 +1,7 @@
 package tests
 
-import mouse_tail "../packages/mouse_tail"
 import architecture "../packages/architecture"
+import mouse_tail "../packages/mouse_tail"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -138,12 +138,7 @@ mouse_tail_generated_town_surface_does_not_ratchet_upward :: proc(t: ^testing.T)
     project := new(terrain.Project)
     defer terrain.free_project(project)
     terrain.init_project(project)
-    centers := [4]third_person.Vec3 {
-        {-12, 0, -12},
-        {12, 0, -12},
-        {-12, 0, 12},
-        {12, 0, 12},
-    }
+    centers := [4]third_person.Vec3{{-12, 0, -12}, {12, 0, -12}, {-12, 0, 12}, {12, 0, 12}}
     for center in centers {
         structure := terrain.structure_make(center.x, center.z, 8, 8, 0, 8)
         structure.kind = .Architecture
@@ -258,13 +253,7 @@ mouse_tail_collides_with_solid_formations :: proc(t: ^testing.T) {
         position = {half_width - .05, .5, 0},
         previous = {half_width - .05, .5, 0},
     }
-    mouse_tail.resolve_structure(
-        &point,
-        structure,
-        config.radius,
-        config.surface_friction,
-        config.segment_length,
-    )
+    mouse_tail.resolve_structure(&point, structure, config.radius, config.surface_friction, config.segment_length)
     inside :=
         math.abs(point.position.x) < half_width &&
         math.abs(point.position.z) < structure.depth * .5 + config.radius &&
@@ -275,15 +264,7 @@ mouse_tail_collides_with_solid_formations :: proc(t: ^testing.T) {
 
 @(test)
 mouse_tail_deep_structure_overlap_cannot_launch_a_segment_to_the_roof :: proc(t: ^testing.T) {
-    solid_kinds := [7]terrain.Formation_Kind {
-        .Box,
-        .Rock,
-        .Spire,
-        .Mountain,
-        .Ridge,
-        .Cliff,
-        .Architecture,
-    }
+    solid_kinds := [7]terrain.Formation_Kind{.Box, .Rock, .Spire, .Mountain, .Ridge, .Cliff, .Architecture}
     for kind in solid_kinds {
         project := new(terrain.Project)
         append(
@@ -291,11 +272,11 @@ mouse_tail_deep_structure_overlap_cannot_launch_a_segment_to_the_roof :: proc(t:
             terrain.Structure {
                 center_x = 0,
                 center_z = 0,
-                width    = 1000,
-                depth    = 1000,
-                base_y   = 0,
-                height   = 100,
-                kind     = kind,
+                width = 1000,
+                depth = 1000,
+                base_y = 0,
+                height = 100,
+                kind = kind,
             },
         )
         project.structure_count = 1

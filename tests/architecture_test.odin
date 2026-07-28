@@ -935,14 +935,22 @@ architecture_openings_stack_and_restore_central_upper_bay :: proc(t: ^testing.T)
         }
         testing.expect(t, math.abs(opening.horizontal) + opening.width * .5 <= structure.width * .5 - .75)
         if opening.row > 1 {
-            previous, found := architecture.opening_layout_find(&layout, .Front, .Window, opening.row - 1, opening.column)
+            previous, found := architecture.opening_layout_find(
+                &layout,
+                .Front,
+                .Window,
+                opening.row - 1,
+                opening.column,
+            )
             testing.expect(t, found)
             if found do testing.expect(t, previous.horizontal == opening.horizontal)
         }
     }
     central_upper := false
     for opening in layout.openings[:layout.count] {
-        if opening.face == .Front && opening.kind == .Window && opening.row == rows - 1 &&
+        if opening.face == .Front &&
+           opening.kind == .Window &&
+           opening.row == rows - 1 &&
            math.abs(opening.horizontal) < .001 {
             central_upper = true
             testing.expect(t, !architecture.opening_layout_contains(&layout, .Front, .Window, 0, opening.column))

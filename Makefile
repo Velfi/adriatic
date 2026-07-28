@@ -65,6 +65,9 @@ ZELDA_ENGINE_PACKAGES := $(abspath $(ZELDA_ENGINE_ROOT))/packages
 ZELDA_ENGINE_COLLECTION := -collection:zelda_engine=$(ZELDA_ENGINE_PACKAGES)
 TEXTSHAPE_DIR := $(abspath $(ZELDA_ENGINE_ROOT))/third_party/textshape
 TEXTSHAPE_LIB := $(TEXTSHAPE_DIR)/libtextshape.a
+TEXTSHAPE_SOURCES := \
+	$(TEXTSHAPE_DIR)/textshape.c \
+	$(shell find "$(ZELDA_ENGINE_ROOT)/third_party/unicode" -type f \( -name '*.c' -o -name '*.h' \) 2>/dev/null)
 CGLTF_DIR := $(ZELDA_ENGINE_PACKAGES)/cgltf
 CGLTF_SOURCE := $(CGLTF_DIR)/src/cgltf.c
 CGLTF_HEADER := $(CGLTF_DIR)/src/cgltf.h
@@ -550,7 +553,7 @@ hot: hot-build
 # Zelda Engine's UI package imports this native archive directly. Build it
 # before every Adriatic link instead of relying on a sibling checkout having
 # produced it already.
-$(TEXTSHAPE_LIB): $(TEXTSHAPE_DIR)/textshape.c
+$(TEXTSHAPE_LIB): $(TEXTSHAPE_SOURCES)
 	$(MAKE) -C "$(ZELDA_ENGINE_ROOT)" textshape-build
 
 textshape-build: doctor $(TEXTSHAPE_LIB)

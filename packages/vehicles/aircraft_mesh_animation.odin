@@ -135,21 +135,19 @@ realign_mesh_group :: proc(
 }
 
 Libellula_Realign :: struct {
-    source_n:      [3]f32,
-    source_t:      [3]f32,
-    source_bi:     [3]f32,
-    target_n:      [3]f32,
-    target_t:      [3]f32,
-    target_bi:     [3]f32,
-    source_mid:    [3]f32,
-    target_mid:    [3]f32,
-    length_scale:  f32,
-    valid:         bool,
+    source_n:     [3]f32,
+    source_t:     [3]f32,
+    source_bi:    [3]f32,
+    target_n:     [3]f32,
+    target_t:     [3]f32,
+    target_bi:    [3]f32,
+    source_mid:   [3]f32,
+    target_mid:   [3]f32,
+    length_scale: f32,
+    valid:        bool,
 }
 
-libellula_realign :: #force_inline proc(
-    source_a, source_b, target_a, target_b: [3]f32,
-) -> Libellula_Realign {
+libellula_realign :: #force_inline proc(source_a, source_b, target_a, target_b: [3]f32) -> Libellula_Realign {
     source_span := source_b - source_a
     target_span := target_b - target_a
     source_length := linalg.length(source_span)
@@ -177,7 +175,10 @@ libellula_realign_point :: #force_inline proc(position: [3]f32, realign: Libellu
     along := linalg.dot(relative, realign.source_n) * realign.length_scale
     tangent := linalg.dot(relative, realign.source_t)
     bitangent := linalg.dot(relative, realign.source_bi)
-    return realign.target_mid + (realign.target_n * along + (realign.target_t * tangent + realign.target_bi * bitangent))
+    return(
+        realign.target_mid +
+        (realign.target_n * along + (realign.target_t * tangent + realign.target_bi * bitangent)) \
+    )
 }
 
 @(no_instrumentation)

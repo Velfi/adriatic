@@ -69,10 +69,8 @@ farmland_color :: proc(crop: farmland.Crop, tint: f32) -> rl.Color {
 
 farmland_world_point :: proc(editor: ^Editor, grid_x, grid_z: f32, lift: f32) -> third_person.Vec3 {
     warped_x, warped_z := farmland_warp_grid(grid_x, grid_z)
-    local_x :=
-        (warped_x - f32(farmland_render_width) * .5) * farmland.CELL_METERS * farmland_render_scale_x
-    local_z :=
-        (warped_z - f32(farmland_render_height) * .5) * farmland.CELL_METERS * farmland_render_scale_z
+    local_x := (warped_x - f32(farmland_render_width) * .5) * farmland.CELL_METERS * farmland_render_scale_x
+    local_z := (warped_z - f32(farmland_render_height) * .5) * farmland.CELL_METERS * farmland_render_scale_z
     // A slight landscape-scale yaw prevents the farm envelope from aligning
     // with the world axes even where the boundary displacement crosses zero.
     cosine, sine := math.cos(farmland_render_yaw), math.sin(farmland_render_yaw)
@@ -210,13 +208,7 @@ farmland_render_crops :: proc(
                         continue
                     }
                     color.a = u8(clamp(detail_fade * 255, 0, 255))
-                    world_grass_card(
-                        {point.x, point.y + height * .5, point.z},
-                        width,
-                        height,
-                        int(mixed % 16),
-                        color,
-                    )
+                    world_grass_card({point.x, point.y + height * .5, point.z}, width, height, int(mixed % 16), color)
                 }
             }
         }
@@ -363,8 +355,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
                 detail_fade,
             )
         }
-        if plan.tradition == .Parliamentary_Enclosure ||
-           farmland.mix(hedge_seed ~ u32(0xc2b2ae35)) & 3 != 0 {
+        if plan.tradition == .Parliamentary_Enclosure || farmland.mix(hedge_seed ~ u32(0xc2b2ae35)) & 3 != 0 {
             farmland_hedgerow(
                 editor,
                 f32(parcel.min_x),

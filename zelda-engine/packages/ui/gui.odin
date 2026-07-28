@@ -16,8 +16,14 @@ when ODIN_OS == .Windows {
 @(default_calling_convention = "c")
 foreign textshape {
     vo_textshape_init :: proc(font_kind: i32, font_path: cstring, logical_height: f32) -> i32 ---
+    vo_textshape_add_fallback :: proc(font_kind: i32, font_path: cstring, logical_height: f32) -> i32 ---
     vo_textshape_width :: proc(font_kind: i32, text: [^]u8, len: i32, text_scale, fallback_advance: f32) -> f32 ---
     vo_textshape_shape :: proc(font_kind: i32, text: [^]u8, len: i32, text_scale: f32, out: [^]Gui_Shaped_Glyph, out_cap: i32) -> i32 ---
+    vo_textshape_shape_ex :: proc(font_kind: i32, text: [^]u8, len: i32, text_scale: f32, base_direction: i32, out: [^]Gui_Shaped_Glyph, out_cap: i32) -> i32 ---
+    vo_textshape_rasterize_glyph :: proc(face_id: i32, glyph_id: u32, pixel_height: i32, out_alpha: [^]u8, out_cap: i32, out: ^Gui_Raster_Glyph) -> i32 ---
+    vo_textshape_next_grapheme :: proc(text: [^]u8, len: i32) -> i32 ---
+    vo_textshape_next_word :: proc(text: [^]u8, len: i32) -> i32 ---
+    vo_textshape_next_line_break :: proc(text: [^]u8, len: i32) -> i32 ---
     vo_textshape_ascii_glyph_bounds :: proc(font_kind: i32, glyph_first, glyph_last, pixel_height: i32, out: ^Gui_Glyph_Bounds) -> i32 ---
     vo_textshape_render_ascii_atlas :: proc(font_kind: i32, glyph_first, glyph_last, pixel_height, cell_width, cell_height, columns, origin_x, baseline: i32, out_rgba: [^]u8, out_len: i32) -> i32 ---
 }
@@ -44,6 +50,12 @@ Text_Align :: enum {
     Left,
     Center,
     Right,
+}
+
+Text_Direction :: enum i32 {
+    Auto,
+    LTR,
+    RTL,
 }
 
 Gui_Font_Kind :: enum i32 {
@@ -496,6 +508,7 @@ MAX_GUI_INTERACTION_RECTS :: 512
 GUI_TEXT_WIDTH_CACHE_SLOTS :: 512
 GUI_TEXT_WIDTH_CACHE_MAX_BYTES :: 128
 GUI_FONT_KIND_CAP :: 4
+GUI_FONT_FALLBACK_CAP :: 31
 GUI_COMBO_SHORT_POPUP_ROWS :: 5
 GUI_BODY_FONT_PATH :: "assets/fonts/ZeldaSans-Regular-v1.otf"
 GUI_DISPLAY_FONT_PATH :: "assets/fonts/ZeldaSerif-Regular-v0_1.otf"
@@ -505,6 +518,8 @@ GUI_TAU :: f32(6.28318530717958647692)
 
 gui_body_font_path: cstring = GUI_BODY_FONT_PATH
 gui_display_font_path: cstring = GUI_DISPLAY_FONT_PATH
+gui_font_fallback_paths: [GUI_FONT_KIND_CAP][GUI_FONT_FALLBACK_CAP]cstring
+gui_font_fallback_counts: [GUI_FONT_KIND_CAP]int
 gui_text_shaper_ready: bool
 gui_text_shaper_font_ready: [GUI_FONT_KIND_CAP]bool
 gui_text_shaper_once: sync.Once
@@ -601,11 +616,24 @@ Gui_Document_Scroll_Slot :: struct {
 MAX_GUI_DOCUMENT_SCROLL_SLOTS :: 64
 
 Gui_Shaped_Glyph :: struct {
-    glyph_id:  u32,
-    x_offset:  f32,
-    y_offset:  f32,
-    x_advance: f32,
-    y_advance: f32,
+    glyph_id:    u32,
+    cluster:     u32,
+    cluster_end: u32,
+    face_id:     u16,
+    direction:   u8,
+    missing:     u8,
+    x_offset:    f32,
+    y_offset:    f32,
+    x_advance:   f32,
+    y_advance:   f32,
+}
+
+Gui_Raster_Glyph :: struct {
+    width:     i32,
+    height:    i32,
+    left:      i32,
+    top:       i32,
+    advance_x: i32,
 }
 
 Gui_Glyph_Bounds :: struct {

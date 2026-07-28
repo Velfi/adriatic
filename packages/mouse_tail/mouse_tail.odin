@@ -39,23 +39,23 @@ Config :: struct {
 
 default_config :: proc() -> Config {
     return {
-        segment_length = .17,
-        radius = .026,
-        gravity = 12,
+        segment_length        = .17,
+        radius                = .026,
+        gravity               = 12,
         // A mouse tail trails as one supple rod rather than preserving a
         // traveling impulse in each vertebra. Bleed off inherited point
         // velocity before it can reflect through the chain as an S-wave.
-        damping = .84,
+        damping               = .84,
         constraint_iterations = 8,
-        substeps = 3,
-        root_stiffness = .30,
-        root_damping = .48,
+        substeps              = 3,
+        root_stiffness        = .30,
+        root_damping          = .48,
         // This is the total bend correction for one solver pass. The actual
         // rigidity tapers with the fourth power of the rendered radius, like
         // a slender elastic rod, so the muscular base carries its shape while
         // the narrow tip remains lively.
-        bend_stiffness = .80,
-        surface_friction = .22,
+        bend_stiffness        = .80,
+        surface_friction      = .22,
     }
 }
 
@@ -85,12 +85,14 @@ point_is_finite :: #force_inline proc(point: third_person.Vec3) -> bool {
     // NaN is the only floating-point value unequal to itself. The magnitude
     // guard also rejects infinities and coordinates that cannot plausibly
     // belong to this finite world before they reach the mesh builder.
-    return point.x == point.x &&
-           point.y == point.y &&
-           point.z == point.z &&
-           math.abs(point.x) < 1e6 &&
-           math.abs(point.y) < 1e6 &&
-           math.abs(point.z) < 1e6
+    return(
+        point.x == point.x &&
+        point.y == point.y &&
+        point.z == point.z &&
+        math.abs(point.x) < 1e6 &&
+        math.abs(point.y) < 1e6 &&
+        math.abs(point.z) < 1e6 \
+    )
 }
 
 state_is_stretched :: proc(state: ^State, root: third_person.Vec3, config: Config) -> bool {
@@ -176,13 +178,13 @@ resolve_terrain :: proc(
         plan = &fallback_plan
     }
     pavement := circulation.surface_at(
-        &project.road_graph,
-        plan,
-        // Generated circulation areas are planar overlays and preserve the
-        // query height in their hit result. Query from the terrain surface,
-        // not from the tail point, or each collision pass treats the point's
-        // previous correction as a taller pavement and ratchets it upward.
-        {point.position.x, surface_height, point.position.z},
+    &project.road_graph,
+    plan,
+    // Generated circulation areas are planar overlays and preserve the
+    // query height in their hit result. Query from the terrain surface,
+    // not from the tail point, or each collision pass treats the point's
+    // previous correction as a taller pavement and ratchets it upward.
+    {point.position.x, surface_height, point.position.z},
     )
     // Rendered road crowns sit 12 cm above the terrain heightfield. Treat that
     // presentation lift as physical support so a grounded tail rests on the
@@ -252,11 +254,7 @@ resolve_structure :: #force_inline proc(
     penetration_z := half_depth - math.abs(local_z)
     penetration_top := top - point.position.y
     if penetration_top <= penetration_x && penetration_top <= penetration_z {
-        apply_bounded_structure_correction(
-            point,
-            {point.position.x, top, point.position.z},
-            maximum_correction,
-        )
+        apply_bounded_structure_correction(point, {point.position.x, top, point.position.z}, maximum_correction)
         if point.previous.y < point.position.y do point.previous.y = point.position.y
         point.previous.x += (point.position.x - point.previous.x) * clamp(friction, 0, 1)
         point.previous.z += (point.position.z - point.previous.z) * clamp(friction, 0, 1)
@@ -294,13 +292,7 @@ resolve_world :: proc(
         // embedded points out of the obstacle. Small props cannot produce
         // the failure-sized correction and retain exact same-frame escape.
         maximum_correction := max(config.segment_length, f32(.02))
-        resolve_structure(
-            point,
-            structure,
-            radius,
-            config.surface_friction,
-            maximum_correction,
-        )
+        resolve_structure(point, structure, radius, config.surface_friction, maximum_correction)
     }
     // A side projection can put a point over a different patch of terrain.
     resolve_terrain(point, project, radius, config.surface_friction, circulation_plan)
