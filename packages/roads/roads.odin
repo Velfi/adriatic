@@ -321,8 +321,10 @@ pavement_at_cached :: proc(graph: ^Graph, query: ^Pavement_Query, position: Vec3
         edge_index = -1,
         distance   = f32(1e9),
     }
+    surface_hit := hit
     if graph == nil || query == nil || query.edge_count != graph.edge_count do return hit
     best_distance_squared := f32(1e18)
+    best_surface_distance_squared := f32(1e18)
     for edge, edge_index in graph.edges[:graph.edge_count] {
         previous := query.points[edge_index][0]
         for segment in 1 ..= PAVEMENT_QUERY_SEGMENTS {
@@ -344,17 +346,32 @@ pavement_at_cached :: proc(graph: ^Graph, query: ^Pavement_Query, position: Vec3
             delta_x := position.x - closest_x
             delta_z := position.z - closest_z
             distance_squared := delta_x * delta_x + delta_z * delta_z
+            on_surface :=
+                distance_squared <=
+                (edge.half_width + edge.shoulder_width) * (edge.half_width + edge.shoulder_width)
             if distance_squared < best_distance_squared {
                 best_distance_squared = distance_squared
                 hit.pavement = edge.pavement
                 hit.edge_index = edge_index
                 hit.height = closest_y
-                hit.on_surface =
-                    distance_squared <=
-                    (edge.half_width + edge.shoulder_width) * (edge.half_width + edge.shoulder_width)
+                hit.on_surface = on_surface
+            }
+            // Surface membership is the union of every road corridor. A
+            // nearby narrow branch must not make a point on a wider road look
+            // off-road merely because that branch has the closest centerline.
+            if on_surface && distance_squared < best_surface_distance_squared {
+                best_surface_distance_squared = distance_squared
+                surface_hit.pavement = edge.pavement
+                surface_hit.edge_index = edge_index
+                surface_hit.height = closest_y
+                surface_hit.on_surface = true
             }
             previous = current
         }
+    }
+    if surface_hit.edge_index >= 0 {
+        surface_hit.distance = f32(math.sqrt(f64(best_surface_distance_squared)))
+        return surface_hit
     }
     if hit.edge_index >= 0 do hit.distance = f32(math.sqrt(f64(best_distance_squared)))
     return hit

@@ -1192,7 +1192,6 @@ road_delete_selected :: proc(editor: ^Editor) {
     structure_history_push_undo(editor)
     if roads.remove_node(&editor.project.road_graph, editor.road_selected_node) {
         editor.project.revision += 1
-        architecture_regenerate_all(editor)
     }
     editor.road_selected_node = -1
     editor.road_drag_edge = -1
@@ -1218,7 +1217,6 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
                 edge.control_to = point
             }
             editor.project.revision += 1
-            architecture_regenerate_all(editor)
         }
         if rl.IsMouseButtonReleased(.LEFT) {
             editor.road_drag_edge = -1
@@ -1245,7 +1243,6 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
                 structure_history_push_undo(editor)
                 _ = road_connect(editor, editor.road_selected_node, clicked_node)
                 editor.project.revision += 1
-                architecture_regenerate_all(editor)
             }
         }
         editor.road_selected_node = clicked_node
@@ -1257,7 +1254,6 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
         if editor.road_selected_node >= 0 do _ = road_connect(editor, editor.road_selected_node, new_node)
         editor.road_selected_node = new_node
         editor.project.revision += 1
-        architecture_regenerate_all(editor)
     }
 }
 

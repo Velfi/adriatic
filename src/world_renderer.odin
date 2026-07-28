@@ -13057,7 +13057,7 @@ world_ground_grass :: proc(editor: ^Editor) {
         ground := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
         if body.position.y - ground > 28 do return
         field_radius = 60
-    } else if editor.pilot.mode != .On_Foot {
+    } else if editor.pilot.mode != .On_Foot && !driving_car(editor) {
         return
     }
 

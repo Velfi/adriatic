@@ -255,6 +255,24 @@ road_pavement_query_classifies_surface_and_offroad_contacts :: proc(t: ^testing.
 }
 
 @(test)
+road_pavement_query_keeps_wide_road_surface_when_narrow_branch_is_nearer :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    wide_from := roads.add_node(&graph, {0, 0, 0})
+    junction := roads.add_node(&graph, {30, 0, 0})
+    narrow_to := roads.add_node(&graph, {30, 0, 30})
+    roads.add_straight_edge(&graph, wide_from, junction, 8, 2, .Asphalt)
+    roads.add_straight_edge(&graph, junction, narrow_to, 1, 0, .Dirt)
+
+    // This point is inside the wide asphalt corridor, but the connected dirt
+    // branch has the closer centerline.
+    surface := roads.pavement_at(&graph, {25, 0, 5.5})
+    testing.expect(t, surface.on_surface)
+    testing.expect(t, surface.pavement == .Asphalt)
+    testing.expect(t, surface.edge_index == 0)
+    testing.expect(t, surface.distance > 5.4)
+}
+
+@(test)
 road_material_grip_profiles_have_predictable_ordering :: proc(t: ^testing.T) {
     asphalt := roads.pavement_grip(.Asphalt)
     cobble := roads.pavement_grip(.Cobblestone)
