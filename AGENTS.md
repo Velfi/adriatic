@@ -15,12 +15,15 @@
 
 ## Screenshot capture
 
-- Build the app, then use its capture CLI:
-  `build/dev/adriatic capture <mode> /absolute/path/to/screenshot.png [target]`.
-- Use `capture building` for a clean, eye-level architectural capture. It
-  automatically selects and frames a façade; pass a zero-based architecture
-  ordinal as the optional target, or use `cypress` for a close streetscape.
-- Use `capture bougainvillea /absolute/output/directory [seed ...]` for the
-  deterministic multi-seed bougainvillea matrix.
+- Build the app, then use its capture tool at `build/dev/adriatic capture`.
 - Capture launches the macOS app briefly. In a sandboxed agent environment,
   allow GUI execution and sibling `../zelda-engine` build writes when prompted.
+
+## Live editor control
+
+- Use the project MCP server at
+  `/Users/zelda/Documents/adriatic/tools/adriatic_mcp.py` to control a running
+  Adriatic editor. It is a stdio MCP server and can also be launched with
+  `make mcp`.
+- The MCP communicates with the already-running game; do not restart the game
+  to use it.

@@ -551,3 +551,22 @@ rotated_structure_hit_testing_uses_local_bounds :: proc(t: ^testing.T) {
     testing.expect(t, terrain.structure_contains_point(structure, 0, 6))
     testing.expect(t, !terrain.structure_contains_point(structure, 0, 16))
 }
+
+@(test)
+formations_are_opaque_and_raise_the_collision_surface :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer free(project)
+    defer delete(project.structures)
+    project.next_structure_id = 1
+    structure := terrain.structure_make(0, 0, 20, 4, 3, 20)
+    structure.kind = .Rock
+    structure.rotation = math.PI * .25
+    structure_index := terrain.add_structure(project, structure)
+
+    testing.expect_value(t, project.structures[structure_index].color[3], u8(255))
+    testing.expect_value(t, terrain.structure_collision_surface_height(project, 0, 6, 1), f32(23))
+    testing.expect_value(t, terrain.structure_collision_surface_height(project, 0, 16, 1), f32(1))
+
+    project.structures[structure_index].kind = .Foliage
+    testing.expect_value(t, terrain.structure_collision_surface_height(project, 0, 6, 1), f32(1))
+}

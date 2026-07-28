@@ -221,8 +221,18 @@ checkout when building, releasing, or testing Adriatic.
 | `make check` | Type-check the application. |
 | `make test` | Run starter tests. |
 | `make run` | Build and run the development executable. |
+| `make mcp` | Run the Adriatic MCP control server over stdio. |
 | `make release` | Build an optimized executable. |
 | `make physics-build` | Fetch and build Zelda Engine's pinned Jolt dependency. |
+
+The MCP server exposes `npc_focus`, which moves a running game's inspection
+camera to a currently placed NPC. Names are case-insensitive; both `Vesna` and
+`Dr Vesna` are accepted. Configure an MCP client to run
+`python3 /absolute/path/to/adriatic/tools/adriatic_mcp.py`, then call:
+
+```json
+{"name":"npc_focus","arguments":{"name":"Zora"}}
+```
 
 The executable owns capture commands:
 

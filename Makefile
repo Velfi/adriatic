@@ -164,7 +164,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fmt check test clean
 
 all: build
 
@@ -742,6 +742,9 @@ benchmark: release
 
 capture-live:
 	$(PYTHON) tools/live_capture.py --path "$(LIVE_CAPTURE_PATH)" --request "$(LIVE_CAPTURE_REQUEST_PATH)" --timeout "$(LIVE_CAPTURE_TIMEOUT)"
+
+mcp:
+	$(PYTHON) tools/adriatic_mcp.py
 
 fmt:
 	@command -v $(ODINFMT) >/dev/null || { echo "odinfmt is required" >&2; exit 1; }

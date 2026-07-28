@@ -184,6 +184,12 @@ project_file_magic_is :: proc(header: ^Project_File_Header, magic: [8]u8) -> boo
 
 project_replace :: proc(project, loaded: ^Project) {
     if project == nil || loaded == nil do return
+    for &structure in loaded.structures[:loaded.structure_count] {
+        // Structures are solid world geometry. Older projects inherited the
+        // translucent editor swatch alpha (220), which made their terrain
+        // show through once world alpha blending was enabled.
+        if structure.kind != .Foliage do structure.color[3] = 255
+    }
     delete(project.structures)
     project^ = loaded^
     loaded.structures = nil
@@ -455,7 +461,7 @@ snap_to_grid :: proc(value, grid: f32) -> f32 {
 }
 
 structure_default_color :: proc() -> [4]u8 {
-    return {112, 169, 181, 220}
+    return {112, 169, 181, 255}
 }
 
 structure_make :: proc(center_x, center_z, width, depth, base_y, height: f32) -> Structure {
@@ -528,6 +534,22 @@ structure_index_at :: proc(project: ^Project, x, z: f32) -> int {
         if structure_contains_point(project.structures[index], x, z) do return index
     }
     return -1
+}
+
+structure_collision_surface_height :: proc(project: ^Project, x, z, fallback: f32) -> f32 {
+    if project == nil do return fallback
+    result := fallback
+    for structure in project.structures[:project.structure_count] {
+        if structure.kind == .Foliage ||
+           structure.width <= 0 ||
+           structure.depth <= 0 ||
+           structure.height <= 0 ||
+           !structure_contains_point(structure, x, z) {
+            continue
+        }
+        result = max(result, structure.base_y + structure.height)
+    }
+    return result
 }
 
 add_structure :: proc(project: ^Project, structure: Structure) -> int {

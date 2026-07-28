@@ -2312,13 +2312,24 @@ seed_default_island_towns :: proc(editor: ^Editor) {
     if editor == nil do return
     architecture.city_plan_destroy(&editor.architecture_city_plan)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    // These are village identities, not repeated invocations of one anonymous
+    // town. Keep their seeds explicit and stable so layout changes in one
+    // village never silently make the other village its twin.
+    village_seeds := [len(terrain.DEFAULT_ISLAND_SIGNS)]u32 {
+        0xA71D3,
+        0xD911C,
+    }
+    village_regions := [len(terrain.DEFAULT_ISLAND_SIGNS)]buildings.Region {
+        .Adriatic,
+        .Aegean,
+    }
     // Put each settlement across the island from its runway apron. A short
     // cobblestone frontage gives the ordinary painted-density parcel planner
     // the same street skeleton it receives from an authored road.
     for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
         town_z := island_center + sign * terrain.DEFAULT_TOWN_OFFSET
-        seed := u32(0xA71D3 + island_index * 0x31F29)
+        seed := village_seeds[island_index]
         road_start_x, road_finish_x := island_center - 78, island_center + 78
         road_start_y := terrain.sample_height(&editor.project, 0, road_start_x, town_z)
         road_finish_y := terrain.sample_height(&editor.project, 0, road_finish_x, town_z)
@@ -2337,7 +2348,7 @@ seed_default_island_towns :: proc(editor: ^Editor) {
         }
         _ = architecture.city_density_stamp(&editor.project.city_density, island_center, town_z, 82, .20, .70)
         plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, town_bounds, seed)
-        region := sign > 0 ? buildings.Region.Aegean : buildings.Region.Adriatic
+        region := village_regions[island_index]
         architecture.city_plan_set_region(&plan, region)
         first_structure := editor.project.structure_count
         _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, town_bounds, &plan)
@@ -2376,6 +2387,40 @@ seed_default_island_towns :: proc(editor: ^Editor) {
                     purpose_explicit = true,
                 },
                 post_office.seed,
+            )
+        }
+        // Every village also needs a deterministic commercial address. In
+        // particular, Zora's home pose deliberately looks for a storefront on
+        // the Aegean island; leaving this to density luck made Fortuna (and
+        // therefore Zora) disappear for otherwise valid town plans.
+        storefront_index := -1
+        storefront_score := -f32(1)
+        for structure_index in first_structure ..< editor.project.structure_count {
+            if structure_index == post_office_index do continue
+            structure := &editor.project.structures[structure_index]
+            if structure.kind != .Architecture || structure.height > 60 do continue
+            // Prefer a separate end of the main street so the postal and
+            // commercial landmarks give each generated village two anchors.
+            score :=
+                math.abs(structure.center_x - island_center) * 2 +
+                math.abs(structure.center_z - town_z)
+            if score > storefront_score {
+                storefront_score = score
+                storefront_index = structure_index
+            }
+        }
+        if storefront_index >= 0 {
+            storefront := &editor.project.structures[storefront_index]
+            storefront.building = architecture.architecture_identity(
+                {
+                    region = region,
+                    purpose = .Inn_Shop,
+                    density = .8,
+                    attached = true,
+                    route = .Civic,
+                    purpose_explicit = true,
+                },
+                storefront.seed,
             )
         }
         for structure in editor.project.structures[first_structure:editor.project.structure_count] {
@@ -2900,23 +2945,24 @@ marina_brush_refresh_preview :: proc(editor: ^Editor, world_x, world_z: f32, rer
         editor.marina_preview_variation = 0
     }
     shoreline := marina.Vec2{world_x, world_z}
-    site, suitability := markov_marina_find_world_site(&editor.project, shoreline)
-    editor.marina_brush_suitability = suitability
+    _, site_suitability := markov_marina_find_world_site(&editor.project, shoreline)
+    editor.marina_brush_suitability = site_suitability
     editor.marina_brush_attempts = 0
     editor.marina_preview_x, editor.marina_preview_z = world_x, world_z
     editor.marina_preview_valid = false
     editor.marina_preview_plan = {}
-    if suitability < MARINA_BRUSH_MINIMUM_SUITABILITY {
+    if site_suitability < MARINA_BRUSH_MINIMUM_SUITABILITY {
         editor.marina_brush_status = .Unsuitable
         return
     }
     seed := u32(abs(int(world_x * 17))) ~ u32(abs(int(world_z * 31))) ~ editor.marina_preview_variation * 0x85ebca6b
-    candidate, attempts := markov_marina_generate_valid_for_site(seed, &site)
+    candidate, suitability, attempts := markov_marina_generate_world_plan(&editor.project, shoreline, seed)
     editor.marina_brush_attempts = attempts
     if !candidate.valid {
         editor.marina_brush_status = .No_Valid_Layout
         return
     }
+    editor.marina_brush_suitability = suitability
     editor.marina_preview_plan = candidate
     editor.marina_preview_valid = true
     editor.marina_brush_status = .Preview
@@ -9411,6 +9457,12 @@ adriatic_run :: proc(
                         )
                         terrain_height := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
                         ground := postale_game.drivable_surface_height(terrain_height, editor.project.sea_level)
+                        ground = terrain.structure_collision_surface_height(
+                            &editor.project,
+                            body.position.x,
+                            body.position.z,
+                            ground,
+                        )
                         if editor.aircraft.active != .Postale {
                             libellula_game.step(
                                 &editor.libellula,
@@ -9875,6 +9927,7 @@ adriatic_run :: proc(
         crash_recovery_draw(editor, width, height)
         photo_mode_capture_pending(editor)
         live_capture_poll()
+        live_control_poll(editor)
         rl.EndDrawing()
         gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()
         dio.flame_graph_set_frame_metrics(&editor.flame_graph, 0, 0, f32(gpu_frame_ms), gpu_frame_available)

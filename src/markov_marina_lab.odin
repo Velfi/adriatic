@@ -76,15 +76,54 @@ markov_marina_sample_world_site :: proc(project: ^terrain.Project, origin: marin
     return site
 }
 
+markov_marina_snap_shoreline :: proc(
+    project: ^terrain.Project,
+    anchor, outward: marina.Vec2,
+) -> marina.Vec2 {
+    if project == nil do return anchor
+    threshold := project.sea_level + .15
+    best := anchor
+    best_distance := f32(1 << 30)
+    previous_offset := f32(-80)
+    previous := marina.Vec2{
+        anchor.x + outward.x * previous_offset,
+        anchor.z + outward.z * previous_offset,
+    }
+    previous_land := terrain.sample_height(project, 0, previous.x, previous.z) > threshold
+    for offset := f32(-76); offset <= 80; offset += 4 {
+        point := marina.Vec2{
+            anchor.x + outward.x * offset,
+            anchor.z + outward.z * offset,
+        }
+        land := terrain.sample_height(project, 0, point.x, point.z) > threshold
+        if land != previous_land {
+            transition_offset := (previous_offset + offset) * .5
+            distance := abs(transition_offset)
+            if distance < best_distance {
+                best = {
+                    anchor.x + outward.x * transition_offset,
+                    anchor.z + outward.z * transition_offset,
+                }
+                best_distance = distance
+            }
+        }
+        previous_offset = offset
+        previous_land = land
+    }
+    return best
+}
+
 markov_marina_find_world_site :: proc(project: ^terrain.Project, shoreline_anchor: marina.Vec2) -> (marina.Site, f32) {
     best: marina.Site
     best_score := f32(-1)
     shore_to_center := -marina.grid_position(0, 4).z
     for index in 0 ..< 16 {
         yaw := f32(index) * math.TAU / 16
+        outward := marina.Vec2{math.sin(yaw), math.cos(yaw)}
+        snapped_anchor := markov_marina_snap_shoreline(project, shoreline_anchor, outward)
         origin := marina.Vec2 {
-            shoreline_anchor.x + math.sin(yaw) * shore_to_center,
-            shoreline_anchor.z + math.cos(yaw) * shore_to_center,
+            snapped_anchor.x + outward.x * shore_to_center,
+            snapped_anchor.z + outward.z * shore_to_center,
         }
         candidate := markov_marina_sample_world_site(project, origin, yaw)
         score := marina.site_suitability(&candidate)
@@ -123,6 +162,45 @@ markov_marina_generate_valid_for_site :: proc(base_seed: u32, site: ^marina.Site
         }
     }
     return best, 32
+}
+
+markov_marina_generate_world_plan :: proc(
+    project: ^terrain.Project,
+    shoreline_anchor: marina.Vec2,
+    base_seed: u32,
+) -> (marina.Plan, f32, int) {
+    best: marina.Plan
+    best_suitability := f32(-1)
+    attempts := 0
+    shore_to_center := -marina.grid_position(0, 4).z
+    // Spend the same bounded 32-plan budget across the possible shoreline
+    // orientations. Curved coasts often give the highest raw site score to an
+    // orientation that no generated plan can exactly conform to.
+    for variation in 0 ..< 2 {
+        for index in 0 ..< 16 {
+            yaw := f32(index) * math.TAU / 16
+            outward := marina.Vec2{math.sin(yaw), math.cos(yaw)}
+            snapped_anchor := markov_marina_snap_shoreline(project, shoreline_anchor, outward)
+            origin := marina.Vec2 {
+                snapped_anchor.x + outward.x * shore_to_center,
+                snapped_anchor.z + outward.z * shore_to_center,
+            }
+            site := markov_marina_sample_world_site(project, origin, yaw)
+            suitability := marina.site_suitability(&site)
+            if suitability < MARINA_BRUSH_MINIMUM_SUITABILITY do continue
+            seed :=
+                base_seed +
+                u32(variation) * u32(0x9e3779b9) +
+                u32(index) * u32(0x85ebca6b)
+            candidate := marina.generate_for_site(seed, &site, context.temp_allocator)
+            attempts += 1
+            if candidate.valid && suitability > best_suitability {
+                best = candidate
+                best_suitability = suitability
+            }
+        }
+    }
+    return best, max(best_suitability, f32(0)), attempts
 }
 
 MARINA_BUOY_RADIUS :: f32(.34)

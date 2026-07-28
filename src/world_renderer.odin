@@ -5056,46 +5056,6 @@ world_architecture_mass :: proc(
                 {189, 174, 143, 255},
             )
         }
-        if postal {
-            // A projecting striped postal sign remains legible from the street,
-            // while the cream inset reads as an envelope without text rendering.
-            postal_sign_local_x := -lantern_side * (door_width * .5 + .72)
-            postal_sign_y := structure.base_y + step_height + door_height * .88
-            postal_sign_x, postal_sign_z := world_rotate_xz(
-                structure.center_x,
-                structure.center_z,
-                postal_sign_local_x,
-                structure.depth * .5 + .72,
-                structure.rotation,
-            )
-            world_box_rotated(
-                {postal_sign_x, postal_sign_y, postal_sign_z},
-                {1.12, .72, .12},
-                structure.rotation,
-                {45, 73, 104, 255},
-            )
-            world_box_rotated(
-                {postal_sign_x, postal_sign_y, postal_sign_z},
-                {.72, .42, .15},
-                structure.rotation,
-                {229, 216, 180, 255},
-            )
-            for stripe in -1 ..= 1 {
-                stripe_x, stripe_z := world_rotate_xz(
-                    structure.center_x,
-                    structure.center_z,
-                    postal_sign_local_x + f32(stripe) * .43,
-                    structure.depth * .5 + .805,
-                    structure.rotation,
-                )
-                world_box_rotated(
-                    {stripe_x, postal_sign_y, stripe_z},
-                    {.12, .62, .035},
-                    structure.rotation,
-                    {154, 54, 52, 255},
-                )
-            }
-        }
         if !mixed_use && structure.seed % 8 == 5 {
             urn_side := -lantern_side
             urn_local_x := urn_side * min(structure.width * .30, door_width * .5 + 1.55)
@@ -5464,7 +5424,11 @@ world_architecture_mass :: proc(
                 identity.archetype == .Harbor_Office ||
                 identity.archetype == .Market_Hall ||
                 identity.archetype == .Post_Office
-            if commercial && (storefront || (structure.height < 18 && structure.seed % 4 == 0)) {
+            // Named storefronts receive their commissioned sign in
+            // world_business_sign_for_resident, where story ownership is
+            // available. Do not put a random clinic, post office, or bakery
+            // identity on an unrelated procedural storefront here.
+            if commercial && !storefront && structure.height < 18 && structure.seed % 4 == 0 {
                 sign_side := (structure.seed & 64) == 0 ? f32(-1) : f32(1)
                 sign_local_x := storefront ? f32(0) : sign_side * (door_width * .5 + .72)
                 // Storefront signs sit on the wall above the canopy head.
@@ -15890,24 +15854,45 @@ world_business_sign_face :: proc(
 ) {
     outward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
     right := third_person.Vec3{math.cos(rotation), 0, math.sin(rotation)}
-    half_width, half_height := width * .5, height * .5
-    points := [4]third_person.Vec3 {
-        center - right * half_width + third_person.Vec3{0, half_height, 0},
-        center - right * half_width - third_person.Vec3{0, half_height, 0},
-        center + right * half_width - third_person.Vec3{0, half_height, 0},
-        center + right * half_width + third_person.Vec3{0, half_height, 0},
-    }
     tile_width := f32(1) / 5
-    u0 := f32(kind) * tile_width
-    u1 := u0 + tile_width
-    uvs := [4][2]f32{{u0, 0}, {u0, 1}, {u1, 1}, {u1, 0}}
-    indices := [6]int{0, 1, 2, 0, 2, 3}
-    for index in indices {
-        vertex := world_vertex(points[index], {255, 255, 255, 255})
-        vertex.kind = .Sign
-        vertex.normal = {outward.x, outward.y, outward.z}
-        vertex.uv = uvs[index]
-        append(&world_renderer.vertices, vertex)
+    tile_u := f32(kind) * tile_width
+    segments := 32
+    for segment in 0 ..< segments {
+        angle_0 := f32(segment) / f32(segments) * 2 * math.PI
+        angle_1 := f32(segment + 1) / f32(segments) * 2 * math.PI
+        local_0 := third_person.Vec3{
+            math.cos(angle_0) * width * .48,
+            math.sin(angle_0) * height * .43,
+            0,
+        }
+        local_1 := third_person.Vec3{
+            math.cos(angle_1) * width * .48,
+            math.sin(angle_1) * height * .43,
+            0,
+        }
+        points := [3]third_person.Vec3 {
+            center,
+            center + right * local_0.x + third_person.Vec3{0, local_0.y, 0},
+            center + right * local_1.x + third_person.Vec3{0, local_1.y, 0},
+        }
+        uvs := [3][2]f32 {
+            {tile_u + tile_width * .5, .5},
+            {
+                tile_u + (.5 + math.cos(angle_0) * .48) * tile_width,
+                .5 - math.sin(angle_0) * .43,
+            },
+            {
+                tile_u + (.5 + math.cos(angle_1) * .48) * tile_width,
+                .5 - math.sin(angle_1) * .43,
+            },
+        }
+        for vertex_index in 0 ..< 3 {
+            vertex := world_vertex(points[vertex_index], {255, 255, 255, 255})
+            vertex.kind = .Sign
+            vertex.normal = {outward.x, outward.y, outward.z}
+            vertex.uv = uvs[vertex_index]
+            append(&world_renderer.vertices, vertex)
+        }
     }
 }
 
@@ -15918,7 +15903,9 @@ world_business_sign :: proc(
     width: f32 = 1.72,
 ) {
     height := width
-    depth := f32(.14)
+    // These are enamel wall plaques, not projecting box signs. Keep enough
+    // edge to catch a highlight without presenting a black slab from the side.
+    depth := f32(.075)
     segments := 24
     outward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
     rim := rl.Color{55, 49, 43, 255}
@@ -15939,12 +15926,24 @@ world_business_sign :: proc(
         world_triangle(center - outward * depth * .5, back_1, back_0, backing)
     }
     world_business_sign_face(center + outward * (depth * .5 + .006), rotation, width, height, kind)
-    bracket_x, bracket_z := world_rotate_xz(center.x, center.z, 0, -.34, rotation)
-    world_box_rotated({bracket_x, center.y + height * .58, bracket_z}, {width * .72, .07, .07}, rotation, rim)
+    // Two short concealed cleats tie the plaque directly to the façade. The
+    // former overhead gallows floated above the artwork and made the assembly
+    // read as several unrelated props when viewed edge-on.
     for side in -1 ..= 1 {
         if side == 0 do continue
-        loop_x, loop_z := world_rotate_xz(center.x, center.z, f32(side) * width * .30, -.18, rotation)
-        world_box_rotated({loop_x, center.y + height * .50, loop_z}, {.055, .24, .055}, rotation, rim)
+        cleat_x, cleat_z := world_rotate_xz(
+            center.x,
+            center.z,
+            f32(side) * width * .27,
+            -.105,
+            rotation,
+        )
+        world_box_rotated(
+            {cleat_x, center.y + height * .25, cleat_z},
+            {.10, .16, .18},
+            rotation,
+            rim,
+        )
     }
 }
 
@@ -15952,8 +15951,30 @@ world_business_sign_for_resident :: proc(editor: ^Editor, resident: story.Reside
     position, rotation, found := world_story_resident_home_pose(editor, resident)
     if !found do return
     side := resident == .Lena || resident == .Anica ? f32(-1) : f32(1)
-    x, z := world_rotate_xz(position.x, position.z, side * 1.45, -.54, rotation)
-    world_business_sign({x, position.y + 2.32, z}, rotation, kind)
+    // Home poses stand well clear of the doorway. Move the plaque back by
+    // that same clearance so its rear face rests on the façade.
+    frontage_clearance: f32
+    switch resident {
+    case .Niko:
+        frontage_clearance = 2.5
+    case .Zora:
+        frontage_clearance = 2.6
+    case .Vesna:
+        frontage_clearance = 2.2
+    case .Anica, .Toma, .Lena:
+        frontage_clearance = 2.3
+    case .Marta, .Gerta, .Iva, .Bojan, .Petar:
+        frontage_clearance = 2.4
+    }
+    plaque_half_depth := f32(.075 * .5)
+    x, z := world_rotate_xz(
+        position.x,
+        position.z,
+        side * 1.45,
+        -frontage_clearance + plaque_half_depth,
+        rotation,
+    )
+    world_business_sign({x, position.y + 2.44, z}, rotation, kind)
 }
 
 world_attendant_kiosk :: proc(editor: ^Editor) {

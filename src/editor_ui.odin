@@ -165,6 +165,10 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     case .Marina:
         editor.tool = .Structure
         editor.marina_paint_mode = true
+        // A previous placement or rejected site leaves the preview invalid.
+        // Reset the state so reselecting the stamp immediately evaluates the
+        // shoreline under the cursor instead of waiting for a large cursor move.
+        editor.marina_brush_status = .Idle
     case .Farm:
         editor.tool = .Structure
         editor.farm_paint_mode = true
