@@ -4,13 +4,6 @@ import mouse_tail "../packages/mouse_tail"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
-import "core:math/linalg"
-import physics "zelda_engine:physics"
-
-player_tail_step_shared_world :: proc(ctx: rawptr, _: physics.World, delta_seconds: f32) {
-    editor := cast(^Editor)ctx
-    gameplay_physics_step_world(editor, delta_seconds)
-}
 
 player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3) {
     if editor == nil do return
@@ -82,46 +75,7 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
 player_tail_update :: proc(editor: ^Editor, delta_seconds: f32) {
     if editor == nil || !editor.in_map || editor.pilot.mode != .On_Foot do return
     player_scarf_rotation_update(editor, delta_seconds)
-    mouse_tail.attach_world(&editor.player_tail, editor.gameplay_physics.world)
     root, backward := player_tail_root(editor)
-    backward_direction := linalg.normalize0(third_person.Vec3{backward.x, 0, backward.z})
-    if linalg.dot(backward_direction, backward_direction) <= .000001 {
-        backward_direction = {0, 0, 1}
-    }
-    // A small rump capsule ends at the tail socket, leaving both pinned base
-    // vertices outside the proxy while the free strand can contact the body.
-    proxy_position := root - backward_direction * .22 + third_person.Vec3{0, .03, 0}
-    proxy := editor.gameplay_physics.player_tail_proxy
-    if proxy == physics.INVALID_BODY {
-        proxy = physics.add_capsule_layered(
-            editor.gameplay_physics.world,
-            .12,
-            .22,
-            {proxy_position.x, proxy_position.y, proxy_position.z},
-            .Kinematic,
-            user_data = 2,
-            layer = .Character_Proxy,
-            friction = .18,
-        )
-        editor.gameplay_physics.player_tail_proxy = proxy
-    } else if delta_seconds > 0 {
-        root_delta := root - editor.player_tail.last_root
-        if linalg.dot(root_delta, root_delta) > 4 {
-            physics.set_transform(
-                editor.gameplay_physics.world,
-                proxy,
-                {proxy_position.x, proxy_position.y, proxy_position.z},
-            )
-        } else {
-            physics.move_kinematic(
-                editor.gameplay_physics.world,
-                proxy,
-                {proxy_position.x, proxy_position.y, proxy_position.z},
-                {0, 0, 0, 1},
-                min(delta_seconds, f32(.05)),
-            )
-        }
-    }
     mouse_tail.step(
         &editor.player_tail,
         root,
@@ -130,8 +84,6 @@ player_tail_update :: proc(editor: ^Editor, delta_seconds: f32) {
         editor.tweak.player_tail,
         delta_seconds,
         editor_circulation_plan(editor),
-        player_tail_step_shared_world,
-        editor,
     )
 }
 

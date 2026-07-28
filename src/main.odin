@@ -606,7 +606,6 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.player_scurry_compression_velocity = 0
     editor.player_animation_previous_speed = 0
     editor.player_paws = {}
-    mouse_tail.destroy(&editor.player_tail)
 
     editor.camera = third_person.default_camera()
     editor.cameras = {}
