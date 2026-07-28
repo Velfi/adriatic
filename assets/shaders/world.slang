@@ -4,7 +4,7 @@ struct Push {
     float4 camera_up;
     float4 camera_forward;
     float4 projection;
-    float4 fog_color;
+    float4 fog_color; // rgb horizon fog, a moonlight strength
     float4 water; // time, sea state, wind x, wind z
     float4 sun;   // direction xyz, daylight
 };
@@ -14,6 +14,8 @@ struct Push {
 [[vk::binding(1, 0)]] SamplerState vehicle_paint_sampler;
 [[vk::binding(2, 0)]] Texture2D<float4> soda_cap_logo;
 [[vk::binding(3, 0)]] SamplerState soda_cap_logo_sampler;
+[[vk::binding(4, 0)]] Texture2D<float4> architecture_material_atlas;
+[[vk::binding(5, 0)]] SamplerState architecture_material_sampler;
 
 struct DynamicShadowCascade {
     // Light-space basis vectors. The fourth components contain the snapped
@@ -70,6 +72,11 @@ static const uint MATERIAL_EYE = 6;
 static const uint MATERIAL_VEHICLE = 7;
 static const uint MATERIAL_ACORN = 8;
 static const uint MATERIAL_BOTTLE_CAP = 9;
+static const uint MATERIAL_EMISSIVE = 10;
+static const uint MATERIAL_EMISSIVE_POOL = 11;
+static const uint MATERIAL_ARCHITECTURE = 12;
+static const uint MATERIAL_GLASS = 13;
+static const uint MATERIAL_EMISSIVE_HALO = 14;
 
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
 // Decode them before interpolation, lighting, and fog blending; the sRGB
@@ -312,6 +319,81 @@ float3 shade_brdf(BrdfMaterial material, float3 normal, float3 world_position) {
     return saturate(diffuse + f0 * specular_strength);
 }
 
+// Palette-authored surfaces intentionally carry their own value grouping, but
+// they still need to inhabit the current environment. At night, reduce their
+// luminance and chroma, suppress long wavelengths, and add a restrained lunar
+// key. This models the perceptual read of mesopic vision without applying a
+// flat blue screen filter.
+float3 apply_environment_light(
+    float3 color,
+    float3 normal,
+    float3 world_position
+) {
+    float daylight = saturate(push.sun.w);
+    float night = 1.0 - smoothstep(.0, .34, daylight);
+    if (night <= 0.0) {
+        return color;
+    }
+
+    float luma = dot(color, float3(.2126, .7152, .0722));
+    float3 low_chroma = lerp(color, luma.xxx, .34);
+    float moon_strength = saturate(push.fog_color.a);
+    // Preserve a small starlight/readability floor at new moon, then let the
+    // whole environment brighten with perceived lunar intensity. The square
+    // root keeps quarter and gibbous phases visually distinct.
+    float ambient_level = lerp(.15, .35, sqrt(moon_strength));
+    float3 cool_fill =
+        low_chroma * float3(.68, .84, 1.14) * ambient_level;
+
+    float moon_facing = saturate(dot(normalize(normal), normalize(push.sun.xyz)));
+    float moon_key = moon_facing * moon_strength * .13;
+    float3 moon_color = float3(.54, .68, .92);
+    float3 night_color = cool_fill + low_chroma * moon_color * moon_key;
+    return lerp(color, night_color, night);
+}
+
+float3 shade_emissive(VertexOutput input) {
+    float3 color = input.color.rgb;
+    float daylight = saturate(push.sun.w);
+    float night = 1.0 - smoothstep(.0, .34, daylight);
+    // Fixtures remain recognizable as amber glass by day, then become a
+    // stable warm source at night regardless of moonlight availability.
+    float3 dormant = color * float3(.24, .20, .14);
+    float3 glowing = saturate(color * 1.16 + float3(.12, .045, .006));
+    float3 source = lerp(dormant, glowing, night);
+    if (input.material.x > .5) {
+        if (input.material.x < 1.5) {
+            // Municipal post-top lanterns reuse their six glass faces: UV-space
+            // perimeter iron and one vertical mullion describe a caged fixture
+            // without extra geometry, draw calls, or textures.
+            float2 edge_distance = min(input.uv, 1.0 - input.uv);
+            float perimeter =
+                1.0 - smoothstep(.055, .105, min(edge_distance.x, edge_distance.y));
+            float mullion =
+                1.0 - smoothstep(.035, .070, abs(input.uv.x - .5));
+            float cage = saturate(max(perimeter, mullion));
+            float3 iron = source * lerp(.15, .08, night);
+            source = lerp(source, iron, cage * .94);
+        } else {
+            // Cantilever heads use the same box faces as a shallow prismatic
+            // lens. A dim gasket, frosted shoulder, and two broad optic ribs
+            // keep the source from reading as an unshaped emissive slab.
+            float2 lens_position = input.uv * 2.0 - 1.0;
+            float lens_radius =
+                length(lens_position * float2(.90, 1.08));
+            float gasket =
+                smoothstep(.74, .94, max(abs(lens_position.x), abs(lens_position.y)));
+            float shoulder =
+                1.0 - smoothstep(.24, .92, lens_radius);
+            float optic_ribs =
+                .88 + .12 * pow(abs(cos(lens_position.x * 6.2831853)), 5.0);
+            source *= lerp(.90, 1.08, shoulder) * optic_ribs;
+            source = lerp(source, source * lerp(.24, .12, night), gasket);
+        }
+    }
+    return source;
+}
+
 float3 shade_imported_material(VertexOutput input) {
     float3 base_color = input.color.rgb;
     bool vehicle = input.kind == MATERIAL_VEHICLE;
@@ -327,6 +409,85 @@ float3 shade_imported_material(VertexOutput input) {
     material.metallic = vehicle ? 0 : input.material.x;
     material.roughness = vehicle ? .04 : input.material.y;
     return shade_brdf(material, input.normal, input.world_position);
+}
+
+float architecture_texture_sample(VertexOutput input) {
+    float3 normal = abs(normalize(input.normal));
+    // World-space triplanar projection keeps the procedural building meshes
+    // textured consistently without adding a second UV-generation path.
+    float2 uv_x = input.world_position.zy / 2.0;
+    float2 uv_y = input.world_position.xz / 4.0;
+    float2 uv_z = input.world_position.xy / 2.0;
+    float3 weights = pow(normal, 8.0);
+    weights /= max(weights.x + weights.y + weights.z, .001);
+    float selector = input.material.x;
+    float tile = clamp(floor(selector + .5), 0.0, 2.0);
+    float2 atlas_x = float2((frac(uv_x.x) + tile) / 3.0, frac(uv_x.y));
+    float2 atlas_y = float2((frac(uv_y.x) + tile) / 3.0, frac(uv_y.y));
+    float2 atlas_z = float2((frac(uv_z.x) + tile) / 3.0, frac(uv_z.y));
+    float sample_x = architecture_material_atlas.Sample(architecture_material_sampler, atlas_x).r;
+    float sample_y = architecture_material_atlas.Sample(architecture_material_sampler, atlas_y).r;
+    float sample_z = architecture_material_atlas.Sample(architecture_material_sampler, atlas_z).r;
+    return dot(float3(sample_x, sample_y, sample_z), weights);
+}
+
+float3 shade_architecture(VertexOutput input) {
+    float selector = input.material.x;
+    float reference = selector < .5 ? .7466 : selector < 1.5 ? .6619 : .4842;
+    float strength = selector < .5 ? .42 : selector < 1.5 ? .58 : .52;
+    float modulation = lerp(1.0, architecture_texture_sample(input) / reference, strength);
+    float3 base = saturate(input.color.rgb * clamp(modulation, .68, 1.30));
+    float visibility = dynamic_shadow_visibility(input.world_position, input.normal);
+    return base * lerp(.72, 1.0, visibility);
+}
+
+float3 shade_glass(VertexOutput input) {
+    float3 normal = normalize(input.normal);
+    float3 view = normalize(push.camera_position.xyz - input.world_position);
+    float facing = saturate(dot(normal, view));
+    float fresnel = pow(1.0 - facing, 3.0);
+    float daylight = saturate(push.sun.w);
+    float horizon = saturate(normalize(view).y * .5 + .5);
+    float3 sky_blue = srgb_to_linear(float3(.43, .68, .78));
+    float3 sky_pale = srgb_to_linear(float3(.78, .89, .87));
+    float3 reflected_sky = lerp(sky_blue, sky_pale, horizon);
+
+    // Broad painted shapes read more clearly than a physically perfect
+    // reflection at the small on-screen size of most façade panes.
+    float diagonal = input.uv.x * .72 + input.uv.y;
+    float sheen = smoothstep(.46, .58, diagonal) *
+                  (1.0 - smoothstep(.64, .78, diagonal));
+    float upper_glow = 1.0 - smoothstep(.08, .62, input.uv.y);
+    float pane_variation = value_noise(
+        floor(input.world_position.xy * .37) + input.world_position.z * .11
+    );
+    reflected_sky *= lerp(.88, 1.08, pane_variation);
+    reflected_sky += srgb_to_linear(float3(.86, .95, .91)) *
+                     (sheen * .38 + upper_glow * .14);
+
+    float interior_light = saturate(input.material.x);
+    float night = 1.0 - smoothstep(.0, .34, daylight);
+    float3 interior = input.color.rgb;
+    // Residential panes need a clearly readable opaque sky body even when
+    // viewed head-on. Storefront and occupied panes retain more of their
+    // authored interior color.
+    float reflection_weight = lerp(.78, .90, fresnel);
+    reflection_weight = lerp(
+        reflection_weight,
+        lerp(.62, .82, fresnel),
+        interior_light
+    );
+    reflection_weight *= lerp(1.0, .55, interior_light * night);
+    float3 color = lerp(interior, reflected_sky, reflection_weight);
+    if (interior_light > 0.0) {
+        // Interior light should remain a warm source without clipping into a
+        // flat yellow card. Reflections and authored pane detail retain enough
+        // headroom to describe actual glass.
+        color += interior * interior_light * lerp(.06, .22, night);
+    }
+    float visibility = dynamic_shadow_visibility(input.world_position, normal);
+    color *= lerp(.86, 1.0, visibility);
+    return saturate(color);
 }
 
 float3 shade_eye(VertexOutput input) {
@@ -644,7 +805,7 @@ float3 shade_road(VertexOutput input) {
     // computer-flat surface without introducing a repeating texture asset.
     float broad = value_noise(rotate2(world, .43) * .052 + float2(.7, 2.1));
     float grain = hash12(world * 1.37 + floor(uv.y * .35));
-    float value = lerp(.82, 1.16, broad) * lerp(.94, 1.06, grain);
+    float value = lerp(.78, 1.20, broad) * lerp(.91, 1.09, grain);
     float3 color = input.color.rgb * value;
 
     // The swept profile places the carriageway between one- and two-thirds
@@ -655,11 +816,11 @@ float3 shade_road(VertexOutput input) {
     float seam_distance = abs(abs(uv.x - .5) - .1667);
     float dusty_seam = (1.0 - smoothstep(.018, .070, seam_distance)) * road_mask;
     float3 dust = float3(.47, .36, .20);
-    color = lerp(color, color + dust * .11, dusty_seam * (.45 + broad * .35));
+    color = lerp(color, color + dust * .16, dusty_seam * (.58 + broad * .34));
 
     float wheel_distance = min(abs(uv.x - .415), abs(uv.x - .585));
     float wheel_wear = (1.0 - smoothstep(.018, .052, wheel_distance)) * road_mask;
-    color *= 1.0 - wheel_wear * lerp(.045, .115, broad);
+    color *= 1.0 - wheel_wear * lerp(.095, .205, broad);
 
     // Material-specific marks remain tonal rather than literal: broken pale
     // aggregate for gravel, offset cool joints for cobble, and warm ruts for
@@ -669,16 +830,16 @@ float3 shade_road(VertexOutput input) {
     float cobble_weight = saturate(1.0 - abs(pavement - 2.0));
     float dirt_weight = saturate(1.0 - abs(pavement - 3.0));
     float gravel = smoothstep(.77, .94, hash12(world * 2.45 + float2(8.1, .6)));
-    color += gravel * gravel_weight * road_mask * float3(.10, .085, .055);
+    color += gravel * gravel_weight * road_mask * float3(.145, .120, .075);
 
     float cobble_row = floor(uv.y * .58);
     float cobble_cross = abs(frac(uv.x * 13.0 + frac(cobble_row * .5) * .5) - .5);
     float cobble_along = abs(frac(uv.y * .58) - .5);
     float cobble_joint = 1.0 - smoothstep(.035, .085, min(cobble_cross, cobble_along));
-    color *= 1.0 - cobble_joint * cobble_weight * road_mask * .20;
+    color *= 1.0 - cobble_joint * cobble_weight * road_mask * .31;
 
     float rut = 1.0 - smoothstep(.028, .075, wheel_distance);
-    color = lerp(color, color * float3(.91, .84, .75), rut * dirt_weight * road_mask * .55);
+    color = lerp(color, color * float3(.87, .76, .64), rut * dirt_weight * road_mask * .68);
 
     // A gentle sun wash keeps the material in the same painted value hierarchy
     // as foliage and terrain without adding a second lighting model.
@@ -896,6 +1057,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     float fog = saturate((input.depth - push.projection.z) /
                          max(push.projection.w - push.projection.z, .001));
     float3 base = input.color.rgb;
+    float output_alpha = input.color.a;
     switch (input.kind) {
         case MATERIAL_WATER:
             base = shade_water(input);
@@ -919,6 +1081,129 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         case MATERIAL_BOTTLE_CAP:
             base = shade_bottle_cap(input);
             break;
+        case MATERIAL_EMISSIVE:
+            base = shade_emissive(input);
+            break;
+        case MATERIAL_EMISSIVE_POOL:
+            float night = 1.0 - smoothstep(.0, .34, saturate(push.sun.w));
+            if (night <= .001) discard;
+            float2 pool_position = input.uv * 2.0 - 1.0;
+            float radial = saturate(1.0 - dot(pool_position, pool_position));
+            // The authored fixture faces local +Z, which maps to +Y in these
+            // pool UVs. Model cutoff optics by suppressing backlight behind the
+            // post while retaining a soft shoulder at the source. This makes
+            // the aimed throw readable and reduces light trespass without
+            // changing the pool mesh, extent, or submission count.
+            float pool_directionality =
+                saturate(input.material.x);
+            float forward_cutoff =
+                smoothstep(-.72, .18, pool_position.y);
+            float aimed_cutoff = lerp(.32, 1.0, forward_cutoff);
+            radial *= lerp(
+                1.0,
+                aimed_cutoff,
+                pool_directionality
+            );
+            radial *= radial;
+            // Break the mathematically perfect decal edge against paving,
+            // soil, and grass while keeping the optically bright center
+            // stable. One low-frequency world-space sample gives overlapping
+            // pools the same surface response without another primitive,
+            // texture fetch, light object, or draw call.
+            float surface_noise = value_noise(input.world_position.xz * .31);
+            float surface_response = lerp(.86, 1.08, surface_noise);
+            radial *= lerp(surface_response, 1.0, smoothstep(.18, .68, radial));
+            if (radial <= .001) discard;
+            // A real pool reads pale nearest the luminaire and warmer toward
+            // its edge. Shape both zones inside the existing primitive rather
+            // than layering another transparent disc.
+            float core = smoothstep(.20, .78, radial);
+            float pool_luma =
+                dot(input.color.rgb, float3(.2126, .7152, .0722));
+            float3 core_color =
+                lerp(input.color.rgb, pool_luma.xxx, .38) * 1.12;
+            base = lerp(input.color.rgb * .76, core_color, core);
+            // Rain and sea-weather lift specular scatter from wet paving.
+            // Keep the fixed pool footprint, but make its source reflection a
+            // little paler and more persistent as weather severity rises.
+            float weather_scatter = saturate(push.water.y);
+            // Weather is uniform for the frame, so clear nights can skip the
+            // complete wet-sheen path without fragment divergence.
+            if (weather_scatter > .001) {
+                // Wet paving does not merely brighten uniformly: the reflected
+                // source compresses into a broken sheen along the optical axis.
+                // Reuse the pool UV and noise sample above so rain gains a distinct
+                // material response without another fetch, primitive, or light.
+                float aimed_wet_lane =
+                    saturate(1.0 - abs(pool_position.x) * 1.34);
+                aimed_wet_lane *= aimed_wet_lane;
+                // Symmetric post-tops have no authored optical axis. Keep their
+                // wet response even around the source instead of accidentally
+                // aligning every reflection to world north; aimed heads retain the
+                // narrow longitudinal sheen established by their UV orientation.
+                float wet_lane =
+                    lerp(.58, aimed_wet_lane, pool_directionality);
+                float wet_sheen =
+                    wet_lane * smoothstep(.10, .72, radial) *
+                    lerp(.72, 1.08, surface_noise);
+                float3 wet_reflection =
+                    lerp(base, pool_luma.xxx, .40) * 1.08;
+                base = lerp(
+                    base,
+                    wet_reflection,
+                    weather_scatter * (.16 + wet_sheen * .38)
+                );
+            }
+
+            // Human exposure adapts to the lunar ambient: a fixed municipal
+            // lamp has more apparent contrast at new moon than at full moon.
+            // Reuse the environment's moon scalar so this costs no additional
+            // CPU state, light objects, draw calls, or geometry.
+            float moon_adaptation =
+                lerp(1.0, .72, sqrt(saturate(push.fog_color.a)));
+            output_alpha *=
+                radial * night * moon_adaptation *
+                lerp(1.0, 1.14, weather_scatter);
+            break;
+        case MATERIAL_EMISSIVE_HALO:
+            float halo_night =
+                1.0 - smoothstep(.0, .34, saturate(push.sun.w));
+            if (halo_night <= .001) discard;
+            float halo_distance_visibility =
+                smoothstep(5.0, 15.0, input.depth) *
+                (1.0 - smoothstep(150.0, 220.0, input.depth));
+            if (halo_distance_visibility <= .001) discard;
+            float2 halo_position = input.uv * 2.0 - 1.0;
+            float halo_source =
+                saturate(1.0 - dot(halo_position, halo_position));
+            // A fixture bloom must disappear well inside its supporting quad;
+            // the broader pool curve left a readable rectangular card when
+            // viewed close to a lamp. Moist air broadens that compact core
+            // slightly, but never expands the existing billboard footprint.
+            float halo_broad = halo_source * halo_source;
+            float halo_compact = halo_broad * halo_source;
+            float halo_radial = lerp(
+                halo_compact,
+                halo_broad,
+                saturate(push.water.y) * .34
+            );
+            if (halo_radial <= .004) discard;
+            float halo_luma =
+                dot(input.color.rgb, float3(.2126, .7152, .0722));
+            base = lerp(input.color.rgb, halo_luma.xxx, .28);
+            float halo_moon_adaptation =
+                lerp(1.0, .72, sqrt(saturate(push.fog_color.a)));
+            output_alpha *=
+                halo_radial * halo_night * halo_moon_adaptation *
+                halo_distance_visibility *
+                lerp(1.0, 1.28, saturate(push.water.y));
+            break;
+        case MATERIAL_ARCHITECTURE:
+            base = shade_architecture(input);
+            break;
+        case MATERIAL_GLASS:
+            base = shade_glass(input);
+            break;
     }
     if (input.kind == MATERIAL_PLAIN ||
         input.kind == MATERIAL_TERRAIN ||
@@ -937,5 +1222,20 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         float visibility = dynamic_shadow_visibility(input.world_position, input.normal);
         base *= lerp(.80, 1.0, visibility);
     }
-    return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), input.color.a);
+    if (input.kind != MATERIAL_EMISSIVE &&
+        input.kind != MATERIAL_EMISSIVE_POOL &&
+        input.kind != MATERIAL_EMISSIVE_HALO) {
+        float3 environment_lit =
+            apply_environment_light(base, input.normal, input.world_position);
+        if (input.kind == MATERIAL_GLASS) {
+            float night =
+                1.0 - smoothstep(.0, .34, saturate(push.sun.w));
+            float interior_visibility =
+                saturate(input.material.x) * night;
+            base = lerp(environment_lit, base, interior_visibility);
+        } else {
+            base = environment_lit;
+        }
+    }
+    return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), output_alpha);
 }

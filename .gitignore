@@ -3,6 +3,7 @@
 /.tools/
 .DS_Store
 *.dSYM/
+src.bin
 
 # Python bytecode caches
 __pycache__/

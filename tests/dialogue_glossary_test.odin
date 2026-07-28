@@ -20,10 +20,10 @@ dialogue_glossary_does_not_mark_familiar_foreign_words :: proc(t: ^testing.T) {
 }
 
 @(test)
-dialogue_glossary_marks_gameplay_keywords_separately_from_translations :: proc(t: ^testing.T) {
-    testing.expect(t, dialogue_glossary.is_gameplay_keyword("Magneto"))
-    testing.expect(t, dialogue_glossary.is_gameplay_keyword("INVITATION"))
-    testing.expect(t, !dialogue_glossary.is_gameplay_keyword("mare"))
-    _, translated := dialogue_glossary.english_for("magneto")
-    testing.expect(t, !translated)
+dialogue_glossary_does_not_mark_names_or_quest_items :: proc(t: ^testing.T) {
+    ordinary_terms := [?]string{"Marta", "Gerta", "Iva", "Niko", "magneto", "invitation", "letter", "propeller"}
+    for term in ordinary_terms {
+        _, found := dialogue_glossary.english_for(term)
+        testing.expect(t, !found)
+    }
 }

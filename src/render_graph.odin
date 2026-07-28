@@ -83,9 +83,10 @@ render_graph_geometry :: proc(user_data: rawptr) {
         u32(size_of(ctx.world_push)),
         &ctx.world_push,
     )
-    if len(world_renderer.vertices) > 0 {
+    world_vertex_count := len(world_renderer.vertices) - world_renderer.late_transparent_count
+    if world_vertex_count > 0 {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.buffer.handle, &ctx.offset)
-        vk.CmdDraw(cmd, u32(len(world_renderer.vertices)), 1, 0, 0)
+        vk.CmdDraw(cmd, u32(world_vertex_count), 1, 0, 0)
     }
     if len(world_renderer.static_indices) > 0 {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.static_vertex_buffer.handle, &ctx.offset)
@@ -287,6 +288,45 @@ render_graph_roads :: proc(user_data: rawptr) {
     render_graph_stage_end(ctx)
 }
 
+render_graph_transparent :: proc(user_data: rawptr) {
+    ctx := cast(^Render_Graph_Context)user_data
+    if world_renderer.late_transparent_count <= 0 do return
+    cmd := ctx.pass.frame.command_buffer
+    render_graph_stage_label(ctx, "Adriatic / Transparent World Effects")
+    vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.transparent_pipelines[ctx.pipeline_index])
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        0,
+        1,
+        &world_renderer.vehicle_paint_descriptor,
+        0,
+        nil,
+    )
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        1,
+        1,
+        &world_renderer.dynamic_shadow.descriptors[ctx.pass.frame.frame_index],
+        0,
+        nil,
+    )
+    vk.CmdPushConstants(
+        cmd,
+        world_renderer.layout,
+        {.VERTEX, .FRAGMENT},
+        0,
+        u32(size_of(ctx.world_push)),
+        &ctx.world_push,
+    )
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.buffer.handle, &ctx.offset)
+    vk.CmdDraw(cmd, u32(world_renderer.late_transparent_count), 1, u32(world_renderer.late_transparent_first), 0)
+    render_graph_stage_end(ctx)
+}
+
 adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
     if graph == nil do return false
     render_graph.reset(graph)
@@ -295,10 +335,12 @@ adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
     foliage := render_graph.add_pass(graph, "foliage", render_graph_foliage)
     terrain := render_graph.add_pass(graph, "terrain", render_graph_terrain)
     roads := render_graph.add_pass(graph, "roads", render_graph_roads)
+    transparent := render_graph.add_pass(graph, "transparent", render_graph_transparent)
     return(
         render_graph.depends_on(graph, terrain, sky) &&
         render_graph.depends_on(graph, geometry, terrain) &&
         render_graph.depends_on(graph, foliage, geometry) &&
-        render_graph.depends_on(graph, roads, foliage) \
+        render_graph.depends_on(graph, roads, foliage) &&
+        render_graph.depends_on(graph, transparent, roads) \
     )
 }

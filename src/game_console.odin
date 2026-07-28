@@ -6,6 +6,7 @@ import "core:strconv"
 import "core:strings"
 import sdl "vendor:sdl3"
 import rl "zelda_engine:canvas2d"
+import physics "zelda_engine:physics"
 
 CONSOLE_INPUT_CAPACITY :: 512
 CONSOLE_LINE_CAPACITY :: 128
@@ -51,6 +52,7 @@ console_commands := [?]string {
     "commands",
     "clear",
     "status",
+    "physics",
     "get",
     "set",
     "watch",
@@ -261,6 +263,7 @@ console_help :: proc(editor: ^Editor, command: string = "") {
     if command == "time" do console_push_line(editor, "time <hour> — set time using a 24-hour clock")
     if command == "weather" do console_push_line(editor, "weather <auto|clear|windy|storm>")
     if command == "teleport" do console_push_line(editor, "teleport <x> <y> <z> — move the player")
+    if command == "physics" do console_push_line(editor, "physics — print shared-world bodies and active soft bodies")
     if command == "lab" {
         console_push_line(editor, "lab list — list registered lab scenes")
         console_push_line(editor, "lab <name> [target] — switch to a lab using its normal loader")
@@ -304,13 +307,26 @@ console_execute :: proc(editor: ^Editor, source: string) {
     case "commands":
         console_push_line(
             editor,
-            "help, commands, clear, status, get, set, watch, unwatch, time, weather, teleport, lab, quit",
+            "help, commands, clear, status, physics, get, set, watch, unwatch, time, weather, teleport, lab, quit",
         )
     case "clear":
         editor.console.line_start = 0
         editor.console.line_count = 0
     case "status":
         for name, index in console_values do console_push_line(editor, fmt.tprintf("%s = %s", name, console_value(editor, index)))
+    case "physics":
+        stats := physics.get_world_stats(editor.gameplay_physics.world)
+        console_push_line(
+            editor,
+            fmt.tprintf(
+                "physics bodies=%d active=%d soft=%d static=%d boats=%d",
+                stats.body_count,
+                stats.active_body_count,
+                stats.soft_body_count,
+                len(editor.gameplay_physics.static_bodies),
+                editor.gameplay_physics.boat_count,
+            ),
+        )
     case "get":
         if count < 2 do console_push_line(editor, "Usage: get <live.value>", .Error)
         if count >= 2 do console_print_value(editor, words[1])
@@ -367,8 +383,7 @@ console_execute :: proc(editor: ^Editor, source: string) {
             if !x_ok || !y_ok || !z_ok {
                 console_push_line(editor, "Teleport coordinates must be numbers", .Error)
             } else {
-                editor.player.position = {x, y, z}
-                editor.player.velocity = {}
+                player_place(editor, {x, y, z}, .Teleport, editor.player.facing_yaw_radians, false)
                 console_print_value(editor, "player.position")
             }
         }

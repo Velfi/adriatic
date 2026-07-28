@@ -149,7 +149,17 @@ architecture_identity :: proc(ctx: Architecture_Context, seed: u32) -> buildings
     case .Workshop:
         identity.archetype = .Workshop
     case .Inn_Shop:
-        identity.archetype = .Shop_House
+        // Keep the established shop house while allowing some commercial
+        // parcels to become a visibly domestic residence-over-shop. Hash the
+        // choice independently: using raw seed % 3 here made mixed-use
+        // selection mutually exclusive with its T-plan and court residues.
+        shop_selector := city_hash(int(seed & 0x0000ffff), int(seed >> 16), seed ~ 0xa511e9b3)
+        // Split commercial residences evenly between the established
+        // shop-house and the more explicitly domestic mixed-use dwelling.
+        // Inn/shop parcels are already uncommon outside civic/mercantile
+        // tissue; a one-in-three split left ordinary deterministic towns with
+        // no mixed-use storefront at all.
+        identity.archetype = shop_selector & 1 == 0 ? .Mixed_Use_Dwelling : .Shop_House
     case .Mill:
         identity.archetype = .Mill
     case .Fishery:
@@ -617,6 +627,25 @@ facade_profile :: proc(archetype: buildings.Archetype) -> Facade_Profile {
             blank_sides = true,
             shop_ground_floor = archetype == .Shop_House,
         }
+    case .Mixed_Use_Dwelling:
+        return {
+            // Two broad display bays flank the glazed shop entrance. Apartment
+            // access is handled on the side walls, not by consuming frontage.
+            front_bays_min    = 2,
+            front_bays_max    = 2,
+            rear_bays_min     = 1,
+            rear_bays_max     = 2,
+            side_bays_min     = 1,
+            side_bays_max     = 2,
+            window_width_min  = 1.35,
+            window_width_max  = 1.70,
+            window_height_min = 1.85,
+            window_height_max = 2.25,
+            opening_ratio_min = .15,
+            opening_ratio_max = .22,
+            blank_sides       = true,
+            shop_ground_floor = true,
+        }
     case .Workshop, .Storehouse, .Fishery, .Barn_Granary, .Mill:
         return {
             front_bays_min = 0,
@@ -777,6 +806,21 @@ architecture_opening_layout :: proc(
                 if primary_face && row == 0 && central_bay {
                     continue
                 }
+                if identity.archetype == .Mixed_Use_Dwelling &&
+                   primary_mass &&
+                   row == 0 &&
+                   (face == .Left || face == .Right) {
+                    // The renderer gives mixed-use dwellings a dedicated
+                    // apartment stair door on each side wall. Reserve that
+                    // ground-floor span here so the independently generated
+                    // side-window grammar cannot draw through either door.
+                    apartment_door_horizontal := face == .Left ? mass.depth * .20 : -mass.depth * .20
+                    apartment_door_width: f32 = 1.65
+                    if math.abs(horizontal - apartment_door_horizontal) <
+                       window_width * .5 + apartment_door_width * .5 + ARCHITECTURE_DOOR_WINDOW_MARGIN {
+                        continue
+                    }
+                }
                 if math.abs(horizontal) + window_width * .5 > span * .5 - ARCHITECTURE_OPENING_CORNER_MARGIN {
                     continue
                 }
@@ -787,9 +831,16 @@ architecture_opening_layout :: proc(
                     kind = .Vent
                     opening_y = max(opening_height * .5 + 1.15, f32(1.5))
                 } else if profile.shop_ground_floor && primary_face && row == 0 {
-                    opening_width = min(window_width * 1.12, f32(1.65))
-                    opening_height = min(window_height * 1.08, f32(2.25))
-                    opening_y = facade_opening_row_y(wall_height, row, opening_height)
+                    // Shop glazing should begin near the pavement and approach
+                    // the door head. Treating it like a slightly enlarged
+                    // domestic window leaves the ground floor visually closed.
+                    if identity.archetype == .Mixed_Use_Dwelling {
+                        opening_width = clamp(span * .27, f32(4.2), f32(7.2))
+                    } else {
+                        opening_width = clamp(span / f32(columns + 1) * .62, f32(2.35), f32(3.60))
+                    }
+                    opening_height = min(window_height * 1.62, f32(3.40))
+                    opening_y = .36 + opening_height * .5
                 } else if primary_face && row == 0 {
                     opening_width *= .90
                     opening_height *= .85
@@ -1210,9 +1261,21 @@ City_Parcel :: struct {
     alley_frontage:        bool,
 }
 
+City_Alley_Terminal :: enum u8 {
+    None,
+    Door,
+    Road,
+    Public_Space,
+}
+
 City_Alley :: struct {
     start_x, start_z, end_x, end_z: f32,
     half_width:                     f32,
+    household_demand:               u16,
+    start_terminal, end_terminal:   City_Alley_Terminal,
+    curve_control_from:             [2]f32,
+    curve_control_to:               [2]f32,
+    curve_ready:                    bool,
 }
 
 City_Lamp :: struct {
@@ -1262,6 +1325,22 @@ architecture_footprint :: #force_inline proc(structure: terrain.Structure) -> Ar
         }
         result.count = 3
     } else if (archetype == .Dwelling || archetype == .Farmstead) &&
+       structure.width >= 18 &&
+       structure.depth >= 18 &&
+       variant % 8 == 6 {
+        // T plan: a broad street range with a centered rear range. Unlike the
+        // mirrored L plans this reads as a different silhouette from either
+        // side and gives medium-width rural parcels a compound option.
+        result.masses[0] = {0, structure.depth * .24, structure.width, structure.depth * .52, 1}
+        result.masses[1] = {
+            0,
+            -structure.depth * .22,
+            max(structure.width * .44, f32(4.5)),
+            max(structure.depth * .56, f32(4.5)),
+            .82,
+        }
+        result.count = 2
+    } else if (archetype == .Dwelling || archetype == .Farmstead) &&
        structure.width >= 12 &&
        structure.depth >= 14 &&
        variant % 4 == 1 {
@@ -1273,6 +1352,54 @@ architecture_footprint :: #force_inline proc(structure: terrain.Structure) -> Ar
             max(structure.width * .38, f32(4.5)),
             max(structure.depth * .76, f32(4.5)),
             .78,
+        }
+        result.count = 2
+    } else if archetype == .Mixed_Use_Dwelling && structure.width >= 22 && structure.depth >= 18 && variant % 6 == 5 {
+        // Broad mixed-use parcels can wrap two private rear ranges around a
+        // small service court. The full-width street bar still carries the
+        // shop and upper apartments, preserving the storefront grammar.
+        result.masses[0] = {0, structure.depth * .18, structure.width, structure.depth * .64, 1}
+        result.masses[1] = {
+            -structure.width * .31,
+            -structure.depth * .35,
+            max(structure.width * .32, f32(4.5)),
+            max(structure.depth * .42, f32(4.5)),
+            .68,
+        }
+        result.masses[2] = {
+            structure.width * .31,
+            -structure.depth * .35,
+            max(structure.width * .32, f32(4.5)),
+            max(structure.depth * .42, f32(4.5)),
+            .68,
+        }
+        result.count = 3
+    } else if archetype == .Mixed_Use_Dwelling && structure.width >= 14 && structure.depth >= 14 {
+        // The full-width street range holds the shop and upper rooms; the
+        // lower rear wing reads as the private part of the dwelling. Most
+        // variants mirror an L; every third uses a centered T-plan.
+        result.masses[0] = {0, structure.depth * .18, structure.width, structure.depth * .64, 1}
+        result.masses[1] = {
+            variant % 3 == 2 ? f32(0) : (variant & 1) == 0 ? -structure.width * .27 : structure.width * .27,
+            -structure.depth * .29,
+            variant % 3 == 2 ? max(structure.width * .54, f32(4.5)) : max(structure.width * .46, f32(4.5)),
+            max(structure.depth * .42, f32(4.5)),
+            variant % 3 == 2 ? f32(.76) : f32(.72),
+        }
+        result.count = 2
+    } else if (archetype == .Townhouse || archetype == .Shop_House) &&
+       structure.width >= 16 &&
+       structure.depth >= 16 &&
+       variant % 6 == 1 {
+        // Street range plus a narrow rear return. Attached buildings therefore
+        // vary in depth as well as using the side-to-side stepped composition.
+        result.masses[0] = {0, structure.depth * .18, structure.width, structure.depth * .64, 1}
+        result.masses[1] = {
+            (variant & 1) == 0 ? -structure.width * .30 : structure.width * .30,
+            -structure.depth * .28,
+            max(structure.width * .40, f32(4.5)),
+            max(structure.depth * .44, f32(4.5)),
+            .76,
         }
         result.count = 2
     } else if (archetype == .Townhouse || archetype == .Shop_House) &&
@@ -1289,6 +1416,28 @@ architecture_footprint :: #force_inline proc(structure: terrain.Structure) -> Ar
             .72,
         }
         result.count = 2
+    } else if (archetype == .Workshop || archetype == .Storehouse || archetype == .Fishery) &&
+       structure.width >= 20 &&
+       structure.depth >= 16 &&
+       variant % 6 == 4 {
+        // A working court edged by two unequal sheds gives larger productive
+        // sites a broken, three-part roofline instead of another residential L.
+        result.masses[0] = {0, -structure.depth * .22, structure.width, structure.depth * .48, 1}
+        result.masses[1] = {
+            -structure.width * .35,
+            structure.depth * .20,
+            max(structure.width * .30, f32(4.5)),
+            max(structure.depth * .48, f32(4.5)),
+            .70,
+        }
+        result.masses[2] = {
+            structure.width * .36,
+            structure.depth * .12,
+            max(structure.width * .28, f32(4.5)),
+            max(structure.depth * .34, f32(4.5)),
+            .58,
+        }
+        result.count = 3
     } else if (archetype == .Workshop || archetype == .Storehouse || archetype == .Fishery) &&
        structure.width >= 12 &&
        structure.depth >= 12 &&
@@ -1802,8 +1951,10 @@ city_plan_density_grid :: proc(
                 structure.kind = .Architecture
                 structure.rotation = rotation
                 structure.seed = building_seed
+                mercantile_frontage := frontage.found && density >= .45 && int((building_seed >> 11) % 8) <= 1
                 structure.building = architecture_identity(
                     {
+                        tissue = mercantile_frontage ? Context_Tissue.Mercantile : Context_Tissue.Unspecified,
                         density = density,
                         attached = density >= .68,
                         frontage = width,
@@ -1893,8 +2044,10 @@ city_plan_add_parcel_building :: proc(
     structure.kind = .Architecture
     structure.rotation = rotation
     structure.seed = seed
+    mercantile_frontage := !alley_frontage && density >= .45 && int((seed >> 11) % 8) <= 1
     structure.building = architecture_identity(
         {
+            tissue = mercantile_frontage ? Context_Tissue.Mercantile : Context_Tissue.Unspecified,
             density = density,
             attached = density > .72,
             frontage = width,
@@ -1936,6 +2089,44 @@ city_plan_add_parcel_building :: proc(
     plan.parcel_count += 1
     append(&plan.structures, structure)
     plan.count += 1
+}
+
+city_alley_segment_intersection :: proc(
+    first_start_x, first_start_z, first_end_x, first_end_z: f32,
+    second: City_Alley,
+) -> (
+    x, z, first_along: f32,
+    found: bool,
+) {
+    first_x, first_z := first_end_x - first_start_x, first_end_z - first_start_z
+    second_x, second_z := second.end_x - second.start_x, second.end_z - second.start_z
+    cross := first_x * second_z - first_z * second_x
+    if math.abs(cross) <= .0001 do return
+    offset_x, offset_z := second.start_x - first_start_x, second.start_z - first_start_z
+    first_amount := (offset_x * second_z - offset_z * second_x) / cross
+    second_amount := (offset_x * first_z - offset_z * first_x) / cross
+    if first_amount <= .001 || first_amount >= .999 || second_amount < -.001 || second_amount > 1.001 {
+        return
+    }
+    return first_start_x + first_x * first_amount, first_start_z + first_z * first_amount, first_amount, true
+}
+
+city_plan_split_alley_at :: proc(plan: ^City_Plan, alley_index: int, x, z: f32) {
+    if plan == nil || alley_index < 0 || alley_index >= plan.alley_count do return
+    original := plan.alleys[alley_index]
+    start_dx, start_dz := x - original.start_x, z - original.start_z
+    end_dx, end_dz := x - original.end_x, z - original.end_z
+    if start_dx * start_dx + start_dz * start_dz <= .0025 || end_dx * end_dx + end_dz * end_dz <= .0025 {
+        return
+    }
+    plan.alleys[alley_index].end_x = x
+    plan.alleys[alley_index].end_z = z
+    plan.alleys[alley_index].end_terminal = .None
+    tail := original
+    tail.start_x, tail.start_z = x, z
+    tail.start_terminal = .None
+    append(&plan.alleys, tail)
+    plan.alley_count += 1
 }
 
 city_plan_density :: proc(
@@ -1991,27 +2182,62 @@ city_plan_density :: proc(
                             false,
                         )
 
-                        // Deep paint receives a narrow alley normal to the main
-                        // street. Lots then front both sides of that alley.
+                        // Dense paint may support a narrow alley normal to the
+                        // main street, but the alley is demand-driven: retain
+                        // it only after multiple independently viable deep
+                        // parcels have asked for shared access.
                         deep_density := city_density_sample(
                             field,
                             current.x + normal_x * side * (edge.half_width + edge.shoulder_width + 62),
                             current.z + normal_z * side * (edge.half_width + edge.shoulder_width + 62),
                         )
-                        if deep_density > .18 && (lot_seed & 7) == 0 {
+                        if deep_density > .55 && (lot_seed & 7) == 0 {
                             alley_start := edge.half_width + edge.shoulder_width + 3
                             alley_length := 62 + deep_density * 22
+                            network_length := alley_start + alley_length
                             alley := City_Alley {
-                                start_x    = current.x + normal_x * side * alley_start,
-                                start_z    = current.z + normal_z * side * alley_start,
-                                end_x      = current.x + normal_x * side * (alley_start + alley_length),
-                                end_z      = current.z + normal_z * side * (alley_start + alley_length),
-                                half_width = 2.2,
+                                // Root the branch on the sampled road
+                                // centerline. Starting beyond the shoulder and
+                                // labeling that point `.Road` only drew a
+                                // convincing apron; it did not make the two
+                                // networks geometrically connected.
+                                start_x        = current.x,
+                                start_z        = current.z,
+                                end_x          = current.x + normal_x * side * network_length,
+                                end_z          = current.z + normal_z * side * network_length,
+                                half_width     = 2.2,
+                                start_terminal = .Road,
                             }
-                            append(&plan.alleys, alley)
-                            plan.alley_count += 1
+                            joined_alley := -1
+                            joined_x, joined_z: f32
+                            joined_amount: f32 = 1
+                            for existing, existing_index in plan.alleys[:plan.alley_count] {
+                                intersection_x, intersection_z, amount, found := city_alley_segment_intersection(
+                                    alley.start_x,
+                                    alley.start_z,
+                                    alley.end_x,
+                                    alley.end_z,
+                                    existing,
+                                )
+                                if found && amount < joined_amount {
+                                    joined_alley = existing_index
+                                    joined_x, joined_z = intersection_x, intersection_z
+                                    joined_amount = amount
+                                }
+                            }
+                            if joined_alley >= 0 {
+                                alley.end_x, alley.end_z = joined_x, joined_z
+                                alley.end_terminal = .None
+                                network_length *= joined_amount
+                            }
+                            structure_start := plan.count
+                            parcel_start := plan.parcel_count
                             for alley_step in 0 ..< 3 {
-                                along := 22 + f32(alley_step) * 18
+                                // Lots still begin beyond the road shoulder;
+                                // only the access centerline reaches the
+                                // network root.
+                                along := alley_start + 22 + f32(alley_step) * 18
+                                if along >= network_length - 2 do continue
                                 alley_x := alley.start_x + normal_x * side * along
                                 alley_z := alley.start_z + normal_z * side * along
                                 for alley_side_index in 0 ..< 2 {
@@ -2043,6 +2269,24 @@ city_plan_density :: proc(
                                         true,
                                     )
                                 }
+                            }
+                            household_demand := plan.count - structure_start
+                            if household_demand >= 2 {
+                                alley.household_demand = u16(household_demand)
+                                if joined_alley >= 0 {
+                                    city_plan_split_alley_at(&plan, joined_alley, joined_x, joined_z)
+                                }
+                                append(&plan.alleys, alley)
+                                plan.alley_count += 1
+                            } else {
+                                // A single deep lot can use private access;
+                                // it does not justify constructing a public
+                                // branch or creating an isolated alley-front
+                                // building merely to decorate that branch.
+                                resize(&plan.structures, structure_start)
+                                resize(&plan.parcels, parcel_start)
+                                plan.count = structure_start
+                                plan.parcel_count = parcel_start
                             }
                         }
                     }

@@ -2,6 +2,7 @@ package tests
 
 import flight "../packages/flight"
 import libellula "../packages/libellula"
+import "core:math"
 import "core:testing"
 
 @(test)
@@ -23,28 +24,51 @@ fixed_wing_step_produces_thrust :: proc(t: ^testing.T) {
 }
 
 @(test)
-fixed_wing_runtime_stall_modifier_changes_effective_stall_speed :: proc(t: ^testing.T) {
-    state := flight.Body_State {
-        velocity = {0, 0, -20},
-        basis    = flight.identity_basis(),
-    }
+fixed_wing_propeller_thrust_is_continuous_and_power_aware :: proc(t: ^testing.T) {
     airframe := flight.postale_airframe()
-    runtime := flight.default_runtime()
-    baseline := flight.step(&state, {}, airframe, runtime, {}, 1.0 / 60.0)
-    state = {
-        velocity = {0, 0, -20},
-        basis    = flight.identity_basis(),
-    }
-    runtime.stall_speed_modifier = .5
-    assisted := flight.step(&state, {}, airframe, runtime, {}, 1.0 / 60.0)
-    testing.expect(t, assisted.effective_stall_speed < baseline.effective_stall_speed)
+    power := airframe.rated_power_per_engine_kw * 1000
+    static := flight.propeller_thrust(
+        power,
+        airframe.propeller_efficiency,
+        airframe.static_thrust_per_engine,
+        0,
+        1,
+    )
+    cruise := flight.propeller_thrust(
+        power,
+        airframe.propeller_efficiency,
+        airframe.static_thrust_per_engine,
+        40,
+        1,
+    )
+    reduced_power := flight.propeller_thrust(
+        power * .5,
+        airframe.propeller_efficiency,
+        airframe.static_thrust_per_engine,
+        40,
+        1,
+    )
+    testing.expect(t, flight.propeller_thrust(power, airframe.propeller_efficiency, airframe.static_thrust_per_engine, 0, 0) == 0)
+    testing.expect(t, math.abs(static - airframe.static_thrust_per_engine) < .01)
+    testing.expect(t, cruise > 0 && cruise < static)
+    testing.expect(t, reduced_power < cruise)
+}
+
+@(test)
+fixed_wing_stall_speed_comes_from_weight_wing_and_flaps :: proc(t: ^testing.T) {
+    airframe := flight.postale_airframe()
+    baseline := flight.effective_stall_speed(airframe.mass_kg, airframe)
+    loaded := flight.effective_stall_speed(airframe.maximum_gross_mass_kg, airframe)
+    flapped := flight.effective_stall_speed(airframe.mass_kg, airframe, 1)
+    testing.expect(t, loaded > baseline)
+    testing.expect(t, flapped < baseline)
 }
 
 @(test)
 postale_and_pelican_tuning :: proc(t: ^testing.T) {
     postale := flight.postale_airframe(); pelican := flight.pelican_airframe()
-    testing.expect(t, postale.stall_speed == 24 && postale.engine_count == 1)
-    testing.expect(t, postale.pitch_damping == 27500 && postale.roll_control_scale == 1.05)
+    testing.expect(t, postale.engine_count == 1)
+    testing.expect(t, postale.pitch_damping == 27500 && postale.roll_control_scale == 1.35)
     testing.expect(t, pelican.water_capable && pelican.engine_count == 2)
     testing.expect(t, pelican.water_planing_start_speed == 11.5 && pelican.water_plow_drag_scale == .72)
 }

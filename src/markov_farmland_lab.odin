@@ -13,6 +13,13 @@ MARKOV_FARMLAND_ORIGIN_X :: f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT
 MARKOV_FARMLAND_ORIGIN_Z :: MARKOV_FARMLAND_ORIGIN_X + terrain.DEFAULT_TOWN_OFFSET
 FARM_INSTANCE_CAPACITY :: 16
 
+Farmland_Lab_Terrain :: enum u8 {
+    Flat,
+    Incline,
+    Terrace,
+    Cliff,
+}
+
 Farm_Instance :: struct {
     plan:     farmland.Plan,
     origin_x: f32,
@@ -32,6 +39,8 @@ farmland_render_preview := false
 farmland_render_width := farmland.GRID_WIDTH
 farmland_render_height := farmland.GRID_HEIGHT
 farmland_render_tradition := farmland.Tradition.Ancient_Enclosure
+markov_farmland_lab_terrain := Farmland_Lab_Terrain.Flat
+markov_farmland_lab_input_ready := false
 
 farmland_warp_grid :: proc(grid_x, grid_z: f32) -> (f32, f32) {
     if farmland_render_tradition == .Parliamentary_Enclosure {
@@ -67,7 +76,7 @@ farmland_color :: proc(crop: farmland.Crop, tint: f32) -> rl.Color {
     return color_lerp(base, warm, tint * .12)
 }
 
-farmland_world_point :: proc(editor: ^Editor, grid_x, grid_z: f32, lift: f32) -> third_person.Vec3 {
+farmland_world_xz :: proc(grid_x, grid_z: f32) -> (f32, f32) {
     warped_x, warped_z := farmland_warp_grid(grid_x, grid_z)
     local_x := (warped_x - f32(farmland_render_width) * .5) * farmland.CELL_METERS * farmland_render_scale_x
     local_z := (warped_z - f32(farmland_render_height) * .5) * farmland.CELL_METERS * farmland_render_scale_z
@@ -76,16 +85,54 @@ farmland_world_point :: proc(editor: ^Editor, grid_x, grid_z: f32, lift: f32) ->
     cosine, sine := math.cos(farmland_render_yaw), math.sin(farmland_render_yaw)
     x := farmland_render_origin_x + local_x * cosine - local_z * sine
     z := farmland_render_origin_z + local_x * sine + local_z * cosine
+    return x, z
+}
+
+farmland_world_point :: proc(editor: ^Editor, grid_x, grid_z: f32, lift: f32) -> third_person.Vec3 {
+    x, z := farmland_world_xz(grid_x, grid_z)
     y := terrain.sample_height(&editor.project, 0, x, z) + lift
     return {x, y, z}
 }
 
-farmland_patch :: proc(editor: ^Editor, x0, z0, x1, z1: f32, color: rl.Color, lift: f32 = .16) {
+farmland_surface_is_safe :: proc(editor: ^Editor, grid_x, grid_z: f32) -> bool {
+    if editor == nil do return false
+    if !lab_scene_is_active(editor, "markov-farmland") do return true
+    x, z := farmland_world_xz(grid_x, grid_z)
+    local_x := x - MARKOV_FARMLAND_ORIGIN_X
+    local_z := z - MARKOV_FARMLAND_ORIGIN_Z
+    switch markov_farmland_lab_terrain {
+    case .Flat:
+        return true
+    case .Incline:
+        return true
+    case .Terrace:
+        terrace_coordinate := local_z + local_x * .12
+        return abs(terrace_coordinate + 34) > 4.5 && abs(terrace_coordinate - 34) > 4.5
+    case .Cliff:
+        cliff_coordinate := local_x - local_z * .10 - 24
+        // The escarpment is a hard holding boundary: keep the upper bench and
+        // reject both the face and the disconnected lower ground beyond it.
+        return cliff_coordinate < -5
+    }
+    return true
+}
+
+farmland_raw_patch :: proc(editor: ^Editor, x0, z0, x1, z1: f32, color: rl.Color, lift: f32 = .16) {
     a := farmland_world_point(editor, x0, z0, lift)
     b := farmland_world_point(editor, x0, z1, lift)
     c := farmland_world_point(editor, x1, z1, lift)
     d := farmland_world_point(editor, x1, z0, lift)
     world_quad(a, b, c, d, color)
+}
+
+farmland_patch :: proc(editor: ^Editor, x0, z0, x1, z1: f32, color: rl.Color, lift: f32 = .16) {
+    if !farmland_surface_is_safe(editor, x0, z0) ||
+       !farmland_surface_is_safe(editor, x0, z1) ||
+       !farmland_surface_is_safe(editor, x1, z0) ||
+       !farmland_surface_is_safe(editor, x1, z1) {
+        return
+    }
+    farmland_raw_patch(editor, x0, z0, x1, z1, color, lift)
 }
 
 farmland_hedgerow :: proc(editor: ^Editor, x0, z0, x1, z1: f32, seed: u32, detail_fade: f32) {
@@ -96,6 +143,12 @@ farmland_hedgerow :: proc(editor: ^Editor, x0, z0, x1, z1: f32, seed: u32, detai
     for segment in 0 ..< segment_count {
         t0 := f32(segment) / f32(segment_count)
         t1 := f32(segment + 1) / f32(segment_count)
+        midpoint_t := (t0 + t1) * .5
+        if !farmland_surface_is_safe(editor, x0 + grid_dx * t0, z0 + grid_dz * t0) ||
+           !farmland_surface_is_safe(editor, x0 + grid_dx * midpoint_t, z0 + grid_dz * midpoint_t) ||
+           !farmland_surface_is_safe(editor, x0 + grid_dx * t1, z0 + grid_dz * t1) {
+            continue
+        }
         segment_start := farmland_world_point(editor, x0 + grid_dx * t0, z0 + grid_dz * t0, 0)
         segment_finish := farmland_world_point(editor, x0 + grid_dx * t1, z0 + grid_dz * t1, 0)
         dx, dz := segment_finish.x - segment_start.x, segment_finish.z - segment_start.z
@@ -179,6 +232,7 @@ farmland_render_crops :: proc(
                     jitter_z := (f32((mixed >> 8) & 255) / 255 - .5) * .18
                     grid_x := f32(x) + (f32(sub_x) + .5) / f32(subdivisions) + jitter_x
                     grid_z := f32(z) + (f32(sub_z) + .5) / f32(subdivisions) + jitter_z
+                    if !farmland_surface_is_safe(editor, grid_x, grid_z) do continue
                     point := farmland_world_point(editor, grid_x, grid_z, .03)
                     height, width := f32(.35), f32(.24)
                     color := farmland_color(parcel.crop, parcel.tint)
@@ -430,6 +484,7 @@ world_markov_farmland :: proc(editor: ^Editor) {
     farmland_render_scale_z = 1
     farmland_render_preview = false
     farmland_render_plan(editor, &markov_farmland_plan)
+    markov_farmland_lab_terrace_walls(editor)
 }
 
 world_authored_farmland :: proc(editor: ^Editor) {
@@ -508,6 +563,8 @@ settlement_village_attach_farmland :: proc(editor: ^Editor) -> bool {
 
 markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
+    markov_farmland_lab_terrain = .Flat
+    markov_farmland_lab_input_ready = false
     seed := MARKOV_FARMLAND_DEFAULT_SEED
     if parsed, ok := strconv.parse_int(target); ok && parsed >= 0 && parsed <= 0xffffffff {
         seed = u32(parsed)
@@ -520,9 +577,18 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         grid_width, grid_height = farmland.GRID_WIDTH, farmland.GRID_HEIGHT
     case "large":
         grid_width, grid_height = 48, 36
+    case "flat":
+        markov_farmland_lab_terrain = .Flat
+    case "incline":
+        markov_farmland_lab_terrain = .Incline
+    case "terrace":
+        markov_farmland_lab_terrain = .Terrace
+    case "cliff":
+        markov_farmland_lab_terrain = .Cliff
     }
     markov_farmland_plan = farmland.generate_sized(seed, grid_width, grid_height, context.temp_allocator)
     if !farmland.validate(&markov_farmland_plan) do return false
+    markov_farmland_lab_apply_terrain(editor, markov_farmland_lab_terrain)
 
     editor.in_map = true
     editor.capture_world_only = true
@@ -538,22 +604,221 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
             {MARKOV_FARMLAND_ORIGIN_X + 42, center_height + 190, MARKOV_FARMLAND_ORIGIN_Z + 54},
             {MARKOV_FARMLAND_ORIGIN_X, center_height, MARKOV_FARMLAND_ORIGIN_Z},
         )
+        third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+        third_person.camera_set_active(&editor.cameras, .Inspection)
     } else {
-        extent := f32(max(markov_farmland_plan.width, markov_farmland_plan.height)) * farmland.CELL_METERS
-        editor.camera_pose = third_person.camera_look_at(
-            {
-                MARKOV_FARMLAND_ORIGIN_X + extent * .58,
-                center_height + extent * .40,
-                MARKOV_FARMLAND_ORIGIN_Z + extent * .66,
-            },
-            {MARKOV_FARMLAND_ORIGIN_X, center_height, MARKOV_FARMLAND_ORIGIN_Z},
-        )
+        markov_farmland_lab_configure_camera(editor)
     }
-    third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
-    third_person.camera_set_active(&editor.cameras, .Inspection)
     return true
 }
 
-markov_farmland_process_input :: proc(_: ^Editor) {  }
+markov_farmland_lab_height :: proc(kind: Farmland_Lab_Terrain, x, z: f32) -> f32 {
+    local_x := x - MARKOV_FARMLAND_ORIGIN_X
+    local_z := z - MARKOV_FARMLAND_ORIGIN_Z
+    switch kind {
+    case .Flat:
+        return 10
+    case .Incline:
+        // A continuous diagonal grade exercises terrain conformity without
+        // terrace transitions or exclusion gaps obscuring the result. Clamp
+        // only beyond the lab's inspection area so the distant terrain stays
+        // above sea level instead of turning the horizon into a shoreline.
+        ramp_x := clamp(local_x, f32(-160), f32(160))
+        ramp_z := clamp(local_z, f32(-160), f32(160))
+        return 22 + ramp_x * .075 + ramp_z * .035
+    case .Terrace:
+        // Three broad agricultural benches with eased stone-bank transitions.
+        terrace_coordinate := local_z + local_x * .12
+        height := f32(7)
+        lower_fraction := clamp((terrace_coordinate + 37) / 6, 0, 1)
+        lower_eased := lower_fraction * lower_fraction * (3 - 2 * lower_fraction)
+        upper_fraction := clamp((terrace_coordinate - 31) / 6, 0, 1)
+        upper_eased := upper_fraction * upper_fraction * (3 - 2 * upper_fraction)
+        height += (lower_eased + upper_eased) * 5
+        return height
+    case .Cliff:
+        // The nominal farm envelope crosses this escarpment. The renderer's
+        // suitability mask must leave the abrupt face free of fields and
+        // hedges while retaining cultivable ground on both benches.
+        cliff_coordinate := local_x - local_z * .10 - 24
+        fraction := clamp((cliff_coordinate + 2) / 4, 0, 1)
+        eased := fraction * fraction * (3 - 2 * fraction)
+        return 28 - eased * 18
+    }
+    return 10
+}
 
-markov_farmland_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {  }
+markov_farmland_lab_point_in_farm :: proc(x, z: f32, verge: f32 = 0) -> bool {
+    local_x := x - MARKOV_FARMLAND_ORIGIN_X
+    local_z := z - MARKOV_FARMLAND_ORIGIN_Z
+    cosine, sine := math.cos(f32(-.14)), math.sin(f32(-.14))
+    farm_local_x := local_x * cosine + local_z * sine
+    farm_local_z := -local_x * sine + local_z * cosine
+    farm_half_width := f32(markov_farmland_plan.width) * farmland.CELL_METERS * .5 + verge
+    farm_half_height := f32(markov_farmland_plan.height) * farmland.CELL_METERS * .5 + verge
+    return abs(farm_local_x) <= farm_half_width && abs(farm_local_z) <= farm_half_height
+}
+
+markov_farmland_lab_terrace_walls :: proc(editor: ^Editor) {
+    if editor == nil || !lab_scene_is_active(editor, "markov-farmland") || markov_farmland_lab_terrain != .Terrace {
+        return
+    }
+
+    // Dry-stacked limestone walls hold the two terrace cuts. The terrain
+    // remains naturally grassed, while cultivated surfaces stop at a narrow
+    // verge above and below each wall.
+    normal_length := f32(math.sqrt(f64(1 + .12 * .12)))
+    normal_x, normal_z := .12 / normal_length, 1 / normal_length
+    direction_x, direction_z := 1 / normal_length, -.12 / normal_length
+    yaw := math.atan2(direction_z, direction_x)
+    SEGMENT_LENGTH :: f32(4)
+    half_extent := f32(max(markov_farmland_plan.width, markov_farmland_plan.height)) * farmland.CELL_METERS * .75
+    for edge_index in 0 ..< 2 {
+        edge := edge_index == 0 ? f32(-34) : f32(34)
+        closest_scale := edge / (1 + .12 * .12)
+        closest_x := normal_x * closest_scale * normal_length
+        closest_z := normal_z * closest_scale * normal_length
+        segment_count := int(math.ceil(f64(half_extent * 2 / SEGMENT_LENGTH)))
+        for segment in 0 ..< segment_count {
+            along := -half_extent + (f32(segment) + .5) * SEGMENT_LENGTH
+            x := MARKOV_FARMLAND_ORIGIN_X + closest_x + direction_x * along
+            z := MARKOV_FARMLAND_ORIGIN_Z + closest_z + direction_z * along
+            if !markov_farmland_lab_point_in_farm(x, z, 1) do continue
+            lower_x, lower_z := x - normal_x * 4, z - normal_z * 4
+            upper_x, upper_z := x + normal_x * 4, z + normal_z * 4
+            lower_y := terrain.sample_height(&editor.project, 0, lower_x, lower_z)
+            upper_y := terrain.sample_height(&editor.project, 0, upper_x, upper_z)
+            wall_height := max(upper_y - lower_y, f32(.8))
+            base_stone := edge_index == 0 ? rl.Color{119, 116, 103, 255} : rl.Color{131, 126, 108, 255}
+            COURSE_COUNT :: 4
+            course_height := wall_height / COURSE_COUNT
+            for course in 0 ..< COURSE_COUNT {
+                for block in 0 ..< 2 {
+                    stagger := course & 1 == 0 ? f32(0) : f32(.22)
+                    block_along := (f32(block) - .5) * SEGMENT_LENGTH * .5 + stagger
+                    block_x := x + direction_x * block_along
+                    block_z := z + direction_z * block_along
+                    shade := f32((segment * 3 + course * 2 + block + edge_index) % 5) / 4
+                    stone := color_lerp(base_stone, {158, 148, 123, 255}, shade * .32)
+                    world_box_rotated(
+                        {block_x, lower_y + (f32(course) + .5) * course_height, block_z},
+                        {SEGMENT_LENGTH * .51, max(course_height - .055, f32(.12)), .78},
+                        yaw,
+                        stone,
+                    )
+                }
+            }
+            coping := color_lerp(base_stone, {188, 178, 148, 255}, .34)
+            world_box_rotated({x, lower_y + wall_height + .07, z}, {SEGMENT_LENGTH + .12, .18, .92}, yaw, coping)
+        }
+    }
+}
+
+markov_farmland_lab_apply_terrain :: proc(editor: ^Editor, kind: Farmland_Lab_Terrain) {
+    if editor == nil do return
+    markov_farmland_lab_terrain = kind
+    for level in 0 ..< terrain.CLIPMAP_LEVELS {
+        data := &editor.project.levels[level]
+        for z in 0 ..< terrain.RING_RESOLUTION {
+            world_z := data.origin_z + f32(z) * data.cell_size
+            for x in 0 ..< terrain.RING_RESOLUTION {
+                world_x := data.origin_x + f32(x) * data.cell_size
+                index := terrain.sample_index(x, z)
+                data.heights[index] = markov_farmland_lab_height(kind, world_x, world_z)
+                data.material[index] = .18
+            }
+        }
+    }
+    editor.project.revision += 1
+    world_terrain_invalidate_all(editor)
+}
+
+markov_farmland_lab_terrain_name :: proc(kind: Farmland_Lab_Terrain) -> cstring {
+    switch kind {
+    case .Flat:
+        return "FLAT FARM"
+    case .Incline:
+        return "PLAIN INCLINE"
+    case .Terrace:
+        return "TERRACES"
+    case .Cliff:
+        return "CLIFF EXCLUSION"
+    }
+    return "FARM"
+}
+
+markov_farmland_lab_configure_camera :: proc(editor: ^Editor) {
+    if editor == nil do return
+    extent := f32(max(markov_farmland_plan.width, markov_farmland_plan.height)) * farmland.CELL_METERS
+    center_height := terrain.sample_height(&editor.project, 0, MARKOV_FARMLAND_ORIGIN_X, MARKOV_FARMLAND_ORIGIN_Z)
+    eye := third_person.Vec3 {
+        MARKOV_FARMLAND_ORIGIN_X + extent * .58,
+        center_height + extent * .40,
+        MARKOV_FARMLAND_ORIGIN_Z + extent * .66,
+    }
+    focus := third_person.Vec3{MARKOV_FARMLAND_ORIGIN_X, center_height, MARKOV_FARMLAND_ORIGIN_Z}
+    switch markov_farmland_lab_terrain {
+    case .Incline:
+        // Look across the diagonal grade at a low enough angle that the
+        // continuous rise is visible behind the field rows.
+        eye = {
+            MARKOV_FARMLAND_ORIGIN_X + extent * .72,
+            center_height + extent * .24,
+            MARKOV_FARMLAND_ORIGIN_Z - extent * .68,
+        }
+        focus.y += 2
+    case .Terrace:
+        // Face uphill across both risers so the three cultivable benches and
+        // their deliberate exclusion gaps can be judged in one frame.
+        eye = {
+            MARKOV_FARMLAND_ORIGIN_X + extent * .10,
+            center_height + extent * .22,
+            MARKOV_FARMLAND_ORIGIN_Z - extent * .82,
+        }
+        focus.y += 3
+    case .Flat, .Cliff:
+    }
+    editor.camera_pose = third_person.camera_look_at(eye, focus)
+    third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+    third_person.camera_set_active(&editor.cameras, .Inspection)
+}
+
+markov_farmland_process_input :: proc(editor: ^Editor) {
+    if editor == nil do return
+    if !markov_farmland_lab_input_ready {
+        // Ignore launch-frame key transitions so command-line presets remain
+        // deterministic when the new SDL window acquires keyboard focus.
+        markov_farmland_lab_input_ready = true
+        return
+    }
+    selected := markov_farmland_lab_terrain
+    if rl.IsKeyPressed(.ONE) do selected = .Flat
+    if rl.IsKeyPressed(.TWO) do selected = .Terrace
+    if rl.IsKeyPressed(.THREE) do selected = .Cliff
+    if rl.IsKeyPressed(.FOUR) do selected = .Incline
+    if selected != markov_farmland_lab_terrain {
+        markov_farmland_lab_apply_terrain(editor, selected)
+        markov_farmland_lab_configure_camera(editor)
+    }
+}
+
+markov_farmland_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
+    panel := rl.Rectangle {
+        x      = 22,
+        y      = 22,
+        width  = 430,
+        height = 112,
+    }
+    rl.DrawRectangleRounded(panel, .12, 8, {10, 27, 37, 226})
+    rl.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, {104, 168, 184, 255})
+    rl.DrawTextEx(rl.Font{}, "MARKOV FARMLAND", {38, 38}, 20, 1, {245, 238, 197, 255})
+    rl.DrawTextEx(
+        rl.Font{},
+        markov_farmland_lab_terrain_name(markov_farmland_lab_terrain),
+        {38, 68},
+        17,
+        1,
+        {105, 215, 198, 255},
+    )
+    rl.DrawTextEx(rl.Font{}, "1 FLAT   2 TERRACE   3 CLIFF   4 INCLINE", {38, 98}, 14, 1, {190, 207, 211, 255})
+}

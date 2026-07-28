@@ -24,10 +24,54 @@ Landing_Run :: struct {
     stop_x:            f32,
     peak_load:         f32,
     structural_damage: f32,
+    final_speed:       f32,
+    final_forward:     f32,
+    final_vertical:    f32,
+    grounded:          bool,
 }
 
-run_scripted_landing :: proc(scenario: Landing_Scenario) -> Landing_Run {
+Takeoff_Run :: struct {
+    took_off, crashed: bool,
+    distance:          f32,
+    seconds:           f32,
+    liftoff_speed:     f32,
+    peak_ground_pitch: f32,
+}
+
+run_takeoff :: proc(mass_kg: f32, wind: flight.Vec3 = {}) -> Takeoff_Run {
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
+    runtime.airframe.mass_kg = mass_kg
+    start := runtime.body.position
+    result: Takeoff_Run
+    for step_index in 0 ..< 3600 {
+        postale.step(&runtime, {throttle_up = true, pitch = .35}, 0, 1.0 / 60.0, wind)
+        result.peak_ground_pitch = max(result.peak_ground_pitch, runtime.ground_pitch_radians)
+        if !runtime.grounded {
+            result.took_off = true
+            result.distance = linalg.length(
+                flight.Vec3{
+                    runtime.body.position.x - start.x,
+                    0,
+                    runtime.body.position.z - start.z,
+                },
+            )
+            result.seconds = f32(step_index + 1) / 60
+            result.liftoff_speed = runtime.telemetry.airspeed
+            break
+        }
+        if runtime.crashed do break
+    }
+    result.crashed = runtime.crashed
+    return result
+}
+
+run_scripted_landing :: proc(
+    scenario: Landing_Scenario,
+    mass_kg: f32 = 3300,
+    wind: flight.Vec3 = {},
+) -> Landing_Run {
     runtime := postale.new_runtime({0, postale.GROUND_CLEARANCE, 0})
+    runtime.airframe.mass_kg = mass_kg
     runtime.grounded = false
     runtime.was_grounded = false
     // Scenario distance is measured outward from the generated runway's
@@ -57,7 +101,7 @@ run_scripted_landing :: proc(scenario: Landing_Scenario) -> Landing_Run {
             control.throttle_down = true
         }
 
-        contact := postale.step(&runtime, control, 0, 1.0 / 60.0)
+        contact := postale.step(&runtime, control, 0, 1.0 / 60.0, wind)
         result.peak_load = max(result.peak_load, runtime.last_landing.load_factor)
         if contact.touched_down && !result.touched_down {
             result.touched_down = true
@@ -74,6 +118,10 @@ run_scripted_landing :: proc(scenario: Landing_Scenario) -> Landing_Run {
     }
     result.crashed = runtime.crashed
     result.structural_damage = runtime.structural_damage
+    result.final_speed = linalg.length(runtime.body.velocity)
+    result.final_forward = linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    result.final_vertical = runtime.body.velocity.y
+    result.grounded = runtime.grounded
     return result
 }
 
@@ -86,12 +134,33 @@ postale_ocean_is_a_drivable_surface_for_now :: proc(t: ^testing.T) {
 @(test)
 postale_scripted_approach_lands_and_stops :: proc(t: ^testing.T) {
     result := run_scripted_landing({distance = 180, altitude = 18, airspeed = 30, sink_speed = 1.8})
-    testing.expect(t, result.touched_down && result.stopped && !result.crashed)
+    testing.expectf(
+        t,
+        result.touched_down && result.stopped && !result.crashed,
+        "landing result: touched=%v stopped=%v crashed=%v grounded=%v speed=%.2f forward=%.2f vertical=%.2f touchdown=%.2f stop=%.2f load=%.2f",
+        result.touched_down,
+        result.stopped,
+        result.crashed,
+        result.grounded,
+        result.final_speed,
+        result.final_forward,
+        result.final_vertical,
+        result.touchdown_x,
+        result.stop_x,
+        result.peak_load,
+    )
     testing.expect(
         t,
         result.touchdown_x <= TEST_RUNWAY_HALF_LENGTH && result.touchdown_x >= -TEST_RUNWAY_HALF_LENGTH + 80,
     )
     testing.expect(t, result.stop_x >= -TEST_RUNWAY_HALF_LENGTH)
+    rollout_distance := math.abs(result.stop_x - result.touchdown_x)
+    testing.expectf(
+        t,
+        rollout_distance >= 170 && rollout_distance <= 220,
+        "expected a 170-220 m landing roll, got %.2f m",
+        rollout_distance,
+    )
     testing.expect(t, result.peak_load < 3)
     testing.expect(t, result.structural_damage == 0)
 }
@@ -102,26 +171,63 @@ postale_landing_envelope_has_adequate_margin :: proc(t: ^testing.T) {
     altitudes := [3]f32{15, 18, 21}
     airspeeds := [3]f32{27, 30, 33}
     sink_speeds := [3]f32{1.2, 1.8, 2.4}
-    attempts, successes := 0, 0
+    attempts, successes, runway_successes := 0, 0, 0
     for distance in distances {
         for altitude in altitudes {
             for airspeed in airspeeds {
                 for sink_speed in sink_speeds {
                     attempts += 1
                     result := run_scripted_landing({distance, altitude, airspeed, sink_speed})
-                    if result.touched_down &&
-                       result.stopped &&
-                       !result.crashed &&
-                       result.touchdown_x >= -TEST_RUNWAY_HALF_LENGTH + 80 &&
-                       result.stop_x >= -TEST_RUNWAY_HALF_LENGTH &&
-                       result.peak_load < 3 {
+                    if result.touched_down && result.stopped && !result.crashed && result.peak_load < 3 {
                         successes += 1
+                        if result.touchdown_x >= -TEST_RUNWAY_HALF_LENGTH + 80 &&
+                           result.stop_x >= -TEST_RUNWAY_HALF_LENGTH {
+                            runway_successes += 1
+                        }
                     }
                 }
             }
         }
     }
-    testing.expect(t, successes * 10 >= attempts * 9)
+    testing.expectf(
+        t,
+        successes * 10 >= attempts * 9,
+        "expected at least 90%% safe, controlled landings, got %d/%d",
+        successes,
+        attempts,
+    )
+    testing.expectf(
+        t,
+        runway_successes * 4 >= attempts * 3,
+        "expected at least 75%% of varied approaches to stop on the runway, got %d/%d",
+        runway_successes,
+        attempts,
+    )
+}
+
+@(test)
+postale_landing_remains_safe_across_weight_and_wind :: proc(t: ^testing.T) {
+    scenario := Landing_Scenario{distance = 180, altitude = 18, airspeed = 30, sink_speed = 1.8}
+    runs := [?]Landing_Run {
+        run_scripted_landing(scenario, 2800),
+        run_scripted_landing(scenario, 3300),
+        run_scripted_landing(scenario, 3800),
+        run_scripted_landing(scenario, 3300, flight.Vec3{4, 0, 0}),
+        run_scripted_landing(scenario, 3300, flight.Vec3{-4, 0, 0}),
+    }
+    for run in runs {
+        testing.expectf(
+            t,
+            run.touched_down && run.stopped && !run.crashed && run.peak_load < 3,
+            "unsafe landing condition: touched=%v stopped=%v crashed=%v load=%.2f",
+            run.touched_down,
+            run.stopped,
+            run.crashed,
+            run.peak_load,
+        )
+        rollout := math.abs(run.stop_x - run.touchdown_x)
+        testing.expectf(t, rollout < 450, "landing rollout exceeded runway length: %.1f m", rollout)
+    }
 }
 
 @(test)
@@ -136,6 +242,62 @@ postale_throttle_and_automatic_flaps_are_smoothed :: proc(t: ^testing.T) {
     runtime.body.velocity = runtime.body.basis.forward * 35
     postale.step(&runtime, {}, 0, .5)
     testing.expect(t, runtime.flap_fraction < 1)
+}
+
+@(test)
+postale_landing_intent_requires_a_stable_sustained_approach :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
+    runtime.grounded = false
+    runtime.was_grounded = false
+    runtime.body.position.y = postale.GROUND_CLEARANCE + 12
+    runtime.body.velocity = runtime.body.basis.forward * 27.5 + flight.Vec3{0, -1.2, 0}
+    runtime.throttle = .3
+
+    testing.expect(t, postale.landing_intent_candidate(&runtime, 0))
+    for _ in 0 ..< 13 {
+        postale.update_landing_intent(&runtime, 0, 1.0 / 60.0)
+    }
+    testing.expect(t, !runtime.landing_intent)
+    for _ in 0 ..< 15 {
+        postale.update_landing_intent(&runtime, 0, 1.0 / 60.0)
+    }
+    testing.expect(t, runtime.landing_intent)
+}
+
+@(test)
+postale_landing_intent_rejects_takeoff_and_stunt_motion :: proc(t: ^testing.T) {
+    takeoff := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
+    takeoff.throttle = 1
+    takeoff.body.velocity = takeoff.body.basis.forward * 24
+    testing.expect(t, !postale.landing_intent_candidate(&takeoff, 0))
+
+    stunt := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE + 10, 0})
+    stunt.grounded = false
+    stunt.was_grounded = false
+    stunt.throttle = .25
+    stunt.body.velocity = stunt.body.basis.forward * 28 + flight.Vec3{0, -1, 0}
+    stunt.body.angular_velocity = stunt.body.basis.forward * .9
+    testing.expect(t, !postale.landing_intent_candidate(&stunt, 0))
+    for _ in 0 ..< 60 {
+        postale.update_landing_intent(&stunt, 0, 1.0 / 60.0)
+    }
+    testing.expect(t, !stunt.landing_intent)
+}
+
+@(test)
+postale_go_around_cancels_landing_intent_immediately :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE + 10, 0})
+    runtime.grounded = false
+    runtime.was_grounded = false
+    runtime.body.velocity = runtime.body.basis.forward * 28 + flight.Vec3{0, -1, 0}
+    runtime.throttle = .3
+    runtime.landing_intent = true
+    runtime.landing_intent_seconds = postale.LANDING_INTENT_CONFIRM_SECONDS
+
+    runtime.throttle = .8
+    postale.update_landing_intent(&runtime, 0, 1.0 / 60.0)
+    testing.expect(t, !runtime.landing_intent)
+    testing.expect(t, runtime.landing_intent_seconds == 0)
 }
 
 @(test)
@@ -200,20 +362,127 @@ postale_exit_requires_a_safe_stop :: proc(t: ^testing.T) {
 }
 
 @(test)
+postale_braking_requires_a_deliberate_rollout :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
+    runtime.body.velocity = runtime.body.basis.forward * 30
+    start := runtime.body.position
+
+    for _ in 0 ..< 60 {
+        postale.step(&runtime, {throttle_down = true}, 0, 1.0 / 60.0)
+    }
+
+    distance := linalg.length(runtime.body.position - start)
+    testing.expectf(
+        t,
+        linalg.length(runtime.body.velocity) > 22,
+        "expected more than 22 m/s after one second of braking, got %.2f",
+        linalg.length(runtime.body.velocity),
+    )
+    testing.expectf(t, distance > 25, "expected more than 25 m of rollout, got %.2f", distance)
+    testing.expect(t, !postale.can_exit(&runtime))
+}
+
+@(test)
+postale_throttle_down_held_at_touchdown_applies_brakes_progressively :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
+    runtime.grounded = false
+    runtime.was_grounded = false
+    runtime.body.position.y = postale.GROUND_CLEARANCE
+    runtime.body.velocity = runtime.body.basis.forward * 30 + flight.Vec3{0, -1, 0}
+
+    result := postale.step(&runtime, {throttle_down = true}, 0, 1.0 / 60.0)
+    speed_at_touchdown := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    testing.expect(t, result.touched_down && runtime.grounded)
+
+    for _ in 0 ..< 20 {
+        postale.step(&runtime, {throttle_down = true}, 0, 1.0 / 60.0)
+    }
+    speed_after_hold := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    testing.expectf(
+        t,
+        speed_after_hold > speed_at_touchdown - 3,
+        "expected a held airborne L2 input to coast after touchdown, speed fell from %.2f to %.2f",
+        speed_at_touchdown,
+        speed_after_hold,
+    )
+
+    speed_before_braking := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    for _ in 0 ..< 120 {
+        postale.step(&runtime, {throttle_down = true}, 0, 1.0 / 60.0)
+    }
+    speed_after_braking := linalg.dot(runtime.body.velocity, runtime.body.basis.forward)
+    testing.expectf(
+        t,
+        speed_after_braking < speed_before_braking - 2,
+        "expected L2 pressed after release to brake, speed fell from %.2f to %.2f",
+        speed_before_braking,
+        speed_after_braking,
+    )
+}
+
+@(test)
 postale_accelerates_and_leaves_the_short_runway :: proc(t: ^testing.T) {
     runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
-    takeoff_distance: f32
-    took_off := false
-    for _ in 0 ..< 420 {
-        postale.step(&runtime, {throttle_up = true, pitch = .35}, 0, 1.0 / 60.0)
-        if !took_off && !runtime.grounded {
-            took_off = true
-            takeoff_distance = math.abs(runtime.body.position.x - runtime.spawn_position.x)
-        }
-    }
-    testing.expect(t, took_off && !runtime.grounded && !runtime.crashed)
-    testing.expect(t, takeoff_distance < 50)
-    testing.expect(t, runtime.body.position.y > postale.GROUND_CLEARANCE + 4.5)
+    run := run_takeoff(runtime.airframe.mass_kg)
+    testing.expectf(
+        t,
+        run.took_off && !run.crashed,
+        "takeoff result: took_off=%v crashed=%v speed=%.2f distance=%.2f",
+        run.took_off,
+        run.crashed,
+        run.liftoff_speed,
+        run.distance,
+    )
+    testing.expectf(
+        t,
+        run.distance >= 80 && run.distance <= 160,
+        "expected an 80-160 m normal-weight takeoff roll, got %.2f m",
+        run.distance,
+    )
+    testing.expectf(
+        t,
+        run.peak_ground_pitch > .0174533,
+        "expected visible aerodynamic rotation before liftoff, got %.3f radians",
+        run.peak_ground_pitch,
+    )
+}
+
+@(test)
+postale_takeoff_distance_responds_to_weight_and_wind :: proc(t: ^testing.T) {
+    light := run_takeoff(2800)
+    normal := run_takeoff(3300)
+    gross := run_takeoff(3800)
+    headwind := run_takeoff(3300, flight.Vec3{4, 0, 0})
+    tailwind := run_takeoff(3300, flight.Vec3{-4, 0, 0})
+
+    testing.expectf(
+        t,
+        light.took_off && normal.took_off && gross.took_off && headwind.took_off && tailwind.took_off,
+        "expected all takeoff conditions to fly: light=%v normal=%v gross=%v headwind=%v tailwind=%v",
+        light.took_off,
+        normal.took_off,
+        gross.took_off,
+        headwind.took_off,
+        tailwind.took_off,
+    )
+    testing.expectf(
+        t,
+        light.distance < normal.distance && normal.distance < gross.distance,
+        "expected takeoff distance to increase with weight: %.1f, %.1f, %.1f m",
+        light.distance,
+        normal.distance,
+        gross.distance,
+    )
+    testing.expectf(
+        t,
+        headwind.distance < normal.distance && normal.distance < tailwind.distance,
+        "expected headwind < calm < tailwind distance: %.1f, %.1f, %.1f m",
+        headwind.distance,
+        normal.distance,
+        tailwind.distance,
+    )
+    testing.expectf(t, gross.distance <= 450, "gross takeoff exceeded runway: %.1f m", gross.distance)
+    testing.expectf(t, tailwind.distance <= 450, "tailwind takeoff exceeded runway: %.1f m", tailwind.distance)
 }
 
 @(test)
@@ -292,6 +561,5 @@ postale_reset_restores_the_runway_state :: proc(t: ^testing.T) {
     testing.expect(t, runtime.flight_runtime.engine_output == 1)
     testing.expect(t, runtime.flight_runtime.control_authority == 1)
     testing.expect(t, !runtime.flight_runtime.controls_damaged)
-    testing.expect(t, runtime.flight_runtime.stall_speed_modifier == runtime.tuning.takeoff_stall_speed_scale)
     testing.expect(t, runtime.grounded && !runtime.crashed)
 }

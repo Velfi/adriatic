@@ -79,6 +79,18 @@
       "enabled": false,
       "description": "Generated town with the architecture authoring tool active."
     },
+    "architecture_night": {
+      "enabled": false,
+      "description": "Matched generated town at 21:00 with moon, municipal lamps, emissive windows, and light pools active."
+    },
+    "municipal_route_night": {
+      "enabled": false,
+      "description": "Deterministic 49 m route segments at 21:00 exercising route-lamp spacing, symmetric pools, halos, and fixture geometry."
+    },
+    "municipal_route_night_storm": {
+      "enabled": false,
+      "description": "Matched municipal route-light scene under storm weather, exercising wet symmetric pools and broadened halos."
+    },
     "shadow_lab": {
       "enabled": false,
       "description": "Playground shadow fixture with thin, broad, angled, overlapping, and elevated casters."

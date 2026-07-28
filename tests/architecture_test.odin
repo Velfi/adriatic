@@ -738,10 +738,67 @@ city_planner_builds_accessible_frontage_parcels_and_deep_alleys :: proc(t: ^test
     testing.expect(t, plan.count > 0)
     testing.expect(t, plan.parcel_count == plan.count)
     testing.expect(t, plan.alley_count > 0)
+    for alley in plan.alleys[:plan.alley_count] {
+        testing.expect(t, alley.household_demand >= 2)
+        testing.expect_value(t, alley.start_terminal, architecture.City_Alley_Terminal.Road)
+        road_root := architecture.city_nearest_road_frontage(&project.road_graph, alley.start_x, alley.start_z)
+        testing.expect(t, road_root.found)
+        testing.expect(t, road_root.distance <= .05)
+    }
     for parcel in plan.parcels[:plan.parcel_count] {
         testing.expect(t, parcel.frontage_width >= 8 && parcel.frontage_width <= 32)
         testing.expect(t, parcel.depth >= 13 && parcel.depth <= 36)
     }
+}
+
+@(test)
+low_density_island_town_does_not_spawn_deep_alley_branches :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    field: [terrain.CITY_DENSITY_SAMPLES]u8
+    center := -f32(terrain.WORLD_SIZE_METERS * .5) * terrain.DEFAULT_ISLAND_OFFSET
+    town_z := center - terrain.DEFAULT_TOWN_OFFSET
+    bounds := architecture.City_Bounds{center - 108, town_z - 68, center + 108, town_z + 68, true}
+
+    road_start := roads.add_node(&project.road_graph, {center - 78, 4.5, town_z}, 0)
+    road_finish := roads.add_node(&project.road_graph, {center + 78, 4.5, town_z}, 0)
+    _ = roads.add_straight_edge(&project.road_graph, road_start, road_finish, 5.5, 1.4, .Cobblestone)
+    _ = architecture.city_density_stamp(&field, center, town_z, 82, .20, .70)
+
+    plan := architecture.city_plan_density(project, &field, bounds, 0xA71D3)
+    defer architecture.city_plan_destroy(&plan)
+    testing.expect(t, plan.count > 0)
+    testing.expect_value(t, plan.alley_count, 0)
+}
+
+@(test)
+alley_branch_snaps_to_and_splits_existing_network :: proc(t: ^testing.T) {
+    plan: architecture.City_Plan
+    defer architecture.city_plan_destroy(&plan)
+    existing := architecture.City_Alley {
+        start_x          = 5,
+        start_z          = -5,
+        end_x            = 5,
+        end_z            = 5,
+        half_width       = .8,
+        household_demand = 3,
+        end_terminal     = .Public_Space,
+    }
+    append(&plan.alleys, existing)
+    plan.alley_count = 1
+
+    x, z, amount, found := architecture.city_alley_segment_intersection(0, 0, 10, 0, existing)
+    testing.expect(t, found)
+    testing.expect(t, math.abs(x - 5) <= .001 && math.abs(z) <= .001)
+    testing.expect(t, math.abs(amount - .5) <= .001)
+
+    architecture.city_plan_split_alley_at(&plan, 0, x, z)
+    testing.expect_value(t, plan.alley_count, 2)
+    testing.expect(t, math.abs(plan.alleys[0].end_x - x) <= .001)
+    testing.expect(t, math.abs(plan.alleys[1].start_x - x) <= .001)
+    testing.expect_value(t, plan.alleys[0].end_terminal, architecture.City_Alley_Terminal.None)
+    testing.expect_value(t, plan.alleys[1].start_terminal, architecture.City_Alley_Terminal.None)
+    testing.expect_value(t, plan.alleys[1].end_terminal, architecture.City_Alley_Terminal.Public_Space)
 }
 
 @(test)
@@ -815,9 +872,16 @@ architecture_frontage_mass_is_the_farthest_rendered_front_plane :: proc(t: ^test
 architecture_context_resolves_explicit_and_contextual_archetypes :: proc(t: ^testing.T) {
     shop := architecture.architecture_identity(
         {purpose = .Inn_Shop, density = .8, attached = true, route = .Civic, purpose_explicit = true},
-        42,
+        43,
     )
     testing.expect_value(t, shop.archetype, buildings.Archetype.Shop_House)
+
+    mixed_use := architecture.architecture_identity(
+        {purpose = .Inn_Shop, density = .65, route = .Street, purpose_explicit = true},
+        47,
+    )
+    testing.expect_value(t, mixed_use.archetype, buildings.Archetype.Mixed_Use_Dwelling)
+    testing.expect(t, buildings.is_habitable(mixed_use.archetype))
 
     townhouse := architecture.architecture_identity(
         {purpose = .Dwelling, density = .72, attached = true, purpose_explicit = true},
@@ -836,6 +900,43 @@ architecture_context_resolves_explicit_and_contextual_archetypes :: proc(t: ^tes
         architecture.architecture_identity(waterfront, 0) == architecture.architecture_identity(waterfront, 0),
     )
     testing.expect(t, architecture.architecture_identity(waterfront, 0).purpose != .Dwelling)
+}
+
+@(test)
+mixed_use_identity_reaches_all_compound_footprint_families :: proc(t: ^testing.T) {
+    ctx := architecture.Architecture_Context {
+        purpose          = .Inn_Shop,
+        density          = .70,
+        route            = .Street,
+        purpose_explicit = true,
+        frontage         = 24,
+        depth            = 18,
+    }
+    mixed_count := 0
+    found_l, found_t, found_court := false, false, false
+    for seed in 0 ..< 512 {
+        identity := architecture.architecture_identity(ctx, u32(seed))
+        if identity.archetype != .Mixed_Use_Dwelling do continue
+        mixed_count += 1
+
+        structure := terrain.structure_make(1300, 1300, 30, 24, 4, 18)
+        structure.kind = .Architecture
+        structure.seed = u32(seed)
+        structure.building = identity
+        footprint := architecture.architecture_footprint(structure)
+        if footprint.count == 3 {
+            found_court = true
+        } else if footprint.count == 2 && footprint.masses[1].local_x == 0 {
+            found_t = true
+        } else if footprint.count == 2 {
+            found_l = true
+        }
+    }
+
+    testing.expect(t, mixed_count > 100)
+    testing.expect(t, found_l)
+    testing.expect(t, found_t)
+    testing.expect(t, found_court)
 }
 
 @(test)
@@ -860,6 +961,116 @@ architecture_archetypes_constrain_compound_massing :: proc(t: ^testing.T) {
     for mass in dwelling_footprint.masses[:dwelling_footprint.count] {
         testing.expect(t, mass.width >= 4.5)
         testing.expect(t, mass.depth >= 4.5)
+    }
+}
+
+@(test)
+architecture_floorplans_offer_distinct_archetype_appropriate_topologies :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(1300, 1300, 30, 24, 4, 24)
+    structure.kind = .Architecture
+
+    structure.building.archetype = .Dwelling
+    structure.seed = 3
+    courtyard := architecture.architecture_footprint(structure)
+    structure.seed = 6
+    tee := architecture.architecture_footprint(structure)
+    structure.seed = 1
+    ell := architecture.architecture_footprint(structure)
+    testing.expect_value(t, courtyard.count, 3)
+    testing.expect_value(t, tee.count, 2)
+    testing.expect_value(t, ell.count, 2)
+    testing.expect(t, tee != ell)
+
+    structure.building.archetype = .Townhouse
+    structure.seed = 1
+    rear_return := architecture.architecture_footprint(structure)
+    structure.seed = 2
+    stepped := architecture.architecture_footprint(structure)
+    testing.expect_value(t, rear_return.count, 2)
+    testing.expect_value(t, stepped.count, 2)
+    testing.expect(t, rear_return != stepped)
+
+    structure.building.archetype = .Workshop
+    structure.seed = 4
+    work_court := architecture.architecture_footprint(structure)
+    structure.seed = 1
+    service_wing := architecture.architecture_footprint(structure)
+    testing.expect_value(t, work_court.count, 3)
+    testing.expect_value(t, service_wing.count, 2)
+
+    structure.building.archetype = .Mixed_Use_Dwelling
+    structure.seed = 43
+    mixed_use := architecture.architecture_footprint(structure)
+    testing.expect_value(t, mixed_use.count, 2)
+    testing.expect(t, mixed_use.masses[0].width == structure.width)
+    testing.expect(t, mixed_use.masses[1].height_scale < mixed_use.masses[0].height_scale)
+
+    structure.seed = 2
+    mixed_use_t := architecture.architecture_footprint(structure)
+    testing.expect_value(t, mixed_use_t.count, 2)
+    testing.expect(t, mixed_use_t.masses[1].local_x == 0)
+    testing.expect(t, mixed_use_t.masses[1].width > mixed_use.masses[1].width)
+
+    structure.seed = 5
+    mixed_use_court := architecture.architecture_footprint(structure)
+    testing.expect_value(t, mixed_use_court.count, 3)
+    testing.expect(t, mixed_use_court.masses[1].local_x < 0)
+    testing.expect(t, mixed_use_court.masses[2].local_x > 0)
+    testing.expect(t, mixed_use_court.masses[1].height_scale < mixed_use_court.masses[0].height_scale)
+    street_bar_rear_edge := mixed_use_court.masses[0].local_z - mixed_use_court.masses[0].depth * .5
+    for rear_wing in mixed_use_court.masses[1:3] {
+        wing_front_edge := rear_wing.local_z + rear_wing.depth * .5
+        testing.expect(t, math.abs(wing_front_edge - street_bar_rear_edge) < .001)
+    }
+}
+
+@(test)
+mixed_use_dwelling_has_full_glass_storefront_grammar :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(1300, 1300, 30, 24, 4, 18)
+    structure.kind = .Architecture
+    structure.seed = 43
+    structure.building.archetype = .Mixed_Use_Dwelling
+    structure.building.purpose = .Inn_Shop
+
+    primary := architecture.architecture_frontage_mass_index(structure)
+    layout := architecture.architecture_opening_layout(structure, primary, primary)
+    storefront_panes := 0
+    found_shop_door := false
+    for opening in layout.openings[:layout.count] {
+        if opening.face != .Front do continue
+        if opening.kind == .Door {
+            found_shop_door = true
+        } else if opening.kind == .Window && opening.row == 0 {
+            storefront_panes += 1
+            testing.expect(t, opening.width >= 4.2)
+            testing.expect(t, opening.y - opening.height * .5 <= .361)
+        }
+    }
+    testing.expect(t, found_shop_door)
+    testing.expect_value(t, storefront_panes, 2)
+}
+
+@(test)
+mixed_use_dwelling_side_windows_clear_apartment_doors :: proc(t: ^testing.T) {
+    for seed in 0 ..< 64 {
+        structure := terrain.structure_make(1300, 1300, 30, 24, 4, 18)
+        structure.kind = .Architecture
+        structure.seed = u32(seed)
+        structure.building.archetype = .Mixed_Use_Dwelling
+        structure.building.purpose = .Inn_Shop
+
+        primary := architecture.architecture_frontage_mass_index(structure)
+        footprint := architecture.architecture_footprint(structure)
+        layout := architecture.architecture_opening_layout(structure, primary, primary)
+        mass := footprint.masses[primary]
+        for opening in layout.openings[:layout.count] {
+            if opening.kind != .Window || opening.row != 0 || (opening.face != .Left && opening.face != .Right) {
+                continue
+            }
+            door_horizontal := opening.face == .Left ? mass.depth * .20 : -mass.depth * .20
+            clearance := math.abs(opening.horizontal - door_horizontal) - opening.width * .5 - f32(1.65) * .5
+            testing.expect(t, clearance >= architecture.ARCHITECTURE_DOOR_WINDOW_MARGIN - .001)
+        }
     }
 }
 

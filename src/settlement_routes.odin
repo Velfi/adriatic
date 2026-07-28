@@ -401,13 +401,17 @@ settlement_route_find :: proc(
 
     span_x, span_z := math.abs(finish_x - start_x), math.abs(finish_z - start_z)
     direct_length := linalg.length([2]f32{finish_x - start_x, finish_z - start_z})
-    if direct_length <= 12 {
+    direct_rise := math.abs(
+        terrain.sample_height(project, 0, finish_x, finish_z) - terrain.sample_height(project, 0, start_x, start_z),
+    )
+    if direct_length <= 12 && direct_rise / max(direct_length, f32(.01)) <= settlement_route_grade_limit(route_class) {
         result.points[0] = {start_x, start_z}
         result.points[1] = {finish_x, finish_z}
         result.count = 2
         return result
     }
-    cell := max(max(span_x, span_z) / f32(SETTLEMENT_ROUTE_GRID - 5), f32(10))
+    minimum_cell := direct_length <= 12 ? f32(2) : f32(10)
+    cell := max(max(span_x, span_z) / f32(SETTLEMENT_ROUTE_GRID - 5), minimum_cell)
     padding := cell * 2
     min_x, min_z := min(start_x, finish_x) - padding, min(start_z, finish_z) - padding
     max_x, max_z := max(start_x, finish_x) + padding, max(start_z, finish_z) + padding
@@ -451,6 +455,7 @@ settlement_route_find :: proc(
         closed[current] = true
         cx, cz := current % width, current / width
         current_x, current_z := min_x + f32(cx) * cell, min_z + f32(cz) * cell
+        if current == start do current_x, current_z = start_x, start_z
         current_height := terrain.sample_height(project, 0, current_x, current_z)
 
         for direction in directions {
@@ -459,11 +464,14 @@ settlement_route_find :: proc(
             neighbor := nz * width + nx
             if closed[neighbor] do continue
             world_x, world_z := min_x + f32(nx) * cell, min_z + f32(nz) * cell
+            if neighbor == finish do world_x, world_z = finish_x, finish_z
             next_height := terrain.sample_height(project, 0, world_x, world_z)
             if next_height <= project.sea_level + .45 do continue
             diagonal := direction[0] != 0 && direction[1] != 0
             distance_cost := diagonal ? f32(1.41421356) : f32(1)
-            grade := math.abs(next_height - current_height) / cell
+            step_length := linalg.length([2]f32{world_x - current_x, world_z - current_z})
+            if step_length <= .01 do continue
+            grade := math.abs(next_height - current_height) / step_length
             cross_slope := settlement_terrain_slope(project, world_x, world_z)
             grade_limit, preferred_grade := f32(.10), f32(.06)
             grade_weight, contour_weight := f32(18), f32(7)
@@ -501,6 +509,39 @@ settlement_route_find :: proc(
     }
 
     if start != finish && parents[finish] < 0 {
+        // A short route on a uniform shoulder may have no legal lattice edge
+        // even though a shallow dogleg provides enough run to stay drivable.
+        // Try the smallest perpendicular switchback before conceding to an
+        // over-grade direct chord.
+        direct := [2]f32{finish_x - start_x, finish_z - start_z}
+        direct_distance := linalg.length(direct)
+        if direct_distance > .01 {
+            normal := [2]f32{-direct[1] / direct_distance, direct[0] / direct_distance}
+            midpoint := [2]f32{(start_x + finish_x) * .5, (start_z + finish_z) * .5}
+            grade_limit := settlement_route_grade_limit(route_class)
+            sides := [2]f32{-1, 1}
+            for offset_step in 1 ..= 12 {
+                offset := direct_distance * f32(offset_step) * .125
+                for side in sides {
+                    bend := midpoint + normal * (offset * side)
+                    bend_height := terrain.sample_height(project, 0, bend[0], bend[1])
+                    if bend_height <= project.sea_level + .45 do continue
+                    first_length := linalg.length(bend - [2]f32{start_x, start_z})
+                    second_length := linalg.length([2]f32{finish_x, finish_z} - bend)
+                    first_grade :=
+                        math.abs(bend_height - terrain.sample_height(project, 0, start_x, start_z)) /
+                        max(first_length, f32(.01))
+                    second_grade :=
+                        math.abs(terrain.sample_height(project, 0, finish_x, finish_z) - bend_height) /
+                        max(second_length, f32(.01))
+                    if first_grade > grade_limit || second_grade > grade_limit do continue
+                    result.points[0], result.points[1], result.points[2] =
+                        {start_x, start_z}, bend, {finish_x, finish_z}
+                    result.count = 3
+                    return result
+                }
+            }
+        }
         result.points[0] = {start_x, start_z}
         result.points[1] = {finish_x, finish_z}
         result.count = 2
@@ -521,7 +562,9 @@ settlement_route_find :: proc(
     case .Civic_Spine, .Connector, .Waterfront, .Ridge:
         point_budget = 3
     case .Street:
-        point_budget = 4
+        // Preserve enough terrain-following bends that subsampling the A*
+        // lattice cannot turn several legal steps into one over-grade chord.
+        point_budget = 6
     case .Lane, .Alley:
         point_budget = 8
     case .Stair:
@@ -570,8 +613,28 @@ settlement_route_commit :: proc(
         if nodes[index] < 0 || nodes[index + 1] < 0 || nodes[index] == nodes[index + 1] do continue
         a, b := graph.nodes[nodes[index]].position, graph.nodes[nodes[index + 1]].position
         dx, dz := b.x - a.x, b.z - a.z
-        c0 := roads.Vec3{a.x + dx / 3, 0, a.z + dz / 3}
-        c1 := roads.Vec3{a.x + dx * 2 / 3, 0, a.z + dz * 2 / 3}
+        segment_length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+        outgoing := [2]f32{dx, dz}
+        incoming_tangent := outgoing
+        outgoing_tangent := outgoing
+        if index > 0 {
+            previous := route.points[index - 1]
+            incoming_tangent = route.points[index + 1] - previous
+        }
+        if index + 2 < route.count {
+            next := route.points[index + 2]
+            outgoing_tangent = next - route.points[index]
+        }
+        incoming_length := linalg.length(incoming_tangent)
+        outgoing_length := linalg.length(outgoing_tangent)
+        if incoming_length > .001 do incoming_tangent /= incoming_length
+        if outgoing_length > .001 do outgoing_tangent /= outgoing_length
+        // Catmull-like tangents turn the terrain-selected polyline into one
+        // continuous walked line. Keep handles short enough that tight alley
+        // corners do not balloon outside their planned corridor.
+        handle_length := min(segment_length / 3, f32(4))
+        c0 := roads.Vec3{a.x + incoming_tangent[0] * handle_length, 0, a.z + incoming_tangent[1] * handle_length}
+        c1 := roads.Vec3{b.x - outgoing_tangent[0] * handle_length, 0, b.z - outgoing_tangent[1] * handle_length}
         c0.y = terrain.sample_height(project, 0, c0.x, c0.z)
         c1.y = terrain.sample_height(project, 0, c1.x, c1.z)
         // Settlement presets express paved width, while the road graph stores

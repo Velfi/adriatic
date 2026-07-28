@@ -62,6 +62,16 @@ MARINA_BRUSH_MINIMUM_SUITABILITY :: f32(.70)
 VEHICLE_SHOWCASE_FOCAL_LENGTH :: f32(2.0)
 AIRCRAFT_FIXED_STEP :: f64(1.0 / 120.0)
 AIRCRAFT_MAX_CATCH_UP :: f64(.1)
+CRASH_MESSAGE_SECONDS :: f32(1.15)
+CRASH_FADE_OUT_SECONDS :: f32(.65)
+CRASH_FADE_IN_SECONDS :: f32(.85)
+
+Crash_Recovery_Phase :: enum u8 {
+    Inactive,
+    Message,
+    Fade_Out,
+    Fade_In,
+}
 
 Structure_History_State :: struct {
     structures:            [dynamic]terrain.Structure,
@@ -74,6 +84,8 @@ Structure_History_State :: struct {
     marina_authored:       bool,
     farms:                 [FARM_INSTANCE_CAPACITY]Farm_Instance,
     farm_count:            int,
+    wrecks:                [WRECK_INSTANCE_CAPACITY]Wreck_Instance,
+    wreck_count:           int,
 }
 
 Terrain_History_State :: struct {
@@ -170,6 +182,17 @@ Fixture :: struct {
     farm_preview_z:                                 f32,
     farm_preview_revision:                          u64,
     farm_preview_seed_offset:                       u32,
+    farm_brush_yaw:                                 f32,
+    wreck_paint_mode:                               bool,
+    wreck_brush_size:                               f32,
+    wreck_brush_yaw:                                f32,
+    wrecks:                                         [WRECK_INSTANCE_CAPACITY]Wreck_Instance,
+    wreck_count:                                    int,
+    wreck_preview:                                  Wreck_Instance,
+    wreck_preview_valid:                            bool,
+    wreck_preview_x, wreck_preview_z:               f32,
+    wreck_preview_revision:                         u64,
+    wreck_preview_seed_offset:                      u32,
     default_marinas:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan,
     default_marina_count:                           int,
     climbing_leaf_paint_mode:                       bool,
@@ -225,6 +248,9 @@ Fixture :: struct {
     terrain_file_status_until:                      f32,
     terrain_saved_revision:                         u64,
     in_map:                                         bool,
+    crash_recovery_phase:                           Crash_Recovery_Phase `fixture:"-"`,
+    crash_recovery_seconds:                         f32 `fixture:"-"`,
+    crash_recovery_position:                        third_person.Vec3 `fixture:"-"`,
     player:                                         third_person.State,
     player_stride_phase:                            f32,
     player_gait_weight:                             f32,
@@ -241,7 +267,7 @@ Fixture :: struct {
     player_scurry_compression_velocity:             f32,
     player_animation_previous_speed:                f32,
     player_paws:                                    mouse_paws.Rig `fixture:"-"`,
-    player_tail:                                    mouse_tail.State,
+    player_tail:                                    mouse_tail.State `fixture:"-"`,
     camera:                                         third_person.Camera,
     camera_pose:                                    third_person.Camera_Pose,
     cameras:                                        third_person.Camera_System,
@@ -384,6 +410,7 @@ Fixture :: struct {
     tweak:                                          Tweak_State,
     tweak_status:                                   Tweak_Status `fixture:"-"`,
     tweak_panel_visible:                            bool `fixture:"-"`,
+    tweak_panel_toggle_down:                        bool `fixture:"-"`,
     pause_screen:                                   Pause_Screen `fixture:"-"`,
     dither_state:                                   Dither_State `fixture:"-"`,
     main_menu_active:                               bool,
@@ -410,6 +437,9 @@ Editor :: struct {
     aircraft_fixed_accumulator:   f64,
     aircraft_previous_body:       flight.Body_State,
     aircraft_previous_body_valid: bool,
+    gameplay_physics:             Gameplay_Physics,
+    player_placement_reason:      Player_Placement_Reason,
+    player_placement_revision:    u64,
     greek_assets:                 [GREEK_ASSET_CAPACITY]Greek_Asset,
     greek_asset_count:            int,
     car_physics_world:            physics.World,
@@ -489,14 +519,78 @@ editor_spawn_into_world :: proc(editor: ^Editor) {
     set_pointer_locked(true)
 }
 
+boat_spawn_is_water :: proc(project: ^terrain.Project, agent: ^boats.Agent, position: boats.Vec2) -> bool {
+    if project == nil || agent == nil do return false
+    spec := boats.specifications(agent.class)
+    // Check the whole hull rather than only its origin. A center point just
+    // offshore can still leave the bow or stern resting on the beach.
+    forward := boats.Vec2{math.sin(agent.yaw), -math.cos(agent.yaw)}
+    right := boats.Vec2{-forward.y, forward.x}
+    half_length := spec.length * .5
+    half_beam := spec.beam * .5
+    samples := [9]boats.Vec2 {
+        position,
+        position + forward * half_length,
+        position - forward * half_length,
+        position + right * half_beam,
+        position - right * half_beam,
+        position + forward * half_length + right * half_beam,
+        position + forward * half_length - right * half_beam,
+        position - forward * half_length + right * half_beam,
+        position - forward * half_length - right * half_beam,
+    }
+    for sample in samples {
+        if terrain.sample_height(project, 0, sample.x, sample.y) > project.sea_level do return false
+    }
+    return true
+}
+
+new_world_boat_traffic :: proc(project: ^terrain.Project) -> boats.Traffic {
+    traffic := boats.new_traffic()
+    if project == nil do return traffic
+    for &agent in traffic.agents[:traffic.count] {
+        original := agent.position
+        if boat_spawn_is_water(project, &agent, original) do continue
+
+        found := false
+        search_step := max(boats.specifications(agent.class).length, f32(12))
+        for ring in 1 ..= 128 {
+            radius := f32(ring) * search_step
+            for spoke in 0 ..< 24 {
+                angle := f32(spoke) * math.PI * 2 / 24
+                candidate := original + boats.Vec2{math.cos(angle), math.sin(angle)} * radius
+                if !boat_spawn_is_water(project, &agent, candidate) do continue
+                offset := candidate - original
+                agent.position = candidate
+                agent.loiter_center += offset
+                for route_index in 0 ..< agent.route_count do agent.route[route_index] += offset
+                found = true
+                break
+            }
+            if found do break
+        }
+        if !found {
+            // No safe water exists in the bounded search area, so omit the
+            // agent instead of visibly placing a boat on land.
+            agent.position = original
+        }
+    }
+    write := 0
+    for &agent in traffic.agents[:traffic.count] {
+        if boat_spawn_is_water(project, &agent, agent.position) {
+            traffic.agents[write] = agent
+            write += 1
+        }
+    }
+    traffic.count = write
+    return traffic
+}
+
 game_state_reset :: proc(editor: ^Editor) {
     if editor == nil do return
 
     spawn := runway_spawn_position(editor)
-    editor.player = {
-        position = spawn,
-        grounded = true,
-    }
+    player_place(editor, spawn, .Reset)
     editor.player_stride_phase = 0
     editor.player_gait_weight = 0
     editor.player_airborne_weight = 0
@@ -512,11 +606,8 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.player_scurry_compression_velocity = 0
     editor.player_animation_previous_speed = 0
     editor.player_paws = {}
-    editor.player_tail = {}
+    mouse_tail.destroy(&editor.player_tail)
 
-    editor.pilot = {
-        position = spawn,
-    }
     editor.camera = third_person.default_camera()
     editor.cameras = {}
     editor.flight_camera = {}
@@ -583,7 +674,7 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.story_cinematic_active = false
 
     markov_marina_buoy_physics_destroy(editor)
-    editor.boat_traffic = boats.new_traffic()
+    editor.boat_traffic = new_world_boat_traffic(&editor.project)
     editor.atmosphere = atmosphere.new(0x41c10)
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
     editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
@@ -603,6 +694,8 @@ structure_history_capture :: proc(editor: ^Editor, state: ^Structure_History_Sta
     state.marina_authored = editor.marina_authored
     state.farms = editor.farms
     state.farm_count = editor.farm_count
+    state.wrecks = editor.wrecks
+    state.wreck_count = editor.wreck_count
     resize(&state.structures, state.count)
     copy(state.structures[:], editor.project.structures[:state.count])
 }
@@ -620,6 +713,8 @@ structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_Sta
     editor.marina_authored = state.marina_authored
     editor.farms = state.farms
     editor.farm_count = state.farm_count
+    editor.wrecks = state.wrecks
+    editor.wreck_count = state.wreck_count
     editor.project.revision += 1
     if editor.structure_selected >= editor.project.structure_count do editor.structure_selected = -1
     if editor.road_selected_node >= editor.project.road_graph.node_count do editor.road_selected_node = -1
@@ -1522,19 +1617,11 @@ seed_terrain_grip_benchmark :: proc(editor: ^Editor) {
 
 seed_player_benchmark :: proc(editor: ^Editor) {
     if editor == nil do return
-    editor.player = {
-        position = runway_spawn_position(editor),
-        grounded = true,
-    }
-    editor.player.position.x += 24
-    editor.player.position.z += 20
-    editor.player.position.y = terrain.sample_height(
-        &editor.project,
-        0,
-        editor.player.position.x,
-        editor.player.position.z,
-    )
-    editor.pilot.position = editor.player.position
+    position := runway_spawn_position(editor)
+    position.x += 24
+    position.z += 20
+    position.y = terrain.sample_height(&editor.project, 0, position.x, position.z)
+    player_place(editor, position, .Scene_Setup)
     editor.postale_visible = false
     editor.libellula_visible = false
     editor.in_map = true
@@ -1551,12 +1638,15 @@ seed_zora_benchmark :: proc(editor: ^Editor) {
     editor.camera_target_lock = false
     editor.postale_visible = false
     editor.libellula_visible = false
-    editor.player.position = {
-        position.x + 20,
-        terrain.sample_height(&editor.project, 0, position.x + 20, position.z),
+    player_position := third_person.Vec3 {
+        position.x + 1.6,
+        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
         position.z,
     }
-    editor.pilot.position = editor.player.position
+    player_facing := math.atan2(player_position.x - position.x, player_position.z - position.z)
+    player_place(editor, player_position, .Scene_Setup, player_facing)
+    editor.in_map = true
+    editor.map_time = f32(rl.GetTime())
     inspection_pose := third_person.camera_near({position.x, position.y + .48, position.z}, {1.35, .62, 1.35})
     third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -1572,13 +1662,11 @@ seed_marta_benchmark :: proc(editor: ^Editor) {
     editor.postale_visible = false
     editor.libellula_visible = false
     attendant := editor.attendant_position
-    editor.player.position = {
-        attendant.x + 20,
-        terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z),
-        attendant.z,
-    }
-    editor.player.grounded = true
-    editor.pilot.position = editor.player.position
+    player_place(
+        editor,
+        {attendant.x + 20, terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z), attendant.z},
+        .Scene_Setup,
+    )
     editor.in_map = true
     editor.map_time = f32(rl.GetTime())
     inspection_pose := third_person.camera_near({attendant.x, attendant.y + .48, attendant.z}, {1.35, .62, 1.35})
@@ -1586,6 +1674,39 @@ seed_marta_benchmark :: proc(editor: ^Editor) {
     third_person.camera_set_active(&editor.cameras, .Inspection)
     editor.camera_pose = inspection_pose
     open_attendant_dialogue(editor, .Marta)
+}
+
+seed_municipal_route_lamps :: proc(editor: ^Editor) {
+    if editor == nil do return
+    plan := &editor.architecture_city_plan
+    clear(&plan.lamps)
+    plan.lamp_count = 0
+    segment_length := f32(49)
+    spacing := settlement_route_lamp_spacing(.Town, .Street)
+    sample_count := settlement_lamp_sample_count(segment_length, spacing)
+    for row in 0 ..< 8 {
+        z := editor.editor_focus.z + (f32(row) - 3.5) * 13
+        for sample in 0 ..< sample_count {
+            along := (f32(sample) + .5) / f32(sample_count)
+            append(
+                &plan.lamps,
+                architecture.City_Lamp {
+                    x = editor.editor_focus.x - segment_length * .5 + segment_length * along,
+                    z = z,
+                    yaw = 0,
+                },
+            )
+            plan.lamp_count += 1
+        }
+    }
+}
+
+seed_municipal_route_night_benchmark :: proc(editor: ^Editor) {
+    if editor == nil do return
+    seed_city_capture(editor)
+    seed_municipal_route_lamps(editor)
+    editor.editor_camera.distance = 92
+    editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
 }
 
 benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
@@ -1649,8 +1770,10 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         seed_zora_benchmark(editor)
     case "marta":
         seed_marta_benchmark(editor)
-    case "architecture":
+    case "architecture", "architecture_night":
         seed_city_capture(editor)
+    case "municipal_route_night", "municipal_route_night_storm":
+        seed_municipal_route_night_benchmark(editor)
     case "shadow_lab":
         _ = lab_scene_load(editor, {definition = lab_scene_find("shadow")})
     case:
@@ -1668,6 +1791,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "grass_disabled" &&
        scenario != "zora" &&
        scenario != "marta" &&
+       scenario != "municipal_route_night" &&
+       scenario != "municipal_route_night_storm" &&
        scenario != "shadow_lab" {
         editor.editor_camera.distance = 260
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
@@ -2170,6 +2295,7 @@ seed_city_capture :: proc(editor: ^Editor) {
 
 seed_default_island_towns :: proc(editor: ^Editor) {
     if editor == nil do return
+    architecture.city_plan_destroy(&editor.architecture_city_plan)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     // Put each settlement across the island from its runway apron. A short
     // cobblestone frontage gives the ordinary painted-density parcel planner
@@ -2200,6 +2326,14 @@ seed_default_island_towns :: proc(editor: ^Editor) {
         architecture.city_plan_set_region(&plan, region)
         first_structure := editor.project.structure_count
         _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, town_bounds, &plan)
+        append(&editor.architecture_city_plan.structures, ..plan.structures[:plan.count])
+        append(&editor.architecture_city_plan.parcels, ..plan.parcels[:plan.parcel_count])
+        append(&editor.architecture_city_plan.alleys, ..plan.alleys[:plan.alley_count])
+        append(&editor.architecture_city_plan.lamps, ..plan.lamps[:plan.lamp_count])
+        editor.architecture_city_plan.count += plan.count
+        editor.architecture_city_plan.parcel_count += plan.parcel_count
+        editor.architecture_city_plan.alley_count += plan.alley_count
+        editor.architecture_city_plan.lamp_count += plan.lamp_count
         for structure in editor.project.structures[first_structure:editor.project.structure_count] {
             if structure.kind != .Architecture || structure.height > 60 do continue
             _ = architecture.city_density_stamp(
@@ -2243,9 +2377,38 @@ seed_default_island_marinas :: proc(editor: ^Editor) {
     }
 }
 
+capture_target_is_storefront_night :: proc(target: string) -> bool {
+    prefix := "storefront-night-display-"
+    return(
+        target == "storefront-night" ||
+        target == "storefront-night-storm" ||
+        target == "storefront-generated-night" ||
+        (len(target) > len(prefix) && target[:len(prefix)] == prefix) \
+    )
+}
+
 configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = "") -> bool {
     if editor == nil do return false
+    if target_arg == "west-town-review" {
+        half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+        center := -half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        town_z := center - terrain.DEFAULT_TOWN_OFFSET
+        focus_y := terrain.sample_height(&editor.project, 0, center, town_z) + 4
+        editor.capture_world_only = true
+        editor.architecture_node_mode = true
+        editor.editor_camera.distance = 190
+        editor.editor_focus = {center, focus_y, town_z}
+        editor.camera_pose = third_person.camera_look_at(
+            {center + 115, focus_y + 125, town_z + 115},
+            editor.editor_focus,
+        )
+        return true
+    }
     bougainvillea_seed_override := -1
+    storefront_plant_seed_override := -1
+    storefront_display_seed_override := -1
+    storefront_angle_seed_override := -1
+    storefront_plan_seed_override := -1
     ground_level_capture := false
     ordinal_arg := target_arg
     ground_prefix := "ground-"
@@ -2258,6 +2421,136 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
         parsed, ok := strconv.parse_int(target_arg[len(bougainvillea_prefix):])
         if ok && parsed >= 0 && parsed <= 0xffffffff {
             bougainvillea_seed_override = int(parsed)
+        }
+    }
+    storefront_plant_prefix := "storefront-plant-"
+    if len(target_arg) > len(storefront_plant_prefix) &&
+       target_arg[:len(storefront_plant_prefix)] == storefront_plant_prefix {
+        parsed, ok := strconv.parse_int(target_arg[len(storefront_plant_prefix):])
+        if ok && parsed >= 0 && parsed <= 0xffffffff {
+            storefront_plant_seed_override = int(parsed)
+        }
+    }
+    storefront_display_prefix := "storefront-display-"
+    if len(target_arg) > len(storefront_display_prefix) &&
+       target_arg[:len(storefront_display_prefix)] == storefront_display_prefix {
+        parsed, ok := strconv.parse_int(target_arg[len(storefront_display_prefix):])
+        if ok && parsed >= 0 && parsed <= 0xffffffff {
+            storefront_display_seed_override = int(parsed)
+        }
+    }
+    storefront_night_display_prefix := "storefront-night-display-"
+    if len(target_arg) > len(storefront_night_display_prefix) &&
+       target_arg[:len(storefront_night_display_prefix)] == storefront_night_display_prefix {
+        parsed, ok := strconv.parse_int(target_arg[len(storefront_night_display_prefix):])
+        if ok && parsed >= 0 && parsed <= 0xffffffff {
+            storefront_display_seed_override = int(parsed)
+        }
+    }
+    storefront_angle_prefix := "storefront-angle-"
+    if len(target_arg) > len(storefront_angle_prefix) &&
+       target_arg[:len(storefront_angle_prefix)] == storefront_angle_prefix {
+        parsed, ok := strconv.parse_int(target_arg[len(storefront_angle_prefix):])
+        if ok && parsed >= 0 && parsed <= 0xffffffff {
+            storefront_angle_seed_override = int(parsed)
+        }
+    }
+    storefront_plan_prefix := "storefront-plan-"
+    if len(target_arg) > len(storefront_plan_prefix) &&
+       target_arg[:len(storefront_plan_prefix)] == storefront_plan_prefix {
+        parsed, ok := strconv.parse_int(target_arg[len(storefront_plan_prefix):])
+        if ok && parsed >= 0 && parsed <= 0xffffffff {
+            storefront_plan_seed_override = int(parsed)
+        }
+    }
+    if target_arg == "municipal-route-night" || target_arg == "municipal-route-night-storm" {
+        seed_municipal_route_lamps(editor)
+        if editor.architecture_city_plan.lamp_count > 0 {
+            // Frame the middle lamp of an interior row so the capture shows
+            // the complete three-fixture pedestrian cadence across the route.
+            lamp_index := min(10, editor.architecture_city_plan.lamp_count - 1)
+            lamp := editor.architecture_city_plan.lamps[lamp_index]
+            ground := terrain.sample_height(&editor.project, 0, lamp.x, lamp.z)
+            focus := third_person.Vec3{lamp.x, ground + 1.8, lamp.z}
+            eye := third_person.Vec3{lamp.x + 2.0, ground + 2.1, lamp.z + 23}
+            editor.capture_world_only = true
+            editor.architecture_node_mode = true
+            editor.editor_focus = focus
+            editor.camera_pose = third_person.camera_look_at(eye, focus)
+            return true
+        }
+    }
+    if target_arg == "plaza" ||
+       target_arg == "plaza-night" ||
+       target_arg == "plaza-night-new-moon" ||
+       target_arg == "plaza-night-full-moon" ||
+       target_arg == "plaza-night-storm" {
+        plan := editor_circulation_plan(editor)
+        if plan != nil {
+            best_area_index := -1
+            best_area_score := -f32(1e30)
+            for area, area_index in plan.areas[:plan.count] {
+                if area.kind != .Plaza do continue
+                score := area.width * area.length
+                if score > best_area_score {
+                    best_area_index, best_area_score = area_index, score
+                }
+            }
+            if best_area_index >= 0 {
+                area := plan.areas[best_area_index]
+                best_eye_x, best_eye_z := area.center_x, area.center_z
+                best_focus_x, best_focus_z := area.center_x, area.center_z
+                best_view_clearance := -f32(1e30)
+                for corner_x in -1 ..= 1 {
+                    if corner_x == 0 do continue
+                    for corner_z in -1 ..= 1 {
+                        if corner_z == 0 do continue
+                        local_x := f32(corner_x) * (area.width * .5 - 1.4)
+                        local_z := f32(corner_z) * (area.length * .5 - 1.4)
+                        candidate_x, candidate_z := world_rotate_xz(
+                            area.center_x,
+                            area.center_z,
+                            local_x,
+                            local_z,
+                            area.rotation,
+                        )
+                        for view_index in 0 ..< 8 {
+                            view_angle := f32(view_index) / 8 * 2 * f32(math.PI)
+                            eye_candidate_x := candidate_x + math.cos(view_angle) * 8
+                            eye_candidate_z := candidate_z + math.sin(view_angle) * 8
+                            midpoint_x := (eye_candidate_x + candidate_x) * .5
+                            midpoint_z := (eye_candidate_z + candidate_z) * .5
+                            clearance := f32(1e30)
+                            for structure in editor.project.structures[:editor.project.structure_count] {
+                                if structure.kind != .Architecture || structure.height > 60 do continue
+                                radius := max(structure.width, structure.depth) * .5
+                                eye_dx, eye_dz :=
+                                    eye_candidate_x - structure.center_x, eye_candidate_z - structure.center_z
+                                eye_distance := f32(math.sqrt(f64(eye_dx * eye_dx + eye_dz * eye_dz))) - radius
+                                mid_dx, mid_dz := midpoint_x - structure.center_x, midpoint_z - structure.center_z
+                                mid_distance := f32(math.sqrt(f64(mid_dx * mid_dx + mid_dz * mid_dz))) - radius
+                                clearance = min(clearance, min(eye_distance, mid_distance))
+                            }
+                            if clearance > best_view_clearance {
+                                best_eye_x, best_eye_z = eye_candidate_x, eye_candidate_z
+                                best_focus_x, best_focus_z = candidate_x, candidate_z
+                                best_view_clearance = clearance
+                            }
+                        }
+                    }
+                }
+                eye_y := terrain.sample_height(&editor.project, 0, best_eye_x, best_eye_z) + 1.78
+                focus_y := terrain.sample_height(&editor.project, 0, best_focus_x, best_focus_z) + 2.15
+                editor.capture_world_only = true
+                editor.architecture_node_mode = true
+                editor.editor_camera.distance = 8
+                editor.editor_focus = {best_focus_x, focus_y, best_focus_z}
+                // Judge public lighting from a pedestrian's eye line inside
+                // the plaza. The former high diagonal view repeatedly landed
+                // between tall façades and hid pool overlap behind rooftops.
+                editor.camera_pose = third_person.camera_look_at({best_eye_x, eye_y, best_eye_z}, editor.editor_focus)
+                return true
+            }
         }
     }
     if target_arg == "cypress" {
@@ -2316,6 +2609,81 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
         }
     }
 
+    generated_storefront_capture := target_arg == "storefront-generated" || target_arg == "storefront-generated-night"
+    storefront_capture :=
+        target_arg == "storefront" ||
+        target_arg == "storefront-front" ||
+        generated_storefront_capture ||
+        capture_target_is_storefront_night(target_arg) ||
+        storefront_plant_seed_override >= 0 ||
+        storefront_display_seed_override >= 0 ||
+        storefront_angle_seed_override >= 0 ||
+        storefront_plan_seed_override >= 0
+    if storefront_capture {
+        best_score := -f32(1e30)
+        for &structure, index in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind != .Architecture {
+                continue
+            }
+            if generated_storefront_capture {
+                if structure.width < 12 || structure.height > 60 do continue
+            } else if structure.width < 16 || structure.height > 36 {
+                continue
+            }
+            identity := architecture.architecture_resolve_legacy_identity(structure)
+            if generated_storefront_capture && identity.archetype != .Mixed_Use_Dwelling {
+                continue
+            }
+            score := structure.width - math.abs(structure.height - 16) * .35
+            if identity.archetype == .Mixed_Use_Dwelling do score += 100
+            if identity.archetype == .Shop_House do score += 50
+            if score > best_score {
+                best_score = score
+                target_index = index
+            }
+        }
+        if generated_storefront_capture && target_index < 0 {
+            // Never let this verification target silently fall through to an
+            // unrelated ordinary building.
+            return false
+        }
+        if target_index >= 0 {
+            // This is a visual test fixture in the transient capture world:
+            // always exercise the dedicated archetype even if the selected
+            // deterministic settlement seed produced only ordinary dwellings.
+            if !generated_storefront_capture {
+                editor.project.structures[target_index].building.archetype = .Mixed_Use_Dwelling
+                editor.project.structures[target_index].building.purpose = .Inn_Shop
+                editor.project.structures[target_index].building.landmark_kind = .None
+                editor.project.structures[target_index].seed &~= SETTLEMENT_LANDMARK_SEED_MASK
+                if storefront_display_seed_override >= 0 {
+                    editor.project.structures[target_index].seed = u32(storefront_display_seed_override)
+                }
+                if storefront_angle_seed_override >= 0 {
+                    editor.project.structures[target_index].seed = u32(storefront_angle_seed_override)
+                }
+                if storefront_plan_seed_override >= 0 {
+                    editor.project.structures[target_index].seed = u32(storefront_plan_seed_override)
+                    editor.project.structures[target_index].width = max(
+                        editor.project.structures[target_index].width,
+                        f32(24),
+                    )
+                    editor.project.structures[target_index].depth = max(
+                        editor.project.structures[target_index].depth,
+                        f32(18),
+                    )
+                }
+                // The capture world may have rendered one editor frame before
+                // this fixture converts the selected building. Rebuild cached
+                // architecture and presentation geometry so ordinary-dwelling
+                // pots, openings, and foliage cannot survive the mixed-use
+                // archetype/seed mutation.
+                world_terrain_invalidate_all(editor)
+            }
+        }
+        ground_level_capture = true
+    }
+
     // Auto-target a normal building on the camera-facing edge of the town.
     // That keeps intervening rows out of the shot as generated layouts change.
     if target_index < 0 {
@@ -2339,17 +2707,28 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     if target_index < 0 do return false
 
     building := editor.project.structures[target_index]
+    if storefront_plant_seed_override >= 0 {
+        editor.capture_bougainvillea_seed_enabled = true
+        editor.capture_bougainvillea_structure_id = building.id
+        editor.capture_bougainvillea_seed = u32(storefront_plant_seed_override)
+    }
     if bougainvillea_seed_override >= 0 {
         editor.capture_bougainvillea_seed_enabled = true
         editor.capture_bougainvillea_structure_id = building.id
         editor.capture_bougainvillea_seed = u32(bougainvillea_seed_override)
     }
     facade_x, facade_z := -math.sin(building.rotation), math.cos(building.rotation)
+    if storefront_plan_seed_override >= 0 {
+        facade_x, facade_z = -facade_x, -facade_z
+    }
     // Move the architectural capture into the lane so balconies and laundry
     // read as the subject instead of small details in a town-wide shot.
     camera_distance := building.depth * .5 + max(f32(9), building.height * .54)
     if ground_level_capture {
         camera_distance = building.depth * .5 + max(f32(10), building.width * .48)
+    }
+    if storefront_plan_seed_override >= 0 {
+        camera_distance = building.depth * .5 + max(f32(28), building.width * 1.25)
     }
     minimum_distance := building.depth * .5 + 6
     for camera_distance > minimum_distance {
@@ -2372,12 +2751,15 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     eye_z := building.center_z + facade_z * camera_distance
     // A modest lateral offset reveals the balcony depth instead of flattening
     // every railing into a line across the window.
-    side_offset := ground_level_capture ? min(f32(5), building.width * .16) : min(f32(8), building.width * .24)
+    side_offset :=
+        target_arg == "storefront-front" || generated_storefront_capture || storefront_display_seed_override >= 0 ? f32(0) : storefront_plan_seed_override >= 0 ? min(f32(24), camera_distance * .45) : storefront_capture ? -min(f32(30), camera_distance * .90) : ground_level_capture ? min(f32(5), building.width * .16) : min(f32(8), building.width * .24)
     eye_x += facade_z * side_offset
     eye_z -= facade_x * side_offset
-    eye_y := terrain.sample_height(&editor.project, 0, eye_x, eye_z) + 3.2
+    eye_y :=
+        terrain.sample_height(&editor.project, 0, eye_x, eye_z) +
+        (storefront_plan_seed_override >= 0 ? f32(6.2) : f32(3.2))
     target_y :=
-        ground_level_capture ? building.base_y + 2.4 : building.base_y + clamp(building.height * .50, f32(7), f32(18))
+        storefront_plan_seed_override >= 0 ? building.base_y + building.height * .34 : ground_level_capture ? building.base_y + 2.4 : building.base_y + clamp(building.height * .50, f32(7), f32(18))
     editor.capture_world_only = true
     // Keep the procedural street dressing in the architectural capture so
     // façades read as a walkable Mediterranean neighborhood, not isolated
@@ -2590,7 +2972,10 @@ farm_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor
     preview_x := f32(math.round(f64(world_x / snap))) * snap
     preview_z := f32(math.round(f64(world_z / snap))) * snap
     if preview_x != editor.farm_preview_x || preview_z != editor.farm_preview_z {
-        editor.farm_preview_seed_offset = 0
+        dx, dz := preview_x - editor.farm_preview_x, preview_z - editor.farm_preview_z
+        if editor.farm_preview_revision != 0 && dx * dx + dz * dz > 1 {
+            editor.farm_brush_yaw = math.atan2(dz, dx)
+        }
     }
     if preview_x == editor.farm_preview_x &&
        preview_z == editor.farm_preview_z &&
@@ -2603,11 +2988,9 @@ farm_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor
     editor.farm_preview_valid = false
     editor.farm_preview_score = 0
     best_score := f32(-1)
-    base_seed :=
-        u32(abs(int(preview_x * 17))) ~
-        u32(abs(int(preview_z * 31))) ~
-        u32(editor.project.revision * 0x9e3779b9) ~
-        editor.farm_preview_seed_offset * u32(0x27d4eb2d)
+    // Keep the chosen procedural variation stable while positioning it.
+    // Right-click is the only interaction that advances this seed.
+    base_seed := u32(0x4641524d) ~ editor.farm_preview_seed_offset * u32(0x27d4eb2d)
     // Radius controls the major footprint. Preserve the traditional 25:19
     // proportion while generating a genuinely different grid at each size.
     grid_width := clamp(
@@ -2620,8 +3003,8 @@ farm_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor
         farmland.MIN_GRID_SPAN,
         farmland.MAX_GRID_SPAN,
     )
-    for orientation in 0 ..< 8 {
-        yaw := f32(orientation) * math.PI / 8 - math.PI * .5
+    for orientation in 0 ..< 1 {
+        yaw := editor.farm_brush_yaw
         site_score, site_valid := farm_site_score(editor, preview_x, preview_z, yaw, grid_width, grid_height)
         if !site_valid do continue
         for variant in 0 ..< 2 {
@@ -2663,7 +3046,83 @@ farm_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_
     editor.farm_count += 1
     editor.project.revision += 1
     editor.farm_preview_valid = false
-    editor.farm_preview_seed_offset = 0
+}
+
+wreck_site_suitable :: proc(editor: ^Editor, origin_x, origin_z: f32) -> bool {
+    if editor == nil do return false
+    // Terrain picking returns the surface used by the heightfield, not whether
+    // the pointer visually lies on ocean water. Do not reject a wreck based on
+    // that sample; wrecks may also be deliberately stranded on a beach.
+    for wreck in editor.wrecks[:editor.wreck_count] {
+        dx, dz := origin_x - wreck.origin_x, origin_z - wreck.origin_z
+        if dx * dx + dz * dz < 380 * 380 do return false
+    }
+    return true
+}
+
+wreck_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
+    if editor == nil || !editor.wreck_paint_mode || editor.in_map || !cursor_hit {
+        if editor != nil do editor.wreck_preview_valid = false
+        return
+    }
+    snap := f32(8)
+    preview_x := f32(math.round(f64(world_x / snap))) * snap
+    preview_z := f32(math.round(f64(world_z / snap))) * snap
+    if preview_x != editor.wreck_preview_x || preview_z != editor.wreck_preview_z {
+        dx, dz := preview_x - editor.wreck_preview_x, preview_z - editor.wreck_preview_z
+        if editor.wreck_preview_revision != 0 && dx * dx + dz * dz > 1 {
+            editor.wreck_brush_yaw = math.atan2(dz, dx)
+        }
+    }
+    if preview_x == editor.wreck_preview_x &&
+       preview_z == editor.wreck_preview_z &&
+       editor.wreck_preview_revision == editor.project.revision {
+        return
+    }
+    editor.wreck_preview_x = preview_x
+    editor.wreck_preview_z = preview_z
+    editor.wreck_preview_revision = editor.project.revision
+    editor.wreck_preview_valid = false
+    if !wreck_site_suitable(editor, preview_x, preview_z) do return
+    // Position and project edits must not reroll the preview. Only right-click
+    // advances the selected procedural variation.
+    seed := u32(0x57524543) ~ editor.wreck_preview_seed_offset * u32(0x27d4eb2d)
+    editor.wreck_preview, editor.wreck_preview_valid = markov_wreck_generate_instance(
+        seed,
+        preview_x,
+        preview_z,
+        editor.wreck_brush_yaw,
+        editor.wreck_brush_size / 330,
+    )
+    if !editor.wreck_preview_valid {
+        editor.wreck_preview, editor.wreck_preview_valid = markov_wreck_generate_instance(
+            MARKOV_WRECK_DEFAULT_SEED,
+            preview_x,
+            preview_z,
+            editor.wreck_brush_yaw,
+            editor.wreck_brush_size / 330,
+        )
+    }
+}
+
+wreck_brush_process_input :: proc(editor: ^Editor, _: f32, _: f32, cursor_hit: bool) {
+    if editor == nil || editor.in_map || !editor.wreck_paint_mode || !cursor_hit do return
+    if rl.IsMouseButtonPressed(.RIGHT) {
+        editor.wreck_preview_seed_offset += 1
+        editor.wreck_preview_revision = 0
+        editor.wreck_preview_valid = false
+        return
+    }
+    if !rl.IsMouseButtonPressed(.LEFT) ||
+       editor.wreck_count >= WRECK_INSTANCE_CAPACITY ||
+       !editor.wreck_preview_valid {
+        return
+    }
+    structure_history_push_undo(editor)
+    editor.wrecks[editor.wreck_count] = editor.wreck_preview
+    editor.wreck_count += 1
+    editor.project.revision += 1
+    editor.wreck_preview_valid = false
 }
 
 climbing_leaf_paint_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: bool) {
@@ -2886,18 +3345,6 @@ Screen_Point :: struct {
     visible:  bool,
 }
 
-player_ground_normal :: proc(editor: ^Editor, position: third_person.Vec3) -> third_person.Vec3 {
-    if editor == nil do return third_person.Vec3{0, 1, 0}
-    SAMPLE_DISTANCE :: f32(.35)
-    height_left := terrain.sample_height(&editor.project, 0, position.x - SAMPLE_DISTANCE, position.z)
-    height_right := terrain.sample_height(&editor.project, 0, position.x + SAMPLE_DISTANCE, position.z)
-    height_back := terrain.sample_height(&editor.project, 0, position.x, position.z - SAMPLE_DISTANCE)
-    height_front := terrain.sample_height(&editor.project, 0, position.x, position.z + SAMPLE_DISTANCE)
-    return linalg.normalize0(
-        third_person.Vec3{height_left - height_right, SAMPLE_DISTANCE * 2, height_back - height_front},
-    )
-}
-
 shape_flight_axis :: proc(value: f32) -> f32 {
     dead_zone := f32(.16)
     magnitude := math.abs(value)
@@ -2918,6 +3365,37 @@ gamepad_down :: proc(button: rl.Gamepad_Button) -> bool {
     return rl.GamepadAvailable() && rl.IsGamepadButtonDown(button)
 }
 
+aircraft_reset :: proc(editor: ^Editor) {
+    if editor == nil do return
+    if lab_scene_is_active(editor, "markov-wreck") && editor.aircraft.active == .Postale {
+        _ = markov_wreck_reset_postale(editor)
+        return
+    }
+    if editor.aircraft.active != .Postale {
+        ground := terrain.sample_height(
+            &editor.project,
+            0,
+            editor.libellula.spawn_position.x,
+            editor.libellula.spawn_position.z,
+        )
+        libellula_game.reset(&editor.libellula, ground)
+    } else {
+        ground := postale_game.drivable_surface_height(
+            terrain.sample_height(
+                &editor.project,
+                0,
+                editor.postale.spawn_position.x,
+                editor.postale.spawn_position.z,
+            ),
+            editor.project.sea_level,
+        )
+        postale_game.reset(&editor.postale, ground)
+    }
+    editor.aircraft_fixed_accumulator = 0
+    editor.aircraft_previous_body_valid = false
+    vehicles.sync_driver(&editor.pilot)
+}
+
 Input_Action :: enum {
     Pause,
     Journal,
@@ -2925,7 +3403,6 @@ Input_Action :: enum {
     Run,
     Interact,
     Camera_Reset,
-    Vehicle_Reset,
     Handbrake,
     Menu_Accept,
     Menu_Cancel,
@@ -2945,8 +3422,6 @@ input_action_pressed :: proc(action: Input_Action) -> bool {
         return rl.IsKeyPressed(.F) || gamepad_pressed(.West)
     case .Camera_Reset:
         return rl.IsKeyPressed(.C) || gamepad_pressed(.South)
-    case .Vehicle_Reset:
-        return rl.IsKeyPressed(.R) || gamepad_pressed(.North)
     case .Menu_Accept:
         return rl.IsKeyPressed(.ENTER) || gamepad_pressed(.South)
     case .Menu_Cancel:
@@ -3072,7 +3547,7 @@ runtime_pointer_sync :: proc(editor: ^Editor) {
     if editor.vehicle_paint_scene {
         set_pointer_locked(false)
         _ = sdl.ShowCursor()
-    } else if editor.console.open || pause_menu_is_open(editor) {
+    } else if editor.tweak_panel_visible || pause_menu_is_open(editor) {
         set_pointer_locked(false)
         if controller_prompt_active(editor) {
             _ = sdl.HideCursor()
@@ -3118,6 +3593,15 @@ editor_debug_toggle_pressed :: proc(editor: ^Editor) -> bool {
     down := shift && keys[int(sdl.Scancode.ESCAPE)]
     pressed := down && !editor.editor_ui.debug_key_down
     editor.editor_ui.debug_key_down = down
+    return pressed
+}
+
+tweak_panel_console_key_pressed :: proc(editor: ^Editor) -> bool {
+    if editor == nil do return false
+    keys := sdl.GetKeyboardState(nil)
+    down := keys[int(sdl.Scancode.GRAVE)]
+    pressed := down && !editor.tweak_panel_toggle_down
+    editor.tweak_panel_toggle_down = down
     return pressed
 }
 
@@ -3745,12 +4229,15 @@ marta_select_aircraft :: proc(editor: ^Editor, target: vehicles.Aircraft_Kind) {
             postale_game.drivable_surface_height(line_ground, editor.project.sea_level),
         )
     }
-    editor.player.position = {
-        line_position.x,
-        terrain.sample_height(&editor.project, 0, line_position.x, line_position.z + 1.8),
-        line_position.z + 1.8,
-    }
-    editor.pilot.position = editor.player.position
+    player_place(
+        editor,
+        {
+            line_position.x,
+            terrain.sample_height(&editor.project, 0, line_position.x, line_position.z + 1.8),
+            line_position.z + 1.8,
+        },
+        .Aircraft_Selection,
+    )
 }
 
 attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
@@ -4455,6 +4942,7 @@ draw_instrument_dial :: proc(
     value_y_offset: f32 = 27,
     range_start: f32 = -1,
     range_end: f32 = -1,
+    reference_value: f32 = -1,
 ) {
     mark := rl.Color {
         r = 232,
@@ -4478,6 +4966,23 @@ draw_instrument_dial :: proc(
         inner_radius := radius - (major ? f32(18) : f32(13))
         inner := rl.Vector2{center.x + math.cos(angle) * inner_radius, center.y + math.sin(angle) * inner_radius}
         draw_antialiased_line(inner, outer, major ? f32(2.6) : f32(1.5), mark)
+    }
+    if reference_value >= minimum && reference_value <= maximum {
+        reference_fraction := clamp((reference_value - minimum) / max(maximum - minimum, f32(.001)), 0, 1)
+        reference_angle := sweep_start + reference_fraction * sweep_range
+        reference_outer_radius := radius - 6
+        reference_inner_radius := radius - 16
+        reference_outer := rl.Vector2 {
+            center.x + math.cos(reference_angle) * reference_outer_radius,
+            center.y + math.sin(reference_angle) * reference_outer_radius,
+        }
+        reference_inner := rl.Vector2 {
+            center.x + math.cos(reference_angle) * reference_inner_radius,
+            center.y + math.sin(reference_angle) * reference_inner_radius,
+        }
+        // A small cyan index bug marks the preferred cruise altitude without
+        // competing with the live amber needle or adding another dial label.
+        draw_antialiased_line(reference_inner, reference_outer, 3, {r = 92, g = 219, b = 213, a = 230})
     }
     if range_start >= minimum && range_end > range_start {
         start_fraction := clamp((range_start - minimum) / max(maximum - minimum, f32(.001)), 0, 1)
@@ -4927,6 +5432,7 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
         500,
         fmt.ctprintf("%.0f m", altitude),
         dial_radius * .62,
+        reference_value = 250,
     )
     draw_vsi_inset({panel_left + dial_spacing * 2.5, y}, dial_radius, vertical_speed)
     compass_y := panel_top + 151
@@ -4955,10 +5461,16 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
     for index in 0 ..< 42 {
         seed := f32(index) * 2.399963
         speed_variation := .72 + f32(math.sin(f64(seed * 2.17))) * .18
-        cycle := time * (1.05 + intensity * 1.8) * speed_variation + f32(index) * .173
+        // Keep screen-space travel below the point where repeated radial lanes
+        // wagon-wheel backward between frames. Length and opacity still grow
+        // aggressively with airspeed, while travel itself stays readable.
+        cycle := time * (.65 + intensity * .75) * speed_variation + f32(index) * .173
         progress := cycle - f32(math.floor(f64(cycle)))
         eased := progress * progress
-        inner := short_side * (.10 + .16 * (.5 + .5 * f32(math.sin(f64(seed * 1.31)))))
+        // Keep the radial overlay outside the aircraft silhouette. Since this
+        // pass is composited after the 3D scene it cannot use world depth; a
+        // generous, varied inner radius preserves the cockpit and wings.
+        inner := short_side * (.25 + .10 * (.5 + .5 * f32(math.sin(f64(seed * 1.31)))))
         distance := inner + (long_side * .72 - inner) * eased
         ray_x := f32(math.cos(f64(seed)))
         ray_y := f32(math.sin(f64(seed))) * .64
@@ -5274,31 +5786,6 @@ editor_focus_terrain :: proc(editor: ^Editor) {
 }
 
 draw_infrastructure_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
-    level := 0
-    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    for sign in terrain.DEFAULT_ISLAND_SIGNS {
-        island_x := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        island_z := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-
-        pier_inner_x := island_x + sign * half_extent * terrain.DEFAULT_PIER_INNER_OFFSET
-        pier_inner_z := island_z - sign * half_extent * .08
-        pier_outer_x := island_x + sign * half_extent * terrain.DEFAULT_ISLAND_RADIUS
-        pier_outer_z := island_z - sign * half_extent * .16
-        pier_width := half_extent * .035
-        pier_inner_height := terrain.sample_height(&editor.project, level, pier_inner_x, pier_inner_z) + .09
-        pier_outer_height := editor.project.sea_level + .09
-        draw_quad_3d(
-            camera,
-            {pier_inner_x, pier_inner_height, pier_inner_z - pier_width},
-            {pier_outer_x, pier_outer_height, pier_outer_z - pier_width},
-            {pier_outer_x, pier_outer_height, pier_outer_z + pier_width},
-            {pier_inner_x, pier_inner_height, pier_inner_z + pier_width},
-            width,
-            height,
-            {r = 137, g = 89, b = 48, a = 255},
-        )
-    }
-
     if editor.postale_visible do draw_postale_3d(editor, camera, width, height)
     // The spawned inspection craft is a world object; keep it in the
     // infrastructure pass even when the parked-vehicle presentation toggles.
@@ -5645,40 +6132,6 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
     )
 }
 
-draw_default_infrastructure :: proc(editor: ^Editor, center: rl.Vector2, scale: f32) {
-    level := 0
-    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    for sign in terrain.DEFAULT_ISLAND_SIGNS {
-        island_x := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        island_z := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-
-        // A short wooden pier points from the island toward its nearby map edge.
-        pier_inner_x := island_x + sign * half_extent * terrain.DEFAULT_PIER_INNER_OFFSET
-        pier_inner_z := island_z - sign * half_extent * .08
-        // End at the shoreline without extending beyond the finite terrain map.
-        pier_outer_x := island_x + sign * half_extent * terrain.DEFAULT_ISLAND_RADIUS
-        pier_outer_z := island_z - sign * half_extent * .16
-        pier_width := half_extent * .035
-        p0 := project_point(
-            pier_inner_x,
-            pier_inner_z - pier_width,
-            terrain.sample_height(&editor.project, level, pier_inner_x, pier_inner_z) + .08,
-            center,
-            scale,
-        )
-        p1 := project_point(pier_outer_x, pier_outer_z - pier_width, editor.project.sea_level + .08, center, scale)
-        p2 := project_point(pier_outer_x, pier_outer_z + pier_width, editor.project.sea_level + .08, center, scale)
-        p3 := project_point(
-            pier_inner_x,
-            pier_inner_z + pier_width,
-            terrain.sample_height(&editor.project, level, pier_inner_x, pier_inner_z) + .08,
-            center,
-            scale,
-        )
-        rl.DrawQuadHatched(p0, p1, p2, p3, {r = 137, g = 89, b = 48, a = 255}, rl.HATCH_DISABLED)
-    }
-}
-
 draw_infinite_ocean :: proc(width, height: i32, time: f32) {
     rl.ClearBackground({r = 14, g = 54, b = 79, a = 255})
     for row in 0 ..< 24 {
@@ -5907,6 +6360,129 @@ runway_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     return {x, terrain.sample_height(&editor.project, 0, x, z), z}
 }
 
+nearest_town_spawn_position :: proc(editor: ^Editor, from: third_person.Vec3) -> third_person.Vec3 {
+    if editor == nil do return {}
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    best := third_person.Vec3{}
+    best_distance_squared := f32(3.402823e38)
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        town := third_person.Vec3{island_center, 0, island_center + sign * terrain.DEFAULT_TOWN_OFFSET}
+        delta_x := town.x - from.x
+        delta_z := town.z - from.z
+        distance_squared := delta_x * delta_x + delta_z * delta_z
+        if distance_squared < best_distance_squared {
+            best = town
+            best_distance_squared = distance_squared
+        }
+    }
+    best.y = terrain.sample_height(&editor.project, 0, best.x, best.z)
+    return best
+}
+
+crash_recovery_active :: proc(editor: ^Editor) -> bool {
+    return editor != nil && editor.crash_recovery_phase != .Inactive
+}
+
+crash_recovery_begin :: proc(editor: ^Editor, crash_position: third_person.Vec3) {
+    if editor == nil || crash_recovery_active(editor) do return
+    editor.crash_recovery_phase = .Message
+    editor.crash_recovery_seconds = 0
+    editor.crash_recovery_position = crash_position
+    editor.flight_control = {}
+}
+
+crash_recovery_relocate :: proc(editor: ^Editor) {
+    if editor == nil do return
+
+    if editor.pilot.vehicle != nil {
+        editor.pilot.vehicle.driver = nil
+    }
+    editor.pilot.vehicle = nil
+    editor.pilot.mode = .On_Foot
+
+    if editor.aircraft.active != .Postale {
+        ground := terrain.sample_height(
+            &editor.project,
+            0,
+            editor.libellula.spawn_position.x,
+            editor.libellula.spawn_position.z,
+        )
+        libellula_game.reset(&editor.libellula, ground)
+    } else {
+        ground := postale_game.drivable_surface_height(
+            terrain.sample_height(
+                &editor.project,
+                0,
+                editor.postale.spawn_position.x,
+                editor.postale.spawn_position.z,
+            ),
+            editor.project.sea_level,
+        )
+        postale_game.reset(&editor.postale, ground)
+    }
+
+    town := nearest_town_spawn_position(editor, editor.crash_recovery_position)
+    player_place(editor, town, .Crash_Recovery)
+    editor.flight_control = {}
+    editor.aircraft_fixed_accumulator = 0
+    editor.aircraft_previous_body_valid = false
+    editor.camera = third_person.default_camera()
+    editor.camera_pose = third_person.camera_pose(town, editor.camera)
+    third_person.camera_set_pose(&editor.cameras, .Player, editor.camera_pose)
+    third_person.camera_set_active(&editor.cameras, .Player)
+}
+
+crash_recovery_update :: proc(editor: ^Editor, delta_seconds: f32) {
+    if !crash_recovery_active(editor) do return
+    editor.crash_recovery_seconds += max(delta_seconds, f32(0))
+    switch editor.crash_recovery_phase {
+    case .Message:
+        if editor.crash_recovery_seconds >= CRASH_MESSAGE_SECONDS {
+            editor.crash_recovery_phase = .Fade_Out
+            editor.crash_recovery_seconds = 0
+        }
+    case .Fade_Out:
+        if editor.crash_recovery_seconds >= CRASH_FADE_OUT_SECONDS {
+            crash_recovery_relocate(editor)
+            editor.crash_recovery_phase = .Fade_In
+            editor.crash_recovery_seconds = 0
+        }
+    case .Fade_In:
+        if editor.crash_recovery_seconds >= CRASH_FADE_IN_SECONDS {
+            editor.crash_recovery_phase = .Inactive
+            editor.crash_recovery_seconds = 0
+        }
+    case .Inactive:
+    }
+}
+
+crash_recovery_draw :: proc(editor: ^Editor, width, height: i32) {
+    if !crash_recovery_active(editor) do return
+    fade := f32(0)
+    if editor.crash_recovery_phase == .Fade_Out {
+        fade = clamp(editor.crash_recovery_seconds / CRASH_FADE_OUT_SECONDS, 0, 1)
+    } else if editor.crash_recovery_phase == .Fade_In {
+        fade = 1 - clamp(editor.crash_recovery_seconds / CRASH_FADE_IN_SECONDS, 0, 1)
+    }
+    if fade > 0 {
+        rl.DrawRectangle(0, 0, width, height, {5, 8, 12, u8(clamp(fade * 255, 0, 255))})
+    }
+    if editor.crash_recovery_phase == .Message || editor.crash_recovery_phase == .Fade_Out {
+        label: cstring = "YOU CRASHED"
+        size := rl.MeasureTextEx(rl.Font{}, label, 34, 2)
+        text_alpha := u8(clamp((1 - fade) * 255, 0, 255))
+        rl.DrawTextEx(
+            rl.Font{},
+            label,
+            {f32(width) * .5 - size.x * .5, f32(height) * .5 - size.y * .5},
+            34,
+            2,
+            {255, 226, 205, text_alpha},
+        )
+    }
+}
+
 car_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     // Park the car on the apron beside the runway rather than on the flight
     // surface. This keeps the aircraft arrival lane clear while leaving the car
@@ -5972,28 +6548,11 @@ car_physics_level_heights :: proc(editor: ^Editor, level_index: int, result: []f
 
 car_physics_create :: proc(editor: ^Editor) {
     if editor == nil || editor.car_physics_world != nil do return
-    editor.car_physics_world = physics.create_world(128, 1)
-    physics.set_gravity(editor.car_physics_world, {0, -9.81, 0})
+    if editor.gameplay_physics.world == nil && !gameplay_physics_create(editor) do return
+    editor.car_physics_world = editor.gameplay_physics.world
     ground := terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
-    collision_heights := make([]f32, terrain.SAMPLES_PER_LEVEL)
-    defer delete(collision_heights)
     for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
-        level := &editor.project.levels[level_index]
-        car_physics_level_heights(editor, level_index, collision_heights)
-        editor.car_physics_terrain[level_index] = physics.add_height_field(
-            editor.car_physics_world,
-            collision_heights,
-            terrain.RING_RESOLUTION,
-            {level.origin_x, 0, level.origin_z},
-            {level.cell_size, 1, level.cell_size},
-            4,
-            8,
-        )
-        if editor.car_physics_terrain[level_index] == physics.INVALID_BODY {
-            physics.destroy_world(editor.car_physics_world)
-            editor.car_physics_world = nil
-            return
-        }
+        editor.car_physics_terrain[level_index] = editor.gameplay_physics.terrain[level_index]
     }
     editor.car_physics_terrain_revision = editor.terrain_revision
     editor.car_physics_vehicle = physics.create_vehicle(
@@ -6024,7 +6583,6 @@ car_physics_create :: proc(editor: ^Editor) {
         car_physics_rotation(editor.car.yaw_radians),
     )
     if editor.car_physics_vehicle == nil {
-        physics.destroy_world(editor.car_physics_world)
         editor.car_physics_world = nil
         for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
             editor.car_physics_terrain[level_index] = physics.INVALID_BODY
@@ -6034,7 +6592,9 @@ car_physics_create :: proc(editor: ^Editor) {
 
 car_physics_destroy :: proc(editor: ^Editor) {
     if editor == nil || editor.car_physics_world == nil do return
-    physics.destroy_world(editor.car_physics_world)
+    if editor.car_physics_vehicle != nil {
+        physics.destroy_vehicle(editor.car_physics_world, editor.car_physics_vehicle)
+    }
     editor.car_physics_world = nil
     editor.car_physics_vehicle = nil
     for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
@@ -6094,35 +6654,9 @@ car_physics_step :: proc(
         surface.lateral_grip * (handbrake ? f32(.22) : f32(1)),
     )
 
-    if editor.terrain_revision != editor.car_physics_terrain_revision {
-        updated := true
-        collision_heights := make([]f32, terrain.SAMPLES_PER_LEVEL)
-        defer delete(collision_heights)
-        for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
-            level := &editor.project.levels[level_index]
-            car_physics_level_heights(editor, level_index, collision_heights)
-            updated =
-                physics.update_height_field(
-                    editor.car_physics_world,
-                    editor.car_physics_terrain[level_index],
-                    0,
-                    0,
-                    terrain.RING_RESOLUTION,
-                    terrain.RING_RESOLUTION,
-                    collision_heights,
-                    terrain.RING_RESOLUTION,
-                ) &&
-                updated
-        }
-        if updated {
-            editor.car_physics_terrain_revision = editor.terrain_revision
-        }
-    }
-    editor.car_physics_accumulator = min(editor.car_physics_accumulator + f64(delta_seconds), f64(.1))
-    for editor.car_physics_accumulator >= 1.0 / 120.0 {
-        physics.step(editor.car_physics_world, 1.0 / 120.0, 2)
-        editor.car_physics_accumulator -= 1.0 / 120.0
-    }
+    gameplay_physics_sync_revisions(editor)
+    editor.car_physics_terrain_revision = editor.gameplay_physics.terrain_revision
+    gameplay_physics_step_world(editor, delta_seconds)
 
     position, body_rotation, body_ok := physics.get_transform(editor.car_physics_world, body)
     if !body_ok do return
@@ -6589,6 +7123,7 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
             max(1, 2 * scale),
             {104, 59, 49, 180},
         )
+        live_capture_poll()
         rl.EndDrawing()
         return
     }
@@ -6938,6 +7473,7 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
         max(1, 2 * scale),
         {104, 59, 49, 180},
     )
+    live_capture_poll()
     rl.EndDrawing()
 }
 
@@ -6975,6 +7511,7 @@ hot_state_save :: proc(editor: ^Editor, path: string) -> bool {
     state.car.driver = nil
     state.car_physics_world = nil
     state.car_physics_vehicle = nil
+    state.gameplay_physics = {}
     state.engine_audio.stream = nil
     state.postale.vehicle.driver = nil
     state.libellula.vehicle.driver = nil
@@ -7361,13 +7898,14 @@ adriatic_run :: proc(
     editor.architecture_brush_hardness = .45
     editor.marina_brush_radius = 60
     editor.farm_brush_radius = 64
+    editor.wreck_brush_size = 330
     editor.climbing_leaf_brush_radius = terrain.BASE_CELL_SIZE * 3.0
     editor.climbing_leaf_brush_strength = .55
     editor.climbing_leaf_brush_hardness = .50
     greek_asset_init(editor)
     editor.greek_placement_mode = false
     editor.atmosphere = atmosphere.new(0x41c10)
-    editor.boat_traffic = boats.new_traffic()
+    editor.boat_traffic = new_world_boat_traffic(&editor.project)
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
     editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
     editor.petal_effects = particle_systems.new_petal_effects(0x6a09e667)
@@ -7440,16 +7978,25 @@ adriatic_run :: proc(
     editor.car.interaction_radius = 2.2
     editor.car.exit_distance = 1.1
     editor.car.yaw_radians = -math.PI * .5
+    // The shared physics character is created from editor.player.position.
+    // Seed both gameplay representations first so its authoritative body does
+    // not begin at the world origin in the ocean and overwrite the runway
+    // spawn on the first physics step.
+    player_spawn := runway_spawn_position(editor)
+    player_place(editor, player_spawn, .Startup)
+    if !gameplay_physics_create(editor) {
+        fmt.eprintln("adriatic could not create the shared gameplay physics world")
+    }
     car_physics_create(editor)
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .78, "Setting the world in motion...", postcard)
     }
+    defer gameplay_physics_destroy(editor)
     defer car_physics_destroy(editor)
     defer markov_marina_buoy_physics_destroy(editor)
     editor.car_trailer_attached = true
     editor.car_trailer_position = editor.car.position
     editor.car_trailer_yaw = editor.car.yaw_radians
-    editor.pilot.position = runway_spawn_position(editor)
     if capture_mode && !capture_map_mode {
         if capture_foliage_stress_mode {
             seed_foliage_stress(editor)
@@ -7492,7 +8039,7 @@ adriatic_run :: proc(
             editor.atmosphere.weather = atmosphere.weather_for(.Clear)
             editor.atmosphere.paused = true
         } else if capture_building_mode {
-            if capture_target == "mouse-town" {
+            if capture_target == "mouse-town" || capture_target == "west-town-review" {
                 seed_default_island_towns(editor)
                 authoring_select_tool(editor, .Building)
                 editor.structure_selected = -1
@@ -7511,6 +8058,24 @@ adriatic_run :: proc(
         }
         if capture_building_mode {
             _ = configure_building_capture_camera(editor, capture_target)
+            if capture_target_is_storefront_night(capture_target) ||
+               capture_target == "municipal-route-night" ||
+               capture_target == "municipal-route-night-storm" ||
+               capture_target == "plaza-night" ||
+               capture_target == "plaza-night-new-moon" ||
+               capture_target == "plaza-night-full-moon" ||
+               capture_target == "plaza-night-storm" {
+                atmosphere.set_world_minutes(&editor.atmosphere, 21 * 60)
+                night_weather := atmosphere.Weather_Preset.Clear
+                if capture_target == "plaza-night-storm" ||
+                   capture_target == "storefront-night-storm" ||
+                   capture_target == "municipal-route-night-storm" {
+                    night_weather = .Storm
+                }
+                atmosphere.set_weather_override(&editor.atmosphere, night_weather)
+                editor.atmosphere.weather = atmosphere.weather_for(night_weather)
+                editor.atmosphere.paused = true
+            }
         }
         if capture_foliage_low_mode {
             // A near-canopy cinematic angle verifies that authored forest
@@ -7607,9 +8172,30 @@ adriatic_run :: proc(
     if capture_building_mode {
         // A warm, still late-afternoon preset gives stucco and terracotta a
         // hand-painted Mediterranean glow while keeping the capture stable.
-        atmosphere.set_world_minutes(&editor.atmosphere, 16 * 60 + 45)
-        atmosphere.set_weather_override(&editor.atmosphere, .Clear)
-        editor.atmosphere.weather = atmosphere.weather_for(.Clear)
+        building_capture_minutes := f32(16 * 60 + 45)
+        if capture_target_is_storefront_night(capture_target) ||
+           capture_target == "plaza-night" ||
+           capture_target == "plaza-night-new-moon" ||
+           capture_target == "plaza-night-full-moon" ||
+           capture_target == "plaza-night-storm" ||
+           capture_target == "municipal-route-night" ||
+           capture_target == "municipal-route-night-storm" {
+            building_capture_minutes = 21 * 60
+        }
+        atmosphere.set_world_minutes(&editor.atmosphere, building_capture_minutes)
+        if capture_target == "plaza-night-new-moon" {
+            atmosphere.set_lunar_age(&editor.atmosphere, 0)
+        } else if capture_target == "plaza-night-full-moon" {
+            atmosphere.set_lunar_age(&editor.atmosphere, atmosphere.SYNODIC_MONTH_DAYS * .5)
+        }
+        building_weather := atmosphere.Weather_Preset.Clear
+        if capture_target == "plaza-night-storm" ||
+           capture_target == "storefront-night-storm" ||
+           capture_target == "municipal-route-night-storm" {
+            building_weather = .Storm
+        }
+        atmosphere.set_weather_override(&editor.atmosphere, building_weather)
+        editor.atmosphere.weather = atmosphere.weather_for(building_weather)
         editor.atmosphere.front_seconds = .75
         editor.atmosphere.paused = true
     }
@@ -7618,9 +8204,23 @@ adriatic_run :: proc(
             fmt.eprintf("unknown benchmark scenario: %s\n", benchmark_scenario)
             return .Quit
         }
-        atmosphere.set_world_minutes(&editor.atmosphere, 9 * 60 + 30)
-        atmosphere.set_weather_override(&editor.atmosphere, .Clear)
-        editor.atmosphere.weather = atmosphere.weather_for(.Clear)
+        gameplay_physics_sync_revisions(editor)
+        gameplay_physics_rebuild_boats(editor)
+        gameplay_physics_teleport_player(editor)
+        car_physics_teleport(editor)
+        benchmark_minutes := f32(9 * 60 + 30)
+        if benchmark_scenario == "architecture_night" ||
+           benchmark_scenario == "municipal_route_night" ||
+           benchmark_scenario == "municipal_route_night_storm" {
+            benchmark_minutes = 21 * 60
+        }
+        atmosphere.set_world_minutes(&editor.atmosphere, benchmark_minutes)
+        benchmark_weather := atmosphere.Weather_Preset.Clear
+        if benchmark_scenario == "municipal_route_night_storm" {
+            benchmark_weather = .Storm
+        }
+        atmosphere.set_weather_override(&editor.atmosphere, benchmark_weather)
+        editor.atmosphere.weather = atmosphere.weather_for(benchmark_weather)
         editor.atmosphere.paused = true
     }
     hot_library_path := ""
@@ -7843,8 +8443,27 @@ adriatic_run :: proc(
                 third_person.camera_set_active(&editor.cameras, .Inspection)
                 editor.camera_pose = inspection_pose
             }
-            if capture_target == "zora-reading" && open_story_dialogue(editor, .Zora) {
-                _ = dialogue.choose(&editor.attendant_dialogue, 1)
+            if capture_target == "zora-reading" {
+                // Dialogue captures render through the in-map presentation path.
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, .Zora) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 1)
+                }
             }
         }
         if capture_target == "player" ||
@@ -8274,6 +8893,7 @@ adriatic_run :: proc(
     benchmark_sample_count := 0
     frame := 0
     for !rl.WindowShouldClose() && !editor.quit_requested {
+        gameplay_physics_begin_frame(editor)
         dio.flame_graph_begin_frame(&editor.flame_graph)
         benchmark_frame_start := rl.GetTime()
         frame_now := rl.GetTime()
@@ -8293,13 +8913,17 @@ adriatic_run :: proc(
         }
         if !pause_menu_is_open(editor) do game_input.reset_menu_repeat(&editor.runtime_input)
         was_paused := pause_menu_is_open(editor)
-        console_process_input(editor, width, height)
-        if !editor.console.open do pause_menu_process_input(editor, width, height, frame_delta)
+        tweak_panel_console_key := tweak_panel_console_key_pressed(editor)
+        if !pause_menu_is_open(editor) && tweak_panel_console_key {
+            editor.tweak_panel_visible = !editor.tweak_panel_visible
+        }
+        pause_menu_process_input(editor, width, height, frame_delta)
         runtime_pointer_sync(editor)
         attendant_dialogue_process_input(editor, width, height, frame_delta)
         simulation_delta := was_paused || pause_menu_is_open(editor) ? f32(0) : frame_delta
         atmosphere.step(&editor.atmosphere, simulation_delta)
         boats.step(&editor.boat_traffic, simulation_delta, editor.atmosphere.world_minutes)
+        gameplay_physics_sync_boats(editor, simulation_delta)
         markov_marina_buoy_physics_step(editor, simulation_delta)
         wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
         wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
@@ -8408,6 +9032,7 @@ adriatic_run :: proc(
                 if !control_key_down() && rl.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
                 if !control_key_down() && rl.IsKeyPressed(.J) do authoring_select_tool(editor, .Marina)
                 if !control_key_down() && rl.IsKeyPressed(.K) do authoring_select_tool(editor, .Farm)
+                if !control_key_down() && rl.IsKeyPressed(.V) do authoring_select_tool(editor, .Wreck)
                 if !control_key_down() && rl.IsKeyPressed(.L) do authoring_select_tool(editor, .ClimbingLeaves)
                 if rl.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)
                 if !control_key_down() && rl.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
@@ -8444,13 +9069,13 @@ adriatic_run :: proc(
                 editor.road_drag_handle = -1
             }
             if !imgui_captures_keyboard() &&
-               (editor.marina_paint_mode || editor.farm_paint_mode) &&
+               (editor.marina_paint_mode || editor.farm_paint_mode || editor.wreck_paint_mode) &&
                control_key_down() &&
                rl.IsKeyPressed(.Z) {
                 structure_undo(editor)
             }
             if !imgui_captures_keyboard() &&
-               (editor.marina_paint_mode || editor.farm_paint_mode) &&
+               (editor.marina_paint_mode || editor.farm_paint_mode || editor.wreck_paint_mode) &&
                control_key_down() &&
                rl.IsKeyPressed(.Y) {
                 structure_redo(editor)
@@ -8564,12 +9189,13 @@ adriatic_run :: proc(
         }
         editor_view_camera := perspective_camera(editor.camera_pose, focal_length)
         world_mouse, world_mouse_inside := rl.GetWorldMousePosition()
+        world_render_width, world_render_height := rl.GetWorldRenderSize()
         world_x, world_z, cursor_hit := terrain_under_cursor_3d(
             editor,
             editor_view_camera,
             world_mouse,
-            ADRIATIC_WORLD_WIDTH,
-            ADRIATIC_WORLD_HEIGHT,
+            world_render_width,
+            world_render_height,
         )
         cursor_hit = cursor_hit && world_mouse_inside
         ui_hit := editor_ui_hit(editor, rl.GetMousePosition(), width, height)
@@ -8584,6 +9210,8 @@ adriatic_run :: proc(
         marina_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         farm_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
         farm_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        wreck_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
+        wreck_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         climbing_leaf_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         formation_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         greek_placement_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
@@ -8592,6 +9220,7 @@ adriatic_run :: proc(
         if !editor.architecture_paint_mode &&
            !editor.marina_paint_mode &&
            !editor.farm_paint_mode &&
+           !editor.wreck_paint_mode &&
            !editor.climbing_leaf_paint_mode &&
            editor.authoring_tool != .Formations &&
            (editor.authoring_tool != .Foliage || editor.foliage_hedgerow_mode) &&
@@ -8614,7 +9243,12 @@ adriatic_run :: proc(
         footstep_surface := engine_sound.Footstep_Surface.Grass
         footstep_landing := false
         footstep_slide := f32(0)
-        if editor.in_map && !pause_menu_is_open(editor) && !capture_car_mode && !cinematic_is_playing(editor) {
+        crash_recovery_update(editor, simulation_delta)
+        if editor.in_map &&
+           !pause_menu_is_open(editor) &&
+           !capture_car_mode &&
+           !cinematic_is_playing(editor) &&
+           !crash_recovery_active(editor) {
             delta_seconds := frame_delta
             if editor.vehicle_paint_scene {
                 vehicle_paint_process_input(editor, width, height, min(delta_seconds, .05))
@@ -8640,35 +9274,6 @@ adriatic_run :: proc(
                     chase_camera.look(&editor.flight_camera, flight_look_x, flight_look_y)
                     if input_action_pressed(.Camera_Reset) {
                         chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
-                    }
-                    if input_action_pressed(.Vehicle_Reset) {
-                        if lab_scene_is_active(editor, "markov-wreck") && editor.aircraft.active == .Postale {
-                            _ = markov_wreck_reset_postale(editor)
-                        } else if editor.aircraft.active != .Postale {
-                            ground := terrain.sample_height(
-                                &editor.project,
-                                0,
-                                editor.libellula.spawn_position.x,
-                                editor.libellula.spawn_position.z,
-                            )
-                            libellula_game.reset(&editor.libellula, ground)
-                        } else {
-                            ground := postale_game.drivable_surface_height(
-                                terrain.sample_height(
-                                    &editor.project,
-                                    0,
-                                    editor.postale.spawn_position.x,
-                                    editor.postale.spawn_position.z,
-                                ),
-                                editor.project.sea_level,
-                            )
-                            postale_game.reset(&editor.postale, ground)
-                        }
-                        if !lab_scene_is_active(editor, "markov-wreck") {
-                            editor.aircraft_fixed_accumulator = 0
-                            editor.aircraft_previous_body_valid = false
-                            vehicles.sync_driver(&editor.pilot)
-                        }
                     }
                     control := postale_game.Control {
                         throttle_up   = rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT),
@@ -8730,6 +9335,7 @@ adriatic_run :: proc(
                                 control,
                                 ground,
                                 f32(AIRCRAFT_FIXED_STEP),
+                                {wind_x, 0, wind_z},
                             )
                             wheels_on_land := terrain_height >= editor.project.sea_level
                             if ground_result.touched_down && wheels_on_land {
@@ -8746,6 +9352,7 @@ adriatic_run :: proc(
                             is_crashed = editor.libellula.crashed
                         }
                         if !was_crashed && is_crashed {
+                            crash_recovery_begin(editor, {body.position.x, body.position.y, body.position.z})
                             crash_profile =
                                 editor.aircraft.active == .Postale ? engine_sound.Crash_Profile.Fixed_Wing : engine_sound.Crash_Profile.Rotorcraft
                             crash_severity = max(
@@ -8807,9 +9414,7 @@ adriatic_run :: proc(
                     if input_action_pressed(.Interact) && can_exit {
                         if vehicles.try_exit(&editor.pilot, true) {
                             editor.flight_control = {}
-                            editor.player.position = editor.pilot.position
-                            editor.player.velocity = {}
-                            editor.player.grounded = true
+                            player_place(editor, editor.pilot.position, .Vehicle_Exit, editor.pilot.facing_yaw_radians)
                             editor.camera = third_person.default_camera()
                         }
                     }
@@ -8827,9 +9432,7 @@ adriatic_run :: proc(
                 if in_car {
                     if input_action_pressed(.Interact) {
                         if vehicles.try_exit(&editor.pilot, true) {
-                            editor.player.position = editor.pilot.position
-                            editor.player.velocity = {}
-                            editor.player.grounded = true
+                            player_place(editor, editor.pilot.position, .Vehicle_Exit, editor.pilot.facing_yaw_radians)
                             editor.camera = third_person.default_camera()
                         }
                     } else {
@@ -8962,36 +9565,23 @@ adriatic_run :: proc(
                         if rl.IsKeyDown(.S) do move_y -= 1
                         move_x = stronger_axis(move_x, gamepad_axis(.Left_X))
                         move_y = stronger_axis(move_y, -gamepad_axis(.Left_Y))
-                        ground_height := terrain.sample_height(
-                            &editor.project,
-                            0,
-                            editor.player.position.x,
-                            editor.player.position.z,
-                        )
                         input := third_person.Input {
                             move_x             = move_x,
                             move_y             = move_y,
                             run_toggle_pressed = input_action_pressed(.Run),
                             jump_pressed       = input_action_pressed(.Jump),
                             jump_held          = input_action_down(.Jump),
-                            grounded           = editor.player.position.y <= ground_height + .01,
+                            grounded           = editor.player.grounded,
                             camera_yaw_radians = editor.camera.yaw_radians,
-                            ground_normal      = player_ground_normal(editor, editor.player.position),
+                            ground_normal      = editor.player.ground_normal,
                         }
                         frame_seconds := min(delta_seconds, .05)
                         stride_phase_before := editor.player_stride_phase
                         player_was_grounded := editor.player.grounded
                         player_vertical_speed_before := editor.player.velocity.y
                         third_person.step(&editor.player, input, editor.tweak.player, frame_seconds)
-                        player_resolve_world_collision(editor)
+                        _ = gameplay_physics_resolve_player(editor, frame_seconds)
                         player_animation_update(editor, frame_seconds)
-                        ground_height = terrain.sample_height(
-                            &editor.project,
-                            0,
-                            editor.player.position.x,
-                            editor.player.position.z,
-                        )
-                        third_person.resolve_ground_contact(&editor.player, ground_height)
                         player_horizontal_speed := f32(
                             math.sqrt(
                                 f64(
@@ -9078,6 +9668,7 @@ adriatic_run :: proc(
                 }
             }
         }
+        gameplay_physics_step_world(editor, simulation_delta)
         if editor.in_map && !editor.vehicle_showcase_scene && !editor.vehicle_paint_scene {
             trailer_ground := terrain.sample_height(
                 &editor.project,
@@ -9132,6 +9723,7 @@ adriatic_run :: proc(
                 editor.camera_pose.position.z,
             )
             editor.camera_pose = third_person.camera_above_height(editor.camera_pose, camera_ground, .35)
+            editor.camera_pose = gameplay_physics_resolve_camera(editor, editor.camera_pose)
         }
         if benchmark_scenario == "terrain_edit" && frame >= benchmark_warmup {
             edit_frame := frame - benchmark_warmup
@@ -9184,8 +9776,8 @@ adriatic_run :: proc(
         rl.BeginDrawing()
         draw_terrain(editor, width, height, f32(rl.GetTime()))
         pause_menu_draw(editor, width, height, postcard)
-        console_draw(editor, width, height)
         cinematic_draw_wipe(editor, width, height)
+        crash_recovery_draw(editor, width, height)
         live_capture_poll()
         rl.EndDrawing()
         gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()

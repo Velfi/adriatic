@@ -32,23 +32,6 @@ entries := [?]Entry {
     {"verre", "glass"},
 }
 
-gameplay_keywords := [?]string {
-    "acceptance",
-    "awning",
-    "dinghy",
-    "Gerta",
-    "invitation",
-    "Iva",
-    "letter",
-    "magneto",
-    "Marta",
-    "Niko",
-    "patch",
-    "post",
-    "propeller",
-    "wing",
-}
-
 ascii_equal_fold :: proc(a, b: string) -> bool {
     if len(a) != len(b) do return false
     for index in 0 ..< len(a) {
@@ -67,11 +50,4 @@ english_for :: proc(term: string) -> (string, bool) {
         if ascii_equal_fold(term, entry.term) do return entry.english, true
     }
     return "", false
-}
-
-is_gameplay_keyword :: proc(term: string) -> bool {
-    for keyword in gameplay_keywords {
-        if ascii_equal_fold(term, keyword) do return true
-    }
-    return false
 }

@@ -145,16 +145,20 @@ Marina_Buoy_Physics :: struct {
 
 markov_marina_buoy_physics_destroy :: proc(editor: ^Editor) {
     if editor == nil || editor.marina_buoys.world == nil do return
-    physics.destroy_world(editor.marina_buoys.world)
+    for buoy in editor.marina_buoys.bodies[:editor.marina_buoys.count] {
+        if buoy.body != physics.INVALID_BODY {
+            physics.remove_body(editor.marina_buoys.world, buoy.body)
+        }
+    }
     editor.marina_buoys = {}
 }
 
 markov_marina_buoy_physics_create :: proc(editor: ^Editor) {
     if editor == nil do return
     markov_marina_buoy_physics_destroy(editor)
-    editor.marina_buoys.world = physics.create_world(marina.SLIP_CAPACITY + 8, 1)
+    if editor.gameplay_physics.world == nil && !gameplay_physics_create(editor) do return
+    editor.marina_buoys.world = editor.gameplay_physics.world
     if editor.marina_buoys.world == nil do return
-    physics.set_gravity(editor.marina_buoys.world, {0, -9.81, 0})
     for berth, berth_index in markov_marina_plan.slips[:markov_marina_plan.slip_count] {
         if berth.kind != .Swing_Mooring do continue
         phase := f32((berth_index * 37 + int(markov_marina_plan.layout_seed & 255)) % 100) / 100
@@ -199,32 +203,27 @@ markov_marina_buoy_physics_step :: proc(editor: ^Editor, delta_seconds: f32) {
        delta_seconds <= 0 {
         return
     }
-    editor.marina_buoys.accumulator = min(editor.marina_buoys.accumulator + f64(delta_seconds), f64(.1))
-    for editor.marina_buoys.accumulator >= MARINA_BUOY_FIXED_STEP {
-        wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
-        for buoy in editor.marina_buoys.bodies[:editor.marina_buoys.count] {
-            position, _, ok := physics.get_transform(editor.marina_buoys.world, buoy.body)
-            if !ok do continue
-            velocity := physics.get_linear_velocity(editor.marina_buoys.world, buoy.body)
-            displacement := MARINA_BUOY_WATERLINE_Y - position[1]
-            vertical_force := MARINA_BUOY_MASS * 9.81 + displacement * 120 - velocity[1] * 18
+    wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
+    for buoy in editor.marina_buoys.bodies[:editor.marina_buoys.count] {
+        position, _, ok := physics.get_transform(editor.marina_buoys.world, buoy.body)
+        if !ok do continue
+        velocity := physics.get_linear_velocity(editor.marina_buoys.world, buoy.body)
+        displacement := MARINA_BUOY_WATERLINE_Y - position[1]
+        vertical_force := MARINA_BUOY_MASS * 9.81 + displacement * 120 - velocity[1] * 18
 
-            dx, dz := position[0] - buoy.anchor[0], position[2] - buoy.anchor[2]
-            distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
-            tether_x, tether_z := f32(0), f32(0)
-            if distance > .65 {
-                tension := (distance - .65) * 24
-                tether_x = -dx / distance * tension
-                tether_z = -dz / distance * tension
-            }
-            physics.add_force(
-                editor.marina_buoys.world,
-                buoy.body,
-                {tether_x - velocity[0] * 5 + wind_x * .16, vertical_force, tether_z - velocity[2] * 5 + wind_z * .16},
-            )
+        dx, dz := position[0] - buoy.anchor[0], position[2] - buoy.anchor[2]
+        distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+        tether_x, tether_z := f32(0), f32(0)
+        if distance > .65 {
+            tension := (distance - .65) * 24
+            tether_x = -dx / distance * tension
+            tether_z = -dz / distance * tension
         }
-        physics.step(editor.marina_buoys.world, f32(MARINA_BUOY_FIXED_STEP), 2)
-        editor.marina_buoys.accumulator -= MARINA_BUOY_FIXED_STEP
+        physics.add_force(
+            editor.marina_buoys.world,
+            buoy.body,
+            {tether_x - velocity[0] * 5 + wind_x * .16, vertical_force, tether_z - velocity[2] * 5 + wind_z * .16},
+        )
     }
 }
 
@@ -380,12 +379,7 @@ markov_marina_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
     dockmaster := markov_marina_dockmaster_position()
-    editor.player = {
-        position = {dockmaster.x + 1.5, dockmaster.y, dockmaster.z + .4},
-        grounded = true,
-    }
-    editor.pilot.mode = .On_Foot
-    editor.pilot.position = editor.player.position
+    player_place(editor, {dockmaster.x + 1.5, dockmaster.y, dockmaster.z + .4}, .Scene_Setup)
     return true
 }
 

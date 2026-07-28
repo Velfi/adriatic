@@ -4,7 +4,7 @@ struct Push {
     float4 camera_up;
     float4 camera_forward;
     float4 projection;
-    float4 fog_color;
+    float4 fog_color; // rgb horizon fog, a moonlight strength
     float4 water;
     float4 sun;
 };
@@ -58,6 +58,22 @@ float3 srgb_to_linear(float3 color) {
     return float3(srgb_channel_to_linear(color.r),
                   srgb_channel_to_linear(color.g),
                   srgb_channel_to_linear(color.b));
+}
+
+float3 apply_environment_light(float3 color) {
+    float daylight = saturate(push.sun.w);
+    float night = 1.0 - smoothstep(.0, .34, daylight);
+    float luma = dot(color, float3(.2126, .7152, .0722));
+    float3 low_chroma = lerp(color, luma.xxx, .34);
+    float moon_strength = saturate(push.fog_color.a);
+    float ambient_level = lerp(.16, .42, sqrt(moon_strength));
+    float3 cool_fill =
+        low_chroma * float3(.72, .88, 1.12) * ambient_level;
+    // Camera-facing cards cannot provide a stable surface normal. Use a small
+    // phase-aware lift so moonlit foliage remains legible without glowing.
+    float moon_lift = moon_strength * .055;
+    float3 night_color = cool_fill + low_chroma * float3(.54, .68, .92) * moon_lift;
+    return lerp(color, night_color, night);
 }
 
 VertexOutput foliage_vertex_transform(VertexInput input) {
@@ -439,6 +455,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         color = input.color.rgb * lerp(1.0, grass_detail, input.color.a);
     }
 
+    color = apply_environment_light(color);
     float alpha = painted_atlas_color ? coverage : texel.a * input.color.a;
     return float4(lerp(color, srgb_to_linear(push.fog_color.rgb), fog), alpha);
 }

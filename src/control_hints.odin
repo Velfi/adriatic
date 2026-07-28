@@ -23,7 +23,6 @@ Control_Hint_Binding :: enum {
     Recenter,
     Power,
     Exit,
-    Reset,
     Drive,
     Steer,
     Brake,
@@ -80,8 +79,6 @@ control_hint_keyboard_source :: proc(binding: Control_Hint_Binding) -> rl.Rectan
         return control_hint_tile(832, 320) // Esc
     case .Recenter:
         return control_hint_tile(128, 256) // C
-    case .Reset:
-        return control_hint_tile(960, 640) // R
     }
     return {}
 }
@@ -115,7 +112,7 @@ control_hint_controller_source :: proc(
             return control_hint_tile(448, 448) // right trigger
         case .Jump, .Recenter:
             return control_hint_tile(256, 0) // A
-        case .Run, .Reset:
+        case .Run:
             return control_hint_tile(128, 192) // Y
         case .Interact, .Exit:
             return control_hint_tile(0, 192) // X
@@ -136,7 +133,7 @@ control_hint_controller_source :: proc(
             return control_hint_tile(128, 384) // R2
         case .Jump, .Recenter:
             return control_hint_tile(320, 64) // Cross
-        case .Run, .Reset:
+        case .Run:
             return control_hint_tile(64, 128) // Triangle
         case .Interact, .Exit:
             return control_hint_tile(704, 64) // Square
@@ -157,7 +154,7 @@ control_hint_controller_source :: proc(
             return control_hint_tile(512, 128) // ZR
         case .Jump, .Recenter:
             return control_hint_tile(384, 0) // B
-        case .Run, .Reset:
+        case .Run:
             return control_hint_tile(128, 128) // X
         case .Interact, .Exit:
             return control_hint_tile(256, 128) // Y
@@ -178,7 +175,7 @@ control_hint_controller_source :: proc(
             return control_hint_tile(256, 64) // trigger
         case .Yaw, .Brake:
             return control_hint_tile(64, 128) // trigger
-        case .Jump, .Run, .Interact, .Pause, .Recenter, .Exit, .Reset:
+        case .Jump, .Run, .Interact, .Pause, .Recenter, .Exit:
             return control_hint_tile(64, 0) // button
         }
     }
@@ -242,8 +239,8 @@ control_hint_draw_gameplay_hud :: proc(editor: ^Editor, width: i32) {
     entries[6] = {.Pause, "PAUSE"}
 
     if flying {
-        panel_width = 940
-        count = 8
+        panel_width = 820
+        count = 7
         title = vehicles.aircraft_kind_name(editor.aircraft.active)
         entries[0] = {.Pitch, "PITCH"}
         entries[1] = {.Roll, "ROLL"}
@@ -252,7 +249,6 @@ control_hint_draw_gameplay_hud :: proc(editor: ^Editor, width: i32) {
         entries[4] = {.Power, "POWER"}
         entries[5] = {.Recenter, "CENTER"}
         entries[6] = {.Exit, "EXIT"}
-        entries[7] = {.Reset, "RESET"}
         if editor.aircraft.active != .Postale {
             entries[4] = {.Altitude, "ALTITUDE"}
         }

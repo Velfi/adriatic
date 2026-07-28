@@ -21,6 +21,11 @@ MARKOV_WRECK_WATERLINE :: f32(0)
 // Sink the hull through the ocean surface: the weather deck remains exposed,
 // while the keel and lower bilges are visibly claimed by the sea.
 MARKOV_WRECK_HULL_CENTER_Y :: f32(12)
+// Route generation does not have an aircraft pose, so it uses a conservative
+// fuselage clearance. Runtime collision uses the transformed Postale mesh.
+MARKOV_WRECK_ROUTE_CLEARANCE_RADIUS :: f32(1.5)
+MARKOV_WRECK_POSTALE_BROADPHASE_RADIUS :: f32(4.4)
+WRECK_INSTANCE_CAPACITY :: 8
 
 Markov_Wreck_Cell :: enum u8 {
     Empty,
@@ -92,6 +97,72 @@ markov_wreck_colliders: [MARKOV_WRECK_COLLIDER_CAPACITY]Markov_Wreck_Collider
 markov_wreck_collider_count: int
 markov_wreck_postale_spawned: bool
 markov_wreck_collision_verified: bool
+markov_wreck_render_origin_x: f32
+markov_wreck_render_origin_z: f32
+markov_wreck_render_yaw: f32
+markov_wreck_render_scale: f32 = 1
+markov_wreck_authored_render: bool
+
+Wreck_Instance :: struct {
+    cells:              [MARKOV_WRECK_LENGTH]Markov_Wreck_Cell,
+    seed:               u32,
+    form:               Markov_Wreck_Form,
+    break_index:        int,
+    second_break_index: int,
+    part_count:         int,
+    first_bay:          int,
+    last_bay:           int,
+    parts:              [3]Markov_Wreck_Part_State,
+    quality:            Markov_Wreck_Quality,
+    origin_x:           f32,
+    origin_z:           f32,
+    yaw:                f32,
+    scale:              f32,
+}
+
+markov_wreck_instance_capture :: proc(origin_x, origin_z, yaw: f32, scale: f32 = 1) -> Wreck_Instance {
+    return {
+        cells = markov_wreck_cells,
+        seed = markov_wreck_seed,
+        form = markov_wreck_form,
+        break_index = markov_wreck_break_index,
+        second_break_index = markov_wreck_second_break_index,
+        part_count = markov_wreck_part_count,
+        first_bay = markov_wreck_first_bay,
+        last_bay = markov_wreck_last_bay,
+        parts = markov_wreck_parts,
+        quality = markov_wreck_quality,
+        origin_x = origin_x,
+        origin_z = origin_z,
+        yaw = yaw,
+        scale = scale,
+    }
+}
+
+markov_wreck_instance_load :: proc(instance: ^Wreck_Instance) {
+    if instance == nil do return
+    markov_wreck_cells = instance.cells
+    markov_wreck_seed = instance.seed
+    markov_wreck_form = instance.form
+    markov_wreck_break_index = instance.break_index
+    markov_wreck_second_break_index = instance.second_break_index
+    markov_wreck_part_count = instance.part_count
+    markov_wreck_first_bay = instance.first_bay
+    markov_wreck_last_bay = instance.last_bay
+    markov_wreck_parts = instance.parts
+    markov_wreck_quality = instance.quality
+    markov_wreck_render_origin_x = instance.origin_x
+    markov_wreck_render_origin_z = instance.origin_z
+    markov_wreck_render_yaw = instance.yaw
+    markov_wreck_render_scale = instance.scale
+}
+
+markov_wreck_transform_xz :: proc(local_x, local_z: f32) -> (f32, f32) {
+    cosine, sine := math.cos(markov_wreck_render_yaw), math.sin(markov_wreck_render_yaw)
+    x := local_x * markov_wreck_render_scale
+    z := local_z * markov_wreck_render_scale
+    return markov_wreck_render_origin_x + x * cosine - z * sine, markov_wreck_render_origin_z + x * sine + z * cosine
+}
 
 markov_wreck_hash :: proc(value: u32) -> u32 {
     x := value
@@ -233,10 +304,12 @@ markov_wreck_major_break_after :: proc(x_index: int) -> bool {
 
 markov_wreck_ring_center :: proc(x_index: int) -> third_person.Vec3 {
     center := f32(MARKOV_WRECK_LENGTH - 1) * .5
-    result := third_person.Vec3{(f32(x_index) - center) * MARKOV_WRECK_CELL, MARKOV_WRECK_HULL_CENTER_Y, 0}
+    x, z := markov_wreck_transform_xz((f32(x_index) - center) * MARKOV_WRECK_CELL, 0)
+    result := third_person.Vec3{x, MARKOV_WRECK_HULL_CENTER_Y, z}
     part := &markov_wreck_parts[markov_wreck_part_for_bay(x_index)]
-    result.y += part.offset_y
-    result.z += part.offset_z
+    result.y += part.offset_y * markov_wreck_render_scale
+    result.x -= math.sin(markov_wreck_render_yaw) * part.offset_z * markov_wreck_render_scale
+    result.z += math.cos(markov_wreck_render_yaw) * part.offset_z * markov_wreck_render_scale
     return result
 }
 
@@ -286,6 +359,47 @@ markov_wreck_model :: proc() -> markov.Proc_Node {
             ),
         },
     )
+}
+
+markov_wreck_generate_instance :: proc(
+    requested_seed: u32,
+    origin_x, origin_z, yaw: f32,
+    scale: f32 = 1,
+) -> (
+    Wreck_Instance,
+    bool,
+) {
+    markov_wreck_form = Markov_Wreck_Form(markov_wreck_hash(requested_seed) % 3)
+    for attempt in 0 ..< 16 {
+        candidate_seed := requested_seed + u32(attempt) * 0x9e3779b9
+        model := markov_wreck_model()
+        ip, loaded := markov.load_model_proc(model, {MARKOV_WRECK_LENGTH, 1, 1})
+        if !loaded do continue
+        frames := markov.run(ip, int(candidate_seed), 0, false, context.temp_allocator)
+        accepted := false
+        if len(frames) > 0 {
+            final := &frames[len(frames) - 1]
+            for index in 0 ..< MARKOV_WRECK_LENGTH {
+                markov_wreck_cells[index] = Markov_Wreck_Cell(final.state[index])
+            }
+            markov_wreck_update_bounds()
+            quality := markov_wreck_evaluate(candidate_seed)
+            if quality.valid {
+                markov_wreck_seed = candidate_seed
+                markov_wreck_quality = quality
+                markov_wreck_select_break(candidate_seed)
+                markov_wreck_build_colliders()
+                route_quality := markov_wreck_evaluate_routes()
+                accepted = route_quality.valid
+                if accepted do markov_wreck_route_quality = route_quality
+            }
+        }
+        markov.interpreter_destroy(ip)
+        if accepted {
+            return markov_wreck_instance_capture(origin_x, origin_z, yaw, scale), true
+        }
+    }
+    return {}, false
 }
 
 markov_wreck_evaluate :: proc(seed: u32) -> Markov_Wreck_Quality {
@@ -529,7 +643,6 @@ markov_wreck_reset_postale :: proc(editor: ^Editor) -> bool {
     editor.postale.vehicle.locked = false
     editor.postale.grounded = false
     editor.postale.was_grounded = false
-    editor.postale.takeoff_armed = false
     editor.postale.throttle = .76
     editor.aircraft_fixed_accumulator = 0
     editor.aircraft_previous_body_valid = false
@@ -639,7 +752,14 @@ markov_wreck_local_point :: proc(x_index: int, local_y, local_z: f32) -> third_p
     center := markov_wreck_ring_center(x_index)
     _, _, roll := markov_wreck_ring_shape(x_index, markov_wreck_cells[x_index] == .Fracture)
     cosine, sine := math.cos(roll), math.sin(roll)
-    return {center.x, center.y + local_y * cosine - local_z * sine, center.z + local_y * sine + local_z * cosine}
+    lateral_x := -math.sin(markov_wreck_render_yaw)
+    lateral_z := math.cos(markov_wreck_render_yaw)
+    rolled_z := local_y * sine + local_z * cosine
+    return {
+        center.x + lateral_x * rolled_z * markov_wreck_render_scale,
+        center.y + (local_y * cosine - local_z * sine) * markov_wreck_render_scale,
+        center.z + lateral_z * rolled_z * markov_wreck_render_scale,
+    }
 }
 
 // Bind authored family details to the generated hull section beneath them.
@@ -651,16 +771,30 @@ markov_wreck_attached_point :: proc(point: third_person.Vec3) -> third_person.Ve
     x_index = clamp(x_index, markov_wreck_first_bay, markov_wreck_last_bay)
     nominal_x := (f32(x_index) - hull_center) * MARKOV_WRECK_CELL
     result := markov_wreck_local_point(x_index, point.y - MARKOV_WRECK_HULL_CENTER_Y, point.z)
-    result.x += point.x - nominal_x
+    along := (point.x - nominal_x) * markov_wreck_render_scale
+    result.x += math.cos(markov_wreck_render_yaw) * along
+    result.z += math.sin(markov_wreck_render_yaw) * along
     return result
 }
 
 markov_wreck_attached_box :: proc(center, size: third_person.Vec3, color: rl.Color) {
-    world_box(markov_wreck_attached_point(center), size, color)
+    world_box_rotated(
+        markov_wreck_attached_point(center),
+        size * markov_wreck_render_scale,
+        markov_wreck_render_yaw,
+        color,
+    )
 }
 
 markov_wreck_attached_box_between :: proc(a, b, up_hint: third_person.Vec3, width, height: f32, color: rl.Color) {
-    world_box_between(markov_wreck_attached_point(a), markov_wreck_attached_point(b), up_hint, width, height, color)
+    world_box_between(
+        markov_wreck_attached_point(a),
+        markov_wreck_attached_point(b),
+        up_hint,
+        width * markov_wreck_render_scale,
+        height * markov_wreck_render_scale,
+        color,
+    )
 }
 
 markov_wreck_attached_run :: proc(x_min, x_max, y, z, depth, height: f32, color: rl.Color) {
@@ -679,8 +813,8 @@ markov_wreck_attached_run :: proc(x_min, x_max, y, z, depth, height: f32, color:
             markov_wreck_attached_point({x0, y, z}),
             markov_wreck_attached_point({x1, y, z}),
             third_person.Vec3{0, 1, 0},
-            depth,
-            height,
+            depth * markov_wreck_render_scale,
+            height * markov_wreck_render_scale,
             color,
         )
     }
@@ -849,7 +983,10 @@ markov_wreck_build_colliders :: proc() {
         ring_seed := markov_wreck_seed ~ u32(x_index * 0x9e37)
         radius_y, radius_z, _ := markov_wreck_ring_shape(x_index, fractured)
         for segment in 0 ..< 12 {
-            if markov_wreck_breach(x_index, segment) && markov_wreck_breach(x_index, (segment + 11) % 12) {
+            // A missing panel also removes its bordering frame collision.
+            // Keeping either half of the frame here seals a visibly open
+            // breach once the aircraft collision radius is applied.
+            if markov_wreck_breach(x_index, segment) || markov_wreck_breach(x_index, (segment + 11) % 12) {
                 continue
             }
             a0 := f32(segment) / 12 * math.TAU
@@ -1014,7 +1151,6 @@ markov_wreck_evaluate_routes :: proc() -> Markov_Wreck_Route_Quality {
     result := Markov_Wreck_Route_Quality {
         minimum_clear_routes = 12,
     }
-    AIRCRAFT_RADIUS :: f32(3.8)
     required_clear_routes := markov_wreck_form == .Carrier ? 2 : 4
     for cell, x_index in markov_wreck_cells {
         if cell == .Empty do continue
@@ -1027,7 +1163,7 @@ markov_wreck_evaluate_routes :: proc() -> Markov_Wreck_Route_Quality {
         result.bays_evaluated += 1
         bay_center := markov_wreck_ring_center(x_index)
         x := bay_center.x
-        if markov_wreck_point_blocked(bay_center, AIRCRAFT_RADIUS) {
+        if markov_wreck_point_blocked(bay_center, MARKOV_WRECK_ROUTE_CLEARANCE_RADIUS) {
             result.centerline_obstacles += 1
         }
         radius_y, radius_z, _ := markov_wreck_ring_shape(x_index, cell == .Fracture)
@@ -1044,7 +1180,7 @@ markov_wreck_evaluate_routes :: proc() -> Markov_Wreck_Route_Quality {
                 bay_center.y + math.sin(angle) * route_radius_y,
                 bay_center.z + math.cos(angle) * route_radius_z,
             }
-            if !markov_wreck_point_blocked(point, AIRCRAFT_RADIUS) do clear_routes += 1
+            if !markov_wreck_point_blocked(point, MARKOV_WRECK_ROUTE_CLEARANCE_RADIUS) do clear_routes += 1
         }
         result.minimum_clear_routes = min(result.minimum_clear_routes, clear_routes)
         if clear_routes >= required_clear_routes do result.navigable_bays += 1
@@ -1064,18 +1200,37 @@ markov_wreck_aircraft_collision_step :: proc(editor: ^Editor) -> bool {
        editor.postale.crashed {
         return false
     }
-    AIRCRAFT_RADIUS :: f32(3.8)
-    point := third_person.Vec3 {
+    origin := third_person.Vec3 {
         editor.postale.body.position.x,
         editor.postale.body.position.y,
         editor.postale.body.position.z,
     }
     for collider in markov_wreck_colliders[:markov_wreck_collider_count] {
-        distance_squared, closest := markov_wreck_point_segment_distance_squared(point, collider.a, collider.b)
-        combined := AIRCRAFT_RADIUS + collider.radius
-        if distance_squared > combined * combined do continue
-        normal := third_person.Vec3{point.x - closest.x, point.y - closest.y, point.z - closest.z}
-        normal_length := f32(math.sqrt(f64(max(distance_squared, .000001))))
+        origin_distance_squared, _ := markov_wreck_point_segment_distance_squared(origin, collider.a, collider.b)
+        broadphase_radius := MARKOV_WRECK_POSTALE_BROADPHASE_RADIUS + collider.radius
+        if origin_distance_squared > broadphase_radius * broadphase_radius do continue
+
+        hit := false
+        hit_distance_squared := collider.radius * collider.radius
+        hit_point, closest := third_person.Vec3{}, third_person.Vec3{}
+        for vertex in editor.postale_base_mesh.vertices[:editor.postale_base_mesh.vertex_count] {
+            point := postale_vertex_world(&editor.postale, vertex.position, POSTALE_PRESENTATION_SCALE)
+            distance_squared, candidate_closest := markov_wreck_point_segment_distance_squared(
+                point,
+                collider.a,
+                collider.b,
+            )
+            if distance_squared > hit_distance_squared do continue
+            hit = true
+            hit_distance_squared = distance_squared
+            hit_point = point
+            closest = candidate_closest
+        }
+        if !hit do continue
+
+        normal := third_person.Vec3{hit_point.x - closest.x, hit_point.y - closest.y, hit_point.z - closest.z}
+        distance := f32(math.sqrt(f64(max(hit_distance_squared, .000001))))
+        normal_length := distance
         if normal_length <= .001 {
             normal = {
                 -editor.postale.body.basis.forward.x,
@@ -1087,12 +1242,13 @@ markov_wreck_aircraft_collision_step :: proc(editor: ^Editor) -> bool {
             normal.y /= normal_length
             normal.z /= normal_length
         }
-        point = {
-            closest.x + normal.x * (combined + .15),
-            closest.y + normal.y * (combined + .15),
-            closest.z + normal.z * (combined + .15),
+        penetration := collider.radius - distance + .15
+        origin = {
+            origin.x + normal.x * penetration,
+            origin.y + normal.y * penetration,
+            origin.z + normal.z * penetration,
         }
-        editor.postale.body.position = {point.x, point.y, point.z}
+        editor.postale.body.position = {origin.x, origin.y, origin.z}
         speed := linalg.length(editor.postale.body.velocity)
         editor.postale.body.velocity = {
             -editor.postale.body.velocity.x * .10 + normal.x * max(speed * .10, f32(3)),
@@ -1106,7 +1262,7 @@ markov_wreck_aircraft_collision_step :: proc(editor: ^Editor) -> bool {
         editor.postale.throttle = 0
         editor.postale.grounded = false
         editor.postale.crashed = true
-        editor.postale.vehicle.position = point
+        editor.postale.vehicle.position = origin
         editor.postale.vehicle.yaw_radians = postale_game.yaw_radians(editor.postale.body.basis)
         return true
     }
@@ -1121,19 +1277,21 @@ world_markov_wreck :: proc(editor: ^Editor) {
     water := rl.Color{54, 112, 129, 238}
     WATER_EXTENT :: f32(500)
     WATER_CELL :: f32(100)
-    for zi in 0 ..< 10 {
-        z0 := -WATER_EXTENT + f32(zi) * WATER_CELL
-        z1 := z0 + WATER_CELL
-        for xi in 0 ..< 10 {
-            x0 := -WATER_EXTENT + f32(xi) * WATER_CELL
-            x1 := x0 + WATER_CELL
-            world_water_quad(
-                {x0, MARKOV_WRECK_WATERLINE, z0},
-                {x0, MARKOV_WRECK_WATERLINE, z1},
-                {x1, MARKOV_WRECK_WATERLINE, z1},
-                {x1, MARKOV_WRECK_WATERLINE, z0},
-                water,
-            )
+    if !markov_wreck_authored_render {
+        for zi in 0 ..< 10 {
+            z0 := -WATER_EXTENT + f32(zi) * WATER_CELL
+            z1 := z0 + WATER_CELL
+            for xi in 0 ..< 10 {
+                x0 := -WATER_EXTENT + f32(xi) * WATER_CELL
+                x1 := x0 + WATER_CELL
+                world_water_quad(
+                    {x0, MARKOV_WRECK_WATERLINE, z0},
+                    {x0, MARKOV_WRECK_WATERLINE, z1},
+                    {x1, MARKOV_WRECK_WATERLINE, z1},
+                    {x1, MARKOV_WRECK_WATERLINE, z0},
+                    water,
+                )
+            }
         }
     }
 
@@ -1248,8 +1406,18 @@ world_markov_wreck :: proc(editor: ^Editor) {
         // without turning every procedural bay into the same comb tooth.
         if (!fractured && x_index % 4 == 0) || (fractured && x_index % 3 == 0) {
             steel := markov_wreck_panel_color(ring_seed ~ 0xa11ce, fractured)
-            world_box({x, ring_center.y - radius_y - 5, ring_center.z}, {7.2, 8, 8}, steel)
-            world_box({x, ring_center.y + radius_y + 7, ring_center.z}, {6.2, 12, 6.2}, steel)
+            world_box_rotated(
+                markov_wreck_local_point(x_index, -radius_y - 5, 0),
+                third_person.Vec3{7.2, 8, 8} * markov_wreck_render_scale,
+                markov_wreck_render_yaw,
+                steel,
+            )
+            world_box_rotated(
+                markov_wreck_local_point(x_index, radius_y + 7, 0),
+                third_person.Vec3{6.2, 12, 6.2} * markov_wreck_render_scale,
+                markov_wreck_render_yaw,
+                steel,
+            )
         }
 
         // Surviving internal deck plates make the open shell read as a ship's
@@ -1257,12 +1425,14 @@ world_markov_wreck :: proc(editor: ^Editor) {
         if markov_wreck_has_internal_deck(x_index) {
             port := markov_wreck_local_point(x_index, 3, -radius_z * .75)
             starboard := markov_wreck_local_point(x_index, 3, radius_z * .75)
-            half_bay := MARKOV_WRECK_CELL * .44
+            half_bay := MARKOV_WRECK_CELL * .44 * markov_wreck_render_scale
+            along_x, along_z :=
+                math.cos(markov_wreck_render_yaw) * half_bay, math.sin(markov_wreck_render_yaw) * half_bay
             world_quad(
-                {port.x - half_bay, port.y, port.z},
-                {starboard.x - half_bay, starboard.y, starboard.z},
-                {starboard.x + half_bay, starboard.y, starboard.z},
-                {port.x + half_bay, port.y, port.z},
+                {port.x - along_x, port.y, port.z - along_z},
+                {starboard.x - along_x, starboard.y, starboard.z - along_z},
+                {starboard.x + along_x, starboard.y, starboard.z + along_z},
+                {port.x + along_x, port.y, port.z + along_z},
                 {83, 88, 82, 255},
             )
             brace_start := markov_wreck_local_point(x_index, 4.5, radius_z * .08)
@@ -1347,8 +1517,27 @@ world_markov_wreck :: proc(editor: ^Editor) {
     }
     bow_center := markov_wreck_ring_center(markov_wreck_first_bay)
     stern_center := markov_wreck_ring_center(markov_wreck_last_bay)
-    world_box({bow_center.x - 9, bow_center.y + 13, bow_center.z}, {28, 4, 4}, {69, 75, 72, 255})
-    world_box({stern_center.x + 7, stern_center.y - 13, stern_center.z}, {22, 4.8, 4.8}, {81, 72, 60, 255})
+    along_x, along_z := math.cos(markov_wreck_render_yaw), math.sin(markov_wreck_render_yaw)
+    world_box_rotated(
+        {
+            bow_center.x - along_x * 9 * markov_wreck_render_scale,
+            bow_center.y + 13 * markov_wreck_render_scale,
+            bow_center.z - along_z * 9 * markov_wreck_render_scale,
+        },
+        third_person.Vec3{28, 4, 4} * markov_wreck_render_scale,
+        markov_wreck_render_yaw,
+        {69, 75, 72, 255},
+    )
+    world_box_rotated(
+        {
+            stern_center.x + along_x * 7 * markov_wreck_render_scale,
+            stern_center.y - 13 * markov_wreck_render_scale,
+            stern_center.z + along_z * 7 * markov_wreck_render_scale,
+        },
+        third_person.Vec3{22, 4.8, 4.8} * markov_wreck_render_scale,
+        markov_wreck_render_yaw,
+        {81, 72, 60, 255},
+    )
 
     // Each seed belongs to a broad landmark family with a distinct skyline.
     switch markov_wreck_form {
@@ -1369,7 +1558,7 @@ world_markov_wreck :: proc(editor: ^Editor) {
                 13,
                 8,
                 10,
-                0,
+                markov_wreck_render_yaw,
                 {154, 83, 54, 255},
             )
             markov_wreck_attached_box({x, deck_y + 34, 0}, {8.5, 4, 10.5}, {43, 48, 47, 255})
@@ -1401,7 +1590,14 @@ world_markov_wreck :: proc(editor: ^Editor) {
         markov_wreck_attached_box({-12, deck_y + 34, 0}, {5, 38, 5}, {55, 62, 62, 255})
         turret_positions := [3]f32{f32(-92), 58, 103}
         for x in turret_positions {
-            world_vertical_prism(markov_wreck_attached_point({x, deck_y + 7, 0}), 10, 11, 8, 0, {82, 91, 91, 255})
+            world_vertical_prism(
+                markov_wreck_attached_point({x, deck_y + 7, 0}),
+                10,
+                11,
+                8,
+                markov_wreck_render_yaw,
+                {82, 91, 91, 255},
+            )
             markov_wreck_attached_box({x - 15, deck_y + 11, -3}, {31, 3.2, 3.2}, {54, 61, 61, 255})
             markov_wreck_attached_box({x - 15, deck_y + 11, 3}, {31, 3.2, 3.2}, {54, 61, 61, 255})
         }
@@ -1415,8 +1611,22 @@ world_markov_wreck :: proc(editor: ^Editor) {
         )
         secondary_positions := [4]f32{f32(-61), -34, 27, 82}
         for x in secondary_positions {
-            world_vertical_prism(markov_wreck_attached_point({x, deck_y + 8, -13}), 5, 5, 5, 0, {74, 82, 81, 255})
-            world_vertical_prism(markov_wreck_attached_point({x, deck_y + 8, 13}), 5, 5, 5, 0, {74, 82, 81, 255})
+            world_vertical_prism(
+                markov_wreck_attached_point({x, deck_y + 8, -13}),
+                5,
+                5,
+                5,
+                markov_wreck_render_yaw,
+                {74, 82, 81, 255},
+            )
+            world_vertical_prism(
+                markov_wreck_attached_point({x, deck_y + 8, 13}),
+                5,
+                5,
+                5,
+                markov_wreck_render_yaw,
+                {74, 82, 81, 255},
+            )
         }
     case .Carrier:
         markov_wreck_attached_run(-131, 95, deck_y + 2, 0, 48, 5.5, {75, 83, 82, 255})
@@ -1442,8 +1652,28 @@ world_markov_wreck :: proc(editor: ^Editor) {
     // This lab replaces the ordinary world, so the shared world pass returns
     // before it submits gameplay vehicles. Keep the spawned flight-mode craft
     // and its seated pilot in the lab's self-contained render pass.
-    world_aircraft(editor)
-    world_postale_pilot(editor)
+    if !markov_wreck_authored_render {
+        world_aircraft(editor)
+        world_postale_pilot(editor)
+    }
+}
+
+world_authored_wrecks :: proc(editor: ^Editor) {
+    if editor == nil do return
+    markov_wreck_authored_render = true
+    for &wreck in editor.wrecks[:editor.wreck_count] {
+        markov_wreck_instance_load(&wreck)
+        world_markov_wreck(editor)
+    }
+    if editor.wreck_paint_mode && editor.wreck_preview_valid {
+        markov_wreck_instance_load(&editor.wreck_preview)
+        world_markov_wreck(editor)
+    }
+    markov_wreck_authored_render = false
+    markov_wreck_render_origin_x = 0
+    markov_wreck_render_origin_z = 0
+    markov_wreck_render_yaw = 0
+    markov_wreck_render_scale = 1
 }
 
 markov_wreck_process_input :: proc(editor: ^Editor) {

@@ -22,6 +22,8 @@ Archetype :: enum u8 {
     Harbor_Office,
     Market_Hall,
     Cycladic_Bell,
+    // Appended to preserve the serialized values of established archetypes.
+    Mixed_Use_Dwelling,
 }
 
 Purpose :: enum u8 {
@@ -72,6 +74,7 @@ is_habitable :: proc(archetype: Archetype) -> bool {
          .Dwelling,
          .Townhouse,
          .Shop_House,
+         .Mixed_Use_Dwelling,
          .Farmstead,
          .Palace_Loggia,
          .Church,

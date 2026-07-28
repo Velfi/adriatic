@@ -11,6 +11,7 @@ import mouse_kinematics "../packages/mouse_kinematics"
 import mouse_paws "../packages/mouse_paws"
 import mouse_tail "../packages/mouse_tail"
 import particles "../packages/particles"
+import plazas "../packages/plazas"
 import render_graph "../packages/render_graph"
 import roads "../packages/roads"
 import story "../packages/story"
@@ -45,6 +46,7 @@ SHADOW_VERTEX_INITIAL_CAPACITY :: 180_000
 CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
 CLIPMAP_VERTEX_COUNT :: CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLUTION - 1) * 6
+CLIPMAP_TRANSITION_WIDTH :: 4
 
 // Keep the world pass useful beyond the immediate flight envelope. The
 // clipmap already provides this coverage; these values prevent the camera
@@ -348,6 +350,14 @@ when ODIN_TEST {
         testing.expect_value(t, world_host_buffer_growth_size(64, 65), vk.DeviceSize(128))
         testing.expect_value(t, world_host_buffer_growth_size(64, 256), vk.DeviceSize(256))
     }
+
+    @(test)
+    papi_signal_card_preserves_long_range_angular_size :: proc(t: ^testing.T) {
+        testing.expect_value(t, papi_signal_card_size(120), f32(.46))
+        testing.expect_value(t, papi_signal_card_size(300), f32(.60))
+        testing.expect_value(t, papi_signal_card_size(500), f32(1))
+        testing.expect_value(t, papi_signal_card_size(1000), PAPI_SIGNAL_CARD_MAX_SIZE)
+    }
 }
 
 World_Material_Kind :: enum u32 {
@@ -361,6 +371,11 @@ World_Material_Kind :: enum u32 {
     Vehicle,
     Acorn,
     Bottle_Cap,
+    Emissive,
+    Emissive_Pool,
+    Architecture,
+    Glass,
+    Emissive_Halo,
 }
 
 World_Vertex :: struct {
@@ -420,6 +435,8 @@ Static_Geometry_Cache_Entry :: struct {
     structure:              terrain.Structure,
     lod:                    Structure_LOD,
     lod_transition:         f32,
+    billboard_right:        [3]f32,
+    billboard_up:           [3]f32,
     world_vertices:         [dynamic]World_Vertex,
     world_indices:          [dynamic]u32,
     foliage_vertices:       [dynamic]Foliage_Vertex,
@@ -433,6 +450,8 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
     detail_tier:            int,
     capture_seed_enabled:   bool,
     capture_seed:           u32,
+    billboard_right:        [3]f32,
+    billboard_up:           [3]f32,
     world_vertices:         [dynamic]World_Vertex,
     bougainvillea_vertices: [dynamic]Foliage_Vertex,
 }
@@ -493,6 +512,7 @@ World_Renderer :: struct {
     editor:                            ^Editor,
     ctx:                               ^engine.Vk_Context,
     pipelines:                         [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    transparent_pipelines:             [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     shadow_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     dynamic_shadow:                    Dynamic_Shadow_State,
     shadow_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
@@ -519,6 +539,7 @@ World_Renderer :: struct {
     wildflower_atlas:                  resources.Image,
     vehicle_paint_atlas:               resources.Image,
     soda_cap_logo:                     resources.Image,
+    architecture_material_atlas:       resources.Image,
     vehicle_paint_staging:             [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vehicle_paint_descriptor_layout:   vk.DescriptorSetLayout,
     vehicle_paint_descriptor_pool:     vk.DescriptorPool,
@@ -532,6 +553,10 @@ World_Renderer :: struct {
     wing_trail_vertex:                 [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     wing_trail_index:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vertices:                          [dynamic]World_Vertex,
+    late_transparent_vertices:         [dynamic]World_Vertex,
+    late_transparent_first:            int,
+    late_transparent_count:            int,
+    scene_daylight:                    f32,
     static_vertices:                   [dynamic]World_Vertex,
     static_indices:                    [dynamic]u32,
     road_vertices:                     [dynamic]World_Vertex,
@@ -804,7 +829,27 @@ world_scene_sun :: proc(editor: ^Editor, sky: atmosphere.Sky_State) -> [4]f32 {
         // coverage remain easy to judge around the full aircraft.
         return {.28, .88, .38, 1.6}
     }
+    // Once the solar key has faded, reuse the directional-light slot for the
+    // moon. World_Push is already at Vulkan's guaranteed 128-byte push-constant
+    // limit, so moon strength travels in fog_color.w below.
+    if sky.daylight <= .02 {
+        return {sky.moon_direction[0], sky.moon_direction[1], sky.moon_direction[2], sky.daylight}
+    }
     return {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], sky.daylight}
+}
+
+world_scene_moonlight :: proc(sky: atmosphere.Sky_State) -> f32 {
+    above_horizon := clamp((sky.moon_direction[1] + .04) / .18, 0, 1)
+    night := 1 - sky.daylight
+    cloud_occlusion := clamp(
+        sky.weather.cloud_cover * .82 + sky.weather.precipitation * .72 + sky.weather.haze * .34,
+        0,
+        1,
+    )
+    // This is deliberately an art-directed readability value rather than a
+    // physical lux ratio. Phase and horizon position still control whether a
+    // lunar key exists at all, and weather can extinguish it.
+    return sky.moon_illumination * above_horizon * night * (1 - cloud_occlusion)
 }
 
 @(no_instrumentation)
@@ -1042,6 +1087,182 @@ world_triangle_foliage :: #force_inline proc(
 world_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
     world_triangle(a, b, c, color)
     world_triangle(a, c, d, color)
+}
+
+@(no_instrumentation)
+world_quad_material :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color, kind: World_Material_Kind) {
+    vertices := [6]World_Vertex {
+        world_vertex(a, color),
+        world_vertex(b, color),
+        world_vertex(c, color),
+        world_vertex(a, color),
+        world_vertex(c, color),
+        world_vertex(d, color),
+    }
+    for &vertex in vertices do vertex.kind = kind
+    append(&world_renderer.vertices, ..vertices[:])
+}
+
+@(no_instrumentation)
+world_ellipse_material_uv :: proc(
+    center: third_person.Vec3,
+    radius_x, radius_z, rotation: f32,
+    color: rl.Color,
+    kind: World_Material_Kind,
+    slope_x: f32 = 0,
+    slope_z: f32 = 0,
+    directionality: f32 = 0,
+    project: ^terrain.Project = nil,
+    terrain_lift: f32 = 0,
+    surface_editor: ^Editor = nil,
+) {
+    segments := 12
+    // Circumscribe the support polygon around the analytic ellipse. With an
+    // inscribed fan, the midpoint of every chord lies inside UV radius one and
+    // retains non-zero alpha, revealing twelve straight pool edges. Extending
+    // both position and UV radius by sec(pi / n) places the shader's zero-alpha
+    // ellipse inside every edge; corner fragments are discarded.
+    edge_scale := f32(1) / math.cos(f32(math.PI) / f32(segments))
+    ring: [12]third_person.Vec3
+    ring_uv: [12][2]f32
+    for segment in 0 ..< segments {
+        angle := f32(segment) / f32(segments) * 2 * f32(math.PI)
+        point_x, point_z := world_rotate_xz(
+            center.x,
+            center.z,
+            math.cos(angle) * radius_x * edge_scale,
+            math.sin(angle) * radius_z * edge_scale,
+            rotation,
+        )
+        point_y := center.y + (point_x - center.x) * slope_x + (point_z - center.z) * slope_z
+        if surface_editor != nil {
+            point_y = mouse_surface_height(surface_editor, point_x, point_z) + terrain_lift
+        } else if project != nil {
+            point_y = terrain.sample_height(project, 0, point_x, point_z) + terrain_lift
+        }
+        ring[segment] = {point_x, point_y, point_z}
+        ring_uv[segment] = {.5 + math.cos(angle) * .5 * edge_scale, .5 + math.sin(angle) * .5 * edge_scale}
+    }
+    for segment in 0 ..< segments {
+        next := (segment + 1) % segments
+        vertices := [3]World_Vertex {
+            world_vertex(center, color),
+            world_vertex(ring[next], color),
+            world_vertex(ring[segment], color),
+        }
+        vertices[0].uv = {.5, .5}
+        vertices[1].uv = ring_uv[next]
+        vertices[2].uv = ring_uv[segment]
+        for &vertex in vertices {
+            vertex.kind = kind
+            vertex.material[0] = directionality
+        }
+        append(&world_renderer.vertices, ..vertices[:])
+    }
+}
+
+world_disc_material_uv :: proc(center: third_person.Vec3, radius: f32, color: rl.Color, kind: World_Material_Kind) {
+    world_ellipse_material_uv(center, radius, radius, 0, color, kind)
+}
+
+world_billboard_material_uv :: proc(
+    editor: ^Editor,
+    center: third_person.Vec3,
+    width, height: f32,
+    color: rl.Color,
+    kind: World_Material_Kind,
+    late_submit: bool = false,
+) {
+    if editor == nil do return
+    if kind == .Emissive_Halo {
+        // Match the fragment shader's off threshold on the CPU. A discarded
+        // transparent card still has no visual purpose in daylight, and older
+        // depth-writing paths could expose it as a sky-colored façade window.
+        if world_renderer.scene_daylight >= .34 do return
+        camera_position := editor.camera_pose.position
+        dx, dy, dz := center.x - camera_position.x, center.y - camera_position.y, center.z - camera_position.z
+        distance_squared := dx * dx + dy * dy + dz * dz
+        // Inside five metres the lantern geometry fills enough pixels to read
+        // without a bloom card. Beyond that, retain a compact aureole so the
+        // bright source connects perceptually to its much broader ground pool.
+        // Match the fragment fade's zero point and avoid submitting vertices
+        // that can only be discarded.
+        // The matching far cutoff prevents sub-pixel lamps from forming an
+        // equally bright horizon constellation and omits cards once their
+        // shader visibility has reached zero.
+        if distance_squared < 5 * 5 || distance_squared > 225 * 225 do return
+    }
+    focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
+    camera := perspective_camera(editor.camera_pose, focal_length)
+    right := third_person.Vec3{camera.right.x * width * .5, camera.right.y * width * .5, camera.right.z * width * .5}
+    up := third_person.Vec3{camera.up.x * height * .5, camera.up.y * height * .5, camera.up.z * height * .5}
+    p0 := third_person.Vec3{center.x - right.x - up.x, center.y - right.y - up.y, center.z - right.z - up.z}
+    p1 := third_person.Vec3{center.x + right.x - up.x, center.y + right.y - up.y, center.z + right.z - up.z}
+    p2 := third_person.Vec3{center.x + right.x + up.x, center.y + right.y + up.y, center.z + right.z + up.z}
+    p3 := third_person.Vec3{center.x - right.x + up.x, center.y - right.y + up.y, center.z - right.z + up.z}
+    vertices := [6]World_Vertex {
+        world_vertex(p0, color),
+        world_vertex(p1, color),
+        world_vertex(p2, color),
+        world_vertex(p0, color),
+        world_vertex(p2, color),
+        world_vertex(p3, color),
+    }
+    vertices[0].uv = {0, 1}
+    vertices[1].uv = {1, 1}
+    vertices[2].uv = {1, 0}
+    vertices[3].uv = {0, 1}
+    vertices[4].uv = {1, 0}
+    vertices[5].uv = {0, 0}
+    for &vertex in vertices do vertex.kind = kind
+    if late_submit {
+        append(&world_renderer.late_transparent_vertices, ..vertices[:])
+    } else {
+        append(&world_renderer.vertices, ..vertices[:])
+    }
+}
+
+world_municipal_light_pool :: proc(
+    x, y, z: f32,
+    project: ^terrain.Project,
+    surface_lift: f32 = .20,
+    radius_x: f32 = 3.75,
+    radius_z: f32 = 3.75,
+    rotation: f32 = 0,
+    alpha: u8 = 62,
+    directionality: f32 = 0,
+    pool_color: rl.Color = {255, 210, 145, 255},
+    surface_editor: ^Editor = nil,
+    late_submit: bool = false,
+) {
+    // A shader-shaped dodecagon keeps transparent overdraw close to the visible
+    // pool while using only 36 vertices for a continuous radial falloff.
+    pool_y := y
+    if surface_editor != nil {
+        pool_y = mouse_surface_height(surface_editor, x, z)
+    } else if project != nil {
+        pool_y = terrain.sample_height(project, 0, x, z)
+    }
+    effective_lift := surface_lift + .025
+    first_vertex := len(world_renderer.vertices)
+    world_ellipse_material_uv(
+        {x, pool_y + effective_lift, z},
+        radius_x,
+        radius_z,
+        rotation,
+        {pool_color.r, pool_color.g, pool_color.b, alpha},
+        .Emissive_Pool,
+        0,
+        0,
+        directionality,
+        project,
+        effective_lift,
+        surface_editor,
+    )
+    if late_submit {
+        append(&world_renderer.late_transparent_vertices, ..world_renderer.vertices[first_vertex:])
+        resize(&world_renderer.vertices, first_vertex)
+    }
 }
 
 world_quad_colored :: proc(a, b, c, d: third_person.Vec3, color_a, color_b, color_c, color_d: rl.Color) {
@@ -1490,12 +1711,16 @@ world_box :: proc(center, size: third_person.Vec3, color: rl.Color) {
 }
 
 @(no_instrumentation)
-clipmap_vertex_color :: #force_inline proc(editor: ^Editor, level: int, x, z, height: f32) -> rl.Color {
+clipmap_vertex_color :: #force_inline proc(
+    editor: ^Editor,
+    level: int,
+    x, z, height, transition_weight: f32,
+) -> rl.Color {
     cell := editor.project.levels[level].cell_size
-    left := terrain.sample_height(&editor.project, level, x - cell, z)
-    right := terrain.sample_height(&editor.project, level, x + cell, z)
-    back := terrain.sample_height(&editor.project, level, x, z - cell)
-    front := terrain.sample_height(&editor.project, level, x, z + cell)
+    left := terrain.sample_clipmap_transition_height(&editor.project, level, x - cell, z, transition_weight)
+    right := terrain.sample_clipmap_transition_height(&editor.project, level, x + cell, z, transition_weight)
+    back := terrain.sample_clipmap_transition_height(&editor.project, level, x, z - cell, transition_weight)
+    front := terrain.sample_clipmap_transition_height(&editor.project, level, x, z + cell, transition_weight)
     normal := linalg.normalize0(
         linalg.cross(third_person.Vec3{0, front - back, cell * 2}, third_person.Vec3{cell * 2, right - left, 0}),
     )
@@ -1566,10 +1791,24 @@ clipmap_update_level :: proc(
         world_z := center[1] + (f32(z) - half_grid) * grid_cell
         for x in min_x ..= max_x {
             world_x := center[0] + (f32(x) - half_grid) * grid_cell
-            height := terrain.sample_height(&editor.project, level, world_x, world_z)
+            edge_distance := min(min(x, z), min(CLIPMAP_GRID_RESOLUTION - 1 - x, CLIPMAP_GRID_RESOLUTION - 1 - z))
+            transition_weight: f32
+            if level < terrain.CLIPMAP_LEVELS - 1 && edge_distance < CLIPMAP_TRANSITION_WIDTH {
+                transition_weight = 1 - f32(edge_distance) / f32(CLIPMAP_TRANSITION_WIDTH)
+                // Smooth the morph so the transition band does not introduce
+                // a visible slope break while converging exactly at the edge.
+                transition_weight = transition_weight * transition_weight * (3 - 2 * transition_weight)
+            }
+            height := terrain.sample_clipmap_transition_height(
+                &editor.project,
+                level,
+                world_x,
+                world_z,
+                transition_weight,
+            )
             vertex := world_vertex(
                 {world_x, height, world_z},
-                clipmap_vertex_color(editor, level, world_x, world_z, height),
+                clipmap_vertex_color(editor, level, world_x, world_z, height, transition_weight),
             )
             vertex.kind = .Terrain
             vertices[z * CLIPMAP_GRID_RESOLUTION + x] = vertex
@@ -1623,6 +1862,12 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
             entry.valid = false
         }
     }
+    for &entry in world_renderer.foliage_geometry_cache {
+        if !entry.valid do continue
+        if world_terrain_structure_intersects(entry.structure, changed) {
+            entry.valid = false
+        }
+    }
     for &entry in world_renderer.town_mouse_geometry_cache {
         if !entry.valid do continue
         closest_x := clamp(entry.model.position.x, changed.min_x, changed.max_x)
@@ -1646,6 +1891,7 @@ world_terrain_invalidate_all :: proc(editor: ^Editor) {
         }
     }
     for &entry in world_renderer.static_geometry_cache do entry.valid = false
+    for &entry in world_renderer.foliage_geometry_cache do entry.valid = false
     for &entry in world_renderer.climbing_leaf_geometry_cache do entry.valid = false
     for &entry in world_renderer.town_mouse_geometry_cache do entry.valid = false
 }
@@ -1739,6 +1985,80 @@ clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
     return true
 }
 
+PAPI_SIGNAL_CARD_START_DISTANCE :: f32(120)
+PAPI_SIGNAL_CARD_BASE_SIZE :: f32(.46)
+PAPI_SIGNAL_CARD_ANGULAR_SCALE :: f32(.002)
+PAPI_SIGNAL_CARD_MAX_SIZE :: f32(1.10)
+
+@(no_instrumentation)
+papi_signal_card_size :: proc(approach_distance: f32) -> f32 {
+    return clamp(
+        approach_distance * PAPI_SIGNAL_CARD_ANGULAR_SCALE,
+        PAPI_SIGNAL_CARD_BASE_SIZE,
+        PAPI_SIGNAL_CARD_MAX_SIZE,
+    )
+}
+
+world_runway_papi :: proc(
+    editor: ^Editor,
+    runway_x, runway_z, runway_y, runway_half_length, runway_half_width, approach_sign: f32,
+) {
+    // A PAPI sits just inside the threshold, on the pilot's left when viewed
+    // from the approach. Its four optical units transition around a three
+    // degree glide path: more white means high, more red means low.
+    papi_x := runway_x + approach_sign * (runway_half_length - 45)
+    papi_side := -approach_sign
+    papi_center_z := runway_z + papi_side * (runway_half_width + 8)
+    approach_distance := (editor.camera_pose.position.x - papi_x) * approach_sign
+    white_count := 0
+    if approach_distance > 1 {
+        height_above_papi := max(editor.camera_pose.position.y - runway_y, f32(0))
+        glide_angle := f32(math.atan2(f64(height_above_papi), f64(approach_distance))) * 180 / f32(math.PI)
+        if glide_angle >= 3.50 {
+            white_count = 4
+        } else if glide_angle >= 3.20 {
+            white_count = 3
+        } else if glide_angle >= 2.80 {
+            white_count = 2
+        } else if glide_angle >= 2.50 {
+            white_count = 1
+        }
+    }
+
+    for light_index in 0 ..< 4 {
+        offset := (f32(light_index) - 1.5) * 1.65
+        light_z := papi_center_z + offset
+        world_box({papi_x, runway_y + .18, light_z}, {.92, .34, .72}, {45, 48, 46, 255})
+        lamp_color := light_index < white_count ? rl.Color{255, 247, 213, 255} : rl.Color{255, 42, 31, 255}
+        if approach_distance <= 1 {
+            lamp_color = {67, 29, 25, 255}
+        }
+        world_box_rotated_material(
+            {papi_x + approach_sign * .39, runway_y + .29, light_z},
+            {.08, .22, .46},
+            0,
+            lamp_color,
+            .Emissive,
+        )
+        if approach_distance >= PAPI_SIGNAL_CARD_START_DISTANCE {
+            // PAPI is an approach aid, not ordinary decorative lighting. Its
+            // physical lens becomes sub-pixel hundreds of metres out, exactly
+            // where the four-light signal must remain readable. Keep a small
+            // minimum angular size while retaining separate dots and normal
+            // scene depth testing.
+            signal_size := papi_signal_card_size(approach_distance)
+            world_billboard_material_uv(
+                editor,
+                {papi_x + approach_sign * .40, runway_y + .29, light_z},
+                signal_size,
+                signal_size,
+                lamp_color,
+                .Emissive,
+            )
+        }
+    }
+}
+
 world_infrastructure :: proc(editor: ^Editor) {
     half := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
@@ -1750,18 +2070,8 @@ world_infrastructure :: proc(editor: ^Editor) {
             mx := x + f32(marker) * run_l * .22
             world_box({mx, y + .06, z}, {run_l * .11, .025, .12}, {238, 232, 186, 255})
         }
-        // Run straight out from the island's outer shoreline. The former
-        // diagonal endpoints crossed the coast at different Z coordinates,
-        // which made the deck read as a detached triangular wedge.
-        ix := x + sign * half * terrain.DEFAULT_ISLAND_RADIUS * .62
-        ox := x + sign * half * terrain.DEFAULT_ISLAND_RADIUS * 1.18
-        iz, oz := z, z
-        // Keep the deck level from land to water. Sloping it down to sea level
-        // buried most of the mesh inside the island and left only its far tip.
-        deck_height := f32(terrain.DEFAULT_ISLAND_HEIGHT + .24)
-        iy, oy := deck_height, deck_height
-        w := half * .018
-        world_quad({ix, iy, iz - w}, {ox, oy, oz - w}, {ox, oy, oz + w}, {ix, iy, iz + w}, {137, 89, 48, 255})
+        world_runway_papi(editor, x, z, y, run_l, run_w, -1)
+        world_runway_papi(editor, x, z, y, run_l, run_w, 1)
     }
 }
 
@@ -1829,6 +2139,144 @@ world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, ro
     world_quad(p[0], p[1], p[5], p[4], color)
 }
 
+world_box_rotated_material :: proc(
+    center: third_person.Vec3,
+    size: third_person.Vec3,
+    rotation: f32,
+    color: rl.Color,
+    kind: World_Material_Kind,
+) {
+    x, y, z := size.x * .5, size.y * .5, size.z * .5
+    p: [8]third_person.Vec3
+    local := [8][3]f32 {
+        {-x, -y, -z},
+        {x, -y, -z},
+        {x, y, -z},
+        {-x, y, -z},
+        {-x, -y, z},
+        {x, -y, z},
+        {x, y, z},
+        {-x, y, z},
+    }
+    for index in 0 ..< 8 {
+        world_x, world_z := world_rotate_xz(center.x, center.z, local[index][0], local[index][2], rotation)
+        p[index] = {world_x, center.y + local[index][1], world_z}
+    }
+    world_quad_material(p[0], p[3], p[2], p[1], color, kind)
+    world_quad_material(p[4], p[5], p[6], p[7], color, kind)
+    world_quad_material(p[0], p[4], p[7], p[3], color, kind)
+    world_quad_material(p[1], p[2], p[6], p[5], color, kind)
+    world_quad_material(p[3], p[7], p[6], p[2], color, kind)
+    world_quad_material(p[0], p[1], p[5], p[4], color, kind)
+}
+
+@(no_instrumentation)
+world_quad_emissive_fixture :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color, fixture_kind: f32) {
+    vertices := [6]World_Vertex {
+        world_vertex(a, color),
+        world_vertex(b, color),
+        world_vertex(c, color),
+        world_vertex(a, color),
+        world_vertex(c, color),
+        world_vertex(d, color),
+    }
+    uvs := [6][2]f32{{0, 1}, {1, 1}, {1, 0}, {0, 1}, {1, 0}, {0, 0}}
+    for &vertex, index in vertices {
+        vertex.kind = .Emissive
+        vertex.material = {fixture_kind, 0}
+        vertex.uv = uvs[index]
+    }
+    append(&world_renderer.vertices, ..vertices[:])
+}
+
+world_emissive_fixture_box :: proc(
+    center: third_person.Vec3,
+    size: third_person.Vec3,
+    rotation: f32,
+    color: rl.Color,
+    fixture_kind: f32,
+) {
+    x, y, z := size.x * .5, size.y * .5, size.z * .5
+    p: [8]third_person.Vec3
+    local := [8][3]f32 {
+        {-x, -y, -z},
+        {x, -y, -z},
+        {x, y, -z},
+        {-x, y, -z},
+        {-x, -y, z},
+        {x, -y, z},
+        {x, y, z},
+        {-x, y, z},
+    }
+    for index in 0 ..< 8 {
+        world_x, world_z := world_rotate_xz(center.x, center.z, local[index][0], local[index][2], rotation)
+        p[index] = {world_x, center.y + local[index][1], world_z}
+    }
+    world_quad_emissive_fixture(p[0], p[3], p[2], p[1], color, fixture_kind)
+    world_quad_emissive_fixture(p[4], p[5], p[6], p[7], color, fixture_kind)
+    world_quad_emissive_fixture(p[0], p[4], p[7], p[3], color, fixture_kind)
+    world_quad_emissive_fixture(p[1], p[2], p[6], p[5], color, fixture_kind)
+    world_quad_emissive_fixture(p[3], p[7], p[6], p[2], color, fixture_kind)
+    world_quad_emissive_fixture(p[0], p[1], p[5], p[4], color, fixture_kind)
+}
+
+world_glass_panel :: proc(
+    center: third_person.Vec3,
+    width, height, rotation: f32,
+    color: rl.Color,
+    interior_light: f32 = 0,
+) {
+    half_width, half_height := width * .5, height * .5
+    cosine, sine := f32(math.cos(f64(rotation))), f32(math.sin(f64(rotation)))
+    right := third_person.Vec3{cosine, 0, sine}
+    up := third_person.Vec3{0, 1, 0}
+    normal := third_person.Vec3{-sine, 0, cosine}
+    // Window reveals are shallow boxes whose outward face sits slightly
+    // beyond their center. Keep the opaque glass plane in front of that face
+    // so residential panes are not hidden by the reveal depth surface.
+    surface_center := center + normal * .035
+    a := surface_center - right * half_width - up * half_height
+    b := surface_center + right * half_width - up * half_height
+    c := surface_center + right * half_width + up * half_height
+    d := surface_center - right * half_width + up * half_height
+    points := [6]third_person.Vec3{a, b, c, a, c, d}
+    uvs := [6][2]f32{{0, 1}, {1, 1}, {1, 0}, {0, 1}, {1, 0}, {0, 0}}
+    vertices: [6]World_Vertex
+    for point, index in points {
+        vertices[index] = world_vertex(point, color)
+        vertices[index].kind = .Glass
+        vertices[index].normal = {normal.x, normal.y, normal.z}
+        vertices[index].material = {interior_light, 0}
+        vertices[index].uv = uvs[index]
+    }
+    append(&world_renderer.vertices, ..vertices[:])
+}
+
+world_architecture_window_interior :: proc(
+    structure: terrain.Structure,
+    face: architecture.Face,
+    row, column: int,
+    storefront: bool = false,
+) -> (
+    rl.Color,
+    f32,
+) {
+    key := structure.seed ~ u32(row * 0x45d9f3b) ~ u32(column * 0x119de1f3) ~ u32(face) * u32(0x9e3779b9)
+    occupied := key % 7 < 3
+    if face != .Front do occupied = key % 7 < 2
+    if storefront do occupied = true
+    if !occupied do return {50, 76, 82, 255}, 0
+
+    switch (key >> 8) % 3 {
+    case 0:
+        return {255, 184, 88, 255}, 1
+    case 1:
+        return {255, 207, 126, 255}, .92
+    case:
+        return {236, 164, 76, 255}, .84
+    }
+}
+
 // Draw a terrain-following rectangular surface, discarding shoreline cells
 // instead of letting a single rigid road or path slab continue over the ocean.
 world_land_surface_rotated :: proc(
@@ -1880,6 +2328,65 @@ world_land_surface_rotated :: proc(
     }
 }
 
+// A short terrain-following trapezoid connects a broad pedestrian/service
+// route to the road edge without the blunt rectangular mouth of the main run.
+world_land_surface_tapered :: proc(
+    editor: ^Editor,
+    endpoint_x, endpoint_z, inward_x, inward_z: f32,
+    run, inner_width, outer_width, lift: f32,
+    color: rl.Color,
+) {
+    if editor == nil || run <= .01 || inner_width <= 0 || outer_width <= 0 do return
+    direction_length := f32(math.sqrt(f64(inward_x * inward_x + inward_z * inward_z)))
+    if direction_length <= .001 do return
+    tangent_x, tangent_z := inward_x / direction_length, inward_z / direction_length
+    normal_x, normal_z := -tangent_z, tangent_x
+    inner_x, inner_z := endpoint_x + tangent_x * run, endpoint_z + tangent_z * run
+    outer_half, inner_half := outer_width * .5, inner_width * .5
+    points := [4][2]f32 {
+        {endpoint_x + normal_x * outer_half, endpoint_z + normal_z * outer_half},
+        {inner_x + normal_x * inner_half, inner_z + normal_z * inner_half},
+        {inner_x - normal_x * inner_half, inner_z - normal_z * inner_half},
+        {endpoint_x - normal_x * outer_half, endpoint_z - normal_z * outer_half},
+    }
+    heights: [4]f32
+    land_threshold := editor.project.sea_level + .04
+    for point, index in points {
+        heights[index] = terrain.sample_height(&editor.project, 0, point[0], point[1])
+        if heights[index] <= land_threshold do return
+    }
+    world_quad(
+        {points[0][0], heights[0] + lift, points[0][1]},
+        {points[1][0], heights[1] + lift, points[1][1]},
+        {points[2][0], heights[2] + lift, points[2][1]},
+        {points[3][0], heights[3] + lift, points[3][1]},
+        color,
+    )
+}
+
+world_land_surface_disc :: proc(editor: ^Editor, center_x, center_z, radius, lift: f32, color: rl.Color) {
+    if editor == nil || radius <= 0 do return
+    segment_count := max(12, int(math.ceil(f64(radius * 10))))
+    center_height := terrain.sample_height(&editor.project, 0, center_x, center_z)
+    land_threshold := editor.project.sea_level + .04
+    if center_height <= land_threshold do return
+    for segment in 0 ..< segment_count {
+        first_angle := math.TAU * f32(segment) / f32(segment_count)
+        second_angle := math.TAU * f32(segment + 1) / f32(segment_count)
+        first_x, first_z := center_x + math.cos(first_angle) * radius, center_z + math.sin(first_angle) * radius
+        second_x, second_z := center_x + math.cos(second_angle) * radius, center_z + math.sin(second_angle) * radius
+        first_height := terrain.sample_height(&editor.project, 0, first_x, first_z)
+        second_height := terrain.sample_height(&editor.project, 0, second_x, second_z)
+        if first_height <= land_threshold || second_height <= land_threshold do continue
+        world_triangle(
+            {center_x, center_height + lift, center_z},
+            {first_x, first_height + lift, first_z},
+            {second_x, second_height + lift, second_z},
+            color,
+        )
+    }
+}
+
 world_architecture_face_color :: proc(base: rl.Color, normal_x, normal_z: f32, top: bool = false) -> rl.Color {
     // A restrained baked key keeps the plain-color architecture readable
     // without fighting the authored stucco palette or the dynamic sky.
@@ -1892,11 +2399,31 @@ world_architecture_face_color :: proc(base: rl.Color, normal_x, normal_z: f32, t
     }
 }
 
+@(no_instrumentation)
+world_architecture_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color, material: f32) {
+    normal := linalg.normalize0(linalg.cross(b - a, c - a))
+    vertices := [6]World_Vertex {
+        world_vertex(a, color),
+        world_vertex(b, color),
+        world_vertex(c, color),
+        world_vertex(a, color),
+        world_vertex(c, color),
+        world_vertex(d, color),
+    }
+    for &vertex in vertices {
+        vertex.kind = .Architecture
+        vertex.normal = {normal.x, normal.y, normal.z}
+        vertex.material = {material, 0}
+    }
+    append(&world_renderer.vertices, ..vertices[:])
+}
+
 world_architecture_box_rotated :: proc(
     center: third_person.Vec3,
     size: third_person.Vec3,
     rotation: f32,
     color: rl.Color,
+    material: f32 = 0,
 ) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
     p: [8]third_person.Vec3
@@ -1922,12 +2449,12 @@ world_architecture_box_rotated :: proc(
     top := world_architecture_face_color(color, 0, 0, true)
     bottom := world_architecture_face_color(color, 0, 0)
     // Preserve the same outward CCW winding as world_box_rotated.
-    world_quad(p[0], p[3], p[2], p[1], back)
-    world_quad(p[4], p[5], p[6], p[7], front)
-    world_quad(p[0], p[4], p[7], p[3], left)
-    world_quad(p[1], p[2], p[6], p[5], right)
-    world_quad(p[3], p[7], p[6], p[2], top)
-    world_quad(p[0], p[1], p[5], p[4], bottom)
+    world_architecture_quad(p[0], p[3], p[2], p[1], back, material)
+    world_architecture_quad(p[4], p[5], p[6], p[7], front, material)
+    world_architecture_quad(p[0], p[4], p[7], p[3], left, material)
+    world_architecture_quad(p[1], p[2], p[6], p[5], right, material)
+    world_architecture_quad(p[3], p[7], p[6], p[2], top, material)
+    world_architecture_quad(p[0], p[1], p[5], p[4], bottom, material)
 }
 
 world_tapered_box_rotated :: proc(
@@ -2604,8 +3131,22 @@ world_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, c
     world_quad(p[0], p[1], p[5], p[4], color)
 }
 
-world_roof_raise :: proc(point: third_person.Vec3, amount: f32) -> third_person.Vec3 {
-    return {point.x, point.y + amount, point.z}
+world_roof_face_normal :: proc(edge_a, edge_b, ridge_a: third_person.Vec3) -> third_person.Vec3 {
+    edge := edge_b - edge_a
+    slope := ridge_a - edge_a
+    normal := third_person.Vec3 {
+        edge.y * slope.z - edge.z * slope.y,
+        edge.z * slope.x - edge.x * slope.z,
+        edge.x * slope.y - edge.y * slope.x,
+    }
+    if normal.y < 0 do normal = -normal
+    length := math.sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z)
+    if length <= 0.0001 do return {0, 1, 0}
+    return normal / length
+}
+
+world_roof_offset :: proc(point, normal: third_person.Vec3, amount: f32) -> third_person.Vec3 {
+    return point + normal * amount
 }
 
 // A Greek tile roof reads through its repeated courses: each course runs from
@@ -2615,13 +3156,13 @@ world_architecture_tile_slope :: proc(
     courses, segments: int,
     seed: u32,
 ) {
+    face_normal := world_roof_face_normal(edge_a, edge_b, ridge_a)
     for course in 0 ..< courses {
         course_start := f32(course) / f32(courses)
         course_end := min(course_start + .78 / f32(courses), 1)
-        // Keep the decorative courses decisively in front of the continuous
-        // weatherproof roof plane.  The old 3.5 cm offset became effectively
-        // coplanar at town-scale camera distances and the depth buffer
-        // alternated between the tile and base surfaces.
+        // Keep the decorative courses a constant distance in front of the
+        // weatherproof plane. Offsetting in world Y makes the actual gap vary
+        // with roof pitch and lets hip-face overlays intersect at their seams.
         relief := .12 + f32(course % 2) * .012
         for segment in 0 ..< segments {
             segment_start := f32(segment) / f32(segments)
@@ -2637,10 +3178,10 @@ world_architecture_tile_slope :: proc(
             inner_b := linalg.lerp(outer_b, ridge_b, course_start)
             next_a := linalg.lerp(outer_a, ridge_a, course_end)
             next_b := linalg.lerp(outer_b, ridge_b, course_end)
-            inner_a = world_roof_raise(inner_a, relief)
-            inner_b = world_roof_raise(inner_b, relief)
-            next_a = world_roof_raise(next_a, relief)
-            next_b = world_roof_raise(next_b, relief)
+            inner_a = world_roof_offset(inner_a, face_normal, relief)
+            inner_b = world_roof_offset(inner_b, face_normal, relief)
+            next_a = world_roof_offset(next_a, face_normal, relief)
+            next_b = world_roof_offset(next_b, face_normal, relief)
 
             tone := int((seed + u32(course * 11 + segment * 3)) % 5)
             tile_bytes := architecture.architecture_roof_tile_color(seed, tone)
@@ -2830,8 +3371,15 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
         world_triangle(left_front, ridge_front, right_front, terracotta)
         world_triangle(right_back, ridge_back, left_back, formation_face_color(terracotta, 1.4, 0))
     }
-    world_quad(left_front, left_back, ridge_back, ridge_front, terracotta)
-    world_quad(right_back, right_front, ridge_front, ridge_back, formation_face_color(terracotta, 1.4, 0))
+    world_architecture_quad(left_front, left_back, ridge_back, ridge_front, terracotta, 2)
+    world_architecture_quad(
+        right_back,
+        right_front,
+        ridge_front,
+        ridge_back,
+        formation_face_color(terracotta, 1.4, 0),
+        2,
+    )
     fascia := formation_face_color(terracotta, math.PI, 0)
     soffit := formation_face_color(terracotta, math.PI * .72, 0)
     front_fascia_x, front_fascia_z := world_rotate_xz(
@@ -3032,6 +3580,7 @@ world_architecture_face_openings :: proc(
     window, trim: rl.Color,
 ) {
     if layout == nil do return
+    identity := architecture.architecture_resolve_legacy_identity(structure)
     for opening in layout.openings[:layout.count] {
         // The existing primary façade pass owns its richer doors, shutters,
         // balconies, and storefront details. This pass supplies the other
@@ -3095,11 +3644,25 @@ world_architecture_face_openings :: proc(
             } else if glass_tone == 2 {
                 glass = {48, 73, 79, 255}
             }
-            world_box_rotated(
+            storefront :=
+                opening.face == .Front &&
+                opening.row == 0 &&
+                (identity.archetype == .Shop_House || identity.archetype == .Mixed_Use_Dwelling)
+            interior, interior_light := world_architecture_window_interior(
+                structure,
+                opening.face,
+                opening.row,
+                opening.column,
+                storefront,
+            )
+            if interior_light > 0 do glass = interior
+            world_glass_panel(
                 {glass_x, structure.base_y + opening_y, glass_z},
-                {opening_width * .84, opening_height * .82, .035},
+                opening_width * .84,
+                opening_height * .82,
                 structure.rotation + yaw_offset,
                 glass,
+                interior_light,
             )
             world_box_rotated(
                 {glass_x, structure.base_y + opening_y, glass_z},
@@ -3141,6 +3704,171 @@ world_architecture_face_openings :: proc(
     }
 }
 
+world_architecture_balcony :: proc(
+    structure: terrain.Structure,
+    local_x, local_z, sill_y, window_width: f32,
+    warm_iron: bool,
+) {
+    balcony_width := window_width + (warm_iron ? f32(1.20) : f32(1.35))
+    balcony_depth: f32 = .90
+    slab_center_z := local_z + balcony_depth * .5 - .08
+    slab_height: f32 = .20
+    slab_center_y := sill_y - .14
+    slab_top_y := slab_center_y + slab_height * .5
+    slab_x, slab_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        local_x,
+        slab_center_z,
+        structure.rotation,
+    )
+    slab_color := rl.Color{196, 151, 103, 255}
+    iron := warm_iron ? rl.Color{83, 68, 62, 255} : rl.Color{102, 76, 63, 255}
+    world_box_rotated(
+        {slab_x, slab_center_y, slab_z},
+        {balcony_width, slab_height, balcony_depth},
+        structure.rotation,
+        slab_color,
+    )
+    // A slightly deeper fascia gives the slab a finished stone edge instead
+    // of exposing one featureless box at eye level.
+    front_z := local_z + balcony_depth - .13
+    fascia_x, fascia_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, front_z, structure.rotation)
+    world_box_rotated(
+        {fascia_x, sill_y - .17, fascia_z},
+        {balcony_width + .06, .24, .10},
+        structure.rotation,
+        formation_face_color(slab_color, math.PI, 0),
+    )
+
+    rail_width := balcony_width - .22
+    rail_base_y := slab_top_y
+    rail_top_y := sill_y + .92
+    rail_height := rail_top_y - rail_base_y
+    rail_depth: f32 = .07
+    top_rail_height: f32 = .10
+    lower_rail_y := rail_base_y + .16
+
+    // Front frame: continuous top and lower rails with closely spaced,
+    // grounded balusters. This reads as a guard instead of a row of floating
+    // sticks, especially against bright glass.
+    world_box_rotated(
+        {fascia_x, rail_top_y, fascia_z},
+        {rail_width + .12, top_rail_height, .09},
+        structure.rotation,
+        iron,
+    )
+    world_box_rotated({fascia_x, lower_rail_y, fascia_z}, {rail_width, .055, rail_depth}, structure.rotation, iron)
+    for baluster in -3 ..= 3 {
+        baluster_x, baluster_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            local_x + f32(baluster) * rail_width / 6,
+            front_z,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {baluster_x, (rail_base_y + rail_top_y) * .5, baluster_z},
+            {.05, rail_height, rail_depth},
+            structure.rotation,
+            iron,
+        )
+    }
+
+    // Carry the guard back to the wall on both sides. The previous balcony
+    // only had a top return, which left the slab visibly open at each end.
+    back_z := local_z + .06
+    return_depth := front_z - back_z
+    return_center_z := (front_z + back_z) * .5
+    rail_levels := [2]f32{rail_top_y, lower_rail_y}
+    for side in -1 ..= 1 {
+        if side == 0 do continue
+        side_local_x := local_x + f32(side) * rail_width * .5
+        for rail_y in rail_levels {
+            return_x, return_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x,
+                return_center_z,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {return_x, rail_y, return_z},
+                {.075, rail_y == rail_top_y ? top_rail_height : f32(.055), return_depth},
+                structure.rotation,
+                iron,
+            )
+        }
+        for depth_step in 0 ..= 2 {
+            post_local_z := back_z + f32(depth_step) * return_depth * .5
+            post_x, post_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x,
+                post_local_z,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {post_x, (rail_base_y + rail_top_y) * .5, post_z},
+                {.06, rail_height, rail_depth},
+                structure.rotation,
+                iron,
+            )
+        }
+    }
+
+    // Two compact stone brackets make the projection feel supported without
+    // turning the façade into a heavy arcade.
+    for bracket in -1 ..= 1 {
+        if bracket == 0 do continue
+        bracket_x, bracket_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            local_x + f32(bracket) * balcony_width * .30,
+            local_z + balcony_depth * .22,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {bracket_x, sill_y - .31, bracket_z},
+            {.16, .36, .26},
+            structure.rotation,
+            formation_face_color(slab_color, math.PI, 0),
+        )
+    }
+}
+
+world_architecture_mixed_use_side_clearance :: proc(
+    structure: terrain.Structure,
+    project: ^terrain.Project,
+    side: int,
+) -> f32 {
+    if project == nil do return f32(1.0e20)
+    side_f := f32(side)
+    threshold_x, threshold_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        side_f * (structure.width * .5 + 1.15),
+        structure.depth * .20,
+        structure.rotation,
+    )
+    nearest := f32(1.0e20)
+    for neighbor in project.structures[:project.structure_count] {
+        if neighbor.kind != .Architecture || neighbor.id == structure.id do continue
+        cosine, sine := math.cos(neighbor.rotation), math.sin(neighbor.rotation)
+        neighbor_footprint := architecture.architecture_footprint(neighbor)
+        for neighbor_mass in neighbor_footprint.masses[:neighbor_footprint.count] {
+            mass_x, mass_z := architecture.architecture_mass_world(neighbor, neighbor_mass)
+            dx, dz := threshold_x - mass_x, threshold_z - mass_z
+            local_x := dx * cosine + dz * sine
+            local_z := -dx * sine + dz * cosine
+            outside_x := max(math.abs(local_x) - neighbor_mass.width * .5, f32(0))
+            outside_z := max(math.abs(local_z) - neighbor_mass.depth * .5, f32(0))
+            nearest = min(nearest, f32(math.sqrt(f64(outside_x * outside_x + outside_z * outside_z))))
+        }
+    }
+    return nearest
+}
+
 world_architecture_mass :: proc(
     structure: terrain.Structure,
     project: ^terrain.Project,
@@ -3150,6 +3878,7 @@ world_architecture_mass :: proc(
 ) {
     identity := architecture.architecture_resolve_legacy_identity(structure)
     habitable := buildings.is_habitable(identity.archetype)
+    mixed_use := identity.archetype == .Mixed_Use_Dwelling
     landmark := structure.height > 60 || settlement_structure_is_landmark(structure) || buildings.is_landmark(identity)
     facade_style := architecture.facade_style_for_seed(structure.seed)
     roof_style := world_architecture_roof_style(structure)
@@ -3166,6 +3895,7 @@ world_architecture_mass :: proc(
         {structure.width + .025, 2.90, structure.depth + .025},
         structure.rotation,
         ground_stone,
+        1,
     )
     // A shallow overhanging limestone plinth separates each façade from the
     // terrain and gives the compact blocks a believable masonry foundation.
@@ -3180,6 +3910,7 @@ world_architecture_mass :: proc(
             {structure.width + .30, foundation_depth + .04, structure.depth + .30},
             structure.rotation,
             foundation_color,
+            1,
         )
     }
     world_architecture_box_rotated(
@@ -3187,6 +3918,7 @@ world_architecture_mass :: proc(
         {structure.width + .46, plinth_height, structure.depth + .46},
         structure.rotation,
         plinth,
+        1,
     )
     damp_course :=
         facade_style == 2 ? rl.Color{92, 113, 110, 255} : facade_style == 3 ? rl.Color{139, 107, 83, 255} : formation_face_color(plinth, math.PI, 0)
@@ -3204,7 +3936,7 @@ world_architecture_mass :: proc(
         panel_x, panel_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
-            0,
+            50,
             structure.depth * .5 + .07,
             structure.rotation,
         )
@@ -3397,11 +4129,24 @@ world_architecture_mass :: proc(
                     structure.depth * .5 + .16,
                     structure.rotation,
                 )
-                world_box_rotated(
+                storefront_window :=
+                    opening.row == 0 &&
+                    (identity.archetype == .Shop_House || identity.archetype == .Mixed_Use_Dwelling)
+                interior, interior_light := world_architecture_window_interior(
+                    structure,
+                    opening.face,
+                    opening.row,
+                    opening.column,
+                    storefront_window,
+                )
+                if interior_light > 0 do glass = interior
+                world_glass_panel(
                     {glass_x, window_y, glass_z},
-                    {window_width * .84, window_height * .82, .025},
+                    window_width * .84,
+                    window_height * .82,
                     structure.rotation,
                     glass,
+                    interior_light,
                 )
                 world_box_rotated(
                     {glass_x, window_y, glass_z},
@@ -3488,6 +4233,7 @@ world_architecture_mass :: proc(
         } else if (structure.seed >> 11) & 3 == 2 {
             door = {119, 71, 55, 255}
         }
+        if mixed_use do door = {43, 77, 76, 255}
         door_width := clamp(structure.width * .13, f32(1.8), f32(2.8))
         door_height := clamp(structure.height * .075, f32(3.0), f32(4.0))
         step_height: f32 = .20
@@ -3497,23 +4243,167 @@ world_architecture_mass :: proc(
         }
         door_center_y := structure.base_y + door_center_local_y
         world_box_rotated({door_x, door_center_y, door_z}, {door_width, door_height, .24}, structure.rotation, door)
-        panel_color := formation_face_color(door, math.PI, 0)
-        for panel in 0 ..< 2 {
-            panel_y := structure.base_y + step_height + (panel == 0 ? door_height * .28 : door_height * .70)
-            panel_height := panel == 0 ? door_height * .34 : door_height * .26
-            panel_x, panel_z := world_rotate_xz(
+        panel_color := mixed_use ? rl.Color{58, 99, 96, 255} : formation_face_color(door, math.PI, 0)
+        if mixed_use {
+            glass_door_x, glass_door_z := world_rotate_xz(
                 structure.center_x,
                 structure.center_z,
                 0,
                 structure.depth * .5 + .315,
                 structure.rotation,
             )
-            world_box_rotated(
-                {panel_x, panel_y, panel_z},
-                {door_width * .70, panel_height, .055},
+            door_interior, door_interior_light := world_architecture_window_interior(structure, .Front, 0, 99, true)
+            door_backing_x, door_backing_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .275,
                 structure.rotation,
-                panel_color,
             )
+            // Keep the door visually transparent in daylight. A bright
+            // emissive slab directly behind the glass made the entrance read
+            // as a cream solid leaf; this dark recessed vestibule lets the
+            // warm interior light live in the glass instead.
+            door_recess := color_lerp(rl.Color{31, 51, 52, 255}, door_interior, .18)
+            world_box_rotated(
+                {door_backing_x, door_center_y + .08, door_backing_z},
+                {door_width * .84, door_height * .86, .025},
+                structure.rotation,
+                door_recess,
+            )
+            door_glass_x, door_glass_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .355,
+                structure.rotation,
+            )
+            world_glass_panel(
+                {door_glass_x, door_center_y + .08, door_glass_z},
+                door_width * .80,
+                door_height * .82,
+                structure.rotation,
+                // The vestibule is shallower and less directly lit than the
+                // display bays. Retaining more blue-green glass at night
+                // keeps this central leaf transparent instead of becoming a
+                // flat luminous slab.
+                color_lerp(rl.Color{34, 69, 74, 255}, door_interior, .18),
+                door_interior_light * .40,
+            )
+            door_reflection_x, door_reflection_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                -door_width * .22,
+                structure.depth * .5 + .412,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {door_reflection_x, door_center_y + door_height * .08, door_reflection_z},
+                {.045, door_height * .34, .022},
+                structure.rotation,
+                {116, 151, 151, 255},
+            )
+            world_box_rotated(
+                {glass_door_x, door_center_y + .08, glass_door_z},
+                {.065, door_height * .84, .065},
+                structure.rotation,
+                {188, 171, 137, 255},
+            )
+            world_box_rotated(
+                {glass_door_x, door_center_y + door_height * .20, glass_door_z},
+                {door_width * .82, .065, .065},
+                structure.rotation,
+                {188, 171, 137, 255},
+            )
+            placard_x, placard_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .405,
+                structure.rotation,
+            )
+            placard_y := door_center_y + .16
+            world_box_rotated(
+                {placard_x, placard_y, placard_z},
+                {.52, .32, .045},
+                structure.rotation,
+                {65, 77, 73, 255},
+            )
+            placard_inset_x, placard_inset_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .432,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {placard_inset_x, placard_y, placard_inset_z},
+                {.40, .22, .025},
+                structure.rotation,
+                {218, 191, 132, 255},
+            )
+            placard_marks := 2 + int((structure.seed >> 13) % 2)
+            for mark in 0 ..< placard_marks {
+                mark_x, mark_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    (f32(mark) - f32(placard_marks - 1) * .5) * .105,
+                    structure.depth * .5 + .448,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {mark_x, placard_y, mark_z},
+                    {.055, .075 + f32(mark % 2) * .035, .018},
+                    structure.rotation,
+                    {84, 79, 63, 255},
+                )
+            }
+            mat_x, mat_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + .82,
+                structure.rotation,
+            )
+            mat_color :=
+                structure.seed % 3 == 0 ? rl.Color{72, 91, 86, 255} : structure.seed % 3 == 1 ? rl.Color{108, 68, 58, 255} : rl.Color{91, 73, 103, 255}
+            world_box_rotated(
+                {mat_x, structure.base_y + .035, mat_z},
+                {door_width * .82, .07, .70},
+                structure.rotation,
+                mat_color,
+            )
+            mat_edge_x, mat_edge_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + 1.18,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {mat_edge_x, structure.base_y + .052, mat_edge_z},
+                {door_width * .86, .035, .055},
+                structure.rotation,
+                {184, 145, 77, 255},
+            )
+        } else {
+            for panel in 0 ..< 2 {
+                panel_y := structure.base_y + step_height + (panel == 0 ? door_height * .28 : door_height * .70)
+                panel_height := panel == 0 ? door_height * .34 : door_height * .26
+                panel_x, panel_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    0,
+                    structure.depth * .5 + .315,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {panel_x, panel_y, panel_z},
+                    {door_width * .70, panel_height, .055},
+                    structure.rotation,
+                    panel_color,
+                )
+            }
         }
         if structure.height < 15 && structure.seed % 5 == 1 {
             divider_x, divider_z := world_rotate_xz(
@@ -3612,7 +4502,8 @@ world_architecture_mass :: proc(
         if (structure.seed >> 19) & 1 != 0 {
             surround = facade_style == 2 ? rl.Color{178, 181, 158, 255} : rl.Color{205, 181, 143, 255}
         }
-        frame_width: f32 = .12
+        if mixed_use do surround = {75, 91, 87, 255}
+        frame_width: f32 = mixed_use ? .08 : .12
         frame_height := door_height + .30
         frame_offset := door_width * .5 + frame_width * .5
         left_frame_x, left_frame_z := world_rotate_xz(
@@ -3654,7 +4545,7 @@ world_architecture_mass :: proc(
             structure.rotation,
             surround,
         )
-        if structure.seed % 5 == 3 {
+        if !mixed_use && structure.seed % 5 == 3 {
             portal_x, portal_z := world_rotate_xz(
                 structure.center_x,
                 structure.center_z,
@@ -3742,7 +4633,7 @@ world_architecture_mass :: proc(
                 wear_color,
             )
         }
-        if structure.seed % 2 == 0 {
+        if !mixed_use && structure.seed % 2 == 0 {
             for pot_side in -1 ..= 1 {
                 if pot_side == 0 do continue
                 if (structure.seed >> 15) & 3 == 1 && pot_side > 0 do continue
@@ -3848,19 +4739,21 @@ world_architecture_mass :: proc(
                 {112, 77, 53, 255},
             )
         }
-        mat_x, mat_z := world_rotate_xz(
-            structure.center_x,
-            structure.center_z,
-            0,
-            structure.depth * .5 + 1.02,
-            structure.rotation,
-        )
-        world_box_rotated(
-            {mat_x, structure.base_y + .075, mat_z},
-            {door_width * .78, .04, .48},
-            structure.rotation,
-            facade_style == 2 ? rl.Color{72, 103, 105, 255} : rl.Color{116, 73, 54, 255},
-        )
+        if !mixed_use {
+            mat_x, mat_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                structure.depth * .5 + 1.02,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {mat_x, structure.base_y + .075, mat_z},
+                {door_width * .78, .04, .48},
+                structure.rotation,
+                facade_style == 2 ? rl.Color{72, 103, 105, 255} : rl.Color{116, 73, 54, 255},
+            )
+        }
         for curb_side in -1 ..= 1 {
             if curb_side == 0 do continue
             curb_x, curb_z := world_rotate_xz(
@@ -3954,7 +4847,13 @@ world_architecture_mass :: proc(
             structure.depth * .5 + .525,
             structure.rotation,
         )
-        world_box_rotated({glass_x, lantern_y, glass_z}, {.20, .26, .045}, structure.rotation, {224, 184, 105, 255})
+        world_box_rotated_material(
+            {glass_x, lantern_y, glass_z},
+            {.20, .26, .045},
+            structure.rotation,
+            {255, 172, 66, 255},
+            .Emissive,
+        )
         world_box_rotated({glass_x, lantern_y + .25, glass_z}, {.38, .07, .075}, structure.rotation, {65, 59, 52, 255})
         plaque_local_x := -lantern_side * (door_width * .5 + .40)
         plaque_x, plaque_z := world_rotate_xz(
@@ -3999,7 +4898,7 @@ world_architecture_mass :: proc(
                 {189, 174, 143, 255},
             )
         }
-        if structure.seed % 8 == 5 {
+        if !mixed_use && structure.seed % 8 == 5 {
             urn_side := -lantern_side
             urn_local_x := urn_side * min(structure.width * .30, door_width * .5 + 1.55)
             urn_x, urn_z := world_rotate_xz(
@@ -4025,7 +4924,8 @@ world_architecture_mass :: proc(
         // A handful of low-rise blocks read as village shops: a shallow
         // canvas canopy over the entrance adds the lived-in 1940s street
         // rhythm without turning every façade into a storefront.
-        if structure.height < 52 && structure.seed % 2 == 0 {
+        storefront := identity.archetype == .Shop_House || identity.archetype == .Mixed_Use_Dwelling
+        if storefront || (structure.height < 52 && structure.seed % 2 == 0) {
             awning_x, awning_z := world_rotate_xz(
                 structure.center_x,
                 structure.center_z,
@@ -4033,105 +4933,1072 @@ world_architecture_mass :: proc(
                 structure.depth * .5 + .46,
                 structure.rotation,
             )
-            awning_color :=
-                structure.seed % 4 == 0 ? rl.Color{196, 105, 71, 255} : structure.seed % 4 == 1 ? rl.Color{215, 198, 151, 255} : rl.Color{105, 143, 151, 255}
-            awning_width := door_width + 1.4
-            world_box_rotated(
-                {awning_x, structure.base_y + step_height + door_height + .82, awning_z},
-                {awning_width, .14, .52},
-                structure.rotation,
-                awning_color,
-            )
-            stripe_color :=
-                structure.seed % 4 == 0 ? rl.Color{226, 198, 157, 255} : structure.seed % 4 == 1 ? rl.Color{183, 91, 70, 255} : rl.Color{214, 199, 163, 255}
-            for stripe in -1 ..= 1 {
-                stripe_x, stripe_z := world_rotate_xz(
+            // Shop canvas comes from a small sun-faded coastal palette. Keep
+            // two colors per awning so stripes, checks, and the loose fringe
+            // read as dyed cloth rather than extra pieces of architecture.
+            awning_color, stripe_color := rl.Color{}, rl.Color{}
+            switch structure.seed % 6 {
+            case 0:
+                awning_color, stripe_color = {177, 73, 58, 255}, {231, 203, 157, 255}
+            case 1:
+                awning_color, stripe_color = {48, 112, 120, 255}, {224, 202, 157, 255}
+            case 2:
+                awning_color, stripe_color = {205, 145, 55, 255}, {105, 67, 73, 255}
+            case 3:
+                awning_color, stripe_color = {83, 111, 74, 255}, {226, 194, 145, 255}
+            case 4:
+                awning_color, stripe_color = {101, 78, 119, 255}, {220, 174, 130, 255}
+            case:
+                awning_color, stripe_color = {196, 105, 71, 255}, {76, 111, 130, 255}
+            }
+            storefront_business_kind := int((structure.seed >> 6) % 4)
+            if identity.archetype == .Mixed_Use_Dwelling {
+                // Tie the canvas to the actual tenant family so neighboring
+                // mixed-use buildings read as different businesses, not the
+                // same storefront with shuffled merchandise.
+                switch storefront_business_kind {
+                case 0:
+                    // pottery
+                    awning_color, stripe_color = {165, 79, 55, 255}, {232, 203, 157, 255}
+                case 1:
+                    // produce
+                    awning_color, stripe_color = {72, 108, 67, 255}, {221, 198, 142, 255}
+                case 2:
+                    // textiles
+                    awning_color, stripe_color = {72, 78, 126, 255}, {202, 151, 83, 255}
+                case:
+                    // books
+                    awning_color, stripe_color = {112, 57, 61, 255}, {218, 190, 151, 255}
+                }
+            }
+            awning_width := storefront ? max(door_width + 1.4, structure.width - 2.4) : door_width + 1.4
+            pattern_kind := int((structure.seed >> 3) % 4)
+            if storefront {
+                // A real projecting fabric canopy: its rear edge is fixed high
+                // on the wall, then four broad planes bow gently toward the
+                // lower front rail. Coloring the planes directly keeps the
+                // existing painted-surface language without stacking decals
+                // over a horizontal architectural slab.
+                panel_count := pattern_kind == 2 ? 9 : 7
+                panel_width := awning_width / f32(panel_count)
+                canopy_z: [5]f32 = {
+                    structure.depth * .5 + .06,
+                    structure.depth * .5 + .40,
+                    structure.depth * .5 + .87,
+                    structure.depth * .5 + 1.38,
+                    structure.depth * .5 + 1.82,
+                }
+                canopy_y: [5]f32 = {
+                    structure.base_y + step_height + door_height + 1.36,
+                    structure.base_y + step_height + door_height + 1.31,
+                    structure.base_y + step_height + door_height + 1.16,
+                    structure.base_y + step_height + door_height + .88,
+                    structure.base_y + step_height + door_height + .64,
+                }
+                for panel in 0 ..< panel_count {
+                    local_x_0 := -awning_width * .5 + panel_width * f32(panel)
+                    local_x_1 := local_x_0 + panel_width + .012
+                    for band in 0 ..< 4 {
+                        painted :=
+                            pattern_kind == 0 ? panel % 2 == 0 : pattern_kind == 1 ? panel % 3 == 1 : pattern_kind == 2 ? (panel + band + int(structure.seed >> 7)) % 2 == 0 : panel == panel_count / 2 || band == 2
+                        fabric_color := painted ? stripe_color : awning_color
+                        x_00, z_00 := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            local_x_0,
+                            canopy_z[band],
+                            structure.rotation,
+                        )
+                        x_10, z_10 := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            local_x_1,
+                            canopy_z[band],
+                            structure.rotation,
+                        )
+                        x_11, z_11 := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            local_x_1,
+                            canopy_z[band + 1],
+                            structure.rotation,
+                        )
+                        x_01, z_01 := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            local_x_0,
+                            canopy_z[band + 1],
+                            structure.rotation,
+                        )
+                        world_quad(
+                            {x_00, canopy_y[band], z_00},
+                            {x_01, canopy_y[band + 1], z_01},
+                            {x_11, canopy_y[band + 1], z_11},
+                            {x_10, canopy_y[band], z_10},
+                            fabric_color,
+                        )
+                    }
+                }
+                rail_x, rail_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
-                    f32(stripe) * awning_width * .30,
-                    structure.depth * .5 + .49,
+                    0,
+                    structure.depth * .5 + 1.82,
                     structure.rotation,
                 )
                 world_box_rotated(
-                    {stripe_x, structure.base_y + step_height + door_height + .832, stripe_z},
-                    {awning_width * .28, .035, .54},
+                    {rail_x, canopy_y[4], rail_z},
+                    {awning_width + .16, .11, .11},
                     structure.rotation,
-                    stripe % 2 == 0 ? stripe_color : awning_color,
+                    {74, 67, 58, 255},
+                )
+            } else {
+                world_box_rotated(
+                    {awning_x, structure.base_y + step_height + door_height + .82, awning_z},
+                    {awning_width, .14, .52},
+                    structure.rotation,
+                    awning_color,
+                )
+                for stripe in -1 ..= 1 {
+                    stripe_x, stripe_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        f32(stripe) * awning_width * .30,
+                        structure.depth * .5 + .49,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {stripe_x, structure.base_y + step_height + door_height + .832, stripe_z},
+                        {awning_width * .28, .035, .54},
+                        structure.rotation,
+                        stripe % 2 == 0 ? stripe_color : awning_color,
+                    )
+                }
+            }
+            if storefront {
+                valance_segments := 11
+                segment_width := awning_width / f32(valance_segments)
+                for segment in 0 ..< valance_segments {
+                    segment_local_x := -awning_width * .5 + segment_width * (f32(segment) + .5)
+                    segment_x, segment_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        segment_local_x,
+                        structure.depth * .5 + 1.83,
+                        structure.rotation,
+                    )
+                    fringe_long := (segment + int(structure.seed >> 5)) % 3 == 0
+                    fringe_height := fringe_long ? f32(.40) : f32(.30)
+                    fringe_color :=
+                        pattern_kind == 3 ? (segment % 3 == 1 ? stripe_color : awning_color) : (segment + pattern_kind) % 2 == 0 ? stripe_color : awning_color
+                    fringe_bottom_y := structure.base_y + step_height + door_height + .64 - fringe_height
+                    world_box_rotated(
+                        {
+                            segment_x,
+                            structure.base_y + step_height + door_height + .64 - fringe_height * .5,
+                            segment_z,
+                        },
+                        {segment_width * .78, fringe_height, .075},
+                        structure.rotation,
+                        fringe_color,
+                    )
+                    // Every third drop finishes in a shallow weighted point.
+                    // The alternating hem breaks the former row of rectangular
+                    // blocks into a fabric silhouette while exposing more
+                    // glass beneath the canopy.
+                    if fringe_long {
+                        tail_left_x, tail_left_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            segment_local_x - segment_width * .27,
+                            structure.depth * .5 + 1.875,
+                            structure.rotation,
+                        )
+                        tail_right_x, tail_right_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            segment_local_x + segment_width * .27,
+                            structure.depth * .5 + 1.875,
+                            structure.rotation,
+                        )
+                        tail_tip_x, tail_tip_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            segment_local_x,
+                            structure.depth * .5 + 1.885,
+                            structure.rotation,
+                        )
+                        tail_color := formation_face_color(fringe_color, math.PI, 1)
+                        tail_left := third_person.Vec3{tail_left_x, fringe_bottom_y + .015, tail_left_z}
+                        tail_right := third_person.Vec3{tail_right_x, fringe_bottom_y + .015, tail_right_z}
+                        tail_tip := third_person.Vec3{tail_tip_x, fringe_bottom_y - .13, tail_tip_z}
+                        world_triangle(tail_left, tail_tip, tail_right, tail_color)
+                        world_triangle(tail_right, tail_tip, tail_left, tail_color)
+                    }
+                }
+                // Three small downlights tuck behind the valance. Their warm
+                // lenses give the canopy a pedestrian-scale night rhythm
+                // while the display windows remain the dominant light source.
+                for fixture in -1 ..= 1 {
+                    fixture_local_x := f32(fixture) * awning_width * .31
+                    fixture_x, fixture_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        fixture_local_x,
+                        structure.depth * .5 + 1.47,
+                        structure.rotation,
+                    )
+                    fixture_y := structure.base_y + step_height + door_height + .48
+                    world_box_rotated(
+                        {fixture_x, fixture_y, fixture_z},
+                        {.28, .10, .22},
+                        structure.rotation,
+                        {65, 60, 53, 255},
+                    )
+                    lens_x, lens_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        fixture_local_x,
+                        structure.depth * .5 + 1.59,
+                        structure.rotation,
+                    )
+                    world_box_rotated_material(
+                        {lens_x, fixture_y - .025, lens_z},
+                        {.16, .055, .035},
+                        structure.rotation,
+                        {255, 183, 88, 255},
+                        .Emissive,
+                    )
+                }
+            } else {
+                fascia_x, fascia_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    0,
+                    structure.depth * .5 + .73,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {fascia_x, structure.base_y + step_height + door_height + .74, fascia_z},
+                    {awning_width, .12, .09},
+                    structure.rotation,
+                    formation_face_color(awning_color, math.PI, 0),
                 )
             }
-            fascia_x, fascia_z := world_rotate_xz(
-                structure.center_x,
-                structure.center_z,
-                0,
-                structure.depth * .5 + .73,
-                structure.rotation,
-            )
-            world_box_rotated(
-                {fascia_x, structure.base_y + step_height + door_height + .74, fascia_z},
-                {awning_width, .12, .07},
-                structure.rotation,
-                formation_face_color(awning_color, math.PI, 0),
-            )
             for support_side in -1 ..= 1 {
                 if support_side == 0 do continue
-                support_x, support_z := world_rotate_xz(
-                    structure.center_x,
-                    structure.center_z,
-                    f32(support_side) * awning_width * .42,
-                    structure.depth * .5 + .39,
-                    structure.rotation,
-                )
-                world_box_rotated(
-                    {support_x, structure.base_y + step_height + door_height + .40, support_z},
-                    {.07, .74, .08},
-                    structure.rotation,
-                    {77, 69, 60, 255},
-                )
+                support_local_x := f32(support_side) * awning_width * .42
+                if storefront {
+                    // Triangular side arms make the canopy visibly wall hung
+                    // instead of supported by posts or floating over the shop.
+                    arm_rear_z := structure.depth * .5 + .12
+                    arm_front_z := structure.depth * .5 + 1.76
+                    arm_rear_y := structure.base_y + step_height + door_height + 1.20
+                    arm_front_y := structure.base_y + step_height + door_height + .52
+                    arm_x_0, arm_z_0 := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        support_local_x - .035,
+                        arm_rear_z,
+                        structure.rotation,
+                    )
+                    arm_x_1, arm_z_1 := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        support_local_x - .035,
+                        arm_front_z,
+                        structure.rotation,
+                    )
+                    arm_x_2, arm_z_2 := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        support_local_x + .035,
+                        arm_front_z,
+                        structure.rotation,
+                    )
+                    arm_x_3, arm_z_3 := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        support_local_x + .035,
+                        arm_rear_z,
+                        structure.rotation,
+                    )
+                    world_quad(
+                        {arm_x_0, arm_rear_y + .035, arm_z_0},
+                        {arm_x_1, arm_front_y + .035, arm_z_1},
+                        {arm_x_2, arm_front_y - .035, arm_z_2},
+                        {arm_x_3, arm_rear_y - .035, arm_z_3},
+                        {77, 69, 60, 255},
+                    )
+                    awning_bracket_x, awning_bracket_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        support_local_x,
+                        structure.depth * .5 + .10,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {awning_bracket_x, arm_rear_y - .23, awning_bracket_z},
+                        {.10, .58, .10},
+                        structure.rotation,
+                        {77, 69, 60, 255},
+                    )
+                } else {
+                    support_x, support_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        support_local_x,
+                        structure.depth * .5 + .39,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {support_x, structure.base_y + step_height + door_height + .40, support_z},
+                        {.07, .74, .08},
+                        structure.rotation,
+                        {77, 69, 60, 255},
+                    )
+                }
             }
             commercial :=
                 identity.archetype == .Shop_House ||
+                identity.archetype == .Mixed_Use_Dwelling ||
                 identity.archetype == .Workshop ||
                 identity.archetype == .Harbor_Office ||
                 identity.archetype == .Market_Hall
-            if commercial && structure.height < 18 && structure.seed % 4 == 0 {
+            if commercial && (storefront || (structure.height < 18 && structure.seed % 4 == 0)) {
                 sign_side := (structure.seed & 64) == 0 ? f32(-1) : f32(1)
-                sign_local_x := sign_side * (door_width * .5 + .72)
-                sign_y := structure.base_y + step_height + door_height + 1.18
+                sign_local_x := storefront ? f32(0) : sign_side * (door_width * .5 + .72)
+                // Storefront signs sit on the wall above the canopy head.
+                // Keeping their lower edge clear of the rear fabric mount
+                // prevents the enlarged awning from hiding the shop identity.
+                sign_y := structure.base_y + step_height + door_height + (storefront ? f32(2.02) : f32(1.18))
+                sign_depth := storefront ? f32(.24) : f32(.49)
                 sign_x, sign_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
                     sign_local_x,
-                    structure.depth * .5 + .49,
+                    structure.depth * .5 + sign_depth,
                     structure.rotation,
                 )
-                world_box_rotated({sign_x, sign_y, sign_z}, {1.15, .54, .10}, structure.rotation, {91, 119, 117, 255})
+                sign_width := storefront ? min(awning_width * .38, f32(5.2)) : f32(1.15)
+                sign_frame := rl.Color{91, 119, 117, 255}
+                if storefront {
+                    if identity.archetype == .Mixed_Use_Dwelling {
+                        switch storefront_business_kind {
+                        case 0:
+                            sign_frame = {103, 65, 50, 255}
+                        case 1:
+                            sign_frame = {57, 80, 58, 255}
+                        case 2:
+                            sign_frame = {54, 59, 91, 255}
+                        case:
+                            sign_frame = {76, 43, 47, 255}
+                        }
+                    } else {
+                        sign_frame =
+                            structure.seed % 3 == 0 ? rl.Color{108, 75, 58, 255} : structure.seed % 3 == 1 ? rl.Color{63, 88, 87, 255} : rl.Color{113, 69, 64, 255}
+                    }
+                }
+                sign_height := storefront ? f32(.90) : f32(.54)
+                world_box_rotated(
+                    {sign_x, sign_y, sign_z},
+                    {sign_width, sign_height, .10},
+                    structure.rotation,
+                    sign_frame,
+                )
+                if storefront {
+                    inset_x, inset_z := world_rotate_xz(sign_x, sign_z, 0, .065, structure.rotation)
+                    sign_inset := rl.Color{61, 89, 85, 255}
+                    if identity.archetype == .Mixed_Use_Dwelling {
+                        switch storefront_business_kind {
+                        case 0:
+                            sign_inset = {177, 92, 61, 255}
+                        case 1:
+                            sign_inset = {97, 124, 72, 255}
+                        case 2:
+                            sign_inset = {84, 88, 139, 255}
+                        case:
+                            sign_inset = {131, 64, 68, 255}
+                        }
+                    } else {
+                        sign_inset =
+                            structure.seed % 3 == 0 ? rl.Color{61, 89, 85, 255} : structure.seed % 3 == 1 ? rl.Color{171, 91, 65, 255} : rl.Color{193, 148, 72, 255}
+                    }
+                    world_box_rotated(
+                        {inset_x, sign_y, inset_z},
+                        {sign_width - .22, .66, .04},
+                        structure.rotation,
+                        sign_inset,
+                    )
+                    business_kind := storefront_business_kind
+                    glyph_color := rl.Color{220, 185, 112, 255}
+                    switch business_kind {
+                    case 0:
+                        // Three large vessel silhouettes: a tall amphora-like
+                        // center flanked by shorter shop pottery.
+                        for vessel in -1 ..= 1 {
+                            vessel_x, vessel_z := world_rotate_xz(
+                                sign_x,
+                                sign_z,
+                                f32(vessel) * .58,
+                                .095,
+                                structure.rotation,
+                            )
+                            vessel_height := vessel == 0 ? f32(.42) : f32(.30)
+                            vessel_width := vessel == 0 ? f32(.29) : f32(.23)
+                            world_box_rotated_material(
+                                {vessel_x, sign_y - .015, vessel_z},
+                                {vessel_width, vessel_height, .035},
+                                structure.rotation,
+                                glyph_color,
+                                .Emissive,
+                            )
+                            world_box_rotated_material(
+                                {vessel_x, sign_y + vessel_height * .48, vessel_z + .002},
+                                {vessel_width + .11, .055, .038},
+                                structure.rotation,
+                                glyph_color,
+                                .Emissive,
+                            )
+                        }
+                    case 1:
+                        // A clustered market-produce emblem, broad enough to
+                        // read as a group instead of the former dotted line.
+                        produce_offsets := [5][2]f32 {
+                            {-0.43, -0.075},
+                            {0, -0.075},
+                            {0.43, -0.075},
+                            {-0.215, 0.145},
+                            {0.215, 0.145},
+                        }
+                        for offset in produce_offsets {
+                            produce_x, produce_z := world_rotate_xz(
+                                sign_x,
+                                sign_z,
+                                offset[0],
+                                .095,
+                                structure.rotation,
+                            )
+                            world_box_rotated_material(
+                                {produce_x, sign_y + offset[1], produce_z},
+                                {.22, .20, .035},
+                                structure.rotation,
+                                glyph_color,
+                                .Emissive,
+                            )
+                        }
+                    case 2:
+                        // Three folded textile bands form one unmistakable
+                        // horizontal motif.
+                        for band in -1 ..= 1 {
+                            band_x, band_z := world_rotate_xz(
+                                sign_x,
+                                sign_z,
+                                f32(band) * .06,
+                                .095,
+                                structure.rotation,
+                            )
+                            world_box_rotated_material(
+                                {band_x, sign_y + f32(band) * .105, band_z},
+                                {1.14 - f32(abs(band)) * .17, .085, .035},
+                                structure.rotation,
+                                glyph_color,
+                                .Emissive,
+                            )
+                        }
+                    case:
+                        // A compact row of uneven upright book spines.
+                        for spine in -2 ..= 2 {
+                            spine_x, spine_z := world_rotate_xz(
+                                sign_x,
+                                sign_z,
+                                f32(spine) * .24,
+                                .095,
+                                structure.rotation,
+                            )
+                            spine_height := .30 + f32((spine + 2) % 3) * .065
+                            world_box_rotated_material(
+                                {spine_x, sign_y - .02 + spine_height * .08, spine_z},
+                                {.12 + f32(abs(spine % 2)) * .03, spine_height, .035},
+                                structure.rotation,
+                                glyph_color,
+                                .Emissive,
+                            )
+                        }
+                    }
+                }
                 sign_bracket_x, sign_bracket_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
                     sign_local_x,
-                    structure.depth * .5 + .29,
+                    structure.depth * .5 + (storefront ? f32(.16) : f32(.29)),
                     structure.rotation,
                 )
                 world_box_rotated(
-                    {sign_bracket_x, sign_y + .36, sign_bracket_z},
-                    {1.32, .07, .09},
+                    {sign_bracket_x, sign_y + sign_height * .5 + .08, sign_bracket_z},
+                    {storefront ? sign_width + .28 : f32(1.32), .07, .09},
                     structure.rotation,
                     {67, 61, 55, 255},
+                )
+                if identity.archetype == .Mixed_Use_Dwelling {
+                    // A projecting blade sign gives the shop an identity from
+                    // along the pavement. Put it opposite the seeded climbing
+                    // plant so the two vertical accents never compete.
+                    plant_side := (structure.seed & 1) == 0 ? f32(-1) : f32(1)
+                    blade_side := -plant_side
+                    blade_local_x := blade_side * structure.width * .39
+                    blade_center_z := structure.depth * .5 + .82
+                    blade_x, blade_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        blade_local_x,
+                        blade_center_z,
+                        structure.rotation,
+                    )
+                    blade_y := structure.base_y + step_height + door_height + 2.12
+                    world_box_rotated({blade_x, blade_y, blade_z}, {.13, .92, 1.05}, structure.rotation, sign_frame)
+                    blade_inset :=
+                        structure.seed % 3 == 0 ? rl.Color{61, 89, 85, 255} : structure.seed % 3 == 1 ? rl.Color{171, 91, 65, 255} : rl.Color{193, 148, 72, 255}
+                    blade_business_kind := int((structure.seed >> 6) % 4)
+                    blade_glyph := rl.Color{227, 190, 111, 255}
+                    for face_side in -1 ..= 1 {
+                        if face_side == 0 do continue
+                        face_f := f32(face_side)
+                        blade_inset_x, blade_inset_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            blade_local_x + face_f * .075,
+                            blade_center_z,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {blade_inset_x, blade_y, blade_inset_z},
+                            {.035, .68, .76},
+                            structure.rotation,
+                            blade_inset,
+                        )
+                        glyph_face_x := blade_local_x + face_f * .098
+                        switch blade_business_kind {
+                        case 0:
+                            vessel_x, vessel_z := world_rotate_xz(
+                                structure.center_x,
+                                structure.center_z,
+                                glyph_face_x,
+                                blade_center_z,
+                                structure.rotation,
+                            )
+                            world_box_rotated_material(
+                                {vessel_x, blade_y - .015, vessel_z},
+                                {.025, .31, .23},
+                                structure.rotation,
+                                blade_glyph,
+                                .Emissive,
+                            )
+                            world_box_rotated_material(
+                                {vessel_x, blade_y + .15, vessel_z},
+                                {.028, .045, .32},
+                                structure.rotation,
+                                blade_glyph,
+                                .Emissive,
+                            )
+                        case 1:
+                            produce_offsets := [5][2]f32 {
+                                {-0.20, -0.08},
+                                {0, -0.08},
+                                {0.20, -0.08},
+                                {-0.10, 0.10},
+                                {0.10, 0.10},
+                            }
+                            for offset in produce_offsets {
+                                produce_x, produce_z := world_rotate_xz(
+                                    structure.center_x,
+                                    structure.center_z,
+                                    glyph_face_x,
+                                    blade_center_z + offset[0],
+                                    structure.rotation,
+                                )
+                                world_box_rotated_material(
+                                    {produce_x, blade_y + offset[1], produce_z},
+                                    {.025, .13, .13},
+                                    structure.rotation,
+                                    blade_glyph,
+                                    .Emissive,
+                                )
+                            }
+                        case 2:
+                            for band in -1 ..= 1 {
+                                band_x, band_z := world_rotate_xz(
+                                    structure.center_x,
+                                    structure.center_z,
+                                    glyph_face_x,
+                                    blade_center_z + f32(band) * .025,
+                                    structure.rotation,
+                                )
+                                world_box_rotated_material(
+                                    {band_x, blade_y + f32(band) * .105, band_z},
+                                    {.025, .055, .48 - f32(abs(band)) * .08},
+                                    structure.rotation,
+                                    blade_glyph,
+                                    .Emissive,
+                                )
+                            }
+                        case:
+                            for spine in -2 ..= 2 {
+                                spine_x, spine_z := world_rotate_xz(
+                                    structure.center_x,
+                                    structure.center_z,
+                                    glyph_face_x,
+                                    blade_center_z + f32(spine) * .11,
+                                    structure.rotation,
+                                )
+                                spine_height := .20 + f32((spine + 2) % 3) * .045
+                                world_box_rotated_material(
+                                    {spine_x, blade_y - .02 + spine_height * .08, spine_z},
+                                    {.025, spine_height, .07 + f32(abs(spine % 2)) * .02},
+                                    structure.rotation,
+                                    blade_glyph,
+                                    .Emissive,
+                                )
+                            }
+                        }
+                    }
+                    blade_bracket_x, blade_bracket_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        blade_local_x,
+                        structure.depth * .5 + .34,
+                        structure.rotation,
+                    )
+                    blade_plate_x, blade_plate_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        blade_local_x,
+                        structure.depth * .5 + .205,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {blade_plate_x, blade_y + .54, blade_plate_z},
+                        {.30, .34, .075},
+                        structure.rotation,
+                        {76, 68, 59, 255},
+                    )
+                    for bolt in -1 ..= 1 {
+                        if bolt == 0 do continue
+                        bolt_x, bolt_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            blade_local_x + f32(bolt) * .075,
+                            structure.depth * .5 + .25,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {bolt_x, blade_y + .54, bolt_z},
+                            {.035, .035, .025},
+                            structure.rotation,
+                            {190, 154, 84, 255},
+                        )
+                    }
+                    world_box_rotated(
+                        {blade_bracket_x, blade_y + .54, blade_bracket_z},
+                        {.10, .10, 1.10},
+                        structure.rotation,
+                        {67, 61, 55, 255},
+                    )
+                }
+            }
+        }
+    }
+    if mixed_use && has_entrance {
+        // Keep residential circulation independent from the shop. Each flank
+        // gets a narrow stair door toward the street, so an attached row still
+        // exposes at least one apartment entrance at its open end.
+        for side in -1 ..= 1 {
+            if side == 0 do continue
+            side_f := f32(side)
+            side_y := structure.base_y + 1.62
+            side_local_x := side_f * (structure.width * .5 + .13)
+            side_local_z := structure.depth * .20
+            clearance := world_architecture_mixed_use_side_clearance(structure, project, side)
+            opposite_clearance := world_architecture_mixed_use_side_clearance(structure, project, -side)
+            // Prefer all genuinely open sides. If both nominal approaches are
+            // tight, retain exactly the side with more clearance so upstairs
+            // apartments can never lose their independent entrance entirely.
+            if clearance < .85 &&
+               (opposite_clearance >= .85 ||
+                       clearance < opposite_clearance ||
+                       (clearance == opposite_clearance && side != (structure.seed & 1 == 0 ? -1 : 1))) {
+                continue
+            }
+            threshold_x, threshold_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_f * (structure.width * .5 + 1.15),
+                side_local_z,
+                structure.rotation,
+            )
+            side_x, side_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x,
+                side_local_z,
+                structure.rotation,
+            )
+            side_yaw := structure.rotation + side_f * math.PI * .5
+            side_door_color := facade_style == 2 ? rl.Color{74, 104, 105, 255} : rl.Color{67, 91, 91, 255}
+            world_box_rotated({side_x, side_y, side_z}, {1.65, 3.05, .20}, side_yaw, side_door_color)
+            // Four shallow panels and a real lever distinguish the private
+            // upstairs entrance from a blank service door. Keep the relief
+            // modest: the glazed shopfront remains the street's focal point.
+            panel_color := formation_face_color(side_door_color, math.PI, 1)
+            for panel_row in 0 ..< 2 {
+                panel_y := structure.base_y + .88 + f32(panel_row) * .98
+                for panel_column in -1 ..= 1 {
+                    if panel_column == 0 do continue
+                    panel_local_z := side_local_z + f32(panel_column) * .39
+                    panel_x, panel_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        side_local_x + side_f * .125,
+                        panel_local_z,
+                        structure.rotation,
+                    )
+                    world_box_rotated({panel_x, panel_y, panel_z}, {.54, .62, .035}, side_yaw, panel_color)
+                }
+            }
+            lever_x, lever_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .24,
+                side_local_z - .54,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {lever_x, structure.base_y + 1.52, lever_z},
+                {.08, .08, .16},
+                side_yaw,
+                {211, 171, 91, 255},
+            )
+            for jamb in -1 ..= 1 {
+                if jamb == 0 do continue
+                jamb_x, jamb_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    side_local_x,
+                    side_local_z + f32(jamb) * .93,
+                    structure.rotation,
+                )
+                world_box_rotated({jamb_x, side_y, jamb_z}, {.13, 3.30, .14}, side_yaw, {202, 184, 145, 255})
+            }
+            lintel_x, lintel_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x,
+                side_local_z,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {lintel_x, structure.base_y + 3.30, lintel_z},
+                {1.95, .15, .14},
+                side_yaw,
+                {202, 184, 145, 255},
+            )
+            transom_x, transom_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .13,
+                side_local_z,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {transom_x, structure.base_y + 2.72, transom_z},
+                {1.24, .34, .045},
+                side_yaw,
+                {48, 78, 78, 255},
+            )
+            step_x, step_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .46,
+                side_local_z,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {step_x, structure.base_y + .08, step_z},
+                {2.05, .16, .74},
+                side_yaw,
+                {166, 143, 112, 255},
+            )
+            // A short run of limestone flags connects the private landing to
+            // the public shop pavement. Generate it only after the clearance
+            // test above, so a suppressed door never leaves an orphan path.
+            path_end_z := structure.depth * .5 + .72
+            path_span := max(path_end_z - side_local_z, f32(1.6))
+            path_paver_length := path_span / 4 * .86
+            for path_paver in 0 ..< 4 {
+                paver_local_z := side_local_z + path_span * (f32(path_paver) + .5) / 4
+                paver_x, paver_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    side_local_x + side_f * .92,
+                    paver_local_z,
+                    structure.rotation,
+                )
+                paver_ground := structure.base_y
+                if project != nil {
+                    paver_ground = terrain.sample_height(project, 0, paver_x, paver_z)
+                }
+                paver_color := path_paver % 2 == 0 ? rl.Color{184, 171, 143, 255} : rl.Color{166, 153, 128, 255}
+                world_box_rotated(
+                    {paver_x, paver_ground + .045, paver_z},
+                    {1.48, .09, path_paver_length},
+                    structure.rotation,
+                    paver_color,
+                )
+            }
+            canopy_x, canopy_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .46,
+                side_local_z,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {canopy_x, structure.base_y + 3.48, canopy_z},
+                {2.20, .16, .82},
+                side_yaw,
+                facade_style == 2 ? rl.Color{105, 143, 151, 255} : rl.Color{178, 103, 72, 255},
+            )
+            // A compact stair-step glyph on the canopy fascia identifies this
+            // as access to upper dwellings, not a secondary shop entrance.
+            // Keep it symbolic so it remains legible across localized worlds.
+            stair_sign_x, stair_sign_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .89,
+                side_local_z,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {stair_sign_x, structure.base_y + 3.47, stair_sign_z},
+                {.76, .34, .045},
+                side_yaw,
+                {60, 76, 74, 255},
+            )
+            for stair_mark in 0 ..< 3 {
+                mark_local_z := side_local_z - .20 + f32(stair_mark) * .20
+                stair_mark_x, stair_mark_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    side_local_x + side_f * .925,
+                    mark_local_z,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {stair_mark_x, structure.base_y + 3.40 + f32(stair_mark) * .07, stair_mark_z},
+                    {.13, .07 + f32(stair_mark) * .025, .025},
+                    side_yaw,
+                    {211, 171, 91, 255},
+                )
+            }
+            // A narrow stairwell light above the portal makes the apartment
+            // circulation read vertically instead of as a second ground-floor
+            // shop entrance.
+            stair_window_y := structure.base_y + 4.62
+            stair_frame_x, stair_frame_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .14,
+                side_local_z,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {stair_frame_x, stair_window_y, stair_frame_z},
+                {1.18, 1.48, .16},
+                side_yaw,
+                {72, 83, 78, 255},
+            )
+            stair_glass_x, stair_glass_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .235,
+                side_local_z,
+                structure.rotation,
+            )
+            world_box_rotated_material(
+                {stair_glass_x, stair_window_y, stair_glass_z},
+                {.90, 1.20, .035},
+                side_yaw,
+                {184, 132, 68, 255},
+                .Emissive,
+            )
+            stair_panel_x, stair_panel_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .25,
+                side_local_z,
+                structure.rotation,
+            )
+            world_glass_panel(
+                {stair_panel_x, stair_window_y, stair_panel_z},
+                .84,
+                1.14,
+                side_yaw,
+                {71, 101, 101, 255},
+                .72,
+            )
+            world_box_rotated(
+                {stair_glass_x, stair_window_y, stair_glass_z},
+                {.055, 1.20, .045},
+                side_yaw,
+                {191, 174, 139, 255},
+            )
+            world_box_rotated(
+                {stair_glass_x, stair_window_y, stair_glass_z},
+                {.90, .055, .045},
+                side_yaw,
+                {191, 174, 139, 255},
+            )
+            lamp_x, lamp_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .30,
+                side_local_z + .68,
+                structure.rotation,
+            )
+            world_box_rotated({lamp_x, structure.base_y + 2.28, lamp_z}, {.22, .34, .16}, side_yaw, {72, 65, 56, 255})
+            light_x, light_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .40,
+                side_local_z + .68,
+                structure.rotation,
+            )
+            world_box_rotated_material(
+                {light_x, structure.base_y + 2.28, light_z},
+                {.12, .19, .035},
+                side_yaw,
+                {255, 172, 66, 255},
+                .Emissive,
+            )
+            world_municipal_light_pool(
+                threshold_x,
+                structure.base_y,
+                threshold_z,
+                project,
+                .09,
+                1.20,
+                .76,
+                side_yaw,
+                30,
+                1,
+                {255, 178, 78, 255},
+            )
+            number_x, number_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                side_local_x + side_f * .28,
+                side_local_z - .58,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {number_x, structure.base_y + 2.15, number_z},
+                {.28, .20, .04},
+                side_yaw,
+                {215, 193, 139, 255},
+            )
+            // Twin dark strokes are a compact "upper dwellings" marker at
+            // streetscape scale, backed by the lit stair window above.
+            for address_mark in -1 ..= 1 {
+                if address_mark == 0 do continue
+                mark_x, mark_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    side_local_x + side_f * .31,
+                    side_local_z - .58 + f32(address_mark) * .055,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {mark_x, structure.base_y + 2.15, mark_z},
+                    {.035, .11, .025},
+                    side_yaw,
+                    {76, 67, 54, 255},
                 )
             }
         }
     }
     rich_front := habitable
+    storefront_front := identity.archetype == .Shop_House || identity.archetype == .Mixed_Use_Dwelling
+    if has_entrance && storefront_front && lod == .Near {
+        spill_x, spill_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            0,
+            structure.depth * .5 + 2.15,
+            structure.rotation,
+        )
+        spill_ground := terrain.sample_height(project, 0, spill_x, spill_z)
+        spill_sample_distance := f32(2)
+        spill_slope_x := clamp(
+            (terrain.sample_height(project, 0, spill_x + spill_sample_distance, spill_z) - spill_ground) /
+            spill_sample_distance,
+            f32(-.35),
+            f32(.35),
+        )
+        spill_slope_z := clamp(
+            (terrain.sample_height(project, 0, spill_x, spill_z + spill_sample_distance) - spill_ground) /
+            spill_sample_distance,
+            f32(-.35),
+            f32(.35),
+        )
+        world_ellipse_material_uv(
+            {spill_x, spill_ground + .225, spill_z},
+            min(structure.width * .38, f32(5.5)),
+            3.4,
+            structure.rotation,
+            {255, 174, 72, 34},
+            .Emissive_Pool,
+            spill_slope_x,
+            spill_slope_z,
+            1,
+        )
+    }
     if rich_front && opening_layout != nil {
         for opening in opening_layout.openings[:opening_layout.count] {
             if opening.face != .Front || opening.kind != .Window do continue
             row, column := opening.row, opening.column
+            storefront_window := storefront_front && row == 0
+            apartment_box_column := (structure.seed & 1) == 0 ? 1 : 0
+            mixed_use_apartment_window := mixed_use && row == 1 && column == apartment_box_column
             x := opening.horizontal
             y := structure.base_y + opening.y
             window_width, window_height := opening.width, opening.height
             local_z := structure.depth * .5 + .16
             wx, wz := world_rotate_xz(structure.center_x, structure.center_z, x, local_z, structure.rotation)
             world_box_rotated({wx, y, wz}, {window_width, window_height, .22}, structure.rotation, window)
+            if landmark {
+                glass_x, glass_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    x,
+                    local_z + .125,
+                    structure.rotation,
+                )
+                glass, interior_light := world_architecture_window_interior(
+                    structure,
+                    opening.face,
+                    row,
+                    column,
+                    storefront_window || mixed_use_apartment_window,
+                )
+                world_glass_panel(
+                    {glass_x, y, glass_z},
+                    window_width * .84,
+                    window_height * .82,
+                    structure.rotation,
+                    glass,
+                    interior_light,
+                )
+            }
             if !landmark {
                 glass_x, glass_z := world_rotate_xz(
                     structure.center_x,
@@ -4155,18 +6022,75 @@ world_architecture_mass :: proc(
                 } else if glass_tone == 1 {
                     glass = {60, 84, 86, 255}
                 }
+                if storefront_window do glass = {43, 77, 76, 255}
                 reveal := formation_face_color(window, math.PI, 0)
-                world_box_rotated(
-                    {glass_x, y, glass_z},
-                    {window_width * .94, window_height * .92, .045},
-                    structure.rotation,
-                    reveal,
+                interior, interior_light := world_architecture_window_interior(
+                    structure,
+                    opening.face,
+                    row,
+                    column,
+                    storefront_window || mixed_use_apartment_window,
                 )
-                world_box_rotated(
+                if storefront_window || mixed_use_apartment_window {
+                    // A warm luminous surface behind the glazing keeps shops
+                    // occupied and legible after dark. Mullions, merchandise,
+                    // and the glass panel remain in front, so this reads as an
+                    // interior rather than a luminous exterior sign.
+                    backing_x, backing_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        local_z + .085,
+                        structure.rotation,
+                    )
+                    backing_color := interior
+                    if storefront_window {
+                        // Recess the shop visually behind its glazing. A bright
+                        // emissive plane nearly flush with the pane made the
+                        // full-glass bay read like a cream shutter in daylight.
+                        backing_color = color_lerp({46, 43, 39, 255}, interior, .30)
+                    } else if mixed_use_apartment_window {
+                        backing_color = color_lerp(interior, {43, 77, 76, 255}, .38)
+                    }
+                    if storefront_window {
+                        world_box_rotated(
+                            {backing_x, y, backing_z},
+                            {window_width * .90, window_height * .86, .025},
+                            structure.rotation,
+                            backing_color,
+                        )
+                    } else {
+                        world_box_rotated_material(
+                            {backing_x, y, backing_z},
+                            {window_width * .90, window_height * .86, .025},
+                            structure.rotation,
+                            backing_color,
+                            .Emissive,
+                        )
+                    }
+                } else {
+                    world_box_rotated(
+                        {glass_x, y, glass_z},
+                        {window_width * .94, window_height * .92, .045},
+                        structure.rotation,
+                        reveal,
+                    )
+                }
+                if interior_light > 0 {
+                    if storefront_window {
+                        glass = color_lerp({38, 73, 77, 255}, interior, .46)
+                        interior_light *= .90
+                    } else {
+                        glass = interior
+                    }
+                }
+                world_glass_panel(
                     {glass_x, y, glass_z},
-                    {window_width * .84, window_height * .82, .035},
+                    window_width * .84,
+                    window_height * .82,
                     structure.rotation,
                     glass,
+                    interior_light,
                 )
                 if (structure.seed + u32(row * 11 + column)) % 4 == 0 {
                     curtain := facade_style == 2 ? rl.Color{205, 197, 170, 255} : rl.Color{190, 169, 145, 255}
@@ -4226,6 +6150,315 @@ world_architecture_mass :: proc(
                     structure.rotation,
                     sill,
                 )
+                if storefront_window {
+                    // A curb-height kick panel protects the bottom of the
+                    // full-glass bay without overlapping the visible pane.
+                    // A narrow brass cap takes trolley and foot traffic.
+                    bulkhead_x, bulkhead_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        local_z + .17,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {bulkhead_x, structure.base_y + .18, bulkhead_z},
+                        {window_width + .30, .34, .12},
+                        structure.rotation,
+                        facade_style == 2 ? rl.Color{54, 83, 82, 255} : rl.Color{91, 66, 54, 255},
+                    )
+                    bulkhead_cap_x, bulkhead_cap_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        local_z + .205,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {bulkhead_cap_x, structure.base_y + .37, bulkhead_cap_z},
+                        {window_width + .20, .045, .055},
+                        structure.rotation,
+                        {180, 142, 74, 255},
+                    )
+                    transom_x, transom_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        local_z + .19,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {transom_x, y + window_height * .27, transom_z},
+                        {window_width * .90, .075, .06},
+                        structure.rotation,
+                        mullion,
+                    )
+                    // A shallow rear display line breaks the luminous backing
+                    // into a believable room. Keep its stock sparse and below
+                    // eye level so the full-glass frontage still feels open.
+                    rear_shelf_z_local := local_z + .105
+                    rear_shelf_x, rear_shelf_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        rear_shelf_z_local,
+                        structure.rotation,
+                    )
+                    // Stagger the two bays so they read as one curated shop
+                    // display rather than mirrored procedural shelving.
+                    rear_shelf_y := structure.base_y + 1.50 + f32(column % 2) * .18
+                    rear_wood := facade_style == 2 ? rl.Color{78, 93, 84, 255} : rl.Color{103, 75, 55, 255}
+                    world_box_rotated(
+                        {rear_shelf_x, rear_shelf_y, rear_shelf_z},
+                        {window_width * .62, .075, .045},
+                        structure.rotation,
+                        rear_wood,
+                    )
+                    for support in -1 ..= 1 {
+                        if support == 0 do continue
+                        support_x, support_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x + f32(support) * window_width * .27,
+                            rear_shelf_z_local,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {support_x, rear_shelf_y - .31, support_z},
+                            {.055, .62, .04},
+                            structure.rotation,
+                            formation_face_color(rear_wood, math.PI, 0),
+                        )
+                    }
+                    merchandise_kind := int((structure.seed >> 6) % 4)
+                    for rear_item in -1 ..= 1 {
+                        if rear_item == 0 do continue
+                        rear_item_local_x := x + f32(rear_item) * window_width * .18
+                        rear_item_x, rear_item_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            rear_item_local_x,
+                            rear_shelf_z_local + .012,
+                            structure.rotation,
+                        )
+                        switch merchandise_kind {
+                        case 0:
+                            rear_color := rear_item < 0 ? rl.Color{152, 94, 59, 255} : rl.Color{86, 117, 111, 255}
+                            world_tapered_box_rotated(
+                                {rear_item_x, rear_shelf_y + .18, rear_item_z},
+                                .34,
+                                .16,
+                                .07,
+                                .23,
+                                .08,
+                                structure.rotation,
+                                rear_color,
+                            )
+                        case 1:
+                            for produce in -1 ..= 1 {
+                                produce_x, produce_z := world_rotate_xz(
+                                    structure.center_x,
+                                    structure.center_z,
+                                    rear_item_local_x + f32(produce) * .075,
+                                    rear_shelf_z_local + .012,
+                                    structure.rotation,
+                                )
+                                world_ellipsoid_rotated(
+                                    {produce_x, rear_shelf_y + .105 + f32(abs(produce)) * .018, produce_z},
+                                    .055,
+                                    .065,
+                                    .035,
+                                    structure.rotation,
+                                    produce == 0 ? rl.Color{179, 83, 57, 255} : rl.Color{177, 139, 65, 255},
+                                    .Plain,
+                                )
+                            }
+                        case 2:
+                            for folded in 0 ..< 2 {
+                                world_box_rotated(
+                                    {rear_item_x, rear_shelf_y + .055 + f32(folded) * .075, rear_item_z},
+                                    {.29 - f32(folded) * .025, .065, .04},
+                                    structure.rotation,
+                                    folded == 0 ? rl.Color{78, 117, 122, 255} : rl.Color{170, 105, 82, 255},
+                                )
+                            }
+                        case:
+                            for spine in -1 ..= 1 {
+                                spine_x, spine_z := world_rotate_xz(
+                                    structure.center_x,
+                                    structure.center_z,
+                                    rear_item_local_x + f32(spine) * .06,
+                                    rear_shelf_z_local + .012,
+                                    structure.rotation,
+                                )
+                                world_box_rotated(
+                                    {spine_x, rear_shelf_y + .14, spine_z},
+                                    {.045, .28 + f32(spine + 1) * .025, .04},
+                                    structure.rotation,
+                                    spine < 0 ? rl.Color{103, 67, 58, 255} : spine == 0 ? rl.Color{69, 99, 100, 255} : rl.Color{155, 116, 62, 255},
+                                )
+                            }
+                        }
+                    }
+                    shelf_x, shelf_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x,
+                        local_z + .22,
+                        structure.rotation,
+                    )
+                    shelf_y := structure.base_y + .88
+                    world_box_rotated(
+                        {shelf_x, shelf_y, shelf_z},
+                        {window_width * .82, .075, .10},
+                        structure.rotation,
+                        {146, 105, 68, 255},
+                    )
+                    for display in -1 ..= 1 {
+                        focal_display := column % 2 == 0
+                        // One bay gets a single hero object; its neighbor gets
+                        // two smaller groups. This asymmetry is retained across
+                        // all business families while the merchandise itself
+                        // supplies the distinct silhouette.
+                        if focal_display && display != 0 do continue
+                        if !focal_display && display == 0 do continue
+                        display_local_x := x + f32(display) * window_width * .25
+                        display_x, display_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            display_local_x,
+                            local_z + .24,
+                            structure.rotation,
+                        )
+                        display_color :=
+                            display < 0 ? rl.Color{190, 126, 72, 255} : display > 0 ? rl.Color{111, 142, 105, 255} : rl.Color{202, 180, 119, 255}
+                        switch merchandise_kind {
+                        case 0:
+                            // Tapered ceramic vessels with a contrasting lip.
+                            vessel_height := display == 0 ? f32(.72) : f32(.42)
+                            world_tapered_box_rotated(
+                                {display_x, shelf_y + vessel_height * .5, display_z},
+                                vessel_height,
+                                display == 0 ? f32(.30) : f32(.20),
+                                display == 0 ? f32(.12) : f32(.09),
+                                display == 0 ? f32(.42) : f32(.29),
+                                display == 0 ? f32(.15) : f32(.11),
+                                structure.rotation,
+                                display_color,
+                            )
+                            world_box_rotated(
+                                {display_x, shelf_y + vessel_height + .015, display_z},
+                                {display == 0 ? f32(.46) : f32(.32), .045, .12},
+                                structure.rotation,
+                                formation_face_color(display_color, .4, 0),
+                            )
+                        case 1:
+                            // Low produce crate with a small mound of fruit.
+                            world_box_rotated(
+                                {display_x, shelf_y + (display == 0 ? f32(.14) : f32(.105)), display_z},
+                                {display == 0 ? f32(.70) : f32(.42), display == 0 ? f32(.28) : f32(.21), .10},
+                                structure.rotation,
+                                {151, 101, 62, 255},
+                            )
+                            fruit_extent := display == 0 ? 2 : 1
+                            for fruit in -fruit_extent ..= fruit_extent {
+                                fruit_x, fruit_z := world_rotate_xz(
+                                    structure.center_x,
+                                    structure.center_z,
+                                    display_local_x + f32(fruit) * .095,
+                                    local_z + .255,
+                                    structure.rotation,
+                                )
+                                fruit_color :=
+                                    fruit == 0 ? rl.Color{203, 83, 57, 255} : fruit < 0 ? rl.Color{218, 154, 60, 255} : rl.Color{112, 151, 73, 255}
+                                world_ellipsoid_rotated(
+                                    {
+                                        fruit_x,
+                                        shelf_y + (display == 0 ? f32(.34) : f32(.255)) + f32(abs(fruit)) * .018,
+                                        fruit_z,
+                                    },
+                                    .075,
+                                    .075,
+                                    .045,
+                                    structure.rotation,
+                                    fruit_color,
+                                    .Plain,
+                                )
+                            }
+                        case 2:
+                            // Folded coastal textiles in alternating dyed bands.
+                            fold_count := display == 0 ? 5 : 3
+                            for fold in 0 ..< fold_count {
+                                fold_color :=
+                                    fold == 0 ? display_color : fold == 1 ? rl.Color{218, 190, 139, 255} : rl.Color{79, 119, 126, 255}
+                                world_box_rotated(
+                                    {display_x, shelf_y + .065 + f32(fold) * .095, display_z},
+                                    {(display == 0 ? f32(.64) : f32(.40)) - f32(fold) * .035, .085, .10},
+                                    structure.rotation,
+                                    fold_color,
+                                )
+                            }
+                        case:
+                            // A short run of upright books with uneven spines.
+                            book_count := display == 0 ? 5 : 3
+                            for book_index in 0 ..< book_count {
+                                book := book_index - book_count / 2
+                                book_x, book_z := world_rotate_xz(
+                                    structure.center_x,
+                                    structure.center_z,
+                                    display_local_x + f32(book) * .085,
+                                    local_z + .24,
+                                    structure.rotation,
+                                )
+                                book_color :=
+                                    book_index % 3 == 0 ? rl.Color{119, 73, 61, 255} : book_index % 3 == 1 ? rl.Color{71, 108, 111, 255} : rl.Color{182, 139, 67, 255}
+                                world_box_rotated(
+                                    {book_x, shelf_y + .18 + f32(book_index % 3) * .025, book_z},
+                                    {.070, .34 + f32(book_index % 3) * .05, .08},
+                                    structure.rotation,
+                                    book_color,
+                                )
+                            }
+                        }
+                    }
+                    for reflection in -1 ..= 1 {
+                        if reflection == 0 do continue
+                        reflection_x, reflection_z := world_rotate_xz(
+                            structure.center_x,
+                            structure.center_z,
+                            x + f32(reflection) * window_width * .28,
+                            local_z + .255,
+                            structure.rotation,
+                        )
+                        world_box_rotated(
+                            {reflection_x, y + window_height * .06, reflection_z},
+                            {.055, window_height * .44, .025},
+                            structure.rotation,
+                            {116, 151, 151, 255},
+                        )
+                    }
+                    pendant_x, pendant_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        x + (column % 2 == 0 ? -window_width * .18 : window_width * .18),
+                        local_z + .26,
+                        structure.rotation,
+                    )
+                    pendant_top := y + window_height * .34
+                    world_box_rotated(
+                        {pendant_x, pendant_top - .18, pendant_z},
+                        {.035, .36, .025},
+                        structure.rotation,
+                        {68, 65, 58, 255},
+                    )
+                    world_box_rotated_material(
+                        {pendant_x, pendant_top - .40, pendant_z},
+                        {.26, .18, .055},
+                        structure.rotation,
+                        {226, 179, 91, 255},
+                        .Emissive,
+                    )
+                }
                 if structure.height < 15 && structure.seed % 5 == 4 {
                     apron_x, apron_z := world_rotate_xz(
                         structure.center_x,
@@ -4272,7 +6505,10 @@ world_architecture_mass :: proc(
                     formation_face_color(trim, math.PI, 0),
                 )
             }
-            if !landmark && window_has_flower_box(structure.seed, row, column) {
+            mixed_use_apartment_box := mixed_use_apartment_window
+            show_flower_box := mixed_use ? mixed_use_apartment_box : window_has_flower_box(structure.seed, row, column)
+            has_juliet_guard := show_flower_box && row > 0
+            if !landmark && !storefront_window && show_flower_box {
                 flower_x, flower_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
@@ -4304,7 +6540,9 @@ world_architecture_mass :: proc(
                 guard_height: f32 = .09
                 guard_center_above_sill: f32 = 1.04
                 post_width: f32 = .055
-                post_base_above_sill: f32 = .04
+                planter_center_below_sill: f32 = .18
+                planter_height: f32 = .12
+                post_base_above_sill := -planter_center_below_sill + planter_height * .5
                 post_top_above_sill := guard_center_above_sill - guard_height * .5
                 post_height := post_top_above_sill - post_base_above_sill
                 post_center_above_sill := (post_base_above_sill + post_top_above_sill) * .5
@@ -4316,7 +6554,7 @@ world_architecture_mass :: proc(
                     guard_z,
                     structure.rotation,
                 )
-                if row > 0 {
+                if has_juliet_guard {
                     world_box_rotated(
                         {guard_x, y - window_height * .5 + guard_center_above_sill, guard_world_z},
                         {guard_width, guard_height, .08},
@@ -4340,73 +6578,60 @@ world_architecture_mass :: proc(
                     }
                 }
             }
-            if !landmark {
-                if facade_style == 1 && row > 0 {
-                    // A shallow balcony is a small silhouette break that reads
-                    // clearly from the wide editor camera without needing a
-                    // separate mesh asset.
-                    balcony_width := window_width + 1.35
-                    balcony_depth: f32 = .90
-                    balcony_center_z := local_z + balcony_depth * .5 - .08
-                    balcony_x, balcony_z := world_rotate_xz(
-                        structure.center_x,
-                        structure.center_z,
-                        x,
-                        balcony_center_z,
-                        structure.rotation,
-                    )
-                    rail_width := window_width + .85
-                    rail_front_z := local_z + balcony_depth - .13
-                    railing_x, railing_z := world_rotate_xz(
-                        structure.center_x,
-                        structure.center_z,
-                        x,
-                        rail_front_z,
-                        structure.rotation,
-                    )
-                    world_box_rotated(
-                        {balcony_x, y - window_height * .5 - .14, balcony_z},
-                        {balcony_width, .20, balcony_depth},
-                        structure.rotation,
-                        {196, 151, 103, 255},
-                    )
-                    world_box_rotated(
-                        {railing_x, y - window_height * .5 + .58, railing_z},
-                        {window_width + .85, .11, .08},
-                        structure.rotation,
-                        {102, 76, 63, 255},
-                    )
-                    for post in -2 ..= 2 {
-                        post_x, post_z := world_rotate_xz(
+            if !landmark && !storefront_window {
+                if mixed_use && row == 1 {
+                    // The first residential level belongs to a pair of
+                    // dwellings reached from the side stair doors. One unit
+                    // receives the planted Juliet guard above; give its
+                    // companion a quieter iron rail instead of handing it to
+                    // an unrelated generic façade style.
+                    if !mixed_use_apartment_window {
+                        companion_width := window_width + .42
+                        companion_z := local_z + .37
+                        companion_color := facade_style == 2 ? rl.Color{64, 82, 83, 255} : rl.Color{83, 68, 62, 255}
+                        companion_x, companion_world_z := world_rotate_xz(
                             structure.center_x,
                             structure.center_z,
-                            x + f32(post) * rail_width * .25,
-                            rail_front_z,
+                            x,
+                            companion_z,
                             structure.rotation,
+                        )
+                        sill_y := y - window_height * .5
+                        companion_slab_center_y := sill_y - .11
+                        companion_slab_height: f32 = .12
+                        companion_slab_top_y := companion_slab_center_y + companion_slab_height * .5
+                        world_box_rotated(
+                            {companion_x, companion_slab_center_y, companion_world_z},
+                            {companion_width + .12, companion_slab_height, .28},
+                            structure.rotation,
+                            {190, 158, 112, 255},
                         )
                         world_box_rotated(
-                            {post_x, y - window_height * .5 + .20, post_z},
-                            {.065, .72, .08},
+                            {companion_x, sill_y + .92, companion_world_z},
+                            {companion_width, .09, .075},
                             structure.rotation,
-                            {102, 76, 63, 255},
+                            companion_color,
                         )
+                        for companion_post in -2 ..= 2 {
+                            companion_post_top_y := sill_y + .92 - .09 * .5
+                            companion_post_height := companion_post_top_y - companion_slab_top_y
+                            post_x, post_z := world_rotate_xz(
+                                structure.center_x,
+                                structure.center_z,
+                                x + f32(companion_post) * companion_width * .24,
+                                companion_z,
+                                structure.rotation,
+                            )
+                            world_box_rotated(
+                                {post_x, (companion_slab_top_y + companion_post_top_y) * .5, post_z},
+                                {.055, companion_post_height, .07},
+                                structure.rotation,
+                                companion_color,
+                            )
+                        }
                     }
-                    for side in -1 ..= 1 {
-                        if side == 0 do continue
-                        return_x, return_z := world_rotate_xz(
-                            structure.center_x,
-                            structure.center_z,
-                            x + f32(side) * rail_width * .5,
-                            (local_z + rail_front_z) * .5,
-                            structure.rotation,
-                        )
-                        world_box_rotated(
-                            {return_x, y - window_height * .5 + .58, return_z},
-                            {.08, .11, rail_front_z - local_z},
-                            structure.rotation,
-                            {102, 76, 63, 255},
-                        )
-                    }
+                } else if facade_style == 1 && row > 0 {
+                    world_architecture_balcony(structure, x, local_z, y - window_height * .5, window_width, false)
                 } else if facade_style == 2 {
                     // Blue façades use small fabric awnings rather than
                     // balconies, giving this seed variant a distinct profile.
@@ -4425,70 +6650,7 @@ world_architecture_mass :: proc(
                     )
                 } else {
                     if facade_style == 0 && row > 0 && row % 2 == 0 {
-                        // Alternating wrought-iron balconies give the warmer
-                        // stucco façades a lived-in 1940s Mediterranean rhythm.
-                        balcony_width := window_width + 1.20
-                        balcony_depth: f32 = .90
-                        balcony_center_z := local_z + balcony_depth * .5 - .08
-                        balcony_x, balcony_z := world_rotate_xz(
-                            structure.center_x,
-                            structure.center_z,
-                            x,
-                            balcony_center_z,
-                            structure.rotation,
-                        )
-                        rail_width := window_width + .75
-                        rail_front_z := local_z + balcony_depth - .13
-                        railing_x, railing_z := world_rotate_xz(
-                            structure.center_x,
-                            structure.center_z,
-                            x,
-                            rail_front_z,
-                            structure.rotation,
-                        )
-                        world_box_rotated(
-                            {balcony_x, y - window_height * .5 - .14, balcony_z},
-                            {balcony_width, .20, balcony_depth},
-                            structure.rotation,
-                            {196, 151, 103, 255},
-                        )
-                        world_box_rotated(
-                            {railing_x, y - window_height * .5 + .58, railing_z},
-                            {window_width + .75, .11, .08},
-                            structure.rotation,
-                            {83, 68, 62, 255},
-                        )
-                        for post in -2 ..= 2 {
-                            post_x, post_z := world_rotate_xz(
-                                structure.center_x,
-                                structure.center_z,
-                                x + f32(post) * rail_width * .25,
-                                rail_front_z,
-                                structure.rotation,
-                            )
-                            world_box_rotated(
-                                {post_x, y - window_height * .5 + .20, post_z},
-                                {.06, .68, .08},
-                                structure.rotation,
-                                {83, 68, 62, 255},
-                            )
-                        }
-                        for side in -1 ..= 1 {
-                            if side == 0 do continue
-                            return_x, return_z := world_rotate_xz(
-                                structure.center_x,
-                                structure.center_z,
-                                x + f32(side) * rail_width * .5,
-                                (local_z + rail_front_z) * .5,
-                                structure.rotation,
-                            )
-                            world_box_rotated(
-                                {return_x, y - window_height * .5 + .58, return_z},
-                                {.08, .11, rail_front_z - local_z},
-                                structure.rotation,
-                                {83, 68, 62, 255},
-                            )
-                        }
+                        world_architecture_balcony(structure, x, local_z, y - window_height * .5, window_width, true)
                         planter_x, planter_z := world_rotate_xz(
                             structure.center_x,
                             structure.center_z,
@@ -4502,7 +6664,7 @@ world_architecture_mass :: proc(
                             structure.rotation,
                             {107, 132, 92, 255},
                         )
-                    } else {
+                    } else if !has_juliet_guard {
                         shutter_width := clamp(window_width * .30, f32(.42), f32(.62))
                         for side in -1 ..= 1 {
                             if side == 0 do continue
@@ -4700,7 +6862,157 @@ world_architecture_mass :: proc(
     }
 }
 
-world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Project, lod: Structure_LOD = .Near) {
+world_architecture_mixed_use_service_door :: proc(
+    structure: terrain.Structure,
+    local_x, local_z, yaw_offset: f32,
+    outward_x, outward_z: f32,
+) {
+    door_x, door_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
+    yaw := structure.rotation + yaw_offset
+    door_color := (structure.seed & 1) == 0 ? rl.Color{68, 98, 97, 255} : rl.Color{111, 72, 58, 255}
+    frame_color := rl.Color{192, 174, 139, 255}
+    world_box_rotated({door_x, structure.base_y + 1.48, door_z}, {1.42, 2.78, .18}, yaw, door_color)
+    for jamb in -1 ..= 1 {
+        if jamb == 0 do continue
+        jamb_local_x := local_x
+        jamb_local_z := local_z
+        if math.abs(yaw_offset) > math.PI * .25 {
+            jamb_local_z += f32(jamb) * .79
+        } else {
+            jamb_local_x += f32(jamb) * .79
+        }
+        jamb_x, jamb_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            jamb_local_x,
+            jamb_local_z,
+            structure.rotation,
+        )
+        world_box_rotated({jamb_x, structure.base_y + 1.48, jamb_z}, {.11, 3.02, .12}, yaw, frame_color)
+    }
+    world_box_rotated({door_x, structure.base_y + 2.94, door_z}, {1.66, .13, .12}, yaw, frame_color)
+    step_local_x := local_x + outward_x * .38
+    step_local_z := local_z + outward_z * .38
+    step_x, step_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        step_local_x,
+        step_local_z,
+        structure.rotation,
+    )
+    world_box_rotated({step_x, structure.base_y + .075, step_z}, {1.72, .15, .68}, yaw, {157, 139, 111, 255})
+    canopy_local_x := local_x + outward_x * .30
+    canopy_local_z := local_z + outward_z * .30
+    canopy_x, canopy_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        canopy_local_x,
+        canopy_local_z,
+        structure.rotation,
+    )
+    world_box_rotated({canopy_x, structure.base_y + 3.18, canopy_z}, {1.82, .13, .64}, yaw, {174, 103, 72, 255})
+    lamp_local_x := local_x + outward_x * .13
+    lamp_local_z := local_z + outward_z * .13
+    lamp_x, lamp_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        lamp_local_x,
+        lamp_local_z,
+        structure.rotation,
+    )
+    world_box_rotated_material(
+        {lamp_x, structure.base_y + 2.78, lamp_z},
+        {.18, .15, .04},
+        yaw,
+        {255, 176, 76, 255},
+        .Emissive,
+    )
+    handle_local_x := local_x
+    handle_local_z := local_z
+    if math.abs(yaw_offset) > math.PI * .25 {
+        handle_local_z -= .42
+    } else {
+        handle_local_x += .42
+    }
+    handle_local_x += outward_x * .13
+    handle_local_z += outward_z * .13
+    handle_x, handle_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        handle_local_x,
+        handle_local_z,
+        structure.rotation,
+    )
+    world_box_rotated({handle_x, structure.base_y + 1.48, handle_z}, {.07, .07, .10}, yaw, {205, 164, 84, 255})
+}
+
+world_architecture_mixed_use_service_path :: proc(
+    structure: terrain.Structure,
+    local_x, local_z, outward_x, outward_z, path_length: f32,
+) {
+    // Pull the private entrance out into the rear yard with a narrow, visibly
+    // jointed stone walk. Without this link the service door reads like an
+    // opening stranded in lawn rather than part of the building circulation.
+    path_local_x := local_x + outward_x * (path_length * .5 + .48)
+    path_local_z := local_z + outward_z * (path_length * .5 + .48)
+    path_x, path_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        path_local_x,
+        path_local_z,
+        structure.rotation,
+    )
+    path_yaw := structure.rotation
+    path_size := [3]f32{1.46, .065, path_length}
+    if math.abs(outward_x) > math.abs(outward_z) {
+        path_yaw += math.PI * .5
+    }
+    world_box_rotated({path_x, structure.base_y + .032, path_z}, path_size, path_yaw, {171, 157, 130, 255})
+    joint_count := int(max(f32(2), math.floor(path_length / .72)))
+    for joint in 1 ..< joint_count {
+        distance := .48 + path_length * f32(joint) / f32(joint_count)
+        joint_local_x := local_x + outward_x * distance
+        joint_local_z := local_z + outward_z * distance
+        joint_x, joint_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            joint_local_x,
+            joint_local_z,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {joint_x, structure.base_y + .068, joint_z},
+            {1.30, .012, .045},
+            path_yaw,
+            {116, 109, 94, 255},
+        )
+    }
+}
+
+world_architecture_entrance_oriented :: proc(source: terrain.Structure) -> terrain.Structure {
+    result := source
+    switch source.entrance_side {
+    case .Front:
+    case .Right:
+        result.rotation -= math.PI * .5
+        result.width, result.depth = source.depth, source.width
+    case .Rear:
+        result.rotation += math.PI
+    case .Left:
+        result.rotation += math.PI * .5
+        result.width, result.depth = source.depth, source.width
+    }
+    // The rich architecture pass is authored around local +Z. Present a
+    // footprint-equivalent view whose +Z is the selected entrance façade.
+    result.entrance_side = .Front
+    return result
+}
+
+world_architecture_oriented :: proc(
+    structure: terrain.Structure,
+    project: ^terrain.Project,
+    lod: Structure_LOD = .Near,
+) {
     footprint := architecture.architecture_footprint(structure)
     if footprint.count <= 1 {
         layout := architecture.architecture_opening_layout(structure, 0, 0)
@@ -4708,6 +7020,46 @@ world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Proje
         return
     }
     frontage_index := architecture.architecture_frontage_mass_index(structure)
+    compound_identity := architecture.architecture_resolve_legacy_identity(structure)
+    if compound_identity.archetype == .Mixed_Use_Dwelling && footprint.count == 3 {
+        // The gap between the paired private wings is a working service court,
+        // not leftover lawn. A shallow stone surface and drain make deliveries
+        // and rear circulation legible without changing the public frontage.
+        left := footprint.masses[1]
+        right := footprint.masses[2]
+        court_left := left.local_x + left.width * .5
+        court_right := right.local_x - right.width * .5
+        court_width := max(court_right - court_left - .35, f32(1.2))
+        court_depth := min(left.depth, right.depth) * .82
+        court_local_x := (court_left + court_right) * .5
+        court_local_z := (left.local_z + right.local_z) * .5
+        court_x, court_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            court_local_x,
+            court_local_z,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {court_x, structure.base_y + .035, court_z},
+            {court_width, .07, court_depth},
+            structure.rotation,
+            {166, 151, 123, 255},
+        )
+        drain_x, drain_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            court_local_x,
+            court_local_z,
+            structure.rotation,
+        )
+        world_box_rotated(
+            {drain_x, structure.base_y + .078, drain_z},
+            {.14, .018, court_depth * .82},
+            structure.rotation,
+            {83, 85, 77, 255},
+        )
+    }
     for mass, mass_index in footprint.masses[:footprint.count] {
         child := structure
         child.center_x, child.center_z = architecture.architecture_mass_world(structure, mass)
@@ -4716,14 +7068,78 @@ world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Proje
         child.height = max(f32(0), structure.height * mass.height_scale)
         // Keep palette identity while decoupling repeated openings and tiles.
         child.seed = structure.seed + u32(mass_index * 747796405)
+        if compound_identity.archetype == .Mixed_Use_Dwelling && mass_index != frontage_index {
+            // Private rear ranges stay subordinate to the commercial street
+            // bar. A consistent parapet avoids pitched secondary roofs
+            // penetrating the taller mass at compound junctions.
+            child.seed = (child.seed &~ u32(3)) | u32(3)
+        }
         layout := architecture.architecture_opening_layout(structure, mass_index, frontage_index)
         world_architecture_mass(child, project, mass_index == frontage_index, &layout, lod)
     }
+    // Render private-range doors after their wall masses so the shallow door
+    // leaves and trim remain visible on the compound façade planes.
+    if lod == .Near && compound_identity.archetype == .Mixed_Use_Dwelling && footprint.count == 3 {
+        // Each private range opens directly into the working court. These are
+        // deliberately modest service/family doors, subordinate to both the
+        // glass storefront and the street-facing apartment stair entrances.
+        for wing_index in 1 ..= 2 {
+            wing := footprint.masses[wing_index]
+            inward := wing_index == 1 ? f32(1) : f32(-1)
+            world_architecture_mixed_use_service_door(
+                structure,
+                wing.local_x + inward * (wing.width * .5 + .10),
+                wing.local_z,
+                math.PI * .5,
+                inward,
+                0,
+            )
+        }
+    } else if lod == .Near && compound_identity.archetype == .Mixed_Use_Dwelling && footprint.count == 2 {
+        // L and T plans get one quiet rear-yard entrance into the private
+        // range, completing circulation without adding another public door
+        // beside the shopfront.
+        wing := footprint.masses[1]
+        world_architecture_mixed_use_service_door(
+            structure,
+            wing.local_x,
+            wing.local_z - wing.depth * .5 - .10,
+            math.PI,
+            0,
+            -1,
+        )
+        world_architecture_mixed_use_service_path(
+            structure,
+            wing.local_x,
+            wing.local_z - wing.depth * .5 - .10,
+            0,
+            -1,
+            clamp(structure.depth * .22, f32(2.8), f32(4.8)),
+        )
+    }
+}
+
+world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Project, lod: Structure_LOD = .Near) {
+    world_architecture_oriented(world_architecture_entrance_oriented(structure), project, lod)
+}
+
+world_architecture_alley_color :: proc(alley: architecture.City_Alley, preview, stair: bool) -> rl.Color {
+    if preview do return {176, 161, 128, 150}
+    if stair do return {139, 126, 103, 255}
+    switch settlement_access_surface(alley) {
+    case .Stone:
+        return {142, 139, 128, 255}
+    case .Gravel:
+        return {151, 137, 110, 255}
+    case .Packed_Earth:
+        return {157, 135, 99, 255}
+    }
+    return {157, 135, 99, 255}
 }
 
 world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan, preview: bool = false) {
     if editor == nil || plan == nil do return
-    for alley in plan.alleys[:plan.alley_count] {
+    for alley, alley_index in plan.alleys[:plan.alley_count] {
         dx, dz := alley.end_x - alley.start_x, alley.end_z - alley.start_z
         length := f32(math.sqrt(f64(dx * dx + dz * dz)))
         if length <= .01 do continue
@@ -4732,16 +7148,186 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
         if !world_sphere_in_view(editor, {center_x, center_y, center_z}, length * .5 + alley.half_width + 1) {
             continue
         }
-        world_land_surface_rotated(
-            editor,
-            center_x,
-            center_z,
-            length,
-            alley.half_width * 2,
-            f32(math.atan2(f64(dz), f64(dx))),
-            .13,
-            preview ? rl.Color{176, 161, 128, 150} : rl.Color{151, 137, 110, 255},
-        )
+        start_height := terrain.sample_height(&editor.project, 0, alley.start_x, alley.start_z)
+        end_height := terrain.sample_height(&editor.project, 0, alley.end_x, alley.end_z)
+        curve := settlement_access_alley_curve(plan, alley_index)
+        curve_segments := settlement_access_curve_sample_count(curve)
+        curve_points: [13][2]f32
+        curve_distances: [13]f32
+        curve_points[0] = curve.points[0]
+        grade := f32(0)
+        previous := curve_points[0]
+        previous_height := terrain.sample_height(&editor.project, 0, previous[0], previous[1])
+        for curve_index in 1 ..= curve_segments {
+            amount := f32(curve_index) / f32(curve_segments)
+            current := settlement_access_curve_point(curve, amount)
+            curve_points[curve_index] = current
+            run := linalg.length(current - previous)
+            current_height := terrain.sample_height(&editor.project, 0, current[0], current[1])
+            if run > .01 do grade = max(grade, math.abs(current_height - previous_height) / run)
+            curve_distances[curve_index] = curve_distances[curve_index - 1] + run
+            previous, previous_height = current, current_height
+        }
+        curve_length := curve_distances[curve_segments]
+        surface_color := world_architecture_alley_color(alley, preview, grade >= SETTLEMENT_ACCESS_STAIR_GRADE)
+        previous = curve_points[0]
+        for curve_index in 1 ..= curve_segments {
+            current := curve_points[curve_index]
+            segment_dx, segment_dz := current[0] - previous[0], current[1] - previous[1]
+            segment_length := f32(math.sqrt(f64(segment_dx * segment_dx + segment_dz * segment_dz)))
+            if segment_length > .01 {
+                world_land_surface_rotated(
+                    editor,
+                    (previous[0] + current[0]) * .5,
+                    (previous[1] + current[1]) * .5,
+                    segment_length + .04,
+                    alley.half_width * 2,
+                    f32(math.atan2(f64(segment_dz), f64(segment_dx))),
+                    .13,
+                    surface_color,
+                )
+            }
+            previous = current
+        }
+        door_terminals := [2]architecture.City_Alley_Terminal{alley.start_terminal, alley.end_terminal}
+        for terminal, endpoint_index in door_terminals {
+            if terminal != .Door do continue
+            door_x, door_z := alley.start_x, alley.start_z
+            direction_x, direction_z := dx, dz
+            if endpoint_index == 1 {
+                door_x, door_z = alley.end_x, alley.end_z
+                direction_x, direction_z = -dx, -dz
+            }
+            apron_length := min(f32(.65), length)
+            apron_center_x := door_x + direction_x / length * apron_length * .5
+            apron_center_z := door_z + direction_z / length * apron_length * .5
+            world_land_surface_rotated(
+                editor,
+                apron_center_x,
+                apron_center_z,
+                apron_length,
+                settlement_access_door_apron_width(alley),
+                f32(math.atan2(f64(direction_z), f64(direction_x))),
+                .14,
+                surface_color,
+            )
+        }
+        road_terminals := [2]architecture.City_Alley_Terminal{alley.start_terminal, alley.end_terminal}
+        for terminal, endpoint_index in road_terminals {
+            if terminal != .Road do continue
+            road_x, road_z := alley.start_x, alley.start_z
+            inward_x, inward_z := dx, dz
+            if endpoint_index == 1 {
+                road_x, road_z = alley.end_x, alley.end_z
+                inward_x, inward_z = -dx, -dz
+            }
+            apron_run, outer_width, apron_valid := settlement_access_road_apron(alley, length)
+            if !apron_valid do continue
+            world_land_surface_tapered(
+                editor,
+                road_x,
+                road_z,
+                inward_x,
+                inward_z,
+                apron_run,
+                alley.half_width * 2,
+                outer_width,
+                .14,
+                surface_color,
+            )
+        }
+        if !preview && grade >= SETTLEMENT_ACCESS_STAIR_GRADE {
+            // Closely spaced transverse stone nosings make steep access read
+            // as a stair rather than a texture stretched implausibly uphill.
+            // Door, road, and public-space terminals retain a clear landing
+            // instead of carrying a riser directly against the threshold.
+            run_start, run_finish, run_valid := settlement_access_stair_nosing_range(alley, curve_length)
+            landing_lengths := [2]f32 {
+                alley.start_terminal != .None ? min(f32(.65), curve_length * .5) : 0,
+                alley.end_terminal != .None ? min(f32(.65), curve_length * .5) : 0,
+            }
+            for landing_length, endpoint_index in landing_lengths {
+                if landing_length <= .01 do continue
+                distance := endpoint_index == 0 ? landing_length * .5 : curve_length - landing_length * .5
+                endpoint_height := start_height
+                if endpoint_index == 1 do endpoint_height = end_height
+                sample_index := 1
+                for sample_index < curve_segments && curve_distances[sample_index] < distance {
+                    sample_index += 1
+                }
+                span := max(curve_distances[sample_index] - curve_distances[sample_index - 1], f32(.001))
+                span_amount := (distance - curve_distances[sample_index - 1]) / span
+                point :=
+                    curve_points[sample_index - 1] +
+                    (curve_points[sample_index] - curve_points[sample_index - 1]) * span_amount
+                tangent := linalg.normalize0(curve_points[sample_index] - curve_points[sample_index - 1])
+                yaw := f32(math.atan2(f64(tangent[1]), f64(tangent[0])))
+                landing_width := alley.half_width * 1.9
+                terminal := endpoint_index == 0 ? alley.start_terminal : alley.end_terminal
+                if terminal == .Door {
+                    landing_width = max(landing_width, settlement_access_door_apron_width(alley))
+                }
+                world_box_rotated(
+                    {point[0], endpoint_height + .08, point[1]},
+                    {landing_length * .5, .08, landing_width},
+                    yaw,
+                    {139, 126, 103, 255},
+                )
+            }
+            if !run_valid do continue
+            run_length := run_finish - run_start
+            step_count := max(1, int(math.ceil(f64(run_length / .42))))
+            for step_index in 0 ..< step_count {
+                distance := run_start + (f32(step_index) + .5) / f32(step_count) * run_length
+                sample_index := 1
+                for sample_index < curve_segments && curve_distances[sample_index] < distance {
+                    sample_index += 1
+                }
+                span := max(curve_distances[sample_index] - curve_distances[sample_index - 1], f32(.001))
+                span_amount := (distance - curve_distances[sample_index - 1]) / span
+                point :=
+                    curve_points[sample_index - 1] +
+                    (curve_points[sample_index] - curve_points[sample_index - 1]) * span_amount
+                tangent := linalg.normalize0(curve_points[sample_index] - curve_points[sample_index - 1])
+                yaw := f32(math.atan2(f64(tangent[1]), f64(tangent[0])))
+                step_y := terrain.sample_height(&editor.project, 0, point[0], point[1])
+                world_box_rotated(
+                    {point[0], step_y + .17, point[1]},
+                    {.075, .08, alley.half_width * 1.9},
+                    yaw,
+                    {105, 94, 76, 255},
+                )
+            }
+        }
+    }
+    seen := make([dynamic][2]f32, context.temp_allocator)
+    for alley in plan.alleys[:plan.alley_count] {
+        endpoints := [2][2]f32{{alley.start_x, alley.start_z}, {alley.end_x, alley.end_z}}
+        for point in endpoints {
+            duplicate := false
+            for existing in seen {
+                if settlement_alley_point_near(existing, point) {
+                    duplicate = true
+                    break
+                }
+            }
+            if duplicate do continue
+            append(&seen, point)
+            radius := settlement_access_node_paving_radius(plan, point)
+            if radius <= .01 do continue
+            height := terrain.sample_height(&editor.project, 0, point[0], point[1])
+            if !world_sphere_in_view(editor, {point[0], height, point[1]}, radius + 1) do continue
+            pad_alley := alley
+            for candidate in plan.alleys[:plan.alley_count] {
+                if candidate.household_demand <= pad_alley.household_demand do continue
+                if settlement_alley_point_near(point, {candidate.start_x, candidate.start_z}) ||
+                   settlement_alley_point_near(point, {candidate.end_x, candidate.end_z}) {
+                    pad_alley = candidate
+                }
+            }
+            pad_color := world_architecture_alley_color(pad_alley, preview, false)
+            world_land_surface_disc(editor, point[0], point[1], radius, .135, pad_color)
+        }
     }
 }
 
@@ -4749,14 +7335,80 @@ world_architecture_lamps :: proc(editor: ^Editor, plan: ^architecture.City_Plan)
     if editor == nil || plan == nil do return
     for lamp in plan.lamps[:plan.lamp_count] {
         base_y := terrain.sample_height(&editor.project, 0, lamp.x, lamp.z)
-        if !world_sphere_in_view(editor, {lamp.x, base_y + 2, lamp.z}, 2.25, 1) do continue
-        metal := rl.Color{48, 54, 53, 255}
-        glass := rl.Color{235, 190, 102, 255}
+        // Include the complete 6.1 m ground pool in the bound, not only the
+        // post and lantern. Otherwise the soft edge can disappear while still
+        // visibly inside the screen.
+        if !world_sphere_in_view(editor, {lamp.x, base_y + 2, lamp.z}, 6.45, .5) do continue
+        // Blue-green painted iron stays subdued without lunar fill, but has
+        // enough authored value for full-moon ambient to describe the post
+        // and lantern cage instead of leaving the same black silhouette.
+        metal := rl.Color{82, 91, 87, 255}
+        glass := rl.Color{246, 211, 146, 255}
+        camera_position := editor.camera_pose.position
+        camera_dx, camera_dz := lamp.x - camera_position.x, lamp.z - camera_position.z
+        far_fixture := camera_dx * camera_dx + camera_dz * camera_dz > 55 * 55
+        if far_fixture {
+            // Beyond this distance the base, cage frame, and cap are all
+            // sub-pixel, but their boxes still cost 108 submitted vertices.
+            // Preserve the silhouette, warm source, halo, and complete pool;
+            // the compact emissive box naturally collapses into the same point
+            // read without a rectangular source billboard.
+            world_box_rotated({lamp.x, base_y + 1.94, lamp.z}, {.14, 3.88, .14}, lamp.yaw, metal)
+            world_box_rotated_material({lamp.x, base_y + 3.62, lamp.z}, {.30, .30, .30}, lamp.yaw, glass, .Emissive)
+            world_billboard_material_uv(
+                editor,
+                {lamp.x, base_y + 3.62, lamp.z},
+                .74,
+                .74,
+                {255, 220, 160, 36},
+                .Emissive_Halo,
+                true,
+            )
+            world_municipal_light_pool(
+                lamp.x,
+                base_y,
+                lamp.z,
+                &editor.project,
+                .20,
+                6.1,
+                6.1,
+                0,
+                50,
+                surface_editor = editor,
+                late_submit = true,
+            )
+            continue
+        }
         world_box_rotated({lamp.x, base_y + .10, lamp.z}, {.48, .20, .48}, lamp.yaw, metal)
         world_box_rotated({lamp.x, base_y + 1.70, lamp.z}, {.14, 3.20, .14}, lamp.yaw, metal)
         world_box_rotated({lamp.x, base_y + 3.36, lamp.z}, {.58, .14, .58}, lamp.yaw, metal)
-        world_box_rotated({lamp.x, base_y + 3.62, lamp.z}, {.42, .42, .42}, lamp.yaw, glass)
+        world_emissive_fixture_box({lamp.x, base_y + 3.62, lamp.z}, {.42, .42, .42}, lamp.yaw, glass, 1)
+        world_billboard_material_uv(
+            editor,
+            {lamp.x, base_y + 3.62, lamp.z},
+            .74,
+            .74,
+            {255, 220, 160, 36},
+            .Emissive_Halo,
+            true,
+        )
         world_box_rotated({lamp.x, base_y + 3.87, lamp.z}, {.54, .10, .54}, lamp.yaw, metal)
+        // Post-top luminaires spread a broad, low-contrast symmetric pool.
+        // The wider footprint bridges route spacing without adding geometry;
+        // reduced opacity prevents overlapping pools from flattening the road.
+        world_municipal_light_pool(
+            lamp.x,
+            base_y,
+            lamp.z,
+            &editor.project,
+            .20,
+            6.1,
+            6.1,
+            0,
+            50,
+            surface_editor = editor,
+            late_submit = true,
+        )
     }
 }
 
@@ -5377,7 +8029,17 @@ world_static_formation_cached :: proc(
     }
     entry := &world_renderer.static_geometry_cache[structure_index]
     lod_result := structure_lod_for(structure, entry.lod, force_near)
-    if entry.valid && entry.structure == structure && entry.lod == lod_result.tier {
+    focal_length := f32(1.35)
+    if world_renderer.editor.in_map && driving_aircraft(world_renderer.editor) {
+        focal_length = world_renderer.editor.flight_camera.focal_length
+    }
+    camera := perspective_camera(world_renderer.editor.camera_pose, focal_length)
+    billboard_right := [3]f32{camera.right.x, camera.right.y, camera.right.z}
+    billboard_up := [3]f32{camera.up.x, camera.up.y, camera.up.z}
+    billboard_basis_matches :=
+        len(entry.bougainvillea_vertices) == 0 ||
+        (entry.billboard_right == billboard_right && entry.billboard_up == billboard_up)
+    if entry.valid && entry.structure == structure && entry.lod == lod_result.tier && billboard_basis_matches {
         world_static_mesh_append(entry)
         append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
         append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
@@ -5423,6 +8085,8 @@ world_static_formation_cached :: proc(
     entry.structure = structure
     entry.lod = lod_result.tier
     entry.lod_transition = lod_result.transition
+    entry.billboard_right = billboard_right
+    entry.billboard_up = billboard_up
 }
 
 world_structure_preview_cluster :: proc(editor: ^Editor) {
@@ -6543,6 +9207,11 @@ world_foliage_lobe :: proc(
     }
     vertices: [MAX_RINGS][MAX_SEGMENTS]third_person.Vec3
     normals: [MAX_RINGS][MAX_SEGMENTS]third_person.Vec3
+    // Grounded foliage bends as one continuous blob over the terrain. Sample
+    // each angular column once and reuse that offset through every profile
+    // ring, keeping terrain queries proportional to the existing silhouette
+    // resolution rather than the full vertex count.
+    terrain_offsets: [MAX_SEGMENTS]f32
     // The signed clump field, sampled once per contour vertex, drives both the
     // rounded three-dimensional bulges and the crevice ambient occlusion baked
     // into the vertex colors, so the painted shade tracks the real mesh volume.
@@ -6656,6 +9325,13 @@ world_foliage_lobe :: proc(
                 droop_wave := clamp(.5 + broad_droop * .34 + tip_droop * .16, 0, 1)
                 contour_lift -= profile_height * (.010 + droop_wave * .068)
             }
+            if base_lift <= 0 {
+                if ring == 0 {
+                    terrain_offsets[segment] =
+                        terrain.sample_height(&world_renderer.editor.project, 0, world_x, world_z) - structure.base_y
+                }
+                contour_lift += terrain_offsets[segment]
+            }
             vertices[ring][segment] = {
                 world_x,
                 structure.base_y + base_lift + profile_height * sampled_ring_height[ring] + contour_lift,
@@ -6700,7 +9376,16 @@ world_foliage_lobe :: proc(
         // keeps the deep pocket while allowing a soft value roll toward it.
         base_fraction = .115
     }
-    base := third_person.Vec3{base_x, structure.base_y + base_lift + profile_height * base_fraction, base_z}
+    base_terrain_offset := f32(0)
+    if base_lift <= 0 {
+        base_terrain_offset =
+            terrain.sample_height(&world_renderer.editor.project, 0, base_x, base_z) - structure.base_y
+    }
+    base := third_person.Vec3 {
+        base_x,
+        structure.base_y + base_lift + profile_height * base_fraction + base_terrain_offset,
+        base_z,
+    }
     for segment in 0 ..< segment_count {
         next := (segment + 1) % segment_count
         if base_lift > 0 {
@@ -6779,7 +9464,16 @@ world_foliage_lobe :: proc(
         structure.rotation,
     )
     crown_fraction := crown_base + f32(math.sin(f64(f32(structure.seed) * .005 + f32(variation) * 1.61))) * .035
-    crown := third_person.Vec3{crown_x, structure.base_y + base_lift + profile_height * crown_fraction, crown_z}
+    crown_terrain_offset := f32(0)
+    if base_lift <= 0 {
+        crown_terrain_offset =
+            terrain.sample_height(&world_renderer.editor.project, 0, crown_x, crown_z) - structure.base_y
+    }
+    crown := third_person.Vec3 {
+        crown_x,
+        structure.base_y + base_lift + profile_height * crown_fraction + crown_terrain_offset,
+        crown_z,
+    }
     for segment in 0 ..< segment_count {
         next := (segment + 1) % segment_count
         world_triangle_foliage(
@@ -7909,6 +10603,66 @@ world_architecture_grass_height_scale :: proc(footprints: []Architecture_Grass_F
     return scale
 }
 
+world_architecture_municipal_lamp :: proc(editor: ^Editor, center_x, center_z, rotation: f32, roadway: bool = true) {
+    base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
+    // Circulation areas can intersect the frustum while individual lamps sit
+    // far outside it. Cull against the widest roadway pool plus the fixture
+    // height so visible light never pops, while off-screen boxes, pool
+    // triangles, and halo cards are not submitted.
+    if !world_sphere_in_view(editor, {center_x, base_y + 2.2, center_z}, 8.75, .5) do return
+    metal := rl.Color{82, 91, 87, 255}
+    world_box_rotated({center_x, base_y + .14, center_z}, {.46, .28, .46}, rotation, {91, 91, 79, 255})
+    world_box_rotated({center_x, base_y + 2.25, center_z}, {.13, 4.35, .13}, rotation, metal)
+
+    arm_x, arm_z := world_rotate_xz(center_x, center_z, 0, .34, rotation)
+    world_box_rotated({arm_x, base_y + 4.33, arm_z}, {.13, .13, .78}, rotation, metal)
+    fixture_x, fixture_z := world_rotate_xz(center_x, center_z, 0, .72, rotation)
+    world_box_rotated({fixture_x, base_y + 4.16, fixture_z}, {.40, .14, .34}, rotation, metal)
+    world_emissive_fixture_box(
+        {fixture_x, base_y + 4.065, fixture_z},
+        {.30, .06, .26},
+        rotation,
+        {255, 210, 140, 255},
+        2,
+    )
+    world_billboard_material_uv(
+        editor,
+        {fixture_x, base_y + 4.04, fixture_z},
+        .70,
+        .70,
+        {255, 220, 160, 34},
+        .Emissive_Halo,
+        true,
+    )
+
+    // Cantilever roadway optics distribute light along the street, while
+    // plaza arms face inward and throw their long axis toward the square.
+    // A broader, lower-alpha footprint bridges municipal coverage without
+    // turning each pool into a bright isolated spot. Geometry and draw-call
+    // cost remain unchanged.
+    pool_radius_x := roadway ? f32(6.40) : f32(3.35)
+    pool_radius_z := roadway ? f32(3.35) : f32(5.20)
+    // The post sits at the circulation edge and its cantilever points along
+    // local +Z. Place the optical footprint farther along that aimed throw,
+    // rather than centering most of it beneath and behind the curbside head.
+    pool_throw := roadway ? f32(2.0) : f32(1.65)
+    pool_x, pool_z := world_rotate_xz(center_x, center_z, 0, pool_throw, rotation)
+    world_municipal_light_pool(
+        pool_x,
+        base_y,
+        pool_z,
+        &editor.project,
+        .20,
+        pool_radius_x,
+        pool_radius_z,
+        rotation,
+        56,
+        1,
+        surface_editor = editor,
+        late_submit = true,
+    )
+}
+
 world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud_cover: f32) {
     if editor == nil || lab_scene_suppresses_procedural_circulation(editor) do return
     min_x, max_x := f32(1e9), f32(-1e9)
@@ -7952,17 +10706,77 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                     shoulder,
                 )
             }
+            // Settlement routes author their own clearance-tested lamps. The
+            // fallback grid exists for legacy/capture city plans; rendering
+            // both systems produces clustered posts and stacked pools.
+            if editor.architecture_city_plan.lamp_count == 0 {
+                lamp_count := clamp(int(area.width / 22), 2, 6)
+                for lamp in 0 ..< lamp_count {
+                    along := -area.width * .5 + area.width * (f32(lamp) + .5) / f32(lamp_count)
+                    side := lamp % 2 == 0 ? f32(-1) : f32(1)
+                    lamp_x, lamp_z := world_rotate_xz(area.center_x, area.center_z, along, side * 3.65, area.rotation)
+                    world_architecture_municipal_lamp(
+                        editor,
+                        lamp_x,
+                        lamp_z,
+                        area.rotation + (side < 0 ? f32(0) : f32(math.PI)),
+                    )
+                }
+            }
         case .Plaza:
-            world_land_surface_rotated(
-                editor,
-                area.center_x,
-                area.center_z,
-                area.width,
-                area.length,
-                area.rotation,
-                .16,
-                {151, 144, 126, 255},
-            )
+            seed := u32(i32(area.center_x * 10)) ~ (u32(i32(area.center_z * 10)) * u32(0x9e3779b9))
+            plaza := plazas.generate(seed, area.width, area.length)
+            for piece, piece_index in plaza.paving[:plaza.paving_count] {
+                piece_x, piece_z := world_rotate_xz(area.center_x, area.center_z, piece.x, piece.z, area.rotation)
+                color := rl.Color{184, 177, 158, 255}
+                if piece.kind == .Border do color = {116, 111, 103, 255}
+                if piece.kind == .Mosaic || piece.kind == .Inlay {
+                    mosaic_palette := [3]rl.Color{{77, 112, 119, 255}, {174, 91, 67, 255}, {211, 190, 135, 255}}
+                    color = mosaic_palette[piece.tone]
+                }
+                // Mosaic bars deliberately cross one another. Giving every
+                // decorative piece the same lift made those intersections
+                // coplanar and unstable in the depth buffer. Preserve the
+                // layered design with a sub-centimetre, deterministic stack;
+                // inlays sit above the mosaic as the final repair layer.
+                lift := f32(.16)
+                switch piece.kind {
+                case .Border:
+                    lift = .19
+                case .Mosaic:
+                    lift = .22 + f32(piece_index - 5) * .0005
+                case .Inlay:
+                    lift = .24 + f32(piece_index - 21) * .0005
+                case .Field:
+                }
+                world_land_surface_rotated(
+                    editor,
+                    piece_x,
+                    piece_z,
+                    piece.width,
+                    piece.length,
+                    area.rotation + piece.rotation,
+                    lift,
+                    color,
+                )
+            }
+            for corner_x in -1 ..= 1 {
+                if corner_x == 0 do continue
+                for corner_z in -1 ..= 1 {
+                    if corner_z == 0 do continue
+                    lamp_x, lamp_z := world_rotate_xz(
+                        area.center_x,
+                        area.center_z,
+                        f32(corner_x) * (area.width * .5 - 1.4),
+                        f32(corner_z) * (area.length * .5 - 1.4),
+                        area.rotation,
+                    )
+                    // local +Z rotates to (-sin(theta), cos(theta)); negate
+                    // target X so the cantilever actually faces the square.
+                    facing := f32(math.atan2(f64(lamp_x - area.center_x), f64(area.center_z - lamp_z)))
+                    world_architecture_municipal_lamp(editor, lamp_x, lamp_z, facing, false)
+                }
+            }
         case .Path, .Forecourt:
             world_land_surface_rotated(
                 editor,
@@ -7981,6 +10795,12 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     // it now comes from the shared circulation plan above.
     for structure in editor.project.structures[:editor.project.structure_count] {
         if structure.kind != .Architecture || structure.height > 60 do continue
+        if architecture.architecture_resolve_legacy_identity(structure).archetype == .Mixed_Use_Dwelling {
+            // Mixed-use storefronts own a commissioned climbing-plant pot at
+            // the outer pier. Generic paired entrance pots collide with that
+            // planter and create a blocky double-stack at its rim.
+            continue
+        }
         if structure.seed % 3 != 0 do continue
         structure_center, structure_radius := structure_visibility_sphere(structure)
         if !world_sphere_in_view(editor, structure_center, structure_radius, 2) do continue
@@ -8127,6 +10947,13 @@ world_structures :: proc(editor: ^Editor) {
            ) {
             continue
         }
+        if !force_visible &&
+           structure.kind == .Foliage &&
+           settlement_access_structure_overlaps_alley(&editor.architecture_city_plan, structure) {
+            world_renderer.static_visibility_classification[index] = .Empty
+            stats.empty += 1
+            continue
+        }
         force_near := index == editor.structure_selected && !editor.in_map
         world_before := len(world_renderer.vertices) + len(world_renderer.static_indices)
         foliage_vertices_before := len(world_renderer.foliage_vertices)
@@ -8211,6 +11038,19 @@ world_climbing_leaf_opening_badness :: proc(structure: terrain.Structure, local_
     if structure.kind != .Architecture do return 0
 
     badness := f32(0)
+    identity := architecture.architecture_resolve_legacy_identity(structure)
+    if identity.archetype == .Mixed_Use_Dwelling {
+        // Full-glass shops need a continuous clear display field. Leave a
+        // masonry corridor at each outer pier so the plant can climb beside
+        // the storefront and soften the canopy edge without veiling merchandise.
+        glass_x_score := clamp(1 - max(math.abs(local_x) - structure.width * .37, f32(0)) / 1.1, 0, 1)
+        glass_y_score := clamp(1 - max(local_y - 4.35, f32(0)) / .75, 0, 1)
+        if local_y >= 0 do badness = max(badness, glass_x_score * glass_y_score)
+        sign_half_width := min(structure.width * .20, f32(3.0))
+        sign_x_score := clamp(1 - max(math.abs(local_x) - sign_half_width, f32(0)) / .65, 0, 1)
+        sign_y_score := clamp(1 - math.abs(local_y - 6.05) / .72, 0, 1)
+        badness = max(badness, sign_x_score * sign_y_score)
+    }
     landmark := structure.height > 60
     if !landmark {
         // Include the lobe footprint in the exclusion margin, not just its
@@ -8248,6 +11088,16 @@ world_climbing_leaf_stem_opening_badness :: proc(structure: terrain.Structure, l
     // stem disappear between floors even when there is clear masonry beside
     // the windows.
     badness := f32(0)
+    identity := architecture.architecture_resolve_legacy_identity(structure)
+    if identity.archetype == .Mixed_Use_Dwelling {
+        glass_x_score := clamp(1 - max(math.abs(local_x) - structure.width * .38, f32(0)) / .55, 0, 1)
+        glass_y_score := clamp(1 - max(local_y - 4.25, f32(0)) / .45, 0, 1)
+        if local_y >= 0 do badness = max(badness, glass_x_score * glass_y_score)
+        sign_half_width := min(structure.width * .20, f32(3.0))
+        sign_x_score := clamp(1 - max(math.abs(local_x) - sign_half_width, f32(0)) / .35, 0, 1)
+        sign_y_score := clamp(1 - math.abs(local_y - 6.05) / .48, 0, 1)
+        badness = max(badness, sign_x_score * sign_y_score)
+    }
     landmark := structure.height > 60
     if !landmark {
         door_x_score := clamp(1 - math.abs(local_x) / (structure.width * .20), 0, 1)
@@ -8348,6 +11198,9 @@ world_climbing_leaf_vine :: proc(
     render_root: bool,
 ) {
     vine_maturity := f32(1)
+    mixed_use_storefront :=
+        structure.kind == .Architecture &&
+        architecture.architecture_resolve_legacy_identity(structure).archetype == .Mixed_Use_Dwelling
     if structure.kind == .Architecture {
         vine_maturity = architecture.bougainvillea_maturity(growth_density)
     }
@@ -8364,10 +11217,21 @@ world_climbing_leaf_vine :: proc(
     root_scale := .78 + vine_maturity * .42
     stem_start := structure.base_y + .12 + f32(seed % 5) * .28
     planter_rooted := false
+    mixed_use_planter := false
     if structure.kind == .Architecture {
         // Architectural bougainvillea starts from a legible growing medium,
         // never from an arbitrary point partway up the wall.
         planter_rooted = architecture.bougainvillea_planter_rooted(plant_seed)
+        if architecture.architecture_resolve_legacy_identity(structure).archetype == .Mixed_Use_Dwelling {
+            // Storefront vines are part of the shopfront composition: give
+            // every one a visible pavement planter at its outer masonry pier.
+            planter_rooted = true
+            mixed_use_planter = true
+            // Retail façades are read from across a street. A slightly larger
+            // commissioned pot anchors the mature plant without encroaching
+            // on either display glass or the apartment landing.
+            root_scale = max(root_scale, f32(1.42))
+        }
         stem_start = structure.base_y + (planter_rooted ? .50 * root_scale : .12)
     }
     stem_end := min(structure.base_y + vine_height, structure.base_y + structure.height * .86)
@@ -8455,6 +11319,11 @@ world_climbing_leaf_vine :: proc(
         root := vine_points[0]
         if planter_rooted {
             pottery := plant_seed % 2 == 0 ? rl.Color{177, 92, 57, 255} : rl.Color{156, 79, 53, 255}
+            foot_color := plant_seed % 2 == 0 ? rl.Color{139, 70, 47, 255} : rl.Color{124, 62, 44, 255}
+            if mixed_use_planter {
+                pottery = plant_seed % 2 == 0 ? rl.Color{196, 105, 65, 255} : rl.Color{181, 91, 59, 255}
+                foot_color = plant_seed % 2 == 0 ? rl.Color{157, 77, 49, 255} : rl.Color{145, 69, 46, 255}
+            }
             pottery_lip := formation_face_color(pottery, .35, 0)
             // A tapered body, proud rim, and visible soil plane read as an
             // actual terracotta planter rather than the former generic cube.
@@ -8462,7 +11331,7 @@ world_climbing_leaf_vine :: proc(
                 {root.x, structure.base_y + .025 * root_scale, root.z},
                 {.76 * root_scale, .05 * root_scale, .62 * root_scale},
                 structure.rotation,
-                plant_seed % 2 == 0 ? rl.Color{139, 70, 47, 255} : rl.Color{124, 62, 44, 255},
+                foot_color,
             )
             world_tapered_box_rotated(
                 {root.x, structure.base_y + .22 * root_scale, root.z},
@@ -8731,25 +11600,6 @@ world_climbing_leaf_vine :: proc(
                     secondary_radius,
                     secondary_radius * .88,
                     secondary_color,
-                )
-            }
-        }
-        if structure.kind == .Architecture && point_index > 0 {
-            segment_previous_delta := vine_local_x[point_index] - vine_local_x[point_index - 1]
-            next_delta := vine_local_x[point_index + 1] - vine_local_x[point_index]
-            bend := math.abs(next_delta - segment_previous_delta)
-            if bend > structure.width * .0045 && start_badness < .48 {
-                // A subtle swollen knuckle rounds the join between the two
-                // tapered tubes. Restrict it to visible bends so straight
-                // leaders stay lean and vertex cost remains bounded.
-                joint_radius := segment_radius * 1.04
-                world_ellipsoid_rotated(
-                    vine_points[point_index],
-                    joint_radius,
-                    joint_radius * 1.10,
-                    joint_radius * .96,
-                    structure.rotation,
-                    woody_color,
                 )
             }
         }
@@ -9042,6 +11892,12 @@ world_climbing_leaf_vine :: proc(
             // limbs before foliage begins.
             branch_reach = structure.width * (.018 + node_t * .038)
             branch_rise = .08 + node_t * .38 + f32(leaf_index % 2) * .12
+            if mixed_use_storefront {
+                // The shop plant is espaliered on a narrow commissioned
+                // frame. Keep its laterals close to that frame instead of
+                // inheriting the broad, tree-like crown used on blank walls.
+                branch_reach *= .42
+            }
         }
         branch_x, branch_z := world_rotate_xz(
             structure.center_x,
@@ -9069,17 +11925,6 @@ world_climbing_leaf_vine :: proc(
             branch_color = color_lerp({73, 103, 61, 255}, {105, 74, 51, 255}, wood_age)
             branch_base_radius = .034 + vine_maturity * .022
             branch_tip_radius = .027 + vine_maturity * .012
-            // A restrained collar hides the tube seam and gives mature
-            // branches the swollen node characteristic of woody climbers.
-            collar_radius := branch_base_radius * (1.05 + vine_maturity * .20)
-            world_ellipsoid_rotated(
-                base,
-                collar_radius,
-                collar_radius * 1.16,
-                collar_radius * .88,
-                structure.rotation,
-                branch_color,
-            )
         }
         world_tube_between(base, branch_end, {0, 1, 0}, branch_base_radius, branch_tip_radius, branch_color)
 
@@ -9171,6 +12016,9 @@ world_climbing_leaf_vine :: proc(
                 if leaf_index >= 3 do crown_scale *= 1.06
             } else if leaf_side == crown_side {
                 crown_scale *= 1.12
+            }
+            if mixed_use_storefront {
+                crown_scale *= .52
             }
         }
         tangent := third_person.Vec3{-average_normal.z, 0, average_normal.x}
@@ -9671,12 +12519,20 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
         editor.capture_bougainvillea_seed_enabled && structure.id == editor.capture_bougainvillea_structure_id
     capture_seed := capture_seed_enabled ? editor.capture_bougainvillea_seed : u32(0)
     entry := &world_renderer.climbing_leaf_geometry_cache[structure_index]
+    camera := perspective_camera(
+        editor.camera_pose,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
+    )
+    billboard_right := [3]f32{camera.right.x, camera.right.y, camera.right.z}
+    billboard_up := [3]f32{camera.up.x, camera.up.y, camera.up.z}
     if entry.valid &&
        entry.structure == structure &&
        entry.density == density &&
        entry.detail_tier == detail_tier &&
        entry.capture_seed_enabled == capture_seed_enabled &&
-       entry.capture_seed == capture_seed {
+       entry.capture_seed == capture_seed &&
+       entry.billboard_right == billboard_right &&
+       entry.billboard_up == billboard_up {
         append(&world_renderer.vertices, ..entry.world_vertices[:])
         append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
         return
@@ -9711,6 +12567,214 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
         root_spread * growth_structure.width * .62,
         plant_seed,
     )
+    mixed_use_storefront :=
+        growth_structure.kind == .Architecture &&
+        architecture.architecture_resolve_legacy_identity(growth_structure).archetype == .Mixed_Use_Dwelling
+    storefront_growth_side := (plant_seed & 1) == 0 ? f32(-1) : f32(1)
+    if mixed_use_storefront {
+        // Establish the plant at an outer solid pier. Leaders can fan inward
+        // above the canopy, but the exact storefront exclusion keeps their
+        // stems and crown off the display glass and central sign.
+        root_attachment_x = storefront_growth_side * growth_structure.width * .43
+        // A slim wall-mounted training frame makes even a sparse young vine
+        // read as intentional shopfront landscaping. Keep its lateral arms
+        // above the canopy so the full-height retail glazing remains clear.
+        trellis_z := growth_structure.depth * .5 + .235
+        trellis_vertical_x := storefront_growth_side * growth_structure.width * .43
+        trellis_x, trellis_world_z := world_rotate_xz(
+            growth_structure.center_x,
+            growth_structure.center_z,
+            trellis_vertical_x,
+            trellis_z,
+            growth_structure.rotation,
+        )
+        trellis_color := rl.Color{78, 101, 76, 255}
+        trellis_rail_width := f32(.028)
+        trellis_height := min(growth_structure.height * .40, f32(6.40))
+        trellis_center_y := growth_structure.base_y + .55 + trellis_height * .5
+        world_box_rotated(
+            {trellis_x, trellis_center_y, trellis_world_z},
+            {trellis_rail_width, trellis_height, trellis_rail_width},
+            growth_structure.rotation,
+            trellis_color,
+        )
+        trellis_arm_width := min(growth_structure.width * .16, f32(1.45))
+        trellis_arm_x := storefront_growth_side * (growth_structure.width * .43 - trellis_arm_width * .5)
+        arm_x, arm_z := world_rotate_xz(
+            growth_structure.center_x,
+            growth_structure.center_z,
+            trellis_arm_x,
+            trellis_z,
+            growth_structure.rotation,
+        )
+        inner_trellis_x := storefront_growth_side * (growth_structure.width * .43 - trellis_arm_width)
+        inner_x, inner_z := world_rotate_xz(
+            growth_structure.center_x,
+            growth_structure.center_z,
+            inner_trellis_x,
+            trellis_z,
+            growth_structure.rotation,
+        )
+        world_box_rotated(
+            {inner_x, trellis_center_y, inner_z},
+            {trellis_rail_width, trellis_height, trellis_rail_width},
+            growth_structure.rotation,
+            trellis_color,
+        )
+        for arm_index in 0 ..< 3 {
+            arm_y := growth_structure.base_y + growth_structure.height * (.28 + f32(arm_index) * .075)
+            world_box_rotated(
+                {arm_x, arm_y, arm_z},
+                {trellis_arm_width, trellis_rail_width, trellis_rail_width},
+                growth_structure.rotation,
+                trellis_color,
+            )
+        }
+        // Carry visible foliage down the trained leader instead of leaving a
+        // bare pole between the commissioned planter and the canopy crown.
+        // These are compact leaf-only renewal shoots centered on the outer
+        // pier, so the display glazing and merchandise stay unobstructed.
+        storefront_maturity := architecture.bougainvillea_maturity(density)
+        lower_shoot_count := min(3 + int(storefront_maturity), 4)
+        shoot_reach := [4]f32{.18, .62, .34, .78}
+        shoot_height_offset := [4]f32{1.02, 1.68, 2.46, 3.08}
+        for shoot_index in 0 ..< lower_shoot_count {
+            shoot_side := shoot_index % 2 == 0 ? f32(1) : f32(-1)
+            shoot_local_x := trellis_vertical_x - storefront_growth_side * shoot_reach[shoot_index]
+            shoot_x, shoot_z := world_rotate_xz(
+                growth_structure.center_x,
+                growth_structure.center_z,
+                shoot_local_x,
+                trellis_z + .055,
+                growth_structure.rotation,
+            )
+            shoot_width := (.58 + storefront_maturity * .18) * (1 - f32(shoot_index) * .045)
+            if shoot_index == 0 {
+                // The lowest upright atlas tile is seen almost square-on from
+                // across the street. Keep it compact enough to read as a
+                // renewal tuft above the pot, not a clipped green planter.
+                shoot_width *= .82
+            }
+            shoot_height := shoot_width * .78
+            shoot_center := third_person.Vec3 {
+                shoot_x,
+                growth_structure.base_y + shoot_height_offset[shoot_index],
+                shoot_z,
+            }
+            shoot_root_x, shoot_root_z := world_rotate_xz(
+                growth_structure.center_x,
+                growth_structure.center_z,
+                trellis_vertical_x,
+                trellis_z + .02,
+                growth_structure.rotation,
+            )
+            shoot_root := third_person.Vec3 {
+                shoot_root_x,
+                shoot_center.y - .14 - f32(shoot_index % 2) * .08,
+                shoot_root_z,
+            }
+            shoot_wood := color_lerp({73, 103, 61, 255}, {112, 77, 51, 255}, storefront_maturity)
+            world_tube_between(
+                shoot_root,
+                shoot_center,
+                {0, 1, 0},
+                .030 + storefront_maturity * .008,
+                .017 + storefront_maturity * .005,
+                shoot_wood,
+            )
+            shoot_tile := int((plant_seed + u32(shoot_index * 13)) % 2) * 2
+            world_bougainvillea_card(
+                shoot_center,
+                shoot_width,
+                shoot_height,
+                shoot_tile,
+                storefront_growth_side > 0,
+                shoot_side * (.028 + f32(shoot_index) * .006),
+                .94,
+                true,
+            )
+        }
+        // Short wall standoffs and warm metal caps make the green frame read
+        // as installed hardware rather than lines painted onto the stucco.
+        // They remain entirely on the outer masonry pier.
+        for rail_index in 0 ..< 2 {
+            anchor_local_x := rail_index == 0 ? trellis_vertical_x : inner_trellis_x
+            for anchor_level in 0 ..< 3 {
+                anchor_y := growth_structure.base_y + .95 + f32(anchor_level) * 2.05
+                if anchor_y > trellis_center_y + trellis_height * .5 - .18 do continue
+                anchor_x, anchor_z := world_rotate_xz(
+                    growth_structure.center_x,
+                    growth_structure.center_z,
+                    anchor_local_x,
+                    growth_structure.depth * .5 + .155,
+                    growth_structure.rotation,
+                )
+                world_box_rotated(
+                    {anchor_x, anchor_y, anchor_z},
+                    {.085, .085, .22},
+                    growth_structure.rotation,
+                    {73, 82, 70, 255},
+                )
+                cap_x, cap_z := world_rotate_xz(
+                    growth_structure.center_x,
+                    growth_structure.center_z,
+                    anchor_local_x,
+                    trellis_z + .025,
+                    growth_structure.rotation,
+                )
+                world_box_rotated(
+                    {cap_x, anchor_y, cap_z},
+                    {.12, .12, .035},
+                    growth_structure.rotation,
+                    {151, 119, 70, 255},
+                )
+            }
+        }
+        // A tiny planter uplight keeps the trained vine legible after dark.
+        // Its glow stays low and narrow so it cannot compete with the display
+        // windows or read as another municipal street lamp.
+        uplight_x, uplight_z := world_rotate_xz(
+            growth_structure.center_x,
+            growth_structure.center_z,
+            storefront_growth_side * growth_structure.width * .43,
+            growth_structure.depth * .5 + .58,
+            growth_structure.rotation,
+        )
+        world_box_rotated(
+            {uplight_x, growth_structure.base_y + .17, uplight_z},
+            {.24, .24, .22},
+            growth_structure.rotation,
+            {72, 63, 49, 255},
+        )
+        world_box_rotated_material(
+            {uplight_x, growth_structure.base_y + .31, uplight_z},
+            {.16, .045, .14},
+            growth_structure.rotation,
+            {255, 186, 96, 255},
+            .Emissive,
+        )
+        world_billboard_material_uv(
+            editor,
+            {uplight_x, growth_structure.base_y + .78, uplight_z},
+            .62,
+            1.10,
+            {255, 185, 98, 25},
+            .Emissive_Halo,
+        )
+        world_municipal_light_pool(
+            uplight_x,
+            growth_structure.base_y,
+            uplight_z,
+            &editor.project,
+            .10,
+            .72,
+            .52,
+            growth_structure.rotation,
+            24,
+            0,
+            {255, 186, 96, 255},
+        )
+    }
     for vine in 0 ..< vine_count {
         vine_seed := plant_seed + u32(vine * 7)
         spread := root_spread
@@ -9718,6 +12782,9 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
         surface_seed := growth_structure.kind == .Architecture ? plant_seed : vine_seed
         surface_offset := f32(math.cos(f64(f32(surface_seed) * .23))) * .18
         attachment_x := spread * growth_structure.width * .62
+        if mixed_use_storefront {
+            attachment_x = storefront_growth_side * growth_structure.width * (.43 - f32(vine) * .035)
+        }
         attachment_z := growth_structure.depth * .5 + .28 + surface_offset
         if growth_structure.kind != .Architecture {
             // Non-building targets are treated as rounded masses: place
@@ -9730,12 +12797,18 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
             )
             attachment_z = shell_height + surface_offset
         }
+        vine_height := growth_structure.height * height_fraction * (.88 + f32((vine + int(structure.seed)) % 3) * .08)
+        if mixed_use_storefront {
+            // Shopfront plants are deliberately trained into the canopy and
+            // first-floor band rather than allowed to become tree-like.
+            vine_height *= .92
+        }
         world_climbing_leaf_vine(
             growth_structure,
             attachment_x,
             root_attachment_x,
             attachment_z,
-            growth_structure.height * height_fraction * (.88 + f32((vine + int(structure.seed)) % 3) * .08),
+            vine_height,
             density,
             vine_seed,
             plant_seed,
@@ -9756,6 +12829,8 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
     entry.detail_tier = detail_tier
     entry.capture_seed_enabled = capture_seed_enabled
     entry.capture_seed = capture_seed
+    entry.billboard_right = billboard_right
+    entry.billboard_up = billboard_up
 }
 
 world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
@@ -10317,14 +13392,14 @@ mouse_body_surface_height :: proc(
     push_up, hit: bool,
 ) {
     if skeleton == nil do return
-    RINGS :: 10
-    ring_z := [RINGS]f32{-.78, -.70, -.52, -.28, -.04, .10, .20, .32, .47, .58}
-    ring_y := [RINGS]f32{.33, .37, .42, .47, .52, .59, .68, .64, .61, .62}
-    radius_x := [RINGS]f32{.07, .19, .29, .30, .255, .205, .20, .17, .095, .025}
-    radius_y := [RINGS]f32{.09, .22, .32, .35, .28, .21, .185, .125, .070, .022}
-    primary := [RINGS]Mouse_Bone{.Pelvis, .Pelvis, .Pelvis, .Spine, .Chest, .Neck, .Head, .Head, .Head, .Head}
-    secondary := [RINGS]Mouse_Bone{.Spine, .Spine, .Spine, .Pelvis, .Spine, .Chest, .Neck, .Neck, .Neck, .Neck}
-    primary_weight := [RINGS]f32{.98, .92, .82, .76, .68, .66, .78, .88, .96, 1}
+    RINGS :: 11
+    ring_z := [RINGS]f32{-.86, -.76, -.64, -.48, -.28, -.04, .10, .20, .32, .47, .58}
+    ring_y := [RINGS]f32{.35, .35, .38, .43, .47, .52, .59, .68, .64, .61, .62}
+    radius_x := [RINGS]f32{.008, .15, .25, .30, .30, .255, .205, .20, .17, .095, .025}
+    radius_y := [RINGS]f32{.010, .18, .28, .34, .35, .28, .21, .185, .125, .070, .022}
+    primary := [RINGS]Mouse_Bone{.Pelvis, .Pelvis, .Pelvis, .Pelvis, .Spine, .Chest, .Neck, .Head, .Head, .Head, .Head}
+    secondary := [RINGS]Mouse_Bone{.Spine, .Spine, .Spine, .Spine, .Pelvis, .Spine, .Chest, .Neck, .Neck, .Neck, .Neck}
+    primary_weight := [RINGS]f32{1, .98, .92, .82, .76, .68, .66, .78, .88, .96, 1}
     if local_z < ring_z[0] || local_z > ring_z[RINGS - 1] do return
 
     lower := 0
@@ -10363,23 +13438,26 @@ world_mouse_skinned_hull :: proc(
     pattern: Mouse_Fur_Pattern,
     breath: f32,
 ) {
-    RINGS :: 10
+    RINGS :: 11
     SEGMENTS :: 12
-    ring_z := [RINGS]f32{-.78, -.70, -.52, -.28, -.04, .10, .20, .32, .47, .58}
+    ring_z := [RINGS]f32{-.86, -.76, -.64, -.48, -.28, -.04, .10, .20, .32, .47, .58}
     // A mouse's dorsal line is a soft arch over the pelvis and ribs, then
     // descends into the neck.  Keeping the belly locations nearly unchanged
     // while lifting and enlarging these middle rings avoids the flat-backed,
     // rectangular silhouette that the low running pose previously produced.
-    ring_y := [RINGS]f32{.33, .37, .42, .47, .52, .59, .68, .64, .61, .62}
-    radius_x := [RINGS]f32{.07, .19, .29, .30, .255, .205, .20, .17, .095, .025}
-    radius_y := [RINGS]f32{.09, .22, .32, .35, .28, .21, .185, .125, .070, .022}
-    primary := [RINGS]Mouse_Bone{.Pelvis, .Pelvis, .Pelvis, .Spine, .Chest, .Neck, .Head, .Head, .Head, .Head}
-    secondary := [RINGS]Mouse_Bone{.Spine, .Spine, .Spine, .Pelvis, .Spine, .Chest, .Neck, .Neck, .Neck, .Neck}
-    primary_weight := [RINGS]f32{.98, .92, .82, .76, .68, .66, .78, .88, .96, 1}
+    // Collapse the first ring almost to a pole, then ease through two
+    // intermediate pelvis rings. This closes the rump as a rounded volume
+    // instead of exposing the flat fan that used to cap a wide rear ellipse.
+    ring_y := [RINGS]f32{.35, .35, .38, .43, .47, .52, .59, .68, .64, .61, .62}
+    radius_x := [RINGS]f32{.008, .15, .25, .30, .30, .255, .205, .20, .17, .095, .025}
+    radius_y := [RINGS]f32{.010, .18, .28, .34, .35, .28, .21, .185, .125, .070, .022}
+    primary := [RINGS]Mouse_Bone{.Pelvis, .Pelvis, .Pelvis, .Pelvis, .Spine, .Chest, .Neck, .Head, .Head, .Head, .Head}
+    secondary := [RINGS]Mouse_Bone{.Spine, .Spine, .Spine, .Spine, .Pelvis, .Spine, .Chest, .Neck, .Neck, .Neck, .Neck}
+    primary_weight := [RINGS]f32{1, .98, .92, .82, .76, .68, .66, .78, .88, .96, 1}
 
     vertices: [RINGS][SEGMENTS]Mouse_Skin_Vertex
     posed: [RINGS][SEGMENTS]third_person.Vec3
-    rib_weights := [RINGS]f32{0, .02, .10, .55, 1, .45, 0, 0, 0, 0}
+    rib_weights := [RINGS]f32{0, 0, .02, .10, .55, 1, .45, 0, 0, 0, 0}
     for ring in 0 ..< RINGS {
         breath_scale := 1 + breath * rib_weights[ring]
         for segment in 0 ..< SEGMENTS {
@@ -10906,7 +13984,12 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
     }
     entry := &world_renderer.town_mouse_geometry_cache[cache_index]
     phase := f32(cache_index) / TOWN_MOUSE_CACHE_COUNT
-    animation_bucket := i64(math.floor(f64(editor.map_time * TOWN_MOUSE_ANIMATION_HZ + phase)))
+    // The world behind dialogue is dimmed and input-locked while the two
+    // foreground portraits have their own live geometry caches. Freeze only
+    // these background residents for the conversation so fourteen procedural
+    // idle meshes do not keep regenerating beneath the dialogue presentation.
+    animation_time := editor.attendant_dialogue_open ? f32(0) : editor.map_time
+    animation_bucket := i64(math.floor(f64(animation_time * TOWN_MOUSE_ANIMATION_HZ + phase)))
     wind := model.scarf_enabled ? editor.atmosphere.weather.wind : [2]f32{}
     if entry.valid &&
        entry.model == model &&
@@ -12380,7 +15463,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     // building a hull from them stretches the root ring across the map and
     // produces a large triangle fan in capture-mode's early frames. Use the
     // authored tail until physics has established a complete local chain.
-    if model.player_controlled && editor.player_tail.initialized {
+    if model.player_controlled && !model.hide_tail && editor.player_tail.initialized {
         tail_points: [mouse_tail.POINT_COUNT]third_person.Vec3
         tail_radii: [mouse_tail.POINT_COUNT]f32
         tail_colors: [mouse_tail.POINT_COUNT]rl.Color
@@ -12991,18 +16074,16 @@ world_brush :: proc(editor: ^Editor) {
                !editor.architecture_paint_mode &&
                !editor.marina_paint_mode &&
                !editor.farm_paint_mode &&
+               !editor.wreck_paint_mode &&
                !editor.climbing_leaf_paint_mode &&
                !formation_brush) {
         return
     }
-    camera := perspective_camera(
-        editor.camera_pose,
-        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
-    )
-    mouse, inside := rl.GetWorldMousePosition()
-    if !inside do return
-    x, z, hit := terrain_under_cursor_3d(editor, camera, mouse, ADRIATIC_WORLD_WIDTH, ADRIATIC_WORLD_HEIGHT)
-    if !hit do return
+    // Input and rendering must share the same pick. Recasting here can use a
+    // later camera pose (or a different focal length), visibly separating the
+    // brush preview from both the pointer and the applied stroke.
+    if !editor.cursor_hit do return
+    x, z := editor.cursor_world_x, editor.cursor_world_z
     color: rl.Color = {230, 244, 218, 76}
     radius, hardness := editor.radius, editor.hardness
     switch editor.tool {
@@ -13023,6 +16104,10 @@ world_brush :: proc(editor: ^Editor) {
         } else if editor.farm_paint_mode {
             color = editor.farm_preview_valid ? rl.Color{153, 174, 76, 92} : rl.Color{218, 105, 86, 104}
             radius = editor.farm_brush_radius
+            hardness = .68
+        } else if editor.wreck_paint_mode {
+            color = editor.wreck_preview_valid ? rl.Color{92, 137, 151, 92} : rl.Color{218, 105, 86, 104}
+            radius = editor.wreck_brush_size * .55
             hardness = .68
         } else if formation_brush {
             color = editor.authoring_tool == .Foliage ? rl.Color{105, 176, 92, 96} : rl.Color{172, 126, 84, 96}
@@ -13147,7 +16232,7 @@ world_ground_grass :: proc(editor: ^Editor) {
             // Keep the authored grass hue, but match its value to the shaded
             // terrain beneath it. In the outer falloff, converge on the exact
             // terrain color so the final cards cannot form a dark cutoff ring.
-            ground_color := clipmap_vertex_color(editor, 0, x, z, height_at)
+            ground_color := clipmap_vertex_color(editor, 0, x, z, height_at, 0)
             grass_value := f32(color.r) * .2126 + f32(color.g) * .7152 + f32(color.b) * .0722
             ground_value := f32(ground_color.r) * .2126 + f32(ground_color.g) * .7152 + f32(ground_color.b) * .0722
             value_scale := ground_value / max(grass_value, f32(1))
@@ -13189,6 +16274,7 @@ world_ground_grass :: proc(editor: ^Editor) {
 world_build :: proc(editor: ^Editor) {
     world_structure_storage_ensure(editor.project.structure_count)
     clear(&world_renderer.vertices)
+    clear(&world_renderer.late_transparent_vertices)
     clear(&world_renderer.static_vertices)
     clear(&world_renderer.static_indices)
     clear(&world_renderer.wing_trail_vertices)
@@ -13206,6 +16292,9 @@ world_build :: proc(editor: ^Editor) {
     world_renderer.player_vertex_count = 0
     world_renderer.dynamic_caster_first = 0
     world_renderer.dynamic_caster_count = 0
+    world_renderer.late_transparent_first = 0
+    world_renderer.late_transparent_count = 0
+    world_renderer.scene_daylight = atmosphere.sample(&editor.atmosphere).daylight
     if editor.pause_screen == .Customization {
         // The customization screen gets a purpose-built miniature world pass.
         // It uses the exact gameplay model and materials, rather than maintaining
@@ -13278,6 +16367,7 @@ world_build :: proc(editor: ^Editor) {
     world_gerta(editor)
     world_town_mice(editor)
     world_authored_farmland(editor)
+    world_authored_wrecks(editor)
     lab_scene_draw_world_overlay(editor)
     world_renderer.dynamic_caster_count = len(world_renderer.vertices) - world_renderer.dynamic_caster_first
     world_structures(editor)
@@ -13292,6 +16382,12 @@ world_build :: proc(editor: ^Editor) {
     world_petal_particles(editor)
     world_wing_trails(editor)
     world_wind_streaks(editor)
+    // Keep transparent municipal pools contiguous at the end of the existing
+    // world buffer. The render graph submits this range only after roads and
+    // foliage have established receiver depth.
+    world_renderer.late_transparent_first = len(world_renderer.vertices)
+    append(&world_renderer.vertices, ..world_renderer.late_transparent_vertices[:])
+    world_renderer.late_transparent_count = len(world_renderer.vertices) - world_renderer.late_transparent_first
 }
 
 world_petal_particles :: proc(editor: ^Editor) {
@@ -13496,10 +16592,6 @@ world_wind_streaks :: proc(editor: ^Editor) {
     direction_x, direction_z := wind_x / wind_speed, wind_z / wind_speed
     side_x, side_z := -direction_z, direction_x
     time := editor.map_time
-    camera := perspective_camera(
-        editor.camera_pose,
-        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
-    )
     for index in 0 ..< 32 {
         speed_variation := .72 + wind_streak_hash(index, 1) * .56
         cycle := time * wind_speed * .035 * speed_variation + wind_streak_hash(index, 2)
@@ -13527,15 +16619,43 @@ world_wind_streaks :: proc(editor: ^Editor) {
         fade := math.sin(phase * math.PI)
         alpha := u8(clamp((22 + strength * 82) * fade, 0, 104))
         width := .018 + strength * .035
-        offset := third_person.Vec3{camera.up.x * width, camera.up.y * width, camera.up.z * width}
-        world_quad(
-            {tail.x - offset.x, tail.y - offset.y, tail.z - offset.z},
-            {center.x - offset.x, center.y - offset.y, center.z - offset.z},
-            {center.x + offset.x, center.y + offset.y, center.z + offset.z},
-            {tail.x + offset.x, tail.y + offset.y, tail.z + offset.z},
+        line_direction := third_person.Vec3{direction_x, 0, direction_z}
+        to_camera := linalg.normalize0(editor.camera_pose.position - streak_center)
+        // Build a true camera-facing ribbon. Offsetting along camera.up makes a
+        // horizontal wind direction collapse edge-on at common flight-camera
+        // angles, and its winding can face away from the back-face culled pass.
+        ribbon_right := linalg.normalize0(linalg.cross(to_camera, line_direction)) * width
+        vertices := [6]World_Vertex {
+            world_vertex(
+                {tail.x - ribbon_right.x, tail.y - ribbon_right.y, tail.z - ribbon_right.z},
+                {137, 218, 235, alpha},
+            ),
+            world_vertex(
+                {center.x - ribbon_right.x, center.y - ribbon_right.y, center.z - ribbon_right.z},
+                {137, 218, 235, alpha},
+            ),
+            world_vertex(
+                {center.x + ribbon_right.x, center.y + ribbon_right.y, center.z + ribbon_right.z},
+                {137, 218, 235, alpha},
+            ),
+            world_vertex(
+                {tail.x - ribbon_right.x, tail.y - ribbon_right.y, tail.z - ribbon_right.z},
+                {137, 218, 235, alpha},
+            ),
+            world_vertex(
+                {center.x + ribbon_right.x, center.y + ribbon_right.y, center.z + ribbon_right.z},
+                {137, 218, 235, alpha},
+            ),
+            world_vertex(
+                {tail.x + ribbon_right.x, tail.y + ribbon_right.y, tail.z + ribbon_right.z},
+                {137, 218, 235, alpha},
+            ),
+        }
+        append(
+            &world_renderer.late_transparent_vertices,
+            ..vertices[:],
             // Cool blue distinguishes wind moving through world space from
             // the warm radial speed lines drawn in the flight overlay.
-            {r = 137, g = 218, b = 235, a = alpha},
         )
     }
 }
@@ -13713,15 +16833,17 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
 
 world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     if !dynamic_shadow_create(&world_renderer.dynamic_shadow, ctx) do return false
-    paint_bindings := [4]vk.DescriptorSetLayoutBinding {
+    paint_bindings := [6]vk.DescriptorSetLayoutBinding {
         {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 3, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 4, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 5, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
     }
     paint_layout_info := vk.DescriptorSetLayoutCreateInfo {
         sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        bindingCount = 4,
+        bindingCount = 6,
         pBindings    = raw_data(paint_bindings[:]),
     }
     if vk.CreateDescriptorSetLayout(ctx.device, &paint_layout_info, nil, &world_renderer.vehicle_paint_descriptor_layout) != .SUCCESS do return false
@@ -13732,8 +16854,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         "vehicle paint descriptor set layout",
     )
     paint_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = 2},
-        {type = .SAMPLER, descriptorCount = 2},
+        {type = .SAMPLED_IMAGE, descriptorCount = 3},
+        {type = .SAMPLER, descriptorCount = 3},
     }
     paint_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
@@ -13770,6 +16892,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     ) {
         return false
     }
+    if !resources.texture_load_file(
+        ctx,
+        "assets/textures/architecture/material-atlas.png",
+        &world_renderer.architecture_material_atlas,
+        {address_mode = .CLAMP_TO_EDGE},
+    ) {
+        return false
+    }
     paint_image_info := vk.DescriptorImageInfo {
         imageView   = world_renderer.vehicle_paint_atlas.view,
         imageLayout = .SHADER_READ_ONLY_OPTIMAL,
@@ -13784,7 +16914,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     soda_logo_sampler_info := vk.DescriptorImageInfo {
         sampler = world_renderer.soda_cap_logo.sampler,
     }
-    paint_writes := [4]vk.WriteDescriptorSet {
+    architecture_material_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.architecture_material_atlas.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    architecture_material_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.architecture_material_atlas.sampler,
+    }
+    paint_writes := [6]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
             dstSet = world_renderer.vehicle_paint_descriptor,
@@ -13817,8 +16954,24 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             descriptorType = .SAMPLER,
             pImageInfo = &soda_logo_sampler_info,
         },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.vehicle_paint_descriptor,
+            dstBinding = 4,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &architecture_material_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.vehicle_paint_descriptor,
+            dstBinding = 5,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &architecture_material_sampler_info,
+        },
     }
-    vk.UpdateDescriptorSets(ctx.device, 4, raw_data(paint_writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(ctx.device, 6, raw_data(paint_writes[:]), 0, nil)
     pr := vk.PushConstantRange {
         stageFlags = {.VERTEX, .FRAGMENT},
         size       = u32(size_of(World_Push)),
@@ -14162,6 +17315,18 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         layout              = world_renderer.layout,
     }
     if !render3d.create_color_pipeline_variants(ctx, &info, .D32_SFLOAT, &world_renderer.pipelines) do return false
+    transparent_depth := depth
+    transparent_depth.depthWriteEnable = false
+    transparent_info := info
+    transparent_info.pDepthStencilState = &transparent_depth
+    if !render3d.create_color_pipeline_variants(
+        ctx,
+        &transparent_info,
+        .D32_SFLOAT,
+        &world_renderer.transparent_pipelines,
+    ) {
+        return false
+    }
     shadow_vert, shadow_frag: engine.Vk_Shader_Module
     if !engine.vk_load_shader_module_with_fallback(
         ctx,
@@ -14897,6 +18062,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         water           = {sky.cloud_time_seconds, sky.weather.severity, sky.weather.wind[0], sky.weather.wind[1]},
         sun             = world_scene_sun(editor, sky),
     }
+    world_push.fog_color[3] = world_scene_moonlight(sky)
     sky_push := Sky_Push {
         camera_right   = {
             camera.right.x,
@@ -14969,6 +18135,7 @@ world_renderer_destroy :: proc() {
     engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_index)
     roads.mesh_destroy(&world_renderer.road_mesh)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.pipelines)
+    render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.transparent_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.shadow_pipelines)
     dynamic_shadow_destroy(&world_renderer.dynamic_shadow, world_renderer.ctx)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.road_pipelines)
@@ -14982,6 +18149,7 @@ world_renderer_destroy :: proc() {
     resources.image_destroy(&world_renderer.wildflower_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.vehicle_paint_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.soda_cap_logo, world_renderer.ctx)
+    resources.image_destroy(&world_renderer.architecture_material_atlas, world_renderer.ctx)
     if world_renderer.layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.layout, nil)
     if world_renderer.sky_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.sky_layout, nil)
     if world_renderer.foliage_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.foliage_layout, nil)
@@ -14998,6 +18166,7 @@ world_renderer_destroy :: proc() {
         vk.DestroyDescriptorSetLayout(world_renderer.ctx.device, world_renderer.vehicle_paint_descriptor_layout, nil)
     }
     delete(world_renderer.vertices)
+    delete(world_renderer.late_transparent_vertices)
     delete(world_renderer.static_vertices)
     delete(world_renderer.static_indices)
     delete(world_renderer.road_vertices)

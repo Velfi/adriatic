@@ -67,6 +67,7 @@ def main() -> int:
 
     target.parent.mkdir(parents=True, exist_ok=True)
     write_request(request, target)
+    last_request_time = time.monotonic()
 
     deadline = time.monotonic() + args.timeout
     while time.monotonic() < deadline:
@@ -74,6 +75,14 @@ def main() -> int:
         if after is not None and after[1] > 0 and after != before:
             print(f"Screenshot: {target}")
             return 0
+        now = time.monotonic()
+        # Startup frames can consume TakeScreenshot before the capture backend
+        # is ready and therefore produce no file. Reissue only after the game
+        # has removed the request, handing it forward to the first capturable
+        # frame without racing an in-progress read.
+        if not request.exists() and now - last_request_time >= 0.25:
+            write_request(request, target)
+            last_request_time = now
         time.sleep(0.05)
 
     print(

@@ -168,6 +168,7 @@ terrain_project_grows_and_round_trips_beyond_legacy_structure_limit :: proc(t: ^
     count := terrain.LEGACY_STRUCTURE_CAPACITY + 144
     for index in 0 ..< count {
         structure := terrain.structure_make(f32(index), f32(-index), 4, 5, 1, 6)
+        if index == count - 1 do structure.entrance_side = .Left
         testing.expect_value(t, terrain.add_structure(source, structure), index)
     }
     testing.expect_value(t, source.structure_count, count)
@@ -177,6 +178,7 @@ terrain_project_grows_and_round_trips_beyond_legacy_structure_limit :: proc(t: ^
     testing.expect_value(t, loaded.structure_count, count)
     testing.expect_value(t, loaded.structures[count - 1].center_x, f32(count - 1))
     testing.expect_value(t, loaded.structures[count - 1].center_z, f32(-(count - 1)))
+    testing.expect_value(t, loaded.structures[count - 1].entrance_side, terrain.Entrance_Side.Left)
 }
 
 @(test)
@@ -185,8 +187,22 @@ terrain_v4_project_migration_copies_fixed_structures_into_growable_storage :: pr
     defer free(legacy)
     legacy.structure_count = 2
     legacy.next_structure_id = 19
-    legacy.structures[0] = terrain.structure_make(4, 5, 6, 7, 8, 9)
-    legacy.structures[1] = terrain.structure_make(10, 11, 12, 13, 14, 15)
+    legacy.structures[0] = {
+        center_x = 4,
+        center_z = 5,
+        width    = 6,
+        depth    = 7,
+        base_y   = 8,
+        height   = 9,
+    }
+    legacy.structures[1] = {
+        center_x = 10,
+        center_z = 11,
+        width    = 12,
+        depth    = 13,
+        base_y   = 14,
+        height   = 15,
+    }
     migrated := new(terrain.Project)
     defer terrain.free_project(migrated)
     testing.expect(t, terrain.project_migrate_v4(migrated, legacy))
@@ -194,6 +210,7 @@ terrain_v4_project_migration_copies_fixed_structures_into_growable_storage :: pr
     testing.expect_value(t, len(migrated.structures), 2)
     testing.expect_value(t, migrated.next_structure_id, u64(19))
     testing.expect_value(t, migrated.structures[1].center_x, f32(10))
+    testing.expect_value(t, migrated.structures[1].entrance_side, terrain.Entrance_Side.Front)
 }
 
 @(test)
@@ -359,6 +376,24 @@ terrain_edits_downsample_into_coarser_overlaps :: proc(t: ^testing.T) {
             }
         }
     }
+}
+
+@(test)
+clipmap_transition_converges_fine_edge_onto_coarse_surface :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    x, z := f32(1.5), f32(2.5)
+    fine := terrain.sample_height(project, 0, x, z)
+    coarse := terrain.sample_height(project, 1, x, z)
+    testing.expect(t, terrain.sample_clipmap_transition_height(project, 0, x, z, 0) == fine)
+    testing.expect(t, terrain.sample_clipmap_transition_height(project, 0, x, z, 1) == coarse)
+    halfway := terrain.sample_clipmap_transition_height(project, 0, x, z, .5)
+    testing.expect(t, math.abs(halfway - (fine + coarse) * .5) < .0001)
+    last := terrain.CLIPMAP_LEVELS - 1
+    testing.expect(
+        t,
+        terrain.sample_clipmap_transition_height(project, last, x, z, 1) == terrain.sample_height(project, last, x, z),
+    )
 }
 
 @(test)

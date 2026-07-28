@@ -60,6 +60,50 @@ mouse_tail_keeps_its_segments_connected :: proc(t: ^testing.T) {
 }
 
 @(test)
+mouse_tail_rebuilds_jolt_body_when_physics_config_changes :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    terrain.init_project(project)
+    state: mouse_tail.State
+    config := mouse_tail.default_config()
+    root := third_person.Vec3{0, 8, 0}
+    mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
+    testing.expect(t, state.applied_config_valid)
+    testing.expect(t, state.applied_config.gravity == config.gravity)
+
+    config.gravity += 3
+    mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
+    testing.expect(t, state.initialized)
+    testing.expect(t, state.applied_config.gravity == config.gravity)
+}
+
+@(test)
+mouse_tail_root_stiffness_controls_attachment_heading_response :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    terrain.init_project(project)
+    root := third_person.Vec3{0, 8, 0}
+
+    loose_state: mouse_tail.State
+    loose := mouse_tail.default_config()
+    loose.root_stiffness = 0
+    mouse_tail.step(&loose_state, root, {0, 0, 1}, project, loose, 0)
+    mouse_tail.step(&loose_state, root, {1, 0, 0}, project, loose, 1.0 / 60.0)
+    loose_direction := loose_state.points[1].position - root
+    testing.expect(t, loose_direction.z > 0)
+    testing.expect(t, math.abs(loose_direction.z) > math.abs(loose_direction.x))
+
+    stiff_state: mouse_tail.State
+    stiff := mouse_tail.default_config()
+    stiff.root_stiffness = 1
+    mouse_tail.step(&stiff_state, root, {0, 0, 1}, project, stiff, 0)
+    mouse_tail.step(&stiff_state, root, {1, 0, 0}, project, stiff, 1.0 / 60.0)
+    stiff_direction := stiff_state.points[1].position - root
+    testing.expect(t, stiff_direction.x > 0)
+    testing.expect(t, math.abs(stiff_direction.x) > math.abs(stiff_direction.z))
+}
+
+@(test)
 mouse_tail_player_motion_settles_into_one_trailing_curve :: proc(t: ^testing.T) {
     project := new(terrain.Project)
     defer terrain.free_project(project)

@@ -785,6 +785,21 @@ settlement_lab_configure :: proc(
             }
         }
     }
+    if editor.settlement_plan.acceptance_failure == .Route_Grade {
+        for route, route_index in editor.settlement_plan.routes[:editor.settlement_plan.route_count] {
+            limit := settlement_route_grade_limit(route.class)
+            if route.maximum_grade > limit + .001 {
+                fmt.println(
+                    "settlement excessive route grade",
+                    route_index,
+                    route.class,
+                    route.maximum_grade,
+                    "limit",
+                    limit,
+                )
+            }
+        }
+    }
     for class_index in 0 ..< SETTLEMENT_ROUTE_CLASS_COUNT {
         length_stats := editor.settlement_plan.metrics.route_length_by_class[class_index]
         if length_stats.count == 0 do continue

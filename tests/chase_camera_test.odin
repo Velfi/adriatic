@@ -66,6 +66,18 @@ aircraft_chase_camera_tracks_translation_exactly_and_smooths_speed_fov :: proc(t
 }
 
 @(test)
+aircraft_chase_camera_does_not_steer_view_from_bank_input :: proc(t: ^testing.T) {
+    target := chase_camera.Target {
+        basis    = flight.identity_basis(),
+        airspeed = 45,
+    }
+    neutral := chase_camera.desired_pose(target, 0, 0)
+    target.roll_input = 1
+    banking := chase_camera.desired_pose(target, 0, 0)
+    testing.expect(t, banking == neutral)
+}
+
+@(test)
 aircraft_chase_camera_shakes_near_large_flyby_volumes :: proc(t: ^testing.T) {
     target := chase_camera.Target {
         position = {13, 20, 0},

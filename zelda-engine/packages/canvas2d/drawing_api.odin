@@ -92,6 +92,12 @@ GetScreenWidth :: proc() -> i32 {if width, height, ok := render2d.sdl_window_siz
     return state.width}
 GetScreenHeight :: proc() -> i32 {if width, height, ok := render2d.sdl_window_size(&state.platform_window); ok do state.width, state.height = width, height
     return state.height}
+GetWorldRenderSize :: proc() -> (width, height: i32) {
+    if state.world_render_width > 0 && state.world_render_height > 0 {
+        return i32(state.world_render_width), i32(state.world_render_height)
+    }
+    return GetScreenWidth(), GetScreenHeight()
+}
 GetTime :: proc() -> f64 { return time.duration_seconds(time.tick_since(state.start)) }
 GetGpuFrameTimeMs :: proc() -> (ms: f64, available: bool) {
     sample := engine.gpu_profiler_last_sample(&state.ctx)

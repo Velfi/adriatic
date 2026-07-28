@@ -587,9 +587,7 @@ tweak_draw_terrain :: proc(editor: ^Editor) {
 
 tweak_draw_atmosphere :: proc(editor: ^Editor) {
     a := &editor.tweak.atmosphere
-    im.SliderFloat("World minutes", &a.world_minutes, 0, atmosphere.DAY_MINUTES, "%.1f", im.SliderFlags_AlwaysClamp)
     im.InputScalar("Seed", im.DataType.U32, rawptr(&a.seed), nil, nil, "%u")
-    im.Checkbox("Paused", &a.paused)
     im.TextUnformatted("Weather override")
     if im.RadioButton("Automatic", a.override == .Automatic) do a.override = .Automatic
     im.SameLine()
@@ -604,6 +602,23 @@ tweak_draw_atmosphere :: proc(editor: ^Editor) {
     tweak_drag_f32("Haze", &a.weather.haze, 0, 1, .01)
     tweak_drag_f32("Severity", &a.weather.severity, 0, 1, .01)
     im.DragFloat2("Wind", &a.weather.wind, .05, -100, 100, "%.2f", im.SliderFlags_AlwaysClamp)
+}
+
+tweak_draw_time_of_day :: proc(editor: ^Editor) {
+    a := &editor.tweak.atmosphere
+    im.SeparatorText("Time of day")
+    im.SliderFloat(
+        "##Time of day",
+        &a.world_minutes,
+        0,
+        atmosphere.DAY_MINUTES,
+        "",
+        im.SliderFlags_AlwaysClamp,
+    )
+    total_minutes := int(a.world_minutes) % int(atmosphere.DAY_MINUTES)
+    im.SameLine()
+    im.Text("%02d:%02d", total_minutes / 60, total_minutes % 60)
+    im.Checkbox("Pause time", &a.paused)
 }
 
 tweak_draw_player :: proc(editor: ^Editor) {
@@ -661,7 +676,9 @@ tweak_draw_player :: proc(editor: ^Editor) {
     tweak_drag_f32("Tail segment length", &tail.segment_length, .05, .5, .005)
     tweak_drag_f32("Tail collision radius", &tail.radius, .005, .1, .001)
     tweak_drag_f32("Tail gravity", &tail.gravity, 0, 40, .1)
-    tweak_drag_f32("Tail damping", &tail.damping, 0, 1, .005)
+    // mouse_tail.Config.damping stores retained velocity: higher values
+    // preserve more rebound, so present it in the direction artists feel.
+    tweak_drag_f32("Tail springiness", &tail.damping, 0, 1, .005)
     tweak_drag_f32("Tail root stiffness", &tail.root_stiffness, 0, 1, .01)
     tweak_drag_f32("Tail bend stiffness", &tail.bend_stiffness, 0, 1, .01)
     tweak_drag_f32("Tail surface friction", &tail.surface_friction, 0, 1, .01)
@@ -827,14 +844,15 @@ tweak_draw_car :: proc(editor: ^Editor) {
 
 tweak_draw_postale :: proc(editor: ^Editor) {
     a := &editor.tweak.postale_airframe
+    if im.Button("Reset active aircraft") do aircraft_reset(editor)
+    im.Separator()
     im.Text("Layout: fixed wing (%d)", a.flight_layout)
     tweak_drag_f32("Mass kg", &a.mass_kg, 1, 50000, 1)
     tweak_drag_f32("Maximum gross mass kg", &a.maximum_gross_mass_kg, 1, 50000, 1)
     tweak_drag_f32("Wing area", &a.wing_area, .1, 500, .1)
     tweak_drag_f32("Lift scale", &a.lift_scale, 0, 10, .01)
     tweak_drag_f32("Drag scale", &a.drag_scale, 0, 10, .01)
-    tweak_drag_f32("Stall speed", &a.stall_speed, 1, 200, .1)
-    tweak_drag_f32("Maximum speed", &a.maximum_speed, 1, 300, .1)
+    tweak_drag_f32("Parasitic drag area", &a.parasitic_drag_area, .01, 20, .01)
     tweak_drag_f32("Power per engine kw", &a.rated_power_per_engine_kw, 0, 5000, 1)
     tweak_drag_f32("Propeller efficiency", &a.propeller_efficiency, 0, 1, .01)
     tweak_drag_f32("Static thrust", &a.static_thrust_per_engine, 0, 100000, 10)
@@ -866,7 +884,6 @@ tweak_draw_postale :: proc(editor: ^Editor) {
     tweak_drag_f32("Engine output", &editor.tweak.postale_runtime.engine_output, 0, 1, .01)
     tweak_drag_f32("Control authority", &editor.tweak.postale_runtime.control_authority, 0, 2, .01)
     tweak_drag_f32("Drag multiplier", &editor.tweak.postale_runtime.drag_multiplier, 0, 5, .01)
-    tweak_drag_f32("Stall speed modifier", &editor.tweak.postale_runtime.stall_speed_modifier, .1, 2, .01)
     im.Checkbox("Controls damaged", &editor.tweak.postale_runtime.controls_damaged)
     im.SeparatorText("Safety")
     tweak_drag_f32("Ground clearance", &editor.tweak.postale_tuning.ground_clearance, 0, 5, .01)
@@ -877,7 +894,6 @@ tweak_draw_postale :: proc(editor: ^Editor) {
     tweak_drag_f32("Hard landing load", &editor.tweak.postale_tuning.hard_landing_load, 1, 10, .1)
     tweak_drag_f32("Ultimate landing load", &editor.tweak.postale_tuning.ultimate_landing_load, 1, 15, .1)
     tweak_drag_f32("Safe exit speed", &editor.tweak.postale_tuning.safe_exit_speed, 0, 20, .1)
-    tweak_drag_f32("Takeoff stall scale", &editor.tweak.postale_tuning.takeoff_stall_speed_scale, .1, 1.5, .01)
     im.SeparatorText("Controls")
     tweak_drag_f32("Throttle up rate", &editor.tweak.postale_tuning.throttle_up_rate, 0, 20, .01)
     tweak_drag_f32("Throttle down rate", &editor.tweak.postale_tuning.throttle_down_rate, 0, 20, .01)
@@ -899,7 +915,6 @@ tweak_draw_postale :: proc(editor: ^Editor) {
     tweak_drag_f32("Takeoff speed scale", &editor.tweak.postale_tuning.takeoff_speed_scale, 0, 2, .01)
     tweak_drag_f32("Takeoff pitch", &editor.tweak.postale_tuning.takeoff_pitch, 0, 1, .01)
     tweak_drag_f32("Takeoff ground time", &editor.tweak.postale_tuning.takeoff_ground_time, 0, 2, .01)
-    tweak_drag_f32("Takeoff vertical assist", &editor.tweak.postale_tuning.takeoff_vertical_assist, 0, 20, .01)
     im.SeparatorText("Propeller")
     tweak_drag_f32("Propeller base rate", &editor.tweak.postale_tuning.propeller_base_rate, 0, 50, .01)
     tweak_drag_f32("Propeller throttle rate", &editor.tweak.postale_tuning.propeller_throttle_rate, 0, 100, .1)
@@ -952,6 +967,24 @@ tweak_draw_performance :: proc(editor: ^Editor) {
     dio.flame_graph_widget(&editor.flame_graph)
 }
 
+tweak_draw_lab_switcher :: proc(editor: ^Editor) {
+    active_name := editor.active_lab_scene == "" ? "None" : editor.active_lab_scene
+    if im.BeginCombo("Lab", fmt.ctprintf("%s", active_name)) {
+        for &definition in LAB_SCENES {
+            selected := editor.active_lab_scene == definition.name
+            if im.Selectable(fmt.ctprintf("%s", definition.name), selected) {
+                _ = lab_scene_load(editor, {definition = &definition})
+            }
+            if selected do im.SetItemDefaultFocus()
+        }
+        im.EndCombo()
+    }
+    if editor.active_lab_scene != "" {
+        im.SameLine()
+        if im.Button("Exit to main menu") do lab_scene_exit_to_main_menu(editor)
+    }
+}
+
 imgui_draw_tweaks :: proc(editor: ^Editor) {
     if editor == nil || !editor.tweak_panel_visible do return
     tweak_sync_from_editor(editor)
@@ -974,6 +1007,9 @@ imgui_draw_tweaks :: proc(editor: ^Editor) {
             im.TextUnformatted("Save failed")
         }
         im.TextUnformatted(TWEAK_FILE_PATH)
+        tweak_draw_time_of_day(editor)
+        im.SeparatorText("Labs")
+        tweak_draw_lab_switcher(editor)
         if im.BeginTabBar("Adriatic subjects") {
             if im.BeginTabItem("Terrain") {
                 tweak_draw_terrain(editor)

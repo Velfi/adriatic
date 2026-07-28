@@ -37,6 +37,12 @@ Settlement_Route_Class :: enum u8 {
     Ridge,
 }
 
+Settlement_Access_Surface :: enum u8 {
+    Packed_Earth,
+    Gravel,
+    Stone,
+}
+
 Settlement_Site_Kind :: enum u8 {
     Ordinary,
     Landmark,
@@ -181,7 +187,10 @@ Settlement_Request :: struct {
 
 SETTLEMENT_NEIGHBORHOOD_CAPACITY :: 96
 SETTLEMENT_MACRO_CELL_CAPACITY :: 192
-SETTLEMENT_PLANNED_ROUTE_CAPACITY :: 48
+// Drivable routes are bounded independently by roads.MAX_NODES/MAX_EDGES.
+// This plan also retains one compact chain for each pedestrian-network branch,
+// so dense cities need headroom proportional to the site capacity.
+SETTLEMENT_PLANNED_ROUTE_CAPACITY :: 320
 SETTLEMENT_BLOCK_CAPACITY :: 128
 SETTLEMENT_SITE_CAPACITY :: 256
 SETTLEMENT_TERRAIN_EDIT_CAPACITY :: 192
@@ -260,6 +269,7 @@ Settlement_Metrics :: struct {
     route_length_by_class: [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
     route_width_by_class:  [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
     intersection_spacing:  Settlement_Scalar_Stats,
+    dead_end_frontage:     Settlement_Scalar_Stats,
     block_short_side:      Settlement_Scalar_Stats,
     block_long_side:       Settlement_Scalar_Stats,
     block_area:            Settlement_Scalar_Stats,
@@ -271,6 +281,7 @@ Settlement_Metrics :: struct {
     building_footprint:    Settlement_Scalar_Stats,
     building_floors:       Settlement_Scalar_Stats,
     network_density:       f32,
+    road_badness:          f32,
     attached_share:        f32,
     density_band_count:    [3]int,
     wide_route_share:      f32,
@@ -290,6 +301,7 @@ Settlement_Acceptance_Failure :: enum {
     Wide_Route_Share,
     Required_Route,
     Disconnected_Anchors,
+    Building_Access,
     Route_Grade,
     Submerged_Route,
     Submerged_Site,
@@ -305,29 +317,47 @@ Settlement_Acceptance_Failure :: enum {
 }
 
 Settlement_Plan :: struct {
-    request:                  Settlement_Request,
-    village_reason:           Village_Reason,
-    neighborhoods:            [SETTLEMENT_NEIGHBORHOOD_CAPACITY]Settlement_Neighborhood,
-    neighborhood_count:       int,
-    macro_cells:              [SETTLEMENT_MACRO_CELL_CAPACITY]Settlement_Neighborhood,
-    macro_cell_count:         int,
-    routes:                   [SETTLEMENT_PLANNED_ROUTE_CAPACITY]Settlement_Planned_Route,
-    route_count:              int,
-    blocks:                   [SETTLEMENT_BLOCK_CAPACITY]Settlement_Block,
-    block_count:              int,
-    sites:                    [SETTLEMENT_SITE_CAPACITY]Settlement_Site,
-    site_count:               int,
-    rejected_sites:           [32]Settlement_Site,
-    rejected_site_count:      int,
-    decorative_foliage:       [32]terrain.Structure,
-    decorative_foliage_count: int,
-    terrain_edits:            [SETTLEMENT_TERRAIN_EDIT_CAPACITY]Settlement_Terrain_Edit,
-    terrain_edit_count:       int,
-    ordinary_purposes:        [SETTLEMENT_SITE_CAPACITY]Settlement_Building_Purpose,
-    ordinary_purpose_count:   int,
-    metrics:                  Settlement_Metrics,
-    acceptance_failure:       Settlement_Acceptance_Failure,
-    valid:                    bool,
+    request:                      Settlement_Request,
+    village_reason:               Village_Reason,
+    neighborhoods:                [SETTLEMENT_NEIGHBORHOOD_CAPACITY]Settlement_Neighborhood,
+    neighborhood_count:           int,
+    macro_cells:                  [SETTLEMENT_MACRO_CELL_CAPACITY]Settlement_Neighborhood,
+    macro_cell_count:             int,
+    routes:                       [SETTLEMENT_PLANNED_ROUTE_CAPACITY]Settlement_Planned_Route,
+    route_count:                  int,
+    access_routes_truncated:      bool,
+    access_required_count:        int,
+    access_connected_count:       int,
+    access_max_degree:            int,
+    access_shallow_junctions:     int,
+    access_hairpin_bends:         int,
+    access_crossings:             int,
+    access_unsplit_junctions:     int,
+    access_bad_door_approaches:   int,
+    access_bad_road_approaches:   int,
+    access_stair_routes:          int,
+    access_excessive_grades:      int,
+    access_shared_segments:       int,
+    access_widened_segments:      int,
+    access_max_shared_width_step: f32,
+    access_orphan_endpoints:      int,
+    road_badness_sum:             f32,
+    road_badness_count:           int,
+    blocks:                       [SETTLEMENT_BLOCK_CAPACITY]Settlement_Block,
+    block_count:                  int,
+    sites:                        [SETTLEMENT_SITE_CAPACITY]Settlement_Site,
+    site_count:                   int,
+    rejected_sites:               [32]Settlement_Site,
+    rejected_site_count:          int,
+    decorative_foliage:           [32]terrain.Structure,
+    decorative_foliage_count:     int,
+    terrain_edits:                [SETTLEMENT_TERRAIN_EDIT_CAPACITY]Settlement_Terrain_Edit,
+    terrain_edit_count:           int,
+    ordinary_purposes:            [SETTLEMENT_SITE_CAPACITY]Settlement_Building_Purpose,
+    ordinary_purpose_count:       int,
+    metrics:                      Settlement_Metrics,
+    acceptance_failure:           Settlement_Acceptance_Failure,
+    valid:                        bool,
 }
 
 Settlement_Rng :: struct {
@@ -396,7 +426,7 @@ settlement_height_band :: proc(region: Settlement_Region, scale: Settlement_Scal
     case .City:
         return 7, 22
     case .Town:
-        return 5, 15
+        return 4.5, 12
     case .Village:
         return 4, 11
     }
@@ -475,9 +505,23 @@ settlement_stats :: proc(values: []f32) -> Settlement_Scalar_Stats {
     return result
 }
 
+settlement_point_structure_footprint_distance :: proc(point: [2]f32, structure: terrain.Structure) -> f32 {
+    sine, cosine := math.sin(structure.rotation), math.cos(structure.rotation)
+    delta := point - [2]f32{structure.center_x, structure.center_z}
+    local := [2]f32{delta[0] * cosine + delta[1] * sine, -delta[0] * sine + delta[1] * cosine}
+    outside := [2]f32 {
+        max(math.abs(local[0]) - structure.width * .5, f32(0)),
+        max(math.abs(local[1]) - structure.depth * .5, f32(0)),
+    }
+    return linalg.length(outside)
+}
+
 settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
     if plan == nil do return
     plan.metrics = {}
+    if plan.road_badness_count > 0 {
+        plan.metrics.road_badness = plan.road_badness_sum / f32(plan.road_badness_count)
+    }
     route_lengths := make([dynamic]f32, context.temp_allocator)
     route_widths := make([dynamic]f32, context.temp_allocator)
     route_grades := make([dynamic]f32, context.temp_allocator)
@@ -488,6 +532,7 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
         route_widths_by_class[class_index] = make([dynamic]f32, context.temp_allocator)
     }
     intersection_spacings := make([dynamic]f32, context.temp_allocator)
+    dead_end_frontages := make([dynamic]f32, context.temp_allocator)
     block_short := make([dynamic]f32, context.temp_allocator)
     block_long := make([dynamic]f32, context.temp_allocator)
     block_areas := make([dynamic]f32, context.temp_allocator)
@@ -569,6 +614,17 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
         if degree >= 3 {
             intersection_nodes[intersection_count] = node_index
             intersection_count += 1
+        } else if degree == 1 {
+            point := topology.nodes[node_index]
+            nearest_frontage := f32(1e30)
+            for site in plan.sites[:plan.site_count] {
+                if !site.accepted || (site.kind != .Ordinary && site.kind != .Landmark) do continue
+                nearest_frontage = min(
+                    nearest_frontage,
+                    settlement_point_structure_footprint_distance(point, site.structure),
+                )
+            }
+            if nearest_frontage < f32(1e29) do append(&dead_end_frontages, nearest_frontage)
         }
     }
     for intersection_index in 0 ..< intersection_count {
@@ -582,6 +638,7 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
         if nearest < f32(1e29) do append(&intersection_spacings, nearest)
     }
     plan.metrics.intersection_spacing = settlement_stats(intersection_spacings[:])
+    plan.metrics.dead_end_frontage = settlement_stats(dead_end_frontages[:])
     plan.metrics.block_short_side = settlement_stats(block_short[:])
     plan.metrics.block_long_side = settlement_stats(block_long[:])
     plan.metrics.block_area = settlement_stats(block_areas[:])
@@ -629,8 +686,18 @@ settlement_plan_acceptance_failure :: proc(
     if project.road_graph.node_count > roads.MAX_NODES || project.road_graph.edge_count > roads.MAX_EDGES {
         return .Capacity
     }
-    if plan.metrics.wide_route_share > .1201 do return .Wide_Route_Share
+    if plan.access_routes_truncated do return .Capacity
+    wide_route_limit := f32(.1201)
+    if plan.request.scale == .Village && plan.village_reason == .Harbor_Fishery {
+        // A quay is a linear public working surface, not evidence that the
+        // village street hierarchy is over-wide. Harbor villages may devote
+        // more of their measured network to waterfront frontage while still
+        // bounding genuinely excessive paving.
+        wide_route_limit = .32
+    }
+    if plan.metrics.wide_route_share > wide_route_limit do return .Wide_Route_Share
     if !settlement_plan_required_routes_connected(plan) do return .Disconnected_Anchors
+    if plan.access_connected_count < plan.access_required_count do return .Building_Access
     for route in plan.routes[:plan.route_count] {
         if route.required && route.geometry.count < 2 do return .Required_Route
         if route.maximum_grade > settlement_route_grade_limit(route.class) + .001 do return .Route_Grade
@@ -732,12 +799,29 @@ settlement_plan_acceptance_valid :: proc(plan: ^Settlement_Plan, project: ^terra
 settlement_plan_report :: proc(plan: ^Settlement_Plan) -> string {
     if plan == nil do return ""
     return fmt.tprintf(
-        "routes %d width %.2f [%.2f..%.2f] grade p90 %.3f | blocks %d %.1fx%.1f | buildings %d height %.1f [%.1f..%.1f] form %.2f/%dQ | landmarks %d parks %d | terrain %d cut %.0f fill %.0f | wide %.1f%% minor %.1f%% | acceptance %v",
+        "routes %d width %.2f [%.2f..%.2f] grade p90 %.3f access %d/%d J%d/%d/H%d X%d/T%d D%d/R%d S%d/E%d W%d/%d/Q%.2f O%d ends %d/%.1fm | blocks %d %.1fx%.1f | buildings %d height %.1f [%.1f..%.1f] form %.2f/%dQ | landmarks %d parks %d | terrain %d cut %.0f fill %.0f | wide %.1f%% minor %.1f%% | acceptance %v",
         plan.route_count,
         plan.metrics.route_width.mean,
         plan.metrics.route_width.min,
         plan.metrics.route_width.max,
         plan.metrics.route_grade.p90,
+        plan.access_connected_count,
+        plan.access_required_count,
+        plan.access_max_degree,
+        plan.access_shallow_junctions,
+        plan.access_hairpin_bends,
+        plan.access_crossings,
+        plan.access_unsplit_junctions,
+        plan.access_bad_door_approaches,
+        plan.access_bad_road_approaches,
+        plan.access_stair_routes,
+        plan.access_excessive_grades,
+        plan.access_widened_segments,
+        plan.access_shared_segments,
+        plan.access_max_shared_width_step,
+        plan.access_orphan_endpoints,
+        plan.metrics.dead_end_frontage.count,
+        plan.metrics.dead_end_frontage.p90,
         plan.block_count,
         plan.metrics.block_short_side.mean,
         plan.metrics.block_long_side.mean,

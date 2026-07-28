@@ -150,21 +150,13 @@ desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_perso
         target.position +
         behind * follow_distance +
         flight.Vec3{0, follow_height + framing_camera + orbit_pitch * 8, 0}
-    right := target.basis.right
-    right.y = 0
-    right = linalg.normalize0(right)
     look_ahead := LOOK_AHEAD
-    lateral_focus, grounded_focus: f32
+    grounded_focus: f32
     if !target.fixed_framing {
         look_ahead += clamp(target.airspeed / 18, 0, 4)
-        lateral_focus = clamp(-target.roll_input * 3.2, -3.2, 3.2)
         grounded_focus = target.grounded ? -.35 : 0
     }
-    focus :=
-        target.position +
-        forward * look_ahead +
-        right * lateral_focus +
-        flight.Vec3{0, focus_height + framing_focus + grounded_focus, 0}
+    focus := target.position + forward * look_ahead + flight.Vec3{0, focus_height + framing_focus + grounded_focus, 0}
     return {position = to_third_person(position), target = to_third_person(focus)}
 }
 

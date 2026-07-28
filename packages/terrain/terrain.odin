@@ -22,12 +22,13 @@ DEFAULT_ISLAND_OFFSET :: 0.65
 DEFAULT_ISLAND_RADIUS :: 0.14
 DEFAULT_ISLAND_HEIGHT :: 4.5
 DEFAULT_ISLAND_SIGNS :: [2]f32{-1, 1}
-DEFAULT_RUNWAY_HALF_LENGTH :: 0.10
+// 450 m gives the Postale enough field for a representative utility-STOL
+// takeoff or landing while still demanding disciplined threshold use.
+DEFAULT_RUNWAY_HALF_LENGTH :: 0.1125
 DEFAULT_RUNWAY_HALF_WIDTH :: 0.012
 DEFAULT_RUNWAY_SPAWN_OFFSET :: 0.06
 DEFAULT_RUNWAY_SHOULDER :: f32(48)
 DEFAULT_RUNWAY_TERRAIN_FEATHER :: f32(32)
-DEFAULT_PIER_INNER_OFFSET :: 0.10
 DEFAULT_TOWN_OFFSET :: 118.0
 DEFAULT_TOWN_HILL_HEIGHT :: 5.5
 DEFAULT_TOWN_HILL_RADIUS_X :: 145.0
@@ -53,7 +54,8 @@ Formation_Kind :: enum {
 
 LEGACY_STRUCTURE_CAPACITY :: 256
 CITY_DENSITY_SAMPLES :: SAMPLES_PER_LEVEL
-PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '5'}
+PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '6'}
+PROJECT_FILE_MAGIC_V5 :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '5'}
 PROJECT_FILE_MAGIC_V4 :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '4'}
 PROJECT_FILE_MAGIC_V3 :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '3'}
 
@@ -62,20 +64,28 @@ Project_File_Header :: struct {
     payload_size: u64,
 }
 
+Entrance_Side :: enum u8 {
+    Front,
+    Right,
+    Rear,
+    Left,
+}
+
 Structure :: struct {
-    id:       u64,
-    group_id: u64,
-    center_x: f32,
-    center_z: f32,
-    width:    f32,
-    depth:    f32,
-    base_y:   f32,
-    height:   f32,
-    rotation: f32,
-    color:    [4]u8,
-    kind:     Formation_Kind,
-    seed:     u32,
-    building: buildings.Identity,
+    id:            u64,
+    group_id:      u64,
+    center_x:      f32,
+    center_z:      f32,
+    width:         f32,
+    depth:         f32,
+    base_y:        f32,
+    height:        f32,
+    rotation:      f32,
+    color:         [4]u8,
+    kind:          Formation_Kind,
+    entrance_side: Entrance_Side,
+    seed:          u32,
+    building:      buildings.Identity,
 }
 
 Clipmap_Level :: struct {
@@ -109,11 +119,27 @@ Project_File_Payload :: struct {
     climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
 }
 
+Structure_V5 :: struct {
+    id:       u64,
+    group_id: u64,
+    center_x: f32,
+    center_z: f32,
+    width:    f32,
+    depth:    f32,
+    base_y:   f32,
+    height:   f32,
+    rotation: f32,
+    color:    [4]u8,
+    kind:     Formation_Kind,
+    seed:     u32,
+    building: buildings.Identity,
+}
+
 Project_V4 :: struct {
     levels:                [CLIPMAP_LEVELS]Clipmap_Level,
     sea_level:             f32,
     revision:              u64,
-    structures:            [LEGACY_STRUCTURE_CAPACITY]Structure,
+    structures:            [LEGACY_STRUCTURE_CAPACITY]Structure_V5,
     structure_count:       int,
     next_structure_id:     u64,
     road_graph:            roads.Graph,
@@ -163,6 +189,25 @@ project_replace :: proc(project, loaded: ^Project) {
     loaded.structures = nil
 }
 
+structure_migrate_v5 :: proc(source: Structure_V5) -> Structure {
+    return {
+        id = source.id,
+        group_id = source.group_id,
+        center_x = source.center_x,
+        center_z = source.center_z,
+        width = source.width,
+        depth = source.depth,
+        base_y = source.base_y,
+        height = source.height,
+        rotation = source.rotation,
+        color = source.color,
+        kind = source.kind,
+        entrance_side = .Front,
+        seed = source.seed,
+        building = source.building,
+    }
+}
+
 project_migrate_v4 :: proc(project: ^Project, legacy: ^Project_V4) -> bool {
     if project == nil ||
        legacy == nil ||
@@ -181,7 +226,38 @@ project_migrate_v4 :: proc(project: ^Project, legacy: ^Project_V4) -> bool {
     loaded.city_density = legacy.city_density
     loaded.climbing_leaf_density = legacy.climbing_leaf_density
     resize(&loaded.structures, loaded.structure_count)
-    copy(loaded.structures[:], legacy.structures[:loaded.structure_count])
+    for source, index in legacy.structures[:loaded.structure_count] {
+        loaded.structures[index] = structure_migrate_v5(source)
+    }
+    project_replace(project, loaded)
+    return true
+}
+
+project_migrate_v5 :: proc(project: ^Project, payload: ^Project_File_Payload, structure_data: []byte) -> bool {
+    if project == nil || payload == nil do return false
+    structure_count := int(payload.structure_count)
+    if structure_count < 0 ||
+       structure_count > len(structure_data) / size_of(Structure_V5) ||
+       structure_count * size_of(Structure_V5) != len(structure_data) {
+        return false
+    }
+    loaded := new(Project)
+    defer free(loaded)
+    loaded.levels = payload.levels
+    loaded.sea_level = payload.sea_level
+    loaded.revision = payload.revision
+    loaded.structure_count = structure_count
+    loaded.next_structure_id = payload.next_structure_id
+    loaded.road_graph = payload.road_graph
+    loaded.city_density = payload.city_density
+    loaded.climbing_leaf_density = payload.climbing_leaf_density
+    resize(&loaded.structures, structure_count)
+    if structure_count > 0 {
+        legacy_structures := cast([^]Structure_V5)raw_data(structure_data)
+        for index in 0 ..< structure_count {
+            loaded.structures[index] = structure_migrate_v5(legacy_structures[index])
+        }
+    }
     project_replace(project, loaded)
     return true
 }
@@ -294,6 +370,15 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
         }
         project_replace(project, loaded)
         return true
+    }
+    if project_file_magic_is(header, PROJECT_FILE_MAGIC_V5) {
+        if header.payload_size != u64(len(data) - header_size) ||
+           len(data) < header_size + size_of(Project_File_Payload) {
+            return false
+        }
+        payload := cast(^Project_File_Payload)raw_data(data[header_size:])
+        structure_data := data[header_size + size_of(Project_File_Payload):]
+        return project_migrate_v5(project, payload, structure_data)
     }
     if project_file_magic_is(header, PROJECT_FILE_MAGIC_V4) {
         if header.payload_size != size_of(Project_V4) || len(data) != header_size + size_of(Project_V4) {
@@ -793,6 +878,19 @@ sample_height :: #force_inline proc(project: ^Project, level: int, x, z: f32) ->
         return sample_level_height(data, x, z)
     }
     return 0
+}
+
+// Blend a rendered fine-grid vertex onto the next coarser surface near the
+// outside of its clipmap patch. At weight 1 the fine edge follows the coarse
+// grid's bilinear surface exactly, eliminating the T-junction crack between
+// the fine edge's intermediate vertices and the coarse ring.
+@(no_instrumentation)
+sample_clipmap_transition_height :: #force_inline proc(project: ^Project, level: int, x, z, weight: f32) -> f32 {
+    fine := sample_height(project, level, x, z)
+    if project == nil || level < 0 || level >= CLIPMAP_LEVELS - 1 || weight <= 0 do return fine
+    coarse := sample_height(project, level + 1, x, z)
+    blend := clamp(weight, 0, 1)
+    return fine + (coarse - fine) * blend
 }
 
 @(no_instrumentation)

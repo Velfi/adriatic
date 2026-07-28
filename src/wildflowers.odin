@@ -41,6 +41,7 @@ wildflower_density_at :: proc(x, z: f32) -> f32 {
 
 wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32, prepared_plan: ^circulation.Plan = nil) -> bool {
     if editor == nil do return false
+    if settlement_access_point_on_alley_surface(&editor.architecture_city_plan, {x, z}) do return false
     ground_height := terrain.sample_height(&editor.project, 0, x, z)
     if terrain.ground_surface_at(&editor.project, 0, x, z) != .Grass do return false
     local_plan: circulation.Plan

@@ -57,6 +57,8 @@ canvas-signposts-build: build/libgfx_signposts.a
 
 physics-deps:
 	@if test ! -d $(JOLT_ROOT)/.git; then git clone --depth 1 --branch $(JOLT_VERSION) https://github.com/jrouwe/JoltPhysics.git $(JOLT_ROOT); fi
+	@if git -C $(JOLT_ROOT) apply --reverse --check ../jolt/soft-body-rod-frames.patch >/dev/null 2>&1; then :; \
+	else git -C $(JOLT_ROOT) apply ../jolt/soft-body-rod-frames.patch; fi
 
 physics-build: physics-deps
 	cmake -S third_party/jolt -B $(JOLT_BUILD) -DCMAKE_BUILD_TYPE=Release

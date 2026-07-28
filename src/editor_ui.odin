@@ -20,12 +20,13 @@ Authoring_Tool :: enum {
     Building,
     Marina,
     Farm,
+    Wreck,
     ClimbingLeaves,
     Roads,
     GreekAssets,
 }
 
-AUTHORING_TOOL_COUNT :: 13
+AUTHORING_TOOL_COUNT :: 14
 EDITOR_UI_TOP_HEIGHT :: f32(54)
 EDITOR_UI_RAIL_WIDTH :: f32(184)
 EDITOR_UI_INSPECTOR_WIDTH :: f32(292)
@@ -73,6 +74,8 @@ authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
         return "MARINA STAMP"
     case .Farm:
         return "FARM STAMP"
+    case .Wreck:
+        return "WRECK STAMP"
     case .ClimbingLeaves:
         return "CLIMBING LEAVES"
     case .Roads:
@@ -106,6 +109,8 @@ authoring_tool_shortcut :: #force_inline proc(tool: Authoring_Tool) -> cstring {
         return "J"
     case .Farm:
         return "K"
+    case .Wreck:
+        return "V"
     case .ClimbingLeaves:
         return "L"
     case .Roads:
@@ -127,6 +132,7 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.marina_paint_mode = false
     editor.marina_preview_valid = false
     editor.farm_paint_mode = false
+    editor.wreck_paint_mode = false
     editor.climbing_leaf_paint_mode = false
     editor.climbing_leaf_painting = false
     editor.formation_brush_painting = false
@@ -162,6 +168,9 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     case .Farm:
         editor.tool = .Structure
         editor.farm_paint_mode = true
+    case .Wreck:
+        editor.tool = .Structure
+        editor.wreck_paint_mode = true
     case .ClimbingLeaves:
         editor.tool = .Structure
         editor.climbing_leaf_paint_mode = true
@@ -388,6 +397,8 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         return "Left places a complete shoreline-oriented marina; right removes it."
     case .Farm:
         return "Left places the previewed farm; right generates a new seed."
+    case .Wreck:
+        return "Left places the previewed wreck; right generates a new seed."
     case .ClimbingLeaves:
         return "Left spreads climbing leaves; right erases. Wheel zooms; Shift spread; Alt hardness."
     case .Roads:
@@ -650,10 +661,36 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         if editor.marina_preview_valid {
             ui_draw_text(.Data, "RIGHT CLICK TO REROLL", {bounds.x, bounds.y + 88}, .4, {134, 224, 216, 255})
         }
+    case .Wreck:
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "WRECK SIZE (m)",
+            editor.wreck_brush_size,
+            160,
+            520,
+            0,
+        )
+        row += 1
+        bounds := editor_ui_slider_bounds(layout, row)
+        ui_draw_text(.Label, "FOOTPRINT", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        ui_draw_text(
+            .Data,
+            fmt.ctprintf("%d x %d m", int(editor.wreck_brush_size), int(editor.wreck_brush_size * 70 / 330)),
+            {bounds.x + 104, bounds.y},
+            .5,
+            {134, 224, 216, 255},
+        )
+        preview_label: cstring =
+            editor.wreck_preview_valid ? "CLICK TO PLACE CURRENT WRECK" : "MOVE AWAY FROM ANOTHER WRECK"
+        preview_color := editor.wreck_preview_valid ? rl.Color{134, 224, 216, 255} : rl.Color{224, 126, 108, 255}
+        ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)
+        if editor.wreck_preview_valid {
+            ui_draw_text(.Data, "RIGHT CLICK TO REROLL", {bounds.x, bounds.y + 66}, .4, {134, 224, 216, 255})
+        }
     case .Farm:
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
-            "SIZE (m)",
+            "FARM SIZE (m)",
             editor.farm_brush_radius * 2,
             40,
             240,
@@ -1007,6 +1044,14 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         if editor.farm_brush_radius != previous_radius {
             editor.farm_preview_revision = 0
             editor.farm_preview_valid = false
+        }
+        row += 1
+    case .Wreck:
+        previous_size := editor.wreck_brush_size
+        _ = editor_ui_slider_input(editor, layout, 15, row, &editor.wreck_brush_size, 160, 520, 10)
+        if editor.wreck_brush_size != previous_size {
+            editor.wreck_preview_revision = 0
+            editor.wreck_preview_valid = false
         }
         row += 1
     case .ClimbingLeaves:

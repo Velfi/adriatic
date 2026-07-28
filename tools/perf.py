@@ -129,6 +129,18 @@ def summarize(runs: list[dict[str, Any]], budgets: dict[str, float]) -> dict[str
                 geometry["foliage_utilization"] for geometry in geometry_runs
             ),
         }
+        summary["workload_present"] = any(
+            summary["geometry"][metric] > 0
+            for metric in (
+                "world_vertices_max",
+                "road_vertices_max",
+                "foliage_vertices_max",
+            )
+        )
+        # A renderer launch can succeed without acquiring a usable GPU in a
+        # sandboxed macOS process. Reject that empty workload instead of
+        # reporting implausibly tiny frame times as a passing benchmark.
+        summary["pass"] &= summary["workload_present"]
     return summary
 
 

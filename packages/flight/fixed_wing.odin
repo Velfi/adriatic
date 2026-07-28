@@ -9,8 +9,7 @@ Airframe :: struct {
     // integrator. The airframe remains product-owned tuning, not engine policy.
     flight_layout:                                                                                                                       u8,
     mass_kg, maximum_gross_mass_kg:                                                                                                      f32,
-    wing_area, lift_scale, drag_scale:                                                                                                   f32,
-    stall_speed, maximum_speed:                                                                                                          f32,
+    wing_area, lift_scale, drag_scale, parasitic_drag_area:                                                                              f32,
     rated_power_per_engine_kw, propeller_efficiency, static_thrust_per_engine, engine_count:                                             f32,
     wing_incidence_degrees, lift_curve_slope_per_degree, zero_lift_angle_degrees:                                                        f32,
     critical_angle_degrees, negative_critical_angle_degrees, post_stall_angle_degrees, post_stall_lift_coefficient, induced_drag_factor: f32,
@@ -25,11 +24,11 @@ tri_rotor_vtol_layout :: u8(1)
 
 Control_Command :: struct {
     pitch, roll, yaw, throttle: f32,
-    flap_setting:               int,
+    flap_fraction:              f32,
 }
 Runtime :: struct {
-    engine_output, control_authority, drag_multiplier, stall_speed_modifier: f32,
-    controls_damaged:                                                        bool,
+    engine_output, control_authority, drag_multiplier: f32,
+    controls_damaged:                                  bool,
 }
 Body_State :: struct {
     position, velocity, angular_velocity: Vec3,
@@ -50,8 +49,7 @@ default_airframe :: proc() -> Airframe {
         wing_area = 42,
         lift_scale = 1,
         drag_scale = 1,
-        stall_speed = 30.3,
-        maximum_speed = 70,
+        parasitic_drag_area = 7,
         rated_power_per_engine_kw = 400,
         propeller_efficiency = .78,
         static_thrust_per_engine = 10500,
@@ -80,16 +78,15 @@ default_airframe :: proc() -> Airframe {
 postale_airframe :: proc() -> Airframe {
     return {
         flight_layout                   = fixed_wing_layout,
-        mass_kg                         = 2400,
+        mass_kg                         = 3300,
         maximum_gross_mass_kg           = 3800,
         wing_area                       = 42,
         lift_scale                      = 1.45,
         drag_scale                      = 1,
-        stall_speed                     = 24,
-        maximum_speed                   = 70,
+        parasitic_drag_area             = 1.33,
         rated_power_per_engine_kw       = 560,
         propeller_efficiency            = .78,
-        static_thrust_per_engine        = 14500,
+        static_thrust_per_engine        = 12000,
         engine_count                    = 1,
         wing_incidence_degrees          = 4,
         lift_curve_slope_per_degree     = .095,
@@ -109,7 +106,7 @@ postale_airframe :: proc() -> Airframe {
         yaw_stability                   = 82000,
         yaw_damping                     = 10500,
         pitch_control_scale             = .95,
-        roll_control_scale              = 1.05,
+        roll_control_scale              = 1.35,
         yaw_control_scale               = .55,
     }
 }
@@ -124,8 +121,7 @@ pelican_airframe :: proc() -> Airframe {
         wing_area = 42,
         lift_scale = 1.38,
         drag_scale = 1,
-        stall_speed = 25.8,
-        maximum_speed = 70,
+        parasitic_drag_area = 7,
         rated_power_per_engine_kw = 400,
         propeller_efficiency = .78,
         static_thrust_per_engine = 10500,
@@ -156,22 +152,25 @@ pelican_airframe :: proc() -> Airframe {
     }
 }
 
-default_runtime :: proc() -> Runtime {return{
-        engine_output = 1,
-        control_authority = 1,
-        drag_multiplier = 1,
-        stall_speed_modifier = 1,
-    }}
-effective_stall_speed :: proc(mass: f32, airframe: Airframe) -> f32 {return(
-        airframe.stall_speed *
-        math.sqrt(clamp(mass / max_f32(airframe.maximum_gross_mass_kg, 1), .55, 1.1)) \
-    )}
+default_runtime :: proc() -> Runtime {return {engine_output = 1, control_authority = 1, drag_multiplier = 1}}
+effective_stall_speed :: proc(mass: f32, airframe: Airframe, flap: f32 = 0) -> f32 {
+    weight := max_f32(mass, 1) * 9.81
+    flap_fraction := clamp(flap, 0, 1)
+    maximum_lift_coefficient := max_f32(
+        lift_coefficient(airframe.critical_angle_degrees, airframe) *
+        (1 + flap_fraction * .12) *
+        max_f32(airframe.lift_scale, .01),
+        .01,
+    )
+    lifting_area := max_f32(airframe.wing_area, .01)
+    return f32(math.sqrt(f64(2 * weight / (1.225 * lifting_area * maximum_lift_coefficient))))
+}
 drag_force_at_speed :: proc(speed: f32, airframe: Airframe) -> f32 {return(
+        .5 *
+        1.225 *
         speed *
         speed *
-        (airframe.static_thrust_per_engine *
-                airframe.engine_count /
-                (airframe.maximum_speed * airframe.maximum_speed)) *
+        max_f32(airframe.parasitic_drag_area, .01) *
         airframe.drag_scale \
     )}
 max_f32 :: proc(a, b: f32) -> f32 { if a > b do return a; return b }
@@ -196,7 +195,7 @@ calculate_forces :: proc(
     Forces,
     Telemetry,
 ) {
-    speed := linalg.length(air_velocity); stall := effective_stall_speed(mass, airframe) * lerp(1, .88, flap)
+    speed := linalg.length(air_velocity); stall := effective_stall_speed(mass, airframe, flap)
     if speed < .5 do return {}, {effective_stall_speed = stall}
     basis := orthonormalize(
         basis_input,
@@ -247,17 +246,18 @@ step :: proc(
 ) -> Telemetry {
     if state == nil || delta_seconds <= 0 do return {}
     command :=
-        command_input; command.pitch = clamp(command.pitch, -1, 1); command.roll = clamp(command.roll, -1, 1); command.yaw = clamp(command.yaw, -1, 1); command.throttle = clamp(command.throttle, 0, 1); flap := clamp(f32(command.flap_setting) / 2, 0, 1)
-    tuned_airframe := airframe
-    tuned_airframe.stall_speed *= max_f32(runtime.stall_speed_modifier, .1)
+        command_input; command.pitch = clamp(command.pitch, -1, 1); command.roll = clamp(command.roll, -1, 1); command.yaw = clamp(command.yaw, -1, 1); command.throttle = clamp(command.throttle, 0, 1); flap := clamp(command.flap_fraction, 0, 1)
     state.basis = orthonormalize(
         state.basis,
-    ); air_velocity := state.velocity - wind; mass := max_f32(tuned_airframe.mass_kg, 1); forces, telemetry := calculate_forces(air_velocity, state.basis, mass, tuned_airframe, max_f32(runtime.drag_multiplier, .1), flap)
-    shaft_power :=
-        airframe.rated_power_per_engine_kw *
-        1000 *
-        airframe.propeller_efficiency *
-        command.throttle; thrust_per_engine := min_f32(airframe.static_thrust_per_engine, shaft_power / max_f32(telemetry.airspeed, 12)); thrust := thrust_per_engine * max_f32(1, airframe.engine_count) * clamp(runtime.engine_output, 0, 1)
+    ); air_velocity := state.velocity - wind; mass := max_f32(airframe.mass_kg, 1); forces, telemetry := calculate_forces(air_velocity, state.basis, mass, airframe, max_f32(runtime.drag_multiplier, .1), flap)
+    thrust_per_engine := propeller_thrust(
+        airframe.rated_power_per_engine_kw * 1000,
+        airframe.propeller_efficiency,
+        airframe.static_thrust_per_engine,
+        telemetry.airspeed,
+        command.throttle,
+    )
+    thrust := thrust_per_engine * max_f32(1, airframe.engine_count) * clamp(runtime.engine_output, 0, 1)
     total :=
         forces.lift + forces.parasitic_drag + forces.induced_drag + forces.lateral_drag + state.basis.forward * thrust
     state.velocity += (total + {0, -9.81 * mass, 0}) * (delta_seconds / mass)
@@ -292,6 +292,29 @@ step :: proc(
     state.basis.up += linalg.cross(state.angular_velocity, state.basis.up) * delta_seconds
     state.basis = orthonormalize(state.basis)
     return telemetry
+}
+
+propeller_thrust :: proc(
+    rated_power_watts, efficiency, static_thrust, airspeed, throttle: f32,
+) -> f32 {
+    power_fraction := clamp(throttle, 0, 1)
+    if power_fraction <= 0 do return 0
+    available_power :=
+        max_f32(rated_power_watts, 0) *
+        clamp(efficiency, 0, 1) *
+        power_fraction
+    static_available := max_f32(static_thrust, 0) * f32(math.sqrt(f64(power_fraction)))
+    if available_power <= 0 || static_available <= 0 do return 0
+    induced_speed := available_power / static_available
+    effective_speed := f32(
+        math.sqrt(
+            f64(
+                max_f32(airspeed, 0) * max_f32(airspeed, 0) +
+                induced_speed * induced_speed,
+            ),
+        ),
+    )
+    return available_power / max_f32(effective_speed, .01)
 }
 
 min_f32 :: proc(a, b: f32) -> f32 { if a < b do return a; return b }

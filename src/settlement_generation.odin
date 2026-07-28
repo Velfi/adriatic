@@ -43,7 +43,10 @@ SETTLEMENT_CITY :: Settlement_Profile {
 
 SETTLEMENT_TOWN :: Settlement_Profile {
     scale                = .Town,
-    world_cell           = 14,
+    // Give towns a broader, lower-density envelope than the city core. This
+    // cell size also drives the default town radius and the spacing between
+    // its neighborhood anchors.
+    world_cell           = 17,
     neighborhood_steps   = 84,
     density_growth_steps = 108,
     medium_steps         = 26,
@@ -52,7 +55,9 @@ SETTLEMENT_TOWN :: Settlement_Profile {
     landmark_steps       = 3,
     foliage_steps        = 18,
     density_floor        = .18,
-    density_ceiling      = .62,
+    // Town centers should read as close Mediterranean fabric, not a smaller
+    // version of the city's vertical core.
+    density_ceiling      = .42,
     max_slope            = .42,
 }
 
@@ -67,7 +72,9 @@ SETTLEMENT_VILLAGE :: Settlement_Profile {
     landmark_steps       = 1,
     foliage_steps        = 14,
     density_floor        = .10,
-    density_ceiling      = .48,
+    // Villages gain character from clustered yards and detached compounds;
+    // keep even their densest cells out of urban massing territory.
+    density_ceiling      = .32,
     max_slope            = .52,
 }
 

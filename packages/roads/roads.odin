@@ -267,14 +267,7 @@ remove_node :: proc(graph: ^Graph, index: int) -> bool {
 }
 
 @(no_instrumentation)
-edge_point :: #force_inline proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
-    if graph == nil || edge.from < 0 || edge.to < 0 || edge.from >= graph.node_count || edge.to >= graph.node_count {
-        return {}
-    }
-    p0 := graph.nodes[edge.from].position
-    p1 := edge.control_from
-    p2 := edge.control_to
-    p3 := graph.nodes[edge.to].position
+bezier_point :: #force_inline proc(p0, p1, p2, p3: Vec3, t: f32) -> Vec3 {
     amount := clamp(t, 0, 1)
     u := 1 - amount
     return(
@@ -285,14 +278,7 @@ edge_point :: #force_inline proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
     )
 }
 
-edge_tangent :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
-    if graph == nil || edge.from < 0 || edge.to < 0 || edge.from >= graph.node_count || edge.to >= graph.node_count {
-        return {1, 0, 0}
-    }
-    p0 := graph.nodes[edge.from].position
-    p1 := edge.control_from
-    p2 := edge.control_to
-    p3 := graph.nodes[edge.to].position
+bezier_tangent :: proc(p0, p1, p2, p3: Vec3, t: f32) -> Vec3 {
     amount := clamp(t, 0, 1)
     u := 1 - amount
     derivative := (p1 - p0) * (3 * u * u) + (p2 - p1) * (6 * u * amount) + (p3 - p2) * (3 * amount * amount)
@@ -302,6 +288,33 @@ edge_tangent :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
         if linalg.dot(tangent, tangent) <= .000001 do tangent = {1, 0, 0}
     }
     return tangent
+}
+
+@(no_instrumentation)
+edge_point :: #force_inline proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
+    if graph == nil || edge.from < 0 || edge.to < 0 || edge.from >= graph.node_count || edge.to >= graph.node_count {
+        return {}
+    }
+    return bezier_point(
+        graph.nodes[edge.from].position,
+        edge.control_from,
+        edge.control_to,
+        graph.nodes[edge.to].position,
+        t,
+    )
+}
+
+edge_tangent :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
+    if graph == nil || edge.from < 0 || edge.to < 0 || edge.from >= graph.node_count || edge.to >= graph.node_count {
+        return {1, 0, 0}
+    }
+    return bezier_tangent(
+        graph.nodes[edge.from].position,
+        edge.control_from,
+        edge.control_to,
+        graph.nodes[edge.to].position,
+        t,
+    )
 }
 
 pavement_query_build :: proc(graph: ^Graph, query: ^Pavement_Query) {
