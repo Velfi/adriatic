@@ -15217,9 +15217,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             posted_weight * .015,
         )
         idle_groom := math.sin(idle_phase * .78 + side_f * .9) * .009 * (1 - run_weight)
+        // An upright mouse keeps its forelegs tucked independently beside the
+        // chest. Do not draw the posted paws toward the centerline: that makes
+        // the overlapping limb hulls read as human-style folded arms.
         fore_paw_x :=
-            side_f * (.09 * (1 - run_weight) + .105 * run_weight + descent_weight * .018 + paw_turn_reach) -
-            side_f * posted_weight * .022
+            side_f * (.09 * (1 - run_weight) + .105 * run_weight + descent_weight * .018 + paw_turn_reach) +
+            side_f * posted_weight * .025
         fore_paw_y :=
             .038 * (1 - run_weight) +
             .042 * run_weight +
@@ -15227,7 +15230,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             air_tuck +
             idle_groom -
             inside_turn * .018 +
-            posted_weight * .405
+            posted_weight * .355
         fore_paw_z :=
             .29 * (1 - run_weight) +
             (.235 + front_cycle + side_f * .014) * run_weight +
@@ -15357,24 +15360,24 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         hind_knee := local_point(
             p,
             rotation,
-            side_f * (.205 + descent_weight * .012 + paw_turn_reach * .48 + posted_weight * .035),
+            side_f * (.205 + descent_weight * .012 + paw_turn_reach * .48 - posted_weight * .015),
             .18 + hind_lift * .35 + air_tuck * .32 - brake_compression * .25 + posted_weight * .015,
             -.25 + hind_cycle * .13 * run_weight + brake_pose * .105 - posted_weight * .055,
         )
         hind_hock := local_point(
             p,
             rotation,
-            side_f * (.22 + descent_weight * .018 + paw_turn_reach * .68 + posted_weight * .040),
+            side_f * (.22 + descent_weight * .018 + paw_turn_reach * .68 - posted_weight * .040),
             .075 + hind_lift * .60 + air_tuck * .48 - brake_compression * .22,
             -.43 - hind_cycle * .060 * run_weight + brake_pose * .075 - posted_weight * .12,
         )
-        hind_paw_x := side_f * (.195 + descent_weight * .025 + paw_turn_reach + posted_weight * .045)
+        hind_paw_x := side_f * (.195 + descent_weight * .025 + paw_turn_reach - posted_weight * .025)
         hind_paw_y := .042 + hind_lift + air_tuck - inside_turn * .014
         // An alert mouse plants its long hind feet forward under the belly;
         // this exposes the toes and supports the raised torso instead of
         // balancing it on two vertical hocks.
         hind_paw_z :=
-            -.16 + hind_cycle * run_weight + side_f * .018 * run_weight + brake_pose * .15 - posted_weight * .10
+            -.16 + hind_cycle * run_weight + side_f * .018 * run_weight + brake_pose * .15 + posted_weight * .08
         hind_paw := local_point(p, rotation, hind_paw_x, hind_paw_y, hind_paw_z)
         if model.driving_pose {
             // Fold the rear legs into the bucket seat. Keeping the hock behind
