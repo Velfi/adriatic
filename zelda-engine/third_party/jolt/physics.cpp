@@ -654,14 +654,6 @@ bool zelda_physics_soft_strand_set_attachment(
         lock.GetBody().GetMotionProperties());
     if (motion->GetVertices().size() < 2) return false;
     const Vec3 targets[2] {vector(root), vector(tangent)};
-    const Vec3 old_direction =
-        motion->GetVertex(1).mPosition - motion->GetVertex(0).mPosition;
-    const Vec3 new_direction = targets[1] - targets[0];
-    if (old_direction.LengthSq() > Square(1.0e-6f) &&
-        new_direction.LengthSq() > Square(1.0e-6f)) {
-        motion->RotateRodFrames(Quat::sFromTo(
-            old_direction.Normalized(), new_direction.Normalized()));
-    }
     for (uint32_t index = 0; index < 2; ++index) {
         SoftBodyVertex &vertex = motion->GetVertex(index);
         if (teleport || delta_time <= 0.0f) {

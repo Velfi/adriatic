@@ -15187,23 +15187,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         front_lift_scale := .075 * walk_weight + .088 * trot_weight + .145 * bound_weight
         hind_lift_scale := .090 * walk_weight + .105 * trot_weight + .165 * bound_weight
         front_lift := front_motion.lift * front_lift_scale * run_weight
-        scapula_slide := front_cycle * .038
         inside_turn := max(side_f * turn_pose, f32(0))
         outside_turn := max(-side_f * turn_pose, f32(0))
         paw_turn_reach := animation.turn_paw_offset * (outside_turn - inside_turn * .45)
-        idle_fore_shoulder := third_person.Vec3{side_f * .12, .31, .04}
-        run_fore_shoulder := third_person.Vec3{side_f * .13, .31, .075}
-        fore_socket_bind := third_person.Vec3 {
-            idle_fore_shoulder.x +
-            (run_fore_shoulder.x - idle_fore_shoulder.x) * run_weight +
-            side_f * paw_turn_reach * .35 -
-            side_f * posted_weight * .020,
-            idle_fore_shoulder.y - inside_turn * .025 + posted_weight * .065,
-            idle_fore_shoulder.z +
-            (run_fore_shoulder.z - idle_fore_shoulder.z) * run_weight +
-            scapula_slide +
-            posted_weight * .090,
-        }
+        // Limb roots are anatomical bind points. Gait, turning, and authored
+        // poses move their parent bones and distal joints, but must not also
+        // translate the socket independently or it separates from the hull.
+        fore_socket_bind := third_person.Vec3{side_f * .12, .31, .04}
         posed_fore_socket := mouse_skin_vertex(
             {bind_position = fore_socket_bind, groups = {{.Chest, .68}, {.Spine, .32}}},
             &skeleton,
@@ -15355,13 +15345,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
 
         hind_cycle := rear_cycle
         hind_lift := rear_motion.lift * hind_lift_scale * run_weight
-        pelvic_drive := hind_cycle * .028
-        idle_hind_socket := third_person.Vec3{side_f * .16, .30, -.47}
-        hind_socket_bind := third_person.Vec3 {
-            idle_hind_socket.x + side_f * (paw_turn_reach * .25 + posted_weight * .030),
-            idle_hind_socket.y - inside_turn * .025,
-            idle_hind_socket.z + pelvic_drive,
-        }
+        hind_socket_bind := third_person.Vec3{side_f * .16, .30, -.47}
         posed_hind_socket := mouse_skin_vertex(
             {bind_position = hind_socket_bind, groups = {{.Pelvis, .82}, {.Spine, .18}}},
             &skeleton,
@@ -15395,8 +15379,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         if model.driving_pose {
             // Fold the rear legs into the bucket seat. Keeping the hock behind
             // the knee creates a readable seated zig-zag when the cockpit is
-            // viewed from either three-quarter angle.
-            hind_hip = local_point(p, rotation, side_f * .17, .285, -.43)
+            // viewed from either three-quarter angle. Keep the skinned hip
+            // socket attached to the pelvis while posing the distal joints.
             hind_knee = local_point(p, rotation, side_f * .205, .19, -.20)
             hind_hock = local_point(p, rotation, side_f * .19, .105, -.36)
             hind_paw = local_point(p, rotation, side_f * .17, .095, -.11)

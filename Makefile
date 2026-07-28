@@ -124,7 +124,6 @@ PHYSICS_STAMP := $(BUILD_DIR)/physics.stamp
 PHYSICS_SOURCES := \
 	$(ZELDA_ENGINE_ROOT)/Makefile \
 	$(ZELDA_ENGINE_ROOT)/third_party/jolt/CMakeLists.txt \
-	$(ZELDA_ENGINE_ROOT)/third_party/jolt/soft-body-rod-frames.patch \
 	$(ZELDA_ENGINE_ROOT)/third_party/jolt/physics.cpp
 ifeq ($(shell uname -s),Darwin)
 SHARED_EXT := dylib
