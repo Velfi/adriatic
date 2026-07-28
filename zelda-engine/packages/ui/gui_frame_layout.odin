@@ -197,14 +197,29 @@ gui_destroy :: proc(ctx: ^Gui_Context) {
 }
 
 gui_init_text_shaper :: proc() {
-    body_ready := vo_textshape_init(i32(Gui_Font_Kind.Body), GUI_BODY_FONT_PATH, GUI_FONT_LOGICAL_HEIGHT) != 0
-    display_ready := vo_textshape_init(i32(Gui_Font_Kind.Display), GUI_DISPLAY_FONT_PATH, GUI_FONT_LOGICAL_HEIGHT) != 0
+    body_ready := vo_textshape_init(i32(Gui_Font_Kind.Body), gui_body_font_path, GUI_FONT_LOGICAL_HEIGHT) != 0
+    display_ready := vo_textshape_init(i32(Gui_Font_Kind.Display), gui_display_font_path, GUI_FONT_LOGICAL_HEIGHT) != 0
     sim_start_ready :=
         vo_textshape_init(i32(Gui_Font_Kind.SimStart), GUI_SIM_START_FONT_PATH, GUI_FONT_LOGICAL_HEIGHT) != 0
     gui_text_shaper_font_ready[int(Gui_Font_Kind.Body)] = body_ready
     gui_text_shaper_font_ready[int(Gui_Font_Kind.Display)] = display_ready
     gui_text_shaper_font_ready[int(Gui_Font_Kind.SimStart)] = sim_start_ready
     gui_text_shaper_ready = body_ready || display_ready || sim_start_ready
+}
+
+// Configure the body face before the first GUI context is initialized.
+// Returning false means text shaping was already initialized and the active
+// face cannot safely be replaced.
+gui_set_body_font_path :: proc(path: cstring) -> bool {
+    if gui_text_shaper_ready || path == nil do return false
+    gui_body_font_path = path
+    return true
+}
+
+gui_set_display_font_path :: proc(path: cstring) -> bool {
+    if gui_text_shaper_ready || path == nil do return false
+    gui_display_font_path = path
+    return true
 }
 
 gui_font_kind_ready :: proc(font_kind: Gui_Font_Kind) -> bool {

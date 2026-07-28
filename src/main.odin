@@ -9,6 +9,7 @@ import chase_camera "../packages/chase_camera"
 import cinematic "../packages/cinematic"
 import circulation "../packages/circulation"
 import dialogue "../packages/dialogue"
+import dialogue_session "../packages/dialogue_session"
 import dio "../packages/dio"
 import engine_sound "../packages/engine_sound"
 import farmland "../packages/farmland"
@@ -23,6 +24,7 @@ import mouse_tail "../packages/mouse_tail"
 import ocean_audio "../packages/ocean_audio"
 import particle_systems "../packages/particles"
 import postale_game "../packages/postale"
+import quest "../packages/quest"
 import roads "../packages/roads"
 import spray_audio "../packages/spray_audio"
 import story "../packages/story"
@@ -253,6 +255,7 @@ Fixture :: struct {
     flight_camera:                                  chase_camera.State,
     flight_throttle_overlay_value:                  f32,
     flight_throttle_overlay_changed_at:             f64,
+    flight_throttle_overlay_fade_started_at:        f64,
     flight_throttle_overlay_initialized:            bool,
     editor_camera:                                  third_person.Camera,
     editor_focus:                                   third_person.Vec3,
@@ -356,13 +359,21 @@ Fixture :: struct {
     attendant_dialogue:                             dialogue.Conversation `fixture:"-"`,
     attendant_dialogue_open:                        bool `fixture:"-"`,
     attendant_dialogue_focus:                       int `fixture:"-"`,
-    attendant_dialogue_action:                      Marta_Menu_Action `fixture:"-"`,
+    attendant_dialogue_view:                        Dialogue_View_State `fixture:"-"`,
+    dialogue_session:                               dialogue_session.State `fixture:"-"`,
     attendant_dialogue_vehicle_target:              vehicles.Aircraft_Kind `fixture:"-"`,
     attendant_dialogue_vehicle_choices:             [8]vehicles.Aircraft_Kind `fixture:"-"`,
     attendant_dialogue_vehicle_choice_count:        int `fixture:"-"`,
     gerta_position:                                 third_person.Vec3,
     story_state:                                    story.State,
     story_catalog:                                  story.Catalog,
+    story_quest_catalog:                            story.Quest_Catalog `fixture:"-"`,
+    tracked_quest_node:                             quest.Node_ID,
+    quest_tracking_suppressed:                      bool,
+    quest_tracking_revision:                        u64,
+    quest_log_tab:                                  Quest_Log_Tab `fixture:"-"`,
+    quest_log_focus:                                int `fixture:"-"`,
+    quest_log_scroll:                               int `fixture:"-"`,
     dialogue_resident:                              story.Resident,
     camera_target_lock:                             bool,
     flight_control:                                 postale_game.Control `fixture:"-"`,
@@ -461,14 +472,6 @@ editor_circulation_plan :: #force_inline proc(editor: ^Editor) -> ^circulation.P
     return &editor.circulation_plan
 }
 
-Marta_Menu_Action :: enum {
-    None,
-    Paint_Aircraft,
-    Select_Aircraft,
-    Borrow_Dinghy,
-    Close,
-}
-
 editor_spawn_into_world :: proc(editor: ^Editor) {
     if editor == nil || editor.in_map do return
     if editor.pilot.mode == .On_Foot {
@@ -524,6 +527,7 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.aircraft_previous_body_valid = false
     editor.flight_throttle_overlay_value = 0
     editor.flight_throttle_overlay_changed_at = 0
+    editor.flight_throttle_overlay_fade_started_at = 0
     editor.flight_throttle_overlay_initialized = false
 
     editor.postale = postale_game.new_runtime(postale_spawn_position(editor))
@@ -554,13 +558,21 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.car_trailer_yaw = editor.car.yaw_radians
 
     editor.story_state = {}
+    story.init_quest_catalog(&editor.story_quest_catalog)
+    _ = story.ensure_quest_progress(&editor.story_state)
+    editor.tracked_quest_node = quest.no_node
+    editor.quest_tracking_suppressed = false
+    editor.quest_tracking_revision = editor.story_state.quest.revision
+    editor.quest_log_tab = .Active
+    editor.quest_log_focus = 0
+    editor.quest_log_scroll = 0
     editor.dialogue_resident = {}
     editor.attendant_position = attendant_spawn_position(editor, editor.libellula.vehicle.position)
     editor.gerta_position = gerta_spawn_position(editor)
     editor.attendant_dialogue = {}
     editor.attendant_dialogue_open = false
     editor.attendant_dialogue_focus = 0
-    editor.attendant_dialogue_action = .None
+    dialogue_session.clear(&editor.dialogue_session)
     editor.attendant_dialogue_vehicle_target = {}
     editor.attendant_dialogue_vehicle_choices = {}
     editor.attendant_dialogue_vehicle_choice_count = 0
@@ -1535,6 +1547,47 @@ seed_player_benchmark :: proc(editor: ^Editor) {
     editor.camera_pose = third_person.camera_pose(editor.player.position, editor.camera)
 }
 
+seed_zora_benchmark :: proc(editor: ^Editor) {
+    if editor == nil do return
+    seed_default_island_towns(editor)
+    position, found := world_story_resident_position(editor, .Zora)
+    if !found do return
+    editor.camera_target_lock = false
+    editor.postale_visible = false
+    editor.libellula_visible = false
+    editor.player.position = {
+        position.x + 20,
+        terrain.sample_height(&editor.project, 0, position.x + 20, position.z),
+        position.z,
+    }
+    editor.pilot.position = editor.player.position
+    inspection_pose := third_person.camera_near({position.x, position.y + .48, position.z}, {1.35, .62, 1.35})
+    third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
+    third_person.camera_set_active(&editor.cameras, .Inspection)
+    editor.camera_pose = inspection_pose
+    if open_story_dialogue(editor, .Zora) {
+        _ = dialogue.choose(&editor.attendant_dialogue, 1)
+    }
+}
+
+seed_marta_benchmark :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.camera_target_lock = false
+    editor.postale_visible = false
+    attendant := editor.attendant_position
+    editor.player.position = {
+        attendant.x + 20,
+        terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z),
+        attendant.z,
+    }
+    editor.pilot.position = editor.player.position
+    inspection_pose := third_person.camera_near({attendant.x, attendant.y + .48, attendant.z}, {1.35, .62, 1.35})
+    third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
+    third_person.camera_set_active(&editor.cameras, .Inspection)
+    editor.camera_pose = inspection_pose
+    open_attendant_dialogue(editor, .Marta)
+}
+
 benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
     if editor == nil do return false
     switch scenario {
@@ -1592,6 +1645,10 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
     case "grass_disabled":
         seed_player_benchmark(editor)
         editor.benchmark_ground_grass_disabled = true
+    case "zora":
+        seed_zora_benchmark(editor)
+    case "marta":
+        seed_marta_benchmark(editor)
     case "architecture":
         seed_city_capture(editor)
     case "shadow_lab":
@@ -1609,6 +1666,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "player" &&
        scenario != "grass" &&
        scenario != "grass_disabled" &&
+       scenario != "zora" &&
+       scenario != "marta" &&
        scenario != "shadow_lab" {
         editor.editor_camera.distance = 260
         editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
@@ -2861,6 +2920,7 @@ gamepad_down :: proc(button: rl.Gamepad_Button) -> bool {
 
 Input_Action :: enum {
     Pause,
+    Journal,
     Jump,
     Run,
     Interact,
@@ -2875,6 +2935,8 @@ input_action_pressed :: proc(action: Input_Action) -> bool {
     switch action {
     case .Pause:
         return (!shift_key_down() && rl.IsKeyPressed(.ESCAPE)) || gamepad_pressed(.Start)
+    case .Journal:
+        return rl.IsKeyPressed(.J) || gamepad_pressed(.Back)
     case .Jump:
         return rl.IsKeyPressed(.SPACE) || gamepad_pressed(.South)
     case .Run:
@@ -2905,6 +2967,21 @@ input_action_down :: proc(action: Input_Action) -> bool {
         return shift_key_down() || gamepad_down(.North)
     }
     return input_action_pressed(action)
+}
+
+controller_journal_label :: proc(editor: ^Editor) -> cstring {
+    if editor == nil do return "VIEW"
+    switch editor.runtime_input.controller_style {
+    case .Xbox:
+        return "VIEW"
+    case .PlayStation:
+        return "SHARE"
+    case .Nintendo:
+        return "MINUS"
+    case .Generic:
+        return "BACK"
+    }
+    return "VIEW"
 }
 
 controller_prompt_active :: proc(editor: ^Editor) -> bool {
@@ -3139,10 +3216,12 @@ aircraft_render_body :: proc(editor: ^Editor) -> flight.Body_State {
     result.position = linalg.lerp(previous.position, body.position, alpha)
     result.velocity = linalg.lerp(previous.velocity, body.velocity, alpha)
     result.angular_velocity = linalg.lerp(previous.angular_velocity, body.angular_velocity, alpha)
-    result.basis = flight.orthonormalize({
-        forward = linalg.lerp(previous.basis.forward, body.basis.forward, alpha),
-        up      = linalg.lerp(previous.basis.up, body.basis.up, alpha),
-    })
+    result.basis = flight.orthonormalize(
+        {
+            forward = linalg.lerp(previous.basis.forward, body.basis.forward, alpha),
+            up = linalg.lerp(previous.basis.up, body.basis.up, alpha),
+        },
+    )
     return result
 }
 
@@ -3320,17 +3399,29 @@ attendant_weather_text :: proc(ctx: ^dialogue.Context) -> string {
     return "Vento leggero und mare aperto.\nBuen día pour voler, aunque les mouettes prendront le crédit."
 }
 
-marta_menu_set_action :: proc(ctx: ^dialogue.Context, action: Marta_Menu_Action) {
+marta_menu_set_result :: proc(ctx: ^dialogue.Context, result: dialogue_session.Airfield_Result) {
     if ctx == nil || ctx.data == nil do return
     editor := cast(^Editor)ctx.data
-    editor.attendant_dialogue_action = action
+    _ = dialogue_session.set_airfield(&editor.dialogue_session, result)
 }
 
-marta_menu_paint :: proc(ctx: ^dialogue.Context) { marta_menu_set_action(ctx, .Paint_Aircraft) }
-marta_menu_close :: proc(ctx: ^dialogue.Context) { marta_menu_set_action(ctx, .Close) }
+marta_menu_paint :: proc(ctx: ^dialogue.Context) { marta_menu_set_result(ctx, .Paint_Aircraft) }
+marta_menu_close :: proc(ctx: ^dialogue.Context) { marta_menu_set_result(ctx, .Close) }
+
+dialogue_session_reset :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.attendant_dialogue = {}
+    editor.attendant_dialogue_open = false
+    editor.attendant_dialogue_focus = 0
+    dialogue_session.clear(&editor.dialogue_session)
+    editor.attendant_dialogue_vehicle_target = {}
+    editor.attendant_dialogue_vehicle_choices = {}
+    editor.attendant_dialogue_vehicle_choice_count = 0
+}
 
 open_attendant_dialogue :: proc(editor: ^Editor, resident: story.Resident = .Marta) {
     if editor == nil || (resident != .Marta && resident != .Gerta) do return
+    attendant_dialogue_definition_release(editor)
     menu_choices := make([]dialogue.Choice, 5)
     menu_choices[0] = dialogue.choice("Paint an aeroplane", dialogue.no_next_node, effect = marta_menu_paint)
     menu_choices[1] = dialogue.choice("Choose an aeroplane", 1)
@@ -3367,19 +3458,44 @@ open_attendant_dialogue :: proc(editor: ^Editor, resident: story.Resident = .Mar
         {data = rawptr(editor), location_id = "airfield", resident_index = int(resident)},
     )
     if opened {
+        dialogue_session.begin(&editor.dialogue_session, .Airfield_Services)
         editor.dialogue_resident = resident
         editor.attendant_dialogue = conversation
         editor.attendant_dialogue_open = true
         editor.attendant_dialogue_focus = 0
-        editor.attendant_dialogue_action = .None
+        dialogue_view_reset(editor)
         game_input.reset_menu_repeat(&editor.runtime_input)
         set_pointer_locked(false)
         _ = sdl.ShowCursor()
     }
 }
 
+attendant_dialogue_definition_release :: proc(editor: ^Editor) {
+    if editor == nil do return
+    if definition := editor.attendant_dialogue.definition; definition != nil {
+        switch editor.dialogue_session.kind {
+        case .Airfield_Services:
+            // The local-news and weather nodes intentionally share the same
+            // backing choice slice, so release it once through node two.
+            if len(definition.nodes) > 0 do delete(definition.nodes[0].choices)
+            if len(definition.nodes) > 1 do delete(definition.nodes[1].choices)
+            if len(definition.nodes) > 2 do delete(definition.nodes[2].choices)
+            delete(definition.nodes)
+            free(definition)
+        case .Marina_Dockmaster:
+            if len(definition.nodes) > 0 do delete(definition.nodes[0].choices)
+            delete(definition.nodes)
+            free(definition)
+        case .None, .Story:
+        // Story definitions and their choice slices belong to story.Catalog.
+        }
+    }
+    dialogue_session_reset(editor)
+}
+
 open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
     if editor == nil || resident == .Marta || resident == .Gerta do return false
+    attendant_dialogue_definition_release(editor)
     definition: ^dialogue.Definition
     switch resident {
     case .Niko:
@@ -3393,17 +3509,21 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
     case .Marta, .Gerta:
         return false
     }
-    conversation, opened := dialogue.open(definition, {
-        data           = rawptr(&editor.story_state),
-        location_id    = resident == .Iva || resident == .Zora ? "east_island" : "west_island",
-        resident_index = int(resident),
-    })
+    conversation, opened := dialogue.open(
+        definition,
+        {
+            data = rawptr(&editor.story_state),
+            location_id = resident == .Iva || resident == .Zora ? "east_island" : "west_island",
+            resident_index = int(resident),
+        },
+    )
     if !opened do return false
+    dialogue_session.begin(&editor.dialogue_session, .Story)
     editor.attendant_dialogue = conversation
     editor.attendant_dialogue_open = true
     editor.attendant_dialogue_focus = 0
-    editor.attendant_dialogue_action = .None
     editor.dialogue_resident = resident
+    dialogue_view_reset(editor)
     game_input.reset_menu_repeat(&editor.runtime_input)
     set_pointer_locked(false)
     _ = sdl.ShowCursor()
@@ -3411,14 +3531,8 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
 }
 
 attendant_dialogue_panel :: proc(editor: ^Editor, width, height: i32) -> rl.Rectangle {
-    choice_count := 1
-    if editor != nil do choice_count = max(dialogue.available_count(&editor.attendant_dialogue), 1)
-    panel_height := min(f32(height) - 96, 146 + f32(choice_count) * 42)
-    return {x = f32(width) * .5 - 310, y = f32(height) - panel_height - 48, width = 620, height = panel_height}
-}
-
-attendant_dialogue_choice_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
-    return {x = panel.x + 24, y = panel.y + 126 + f32(index) * 42, width = panel.width - 48, height = 34}
+    _ = editor
+    return dialogue_tv_layout(width, height).conversation
 }
 
 tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
@@ -3529,6 +3643,8 @@ tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
 attendant_dialogue_close :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.attendant_dialogue_open = false
+    engine_sound.dialogue_voice_stop(&editor.engine_audio)
+    attendant_dialogue_definition_release(editor)
     game_input.reset_menu_repeat(&editor.runtime_input)
     set_pointer_locked(true)
     _ = sdl.HideCursor()
@@ -3567,20 +3683,30 @@ marta_select_aircraft :: proc(editor: ^Editor, target: vehicles.Aircraft_Kind) {
 attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
     if editor == nil || !editor.attendant_dialogue_open do return
     romance_before := editor.story_state.romance
-    editor.attendant_dialogue_action = .None
-    if editor.attendant_dialogue.current_node == 1 &&
+    session_kind := editor.dialogue_session.kind
+    editor.dialogue_session.airfield = .None
+    editor.dialogue_session.marina = .None
+    current_node := dialogue.current(&editor.attendant_dialogue)
+    if session_kind == .Airfield_Services &&
+       current_node != nil &&
+       current_node.id == "aircraft" &&
        choice_index >= 0 &&
        choice_index < editor.attendant_dialogue_vehicle_choice_count {
         editor.attendant_dialogue_vehicle_target = editor.attendant_dialogue_vehicle_choices[choice_index]
-        editor.attendant_dialogue_action = .Select_Aircraft
+        _ = dialogue_session.set_airfield(&editor.dialogue_session, .Select_Aircraft)
     }
     if !dialogue.choose(&editor.attendant_dialogue, choice_index) do return
     if romance_before != .Meeting && editor.story_state.romance == .Meeting {
         editor.story_meeting_cinematic_pending = true
     }
 
-    action := editor.attendant_dialogue_action
-    if action == .None {
+    airfield_result := editor.dialogue_session.airfield
+    marina_result := editor.dialogue_session.marina
+    vehicle_target := editor.attendant_dialogue_vehicle_target
+    has_result :=
+        session_kind == .Airfield_Services && airfield_result != .None ||
+        session_kind == .Marina_Dockmaster && marina_result != .None
+    if !has_result {
         if editor.attendant_dialogue.ended {
             attendant_dialogue_close(editor)
             if editor.story_meeting_cinematic_pending {
@@ -3595,20 +3721,31 @@ attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
     }
 
     attendant_dialogue_close(editor)
-    switch action {
-    case .Paint_Aircraft:
-        vehicle_paint_open(editor)
-    case .Select_Aircraft:
-        marta_select_aircraft(editor, editor.attendant_dialogue_vehicle_target)
-    case .Borrow_Dinghy:
-        editor.marina_dinghy_borrowed = true
-    case .None, .Close:
+    switch session_kind {
+    case .Airfield_Services:
+        switch airfield_result {
+        case .Paint_Aircraft:
+            vehicle_paint_open(editor)
+        case .Select_Aircraft:
+            marta_select_aircraft(editor, vehicle_target)
+        case .None, .Close:
+        }
+    case .Marina_Dockmaster:
+        switch marina_result {
+        case .Borrow_Dinghy:
+            editor.marina_dinghy_borrowed = true
+        case .None, .Close:
+        }
+    case .None, .Story:
     }
 }
 
 attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     if editor == nil || !editor.attendant_dialogue_open || pause_menu_is_open(editor) do return
-    panel := attendant_dialogue_panel(editor, width, height)
+    dialogue_view_update(editor, delta_seconds)
+    layout := dialogue_tv_layout(width, height)
+    visible_rows := dialogue_choice_visible_rows(layout)
+    dialogue_choice_scroll_focus(editor, visible_rows)
     mouse := rl.GetMousePosition()
     mouse_delta := rl.GetMouseDelta()
     mouse_active := rl.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
@@ -3625,28 +3762,53 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
     if direction == 0 do direction = vertical
     if direction == 0 do direction = horizontal
     choice_count := dialogue.available_count(&editor.attendant_dialogue)
+    wheel := rl.GetMouseWheelMove()
+    if wheel != 0 && choice_count > visible_rows {
+        editor.attendant_dialogue_view.first_choice = clamp(
+            editor.attendant_dialogue_view.first_choice - int(wheel),
+            0,
+            max(choice_count - visible_rows, 0),
+        )
+        editor.attendant_dialogue_focus = clamp(
+            editor.attendant_dialogue_focus,
+            editor.attendant_dialogue_view.first_choice,
+            min(editor.attendant_dialogue_view.first_choice + visible_rows - 1, choice_count - 1),
+        )
+    }
     if direction != 0 {
         editor.attendant_dialogue_focus = clamp(
             editor.attendant_dialogue_focus + direction,
             0,
             max(choice_count - 1, 0),
         )
+        dialogue_choice_scroll_focus(editor, visible_rows)
     }
 
     if mouse_active {
-        for index in 0 ..< choice_count {
-            if rl.CheckCollisionPointRec(mouse, attendant_dialogue_choice_bounds(panel, index)) {
+        first := editor.attendant_dialogue_view.first_choice
+        last := min(first + visible_rows, choice_count)
+        for index in first ..< last {
+            if rl.CheckCollisionPointRec(mouse, dialogue_choice_bounds(layout, index - first)) {
                 editor.attendant_dialogue_focus = index
             }
         }
     }
 
     activated := -1
-    if input_action_pressed(.Menu_Accept) do activated = editor.attendant_dialogue_focus
+    accept_pressed := input_action_pressed(.Menu_Accept)
+    if accept_pressed {
+        if dialogue_view_revealing(editor) {
+            dialogue_view_complete_reveal(editor)
+        } else {
+            activated = editor.attendant_dialogue_focus
+        }
+    }
     if input_action_pressed(.Menu_Cancel) do activated = max(choice_count - 1, 0)
     if rl.IsMouseButtonPressed(.LEFT) {
-        for index in 0 ..< choice_count {
-            if rl.CheckCollisionPointRec(mouse, attendant_dialogue_choice_bounds(panel, index)) {
+        first := editor.attendant_dialogue_view.first_choice
+        last := min(first + visible_rows, choice_count)
+        for index in first ..< last {
+            if rl.CheckCollisionPointRec(mouse, dialogue_choice_bounds(layout, index - first)) {
                 activated = index
             }
         }
@@ -3746,13 +3908,16 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
             height,
         )
         if !(pa.visible && pb.visible && pc.visible) do continue
-        append(&editor.libellula_projected_faces, Projected_Aircraft_Face {
-            a     = pa.position,
-            b     = pb.position,
-            c     = pc.position,
-            depth = (pa.depth + pb.depth + pc.depth) / 3,
-            color = aircraft_part_color(a.part),
-        })
+        append(
+            &editor.libellula_projected_faces,
+            Projected_Aircraft_Face {
+                a = pa.position,
+                b = pb.position,
+                c = pc.position,
+                depth = (pa.depth + pb.depth + pc.depth) / 3,
+                color = aircraft_part_color(a.part),
+            },
+        )
     }
     faces := editor.libellula_projected_faces[:]
     face_count := len(faces)
@@ -4517,15 +4682,19 @@ draw_throttle_overlay :: proc(editor: ^Editor, width, height: i32, power: f32) {
     if !editor.flight_throttle_overlay_initialized {
         editor.flight_throttle_overlay_value = normalized
         editor.flight_throttle_overlay_changed_at = now
+        editor.flight_throttle_overlay_fade_started_at = now
         editor.flight_throttle_overlay_initialized = true
     } else if math.abs(normalized - editor.flight_throttle_overlay_value) > .001 {
+        was_hidden := now - editor.flight_throttle_overlay_changed_at >= 3
         editor.flight_throttle_overlay_value = normalized
         editor.flight_throttle_overlay_changed_at = now
+        if was_hidden do editor.flight_throttle_overlay_fade_started_at = now
     }
 
     age := f32(now - editor.flight_throttle_overlay_changed_at)
     if age >= 3 do return
-    fade_in := clamp(age / .14, 0, 1)
+    fade_age := f32(now - editor.flight_throttle_overlay_fade_started_at)
+    fade_in := clamp(fade_age / .14, 0, 1)
     fade_out := clamp((3 - age) / .65, 0, 1)
     visibility := fade_in * fade_out
     alpha := u8(clamp(255 * visibility, 0, 255))
@@ -5754,28 +5923,33 @@ car_physics_create :: proc(editor: ^Editor) {
         }
     }
     editor.car_physics_terrain_revision = editor.terrain_revision
-    editor.car_physics_vehicle = physics.create_vehicle(editor.car_physics_world, {
-            half_width              = .67,
-            half_height             = .25,
-            half_length             = 1.22,
-            mass                    = 720,
+    editor.car_physics_vehicle = physics.create_vehicle(
+        editor.car_physics_world,
+        {
+            half_width = .67,
+            half_height = .25,
+            half_length = 1.22,
+            mass = 720,
             center_of_mass_offset_y = -.18,
-            wheel_x                 = vehicles.CAR_WHEEL_TRACK_HALF,
-            front_wheel_z           = vehicles.CAR_WHEELBASE_HALF,
-            rear_wheel_z            = -vehicles.CAR_WHEELBASE_HALF,
-            wheel_y                 = -.20,
-            wheel_radius            = vehicles.CAR_WHEEL_RADIUS,
-            wheel_width             = vehicles.CAR_WHEEL_WIDTH,
-            suspension_min          = .08,
-            suspension_max          = .30,
-            suspension_frequency    = 2.4,
-            suspension_damping      = .9,
-            max_steer_angle         = math.PI * .19,
-            max_engine_torque       = 520,
-            max_brake_torque        = 1100,
-            max_handbrake_torque    = 1400,
-            four_wheel_drive        = false,
-        }, {editor.car.position.x, ground + .74, editor.car.position.z}, car_physics_rotation(editor.car.yaw_radians))
+            wheel_x = vehicles.CAR_WHEEL_TRACK_HALF,
+            front_wheel_z = vehicles.CAR_WHEELBASE_HALF,
+            rear_wheel_z = -vehicles.CAR_WHEELBASE_HALF,
+            wheel_y = -.20,
+            wheel_radius = vehicles.CAR_WHEEL_RADIUS,
+            wheel_width = vehicles.CAR_WHEEL_WIDTH,
+            suspension_min = .08,
+            suspension_max = .30,
+            suspension_frequency = 2.4,
+            suspension_damping = .9,
+            max_steer_angle = math.PI * .19,
+            max_engine_torque = 520,
+            max_brake_torque = 1100,
+            max_handbrake_torque = 1400,
+            four_wheel_drive = false,
+        },
+        {editor.car.position.x, ground + .74, editor.car.position.z},
+        car_physics_rotation(editor.car.yaw_radians),
+    )
     if editor.car_physics_vehicle == nil {
         physics.destroy_world(editor.car_physics_world)
         editor.car_physics_world = nil
@@ -6081,6 +6255,7 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     if lab_scene_draw_ui(editor, width, height) do return
     draw_postale_speed_effects(editor, width, height, time)
     control_hint_draw_gameplay_hud(editor, width)
+    quest_tracking_hud_draw(editor, width)
     if editor.in_map {
         flying := driving_aircraft(editor)
         if flying && editor.gameplay_options.show_hud {
@@ -6092,56 +6267,7 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
             altitude := max(f32(0), body.position.y - ground - active_aircraft_ground_clearance(editor))
             draw_flight_instruments(editor, width, height, altitude)
         } else if editor.attendant_dialogue_open {
-            panel := attendant_dialogue_panel(editor, width, height)
-            tarot_layout_draw(editor, panel)
-            rl.DrawRectangleRounded(panel, .08, 10, {8, 28, 45, 238})
-            rl.DrawRectangleRoundedLinesEx(panel, .08, 10, 1, {86, 153, 158, 255})
-            conversation := &editor.attendant_dialogue
-            if current := dialogue.current(conversation); current != nil {
-                rl.DrawTextEx(
-                    rl.Font{},
-                    fmt.ctprintf("%s", current.speaker(&conversation.ctx)),
-                    {panel.x + 24, panel.y + 20},
-                    15,
-                    1,
-                    {211, 250, 242, 255},
-                )
-                rl.DrawTextEx(
-                    rl.Font{},
-                    fmt.ctprintf("%s", current.text(&conversation.ctx)),
-                    {panel.x + 24, panel.y + 50},
-                    14,
-                    1,
-                    {245, 239, 192, 255},
-                )
-                mouse := rl.GetMousePosition()
-                for index in 0 ..< dialogue.available_count(conversation) {
-                    bounds := attendant_dialogue_choice_bounds(panel, index)
-                    hovered := rl.CheckCollisionPointRec(mouse, bounds)
-                    focused := editor.attendant_dialogue_focus == index
-                    fill: rl.Color = {20, 57, 70, 255}
-                    border: rl.Color = {86, 153, 158, 255}
-                    if hovered do fill = {39, 91, 96, 255}
-                    if focused {
-                        fill = {43, 112, 119, 255}
-                        border = {211, 250, 242, 255}
-                    }
-                    rl.DrawRectangleRounded(bounds, .16, 8, fill)
-                    rl.DrawRectangleRoundedLinesEx(bounds, .16, 8, focused ? 2 : 1, border)
-                    if response := dialogue.available_at(conversation, index); response != nil {
-                        label := fmt.ctprintf("%s", response.text)
-                        size := rl.MeasureTextEx(rl.Font{}, label, 14, 1)
-                        rl.DrawTextEx(
-                            rl.Font{},
-                            label,
-                            {bounds.x + (bounds.width - size.x) * .5, bounds.y + 10},
-                            14,
-                            1,
-                            {239, 255, 250, 255},
-                        )
-                    }
-                }
-            }
+            dialogue_tv_draw(editor, width, height)
         } else if editor.gameplay_options.show_hud {
             if prompt := vehicle_entry_prompt(editor); prompt != nil {
                 rl.DrawRectangle(width / 2 - 116, height - 92, 232, 42, {8, 28, 45, 220})
@@ -6788,6 +6914,7 @@ hot_state_save :: proc(editor: ^Editor, path: string) -> bool {
     state.libellula_projected_faces = {}
     state.attendant_dialogue = {}
     state.attendant_dialogue_open = false
+    state.dialogue_session = {}
 
     payload := hs.serialize(state, {.Dynamics}, context.allocator)
     defer delete(payload)
@@ -6825,6 +6952,7 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
     structure_storage_destroy(editor)
     editor.attendant_dialogue = {}
     editor.attendant_dialogue_open = false
+    editor.dialogue_session = {}
 
     identical := hs.deserialize(editor, payload, {.Dynamics}, context.allocator)
     _ = identical // hs already used mem.copy for every identical subtree.
@@ -6838,6 +6966,7 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
     )
     editor.attendant_dialogue = {}
     editor.attendant_dialogue_open = false
+    editor.dialogue_session = {}
     editor.quit_requested = false
     return .Loaded
 }
@@ -6978,6 +7107,12 @@ adriatic_run :: proc(
     initial_height := i32(benchmark_mode ? benchmark_window_height : 720)
     if capture_kind == .Narrow do initial_width = 1000
     if capture_kind == .Compact do initial_width = 760
+    if capture_target == "quest-log-480" {
+        initial_width = 854
+        initial_height = 480
+    }
+    _ = rl.SetBodyFontPath("assets/fonts/NotoSans-Regular.ttf")
+    _ = rl.SetDisplayFontPath("assets/fonts/NotoSerif-Regular.ttf")
     rl.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring")
     show_loading_screen := SHOW_STARTUP_MENU && first_start && !capture_mode && !benchmark_mode
     postcard: rl.Texture
@@ -7055,10 +7190,13 @@ adriatic_run :: proc(
     }
     editor := new(Editor)
     defer free(editor)
+    defer attendant_dialogue_definition_release(editor)
     defer structure_storage_destroy(editor)
     defer dio.flame_graph_destroy(&editor.flame_graph)
     defer greek_asset_destroy(editor)
     story.init_catalog(&editor.story_catalog)
+    story.init_quest_catalog(&editor.story_quest_catalog)
+    _ = story.ensure_quest_progress(&editor.story_state)
     engine_audio_ready := !capture_mode && !benchmark_mode && engine_sound.open(&editor.engine_audio)
     if engine_audio_ready do defer engine_sound.close(&editor.engine_audio)
     vehicle_paint_history_init(editor)
@@ -7516,10 +7654,16 @@ adriatic_run :: proc(
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
         }
-        if !capture_vehicle_showcase_mode && (capture_target == "marta" || capture_target == "gerta") {
+        if !capture_vehicle_showcase_mode &&
+           (capture_target == "marta" ||
+                   capture_target == "gerta" ||
+                   capture_target == "marta-dialogue" ||
+                   capture_target == "marta-dialogue-dark" ||
+                   capture_target == "gerta-dialogue") {
             editor.camera_target_lock = false
             editor.postale_visible = false
-            attendant := capture_target == "gerta" ? editor.gerta_position : editor.attendant_position
+            gerta_capture := capture_target == "gerta" || capture_target == "gerta-dialogue"
+            attendant := gerta_capture ? editor.gerta_position : editor.attendant_position
             editor.player.position = {
                 attendant.x + 20,
                 terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z),
@@ -7533,6 +7677,11 @@ adriatic_run :: proc(
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
+            if capture_target == "marta-dialogue" ||
+               capture_target == "marta-dialogue-dark" ||
+               capture_target == "gerta-dialogue" {
+                open_attendant_dialogue(editor, gerta_capture ? .Gerta : .Marta)
+            }
         }
         if capture_target == "niko" ||
            capture_target == "iva" ||
@@ -7803,6 +7952,26 @@ adriatic_run :: proc(
         }
         if capture_target == "pause" do editor.pause_screen = .Pause
         if capture_target == "options" do editor.pause_screen = .Options
+        if capture_target == "options-dark" {
+            editor.pause_screen = .Options
+            editor.options_focus = 8
+            editor.options_scroll_y = 370
+            editor.gameplay_options.theme_mode = .Dark
+            ui_theme_set_mode(.Dark)
+        }
+        if capture_target == "marta-dialogue-dark" {
+            editor.gameplay_options.theme_mode = .Dark
+            ui_theme_set_mode(.Dark)
+        }
+        if capture_target == "quest-log" || capture_target == "quest-log-480" {
+            _ = story.begin_delivery(&editor.story_state)
+            _ = story.complete_delivery(&editor.story_state, .Iva)
+            quest_tracking_refresh(editor)
+            editor.pause_screen = .Journal
+            editor.quest_log_tab = .Active
+            editor.quest_log_focus = 0
+            editor.quest_log_scroll = 0
+        }
         if capture_target == "options-hdr" {
             editor.pause_screen = .Options
             editor.options_focus = 7
@@ -7965,6 +8134,8 @@ adriatic_run :: proc(
     // Catalog slices point into this Editor instance and must never retain
     // addresses serialized from a previous hot-loaded dylib.
     story.init_catalog(&editor.story_catalog)
+    story.init_quest_catalog(&editor.story_quest_catalog)
+    _ = story.ensure_quest_progress(&editor.story_state)
     if !state_loaded do control_hints_load(editor)
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, 1, "Welcome to Adriatic", postcard)
@@ -8415,13 +8586,18 @@ adriatic_run :: proc(
                         terrain_height := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
                         ground := postale_game.drivable_surface_height(terrain_height, editor.project.sea_level)
                         if editor.aircraft.active != .Postale {
-                            libellula_game.step(&editor.libellula, {
-                                    throttle_up   = control.throttle_up,
+                            libellula_game.step(
+                                &editor.libellula,
+                                {
+                                    throttle_up = control.throttle_up,
                                     throttle_down = control.throttle_down,
-                                    pitch         = control.pitch,
-                                    roll          = control.roll,
-                                    yaw           = control.yaw,
-                                }, ground, f32(AIRCRAFT_FIXED_STEP))
+                                    pitch = control.pitch,
+                                    roll = control.roll,
+                                    yaw = control.yaw,
+                                },
+                                ground,
+                                f32(AIRCRAFT_FIXED_STEP),
+                            )
                         } else {
                             ground_result := postale_game.step(
                                 &editor.postale,
@@ -8689,10 +8865,7 @@ adriatic_run :: proc(
                             editor.player.position.x,
                             editor.player.position.z,
                         )
-                        if editor.player.position.y <= ground_height {
-                            editor.player.position.y = ground_height
-                            editor.player.grounded = true
-                        }
+                        third_person.resolve_ground_contact(&editor.player, ground_height)
                         player_horizontal_speed := f32(
                             math.sqrt(
                                 f64(
@@ -9032,6 +9205,9 @@ adriatic_run :: proc(
             }
         }
         if engine_audio_ready {
+            if pause_menu_is_open(editor) || !editor.attendant_dialogue_open {
+                engine_sound.dialogue_voice_stop(&editor.engine_audio)
+            }
             engine_sound.update(
                 &editor.engine_audio,
                 engine_controls,

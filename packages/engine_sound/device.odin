@@ -13,6 +13,7 @@ Device :: struct {
     roll_synth:     Roll_Synth,
     crash_mixer:    Crash_Mixer,
     footstep_mixer: Footstep_Mixer,
+    dialogue_voice: Dialogue_Voice,
     mix_state:      Mix_State,
     mute_gain:      f32,
     buffer:         [BUFFER_SAMPLES]f32,
@@ -25,6 +26,7 @@ open :: proc(device: ^Device) -> bool {
     device.roll_synth = new_roll()
     device.crash_mixer = new_crash_mixer()
     device.footstep_mixer = new_footstep_mixer()
+    device.dialogue_voice = {}
     device.mix_state = {}
     device.mute_gain = 1
     if !sdl.InitSubSystem(sdl.INIT_AUDIO) do return false
@@ -108,6 +110,7 @@ update :: proc(
         render_roll_add(&device.roll_synth, roll, device.buffer[:])
         render_footstep_mixer_add(&device.footstep_mixer, device.buffer[:])
         render_crash_mixer_add(&device.crash_mixer, device.buffer[:])
+        render_dialogue_voice_add(&device.dialogue_voice, device.buffer[:])
         process_mix(&device.mix_state, device.buffer[:])
         apply_device_mute(&device.mute_gain, device.buffer[:], muted)
         if !sdl.PutAudioStreamData(

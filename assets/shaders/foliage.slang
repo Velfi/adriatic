@@ -189,11 +189,24 @@ VertexOutput grass_vertex_main(GrassInstance instance, uint vertex_id : SV_Verte
         float2(-.5, -.5), float2(.5, .5), float2(-.5, .5)
     };
     float2 corner = corners[vertex_id];
-    float3 position = instance.center;
-    // Camera-facing width with a world-vertical axis keeps roots planted even
-    // when the chase camera pitches.
+    float3 root = instance.center - float3(0.0, instance.size.y * .5, 0.0);
+    float distance_to_camera = length(root - push.camera_position.xyz);
+    float overhead = smoothstep(.58, .90, abs(push.camera_forward.y));
+    float nearby = 1.0 - smoothstep(8.0, 20.0, distance_to_camera);
+    // World-vertical cards look planted at ordinary chase-camera pitches, but
+    // collapse to a line when viewed from almost directly above. Nearby grass
+    // gradually becomes a full camera-facing card in that steep view. Building
+    // from the root keeps the blade attached to the terrain while its tip leans
+    // into the view; distant fields retain their existing upright silhouette.
+    float camera_facing = overhead * nearby;
+    float3 blade_axis = normalize(lerp(
+        float3(0.0, 1.0, 0.0),
+        push.camera_up.xyz,
+        camera_facing
+    ));
+    float3 position = root;
     position += push.camera_right.xyz * (corner.x * instance.size.x);
-    position.y += corner.y * instance.size.y;
+    position += blade_axis * ((corner.y + .5) * instance.size.y);
 
     uint column = instance.tile & 3;
     uint row = instance.tile >> 2;

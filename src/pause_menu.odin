@@ -10,6 +10,7 @@ import rl "zelda_engine:canvas2d"
 Pause_Screen :: enum {
     Closed,
     Pause,
+    Journal,
     Options,
     Customization,
 }
@@ -25,6 +26,7 @@ Gameplay_Options :: struct {
     crunchiness:         Crunchiness,
     dither_mode:         Dither_Mode,
     hdr_exposure:        bool,
+    theme_mode:          UI_Theme_Mode,
 }
 
 Crunchiness :: enum {
@@ -44,6 +46,7 @@ gameplay_options_default :: proc() -> Gameplay_Options {
         crunchiness = .P480,
         dither_mode = .Off,
         hdr_exposure = true,
+        theme_mode = .Light,
     }
 }
 
@@ -101,10 +104,10 @@ main_menu_button_bounds :: proc(panel: rl.Rectangle, row: int) -> rl.Rectangle {
     return {panel.x + 42, panel.y + 128 + f32(row) * 62, panel.width - 84, 48}
 }
 
-OPTIONS_ROW_COUNT :: 9
+OPTIONS_ROW_COUNT :: 10
 OPTIONS_RESTORE_FOCUS :: OPTIONS_ROW_COUNT
 OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
-OPTIONS_CONTENT_HEIGHT :: f32(714)
+OPTIONS_CONTENT_HEIGHT :: f32(786)
 
 options_menu_viewport :: proc(panel: rl.Rectangle) -> rl.Rectangle {
     return {panel.x + 30, panel.y + 108, panel.width - 54, max(panel.height - 178, f32(80))}
@@ -121,7 +124,7 @@ options_menu_row_bounds :: proc(panel: rl.Rectangle, row: int, scroll_y: f32 = 0
 
 options_menu_restore_bounds :: proc(panel: rl.Rectangle, scroll_y: f32 = 0) -> rl.Rectangle {
     viewport := options_menu_viewport(panel)
-    return {panel.x + 44, viewport.y + 658 - scroll_y, panel.width - 88, 46}
+    return {panel.x + 44, viewport.y + 730 - scroll_y, panel.width - 88, 46}
 }
 
 options_menu_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
@@ -149,21 +152,21 @@ options_menu_slider_track :: proc(bounds: rl.Rectangle) -> rl.Rectangle {
 
 pause_menu_button :: proc(bounds: rl.Rectangle, label: cstring, accent: bool = false, focused: bool = false) {
     hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
-    fill := rl.Color{31, 36, 43, 255}
-    border := rl.Color{73, 82, 94, 255}
-    text := rl.Color{230, 235, 240, 255}
+    fill := ui_theme_control()
+    border := ui_theme_border()
+    text := ui_theme_text()
     if hovered {
-        fill = {45, 53, 62, 255}
-        border = {115, 129, 143, 255}
+        fill = ui_theme_control_hover()
+        border = ui_theme_border_strong()
     }
     if accent {
-        fill = hovered ? rl.Color{42, 112, 111, 255} : rl.Color{33, 91, 92, 255}
-        border = {86, 211, 201, 255}
-        text = {246, 255, 254, 255}
+        fill = hovered ? ui_theme_accent_hover() : ui_theme_accent()
+        border = ui_theme_border_strong()
+        text = ui_theme_text_inverse()
     }
     if focused {
-        border = {105, 231, 220, 255}
-        if !accent do fill = {38, 54, 60, 255}
+        border = ui_theme_focus()
+        if !accent do fill = ui_theme_surface_elevated()
     }
     rl.DrawRectangleRounded(bounds, .12, 8, fill)
     rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, accent || focused ? 2 : 1, border)
@@ -171,7 +174,7 @@ pause_menu_button :: proc(bounds: rl.Rectangle, label: cstring, accent: bool = f
     ui_draw_text(
         .Label,
         label,
-        {bounds.x + (bounds.width - size.x) * .5, bounds.y + (bounds.height - size.y) * .5 + 2},
+        {bounds.x + (bounds.width - size.x) * .5, bounds.y + (bounds.height - size.y) * .5 + 4},
         .5,
         text,
     )
@@ -252,6 +255,9 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
     case 7:
         editor.gameplay_options.hdr_exposure = direction > 0
         dither_apply(editor)
+    case 8:
+        editor.gameplay_options.theme_mode = direction > 0 ? .Dark : .Light
+        ui_theme_set_mode(editor.gameplay_options.theme_mode)
     }
 }
 
@@ -311,11 +317,15 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         case 7:
             editor.gameplay_options.hdr_exposure = !editor.gameplay_options.hdr_exposure
             dither_apply(editor)
+        case 8:
+            editor.gameplay_options.theme_mode = editor.gameplay_options.theme_mode == .Dark ? .Light : .Dark
+            ui_theme_set_mode(editor.gameplay_options.theme_mode)
         case OPTIONS_RESTORE_FOCUS:
             editor.gameplay_options = gameplay_options_default()
             crunchiness_apply(editor.gameplay_options.crunchiness)
             dither_apply(editor)
-        case 8:
+            ui_theme_set_mode(editor.gameplay_options.theme_mode)
+        case 9:
             editor.pause_screen = .Customization
             editor.customization_focus = 0
         case OPTIONS_BACK_FOCUS:
@@ -325,7 +335,8 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         if editor.options_focus != 0 &&
            editor.options_focus != 5 &&
            editor.options_focus != 6 &&
-           editor.options_focus != 7 {
+           editor.options_focus != 7 &&
+           editor.options_focus != 8 {
             return
         }
     }
@@ -430,6 +441,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         editor.gameplay_options = gameplay_options_default()
         crunchiness_apply(editor.gameplay_options.crunchiness)
         dither_apply(editor)
+        ui_theme_set_mode(editor.gameplay_options.theme_mode)
         return
     }
     dither := options_menu_row_bounds(panel, 6, scroll_y)
@@ -459,6 +471,12 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     }
     if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 8, scroll_y)) {
         editor.options_focus = 8
+        editor.gameplay_options.theme_mode = editor.gameplay_options.theme_mode == .Dark ? .Light : .Dark
+        ui_theme_set_mode(editor.gameplay_options.theme_mode)
+        return
+    }
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 9, scroll_y)) {
+        editor.options_focus = 9
         editor.pause_screen = .Customization
         editor.customization_focus = 0
         return
@@ -546,9 +564,22 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     if rl.GamepadAvailable() do editor.controller_disconnect_notice = false
 
     if editor.pause_screen == .Closed {
+        if input_action_pressed(.Journal) {
+            quest_log_open(editor)
+            return
+        }
         if input_action_pressed(.Pause) {
             pause_menu_open(editor)
         }
+        return
+    }
+
+    if editor.pause_screen == .Journal {
+        if input_action_pressed(.Journal) || input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
+            quest_log_close(editor)
+            return
+        }
+        quest_log_process_input(editor, width, height, delta_seconds)
         return
     }
 
@@ -629,25 +660,25 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
 
 pause_menu_draw_header :: proc(panel: rl.Rectangle, eyebrow, title: cstring) {
     if eyebrow != "" {
-        ui_draw_text(.Data, eyebrow, {panel.x + 40, panel.y + 28}, .6, {103, 210, 201, 255})
+        ui_draw_text(.Data, eyebrow, {panel.x + 40, panel.y + 28}, .6, ui_theme_accent())
     }
     title_y := panel.y + 57
     if eyebrow == "" do title_y = panel.y + 38
-    ui_draw_text(.Display, title, {panel.x + 40, title_y}, .5, {244, 247, 249, 255})
-    rl.DrawLineEx({panel.x + 40, panel.y + 96}, {panel.x + panel.width - 40, panel.y + 96}, 1, {65, 73, 83, 255})
+    ui_draw_text(.Display, title, {panel.x + 40, title_y}, .5, ui_theme_text())
+    rl.DrawLineEx({panel.x + 40, panel.y + 96}, {panel.x + panel.width - 40, panel.y + 96}, 1, ui_theme_border())
 }
 
 options_menu_draw_toggle :: proc(bounds: rl.Rectangle, label: cstring, enabled: bool, focused: bool = false) {
     hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
-    fill := hovered ? rl.Color{39, 47, 55, 255} : rl.Color{29, 34, 41, 255}
-    border := hovered ? rl.Color{85, 99, 112, 255} : rl.Color{48, 56, 65, 255}
+    fill := hovered ? ui_theme_control_hover() : ui_theme_control()
+    border := hovered ? ui_theme_border_strong() : ui_theme_border()
     if focused {
-        fill = {35, 48, 53, 255}
-        border = {91, 211, 201, 255}
+        fill = ui_theme_surface_elevated()
+        border = ui_theme_focus()
     }
     rl.DrawRectangleRounded(bounds, .1, 8, fill)
     rl.DrawRectangleRoundedLinesEx(bounds, .1, 8, focused ? 2 : 1, border)
-    ui_draw_text(.Label, label, {bounds.x + 14, bounds.y + 18}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, label, {bounds.x + 14, bounds.y + 18}, .4, ui_theme_text())
     toggle := rl.Rectangle{bounds.x + bounds.width - 70, bounds.y + 14, 56, 30}
     status: cstring = enabled ? "ON" : "OFF"
     status_size := ui_measure_text(.Data, status, .2)
@@ -656,29 +687,29 @@ options_menu_draw_toggle :: proc(bounds: rl.Rectangle, label: cstring, enabled: 
         status,
         {toggle.x - status_size.x - 12, bounds.y + 19},
         .2,
-        enabled ? rl.Color{105, 224, 214, 255} : rl.Color{130, 140, 151, 255},
+        enabled ? ui_theme_positive() : ui_theme_disabled(),
     )
 
     // A soft underlay and outlined track keep the switch legible against both
     // the resting and hovered row colors.
-    rl.DrawRectangleRounded({toggle.x, toggle.y + 2, toggle.width, toggle.height}, 1, 12, {10, 14, 18, 105})
-    track_fill := enabled ? rl.Color{38, 145, 139, 255} : rl.Color{61, 70, 81, 255}
-    track_border := enabled ? rl.Color{83, 218, 207, 255} : rl.Color{91, 102, 114, 255}
+    rl.DrawRectangleRounded({toggle.x, toggle.y + 2, toggle.width, toggle.height}, 1, 12, ui_theme_scrim(65))
+    track_fill := enabled ? ui_theme_positive() : ui_theme_disabled()
+    track_border := enabled ? ui_theme_border_strong() : ui_theme_border()
     rl.DrawRectangleRounded(toggle, 1, 12, track_fill)
     rl.DrawRectangleRoundedLinesEx(toggle, 1, 12, 1, track_border)
 
     knob_x := enabled ? toggle.x + toggle.width - 15 : toggle.x + 15
     knob_center := rl.Vector2{knob_x, toggle.y + toggle.height * .5}
-    rl.DrawCircleV({knob_center.x, knob_center.y + 2}, 11, {8, 12, 15, 110})
-    rl.DrawCircleV(knob_center, 11, {239, 244, 246, 255})
-    rl.DrawCircleV(knob_center, 4, enabled ? rl.Color{63, 178, 169, 255} : rl.Color{151, 161, 171, 255})
+    rl.DrawCircleV({knob_center.x, knob_center.y + 2}, 11, ui_theme_scrim(80))
+    rl.DrawCircleV(knob_center, 11, ui_theme_surface_elevated())
+    rl.DrawCircleV(knob_center, 4, enabled ? ui_theme_positive() : ui_theme_disabled())
 }
 
 options_menu_draw_scrollbar :: proc(panel: rl.Rectangle, scroll_y: f32) {
     track := options_menu_scrollbar_track(panel)
     thumb := options_menu_scrollbar_thumb(panel, scroll_y)
-    rl.DrawRectangleRounded(track, 1, 6, {45, 53, 62, 190})
-    thumb_color := options_menu_max_scroll(panel) > 0 ? rl.Color{91, 111, 123, 255} : rl.Color{64, 74, 84, 150}
+    rl.DrawRectangleRounded(track, 1, 6, ui_theme_control(190))
+    thumb_color := options_menu_max_scroll(panel) > 0 ? ui_theme_border_strong() : ui_theme_disabled(150)
     rl.DrawRectangleRounded(thumb, 1, 8, thumb_color)
 }
 
@@ -692,7 +723,7 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         navigation_hint,
         {panel.x + panel.width - navigation_size.x - 40, panel.y + 64},
         .2,
-        {121, 133, 145, 255},
+        ui_theme_text_muted(),
     )
     viewport := options_menu_viewport(panel)
     scroll_y := clamp(editor.options_scroll_y, 0, options_menu_max_scroll(panel))
@@ -700,15 +731,15 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
 
     sensitivity := options_menu_row_bounds(panel, 0, scroll_y)
     sensitivity_hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), sensitivity)
-    sensitivity_fill := sensitivity_hovered ? rl.Color{36, 44, 52, 255} : rl.Color{27, 32, 39, 255}
-    sensitivity_border := sensitivity_hovered ? rl.Color{78, 93, 106, 255} : rl.Color{45, 53, 62, 255}
+    sensitivity_fill := sensitivity_hovered ? ui_theme_control_hover() : ui_theme_control()
+    sensitivity_border := sensitivity_hovered ? ui_theme_border_strong() : ui_theme_border()
     if editor.options_focus == 0 {
-        sensitivity_fill = {34, 47, 52, 255}
-        sensitivity_border = {91, 211, 201, 255}
+        sensitivity_fill = ui_theme_surface_elevated()
+        sensitivity_border = ui_theme_focus()
     }
     rl.DrawRectangleRounded(sensitivity, .1, 8, sensitivity_fill)
     rl.DrawRectangleRoundedLinesEx(sensitivity, .1, 8, editor.options_focus == 0 ? 2 : 1, sensitivity_border)
-    ui_draw_text(.Label, "LOOK SENSITIVITY", {sensitivity.x + 14, sensitivity.y + 8}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "LOOK SENSITIVITY", {sensitivity.x + 14, sensitivity.y + 8}, .4, ui_theme_text())
     percent := editor.gameplay_options.look_sensitivity / .012
     value := fmt.ctprintf("%d%%", int(percent * 100 + .5))
     value_size := ui_measure_text(.Data, value, .3)
@@ -717,20 +748,20 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         value,
         {sensitivity.x + sensitivity.width - value_size.x - 14, sensitivity.y + 8},
         .3,
-        {132, 225, 216, 255},
+        ui_theme_accent(),
     )
     track := options_menu_slider_track(sensitivity)
-    rl.DrawRectangleRounded(track, 1, 6, {51, 60, 69, 255})
+    rl.DrawRectangleRounded(track, 1, 6, ui_theme_border(180))
     for tick in 0 ..= 4 {
         tick_x := track.x + track.width * f32(tick) / 4
-        rl.DrawLineEx({tick_x, track.y - 2}, {tick_x, track.y + track.height + 2}, 1, {88, 99, 110, 150})
+        rl.DrawLineEx({tick_x, track.y - 2}, {tick_x, track.y + track.height + 2}, 1, ui_theme_border_strong(120))
     }
     normalized := clamp((editor.gameplay_options.look_sensitivity - .004) / .020, 0, 1)
-    rl.DrawRectangleRounded({track.x, track.y, track.width * normalized, track.height}, 1, 6, {52, 177, 168, 255})
+    rl.DrawRectangleRounded({track.x, track.y, track.width * normalized, track.height}, 1, 6, ui_theme_accent())
     knob := rl.Vector2{track.x + track.width * normalized, track.y + track.height * .5}
-    rl.DrawCircleV({knob.x, knob.y + 2}, 9, {8, 12, 15, 120})
-    rl.DrawCircleV(knob, 9, {238, 244, 245, 255})
-    rl.DrawCircleV(knob, 3, {58, 172, 163, 255})
+    rl.DrawCircleV({knob.x, knob.y + 2}, 9, ui_theme_scrim(80))
+    rl.DrawCircleV(knob, 9, ui_theme_surface_elevated())
+    rl.DrawCircleV(knob, 3, ui_theme_accent())
 
     options_menu_draw_toggle(
         options_menu_row_bounds(panel, 1, scroll_y),
@@ -763,17 +794,17 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
             {crunchiness.x - 4, crunchiness.y - 4, crunchiness.width + 8, crunchiness.height + 8},
             .08,
             8,
-            {31, 45, 50, 220},
+            ui_theme_surface_elevated(220),
         )
         rl.DrawRectangleRoundedLinesEx(
             {crunchiness.x - 4, crunchiness.y - 4, crunchiness.width + 8, crunchiness.height + 8},
             .08,
             8,
             2,
-            {91, 211, 201, 255},
+            ui_theme_focus(),
         )
     }
-    ui_draw_text(.Label, "CRUNCHINESS", {crunchiness.x, crunchiness.y + 2}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "CRUNCHINESS", {crunchiness.x, crunchiness.y + 2}, .4, ui_theme_text())
     segment_gap := f32(6)
     segment_width := (crunchiness.width - segment_gap * 3) / 4
     for index in 0 ..< 4 {
@@ -791,17 +822,17 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
             {dither.x - 4, dither.y - 4, dither.width + 8, dither.height + 8},
             .08,
             8,
-            {31, 45, 50, 220},
+            ui_theme_surface_elevated(220),
         )
         rl.DrawRectangleRoundedLinesEx(
             {dither.x - 4, dither.y - 4, dither.width + 8, dither.height + 8},
             .08,
             8,
             2,
-            {91, 211, 201, 255},
+            ui_theme_focus(),
         )
     }
-    ui_draw_text(.Label, "COLOR DITHER", {dither.x, dither.y + 2}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "COLOR DITHER", {dither.x, dither.y + 2}, .4, ui_theme_text())
     dither_gap := f32(6)
     dither_segment_width := (dither.width - dither_gap * 3) / 4
     for index in 0 ..< 4 {
@@ -820,7 +851,14 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         editor.options_focus == 7,
     )
 
-    pause_menu_button(options_menu_row_bounds(panel, 8, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 8)
+    options_menu_draw_toggle(
+        options_menu_row_bounds(panel, 8, scroll_y),
+        "DARK MODE",
+        editor.gameplay_options.theme_mode == .Dark,
+        editor.options_focus == 8,
+    )
+
+    pause_menu_button(options_menu_row_bounds(panel, 9, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 9)
 
     pause_menu_button(
         options_menu_restore_bounds(panel, scroll_y),
@@ -834,7 +872,7 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         {panel.x + 30, viewport.y + viewport.height + 4},
         {panel.x + panel.width - 30, viewport.y + viewport.height + 4},
         1,
-        {55, 64, 73, 255},
+        ui_theme_border(),
     )
     pause_menu_button(options_menu_back_bounds(panel), "BACK", true, editor.options_focus == OPTIONS_BACK_FOCUS)
 }
@@ -851,12 +889,12 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture
             {255, 255, 255, 255},
         )
     } else {
-        rl.ClearBackground({17, 63, 80, 255})
+        rl.ClearBackground(ui_theme_border_strong())
     }
-    rl.DrawRectangle(0, 0, width, height, {6, 19, 27, 72})
+    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(72))
 
     frame_width := max(i32(8), i32(min(f32(width) / 1280, f32(height) / 720) * 10))
-    frame_color := rl.Color{238, 221, 181, 255}
+    frame_color := ui_theme_surface_elevated()
     rl.DrawRectangle(0, 0, width, frame_width, frame_color)
     rl.DrawRectangle(0, height - frame_width, width, frame_width, frame_color)
     rl.DrawRectangle(0, 0, frame_width, height, frame_color)
@@ -866,11 +904,15 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture
         customization_scene_draw(editor, width, height)
         return
     }
+    if editor.pause_screen == .Journal {
+        quest_log_draw(editor, width, height)
+        return
+    }
 
     options := editor.pause_screen == .Options
     panel := options ? pause_menu_panel(width, height, true) : main_menu_panel(width, height)
-    rl.DrawRectangleRounded(panel, .035, 12, {17, 28, 34, 238})
-    rl.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, {225, 207, 162, 220})
+    rl.DrawRectangleRounded(panel, .035, 12, ui_theme_surface(245))
+    rl.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, ui_theme_border_strong(220))
     if options {
         options_menu_draw(editor, panel)
         return
@@ -890,7 +932,7 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture
         hint,
         {panel.x + (panel.width - hint_size.x) * .5, panel.y + panel.height - 24},
         .2,
-        {168, 180, 184, 255},
+        ui_theme_text_muted(),
     )
 }
 
@@ -902,17 +944,21 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
     }
     pause_menu_pointer_enabled = !controller_prompt_active(editor)
     overlay_alpha: u8 = editor.pause_screen == .Customization ? 58 : 190
-    rl.DrawRectangle(0, 0, width, height, {7, 11, 15, overlay_alpha})
+    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(overlay_alpha))
 
     if editor.pause_screen == .Customization {
         customization_scene_draw(editor, width, height)
         return
     }
+    if editor.pause_screen == .Journal {
+        quest_log_draw(editor, width, height)
+        return
+    }
 
     options := editor.pause_screen == .Options
     panel := pause_menu_panel(width, height, options)
-    rl.DrawRectangleRounded(panel, .035, 12, {22, 26, 32, 252})
-    rl.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, {78, 88, 100, 255})
+    rl.DrawRectangleRounded(panel, .035, 12, ui_theme_surface())
+    rl.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, ui_theme_border())
 
     if options {
         options_menu_draw(editor, panel)
@@ -955,6 +1001,6 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
         hint,
         {panel.x + (panel.width - hint_size.x) * .5, panel.y + panel.height - 28},
         .3,
-        {132, 143, 155, 255},
+        ui_theme_text_muted(),
     )
 }

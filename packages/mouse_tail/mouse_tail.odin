@@ -42,11 +42,14 @@ default_config :: proc() -> Config {
         segment_length = .17,
         radius = .026,
         gravity = 12,
-        damping = .965,
+        // A mouse tail trails as one supple rod rather than preserving a
+        // traveling impulse in each vertebra. Bleed off inherited point
+        // velocity before it can reflect through the chain as an S-wave.
+        damping = .84,
         constraint_iterations = 8,
         substeps = 3,
-        root_stiffness = .42,
-        root_damping = .72,
+        root_stiffness = .30,
+        root_damping = .48,
         // This is the total bend correction for one solver pass. The actual
         // rigidity tapers with the fourth power of the rendered radius, like
         // a slender elastic rod, so the muscular base carries its shape while
@@ -75,6 +78,39 @@ reset :: proc(state: ^State, root, backward: third_person.Vec3, config: Config) 
     }
     state.last_root = root
     state.initialized = true
+}
+
+@(no_instrumentation)
+point_is_finite :: #force_inline proc(point: third_person.Vec3) -> bool {
+    // NaN is the only floating-point value unequal to itself. The magnitude
+    // guard also rejects infinities and coordinates that cannot plausibly
+    // belong to this finite world before they reach the mesh builder.
+    return point.x == point.x &&
+           point.y == point.y &&
+           point.z == point.z &&
+           math.abs(point.x) < 1e6 &&
+           math.abs(point.y) < 1e6 &&
+           math.abs(point.z) < 1e6
+}
+
+state_is_stretched :: proc(state: ^State, root: third_person.Vec3, config: Config) -> bool {
+    if state == nil || !state.initialized do return false
+    segment_length := max(config.segment_length, f32(.02))
+    maximum_link := segment_length * 4
+    maximum_link_squared := maximum_link * maximum_link
+    authored_length := segment_length * f32(POINT_COUNT - 1)
+    maximum_root_distance := authored_length * 1.5
+    maximum_root_distance_squared := maximum_root_distance * maximum_root_distance
+    for point, index in state.points {
+        if !point_is_finite(point.position) || !point_is_finite(point.previous) do return true
+        root_delta := point.position - root
+        if linalg.dot(root_delta, root_delta) > maximum_root_distance_squared do return true
+        if index > 0 {
+            link := point.position - state.points[index - 1].position
+            if linalg.dot(link, link) > maximum_link_squared do return true
+        }
+    }
+    return false
 }
 
 @(no_instrumentation)
@@ -126,13 +162,27 @@ bend_iteration_stiffness :: #force_inline proc(stiffness: f32, iterations: int) 
     return 1 - f32(math.pow(f64(1 - clamped), 1.0 / f64(iterations)))
 }
 
-resolve_terrain :: proc(point: ^Point, project: ^terrain.Project, radius, friction: f32) {
+resolve_terrain :: proc(
+    point: ^Point,
+    project: ^terrain.Project,
+    radius, friction: f32,
+    cached_plan: ^circulation.Plan = nil,
+) {
     surface_height := terrain.sample_height(project, 0, point.position.x, point.position.z)
-    plan := architecture.circulation_plan(project)
+    fallback_plan: circulation.Plan
+    plan := cached_plan
+    if plan == nil {
+        fallback_plan = architecture.circulation_plan(project)
+        plan = &fallback_plan
+    }
     pavement := circulation.surface_at(
         &project.road_graph,
-        &plan,
-        {point.position.x, point.position.y, point.position.z},
+        plan,
+        // Generated circulation areas are planar overlays and preserve the
+        // query height in their hit result. Query from the terrain surface,
+        // not from the tail point, or each collision pass treats the point's
+        // previous correction as a taller pavement and ratchets it upward.
+        {point.position.x, surface_height, point.position.z},
     )
     // Rendered road crowns sit 12 cm above the terrain heightfield. Treat that
     // presentation lift as physical support so a grounded tail rests on the
@@ -228,9 +278,14 @@ resolve_structure :: #force_inline proc(
     )
 }
 
-resolve_world :: proc(point: ^Point, project: ^terrain.Project, config: Config) {
+resolve_world :: proc(
+    point: ^Point,
+    project: ^terrain.Project,
+    config: Config,
+    circulation_plan: ^circulation.Plan = nil,
+) {
     radius := max(config.radius, f32(0))
-    resolve_terrain(point, project, radius, config.surface_friction)
+    resolve_terrain(point, project, radius, config.surface_friction, circulation_plan)
     for index in 0 ..< project.structure_count {
         structure := project.structures[index]
         // Any authored solid can have a large enclosing volume. Never let a
@@ -248,7 +303,7 @@ resolve_world :: proc(point: ^Point, project: ^terrain.Project, config: Config) 
         )
     }
     // A side projection can put a point over a different patch of terrain.
-    resolve_terrain(point, project, radius, config.surface_friction)
+    resolve_terrain(point, project, radius, config.surface_friction, circulation_plan)
 }
 
 step :: proc(
@@ -257,9 +312,16 @@ step :: proc(
     project: ^terrain.Project,
     config: Config,
     delta_seconds: f32,
+    cached_plan: ^circulation.Plan = nil,
 ) {
     if state == nil || project == nil do return
-    if !state.initialized || linalg.dot(root - state.last_root, root - state.last_root) > 4 {
+    if !point_is_finite(root) {
+        state.initialized = false
+        return
+    }
+    if !state.initialized ||
+       linalg.dot(root - state.last_root, root - state.last_root) > 4 ||
+       state_is_stretched(state, root, config) {
         reset(state, root, backward, config)
     }
     if delta_seconds <= 0 {
@@ -284,6 +346,12 @@ step :: proc(
         chain_weight := f32(index + 1) / f32(POINT_COUNT - 1)
         pass_stiffness := clamp(config.bend_stiffness, 0, 1) * bend_rigidity_profile(chain_weight)
         bend_iteration_weights[index] = bend_iteration_stiffness(pass_stiffness, iterations)
+    }
+    fallback_plan: circulation.Plan
+    circulation_plan := cached_plan
+    if circulation_plan == nil {
+        fallback_plan = architecture.circulation_plan(project)
+        circulation_plan = &fallback_plan
     }
 
     for _ in 0 ..< substeps {
@@ -330,7 +398,7 @@ step :: proc(
                 constrain_distance(&state.points[index], &state.points[index + 1], segment_length, a_weight, 1)
             }
             for index in 1 ..< POINT_COUNT {
-                resolve_world(&state.points[index], project, config)
+                resolve_world(&state.points[index], project, config, circulation_plan)
             }
         }
     }

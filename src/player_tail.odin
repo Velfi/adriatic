@@ -76,7 +76,15 @@ player_tail_update :: proc(editor: ^Editor, delta_seconds: f32) {
     if editor == nil || !editor.in_map || editor.pilot.mode != .On_Foot do return
     player_scarf_rotation_update(editor, delta_seconds)
     root, backward := player_tail_root(editor)
-    mouse_tail.step(&editor.player_tail, root, backward, &editor.project, editor.tweak.player_tail, delta_seconds)
+    mouse_tail.step(
+        &editor.player_tail,
+        root,
+        backward,
+        &editor.project,
+        editor.tweak.player_tail,
+        delta_seconds,
+        editor_circulation_plan(editor),
+    )
 }
 
 player_scarf_rotation_update :: proc(editor: ^Editor, delta_seconds: f32) {

@@ -386,9 +386,27 @@ gui_font_glyph_slot :: proc(glyph_id: u32) -> i32 {
     return -1
 }
 
+gui_font_ascii_glyph_bounds :: proc(
+    font_kind: Gui_Font_Kind,
+    glyph_first, glyph_last, pixel_height: int,
+    out: ^Gui_Glyph_Bounds,
+) -> bool {
+    effective_font_kind := gui_effective_font_kind(font_kind)
+    if out == nil || !gui_text_shaper_ready || !gui_font_kind_ready(effective_font_kind) {
+        return false
+    }
+    return vo_textshape_ascii_glyph_bounds(
+        i32(effective_font_kind),
+        i32(glyph_first),
+        i32(glyph_last),
+        i32(pixel_height),
+        out,
+    ) != 0
+}
+
 gui_font_render_ascii_atlas :: proc(
     font_kind: Gui_Font_Kind,
-    glyph_first, glyph_last, pixel_height, cell_width, cell_height, columns: int,
+    glyph_first, glyph_last, pixel_height, cell_width, cell_height, columns, origin_x, baseline: int,
     rgba: []u8,
 ) -> bool {
     effective_font_kind := gui_effective_font_kind(font_kind)
@@ -404,6 +422,8 @@ gui_font_render_ascii_atlas :: proc(
             i32(cell_width),
             i32(cell_height),
             i32(columns),
+            i32(origin_x),
+            i32(baseline),
             raw_data(rgba),
             i32(len(rgba)),
         ) !=

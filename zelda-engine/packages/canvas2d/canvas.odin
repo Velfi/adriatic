@@ -22,7 +22,8 @@ Vector2 :: render2d.Vector2
 Rectangle :: render2d.Rectangle
 Color :: render2d.Color
 Font :: struct {
-    ready: bool,
+    ready:   bool,
+    display: bool,
 }
 Texture :: render2d.Texture
 Button_Interaction :: struct {
@@ -90,6 +91,7 @@ Gamepad_Button :: enum {
     Dpad_Down,
     Dpad_Left,
     Dpad_Right,
+    Back,
     Start,
     Count,
 }; Gamepad_Axis :: enum {
@@ -238,15 +240,13 @@ FONT_COUNT :: FONT_LAST - FONT_FIRST + 1
 FONT_FALLBACK_RUNES :: [?]rune{'◆', '◇', '✓', '✕', '⚠'}
 FONT_FALLBACK_COUNT :: len(FONT_FALLBACK_RUNES)
 FONT_COLUMNS :: 16
-// Keep the UI atlas at 2x its logical 28 px design size. Large display type
-// otherwise upscales a 28 px bitmap and visibly softens while the rest of the
-// interface remains sharp. Iosevka's monospace advance fits comfortably in
-// the doubled cell without bleeding into adjacent glyphs.
-FONT_CELL_W :: 40
-FONT_CELL_H :: 64
+// Keep the UI atlas near 2x its logical 28 px design size. The cell must fit
+// the widest supported display-face glyph at this raster height; unlike the
+// original condensed body face, proportional serif faces can approach a full
+// em in width.
+FONT_RASTER_H :: 56
+FONT_LOGICAL_CELL_H :: 64
 FONT_ROWS :: (FONT_COUNT + FONT_FALLBACK_COUNT + FONT_COLUMNS - 1) / FONT_COLUMNS
-FONT_ATLAS_W :: FONT_CELL_W * FONT_COLUMNS
-FONT_ATLAS_H :: FONT_CELL_H * FONT_ROWS
 ICON_COLUMNS :: 6
 ICON_ROWS :: 6
 MAX_TEXTURES :: 16
@@ -278,7 +278,10 @@ State :: struct {
     texture_count:                             int,
     texture_width, texture_height:             int,
     icon_y, icon_width, icon_height:           int,
-    font_advance_em:                           f32,
+    font_cell_width, font_cell_height:         int,
+    font_origin_x, font_baseline:              int,
+    font_atlas_width, font_atlas_height:       int,
+    font_advance_em:                           [2][FONT_COUNT]f32,
     descriptor_layout:                         vk.DescriptorSetLayout,
     descriptor_pool:                           vk.DescriptorPool,
     descriptors:                               [MAX_TEXTURES]vk.DescriptorSet,

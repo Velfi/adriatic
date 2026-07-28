@@ -1,6 +1,7 @@
 package tests
 
 import dialogue "../packages/dialogue"
+import quest "../packages/quest"
 import story "../packages/story"
 import tarot "../packages/tarot"
 import "core:testing"
@@ -314,4 +315,76 @@ resident_action_indicators_follow_campaign_progress :: proc(t: ^testing.T) {
     testing.expect(t, !story.resident_has_action(&state, .Iva))
     testing.expect(t, story.begin_delivery(&state))
     testing.expect(t, story.resident_has_action(&state, .Iva))
+}
+
+@(test)
+two_island_quest_graph_projects_to_legacy_story_stages :: proc(t: ^testing.T) {
+    catalog: story.Quest_Catalog
+    story.init_quest_catalog(&catalog)
+    testing.expect(t, quest.validate(&catalog.definition))
+
+    graph_state: quest.State
+    _, initialized := quest.init(&graph_state, &catalog.definition)
+    testing.expect(t, initialized)
+
+    legacy: story.State
+    testing.expect(t, story.apply_quest_projection(&legacy, &graph_state, &catalog))
+    testing.expect(t, legacy.romance == .Unintroduced)
+    testing.expect(t, legacy.repair == .Not_Seen)
+
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Talk, key = "crash-reported", target = "bojan"})
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Inspect, key = "bojan-wing"})
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Repair, key = "apply-wing-patch"})
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Repair, key = "verify-wing-repair"})
+    testing.expect(t, story.apply_quest_projection(&legacy, &graph_state, &catalog))
+    testing.expect(t, legacy.repair == .Repaired)
+    testing.expect(t, legacy.romance == .Unintroduced)
+
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "first-letter", target = "iva"})
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "first-reply", target = "niko"})
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "regatta-invitation", target = "iva"})
+    testing.expect(t, story.apply_quest_projection(&legacy, &graph_state, &catalog))
+    testing.expect(t, legacy.romance == .Invitation)
+    testing.expect(
+        t,
+        quest.status(&graph_state, &catalog.definition, story.quest_node_id(.Regatta_Acceptance)) == .Active,
+    )
+
+    _ = quest.publish(
+        &graph_state,
+        &catalog.definition,
+        {kind = .Deliver, key = "regatta-acceptance", target = "niko"},
+    )
+    testing.expect(t, story.apply_quest_projection(&legacy, &graph_state, &catalog))
+    testing.expect(t, legacy.romance == .Meeting)
+    testing.expect(t, legacy.stamps_earned == 4)
+
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Talk, key = "awning-meeting"})
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "post-route"})
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "post-route"})
+    testing.expect(t, story.apply_quest_projection(&legacy, &graph_state, &catalog))
+    testing.expect(t, legacy.romance == .Together)
+    testing.expect(t, legacy.repeat_deliveries == 2)
+    testing.expect(t, legacy.completed_deliveries == 6)
+    testing.expect(t, legacy.stamps_earned == 6)
+}
+
+@(test)
+legacy_story_actions_publish_into_authoritative_quest_state :: proc(t: ^testing.T) {
+    state: story.State
+    catalog: story.Quest_Catalog
+    story.init_quest_catalog(&catalog)
+
+    testing.expect(t, story.begin_delivery(&state))
+    testing.expect(t, story.complete_delivery(&state, .Iva))
+    testing.expect(t, quest.is_complete(&state.quest, &catalog.definition, story.quest_node_id(.First_Letter)))
+    testing.expect(t, state.romance == .First_Letter)
+    testing.expect(t, state.stamps_earned == 1)
+
+    testing.expect(t, story.report_crash(&state))
+    testing.expect(t, story.diagnose_crash(&state))
+    testing.expect(t, story.apply_wing_patch(&state))
+    testing.expect(t, story.verify_repair(&state))
+    testing.expect(t, quest.is_complete(&state.quest, &catalog.definition, story.quest_node_id(.Repair_Verified)))
+    testing.expect(t, state.repair == .Repaired)
 }

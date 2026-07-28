@@ -319,6 +319,20 @@ step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32) {
     }
 }
 
+// resolve_ground_contact keeps an already-grounded controller attached to the
+// sampled surface after horizontal movement. Without that adhesion, descending
+// terrain leaves the controller at the previous frame's height for one or more
+// frames, making it alternate between grounded and falling. An intentional
+// jump remains airborne because step clears State.grounded before this runs.
+resolve_ground_contact :: proc(state: ^State, ground_height: f32) {
+    if state == nil do return
+    if state.grounded || state.position.y <= ground_height {
+        state.position.y = ground_height
+        state.grounded = true
+        if state.velocity.y < 0 do state.velocity.y = 0
+    }
+}
+
 // camera_pose returns an orbit-camera placement looking at the character's
 // upper body. Clamp pitch while collecting look input to avoid a pole flip.
 camera_pose :: proc(character_position: Vec3, camera: Camera) -> Camera_Pose {

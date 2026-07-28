@@ -1,9 +1,10 @@
 package main
 
-import atmosphere "../packages/atmosphere"
 import architecture "../packages/architecture"
+import atmosphere "../packages/atmosphere"
 import boats "../packages/boats"
 import dialogue "../packages/dialogue"
+import dialogue_session "../packages/dialogue_session"
 import game_input "../packages/game_input"
 import marina "../packages/marina"
 import roads "../packages/roads"
@@ -412,17 +413,18 @@ markov_marina_dockmaster_text :: proc(ctx: ^dialogue.Context) -> string {
 markov_marina_borrow_dinghy :: proc(ctx: ^dialogue.Context) {
     if ctx == nil || ctx.data == nil do return
     editor := cast(^Editor)ctx.data
-    editor.attendant_dialogue_action = .Borrow_Dinghy
+    _ = dialogue_session.set_marina(&editor.dialogue_session, .Borrow_Dinghy)
 }
 
 markov_marina_close_dialogue :: proc(ctx: ^dialogue.Context) {
     if ctx == nil || ctx.data == nil do return
     editor := cast(^Editor)ctx.data
-    editor.attendant_dialogue_action = .Close
+    _ = dialogue_session.set_marina(&editor.dialogue_session, .Close)
 }
 
 open_markov_marina_dockmaster_dialogue :: proc(editor: ^Editor) -> bool {
     if editor == nil || !markov_marina_dockmaster_near(editor) do return false
+    attendant_dialogue_definition_release(editor)
     choice_count := editor.marina_dinghy_borrowed ? 1 : 2
     choices := make([]dialogue.Choice, choice_count)
     if editor.marina_dinghy_borrowed {
@@ -453,10 +455,11 @@ open_markov_marina_dockmaster_dialogue :: proc(editor: ^Editor) -> bool {
     }
     conversation, opened := dialogue.open(definition, {data = rawptr(editor), location_id = "markov_marina"})
     if !opened do return false
+    dialogue_session.begin(&editor.dialogue_session, .Marina_Dockmaster)
     editor.attendant_dialogue = conversation
     editor.attendant_dialogue_open = true
     editor.attendant_dialogue_focus = 0
-    editor.attendant_dialogue_action = .None
+    dialogue_view_reset(editor)
     game_input.reset_menu_repeat(&editor.runtime_input)
     set_pointer_locked(false)
     _ = sdl.ShowCursor()
@@ -603,18 +606,20 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
             rock_width := rock_scale * (.78 + aspect_roll * .48)
             rock_depth := rock_scale * (1.18 - aspect_roll * .35) * (.88 + depth_roll * .30)
             rock_height := .38 + rock_scale * (.24 + height_roll * .22)
-            world_formation({
-                center_x = along_x + stone_x,
-                center_z = along_z + stone_z,
-                width    = rock_width,
-                depth    = rock_depth,
-                base_y   = .18 + (1 - toe_fraction) * .25,
-                height   = rock_height + toe_fraction * .08,
-                rotation = yaw + (rotation_roll * 2 - 1) * .42,
-                color    = {tone, tone + 2, tone, 255},
-                kind     = .Rock,
-                seed     = seed,
-            })
+            world_formation(
+                {
+                    center_x = along_x + stone_x,
+                    center_z = along_z + stone_z,
+                    width = rock_width,
+                    depth = rock_depth,
+                    base_y = .18 + (1 - toe_fraction) * .25,
+                    height = rock_height + toe_fraction * .08,
+                    rotation = yaw + (rotation_roll * 2 - 1) * .42,
+                    color = {tone, tone + 2, tone, 255},
+                    kind = .Rock,
+                    seed = seed,
+                },
+            )
         }
     }
 }
@@ -711,13 +716,13 @@ markov_marina_office_structure :: proc(plan: ^marina.Plan) -> terrain.Structure 
     structure.seed = seed
     structure.building = architecture.architecture_identity(
         {
-            region        = .Adriatic,
-            tissue        = .Harbor,
-            density       = .42,
-            frontage      = structure.width,
-            depth         = structure.depth,
-            route         = .Waterfront,
-            waterfront    = true,
+            region = .Adriatic,
+            tissue = .Harbor,
+            density = .42,
+            frontage = structure.width,
+            depth = structure.depth,
+            route = .Waterfront,
+            waterfront = true,
             landmark_kind = .Harbor_Office,
         },
         seed,

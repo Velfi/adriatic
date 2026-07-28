@@ -1,6 +1,7 @@
 package tests
 
 import mouse_tail "../packages/mouse_tail"
+import architecture "../packages/architecture"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -59,6 +60,38 @@ mouse_tail_keeps_its_segments_connected :: proc(t: ^testing.T) {
 }
 
 @(test)
+mouse_tail_player_motion_settles_into_one_trailing_curve :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    terrain.init_project(project)
+    state: mouse_tail.State
+    config := mouse_tail.default_config()
+    root := third_person.Vec3{0, 8, 0}
+    mouse_tail.reset(&state, root, {0, 0, 1}, config)
+
+    // Sustained lateral player motion used to excite alternating bends down
+    // the Verlet chain. A regular mouse tail may bow once as it trails, but
+    // should not reverse curvature repeatedly into a visible S-wave.
+    for _ in 0 ..< 45 {
+        root.x += .07
+        mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
+    }
+    previous_sign := i32(0)
+    reversals := 0
+    for index in 1 ..< mouse_tail.POINT_COUNT - 1 {
+        before := state.points[index].position.x - state.points[index - 1].position.x
+        after := state.points[index + 1].position.x - state.points[index].position.x
+        curvature := after - before
+        sign := curvature > .0005 ? i32(1) : curvature < -.0005 ? i32(-1) : i32(0)
+        if sign != 0 {
+            if previous_sign != 0 && sign != previous_sign do reversals += 1
+            previous_sign = sign
+        }
+    }
+    testing.expectf(t, reversals <= 1, "tail formed an S-wave with %d curvature reversals", reversals)
+}
+
+@(test)
 mouse_tail_collides_with_terrain :: proc(t: ^testing.T) {
     project := new(terrain.Project)
     defer terrain.free_project(project)
@@ -98,6 +131,121 @@ mouse_tail_rests_on_rendered_road_crown :: proc(t: ^testing.T) {
         t,
         point.position.y >= terrain_height + .12 + config.radius + mouse_tail.TERRAIN_CONTACT_SKIN - .0001,
     )
+}
+
+@(test)
+mouse_tail_generated_town_surface_does_not_ratchet_upward :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    terrain.init_project(project)
+    centers := [4]third_person.Vec3 {
+        {-12, 0, -12},
+        {12, 0, -12},
+        {-12, 0, 12},
+        {12, 0, 12},
+    }
+    for center in centers {
+        structure := terrain.structure_make(center.x, center.z, 8, 8, 0, 8)
+        structure.kind = .Architecture
+        append(&project.structures, structure)
+        project.structure_count += 1
+    }
+
+    config := mouse_tail.default_config()
+    point := mouse_tail.Point {
+        position = {0, 1, 0},
+        previous = {0, 1, 0},
+    }
+    initial_y := point.position.y
+    for _ in 0 ..< 64 {
+        mouse_tail.resolve_terrain(&point, project, config.radius, config.surface_friction)
+    }
+    testing.expectf(
+        t,
+        math.abs(point.position.y - initial_y) < .0001,
+        "generated surface ratcheted tail point from %.3f to %.3f",
+        initial_y,
+        point.position.y,
+    )
+}
+
+@(test)
+mouse_tail_step_accepts_one_prebuilt_town_circulation_plan :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    terrain.init_project(project)
+    for z in -1 ..= 1 {
+        for x in -1 ..= 1 {
+            structure := terrain.structure_make(f32(x * 14), f32(z * 14), 8, 8, 0, 8)
+            structure.kind = .Architecture
+            append(&project.structures, structure)
+            project.structure_count += 1
+        }
+    }
+    plan := architecture.circulation_plan(project)
+    config := mouse_tail.default_config()
+    state: mouse_tail.State
+    root := third_person.Vec3{0, 1, 0}
+    for _ in 0 ..< 8 {
+        mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0, &plan)
+    }
+    for point in state.points {
+        testing.expect(t, math.abs(point.position.x) < 1e6)
+        testing.expect(t, math.abs(point.position.y) < 1e6)
+        testing.expect(t, math.abs(point.position.z) < 1e6)
+    }
+}
+
+@(test)
+mouse_tail_recovers_from_a_previously_launched_chain :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    terrain.init_project(project)
+    config := mouse_tail.default_config()
+    root := third_person.Vec3{0, 1, 0}
+    state: mouse_tail.State
+    mouse_tail.reset(&state, root, {0, 0, 1}, config)
+
+    // Match the visible failure: an earlier collision frame left one part of
+    // the simulated chain many metres above the player.
+    state.points[6].position.y = 100
+    state.points[6].previous.y = 100
+    mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
+
+    testing.expect(t, !mouse_tail.state_is_stretched(&state, root, config))
+    for index in 0 ..< mouse_tail.POINT_COUNT - 1 {
+        distance := tail_distance(state.points[index].position, state.points[index + 1].position)
+        testing.expectf(
+            t,
+            distance <= config.segment_length * 1.1,
+            "recovered link %d remains stretched to %.3f m",
+            index,
+            distance,
+        )
+    }
+}
+
+@(test)
+mouse_tail_rejects_a_non_finite_root_without_poisoning_the_chain :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    terrain.init_project(project)
+    config := mouse_tail.default_config()
+    state: mouse_tail.State
+    valid_root := third_person.Vec3{0, 1, 0}
+    mouse_tail.reset(&state, valid_root, {0, 0, 1}, config)
+    original := state.points
+
+    invalid_root := valid_root
+    negative := f64(-1)
+    invalid_root.y = f32(math.sqrt(negative))
+    mouse_tail.step(&state, invalid_root, {0, 0, 1}, project, config, 1.0 / 60.0)
+
+    testing.expect(t, !state.initialized)
+    for point, index in state.points {
+        testing.expect(t, point.position == original[index].position)
+        testing.expect(t, point.previous == original[index].previous)
+    }
 }
 
 @(test)

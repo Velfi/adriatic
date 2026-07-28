@@ -208,7 +208,7 @@ control_hint_draw_bar :: proc(editor: ^Editor, entries: []Control_Hint_Entry, po
             texture,
             source,
             {cursor_x, position.y - 4, CONTROL_HINT_DRAW_SIZE, CONTROL_HINT_DRAW_SIZE},
-            {255, 255, 255, 255},
+            ui_theme_text(),
         )
         rl.DrawTextEx(
             rl.Font{},
@@ -216,14 +216,16 @@ control_hint_draw_bar :: proc(editor: ^Editor, entries: []Control_Hint_Entry, po
             {cursor_x + CONTROL_HINT_DRAW_SIZE + 4, position.y},
             13,
             .6,
-            {183, 219, 221, 255},
+            ui_theme_text_muted(),
         )
         cursor_x += entry_width + 14
     }
 }
 
 control_hint_draw_gameplay_hud :: proc(editor: ^Editor, width: i32) {
-    if editor == nil || !editor.in_map || !editor.gameplay_options.show_hud do return
+    if editor == nil || !editor.in_map || !editor.gameplay_options.show_hud || editor.attendant_dialogue_open {
+        return
+    }
 
     flying := driving_aircraft(editor)
     in_car := driving_car(editor)
@@ -267,7 +269,21 @@ control_hint_draw_gameplay_hud :: proc(editor: ^Editor, width: i32) {
     }
 
     panel_width = min(panel_width, width - 28)
-    rl.DrawRectangle(14, 14, panel_width, 58, {8, 28, 45, 210})
-    rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", title), {26, 23}, 17, 1, {211, 250, 242, 255})
-    control_hint_draw_bar(editor, entries[:count], {26, 46}, f32(panel_width - 24))
+    panel := rl.Rectangle{14, 14, f32(panel_width), 58}
+    rl.DrawRectangleRounded(panel, .16, 8, ui_theme_surface(232))
+    rl.DrawRectangleRoundedLinesEx(panel, .16, 8, 1, ui_theme_border(235))
+    rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", title), {26, 23}, 17, 1, ui_theme_text())
+    journal_hint: cstring = "J JOURNAL"
+    if controller_prompt_active(editor) {
+        journal_hint = fmt.ctprintf("%s JOURNAL", controller_journal_label(editor))
+    }
+    journal_size := rl.MeasureTextEx(rl.Font{}, journal_hint, 13, .6)
+    ui_draw_text(
+        .Data,
+        journal_hint,
+        {panel.x + panel.width - journal_size.x - 12, panel.y + 34},
+        .2,
+        ui_theme_accent(),
+    )
+    control_hint_draw_bar(editor, entries[:count], {26, 46}, f32(panel_width - 48) - journal_size.x)
 }

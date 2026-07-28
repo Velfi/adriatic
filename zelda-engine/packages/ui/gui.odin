@@ -18,7 +18,8 @@ foreign textshape {
     vo_textshape_init :: proc(font_kind: i32, font_path: cstring, logical_height: f32) -> i32 ---
     vo_textshape_width :: proc(font_kind: i32, text: [^]u8, len: i32, text_scale, fallback_advance: f32) -> f32 ---
     vo_textshape_shape :: proc(font_kind: i32, text: [^]u8, len: i32, text_scale: f32, out: [^]Gui_Shaped_Glyph, out_cap: i32) -> i32 ---
-    vo_textshape_render_ascii_atlas :: proc(font_kind: i32, glyph_first, glyph_last, pixel_height, cell_width, cell_height, columns: i32, out_rgba: [^]u8, out_len: i32) -> i32 ---
+    vo_textshape_ascii_glyph_bounds :: proc(font_kind: i32, glyph_first, glyph_last, pixel_height: i32, out: ^Gui_Glyph_Bounds) -> i32 ---
+    vo_textshape_render_ascii_atlas :: proc(font_kind: i32, glyph_first, glyph_last, pixel_height, cell_width, cell_height, columns, origin_x, baseline: i32, out_rgba: [^]u8, out_len: i32) -> i32 ---
 }
 
 Vec2 :: zmath.Vec2
@@ -502,6 +503,8 @@ GUI_SIM_START_FONT_PATH :: "assets/fonts/MomoTrustDisplay-Regular.ttf"
 GUI_PI :: f32(3.14159265358979323846)
 GUI_TAU :: f32(6.28318530717958647692)
 
+gui_body_font_path: cstring = GUI_BODY_FONT_PATH
+gui_display_font_path: cstring = GUI_DISPLAY_FONT_PATH
 gui_text_shaper_ready: bool
 gui_text_shaper_font_ready: [GUI_FONT_KIND_CAP]bool
 gui_text_shaper_once: sync.Once
@@ -603,6 +606,13 @@ Gui_Shaped_Glyph :: struct {
     y_offset:  f32,
     x_advance: f32,
     y_advance: f32,
+}
+
+Gui_Glyph_Bounds :: struct {
+    min_x:   i32,
+    max_x:   i32,
+    ascent:  i32,
+    descent: i32,
 }
 
 Gui_Context :: struct {

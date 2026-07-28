@@ -225,9 +225,30 @@ CheckCollisionPointRec :: #force_inline proc(p: Vector2, r: Rectangle) -> bool {
         p.y >= r.y &&
         p.y <= r.y + r.height \
     )}
-LoadFontEx :: proc(path: cstring, size: i32, codepoints: [^]rune, count: i32) -> Font { return {state.initialized} }
+LoadFontEx :: proc(path: cstring, size: i32, codepoints: [^]rune, count: i32) -> Font {
+    return {ready = state.initialized}
+}
+DisplayFont :: proc() -> Font { return {ready = state.initialized, display = true} }
 @(no_instrumentation)
-FontAdvanceEm :: #force_inline proc() -> f32 { return state.font_advance_em }
+FontAdvanceEm :: #force_inline proc(font := Font{}) -> f32 {
+    return state.font_advance_em[font.display ? 1 : 0][int('M') - FONT_FIRST]
+}
+@(no_instrumentation)
+font_advance_em :: #force_inline proc(font: Font, ch: rune) -> f32 {
+    slot := font_glyph_slot(ch)
+    if slot < 0 || slot >= FONT_COUNT do slot = int('?') - FONT_FIRST
+    return state.font_advance_em[font.display ? 1 : 0][slot]
+}
+@(no_instrumentation)
+font_kind :: #force_inline proc(font: Font) -> ui.Gui_Font_Kind {
+    return font.display ? .Display : .Body
+}
+@(no_instrumentation)
+font_shape_scale :: #force_inline proc(size: f32) -> f32 {
+    // Atlas storage can grow to preserve bearings and descenders without
+    // changing the authored text size.
+    return size / ui.GUI_FONT_LOGICAL_HEIGHT * f32(FONT_RASTER_H) / f32(FONT_LOGICAL_CELL_H)
+}
 UnloadFont :: proc(font: Font) {  }
 @(no_instrumentation)
 font_glyph_slot :: #force_inline proc(ch: rune) -> int {
@@ -243,32 +264,95 @@ font_glyph_slot :: #force_inline proc(ch: rune) -> int {
     return int('?') - FONT_FIRST
 }
 @(no_instrumentation)
-MeasureTextEx :: #force_inline proc(font: Font, text: cstring, size, spacing: f32) -> Vector2 {count := 0; for _ in string(text) do count += 1
-    // Measurement is in logical UI units; atlas oversampling must not alter layout.
-    return{f32(count) * (size * FontAdvanceEm() + spacing), max(size, f32(32))}}
+MeasureTextEx :: #force_inline proc(font: Font, text: cstring, size, spacing: f32) -> Vector2 {
+    value := string(text)
+    if len(value) == 0 do return {0, max(size, f32(32))}
+    shaped := make([]ui.Gui_Shaped_Glyph, len(value), context.temp_allocator)
+    count := ui.gui_font_shape_text(
+        font_kind(font),
+        transmute([]u8)value,
+        font_shape_scale(size),
+        shaped,
+    )
+    if count > 0 {
+        width := f32(0)
+        for glyph in shaped[:count] do width += glyph.x_advance
+        return {width + f32(max(count - 1, 0)) * spacing, max(size, f32(32))}
+    }
+    width := f32(0)
+    rune_count := 0
+    for ch in value {
+        width += size * font_advance_em(font, ch)
+        rune_count += 1
+    }
+    return {width + f32(max(rune_count - 1, 0)) * spacing, max(size, f32(32))}
+}
 DrawTextEx :: proc(font: Font, text: cstring, position: Vector2, size, spacing: f32, color: Color) {
     value := string(text)
-    scale := size / f32(FONT_CELL_H)
+    if len(value) == 0 do return
+    scale := size / f32(FONT_LOGICAL_CELL_H)
     cursor := position.x
-    for ch in value {
-        glyph := font_glyph_slot(ch)
+    shaped := make([]ui.Gui_Shaped_Glyph, len(value), context.temp_allocator)
+    count := ui.gui_font_shape_text(
+        font_kind(font),
+        transmute([]u8)value,
+        font_shape_scale(size),
+        shaped,
+    )
+    if count <= 0 {
+        for ch in value {
+            glyph := font_glyph_slot(ch)
+            col := glyph % FONT_COLUMNS
+            row := glyph / FONT_COLUMNS + (font.display ? FONT_ROWS : 0)
+            uv0 := Vector2 {
+                f32(col * state.font_cell_width) / f32(state.texture_width),
+                f32(row * state.font_cell_height) / f32(state.texture_height),
+            }
+            uv1 := Vector2 {
+                f32((col + 1) * state.font_cell_width) / f32(state.texture_width),
+                f32((row + 1) * state.font_cell_height) / f32(state.texture_height),
+            }
+            r := Rectangle{
+                cursor - f32(state.font_origin_x) * scale,
+                position.y,
+                f32(state.font_cell_width) * scale,
+                f32(state.font_cell_height) * scale,
+            }
+            a := transform({r.x, r.y})
+            b := transform({r.x + r.width, r.y})
+            c := transform({r.x + r.width, r.y + r.height})
+            d := transform({r.x, r.y + r.height})
+            quad(a, b, c, d, color, uv0, uv1, 0)
+            cursor += size * font_advance_em(font, ch) + spacing
+        }
+        return
+    }
+    for shaped_glyph in shaped[:count] {
+        glyph := font_glyph_slot(rune(shaped_glyph.glyph_id))
         col := glyph % FONT_COLUMNS
-        row := glyph / FONT_COLUMNS
+        row := glyph / FONT_COLUMNS + (font.display ? FONT_ROWS : 0)
         uv0 := Vector2 {
-            f32(col * FONT_CELL_W) / f32(state.texture_width),
-            f32(row * FONT_CELL_H) / f32(state.texture_height),
+            f32(col * state.font_cell_width) / f32(state.texture_width),
+            f32(row * state.font_cell_height) / f32(state.texture_height),
         }
         uv1 := Vector2 {
-            f32((col + 1) * FONT_CELL_W) / f32(state.texture_width),
-            f32((row + 1) * FONT_CELL_H) / f32(state.texture_height),
+            f32((col + 1) * state.font_cell_width) / f32(state.texture_width),
+            f32((row + 1) * state.font_cell_height) / f32(state.texture_height),
         }
-        r := Rectangle{cursor, position.y, FONT_CELL_W * scale, FONT_CELL_H * scale}
+        r := Rectangle{
+            cursor + shaped_glyph.x_offset - f32(state.font_origin_x) * scale,
+            position.y - shaped_glyph.y_offset,
+            f32(state.font_cell_width) * scale,
+            f32(state.font_cell_height) * scale,
+        }
         a := transform({r.x, r.y})
         b := transform({r.x + r.width, r.y})
         c := transform({r.x + r.width, r.y + r.height})
         d := transform({r.x, r.y + r.height})
         quad(a, b, c, d, color, uv0, uv1, 0)
-        cursor += size * FontAdvanceEm() + spacing}}
+        cursor += shaped_glyph.x_advance + spacing
+    }
+}
 DrawIcon :: proc(index: int, destination: Rectangle, color := Color{255, 255, 255, 255}) {
     if index < 0 || index >= ICON_COLUMNS * ICON_ROWS || state.icon_width <= 0 do return
     col, row := index % ICON_COLUMNS, index / ICON_COLUMNS

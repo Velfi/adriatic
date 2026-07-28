@@ -99,7 +99,7 @@ Static_Visibility_Stats :: struct {
     atlas_opaque_used:   u32,
     atlas_foliage_used:  u32,
     atlas_bougainvillea_used: u32,
-    atlas_fragmentation: f32,
+    atlas_fragmentation:      f32,
 }
 
 Structure_Visibility_Order :: struct {
@@ -163,8 +163,7 @@ structure_lod_projected_diameter :: proc(
 ) -> f32 {
     depth := linalg.dot(center - camera.position, camera.forward)
     if depth <= near_plane + radius do return f32(1e9)
-    return max(radius, f32(0)) * 2 * max(camera.focal_length, f32(.01)) *
-           max(viewport_height, f32(1)) * .5 / depth
+    return max(radius, f32(0)) * 2 * max(camera.focal_length, f32(.01)) * max(viewport_height, f32(1)) * .5 / depth
 }
 
 // Conservative sphere/frustum test in the same camera basis and projection
@@ -193,16 +192,18 @@ static_sphere_in_frustum :: proc(
 }
 
 structure_visibility_sphere :: proc(structure: terrain.Structure) -> (third_person.Vec3, f32) {
-    center := third_person.Vec3 {
-        structure.center_x,
-        structure.base_y + structure.height * .5,
-        structure.center_z,
-    }
-    radius := f32(math.sqrt(f64(
-        structure.width * structure.width +
-        structure.depth * structure.depth +
-        structure.height * structure.height,
-    ))) * .5
+    center := third_person.Vec3{structure.center_x, structure.base_y + structure.height * .5, structure.center_z}
+    radius :=
+        f32(
+            math.sqrt(
+                f64(
+                    structure.width * structure.width +
+                    structure.depth * structure.depth +
+                    structure.height * structure.height,
+                ),
+            ),
+        ) *
+        .5
     return center, radius
 }
 
@@ -212,11 +213,7 @@ structure_lod_select :: proc(
     force_near := false,
 ) -> Structure_LOD_Result {
     if structure_lod_forced >= 0 {
-        return {
-            tier = Structure_LOD(structure_lod_forced),
-            projected_diameter = projected_diameter,
-            transition = 1,
-        }
+        return {tier = Structure_LOD(structure_lod_forced), projected_diameter = projected_diameter, transition = 1}
     }
     if force_near || projected_diameter >= f32(1e8) {
         return {tier = .Near, projected_diameter = projected_diameter, transition = 1}
@@ -257,16 +254,18 @@ structure_lod_for :: proc(
     if editor == nil do return {tier = .Near, projected_diameter = 1e9, transition = 1}
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     camera := perspective_camera(editor.camera_pose, focal_length)
-    center := third_person.Vec3 {
-        structure.center_x,
-        structure.base_y + structure.height * .5,
-        structure.center_z,
-    }
-    radius := f32(math.sqrt(f64(
-        structure.width * structure.width +
-        structure.depth * structure.depth +
-        structure.height * structure.height,
-    ))) * .5
+    center := third_person.Vec3{structure.center_x, structure.base_y + structure.height * .5, structure.center_z}
+    radius :=
+        f32(
+            math.sqrt(
+                f64(
+                    structure.width * structure.width +
+                    structure.depth * structure.depth +
+                    structure.height * structure.height,
+                ),
+            ),
+        ) *
+        .5
     near_plane := editor.in_map && driving_aircraft(editor) ? WORLD_FLIGHT_NEAR_CLIP : WORLD_PLAY_NEAR_CLIP
     diameter := structure_lod_projected_diameter(camera, center, radius, f32(rl.GetScreenHeight()), near_plane)
     return structure_lod_select(diameter, previous, force_near)
@@ -313,10 +312,10 @@ when ODIN_TEST {
     @(test)
     structure_lod_projection_accounts_for_focal_length_and_near_plane :: proc(t: ^testing.T) {
         camera := Perspective_Camera {
-            position = {0, 0, 0},
-            forward = {0, 0, -1},
-            right = {1, 0, 0},
-            up = {0, 1, 0},
+            position     = {0, 0, 0},
+            forward      = {0, 0, -1},
+            right        = {1, 0, 0},
+            up           = {0, 1, 0},
             focal_length = 1,
         }
         diameter := structure_lod_projected_diameter(camera, {0, 0, -10}, 1, 1000, .2)
@@ -329,10 +328,10 @@ when ODIN_TEST {
     @(test)
     static_frustum_is_conservative_at_planes_and_rejects_clear_misses :: proc(t: ^testing.T) {
         camera := Perspective_Camera {
-            position = {},
-            forward = {0, 0, -1},
-            right = {1, 0, 0},
-            up = {0, 1, 0},
+            position     = {},
+            forward      = {0, 0, -1},
+            right        = {1, 0, 0},
+            up           = {0, 1, 0},
             focal_length = 1,
         }
         testing.expect(t, static_sphere_in_frustum(camera, {0, 0, -10}, 1, 16.0 / 9.0, .2, 100))
@@ -444,6 +443,15 @@ Town_Mouse_Geometry_Cache_Entry :: struct {
     vertices:         [dynamic]World_Vertex,
 }
 
+Libellula_Geometry_Cache_Entry :: struct {
+    valid:       bool,
+    body:        flight.Body_State,
+    kind:        vehicles.Aircraft_Kind,
+    rotor_turns: [3]f32,
+    pitch, roll: f32,
+    vertices:    [dynamic]World_Vertex,
+}
+
 Terrain_Dirty_Bounds :: struct {
     valid:        bool,
     full_rebuild: bool,
@@ -475,99 +483,109 @@ Sky_Push :: struct {
 }
 
 World_Renderer :: struct {
-    editor:                          ^Editor,
-    ctx:                             ^engine.Vk_Context,
-    pipelines:                       [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    shadow_pipelines:                [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    dynamic_shadow:                  Dynamic_Shadow_State,
-    shadow_vertex:                   [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    shadow_vertices:                 [dynamic]World_Vertex,
-    dynamic_caster_first:            int,
-    dynamic_caster_count:            int,
-    road_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    sky_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    particle_pipelines:              [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    foliage_pipelines:               [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    grass_pipelines:                 [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    layout:                          vk.PipelineLayout,
-    sky_layout:                      vk.PipelineLayout,
-    foliage_layout:                  vk.PipelineLayout,
-    foliage_descriptor_layout:       vk.DescriptorSetLayout,
-    foliage_descriptor_pool:         vk.DescriptorPool,
-    foliage_descriptor:              vk.DescriptorSet,
-    bougainvillea_descriptor:        vk.DescriptorSet,
-    grass_descriptor:                vk.DescriptorSet,
-    wildflower_descriptor:           vk.DescriptorSet,
-    foliage_atlas:                   resources.Image,
-    bougainvillea_atlas:             resources.Image,
-    grass_atlas:                     resources.Image,
-    wildflower_atlas:                resources.Image,
-    vehicle_paint_atlas:             resources.Image,
-    soda_cap_logo:                   resources.Image,
-    vehicle_paint_staging:           [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    vehicle_paint_descriptor_layout: vk.DescriptorSetLayout,
-    vehicle_paint_descriptor_pool:   vk.DescriptorPool,
-    vehicle_paint_descriptor:        vk.DescriptorSet,
-    vertex:                          [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    static_vertex:                   [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    static_index:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    road_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    foliage_vertex:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    grass_instance:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    wing_trail_vertex:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    wing_trail_index:                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    vertices:                        [dynamic]World_Vertex,
-    static_vertices:                 [dynamic]World_Vertex,
-    static_indices:                  [dynamic]u32,
-    road_vertices:                   [dynamic]World_Vertex,
-    foliage_vertices:                [dynamic]Foliage_Vertex,
-    bougainvillea_vertices:          [dynamic]Foliage_Vertex,
-    grass_instances:                 [dynamic]Grass_Instance,
-    wildflower_instances:            [dynamic]Grass_Instance,
-    wing_trail_vertices:             [dynamic]World_Vertex,
-    wing_trail_indices:              [dynamic]u16,
-    wing_trail_optimized_indices:    [dynamic]u16,
-    land_surface_samples:            [dynamic]World_Land_Surface_Sample,
-    player_vertex_first:             int,
-    player_vertex_count:             int,
-    player_shadow_receiver:          f32,
-    clipmap_vertex:                  [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
-    clipmap_index:                   engine.Vk_Buffer,
-    clipmap_full_indices:            u32,
-    clipmap_ring_first:              u32,
-    clipmap_ring_indices:            u32,
-    clipmap_revision:                [engine.MAX_FRAMES_IN_FLIGHT]u64,
-    clipmap_center:                  [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
-    clipmap_valid:                   [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
-    clipmap_dirty:                   [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
-    road_mesh:                       roads.Mesh,
-    road_graph:                      roads.Graph,
-    road_graph_valid:                bool,
-    road_revision:                   u64,
-    pavement_query:                  roads.Pavement_Query,
-    pavement_query_graph:            roads.Graph,
-    pavement_query_graph_valid:      bool,
-    pavement_query_revision:         u64,
-    foliage_geometry_cache:          [dynamic]Foliage_Geometry_Cache_Entry,
-    static_geometry_cache:           [dynamic]Static_Geometry_Cache_Entry,
-    climbing_leaf_geometry_cache:    [dynamic]Climbing_Leaf_Geometry_Cache_Entry,
-    town_mouse_geometry_cache:        [TOWN_MOUSE_CACHE_COUNT]Town_Mouse_Geometry_Cache_Entry,
-    marina_geometry_cache:           [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
-    structure_lod_counts:             [3]int,
-    structure_lod_cache_rebuilds:     u64,
-    structure_lod_world_vertices:     int,
-    structure_lod_foliage_vertices:   int,
-    static_visibility:                Static_Visibility_Stats,
-    static_visibility_classification: [dynamic]Static_Visibility_Classification,
-    structure_visibility_order:       [dynamic]Structure_Visibility_Order,
-    structure_visibility_centers:     [dynamic][2]f32,
-    structure_visibility_camera:      [2]f32,
-    structure_visibility_selected:    int,
-    structure_visibility_hovered:     int,
-    structure_visibility_order_valid: bool,
-    structure_building_spans:         [dynamic]u8,
-    structure_candidates:             [dynamic]int,
-    initialized:                     bool,
+    editor:                            ^Editor,
+    ctx:                               ^engine.Vk_Context,
+    pipelines:                         [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    shadow_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    dynamic_shadow:                    Dynamic_Shadow_State,
+    shadow_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    shadow_vertices:                   [dynamic]World_Vertex,
+    dynamic_caster_first:              int,
+    dynamic_caster_count:              int,
+    road_pipelines:                    [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    sky_pipelines:                     [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    particle_pipelines:                [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    foliage_pipelines:                 [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    grass_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    layout:                            vk.PipelineLayout,
+    sky_layout:                        vk.PipelineLayout,
+    foliage_layout:                    vk.PipelineLayout,
+    foliage_descriptor_layout:         vk.DescriptorSetLayout,
+    foliage_descriptor_pool:           vk.DescriptorPool,
+    foliage_descriptor:                vk.DescriptorSet,
+    bougainvillea_descriptor:          vk.DescriptorSet,
+    grass_descriptor:                  vk.DescriptorSet,
+    wildflower_descriptor:             vk.DescriptorSet,
+    foliage_atlas:                     resources.Image,
+    bougainvillea_atlas:               resources.Image,
+    grass_atlas:                       resources.Image,
+    wildflower_atlas:                  resources.Image,
+    vehicle_paint_atlas:               resources.Image,
+    soda_cap_logo:                     resources.Image,
+    vehicle_paint_staging:             [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    vehicle_paint_descriptor_layout:   vk.DescriptorSetLayout,
+    vehicle_paint_descriptor_pool:     vk.DescriptorPool,
+    vehicle_paint_descriptor:          vk.DescriptorSet,
+    vertex:                            [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    static_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    static_index:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    road_vertex:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    foliage_vertex:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    grass_instance:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    wing_trail_vertex:                 [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    wing_trail_index:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    vertices:                          [dynamic]World_Vertex,
+    static_vertices:                   [dynamic]World_Vertex,
+    static_indices:                    [dynamic]u32,
+    road_vertices:                     [dynamic]World_Vertex,
+    foliage_vertices:                  [dynamic]Foliage_Vertex,
+    bougainvillea_vertices:            [dynamic]Foliage_Vertex,
+    grass_instances:                   [dynamic]Grass_Instance,
+    wildflower_instances:              [dynamic]Grass_Instance,
+    wing_trail_vertices:               [dynamic]World_Vertex,
+    wing_trail_indices:                [dynamic]u16,
+    wing_trail_optimized_indices:      [dynamic]u16,
+    land_surface_samples:              [dynamic]World_Land_Surface_Sample,
+    player_vertex_first:               int,
+    player_vertex_count:               int,
+    player_shadow_receiver:            f32,
+    clipmap_vertex:                    [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
+    clipmap_index:                     engine.Vk_Buffer,
+    clipmap_full_indices:              u32,
+    clipmap_ring_first:                u32,
+    clipmap_ring_indices:              u32,
+    clipmap_revision:                  [engine.MAX_FRAMES_IN_FLIGHT]u64,
+    clipmap_center:                    [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
+    clipmap_valid:                     [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
+    clipmap_dirty:                     [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
+    road_mesh:                         roads.Mesh,
+    road_graph:                        roads.Graph,
+    road_graph_valid:                  bool,
+    road_revision:                     u64,
+    road_geometry_cache:               [dynamic]World_Vertex,
+    road_geometry_revision:            u64,
+    road_geometry_terrain_revision:    u64,
+    road_geometry_valid:               bool,
+    laundry_geometry_cache:            [dynamic]World_Vertex,
+    laundry_geometry_revision:         u64,
+    laundry_geometry_terrain_revision: u64,
+    laundry_geometry_valid:            bool,
+    pavement_query:                    roads.Pavement_Query,
+    pavement_query_graph:              roads.Graph,
+    pavement_query_graph_valid:        bool,
+    pavement_query_revision:           u64,
+    foliage_geometry_cache:            [dynamic]Foliage_Geometry_Cache_Entry,
+    static_geometry_cache:             [dynamic]Static_Geometry_Cache_Entry,
+    climbing_leaf_geometry_cache:      [dynamic]Climbing_Leaf_Geometry_Cache_Entry,
+    town_mouse_geometry_cache:         [TOWN_MOUSE_CACHE_COUNT]Town_Mouse_Geometry_Cache_Entry,
+    dialogue_portrait_geometry_cache:  [2]Town_Mouse_Geometry_Cache_Entry,
+    libellula_geometry_cache:          Libellula_Geometry_Cache_Entry,
+    marina_geometry_cache:             [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
+    structure_lod_counts:              [3]int,
+    structure_lod_cache_rebuilds:      u64,
+    structure_lod_world_vertices:      int,
+    structure_lod_foliage_vertices:    int,
+    static_visibility:                 Static_Visibility_Stats,
+    static_visibility_classification:  [dynamic]Static_Visibility_Classification,
+    structure_visibility_order:        [dynamic]Structure_Visibility_Order,
+    structure_visibility_centers:      [dynamic][2]f32,
+    structure_visibility_camera:       [2]f32,
+    structure_visibility_selected:     int,
+    structure_visibility_hovered:      int,
+    structure_visibility_order_valid:  bool,
+    structure_building_spans:          [dynamic]u8,
+    structure_candidates:              [dynamic]int,
+    initialized:                       bool,
 }
 
 world_renderer: World_Renderer
@@ -1262,7 +1280,13 @@ world_roads :: proc(editor: ^Editor) {
         world_renderer.road_revision = editor.project.revision
     }
     mesh := &world_renderer.road_mesh
-    if len(mesh.indices) > 0 {
+    road_geometry_cached :=
+        world_renderer.road_geometry_valid &&
+        world_renderer.road_geometry_revision == editor.project.revision &&
+        world_renderer.road_geometry_terrain_revision == editor.terrain_revision
+    if road_geometry_cached {
+        append(&world_renderer.road_vertices, ..world_renderer.road_geometry_cache[:])
+    } else if len(mesh.indices) > 0 {
         for triangle in 0 ..< len(mesh.indices) / 3 {
             a := mesh.vertices[mesh.indices[triangle * 3]]
             b := mesh.vertices[mesh.indices[triangle * 3 + 1]]
@@ -1277,6 +1301,13 @@ world_roads :: proc(editor: ^Editor) {
                 road_surface_color(c.surface, c.pavement),
             )
         }
+    }
+    if !road_geometry_cached {
+        clear(&world_renderer.road_geometry_cache)
+        append(&world_renderer.road_geometry_cache, ..world_renderer.road_vertices[:])
+        world_renderer.road_geometry_revision = editor.project.revision
+        world_renderer.road_geometry_terrain_revision = editor.terrain_revision
+        world_renderer.road_geometry_valid = true
     }
     if editor.in_map || !editor.road_mode || editor.capture_world_only do return
     for node, index in graph.nodes[:graph.node_count] {
@@ -1528,10 +1559,7 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int) {
     revision_changed := world_renderer.clipmap_revision[frame_index] != editor.terrain_revision
     dirty := &world_renderer.clipmap_dirty[frame_index]
     localized_revision :=
-        revision_changed &&
-        dirty.valid &&
-        !dirty.full_rebuild &&
-        dirty.revision == editor.terrain_revision
+        revision_changed && dirty.valid && !dirty.full_rebuild && dirty.revision == editor.terrain_revision
     snap := editor.project.levels[0].cell_size * 2
     center := [2]f32 {
         f32(math.round(f64(editor.camera_pose.target.x / snap))) * snap,
@@ -2525,11 +2553,7 @@ world_architecture_roof_style :: proc(structure: terrain.Structure) -> architect
     return architecture.roof_style_for_seed(structure.seed)
 }
 
-world_architecture_roof :: proc(
-    structure: terrain.Structure,
-    landmark: bool,
-    lod: Structure_LOD = .Near,
-) {
+world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lod: Structure_LOD = .Near) {
     eave_y := structure.base_y + structure.height
     roof_style := world_architecture_roof_style(structure)
     identity := architecture.architecture_resolve_legacy_identity(structure)
@@ -2906,20 +2930,10 @@ world_architecture_face_openings :: proc(
         if (opening.face == .Front && opening.kind == .Window) || opening.kind == .Door {
             continue
         }
-        face_span := opening.face == .Front || opening.face == .Rear ? structure.width : structure.depth
         horizontal := opening.horizontal
-        opening_y := architecture.facade_window_row_y(structure.height, opening.row)
-        opening_width := architecture.facade_window_width(face_span)
-        opening_height := architecture.facade_window_height(structure.height)
-        if opening.kind == .Service_Door {
-            horizontal = 0
-            opening_width = clamp(face_span * .13, f32(1.8), f32(2.8))
-            opening_height = clamp(structure.height * .075, f32(3.0), f32(4.0))
-            opening_y = .20 + opening_height * .5
-        } else if opening.kind == .Vent {
-            opening_height = clamp(opening_height * .55, f32(.65), f32(1.4))
-            opening_y = max(opening_height * .5 + .55, f32(1.1))
-        }
+        opening_y := opening.y
+        opening_width := opening.width
+        opening_height := opening.height
         // Keep the shallow panel wholly beyond the wall plane.  At long
         // streetscape distances a half-embedded panel can lose the depth
         // test to the wall because both surfaces quantize to the same depth.
@@ -3243,13 +3257,13 @@ world_architecture_mass :: proc(
     if lod == .Medium {
         window := facade_style == 2 ? rl.Color{42, 74, 82, 255} : rl.Color{48, 62, 64, 255}
         rows := architecture.facade_floor_count(structure.height)
-        columns := architecture.facade_column_count(structure.width)
-        window_width := architecture.facade_window_width(structure.width)
-        window_height := architecture.facade_window_height(structure.height)
-        for row in 0 ..< rows {
-            for column in 0 ..< columns {
-                local_x := architecture.facade_window_column_x(structure.width, column)
-                window_y := structure.base_y + architecture.facade_window_row_y(structure.height, row)
+        if opening_layout != nil {
+            for opening in opening_layout.openings[:opening_layout.count] {
+                if opening.face != .Front || opening.kind != .Window do continue
+                local_x := opening.horizontal
+                window_y := structure.base_y + opening.y
+                window_width := opening.width
+                window_height := opening.height
                 window_x, window_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
@@ -3295,6 +3309,12 @@ world_architecture_mass :: proc(
             }
         }
         if has_entrance && habitable {
+            door_width := clamp(structure.width * .13, f32(1.8), f32(2.8))
+            door_height := clamp(structure.height * .075, f32(3.0), f32(4.0))
+            door_y := door_height * .5
+            if opening, found := architecture.opening_layout_find(opening_layout, .Front, .Door, 0, 0); found {
+                door_width, door_height, door_y = opening.width, opening.height, opening.y
+            }
             door_x, door_z := world_rotate_xz(
                 structure.center_x,
                 structure.center_z,
@@ -3302,32 +3322,41 @@ world_architecture_mass :: proc(
                 structure.depth * .5 + .10,
                 structure.rotation,
             )
-            door_width := clamp(structure.width * .13, f32(1.8), f32(2.8))
-            door_height := clamp(structure.height * .075, f32(3.0), f32(4.0))
             world_box_rotated(
-                {door_x, structure.base_y + door_height * .5, door_z},
+                {door_x, structure.base_y + door_y, door_z},
                 {door_width, door_height, .16},
                 structure.rotation,
                 {92, 66, 57, 255},
             )
         }
-        if !landmark && rows > 1 && structure.seed % 3 == 0 {
-            balcony_x, balcony_z := world_rotate_xz(
-                structure.center_x,
-                structure.center_z,
-                0,
-                structure.depth * .5 + .42,
-                structure.rotation,
-            )
-            balcony_y := structure.base_y + architecture.facade_window_row_y(structure.height, rows - 1) -
-                          window_height * .5
-            world_box_rotated(
-                {balcony_x, balcony_y, balcony_z},
-                {min(structure.width * .56, f32(7.5)), .14, .72},
-                structure.rotation,
-                {111, 94, 76, 255},
-            )
+        if !landmark && rows > 1 && structure.seed % 3 == 0 && opening_layout != nil {
+            balcony_opening: ^architecture.Opening
+            for opening, index in opening_layout.openings[:opening_layout.count] {
+                if opening.face != .Front || opening.kind != .Window || opening.row != rows - 1 do continue
+                if balcony_opening == nil || math.abs(opening.horizontal) < math.abs(balcony_opening.horizontal) {
+                    balcony_opening = &opening_layout.openings[index]
+                }
+            }
+            if balcony_opening != nil {
+                balcony_x, balcony_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    balcony_opening.horizontal,
+                    structure.depth * .5 + .42,
+                    structure.rotation,
+                )
+                balcony_y := structure.base_y + balcony_opening.y - balcony_opening.height * .5
+                world_box_rotated(
+                    {balcony_x, balcony_y, balcony_z},
+                    {balcony_opening.width + 1.35, .14, .72},
+                    structure.rotation,
+                    {111, 94, 76, 255},
+                )
+            }
         }
+        face_trim :=
+            facade_style == 2 ? rl.Color{166, 171, 151, 255} : (facade_style == 1 ? rl.Color{205, 190, 157, 255} : rl.Color{190, 166, 128, 255})
+        world_architecture_face_openings(structure, opening_layout, window, face_trim)
         return
     }
     // Dark inset windows and red shutters give the generated blocks a readable
@@ -3335,8 +3364,6 @@ world_architecture_mass :: proc(
     window := facade_style == 2 ? rl.Color{42, 74, 82, 255} : rl.Color{48, 62, 64, 255}
     shutter :=
         facade_style == 2 ? rl.Color{43, 102, 126, 255} : facade_style == 3 ? rl.Color{236, 218, 179, 255} : rl.Color{167, 61, 53, 255}
-    rows := architecture.facade_floor_count(structure.height)
-    columns := architecture.facade_column_count(structure.width)
     if has_entrance && habitable {
         door_x, door_z := world_rotate_xz(
             structure.center_x,
@@ -3355,7 +3382,11 @@ world_architecture_mass :: proc(
         door_width := clamp(structure.width * .13, f32(1.8), f32(2.8))
         door_height := clamp(structure.height * .075, f32(3.0), f32(4.0))
         step_height: f32 = .20
-        door_center_y := structure.base_y + step_height + door_height * .5
+        door_center_local_y := step_height + door_height * .5
+        if opening, found := architecture.opening_layout_find(opening_layout, .Front, .Door, 0, 0); found {
+            door_width, door_height, door_center_local_y = opening.width, opening.height, opening.y
+        }
+        door_center_y := structure.base_y + door_center_local_y
         world_box_rotated({door_x, door_center_y, door_z}, {door_width, door_height, .24}, structure.rotation, door)
         panel_color := formation_face_color(door, math.PI, 0)
         for panel in 0 ..< 2 {
@@ -3981,18 +4012,14 @@ world_architecture_mass :: proc(
             }
         }
     }
-    window_width := architecture.facade_window_width(structure.width)
-    window_height := architecture.facade_window_height(structure.height)
     rich_front := habitable
-    for row in 0 ..< rows {
-        if !rich_front do break
-        for column in 0 ..< columns {
-            if opening_layout != nil &&
-               !architecture.opening_layout_contains(opening_layout, .Front, .Window, row, column) {
-                continue
-            }
-            x := architecture.facade_window_column_x(structure.width, column)
-            y := structure.base_y + architecture.facade_window_row_y(structure.height, row)
+    if rich_front && opening_layout != nil {
+        for opening in opening_layout.openings[:opening_layout.count] {
+            if opening.face != .Front || opening.kind != .Window do continue
+            row, column := opening.row, opening.column
+            x := opening.horizontal
+            y := structure.base_y + opening.y
+            window_width, window_height := opening.width, opening.height
             local_z := structure.depth * .5 + .16
             wx, wz := world_rotate_xz(structure.center_x, structure.center_z, x, local_z, structure.rotation)
             world_box_rotated({wx, y, wz}, {window_width, window_height, .22}, structure.rotation, window)
@@ -4564,11 +4591,7 @@ world_architecture_mass :: proc(
     }
 }
 
-world_architecture :: proc(
-    structure: terrain.Structure,
-    project: ^terrain.Project,
-    lod: Structure_LOD = .Near,
-) {
+world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Project, lod: Structure_LOD = .Near) {
     footprint := architecture.architecture_footprint(structure)
     if footprint.count <= 1 {
         layout := architecture.architecture_opening_layout(structure, 0, 0)
@@ -5131,11 +5154,7 @@ world_formation_sea_vegetation_band :: proc(
     }
 }
 
-world_formation :: proc(
-    structure: terrain.Structure,
-    project: ^terrain.Project = nil,
-    lod: Structure_LOD = .Near,
-) {
+world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project = nil, lod: Structure_LOD = .Near) {
     switch structure.kind {
     case .Box:
         world_box_rotated(
@@ -5172,11 +5191,7 @@ world_formation :: proc(
     world_formation_sea_vegetation_band(structure, project, lod)
 }
 
-world_foliage_formation_cached :: proc(
-    structure: terrain.Structure,
-    structure_index: int,
-    force_near := false,
-) {
+world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_index: int, force_near := false) {
     if structure_index < 0 || structure_index >= len(world_renderer.foliage_geometry_cache) {
         world_foliage_formation(structure)
         return
@@ -5195,8 +5210,7 @@ world_foliage_formation_cached :: proc(
     // player moves through a forest instead of invalidating the whole scene.
     distance_bucket := lod_result.tier == .Far ? i32(0) : i32(math.floor(distance / 16))
     direction := math.atan2(dz, dx)
-    direction_bucket := lod_result.tier == .Far ? i32(0) :
-        i32(math.floor((direction + math.PI) * 16 / (math.PI * 2)))
+    direction_bucket := lod_result.tier == .Far ? i32(0) : i32(math.floor((direction + math.PI) * 16 / (math.PI * 2)))
     if entry.valid &&
        entry.structure == structure &&
        entry.lod == lod_result.tier &&
@@ -5243,17 +5257,13 @@ world_static_formation_cached :: proc(
     project: ^terrain.Project,
     force_near := false,
 ) {
-    if project == nil ||
-       structure_index < 0 ||
-       structure_index >= len(world_renderer.static_geometry_cache) {
+    if project == nil || structure_index < 0 || structure_index >= len(world_renderer.static_geometry_cache) {
         world_formation(structure, project)
         return
     }
     entry := &world_renderer.static_geometry_cache[structure_index]
     lod_result := structure_lod_for(structure, entry.lod, force_near)
-    if entry.valid &&
-       entry.structure == structure &&
-       entry.lod == lod_result.tier {
+    if entry.valid && entry.structure == structure && entry.lod == lod_result.tier {
         world_static_mesh_append(entry)
         append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
         append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
@@ -5624,13 +5634,7 @@ world_window_flower_bunch_billboard :: proc(
     row, column: int,
 ) {
     seed := structure.seed ~ u32(row + 1) * 0x9e3779b9 ~ u32(column + 1) * 0x85ebca6b
-    root_x, root_z := world_rotate_xz(
-        structure.center_x,
-        structure.center_z,
-        local_x,
-        local_z,
-        structure.rotation,
-    )
+    root_x, root_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
     palette := architecture.bougainvillea_palette(seed)
     flower_tile := architecture.bougainvillea_flower_tile_base(palette)
     // Even atlas columns are upright, bottom-anchored clumps: a natural fit
@@ -7555,7 +7559,7 @@ world_laundry_cloth :: proc(
     world_quad(top_right, bottom_right, bottom_left, top_left, color)
 }
 
-world_architecture_laundry_webbing :: proc(editor: ^Editor) {
+world_architecture_laundry_webbing_uncached :: proc(editor: ^Editor) {
     if editor == nil do return
     webbing_count := 0
     webbing_limit := 8
@@ -7703,6 +7707,28 @@ world_architecture_laundry_webbing :: proc(editor: ^Editor) {
     }
 }
 
+world_architecture_laundry_webbing :: proc(editor: ^Editor) {
+    if editor == nil do return
+    cache_valid :=
+        world_renderer.laundry_geometry_valid &&
+        world_renderer.laundry_geometry_revision == editor.project.revision &&
+        world_renderer.laundry_geometry_terrain_revision == editor.terrain_revision
+    if cache_valid {
+        append(&world_renderer.vertices, ..world_renderer.laundry_geometry_cache[:])
+        return
+    }
+
+    first := len(world_renderer.vertices)
+    world_architecture_laundry_webbing_uncached(editor)
+    clear(&world_renderer.laundry_geometry_cache)
+    if first < len(world_renderer.vertices) {
+        append(&world_renderer.laundry_geometry_cache, ..world_renderer.vertices[first:])
+    }
+    world_renderer.laundry_geometry_revision = editor.project.revision
+    world_renderer.laundry_geometry_terrain_revision = editor.terrain_revision
+    world_renderer.laundry_geometry_valid = true
+}
+
 world_architecture_grass_footprints :: proc(
     editor: ^Editor,
     allocator := context.temp_allocator,
@@ -7714,30 +7740,37 @@ world_architecture_grass_footprints :: proc(
         footprint := architecture.architecture_footprint(structure)
         for mass in footprint.masses[:footprint.count] {
             center_x, center_z := architecture.architecture_mass_world(structure, mass)
-            append(&footprints, Architecture_Grass_Footprint {
-                center_x   = center_x,
-                center_z   = center_z,
-                half_width = mass.width * .5,
-                half_depth = mass.depth * .5,
-                rotation   = structure.rotation,
-            })
+            append(
+                &footprints,
+                Architecture_Grass_Footprint {
+                    center_x = center_x,
+                    center_z = center_z,
+                    half_width = mass.width * .5,
+                    half_depth = mass.depth * .5,
+                    rotation = structure.rotation,
+                },
+            )
         }
     }
     // The kiosks are procedural landmarks rather than authored Architecture
     // structures, so register their pads and approaches explicitly.
     kiosk_positions := [2]third_person.Vec3{editor.attendant_position, editor.gerta_position}
     for kiosk in kiosk_positions {
-        append(&footprints, Architecture_Grass_Footprint {
-            center_x   = kiosk.x,
-            center_z   = kiosk.z + .35,
-            half_width = 2.1,
-            half_depth = 1.9,
-        }, Architecture_Grass_Footprint {
-            center_x   = kiosk.x,
-            center_z   = kiosk.z - 2.65,
-            half_width = .825,
-            half_depth = 1.5,
-        })
+        append(
+            &footprints,
+            Architecture_Grass_Footprint {
+                center_x = kiosk.x,
+                center_z = kiosk.z + .35,
+                half_width = 2.1,
+                half_depth = 1.9,
+            },
+            Architecture_Grass_Footprint {
+                center_x = kiosk.x,
+                center_z = kiosk.z - 2.65,
+                half_width = .825,
+                half_depth = 1.5,
+            },
+        )
     }
     return footprints
 }
@@ -7932,10 +7965,7 @@ world_structures :: proc(editor: ^Editor) {
         }
         for &ordered in world_renderer.structure_visibility_order {
             structure := editor.project.structures[ordered.index]
-            world_renderer.structure_visibility_centers[ordered.index] = {
-                structure.center_x,
-                structure.center_z,
-            }
+            world_renderer.structure_visibility_centers[ordered.index] = {structure.center_x, structure.center_z}
             dx, dz := structure.center_x - view_camera.position.x, structure.center_z - view_camera.position.z
             ordered.distance_squared = dx * dx + dz * dz
             if ordered.index == selected_index || ordered.index == hovered_index {
@@ -7992,8 +8022,10 @@ world_structures :: proc(editor: ^Editor) {
         world_renderer.structure_lod_world_vertices +=
             len(world_renderer.vertices) + len(world_renderer.static_indices) - world_before
         world_renderer.structure_lod_foliage_vertices +=
-            len(world_renderer.foliage_vertices) - foliage_vertices_before +
-            len(world_renderer.bougainvillea_vertices) - bougainvillea_vertices_before
+            len(world_renderer.foliage_vertices) -
+            foliage_vertices_before +
+            len(world_renderer.bougainvillea_vertices) -
+            bougainvillea_vertices_before
         world_added := len(world_renderer.vertices) + len(world_renderer.static_indices) - world_before
         foliage_added := len(world_renderer.foliage_vertices) - foliage_vertices_before
         bougainvillea_added := len(world_renderer.bougainvillea_vertices) - bougainvillea_vertices_before
@@ -9497,11 +9529,7 @@ world_climbing_leaf_vine :: proc(
     }
 }
 
-world_climbing_leaves_for_structure :: proc(
-    editor: ^Editor,
-    structure: terrain.Structure,
-    structure_index: int,
-) {
+world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.Structure, structure_index: int) {
     if editor == nil do return
     eligible :=
         structure.kind == .Architecture ||
@@ -9519,95 +9547,95 @@ world_climbing_leaves_for_structure :: proc(
         dz := editor.camera_pose.position.z - structure.center_z
         detail_tier = architecture.bougainvillea_detail_tier(f32(math.sqrt(f64(dx * dx + dz * dz))))
     }
-        capture_seed_enabled :=
-            editor.capture_bougainvillea_seed_enabled && structure.id == editor.capture_bougainvillea_structure_id
-        capture_seed := capture_seed_enabled ? editor.capture_bougainvillea_seed : u32(0)
-        entry := &world_renderer.climbing_leaf_geometry_cache[structure_index]
-        if entry.valid &&
-           entry.structure == structure &&
-           entry.density == density &&
-           entry.detail_tier == detail_tier &&
-           entry.capture_seed_enabled == capture_seed_enabled &&
-           entry.capture_seed == capture_seed {
-            append(&world_renderer.vertices, ..entry.world_vertices[:])
-            append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
-            return
-        }
-        world_first := len(world_renderer.vertices)
-        bougainvillea_first := len(world_renderer.bougainvillea_vertices)
-        // Compound buildings, laundry anchors, and climbing growth all share
-        // the same frontmost rendered mass.
-        growth_structure := architecture.architecture_frontage_structure(structure)
-        // A painted patch should grow into a small colony of stems rather
-        // than a single line; density controls the colony size continuously.
-        vine_count := min(1 + int(density * 5.0), 4)
-        if structure.kind == .Architecture {
-            // Mature bougainvillea usually presents one woody plant with a
-            // small number of leaders, not several unrelated ivy-like tracks.
-            vine_count = min(1 + int(density * 1.8), 2)
-        }
-        height_fraction := .50 + density * .30
-        if structure.kind == .Architecture {
-            maturity := architecture.bougainvillea_maturity(density)
-            // Juveniles should be visibly young in reach as well as foliage
-            // density. Established plants can still occupy most of a façade.
-            height_fraction = architecture.bougainvillea_height_fraction(maturity)
-        }
-        plant_seed := structure.seed + u32(structure_index * 19)
-        if capture_seed_enabled {
-            plant_seed = capture_seed
-        }
-        root_spread := f32(math.sin(f64(f32(plant_seed) * .17))) * .38
-        root_attachment_x := architecture.bougainvillea_root_attachment_x(
-            growth_structure,
-            root_spread * growth_structure.width * .62,
-            plant_seed,
-        )
-        for vine in 0 ..< vine_count {
-            vine_seed := plant_seed + u32(vine * 7)
-            spread := root_spread
-            if vine_count > 1 do spread += (f32(vine) / f32(vine_count - 1) - .5) * .24
-            surface_seed := growth_structure.kind == .Architecture ? plant_seed : vine_seed
-            surface_offset := f32(math.cos(f64(f32(surface_seed) * .23))) * .18
-            attachment_x := spread * growth_structure.width * .62
-            attachment_z := growth_structure.depth * .5 + .28 + surface_offset
-            if growth_structure.kind != .Architecture {
-                // Non-building targets are treated as rounded masses: place
-                // each vine on the near radial shell instead of projecting it
-                // onto an arbitrary rectangular front plane.
-                shell_radius := max(growth_structure.width, growth_structure.depth) * .46 + .24
-                attachment_x = spread * shell_radius
-                shell_height := f32(
-                    math.sqrt(f64(max(shell_radius * shell_radius - attachment_x * attachment_x, f32(.16)))),
-                )
-                attachment_z = shell_height + surface_offset
-            }
-            world_climbing_leaf_vine(
-                growth_structure,
-                attachment_x,
-                root_attachment_x,
-                attachment_z,
-                growth_structure.height * height_fraction * (.88 + f32((vine + int(structure.seed)) % 3) * .08),
-                density,
-                vine_seed,
-                plant_seed,
-                vine == 0,
+    capture_seed_enabled :=
+        editor.capture_bougainvillea_seed_enabled && structure.id == editor.capture_bougainvillea_structure_id
+    capture_seed := capture_seed_enabled ? editor.capture_bougainvillea_seed : u32(0)
+    entry := &world_renderer.climbing_leaf_geometry_cache[structure_index]
+    if entry.valid &&
+       entry.structure == structure &&
+       entry.density == density &&
+       entry.detail_tier == detail_tier &&
+       entry.capture_seed_enabled == capture_seed_enabled &&
+       entry.capture_seed == capture_seed {
+        append(&world_renderer.vertices, ..entry.world_vertices[:])
+        append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
+        return
+    }
+    world_first := len(world_renderer.vertices)
+    bougainvillea_first := len(world_renderer.bougainvillea_vertices)
+    // Compound buildings, laundry anchors, and climbing growth all share
+    // the same frontmost rendered mass.
+    growth_structure := architecture.architecture_frontage_structure(structure)
+    // A painted patch should grow into a small colony of stems rather
+    // than a single line; density controls the colony size continuously.
+    vine_count := min(1 + int(density * 5.0), 4)
+    if structure.kind == .Architecture {
+        // Mature bougainvillea usually presents one woody plant with a
+        // small number of leaders, not several unrelated ivy-like tracks.
+        vine_count = min(1 + int(density * 1.8), 2)
+    }
+    height_fraction := .50 + density * .30
+    if structure.kind == .Architecture {
+        maturity := architecture.bougainvillea_maturity(density)
+        // Juveniles should be visibly young in reach as well as foliage
+        // density. Established plants can still occupy most of a façade.
+        height_fraction = architecture.bougainvillea_height_fraction(maturity)
+    }
+    plant_seed := structure.seed + u32(structure_index * 19)
+    if capture_seed_enabled {
+        plant_seed = capture_seed
+    }
+    root_spread := f32(math.sin(f64(f32(plant_seed) * .17))) * .38
+    root_attachment_x := architecture.bougainvillea_root_attachment_x(
+        growth_structure,
+        root_spread * growth_structure.width * .62,
+        plant_seed,
+    )
+    for vine in 0 ..< vine_count {
+        vine_seed := plant_seed + u32(vine * 7)
+        spread := root_spread
+        if vine_count > 1 do spread += (f32(vine) / f32(vine_count - 1) - .5) * .24
+        surface_seed := growth_structure.kind == .Architecture ? plant_seed : vine_seed
+        surface_offset := f32(math.cos(f64(f32(surface_seed) * .23))) * .18
+        attachment_x := spread * growth_structure.width * .62
+        attachment_z := growth_structure.depth * .5 + .28 + surface_offset
+        if growth_structure.kind != .Architecture {
+            // Non-building targets are treated as rounded masses: place
+            // each vine on the near radial shell instead of projecting it
+            // onto an arbitrary rectangular front plane.
+            shell_radius := max(growth_structure.width, growth_structure.depth) * .46 + .24
+            attachment_x = spread * shell_radius
+            shell_height := f32(
+                math.sqrt(f64(max(shell_radius * shell_radius - attachment_x * attachment_x, f32(.16)))),
             )
+            attachment_z = shell_height + surface_offset
         }
-        clear(&entry.world_vertices)
-        clear(&entry.bougainvillea_vertices)
-        if world_first < len(world_renderer.vertices) {
-            append(&entry.world_vertices, ..world_renderer.vertices[world_first:])
-        }
-        if bougainvillea_first < len(world_renderer.bougainvillea_vertices) {
-            append(&entry.bougainvillea_vertices, ..world_renderer.bougainvillea_vertices[bougainvillea_first:])
-        }
-        entry.valid = true
-        entry.structure = structure
-        entry.density = density
-        entry.detail_tier = detail_tier
-        entry.capture_seed_enabled = capture_seed_enabled
-        entry.capture_seed = capture_seed
+        world_climbing_leaf_vine(
+            growth_structure,
+            attachment_x,
+            root_attachment_x,
+            attachment_z,
+            growth_structure.height * height_fraction * (.88 + f32((vine + int(structure.seed)) % 3) * .08),
+            density,
+            vine_seed,
+            plant_seed,
+            vine == 0,
+        )
+    }
+    clear(&entry.world_vertices)
+    clear(&entry.bougainvillea_vertices)
+    if world_first < len(world_renderer.vertices) {
+        append(&entry.world_vertices, ..world_renderer.vertices[world_first:])
+    }
+    if bougainvillea_first < len(world_renderer.bougainvillea_vertices) {
+        append(&entry.bougainvillea_vertices, ..world_renderer.bougainvillea_vertices[bougainvillea_first:])
+    }
+    entry.valid = true
+    entry.structure = structure
+    entry.density = density
+    entry.detail_tier = detail_tier
+    entry.capture_seed_enabled = capture_seed_enabled
+    entry.capture_seed = capture_seed
 }
 
 world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
@@ -9678,8 +9706,24 @@ world_aircraft_normal_world :: #force_inline proc(
     }
 }
 
+world_aircraft_in_view :: proc(editor: ^Editor, position: flight.Vec3, radius: f32) -> bool {
+    if editor == nil do return false
+    focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
+    camera := perspective_camera(editor.camera_pose, focal_length)
+    width := max(rl.GetScreenWidth(), 1)
+    height := max(rl.GetScreenHeight(), 1)
+    return static_sphere_in_frustum(
+        camera,
+        {position.x, position.y, position.z},
+        radius,
+        f32(width) / f32(height),
+        world_camera_near_clip(editor),
+        WORLD_FAR_CLIP,
+    )
+}
+
 world_aircraft :: proc(editor: ^Editor) {
-    if editor.postale_visible {
+    if editor.postale_visible && world_aircraft_in_view(editor, editor.postale.body.position, 18) {
         postale_paint_layer := f32(vehicle_paint_layer_index(.Postale))
         postale_propeller_blur := aircraft_propeller_blur_amount(editor.postale.throttle)
         postale_transform := world_aircraft_transform(editor.postale.body, POSTALE_PRESENTATION_SCALE)
@@ -9728,7 +9772,23 @@ world_aircraft :: proc(editor: ^Editor) {
             }
         }
     }
-    if editor.libellula_visible {
+    if editor.libellula_visible && world_aircraft_in_view(editor, editor.libellula.body.position, 14) {
+        cache := &world_renderer.libellula_geometry_cache
+        rotor_turns := [3]f32 {
+            editor.libellula.rotor_turns.x,
+            editor.libellula.rotor_turns.y,
+            editor.libellula.rotor_turns.z,
+        }
+        if cache.valid &&
+           cache.body == editor.libellula.body &&
+           cache.kind == editor.aircraft.active &&
+           cache.rotor_turns == rotor_turns &&
+           cache.pitch == editor.libellula.pitch &&
+           cache.roll == editor.libellula.roll {
+            append(&world_renderer.vertices, ..cache.vertices[:])
+            return
+        }
+        first := len(world_renderer.vertices)
         libellula := &editor.libellula_visual_mesh
         if editor.aircraft.active == .Libellula_Mk2 {
             vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
@@ -9770,6 +9830,16 @@ world_aircraft :: proc(editor: ^Editor) {
                 vehicle_paint_part_is_paintable(a.part),
             )
         }
+        clear(&cache.vertices)
+        if first < len(world_renderer.vertices) {
+            append(&cache.vertices, ..world_renderer.vertices[first:])
+        }
+        cache.valid = true
+        cache.body = editor.libellula.body
+        cache.kind = editor.aircraft.active
+        cache.rotor_turns = rotor_turns
+        cache.pitch = editor.libellula.pitch
+        cache.roll = editor.libellula.roll
     }
 }
 
@@ -9795,19 +9865,23 @@ world_showcase_aircraft_pilot :: proc(editor: ^Editor, position: flight.Vec3, ba
         position.y + basis.up.y * .55,
         position.z + basis.up.z * .55,
     }
-    world_mouse_model_parented(editor, {
-            position          = seat_position,
-            rotation          = rotation,
-            accessory         = editor.mouse_headgear,
-            fur               = editor.mouse_fur,
-            pattern           = editor.mouse_pattern,
-            scarf_enabled     = editor.mouse_scarf_enabled,
-            scarf_color       = editor.mouse_scarf_color,
+    world_mouse_model_parented(
+        editor,
+        {
+            position = seat_position,
+            rotation = rotation,
+            accessory = editor.mouse_headgear,
+            fur = editor.mouse_fur,
+            pattern = editor.mouse_pattern,
+            scarf_enabled = editor.mouse_scarf_enabled,
+            scarf_color = editor.mouse_scarf_color,
             player_controlled = true,
-            grounded          = false,
-            hide_tail         = true,
-            hide_hind_feet    = true,
-        }, basis)
+            grounded = false,
+            hide_tail = true,
+            hide_hind_feet = true,
+        },
+        basis,
+    )
 }
 
 world_showcase_car_pilot :: proc(editor: ^Editor) {
@@ -10262,11 +10336,14 @@ world_mouse_skinned_hull :: proc(
         {bind_position = {0, ring_y[0], ring_z[0]}, groups = {{.Pelvis, 1}, {.Spine, 0}}, color = fur},
         skeleton,
     )
-    nose_center_local := mouse_skin_vertex({
+    nose_center_local := mouse_skin_vertex(
+        {
             bind_position = {0, ring_y[RINGS - 1], ring_z[RINGS - 1]},
-            groups        = {{.Head, 1}, {.Neck, 0}},
-            color         = fur_light,
-        }, skeleton)
+            groups = {{.Head, 1}, {.Neck, 0}},
+            color = fur_light,
+        },
+        skeleton,
+    )
     rear_x, rear_z := world_rotate_xz(origin.x, origin.z, rear_center_local.x, rear_center_local.z, rotation)
     nose_x, nose_z := world_rotate_xz(origin.x, origin.z, nose_center_local.x, nose_center_local.z, rotation)
     rear_center := third_person.Vec3{rear_x, origin.y + rear_center_local.y, rear_z}
@@ -10533,12 +10610,7 @@ mouse_constrain_hind_chain :: proc(
         root_to_target = {target.x - root.x, target.y - root.y, target.z - root.z}
         distance = linalg.length(root_to_target)
     }
-    remaining := mouse_kinematics.stable_distal_span(
-        distance,
-        lengths[0],
-        lengths[1],
-        lengths[2],
-    )
+    remaining := mouse_kinematics.stable_distal_span(distance, lengths[0], lengths[1], lengths[2])
     // Two nested analytic solves preserve all three segment lengths and both
     // endpoints exactly. Stable anatomical poles retain the zig-zag topology,
     // while the phase-independent distal span prevents knee/hock accordion.
@@ -10699,12 +10771,7 @@ world_mouse_model_scaled :: proc(editor: ^Editor, model: Mouse_Model, scale: f32
     }
 }
 
-world_town_mouse_model_scaled_cached :: proc(
-    editor: ^Editor,
-    model: Mouse_Model,
-    scale: f32,
-    cache_index: int,
-) {
+world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model, scale: f32, cache_index: int) {
     if editor == nil || cache_index < 0 || cache_index >= TOWN_MOUSE_CACHE_COUNT {
         world_mouse_model_scaled(editor, model, scale)
         return
@@ -10811,13 +10878,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         model.player_controlled ? editor.player_gait_weight * (1 - airborne_weight) + .88 * airborne_weight : f32(0)
     stride_phase := model.player_controlled ? editor.player_stride_phase : f32(0)
     horizontal_speed := f32(
-            math.sqrt(
-                f64(
-                    editor.player.velocity.x * editor.player.velocity.x +
-                    editor.player.velocity.z * editor.player.velocity.z,
-                ),
+        math.sqrt(
+            f64(
+                editor.player.velocity.x * editor.player.velocity.x +
+                editor.player.velocity.z * editor.player.velocity.z,
             ),
-        )
+        ),
+    )
     if model.gait_preview {
         run_weight = 1
         stride_phase = model.gait_phase
@@ -10873,17 +10940,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     bound_phase := mouse_gait.bound_animation_phase(stride_phase, bound_weight)
     bound := math.sin(bound_phase) * run_weight * mouse_gait.axial_flex_scale(gait)
     spine_extension := -bound
-    bound_aerial_lift :=
-        mouse_gait.bound_aerial_weight(bound_phase) *
-        bound_weight *
-        run_weight *
-        .085
+    bound_aerial_lift := mouse_gait.bound_aerial_weight(bound_phase) * bound_weight * run_weight * .085
     body_bob :=
-        (
-            -bound * .018 +
-            math.abs(math.sin(stride_phase * 2)) * mouse_gait.vertical_bob_scale(gait) +
-            bound_aerial_lift
-        ) * run_weight +
+        (-bound * .018 +
+                math.abs(math.sin(stride_phase * 2)) * mouse_gait.vertical_bob_scale(gait) +
+                bound_aerial_lift) *
+            run_weight +
         math.sin(idle_phase) * .006 * (1 - run_weight) +
         animation.run_body_lift * run_weight * (1 - airborne_weight)
     body_bob -= scurry_compression
@@ -11024,10 +11086,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     // hull. Reconstructing this point from head_y/head_z ignored head pitch,
     // so the nose floated above the snout during the gathered bound pose.
     posed_muzzle_tip := mouse_skin_vertex(
-        {
-            bind_position = {0, .62, .58},
-            groups = {{.Head, 1}, {.Neck, 0}},
-        },
+        {bind_position = {0, .62, .58}, groups = {{.Head, 1}, {.Neck, 0}}},
         &skeleton,
     )
     muzzle_x := posed_muzzle_tip.x
@@ -11913,14 +11972,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
         front_cycle := front_motion.reach * run_weight
         rear_cycle := rear_motion.reach * run_weight
-        front_lift_scale :=
-            .075 * walk_weight +
-            .088 * trot_weight +
-            .145 * bound_weight
-        hind_lift_scale :=
-            .090 * walk_weight +
-            .105 * trot_weight +
-            .165 * bound_weight
+        front_lift_scale := .075 * walk_weight + .088 * trot_weight + .145 * bound_weight
+        hind_lift_scale := .090 * walk_weight + .105 * trot_weight + .165 * bound_weight
         front_lift := front_motion.lift * front_lift_scale * run_weight
         scapula_slide := front_cycle * .038
         inside_turn := max(side_f * turn_pose, f32(0))
@@ -11930,14 +11983,14 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         run_fore_shoulder := third_person.Vec3{side_f * .13, .31, .075}
         fore_socket_bind := third_person.Vec3 {
             idle_fore_shoulder.x +
-                (run_fore_shoulder.x - idle_fore_shoulder.x) * run_weight +
-                side_f * paw_turn_reach * .35 -
-                side_f * posted_weight * .020,
+            (run_fore_shoulder.x - idle_fore_shoulder.x) * run_weight +
+            side_f * paw_turn_reach * .35 -
+            side_f * posted_weight * .020,
             idle_fore_shoulder.y - inside_turn * .025 + posted_weight * .065,
             idle_fore_shoulder.z +
-                (run_fore_shoulder.z - idle_fore_shoulder.z) * run_weight +
-                scapula_slide +
-                posted_weight * .090,
+            (run_fore_shoulder.z - idle_fore_shoulder.z) * run_weight +
+            scapula_slide +
+            posted_weight * .090,
         }
         posed_fore_socket := mouse_skin_vertex(
             {bind_position = fore_socket_bind, groups = {{.Chest, .68}, {.Spine, .32}}},
@@ -12015,10 +12068,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // zero; using front_lift here incorrectly pins both forepaws even
         // while one side's underlying gait is already in recovery.
         fore_locomoting := horizontal_speed > .08 || run_weight > .03
-        fore_planted :=
-            model.grounded &&
-            posted_weight < .5 &&
-            (!fore_locomoting || front_motion.lift < .025)
+        fore_planted := model.grounded && posted_weight < .5 && (!fore_locomoting || front_motion.lift < .025)
         // Mouse forearms are approximately as long as, or slightly longer
         // than, the humerus. Keep the complete chain compact so the proximal
         // limb remains tucked inside the chest silhouette instead of reading
@@ -12072,15 +12122,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // opens between those independently posed surfaces at deep flexion.
         shoulder_socket_center := fore_shoulder
         shoulder_socket_center.y += .018
-        world_ellipsoid_rotated(
-            shoulder_socket_center,
-            .046,
-            .050,
-            .052,
-            rotation,
-            fore_socket_color,
-            .Plain,
-        )
+        world_ellipsoid_rotated(shoulder_socket_center, .046, .050, .052, rotation, fore_socket_color, .Plain)
         world_mouse_limb_hull(fore_points[:], fore_radii[:], fore_colors[:], model_forward)
         // Paws are low pads lying in the ground plane. The former vertical
         // discs presented their extrusion as a rectangular bar in profile.
@@ -12136,11 +12178,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // this exposes the toes and supports the raised torso instead of
         // balancing it on two vertical hocks.
         hind_paw_z :=
-            -.16 +
-            hind_cycle * run_weight +
-            side_f * .018 * run_weight +
-            brake_pose * .15 -
-            posted_weight * .10
+            -.16 + hind_cycle * run_weight + side_f * .018 * run_weight + brake_pose * .15 - posted_weight * .10
         hind_paw := local_point(p, rotation, hind_paw_x, hind_paw_y, hind_paw_z)
         if model.driving_pose {
             // Fold the rear legs into the bucket seat. Keeping the hock behind
@@ -12313,11 +12351,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         snout_root := f32(.20)
         for index in first_vertex ..< len(world_renderer.vertices) {
             vertex := &world_renderer.vertices[index]
-            delta := third_person.Vec3 {
-                vertex.position[0] - p.x,
-                vertex.position[1] - p.y,
-                vertex.position[2] - p.z,
-            }
+            delta := third_person.Vec3{vertex.position[0] - p.x, vertex.position[1] - p.y, vertex.position[2] - p.z}
             local_x := delta.x * yaw_right.x + delta.z * yaw_right.z
             local_z := delta.x * yaw_forward.x + delta.z * yaw_forward.z
             local_x *= build
@@ -12349,18 +12383,21 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
 
 world_character :: proc(editor: ^Editor) {
     if !editor.in_map || editor.pilot.mode != .On_Foot do return
-    world_mouse_model(editor, {
-        position          = editor.player.position,
-        rotation          = math.PI - editor.player.facing_yaw_radians,
-        accessory         = editor.mouse_headgear,
-        fur               = editor.mouse_fur,
-        pattern           = editor.mouse_pattern,
-        scarf_enabled     = editor.mouse_scarf_enabled,
-        scarf_color       = editor.mouse_scarf_color,
-        player_controlled = true,
-        track_paw_plants  = true,
-        grounded          = editor.player.grounded,
-    })
+    world_mouse_model(
+        editor,
+        {
+            position = editor.player.position,
+            rotation = math.PI - editor.player.facing_yaw_radians,
+            accessory = editor.mouse_headgear,
+            fur = editor.mouse_fur,
+            pattern = editor.mouse_pattern,
+            scarf_enabled = editor.mouse_scarf_enabled,
+            scarf_color = editor.mouse_scarf_color,
+            player_controlled = true,
+            track_paw_plants = true,
+            grounded = editor.player.grounded,
+        },
+    )
 }
 
 world_postale_pilot :: proc(editor: ^Editor) {
@@ -12374,19 +12411,23 @@ world_postale_pilot :: proc(editor: ^Editor) {
     seat_local := [3]f32{0, -.37, -.20}
     position := postale_vertex_world(&editor.postale, seat_local, POSTALE_PRESENTATION_SCALE)
     rotation := math.atan2(-body.basis.forward.x, -body.basis.forward.z)
-    world_mouse_model_parented(editor, {
-            position          = position,
-            rotation          = rotation,
-            accessory         = editor.mouse_headgear,
-            fur               = editor.mouse_fur,
-            pattern           = editor.mouse_pattern,
-            scarf_enabled     = editor.mouse_scarf_enabled,
-            scarf_color       = editor.mouse_scarf_color,
+    world_mouse_model_parented(
+        editor,
+        {
+            position = position,
+            rotation = rotation,
+            accessory = editor.mouse_headgear,
+            fur = editor.mouse_fur,
+            pattern = editor.mouse_pattern,
+            scarf_enabled = editor.mouse_scarf_enabled,
+            scarf_color = editor.mouse_scarf_color,
             player_controlled = true,
-            grounded          = false,
-            hide_tail         = true,
-            hide_hind_feet    = true,
-        }, body.basis)
+            grounded = false,
+            hide_tail = true,
+            hide_hind_feet = true,
+        },
+        body.basis,
+    )
 }
 
 MARTA_STOOL_HEIGHT :: f32(.49)
@@ -12501,17 +12542,17 @@ world_mouse_interaction_indicator :: proc(editor: ^Editor, mouse_position: third
 }
 
 Town_Mouse :: struct {
-    lateral:     f32,
-    outward:     f32,
-    facing:      f32,
-    scale:       f32,
-    build:       f32,
+    lateral:      f32,
+    outward:      f32,
+    facing:       f32,
+    scale:        f32,
+    build:        f32,
     snout_length: f32,
-    accessory:   Mouse_Accessory,
-    fur:         Mouse_Fur,
-    pattern:     Mouse_Fur_Pattern,
-    scarf:       bool,
-    scarf_color: rl.Color,
+    accessory:    Mouse_Accessory,
+    fur:          Mouse_Fur,
+    pattern:      Mouse_Fur_Pattern,
+    scarf:        bool,
+    scarf_color:  rl.Color,
 }
 
 story_resident_town_slot :: proc(resident: story.Resident) -> (island_index, resident_index: int, ok: bool) {
@@ -12643,28 +12684,38 @@ world_story_meeting :: proc(editor: ^Editor) {
 
     facing_niko := math.atan2(iva.x - niko.x, iva.z - niko.z)
     facing_iva := math.atan2(niko.x - iva.x, niko.z - iva.z)
-    world_town_mouse_model_scaled_cached(editor, {
-            position  = niko,
-            rotation  = math.PI - facing_niko,
-            build     = 1.12,
+    world_town_mouse_model_scaled_cached(
+        editor,
+        {
+            position = niko,
+            rotation = math.PI - facing_niko,
+            build = 1.12,
             snout_length = .94,
             accessory = .Acorn_Cap,
-            fur       = .Chestnut,
-            pattern   = .Pale_Belly,
-            grounded  = true,
-        }, 1.02, TOWN_MOUSE_CACHE_COUNT - 2)
-    world_town_mouse_model_scaled_cached(editor, {
-            position      = iva,
-            rotation      = math.PI - facing_iva,
-            build         = .86,
-            snout_length  = 1.16,
-            accessory     = .Flower,
-            fur           = .Cream,
-            pattern       = .Piebald,
+            fur = .Chestnut,
+            pattern = .Pale_Belly,
+            grounded = true,
+        },
+        1.02,
+        TOWN_MOUSE_CACHE_COUNT - 2,
+    )
+    world_town_mouse_model_scaled_cached(
+        editor,
+        {
+            position = iva,
+            rotation = math.PI - facing_iva,
+            build = .86,
+            snout_length = 1.16,
+            accessory = .Flower,
+            fur = .Cream,
+            pattern = .Piebald,
             scarf_enabled = true,
-            scarf_color   = {177, 65, 73, 255},
-            grounded      = true,
-        }, .96, TOWN_MOUSE_CACHE_COUNT - 1)
+            scarf_color = {177, 65, 73, 255},
+            grounded = true,
+        },
+        .96,
+        TOWN_MOUSE_CACHE_COUNT - 1,
+    )
     if story.resident_has_action(&editor.story_state, .Niko) {
         world_mouse_interaction_indicator(editor, niko)
     }
@@ -12673,6 +12724,12 @@ world_story_meeting :: proc(editor: ^Editor) {
 world_town_mice :: proc(editor: ^Editor) {
     if editor == nil do return
 
+    focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
+    view_camera := perspective_camera(editor.camera_pose, focal_length)
+    screen_width := max(rl.GetScreenWidth(), 1)
+    screen_height := max(rl.GetScreenHeight(), 1)
+    aspect := f32(screen_width) / f32(screen_height)
+    near_plane := world_camera_near_clip(editor)
     residents := [7]Town_Mouse {
         {-1.0, 2.5, .18, 1.08, 1.12, .94, .Acorn_Cap, .Chestnut, .Pale_Belly, false, {}},
         {.8, 2.2, -.22, .91, .86, 1.16, .Flower, .Cream, .Piebald, true, {177, 65, 73, 255}},
@@ -12733,6 +12790,17 @@ world_town_mice :: proc(editor: ^Editor) {
                     break
                 }
                 rotation := frontage.rotation + math.PI * .5 + resident.facing
+                mouse_center := third_person.Vec3{x, ground_y + .75 * resident.scale, z}
+                if !static_sphere_in_frustum(
+                    view_camera,
+                    mouse_center,
+                    1.8 * resident.scale,
+                    aspect,
+                    near_plane,
+                    WORLD_FAR_CLIP,
+                ) {
+                    break
+                }
                 world_town_mouse_model_scaled_cached(
                     editor,
                     {
@@ -12744,9 +12812,12 @@ world_town_mice :: proc(editor: ^Editor) {
                         fur = resident.fur,
                         pattern = resident.pattern,
                         scarf_enabled = resident.scarf,
-                        scarf_color   = resident.scarf_color,
-                        grounded      = true,
-                    }, resident.scale, island_index * len(residents) + resident_index)
+                        scarf_color = resident.scarf_color,
+                        grounded = true,
+                    },
+                    resident.scale,
+                    island_index * len(residents) + resident_index,
+                )
                 if named && story.resident_has_action(&editor.story_state, named_resident) {
                     world_mouse_interaction_indicator(editor, {x, ground_y, z})
                 }
@@ -12980,18 +13051,21 @@ world_build :: proc(editor: ^Editor) {
         // a second approximation of the mouse in the UI layer.
         world_ellipsoid_rotated({0, -.08, 0}, .72, .08, .72, 0, {40, 58, 61, 255})
         world_ellipsoid_rotated({0, -.025, 0}, .60, .035, .60, 0, {77, 112, 111, 255})
-        world_mouse_model(editor, {
-            position          = {0, 0, 0},
-            rotation          = editor.customization_preview_yaw + .65,
-            accessory         = editor.mouse_headgear,
-            fur               = editor.mouse_fur,
-            pattern           = editor.mouse_pattern,
-            scarf_enabled     = editor.mouse_scarf_enabled,
-            scarf_color       = editor.mouse_scarf_color,
-            preview           = true,
-            player_controlled = true,
-            grounded          = false,
-        })
+        world_mouse_model(
+            editor,
+            {
+                position = {0, 0, 0},
+                rotation = editor.customization_preview_yaw + .65,
+                accessory = editor.mouse_headgear,
+                fur = editor.mouse_fur,
+                pattern = editor.mouse_pattern,
+                scarf_enabled = editor.mouse_scarf_enabled,
+                scarf_color = editor.mouse_scarf_color,
+                preview = true,
+                player_controlled = true,
+                grounded = false,
+            },
+        )
         return
     }
     if editor.vehicle_showcase_scene {
@@ -14276,6 +14350,234 @@ world_pre_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     world_renderer.dynamic_shadow.frame_prepared = true
 }
 
+dialogue_portrait_mouse_model :: proc(editor: ^Editor, resident: story.Resident, player: bool) -> Mouse_Model {
+    animation_time := f32(math.floor(f64(editor.map_time * TOWN_MOUSE_ANIMATION_HZ))) / TOWN_MOUSE_ANIMATION_HZ
+    idle := f32(math.sin(f64(animation_time * 2.1 + (player ? 0 : 1.7)))) * .025
+    model := Mouse_Model {
+        position = {0, idle, 0},
+        rotation = math.PI,
+        preview  = true,
+    }
+    if player {
+        model.fur = editor.mouse_fur
+        model.pattern = editor.mouse_pattern
+        model.accessory = editor.mouse_headgear
+        model.scarf_enabled = editor.mouse_scarf_enabled
+        model.scarf_color = editor.mouse_scarf_color
+        model.player_controlled = true
+        return model
+    }
+    switch resident {
+    case .Marta:
+        model.build, model.snout_length = .88, 1.12
+        model.accessory, model.fur, model.pattern = .Flower, .Chestnut, .Pale_Belly
+    case .Gerta:
+        model.build, model.snout_length = 1.16, .92
+        model.accessory, model.accessory_side = .Flower, 1
+        model.fur, model.pattern = .Silver, .Solid
+    case .Niko:
+        model.build, model.snout_length = 1.12, .94
+        model.accessory, model.fur, model.pattern = .Acorn_Cap, .Chestnut, .Pale_Belly
+    case .Iva:
+        model.build, model.snout_length = .86, 1.16
+        model.accessory, model.fur, model.pattern = .Flower, .Cream, .Piebald
+        model.scarf_enabled, model.scarf_color = true, {177, 65, 73, 255}
+    case .Bojan:
+        model.build, model.snout_length = 1.22, .88
+        model.accessory, model.fur, model.pattern = .Bottle_Cap, .Soot, .Solid
+        model.scarf_enabled, model.scarf_color = true, {61, 112, 139, 255}
+    case .Zora:
+        model.build, model.snout_length = 1.18, 1.10
+        model.fur, model.pattern = .Russet, .Piebald
+        model.scarf_enabled, model.scarf_color = true, {205, 151, 52, 255}
+    }
+    return model
+}
+
+world_dialogue_portrait_model_cached :: proc(editor: ^Editor, model: Mouse_Model, portrait_index: int) {
+    if portrait_index < 0 || portrait_index >= len(world_renderer.dialogue_portrait_geometry_cache) {
+        world_mouse_model(editor, model)
+        return
+    }
+    entry := &world_renderer.dialogue_portrait_geometry_cache[portrait_index]
+    if entry.valid && entry.model == model {
+        append(&world_renderer.vertices, ..entry.vertices[:])
+        return
+    }
+    first := len(world_renderer.vertices)
+    world_mouse_model(editor, model)
+    clear(&entry.vertices)
+    if first < len(world_renderer.vertices) {
+        append(&entry.vertices, ..world_renderer.vertices[first:])
+    }
+    entry.valid = true
+    entry.model = model
+}
+
+dialogue_portrait_world_push :: proc(editor: ^Editor, aspect: f32, player: bool) -> World_Push {
+    target := third_person.Vec3{0, .62, 0}
+    camera_offset := third_person.Vec3{player ? f32(-.10) : f32(.10), .10, -1.42}
+    pose := third_person.camera_near(target, camera_offset)
+    camera := perspective_camera(pose, 1.72)
+    sky := atmosphere.sample(&editor.atmosphere)
+    return {
+        camera_position = {camera.position.x, camera.position.y, camera.position.z, .04},
+        camera_right = {camera.right.x, camera.right.y, camera.right.z, 12},
+        camera_up = {camera.up.x, camera.up.y, camera.up.z, 0},
+        camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
+        projection = {camera.focal_length, max(aspect, f32(.1)), 40, 80},
+        fog_color = world_color({16, 43, 55, 255}),
+        water = {sky.cloud_time_seconds, 0, 0, 0},
+        sun = {-.42, .78, -.46, 1.35},
+    }
+}
+
+dialogue_portrait_backdrop :: proc(aspect: f32) {
+    // This quad is drawn after the world scene but before the portrait mesh.
+    // Its alpha therefore dims the scene behind the mouse without tinting the
+    // model itself.
+    half_height := f32(1.55)
+    half_width := half_height * max(aspect, f32(.1))
+    z := f32(.38)
+    color := rl.Color{18, 15, 12, 176}
+    a := third_person.Vec3{-half_width, -.35, z}
+    b := third_person.Vec3{-half_width, -.35 + half_height * 2, z}
+    c := third_person.Vec3{half_width, -.35 + half_height * 2, z}
+    d := third_person.Vec3{half_width, -.35, z}
+    world_quad(a, b, c, d, color)
+    world_quad(d, c, b, a, color)
+}
+
+dialogue_portrait_render :: proc(
+    pass: ^rl.World_Pass_Context,
+    buffer: ^engine.Vk_Buffer,
+    pipeline_index: int,
+    editor: ^Editor,
+) {
+    if editor == nil || !editor.attendant_dialogue_open do return
+    logical_w, logical_h := pass.logical_extent[0], pass.logical_extent[1]
+    if logical_w <= 0 || logical_h <= 0 do return
+    layout := dialogue_tv_layout(logical_w, logical_h)
+    cards := [2]rl.Rectangle{layout.player_card, layout.npc_card}
+    players := [2]bool{true, false}
+    main_count := len(world_renderer.vertices)
+    backdrop_firsts, backdrop_counts: [2]int
+    model_firsts, model_counts: [2]int
+    for player, portrait_index in players {
+        backdrop_firsts[portrait_index] = len(world_renderer.vertices)
+        dialogue_portrait_backdrop(layout.player_card.width / max(layout.player_card.height, f32(1)))
+        backdrop_counts[portrait_index] = len(world_renderer.vertices) - backdrop_firsts[portrait_index]
+        model_firsts[portrait_index] = len(world_renderer.vertices)
+        world_dialogue_portrait_model_cached(
+            editor,
+            dialogue_portrait_mouse_model(editor, editor.dialogue_resident, player),
+            portrait_index,
+        )
+        model_counts[portrait_index] = len(world_renderer.vertices) - model_firsts[portrait_index]
+    }
+    portrait_count := len(world_renderer.vertices) - main_count
+    required_size := vk.DeviceSize(len(world_renderer.vertices) * size_of(World_Vertex))
+    if portrait_count <= 0 || required_size > buffer.size {
+        resize(&world_renderer.vertices, main_count)
+        return
+    }
+    destination := cast(rawptr)(cast(uintptr)buffer.mapped + uintptr(main_count * size_of(World_Vertex)))
+    mem.copy_non_overlapping(
+        destination,
+        raw_data(world_renderer.vertices[main_count:]),
+        portrait_count * size_of(World_Vertex),
+    )
+    cmd := pass.frame.command_buffer
+    vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.pipelines[pipeline_index])
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        0,
+        1,
+        &world_renderer.vehicle_paint_descriptor,
+        0,
+        nil,
+    )
+    vk.CmdBindDescriptorSets(
+        cmd,
+        .GRAPHICS,
+        world_renderer.layout,
+        1,
+        1,
+        &world_renderer.dynamic_shadow.descriptors[pass.frame.frame_index],
+        0,
+        nil,
+    )
+    offset := vk.DeviceSize(0)
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &buffer.handle, &offset)
+    sx := f32(pass.framebuffer_extent.width) / f32(logical_w)
+    sy := f32(pass.framebuffer_extent.height) / f32(logical_h)
+    for card, portrait_index in cards {
+        inset_x, inset_top, inset_bottom := 10 * layout.scale, 54 * layout.scale, 78 * layout.scale
+        card_x := max(i32(card.x * sx), 0)
+        card_y := max(i32(card.y * sy), 0)
+        card_w := max(u32(card.width * sx), 1)
+        card_h := max(u32(card.height * sy), 1)
+        x := max(i32((card.x + inset_x) * sx), 0)
+        y := max(i32((card.y + inset_top) * sy), 0)
+        w := max(u32((card.width - inset_x * 2) * sx), 1)
+        h := max(u32((card.height - inset_top - inset_bottom) * sy), 1)
+        card_rect := vk.Rect2D {
+            offset = {card_x, card_y},
+            extent = {card_w, card_h},
+        }
+        view_rect := vk.Rect2D {
+            offset = {x, y},
+            extent = {w, h},
+        }
+        clear_attachment := vk.ClearAttachment {
+            aspectMask = {.DEPTH},
+            clearValue = {depthStencil = {depth = 1}},
+        }
+        clear_rect := vk.ClearRect {
+            rect           = card_rect,
+            baseArrayLayer = 0,
+            layerCount     = 1,
+        }
+        vk.CmdClearAttachments(cmd, 1, &clear_attachment, 1, &clear_rect)
+        card_viewport := vk.Viewport {
+            x        = f32(card_x),
+            y        = f32(card_y),
+            width    = f32(card_w),
+            height   = f32(card_h),
+            minDepth = 0,
+            maxDepth = 1,
+        }
+        vk.CmdSetViewport(cmd, 0, 1, &card_viewport)
+        vk.CmdSetScissor(cmd, 0, 1, &card_rect)
+        backdrop_push := dialogue_portrait_world_push(editor, f32(card_w) / f32(card_h), players[portrait_index])
+        vk.CmdPushConstants(
+            cmd,
+            world_renderer.layout,
+            {.VERTEX, .FRAGMENT},
+            0,
+            u32(size_of(backdrop_push)),
+            &backdrop_push,
+        )
+        vk.CmdDraw(cmd, u32(backdrop_counts[portrait_index]), 1, u32(backdrop_firsts[portrait_index]), 0)
+        viewport := vk.Viewport {
+            x        = f32(x),
+            y        = f32(y),
+            width    = f32(w),
+            height   = f32(h),
+            minDepth = 0,
+            maxDepth = 1,
+        }
+        vk.CmdSetViewport(cmd, 0, 1, &viewport)
+        vk.CmdSetScissor(cmd, 0, 1, &view_rect)
+        push := dialogue_portrait_world_push(editor, f32(w) / f32(h), players[portrait_index])
+        vk.CmdPushConstants(cmd, world_renderer.layout, {.VERTEX, .FRAGMENT}, 0, u32(size_of(push)), &push)
+        vk.CmdDraw(cmd, u32(model_counts[portrait_index]), 1, u32(model_firsts[portrait_index]), 0)
+    }
+    resize(&world_renderer.vertices, main_count)
+}
+
 world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized do return
     editor := world_renderer.editor
@@ -14446,6 +14748,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         world_render_graph_ready = adriatic_render_graph(&world_render_graph)
     }
     if world_render_graph_ready do _ = render_graph.execute(&world_render_graph, &graph_context)
+    dialogue_portrait_render(pass, buffer, pipeline_index, editor)
 }
 
 world_renderer_attach :: proc(editor: ^Editor) {
@@ -14509,6 +14812,8 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.static_vertices)
     delete(world_renderer.static_indices)
     delete(world_renderer.road_vertices)
+    delete(world_renderer.road_geometry_cache)
+    delete(world_renderer.laundry_geometry_cache)
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)
     delete(world_renderer.grass_instances)
@@ -14543,6 +14848,10 @@ world_renderer_destroy :: proc() {
     for &entry in world_renderer.town_mouse_geometry_cache {
         delete(entry.vertices)
     }
+    for &entry in world_renderer.dialogue_portrait_geometry_cache {
+        delete(entry.vertices)
+    }
+    delete(world_renderer.libellula_geometry_cache.vertices)
     for &entry in world_renderer.marina_geometry_cache {
         delete(entry.world_vertices)
     }

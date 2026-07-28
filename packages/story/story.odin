@@ -1,6 +1,7 @@
 package story
 
 import dialogue "../dialogue"
+import quest "../quest"
 import tarot "../tarot"
 import "core:fmt"
 
@@ -58,6 +59,7 @@ Delivery :: struct {
 }
 
 State :: struct {
+    quest:                quest.State,
     romance:              Romance_Stage,
     repair:               Repair_Stage,
     delivery:             Delivery,
@@ -103,6 +105,7 @@ resident_island :: proc(resident: Resident) -> Island {
 
 begin_delivery :: proc(state: ^State) -> bool {
     if state == nil || state.delivery.active do return false
+    _ = ensure_quest_progress(state)
 
     delivery: Delivery
     switch state.romance {
@@ -180,62 +183,84 @@ begin_delivery :: proc(state: ^State) -> bool {
 complete_delivery :: proc(state: ^State, recipient: Resident) -> bool {
     if state == nil || !state.delivery.active || state.delivery.to != recipient do return false
 
+    event: quest.Event
     switch state.delivery.kind {
     case .First_Letter:
         if state.romance != .Unintroduced do return false
-        state.romance = .First_Letter
+        event = {
+            kind   = .Deliver,
+            key    = "first-letter",
+            target = "iva",
+        }
     case .First_Reply:
         if state.romance != .First_Letter do return false
-        state.romance = .Corresponding
+        event = {
+            kind   = .Deliver,
+            key    = "first-reply",
+            target = "niko",
+        }
     case .Regatta_Invitation:
         if state.romance != .Corresponding do return false
-        state.romance = .Invitation
+        event = {
+            kind   = .Deliver,
+            key    = "regatta-invitation",
+            target = "iva",
+        }
     case .Regatta_Acceptance:
         if state.romance != .Invitation || state.repair != .Repaired do return false
-        state.romance = .Meeting
+        event = {
+            kind   = .Deliver,
+            key    = "regatta-acceptance",
+            target = "niko",
+        }
     case .Repeat_Eastbound, .Repeat_Westbound:
         if state.romance != .Together do return false
-        state.repeat_deliveries += 1
+        event = {
+            kind = .Deliver,
+            key  = "post-route",
+        }
     case .None:
         return false
     }
+    update, published := publish_quest_event(state, event)
+    if !published || update.completed_count == 0 do return false
 
     state.delivery.active = false
-    state.completed_deliveries += 1
-    state.stamps_earned += 1
     return true
 }
 
 complete_meeting :: proc(state: ^State) -> bool {
     if state == nil || state.romance != .Meeting || state.delivery.active do return false
-    state.romance = .Together
-    return true
+    update, published := publish_quest_event(state, {kind = .Talk, key = "awning-meeting"})
+    return published && update.completed_count > 0
 }
 
 report_crash :: proc(state: ^State) -> bool {
     if state == nil || state.repair != .Not_Seen do return false
-    state.repair = .Crash_Reported
-    return true
+    update, published := publish_quest_event(state, {kind = .Talk, key = "crash-reported", target = "bojan"})
+    return published && update.completed_count > 0
 }
 
 diagnose_crash :: proc(state: ^State) -> bool {
     if state == nil || state.repair != .Crash_Reported do return false
-    state.repair = .Diagnosed
+    update, published := publish_quest_event(state, {kind = .Inspect, key = "bojan-wing"})
+    if !published || update.completed_count == 0 do return false
     state.has_wing_patch = true
     return true
 }
 
 apply_wing_patch :: proc(state: ^State) -> bool {
     if state == nil || state.repair != .Diagnosed || !state.has_wing_patch do return false
+    update, published := publish_quest_event(state, {kind = .Repair, key = "apply-wing-patch"})
+    if !published || update.completed_count == 0 do return false
     state.has_wing_patch = false
-    state.repair = .Patched
     return true
 }
 
 verify_repair :: proc(state: ^State) -> bool {
     if state == nil || state.repair != .Patched do return false
-    state.repair = .Repaired
-    return true
+    update, published := publish_quest_event(state, {kind = .Repair, key = "verify-wing-repair"})
+    return published && update.completed_count > 0
 }
 
 state_from_context :: proc(ctx: ^dialogue.Context) -> ^State {

@@ -80,6 +80,29 @@ shadow, spacing, offset, wave, shake, pulse, drift, and typewriter properties;
 the package supplies deterministic reveal timing while leaving glyph drawing
 to the game's canvas/UI layer.
 
+## Quest graphs
+
+`packages/quest` owns product-local, presentation-neutral campaign progression.
+Immutable definitions connect objectives, gates, milestones, and rewards;
+saveable runtime state records node status and completion counts. Gameplay
+publishes typed events and receives a transactional update listing every
+activation, completion, and reward caused by that event. Automatic activation
+is the default, with explicit acceptance available for conspicuous side
+stories. Repeatable nodes make recurring work such as the island post route
+explicit without allowing one-shot rewards to fire twice.
+
+The two-island campaign catalog lives beside the story in
+`packages/story/quest_graph.odin`. Its compatibility projection preserves the
+existing romance and repair stage enums while dialogue and presentation are
+migrated incrementally. Quest code never opens UI, plays cinematics, moves
+residents, or mutates engine state; the owning game interprets its updates.
+
+Press `J` or the controller View/Back/Share/Minus button during gameplay to
+open the Courier's Ledger. Its active and completed pages show discovered
+errands without revealing locked story beats. One active errand can be tracked
+on the HUD; the first objective is selected automatically until the player
+chooses or clears another.
+
 ## Cinematics
 
 `packages/cinematic` provides renderer-independent shot scripting and

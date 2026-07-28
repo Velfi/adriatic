@@ -155,34 +155,93 @@ backend_destroy :: proc() {
     state.window = nil
     state^ = {}}
 upload_font :: proc() -> bool {ui.gui_init(&state.gui)
-    // Read the advance from the same loaded face and scale used to rasterize
-    // the atlas. This keeps layout correct when the font asset changes.
+    // Read advances from the same loaded faces and scale used to rasterize
+    // their atlases. This keeps layout correct when either asset changes.
     shaped: [1]ui.Gui_Shaped_Glyph
-    font_pixel_height := f32(56)
-    probe_text: string = "M"
-    shaped_count := ui.gui_font_shape_text(
-        .Body,
-        transmute([]u8)probe_text,
-        font_pixel_height / ui.GUI_FONT_LOGICAL_HEIGHT,
-        shaped[:],
-    )
-    state.font_advance_em = shaped_count == 1 ? shaped[0].x_advance / f32(FONT_CELL_H) : f32(.57)
-    font_pixels := make([]u8, FONT_ATLAS_W * FONT_ATLAS_H * 4, context.temp_allocator)
-    if !ui.gui_font_render_ascii_atlas(.Body, FONT_FIRST, FONT_LAST, int(font_pixel_height), FONT_CELL_W, FONT_CELL_H, FONT_COLUMNS, font_pixels) do return false
-    fallback_cell := make([]u8, FONT_CELL_W * FONT_CELL_H * 4, context.temp_allocator)
+    font_pixel_height := FONT_RASTER_H
+    font_kinds := [2]ui.Gui_Font_Kind{ui.Gui_Font_Kind.Body, ui.Gui_Font_Kind.Display}
+    for font_kind, index in font_kinds {
+        for ch in FONT_FIRST ..= FONT_LAST {
+            probe := [1]u8{u8(ch)}
+            shaped_count := ui.gui_font_shape_text(
+                font_kind,
+                probe[:],
+                f32(font_pixel_height) / ui.GUI_FONT_LOGICAL_HEIGHT,
+                shaped[:],
+            )
+            state.font_advance_em[index][ch - FONT_FIRST] =
+                shaped_count == 1 ? shaped[0].x_advance / f32(FONT_LOGICAL_CELL_H) : f32(.57)
+        }
+    }
+
+    bounds: ui.Gui_Glyph_Bounds
+    if !ui.gui_font_ascii_glyph_bounds(.Body, FONT_FIRST, FONT_LAST, font_pixel_height, &bounds) do return false
+    display_bounds: ui.Gui_Glyph_Bounds
+    if !ui.gui_font_ascii_glyph_bounds(.Display, FONT_FIRST, FONT_LAST, font_pixel_height, &display_bounds) do return false
+    bounds.min_x = min(bounds.min_x, display_bounds.min_x)
+    bounds.max_x = max(bounds.max_x, display_bounds.max_x)
+    bounds.ascent = max(bounds.ascent, display_bounds.ascent)
+    bounds.descent = max(bounds.descent, display_bounds.descent)
+
     // Noto's symbols are substantially wider than condensed Iosevka glyphs.
-    // Rasterize them to the cell width instead of the primary face's height so
-    // diamonds and arrows are not clipped into question-mark-like fragments.
     fallback_pixel_height := 36
+    for ch in FONT_FALLBACK_RUNES {
+        fallback_bounds: ui.Gui_Glyph_Bounds
+        if !ui.gui_font_ascii_glyph_bounds(.Display, int(ch), int(ch), fallback_pixel_height, &fallback_bounds) do return false
+        bounds.min_x = min(bounds.min_x, fallback_bounds.min_x)
+        bounds.max_x = max(bounds.max_x, fallback_bounds.max_x)
+        bounds.ascent = max(bounds.ascent, fallback_bounds.ascent)
+        bounds.descent = max(bounds.descent, fallback_bounds.descent)
+    }
+
+    // One transparent texel is insufficient with linear filtering at fractional
+    // positions. Derive all remaining geometry from the loaded faces.
+    padding := 2
+    state.font_origin_x = padding - int(bounds.min_x)
+    state.font_baseline = padding + int(bounds.ascent)
+    state.font_cell_width = int(bounds.max_x - bounds.min_x) + padding * 2
+    state.font_cell_height = int(bounds.ascent + bounds.descent) + padding * 2
+    state.font_atlas_width = state.font_cell_width * FONT_COLUMNS
+    state.font_atlas_height = state.font_cell_height * FONT_ROWS
+
+    font_plane_bytes := state.font_atlas_width * state.font_atlas_height * 4
+    font_pixels := make([]u8, font_plane_bytes * 2, context.temp_allocator)
+    body_pixels := font_pixels[:font_plane_bytes]
+    display_pixels := font_pixels[font_plane_bytes:]
+    body_rendered := ui.gui_font_render_ascii_atlas(
+        .Body, FONT_FIRST, FONT_LAST, font_pixel_height,
+        state.font_cell_width, state.font_cell_height, FONT_COLUMNS,
+        state.font_origin_x, state.font_baseline, body_pixels,
+    )
+    if !body_rendered do return false
+    display_rendered := ui.gui_font_render_ascii_atlas(
+        .Display, FONT_FIRST, FONT_LAST, font_pixel_height,
+        state.font_cell_width, state.font_cell_height, FONT_COLUMNS,
+        state.font_origin_x, state.font_baseline, display_pixels,
+    )
+    if !display_rendered do return false
+    fallback_cell := make([]u8, state.font_cell_width * state.font_cell_height * 4, context.temp_allocator)
     for ch, fallback_index in FONT_FALLBACK_RUNES {
-        if !ui.gui_font_render_ascii_atlas(.Display, int(ch), int(ch), fallback_pixel_height, FONT_CELL_W, FONT_CELL_H, 1, fallback_cell) do return false
+        fallback_rendered := ui.gui_font_render_ascii_atlas(
+            .Display, int(ch), int(ch), fallback_pixel_height,
+            state.font_cell_width, state.font_cell_height, 1,
+            state.font_origin_x, state.font_baseline, fallback_cell,
+        )
+        if !fallback_rendered do return false
         slot := FONT_COUNT + fallback_index
-        cell_x := slot % FONT_COLUMNS * FONT_CELL_W
-        cell_y := slot / FONT_COLUMNS * FONT_CELL_H
-        for y in 0 ..< FONT_CELL_H {
-            destination := (cell_y + y) * FONT_ATLAS_W * 4 + cell_x * 4
-            source := y * FONT_CELL_W * 4
-            copy(font_pixels[destination:], fallback_cell[source:source + FONT_CELL_W * 4])
+        cell_x := slot % FONT_COLUMNS * state.font_cell_width
+        cell_y := slot / FONT_COLUMNS * state.font_cell_height
+        for plane in 0 ..< 2 {
+            for y in 0 ..< state.font_cell_height {
+                destination := plane * font_plane_bytes +
+                    (cell_y + y) * state.font_atlas_width * 4 +
+                    cell_x * 4
+                source := y * state.font_cell_width * 4
+                copy(
+                    font_pixels[destination:],
+                    fallback_cell[source:source + state.font_cell_width * 4],
+                )
+            }
         }
     }
     icons, icon_error := image.load(
@@ -192,13 +251,17 @@ upload_font :: proc() -> bool {ui.gui_init(&state.gui)
     )
     if icon_error != nil || icons == nil do return false
     defer image.destroy(icons, context.temp_allocator)
-    width := max(FONT_ATLAS_W, icons.width)
-    height := FONT_ATLAS_H + icons.height
+    width := max(state.font_atlas_width, icons.width)
+    font_atlas_height := state.font_atlas_height * 2
+    height := font_atlas_height + icons.height
     pixels := make([]u8, width * height * 4, context.temp_allocator)
-    for y in 0 ..< FONT_ATLAS_H do copy(pixels[y * width * 4:], font_pixels[y * FONT_ATLAS_W * 4:(y + 1) * FONT_ATLAS_W * 4])
-    for y in 0 ..< icons.height do copy(pixels[(FONT_ATLAS_H + y) * width * 4:], icons.pixels.buf[y * icons.width * 4:(y + 1) * icons.width * 4])
+    for y in 0 ..< font_atlas_height do copy(
+        pixels[y * width * 4:],
+        font_pixels[y * state.font_atlas_width * 4:(y + 1) * state.font_atlas_width * 4],
+    )
+    for y in 0 ..< icons.height do copy(pixels[(font_atlas_height + y) * width * 4:], icons.pixels.buf[y * icons.width * 4:(y + 1) * icons.width * 4])
     state.texture_width, state.texture_height = width, height
-    state.icon_y, state.icon_width, state.icon_height = FONT_ATLAS_H, icons.width, icons.height
+    state.icon_y, state.icon_width, state.icon_height = font_atlas_height, icons.width, icons.height
     return resources.texture_upload_rgba8(
         &state.ctx,
         pixels,

@@ -212,6 +212,32 @@ third_person_slope_gravity_distinguishes_uphill_and_downhill :: proc(t: ^testing
 }
 
 @(test)
+third_person_ground_contact_follows_descending_surfaces_without_interrupting_jumps :: proc(t: ^testing.T) {
+    grounded := third_person.State {
+        position = {0, 4, 0},
+        velocity = {0, 0, -3},
+        grounded = true,
+    }
+    third_person.resolve_ground_contact(&grounded, 3.75)
+    testing.expect(t, grounded.position.y == 3.75 && grounded.grounded)
+
+    jumping := third_person.State {
+        position = {0, 4, 0},
+        velocity = {0, 7, -3},
+        grounded = false,
+    }
+    third_person.resolve_ground_contact(&jumping, 3.75)
+    testing.expect(t, jumping.position.y == 4 && !jumping.grounded && jumping.velocity.y == 7)
+
+    falling := third_person.State {
+        position = {0, 3.5, 0},
+        velocity = {0, -4, -3},
+    }
+    third_person.resolve_ground_contact(&falling, 3.75)
+    testing.expect(t, falling.position.y == 3.75 && falling.grounded && falling.velocity.y == 0)
+}
+
+@(test)
 third_person_motion_signals_decay_without_grounded_forces :: proc(t: ^testing.T) {
     state := third_person.State {
         turn_amount  = 1,

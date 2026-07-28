@@ -741,6 +741,7 @@ check: doctor
 	$(ODIN) check packages/wireframe $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/vehicles $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/machines $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
+	$(ODIN) check packages/quest $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/terrain $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/postale $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/libellula $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point

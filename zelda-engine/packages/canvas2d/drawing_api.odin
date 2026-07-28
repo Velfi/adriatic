@@ -14,6 +14,8 @@ import resources "zelda_engine:render_resources"
 import ui "zelda_engine:ui"
 
 SetConfigFlags :: proc(flags: ConfigFlags) { state_ensure().config_flags = flags }
+SetBodyFontPath :: proc(path: cstring) -> bool { return ui.gui_set_body_font_path(path) }
+SetDisplayFontPath :: proc(path: cstring) -> bool { return ui.gui_set_display_font_path(path) }
 SetVSyncEnabled :: proc(enabled: bool) {
     canvas := state_ensure()
     if enabled {
@@ -139,7 +141,9 @@ GetMousePinchScale :: proc() -> f32 { return state.mouse_pinch_scale }
 IsMouseButtonPressed :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return(
         state.mouse_pressed[int(button)] \
     )}
-IsMouseButtonDown :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return state.mouse_down[int(button)]}
+IsMouseButtonDown :: proc(button: MouseButton) -> bool { assert(button != .COUNT); return(
+        state.mouse_down[int(button)] \
+    ) }
 IsMouseButtonReleased :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return(
         state.mouse_released[int(button)] \
     )}
@@ -251,7 +255,8 @@ gamepad_sdl_button :: proc(button: Gamepad_Button) -> sdl.GamepadButton {switch 
         return .DPAD_UP; case .Dpad_Down:
         return .DPAD_DOWN; case .Dpad_Left:
         return .DPAD_LEFT; case .Dpad_Right:
-        return .DPAD_RIGHT; case .Start:
+        return .DPAD_RIGHT; case .Back:
+        return .BACK; case .Start:
         return .START; case .Count:
         unreachable()}
     unreachable()}
@@ -423,7 +428,10 @@ EndScissorMode :: proc() { state.clip_enabled = false; state.clip = {} }
 ButtonBehavior :: proc(id: int, r: Rectangle, enabled: bool) -> Button_Interaction {gui_id := ui.Gui_Id(id + 1)
     activated := ui.gui_button_behavior(&state.gui, gui_id, {r.x, r.y, r.width, r.height}, enabled)
     return {activated, state.gui.hot == gui_id, state.gui.focused == gui_id}}
-DrawRectangle :: proc(x, y, width, height: i32, color: Color) {rect({f32(x), f32(y), f32(width), f32(height)}, color)}
+DrawRectangle :: proc(x, y, width, height: i32, color: Color) { rect(
+        {f32(x), f32(y), f32(width), f32(height)},
+        color,
+    ) }
 DrawRectangleRec :: proc(r: Rectangle, color: Color) { rect(r, color) }
 // A material-space quad for projected procedural geometry. UVs remain attached
 // to the supplied corners while the hatch offset/rotation can be aligned to a

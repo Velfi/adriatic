@@ -36,6 +36,10 @@ CITY_ALLEY_MIN_FRONT_CLEARANCE :: f32(1.80)
 ARCHITECTURE_MIN_OPENING_FACE_SPAN :: f32(4.5)
 ARCHITECTURE_MIN_OPENING_WALL_HEIGHT :: f32(5.5)
 ARCHITECTURE_OPENING_CORNER_MARGIN :: f32(.75)
+// Product-level tuning control for the archetype-specific façade grammar.
+// Individual structures still choose coherent complete bays, never random
+// holes in an otherwise aligned vertical stack.
+ARCHITECTURE_WINDOW_DENSITY :: f32(1)
 
 Context_Tissue :: enum u8 {
     Unspecified,
@@ -418,12 +422,12 @@ facade_column_count :: #force_inline proc(width: f32) -> int {
 
 @(no_instrumentation)
 facade_window_width :: #force_inline proc(width: f32) -> f32 {
-    return clamp(width * .13, f32(1.6), f32(2.6))
+    return clamp(width * .075, f32(1.05), f32(1.60))
 }
 
 @(no_instrumentation)
 facade_window_height :: #force_inline proc(height: f32) -> f32 {
-    return clamp(height * .06, f32(2.2), f32(3.2))
+    return clamp(height * .045, f32(1.55), f32(2.20))
 }
 
 @(no_instrumentation)
@@ -535,6 +539,145 @@ opening_layout_contains :: proc(layout: ^Opening_Layout, face: Face, kind: Openi
     return false
 }
 
+opening_layout_find :: proc(
+    layout: ^Opening_Layout,
+    face: Face,
+    kind: Opening_Kind,
+    row, column: int,
+) -> (^Opening, bool) {
+    if layout == nil do return nil, false
+    for opening, index in layout.openings[:layout.count] {
+        if opening.face == face && opening.kind == kind && opening.row == row && opening.column == column {
+            return &layout.openings[index], true
+        }
+    }
+    return nil, false
+}
+
+Facade_Profile :: struct {
+    front_bays_min, front_bays_max: int,
+    rear_bays_min, rear_bays_max:   int,
+    side_bays_min, side_bays_max:   int,
+    window_width_min, window_width_max:   f32,
+    window_height_min, window_height_max: f32,
+    opening_ratio_min, opening_ratio_max: f32,
+    blank_sides:                          bool,
+    service:                              bool,
+    shop_ground_floor:                    bool,
+}
+
+facade_profile :: proc(archetype: buildings.Archetype) -> Facade_Profile {
+    switch archetype {
+    case .Dwelling, .Farmstead, .Legacy:
+        return {
+            front_bays_min = 1, front_bays_max = 2,
+            rear_bays_min = 1, rear_bays_max = 2,
+            side_bays_min = 0, side_bays_max = 1,
+            window_width_min = 1.05, window_width_max = 1.35,
+            window_height_min = 1.55, window_height_max = 1.90,
+            opening_ratio_min = .08, opening_ratio_max = .14,
+            blank_sides = true,
+        }
+    case .Townhouse, .Shop_House:
+        return {
+            front_bays_min = 2, front_bays_max = 3,
+            rear_bays_min = 1, rear_bays_max = 2,
+            side_bays_min = 0, side_bays_max = 2,
+            window_width_min = 1.15, window_width_max = 1.50,
+            window_height_min = 1.70, window_height_max = 2.20,
+            opening_ratio_min = .12, opening_ratio_max = .20,
+            blank_sides = true,
+            shop_ground_floor = archetype == .Shop_House,
+        }
+    case .Workshop, .Storehouse, .Fishery, .Barn_Granary, .Mill:
+        return {
+            front_bays_min = 0, front_bays_max = 2,
+            rear_bays_min = 0, rear_bays_max = 1,
+            side_bays_min = 0, side_bays_max = 1,
+            window_width_min = .80, window_width_max = 1.35,
+            window_height_min = .65, window_height_max = 1.20,
+            opening_ratio_min = 0, opening_ratio_max = .08,
+            blank_sides = true,
+            service = true,
+        }
+    case .Palace_Loggia, .Harbor_Office, .Market_Hall, .Monastery, .Church:
+        return {
+            front_bays_min = 3, front_bays_max = 5,
+            rear_bays_min = 1, rear_bays_max = 3,
+            side_bays_min = 1, side_bays_max = 3,
+            window_width_min = 1.20, window_width_max = 1.70,
+            window_height_min = 1.80, window_height_max = 2.35,
+            opening_ratio_min = .15, opening_ratio_max = .22,
+        }
+    case .Campanile, .Fortress_Gate, .Cycladic_Bell:
+        return {
+            front_bays_min = 0, front_bays_max = 1,
+            rear_bays_min = 0, rear_bays_max = 1,
+            side_bays_min = 0, side_bays_max = 1,
+            window_width_min = .75, window_width_max = 1.10,
+            window_height_min = .75, window_height_max = 1.40,
+            opening_ratio_min = 0, opening_ratio_max = .06,
+            blank_sides = true,
+            service = true,
+        }
+    }
+    return {}
+}
+
+facade_profile_bay_count :: proc(
+    profile: Facade_Profile,
+    structure: terrain.Structure,
+    face: Face,
+    primary_face: bool,
+    span: f32,
+) -> int {
+    low, high := profile.side_bays_min, profile.side_bays_max
+    if face == .Rear {
+        low, high = profile.rear_bays_min, profile.rear_bays_max
+    } else if primary_face {
+        low, high = profile.front_bays_min, profile.front_bays_max
+    }
+    if !primary_face && face != .Rear && !profile.blank_sides {
+        low = max(low, 1)
+    }
+    if high <= 0 do return 0
+    if primary_face && high >= 3 && span >= 28 do high = min(high + 1, 5)
+    variant := int((structure.seed >> u32(9 + int(face) * 3)) & 255)
+    count := low
+    if high > low {
+        count += variant % (high - low + 1)
+    }
+    count = int(math.floor(f64(f32(count) * ARCHITECTURE_WINDOW_DENSITY + .5)))
+    if primary_face && !profile.service do count = max(count, 1)
+    maximum_fit := max(1, int(math.floor(f64((span - 2 * 1.15 + 1.15) / (profile.window_width_min + 1.15)))))
+    return clamp(count, 0, maximum_fit)
+}
+
+facade_profile_window_size :: proc(
+    profile: Facade_Profile,
+    structure: terrain.Structure,
+    face: Face,
+) -> (f32, f32) {
+    width_t := f32((structure.seed >> u32(3 + int(face) * 2)) & 31) / 31
+    height_t := f32((structure.seed >> u32(5 + int(face) * 2)) & 31) / 31
+    return profile.window_width_min + (profile.window_width_max - profile.window_width_min) * width_t,
+           profile.window_height_min + (profile.window_height_max - profile.window_height_min) * height_t
+}
+
+facade_bay_center :: proc(span, window_width: f32, columns, column: int) -> f32 {
+    if columns <= 1 do return 0
+    pitch := clamp((span - 2 * 1.15 - window_width) / f32(columns - 1), f32(2.8), f32(4.6))
+    return (f32(clamp(column, 0, columns - 1)) - f32(columns - 1) * .5) * pitch
+}
+
+facade_opening_row_y :: proc(height: f32, row: int, opening_height: f32) -> f32 {
+    rows := facade_floor_count(height)
+    first_y := opening_height * .5 + 1.45
+    if rows <= 1 do return first_y
+    last_y := max(first_y, height - opening_height * .5 - 1.45)
+    return first_y + (last_y - first_y) * f32(clamp(row, 0, rows - 1)) / f32(rows - 1)
+}
+
 architecture_opening_layout :: proc(
     structure: terrain.Structure,
     mass_index: int,
@@ -548,11 +691,11 @@ architecture_opening_layout :: proc(
     if wall_height < ARCHITECTURE_MIN_OPENING_WALL_HEIGHT do return layout
 
     identity := architecture_resolve_legacy_identity(structure)
+    profile := facade_profile(identity.archetype)
     habitable := buildings.is_habitable(identity.archetype)
     primary_mass := mass_index == primary_mass_index
     faces := [4]Face{.Front, .Rear, .Left, .Right}
     rows := facade_floor_count(wall_height)
-    window_height := facade_window_height(wall_height)
 
     for face in faces {
         span := face_span(mass, face)
@@ -572,38 +715,42 @@ architecture_opening_layout :: proc(
             })
         }
 
-        columns := facade_column_count(span)
-        if !primary_face {
-            columns = clamp(int(math.floor(f64((span - 1.5) / 2.5))), 2, 6)
-        }
-        face_rows := habitable ? rows : 1
-        if !habitable {
-            columns = max(1, min(columns, 2))
-        }
+        columns := facade_profile_bay_count(profile, structure, face, primary_face, span)
+        if columns <= 0 do continue
+        window_width, window_height := facade_profile_window_size(profile, structure, face)
+        face_rows := profile.service ? 1 : rows
         for row in 0 ..< face_rows {
-            opening_y := facade_window_row_y(wall_height, row)
+            opening_y := facade_opening_row_y(wall_height, row, window_height)
             for column in 0 ..< columns {
-                horizontal := facade_window_column_x_for_count(span, columns, column)
-                if primary_face {
-                    horizontal = facade_window_column_x(span, column)
+                horizontal := facade_bay_center(span, window_width, columns, column)
+                central_bay := columns % 2 == 1 && column == columns / 2
+                if primary_face && row == 0 && central_bay {
+                    continue
                 }
-                window_width := facade_window_width(span)
                 if math.abs(horizontal) + window_width * .5 > span * .5 - ARCHITECTURE_OPENING_CORNER_MARGIN {
                     continue
                 }
                 kind := Opening_Kind.Window
                 opening_height := window_height
-                if !habitable {
+                opening_width := window_width
+                if profile.service {
                     kind = .Vent
-                    opening_height = clamp(window_height * .55, f32(.65), f32(1.4))
-                    opening_y = max(opening_height * .5 + .55, f32(1.1))
+                    opening_y = max(opening_height * .5 + 1.15, f32(1.5))
+                } else if profile.shop_ground_floor && primary_face && row == 0 {
+                    opening_width = min(window_width * 1.12, f32(1.65))
+                    opening_height = min(window_height * 1.08, f32(2.25))
+                    opening_y = facade_opening_row_y(wall_height, row, opening_height)
+                } else if primary_face && row == 0 {
+                    opening_width *= .90
+                    opening_height *= .85
+                    opening_y = facade_opening_row_y(wall_height, row, opening_height)
                 }
                 _ = opening_layout_add(&layout, {
                     face       = face,
                     kind       = kind,
                     horizontal = horizontal,
                     y          = opening_y,
-                    width      = window_width,
+                    width      = opening_width,
                     height     = opening_height,
                     row        = row,
                     column     = column,

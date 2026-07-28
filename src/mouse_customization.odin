@@ -447,19 +447,18 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
 
 customization_card :: proc(bounds: rl.Rectangle, label: cstring, selected, focused: bool, swatch: rl.Color = {}) {
     hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
-    fill: rl.Color = hovered ? rl.Color{40, 49, 58, 255} : rl.Color{29, 35, 42, 255}
-    border: rl.Color = selected ? rl.Color{81, 205, 194, 255} : rl.Color{55, 65, 75, 255}
-    if focused {
-        fill = {37, 55, 59, 255}
-        border = {118, 238, 226, 255}
-    }
-    rl.DrawRectangleRounded(bounds, .12, 8, fill)
-    rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, focused || selected ? 2 : 1, border)
+    state := UI_Control_State.Resting
+    if hovered do state = .Hovered
+    if focused do state = .Focused
+    if selected do state = .Selected
+    style := ui_theme_control_style(state)
+    rl.DrawRectangleRounded(bounds, .12, 8, style.fill)
+    rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, style.border_width, style.border)
     if selected {
         mark := rl.Vector2{bounds.x + bounds.width - 11, bounds.y + 10}
-        rl.DrawCircleV(mark, 5, {81, 205, 194, 255})
-        rl.DrawLineEx({mark.x - 2.5, mark.y}, {mark.x - .5, mark.y + 2}, 1.5, {15, 29, 31, 255})
-        rl.DrawLineEx({mark.x - .5, mark.y + 2}, {mark.x + 3, mark.y - 2}, 1.5, {15, 29, 31, 255})
+        rl.DrawCircleV(mark, 5, ui_theme_accent())
+        rl.DrawLineEx({mark.x - 2.5, mark.y}, {mark.x - .5, mark.y + 2}, 1.5, ui_theme_text_inverse())
+        rl.DrawLineEx({mark.x - .5, mark.y + 2}, {mark.x + 3, mark.y - 2}, 1.5, ui_theme_text_inverse())
     }
     text_x := bounds.x + 10
     if swatch.a > 0 {
@@ -467,7 +466,7 @@ customization_card :: proc(bounds: rl.Rectangle, label: cstring, selected, focus
         text_x = bounds.x + 34
     }
     size := ui_measure_text(.Data, label, .2)
-    ui_draw_text(.Data, label, {text_x, bounds.y + (bounds.height - size.y) * .5 + 1}, .2, {229, 234, 238, 255})
+    ui_draw_text(.Data, label, {text_x, bounds.y + (bounds.height - size.y) * .5 + 1}, .2, style.text)
 }
 
 customization_pattern_thumbnail :: proc(bounds: rl.Rectangle, pattern: Mouse_Fur_Pattern) {
@@ -558,16 +557,16 @@ customization_color_component :: proc(
     customization_card(bounds, label, false, focused)
     track := rl.Rectangle{bounds.x + 42, bounds.y + 16, bounds.width - 52, 10}
     opacity := enabled ? u8(255) : u8(95)
-    rl.DrawRectangleRounded(track, .45, 6, {12, 17, 21, opacity})
+    rl.DrawRectangleRounded(track, .45, 6, ui_theme_scrim(opacity))
     fill := track
     fill.width *= clamp(value, 0, 1)
     shade := rl.Color{color.r, color.g, color.b, opacity}
     if fill.width > 0 do rl.DrawRectangleRounded(fill, .45, 6, shade)
     handle_x := track.x + track.width * clamp(value, 0, 1)
-    rl.DrawCircleV({handle_x, track.y + track.height * .5}, 5, {235, 240, 242, opacity})
+    rl.DrawCircleV({handle_x, track.y + track.height * .5}, 5, ui_theme_surface_elevated(opacity))
     if !enabled {
-        rl.DrawRectangleRounded(bounds, .12, 8, {10, 14, 18, 86})
-        if focused do rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, 2, {118, 238, 226, 255})
+        rl.DrawRectangleRounded(bounds, .12, 8, ui_theme_scrim(86))
+        if focused do rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, 2, ui_theme_focus())
     }
 }
 
@@ -575,8 +574,8 @@ customization_draw_3d_preview :: proc(_: ^Editor, bounds: rl.Rectangle) {
     // The world pass renders the gameplay mouse beneath this translucent frame.
     // Keeping the UI layer to chrome preserves the model's real
     // depth, lighting, animation, fur markings, and headgear geometry.
-    rl.DrawRectangleRounded(bounds, .035, 12, {8, 15, 20, 42})
-    rl.DrawRectangleRoundedLinesEx(bounds, .035, 12, 2, {83, 151, 151, 235})
+    rl.DrawRectangleRounded(bounds, .035, 12, ui_theme_scrim(42))
+    rl.DrawRectangleRoundedLinesEx(bounds, .035, 12, 2, ui_theme_border(235))
 }
 
 customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
@@ -588,9 +587,9 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
         panel.width * .61,
         panel.height - 96 * customization_scale_y(panel),
     }
-    rl.DrawRectangleRounded(header_panel, .025, 12, {22, 26, 32, 252})
-    rl.DrawRectangleRounded(controls_panel, .02, 10, {22, 26, 32, 252})
-    rl.DrawRectangleRoundedLinesEx(panel, .025, 12, 1, {78, 88, 100, 255})
+    rl.DrawRectangleRounded(header_panel, .025, 12, ui_theme_surface())
+    rl.DrawRectangleRounded(controls_panel, .02, 10, ui_theme_surface())
+    rl.DrawRectangleRoundedLinesEx(panel, .025, 12, 1, ui_theme_border())
     pause_menu_draw_header(panel, "", "CUSTOMIZE MOUSE")
     hint: cstring = "SAVES AUTOMATICALLY  /  DRAG PREVIEW"
     if controller_prompt_active(editor) do hint = "SAVES AUTOMATICALLY  /  D-PAD + A"
@@ -600,12 +599,12 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
         hint,
         {panel.x + panel.width - hint_size.x - 40, customization_y(panel, 42)},
         .2,
-        {137, 149, 160, 255},
+        ui_theme_text_muted(),
     )
     customization_draw_3d_preview(editor, customization_preview_bounds(panel))
 
     controls_x := panel.x + panel.width * .41
-    ui_draw_text(.Label, "FUR COLOR", {controls_x, customization_y(panel, 84)}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "FUR COLOR", {controls_x, customization_y(panel, 84)}, .4, ui_theme_text())
     for index in 0 ..< CUSTOMIZATION_COLOR_COUNT {
         value := Mouse_Fur(index)
         customization_card(
@@ -617,7 +616,7 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
         )
     }
 
-    ui_draw_text(.Label, "FUR PATTERN", {controls_x, customization_y(panel, 218)}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "FUR PATTERN", {controls_x, customization_y(panel, 218)}, .4, ui_theme_text())
     for index in 0 ..< CUSTOMIZATION_PATTERN_COUNT {
         value := Mouse_Fur_Pattern(index)
         customization_card(
@@ -629,7 +628,7 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
         customization_pattern_thumbnail(customization_pattern_bounds(panel, index), value)
     }
 
-    ui_draw_text(.Label, "HEADGEAR", {controls_x, customization_y(panel, 326)}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "HEADGEAR", {controls_x, customization_y(panel, 326)}, .4, ui_theme_text())
     for index in 0 ..< CUSTOMIZATION_HEADGEAR_COUNT {
         value := Mouse_Accessory(index)
         customization_card(
@@ -641,7 +640,7 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
         customization_headgear_thumbnail(customization_headgear_bounds(panel, index), value)
     }
 
-    ui_draw_text(.Label, "SCARF", {controls_x, customization_y(panel, 478)}, .4, {225, 230, 235, 255})
+    ui_draw_text(.Label, "SCARF", {controls_x, customization_y(panel, 478)}, .4, ui_theme_text())
     customization_card(
         customization_scarf_bounds(panel, 0),
         editor.mouse_scarf_enabled ? "ON" : "OFF",

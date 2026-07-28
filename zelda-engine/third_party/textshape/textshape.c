@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <limits.h>
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -25,6 +26,13 @@ typedef struct Vo_Shaped_Glyph {
     float x_advance;
     float y_advance;
 } Vo_Shaped_Glyph;
+
+typedef struct Vo_Glyph_Bounds {
+    int32_t min_x;
+    int32_t max_x;
+    int32_t ascent;
+    int32_t descent;
+} Vo_Glyph_Bounds;
 
 static Vo_Textshape_Font *vo_textshape_font(int font_kind) {
     if (font_kind < 0 || font_kind >= VO_TEXTSHAPE_MAX_FONTS) {
@@ -78,6 +86,51 @@ int vo_textshape_init(int font_kind, const char *font_path, float logical_height
     return font->hb_font != NULL;
 }
 
+int vo_textshape_ascii_glyph_bounds(
+    int font_kind,
+    int glyph_first,
+    int glyph_last,
+    int pixel_height,
+    Vo_Glyph_Bounds *out
+) {
+    Vo_Textshape_Font *font = vo_textshape_font(font_kind);
+    if (font == NULL || font->render_face == NULL || out == NULL || glyph_last < glyph_first || pixel_height <= 0) {
+        return 0;
+    }
+    if (FT_Set_Pixel_Sizes(font->render_face, 0, pixel_height) != 0) {
+        return 0;
+    }
+
+    int min_x = INT_MAX;
+    int max_x = INT_MIN;
+    int ascent = 0;
+    int descent = 0;
+    for (int codepoint = glyph_first; codepoint <= glyph_last; codepoint += 1) {
+        if (codepoint == ' ') {
+            continue;
+        }
+        if (FT_Load_Char(font->render_face, (unsigned long)codepoint, FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL) != 0) {
+            continue;
+        }
+        FT_GlyphSlot glyph = font->render_face->glyph;
+        int glyph_min_x = glyph->bitmap_left;
+        int glyph_max_x = glyph->bitmap_left + (int)glyph->bitmap.width;
+        min_x = glyph_min_x < min_x ? glyph_min_x : min_x;
+        max_x = glyph_max_x > max_x ? glyph_max_x : max_x;
+        ascent = glyph->bitmap_top > ascent ? glyph->bitmap_top : ascent;
+        int glyph_descent = (int)glyph->bitmap.rows - glyph->bitmap_top;
+        descent = glyph_descent > descent ? glyph_descent : descent;
+    }
+    if (min_x == INT_MAX || max_x == INT_MIN) {
+        return 0;
+    }
+    out->min_x = min_x;
+    out->max_x = max_x;
+    out->ascent = ascent;
+    out->descent = descent;
+    return 1;
+}
+
 int vo_textshape_render_ascii_atlas(
     int font_kind,
     int glyph_first,
@@ -86,6 +139,8 @@ int vo_textshape_render_ascii_atlas(
     int cell_width,
     int cell_height,
     int columns,
+    int origin_x,
+    int baseline,
     uint8_t *out_rgba,
     int out_len
 ) {
@@ -114,11 +169,6 @@ int vo_textshape_render_ascii_atlas(
         return 0;
     }
 
-    int baseline = (int)((font->render_face->size->metrics.ascender + 32) / 64);
-    if (baseline <= 0 || baseline >= cell_height) {
-        baseline = (int)((float)cell_height * 0.78f);
-    }
-
     for (int codepoint = glyph_first; codepoint <= glyph_last; codepoint += 1) {
         int slot = codepoint - glyph_first;
         int cell_x = (slot % columns) * cell_width;
@@ -133,7 +183,7 @@ int vo_textshape_render_ascii_atlas(
 
         FT_GlyphSlot glyph = font->render_face->glyph;
         FT_Bitmap *bitmap = &glyph->bitmap;
-        int dst_origin_x = cell_x + glyph->bitmap_left;
+        int dst_origin_x = cell_x + origin_x + glyph->bitmap_left;
         int dst_origin_y = cell_y + baseline - glyph->bitmap_top;
 
         for (int y = 0; y < (int)bitmap->rows; y += 1) {

@@ -213,11 +213,11 @@ architecture_facade_floor_count_tracks_height :: proc(t: ^testing.T) {
     testing.expect(t, architecture.facade_floor_count(33) == 7)
     testing.expect(t, architecture.facade_floor_count(50) == 10)
     testing.expect(t, architecture.facade_floor_count(80) == 16)
-    testing.expect(t, architecture.facade_window_row_y(50, 0) == 2.95)
-    testing.expect(t, architecture.facade_window_row_y(50, 9) == 47.05)
+    testing.expect(t, math.abs(architecture.facade_window_row_y(50, 0) - 2.55) < .001)
+    testing.expect(t, math.abs(architecture.facade_window_row_y(50, 9) - 47.45) < .001)
     low_rise_window_height := architecture.facade_window_height(11)
     low_rise_window_y := architecture.facade_window_row_y(11, 0)
-    testing.expect(t, low_rise_window_height == 2.2)
+    testing.expect(t, low_rise_window_height == 1.55)
     testing.expect(t, math.abs(low_rise_window_y - low_rise_window_height * .5 - 1.45) < .001)
     testing.expect(t, architecture.facade_floor_count(4.8) == 1)
     testing.expect(t, architecture.facade_floor_count(9.6) == 2)
@@ -890,8 +890,88 @@ architecture_openings_cover_every_mass_face_without_cross_mass_culling :: proc(t
                 span * .5 - architecture.ARCHITECTURE_OPENING_CORNER_MARGIN + .001,
             )
         }
-        for count in face_counts do testing.expect(t, count > 0)
+        testing.expect(t, layout.count > 0)
         testing.expect(t, doors == (mass_index == primary ? 1 : 0))
+    }
+}
+
+@(test)
+architecture_facade_profiles_match_archetype_targets :: proc(t: ^testing.T) {
+    dwelling := architecture.facade_profile(.Dwelling)
+    testing.expect(t, dwelling.front_bays_min == 1 && dwelling.front_bays_max == 2)
+    testing.expect(t, dwelling.side_bays_min == 0 && dwelling.side_bays_max == 1)
+    testing.expect(t, dwelling.window_width_min >= 1.05 && dwelling.window_width_max <= 1.35)
+    testing.expect(t, dwelling.opening_ratio_min == .08 && dwelling.opening_ratio_max == .14)
+
+    townhouse := architecture.facade_profile(.Townhouse)
+    testing.expect(t, townhouse.front_bays_min == 2 && townhouse.front_bays_max == 3)
+    testing.expect(t, townhouse.opening_ratio_min == .12 && townhouse.opening_ratio_max == .20)
+
+    service := architecture.facade_profile(.Storehouse)
+    testing.expect(t, service.service)
+    testing.expect(t, service.front_bays_max == 2 && service.side_bays_max == 1)
+    testing.expect(t, service.opening_ratio_max <= .08)
+
+    civic := architecture.facade_profile(.Palace_Loggia)
+    testing.expect(t, civic.front_bays_min == 3 && civic.front_bays_max == 5)
+    testing.expect(t, civic.window_width_max <= 1.70)
+    testing.expect(t, civic.opening_ratio_min == .15 && civic.opening_ratio_max == .22)
+}
+
+@(test)
+architecture_openings_stack_and_restore_central_upper_bay :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(1300, 1300, 24, 18, 4, 19.2)
+    structure.kind = .Architecture
+    structure.seed = 512
+    structure.building.archetype = .Townhouse
+    layout := architecture.architecture_opening_layout(structure, 0, 0)
+    rows := architecture.facade_floor_count(structure.height)
+    for opening in layout.openings[:layout.count] {
+        if opening.face != .Front || opening.kind != .Window do continue
+        if opening.row == 0 {
+            testing.expect(t, opening.width >= 1.15 * .90 && opening.width <= 1.50 * .90)
+        } else {
+            testing.expect(t, opening.width >= 1.15 && opening.width <= 1.50)
+        }
+        testing.expect(t, math.abs(opening.horizontal) + opening.width * .5 <= structure.width * .5 - .75)
+        if opening.row > 1 {
+            previous, found := architecture.opening_layout_find(&layout, .Front, .Window, opening.row - 1, opening.column)
+            testing.expect(t, found)
+            if found do testing.expect(t, previous.horizontal == opening.horizontal)
+        }
+    }
+    central_upper := false
+    for opening in layout.openings[:layout.count] {
+        if opening.face == .Front && opening.kind == .Window && opening.row == rows - 1 &&
+           math.abs(opening.horizontal) < .001 {
+            central_upper = true
+            testing.expect(t, !architecture.opening_layout_contains(&layout, .Front, .Window, 0, opening.column))
+        }
+    }
+    testing.expect(t, central_upper)
+}
+
+@(test)
+architecture_rural_and_service_profiles_allow_blank_sides :: proc(t: ^testing.T) {
+    dwelling := terrain.structure_make(1300, 1300, 16, 12, 4, 14.4)
+    dwelling.kind = .Architecture
+    dwelling.seed = 0
+    dwelling.building.archetype = .Dwelling
+    layout := architecture.architecture_opening_layout(dwelling, 0, 0)
+    side_windows := 0
+    for opening in layout.openings[:layout.count] {
+        if (opening.face == .Left || opening.face == .Right) && opening.kind == .Window do side_windows += 1
+    }
+    testing.expect(t, side_windows == 0)
+
+    storehouse := dwelling
+    storehouse.building.archetype = .Storehouse
+    service_layout := architecture.architecture_opening_layout(storehouse, 0, 0)
+    for opening in service_layout.openings[:service_layout.count] {
+        if opening.kind == .Vent {
+            testing.expect(t, opening.width <= 1.35)
+            testing.expect(t, opening.height <= 1.20)
+        }
     }
 }
 
@@ -899,15 +979,22 @@ architecture_openings_cover_every_mass_face_without_cross_mass_culling :: proc(t
 architecture_service_faces_receive_sparse_vents :: proc(t: ^testing.T) {
     structure := terrain.structure_make(1300, 1300, 22, 18, 4, 10)
     structure.kind = .Architecture
-    structure.seed = 7
+    structure.seed = 512
     structure.building.archetype = .Storehouse
     primary := architecture.architecture_frontage_mass_index(structure)
     layout := architecture.architecture_opening_layout(structure, 0, primary)
     face_vents: [4]int
+    vents := 0
     for opening in layout.openings[:layout.count] {
-        if opening.kind == .Vent do face_vents[int(opening.face)] += 1
+        if opening.kind == .Vent {
+            face_vents[int(opening.face)] += 1
+            vents += 1
+        }
     }
-    for count in face_vents do testing.expect(t, count > 0)
+    testing.expect(t, vents > 0)
+    testing.expect(t, face_vents[int(architecture.Face.Front)] <= 2)
+    testing.expect(t, face_vents[int(architecture.Face.Left)] <= 1)
+    testing.expect(t, face_vents[int(architecture.Face.Right)] <= 1)
 }
 
 @(test)
