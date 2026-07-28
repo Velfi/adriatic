@@ -271,11 +271,7 @@ photo_mode_process_input :: proc(editor: ^Editor, delta_seconds: f32) {
         f32(math.sin(f64(editor.photo_pitch))),
         -f32(math.cos(f64(editor.photo_yaw))) * cos_pitch,
     }
-    right := third_person.Vec3 {
-        f32(math.cos(f64(editor.photo_yaw))),
-        0,
-        -f32(math.sin(f64(editor.photo_yaw))),
-    }
+    right := third_person.Vec3{f32(math.cos(f64(editor.photo_yaw))), 0, -f32(math.sin(f64(editor.photo_yaw)))}
     move_x, move_y, move_z := f32(0), f32(0), f32(0)
     if rl.IsKeyDown(.D) do move_x += 1
     if rl.IsKeyDown(.A) do move_x -= 1

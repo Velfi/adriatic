@@ -124,12 +124,7 @@ update :: proc(
         if footstep_triggered {
             peak := f32(0)
             for sample in device.buffer do peak = max(peak, math.abs(sample))
-            fmt.eprintf(
-                "audio probe: mixed peak=%.6f muted=%v gain=%.3f\n",
-                peak,
-                muted,
-                device.mute_gain,
-            )
+            fmt.eprintf("audio probe: mixed peak=%.6f muted=%v gain=%.3f\n", peak, muted, device.mute_gain)
         }
         if !sdl.PutAudioStreamData(
             device.stream,

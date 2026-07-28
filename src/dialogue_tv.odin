@@ -99,6 +99,10 @@ dialogue_voice_profile :: proc(resident: story.Resident) -> engine_sound.Dialogu
         return {235, 90, .38, .88, .115}
     case .Zora:
         return {335, 210, .62, .68, .105}
+    case .Vesna:
+        return {365, 145, .58, .52, .10}
+    case .Petar:
+        return {285, 115, .44, .74, .11}
     }
     return {340, 140, .55, .6, .1}
 }
@@ -346,6 +350,10 @@ dialogue_portrait_color :: proc(editor: ^Editor, resident: story.Resident, playe
         return {82, 78, 75, 255}
     case .Zora:
         return {158, 145, 151, 255}
+    case .Vesna:
+        return {224, 219, 202, 255}
+    case .Petar:
+        return {169, 128, 91, 255}
     }
     return {145, 125, 101, 255}
 }

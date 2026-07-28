@@ -152,7 +152,7 @@ pelican_airframe :: proc() -> Airframe {
     }
 }
 
-default_runtime :: proc() -> Runtime {return {engine_output = 1, control_authority = 1, drag_multiplier = 1}}
+default_runtime :: proc() -> Runtime { return {engine_output = 1, control_authority = 1, drag_multiplier = 1} }
 effective_stall_speed :: proc(mass: f32, airframe: Airframe, flap: f32 = 0) -> f32 {
     weight := max_f32(mass, 1) * 9.81
     flap_fraction := clamp(flap, 0, 1)
@@ -294,26 +294,14 @@ step :: proc(
     return telemetry
 }
 
-propeller_thrust :: proc(
-    rated_power_watts, efficiency, static_thrust, airspeed, throttle: f32,
-) -> f32 {
+propeller_thrust :: proc(rated_power_watts, efficiency, static_thrust, airspeed, throttle: f32) -> f32 {
     power_fraction := clamp(throttle, 0, 1)
     if power_fraction <= 0 do return 0
-    available_power :=
-        max_f32(rated_power_watts, 0) *
-        clamp(efficiency, 0, 1) *
-        power_fraction
+    available_power := max_f32(rated_power_watts, 0) * clamp(efficiency, 0, 1) * power_fraction
     static_available := max_f32(static_thrust, 0) * f32(math.sqrt(f64(power_fraction)))
     if available_power <= 0 || static_available <= 0 do return 0
     induced_speed := available_power / static_available
-    effective_speed := f32(
-        math.sqrt(
-            f64(
-                max_f32(airspeed, 0) * max_f32(airspeed, 0) +
-                induced_speed * induced_speed,
-            ),
-        ),
-    )
+    effective_speed := f32(math.sqrt(f64(max_f32(airspeed, 0) * max_f32(airspeed, 0) + induced_speed * induced_speed)))
     return available_power / max_f32(effective_speed, .01)
 }
 

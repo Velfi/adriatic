@@ -134,6 +134,8 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
     testing.expect(t, dialogue.validate(&catalog.iva))
     testing.expect(t, dialogue.validate(&catalog.bojan))
     testing.expect(t, dialogue.validate(&catalog.zora))
+    testing.expect(t, dialogue.validate(&catalog.vesna))
+    testing.expect(t, dialogue.validate(&catalog.petar))
     expect_choice_texts(
         t,
         catalog.niko_root_choices[:],
@@ -318,18 +320,30 @@ dialogue_text_and_choices_follow_story_and_repair_state :: proc(t: ^testing.T) {
 resident_action_indicators_follow_campaign_progress :: proc(t: ^testing.T) {
     state: story.State
     testing.expect(t, story.resident_name(.Gerta) == "Gerta")
+    testing.expect(t, story.resident_name(.Vesna) == "Dr Vesna")
+    testing.expect(t, story.resident_name(.Petar) == "Petar")
+    testing.expect(t, story.resident_island(.Vesna) == .West)
+    testing.expect(t, story.resident_island(.Petar) == .East)
     testing.expect(t, story.resident_island(.Gerta) == .West)
     testing.expect(t, story.resident_has_action(&state, .Marta))
     testing.expect(t, !story.resident_has_action(&state, .Gerta))
     testing.expect(t, !story.resident_has_action(&state, .Niko))
     testing.expect(t, !story.resident_has_action(&state, .Bojan))
     testing.expect(t, !story.resident_has_action(&state, .Iva))
+    testing.expect(t, story.resident_has_unseen_action(&state, .Marta))
+    story.acknowledge_resident_action(&state, .Marta)
+    testing.expect(t, story.resident_has_action(&state, .Marta))
+    testing.expect(t, !story.resident_has_unseen_action(&state, .Marta))
 
     testing.expect(t, story.accept_airfield_errand(&state))
     testing.expect(t, !story.resident_has_action(&state, .Marta))
     testing.expect(t, story.resident_has_action(&state, .Gerta))
+    testing.expect(t, story.resident_has_unseen_action(&state, .Gerta))
+    story.acknowledge_resident_action(&state, .Gerta)
+    testing.expect(t, !story.resident_has_unseen_action(&state, .Gerta))
     testing.expect(t, story.handoff_broken_magneto(&state))
     testing.expect(t, story.resident_has_action(&state, .Marta))
+    testing.expect(t, story.resident_has_unseen_action(&state, .Marta))
     testing.expect(t, !story.resident_has_action(&state, .Gerta))
     testing.expect(t, story.resident_has_action(&state, .Niko))
     testing.expect(t, story.resident_has_action(&state, .Bojan))

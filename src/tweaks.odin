@@ -607,14 +607,7 @@ tweak_draw_atmosphere :: proc(editor: ^Editor) {
 tweak_draw_time_of_day :: proc(editor: ^Editor) {
     a := &editor.tweak.atmosphere
     im.SeparatorText("Time of day")
-    im.SliderFloat(
-        "##Time of day",
-        &a.world_minutes,
-        0,
-        atmosphere.DAY_MINUTES,
-        "",
-        im.SliderFlags_AlwaysClamp,
-    )
+    im.SliderFloat("##Time of day", &a.world_minutes, 0, atmosphere.DAY_MINUTES, "", im.SliderFlags_AlwaysClamp)
     total_minutes := int(a.world_minutes) % int(atmosphere.DAY_MINUTES)
     im.SameLine()
     im.Text("%02d:%02d", total_minutes / 60, total_minutes % 60)

@@ -77,6 +77,7 @@ static const uint MATERIAL_EMISSIVE_POOL = 11;
 static const uint MATERIAL_ARCHITECTURE = 12;
 static const uint MATERIAL_GLASS = 13;
 static const uint MATERIAL_EMISSIVE_HALO = 14;
+static const uint MATERIAL_SAILOR_HAT = 15;
 
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
 // Decode them before interpolation, lighting, and fog blending; the sRGB
@@ -589,6 +590,35 @@ float3 shade_bottle_cap(VertexOutput input) {
     return shade_brdf(material, normal, input.world_position);
 }
 
+float3 shade_sailor_hat(VertexOutput input) {
+    float3 normal = normalize(input.normal);
+
+    // Two navy bands are printed into the UV-mapped cloth. Feathered edges
+    // keep them from aliasing as the tiny hat recedes from the camera.
+    float stripe_one =
+        smoothstep(.285, .300, input.uv.y) *
+        (1.0 - smoothstep(.340, .355, input.uv.y));
+    float stripe_two =
+        smoothstep(.475, .490, input.uv.y) *
+        (1.0 - smoothstep(.540, .555, input.uv.y));
+    float stripe = saturate(stripe_one + stripe_two);
+    float3 canvas = input.color.rgb;
+    float3 navy = srgb_to_linear(float3(38.0, 88.0, 145.0) / 255.0);
+
+    // Fine crossing warp and weft provide a restrained woven texture without
+    // introducing geometry or swimming world-space noise.
+    float warp = .5 + .5 * sin(input.uv.x * 24.0 * 6.2831853);
+    float weft = .5 + .5 * sin(input.uv.y * 72.0 * 6.2831853);
+    float weave = lerp(.975, 1.025, warp * weft);
+    float3 fabric = lerp(canvas, navy, stripe) * weave;
+
+    BrdfMaterial material;
+    material.base_color = fabric;
+    material.metallic = 0;
+    material.roughness = .86;
+    return shade_brdf(material, normal, input.world_position);
+}
+
 float hash12(float2 p) {
     float3 p3 = frac(float3(p.xyx) * .1031);
     p3 += dot(p3, p3.yzx + 33.33);
@@ -1080,6 +1110,9 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             break;
         case MATERIAL_BOTTLE_CAP:
             base = shade_bottle_cap(input);
+            break;
+        case MATERIAL_SAILOR_HAT:
+            base = shade_sailor_hat(input);
             break;
         case MATERIAL_EMISSIVE:
             base = shade_emissive(input);

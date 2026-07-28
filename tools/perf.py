@@ -141,6 +141,16 @@ def summarize(runs: list[dict[str, Any]], budgets: dict[str, float]) -> dict[str
         # sandboxed macOS process. Reject that empty workload instead of
         # reporting implausibly tiny frame times as a passing benchmark.
         summary["pass"] &= summary["workload_present"]
+        cache_runs = [
+            geometry["caches"]
+            for geometry in geometry_runs
+            if isinstance(geometry.get("caches"), dict)
+        ]
+        if cache_runs:
+            summary["caches"] = {
+                key: max(int(cache.get(key, 0)) for cache in cache_runs)
+                for key in cache_runs[0]
+            }
     return summary
 
 
@@ -206,6 +216,15 @@ def command_run(args: argparse.Namespace) -> int:
                 f"({geometry['foliage_utilization_max'] * 100:.1f}%), "
                 f"roads {geometry['road_vertices_max']:,} "
                 f"({geometry['road_utilization_max'] * 100:.1f}%)"
+            )
+        if "caches" in summary:
+            cache = summary["caches"]
+            print(
+                f"  caches: clipmap {cache['clipmap_generated']} generated / "
+                f"{cache['clipmap_copied']} copied, grass {cache['grass_hits']} hits / "
+                f"{cache['grass_misses']} misses, climbing leaves "
+                f"{cache['climbing_leaf_builds']} builds / {cache['climbing_leaf_reuses']} reuse, "
+                f"town mice {cache['town_mouse_builds']} builds / {cache['town_mouse_reuses']} reuse"
             )
 
     output_path = Path(args.output).resolve()

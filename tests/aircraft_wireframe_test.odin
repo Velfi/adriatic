@@ -145,6 +145,35 @@ procedural_player_aircraft_build_closed_triangle_surfaces :: proc(t: ^testing.T)
     valid_triangle_mesh(t, &postale)
     testing.expect(t, postale.triangle_count > 300)
 
+    cockpit_floor_triangles := 0
+    for triangle in postale.triangles[:postale.triangle_count] {
+        a := postale.vertices[triangle.a].position
+        b := postale.vertices[triangle.b].position
+        c := postale.vertices[triangle.c].position
+        if a[1] != -.48 || b[1] != -.48 || c[1] != -.48 do continue
+        if a[0] < -.42 || a[0] > .42 || b[0] < -.42 || b[0] > .42 || c[0] < -.42 || c[0] > .42 do continue
+        if a[2] < -1.18 || a[2] > .20 || b[2] < -1.18 || b[2] > .20 || c[2] < -1.18 || c[2] > .20 do continue
+        cockpit_floor_triangles += 1
+        testing.expect(t, triangle_normal(a, b, c)[1] > 0)
+    }
+    testing.expect(t, cockpit_floor_triangles == 2)
+
+    cockpit_tub_wall_triangles := 0
+    for triangle in postale.triangles[:postale.triangle_count] {
+        a := postale.vertices[triangle.a].position
+        b := postale.vertices[triangle.b].position
+        c := postale.vertices[triangle.c].position
+        min_y := min(a[1], min(b[1], c[1]))
+        max_y := max(a[1], max(b[1], c[1]))
+        if min_y != -.48 || max_y != .34 do continue
+        if a[2] < -1.55 || a[2] > .58 || b[2] < -1.55 || b[2] > .58 || c[2] < -1.55 || c[2] > .58 do continue
+        cockpit_tub_wall_triangles += 1
+        normal := triangle_normal(a, b, c)
+        center := (a + b + c) / 3
+        testing.expect(t, normal[0] * -center[0] + normal[2] * (-.485 - center[2]) > 0)
+    }
+    testing.expect(t, cockpit_tub_wall_triangles == 20)
+
     pelican := vehicles.pelican_mesh()
     valid_triangle_mesh(t, &pelican)
     testing.expect(t, pelican.triangle_count > 300)

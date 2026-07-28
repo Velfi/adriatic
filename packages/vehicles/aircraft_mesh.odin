@@ -801,6 +801,47 @@ add_postale_hull :: proc(mesh: ^Aircraft_Mesh) {
     // Close the bottom of the opening with a recessed cockpit tub. The wing is
     // split at the fuselage below, so the floor can remain aligned with the
     // seated pilot without exposing a center wing slab or opening to the belly.
+    // Continue the sill down to the floor as a closed tub. Without these walls,
+    // oblique cockpit views look through the gap between the inset floor and
+    // the fuselage skin to the terrain below.
+    for segment in 0 ..< 4 {
+        right_front := cockpit_right[segment]
+        right_rear := cockpit_right[segment + 1]
+        left_front := cockpit_left[segment]
+        left_rear := cockpit_left[segment + 1]
+        mesh_quad(
+            mesh,
+            {right_front[0], sill_y, right_front[2]},
+            {right_rear[0], sill_y, right_rear[2]},
+            {right_rear[0], -.48, right_rear[2]},
+            {right_front[0], -.48, right_front[2]},
+            .Dark_Metal,
+        )
+        mesh_quad(
+            mesh,
+            {left_rear[0], sill_y, left_rear[2]},
+            {left_front[0], sill_y, left_front[2]},
+            {left_front[0], -.48, left_front[2]},
+            {left_rear[0], -.48, left_rear[2]},
+            .Dark_Metal,
+        )
+    }
+    mesh_quad(
+        mesh,
+        {cockpit_left[0][0], sill_y, cockpit_left[0][2]},
+        {cockpit_right[0][0], sill_y, cockpit_right[0][2]},
+        {cockpit_right[0][0], -.48, cockpit_right[0][2]},
+        {cockpit_left[0][0], -.48, cockpit_left[0][2]},
+        .Dark_Metal,
+    )
+    mesh_quad(
+        mesh,
+        {cockpit_right[4][0], sill_y, cockpit_right[4][2]},
+        {cockpit_left[4][0], sill_y, cockpit_left[4][2]},
+        {cockpit_left[4][0], -.48, cockpit_left[4][2]},
+        {cockpit_right[4][0], -.48, cockpit_right[4][2]},
+        .Dark_Metal,
+    )
     mesh_quad(mesh, {-.42, -.48, -1.18}, {.42, -.48, -1.18}, {.42, -.48, .20}, {-.42, -.48, .20}, .Dark_Metal)
     // Carry the cushion beneath the pilot, but place the back against the
     // rear of the aperture so it supports rather than intersects the torso.

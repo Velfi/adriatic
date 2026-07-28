@@ -27,20 +27,8 @@ fixed_wing_step_produces_thrust :: proc(t: ^testing.T) {
 fixed_wing_propeller_thrust_is_continuous_and_power_aware :: proc(t: ^testing.T) {
     airframe := flight.postale_airframe()
     power := airframe.rated_power_per_engine_kw * 1000
-    static := flight.propeller_thrust(
-        power,
-        airframe.propeller_efficiency,
-        airframe.static_thrust_per_engine,
-        0,
-        1,
-    )
-    cruise := flight.propeller_thrust(
-        power,
-        airframe.propeller_efficiency,
-        airframe.static_thrust_per_engine,
-        40,
-        1,
-    )
+    static := flight.propeller_thrust(power, airframe.propeller_efficiency, airframe.static_thrust_per_engine, 0, 1)
+    cruise := flight.propeller_thrust(power, airframe.propeller_efficiency, airframe.static_thrust_per_engine, 40, 1)
     reduced_power := flight.propeller_thrust(
         power * .5,
         airframe.propeller_efficiency,
@@ -48,7 +36,10 @@ fixed_wing_propeller_thrust_is_continuous_and_power_aware :: proc(t: ^testing.T)
         40,
         1,
     )
-    testing.expect(t, flight.propeller_thrust(power, airframe.propeller_efficiency, airframe.static_thrust_per_engine, 0, 0) == 0)
+    testing.expect(
+        t,
+        flight.propeller_thrust(power, airframe.propeller_efficiency, airframe.static_thrust_per_engine, 0, 0) == 0,
+    )
     testing.expect(t, math.abs(static - airframe.static_thrust_per_engine) < .01)
     testing.expect(t, cruise > 0 && cruise < static)
     testing.expect(t, reduced_power < cruise)

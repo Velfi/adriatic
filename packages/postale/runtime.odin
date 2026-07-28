@@ -299,24 +299,15 @@ step :: proc(
         rotation_speed :=
             flight.effective_stall_speed(runtime.airframe.mass_kg, runtime.airframe, runtime.flap_fraction) *
             runtime.tuning.takeoff_speed_scale
-        rotation_fraction :=
-            clamp(
-                (runtime.pitch - runtime.tuning.takeoff_pitch) /
-                    max_f32(1 - runtime.tuning.takeoff_pitch, .01),
-                0,
-                1,
-            )
-        speed_fraction := clamp(
-            (forward_speed - rotation_speed * .9) / max_f32(rotation_speed * .1, .01),
+        rotation_fraction := clamp(
+            (runtime.pitch - runtime.tuning.takeoff_pitch) / max_f32(1 - runtime.tuning.takeoff_pitch, .01),
             0,
             1,
         )
+        speed_fraction := clamp((forward_speed - rotation_speed * .9) / max_f32(rotation_speed * .1, .01), 0, 1)
         ground_pitch_target := f32(0)
         if runtime.throttle > runtime.tuning.takeoff_throttle {
-            ground_pitch_target =
-                MAX_GROUND_PITCH_RADIANS *
-                rotation_fraction *
-                speed_fraction
+            ground_pitch_target = MAX_GROUND_PITCH_RADIANS * rotation_fraction * speed_fraction
         }
         runtime.ground_pitch_radians = approach(
             runtime.ground_pitch_radians,
@@ -447,8 +438,7 @@ resolve_ground_contact :: proc(
         landing = runtime.last_landing
     }
 
-    takeoff_speed :=
-        flight.effective_stall_speed(runtime.airframe.mass_kg, runtime.airframe, runtime.flap_fraction)
+    takeoff_speed := flight.effective_stall_speed(runtime.airframe.mass_kg, runtime.airframe, runtime.flap_fraction)
     takeoff_intent :=
         runtime.throttle > runtime.tuning.takeoff_throttle &&
         runtime.pitch > runtime.tuning.takeoff_pitch &&
@@ -565,11 +555,7 @@ rotate_ground_heading :: proc(basis: ^flight.Basis, radians: f32) {
     pitch := math.asin(clamp(basis.forward.y, -1, 1))
     c, s := math.cos(radians), math.sin(radians)
     horizontal := linalg.normalize0(flight.Vec3{basis.forward.x, 0, basis.forward.z})
-    rotated := flight.Vec3 {
-        horizontal.x * c - horizontal.z * s,
-        0,
-        horizontal.x * s + horizontal.z * c,
-    }
+    rotated := flight.Vec3{horizontal.x * c - horizontal.z * s, 0, horizontal.x * s + horizontal.z * c}
     basis.forward = rotated
     set_ground_pitch(basis, pitch)
 }

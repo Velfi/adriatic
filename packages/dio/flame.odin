@@ -64,6 +64,7 @@ Flame_Frame_History :: struct {
     gpu_valid:      bool,
     other_ms:       f32,
     scope_count:    int,
+    dropped_slots:  u64,
     scopes:         [FLAME_GRAPH_SCOPE_BUCKETS]Flame_Frame_Scope,
     slots:          [dynamic]Flame_Slot,
 }
@@ -80,13 +81,14 @@ Flame_Range_Summary :: struct {
 }
 
 Flame_Graph_Session_Record :: struct {
-    frame_id:   u64,
-    total_ms:   f32,
-    wait_ms:    f32,
-    cpu_ms:     f32,
-    gpu_ms:     f32,
-    gpu_valid:  bool,
-    slot_count: u32,
+    frame_id:      u64,
+    total_ms:      f32,
+    wait_ms:       f32,
+    cpu_ms:        f32,
+    gpu_ms:        f32,
+    gpu_valid:     bool,
+    slot_count:    u32,
+    dropped_slots: u64,
 }
 
 Flame_Graph_Session_Slot :: struct {
@@ -120,6 +122,7 @@ Flame_Export_Summary :: struct {
     worst_gpu_ms:       f64,
     gpu_frame_count:    int,
     worst_gpu_frame_id: u64,
+    dropped_slots:      u64,
 }
 
 Flame_Export_Job :: struct {
@@ -140,32 +143,33 @@ Flame_Export_Job :: struct {
 Flame_Slot_Handle :: distinct int
 
 Flame_Graph :: struct {
-    slots:                [dynamic]Flame_Slot,
-    curr_depth:           int,
-    current_frame:        Flame_Slot_Handle,
-    history:              [FLAME_GRAPH_HISTORY_SAMPLES]Flame_Frame_History,
-    history_head:         int,
-    history_count:        int,
-    next_frame_id:        u64,
-    selected_frame_id:    u64,
-    selected_range_a:     u64,
-    selected_range_b:     u64,
-    drag_anchor_id:       u64,
-    dragging_timeline:    bool,
-    paused:               bool,
-    next_wait_ms:         f32,
-    next_cpu_ms:          f32,
-    next_gpu_ms:          f32,
-    next_gpu_valid:       bool,
-    session_file:         ^os.File,
-    session_frame_buffer: [dynamic]byte,
-    session_path:         string,
-    session_frame_count:  int,
-    session_byte_count:   i64,
-    export_thread:        ^thread.Thread,
-    export_job:           ^Flame_Export_Job,
-    export_ok:            bool,
-    export_message:       string,
+    slots:                 [dynamic]Flame_Slot,
+    curr_depth:            int,
+    current_frame:         Flame_Slot_Handle,
+    history:               [FLAME_GRAPH_HISTORY_SAMPLES]Flame_Frame_History,
+    history_head:          int,
+    history_count:         int,
+    next_frame_id:         u64,
+    selected_frame_id:     u64,
+    selected_range_a:      u64,
+    selected_range_b:      u64,
+    drag_anchor_id:        u64,
+    dragging_timeline:     bool,
+    paused:                bool,
+    next_wait_ms:          f32,
+    next_cpu_ms:           f32,
+    next_gpu_ms:           f32,
+    next_gpu_valid:        bool,
+    current_dropped_slots: u64,
+    session_file:          ^os.File,
+    session_frame_buffer:  [dynamic]byte,
+    session_path:          string,
+    session_frame_count:   int,
+    session_byte_count:    i64,
+    export_thread:         ^thread.Thread,
+    export_job:            ^Flame_Export_Job,
+    export_ok:             bool,
+    export_message:        string,
 }
 
 @(thread_local)
@@ -373,6 +377,7 @@ flame_graph_export_summary :: proc(graph: ^Flame_Graph) -> Flame_Export_Summary 
         if entry == nil do continue
         out.total_wait_ms += f64(entry.wait_ms)
         out.total_cpu_ms += f64(entry.cpu_ms)
+        out.dropped_slots += entry.dropped_slots
         if entry.gpu_valid {
             out.gpu_frame_count += 1
             out.total_gpu_ms += f64(entry.gpu_ms)
@@ -393,7 +398,10 @@ flame_graph_export_summary :: proc(graph: ^Flame_Graph) -> Flame_Export_Summary 
 flame_graph_begin :: proc(graph: ^Flame_Graph, name: string, loc := #caller_location) -> Flame_Slot_Handle {
     when !FLAME_GRAPH do return Flame_Slot_Handle(-1)
     if graph == nil do return Flame_Slot_Handle(-1)
-    if len(graph.slots) >= FLAME_AUTO_SLOT_CAP do return Flame_Slot_Handle(-1)
+    if len(graph.slots) >= FLAME_AUTO_SLOT_CAP {
+        graph.current_dropped_slots += 1
+        return Flame_Slot_Handle(-1)
+    }
     append(
         &graph.slots,
         Flame_Slot {
@@ -496,6 +504,7 @@ flame_graph_begin_frame :: proc(graph: ^Flame_Graph) {
     graph.next_cpu_ms = 0
     graph.next_gpu_ms = 0
     graph.next_gpu_valid = false
+    graph.current_dropped_slots = 0
     flame_graph_set_current(graph)
     graph.current_frame = flame_graph_begin(graph, "frame")
 }
@@ -588,13 +597,14 @@ flame_graph_session_record :: proc(graph: ^Flame_Graph, entry: ^Flame_Frame_Hist
 
     clear(&graph.session_frame_buffer)
     record := Flame_Graph_Session_Record {
-        frame_id   = entry.frame_id,
-        total_ms   = entry.total_ms,
-        wait_ms    = entry.wait_ms,
-        cpu_ms     = entry.cpu_ms,
-        gpu_ms     = entry.gpu_ms,
-        gpu_valid  = entry.gpu_valid,
-        slot_count = u32(len(entry.slots)),
+        frame_id      = entry.frame_id,
+        total_ms      = entry.total_ms,
+        wait_ms       = entry.wait_ms,
+        cpu_ms        = entry.cpu_ms,
+        gpu_ms        = entry.gpu_ms,
+        gpu_valid     = entry.gpu_valid,
+        slot_count    = u32(len(entry.slots)),
+        dropped_slots = entry.dropped_slots,
     }
     record_array := [1]Flame_Graph_Session_Record{record}
     record_bytes := slice.reinterpret([]byte, record_array[:])
@@ -715,6 +725,7 @@ flame_graph_end_frame :: proc(graph: ^Flame_Graph) {
         if entry.cpu_ms <= 0 do entry.cpu_ms = max(entry.total_ms - entry.wait_ms, f32(0))
         entry.gpu_ms = graph.next_gpu_ms
         entry.gpu_valid = graph.next_gpu_valid
+        entry.dropped_slots = graph.current_dropped_slots
         entry.session_offset = -1
         flame_graph_refresh_history_entry(entry)
         flame_graph_session_record(graph, entry)
@@ -755,6 +766,9 @@ flame_graph_destroy :: proc(graph: ^Flame_Graph) {
         if _flame_graph_current == graph do flame_graph_end_frame(graph)
         _ = flame_graph_export_begin(graph)
         flame_graph_export_stop(graph)
+    } else {
+        if _flame_graph_current == graph do flame_graph_end_frame(graph)
+        _ = flame_graph_write_exports(graph)
     }
 
     flame_graph_export_stop(graph)
@@ -1033,11 +1047,13 @@ flame_graph_write_source_header :: proc(
     worst_gpu_ms: f64
     gpu_frame_count: int
     worst_gpu_frame_id: u64
+    dropped_slots: u64
     for order in first_order ..= last_order {
         entry := flame_graph_history_at(graph, order)
         if entry == nil do continue
         total_wait_ms += f64(entry.wait_ms)
         total_cpu_ms += f64(entry.cpu_ms)
+        dropped_slots += entry.dropped_slots
         if entry.gpu_valid {
             gpu_frame_count += 1
             total_gpu_ms += f64(entry.gpu_ms)
@@ -1051,7 +1067,7 @@ flame_graph_write_source_header :: proc(
     avg_gpu_ms := total_gpu_ms / f64(max(gpu_frame_count, 1))
     fmt.sbprintf(
         builder,
-        "{{\"kind\":\"%s_header\",\"freq_hz\":%d,\"frame_count\":%d,\"first_frame_id\":%d,\"last_frame_id\":%d,\"worst_frame_id\":%d,\"total_ms\":%.6f,\"avg_ms\":%.6f,\"total_wait_ms\":%.6f,\"avg_wait_ms\":%.6f,\"total_cpu_ms\":%.6f,\"avg_cpu_ms\":%.6f,\"total_gpu_ms\":%.6f,\"avg_gpu_ms\":%.6f,\"worst_gpu_ms\":%.6f,\"gpu_frame_count\":%d,\"worst_gpu_frame_id\":%d}}\n",
+        "{{\"kind\":\"%s_header\",\"freq_hz\":%d,\"frame_count\":%d,\"first_frame_id\":%d,\"last_frame_id\":%d,\"worst_frame_id\":%d,\"total_ms\":%.6f,\"avg_ms\":%.6f,\"total_wait_ms\":%.6f,\"avg_wait_ms\":%.6f,\"total_cpu_ms\":%.6f,\"avg_cpu_ms\":%.6f,\"total_gpu_ms\":%.6f,\"avg_gpu_ms\":%.6f,\"worst_gpu_ms\":%.6f,\"gpu_frame_count\":%d,\"worst_gpu_frame_id\":%d,\"dropped_slots\":%d}}\n",
         kind,
         FLAME_GRAPH_TICK_FREQUENCY_HZ,
         summary.count,
@@ -1069,6 +1085,7 @@ flame_graph_write_source_header :: proc(
         worst_gpu_ms,
         gpu_frame_count,
         worst_gpu_frame_id,
+        dropped_slots,
     )
     return true
 }
@@ -1084,7 +1101,7 @@ flame_graph_write_source_frame :: proc(builder: ^strings.Builder, entry: ^Flame_
     }
     fmt.sbprintf(
         builder,
-        "{{\"kind\":\"frame\",\"frame_id\":%d,\"start_ticks\":%d,\"end_ticks\":%d,\"total_ms\":%.6f,\"wait_ms\":%.6f,\"cpu_ms\":%.6f,\"gpu_ms\":%.6f,\"gpu_valid\":%s,\"slots\":[",
+        "{{\"kind\":\"frame\",\"frame_id\":%d,\"start_ticks\":%d,\"end_ticks\":%d,\"total_ms\":%.6f,\"wait_ms\":%.6f,\"cpu_ms\":%.6f,\"gpu_ms\":%.6f,\"gpu_valid\":%s,\"dropped_slots\":%d,\"slots\":[",
         entry.frame_id,
         flame_tick_value(first),
         flame_tick_value(last),
@@ -1093,6 +1110,7 @@ flame_graph_write_source_frame :: proc(builder: ^strings.Builder, entry: ^Flame_
         entry.cpu_ms,
         entry.gpu_ms,
         "true" if entry.gpu_valid else "false",
+        entry.dropped_slots,
     )
     for slot, index in entry.slots {
         if index > 0 do strings.write_byte(builder, ',')
@@ -1106,7 +1124,7 @@ flame_graph_write_source_scopes :: proc(builder: ^strings.Builder, entry: ^Flame
     if entry == nil do return false
     fmt.sbprintf(
         builder,
-        "{{\"kind\":\"frame_scopes\",\"frame_id\":%d,\"total_ms\":%.6f,\"wait_ms\":%.6f,\"cpu_ms\":%.6f,\"gpu_ms\":%.6f,\"gpu_valid\":%s,\"other_ms\":%.6f,\"scope_count\":%d,\"scopes\":[",
+        "{{\"kind\":\"frame_scopes\",\"frame_id\":%d,\"total_ms\":%.6f,\"wait_ms\":%.6f,\"cpu_ms\":%.6f,\"gpu_ms\":%.6f,\"gpu_valid\":%s,\"other_ms\":%.6f,\"scope_count\":%d,\"dropped_slots\":%d,\"scopes\":[",
         entry.frame_id,
         entry.total_ms,
         entry.wait_ms,
@@ -1115,6 +1133,7 @@ flame_graph_write_source_scopes :: proc(builder: ^strings.Builder, entry: ^Flame
         "true" if entry.gpu_valid else "false",
         entry.other_ms,
         entry.scope_count,
+        entry.dropped_slots,
     )
     for index in 0 ..< entry.scope_count {
         if index > 0 do strings.write_byte(builder, ',')
@@ -1131,7 +1150,7 @@ flame_graph_write_export_summary_header :: proc(builder: ^strings.Builder, summa
     if builder == nil || summary.frame_count <= 0 do return false
     fmt.sbprintf(
         builder,
-        "{{\"kind\":\"%s_header\",\"freq_hz\":%d,\"frame_count\":%d,\"first_frame_id\":%d,\"last_frame_id\":%d,\"worst_frame_id\":%d,\"total_ms\":%.6f,\"avg_ms\":%.6f,\"total_wait_ms\":%.6f,\"avg_wait_ms\":%.6f,\"total_cpu_ms\":%.6f,\"avg_cpu_ms\":%.6f,\"total_gpu_ms\":%.6f,\"avg_gpu_ms\":%.6f,\"worst_gpu_ms\":%.6f,\"gpu_frame_count\":%d,\"worst_gpu_frame_id\":%d}}\n",
+        "{{\"kind\":\"%s_header\",\"freq_hz\":%d,\"frame_count\":%d,\"first_frame_id\":%d,\"last_frame_id\":%d,\"worst_frame_id\":%d,\"total_ms\":%.6f,\"avg_ms\":%.6f,\"total_wait_ms\":%.6f,\"avg_wait_ms\":%.6f,\"total_cpu_ms\":%.6f,\"avg_cpu_ms\":%.6f,\"total_gpu_ms\":%.6f,\"avg_gpu_ms\":%.6f,\"worst_gpu_ms\":%.6f,\"gpu_frame_count\":%d,\"worst_gpu_frame_id\":%d,\"dropped_slots\":%d}}\n",
         summary.kind,
         summary.freq_hz,
         summary.frame_count,
@@ -1149,6 +1168,7 @@ flame_graph_write_export_summary_header :: proc(builder: ^strings.Builder, summa
         summary.worst_gpu_ms,
         summary.gpu_frame_count,
         summary.worst_gpu_frame_id,
+        summary.dropped_slots,
     )
     return true
 }
@@ -1340,13 +1360,14 @@ flame_graph_export_stream :: proc(job: ^Flame_Export_Job) -> bool {
         }
 
         entry = {
-            frame_id  = record.frame_id,
-            total_ms  = record.total_ms,
-            wait_ms   = record.wait_ms,
-            cpu_ms    = record.cpu_ms,
-            gpu_ms    = record.gpu_ms,
-            gpu_valid = record.gpu_valid,
-            slots     = slots,
+            frame_id      = record.frame_id,
+            total_ms      = record.total_ms,
+            wait_ms       = record.wait_ms,
+            cpu_ms        = record.cpu_ms,
+            gpu_ms        = record.gpu_ms,
+            gpu_valid     = record.gpu_valid,
+            dropped_slots = record.dropped_slots,
+            slots         = slots,
         }
         flame_graph_refresh_history_entry(&entry)
 
@@ -1602,6 +1623,7 @@ when FLAME_AUTO_INSTRUMENT {
         context = runtime.default_context()
         if len(_flame_graph_auto_handles) >= cap(_flame_graph_auto_handles) ||
            len(_flame_graph_current.slots) >= FLAME_AUTO_SLOT_CAP {
+            _flame_graph_current.current_dropped_slots += 1
             _flame_graph_auto_overflow_depth += 1
             return
         }

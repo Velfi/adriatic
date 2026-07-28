@@ -9,6 +9,7 @@ import "core:math"
 
 // Sparse, jittered patch centers make wildflowers locally abundant but keep
 // most grass uninterrupted. A fine hash roughens each patch's circular edge.
+@(no_instrumentation)
 wildflower_density_at :: proc(x, z: f32) -> f32 {
     // Broad cells preserve uninterrupted grass between patches while letting
     // each flower field span a meaningful stretch of terrain.
@@ -39,6 +40,7 @@ wildflower_density_at :: proc(x, z: f32) -> f32 {
     return density
 }
 
+@(no_instrumentation)
 wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32, prepared_plan: ^circulation.Plan = nil) -> bool {
     if editor == nil do return false
     if settlement_access_point_on_alley_surface(&editor.architecture_city_plan, {x, z}) do return false
@@ -77,7 +79,8 @@ wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
     }
     flower_density := wildflower_density_at(origin.x, origin.z)
     ground_height := terrain.sample_height(&editor.project, 0, origin.x, origin.z)
-    if !wildflowers_renderable_at(editor, origin.x, origin.z) {
+    circulation_plan := editor_circulation_plan(editor)
+    if !wildflowers_renderable_at(editor, origin.x, origin.z, circulation_plan) {
         flower_density = 0
     }
     wind := editor.atmosphere.weather.wind

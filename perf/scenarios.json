@@ -19,6 +19,14 @@
       "enabled": true,
       "description": "Default terrain editor overview and UI."
     },
+    "terrain_edit": {
+      "enabled": false,
+      "description": "Continuous localized terrain edits exercising clipmap cache patching and frame-buffer publication."
+    },
+    "formation_edit": {
+      "enabled": false,
+      "description": "Continuous structure edits exercising procedural geometry cache invalidation."
+    },
     "foliage": {
       "enabled": true,
       "description": "Seeded bush, hedge, and forest canopy quality scene."

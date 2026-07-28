@@ -49,11 +49,7 @@ run_takeoff :: proc(mass_kg: f32, wind: flight.Vec3 = {}) -> Takeoff_Run {
         if !runtime.grounded {
             result.took_off = true
             result.distance = linalg.length(
-                flight.Vec3{
-                    runtime.body.position.x - start.x,
-                    0,
-                    runtime.body.position.z - start.z,
-                },
+                flight.Vec3{runtime.body.position.x - start.x, 0, runtime.body.position.z - start.z},
             )
             result.seconds = f32(step_index + 1) / 60
             result.liftoff_speed = runtime.telemetry.airspeed
@@ -65,11 +61,7 @@ run_takeoff :: proc(mass_kg: f32, wind: flight.Vec3 = {}) -> Takeoff_Run {
     return result
 }
 
-run_scripted_landing :: proc(
-    scenario: Landing_Scenario,
-    mass_kg: f32 = 3300,
-    wind: flight.Vec3 = {},
-) -> Landing_Run {
+run_scripted_landing :: proc(scenario: Landing_Scenario, mass_kg: f32 = 3300, wind: flight.Vec3 = {}) -> Landing_Run {
     runtime := postale.new_runtime({0, postale.GROUND_CLEARANCE, 0})
     runtime.airframe.mass_kg = mass_kg
     runtime.grounded = false
@@ -207,7 +199,12 @@ postale_landing_envelope_has_adequate_margin :: proc(t: ^testing.T) {
 
 @(test)
 postale_landing_remains_safe_across_weight_and_wind :: proc(t: ^testing.T) {
-    scenario := Landing_Scenario{distance = 180, altitude = 18, airspeed = 30, sink_speed = 1.8}
+    scenario := Landing_Scenario {
+        distance   = 180,
+        altitude   = 18,
+        airspeed   = 30,
+        sink_speed = 1.8,
+    }
     runs := [?]Landing_Run {
         run_scripted_landing(scenario, 2800),
         run_scripted_landing(scenario, 3300),

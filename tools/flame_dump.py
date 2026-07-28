@@ -35,6 +35,7 @@ class FrameRow:
     gpu_ms: float
     gpu_valid: bool
     other_ms: float
+    dropped_slots: int = 0
     scopes: list[dict[str, Any]] = field(default_factory=list)
     top_scope_name: str = ""
     top_scope_ms: float = 0.0
@@ -127,6 +128,7 @@ def frame_from_record(record: dict[str, Any]) -> FrameRow:
         gpu_ms=number(record.get("gpu_ms")),
         gpu_valid=bool(record.get("gpu_valid", False)),
         other_ms=other_ms,
+        dropped_slots=integer(record.get("dropped_slots")),
         scopes=normalized_scopes,
     )
     for scope in normalized_scopes:
@@ -156,6 +158,7 @@ def derived_header(frames: list[FrameRow], freq_hz: int) -> dict[str, Any]:
             "worst_gpu_ms": 0.0,
             "gpu_frame_count": 0,
             "worst_gpu_frame_id": 0,
+            "dropped_slots": 0,
         }
     total_ms = sum(frame.total_ms for frame in frames)
     total_wait_ms = sum(frame.wait_ms for frame in frames)
@@ -182,6 +185,7 @@ def derived_header(frames: list[FrameRow], freq_hz: int) -> dict[str, Any]:
         "worst_gpu_ms": worst_gpu.gpu_ms if worst_gpu else 0.0,
         "gpu_frame_count": len(gpu_frames),
         "worst_gpu_frame_id": worst_gpu.frame_id if worst_gpu else 0,
+        "dropped_slots": sum(frame.dropped_slots for frame in frames),
     }
 
 
@@ -241,6 +245,9 @@ def print_summary(analysis: Analysis, top_n: int) -> None:
     print(f"avg frame: {avg_ms:.2f} ms ({1000 / avg_ms:.2f} FPS)" if avg_ms > 0 else "avg frame: 0.00 ms (0.00 FPS)")
     print(f"avg cpu:   {number(header.get('avg_cpu_ms')):.2f} ms")
     print(f"avg wait:  {number(header.get('avg_wait_ms')):.2f} ms")
+    dropped_slots = integer(header.get("dropped_slots"))
+    if dropped_slots > 0:
+        print(f"warning:   trace truncated; {dropped_slots} function slots were dropped")
     if integer(header.get("gpu_frame_count")) > 0:
         print(f"avg gpu:   {number(header.get('avg_gpu_ms')):.2f} ms ({integer(header.get('gpu_frame_count'))} frames)")
     else:

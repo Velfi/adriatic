@@ -7,7 +7,7 @@ import rl "zelda_engine:canvas2d"
 CUSTOMIZATION_COLOR_COUNT :: 6
 CUSTOMIZATION_PATTERN_COUNT :: 6
 CUSTOMIZATION_PATTERN_COLUMNS :: 3
-CUSTOMIZATION_HEADGEAR_COUNT :: 11
+CUSTOMIZATION_HEADGEAR_COUNT :: 12
 CUSTOMIZATION_SCARF_CONTROL_COUNT :: 4
 CUSTOMIZATION_PATTERN_START :: CUSTOMIZATION_COLOR_COUNT
 CUSTOMIZATION_HEADGEAR_START :: CUSTOMIZATION_PATTERN_START + CUSTOMIZATION_PATTERN_COUNT
@@ -101,6 +101,8 @@ mouse_headgear_label :: proc(value: Mouse_Accessory) -> cstring {
         return "ALPINE HAT"
     case .Flat_Cap:
         return "FLAT CAP"
+    case .Sailor_Hat:
+        return "SAILOR HAT"
     }
     return "NONE"
 }
@@ -543,6 +545,12 @@ customization_headgear_thumbnail :: proc(bounds: rl.Rectangle, accessory: Mouse_
         rl.DrawRectangleRounded({center.x - 8, center.y - 2, 16, 8}, .35, 5, color)
         rl.DrawCircleV({center.x - 1, center.y - 4}, 7, {113, 126, 104, 255})
         rl.DrawRectangleRounded({center.x - 9, center.y - 4, 18, 5}, .5, 4, {113, 126, 104, 255})
+    case .Sailor_Hat:
+        rl.DrawRectangleRounded({center.x - 9, center.y - 1, 18, 6}, .5, 4, {241, 239, 222, 255})
+        rl.DrawRectangleRounded({center.x - 8, center.y - 2, 16, 2}, .5, 2, {38, 88, 145, 255})
+        rl.DrawRectangleRounded({center.x - 7, center.y - 5, 14, 2}, .5, 2, {38, 88, 145, 255})
+        rl.DrawCircleV({center.x, center.y - 7}, 6, {241, 239, 222, 255})
+        rl.DrawCircleV({center.x, center.y - 12}, 1.5, {38, 88, 145, 255})
     }
 }
 

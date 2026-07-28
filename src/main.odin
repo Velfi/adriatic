@@ -1871,7 +1871,7 @@ benchmark_report :: proc(
     road_vertex_capacity := int(world_buffer_min_size(world_renderer.road_vertex[:]) / size_of(World_Vertex))
     road_vertex_utilization := f64(road_vertex_count) / f64(max(road_vertex_capacity, 1))
     fmt.printf(
-        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"empty\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}}}}}}\n",
+        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"empty\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}},\"caches\":{{\"clipmap_generated\":%d,\"clipmap_copied\":%d,\"grass_hits\":%d,\"grass_misses\":%d,\"grass_emitted\":%d,\"climbing_leaf_builds\":%d,\"climbing_leaf_reuses\":%d,\"town_mouse_builds\":%d,\"town_mouse_reuses\":%d}}}}}}\n",
         scenario,
         len(sorted),
         window_width,
@@ -1913,6 +1913,15 @@ benchmark_report :: proc(
         world_renderer.static_visibility.atlas_foliage_used,
         world_renderer.static_visibility.atlas_bougainvillea_used,
         world_renderer.static_visibility.atlas_fragmentation,
+        world_renderer.clipmap_levels_generated,
+        world_renderer.clipmap_levels_copied,
+        world_renderer.grass_candidate_hits,
+        world_renderer.grass_candidate_misses,
+        world_renderer.grass_instances_emitted,
+        world_renderer.climbing_leaf_cache_builds,
+        world_renderer.climbing_leaf_cache_reuses,
+        world_renderer.town_mouse_cache_builds,
+        world_renderer.town_mouse_cache_reuses,
     )
 }
 
@@ -4021,6 +4030,7 @@ open_attendant_dialogue :: proc(editor: ^Editor, resident: story.Resident = .Mar
         {data = rawptr(editor), location_id = "airfield", resident_index = int(resident)},
     )
     if opened {
+        story.acknowledge_resident_action(&editor.story_state, resident)
         dialogue_session.begin(&editor.dialogue_session, .Airfield_Services)
         editor.dialogue_resident = resident
         editor.attendant_dialogue = conversation
@@ -4069,6 +4079,10 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
         definition = &editor.story_catalog.bojan
     case .Zora:
         definition = &editor.story_catalog.zora
+    case .Vesna:
+        definition = &editor.story_catalog.vesna
+    case .Petar:
+        definition = &editor.story_catalog.petar
     case .Marta, .Gerta:
         return false
     }
@@ -4076,11 +4090,12 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
         definition,
         {
             data = rawptr(&editor.story_state),
-            location_id = resident == .Iva || resident == .Zora ? "east_island" : "west_island",
+            location_id = resident == .Vesna || resident == .Petar ? "clinic" : (resident == .Iva || resident == .Zora ? "east_island" : "west_island"),
             resident_index = int(resident),
         },
     )
     if !opened do return false
+    story.acknowledge_resident_action(&editor.story_state, resident)
     dialogue_session.begin(&editor.dialogue_session, .Story)
     editor.attendant_dialogue = conversation
     editor.attendant_dialogue_open = true
@@ -4412,7 +4427,7 @@ nearest_story_resident :: proc(
 ) {
     if editor == nil || editor.pilot.mode != .On_Foot do return {}, 0, false
     best_distance := f32(2.25 * 2.25)
-    candidates := [4]story.Resident{.Niko, .Iva, .Bojan, .Zora}
+    candidates := [6]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar}
     for candidate in candidates {
         if require_action && !story.resident_has_action(&editor.story_state, candidate) do continue
         position, placed := world_story_resident_position(editor, candidate)
@@ -6428,13 +6443,35 @@ crash_recovery_relocate :: proc(editor: ^Editor) {
         postale_game.reset(&editor.postale, ground)
     }
 
-    town := nearest_town_spawn_position(editor, editor.crash_recovery_position)
-    player_place(editor, town, .Crash_Recovery)
+    west_clinic, west_rotation, west_found := world_story_resident_home_pose(editor, .Vesna)
+    east_clinic, east_rotation, east_found := world_story_resident_home_pose(editor, .Petar)
+    clinic, clinic_rotation, clinic_found := west_clinic, west_rotation, west_found
+    if east_found {
+        west_distance := f32(3.402823e38)
+        if west_found {
+            west_delta := west_clinic - editor.crash_recovery_position
+            west_distance = linalg.dot(west_delta, west_delta)
+        }
+        east_delta := east_clinic - editor.crash_recovery_position
+        east_distance := linalg.dot(east_delta, east_delta)
+        if !west_found || east_distance < west_distance {
+            clinic, clinic_rotation, clinic_found = east_clinic, east_rotation, true
+        }
+    }
+    if !clinic_found {
+        clinic = nearest_town_spawn_position(editor, editor.crash_recovery_position)
+    } else {
+        clinic.x += -math.sin(clinic_rotation) * 1.6
+        clinic.z += math.cos(clinic_rotation) * 1.6
+        clinic.y = terrain.sample_height(&editor.project, 0, clinic.x, clinic.z)
+    }
+    player_place(editor, clinic, .Crash_Recovery)
+    editor.story_state.clinic_visits += 1
     editor.flight_control = {}
     editor.aircraft_fixed_accumulator = 0
     editor.aircraft_previous_body_valid = false
     editor.camera = third_person.default_camera()
-    editor.camera_pose = third_person.camera_pose(town, editor.camera)
+    editor.camera_pose = third_person.camera_pose(clinic, editor.camera)
     third_person.camera_set_pose(&editor.cameras, .Player, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Player)
 }
@@ -7610,6 +7647,11 @@ adriatic_run :: proc(
         return .Quit
     }
     benchmark_mode := benchmark_requested && len(args) >= 9
+    instrument_duration_seconds: f64
+    if len(args) >= 3 && args[1] == "--instrument-seconds" {
+        parsed, ok := strconv.parse_f64(args[2])
+        if ok do instrument_duration_seconds = max(parsed, 0)
+    }
     loading_preview_mode := len(args) >= 3 && args[1] == "--loading-preview"
     loading_preview_output := loading_preview_mode ? args[2] : ""
     loading_lab_mode := len(args) >= 3 && args[1] == "--lab" && args[2] == "loading-screen"
@@ -8510,7 +8552,10 @@ adriatic_run :: proc(
            capture_target == "player-hat-flat-cap" ||
            capture_target == "player-hat-flat-cap-front" ||
            capture_target == "player-hat-flat-cap-three-quarter" ||
-           capture_target == "player-hat-flat-cap-profile" {
+           capture_target == "player-hat-flat-cap-profile" ||
+           capture_target == "player-hat-sailor" ||
+           capture_target == "player-hat-sailor-front" ||
+           capture_target == "player-hat-sailor-profile" {
             editor.camera_target_lock = false
             editor.postale_visible = false
             editor.libellula_visible = false
@@ -8560,7 +8605,10 @@ adriatic_run :: proc(
                capture_target == "player-hat-flat-cap" ||
                capture_target == "player-hat-flat-cap-front" ||
                capture_target == "player-hat-flat-cap-three-quarter" ||
-               capture_target == "player-hat-flat-cap-profile" {
+               capture_target == "player-hat-flat-cap-profile" ||
+               capture_target == "player-hat-sailor" ||
+               capture_target == "player-hat-sailor-front" ||
+               capture_target == "player-hat-sailor-profile" {
                 editor.mouse_fur = .Silver
                 editor.mouse_pattern = .Piebald
                 switch capture_target {
@@ -8588,6 +8636,8 @@ adriatic_run :: proc(
                      "player-hat-flat-cap-three-quarter",
                      "player-hat-flat-cap-profile":
                     editor.mouse_headgear = .Flat_Cap
+                case "player-hat-sailor", "player-hat-sailor-front", "player-hat-sailor-profile":
+                    editor.mouse_headgear = .Sailor_Hat
                 case:
                     editor.mouse_headgear = .Chef_Hat
                 }
@@ -8614,7 +8664,8 @@ adriatic_run :: proc(
                 capture_target == "player-hat-bottle-cap-front" ||
                 capture_target == "player-hat-beret-front" ||
                 capture_target == "player-hat-alpine-front" ||
-                capture_target == "player-hat-flat-cap-front"
+                capture_target == "player-hat-flat-cap-front" ||
+                capture_target == "player-hat-sailor-front"
             capture_three_quarter_view :=
                 capture_target == "player-three-quarter" ||
                 capture_target == "player-hat-ushanka-three-quarter" ||
@@ -8626,7 +8677,8 @@ adriatic_run :: proc(
                 capture_target == "player-hat-ushanka-profile" ||
                 capture_target == "player-hat-beret-profile" ||
                 capture_target == "player-hat-alpine-profile" ||
-                capture_target == "player-hat-flat-cap-profile"
+                capture_target == "player-hat-flat-cap-profile" ||
+                capture_target == "player-hat-sailor-profile"
             capture_top_view := capture_target == "player-hat-bottle-cap-top"
             // Track the moving profile from its longitudinal center so the
             // body and body-length tail share one depth plane in the capture.
@@ -8898,6 +8950,7 @@ adriatic_run :: proc(
     }
     benchmark_samples: [4096]f64
     benchmark_sample_count := 0
+    instrument_started_at := rl.GetTime()
     frame := 0
     for !rl.WindowShouldClose() && !editor.quit_requested {
         gameplay_physics_begin_frame(editor)
@@ -9979,6 +10032,9 @@ adriatic_run :: proc(
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.
         if capture_mode && frame >= 32 do break
+        if instrument_duration_seconds > 0 && rl.GetTime() - instrument_started_at >= instrument_duration_seconds {
+            editor.quit_requested = true
+        }
         if HOT_RELOAD && hot_reload_requested(hot_library_path, hot_library_mtime) {
             if !hot_state_save(editor, hot_state_path) {
                 fmt.eprintln("adriatic hot reload could not save state")

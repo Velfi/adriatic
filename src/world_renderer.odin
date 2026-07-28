@@ -5,6 +5,7 @@ import atmosphere "../packages/atmosphere"
 import boats "../packages/boats"
 import buildings "../packages/buildings"
 import circulation "../packages/circulation"
+import dio "../packages/dio"
 import flight "../packages/flight"
 import mouse_gait "../packages/mouse_gait"
 import mouse_kinematics "../packages/mouse_kinematics"
@@ -110,6 +111,14 @@ Structure_Visibility_Order :: struct {
     distance_squared: f32,
 }
 
+Ground_Grass_Candidate :: struct {
+    height:                    f32,
+    ground_color:              rl.Color,
+    architecture_height_scale: f32,
+    flower_density:            f32,
+    renderable:                bool,
+}
+
 @(no_instrumentation)
 structure_visibility_order_less :: #force_inline proc(a, b: Structure_Visibility_Order) -> bool {
     if a.distance_squared != b.distance_squared do return a.distance_squared < b.distance_squared
@@ -172,6 +181,7 @@ structure_lod_projected_diameter :: proc(
 // Conservative sphere/frustum test in the same camera basis and projection
 // convention used by the world shaders. A sphere intersecting any plane stays
 // visible; this deliberately prefers extra work over a visible false reject.
+@(no_instrumentation)
 static_sphere_in_frustum :: proc(
     camera: Perspective_Camera,
     center: third_person.Vec3,
@@ -377,6 +387,7 @@ World_Material_Kind :: enum u32 {
     Architecture,
     Glass,
     Emissive_Halo,
+    Sailor_Hat,
 }
 
 World_Vertex :: struct {
@@ -405,6 +416,18 @@ Foliage_Vertex :: struct {
     uv:       [2]f32,
     color:    [4]f32,
     kind:     u32,
+}
+
+Bougainvillea_Card_Descriptor :: struct {
+    center:       third_person.Vec3,
+    width:        f32,
+    height:       f32,
+    tile:         int,
+    mirror:       bool,
+    roll:         f32,
+    value:        f32,
+    young_growth: bool,
+    yaw_bias:     f32,
 }
 
 Grass_Instance :: struct {
@@ -455,6 +478,7 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
     billboard_up:           [3]f32,
     world_vertices:         [dynamic]World_Vertex,
     bougainvillea_vertices: [dynamic]Foliage_Vertex,
+    cards:                  [dynamic]Bougainvillea_Card_Descriptor,
 }
 
 TOWN_MOUSE_CACHE_COUNT :: len(terrain.DEFAULT_ISLAND_SIGNS) * 7 + 2
@@ -581,6 +605,24 @@ World_Renderer :: struct {
     clipmap_center:                    [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
     clipmap_valid:                     [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
     clipmap_dirty:                     [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
+    clipmap_cache_vertex:              [terrain.CLIPMAP_LEVELS][dynamic]World_Vertex,
+    clipmap_cache_center:              [terrain.CLIPMAP_LEVELS][2]f32,
+    clipmap_cache_valid:               [terrain.CLIPMAP_LEVELS]bool,
+    clipmap_cache_revision:            u64,
+    clipmap_levels_generated:          u64,
+    clipmap_levels_copied:             u64,
+    grass_candidate_hits:              u64,
+    grass_candidate_misses:            u64,
+    grass_instances_emitted:           u64,
+    grass_candidate_cache:             map[[2]int]Ground_Grass_Candidate,
+    grass_cache_terrain_revision:      u64,
+    grass_cache_project_revision:      u64,
+    grass_cache_center:                [2]int,
+    grass_cache_center_valid:          bool,
+    climbing_leaf_cache_builds:        u64,
+    climbing_leaf_cache_reuses:        u64,
+    town_mouse_cache_builds:           u64,
+    town_mouse_cache_reuses:           u64,
     road_mesh:                         roads.Mesh,
     road_graph:                        roads.Graph,
     road_graph_valid:                  bool,
@@ -623,6 +665,7 @@ World_Renderer :: struct {
 }
 
 world_renderer: World_Renderer
+climbing_leaf_card_capture: ^[dynamic]Bougainvillea_Card_Descriptor
 
 when ODIN_OS == .Windows {
     foreign import adriatic_mesh "system:adriatic_mesh.lib"
@@ -1744,12 +1787,11 @@ clipmap_vertex_color :: #force_inline proc(
 
 clipmap_update_level :: proc(
     editor: ^Editor,
-    frame_index, level: int,
+    vertices: []World_Vertex,
+    level: int,
     center: [2]f32,
     dirty: ^Terrain_Dirty_Bounds = nil,
 ) {
-    buffer := &world_renderer.clipmap_vertex[frame_index][level]
-    vertices := cast([^]World_Vertex)buffer.mapped
     data := &editor.project.levels[level]
     grid_cell := data.cell_size * 2
     half_grid := f32(CLIPMAP_GRID_RESOLUTION - 1) * .5
@@ -1912,35 +1954,57 @@ world_structure_storage_ensure :: proc(count: int) {
 }
 
 clipmap_update :: proc(editor: ^Editor, frame_index: int) {
-    revision_changed := world_renderer.clipmap_revision[frame_index] != editor.terrain_revision
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "clipmap_update")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
+    cache_revision_changed := world_renderer.clipmap_cache_revision != editor.terrain_revision
     dirty := &world_renderer.clipmap_dirty[frame_index]
     localized_revision :=
-        revision_changed && dirty.valid && !dirty.full_rebuild && dirty.revision == editor.terrain_revision
+        cache_revision_changed && dirty.valid && !dirty.full_rebuild && dirty.revision == editor.terrain_revision
     snap := editor.project.levels[0].cell_size * 2
     center := [2]f32 {
         f32(math.round(f64(editor.camera_pose.target.x / snap))) * snap,
         f32(math.round(f64(editor.camera_pose.target.z / snap))) * snap,
     }
     for level in 0 ..< terrain.CLIPMAP_LEVELS {
-        if revision_changed ||
-           !world_renderer.clipmap_valid[frame_index][level] ||
-           world_renderer.clipmap_center[frame_index][level] != center {
-            center_changed :=
-                !world_renderer.clipmap_valid[frame_index][level] ||
-                world_renderer.clipmap_center[frame_index][level] != center
+        cache_center_changed :=
+            !world_renderer.clipmap_cache_valid[level] || world_renderer.clipmap_cache_center[level] != center
+        if cache_revision_changed || cache_center_changed {
+            vertex_count := CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
+            if len(world_renderer.clipmap_cache_vertex[level]) != vertex_count {
+                resize(&world_renderer.clipmap_cache_vertex[level], vertex_count)
+            }
+            generate_profile := dio.flame_graph_begin(dio.flame_graph_current(), "clipmap_generate")
             clipmap_update_level(
                 editor,
-                frame_index,
+                world_renderer.clipmap_cache_vertex[level][:],
                 level,
                 center,
-                localized_revision && !center_changed ? dirty : nil,
+                localized_revision && !cache_center_changed ? dirty : nil,
             )
+            _ = dio.flame_graph_end(dio.flame_graph_current(), generate_profile)
+            world_renderer.clipmap_cache_center[level] = center
+            world_renderer.clipmap_cache_valid[level] = true
+            world_renderer.clipmap_levels_generated += 1
+        }
+        if world_renderer.clipmap_revision[frame_index] != editor.terrain_revision ||
+           !world_renderer.clipmap_valid[frame_index][level] ||
+           world_renderer.clipmap_center[frame_index][level] != center {
+            upload_profile := dio.flame_graph_begin(dio.flame_graph_current(), "clipmap_upload")
+            buffer := &world_renderer.clipmap_vertex[frame_index][level]
+            mem.copy_non_overlapping(
+                buffer.mapped,
+                raw_data(world_renderer.clipmap_cache_vertex[level][:]),
+                len(world_renderer.clipmap_cache_vertex[level]) * size_of(World_Vertex),
+            )
+            _ = dio.flame_graph_end(dio.flame_graph_current(), upload_profile)
             world_renderer.clipmap_center[frame_index][level] = center
             world_renderer.clipmap_valid[frame_index][level] = true
+            world_renderer.clipmap_levels_copied += 1
         }
     }
+    world_renderer.clipmap_cache_revision = editor.terrain_revision
     world_renderer.clipmap_revision[frame_index] = editor.terrain_revision
-    dirty^ = {}
+    for &frame_dirty in world_renderer.clipmap_dirty do frame_dirty = {}
 }
 
 @(no_instrumentation)
@@ -2876,6 +2940,96 @@ world_flat_cap_hull :: proc(
             vertex_colors[RING_COUNT - 1][segment],
             vertex_colors[RING_COUNT - 1][next],
         )
+    }
+}
+
+// One continuous cloth shell for the sailor hat. The profile travels from the
+// fitted underside, around the upturned bucket brim, and inward over the crown.
+// UVs follow that profile so the shader's stripes and weave remain attached to
+// the fabric instead of being represented by stacked geometry.
+world_sailor_hat_hull :: proc(center: third_person.Vec3, rotation: f32, color: rl.Color) {
+    SEGMENTS :: 24
+    RING_COUNT :: 8
+    heights := [RING_COUNT]f32{-.050, -.036, .020, .052, .036, .112, .174, .192}
+    radii_x := [RING_COUNT]f32{.150, .248, .280, .252, .205, .196, .168, .112}
+    radii_z := [RING_COUNT]f32{.120, .195, .220, .202, .162, .156, .132, .086}
+    offsets_z := [RING_COUNT]f32{-.012, 0, .004, 0, -.006, -.012, -.018, -.022}
+    // Profile-distance UVs keep the two fabric stripes a consistent physical
+    // width as the brim rolls upward into the bucket crown.
+    profile_v := [RING_COUNT]f32{0, .16, .30, .40, .47, .66, .88, .96}
+
+    rings: [RING_COUNT][SEGMENTS]third_person.Vec3
+    normals: [RING_COUNT][SEGMENTS]third_person.Vec3
+    uvs: [RING_COUNT][SEGMENTS][2]f32
+    for ring_index in 0 ..< RING_COUNT {
+        previous := max(ring_index - 1, 0)
+        following := min(ring_index + 1, RING_COUNT - 1)
+        height_delta := heights[following] - heights[previous]
+        radius_delta := (radii_x[following] - radii_x[previous] + radii_z[following] - radii_z[previous]) * .5
+        for segment in 0 ..< SEGMENTS {
+            angle := f32(segment) * math.PI * 2 / f32(SEGMENTS)
+            local_x := math.cos(angle) * radii_x[ring_index]
+            local_z := offsets_z[ring_index] + math.sin(angle) * radii_z[ring_index]
+            // A slightly higher side and rear edge gives the brim the jaunty,
+            // hand-shaped rise of a soft sailor bucket rather than a rigid bowl.
+            brim_lift := f32(0)
+            if ring_index == 2 || ring_index == 3 {
+                brim_lift = (.5 - math.sin(angle) * .5) * .018 + math.abs(math.cos(angle)) * .010
+            }
+            world_x, world_z := world_rotate_xz(center.x, center.z, local_x, local_z, rotation)
+            rings[ring_index][segment] = {world_x, center.y + heights[ring_index] + brim_lift, world_z}
+
+            radial_y := -radius_delta / max(math.abs(height_delta), f32(.025))
+            local_normal := linalg.normalize0([3]f32{math.cos(angle), radial_y, math.sin(angle)})
+            normal_x, normal_z := world_rotate_xz(0, 0, local_normal.x, local_normal.z, rotation)
+            normals[ring_index][segment] = {normal_x, local_normal.y, normal_z}
+            uvs[ring_index][segment] = {f32(segment) / f32(SEGMENTS), profile_v[ring_index]}
+        }
+    }
+
+    for ring_index in 0 ..< RING_COUNT - 1 {
+        for segment in 0 ..< SEGMENTS {
+            next := (segment + 1) % SEGMENTS
+            coordinates := [6][2]int {
+                {ring_index, segment},
+                {ring_index + 1, segment},
+                {ring_index + 1, next},
+                {ring_index, segment},
+                {ring_index + 1, next},
+                {ring_index, next},
+            }
+            for coordinate in coordinates {
+                ring, point := coordinate[0], coordinate[1]
+                vertex := world_eye_vertex(rings[ring][point], color, normals[ring][point])
+                vertex.kind = .Sailor_Hat
+                vertex.uv = uvs[ring][point]
+                append(&world_renderer.vertices, vertex)
+            }
+        }
+    }
+
+    bottom := third_person.Vec3{center.x, center.y + heights[0], center.z + offsets_z[0]}
+    top_x, top_z := world_rotate_xz(center.x, center.z, 0, offsets_z[RING_COUNT - 1], rotation)
+    top := third_person.Vec3{top_x, center.y + heights[RING_COUNT - 1] - .012, top_z}
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        bottom_points := [3]int{-1, next, segment}
+        for point_index in bottom_points {
+            point := point_index < 0 ? bottom : rings[0][point_index]
+            vertex := world_eye_vertex(point, color, {0, -1, 0})
+            vertex.kind = .Sailor_Hat
+            vertex.uv = point_index < 0 ? [2]f32{.5, 0} : uvs[0][point_index]
+            append(&world_renderer.vertices, vertex)
+        }
+        top_points := [3]int{-1, segment, next}
+        for point_index in top_points {
+            point := point_index < 0 ? top : rings[RING_COUNT - 1][point_index]
+            vertex := world_eye_vertex(point, color, {0, 1, 0})
+            vertex.kind = .Sailor_Hat
+            vertex.uv =
+                point_index < 0 ? [2]f32{.5, 1} : [2]f32{f32(point_index) / f32(SEGMENTS), 1}
+            append(&world_renderer.vertices, vertex)
+        }
     }
 }
 
@@ -8269,6 +8423,22 @@ world_bougainvillea_card :: proc(
 ) {
     editor := world_renderer.editor
     if editor == nil do return
+    if climbing_leaf_card_capture != nil {
+        append(
+            climbing_leaf_card_capture,
+            Bougainvillea_Card_Descriptor {
+                center = center,
+                width = width,
+                height = height,
+                tile = tile,
+                mirror = mirror,
+                roll = roll,
+                value = value,
+                young_growth = young_growth,
+                yaw_bias = yaw_bias,
+            },
+        )
+    }
     atlas_tile := ((tile % 16) + 16) % 16
     // Normalized painted branch origins within each atlas cell. Upright
     // clumps root near bottom-center; lateral sprays root at the appropriate
@@ -8433,6 +8603,7 @@ world_window_flower_bunch_billboard :: proc(
     )
 }
 
+@(no_instrumentation)
 world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: int, color: rl.Color) {
     append(
         &world_renderer.grass_instances,
@@ -12520,24 +12691,37 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
         editor.capture_bougainvillea_seed_enabled && structure.id == editor.capture_bougainvillea_structure_id
     capture_seed := capture_seed_enabled ? editor.capture_bougainvillea_seed : u32(0)
     entry := &world_renderer.climbing_leaf_geometry_cache[structure_index]
-    camera := perspective_camera(
-        editor.camera_pose,
-        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
-    )
-    billboard_right := [3]f32{camera.right.x, camera.right.y, camera.right.z}
-    billboard_up := [3]f32{camera.up.x, camera.up.y, camera.up.z}
     if entry.valid &&
        entry.structure == structure &&
        entry.density == density &&
        entry.detail_tier == detail_tier &&
        entry.capture_seed_enabled == capture_seed_enabled &&
-       entry.capture_seed == capture_seed &&
-       entry.billboard_right == billboard_right &&
-       entry.billboard_up == billboard_up {
+       entry.capture_seed == capture_seed {
+        world_renderer.climbing_leaf_cache_reuses += 1
+        profile := dio.flame_graph_begin(dio.flame_graph_current(), "climbing_leaf_cache_reuse")
         append(&world_renderer.vertices, ..entry.world_vertices[:])
-        append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
+        for card in entry.cards {
+            world_bougainvillea_card(
+                card.center,
+                card.width,
+                card.height,
+                card.tile,
+                card.mirror,
+                card.roll,
+                card.value,
+                card.young_growth,
+                card.yaw_bias,
+            )
+        }
+        _ = dio.flame_graph_end(dio.flame_graph_current(), profile)
         return
     }
+    world_renderer.climbing_leaf_cache_builds += 1
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "climbing_leaf_cache_build")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
+    clear(&entry.cards)
+    climbing_leaf_card_capture = &entry.cards
+    defer climbing_leaf_card_capture = nil
     world_first := len(world_renderer.vertices)
     bougainvillea_first := len(world_renderer.bougainvillea_vertices)
     // Compound buildings, laundry anchors, and climbing growth all share
@@ -12830,8 +13014,6 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
     entry.detail_tier = detail_tier
     entry.capture_seed_enabled = capture_seed_enabled
     entry.capture_seed = capture_seed
-    entry.billboard_right = billboard_right
-    entry.billboard_up = billboard_up
 }
 
 world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
@@ -13850,6 +14032,7 @@ Mouse_Accessory :: enum {
     Beret,
     Alpine_Hat,
     Flat_Cap,
+    Sailor_Hat,
 }
 
 Mouse_Fur :: enum {
@@ -13997,9 +14180,15 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
        entry.scale == scale &&
        entry.animation_bucket == animation_bucket &&
        entry.wind == wind {
+        world_renderer.town_mouse_cache_reuses += 1
+        profile := dio.flame_graph_begin(dio.flame_graph_current(), "town_mouse_cache_reuse")
         append(&world_renderer.vertices, ..entry.vertices[:])
+        _ = dio.flame_graph_end(dio.flame_graph_current(), profile)
         return
     }
+    world_renderer.town_mouse_cache_builds += 1
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "town_mouse_cache_build")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
 
     first := len(world_renderer.vertices)
     world_mouse_model_scaled(editor, model, scale)
@@ -14956,6 +15145,16 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             tweed_front,
             tweed_light,
         )
+    } else if model.accessory == .Sailor_Hat {
+        crown_x := head_sway + head_turn_x
+        crown_y := head_y + .145
+        crown_z := head_z + .065
+        canvas := rl.Color{242, 239, 221, 255}
+        world_sailor_hat_hull(
+            local_point(p, rotation, crown_x, crown_y, crown_z),
+            rotation,
+            canvas,
+        )
     }
 
     if model.scarf_enabled {
@@ -15697,7 +15896,7 @@ world_marta :: proc(editor: ^Editor) {
             grounded = false,
         },
     )
-    if story.resident_has_action(&editor.story_state, .Marta) {
+    if story.resident_has_unseen_action(&editor.story_state, .Marta) {
         world_mouse_interaction_indicator(editor, position)
     }
 }
@@ -15725,7 +15924,7 @@ world_gerta :: proc(editor: ^Editor) {
             grounded = false,
         },
     )
-    if story.resident_has_action(&editor.story_state, .Gerta) {
+    if story.resident_has_unseen_action(&editor.story_state, .Gerta) {
         world_mouse_interaction_indicator(editor, position)
     }
 }
@@ -15775,6 +15974,10 @@ story_resident_town_slot :: proc(resident: story.Resident) -> (island_index, res
         return 1, 1, true
     case .Zora:
         return 1, 5, true
+    case .Vesna:
+        return 0, 4, true
+    case .Petar:
+        return 1, 6, true
     case .Marta:
         return 0, 0, false
     case .Gerta:
@@ -15927,13 +16130,33 @@ world_story_meeting :: proc(editor: ^Editor) {
         .96,
         TOWN_MOUSE_CACHE_COUNT - 1,
     )
-    if story.resident_has_action(&editor.story_state, .Niko) {
+    if story.resident_has_unseen_action(&editor.story_state, .Niko) {
         world_mouse_interaction_indicator(editor, niko)
     }
 }
 
+world_clinic_sign :: proc(editor: ^Editor, resident: story.Resident) {
+    if editor == nil do return
+    attendant, frontage_rotation, found := world_story_resident_home_pose(editor, resident)
+    if !found do return
+    side_x, side_z := math.cos(frontage_rotation), math.sin(frontage_rotation)
+    out_x, out_z := -math.sin(frontage_rotation), math.cos(frontage_rotation)
+    center := third_person.Vec3 {
+        attendant.x - side_x * 1.45 - out_x * .32,
+        attendant.y + 2.15,
+        attendant.z - side_z * 1.45 - out_z * .32,
+    }
+    white := rl.Color{238, 234, 218, 255}
+    red := rl.Color{177, 53, 52, 255}
+    world_box_rotated(center, {1.02, .82, .09}, frontage_rotation, white)
+    world_box_rotated(center + third_person.Vec3{0, 0, -.04}, {.18, .58, .13}, frontage_rotation, red)
+    world_box_rotated(center + third_person.Vec3{0, 0, -.05}, {.62, .18, .14}, frontage_rotation, red)
+}
+
 world_town_mice :: proc(editor: ^Editor) {
     if editor == nil do return
+    world_clinic_sign(editor, .Vesna)
+    world_clinic_sign(editor, .Petar)
 
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
@@ -15994,6 +16217,10 @@ world_town_mice :: proc(editor: ^Editor) {
                     named_resident, named = .Iva, true
                 } else if island_index == 1 && resident_index == 5 {
                     named_resident, named = .Zora, true
+                } else if island_index == 0 && resident_index == 4 {
+                    named_resident, named = .Vesna, true
+                } else if island_index == 1 && resident_index == 6 {
+                    named_resident, named = .Petar, true
                 }
                 if named &&
                    editor.story_state.romance == .Meeting &&
@@ -16029,7 +16256,7 @@ world_town_mice :: proc(editor: ^Editor) {
                     resident.scale,
                     island_index * len(residents) + resident_index,
                 )
-                if named && story.resident_has_action(&editor.story_state, named_resident) {
+                if named && story.resident_has_unseen_action(&editor.story_state, named_resident) {
                     world_mouse_interaction_indicator(editor, {x, ground_y, z})
                 }
                 break
@@ -16120,6 +16347,8 @@ world_brush :: proc(editor: ^Editor) {
 
 world_ground_grass :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map || editor.benchmark_ground_grass_disabled do return
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "ground_grass")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     // Populate around the active view rather than the player character. This
     // keeps the visible field dense when an inspection or chase camera moves
     // away from the mouse, while the snapped world grid prevents shimmer.
@@ -16158,6 +16387,29 @@ world_ground_grass :: proc(editor: ^Editor) {
     center_grid_z := int(math.floor(f64(field_z / SPACING)))
     center_x := f32(center_grid_x) * SPACING
     center_z := f32(center_grid_z) * SPACING
+    if world_renderer.grass_candidate_cache == nil {
+        world_renderer.grass_candidate_cache = make(map[[2]int]Ground_Grass_Candidate, 40_000)
+    }
+    if world_renderer.grass_cache_terrain_revision != editor.terrain_revision ||
+       world_renderer.grass_cache_project_revision != editor.project.revision {
+        clear(&world_renderer.grass_candidate_cache)
+        world_renderer.grass_cache_terrain_revision = editor.terrain_revision
+        world_renderer.grass_cache_project_revision = editor.project.revision
+        world_renderer.grass_cache_center_valid = false
+    }
+    if !world_renderer.grass_cache_center_valid ||
+       world_renderer.grass_cache_center != ([2]int{center_grid_x, center_grid_z}) {
+        stale_keys := make([dynamic][2]int, 0, 512, context.temp_allocator)
+        retain_radius := grid_radius + 2
+        for key, _ in world_renderer.grass_candidate_cache {
+            if abs(key[0] - center_grid_x) > retain_radius || abs(key[1] - center_grid_z) > retain_radius {
+                append(&stale_keys, key)
+            }
+        }
+        for key in stale_keys do delete_key(&world_renderer.grass_candidate_cache, key)
+        world_renderer.grass_cache_center = {center_grid_x, center_grid_z}
+        world_renderer.grass_cache_center_valid = true
+    }
     for grid_z in -grid_radius ..= grid_radius {
         for grid_x in -grid_radius ..= grid_radius {
             world_grid_x := grid_x + center_grid_x
@@ -16177,7 +16429,28 @@ world_ground_grass :: proc(editor: ^Editor) {
             // Dither the population all the way to zero instead of retaining
             // half the cards at the render limit and dropping them at once.
             if wind_streak_hash(seed_index, 3) > density do continue
-            height_at := terrain.sample_height(&editor.project, 0, x, z)
+            key := [2]int{world_grid_x, world_grid_z}
+            candidate, cached := world_renderer.grass_candidate_cache[key]
+            if cached {
+                world_renderer.grass_candidate_hits += 1
+            } else {
+                world_renderer.grass_candidate_misses += 1
+                candidate.height = terrain.sample_height(&editor.project, 0, x, z)
+                candidate.renderable =
+                    !farmland_excludes_ground_grass(editor, x, z) &&
+                    wildflowers_renderable_at(editor, x, z, circulation_plan)
+                if candidate.renderable {
+                    candidate.ground_color = clipmap_vertex_color(editor, 0, x, z, candidate.height, 0)
+                    candidate.architecture_height_scale = world_architecture_grass_height_scale(
+                        building_footprints[:],
+                        x,
+                        z,
+                    )
+                    candidate.flower_density = wildflower_density_at(x, z)
+                }
+                world_renderer.grass_candidate_cache[key] = candidate
+            }
+            height_at := candidate.height
             // The generated field surrounds the camera so walking and turning
             // never expose an empty edge, but only the forward slice can reach
             // the framebuffer. A deliberately generous sphere retains every
@@ -16187,8 +16460,7 @@ world_ground_grass :: proc(editor: ^Editor) {
             if !static_sphere_in_frustum(view_camera, {x, height_at + .75, z}, 2, aspect, near_plane, WORLD_FAR_CLIP) {
                 continue
             }
-            if farmland_excludes_ground_grass(editor, x, z) do continue
-            if !wildflowers_renderable_at(editor, x, z, circulation_plan) do continue
+            if !candidate.renderable do continue
             variation := wind_streak_hash(seed_index, 4)
             // The atlas is sampled as luminance, so elevation can drive the
             // complete palette without additional texture variants. Moist,
@@ -16220,7 +16492,7 @@ world_ground_grass :: proc(editor: ^Editor) {
             // Keep the authored grass hue, but match its value to the shaded
             // terrain beneath it. In the outer falloff, converge on the exact
             // terrain color so the final cards cannot form a dark cutoff ring.
-            ground_color := clipmap_vertex_color(editor, 0, x, z, height_at, 0)
+            ground_color := candidate.ground_color
             grass_value := f32(color.r) * .2126 + f32(color.g) * .7152 + f32(color.b) * .0722
             ground_value := f32(ground_color.r) * .2126 + f32(ground_color.g) * .7152 + f32(ground_color.b) * .0722
             value_scale := ground_value / max(grass_value, f32(1))
@@ -16240,12 +16512,13 @@ world_ground_grass :: proc(editor: ^Editor) {
             } else if height_noise > .90 {
                 height *= 1.28
             }
-            architecture_height_scale := world_architecture_grass_height_scale(building_footprints[:], x, z)
+            architecture_height_scale := candidate.architecture_height_scale
             if architecture_height_scale <= 0 do continue
             height *= architecture_height_scale
             width := height * (.56 + width_noise * .48)
             world_grass_card({x, height_at + height * .5, z}, width, height, abs(seed_index) % 16, color)
-            flower_density := wildflower_density_at(x, z)
+            world_renderer.grass_instances_emitted += 1
+            flower_density := candidate.flower_density
             if flower_density > .18 && wind_streak_hash(seed_index, 12) < flower_density * .34 {
                 flower_height := .32 + wind_streak_hash(seed_index, 13) * .34
                 world_wildflower_card(
@@ -16260,6 +16533,8 @@ world_ground_grass :: proc(editor: ^Editor) {
 }
 
 world_build :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_build")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     world_structure_storage_ensure(editor.project.structure_count)
     clear(&world_renderer.vertices)
     clear(&world_renderer.late_transparent_vertices)
@@ -16564,6 +16839,7 @@ world_wing_trails :: proc(editor: ^Editor) {
     }
 }
 
+@(no_instrumentation)
 wind_streak_hash :: proc(index, salt: int) -> f32 {
     value := math.sin(f64(index * 127 + salt * 311) * 12.9898) * 43758.5453
     return f32(value - math.floor(value))
@@ -16603,7 +16879,10 @@ world_wind_streaks :: proc(editor: ^Editor) {
             (center.y + tail.y) * .5,
             (center.z + tail.z) * .5,
         }
-        if !world_sphere_in_view(editor, streak_center, streak_length * .5 + .15) do continue
+        // Keep the whole stream alive just beyond the viewport. Exact
+        // frustum culling makes these sparse, fast-moving streaks visibly
+        // blink out at the screen edge before their fade reads as complete.
+        if !world_sphere_in_view(editor, streak_center, streak_length * .5 + .15, 3) do continue
         fade := math.sin(phase * math.PI)
         alpha := u8(clamp((22 + strength * 82) * fade, 0, 104))
         width := .018 + strength * .035
@@ -17759,6 +18038,12 @@ dialogue_portrait_mouse_model :: proc(editor: ^Editor, resident: story.Resident,
         model.build, model.snout_length = 1.18, 1.10
         model.fur, model.pattern = .Russet, .Piebald
         model.scarf_enabled, model.scarf_color = true, {205, 151, 52, 255}
+    case .Vesna:
+        model.build, model.snout_length = 1.08, 1.02
+        model.accessory, model.fur, model.pattern = .Chef_Hat, .White, .Pale_Belly
+    case .Petar:
+        model.build, model.snout_length = .82, .90
+        model.accessory, model.fur, model.pattern = .Goggles, .Chestnut, .Hooded
     }
     return model
 }
@@ -18192,11 +18477,13 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.bougainvillea_vertices)
     delete(world_renderer.grass_instances)
     delete(world_renderer.wildflower_instances)
+    delete(world_renderer.grass_candidate_cache)
     delete(world_renderer.wing_trail_vertices)
     delete(world_renderer.wing_trail_indices)
     delete(world_renderer.wing_trail_optimized_indices)
     delete(world_renderer.land_surface_samples)
     delete(world_renderer.shadow_vertices)
+    for &vertices in world_renderer.clipmap_cache_vertex do delete(vertices)
     for &entry in world_renderer.foliage_geometry_cache {
         delete(entry.world_vertices)
         delete(entry.foliage_vertices)
@@ -18212,6 +18499,7 @@ world_renderer_destroy :: proc() {
     for &entry in world_renderer.climbing_leaf_geometry_cache {
         delete(entry.world_vertices)
         delete(entry.bougainvillea_vertices)
+        delete(entry.cards)
     }
     delete(world_renderer.climbing_leaf_geometry_cache)
     delete(world_renderer.static_visibility_classification)

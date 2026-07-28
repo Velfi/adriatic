@@ -38,7 +38,8 @@ PROFILE_VULKAN_VALIDATION_validation := true
 PROFILE_ASAN_validation := true
 
 PROFILE_ODIN_FLAGS_instrument := -dynamic-map-calls -o:minimal -debug
-PROFILE_DEFINE_FLAGS_instrument := -define:FLAME_AUTO_INSTRUMENT=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true -define:BACK_OTHER_CUSTOM_INSTRUMENTATION=true
+PROFILE_DEFINE_FLAGS_instrument := -define:DIO_FLAME_GRAPH=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true
+PROFILE_DEFINE_FLAGS_instrument_deep := -define:FLAME_AUTO_INSTRUMENT=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true -define:BACK_OTHER_CUSTOM_INSTRUMENTATION=true -define:FLAME_AUTO_SLOT_CAP=50000
 PROFILE_CONFIG_instrument := release
 PROFILE_ENTRY_instrument := cold
 PROFILE_LINK_MODE_instrument := system
@@ -163,7 +164,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live fmt check test clean
 
 all: build
 
@@ -720,7 +721,18 @@ $(INSTRUMENT_RUNTIME_STAMP): shaders $(INSTRUMENT_ASSET_SOURCES)
 	touch $@
 
 instrument: instrument-build $(INSTRUMENT_RUNTIME_STAMP)
-	$(PROFILE_RUNTIME_ENV_instrument) "$(INSTRUMENT_APP)"
+	$(PROFILE_RUNTIME_ENV_instrument) "$(INSTRUMENT_APP)" --instrument-seconds "$(INSTRUMENT_SECONDS)"
+
+INSTRUMENT_SECONDS ?= 0
+INSTRUMENT_DEEP_DIR := $(BUILD_DIR)/instrument-deep
+INSTRUMENT_DEEP_APP := $(INSTRUMENT_DEEP_DIR)/$(APP)
+
+instrument-deep: instrument-build $(INSTRUMENT_RUNTIME_STAMP)
+	@mkdir -p "$(INSTRUMENT_DEEP_DIR)/assets" "$(INSTRUMENT_DEEP_DIR)/shaders"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_instrument) $(PROFILE_DEFINE_FLAGS_instrument_deep) -out:$(INSTRUMENT_DEEP_APP) -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
+	cp -R assets/. "$(INSTRUMENT_DEEP_DIR)/assets/"
+	cp -R build/generated/shaders/. "$(INSTRUMENT_DEEP_DIR)/shaders/"
+	$(PROFILE_RUNTIME_ENV_instrument) "$(INSTRUMENT_DEEP_APP)" --instrument-seconds "$(INSTRUMENT_SECONDS)"
 
 run: build
 	$(PROFILE_RUNTIME_ENV_debug) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(DEV_APP)"

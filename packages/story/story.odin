@@ -20,6 +20,8 @@ Resident :: enum {
     Iva,
     Bojan,
     Zora,
+    Vesna,
+    Petar,
 }
 
 Romance_Stage :: enum {
@@ -79,6 +81,11 @@ State :: struct {
     tarot_seed:           u32,
     tarot_last_moment:    u32,
     tarot_layout:         tarot.Layout,
+    clinic_visits:        int,
+    // Quest punctuation is a notification, not a permanent label. Remember
+    // the action state last seen in conversation so it stays gone until that
+    // resident has something new to say or do.
+    resident_action_seen: [Resident]u64,
 }
 
 resident_name :: proc(resident: Resident) -> string {
@@ -95,6 +102,10 @@ resident_name :: proc(resident: Resident) -> string {
         return "Bojan"
     case .Zora:
         return "Zora"
+    case .Vesna:
+        return "Dr Vesna"
+    case .Petar:
+        return "Petar"
     }
     return ""
 }
@@ -106,6 +117,10 @@ resident_island :: proc(resident: Resident) -> Island {
     case .Gerta, .Niko, .Bojan:
         return .West
     case .Zora:
+        return .East
+    case .Vesna:
+        return .West
+    case .Petar:
         return .East
     }
     return .West
@@ -309,6 +324,32 @@ niko_speaker :: proc(_: ^dialogue.Context) -> string { return "NIKO" }
 iva_speaker :: proc(_: ^dialogue.Context) -> string { return "IVA" }
 bojan_speaker :: proc(_: ^dialogue.Context) -> string { return "BOJAN" }
 zora_speaker :: proc(_: ^dialogue.Context) -> string { return "ZORA" }
+vesna_speaker :: proc(_: ^dialogue.Context) -> string { return "DR VESNA" }
+petar_speaker :: proc(_: ^dialogue.Context) -> string { return "PETAR" }
+
+vesna_text :: proc(ctx: ^dialogue.Context) -> string {
+    state := state_from_context(ctx)
+    if state == nil || state.clinic_visits == 0 {
+        return "La clinica is quiet, dobro. Mais we keep un letto pronto, perché pilots confuse fortuna con meteo."
+    }
+    if state.clinic_visits == 1 {
+        return "Niente rotto. Un po' de riposo, beaucoup d'acqua, und oggi no bravura. Tes lunettes sono sul vassoio."
+    }
+    return fmt.tprintf(
+        "Visita numero %d. Tu connais la routine: acqua, repos, then guarda il meteo before il motore.",
+        state.clinic_visits,
+    )
+}
+
+petar_text :: proc(ctx: ^dialogue.Context) -> string {
+    state := state_from_context(ctx)
+    if state == nil || state.clinic_visits == 0 {
+        return "Io wash le lenzuola ogni mattina. Das is not une invitation à remplirle il letto, capito?"
+    }
+    return(
+        "Tes lunettes sont sul vassoio, le scarf est asciutta, und il tuo aeroplano aspetta all'airfield. In quest'ordine." \
+    )
+}
 
 zora_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
@@ -722,8 +763,47 @@ resident_has_action :: proc(state: ^State, resident: Resident) -> bool {
         return can_report_crash(&ctx) || can_inspect_crash(&ctx) || can_patch_wing(&ctx) || can_verify_repair(&ctx)
     case .Zora:
         return true
+    case .Vesna, .Petar:
+        return true
     }
     return false
+}
+
+resident_action_signature :: proc(state: ^State, resident: Resident) -> u64 {
+    if state == nil do return 0
+    // FNV-1a over the campaign state which can change actionable dialogue.
+    // A newly unlocked step restores the marker even when it belongs to the
+    // same resident as the step just acknowledged.
+    signature := u64(14695981039346656037)
+    values := [10]u64 {
+        u64(resident) + 1,
+        u64(state.romance) + 1,
+        u64(state.repair) + 1,
+        u64(state.airfield_errand) + 1,
+        u64(state.delivery.kind) + 1,
+        u64(state.delivery.from) + 1,
+        u64(state.delivery.to) + 1,
+        state.delivery.active ? 2 : 1,
+        u64(state.repeat_deliveries) + 1,
+        u64(tarot_moment(state)) + 1,
+    }
+    for value in values {
+        signature = (signature ~ value) * 1099511628211
+    }
+    return signature
+}
+
+resident_has_unseen_action :: proc(state: ^State, resident: Resident) -> bool {
+    return(
+        state != nil &&
+        resident_has_action(state, resident) &&
+        state.resident_action_seen[resident] != resident_action_signature(state, resident) \
+    )
+}
+
+acknowledge_resident_action :: proc(state: ^State, resident: Resident) {
+    if state == nil || !resident_has_action(state, resident) do return
+    state.resident_action_seen[resident] = resident_action_signature(state, resident)
 }
 
 Catalog :: struct {
@@ -740,14 +820,20 @@ Catalog :: struct {
     bojan_choices:          [5]dialogue.Choice,
     zora_choices:           [4]dialogue.Choice,
     zora_return_choices:    [1]dialogue.Choice,
+    vesna_choices:          [1]dialogue.Choice,
+    petar_choices:          [1]dialogue.Choice,
     niko_nodes:             [7]dialogue.Node,
     iva_nodes:              [4]dialogue.Node,
     bojan_nodes:            [1]dialogue.Node,
     zora_nodes:             [2]dialogue.Node,
+    vesna_nodes:            [1]dialogue.Node,
+    petar_nodes:            [1]dialogue.Node,
     niko:                   dialogue.Definition,
     iva:                    dialogue.Definition,
     bojan:                  dialogue.Definition,
     zora:                   dialogue.Definition,
+    vesna:                  dialogue.Definition,
+    petar:                  dialogue.Definition,
 }
 
 init_catalog :: proc(catalog: ^Catalog) {
@@ -872,5 +958,19 @@ init_catalog :: proc(catalog: ^Catalog) {
     catalog.zora = {
         id    = "zora",
         nodes = catalog.zora_nodes[:],
+    }
+
+    catalog.vesna_choices[0] = dialogue.choice("Thanks, doctor. I'll take it slower.")
+    catalog.vesna_nodes[0] = dialogue.node("vesna", vesna_text, catalog.vesna_choices[:], vesna_speaker)
+    catalog.vesna = {
+        id    = "vesna",
+        nodes = catalog.vesna_nodes[:],
+    }
+
+    catalog.petar_choices[0] = dialogue.choice("I'll try to return by the door next time.")
+    catalog.petar_nodes[0] = dialogue.node("petar", petar_text, catalog.petar_choices[:], petar_speaker)
+    catalog.petar = {
+        id    = "petar",
+        nodes = catalog.petar_nodes[:],
     }
 }
