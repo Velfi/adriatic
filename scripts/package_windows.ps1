@@ -59,13 +59,36 @@ Invoke-Checked "lib" @("/nologo", "/OUT:$SignpostLibrary", $SignpostObject)
 
 $TextshapeObject = Join-Path $Build "textshape.obj"
 $TextshapeLibrary = Join-Path $ZeldaEngineRoot "third_party/textshape/textshape.lib"
+$UnicodeRoot = Join-Path $ZeldaEngineRoot "third_party/unicode"
+$SheenBidiRoot = Join-Path $UnicodeRoot "sheenbidi"
+$LibgraphemeRoot = Join-Path $UnicodeRoot "libgrapheme"
 Invoke-Checked "cl" @(
 	"/nologo", "/O2", "/DNDEBUG", "/std:c17",
 	"/I$Include", "/I$(Join-Path $Include 'harfbuzz')", "/I$(Join-Path $Include 'freetype2')",
+	"/I$(Join-Path $SheenBidiRoot 'Headers')", "/I$(Join-Path $SheenBidiRoot 'Source')",
+	"/I$LibgraphemeRoot",
 	"/c", (Join-Path $ZeldaEngineRoot "third_party/textshape/textshape.c"),
 	"/Fo$TextshapeObject"
 )
-Invoke-Checked "lib" @("/nologo", "/OUT:$TextshapeLibrary", $TextshapeObject)
+$UnicodeObjects = @()
+$SheenBidiObject = Join-Path $Build "SheenBidi.obj"
+Invoke-Checked "cl" @(
+	"/nologo", "/O2", "/DNDEBUG", "/std:c17", "/DSB_CONFIG_UNITY",
+	"/I$(Join-Path $SheenBidiRoot 'Headers')", "/I$(Join-Path $SheenBidiRoot 'Source')",
+	"/c", (Join-Path $SheenBidiRoot "Source/SheenBidi.c"),
+	"/Fo$SheenBidiObject"
+)
+$UnicodeObjects += $SheenBidiObject
+foreach ($source in @("character.c", "line.c", "utf8.c", "util.c", "word.c")) {
+	$object = Join-Path $Build ("grapheme_" + [IO.Path]::GetFileNameWithoutExtension($source) + ".obj")
+	Invoke-Checked "cl" @(
+		"/nologo", "/O2", "/DNDEBUG", "/std:c17", "/I$LibgraphemeRoot",
+		"/c", (Join-Path $LibgraphemeRoot "src/$source"),
+		"/Fo$object"
+	)
+	$UnicodeObjects += $object
+}
+Invoke-Checked "lib" (@("/nologo", "/OUT:$TextshapeLibrary", $TextshapeObject) + $UnicodeObjects)
 
 # Build Adriatic's xatlas/meshoptimizer bridge imported by the world and vehicle
 # packages. Keep the source list aligned with the native archive rules in the
