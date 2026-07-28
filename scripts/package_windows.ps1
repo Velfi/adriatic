@@ -191,7 +191,8 @@ $LinkerFlags = "/LIBPATH:$Lib SDL3.lib harfbuzz.lib freetype.lib vulkan-1.lib /L
 Invoke-Checked "odin" @(
 	"build", (Join-Path $Root "src"),
 	"-collection:zelda_engine=$(Join-Path $ZeldaEngineRoot 'packages')",
-	"-o:speed", "-out:$Exe", "-extra-linker-flags:$LinkerFlags"
+	"-o:speed", "-no-instrumentation-force-inline",
+	"-out:$Exe", "-extra-linker-flags:$LinkerFlags"
 )
 
 if (Test-Path $Package) { Remove-Item -Recurse -Force $Package }

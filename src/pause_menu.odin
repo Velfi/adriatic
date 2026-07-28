@@ -81,30 +81,35 @@ crunchiness_apply :: proc(value: Crunchiness) {
     }
 }
 
-pause_menu_is_open :: proc(editor: ^Editor) -> bool {
+@(no_instrumentation)
+pause_menu_is_open :: #force_inline proc(editor: ^Editor) -> bool {
     return editor != nil && (editor.console.open || editor.main_menu_active || editor.pause_screen != .Closed)
 }
 
-pause_menu_panel :: proc(width, height: i32, options: bool) -> rl.Rectangle {
+@(no_instrumentation)
+pause_menu_panel :: #force_inline proc(width, height: i32, options: bool) -> rl.Rectangle {
     panel_width := min(f32(500), f32(width) - 40)
     panel_height := options ? f32(560) : f32(488)
     panel_height = min(panel_height, f32(height) - 32)
     return {(f32(width) - panel_width) * .5, (f32(height) - panel_height) * .5, panel_width, panel_height}
 }
 
-pause_menu_button_bounds :: proc(panel: rl.Rectangle, row: int) -> rl.Rectangle {
+@(no_instrumentation)
+pause_menu_button_bounds :: #force_inline proc(panel: rl.Rectangle, row: int) -> rl.Rectangle {
     return {panel.x + 44, panel.y + 126 + f32(row) * 58, panel.width - 88, 46}
 }
 
 MAIN_MENU_BUTTON_COUNT :: 3
 
-main_menu_panel :: proc(width, height: i32) -> rl.Rectangle {
+@(no_instrumentation)
+main_menu_panel :: #force_inline proc(width, height: i32) -> rl.Rectangle {
     panel_width := min(f32(430), f32(width) - 48)
     panel_height := min(f32(360), f32(height) - 48)
     return {f32(width) - panel_width - 54, (f32(height) - panel_height) * .5, panel_width, panel_height}
 }
 
-main_menu_button_bounds :: proc(panel: rl.Rectangle, row: int) -> rl.Rectangle {
+@(no_instrumentation)
+main_menu_button_bounds :: #force_inline proc(panel: rl.Rectangle, row: int) -> rl.Rectangle {
     return {panel.x + 42, panel.y + 128 + f32(row) * 62, panel.width - 84, 48}
 }
 
@@ -113,29 +118,35 @@ OPTIONS_RESTORE_FOCUS :: OPTIONS_ROW_COUNT
 OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
 OPTIONS_CONTENT_HEIGHT :: f32(786)
 
-options_menu_viewport :: proc(panel: rl.Rectangle) -> rl.Rectangle {
+@(no_instrumentation)
+options_menu_viewport :: #force_inline proc(panel: rl.Rectangle) -> rl.Rectangle {
     return {panel.x + 30, panel.y + 108, panel.width - 54, max(panel.height - 178, f32(80))}
 }
 
-options_menu_max_scroll :: proc(panel: rl.Rectangle) -> f32 {
+@(no_instrumentation)
+options_menu_max_scroll :: #force_inline proc(panel: rl.Rectangle) -> f32 {
     return max(OPTIONS_CONTENT_HEIGHT - options_menu_viewport(panel).height, f32(0))
 }
 
-options_menu_row_bounds :: proc(panel: rl.Rectangle, row: int, scroll_y: f32 = 0) -> rl.Rectangle {
+@(no_instrumentation)
+options_menu_row_bounds :: #force_inline proc(panel: rl.Rectangle, row: int, scroll_y: f32 = 0) -> rl.Rectangle {
     viewport := options_menu_viewport(panel)
     return {panel.x + 40, viewport.y + 10 + f32(row) * 72 - scroll_y, panel.width - 80, 58}
 }
 
-options_menu_restore_bounds :: proc(panel: rl.Rectangle, scroll_y: f32 = 0) -> rl.Rectangle {
+@(no_instrumentation)
+options_menu_restore_bounds :: #force_inline proc(panel: rl.Rectangle, scroll_y: f32 = 0) -> rl.Rectangle {
     viewport := options_menu_viewport(panel)
     return {panel.x + 44, viewport.y + 730 - scroll_y, panel.width - 88, 46}
 }
 
-options_menu_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
+@(no_instrumentation)
+options_menu_back_bounds :: #force_inline proc(panel: rl.Rectangle) -> rl.Rectangle {
     return {panel.x + 44, panel.y + panel.height - 54, panel.width - 88, 46}
 }
 
-options_menu_scrollbar_track :: proc(panel: rl.Rectangle) -> rl.Rectangle {
+@(no_instrumentation)
+options_menu_scrollbar_track :: #force_inline proc(panel: rl.Rectangle) -> rl.Rectangle {
     viewport := options_menu_viewport(panel)
     return {panel.x + panel.width - 19, viewport.y + 8, 4, max(viewport.height - 16, f32(16))}
 }
@@ -150,7 +161,8 @@ options_menu_scrollbar_thumb :: proc(panel: rl.Rectangle, scroll_y: f32) -> rl.R
     return {track.x - 3, track.y + travel * clamp(scroll_y / maximum, 0, 1), track.width + 6, thumb_height}
 }
 
-options_menu_slider_track :: proc(bounds: rl.Rectangle) -> rl.Rectangle {
+@(no_instrumentation)
+options_menu_slider_track :: #force_inline proc(bounds: rl.Rectangle) -> rl.Rectangle {
     return {bounds.x + 14, bounds.y + 41, bounds.width - 28, 6}
 }
 
