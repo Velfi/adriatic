@@ -48,9 +48,8 @@ Quest_Catalog :: struct {
     ready_requirements:        [2]quest.Requirement,
     acceptance_requirements:   [1]quest.Requirement,
     meeting_requirements:      [1]quest.Requirement,
-    post_requirements:         [1]quest.Requirement,
     stamp_reward:              [1]quest.Reward,
-    starts:                    [1]quest.Node_ID,
+    starts:                    [2]quest.Node_ID,
     nodes:                     [13]quest.Node,
     definition:                quest.Definition,
 }
@@ -97,9 +96,8 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
     catalog.ready_requirements = {{node = invitation}, {node = repaired}}
     catalog.acceptance_requirements = {{node = ready}}
     catalog.meeting_requirements = {{node = acceptance}}
-    catalog.post_requirements = {{node = meeting}}
     catalog.stamp_reward = {{key = "stamp", amount = 1}}
-    catalog.starts = {magneto_out}
+    catalog.starts = {magneto_out, post}
 
     catalog.nodes = {
         {
@@ -225,7 +223,6 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
             location = "Across the water",
             kind = .Objective,
             objective = {kind = .Deliver, key = "post-route"},
-            requirements = catalog.post_requirements[:],
             successors = catalog.post_successors[:],
             rewards = catalog.stamp_reward[:],
             repeatable = true,
@@ -267,6 +264,10 @@ ensure_quest_progress :: proc(state: ^State) -> bool {
     catalog: Quest_Catalog
     init_quest_catalog(&catalog)
     if state.quest.definition_id == catalog.definition.id && state.quest.node_count == len(catalog.definition.nodes) {
+        // Refresh against the current authored graph so newly introduced
+        // always-available starts also unlock in existing saves.
+        graph_update: quest.Update
+        quest.refresh(&state.quest, &catalog.definition, &graph_update)
         projected: State
         _ = apply_quest_projection(&projected, &state.quest, &catalog)
         if projected.romance == state.romance &&

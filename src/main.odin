@@ -2349,6 +2349,35 @@ seed_default_island_towns :: proc(editor: ^Editor) {
         editor.architecture_city_plan.parcel_count += plan.parcel_count
         editor.architecture_city_plan.alley_count += plan.alley_count
         editor.architecture_city_plan.lamp_count += plan.lamp_count
+        // Give every island a permanent postal counter on its main street.
+        // Promote an existing central parcel so the office inherits the
+        // generated town's frontage, access, and regional architecture.
+        post_office_index := -1
+        post_office_score := f32(1e30)
+        for structure_index in first_structure ..< editor.project.structure_count {
+            structure := &editor.project.structures[structure_index]
+            if structure.kind != .Architecture || structure.height > 60 do continue
+            score :=
+                math.abs(structure.center_z - town_z) * 2 +
+                math.abs(structure.center_x - island_center)
+            if score < post_office_score {
+                post_office_score = score
+                post_office_index = structure_index
+            }
+        }
+        if post_office_index >= 0 {
+            post_office := &editor.project.structures[post_office_index]
+            post_office.building = architecture.architecture_identity(
+                {
+                    region = region,
+                    purpose = .Inn_Shop,
+                    route = .Civic,
+                    landmark_kind = .Post_Office,
+                    purpose_explicit = true,
+                },
+                post_office.seed,
+            )
+        }
         for structure in editor.project.structures[first_structure:editor.project.structure_count] {
             if structure.kind != .Architecture || structure.height > 60 do continue
             _ = architecture.city_density_stamp(
@@ -4085,6 +4114,10 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
         definition = &editor.story_catalog.petar
     case .Anica:
         definition = &editor.story_catalog.anica
+    case .Toma:
+        definition = &editor.story_catalog.toma
+    case .Lena:
+        definition = &editor.story_catalog.lena
     case .Marta, .Gerta:
         return false
     }
@@ -4429,7 +4462,7 @@ nearest_story_resident :: proc(
 ) {
     if editor == nil || editor.pilot.mode != .On_Foot do return {}, 0, false
     best_distance := f32(2.25 * 2.25)
-    candidates := [7]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica}
+    candidates := [9]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena}
     for candidate in candidates {
         if require_action && !story.resident_has_action(&editor.story_state, candidate) do continue
         position, placed := world_story_resident_position(editor, candidate)

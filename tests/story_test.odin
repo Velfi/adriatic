@@ -33,6 +33,30 @@ expect_choice_texts :: proc(t: ^testing.T, actual: []dialogue.Choice, expected: 
 }
 
 @(test)
+island_post_is_always_available_and_alternates_between_islands :: proc(t: ^testing.T) {
+    state: story.State
+
+    testing.expect(t, story.begin_post_delivery(&state))
+    testing.expect(t, state.romance == .Unintroduced)
+    testing.expect(t, state.delivery.kind == .Repeat_Eastbound)
+    testing.expect(t, state.delivery.origin == .West && state.delivery.destination == .East)
+    complete_current_delivery(t, &state, .Lena)
+    testing.expect(t, state.repeat_deliveries == 1 && state.stamps_earned == 1)
+
+    testing.expect(t, story.begin_post_delivery(&state))
+    testing.expect(t, state.delivery.kind == .Repeat_Westbound)
+    testing.expect(t, state.delivery.origin == .East && state.delivery.destination == .West)
+    complete_current_delivery(t, &state, .Toma)
+    testing.expect(t, state.repeat_deliveries == 2 && state.stamps_earned == 2)
+
+    // The independent postal route does not consume or advance the authored
+    // correspondence storyline.
+    complete_airfield_intro(t, &state)
+    testing.expect(t, story.begin_delivery(&state))
+    testing.expect(t, state.delivery.kind == .First_Letter)
+}
+
+@(test)
 two_island_story_advances_on_completion_and_becomes_repeatable :: proc(t: ^testing.T) {
     state: story.State
 
@@ -77,13 +101,13 @@ two_island_story_advances_on_completion_and_becomes_repeatable :: proc(t: ^testi
     testing.expect(t, story.begin_delivery(&state))
     testing.expect(t, state.delivery.kind == .Repeat_Eastbound)
     testing.expect(t, state.delivery.subject == "Bread, postcards, and one pressed flower")
-    complete_current_delivery(t, &state, .Iva)
+    complete_current_delivery(t, &state, .Lena)
     testing.expect(t, state.repeat_deliveries == 1 && state.stamps_earned == 6)
 
     testing.expect(t, story.begin_delivery(&state))
     testing.expect(t, state.delivery.kind == .Repeat_Westbound)
     testing.expect(t, state.delivery.subject == "Lamp glass and a note for supper")
-    complete_current_delivery(t, &state, .Niko)
+    complete_current_delivery(t, &state, .Toma)
     testing.expect(t, state.repeat_deliveries == 2 && state.stamps_earned == 7)
 }
 
@@ -137,16 +161,16 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
     testing.expect(t, dialogue.validate(&catalog.vesna))
     testing.expect(t, dialogue.validate(&catalog.petar))
     testing.expect(t, dialogue.validate(&catalog.anica))
+    testing.expect(t, dialogue.validate(&catalog.toma))
+    testing.expect(t, dialogue.validate(&catalog.lena))
     expect_choice_texts(
         t,
         catalog.niko_root_choices[:],
         []string {
             "Give Niko Iva's reply.",
             "Give Niko Iva's regatta acceptance.",
-            "Give Niko Iva's lamp glass and supper note.",
             "I'll carry your sealed letter to Iva.",
             "I'll carry your regatta invitation to Iva.",
-            "I'll carry the island post to Iva.",
             "Stay under the awning.",
             "I'll leave you to your work.",
         },
@@ -170,10 +194,8 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
         []string {
             "Give Iva Niko's sealed letter.",
             "Give Iva Niko's regatta invitation.",
-            "Give Iva Niko's bread, postcards, and flower.",
             "I'll carry your reply to Niko.",
             "I'll carry your regatta acceptance to Niko.",
-            "I'll carry the island post to Niko.",
             "I'll leave you to tend the lamp.",
         },
     )
@@ -369,7 +391,7 @@ resident_action_indicators_follow_campaign_progress :: proc(t: ^testing.T) {
     testing.expect(t, story.resident_has_action(&state, .Niko))
     testing.expect(t, !story.resident_has_action(&state, .Iva))
     testing.expect(t, story.begin_delivery(&state))
-    testing.expect(t, story.resident_has_action(&state, .Iva))
+    testing.expect(t, story.resident_has_action(&state, .Lena))
 }
 
 @(test)
@@ -461,14 +483,15 @@ westbound_opening_is_quiet_and_carries_main_and_side_cargo_together :: proc(t: ^
     testing.expect(t, story.ensure_quest_progress(&state))
     testing.expect(t, state.airfield_errand == .Not_Offered)
     testing.expect(t, !state.delivery.active)
-    testing.expect(t, quest.first_active(&state.quest, &catalog.definition) == quest.no_node)
+    testing.expect(t, quest.first_active(&state.quest, &catalog.definition) == story.quest_node_id(.Post_Route))
     testing.expect(t, !quest.is_presented(&state.quest, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
     testing.expect(t, !story.begin_delivery(&state))
     testing.expect(t, !story.report_crash(&state))
 
     testing.expect(t, story.accept_airfield_errand(&state))
     testing.expect(t, state.airfield_errand == .Westbound)
-    testing.expect(t, quest.first_active(&state.quest, &catalog.definition) == story.quest_node_id(.Magneto_Westbound))
+    testing.expect(t, quest.first_active(&state.quest, &catalog.definition) == story.quest_node_id(.Post_Route))
+    testing.expect(t, quest.is_presented(&state.quest, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
     testing.expect(t, story.handoff_broken_magneto(&state))
     testing.expect(t, state.airfield_errand == .Eastbound)
 

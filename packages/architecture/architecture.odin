@@ -97,6 +97,8 @@ architecture_landmark_archetype :: proc(kind: buildings.Landmark_Kind) -> buildi
         return .Market_Hall
     case .Cycladic_Bell:
         return .Cycladic_Bell
+    case .Post_Office:
+        return .Post_Office
     case .None:
         return .Legacy
     }
@@ -610,7 +612,7 @@ facade_profile :: proc(archetype: buildings.Archetype) -> Facade_Profile {
             opening_ratio_max = .14,
             blank_sides = true,
         }
-    case .Townhouse, .Shop_House:
+    case .Townhouse, .Shop_House, .Post_Office:
         return {
             front_bays_min = 2,
             front_bays_max = 3,

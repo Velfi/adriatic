@@ -105,6 +105,10 @@ dialogue_voice_profile :: proc(resident: story.Resident) -> engine_sound.Dialogu
         return {285, 115, .44, .74, .11}
     case .Anica:
         return {405, 165, .64, .46, .10}
+    case .Toma:
+        return {295, 125, .50, .70, .105}
+    case .Lena:
+        return {385, 170, .65, .50, .10}
     }
     return {340, 140, .55, .6, .1}
 }
@@ -358,6 +362,10 @@ dialogue_portrait_color :: proc(editor: ^Editor, resident: story.Resident, playe
         return {169, 128, 91, 255}
     case .Anica:
         return {181, 169, 146, 255}
+    case .Toma:
+        return {138, 101, 72, 255}
+    case .Lena:
+        return {210, 194, 154, 255}
     }
     return {145, 125, 101, 255}
 }

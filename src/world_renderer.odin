@@ -388,6 +388,7 @@ World_Material_Kind :: enum u32 {
     Glass,
     Emissive_Halo,
     Sailor_Hat,
+    Sign,
 }
 
 World_Vertex :: struct {
@@ -481,7 +482,7 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
     cards:                  [dynamic]Bougainvillea_Card_Descriptor,
 }
 
-TOWN_MOUSE_CACHE_COUNT :: len(terrain.DEFAULT_ISLAND_SIGNS) * 7 + 2
+TOWN_MOUSE_CACHE_COUNT :: len(terrain.DEFAULT_ISLAND_SIGNS) * 7 + 4
 TOWN_MOUSE_ANIMATION_HZ :: f32(30)
 TOWN_MOUSE_TERRAIN_RADIUS :: f32(2.5)
 
@@ -565,6 +566,7 @@ World_Renderer :: struct {
     vehicle_paint_atlas:               resources.Image,
     soda_cap_logo:                     resources.Image,
     architecture_material_atlas:       resources.Image,
+    business_sign_atlas:               resources.Image,
     vehicle_paint_staging:             [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vehicle_paint_descriptor_layout:   vk.DescriptorSetLayout,
     vehicle_paint_descriptor_pool:     vk.DescriptorPool,
@@ -5032,7 +5034,8 @@ world_architecture_mass :: proc(
             )
             world_box_rotated({mark_x, plaque_y, mark_z}, {.035, .11, .025}, structure.rotation, {75, 68, 58, 255})
         }
-        if structure.seed % 4 == 1 {
+        postal := identity.archetype == .Post_Office
+        if postal || structure.seed % 4 == 1 {
             mailbox_x, mailbox_z := world_rotate_xz(
                 structure.center_x,
                 structure.center_z,
@@ -5052,6 +5055,46 @@ world_architecture_mass :: proc(
                 structure.rotation,
                 {189, 174, 143, 255},
             )
+        }
+        if postal {
+            // A projecting striped postal sign remains legible from the street,
+            // while the cream inset reads as an envelope without text rendering.
+            postal_sign_local_x := -lantern_side * (door_width * .5 + .72)
+            postal_sign_y := structure.base_y + step_height + door_height * .88
+            postal_sign_x, postal_sign_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                postal_sign_local_x,
+                structure.depth * .5 + .72,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {postal_sign_x, postal_sign_y, postal_sign_z},
+                {1.12, .72, .12},
+                structure.rotation,
+                {45, 73, 104, 255},
+            )
+            world_box_rotated(
+                {postal_sign_x, postal_sign_y, postal_sign_z},
+                {.72, .42, .15},
+                structure.rotation,
+                {229, 216, 180, 255},
+            )
+            for stripe in -1 ..= 1 {
+                stripe_x, stripe_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    postal_sign_local_x + f32(stripe) * .43,
+                    structure.depth * .5 + .805,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {stripe_x, postal_sign_y, stripe_z},
+                    {.12, .62, .035},
+                    structure.rotation,
+                    {154, 54, 52, 255},
+                )
+            }
         }
         if !mixed_use && structure.seed % 8 == 5 {
             urn_side := -lantern_side
@@ -5419,7 +5462,8 @@ world_architecture_mass :: proc(
                 identity.archetype == .Mixed_Use_Dwelling ||
                 identity.archetype == .Workshop ||
                 identity.archetype == .Harbor_Office ||
-                identity.archetype == .Market_Hall
+                identity.archetype == .Market_Hall ||
+                identity.archetype == .Post_Office
             if commercial && (storefront || (structure.height < 18 && structure.seed % 4 == 0)) {
                 sign_side := (structure.seed & 64) == 0 ? f32(-1) : f32(1)
                 sign_local_x := storefront ? f32(0) : sign_side * (door_width * .5 + .72)
@@ -15831,6 +15875,87 @@ world_postale_pilot :: proc(editor: ^Editor) {
 
 MARTA_STOOL_HEIGHT :: f32(.49)
 
+Business_Sign_Kind :: enum {
+    Post,
+    Fortuna,
+    Clinica,
+    Pane,
+    Aerodromo,
+}
+
+world_business_sign_face :: proc(
+    center: third_person.Vec3,
+    rotation, width, height: f32,
+    kind: Business_Sign_Kind,
+) {
+    outward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
+    right := third_person.Vec3{math.cos(rotation), 0, math.sin(rotation)}
+    half_width, half_height := width * .5, height * .5
+    points := [4]third_person.Vec3 {
+        center - right * half_width + third_person.Vec3{0, half_height, 0},
+        center - right * half_width - third_person.Vec3{0, half_height, 0},
+        center + right * half_width - third_person.Vec3{0, half_height, 0},
+        center + right * half_width + third_person.Vec3{0, half_height, 0},
+    }
+    tile_width := f32(1) / 5
+    u0 := f32(kind) * tile_width
+    u1 := u0 + tile_width
+    uvs := [4][2]f32{{u0, 0}, {u0, 1}, {u1, 1}, {u1, 0}}
+    indices := [6]int{0, 1, 2, 0, 2, 3}
+    for index in indices {
+        vertex := world_vertex(points[index], {255, 255, 255, 255})
+        vertex.kind = .Sign
+        vertex.normal = {outward.x, outward.y, outward.z}
+        vertex.uv = uvs[index]
+        append(&world_renderer.vertices, vertex)
+    }
+}
+
+world_business_sign :: proc(
+    center: third_person.Vec3,
+    rotation: f32,
+    kind: Business_Sign_Kind,
+    width: f32 = 1.72,
+) {
+    height := width
+    depth := f32(.14)
+    segments := 24
+    outward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
+    rim := rl.Color{55, 49, 43, 255}
+    backing := rl.Color{83, 70, 56, 255}
+    for segment in 0 ..< segments {
+        angle_0 := f32(segment) / f32(segments) * 2 * math.PI
+        angle_1 := f32(segment + 1) / f32(segments) * 2 * math.PI
+        local_0 := third_person.Vec3{math.cos(angle_0) * width * .48, math.sin(angle_0) * height * .43, 0}
+        local_1 := third_person.Vec3{math.cos(angle_1) * width * .48, math.sin(angle_1) * height * .43, 0}
+        p0x, p0z := world_rotate_xz(center.x, center.z, local_0.x, 0, rotation)
+        p1x, p1z := world_rotate_xz(center.x, center.z, local_1.x, 0, rotation)
+        front_0 := third_person.Vec3{p0x, center.y + local_0.y, p0z} + outward * (depth * .5)
+        front_1 := third_person.Vec3{p1x, center.y + local_1.y, p1z} + outward * (depth * .5)
+        back_0 := front_0 - outward * depth
+        back_1 := front_1 - outward * depth
+        world_quad(front_0, back_0, back_1, front_1, rim)
+        world_triangle(center + outward * depth * .5, front_0, front_1, backing)
+        world_triangle(center - outward * depth * .5, back_1, back_0, backing)
+    }
+    world_business_sign_face(center + outward * (depth * .5 + .006), rotation, width, height, kind)
+    bracket_x, bracket_z := world_rotate_xz(center.x, center.z, 0, -.34, rotation)
+    world_box_rotated({bracket_x, center.y + height * .58, bracket_z}, {width * .72, .07, .07}, rotation, rim)
+    for side in -1 ..= 1 {
+        if side == 0 do continue
+        loop_x, loop_z := world_rotate_xz(center.x, center.z, f32(side) * width * .30, -.18, rotation)
+        world_box_rotated({loop_x, center.y + height * .50, loop_z}, {.055, .24, .055}, rotation, rim)
+    }
+}
+
+world_business_sign_for_resident :: proc(editor: ^Editor, resident: story.Resident, kind: Business_Sign_Kind) {
+    position, rotation, found := world_story_resident_home_pose(editor, resident)
+    if !found do return
+    side := resident == .Lena || resident == .Anica ? f32(-1) : f32(1)
+    x, z := world_rotate_xz(position.x, position.z, side * 1.45, -.54, rotation)
+    world_business_sign({x, position.y + 2.32, z}, rotation, kind)
+}
+
 world_attendant_kiosk :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
     if world_sphere_in_view(editor, editor.attendant_position + third_person.Vec3{0, 1.5, 0}, 3.5, 4) {
@@ -15863,6 +15988,7 @@ world_attendant_kiosk_at :: proc(editor: ^Editor, p: third_person.Vec3) {
     world_box_rotated({p.x, ground + .62, p.z - .36}, {2.85, .72, .14}, 0, timber)
     world_box_rotated({p.x, ground + 2.28, p.z + 1.47}, {2.25, .48, .08}, 0, cream)
     world_box_rotated({p.x, ground + 2.28, p.z + 1.40}, {1.55, .14, .06}, 0, painted)
+    world_business_sign({p.x, ground + 3.58, p.z + 1.44}, 0, .Aerodromo, 1.58)
 
     // Marta is much shorter than the service counter. Give her a sturdy
     // standing stool on the raised deck so she can comfortably see customers.
@@ -15980,7 +16106,7 @@ story_resident_town_slot :: proc(resident: story.Resident) -> (island_index, res
         return 0, 6, true
     case .Anica:
         return 1, 6, true
-    case .Marta:
+    case .Marta, .Toma, .Lena:
         return 0, 0, false
     case .Gerta:
         return 0, 0, false
@@ -15997,6 +16123,76 @@ world_story_resident_home_pose :: proc(
     ok: bool,
 ) {
     if editor == nil do return {}, 0, false
+    if resident == .Zora {
+        half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+        island_signs := terrain.DEFAULT_ISLAND_SIGNS
+        island_center := island_signs[1] * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
+        best_structure_index := -1
+        best_post_office_distance := -f32(1)
+        structures := editor.project.structures[:editor.project.structure_count]
+        for structure, structure_index in structures {
+            identity := architecture.architecture_resolve_legacy_identity(structure)
+            storefront :=
+                identity.archetype == .Shop_House ||
+                identity.archetype == .Mixed_Use_Dwelling
+            if structure.kind != .Architecture || structure.height > 60 || !storefront do continue
+            island_dx, island_dz := structure.center_x - island_center, structure.center_z - island_center
+            if island_dx * island_dx + island_dz * island_dz > island_radius * island_radius do continue
+            nearest_post_office_distance := f32(1e30)
+            for office in structures {
+                office_identity := architecture.architecture_resolve_legacy_identity(office)
+                if office.kind != .Architecture || office_identity.archetype != .Post_Office do continue
+                office_dx, office_dz := structure.center_x - office.center_x, structure.center_z - office.center_z
+                nearest_post_office_distance = min(
+                    nearest_post_office_distance,
+                    office_dx * office_dx + office_dz * office_dz,
+                )
+            }
+            if nearest_post_office_distance > best_post_office_distance {
+                best_post_office_distance = nearest_post_office_distance
+                best_structure_index = structure_index
+            }
+        }
+        if best_structure_index < 0 do return {}, 0, false
+        frontage := architecture.architecture_frontage_structure(structures[best_structure_index])
+        x, z := world_rotate_xz(
+            frontage.center_x,
+            frontage.center_z,
+            1.4,
+            frontage.depth * .5 + 2.6,
+            frontage.rotation,
+        )
+        ground_y := terrain.sample_height(&editor.project, 0, x, z)
+        if ground_y <= editor.project.sea_level + .35 do return {}, 0, false
+        return {x, ground_y, z}, frontage.rotation, true
+    }
+    if resident == .Toma || resident == .Lena {
+        target_island := resident == .Toma ? 0 : 1
+        half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+        island_signs := terrain.DEFAULT_ISLAND_SIGNS
+        island_center := island_signs[target_island] * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
+        for structure in editor.project.structures[:editor.project.structure_count] {
+            identity := architecture.architecture_resolve_legacy_identity(structure)
+            if structure.kind != .Architecture || identity.archetype != .Post_Office do continue
+            dx, dz := structure.center_x - island_center, structure.center_z - island_center
+            if dx * dx + dz * dz > island_radius * island_radius do continue
+            frontage := architecture.architecture_frontage_structure(structure)
+            lateral := resident == .Toma ? f32(-1.1) : f32(1.1)
+            x, z := world_rotate_xz(
+                frontage.center_x,
+                frontage.center_z,
+                lateral,
+                frontage.depth * .5 + 2.3,
+                frontage.rotation,
+            )
+            ground_y := terrain.sample_height(&editor.project, 0, x, z)
+            if ground_y <= editor.project.sea_level + .35 do continue
+            return {x, ground_y, z}, frontage.rotation, true
+        }
+        return {}, 0, false
+    }
     island_index, resident_index, mapped := story_resident_town_slot(resident)
     if !mapped do return {}, 0, false
     structures := editor.project.structures[:editor.project.structure_count]
@@ -16137,28 +16333,14 @@ world_story_meeting :: proc(editor: ^Editor) {
     }
 }
 
-world_clinic_sign :: proc(editor: ^Editor, resident: story.Resident) {
-    if editor == nil do return
-    attendant, frontage_rotation, found := world_story_resident_home_pose(editor, resident)
-    if !found do return
-    side_x, side_z := math.cos(frontage_rotation), math.sin(frontage_rotation)
-    out_x, out_z := -math.sin(frontage_rotation), math.cos(frontage_rotation)
-    center := third_person.Vec3 {
-        attendant.x - side_x * 1.45 - out_x * .32,
-        attendant.y + 2.15,
-        attendant.z - side_z * 1.45 - out_z * .32,
-    }
-    white := rl.Color{238, 234, 218, 255}
-    red := rl.Color{177, 53, 52, 255}
-    world_box_rotated(center, {1.02, .82, .09}, frontage_rotation, white)
-    world_box_rotated(center + third_person.Vec3{0, 0, -.04}, {.18, .58, .13}, frontage_rotation, red)
-    world_box_rotated(center + third_person.Vec3{0, 0, -.05}, {.62, .18, .14}, frontage_rotation, red)
-}
-
 world_town_mice :: proc(editor: ^Editor) {
     if editor == nil do return
-    world_clinic_sign(editor, .Vesna)
-    world_clinic_sign(editor, .Anica)
+    world_business_sign_for_resident(editor, .Niko, .Pane)
+    world_business_sign_for_resident(editor, .Zora, .Fortuna)
+    world_business_sign_for_resident(editor, .Vesna, .Clinica)
+    world_business_sign_for_resident(editor, .Anica, .Clinica)
+    world_business_sign_for_resident(editor, .Toma, .Post)
+    world_business_sign_for_resident(editor, .Lena, .Post)
 
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
@@ -16231,6 +16413,7 @@ world_town_mice :: proc(editor: ^Editor) {
                    (named_resident == .Niko || named_resident == .Iva) {
                     break
                 }
+                if named && named_resident == .Zora do break
                 rotation := frontage.rotation + math.PI * .5 + resident.facing
                 mouse_center := third_person.Vec3{x, ground_y + .75 * resident.scale, z}
                 if !static_sphere_in_frustum(
@@ -16265,6 +16448,54 @@ world_town_mice :: proc(editor: ^Editor) {
                 }
                 break
             }
+        }
+    }
+    zora_position, zora_rotation, zora_found := world_story_resident_home_pose(editor, .Zora)
+    if zora_found && world_sphere_in_view(editor, zora_position + third_person.Vec3{0, 1.1, 0}, 2, 4) {
+        world_town_mouse_model_scaled_cached(
+            editor,
+            {
+                position = zora_position,
+                rotation = zora_rotation + math.PI * .5 - .10,
+                build = 1.18,
+                snout_length = 1.10,
+                fur = .Russet,
+                pattern = .Piebald,
+                scarf_enabled = true,
+                scarf_color = {205, 151, 52, 255},
+                grounded = true,
+            },
+            1.05,
+            len(residents) + 5,
+        )
+        if story.resident_has_unseen_action(&editor.story_state, .Zora) {
+            world_mouse_interaction_indicator(editor, zora_position)
+        }
+    }
+    postal_residents := [2]story.Resident{.Toma, .Lena}
+    for postal_resident, postal_index in postal_residents {
+        position, frontage_rotation, found := world_story_resident_home_pose(editor, postal_resident)
+        if !found || !world_sphere_in_view(editor, position + third_person.Vec3{0, 1.1, 0}, 2, 4) do continue
+        is_toma := postal_resident == .Toma
+        world_town_mouse_model_scaled_cached(
+            editor,
+            {
+                position = position,
+                rotation = frontage_rotation + math.PI * .5,
+                build = is_toma ? f32(1.06) : f32(.92),
+                snout_length = is_toma ? f32(.96) : f32(1.10),
+                accessory = .Paper_Boat,
+                fur = is_toma ? Mouse_Fur.Chestnut : Mouse_Fur.Cream,
+                pattern = is_toma ? Mouse_Fur_Pattern.Hooded : Mouse_Fur_Pattern.Piebald,
+                scarf_enabled = true,
+                scarf_color = is_toma ? rl.Color{45, 73, 104, 255} : rl.Color{154, 54, 52, 255},
+                grounded = true,
+            },
+            1,
+            TOWN_MOUSE_CACHE_COUNT - 4 + postal_index,
+        )
+        if story.resident_has_unseen_action(&editor.story_state, postal_resident) {
+            world_mouse_interaction_indicator(editor, position)
         }
     }
     world_story_meeting(editor)
@@ -17109,17 +17340,19 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     }
     if !dynamic_shadow_create(&world_renderer.dynamic_shadow, ctx) do return false
     failure_stage = "vehicle paint descriptors"
-    paint_bindings := [6]vk.DescriptorSetLayoutBinding {
+    paint_bindings := [8]vk.DescriptorSetLayoutBinding {
         {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 3, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 4, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 5, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 6, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 7, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
     }
     paint_layout_info := vk.DescriptorSetLayoutCreateInfo {
         sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        bindingCount = 6,
+        bindingCount = 8,
         pBindings    = raw_data(paint_bindings[:]),
     }
     if vk.CreateDescriptorSetLayout(ctx.device, &paint_layout_info, nil, &world_renderer.vehicle_paint_descriptor_layout) != .SUCCESS do return false
@@ -17130,8 +17363,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         "vehicle paint descriptor set layout",
     )
     paint_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = 3},
-        {type = .SAMPLER, descriptorCount = 3},
+        {type = .SAMPLED_IMAGE, descriptorCount = 4},
+        {type = .SAMPLER, descriptorCount = 4},
     }
     paint_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
@@ -17193,6 +17426,15 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         }
         fmt.eprintln("architecture material atlas failed to load; using neutral fallback")
     }
+    failure_stage = "business sign atlas"
+    if !resources.texture_load_file(
+        ctx,
+        "assets/textures/signs/business-sign-atlas.png",
+        &world_renderer.business_sign_atlas,
+        {address_mode = .CLAMP_TO_EDGE},
+    ) {
+        return false
+    }
     paint_image_info := vk.DescriptorImageInfo {
         imageView   = world_renderer.vehicle_paint_atlas.view,
         imageLayout = .SHADER_READ_ONLY_OPTIMAL,
@@ -17214,7 +17456,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     architecture_material_sampler_info := vk.DescriptorImageInfo {
         sampler = world_renderer.architecture_material_atlas.sampler,
     }
-    paint_writes := [6]vk.WriteDescriptorSet {
+    business_sign_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.business_sign_atlas.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    business_sign_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.business_sign_atlas.sampler,
+    }
+    paint_writes := [8]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
             dstSet = world_renderer.vehicle_paint_descriptor,
@@ -17263,8 +17512,24 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             descriptorType = .SAMPLER,
             pImageInfo = &architecture_material_sampler_info,
         },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.vehicle_paint_descriptor,
+            dstBinding = 6,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &business_sign_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.vehicle_paint_descriptor,
+            dstBinding = 7,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &business_sign_sampler_info,
+        },
     }
-    vk.UpdateDescriptorSets(ctx.device, 6, raw_data(paint_writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(ctx.device, 8, raw_data(paint_writes[:]), 0, nil)
     pr := vk.PushConstantRange {
         stageFlags = {.VERTEX, .FRAGMENT},
         size       = u32(size_of(World_Push)),
@@ -18052,6 +18317,14 @@ dialogue_portrait_mouse_model :: proc(editor: ^Editor, resident: story.Resident,
         model.build, model.snout_length = .96, 1.08
         model.accessory, model.fur, model.pattern = .Flower, .Silver, .Pale_Belly
         model.scarf_enabled, model.scarf_color = true, {73, 126, 132, 255}
+    case .Toma:
+        model.build, model.snout_length = 1.06, .96
+        model.accessory, model.fur, model.pattern = .Paper_Boat, .Chestnut, .Hooded
+        model.scarf_enabled, model.scarf_color = true, {45, 73, 104, 255}
+    case .Lena:
+        model.build, model.snout_length = .92, 1.10
+        model.accessory, model.fur, model.pattern = .Paper_Boat, .Cream, .Piebald
+        model.scarf_enabled, model.scarf_color = true, {154, 54, 52, 255}
     }
     return model
 }
@@ -18458,6 +18731,7 @@ world_renderer_destroy :: proc() {
     resources.image_destroy(&world_renderer.vehicle_paint_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.soda_cap_logo, world_renderer.ctx)
     resources.image_destroy(&world_renderer.architecture_material_atlas, world_renderer.ctx)
+    resources.image_destroy(&world_renderer.business_sign_atlas, world_renderer.ctx)
     if world_renderer.layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.layout, nil)
     if world_renderer.sky_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.sky_layout, nil)
     if world_renderer.foliage_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.foliage_layout, nil)

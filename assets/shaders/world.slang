@@ -16,6 +16,8 @@ struct Push {
 [[vk::binding(3, 0)]] SamplerState soda_cap_logo_sampler;
 [[vk::binding(4, 0)]] Texture2D<float4> architecture_material_atlas;
 [[vk::binding(5, 0)]] SamplerState architecture_material_sampler;
+[[vk::binding(6, 0)]] Texture2D<float4> business_sign_atlas;
+[[vk::binding(7, 0)]] SamplerState business_sign_sampler;
 
 struct DynamicShadowCascade {
     // Light-space basis vectors. The fourth components contain the snapped
@@ -78,6 +80,7 @@ static const uint MATERIAL_ARCHITECTURE = 12;
 static const uint MATERIAL_GLASS = 13;
 static const uint MATERIAL_EMISSIVE_HALO = 14;
 static const uint MATERIAL_SAILOR_HAT = 15;
+static const uint MATERIAL_SIGN = 16;
 
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
 // Decode them before interpolation, lighting, and fog blending; the sRGB
@@ -1236,6 +1239,15 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             break;
         case MATERIAL_GLASS:
             base = shade_glass(input);
+            break;
+        case MATERIAL_SIGN:
+            float2 sign_tile_uv = float2(frac(input.uv.x * 5.0), input.uv.y);
+            float2 sign_ellipse = (sign_tile_uv - float2(.5, .5)) / float2(.48, .43);
+            if (dot(sign_ellipse, sign_ellipse) > 1.0) discard;
+            float4 sign_sample = business_sign_atlas.Sample(business_sign_sampler, input.uv);
+            if (sign_sample.a < .08) discard;
+            base = srgb_to_linear(sign_sample.rgb);
+            output_alpha *= sign_sample.a;
             break;
     }
     if (input.kind == MATERIAL_PLAIN ||

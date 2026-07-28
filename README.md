@@ -142,8 +142,9 @@ through later sealed deliveries. Iva plans to fly to the regatta in Bojan's
 courier plane, so diagnosing, patching, and verifying its torn wing makes their
 meeting possible; repairing it early is preserved as a useful act of
 foresight. Her arrival plays as a short cinematic before their joint
-conversation beneath a blue awning. Afterward, the route continues as an
-alternating repeatable mail job that awards one stamp per completed delivery.
+conversation beneath a blue awning. Independently, the island post is available
+from the beginning as an alternating repeatable mail job that awards one stamp
+per completed delivery.
 
 ## Wireframe renderer
 

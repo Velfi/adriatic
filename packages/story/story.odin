@@ -23,6 +23,8 @@ Resident :: enum {
     Vesna,
     Petar,
     Anica,
+    Toma,
+    Lena,
 }
 
 Romance_Stage :: enum {
@@ -109,15 +111,19 @@ resident_name :: proc(resident: Resident) -> string {
         return "Petar"
     case .Anica:
         return "Anica"
+    case .Toma:
+        return "Toma"
+    case .Lena:
+        return "Lena"
     }
     return ""
 }
 
 resident_island :: proc(resident: Resident) -> Island {
     switch resident {
-    case .Marta, .Iva:
+    case .Marta, .Iva, .Lena:
         return .East
-    case .Gerta, .Niko, .Bojan:
+    case .Gerta, .Niko, .Bojan, .Toma:
         return .West
     case .Zora:
         return .East
@@ -184,30 +190,36 @@ begin_delivery :: proc(state: ^State) -> bool {
     case .Meeting:
         return false
     case .Together:
-        eastbound := state.repeat_deliveries % 2 == 0
-        if eastbound {
-            delivery = {
-                active      = true,
-                kind        = .Repeat_Eastbound,
-                from        = .Niko,
-                to          = .Iva,
-                origin      = .West,
-                destination = .East,
-                subject     = "Bread, postcards, and one pressed flower",
-            }
-        } else {
-            delivery = {
-                active      = true,
-                kind        = .Repeat_Westbound,
-                from        = .Iva,
-                to          = .Niko,
-                origin      = .East,
-                destination = .West,
-                subject     = "Lamp glass and a note for supper",
-            }
-        }
+        return begin_post_delivery(state)
     }
     state.delivery = delivery
+    return true
+}
+
+begin_post_delivery :: proc(state: ^State) -> bool {
+    if state == nil || state.delivery.active || !ensure_quest_progress(state) do return false
+    catalog: Quest_Catalog
+    init_quest_catalog(&catalog)
+    if quest.status(&state.quest, &catalog.definition, quest_node_id(.Post_Route)) != .Active do return false
+
+    eastbound := state.repeat_deliveries % 2 == 0
+    state.delivery = eastbound ? Delivery {
+        active      = true,
+        kind        = .Repeat_Eastbound,
+        from        = .Toma,
+        to          = .Lena,
+        origin      = .West,
+        destination = .East,
+        subject     = "Bread, postcards, and one pressed flower",
+    } : Delivery {
+        active      = true,
+        kind        = .Repeat_Westbound,
+        from        = .Lena,
+        to          = .Toma,
+        origin      = .East,
+        destination = .West,
+        subject     = "Lamp glass and a note for supper",
+    }
     return true
 }
 
@@ -245,7 +257,6 @@ complete_delivery :: proc(state: ^State, recipient: Resident) -> bool {
             target = "niko",
         }
     case .Repeat_Eastbound, .Repeat_Westbound:
-        if state.romance != .Together do return false
         event = {
             kind = .Deliver,
             key  = "post-route",
@@ -658,6 +669,9 @@ bojan_text :: proc(ctx: ^dialogue.Context) -> string {
 }
 
 accept_delivery :: proc(ctx: ^dialogue.Context) { _ = begin_delivery(state_from_context(ctx)) }
+accept_post_delivery :: proc(ctx: ^dialogue.Context) { _ = begin_post_delivery(state_from_context(ctx)) }
+complete_toma_delivery :: proc(ctx: ^dialogue.Context) { _ = complete_delivery(state_from_context(ctx), .Toma) }
+complete_lena_delivery :: proc(ctx: ^dialogue.Context) { _ = complete_delivery(state_from_context(ctx), .Lena) }
 complete_niko_delivery :: proc(ctx: ^dialogue.Context) { _ = complete_delivery(state_from_context(ctx), .Niko) }
 complete_iva_delivery :: proc(ctx: ^dialogue.Context) { _ = complete_delivery(state_from_context(ctx), .Iva) }
 finish_meeting :: proc(ctx: ^dialogue.Context) { _ = complete_meeting(state_from_context(ctx)) }
@@ -709,6 +723,14 @@ has_repeat_westbound :: proc(ctx: ^dialogue.Context) -> bool { return delivery_i
 has_first_letter :: proc(ctx: ^dialogue.Context) -> bool { return delivery_is(ctx, .First_Letter) }
 has_regatta_invitation :: proc(ctx: ^dialogue.Context) -> bool { return delivery_is(ctx, .Regatta_Invitation) }
 has_repeat_eastbound :: proc(ctx: ^dialogue.Context) -> bool { return delivery_is(ctx, .Repeat_Eastbound) }
+has_post_for_toma :: proc(ctx: ^dialogue.Context) -> bool {
+    state := state_from_context(ctx)
+    return state != nil && state.delivery.active && state.delivery.to == .Toma
+}
+has_post_for_lena :: proc(ctx: ^dialogue.Context) -> bool {
+    state := state_from_context(ctx)
+    return state != nil && state.delivery.active && state.delivery.to == .Lena
+}
 
 can_begin_first_letter :: proc(ctx: ^dialogue.Context) -> bool {
     state := state_from_context(ctx)
@@ -722,7 +744,7 @@ can_begin_regatta_invitation :: proc(ctx: ^dialogue.Context) -> bool {
 
 can_begin_repeat_eastbound :: proc(ctx: ^dialogue.Context) -> bool {
     state := state_from_context(ctx)
-    return state != nil && state.romance == .Together && can_begin_niko_delivery(ctx)
+    return state != nil && !state.delivery.active && state.repeat_deliveries % 2 == 0
 }
 
 can_begin_first_reply :: proc(ctx: ^dialogue.Context) -> bool {
@@ -737,7 +759,7 @@ can_begin_regatta_acceptance :: proc(ctx: ^dialogue.Context) -> bool {
 
 can_begin_repeat_westbound :: proc(ctx: ^dialogue.Context) -> bool {
     state := state_from_context(ctx)
-    return state != nil && state.romance == .Together && can_begin_iva_delivery(ctx)
+    return state != nil && !state.delivery.active && state.repeat_deliveries % 2 == 1
 }
 
 can_hold_meeting :: proc(ctx: ^dialogue.Context) -> bool {
@@ -789,6 +811,10 @@ resident_has_action :: proc(state: ^State, resident: Resident) -> bool {
         return true
     case .Vesna, .Petar, .Anica:
         return true
+    case .Toma:
+        return has_post_for_toma(&ctx) || can_begin_repeat_eastbound(&ctx)
+    case .Lena:
+        return has_post_for_lena(&ctx) || can_begin_repeat_westbound(&ctx)
     }
     return false
 }
@@ -831,13 +857,13 @@ acknowledge_resident_action :: proc(state: ^State, resident: Resident) {
 }
 
 Catalog :: struct {
-    niko_root_choices:      [8]dialogue.Choice,
+    niko_root_choices:      [6]dialogue.Choice,
     niko_reaction_choices:  [2]dialogue.Choice,
     niko_warm_choices:      [1]dialogue.Choice,
     niko_discreet_choices:  [1]dialogue.Choice,
     meeting_choices:        [2]dialogue.Choice,
     meeting_finish_choices: [1]dialogue.Choice,
-    iva_root_choices:       [7]dialogue.Choice,
+    iva_root_choices:       [5]dialogue.Choice,
     iva_reaction_choices:   [2]dialogue.Choice,
     iva_warm_choices:       [1]dialogue.Choice,
     iva_discreet_choices:   [1]dialogue.Choice,
@@ -847,6 +873,8 @@ Catalog :: struct {
     vesna_choices:          [1]dialogue.Choice,
     petar_choices:          [1]dialogue.Choice,
     anica_choices:          [1]dialogue.Choice,
+    toma_choices:           [3]dialogue.Choice,
+    lena_choices:           [3]dialogue.Choice,
     niko_nodes:             [7]dialogue.Node,
     iva_nodes:              [4]dialogue.Node,
     bojan_nodes:            [1]dialogue.Node,
@@ -854,6 +882,8 @@ Catalog :: struct {
     vesna_nodes:            [1]dialogue.Node,
     petar_nodes:            [1]dialogue.Node,
     anica_nodes:            [1]dialogue.Node,
+    toma_nodes:             [1]dialogue.Node,
+    lena_nodes:             [1]dialogue.Node,
     niko:                   dialogue.Definition,
     iva:                    dialogue.Definition,
     bojan:                  dialogue.Definition,
@@ -861,6 +891,8 @@ Catalog :: struct {
     vesna:                  dialogue.Definition,
     petar:                  dialogue.Definition,
     anica:                  dialogue.Definition,
+    toma:                   dialogue.Definition,
+    lena:                   dialogue.Definition,
 }
 
 init_catalog :: proc(catalog: ^Catalog) {
@@ -871,12 +903,6 @@ init_catalog :: proc(catalog: ^Catalog) {
         dialogue.choice("Give Niko Iva's reply.", 1, has_first_reply, complete_niko_delivery),
         dialogue.choice("Give Niko Iva's regatta acceptance.", 1, has_regatta_acceptance, complete_niko_delivery),
         dialogue.choice(
-            "Give Niko Iva's lamp glass and supper note.",
-            1,
-            has_repeat_westbound,
-            complete_niko_delivery,
-        ),
-        dialogue.choice(
             "I'll carry your sealed letter to Iva.",
             condition = can_begin_first_letter,
             effect = accept_delivery,
@@ -884,11 +910,6 @@ init_catalog :: proc(catalog: ^Catalog) {
         dialogue.choice(
             "I'll carry your regatta invitation to Iva.",
             condition = can_begin_regatta_invitation,
-            effect = accept_delivery,
-        ),
-        dialogue.choice(
-            "I'll carry the island post to Iva.",
-            condition = can_begin_repeat_eastbound,
             effect = accept_delivery,
         ),
         dialogue.choice("Stay under the awning.", 4, can_hold_meeting),
@@ -922,21 +943,10 @@ init_catalog :: proc(catalog: ^Catalog) {
     catalog.iva_root_choices = {
         dialogue.choice("Give Iva Niko's sealed letter.", 1, has_first_letter, complete_iva_delivery),
         dialogue.choice("Give Iva Niko's regatta invitation.", 1, has_regatta_invitation, complete_iva_delivery),
-        dialogue.choice(
-            "Give Iva Niko's bread, postcards, and flower.",
-            1,
-            has_repeat_eastbound,
-            complete_iva_delivery,
-        ),
         dialogue.choice("I'll carry your reply to Niko.", condition = can_begin_first_reply, effect = accept_delivery),
         dialogue.choice(
             "I'll carry your regatta acceptance to Niko.",
             condition = can_begin_regatta_acceptance,
-            effect = accept_delivery,
-        ),
-        dialogue.choice(
-            "I'll carry the island post to Niko.",
-            condition = can_begin_repeat_westbound,
             effect = accept_delivery,
         ),
         dialogue.choice("I'll leave you to tend the lamp."),
@@ -1007,4 +1017,30 @@ init_catalog :: proc(catalog: ^Catalog) {
         id    = "anica",
         nodes = catalog.anica_nodes[:],
     }
+
+    catalog.toma_choices = {
+        dialogue.choice("Give Toma the east-island post.", condition = has_post_for_toma, effect = complete_toma_delivery),
+        dialogue.choice("I'll carry the island post to Lena.", condition = can_begin_repeat_eastbound, effect = accept_post_delivery),
+        dialogue.choice("I'll come back when the postbag is ready."),
+    }
+    catalog.toma_nodes[0] = dialogue.node(
+        "toma",
+        proc(_: ^dialogue.Context) -> string { return "West island post. Every crossing counts, even when the bag is light." },
+        catalog.toma_choices[:],
+        proc(_: ^dialogue.Context) -> string { return "TOMA · POSTMASTER" },
+    )
+    catalog.toma = {id = "toma", nodes = catalog.toma_nodes[:]}
+
+    catalog.lena_choices = {
+        dialogue.choice("Give Lena the west-island post.", condition = has_post_for_lena, effect = complete_lena_delivery),
+        dialogue.choice("I'll carry the island post to Toma.", condition = can_begin_repeat_westbound, effect = accept_post_delivery),
+        dialogue.choice("I'll let you finish sorting."),
+    }
+    catalog.lena_nodes[0] = dialogue.node(
+        "lena",
+        proc(_: ^dialogue.Context) -> string { return "East island post. Letters above, lamp glass below, bread where I can see it." },
+        catalog.lena_choices[:],
+        proc(_: ^dialogue.Context) -> string { return "LENA · POSTMASTER" },
+    )
+    catalog.lena = {id = "lena", nodes = catalog.lena_nodes[:]}
 }
