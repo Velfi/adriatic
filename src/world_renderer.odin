@@ -13250,13 +13250,7 @@ world_build :: proc(editor: ^Editor) {
         world_markov_marina_facility(editor, &editor.marina_authored_plan, false, MARINA_GEOMETRY_CACHE_AUTHORED)
     }
     if editor.marina_paint_mode && editor.marina_preview_valid {
-        world_markov_marina_facility(
-            editor,
-            &editor.marina_preview_plan,
-            false,
-            MARINA_GEOMETRY_CACHE_PREVIEW,
-            true,
-        )
+        world_markov_marina_facility(editor, &editor.marina_preview_plan, false, MARINA_GEOMETRY_CACHE_PREVIEW, true)
     }
     if !lab_scene_suppresses_infrastructure(editor) do world_infrastructure(editor)
     world_roads(editor)

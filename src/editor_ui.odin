@@ -628,7 +628,8 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         bounds := editor_ui_slider_bounds(layout, row)
         ui_draw_text(.Label, "FOOTPRINT", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
         ui_draw_text(.Data, "108 x 84 m", {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
-        preview_label: cstring = editor.marina_preview_valid ? "CLICK TO PLACE CURRENT MARINA" : "NO SUITABLE CANDIDATE"
+        preview_label: cstring =
+            editor.marina_preview_valid ? "CLICK TO PLACE CURRENT MARINA" : "NO SUITABLE CANDIDATE"
         preview_color := editor.marina_preview_valid ? rl.Color{134, 224, 216, 255} : rl.Color{224, 126, 108, 255}
         ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)
         score_color := rl.Color{231, 150, 126, 255}

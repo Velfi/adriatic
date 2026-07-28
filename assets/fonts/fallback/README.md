@@ -10,4 +10,6 @@ Devanagari, Bengali, Gurmukhi, Gujarati, Odia, Tamil, Telugu, Kannada,
 Malayalam, Sinhala, Thai, Lao, and monochrome symbols/emoji. The primary Noto
 Sans/Serif faces cover Latin, Greek, and Cyrillic.
 
-CJK, vertical writing, and color emoji are intentionally unsupported.
+`NotoEmoji-Regular.ttf` is the regular-weight monochrome Noto Emoji face from
+Google Fonts. CJK, vertical writing, and color emoji are intentionally
+unsupported.

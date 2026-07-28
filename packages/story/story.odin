@@ -444,30 +444,30 @@ niko_text :: proc(ctx: ^dialogue.Context) -> string {
     if state.delivery.active && state.delivery.to == .Niko {
         switch state.delivery.kind {
         case .First_Reply:
-            return "Ah, du bist back preko il mare. Hat Iva una risposta envoyé?"
+            return "Ah, du bist back preko il mare. Hast du Iva's reply con te?"
         case .Regatta_Acceptance:
-            return "Le moteur de Bojan cruzó la baia à l'alba. Ist das la parola d'Iva?"
+            return "Le moteur de Bojan cruzó la baia à l'alba. Ist das Iva's regatta acceptance?"
         case .Repeat_Westbound:
-            return "Le verre de lampe voyage malissimo. Hoffentlich Iva lo ha packed mejor que moi."
+            return "The lamp glass voyage malissimo. Hoffentlich Iva lo ha packed mejor que moi."
         case .None, .First_Letter, .Regatta_Invitation, .Repeat_Eastbound:
         }
     }
     switch state.romance {
     case .Unintroduced:
         if state.airfield_errand == .Eastbound || state.airfield_errand == .Completed {
-            return "Wenn tu retournes verso est… j'ai una cosa piccola para Iva. Klein fuori, almeno."
+            return "Wenn tu retournes verso est… j'ai una sealed letter para Iva. Klein fuori, almeno."
         }
         return "La lampe de l'isola est clignote twice avant alba. Iva veglia quando mes forni aussi."
     case .First_Letter:
         return "La boîte de cardamomo looks molto sospetta quand uno wartet auf risposta."
     case .Corresponding:
-        return "La regatta braucht un boulanger, certo. Io preferirebbe aussi una gardienne du phare."
+        return "La regatta braucht un boulanger, certo. Questa regatta invitation ist pour Iva, la gardienne du phare."
     case .Invitation:
         return "Hay una tenda blu am Quai. Nobody sait pourquoi io la regarde toujours."
     case .Meeting:
-        return "Iva ha trouvé la tenda blu. Sie scheint kleiner con due persone dessous."
+        return "Iva ha trouvé the blue awning. Sie scheint kleiner con due persone dessous."
     case .Together:
-        return "Iva dit que le verre può aspettare. Das pane offenbar nicht."
+        return "The island post continua: Iva dit que le verre può aspettare. Das pane offenbar nicht."
     }
     return ""
 }
@@ -514,11 +514,11 @@ iva_text :: proc(ctx: ^dialogue.Context) -> string {
     if state.delivery.active && state.delivery.to == .Iva {
         switch state.delivery.kind {
         case .First_Letter:
-            return "Una lettre attraversò tutto quel mare bleu pour trouver ce phare."
+            return "Una sealed letter attraversò tutto quel mare bleu pour trouver ce phare."
         case .Regatta_Invitation:
-            return "L'écriture de Niko devient gerader quand il prétend no estar nervioso."
+            return "Niko's regatta invitation devient gerader quand il prétend no estar nervioso."
         case .Repeat_Eastbound:
-            return "Quel pacco riecht comme si Niko confundiera la route postale con una despensa."
+            return "The island post riecht comme si Niko confundiera la route postale con una despensa."
         case .None, .First_Reply, .Regatta_Acceptance, .Repeat_Westbound:
         }
     }
@@ -526,18 +526,20 @@ iva_text :: proc(ctx: ^dialogue.Context) -> string {
     case .Unintroduced:
         return "Due lampi signifient acqua chiara. Uno sah immer ein bisschen solo."
     case .First_Letter:
-        return "Er ricordava il cardamomo. Bene, le phare peut offrir une feuille de carta."
+        return "Er ricordava il cardamomo. Bene, le phare peut offrir Iva's reply."
     case .Corresponding:
         return "La posta dell'isola west ist devenue remarquablement puntual."
     case .Invitation:
         if state.repair == .Repaired {
-            return "Tu reparaste l'aereo de Bojan before che io lo necesitara. Grazie; jetzt posso rispondere."
+            return(
+                "Tu reparaste l'aereo de Bojan before che io lo necesitara. Grazie; jetzt puoi portare la regatta acceptance." \
+            )
         }
         return "Posso répondre à Niko, but l'ala rotta non peut me porter. Nema regatta todavía."
     case .Meeting:
         return "L'isola west ist plus bruyante que le phare. Niko, heureusement, no."
     case .Together:
-        return "Niko manda pane comme si el mare fosse un problema que man durch füttern résout."
+        return "The island post porta pane, comme si el mare fosse un problema que man durch füttern résout."
     }
     return ""
 }
@@ -576,11 +578,11 @@ bojan_text :: proc(ctx: ^dialogue.Context) -> string {
     case .Not_Seen:
         return "L'atterraggio war perfekt. Le ground est arrivé trop tôt. Hai visto niente plus compliqué."
     case .Crash_Reported:
-        return "Maintenant la versione officielle ist breve, possiamo inspecter l'ala honnêtement."
+        return "Maintenant la versione officielle ist breve, possiamo inspecter the wing honnêtement."
     case .Diagnosed:
-        return "Uno panneau di tela déchiré. Ich habe un patch; tu as mani plus stabili que ma réputation."
+        return "Uno panneau di tela déchiré. Ich habe the canvas patch; tu as mani plus stabili que ma réputation."
     case .Patched:
-        return "Patch tendu, Rippen gerade, controles libres. Voilà: una vuelta prudente dell'elica."
+        return "Canvas patch tendu, Rippen gerade, controles libres. Voilà: turn the propeller, con prudenza."
     case .Repaired:
         if state.romance == .Invitation {
             return "L'aereo ist pronto pour Iva. Ho même nettoyé el asiento qui non m'appartient."
@@ -629,6 +631,48 @@ can_complete_niko_delivery :: proc(ctx: ^dialogue.Context) -> bool {
 can_complete_iva_delivery :: proc(ctx: ^dialogue.Context) -> bool {
     state := state_from_context(ctx)
     return state != nil && state.delivery.active && state.delivery.to == .Iva
+}
+
+delivery_is :: proc(ctx: ^dialogue.Context, kind: Delivery_Kind) -> bool {
+    state := state_from_context(ctx)
+    return state != nil && state.delivery.active && state.delivery.kind == kind
+}
+
+has_first_reply :: proc(ctx: ^dialogue.Context) -> bool { return delivery_is(ctx, .First_Reply) }
+has_regatta_acceptance :: proc(ctx: ^dialogue.Context) -> bool { return delivery_is(ctx, .Regatta_Acceptance) }
+has_repeat_westbound :: proc(ctx: ^dialogue.Context) -> bool { return delivery_is(ctx, .Repeat_Westbound) }
+has_first_letter :: proc(ctx: ^dialogue.Context) -> bool { return delivery_is(ctx, .First_Letter) }
+has_regatta_invitation :: proc(ctx: ^dialogue.Context) -> bool { return delivery_is(ctx, .Regatta_Invitation) }
+has_repeat_eastbound :: proc(ctx: ^dialogue.Context) -> bool { return delivery_is(ctx, .Repeat_Eastbound) }
+
+can_begin_first_letter :: proc(ctx: ^dialogue.Context) -> bool {
+    state := state_from_context(ctx)
+    return state != nil && state.romance == .Unintroduced && can_begin_niko_delivery(ctx)
+}
+
+can_begin_regatta_invitation :: proc(ctx: ^dialogue.Context) -> bool {
+    state := state_from_context(ctx)
+    return state != nil && state.romance == .Corresponding && can_begin_niko_delivery(ctx)
+}
+
+can_begin_repeat_eastbound :: proc(ctx: ^dialogue.Context) -> bool {
+    state := state_from_context(ctx)
+    return state != nil && state.romance == .Together && can_begin_niko_delivery(ctx)
+}
+
+can_begin_first_reply :: proc(ctx: ^dialogue.Context) -> bool {
+    state := state_from_context(ctx)
+    return state != nil && state.romance == .First_Letter && can_begin_iva_delivery(ctx)
+}
+
+can_begin_regatta_acceptance :: proc(ctx: ^dialogue.Context) -> bool {
+    state := state_from_context(ctx)
+    return state != nil && state.romance == .Invitation && can_begin_iva_delivery(ctx)
+}
+
+can_begin_repeat_westbound :: proc(ctx: ^dialogue.Context) -> bool {
+    state := state_from_context(ctx)
+    return state != nil && state.romance == .Together && can_begin_iva_delivery(ctx)
 }
 
 can_hold_meeting :: proc(ctx: ^dialogue.Context) -> bool {
@@ -683,13 +727,13 @@ resident_has_action :: proc(state: ^State, resident: Resident) -> bool {
 }
 
 Catalog :: struct {
-    niko_root_choices:      [4]dialogue.Choice,
+    niko_root_choices:      [8]dialogue.Choice,
     niko_reaction_choices:  [2]dialogue.Choice,
     niko_warm_choices:      [1]dialogue.Choice,
     niko_discreet_choices:  [1]dialogue.Choice,
     meeting_choices:        [2]dialogue.Choice,
     meeting_finish_choices: [1]dialogue.Choice,
-    iva_root_choices:       [3]dialogue.Choice,
+    iva_root_choices:       [7]dialogue.Choice,
     iva_reaction_choices:   [2]dialogue.Choice,
     iva_warm_choices:       [1]dialogue.Choice,
     iva_discreet_choices:   [1]dialogue.Choice,
@@ -711,8 +755,29 @@ init_catalog :: proc(catalog: ^Catalog) {
     catalog^ = {}
 
     catalog.niko_root_choices = {
-        dialogue.choice("Give Niko the sealed letter.", 1, can_complete_niko_delivery, complete_niko_delivery),
-        dialogue.choice("I can take it to Iva.", condition = can_begin_niko_delivery, effect = accept_delivery),
+        dialogue.choice("Give Niko Iva's reply.", 1, has_first_reply, complete_niko_delivery),
+        dialogue.choice("Give Niko Iva's regatta acceptance.", 1, has_regatta_acceptance, complete_niko_delivery),
+        dialogue.choice(
+            "Give Niko Iva's lamp glass and supper note.",
+            1,
+            has_repeat_westbound,
+            complete_niko_delivery,
+        ),
+        dialogue.choice(
+            "I'll carry your sealed letter to Iva.",
+            condition = can_begin_first_letter,
+            effect = accept_delivery,
+        ),
+        dialogue.choice(
+            "I'll carry your regatta invitation to Iva.",
+            condition = can_begin_regatta_invitation,
+            effect = accept_delivery,
+        ),
+        dialogue.choice(
+            "I'll carry the island post to Iva.",
+            condition = can_begin_repeat_eastbound,
+            effect = accept_delivery,
+        ),
         dialogue.choice("Stay under the awning.", 4, can_hold_meeting),
         dialogue.choice("I'll leave you to your work."),
     }
@@ -742,8 +807,25 @@ init_catalog :: proc(catalog: ^Catalog) {
     }
 
     catalog.iva_root_choices = {
-        dialogue.choice("Give Iva the sealed letter.", 1, can_complete_iva_delivery, complete_iva_delivery),
-        dialogue.choice("I'll carry your reply.", condition = can_begin_iva_delivery, effect = accept_delivery),
+        dialogue.choice("Give Iva Niko's sealed letter.", 1, has_first_letter, complete_iva_delivery),
+        dialogue.choice("Give Iva Niko's regatta invitation.", 1, has_regatta_invitation, complete_iva_delivery),
+        dialogue.choice(
+            "Give Iva Niko's bread, postcards, and flower.",
+            1,
+            has_repeat_eastbound,
+            complete_iva_delivery,
+        ),
+        dialogue.choice("I'll carry your reply to Niko.", condition = can_begin_first_reply, effect = accept_delivery),
+        dialogue.choice(
+            "I'll carry your regatta acceptance to Niko.",
+            condition = can_begin_regatta_acceptance,
+            effect = accept_delivery,
+        ),
+        dialogue.choice(
+            "I'll carry the island post to Niko.",
+            condition = can_begin_repeat_westbound,
+            effect = accept_delivery,
+        ),
         dialogue.choice("I'll leave you to tend the lamp."),
     }
     catalog.iva_reaction_choices = {

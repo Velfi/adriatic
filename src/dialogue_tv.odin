@@ -238,7 +238,9 @@ dialogue_draw_glossed_wrapped :: proc(
                 for word_end > word_start && !dialogue_word_byte(token[word_end - 1]) do word_end -= 1
                 if word_start < word_end {
                     word := token[word_start:word_end]
-                    if english, found := dialogue_glossary.english_for(word); found {
+                    english, glossary_found := dialogue_glossary.english_for(word)
+                    gameplay_keyword := dialogue_glossary.is_gameplay_keyword(word)
+                    if glossary_found || gameplay_keyword {
                         prefix_width: f32
                         if word_start > 0 {
                             prefix := token[:word_start]
@@ -248,15 +250,16 @@ dialogue_draw_glossed_wrapped :: proc(
                         word_width := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", word), size, spacing).x
                         word_bounds := rl.Rectangle{x + prefix_width, y, word_width, line_height}
                         hovered := rl.CheckCollisionPointRec(mouse, word_bounds)
-                        underline_color := hovered ? ui_theme_focus() : ui_theme_accent(190)
+                        underline_color :=
+                            hovered ? ui_theme_focus() : (gameplay_keyword ? ui_theme_focus() : ui_theme_accent(190))
                         rl.DrawRectangle(
                             i32(word_bounds.x),
                             i32(y + size + 2),
                             max(i32(word_bounds.width), 1),
-                            max(i32(hovered ? 3 : 2), 1),
+                            max(i32((hovered || gameplay_keyword) ? 3 : 2), 1),
                             underline_color,
                         )
-                        if hovered do hovered_english = english
+                        if hovered && glossary_found do hovered_english = english
                     }
                 }
             }

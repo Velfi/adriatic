@@ -347,8 +347,7 @@ pavement_at_cached :: proc(graph: ^Graph, query: ^Pavement_Query, position: Vec3
             delta_z := position.z - closest_z
             distance_squared := delta_x * delta_x + delta_z * delta_z
             on_surface :=
-                distance_squared <=
-                (edge.half_width + edge.shoulder_width) * (edge.half_width + edge.shoulder_width)
+                distance_squared <= (edge.half_width + edge.shoulder_width) * (edge.half_width + edge.shoulder_width)
             if distance_squared < best_distance_squared {
                 best_distance_squared = distance_squared
                 hit.pavement = edge.pavement

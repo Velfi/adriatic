@@ -138,8 +138,12 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
         t,
         catalog.niko_root_choices[:],
         []string {
-            "Give Niko the sealed letter.",
-            "I can take it to Iva.",
+            "Give Niko Iva's reply.",
+            "Give Niko Iva's regatta acceptance.",
+            "Give Niko Iva's lamp glass and supper note.",
+            "I'll carry your sealed letter to Iva.",
+            "I'll carry your regatta invitation to Iva.",
+            "I'll carry the island post to Iva.",
             "Stay under the awning.",
             "I'll leave you to your work.",
         },
@@ -160,7 +164,15 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
     expect_choice_texts(
         t,
         catalog.iva_root_choices[:],
-        []string{"Give Iva the sealed letter.", "I'll carry your reply.", "I'll leave you to tend the lamp."},
+        []string {
+            "Give Iva Niko's sealed letter.",
+            "Give Iva Niko's regatta invitation.",
+            "Give Iva Niko's bread, postcards, and flower.",
+            "I'll carry your reply to Niko.",
+            "I'll carry your regatta acceptance to Niko.",
+            "I'll carry the island post to Niko.",
+            "I'll leave you to tend the lamp.",
+        },
     )
     expect_choice_texts(
         t,
@@ -278,7 +290,7 @@ dialogue_text_and_choices_follow_story_and_repair_state :: proc(t: ^testing.T) {
     testing.expect(
         t,
         story.iva_text(&ctx) ==
-        "Tu reparaste l'aereo de Bojan before che io lo necesitara. Grazie; jetzt posso rispondere.",
+        "Tu reparaste l'aereo de Bojan before che io lo necesitara. Grazie; jetzt puoi portare la regatta acceptance.",
     )
     testing.expect(
         t,
@@ -291,7 +303,10 @@ dialogue_text_and_choices_follow_story_and_repair_state :: proc(t: ^testing.T) {
     )
     testing.expect(t, opened)
     testing.expect(t, dialogue.available_count(&iva_conversation) == 2)
-    testing.expect(t, dialogue.available_at(&iva_conversation, 0).text == "I'll carry your reply.")
+    testing.expect(
+        t,
+        dialogue.available_at(&iva_conversation, 0).text == "I'll carry your regatta acceptance to Niko.",
+    )
     testing.expect(t, dialogue.available_at(&iva_conversation, 1).text == "I'll leave you to tend the lamp.")
 }
 

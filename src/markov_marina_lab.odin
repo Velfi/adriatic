@@ -405,9 +405,9 @@ markov_marina_dockmaster_text :: proc(ctx: ^dialogue.Context) -> string {
     if ctx == nil || ctx.data == nil do return "Dobro jutro. Mind the lines and the gulls."
     editor := cast(^Editor)ctx.data
     if editor.marina_dinghy_borrowed {
-        return "The little tender is waiting below the quay. Bring her back with more fuel than excuses."
+        return "The little dinghy is waiting below the quay. Bring her back with more fuel than excuses."
     }
-    return "The basin is calm, the bura is elsewhere, and my little tender is doing no useful work."
+    return "The basin is calm, the bura is elsewhere, and my little dinghy is doing no useful work."
 }
 
 markov_marina_borrow_dinghy :: proc(ctx: ^dialogue.Context) {

@@ -5,10 +5,10 @@ import ui "zelda_engine:ui"
 
 glyph_page_cell :: proc(page: int) -> int {
     switch page {
-    case 0: return 36
-    case 1: return 68
+    case 0: return GLYPH_ATLAS_CELL_32
+    case 1: return GLYPH_ATLAS_CELL_64
     }
-    return 132
+    return GLYPH_ATLAS_CELL_128
 }
 
 glyph_page_tier :: proc(page: int) -> int {
@@ -21,10 +21,12 @@ glyph_page_tier :: proc(page: int) -> int {
 
 glyph_page_slot_range :: proc(page: int) -> (start, count: int) {
     switch page {
-    case 0: return 0, 3136
-    case 1: return 3136, 900
-    case 2: return 4036, 225
-    case 3: return 4261, 225
+    case 0: return 0, GLYPH_ATLAS_SLOTS_32
+    case 1: return GLYPH_ATLAS_SLOTS_32, GLYPH_ATLAS_SLOTS_64
+    case 2: return GLYPH_ATLAS_SLOTS_32 + GLYPH_ATLAS_SLOTS_64, GLYPH_ATLAS_SLOTS_128
+    case 3:
+        return GLYPH_ATLAS_SLOTS_32 + GLYPH_ATLAS_SLOTS_64 + GLYPH_ATLAS_SLOTS_128,
+               GLYPH_ATLAS_SLOTS_128
     }
     return 0, 0
 }

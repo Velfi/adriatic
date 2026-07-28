@@ -807,8 +807,7 @@ architecture_opening_layout :: proc(
                     } else {
                         horizontal = max(horizontal, minimum_center)
                     }
-                    if math.abs(horizontal) + opening_width * .5 >
-                       span * .5 - ARCHITECTURE_OPENING_CORNER_MARGIN {
+                    if math.abs(horizontal) + opening_width * .5 > span * .5 - ARCHITECTURE_OPENING_CORNER_MARGIN {
                         continue
                     }
                 }

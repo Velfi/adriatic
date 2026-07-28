@@ -3341,7 +3341,7 @@ gerta_menu_text :: proc(ctx: ^dialogue.Context) -> string {
     editor := attendant_context_editor(ctx)
     if editor != nil && editor.story_state.airfield_errand == .Westbound {
         return(
-            "Ja, misma serie. Marta garde ogni macchina bis sie devient famiglia. Nimm il ricambio—et non lascia che das mare lo assaggi." \
+            "Ja, misma serie. Marta garde ogni macchina bis sie devient famiglia. Nimm the replacement magneto—et non lascia che das mare lo assaggi." \
         )
     }
     return "Dobar dan. Marta gère l'apron est; what peut faire ihre Schwester pour toi?"
@@ -7205,6 +7205,7 @@ adriatic_run :: proc(
         "assets/fonts/fallback/NotoSansGeorgian-Regular.ttf",
         "assets/fonts/fallback/NotoSansEthiopic-Regular.ttf",
         "assets/fonts/fallback/NotoSansSymbols2-Regular.ttf",
+        "assets/fonts/fallback/NotoEmoji-Regular.ttf",
     }
     for path in unicode_fallbacks {
         _ = rl.AddBodyFontFallbackPath(path)

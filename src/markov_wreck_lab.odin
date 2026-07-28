@@ -493,9 +493,7 @@ markov_wreck_spawn_postale :: proc(editor: ^Editor) -> bool {
 // invalidating one of the driver pointers, which makes driving_aircraft false
 // and silently routes all input away from the flight model.
 markov_wreck_ensure_flight_control :: proc(editor: ^Editor) -> bool {
-    if editor == nil ||
-       !lab_scene_is_active(editor, "markov-wreck") ||
-       !markov_wreck_postale_spawned {
+    if editor == nil || !lab_scene_is_active(editor, "markov-wreck") || !markov_wreck_postale_spawned {
         return false
     }
     if !vehicles.aircraft_fleet_switch(&editor.aircraft, .Postale) do return false

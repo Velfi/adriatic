@@ -196,7 +196,9 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
 mouse_preference_save :: proc(editor: ^Editor) -> bool {
     if editor == nil do return false
     directory, directory_ok := mouse_preference_save_directory(context.temp_allocator)
-    if !directory_ok || os.make_directory_all(directory) != nil do return false
+    if !directory_ok do return false
+    directory_err := os.make_directory_all(directory)
+    if directory_err != nil && directory_err != .Exist do return false
     path, path_ok := mouse_preference_save_path(context.temp_allocator)
     return path_ok && mouse_preference_save_to_path(editor, path)
 }
