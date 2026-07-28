@@ -18,6 +18,7 @@ import story "../packages/story"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
+import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
@@ -16832,7 +16833,12 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
 }
 
 world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
+    failure_stage := "dynamic shadow"
+    defer if !world_renderer.initialized {
+        fmt.eprintf("world renderer initialization failed during %s\n", failure_stage)
+    }
     if !dynamic_shadow_create(&world_renderer.dynamic_shadow, ctx) do return false
+    failure_stage = "vehicle paint descriptors"
     paint_bindings := [6]vk.DescriptorSetLayoutBinding {
         {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
@@ -16883,7 +16889,9 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         auto_cast world_renderer.vehicle_paint_descriptor,
         "vehicle paint descriptor set",
     )
+    failure_stage = "vehicle paint atlas"
     if !vehicle_paint_atlas_create(ctx, &world_renderer.vehicle_paint_atlas) do return false
+    failure_stage = "soda cap texture"
     if !resources.texture_load_file(
         ctx,
         "assets/textures/accessories/soda-cap-logo.png",
@@ -16892,13 +16900,28 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     ) {
         return false
     }
+    failure_stage = "architecture material atlas"
     if !resources.texture_load_file(
         ctx,
         "assets/textures/architecture/material-atlas.png",
         &world_renderer.architecture_material_atlas,
         {address_mode = .CLAMP_TO_EDGE},
     ) {
-        return false
+        // Architecture texturing is optional presentation detail. Do not let a
+        // malformed, oversized, or temporarily unavailable authoring atlas
+        // disable the terrain and the rest of the world renderer.
+        fallback_pixels := [4]u8{190, 190, 190, 255}
+        if !resources.texture_upload_rgba8(
+            ctx,
+            fallback_pixels[:],
+            1,
+            1,
+            &world_renderer.architecture_material_atlas,
+            {address_mode = .CLAMP_TO_EDGE},
+        ) {
+            return false
+        }
+        fmt.eprintln("architecture material atlas failed to load; using neutral fallback")
     }
     paint_image_info := vk.DescriptorImageInfo {
         imageView   = world_renderer.vehicle_paint_atlas.view,
@@ -16987,6 +17010,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         setLayoutCount         = 2,
         pSetLayouts            = raw_data(world_set_layouts[:]),
     }
+    failure_stage = "world pipeline layout"
     if vk.CreatePipelineLayout(ctx.device, &li, nil, &world_renderer.layout) != .SUCCESS do return false
     engine.vk_set_debug_name(ctx, .PIPELINE_LAYOUT, auto_cast world_renderer.layout, "world pipeline layout")
     foliage_bindings := [2]vk.DescriptorSetLayoutBinding {
@@ -17072,6 +17096,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         auto_cast world_renderer.wildflower_descriptor,
         "wildflower descriptor set",
     )
+    failure_stage = "foliage textures and descriptors"
     if !resources.texture_load_file(
         ctx,
         "assets/textures/foliage/leaf-branches-atlas.png",
@@ -17223,6 +17248,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     if vk.CreatePipelineLayout(ctx.device, &sky_li, nil, &world_renderer.sky_layout) != .SUCCESS do return false
     engine.vk_set_debug_name(ctx, .PIPELINE_LAYOUT, auto_cast world_renderer.sky_layout, "sky pipeline layout")
     vert, frag: engine.Vk_Shader_Module
+    failure_stage = "world shaders"
     if !engine.vk_load_shader_module_with_fallback(ctx, "assets/shaders/world.slang", "shaders/world.vert", .Vertex, "vertex_main", &vert) do return false
     defer engine.vk_destroy_shader_module(ctx, &vert)
     if !engine.vk_load_shader_module_with_fallback(ctx, "assets/shaders/world.slang", "shaders/world.frag", .Fragment, "fragment_main", &frag) do return false
@@ -17314,6 +17340,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         pDynamicState       = &di,
         layout              = world_renderer.layout,
     }
+    failure_stage = "world graphics pipelines"
     if !render3d.create_color_pipeline_variants(ctx, &info, .D32_SFLOAT, &world_renderer.pipelines) do return false
     transparent_depth := depth
     transparent_depth.depthWriteEnable = false
@@ -17651,6 +17678,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             }
         }
     }
+    failure_stage = "clipmap buffers"
     if !clipmap_create_indices(ctx) do return false
     world_renderer.vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_INITIAL_CAPACITY)
     world_renderer.static_vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_INITIAL_CAPACITY)

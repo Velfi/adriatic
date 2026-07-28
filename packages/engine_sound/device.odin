@@ -1,6 +1,8 @@
 package engine_sound
 
 import "core:c"
+import "core:fmt"
+import "core:math"
 import sdl "vendor:sdl3"
 
 BUFFER_SAMPLES :: 1024
@@ -93,6 +95,12 @@ update :: proc(
     }
     if controls.shift do trigger_shift(&device.synth)
     if footstep_triggered {
+        fmt.eprintf(
+            "audio probe: footstep trigger intensity=%.3f queued_bytes=%d device=%d\n",
+            footstep_intensity,
+            sdl.GetAudioStreamQueued(device.stream),
+            sdl.GetAudioStreamDevice(device.stream),
+        )
         trigger_footstep_mixer(
             &device.footstep_mixer,
             footstep_intensity,
@@ -113,6 +121,16 @@ update :: proc(
         render_dialogue_voice_add(&device.dialogue_voice, device.buffer[:])
         process_mix(&device.mix_state, device.buffer[:])
         apply_device_mute(&device.mute_gain, device.buffer[:], muted)
+        if footstep_triggered {
+            peak := f32(0)
+            for sample in device.buffer do peak = max(peak, math.abs(sample))
+            fmt.eprintf(
+                "audio probe: mixed peak=%.6f muted=%v gain=%.3f\n",
+                peak,
+                muted,
+                device.mute_gain,
+            )
+        }
         if !sdl.PutAudioStreamData(
             device.stream,
             raw_data(device.buffer[:]),
