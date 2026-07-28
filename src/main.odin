@@ -7316,13 +7316,15 @@ adriatic_run :: proc(
             editor.gameplay_options.dither_mode = .Matriax_8
         }
     }
-    dither_apply(editor)
     editor.mouse_fur = .Chestnut
     editor.mouse_pattern = .Solid
     editor.mouse_headgear = .Goggles
     editor.mouse_scarf_enabled = false
     editor.mouse_scarf_color = {194, 35, 47, 255}
     if !capture_mode do _ = mouse_preference_load(editor)
+    crunchiness_apply(editor.gameplay_options.crunchiness)
+    dither_apply(editor)
+    ui_theme_set_mode(editor.gameplay_options.theme_mode)
     editor.runtime_input = game_input.default_state()
     editor.vehicle_paint_tool_icons = rl.LoadTexture("assets/icons/control-hints/keyboard-mouse.png")
     if !editor.vehicle_paint_tool_icons.ready {

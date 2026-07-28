@@ -31,6 +31,14 @@ when ODIN_TEST {
         source.mouse_headgear = .Flat_Cap
         source.mouse_scarf_enabled = true
         source.mouse_scarf_color = {17, 83, 241, 255}
+        source.gameplay_options = gameplay_options_default()
+        source.gameplay_options.look_sensitivity = .021
+        source.gameplay_options.invert_look_y = true
+        source.gameplay_options.show_hud = false
+        source.gameplay_options.crunchiness = .P720
+        source.gameplay_options.dither_mode = .Blue_Noise
+        source.gameplay_options.hdr_exposure = false
+        source.gameplay_options.theme_mode = .Dark
 
         testing.expect(t, mouse_preference_save_to_path(source, path))
         testing.expect(t, mouse_preference_load_from_path(restored, path))
@@ -39,6 +47,7 @@ when ODIN_TEST {
         testing.expect(t, restored.mouse_headgear == source.mouse_headgear)
         testing.expect(t, restored.mouse_scarf_enabled == source.mouse_scarf_enabled)
         testing.expect(t, restored.mouse_scarf_color == source.mouse_scarf_color)
+        testing.expect(t, restored.gameplay_options == source.gameplay_options)
 
         bytes, read_err := os.read_entire_file(path, context.allocator)
         testing.expect(t, read_err == nil)
