@@ -516,10 +516,7 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
             if reached_target || chunk_span_count >= maximum_spans || sample == segment_count {
                 append(
                     &mesh.chunks,
-                    Mesh_Chunk {
-                        first_index = chunk_first_index,
-                        index_count = len(mesh.indices) - chunk_first_index,
-                    },
+                    Mesh_Chunk{first_index = chunk_first_index, index_count = len(mesh.indices) - chunk_first_index},
                 )
                 chunk_first_index = len(mesh.indices)
                 chunk_span_count = 0
@@ -745,13 +742,7 @@ bake :: proc(graph: ^Graph, settings: Bake_Settings = DEFAULT_BAKE_SETTINGS) -> 
         first_index := len(mesh.indices)
         bake_junction(&mesh, graph, &edge_boundaries, node_index, settings)
         if len(mesh.indices) > first_index {
-            append(
-                &mesh.chunks,
-                Mesh_Chunk {
-                    first_index = first_index,
-                    index_count = len(mesh.indices) - first_index,
-                },
-            )
+            append(&mesh.chunks, Mesh_Chunk{first_index = first_index, index_count = len(mesh.indices) - first_index})
         }
     }
     return mesh

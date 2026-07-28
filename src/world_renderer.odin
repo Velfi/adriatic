@@ -782,12 +782,7 @@ world_camera_near_clip :: proc(editor: ^Editor) -> f32 {
     return clamp(distance * distance / 720, f32(2), WORLD_EDITOR_NEAR_CLIP)
 }
 
-world_sphere_in_view :: proc(
-    editor: ^Editor,
-    center: third_person.Vec3,
-    radius: f32,
-    margin: f32 = 0,
-) -> bool {
+world_sphere_in_view :: proc(editor: ^Editor, center: third_person.Vec3, radius: f32, margin: f32 = 0) -> bool {
     if editor == nil do return false
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     camera := perspective_camera(editor.camera_pose, focal_length)
@@ -1165,7 +1160,11 @@ world_npc_boats :: proc(editor: ^Editor) {
                 ),
             ) *
             .5
-        if !world_sphere_in_view(editor, {position.x, position.y + spec.height_or_clearance * .5, position.z}, radius) {
+        if !world_sphere_in_view(
+            editor,
+            {position.x, position.y + spec.height_or_clearance * .5, position.z},
+            radius,
+        ) {
             continue
         }
         world_npc_boat(agent.class, position, agent.yaw, agent.behavior != .Moored)
@@ -1362,8 +1361,8 @@ world_road_cache_chunk_finish :: proc(first_vertex: int) {
         Road_Geometry_Cache_Chunk {
             first_vertex = first_vertex,
             vertex_count = vertex_count,
-            center       = center,
-            radius       = f32(math.sqrt(f64(radius_squared))),
+            center = center,
+            radius = f32(math.sqrt(f64(radius_squared))),
         },
     )
 }
@@ -7933,10 +7932,7 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     path_color := rl.Color{194, 184, 157, 255}
     for area in plan.areas[:plan.count] {
         area_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z)
-        area_radius :=
-            f32(math.sqrt(f64(area.width * area.width + area.length * area.length))) *
-            .5 +
-            2
+        area_radius := f32(math.sqrt(f64(area.width * area.width + area.length * area.length))) * .5 + 2
         if !world_sphere_in_view(editor, {area.center_x, area_y, area.center_z}, area_radius) do continue
         switch area.kind {
         case .Street:
@@ -12630,7 +12626,9 @@ world_marta :: proc(editor: ^Editor) {
             grounded = false,
         },
     )
-    world_mouse_interaction_indicator(editor, position)
+    if story.resident_has_action(&editor.story_state, .Marta) {
+        world_mouse_interaction_indicator(editor, position)
+    }
 }
 
 world_gerta :: proc(editor: ^Editor) {
@@ -12656,7 +12654,9 @@ world_gerta :: proc(editor: ^Editor) {
             grounded = false,
         },
     )
-    world_mouse_interaction_indicator(editor, position)
+    if story.resident_has_action(&editor.story_state, .Gerta) {
+        world_mouse_interaction_indicator(editor, position)
+    }
 }
 
 world_mouse_interaction_indicator :: proc(editor: ^Editor, mouse_position: third_person.Vec3) {
@@ -13106,14 +13106,7 @@ world_ground_grass :: proc(editor: ^Editor) {
             // potentially visible grass or wildflower card while rejecting
             // the field behind and well outside the view before its expensive
             // terrain/material classification.
-            if !static_sphere_in_frustum(
-                view_camera,
-                {x, height_at + .75, z},
-                2,
-                aspect,
-                near_plane,
-                WORLD_FAR_CLIP,
-            ) {
+            if !static_sphere_in_frustum(view_camera, {x, height_at + .75, z}, 2, aspect, near_plane, WORLD_FAR_CLIP) {
                 continue
             }
             if farmland_excludes_ground_grass(editor, x, z) do continue

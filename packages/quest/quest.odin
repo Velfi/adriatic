@@ -82,6 +82,7 @@ Node :: struct {
     rewards:             []Reward,
     repeatable:          bool,
     requires_acceptance: bool,
+    hide_until_accepted: bool,
 }
 
 Definition :: struct {
@@ -157,12 +158,20 @@ is_active :: proc(state: ^State, definition: ^Definition, id: Node_ID) -> bool {
     return current == .Active || current == .Available
 }
 
+is_presented :: proc(state: ^State, definition: ^Definition, id: Node_ID) -> bool {
+    node := find_node(definition, id)
+    if node == nil do return false
+    current := status(state, definition, id)
+    if current == .Available && node.hide_until_accepted do return false
+    return current == .Active || current == .Available
+}
+
 first_active :: proc(state: ^State, definition: ^Definition) -> Node_ID {
     if state == nil || definition == nil do return no_node
     result := no_node
     result_sequence: u64
     for &node in definition.nodes {
-        if node.kind != .Objective || !is_active(state, definition, node.id) do continue
+        if node.kind != .Objective || !is_presented(state, definition, node.id) do continue
         sequence := activation_sequence(state, definition, node.id)
         if result == no_node || sequence < result_sequence {
             result = node.id

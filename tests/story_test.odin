@@ -19,6 +19,12 @@ complete_current_delivery :: proc(t: ^testing.T, state: ^story.State, recipient:
     testing.expect(t, story.complete_delivery(state, recipient))
 }
 
+complete_airfield_intro :: proc(t: ^testing.T, state: ^story.State) {
+    testing.expect(t, story.accept_airfield_errand(state))
+    testing.expect(t, story.handoff_broken_magneto(state))
+    testing.expect(t, story.return_replacement_magneto(state))
+}
+
 expect_choice_texts :: proc(t: ^testing.T, actual: []dialogue.Choice, expected: []string) {
     testing.expect(t, len(actual) == len(expected))
     for choice, index in actual {
@@ -30,6 +36,7 @@ expect_choice_texts :: proc(t: ^testing.T, actual: []dialogue.Choice, expected: 
 two_island_story_advances_on_completion_and_becomes_repeatable :: proc(t: ^testing.T) {
     state: story.State
 
+    complete_airfield_intro(t, &state)
     testing.expect(t, story.begin_delivery(&state))
     testing.expect(t, state.romance == .Unintroduced)
     testing.expect(t, state.delivery.kind == .First_Letter)
@@ -62,7 +69,7 @@ two_island_story_advances_on_completion_and_becomes_repeatable :: proc(t: ^testi
     complete_current_delivery(t, &state, .Niko)
     testing.expect(t, state.romance == .Meeting)
     testing.expect(t, !story.begin_delivery(&state))
-    testing.expect(t, state.stamps_earned == 4)
+    testing.expect(t, state.stamps_earned == 5)
 
     testing.expect(t, story.complete_meeting(&state))
     testing.expect(t, state.romance == .Together)
@@ -71,18 +78,19 @@ two_island_story_advances_on_completion_and_becomes_repeatable :: proc(t: ^testi
     testing.expect(t, state.delivery.kind == .Repeat_Eastbound)
     testing.expect(t, state.delivery.subject == "Bread, postcards, and one pressed flower")
     complete_current_delivery(t, &state, .Iva)
-    testing.expect(t, state.repeat_deliveries == 1 && state.stamps_earned == 5)
+    testing.expect(t, state.repeat_deliveries == 1 && state.stamps_earned == 6)
 
     testing.expect(t, story.begin_delivery(&state))
     testing.expect(t, state.delivery.kind == .Repeat_Westbound)
     testing.expect(t, state.delivery.subject == "Lamp glass and a note for supper")
     complete_current_delivery(t, &state, .Niko)
-    testing.expect(t, state.repeat_deliveries == 2 && state.stamps_earned == 6)
+    testing.expect(t, state.repeat_deliveries == 2 && state.stamps_earned == 7)
 }
 
 @(test)
 early_repair_is_preserved_as_preparedness :: proc(t: ^testing.T) {
     state: story.State
+    complete_airfield_intro(t, &state)
     repair_aircraft(t, &state)
 
     testing.expect(t, story.begin_delivery(&state))
@@ -100,6 +108,9 @@ early_repair_is_preserved_as_preparedness :: proc(t: ^testing.T) {
 @(test)
 story_rejects_wrong_recipient_invalid_kind_and_out_of_order_repair :: proc(t: ^testing.T) {
     state: story.State
+    testing.expect(t, !story.begin_delivery(&state))
+    testing.expect(t, story.accept_airfield_errand(&state))
+    testing.expect(t, story.handoff_broken_magneto(&state))
     testing.expect(t, story.begin_delivery(&state))
     testing.expect(t, !story.complete_delivery(&state, .Niko))
     testing.expect(t, state.delivery.active)
@@ -128,7 +139,7 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
         catalog.niko_root_choices[:],
         []string {
             "Give Niko the sealed letter.",
-            "Yes. I'll carry it across the sea.",
+            "I can take it to Iva.",
             "Stay under the awning.",
             "I'll leave you to your work.",
         },
@@ -290,11 +301,19 @@ resident_action_indicators_follow_campaign_progress :: proc(t: ^testing.T) {
     testing.expect(t, story.resident_name(.Gerta) == "Gerta")
     testing.expect(t, story.resident_island(.Gerta) == .West)
     testing.expect(t, story.resident_has_action(&state, .Marta))
-    testing.expect(t, story.resident_has_action(&state, .Gerta))
-    testing.expect(t, story.resident_has_action(&state, .Niko))
-    testing.expect(t, story.resident_has_action(&state, .Bojan))
+    testing.expect(t, !story.resident_has_action(&state, .Gerta))
+    testing.expect(t, !story.resident_has_action(&state, .Niko))
+    testing.expect(t, !story.resident_has_action(&state, .Bojan))
     testing.expect(t, !story.resident_has_action(&state, .Iva))
 
+    testing.expect(t, story.accept_airfield_errand(&state))
+    testing.expect(t, !story.resident_has_action(&state, .Marta))
+    testing.expect(t, story.resident_has_action(&state, .Gerta))
+    testing.expect(t, story.handoff_broken_magneto(&state))
+    testing.expect(t, story.resident_has_action(&state, .Marta))
+    testing.expect(t, !story.resident_has_action(&state, .Gerta))
+    testing.expect(t, story.resident_has_action(&state, .Niko))
+    testing.expect(t, story.resident_has_action(&state, .Bojan))
     testing.expect(t, story.begin_delivery(&state))
     testing.expect(t, !story.resident_has_action(&state, .Niko))
     testing.expect(t, story.resident_has_action(&state, .Iva))
@@ -331,7 +350,12 @@ two_island_quest_graph_projects_to_legacy_story_stages :: proc(t: ^testing.T) {
     testing.expect(t, story.apply_quest_projection(&legacy, &graph_state, &catalog))
     testing.expect(t, legacy.romance == .Unintroduced)
     testing.expect(t, legacy.repair == .Not_Seen)
+    testing.expect(t, legacy.airfield_errand == .Not_Offered)
+    testing.expect(t, !quest.is_presented(&graph_state, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
 
+    testing.expect(t, quest.accept(&graph_state, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "broken-magneto", target = "gerta"})
+    testing.expect(t, quest.accept(&graph_state, &catalog.definition, story.quest_node_id(.Crash_Reported)))
     _ = quest.publish(&graph_state, &catalog.definition, {kind = .Talk, key = "crash-reported", target = "bojan"})
     _ = quest.publish(&graph_state, &catalog.definition, {kind = .Inspect, key = "bojan-wing"})
     _ = quest.publish(&graph_state, &catalog.definition, {kind = .Repair, key = "apply-wing-patch"})
@@ -340,6 +364,7 @@ two_island_quest_graph_projects_to_legacy_story_stages :: proc(t: ^testing.T) {
     testing.expect(t, legacy.repair == .Repaired)
     testing.expect(t, legacy.romance == .Unintroduced)
 
+    testing.expect(t, quest.accept(&graph_state, &catalog.definition, story.quest_node_id(.First_Letter)))
     _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "first-letter", target = "iva"})
     _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "first-reply", target = "niko"})
     _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "regatta-invitation", target = "iva"})
@@ -375,6 +400,8 @@ legacy_story_actions_publish_into_authoritative_quest_state :: proc(t: ^testing.
     catalog: story.Quest_Catalog
     story.init_quest_catalog(&catalog)
 
+    testing.expect(t, story.accept_airfield_errand(&state))
+    testing.expect(t, story.handoff_broken_magneto(&state))
     testing.expect(t, story.begin_delivery(&state))
     testing.expect(t, story.complete_delivery(&state, .Iva))
     testing.expect(t, quest.is_complete(&state.quest, &catalog.definition, story.quest_node_id(.First_Letter)))
@@ -387,4 +414,53 @@ legacy_story_actions_publish_into_authoritative_quest_state :: proc(t: ^testing.
     testing.expect(t, story.verify_repair(&state))
     testing.expect(t, quest.is_complete(&state.quest, &catalog.definition, story.quest_node_id(.Repair_Verified)))
     testing.expect(t, state.repair == .Repaired)
+}
+
+@(test)
+westbound_opening_is_quiet_and_carries_main_and_side_cargo_together :: proc(t: ^testing.T) {
+    state: story.State
+    catalog: story.Quest_Catalog
+    story.init_quest_catalog(&catalog)
+
+    testing.expect(t, story.ensure_quest_progress(&state))
+    testing.expect(t, state.airfield_errand == .Not_Offered)
+    testing.expect(t, !state.delivery.active)
+    testing.expect(t, quest.first_active(&state.quest, &catalog.definition) == quest.no_node)
+    testing.expect(t, !quest.is_presented(&state.quest, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
+    testing.expect(t, !story.begin_delivery(&state))
+    testing.expect(t, !story.report_crash(&state))
+
+    testing.expect(t, story.accept_airfield_errand(&state))
+    testing.expect(t, state.airfield_errand == .Westbound)
+    testing.expect(t, quest.first_active(&state.quest, &catalog.definition) == story.quest_node_id(.Magneto_Westbound))
+    testing.expect(t, story.handoff_broken_magneto(&state))
+    testing.expect(t, state.airfield_errand == .Eastbound)
+
+    testing.expect(t, story.begin_delivery(&state))
+    testing.expect(t, state.delivery.active && state.delivery.kind == .First_Letter)
+    testing.expect(t, story.return_replacement_magneto(&state))
+    testing.expect(t, state.airfield_errand == .Completed)
+    testing.expect(t, state.delivery.active && state.delivery.kind == .First_Letter)
+    testing.expect(t, state.stamps_earned == 1)
+
+    testing.expect(t, story.complete_delivery(&state, .Iva))
+    testing.expect(t, state.romance == .First_Letter)
+    testing.expect(t, state.stamps_earned == 2)
+}
+
+@(test)
+legacy_progress_migrates_past_the_new_airfield_introduction :: proc(t: ^testing.T) {
+    state := story.State {
+        romance = .First_Letter,
+        quest = {definition_id = "two-island-story", node_count = 11},
+    }
+    catalog: story.Quest_Catalog
+    story.init_quest_catalog(&catalog)
+
+    testing.expect(t, story.ensure_quest_progress(&state))
+    testing.expect(t, state.quest.node_count == len(catalog.definition.nodes))
+    testing.expect(t, state.airfield_errand == .Completed)
+    testing.expect(t, state.romance == .First_Letter)
+    testing.expect(t, quest.is_complete(&state.quest, &catalog.definition, story.quest_node_id(.Magneto_Eastbound)))
+    testing.expect(t, state.stamps_earned == 2)
 }

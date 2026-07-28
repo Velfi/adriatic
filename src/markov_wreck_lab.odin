@@ -468,26 +468,53 @@ markov_wreck_spawn_postale :: proc(editor: ^Editor) -> bool {
     editor.postale_visible = true
     editor.libellula_visible = false
 
-    editor.pilot.mode = .On_Foot
-    editor.pilot.vehicle = nil
-    editor.pilot.position = editor.postale.vehicle.position
-    editor.postale.vehicle.driver = nil
-    _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
-    if !entered do return false
-
     editor.in_map = true
     editor.map_time = f32(rl.GetTime())
     editor.aircraft_fixed_accumulator = 0
     editor.aircraft_previous_body_valid = false
     editor.capture_world_only = false
+    markov_wreck_postale_spawned = true
+    if !markov_wreck_ensure_flight_control(editor) {
+        markov_wreck_postale_spawned = false
+        return false
+    }
     chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
     editor.camera_pose = editor.flight_camera.pose
     third_person.camera_set_pose(&editor.cameras, .Player, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Player)
-    vehicles.sync_driver(&editor.pilot)
     set_pointer_locked(true)
     _ = sdl.HideCursor()
-    markov_wreck_postale_spawned = true
+    return true
+}
+
+// A wreck flight is a self-contained challenge, not an ordinary enter/exit
+// interaction. Keep its ownership state authoritative for the whole session:
+// hot reloads and lab transitions can preserve the visible aircraft while
+// invalidating one of the driver pointers, which makes driving_aircraft false
+// and silently routes all input away from the flight model.
+markov_wreck_ensure_flight_control :: proc(editor: ^Editor) -> bool {
+    if editor == nil ||
+       !lab_scene_is_active(editor, "markov-wreck") ||
+       !markov_wreck_postale_spawned {
+        return false
+    }
+    if !vehicles.aircraft_fleet_switch(&editor.aircraft, .Postale) do return false
+
+    if editor.pilot.vehicle != nil && editor.pilot.vehicle != &editor.postale.vehicle {
+        editor.pilot.vehicle.driver = nil
+    }
+    if editor.postale.vehicle.driver != nil && editor.postale.vehicle.driver != &editor.pilot {
+        editor.postale.vehicle.driver.vehicle = nil
+        editor.postale.vehicle.driver.mode = .On_Foot
+    }
+    editor.in_map = true
+    editor.capture_world_only = false
+    editor.postale_visible = true
+    editor.libellula_visible = false
+    editor.pilot.mode = .Driving
+    editor.pilot.vehicle = &editor.postale.vehicle
+    editor.postale.vehicle.driver = &editor.pilot
+    vehicles.sync_driver(&editor.pilot)
     return true
 }
 
@@ -1422,7 +1449,11 @@ world_markov_wreck :: proc(editor: ^Editor) {
 }
 
 markov_wreck_process_input :: proc(editor: ^Editor) {
-    if editor == nil || markov_wreck_postale_spawned do return
+    if editor == nil do return
+    if markov_wreck_postale_spawned {
+        _ = markov_wreck_ensure_flight_control(editor)
+        return
+    }
     if rl.IsMouseButtonPressed(.LEFT) {
         mouse := rl.GetMousePosition()
         if rl.CheckCollisionPointRec(mouse, markov_wreck_spawn_button_bounds(rl.GetScreenHeight())) {

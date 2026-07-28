@@ -39,6 +39,13 @@ Repair_Stage :: enum {
     Repaired,
 }
 
+Airfield_Errand_Stage :: enum {
+    Not_Offered,
+    Westbound,
+    Eastbound,
+    Completed,
+}
+
 Delivery_Kind :: enum {
     None,
     First_Letter,
@@ -62,6 +69,7 @@ State :: struct {
     quest:                quest.State,
     romance:              Romance_Stage,
     repair:               Repair_Stage,
+    airfield_errand:      Airfield_Errand_Stage,
     delivery:             Delivery,
     completed_deliveries: int,
     repeat_deliveries:    int,
@@ -110,6 +118,9 @@ begin_delivery :: proc(state: ^State) -> bool {
     delivery: Delivery
     switch state.romance {
     case .Unintroduced:
+        catalog: Quest_Catalog
+        init_quest_catalog(&catalog)
+        if !quest.accept(&state.quest, &catalog.definition, quest_node_id(.First_Letter)) do return false
         delivery = {
             active      = true,
             kind        = .First_Letter,
@@ -237,7 +248,33 @@ complete_meeting :: proc(state: ^State) -> bool {
 
 report_crash :: proc(state: ^State) -> bool {
     if state == nil || state.repair != .Not_Seen do return false
+    if !ensure_quest_progress(state) do return false
+    catalog: Quest_Catalog
+    init_quest_catalog(&catalog)
+    if !quest.accept(&state.quest, &catalog.definition, quest_node_id(.Crash_Reported)) do return false
     update, published := publish_quest_event(state, {kind = .Talk, key = "crash-reported", target = "bojan"})
+    return published && update.completed_count > 0
+}
+
+accept_airfield_errand :: proc(state: ^State) -> bool {
+    if state == nil || state.airfield_errand != .Not_Offered do return false
+    if !ensure_quest_progress(state) do return false
+    catalog: Quest_Catalog
+    init_quest_catalog(&catalog)
+    if !quest.accept(&state.quest, &catalog.definition, quest_node_id(.Magneto_Westbound)) do return false
+    state.airfield_errand = .Westbound
+    return true
+}
+
+handoff_broken_magneto :: proc(state: ^State) -> bool {
+    if state == nil || state.airfield_errand != .Westbound do return false
+    update, published := publish_quest_event(state, {kind = .Deliver, key = "broken-magneto", target = "gerta"})
+    return published && update.completed_count > 0
+}
+
+return_replacement_magneto :: proc(state: ^State) -> bool {
+    if state == nil || state.airfield_errand != .Eastbound do return false
+    update, published := publish_quest_event(state, {kind = .Deliver, key = "replacement-magneto", target = "marta"})
     return published && update.completed_count > 0
 }
 
@@ -417,6 +454,9 @@ niko_text :: proc(ctx: ^dialogue.Context) -> string {
     }
     switch state.romance {
     case .Unintroduced:
+        if state.airfield_errand == .Eastbound || state.airfield_errand == .Completed {
+            return "Wenn tu retournes verso est… j'ai una cosa piccola para Iva. Klein fuori, almeno."
+        }
         return "La lampe de l'isola est clignote twice avant alba. Iva veglia quando mes forni aussi."
     case .First_Letter:
         return "La boîte de cardamomo looks molto sospetta quand uno wartet auf risposta."
@@ -562,11 +602,13 @@ confirm_repair :: proc(ctx: ^dialogue.Context) { _ = verify_repair(state_from_co
 can_begin_niko_delivery :: proc(ctx: ^dialogue.Context) -> bool {
     state := state_from_context(ctx)
     if state == nil || state.delivery.active do return false
-    return(
-        state.romance == .Unintroduced ||
-        state.romance == .Corresponding ||
-        (state.romance == .Together && state.repeat_deliveries % 2 == 0) \
-    )
+    if state.romance == .Unintroduced {
+        if !ensure_quest_progress(state) do return false
+        catalog: Quest_Catalog
+        init_quest_catalog(&catalog)
+        return quest.status(&state.quest, &catalog.definition, quest_node_id(.First_Letter)) == .Available
+    }
+    return state.romance == .Corresponding || (state.romance == .Together && state.repeat_deliveries % 2 == 0)
 }
 
 can_begin_iva_delivery :: proc(ctx: ^dialogue.Context) -> bool {
@@ -596,7 +638,10 @@ can_hold_meeting :: proc(ctx: ^dialogue.Context) -> bool {
 
 can_report_crash :: proc(ctx: ^dialogue.Context) -> bool {
     state := state_from_context(ctx)
-    return state != nil && state.repair == .Not_Seen
+    if state == nil || state.repair != .Not_Seen || !ensure_quest_progress(state) do return false
+    catalog: Quest_Catalog
+    init_quest_catalog(&catalog)
+    return quest.status(&state.quest, &catalog.definition, quest_node_id(.Crash_Reported)) == .Available
 }
 
 can_inspect_crash :: proc(ctx: ^dialogue.Context) -> bool {
@@ -620,8 +665,10 @@ resident_has_action :: proc(state: ^State, resident: Resident) -> bool {
         data = rawptr(state),
     }
     switch resident {
-    case .Marta, .Gerta:
-        return true
+    case .Marta:
+        return state.airfield_errand == .Not_Offered || state.airfield_errand == .Eastbound
+    case .Gerta:
+        return state.airfield_errand == .Westbound
     case .Niko:
         return can_complete_niko_delivery(&ctx) || can_begin_niko_delivery(&ctx) || can_hold_meeting(&ctx)
     case .Iva:
@@ -665,11 +712,7 @@ init_catalog :: proc(catalog: ^Catalog) {
 
     catalog.niko_root_choices = {
         dialogue.choice("Give Niko the sealed letter.", 1, can_complete_niko_delivery, complete_niko_delivery),
-        dialogue.choice(
-            "Yes. I'll carry it across the sea.",
-            condition = can_begin_niko_delivery,
-            effect = accept_delivery,
-        ),
+        dialogue.choice("I can take it to Iva.", condition = can_begin_niko_delivery, effect = accept_delivery),
         dialogue.choice("Stay under the awning.", 4, can_hold_meeting),
         dialogue.choice("I'll leave you to your work."),
     }

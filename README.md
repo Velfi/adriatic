@@ -134,12 +134,15 @@ _ = cinematic_play(editor, &script)
 ## Two-island story
 
 `packages/story` contains the first narrative campaign and its dialogue
-catalog. Niko, a west-island baker, and Iva, the east-island lighthouse keeper,
-fall in love through a sequence of sealed deliveries. Iva plans to fly to the
-regatta in Bojan's courier plane, so diagnosing, patching, and verifying its
-torn wing makes their meeting possible; repairing it early is preserved as a
-useful act of foresight. Her arrival plays as a short cinematic before their
-joint conversation beneath a blue awning. Afterward, the route continues as an
+catalog. The player begins without an assigned errand and can volunteer to
+carry Marta's cracked magneto west, returning with Gerta's replacement. On that
+crossing, Niko, a west-island baker, may entrust the player with an optional
+letter for Iva, the east-island lighthouse keeper. Their correspondence grows
+through later sealed deliveries. Iva plans to fly to the regatta in Bojan's
+courier plane, so diagnosing, patching, and verifying its torn wing makes their
+meeting possible; repairing it early is preserved as a useful act of
+foresight. Her arrival plays as a short cinematic before their joint
+conversation beneath a blue awning. Afterward, the route continues as an
 alternating repeatable mail job that awards one stamp per completed delivery.
 
 ## Wireframe renderer

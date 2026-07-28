@@ -80,7 +80,7 @@ quest_log_collect :: proc(editor: ^Editor, tab: Quest_Log_Tab, items: ^[QUEST_LO
         if node.kind != .Objective do continue
         node_status := quest.status(&editor.story_state.quest, definition, node.id)
         completed := quest.completion_count(&editor.story_state.quest, definition, node.id) > 0
-        include := tab == .Active ? (node_status == .Active || node_status == .Available) : completed
+        include := tab == .Active ? quest.is_presented(&editor.story_state.quest, definition, node.id) : completed
         if !include || count >= QUEST_LOG_MAX_ITEMS do continue
         items[count] = node.id
         count += 1

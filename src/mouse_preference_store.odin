@@ -8,11 +8,11 @@ MOUSE_PREFERENCE_MAGIC :: [8]u8{'A', 'D', 'R', 'M', 'O', 'U', 'S', 'E'}
 MOUSE_PREFERENCE_VERSION :: u32(2)
 
 Mouse_Preference_Payload :: struct {
-    fur:           u8,
-    pattern:       u8,
-    headgear:      u8,
-    scarf_enabled: bool,
-    scarf_color:   [4]u8,
+    fur:                 u8,
+    pattern:             u8,
+    headgear:            u8,
+    scarf_enabled:       bool,
+    scarf_color:         [4]u8,
     look_sensitivity:    f32,
     invert_look_x:       bool,
     invert_look_y:       bool,
@@ -180,15 +180,15 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
         payload.scarf_color[3],
     }
     editor.gameplay_options = {
-        look_sensitivity = payload.look_sensitivity,
-        invert_look_x = payload.invert_look_x,
-        invert_look_y = payload.invert_look_y,
+        look_sensitivity    = payload.look_sensitivity,
+        invert_look_x       = payload.invert_look_x,
+        invert_look_y       = payload.invert_look_y,
         invert_flight_pitch = payload.invert_flight_pitch,
-        show_hud = payload.show_hud,
-        crunchiness = Crunchiness(payload.crunchiness),
-        dither_mode = Dither_Mode(payload.dither_mode),
-        hdr_exposure = payload.hdr_exposure,
-        theme_mode = UI_Theme_Mode(payload.theme_mode),
+        show_hud            = payload.show_hud,
+        crunchiness         = Crunchiness(payload.crunchiness),
+        dither_mode         = Dither_Mode(payload.dither_mode),
+        hdr_exposure        = payload.hdr_exposure,
+        theme_mode          = UI_Theme_Mode(payload.theme_mode),
     }
     return true
 }

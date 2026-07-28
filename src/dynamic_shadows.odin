@@ -569,15 +569,10 @@ dynamic_shadow_render :: proc(pass: ^rl.World_Pass_Context, frame_index: int) {
         }
         vk.CmdSetViewport(cmd, 0, 1, &viewport)
         vk.CmdSetScissor(cmd, 0, 1, &scissor)
-        push := Dynamic_Shadow_Push{cascade = u32(cascade)}
-        vk.CmdPushConstants(
-            cmd,
-            state.pipeline_layout,
-            {.VERTEX},
-            0,
-            u32(size_of(Dynamic_Shadow_Push)),
-            &push,
-        )
+        push := Dynamic_Shadow_Push {
+            cascade = u32(cascade),
+        }
+        vk.CmdPushConstants(cmd, state.pipeline_layout, {.VERTEX}, 0, u32(size_of(Dynamic_Shadow_Push)), &push)
         vk.CmdDraw(cmd, u32(len(world_renderer.shadow_vertices)), 1, 0, 0)
         vk.CmdEndRendering(cmd)
         engine.vk_cmd_image_barrier2(

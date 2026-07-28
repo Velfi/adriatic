@@ -3331,10 +3331,22 @@ gerta_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
 
 attendant_speaker :: proc(_: ^dialogue.Context) -> string { return "MARTA" }
 gerta_speaker :: proc(_: ^dialogue.Context) -> string { return "GERTA" }
-attendant_menu_text :: proc(_: ^dialogue.Context) -> string {
+attendant_menu_text :: proc(ctx: ^dialogue.Context) -> string {
+    editor := attendant_context_editor(ctx)
+    if editor != nil && editor.story_state.airfield_errand == .Not_Offered {
+        return(
+            "Ce magneto hat una crepa fine comme un cheveu. Gerta guarda un Ersatz sull'isola west; elle voudra voir el pezzo vecchio avant de fidarsi." \
+        )
+    }
     return "Ciao. How kann ich vous aider?"
 }
-gerta_menu_text :: proc(_: ^dialogue.Context) -> string {
+gerta_menu_text :: proc(ctx: ^dialogue.Context) -> string {
+    editor := attendant_context_editor(ctx)
+    if editor != nil && editor.story_state.airfield_errand == .Westbound {
+        return(
+            "Ja, misma serie. Marta garde ogni macchina bis sie devient famiglia. Nimm il ricambio—et non lascia che das mare lo assaggi." \
+        )
+    }
     return "Dobar dan. Marta gère l'apron est; what peut faire ihre Schwester pour toi?"
 }
 attendant_aircraft_text :: proc(_: ^dialogue.Context) -> string {
@@ -3412,6 +3424,51 @@ marta_menu_set_result :: proc(ctx: ^dialogue.Context, result: dialogue_session.A
 marta_menu_paint :: proc(ctx: ^dialogue.Context) { marta_menu_set_result(ctx, .Paint_Aircraft) }
 marta_menu_close :: proc(ctx: ^dialogue.Context) { marta_menu_set_result(ctx, .Close) }
 
+can_accept_marta_magneto :: proc(ctx: ^dialogue.Context) -> bool {
+    editor := attendant_context_editor(ctx)
+    return(
+        editor != nil &&
+        ctx.resident_index == int(story.Resident.Marta) &&
+        editor.story_state.airfield_errand == .Not_Offered \
+    )
+}
+
+can_handoff_gerta_magneto :: proc(ctx: ^dialogue.Context) -> bool {
+    editor := attendant_context_editor(ctx)
+    return(
+        editor != nil &&
+        ctx.resident_index == int(story.Resident.Gerta) &&
+        editor.story_state.airfield_errand == .Westbound \
+    )
+}
+
+can_return_marta_magneto :: proc(ctx: ^dialogue.Context) -> bool {
+    editor := attendant_context_editor(ctx)
+    return(
+        editor != nil &&
+        ctx.resident_index == int(story.Resident.Marta) &&
+        editor.story_state.airfield_errand == .Eastbound \
+    )
+}
+
+accept_marta_magneto :: proc(ctx: ^dialogue.Context) {
+    if editor := attendant_context_editor(ctx); editor != nil {
+        _ = story.accept_airfield_errand(&editor.story_state)
+    }
+}
+
+handoff_gerta_magneto :: proc(ctx: ^dialogue.Context) {
+    if editor := attendant_context_editor(ctx); editor != nil {
+        _ = story.handoff_broken_magneto(&editor.story_state)
+    }
+}
+
+return_marta_magneto :: proc(ctx: ^dialogue.Context) {
+    if editor := attendant_context_editor(ctx); editor != nil {
+        _ = story.return_replacement_magneto(&editor.story_state)
+    }
+}
+
 dialogue_session_reset :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.attendant_dialogue = {}
@@ -3426,12 +3483,27 @@ dialogue_session_reset :: proc(editor: ^Editor) {
 open_attendant_dialogue :: proc(editor: ^Editor, resident: story.Resident = .Marta) {
     if editor == nil || (resident != .Marta && resident != .Gerta) do return
     attendant_dialogue_definition_release(editor)
-    menu_choices := make([]dialogue.Choice, 5)
-    menu_choices[0] = dialogue.choice("Paint an aeroplane", dialogue.no_next_node, effect = marta_menu_paint)
-    menu_choices[1] = dialogue.choice("Choose an aeroplane", 1)
-    menu_choices[2] = dialogue.choice("Any local news?", 2)
-    menu_choices[3] = dialogue.choice("How is the weather?", 3)
-    menu_choices[4] = dialogue.choice("Nothing, grazie.", dialogue.no_next_node, effect = marta_menu_close)
+    menu_choices := make([]dialogue.Choice, 8)
+    menu_choices[0] = dialogue.choice(
+        "I can bring the broken magneto to Gerta.",
+        condition = can_accept_marta_magneto,
+        effect = accept_marta_magneto,
+    )
+    menu_choices[1] = dialogue.choice(
+        "Give Gerta the broken magneto.",
+        condition = can_handoff_gerta_magneto,
+        effect = handoff_gerta_magneto,
+    )
+    menu_choices[2] = dialogue.choice(
+        "Give Marta the replacement magneto.",
+        condition = can_return_marta_magneto,
+        effect = return_marta_magneto,
+    )
+    menu_choices[3] = dialogue.choice("Paint an aeroplane", dialogue.no_next_node, effect = marta_menu_paint)
+    menu_choices[4] = dialogue.choice("Choose an aeroplane", 1)
+    menu_choices[5] = dialogue.choice("Any local news?", 2)
+    menu_choices[6] = dialogue.choice("How is the weather?", 3)
+    menu_choices[7] = dialogue.choice("Nothing, grazie.", dialogue.no_next_node, effect = marta_menu_close)
 
     editor.attendant_dialogue_vehicle_choice_count = 0
     aircraft_choices := make([]dialogue.Choice, editor.aircraft.count + 1)

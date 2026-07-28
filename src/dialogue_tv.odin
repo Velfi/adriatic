@@ -189,15 +189,7 @@ dialogue_choice_bounds :: proc(layout: Dialogue_Tv_Layout, visible_row: int) -> 
 
 dialogue_draw_wrapped :: proc(text: string, bounds: rl.Rectangle, size, spacing, line_height: f32, color: rl.Color) {
     if len(text) == 0 do return
-    _ = rl.DrawTextWrappedEx(
-        dialogue_font(),
-        fmt.ctprintf("%s", text),
-        bounds,
-        size,
-        spacing,
-        line_height,
-        color,
-    )
+    _ = rl.DrawTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), bounds, size, spacing, line_height, color)
 }
 
 dialogue_word_byte :: proc(byte: u8) -> bool {
@@ -215,15 +207,7 @@ dialogue_draw_glossed_wrapped :: proc(
 ) -> string {
     if len(text) == 0 do return ""
     lines := make([dynamic]rl.Text_Wrapped_Line, 0, 8, context.temp_allocator)
-    rl.LayoutTextWrappedEx(
-        dialogue_font(),
-        fmt.ctprintf("%s", text),
-        size,
-        spacing,
-        bounds.width,
-        .Auto,
-        &lines,
-    )
+    rl.LayoutTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), size, spacing, bounds.width, .Auto, &lines)
     hovered_english := ""
     visible := min(len(lines), max(int(bounds.height / line_height), 0))
     for line, line_index in lines[:visible] {
@@ -231,51 +215,52 @@ dialogue_draw_glossed_wrapped :: proc(
         y := bounds.y + f32(line_index) * line_height
         cursor := line.start
         for cursor < line.end {
-        start := cursor
-        is_space := text[cursor] == ' '
-        if is_space {
-            for cursor < line.end && text[cursor] == ' ' do cursor += 1
-        } else {
-            for cursor < line.end && text[cursor] != ' ' do cursor += 1
-        }
-        token := text[start:cursor]
-        measured := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", token), size, spacing)
-        if !is_space && x > bounds.x && x + measured.x > bounds.x + bounds.width {
-            x = bounds.x
-            y += line_height
-            if y + line_height > bounds.y + bounds.height do break
-        }
-        if is_space && x == bounds.x do continue
+            start := cursor
+            is_space := text[cursor] == ' '
+            if is_space {
+                for cursor < line.end && text[cursor] == ' ' do cursor += 1
+            } else {
+                for cursor < line.end && text[cursor] != ' ' do cursor += 1
+            }
+            token := text[start:cursor]
+            measured := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", token), size, spacing)
+            if !is_space && x > bounds.x && x + measured.x > bounds.x + bounds.width {
+                x = bounds.x
+                y += line_height
+                if y + line_height > bounds.y + bounds.height do break
+            }
+            if is_space && x == bounds.x do continue
 
-        rl.DrawTextEx(dialogue_font(), fmt.ctprintf("%s", token), {x, y}, size, spacing, color)
-        if !is_space {
-            word_start, word_end := 0, len(token)
-            for word_start < word_end && !dialogue_word_byte(token[word_start]) do word_start += 1
-            for word_end > word_start && !dialogue_word_byte(token[word_end - 1]) do word_end -= 1
-            if word_start < word_end {
-                word := token[word_start:word_end]
-                if english, found := dialogue_glossary.english_for(word); found {
-                    prefix_width: f32
-                    if word_start > 0 {
-                        prefix := token[:word_start]
-                        prefix_width = rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", prefix), size, spacing).x
+            rl.DrawTextEx(dialogue_font(), fmt.ctprintf("%s", token), {x, y}, size, spacing, color)
+            if !is_space {
+                word_start, word_end := 0, len(token)
+                for word_start < word_end && !dialogue_word_byte(token[word_start]) do word_start += 1
+                for word_end > word_start && !dialogue_word_byte(token[word_end - 1]) do word_end -= 1
+                if word_start < word_end {
+                    word := token[word_start:word_end]
+                    if english, found := dialogue_glossary.english_for(word); found {
+                        prefix_width: f32
+                        if word_start > 0 {
+                            prefix := token[:word_start]
+                            prefix_width =
+                                rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", prefix), size, spacing).x
+                        }
+                        word_width := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", word), size, spacing).x
+                        word_bounds := rl.Rectangle{x + prefix_width, y, word_width, line_height}
+                        hovered := rl.CheckCollisionPointRec(mouse, word_bounds)
+                        underline_color := hovered ? ui_theme_focus() : ui_theme_accent(190)
+                        rl.DrawRectangle(
+                            i32(word_bounds.x),
+                            i32(y + size + 2),
+                            max(i32(word_bounds.width), 1),
+                            max(i32(hovered ? 3 : 2), 1),
+                            underline_color,
+                        )
+                        if hovered do hovered_english = english
                     }
-                    word_width := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", word), size, spacing).x
-                    word_bounds := rl.Rectangle{x + prefix_width, y, word_width, line_height}
-                    hovered := rl.CheckCollisionPointRec(mouse, word_bounds)
-                    underline_color := hovered ? ui_theme_focus() : ui_theme_accent(190)
-                    rl.DrawRectangle(
-                        i32(word_bounds.x),
-                        i32(y + size + 2),
-                        max(i32(word_bounds.width), 1),
-                        max(i32(hovered ? 3 : 2), 1),
-                        underline_color,
-                    )
-                    if hovered do hovered_english = english
                 }
             }
-        }
-        x += measured.x
+            x += measured.x
         }
     }
     return hovered_english
