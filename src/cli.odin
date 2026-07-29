@@ -2,9 +2,11 @@ package main
 
 import architecture "../packages/architecture"
 import "core:fmt"
+import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:strconv"
+import "core:strings"
 
 adriatic_cli_usage :: proc() {
     fmt.println("usage:")
@@ -18,6 +20,12 @@ adriatic_cli_usage :: proc() {
     fmt.println("    --width <pixels>      window width (320–7680)")
     fmt.println("    --height <pixels>     window height (240–4320)")
     fmt.println("    --settle-frames <n>   frame to capture (0–4096)")
+    fmt.println("    --camera-eye <x,y,z>  explicit camera position")
+    fmt.println("    --camera-look-at <x,y,z> explicit camera target")
+    fmt.println("    --camera-orbit <yaw,pitch> adjust authored camera in degrees")
+    fmt.println("    --camera-distance <n> set distance from camera target")
+    fmt.println("    --camera-offset <x,y,z> translate authored camera and target")
+    fmt.println("    --list-targets        list registered targets for this mode")
     fmt.println("    building targets: <ordinal>, ground-<ordinal>, cypress, mouse-town")
     fmt.println("  adriatic capture bougainvillea [output-directory] [seed ...]")
     fmt.println("")
@@ -123,6 +131,27 @@ adriatic_cli_parse_bounded_int :: proc(
     return int(parsed), true
 }
 
+adriatic_cli_parse_f32_components :: proc(
+    option, value: string,
+    count: int,
+) -> ([3]f32, bool) {
+    result: [3]f32
+    parts := strings.split(value, ",", context.temp_allocator)
+    if len(parts) != count {
+        fmt.eprintf("adriatic: %s expects %d comma-separated numbers, got %s\n", option, count, value)
+        return result, false
+    }
+    for component in 0 ..< count {
+        parsed, ok := strconv.parse_f32(parts[component])
+        if !ok || math.is_nan(parsed) || math.is_inf(parsed) {
+            fmt.eprintf("adriatic: %s contains an invalid number: %s\n", option, parts[component])
+            return result, false
+        }
+        result[component] = parsed
+    }
+    return result, true
+}
+
 adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     if len(args) < 2 do return false, true
     if args[1] == "help" || args[1] == "--help" || args[1] == "-h" {
@@ -147,15 +176,35 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     target := ""
     window_width, window_height := 0, 0
     settle_frames := -1
+    camera_eye, camera_look_at, camera_offset: [3]f32
+    camera_orbit: [2]f32
+    camera_eye_set, camera_look_at_set := false, false
+    camera_orbit_set, camera_distance_set, camera_offset_set := false, false, false
+    camera_distance: f32
+    list_targets := false
     positional_count := 0
     index := 3
     for index < len(args) {
         argument := args[index]
+        if argument == "--list-targets" {
+            if list_targets {
+                fmt.eprintln("adriatic: --list-targets was specified more than once")
+                return true, false
+            }
+            list_targets = true
+            index += 1
+            continue
+        }
         if argument == "--output" ||
            argument == "--target" ||
            argument == "--width" ||
            argument == "--height" ||
-           argument == "--settle-frames" {
+           argument == "--settle-frames" ||
+           argument == "--camera-eye" ||
+           argument == "--camera-look-at" ||
+           argument == "--camera-orbit" ||
+           argument == "--camera-distance" ||
+           argument == "--camera-offset" {
             if index + 1 >= len(args) {
                 fmt.eprintf("adriatic: %s requires a value\n", argument)
                 return true, false
@@ -186,6 +235,30 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 0, 4096)
                 if !ok do return true, false
                 settle_frames = parsed
+            case "--camera-eye":
+                parsed, ok := adriatic_cli_parse_f32_components(argument, value, 3)
+                if !ok do return true, false
+                camera_eye, camera_eye_set = parsed, true
+            case "--camera-look-at":
+                parsed, ok := adriatic_cli_parse_f32_components(argument, value, 3)
+                if !ok do return true, false
+                camera_look_at, camera_look_at_set = parsed, true
+            case "--camera-orbit":
+                parsed, ok := adriatic_cli_parse_f32_components(argument, value, 2)
+                if !ok do return true, false
+                camera_orbit = {parsed[0], parsed[1]}
+                camera_orbit_set = true
+            case "--camera-distance":
+                parsed, ok := strconv.parse_f32(value)
+                if !ok || math.is_nan(parsed) || math.is_inf(parsed) || parsed < .01 || parsed > 100000 {
+                    fmt.eprintf("adriatic: %s must be a number from 0.01 to 100000, got %s\n", argument, value)
+                    return true, false
+                }
+                camera_distance, camera_distance_set = parsed, true
+            case "--camera-offset":
+                parsed, ok := adriatic_cli_parse_f32_components(argument, value, 3)
+                if !ok do return true, false
+                camera_offset, camera_offset_set = parsed, true
             }
             index += 2
             continue
@@ -213,9 +286,38 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         positional_count += 1
         index += 1
     }
+    if list_targets {
+        targets := capture_targets(kind)
+        if len(targets) == 0 {
+            fmt.printf("adriatic: capture mode %s has no registered named targets\n", mode)
+        } else {
+            fmt.printf("%s targets:\n", mode)
+            for name in targets do fmt.printf("  %s\n", name)
+        }
+        return true, true
+    }
     if requested_output == "" {
         fmt.eprintf("adriatic: capture %s requires an output path\n", mode)
         return true, false
+    }
+    if camera_eye_set != camera_look_at_set {
+        fmt.eprintln("adriatic: --camera-eye and --camera-look-at must be provided together")
+        return true, false
+    }
+    if camera_eye_set && (camera_orbit_set || camera_distance_set || camera_offset_set) {
+        fmt.eprintln(
+            "adriatic: explicit --camera-eye/--camera-look-at cannot be combined with relative camera options",
+        )
+        return true, false
+    }
+    if camera_eye_set {
+        dx := camera_eye[0] - camera_look_at[0]
+        dy := camera_eye[1] - camera_look_at[1]
+        dz := camera_eye[2] - camera_look_at[2]
+        if dx * dx + dy * dy + dz * dz < 1e-6 {
+            fmt.eprintln("adriatic: --camera-eye must differ from --camera-look-at")
+            return true, false
+        }
     }
     output, resolved := adriatic_cli_absolute_path(requested_output)
     if !resolved do return true, false
@@ -235,6 +337,16 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         window_width  = window_width,
         window_height = window_height,
         settle_frames = settle_frames,
+        camera_eye = camera_eye,
+        camera_look_at = camera_look_at,
+        camera_eye_set = camera_eye_set,
+        camera_look_at_set = camera_look_at_set,
+        camera_orbit_degrees = camera_orbit,
+        camera_orbit_set = camera_orbit_set,
+        camera_distance = camera_distance,
+        camera_distance_set = camera_distance_set,
+        camera_offset = camera_offset,
+        camera_offset_set = camera_offset_set,
     }
     _ = adriatic_run(nil, request = &request)
     info, screenshot_error := os.stat(output, context.temp_allocator)

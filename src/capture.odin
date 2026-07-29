@@ -55,6 +55,16 @@ Capture_Request :: struct {
     window_width:  int,
     window_height: int,
     settle_frames: int,
+    camera_eye:          [3]f32,
+    camera_look_at:      [3]f32,
+    camera_eye_set:      bool,
+    camera_look_at_set:  bool,
+    camera_orbit_degrees:[2]f32,
+    camera_orbit_set:    bool,
+    camera_distance:     f32,
+    camera_distance_set: bool,
+    camera_offset:       [3]f32,
+    camera_offset_set:   bool,
 }
 
 CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night}
@@ -79,6 +89,58 @@ CAPTURE_FOLIAGE_LOW_KINDS :: bit_set[Capture_Kind] {
     .Foliage_Understory,
     .Foliage_Low_Wind_A,
     .Foliage_Low_Wind_B,
+}
+
+CAPTURE_BUILDING_TARGETS := [?]string {
+    "<ordinal>",
+    "ground-<ordinal>",
+    "cypress",
+    "mouse-town",
+    "west-town-review",
+    "east-town-review",
+    "municipal-route-night",
+    "municipal-route-night-storm",
+    "plaza",
+    "plaza-night",
+    "plaza-night-new-moon",
+    "plaza-night-full-moon",
+    "plaza-night-storm",
+    "storefront",
+    "storefront-front",
+    "storefront-generated",
+    "storefront-generated-night",
+    "storefront-night",
+    "storefront-night-storm",
+    "bougainvillea-<seed>",
+    "storefront-plant-<seed>",
+    "storefront-display-<seed>",
+    "storefront-night-display-<seed>",
+    "storefront-angle-<seed>",
+    "storefront-plan-<seed>",
+}
+CAPTURE_FLIGHT_TARGETS := [?]string {
+    "postale",
+    "rondine",
+    "rondine-launch",
+    "rondine-landing",
+    "rondine-drift",
+    "rondine-countersteer",
+    "rondine-countersteer-left",
+    "rondine-breakaway",
+    "rondine-hookup",
+}
+CAPTURE_SKY_TARGETS := [?]string{"sun", "sun-air", "sun-away", "moon", "stars"}
+
+capture_targets :: proc(kind: Capture_Kind) -> []string {
+    #partial switch kind {
+    case .Building:
+        return CAPTURE_BUILDING_TARGETS[:]
+    case .Flight:
+        return CAPTURE_FLIGHT_TARGETS[:]
+    case .Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night:
+        return CAPTURE_SKY_TARGETS[:]
+    }
+    return nil
 }
 
 capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {

@@ -11203,8 +11203,50 @@ adriatic_run :: proc(
             saved_aircraft_body = render_aircraft_body^
             render_aircraft_body^ = aircraft_render_body(editor)
         }
+        capture_camera_overridden := false
+        capture_camera_original := editor.camera_pose
+        if capture_mode && request != nil &&
+           (request.camera_eye_set ||
+            request.camera_orbit_set ||
+            request.camera_distance_set ||
+            request.camera_offset_set) {
+            pose := capture_camera_original
+            if request.camera_eye_set {
+                pose = third_person.camera_look_at(request.camera_eye, request.camera_look_at)
+            } else {
+                delta := pose.position - pose.target
+                radius := f32(math.sqrt(f64(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z)))
+                if radius < .0001 {
+                    delta = {0, 0, 1}
+                    radius = 1
+                }
+                yaw := math.atan2(delta.x, delta.z)
+                horizontal := f32(math.sqrt(f64(delta.x * delta.x + delta.z * delta.z)))
+                pitch := math.atan2(delta.y, horizontal)
+                if request.camera_orbit_set {
+                    degrees_to_radians := f32(math.PI / 180)
+                    yaw += request.camera_orbit_degrees[0] * degrees_to_radians
+                    pitch += request.camera_orbit_degrees[1] * degrees_to_radians
+                    pitch = clamp(pitch, f32(-math.PI * .495), f32(math.PI * .495))
+                }
+                if request.camera_distance_set do radius = request.camera_distance
+                horizontal_radius := math.cos(pitch) * radius
+                pose.position = pose.target + third_person.Vec3 {
+                    math.sin(yaw) * horizontal_radius,
+                    math.sin(pitch) * radius,
+                    math.cos(yaw) * horizontal_radius,
+                }
+                if request.camera_offset_set {
+                    pose.position += request.camera_offset
+                    pose.target += request.camera_offset
+                }
+            }
+            editor.camera_pose = pose
+            capture_camera_overridden = true
+        }
         rl.BeginDrawing()
         draw_terrain(editor, width, height, f32(rl.GetTime()))
+        if capture_camera_overridden do editor.camera_pose = capture_camera_original
         pause_menu_draw(editor, width, height, postcard)
         cinematic_draw_wipe(editor, width, height)
         crash_recovery_draw(editor, width, height)
