@@ -501,7 +501,7 @@ markov_marina_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
             {185, editor.project.sea_level + 260, 245},
             {0, editor.project.sea_level, 0},
         )
-    } else if target == "vesna" {
+    } else if target == "mira" {
         dockmaster := markov_marina_dockmaster_position()
         editor.camera_pose = third_person.camera_near(
             {dockmaster.x, dockmaster.y + .48, dockmaster.z},
@@ -534,16 +534,16 @@ markov_marina_dockmaster_near :: proc(editor: ^Editor) -> bool {
 }
 
 markov_marina_dockmaster_speaker :: proc(_: ^dialogue.Context) -> string {
-    return "VESNA"
+    return "MIRA"
 }
 
 markov_marina_dockmaster_text :: proc(ctx: ^dialogue.Context) -> string {
-    if ctx == nil || ctx.data == nil do return "Dobro jutro. Mind the lines and the gulls."
+    if ctx == nil || ctx.data == nil do return "Dobro jutro. Mind les lines und the gulls."
     editor := cast(^Editor)ctx.data
     if editor.marina_dinghy_borrowed {
-        return "The little dinghy is waiting below the quay. Bring her back with more fuel than excuses."
+        return "La little dinghy waits below the quay. Return her con more fuel than excuses."
     }
-    return "The basin is calm, the bura is elsewhere, and my little dinghy is doing no useful work."
+    return "La basin is calm, the bura is elsewhere, und my little dinghy does zero useful work."
 }
 
 markov_marina_borrow_dinghy :: proc(ctx: ^dialogue.Context) {
@@ -601,7 +601,7 @@ open_markov_marina_dockmaster_dialogue :: proc(editor: ^Editor) -> bool {
     nodes[0] = dialogue.node("dockmaster", markov_marina_dockmaster_text, choices, markov_marina_dockmaster_speaker)
     definition := new(dialogue.Definition)
     definition^ = {
-        id         = "vesna_dockmaster",
+        id         = "mira_dockmaster",
         start_node = 0,
         nodes      = nodes,
     }
@@ -649,11 +649,11 @@ marin_near :: proc(editor: ^Editor) -> bool {
 marin_speaker :: proc(_: ^dialogue.Context) -> string { return "MARIN" }
 
 marin_text :: proc(_: ^dialogue.Context) -> string {
-    return "La Rondine e pronta, ali ciste und motori caldi. I keep her fuori del breakwater, ready for il mare."
+    return "La Rondine is ready, wings clean und motors warm. Io keep her outside the breakwater, ready for il mare."
 }
 
 marin_handling_text :: proc(_: ^dialogue.Context) -> string {
-    return "Build speed straight, puis turn smooth, da. Hold the bank and lascia the outside wake carry il drift; release before la costa."
+    return "Build speed straight, then turn smooth, da. Hold the bank und let the outside wake carry il drift; release before la coast."
 }
 
 open_marin_dialogue :: proc(editor: ^Editor) -> bool {

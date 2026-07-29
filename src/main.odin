@@ -4152,22 +4152,22 @@ attendant_menu_text :: proc(ctx: ^dialogue.Context) -> string {
     editor := attendant_context_editor(ctx)
     if editor != nil && editor.story_state.airfield_errand == .Not_Offered {
         return(
-            "Ce magneto hat una crepa fine comme un cheveu. Gerta guarda un Ersatz sull'isola west; elle voudra voir el pezzo vecchio avant de fidarsi." \
+            "Questo magneto has una fine crack, comme a hair. Gerta keeps un replacement on west island; she must inspect the old magneto before she trusts it." \
         )
     }
-    return "Ciao. How kann ich vous aider?"
+    return "Ciao. How can io help vous?"
 }
 gerta_menu_text :: proc(ctx: ^dialogue.Context) -> string {
     editor := attendant_context_editor(ctx)
     if editor != nil && editor.story_state.airfield_errand == .Westbound {
         return(
-            "Ja, misma serie. Marta garde ogni macchina bis sie devient famiglia. Nimm the replacement magneto—et non lascia che das mare lo assaggi." \
+            "Ja, same series. Marta keeps ogni machine until it becomes family. Take the replacement magneto—and do not let il mare taste it." \
         )
     }
-    return "Dobar dan. Marta gère l'apron est; what peut faire ihre Schwester pour toi?"
+    return "Dobar dan. Marta manages the east apron; what can sua sister do for you?"
 }
 attendant_aircraft_text :: proc(_: ^dialogue.Context) -> string {
-    return "Which aeroplano soll ich mettre sulla linea?"
+    return "Which aeroplano should io place on la line?"
 }
 
 attendant_context_editor :: proc(ctx: ^dialogue.Context) -> ^Editor {
@@ -4177,59 +4177,59 @@ attendant_context_editor :: proc(ctx: ^dialogue.Context) -> ^Editor {
 
 attendant_local_news_text :: proc(ctx: ^dialogue.Context) -> string {
     editor := attendant_context_editor(ctx)
-    if editor == nil do return "Les isole sono tranquille, ce qui niemals signifie que niemand ist occupé."
+    if editor == nil do return "Le islands are tranquil, which never means nobody is occupied."
     gerta := ctx.resident_index == int(story.Resident.Gerta)
     switch editor.story_state.romance {
     case .Unintroduced:
-        if gerta do return "Niko allume die forni avant les mouettes.\nÚltimamente il regarde la lampe est entre deux plateaux."
-        return "Iva prépare la lampe del faro muy tôt.\nDue lampi avant alba, réguliers wie una promessa."
+        if gerta do return "Niko lights les ovens before the gulls.\nRecently he watches la east lamp between two trays."
+        return "Iva prepares la lighthouse lamp very early.\nDue flashes before alba, regular as una promise."
     case .First_Letter:
-        if gerta do return "Niko hat farina sulle manches, mais zéro sur la boîte de cardamomo.\nFais-en lo que quieras."
-        return "Iva ha reçu posta dall'isola west.\nLe phare n'est pas plus lumineux, obwohl sie insiste."
+        if gerta do return "Niko has farina on his sleeves, mais zero on la cardamom box.\nMake of that what you will."
+        return "Iva received posta from west island.\nThe lighthouse is no brighter, although elle insists."
     case .Corresponding:
-        if gerta do return "Les tende de la regatta gehen hoch.\nNiko inspecte la blu assez souvent pour appeler ça Wartung."
+        if gerta do return "Les regatta awnings are going up.\nNiko inspects la blue one enough to call it maintenance."
         return(
-            "Le lettere cruzan la baia plus vite que les barche da pesca.\nIva les sigilla encore bene, avant que tu demandes." \
+            "Le letters cross la bay faster than fishing boats.\nIva seals them very well, avant you ask." \
         )
     case .Invitation:
         if editor.story_state.repair == .Repaired {
-            if gerta do return "L'aereo de Bojan ist wieder sano.\nHa pulito el asiento passagero, donc ce vol compte."
+            if gerta do return "Bojan's aeroplano is healthy again.\nHe cleaned la passenger seat, donc this flight matters."
             return(
-                "Iva peut faire la regatta, jetzt que l'ala de Bojan ist réparée.\nElle a contrôlé il meteo dreimal." \
+                "Iva can attend la regatta, now that Bojan's wing is repaired.\nElle checked il meteo three times." \
             )
         }
-        if gerta do return "L'ala di tela de Bojan braucht lavoro honnête.\nLa spiegazione malhonnête, il l'a déjà fournie."
-        return "Iva doit être quelque part oltre il mare.\nL'aereo de Bojan porte encore daylight durch una ala."
+        if gerta do return "Bojan's canvas wing needs honest work.\nLa dishonest explanation, he already supplied."
+        return "Iva must be somewhere beyond il mare.\nBojan's aeroplano still carries daylight through una wing."
     case .Meeting:
-        if gerta do return "Iva ist arrivée sana e salva.\nNiko appelle l'extra pane un erreur de contabilità."
-        return "Iva dit que la vue sous la tenda blu dell'isola west\nist quasi assez belle pour remplacer sa lampe."
+        if gerta do return "Iva arrived safe and sana.\nNiko calls the extra pane an accounting error."
+        return "Iva says la view under the blue awning on west island\nis quasi beautiful enough to replace her lamp."
     case .Together:
-        if gerta do return "Niko und Iva mandent encore pacchi oltre la baia.\nApparemment, rencontrer qualcuno améliore seulement la posta."
-        return "Pane va est, verre de lampe va west.\nSolo il corriere ne sait pas cosa dit la nota de cena."
+        if gerta do return "Niko und Iva still send packages across la bay.\nApparently, meeting someone only improves la posta."
+        return "Pane goes east, lamp glass goes west.\nSolo the courier does not know what la dinner note says."
     }
     return ""
 }
 
 attendant_weather_text :: proc(ctx: ^dialogue.Context) -> string {
     editor := attendant_context_editor(ctx)
-    if editor == nil do return "Regarde il mare avant de croire irgendeine prévision."
+    if editor == nil do return "Inspect il mare before believing any forecast."
     weather := editor.atmosphere.weather
     wind_speed := f32(math.sqrt(f64(weather.wind[0] * weather.wind[0] + weather.wind[1] * weather.wind[1])))
     gerta := ctx.resident_index == int(story.Resident.Gerta)
     if weather.precipitation > .55 || weather.severity > .72 {
-        if gerta do return "Un fronte duro attraversa la baia.\nBleib unter les nuages et laisse la fierté am apron."
-        return "La pluie de tempesta approche.\nLe phare travaille; eso ne signifie pas que tu dois le tester."
+        if gerta do return "Un hard front crosses la bay.\nStay below les clouds et leave your pride on the apron."
+        return "La tempesta rain approaches.\nLe lighthouse works; that does not mean you must test it."
     }
     if wind_speed > 7 || weather.cloud_cover > .48 {
-        if gerta do return "Der vento ist vivant sopra la crête west.\nDonne spazio aux falaises et attends un crosswind au retour."
-        return "Nuages cassés und vento ferme sur la baia.\nVolable, si tu laisses l'aria dire l'ultima parola."
+        if gerta do return "Il vento is alive above the west ridge.\nGive space to les cliffs et expect a crosswind on return."
+        return "Broken clouds und firm vento over la bay.\nFlyable, if you let l'aria have the last word."
     }
     if editor.atmosphere.world_minutes < 6 * 60 || editor.atmosphere.world_minutes > 19 * 60 {
-        if gerta do return "Aria nocturna chiara; les lumières de pista verdienen ihr Geld.\nAttenzione alla brume sur il mare oscuro."
-        return "La notte ist calme.\nGarde la lampe d'Iva à gauche quando voli verso est."
+        if gerta do return "Night aria is clear; les runway lights earn their money.\nAttention to fog over il mare oscuro."
+        return "La night is calm.\nKeep Iva's lamp on the left when flying east."
     }
-    if gerta do return "Assez clair pour voir l'isola est vom apron west.\nLa baia ist heute très coopérative."
-    return "Vento leggero und mare aperto.\nBuen día pour voler, aunque les mouettes prendront le crédit."
+    if gerta do return "Clear enough to see east island from the west apron.\nLa bay is very cooperative today."
+    return "Light vento und open mare.\nBuen day for flight, although les gulls take the credit."
 }
 
 marta_menu_set_result :: proc(ctx: ^dialogue.Context, result: dialogue_session.Airfield_Result) {

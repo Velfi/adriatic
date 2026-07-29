@@ -347,13 +347,13 @@ anica_speaker :: proc(_: ^dialogue.Context) -> string { return "ANICA" }
 vesna_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
     if state == nil || state.clinic_visits == 0 {
-        return "La clinica is quiet, dobro. Mais we keep un letto pronto, perché pilots confuse fortuna con meteo."
+        return "La clinica is quiet, dobro. Mais we keep one letto ready, perché pilots confuse fortuna with meteo."
     }
     if state.clinic_visits == 1 {
-        return "Niente rotto. Un po' de riposo, beaucoup d'acqua, und oggi no bravura. Tes lunettes sono sul vassoio."
+        return "No bones broken. Un poco de repos, beaucoup acqua, und today zero bravura. Your glasses are on the tray."
     }
     return fmt.tprintf(
-        "Visita numero %d. Tu connais la routine: acqua, repos, then guarda il meteo before il motore.",
+        "Visit numero %d. You know la routine: acqua, repos, then inspect il meteo before the motor.",
         state.clinic_visits,
     )
 }
@@ -361,10 +361,10 @@ vesna_text :: proc(ctx: ^dialogue.Context) -> string {
 petar_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
     if state == nil || state.clinic_visits == 0 {
-        return "Io wash le lenzuola ogni mattina. Das is not une invitation à remplirle il letto, capito?"
+        return "Io wash the clinic linens ogni morning. Das is not an invitation to occupy le letto, capito?"
     }
     return(
-        "Tes lunettes sont sul vassoio, le scarf est asciutta, und il tuo aeroplano aspetta all'airfield. In quest'ordine." \
+        "Your glasses are on the tray, la scarf is dry, und your aeroplano waits at the airfield. In questo order." \
     )
 }
 
@@ -372,31 +372,59 @@ anica_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
     if state == nil || state.clinic_visits == 0 {
         return(
-            "La clinica east guarda il mare. Dobro for finding boats; moins dobro quand un aeroplano arrive senza appuntamento." \
+            "The east clinica faces il mare. Dobro for finding boats; less dobro when an aeroplano arrives without appointment." \
         )
     }
     if state.clinic_visits == 1 {
         return(
-            "Respira piano. Rien de cassé, samo un grande rumore. Ho messo acqua qui und il meteo là—scegli prima l'acqua." \
+            "Respira piano. Nothing cassé, solo one grande rumore. Acqua here und meteo there—choose acqua first." \
         )
     }
     return fmt.tprintf(
-        "Ancora tu, visita numero %d. Il mare forgives beaucoup, aber non tiene il conto per me.",
+        "Again you, visit numero %d. Il mare pardons beaucoup, but it does not keep my records.",
         state.clinic_visits,
     )
+}
+
+toma_text :: proc(ctx: ^dialogue.Context) -> string {
+    state := state_from_context(ctx)
+    if state == nil {
+        return "West-island posta, dobro. Every traversata conta, even quand the postbag is light."
+    }
+    if state.delivery.active && state.delivery.to == .Toma {
+        return "Ah, the east-island posta. Place it here, bitte: lamp glass below, Lena's dinner note above, and pane separate."
+    }
+    if !state.delivery.active && state.repeat_deliveries % 2 == 0 {
+        return "Lena expects this island post: pane, postcards, et one pressed flower. Carry it east before the pane becomes stone."
+    }
+    return "The postbag repose, mais io non. Every letter finds its place before la bura enters the door."
+}
+
+lena_text :: proc(ctx: ^dialogue.Context) -> string {
+    state := state_from_context(ctx)
+    if state == nil {
+        return "East-island posta: letters above, lamp glass below, und pane always visible."
+    }
+    if state.delivery.active && state.delivery.to == .Lena {
+        return "The west-island posta est arrivée, dobro. Pane here, postcards là, und the flower—delicato, it has traveled enough."
+    }
+    if !state.delivery.active && state.repeat_deliveries % 2 == 1 {
+        return "Toma expects this island post: lamp glass, bien protected, et a dinner note. Carry it west; glass cannot swim."
+    }
+    return "Everything est sorted, quasi. The letters wait calmly; solo il pane pretends to be urgent."
 }
 
 zora_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
     if state == nil || state.tarot_readings == 0 {
         return(
-            "Ferme la persiana, piccolo corriere. The bura mescola déjà abbastanza. Le carte ne commandent pas il mare; they show seulement dove tira il vento." \
+            "Close la shutter, piccolo courier. The bura already mixes enough. Le cards do not command il mare; they show only where the vento turns." \
         )
     }
     if state.tarot_last_moment == tarot_moment(state) {
-        return "Le carte ont parlé pour questo vento. Now guarda il cielo vero; ritorna quand qualcosa cambia."
+        return "Le cards have spoken for questo vento. Now inspect the real cielo; return when something changes."
     }
-    return "Siedi. The vento ha tourné depuis l'ultima volta; vediamo si les cartes l'hanno notato."
+    return "Sit. The vento has turned since l'ultima reading; let us see if le cards noticed."
 }
 
 tarot_moment :: proc(state: ^State) -> u32 {
@@ -413,58 +441,58 @@ tarot_card_omen :: proc(card: tarot.Card) -> string {
     id := int(card)
     switch {
     case id == 6:
-        return "deux persone must scegliere la stessa traversée"
+        return "deux persone must choose la stessa traversata"
     case id == 7:
-        return "the voyage demande mani ferme, non fretta"
+        return "the voyage demande steady hands, non speed"
     case id == 9:
-        return "une lampe solitaria can ancora guidare qualcuno"
+        return "una lamp solitaria can still guide someone"
     case id == 10:
-        return "the ruota tourne, mais seulement si qualcuno la spinge"
+        return "the wheel turns, mais only if someone gives it a push"
     case id == 16:
-        return "ce qui looks like rovina demande prima un'ispezione"
+        return "what looks like ruin demande first an inspection"
     case id == 17:
-        return "une luce lontana is aussi una promessa"
+        return "una distant light is aussi one promise"
     case id == 18:
-        return "the meteo cache metà della route"
+        return "the meteo hides half of la route"
     case id == 19:
-        return "la clarté will arrivare con il giorno"
+        return "clarity will arrive con il daylight"
     case id >= 22 && id < 36:
-        return "le travail e il coraggio pull nella stessa direzione"
+        return "work et courage pull in la stessa direction"
     case id >= 36 && id < 50:
-        return "les affetti travel meglio in un recipiente semplice"
+        return "affection travels better in un container simple"
     case id >= 50 && id < 64:
-        return "une parola cuts; una parola precisa répare"
+        return "one parola cuts; una precise parola repairs"
     case id >= 64:
-        return "the cosa concreta sotto la mano mérite confiance"
+        return "the concrete thing under your hand merita confidence"
     }
-    return "le changement is già entrato dalla finestra"
+    return "change has already entered through la window"
 }
 
 zora_story_omen :: proc(state: ^State) -> string {
-    if state == nil do return "Ne cours pas dietro al simbolo; watch cosa fa muovere."
+    if state == nil do return "Do not chase il symbol; watch what it moves."
     switch state.romance {
     case .Unintroduced:
-        return "Deux persone keep le stesse ore su rive diverse. Non la chiamano encore attesa."
+        return "Deux persone keep the same hours on different shores. They do not call it waiting yet."
     case .First_Letter:
-        return "Une cosa sigillata crosses meglio il mare in mani che savent se taire."
+        return "Una sealed letter crosses il mare best in hands that stay silent."
     case .Corresponding:
-        return "Les distanze become piccole prima sulla carta, puis sotto i piedi."
+        return "La distance becomes small first on paper, then sotto the feet."
     case .Invitation:
         if state.repair != .Repaired {
-            return "Canvas, vento, et un voyage da réparer prima di prometterlo."
+            return "Canvas, vento, et one voyage need repair before making a promise."
         }
-        return "La route nel cielo is pronta. Il coraggio doit seulement salire a bordo."
+        return "La route in the cielo is ready. Il courage needs only to board."
     case .Meeting:
-        return "Deux sedie sous una tenda blu make moins ombra di una sedia vuota."
+        return "Deux chairs under una blue awning make less shadow than one empty chair."
     case .Together:
-        return "Tu connais the route: pane all'andata, verre ben avvolto al ritorno."
+        return "You know la route: pane outbound, lamp glass protected on return."
     }
     return ""
 }
 
 zora_reading_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
-    if state == nil || state.tarot_layout.count == 0 do return "La table is vuota; qualcosa ha mangé la sorte."
+    if state == nil || state.tarot_layout.count == 0 do return "La table is empty; something has eaten la fortuna."
     first := state.tarot_layout.placements[0]
     direction := first.orientation == .Reversed ? "controvento" : "con il vento"
     switch state.tarot_layout.spread {
@@ -480,7 +508,7 @@ zora_reading_text :: proc(ctx: ^dialogue.Context) -> string {
         second := state.tarot_layout.placements[1]
         third := state.tarot_layout.placements[2]
         return fmt.tprintf(
-            "Passé: %s. Ora: %s.\nPossible shore: %s. %s",
+            "Past: %s. Ora: %s.\nPossible shore: %s. %s",
             tarot.card_name(first.card),
             tarot.card_name(second.card),
             tarot.card_name(third.card),
@@ -490,7 +518,7 @@ zora_reading_text :: proc(ctx: ^dialogue.Context) -> string {
         crossing := state.tarot_layout.placements[1]
         shore := state.tarot_layout.placements[state.tarot_layout.count - 1]
         return fmt.tprintf(
-            "Cœur: %s. Contro: %s.\nFar shore, riva lontana: %s. %s",
+            "Core: %s. Contro: %s.\nFar shore, riva lontana: %s. %s",
             tarot.card_name(first.card),
             tarot.card_name(crossing.card),
             tarot.card_name(shore.card),
@@ -516,34 +544,34 @@ deal_cross :: proc(ctx: ^dialogue.Context) { deal_tarot(ctx, .Celtic_Cross) }
 
 niko_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
-    if state == nil do return "Buongiorno. Die forni will be chauds avant che il porto si svegli."
+    if state == nil do return "Buongiorno. Les ovens will be hot avant il porto wakes."
     if state.delivery.active && state.delivery.to == .Niko {
         switch state.delivery.kind {
         case .First_Reply:
-            return "Ah, du bist back across il mare. Tu as Iva's reply con te?"
+            return "Ah, you are back across il mare. Tu have Iva's reply con te?"
         case .Regatta_Acceptance:
-            return "Bojan's moteur crossed la baia à l'alba. Ist das Iva's regatta acceptance?"
+            return "Bojan's motor crossed la bay at alba. Is that Iva's regatta acceptance?"
         case .Repeat_Westbound:
-            return "The lamp glass voyage malissimo. Hoffentlich Iva l'a packed meglio que moi."
+            return "Lamp glass travels malissimo. I hope Iva packed it better than moi."
         case .None, .First_Letter, .Regatta_Invitation, .Repeat_Eastbound:
         }
     }
     switch state.romance {
     case .Unintroduced:
         if state.airfield_errand == .Eastbound || state.airfield_errand == .Completed {
-            return "Wenn tu retournes east… j'ai una sealed letter for Iva. Piccola fuori, almeno."
+            return "When you return east… io have una sealed letter for Iva. The envelope is piccola outside, at least."
         }
-        return "La lampe on l'isola est blinks twice avant alba. Iva veglia while meine forni warm."
+        return "La lamp on the east island blinks twice avant alba. Iva watches while my ovens warm."
     case .First_Letter:
-        return "La boîte de cardamomo looks molto suspicious quand uno waits for risposta."
+        return "La cardamom box looks molto suspicious when someone waits for risposta."
     case .Corresponding:
-        return "La regatta needs un baker, certo. Questa regatta invitation is for Iva, gardienne du phare."
+        return "La regatta needs un baker, certo. Questa regatta invitation is for Iva, keeper du phare."
     case .Invitation:
-        return "C'è una tenda blu am quai. Nobody sait pourquoi io la regarde toujours."
+        return "There is una blue awning on the quay. Nobody knows why io inspect it always."
     case .Meeting:
-        return "Iva hat trouvé the blue awning. It seems kleiner con due persone dessous."
+        return "Iva found the blue awning. It seems smaller con two persone under it."
     case .Together:
-        return "The island post continua: Iva dit le verre può aspettare. Das pane cannot."
+        return "The island post continua: Iva says lamp glass can wait. Das pane cannot."
     }
     return ""
 }
@@ -553,69 +581,69 @@ niko_delivery_reaction :: proc(ctx: ^dialogue.Context) -> string {
     if state == nil do return ""
     switch state.delivery.kind {
     case .First_Reply:
-        return "She ricordava la farina dans ma première nota. Non era la parte I expected."
+        return "She remembered la farina from my first note. Non the part I expected."
     case .Regatta_Acceptance:
-        return "Elle viene. Ich muss make la tenda look comme si non l'avessi lucidée."
+        return "Elle is coming. I must make la tenda look as if io did not polish it."
     case .Repeat_Westbound:
-        return "Le verre ha survécu, und elle included instructions per cena. One of them ist plus fragile."
+        return "Lamp glass survived, und elle included instructions per cena. One of them is more fragile."
     case .None, .First_Letter, .Regatta_Invitation, .Repeat_Eastbound:
-        return "Grazie. Certaines cose arrivent meglio wenn niemand le abre en route."
+        return "Grazie. Some cose arrive better when nobody opens them en route."
     }
     return ""
 }
 
 niko_warm_close :: proc(_: ^dialogue.Context) -> string {
-    return "Va bene. Ich stelle un altro plateau dentro; waiting va mieux con lavoro utile."
+    return "Va bene. Io place another tray inside; waiting goes better con useful work."
 }
 
 niko_discreet_close :: proc(_: ^dialogue.Context) -> string {
-    return "Bene. Una lettre sigillata mérite almeno una persona who can keep silent."
+    return "Bene. Una sealed letter deserves at least one persona who keeps silent."
 }
 
 meeting_iva_text :: proc(_: ^dialogue.Context) -> string {
-    return "Bojan appelle le vol routine. But routine landings use tutte le ruote, sì?"
+    return "Bojan calls il flight routine. But routine landings use tutte the wheels, sì?"
 }
 
 meeting_niko_warm :: proc(_: ^dialogue.Context) -> string {
-    return "Bleib pour la première course. I made troppo pane mit remarquable foresight."
+    return "Stay for la first race. I made troppo pane with remarkable foresight."
 }
 
 meeting_niko_discreet :: proc(_: ^dialogue.Context) -> string {
-    return "Ti dobbiamo une traversée tranquille, sans questions. Auch cena, if le mare te donne faim."
+    return "We owe you una tranquil crossing, without questions. And cena, if il mare gives you appetite."
 }
 
 iva_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
-    if state == nil do return "Dobro jutro. La lampe is prête; il meteo ne sait pas yet."
+    if state == nil do return "Dobro jutro. La lamp is ready; il meteo is not yet."
     if state.delivery.active && state.delivery.to == .Iva {
         switch state.delivery.kind {
         case .First_Letter:
-            return "Una sealed letter crossed tutto quel mare bleu pour trouver ce phare."
+            return "Una sealed letter crossed all that blue mare to find this lighthouse."
         case .Regatta_Invitation:
-            return "Niko's regatta invitation devient straighter quand lui prétend non essere nervous."
+            return "Niko's regatta invitation becomes straighter when he pretends to be non nervous."
         case .Repeat_Eastbound:
-            return "The island post smells comme si Niko confused la route postale con una pantry."
+            return "The island post smells as if Niko confused la postal route con una pantry."
         case .None, .First_Reply, .Regatta_Acceptance, .Repeat_Westbound:
         }
     }
     switch state.romance {
     case .Unintroduced:
-        return "Due lampi signifient acqua chiara. One looked toujours un poco solo."
+        return "Due flashes signal clear acqua. One always looked un poco solo."
     case .First_Letter:
-        return "He ricordava il cardamomo. Bene, le phare peut offrir Iva's reply."
+        return "He remembered il cardamom. Bene, the lighthouse can offer Iva's reply."
     case .Corresponding:
-        return "La posta dell'isola west has become remarquablement puntual."
+        return "La west-island posta has become remarkably punctual."
     case .Invitation:
         if state.repair == .Repaired {
             return(
-                "Tu repaired l'aereo de Bojan avant che io lo needed. Grazie; maintenant puoi portare la regatta acceptance." \
+                "Tu repaired Bojan's aeroplano before io needed it. Grazie; now you can carry la regatta acceptance." \
             )
         }
-        return "Posso répondre à Niko, but l'ala rotta cannot carry me. Nema regatta yet."
+        return "Io can respond to Niko, but la broken wing cannot carry me. Nema regatta yet."
     case .Meeting:
-        return "L'isola west is plus bruyante que le phare. Niko, heureusement, non."
+        return "The west island is more noisy than le phare. Niko, fortunately, non."
     case .Together:
-        return "The island post porta pane, comme si il mare fosse un problema que feeding sempre résout."
+        return "The island post brings pane, as if il mare were a problem that feeding always solves."
     }
     return ""
 }
@@ -625,45 +653,45 @@ iva_delivery_reaction :: proc(ctx: ^dialogue.Context) -> string {
     if state == nil do return ""
     switch state.delivery.kind {
     case .First_Letter:
-        return "He ricordava il cardamomo. Dite à Niko: due lampi, parce que one felt solo."
+        return "He remembered il cardamom. Tell Niko: due flashes, because one felt solo."
     case .Regatta_Invitation:
         if state.repair == .Repaired {
-            return "L'aereo de Bojan is pronto. Grazie; ta gentillesse d'avant arranged ma risposta."
+            return "Bojan's aeroplano is ready. Grazie; your earlier kindness arranged ma risposta."
         }
-        return "Io would go, mais l'aereo de Bojan shows more cielo through l'ala che sopra."
+        return "Io would go, mais Bojan's aeroplano shows more cielo through la wing than above it."
     case .Repeat_Eastbound:
-        return "Pane, cartes postales und un fiore. He packed tre sortes de meteo."
+        return "Pane, postcards, und one flower. He packed tre kinds of meteo."
     case .None, .First_Reply, .Regatta_Acceptance, .Repeat_Westbound:
-        return "Encore sigillata. Grazie por traiter la traversée comme parte della promessa."
+        return "Still sealed. Grazie for treating la crossing as part of the promise."
     }
     return ""
 }
 
 iva_warm_close :: proc(_: ^dialogue.Context) -> string {
-    return "Don't sourire così al faro. Das encourages les mouettes."
+    return "Do not smile così at the lighthouse. Das encourages les gulls."
 }
 
 iva_discreet_close :: proc(_: ^dialogue.Context) -> string {
-    return "Grazie. Le isole are déjà petites sans que les lettres become strade pubbliche."
+    return "Grazie. Le islands are already small without letters becoming public roads."
 }
 
 bojan_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
-    if state == nil do return "L'aeroplano und I faisons repos. Alles tranquillo, plus ou moins."
+    if state == nil do return "L'aeroplano und io are resting. Tutto tranquillo, more or less."
     switch state.repair {
     case .Not_Seen:
-        return "L'atterraggio war perfekt. The ground est arrivé trop tôt. Hai visto nothing plus compliqué."
+        return "La landing was perfekt. The ground arrived troppo early. You saw zero complication."
     case .Crash_Reported:
-        return "Maintenant la versione officielle ist breve; we can inspect the wing honnêtement."
+        return "Now la official version is brief; we can inspect the wing honestly."
     case .Diagnosed:
-        return "Uno panneau di tela is déchiré. Ich habe the canvas patch; tu as steadier mani que ma réputation."
+        return "One canvas panel is torn. Io have the canvas patch; tu have steadier hands than my reputation."
     case .Patched:
         return "Canvas patch tendu, wing ribs straight, controles libres. Voilà: turn the propeller, con prudenza."
     case .Repaired:
         if state.romance == .Invitation {
-            return "L'aereo is pronto pour Iva. Ich habe même cleaned il seat qui non m'appartient."
+            return "L'aereo is ready for Iva. Io even cleaned the seat that is not mine."
         }
-        return "Patch tendu, wing ribs straight, controles libres. Basta—that is notre ingénierie."
+        return "Patch tensioned, wing ribs straight, controles free. Basta—that is notre engineering."
     }
     return ""
 }
@@ -1025,7 +1053,7 @@ init_catalog :: proc(catalog: ^Catalog) {
     }
     catalog.toma_nodes[0] = dialogue.node(
         "toma",
-        proc(_: ^dialogue.Context) -> string { return "West island post. Every crossing counts, even when the bag is light." },
+        toma_text,
         catalog.toma_choices[:],
         proc(_: ^dialogue.Context) -> string { return "TOMA · POSTMASTER" },
     )
@@ -1038,7 +1066,7 @@ init_catalog :: proc(catalog: ^Catalog) {
     }
     catalog.lena_nodes[0] = dialogue.node(
         "lena",
-        proc(_: ^dialogue.Context) -> string { return "East island post. Letters above, lamp glass below, bread where I can see it." },
+        lena_text,
         catalog.lena_choices[:],
         proc(_: ^dialogue.Context) -> string { return "LENA · POSTMASTER" },
     )
