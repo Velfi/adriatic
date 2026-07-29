@@ -52,6 +52,12 @@ when ODIN_TEST {
         historical.farms[0].plan.valid = true
         historical.farms[0].plan.parcels[0].min_x = 7
         historical.farms[0].plan.parcels[0].max_x = 19
+        historical.architecture_brush_radius = 44
+        historical.aircraft.slots[0].kind = .Postale
+        historical.aircraft.slots[1].kind = .Libellula
+        historical.aircraft.slots[2].kind = .Libellula_Mk2
+        historical.aircraft.active = .Postale
+        historical.aircraft.count = 3
 
         payload, portable_error, ok := hs.portable_encode(
             any{data = rawptr(historical), id = typeid_of(fixture_v0001.Fixture)},

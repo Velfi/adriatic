@@ -1,7 +1,6 @@
 package hs
 
 import rt "base:runtime"
-import "core:fmt"
 import "core:mem"
 import "core:reflect"
 import "core:strings"
@@ -104,6 +103,7 @@ Portable_Kind :: enum u8 {
     Array,
     Enum,
     Dynamic_Array,
+    Enumerated_Array,
 }
 
 Portable_Field :: struct {
@@ -121,6 +121,7 @@ Portable_Type :: struct {
     width:       u8,
     signed:      bool,
     elem:        u32,
+    index:       u32,
     count:       int,
     base:        u32,
     fields:      [dynamic]Portable_Field,
@@ -141,9 +142,10 @@ portable_delete_types :: proc(types: [dynamic]Portable_Type) {
 }
 
 Portable_Writer :: struct {
-    bytes: [dynamic]byte,
-    limit: int,
-    error: Portable_Error,
+    bytes:             [dynamic]byte,
+    limit:             int,
+    error:             Portable_Error,
+    allocation_failed: bool,
 }
 
 portable_copy_error_path :: proc(path: string, alloc: mem.Allocator) -> (string, bool) {
@@ -167,12 +169,14 @@ portable_error_dispose :: proc(error: ^Portable_Error) {
     error.path_allocator = {}
 }
 
-portable_path_field :: proc(path, name: string, alloc: mem.Allocator) -> string {
-    builder: strings.Builder
-    _, err := strings.builder_init(&builder, alloc)
-    if err != nil do return "$"
-    if path == "$" do return fmt.sbprintf(&builder, "$.%s", name)
-    return fmt.sbprintf(&builder, "%s.%s", path, name)
+portable_path_field :: proc(path, name: string, alloc: mem.Allocator) -> (result: string, ok: bool) {
+    if len(name) >= max(int) || len(path) > max(int) - len(name) - 1 do return "", false
+    bytes, allocation_error := make([]byte, len(path) + len(name) + 1, alloc)
+    if allocation_error != nil do return "", false
+    copy(bytes, transmute([]byte)path)
+    bytes[len(path)] = '.'
+    copy(bytes[len(path) + 1:], transmute([]byte)name)
+    return string(bytes), true
 }
 
 portable_path_dispose :: proc(path: string, alloc: mem.Allocator) {
@@ -187,26 +191,41 @@ portable_writer_can_append :: proc(w: ^Portable_Writer, count: int) -> bool {
 portable_write_byte :: proc(w: ^Portable_Writer, value: byte) -> bool {
     if !portable_writer_can_append(w, 1) do return false
     _, allocation_error := append(&w.bytes, value)
-    return allocation_error == nil
+    if allocation_error != nil {
+        w.allocation_failed = true
+        return false
+    }
+    return true
 }
 
 portable_write_u16 :: proc(w: ^Portable_Writer, value: u16) -> bool {
     if !portable_writer_can_append(w, 2) do return false
     _, allocation_error := append(&w.bytes, byte(value), byte(value >> 8))
-    return allocation_error == nil
+    if allocation_error != nil {
+        w.allocation_failed = true
+        return false
+    }
+    return true
 }
 
 portable_write_u32 :: proc(w: ^Portable_Writer, value: u32) -> bool {
     if !portable_writer_can_append(w, 4) do return false
     _, allocation_error := append(&w.bytes, byte(value), byte(value >> 8), byte(value >> 16), byte(value >> 24))
-    return allocation_error == nil
+    if allocation_error != nil {
+        w.allocation_failed = true
+        return false
+    }
+    return true
 }
 
 portable_write_u64 :: proc(w: ^Portable_Writer, value: u64) -> bool {
     if !portable_writer_can_append(w, 8) do return false
     for i in 0 ..< 8 {
         _, allocation_error := append(&w.bytes, byte(value >> (u64(i) * 8)))
-        if allocation_error != nil do return false
+        if allocation_error != nil {
+            w.allocation_failed = true
+            return false
+        }
     }
     return true
 }
@@ -219,7 +238,10 @@ portable_write_fixed_u64 :: proc(w: ^Portable_Writer, value: u64, width: int) ->
     if width < 1 || width > 8 || !portable_writer_can_append(w, width) do return false
     for i in 0 ..< width {
         _, allocation_error := append(&w.bytes, byte(value >> (u64(i) * 8)))
-        if allocation_error != nil do return false
+        if allocation_error != nil {
+            w.allocation_failed = true
+            return false
+        }
     }
     return true
 }
@@ -227,7 +249,11 @@ portable_write_fixed_u64 :: proc(w: ^Portable_Writer, value: u64, width: int) ->
 portable_write_bytes :: proc(w: ^Portable_Writer, data: []byte) -> bool {
     if !portable_writer_can_append(w, len(data)) do return false
     _, allocation_error := append(&w.bytes, ..data)
-    return allocation_error == nil
+    if allocation_error != nil {
+        w.allocation_failed = true
+        return false
+    }
+    return true
 }
 
 portable_write_string :: proc(w: ^Portable_Writer, value: string) -> bool {
@@ -253,6 +279,41 @@ portable_type_kind :: proc(info: ^rt.Type_Info) -> (kind: Portable_Kind, width: 
     case:
         return .Invalid, 0, false, false
     }
+}
+
+portable_runtime_enumerated_array_info :: proc(
+    array: rt.Type_Info_Enumerated_Array,
+) -> (
+    index: rt.Type_Info_Enum,
+    min_value: i64,
+    ok: bool,
+) {
+    if array.is_sparse || array.count <= 0 || array.elem == nil || array.index == nil do return {}, 0, false
+    element_info := rt.type_info_base(array.elem)
+    index_info := rt.type_info_base(array.index)
+    if element_info == nil || index_info == nil || array.elem_size != element_info.size do return {}, 0, false
+    index_ok: bool
+    index, index_ok = index_info.variant.(rt.Type_Info_Enum)
+    if !index_ok || len(index.names) != len(index.values) || len(index.values) != array.count do return {}, 0, false
+
+    min_value = i64(index.values[0])
+    max_value := min_value
+    for value, value_index in index.values {
+        candidate := i64(value)
+        min_value = min(min_value, candidate)
+        max_value = max(max_value, candidate)
+        for previous_index in 0 ..< value_index {
+            if index.values[previous_index] == value do return {}, 0, false
+        }
+    }
+    if u64(array.count - 1) > u64(max(i64)) ||
+       min_value > max(i64) - i64(array.count - 1) ||
+       min_value + i64(array.count - 1) != max_value ||
+       min_value != i64(array.min_value) ||
+       max_value != i64(array.max_value) {
+        return {}, 0, false
+    }
+    return index, min_value, true
 }
 
 portable_field_excluded :: proc(field: reflect.Struct_Field, config: Portable_Config) -> bool {
@@ -338,6 +399,28 @@ portable_discover_type :: proc(ctx: ^Portable_Discovery, id: typeid, path: strin
         ctx.types[index].kind = .Array
         ctx.types[index].elem = elem
         ctx.types[index].count = value.count
+    case rt.Type_Info_Enumerated_Array:
+        if value.is_sparse {
+            portable_discovery_error(ctx, .Unsupported_Type, path, "sparse enumerated arrays are not portable")
+            return 0
+        }
+        if value.count <= 0 || value.count > ctx.config.limits.max_array_elements {
+            portable_discovery_error(ctx, .Limit_Exceeded, path, "enumerated array element count exceeds limit")
+            return 0
+        }
+        _, _, metadata_ok := portable_runtime_enumerated_array_info(value)
+        if !metadata_ok {
+            portable_discovery_error(ctx, .Invalid_Metadata, path, "enumerated array metadata is invalid")
+            return 0
+        }
+        elem := portable_discover_type(ctx, value.elem.id, path, depth + 1)
+        if elem == 0 do return 0
+        index_handle := portable_discover_type(ctx, value.index.id, path, depth + 1)
+        if index_handle == 0 do return 0
+        ctx.types[index].kind = .Enumerated_Array
+        ctx.types[index].elem = elem
+        ctx.types[index].index = index_handle
+        ctx.types[index].count = value.count
     case rt.Type_Info_Dynamic_Array:
         elem := portable_discover_type(ctx, value.elem.id, path, depth + 1)
         if elem == 0 do return 0
@@ -359,7 +442,12 @@ portable_discover_type :: proc(ctx: ^Portable_Discovery, id: typeid, path: strin
             }
             field_path := path
             if !ctx.flat_paths {
-                field_path = portable_path_field(path, field.name, ctx.alloc)
+                path_ok: bool
+                field_path, path_ok = portable_path_field(path, field.name, ctx.alloc)
+                if !path_ok {
+                    portable_discovery_error(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                    return 0
+                }
             }
             field_handle := portable_discover_type(ctx, field.type.id, field_path, depth + 1)
             if field_handle == 0 {
@@ -483,6 +571,29 @@ portable_encode_value :: proc(
             if !portable_encode_value(ctx, w, field, type.elem, path, depth + 1) do return false
         }
         return true
+    case .Enumerated_Array:
+        array_info, ok := info.variant.(rt.Type_Info_Enumerated_Array)
+        if !ok ||
+           array_info.is_sparse ||
+           array_info.count != type.count ||
+           array_info.elem.id != ctx.types[type.elem - 1].id ||
+           array_info.index.id != ctx.types[type.index - 1].id {
+            portable_discovery_error(ctx, .Type_Mismatch, path, "enumerated array metadata changed during encoding")
+            return false
+        }
+        element_info := rt.type_info_base(array_info.elem)
+        if element_info == nil || array_info.elem_size != element_info.size {
+            portable_discovery_error(ctx, .Invalid_Metadata, path, "enumerated array element metadata is invalid")
+            return false
+        }
+        for i in 0 ..< type.count {
+            field := any {
+                data = rawptr(uintptr(value.data) + uintptr(i * array_info.elem_size)),
+                id   = array_info.elem.id,
+            }
+            if !portable_encode_value(ctx, w, field, type.elem, path, depth + 1) do return false
+        }
+        return true
     case .Dynamic_Array:
         dynamic_info, ok := info.variant.(rt.Type_Info_Dynamic_Array)
         if !ok {
@@ -546,7 +657,11 @@ portable_encode_value :: proc(
                 data = rawptr(uintptr(value.data) + field.offset),
                 id   = field.type.id,
             }
-            field_path := portable_path_field(path, field.name, ctx.alloc)
+            field_path, path_ok := portable_path_field(path, field.name, ctx.alloc)
+            if !path_ok {
+                portable_discovery_error(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                return false
+            }
             field_ok := portable_encode_value(ctx, w, field_value, saved_field.type, field_path, depth + 1)
             portable_path_dispose(field_path, ctx.alloc)
             if !field_ok do return false
@@ -575,6 +690,8 @@ portable_encode_type_table :: proc(ctx: ^Portable_Discovery, w: ^Portable_Writer
         #partial switch type.kind {
         case .Array:
             if !portable_write_u32(w, type.elem) || !portable_write_u64(w, u64(type.count)) do return false
+        case .Enumerated_Array:
+            if !portable_write_u32(w, type.elem) || !portable_write_u32(w, type.index) || !portable_write_u64(w, u64(type.count)) do return false
         case .Dynamic_Array:
             if !portable_write_u32(w, type.elem) do return false
         case .Struct:
@@ -651,6 +768,11 @@ portable_encode :: proc(
     }
     defer delete(table_writer.bytes)
     if !portable_encode_type_table(&discovery, &table_writer) {
+        if table_writer.allocation_failed {
+            return nil,
+                portable_error(.Limit_Exceeded, len(table_writer.bytes), "$", "type table allocation failed"),
+                false
+        }
         return nil,
             portable_error(.Limit_Exceeded, len(table_writer.bytes), "$", "type table exceeds payload limit"),
             false
@@ -666,6 +788,11 @@ portable_encode :: proc(
     defer delete(body_writer.bytes)
     if !portable_encode_value(&discovery, &body_writer, value, root, "$", 0) {
         if discovery.error.kind != .None do return nil, discovery.error, false
+        if body_writer.allocation_failed {
+            return nil,
+                portable_error(.Limit_Exceeded, len(body_writer.bytes), "$", "value body allocation failed"),
+                false
+        }
         return nil, portable_error(.Limit_Exceeded, len(body_writer.bytes), "$", "value exceeds payload limit"), false
     }
 
@@ -687,9 +814,17 @@ portable_encode :: proc(
        ) ||
        !portable_write_bytes(&output_writer, table_writer.bytes[:]) ||
        !portable_write_bytes(&output_writer, body_writer.bytes[:]) {
+        if output_writer.allocation_failed {
+            return nil,
+                portable_error(.Limit_Exceeded, len(output_writer.bytes), "$", "payload allocation failed"),
+                false
+        }
         return nil, portable_error(.Limit_Exceeded, len(output_writer.bytes), "$", "payload exceeds limit"), false
     }
-    result := make([]byte, len(output_writer.bytes), alloc)
+    result, result_error := make([]byte, len(output_writer.bytes), alloc)
+    if result_error != nil {
+        return nil, portable_error(.Limit_Exceeded, 0, "$", "result allocation failed"), false
+    }
     copy(result, output_writer.bytes[:])
     return result, portable_no_error(), true
 }
@@ -836,6 +971,8 @@ portable_saved_type_valid :: proc(type: Portable_Type, type_count: int, limits: 
             type.count >= 0 &&
             type.count <= limits.max_array_elements \
         )
+    case .Enumerated_Array:
+        return !type.signed && type.width == 0 && type.count > 0 && type.count <= limits.max_array_elements
     case .Dynamic_Array:
         return !type.signed && type.width == 0
     case .Struct:
@@ -870,7 +1007,10 @@ portable_parse_type_table :: proc(
         return nil, portable_error(.Limit_Exceeded, 0, "$table", "type table allocation failed"), false
     }
     defer if !ok do portable_delete_types(types)
-    names := make(map[string]bool, alloc)
+    names, names_error := make(map[string]bool, 0, alloc)
+    if names_error != nil {
+        return types, portable_error(.Limit_Exceeded, 0, "$table", "name index allocation failed"), false
+    }
     defer delete(names)
     total_fields := 0
     for type_index in 0 ..< type_count {
@@ -883,7 +1023,7 @@ portable_parse_type_table :: proc(
             portable_reader_fail(&reader, .Invalid_Metadata, "$table", "reserved type metadata is not zero")
             return types, reader.error, false
         }
-        if kind_byte > u8(Portable_Kind.Dynamic_Array) {
+        if kind_byte > u8(Portable_Kind.Enumerated_Array) {
             portable_reader_fail(&reader, .Invalid_Metadata, "$table", "unknown type kind")
             return types, reader.error, false
         }
@@ -908,6 +1048,23 @@ portable_parse_type_table :: proc(
                 return types, reader.error, false
             }
             type.elem = elem
+            type.count = int(count)
+        case .Enumerated_Array:
+            elem, elem_ok := portable_read_u32(&reader, "$table.enumerated_array")
+            index_handle, index_ok := portable_read_u32(&reader, "$table.enumerated_array")
+            count, count_ok := portable_read_u64(&reader, "$table.enumerated_array")
+            if !elem_ok || !index_ok || !count_ok do return types, reader.error, false
+            if count == 0 || count > u64(max(0, limits.max_array_elements)) {
+                portable_reader_fail(
+                    &reader,
+                    .Limit_Exceeded,
+                    "$table.enumerated_array",
+                    "enumerated array count exceeds limit",
+                )
+                return types, reader.error, false
+            }
+            type.elem = elem
+            type.index = index_handle
             type.count = int(count)
         case .Dynamic_Array:
             elem, elem_ok := portable_read_u32(&reader, "$table.dynamic_array")
@@ -1002,6 +1159,17 @@ portable_parse_type_table :: proc(
                 portable_error(.Invalid_Handle, reader.cursor, "$table.array", "array element handle is invalid"),
                 false
         }
+        if type.kind == .Enumerated_Array &&
+           (!portable_handle_valid(type.elem, type_count) || !portable_handle_valid(type.index, type_count)) {
+            return types,
+                portable_error(
+                    .Invalid_Handle,
+                    reader.cursor,
+                    "$table.enumerated_array",
+                    "enumerated array element or index handle is invalid",
+                ),
+                false
+        }
         if type.kind == .Dynamic_Array && !portable_handle_valid(type.elem, type_count) {
             return types,
                 portable_error(
@@ -1070,6 +1238,11 @@ portable_validate_graph_type :: proc(
     case .Array:
         graph_error := portable_validate_graph_type(types, type.elem, states, depth + 1, max_depth)
         if graph_error.kind != .None do return graph_error
+    case .Enumerated_Array:
+        graph_error := portable_validate_graph_type(types, type.elem, states, depth + 1, max_depth)
+        if graph_error.kind != .None do return graph_error
+        graph_error = portable_validate_graph_type(types, type.index, states, depth + 1, max_depth)
+        if graph_error.kind != .None do return graph_error
     case .Dynamic_Array:
         graph_error := portable_validate_graph_type(types, type.elem, states, depth + 1, max_depth)
         if graph_error.kind != .None do return graph_error
@@ -1097,6 +1270,74 @@ portable_validate_graph_type :: proc(
     return portable_no_error()
 }
 
+portable_validate_enumerated_array_type :: proc(
+    types: []Portable_Type,
+    type: Portable_Type,
+    alloc: mem.Allocator,
+) -> Portable_Error {
+    if !portable_handle_valid(type.index, len(types)) {
+        return portable_error(
+            .Invalid_Handle,
+            0,
+            "$table.enumerated_array",
+            "enumerated array index handle is invalid",
+        )
+    }
+    index_type := types[type.index - 1]
+    if index_type.kind != .Enum {
+        return portable_error(.Invalid_Metadata, 0, "$table.enumerated_array", "enumerated array index is not an enum")
+    }
+    if type.count <= 0 || len(index_type.enum_fields) != type.count {
+        return portable_error(
+            .Invalid_Metadata,
+            0,
+            "$table.enumerated_array",
+            "enumerated array count does not match index enum",
+        )
+    }
+
+    min_value := index_type.enum_fields[0].value
+    max_value := min_value
+    for field in index_type.enum_fields {
+        min_value = min(min_value, field.value)
+        max_value = max(max_value, field.value)
+    }
+    if u64(type.count - 1) > u64(max(i64)) ||
+       min_value > max(i64) - i64(type.count - 1) ||
+       min_value + i64(type.count - 1) != max_value {
+        return portable_error(
+            .Invalid_Metadata,
+            0,
+            "$table.enumerated_array",
+            "enumerated array index range is not contiguous",
+        )
+    }
+
+    seen, allocation_error := make([]bool, type.count, alloc)
+    if allocation_error != nil {
+        return portable_error(
+            .Limit_Exceeded,
+            0,
+            "$table.enumerated_array",
+            "enumerated array validation allocation failed",
+        )
+    }
+    defer delete(seen, alloc)
+    for field in index_type.enum_fields {
+        offset := u64(field.value) - u64(min_value)
+        if offset >= u64(type.count) || seen[int(offset)] {
+            return portable_error(
+                .Invalid_Metadata,
+                0,
+                "$table.enumerated_array",
+                "enumerated array index values are not unique and contiguous",
+            )
+        }
+        seen[int(offset)] = true
+    }
+    return portable_no_error()
+}
+
 portable_validate_type_graph :: proc(
     types: []Portable_Type,
     root: u32,
@@ -1113,6 +1354,12 @@ portable_validate_type_graph :: proc(
     for state in states {
         if Portable_Graph_State(state) == .Unseen {
             return portable_error(.Invalid_Metadata, 0, "$table", "type table contains unreachable metadata")
+        }
+    }
+    for type in types {
+        if type.kind == .Enumerated_Array {
+            enum_array_error := portable_validate_enumerated_array_type(types, type, alloc)
+            if enum_array_error.kind != .None do return enum_array_error
         }
     }
     return portable_no_error()
@@ -1184,7 +1431,7 @@ portable_skip_value :: proc(ctx: ^Portable_Decoder, handle: u32, path: string, d
         _, _ = portable_read_bytes(&ctx.reader, int(type.width), path)
     case .String:
         _, _ = portable_read_string(&ctx.reader, ctx.config.limits.max_string_bytes, path)
-    case .Array:
+    case .Array, .Enumerated_Array:
         for _ in 0 ..< type.count {
             portable_skip_value(ctx, type.elem, path, depth + 1)
             if ctx.reader.error.kind != .None do return
@@ -1202,7 +1449,11 @@ portable_skip_value :: proc(ctx: ^Portable_Decoder, handle: u32, path: string, d
         }
     case .Struct:
         for field in type.fields {
-            field_path := portable_path_field(path, field.name, ctx.alloc)
+            field_path, path_ok := portable_path_field(path, field.name, ctx.alloc)
+            if !path_ok {
+                portable_decoder_fail(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                return
+            }
             portable_skip_value(ctx, field.type, field_path, depth + 1)
             portable_path_dispose(field_path, ctx.alloc)
             if ctx.reader.error.kind != .None do return
@@ -1387,6 +1638,51 @@ portable_decode_value :: proc(
             portable_skip_value(ctx, saved.elem, path, depth + 1)
             if ctx.reader.error.kind != .None do return
         }
+    case .Enumerated_Array:
+        array_info, array_ok := current_info.variant.(rt.Type_Info_Enumerated_Array)
+        if !array_ok {
+            portable_decoder_fail(ctx, .Type_Mismatch, path, "saved enumerated array does not match destination")
+            return
+        }
+        current_index, current_min, current_metadata_ok := portable_runtime_enumerated_array_info(array_info)
+        if !current_metadata_ok {
+            portable_decoder_fail(ctx, .Invalid_Metadata, path, "destination enumerated array metadata is invalid")
+            return
+        }
+        saved_index := ctx.types[saved.index - 1]
+        saved_base := ctx.types[saved_index.base - 1]
+        current_base_info := rt.type_info_base(current_index.base)
+        current_kind, current_width, current_signed, current_base_ok := portable_type_kind(current_base_info)
+        if !current_base_ok ||
+           current_kind != saved_base.kind ||
+           current_width != saved_base.width ||
+           current_signed != saved_base.signed {
+            portable_decoder_fail(ctx, .Type_Mismatch, path, "enumerated array index base does not match destination")
+            return
+        }
+        saved_min := saved_index.enum_fields[0].value
+        for field in saved_index.enum_fields {
+            saved_min = min(saved_min, field.value)
+        }
+        current_max := i64(array_info.max_value)
+        for i in 0 ..< saved.count {
+            if saved_min > max(i64) - i64(i) {
+                portable_decoder_fail(ctx, .Overflow, path, "saved enumerated array index overflows")
+                return
+            }
+            logical_index := saved_min + i64(i)
+            if logical_index < current_min || logical_index > current_max {
+                portable_skip_value(ctx, saved.elem, path, depth + 1)
+            } else {
+                destination_index := logical_index - current_min
+                field := any {
+                    data = rawptr(uintptr(destination.data) + uintptr(destination_index * i64(array_info.elem_size))),
+                    id   = array_info.elem.id,
+                }
+                portable_decode_value(ctx, saved.elem, field, array_info.elem.id, path, depth + 1)
+            }
+            if ctx.reader.error.kind != .None do return
+        }
     case .Dynamic_Array:
         count, count_ok := portable_read_u64(&ctx.reader, path)
         if !count_ok do return
@@ -1443,7 +1739,12 @@ portable_decode_value :: proc(
             if !found {
                 field_path := path
                 if !ctx.config.exact_schema {
-                    field_path = portable_path_field(path, field.name, ctx.alloc)
+                    path_ok: bool
+                    field_path, path_ok = portable_path_field(path, field.name, ctx.alloc)
+                    if !path_ok {
+                        portable_decoder_fail(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                        return
+                    }
                 }
                 portable_skip_value(ctx, field.type, field_path, depth + 1)
                 if !ctx.config.exact_schema do portable_path_dispose(field_path, ctx.alloc)
@@ -1456,7 +1757,12 @@ portable_decode_value :: proc(
             }
             field_path := path
             if !ctx.config.exact_schema {
-                field_path = portable_path_field(path, field.name, ctx.alloc)
+                path_ok: bool
+                field_path, path_ok = portable_path_field(path, field.name, ctx.alloc)
+                if !path_ok {
+                    portable_decoder_fail(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                    return
+                }
             }
             portable_decode_value(ctx, field.type, destination_field, current_field.type.id, field_path, depth + 1)
             if !ctx.config.exact_schema do portable_path_dispose(field_path, ctx.alloc)
@@ -1593,6 +1899,9 @@ portable_validate_exact_type_table :: proc(
     }
     defer delete(writer.bytes)
     if !portable_encode_type_table(&discovery, &writer) {
+        if writer.allocation_failed {
+            return portable_error(.Limit_Exceeded, len(writer.bytes), "$table", "exact type table allocation failed")
+        }
         return portable_error(.Limit_Exceeded, len(writer.bytes), "$table", "exact type table emission failed")
     }
     if len(writer.bytes) != len(saved_table) {

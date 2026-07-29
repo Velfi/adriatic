@@ -27,6 +27,102 @@ MIGRATION_SCAFFOLD_EXPECTED_STATE_IDS :: [?]string {
     "field-type:adriatic:packages/terrain.Project.structures",
 }
 
+MIGRATION_V0003_TO_V0004_STRUCTURAL_IDS :: [?]string {
+    "field-add:adriatic:packages/architecture.City_Alley.curve_control_from",
+    "field-add:adriatic:packages/architecture.City_Alley.curve_control_to",
+    "field-add:adriatic:packages/architecture.City_Alley.curve_ready",
+    "field-add:adriatic:packages/architecture.City_Alley.end_terminal",
+    "field-add:adriatic:packages/architecture.City_Alley.household_demand",
+    "field-add:adriatic:packages/architecture.City_Alley.start_terminal",
+    "field-add:adriatic:packages/flight.Airframe.parasitic_drag_area",
+    "field-add:adriatic:packages/postale.Runtime.ground_brake_amount",
+    "field-add:adriatic:packages/postale.Runtime.ground_pitch_radians",
+    "field-add:adriatic:packages/postale.Runtime.landing_intent",
+    "field-add:adriatic:packages/postale.Runtime.landing_intent_seconds",
+    "field-add:adriatic:packages/story.State.clinic_visits",
+    "field-add:adriatic:packages/story.State.resident_action_seen",
+    "field-add:adriatic:packages/terrain.Structure.entrance_side",
+    "field-add:adriatic:src.Fixture.architecture_brush_preset",
+    "field-add:adriatic:src.Fixture.architecture_brush_shape",
+    "field-remove:adriatic:packages/flight.Airframe.maximum_speed",
+    "field-remove:adriatic:packages/flight.Airframe.stall_speed",
+    "field-remove:adriatic:packages/flight.Runtime.stall_speed_modifier",
+    "field-remove:adriatic:packages/postale.Runtime.takeoff_armed",
+    "field-remove:adriatic:packages/postale.Tuning.takeoff_stall_speed_scale",
+    "field-remove:adriatic:packages/postale.Tuning.takeoff_vertical_assist",
+    "field-remove:adriatic:src.Fixture.architecture_brush_radius",
+    "field-remove:adriatic:src.Fixture.player_tail",
+    "type-remove:adriatic:packages/mouse_tail.Point",
+    "type-remove:adriatic:packages/mouse_tail.State",
+}
+
+migration_v0003_to_v0004_structural_id :: proc(id: string) -> bool {
+    for structural_id in MIGRATION_V0003_TO_V0004_STRUCTURAL_IDS {
+        if id == structural_id do return true
+    }
+    return false
+}
+
+MIGRATION_V0003_TO_V0004_ROOT_IDS :: [?]string {
+    "field-add:adriatic:src.Fixture.farm_brush_yaw",
+    "field-add:adriatic:src.Fixture.rondine",
+    "field-add:adriatic:src.Fixture.rondine_visible",
+    "field-add:adriatic:src.Fixture.wreck_brush_size",
+    "field-add:adriatic:src.Fixture.wreck_brush_yaw",
+    "field-add:adriatic:src.Fixture.wreck_count",
+    "field-add:adriatic:src.Fixture.wreck_paint_mode",
+    "field-add:adriatic:src.Fixture.wrecks",
+}
+
+migration_v0003_to_v0004_root_id :: proc(id: string) -> bool {
+    for root_id in MIGRATION_V0003_TO_V0004_ROOT_IDS {
+        if id == root_id do return true
+    }
+    return false
+}
+
+MIGRATION_V0003_TO_V0004_SETTLEMENT_IDS :: [?]string {
+    "field-add:adriatic:src.Settlement_Metrics.dead_end_frontage",
+    "field-add:adriatic:src.Settlement_Metrics.road_badness",
+    "field-add:adriatic:src.Settlement_Plan.access_bad_door_approaches",
+    "field-add:adriatic:src.Settlement_Plan.access_bad_road_approaches",
+    "field-add:adriatic:src.Settlement_Plan.access_connected_count",
+    "field-add:adriatic:src.Settlement_Plan.access_crossings",
+    "field-add:adriatic:src.Settlement_Plan.access_excessive_grades",
+    "field-add:adriatic:src.Settlement_Plan.access_hairpin_bends",
+    "field-add:adriatic:src.Settlement_Plan.access_max_degree",
+    "field-add:adriatic:src.Settlement_Plan.access_max_shared_width_step",
+    "field-add:adriatic:src.Settlement_Plan.access_orphan_endpoints",
+    "field-add:adriatic:src.Settlement_Plan.access_required_count",
+    "field-add:adriatic:src.Settlement_Plan.access_routes_truncated",
+    "field-add:adriatic:src.Settlement_Plan.access_shallow_junctions",
+    "field-add:adriatic:src.Settlement_Plan.access_shared_segments",
+    "field-add:adriatic:src.Settlement_Plan.access_stair_routes",
+    "field-add:adriatic:src.Settlement_Plan.access_unsplit_junctions",
+    "field-add:adriatic:src.Settlement_Plan.access_widened_segments",
+    "field-add:adriatic:src.Settlement_Plan.activity_point_count",
+    "field-add:adriatic:src.Settlement_Plan.activity_points",
+    "field-add:adriatic:src.Settlement_Plan.brush_piece_count",
+    "field-add:adriatic:src.Settlement_Plan.brush_pieces",
+    "field-add:adriatic:src.Settlement_Plan.inhabitant_count",
+    "field-add:adriatic:src.Settlement_Plan.inhabitants",
+    "field-add:adriatic:src.Settlement_Plan.next_brush_component_id",
+    "field-add:adriatic:src.Settlement_Plan.program",
+    "field-add:adriatic:src.Settlement_Plan.road_badness_count",
+    "field-add:adriatic:src.Settlement_Plan.road_badness_sum",
+    "field-add:adriatic:src.Settlement_Plan.route_piece_ids",
+    "field-add:adriatic:src.Settlement_Plan.site_piece_ids",
+    "field-add:adriatic:src.Settlement_Request.density",
+    "field-type:adriatic:src.Settlement_Plan.routes",
+}
+
+migration_v0003_to_v0004_settlement_id :: proc(id: string) -> bool {
+    for settlement_id in MIGRATION_V0003_TO_V0004_SETTLEMENT_IDS {
+        if id == settlement_id do return true
+    }
+    return false
+}
+
 migration_scaffold_production_report :: proc(t: ^testing.T) -> (report: fixture_schema.Schema_Diff_Report, ok: bool) {
     repo_root, root_error := os.get_working_directory(context.allocator)
     testing.expect(t, root_error == nil)
@@ -271,6 +367,145 @@ fixture_migration_scaffold_v0002_to_v0003_resolved_is_exact :: proc(t: ^testing.
     fixture_schema.migration_scaffold_dispose(&parsed)
     fixture_schema.migration_scaffold_error_dispose(&validation_error)
 
+}
+
+@(test)
+fixture_migration_scaffold_v0003_to_v0004_resolved_is_exact :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    report, report_ok := fixture_schema_diff_v0003_to_v0004_frozen_report(t)
+    if !report_ok do return
+    defer fixture_schema.schema_diff_report_dispose(&report)
+
+    repo_root, root_error := os.get_working_directory(context.allocator)
+    testing.expect(t, root_error == nil)
+    if root_error != nil do return
+    target := fmt.tprintf("%s/src/fixture_migration_v0003_to_v0004.odin", repo_root)
+    source, read_error := os.read_entire_file(target, context.allocator)
+    testing.expect(t, read_error == nil)
+    if read_error != nil do return
+    defer delete(source)
+
+    source_sha, source_sha_ok := fixture_schema.history_manifest_sha256_hex(source, context.allocator)
+    testing.expect(
+        t,
+        source_sha_ok && source_sha == "abb7ba79049fd12096a7779eaa1281189913acc0a78e9afe567b3cb4d24b4e3d",
+    )
+    if !source_sha_ok do return
+    defer delete(source_sha)
+
+    generated := string(source)
+    testing.expect(t, strings.contains(generated, "package main\n"))
+    testing.expect(t, strings.contains(generated, "import fixture_v0003 \"../packages/fixture_history/v0003\""))
+    testing.expect(t, strings.contains(generated, "FIXTURE_MIGRATION_V0003_TO_V0004_FROM_VERSION :: 3"))
+    testing.expect(t, strings.contains(generated, "FIXTURE_MIGRATION_V0003_TO_V0004_TO_VERSION :: 4"))
+    testing.expect(t, strings.contains(generated, "#by_ptr historical: fixture_v0003.Fixture"))
+    testing.expect(t, !strings.contains(generated, "^const"))
+    testing.expect(
+        t,
+        strings.contains(
+            generated,
+            "FIXTURE_MIGRATION_V0003_SETTLEMENT_ID :: \"field-add:adriatic:src.Settlement_Metrics.dead_end_frontage\"",
+        ),
+    )
+    testing.expect(t, !strings.contains(generated, "FIXTURE_MIGRATION_V0003_FIRST_UNRESOLVED_ID"))
+
+    parsed, parse_error, parse_ok := fixture_schema.migration_scaffold_parse(source, context.allocator)
+    testing.expect(t, parse_ok && parse_error.kind == .None)
+    if !parse_ok {
+        fixture_schema.migration_scaffold_dispose(&parsed)
+        fixture_schema.migration_scaffold_error_dispose(&parse_error)
+        return
+    }
+    fixture_schema.migration_scaffold_error_dispose(&parse_error)
+    defer fixture_schema.migration_scaffold_dispose(&parsed)
+    testing.expect(t, parsed.from_version == 3 && parsed.to_version == 4)
+    testing.expect(t, len(parsed.resolutions) == 100)
+    testing.expect(t, len(MIGRATION_V0003_TO_V0004_STRUCTURAL_IDS) == 26)
+    for structural_id in MIGRATION_V0003_TO_V0004_STRUCTURAL_IDS {
+        matches := 0
+        for resolution in parsed.resolutions {
+            if resolution.change_id == structural_id {
+                matches += 1
+                testing.expect(t, resolution.kind == .Scripted)
+            }
+        }
+        testing.expect(t, matches == 1)
+    }
+    testing.expect(t, len(MIGRATION_V0003_TO_V0004_ROOT_IDS) == 8)
+    for root_id in MIGRATION_V0003_TO_V0004_ROOT_IDS {
+        matches := 0
+        for resolution in parsed.resolutions {
+            if resolution.change_id == root_id {
+                matches += 1
+                testing.expect(t, resolution.kind == .Scripted)
+            }
+        }
+        testing.expect(t, matches == 1)
+    }
+    testing.expect(t, len(MIGRATION_V0003_TO_V0004_SETTLEMENT_IDS) == 32)
+    for settlement_id in MIGRATION_V0003_TO_V0004_SETTLEMENT_IDS {
+        matches := 0
+        for resolution in parsed.resolutions {
+            if resolution.change_id == settlement_id {
+                matches += 1
+                testing.expect(t, resolution.kind == .Scripted)
+            }
+        }
+        testing.expect(t, matches == 1)
+    }
+
+    state_count := 0
+    supporting_count := 0
+    scripted_count := 0
+    unresolved_count := 0
+    automatic_count := 0
+    resolution_index := 0
+    previous_id := ""
+    for change in report.changes {
+        if change.class == .Supporting {
+            supporting_count += 1
+            testing.expect(t, !strings.contains(generated, fmt.tprintf("change_id = \"%s\"", change.id)))
+            continue
+        }
+        state_count += 1
+        testing.expect(t, resolution_index < len(parsed.resolutions))
+        if resolution_index >= len(parsed.resolutions) do continue
+        resolution := parsed.resolutions[resolution_index]
+        testing.expect(t, resolution.change_id == change.id)
+        if change.kind == .Enum_Add ||
+           change.kind == .Enum_Value ||
+           migration_v0003_to_v0004_structural_id(change.id) ||
+           migration_v0003_to_v0004_root_id(change.id) ||
+           migration_v0003_to_v0004_settlement_id(change.id) {
+            testing.expect(t, resolution.kind == .Scripted)
+        } else {
+            testing.expect(t, resolution.kind == .Unresolved)
+        }
+        switch resolution.kind {
+        case .Scripted:
+            scripted_count += 1
+        case .Unresolved:
+            unresolved_count += 1
+        case .Automatic:
+            automatic_count += 1
+        }
+        if resolution_index > 0 do testing.expect(t, previous_id < resolution.change_id)
+        previous_id = resolution.change_id
+        resolution_index += 1
+    }
+    testing.expect(
+        t,
+        state_count == 100 &&
+        supporting_count == 19 &&
+        scripted_count == 100 &&
+        unresolved_count == 0 &&
+        automatic_count == 0 &&
+        resolution_index == len(parsed.resolutions),
+    )
+    validation_error, validation_ok := fixture_schema.migration_scaffold_validate(&parsed, &report)
+    testing.expect(t, validation_ok && validation_error.kind == .None)
+    fixture_schema.migration_scaffold_error_dispose(&validation_error)
 }
 
 @(test)

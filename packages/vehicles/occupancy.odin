@@ -18,6 +18,7 @@ Fixture_Occupant :: enum u8 {
     Postale       = 2,
     Libellula     = 3,
     Libellula_Mk2 = 4,
+    Rondine       = 5,
 }
 
 Character :: struct {
@@ -106,6 +107,14 @@ fixture_occupant_derive :: proc(
         case .Rondine:
             return {}, false
         }
+    }
+    if character.vehicle == rondine &&
+       rondine.driver == character &&
+       car.driver == nil &&
+       postale.driver == nil &&
+       libellula.driver == nil &&
+       active_aircraft == .Rondine {
+        return .Rondine, true
     }
     return {}, false
 }

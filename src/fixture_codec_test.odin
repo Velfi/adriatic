@@ -182,6 +182,8 @@ when ODIN_TEST {
             subject     = "delivery-subject-marker",
         }
         source.story_state.completed_deliveries = 3
+        source.story_state.resident_action_seen[.Niko] = 0x4e494b4f
+        source.story_state.resident_action_seen[.Anica] = 0x414e4943
         source.atmosphere.seed = 0x41544d4f
         source.atmosphere.world_minutes = f32(1234.5)
         source.atmosphere.override = .Windy
@@ -327,7 +329,12 @@ when ODIN_TEST {
         if historical == nil do return nil, false
 
         historical.pilot.mode = .Driving
+        historical.architecture_brush_radius = 45
+        historical.aircraft.slots[0].kind = .Postale
+        historical.aircraft.slots[1].kind = .Libellula
+        historical.aircraft.slots[2].kind = .Libellula_Mk2
         historical.aircraft.active = .Libellula_Mk2
+        historical.aircraft.count = 3
         historical.structure_selected = 731
         historical.vehicle_showcase_target = "codec-v2-target"
         historical.active_lab_scene = "codec-v2-lab"
@@ -355,7 +362,7 @@ when ODIN_TEST {
         source := fixture_codec_test_source()
         defer fixture_codec_test_destroy_source(source)
 
-        occupant_values := [5]vehicles.Fixture_Occupant{.On_Foot, .Car, .Postale, .Libellula, .Libellula_Mk2}
+        occupant_values := [6]vehicles.Fixture_Occupant{.On_Foot, .Car, .Postale, .Libellula, .Libellula_Mk2, .Rondine}
         for occupant in occupant_values {
             source.occupant = occupant
             source_lamp_count := len(source.architecture_city_plan.lamps)
@@ -380,6 +387,11 @@ when ODIN_TEST {
                     testing.expect(t, occupant_result.fixture.occupant == occupant)
                     testing.expect(t, occupant_result.fixture.pilot.mode == .On_Foot)
                     testing.expect(t, occupant_result.fixture.aircraft.active == .Postale)
+                    testing.expect(
+                        t,
+                        occupant_result.fixture.story_state.resident_action_seen ==
+                        source.story_state.resident_action_seen,
+                    )
                     occupant_restored, occupant_restored_error, occupant_restored_ok := fixture_codec_encode(
                         occupant_result.fixture,
                         context.allocator,
@@ -511,6 +523,7 @@ when ODIN_TEST {
             testing.expect(t, decoded.settlement_plan.valid)
             testing.expect(t, decoded.settlement_plan.neighborhood_count == 1)
             testing.expect(t, decoded.story_state.delivery.subject == "delivery-subject-marker")
+            testing.expect(t, decoded.story_state.resident_action_seen == source.story_state.resident_action_seen)
             testing.expect(t, decoded.atmosphere.world_minutes == source.atmosphere.world_minutes)
             testing.expect(t, decoded.vehicle_effects.seed == source.vehicle_effects.seed)
             testing.expect(t, decoded.tweak.atmosphere.world_minutes == source.tweak.atmosphere.world_minutes)

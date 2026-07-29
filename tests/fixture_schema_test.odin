@@ -66,7 +66,7 @@ build_synthetic :: proc(repo: Synthetic_Repo) -> (manifest, diagnostics: string,
 }
 
 @(test)
-fixture_schema_production_graph_matches_frozen_v3 :: proc(t: ^testing.T) {
+fixture_schema_production_graph_matches_frozen_v4 :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     repo_root, repo_err := os.get_working_directory(context.allocator)
@@ -79,8 +79,8 @@ fixture_schema_production_graph_matches_frozen_v3 :: proc(t: ^testing.T) {
     )
     testing.expect(t, generated_ok)
     testing.expect(t, diagnostics == "")
-    testing.expect(t, version == 3)
-    stored_path := fixture_schema.manifest_path(repo_root, 3)
+    testing.expect(t, version == 4)
+    stored_path := fixture_schema.manifest_path(repo_root, 4)
     stored, read_err := os.read_entire_file(stored_path, context.allocator)
     testing.expect(t, read_err == nil)
     if read_err != nil do return
@@ -99,9 +99,39 @@ fixture_schema_production_graph_matches_frozen_v3 :: proc(t: ^testing.T) {
             "field=adriatic:src.Fixture|name=occupant|using=0|tag=|type=adriatic:packages/vehicles.Fixture_Occupant",
         ),
     )
-    retained_names := [?]string{"marina_authored_plan", "farms", "boat_traffic", "settlement_plan", "story_state"}
+    testing.expect(
+        t,
+        strings.contains(
+            generated,
+            "field=adriatic:packages/story.State|name=resident_action_seen|using=0|tag=|type=enumerated_array[11;adriatic:packages/story.Resident]<builtin:u64>",
+        ),
+    )
+    retained_names := [?]string {
+        "marina_authored_plan",
+        "farms",
+        "boat_traffic",
+        "settlement_plan",
+        "story_state",
+        "architecture_brush_shape",
+        "architecture_brush_preset",
+        "farm_brush_yaw",
+        "wreck_paint_mode",
+        "wreck_brush_size",
+        "wreck_brush_yaw",
+        "wrecks",
+        "wreck_count",
+        "rondine",
+        "rondine_visible",
+    }
     for name in retained_names {
         testing.expect(t, strings.contains(generated, fmt.tprintf("field=adriatic:src.Fixture|name=%s|", name)))
+    }
+    retained_story_names := [?]string{"clinic_visits", "resident_action_seen"}
+    for name in retained_story_names {
+        testing.expect(
+            t,
+            strings.contains(generated, fmt.tprintf("field=adriatic:packages/story.State|name=%s|", name)),
+        )
     }
     excluded_names := [?]string {
         "circulation_plan",
@@ -124,9 +154,16 @@ fixture_schema_production_graph_matches_frozen_v3 :: proc(t: ^testing.T) {
         "farm_preview_z",
         "farm_preview_revision",
         "farm_preview_seed_offset",
+        "wreck_preview",
+        "wreck_preview_valid",
+        "wreck_preview_x",
+        "wreck_preview_z",
+        "wreck_preview_revision",
+        "wreck_preview_seed_offset",
         "default_marinas",
         "default_marina_islands",
         "default_marina_count",
+        "player_tail",
         "cinematic_focal_length",
         "story_cinematic_shots",
         "story_cinematic_script",
@@ -135,7 +172,24 @@ fixture_schema_production_graph_matches_frozen_v3 :: proc(t: ^testing.T) {
         "story_cinematic_active",
         "flight_throttle_overlay_value",
         "flight_throttle_overlay_changed_at",
+        "flight_throttle_overlay_fade_started_at",
         "flight_throttle_overlay_initialized",
+        "gameplay_physics",
+        "player_placement_reason",
+        "player_placement_revision",
+        "car_physics_world",
+        "car_physics_vehicle",
+        "car_physics_terrain",
+        "car_physics_terrain_revision",
+        "car_physics_accumulator",
+        "car_wheels",
+        "photo_restore_pose",
+        "photo_restore_inspection",
+        "photo_restore_slot",
+        "photo_yaw",
+        "photo_pitch",
+        "photo_capture_pending",
+        "photo_capture_notice_until",
         "dialogue_resident",
         "main_menu_active",
         "main_menu_focus",
@@ -323,7 +377,7 @@ fixture_schema_enumerated_arrays_are_deterministic_and_fail_closed :: proc(t: ^t
     first, first_diagnostics, first_ok := build_synthetic(repo)
     testing.expect(t, first_ok)
     testing.expect(t, first_diagnostics == "")
-    testing.expect(t, strings.contains(first, "array[3]<builtin:u64>"))
+    testing.expect(t, strings.contains(first, "enumerated_array[3;adriatic:packages/indexes.Resident]<builtin:u64>"))
     testing.expect(t, strings.contains(first, "array[2]<builtin:u8>"))
     testing.expect(t, strings.contains(first, "type=adriatic:packages/indexes.Resident|kind=enum|"))
     testing.expect(t, strings.contains(first, "enum=adriatic:packages/indexes.Resident|name=West|value=-1"))

@@ -140,6 +140,11 @@ schema_diff_test_join :: proc(first, second: string) -> string {
     return fmt.tprintf("%s%s", first, second)
 }
 
+schema_diff_test_replace :: proc(source, old, new: string) -> string {
+    output, _ := strings.replace_all(source, old, new, context.allocator)
+    return output
+}
+
 schema_diff_test_field :: proc(record, name, using_value, tag, type_name: string) -> string {
     return fmt.tprintf("field=%s|name=%s|using=%s|tag=%s|type=%s\n", record, name, using_value, tag, type_name)
 }
@@ -297,6 +302,42 @@ fixture_schema_diff_v0002_to_v0003_frozen_report :: proc(
     return built_report, true
 }
 
+fixture_schema_diff_v0003_to_v0004_frozen_report :: proc(
+    t: ^testing.T,
+) -> (
+    report: fixture_schema.Schema_Diff_Report,
+    ok: bool,
+) {
+    repo_root, root_error := os.get_working_directory(context.allocator)
+    testing.expect(t, root_error == nil)
+    if root_error != nil do return {}, false
+
+    frozen, frozen_error := os.read_entire_file(fixture_schema.manifest_path(repo_root, 3), context.allocator)
+    testing.expect(t, frozen_error == nil)
+    if frozen_error != nil do return {}, false
+    defer delete(frozen)
+
+    candidate, candidate_error := os.read_entire_file(fixture_schema.manifest_path(repo_root, 4), context.allocator)
+    testing.expect(t, candidate_error == nil)
+    if candidate_error != nil do return {}, false
+    defer delete(candidate)
+
+    built_report, error, report_ok := fixture_schema.schema_diff_build_report(
+        frozen,
+        candidate,
+        3,
+        4,
+        context.allocator,
+    )
+    testing.expect(t, report_ok && error.kind == .None)
+    fixture_schema.schema_diff_error_dispose(&error)
+    if !report_ok {
+        fixture_schema.schema_diff_report_dispose(&built_report)
+        return {}, false
+    }
+    return built_report, true
+}
+
 @(test)
 fixture_schema_diff_v0002_to_v0003_frozen_is_exact :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
@@ -353,6 +394,107 @@ fixture_schema_diff_v0002_to_v0003_frozen_is_exact :: proc(t: ^testing.T) {
     testing.expect(t, render_ok && len(rendered) == 1236)
     if !render_ok do return
     defer delete(rendered)
+    parsed, parse_error, parse_ok := fixture_schema.schema_diff_report_parse(
+        transmute([]byte)rendered,
+        context.allocator,
+    )
+    testing.expect(t, parse_ok && parse_error.kind == .None)
+    fixture_schema.schema_diff_error_dispose(&parse_error)
+    if !parse_ok {
+        fixture_schema.schema_diff_report_dispose(&parsed)
+        return
+    }
+    defer fixture_schema.schema_diff_report_dispose(&parsed)
+    rendered_again, rendered_again_ok := fixture_schema.schema_diff_report_render(&parsed, context.allocator)
+    testing.expect(t, rendered_again_ok && rendered_again == rendered)
+    if rendered_again_ok do delete(rendered_again)
+}
+
+@(test)
+fixture_schema_diff_v0003_to_v0004_frozen_is_exact :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    report, report_ok := fixture_schema_diff_v0003_to_v0004_frozen_report(t)
+    if !report_ok do return
+    defer fixture_schema.schema_diff_report_dispose(&report)
+
+    testing.expect(t, report.from_version == 3 && report.to_version == 4)
+    testing.expect(t, len(report.changes) == 119)
+    state_count, supporting_count := fixture_schema.schema_diff_report_counts(&report)
+    testing.expect(t, state_count == 100 && supporting_count == 19)
+    testing.expect(t, report.frozen_sha256 == "210c2d82c27ac668bcdae75f18c5735726f7d88ca48609a8795bdaec56225b9f")
+    testing.expect(t, report.candidate_sha256 == "fad52f4e0a38b35fffdf29ae3ffb3f91251780fe0ce2dc5990beba76f1e518fa")
+    testing.expect(
+        t,
+        report.candidate_line_count == 1611 &&
+        report.candidate_record_count == 167 &&
+        report.candidate_root_fields == 154,
+    )
+
+    enum_add_count := 0
+    enum_value_count := 0
+    field_add_count := 0
+    field_remove_count := 0
+    field_type_count := 0
+    type_add_count := 0
+    type_remove_count := 0
+    previous_id := ""
+    occupant_rondine_found := false
+    for change, index in report.changes {
+        if index > 0 do testing.expect(t, previous_id < change.id)
+        previous_id = change.id
+        #partial switch change.kind {
+        case .Enum_Add:
+            enum_add_count += 1
+        case .Enum_Value:
+            enum_value_count += 1
+        case .Field_Add:
+            field_add_count += 1
+        case .Field_Remove:
+            field_remove_count += 1
+        case .Field_Type:
+            field_type_count += 1
+        case .Type_Add:
+            type_add_count += 1
+        case .Type_Remove:
+            type_remove_count += 1
+        }
+        if change.id == "enum-add:adriatic:packages/vehicles.Fixture_Occupant.Rondine" {
+            occupant_rondine_found =
+                change.class == .State &&
+                change.policy == .Script_Required &&
+                change.path == "adriatic:packages/vehicles.Fixture_Occupant.Rondine" &&
+                change.before == "" &&
+                change.after == "5"
+        }
+    }
+    testing.expect(
+        t,
+        enum_add_count == 14 &&
+        enum_value_count == 20 &&
+        field_add_count == 55 &&
+        field_remove_count == 8 &&
+        field_type_count == 1 &&
+        type_add_count == 19 &&
+        type_remove_count == 2 &&
+        occupant_rondine_found,
+    )
+
+    rendered, render_ok := fixture_schema.schema_diff_report_render(&report, context.allocator)
+    testing.expect(t, render_ok && len(rendered) == 43600)
+    if !render_ok do return
+    defer delete(rendered)
+    report_sha, report_sha_ok := fixture_schema.history_manifest_sha256_hex(
+        transmute([]byte)rendered,
+        context.allocator,
+    )
+    testing.expect(
+        t,
+        report_sha_ok && report_sha == "563bd70951b04b72935f861866db973f8f2642debd016235192c6d637afc0f76",
+    )
+    if !report_sha_ok do return
+    defer delete(report_sha)
+
     parsed, parse_error, parse_ok := fixture_schema.schema_diff_report_parse(
         transmute([]byte)rendered,
         context.allocator,
@@ -669,6 +811,142 @@ fixture_schema_diff_ignores_version_and_record_enum_order :: proc(t: ^testing.T)
     if !ok do return
     testing.expect(t, len(report.changes) == 0)
     fixture_schema.schema_diff_report_dispose(&report)
+}
+
+@(test)
+fixture_schema_diff_enumerated_arrays_visit_classify_and_fail_closed :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    index_id := "adriatic:src.Index"
+    element_id := "adriatic:src.Element"
+    frozen := schema_diff_test_manifest(DIFF_TEST_ROOT, schema_diff_test_struct(DIFF_TEST_ROOT, ""))
+    candidate_records := schema_diff_test_struct(
+        DIFF_TEST_ROOT,
+        schema_diff_test_field(
+            DIFF_TEST_ROOT,
+            "slots",
+            "0",
+            "",
+            "enumerated_array[3;adriatic:src.Index]<adriatic:src.Element>",
+        ),
+    )
+    candidate_records = schema_diff_test_join(
+        candidate_records,
+        schema_diff_test_enum(
+            schema_diff_test_join(
+                schema_diff_test_join(
+                    schema_diff_test_enum_entry(index_id, "West", "0"),
+                    schema_diff_test_enum_entry(index_id, "Center", "1"),
+                ),
+                schema_diff_test_enum_entry(index_id, "East", "2"),
+            ),
+            index_id,
+        ),
+    )
+    candidate_records = schema_diff_test_join(
+        candidate_records,
+        schema_diff_test_struct(element_id, schema_diff_test_field(element_id, "value", "0", "", "builtin:u64")),
+    )
+    candidate := schema_diff_test_manifest(DIFF_TEST_ROOT, candidate_records, 2)
+    report, report_ok := schema_diff_test_report_for(t, frozen, candidate)
+    if !report_ok do return
+    state_count, supporting_count := fixture_schema.schema_diff_report_counts(&report)
+    testing.expect(t, len(report.changes) == 3 && state_count == 1 && supporting_count == 2)
+    index_supporting := false
+    element_supporting := false
+    for change in report.changes {
+        if change.kind == .Type_Add && change.class == .Supporting {
+            index_supporting = index_supporting || change.path == index_id
+            element_supporting = element_supporting || change.path == element_id
+        }
+    }
+    testing.expect(t, index_supporting && element_supporting)
+    fixture_schema.schema_diff_report_dispose(&report)
+    fixture_schema.schema_diff_report_dispose(&report)
+
+    hostile := [?]string {
+        schema_diff_test_replace(candidate, "enumerated_array[3;", "enumerated_array[2;"),
+        schema_diff_test_replace(candidate, ";adriatic:src.Index]", ";adriatic:src.Element]"),
+        schema_diff_test_replace(candidate, ";adriatic:src.Index]", ";adriatic:src.Missing]"),
+        schema_diff_test_replace(candidate, "enumerated_array[3;", "enumerated_array[3"),
+        schema_diff_test_replace(candidate, "name=East|value=2", "name=East|value=3"),
+    }
+    for invalid in hostile {
+        invalid_report, invalid_error, invalid_ok := fixture_schema.schema_diff_build_report(
+            transmute([]byte)frozen,
+            transmute([]byte)invalid,
+            1,
+            2,
+            context.allocator,
+        )
+        testing.expect(t, !invalid_ok && invalid_error.kind == .Unresolved_Reference)
+        testing.expect(t, invalid_error.line == 5 && invalid_error.path == "adriatic:src.Fixture.slots")
+        fixture_schema.schema_diff_report_dispose(&invalid_report)
+        fixture_schema.schema_diff_report_dispose(&invalid_report)
+        fixture_schema.schema_diff_error_dispose(&invalid_error)
+        fixture_schema.schema_diff_error_dispose(&invalid_error)
+        delete(invalid)
+    }
+    duplicate := schema_diff_test_replace(candidate, "name=East|value=2", "name=East|value=1")
+    duplicate_report, duplicate_error, duplicate_ok := fixture_schema.schema_diff_build_report(
+        transmute([]byte)frozen,
+        transmute([]byte)duplicate,
+        1,
+        2,
+        context.allocator,
+    )
+    testing.expect(t, !duplicate_ok && duplicate_error.kind == .Invalid_Input)
+    testing.expect(t, duplicate_error.line == 9 && duplicate_error.path == "adriatic:src.Index.East")
+    fixture_schema.schema_diff_report_dispose(&duplicate_report)
+    fixture_schema.schema_diff_report_dispose(&duplicate_report)
+    fixture_schema.schema_diff_error_dispose(&duplicate_error)
+    fixture_schema.schema_diff_error_dispose(&duplicate_error)
+    delete(duplicate)
+
+    limited := fixture_schema.SCHEMA_DIFF_DEFAULT_LIMITS
+    limited.max_array_length = 2
+    limited_snapshot, limited_error, limited_ok := fixture_schema.schema_diff_parse_candidate_snapshot(
+        transmute([]byte)candidate,
+        context.allocator,
+        limited,
+    )
+    testing.expect(t, !limited_ok && limited_error.line == 5)
+    testing.expect(t, limited_error.path == "adriatic:src.Fixture.slots")
+    fixture_schema.schema_diff_snapshot_dispose(&limited_snapshot)
+    fixture_schema.schema_diff_error_dispose(&limited_error)
+
+    success_state := Fixture_Schema_Diff_Fault_Allocator {
+        backing    = runtime.default_allocator(),
+        fail_index = -1,
+    }
+    success_allocator := fixture_schema_diff_fault_allocator(&success_state)
+    snapshot, parse_error, parse_ok := fixture_schema.schema_diff_parse_candidate_snapshot(
+        transmute([]byte)candidate,
+        success_allocator,
+    )
+    testing.expect(t, parse_ok && parse_error.kind == .None && success_state.attempts > 0)
+    fixture_schema.schema_diff_snapshot_dispose(&snapshot)
+    fixture_schema.schema_diff_snapshot_dispose(&snapshot)
+    fixture_schema.schema_diff_error_dispose(&parse_error)
+    fixture_schema.schema_diff_error_dispose(&parse_error)
+    testing.expect(t, success_state.outstanding == 0)
+    for fail_index in 0 ..< success_state.attempts {
+        state := Fixture_Schema_Diff_Fault_Allocator {
+            backing    = runtime.default_allocator(),
+            fail_index = fail_index,
+        }
+        allocator := fixture_schema_diff_fault_allocator(&state)
+        failed, failed_error, failed_ok := fixture_schema.schema_diff_parse_candidate_snapshot(
+            transmute([]byte)candidate,
+            allocator,
+        )
+        testing.expect(t, !failed_ok && failed_error.kind == .Out_Of_Memory)
+        fixture_schema.schema_diff_snapshot_dispose(&failed)
+        fixture_schema.schema_diff_snapshot_dispose(&failed)
+        fixture_schema.schema_diff_error_dispose(&failed_error)
+        fixture_schema.schema_diff_error_dispose(&failed_error)
+        testing.expect(t, state.outstanding == 0)
+    }
 }
 
 @(test)

@@ -673,13 +673,14 @@ ensure_record :: proc(b: ^Builder, package_id, name, type_path: string) -> strin
     return key
 }
 
-enumerated_array_length :: proc(
+enumerated_array_info :: proc(
     b: ^Builder,
     package_id: string,
     expr: ^ast.Expr,
     type_path: string,
 ) -> (
     length: i64,
+    index_type: string,
     matched: bool,
     ok: bool,
 ) {
@@ -689,43 +690,43 @@ enumerated_array_length :: proc(
     #partial switch node in value.derived_expr {
     case ^ast.Ident:
         symbol = lookup_symbol(b, package_id, node.name)
-        if symbol == nil do return 0, false, true
+        if symbol == nil do return 0, "", false, true
     case ^ast.Selector_Expr:
         root := ast.unparen_expr(node.expr)
         root_ident, root_ok := root.derived_expr.(^ast.Ident)
         info, info_ok := b.packages[package_id]
         if !root_ok || !info_ok {
-            return 0, false, true
+            return 0, "", false, true
         }
         _, imported := import_target_for_expr(info, value, root_ident.name)
         if !imported {
-            return 0, false, true
+            return 0, "", false, true
         }
         target_package, symbol = resolve_selector(b, package_id, node, type_path)
-        if symbol == nil do return 0, true, false
+        if symbol == nil do return 0, "", true, false
     case:
-        return 0, false, true
+        return 0, "", false, true
     }
 
     declaration := symbol.value
     if len(declaration.names) != len(declaration.values) || symbol.name_index >= len(declaration.values) {
-        return 0, false, true
+        return 0, "", false, true
     }
     declaration_expr := ast.unparen_expr(declaration.values[symbol.name_index])
     if _, is_enum := declaration_expr.derived_expr.(^ast.Enum_Type); !is_enum {
-        return 0, false, true
+        return 0, "", false, true
     }
 
     key := ensure_record(b, target_package, symbol.name, type_path)
-    if key == "invalid" do return 0, true, false
+    if key == "invalid" do return 0, "", true, false
     record := b.records[key]
     if record == nil || record.kind != "enum" {
         diagnostic_at(b, expr, type_path, "enumerated array index is not an enum")
-        return 0, true, false
+        return 0, "", true, false
     }
     if len(record.enums) == 0 {
         diagnostic_at(b, expr, type_path, "enumerated array index enum is empty")
-        return 0, true, false
+        return 0, "", true, false
     }
 
     min_value := record.enums[0].value
@@ -736,25 +737,25 @@ enumerated_array_length :: proc(
         for previous_index in 0 ..< index {
             if record.enums[previous_index].value == member.value {
                 diagnostic_at(b, expr, type_path, "enumerated array index enum has duplicate values")
-                return 0, true, false
+                return 0, "", true, false
             }
         }
     }
     span, span_ok := checked_sub(max_value, min_value)
     if !span_ok {
         diagnostic_at(b, expr, type_path, "enumerated array index range overflows")
-        return 0, true, false
+        return 0, "", true, false
     }
     computed_length, length_ok := checked_add(span, 1)
     if !length_ok {
         diagnostic_at(b, expr, type_path, "enumerated array index range overflows")
-        return 0, true, false
+        return 0, "", true, false
     }
     if computed_length != i64(len(record.enums)) {
         diagnostic_at(b, expr, type_path, "enumerated array index enum must be contiguous")
-        return 0, true, false
+        return 0, "", true, false
     }
-    return computed_length, true, true
+    return computed_length, key, true, true
 }
 
 type_repr :: proc(b: ^Builder, package_id: string, expr: ^ast.Expr, type_path: string) -> string {
@@ -811,14 +812,14 @@ type_repr :: proc(b: ^Builder, package_id: string, expr: ^ast.Expr, type_path: s
         if unary, ok := ast.unparen_expr(node.len).derived_expr.(^ast.Unary_Expr); ok && unary.op.kind == .Question {
             return fmt.tprintf("dynamic_any<%s>", elem)
         }
-        if length, matched, ok := enumerated_array_length(
+        if length, index_type, matched, ok := enumerated_array_info(
             b,
             package_id,
             node.len,
             fmt.tprintf("%s.length", type_path),
         ); matched {
             if !ok do return "invalid"
-            return fmt.tprintf("array[%d]<%s>", length, elem)
+            return fmt.tprintf("enumerated_array[%d;%s]<%s>", length, index_type, elem)
         }
         length, ok := eval_constant_expr(b, package_id, node.len, fmt.tprintf("%s.length", type_path))
         if !ok {

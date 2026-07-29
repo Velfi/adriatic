@@ -81,6 +81,12 @@ when ODIN_TEST {
         historical.farms[0].plan.parcel_count = 1
         historical.farms[0].plan.valid = true
         historical.farm_count = 1
+        historical.architecture_brush_radius = 44
+        historical.aircraft.slots[0].kind = .Postale
+        historical.aircraft.slots[1].kind = .Libellula
+        historical.aircraft.slots[2].kind = .Libellula_Mk2
+        historical.aircraft.active = .Postale
+        historical.aircraft.count = 3
         historical.vehicle_showcase_target = "historical-target"
         historical.active_lab_scene = "historical-lab"
         payload, error, ok := hs.portable_encode(
@@ -329,6 +335,7 @@ when ODIN_TEST {
             testing.expect(t, current_result.fixture != nil)
             testing.expect(t, current_result.fixture.structure_selected == 0)
             testing.expect(t, current_result.fixture.occupant == .On_Foot)
+            testing.expect(t, current_result.fixture.aircraft.count == 1)
             current_structures := cast(^runtime.Raw_Dynamic_Array)(&current_result.fixture.architecture_city_plan.structures)
             testing.expect(t, current_structures.allocator.data == rawptr(current_result.arena))
             previous_length := len(current_result.fixture.architecture_city_plan.structures)
@@ -616,8 +623,8 @@ when ODIN_TEST {
         fixture_migration_test_expect_rejected(
             t,
             payload,
-            4,
-            4,
+            5,
+            5,
             fixture_migration_production_registry(),
             .Unsupported_Version,
         )
@@ -625,7 +632,7 @@ when ODIN_TEST {
             t,
             payload,
             1,
-            4,
+            5,
             fixture_migration_production_registry(),
             .Unsupported_Version,
         )

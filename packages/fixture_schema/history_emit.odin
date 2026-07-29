@@ -85,6 +85,21 @@ history_emit_type_node :: proc(
 ) -> bool {
     if cursor^ >= len(expr) do return false
     if depth > HISTORY_MANIFEST_MAX_TYPE_DEPTH do return false
+    if strings.has_prefix(expr[cursor^:], "enumerated_array[") {
+        count, index_id, header_ok := history_enumerated_array_header(expr, cursor, HISTORY_MANIFEST_MAX_ARRAY_LENGTH)
+        if !header_ok do return false
+        index, found := history_sorted_index(sorted, index_id)
+        if !found || !history_enumerated_array_record_valid(sorted[index], count) do return false
+        strings.write_byte(builder, '[')
+        if !history_emit_symbol(builder, manifest, sorted, index_id) do return false
+        strings.write_byte(builder, ']')
+        if cursor^ >= len(expr) || expr[cursor^] != '<' do return false
+        cursor^ += 1
+        if !history_emit_type_node(builder, expr, cursor, manifest, sorted, false, depth + 1) do return false
+        if cursor^ >= len(expr) || expr[cursor^] != '>' do return false
+        cursor^ += 1
+        return true
+    }
     if strings.has_prefix(expr[cursor^:], "array[") {
         cursor^ += len("array[")
         length_start := cursor^

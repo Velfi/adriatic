@@ -497,6 +497,53 @@ history_validate_detail :: proc(kind, detail: string) -> bool {
     return false
 }
 
+history_enumerated_array_header :: proc(
+    expr: string,
+    cursor: ^int,
+    maximum_length: i64,
+) -> (
+    count: i64,
+    index_id: string,
+    ok: bool,
+) {
+    if !strings.has_prefix(expr[cursor^:], "enumerated_array[") do return
+    cursor^ += len("enumerated_array[")
+    count_start := cursor^
+    for cursor^ < len(expr) && expr[cursor^] >= '0' && expr[cursor^] <= '9' {
+        cursor^ += 1
+    }
+    if count_start == cursor^ || cursor^ >= len(expr) || expr[cursor^] != ';' do return
+    parsed_count, count_ok := history_parse_i64(expr[count_start:cursor^], false)
+    if !count_ok || parsed_count <= 0 || parsed_count > maximum_length do return
+    cursor^ += 1
+    index_start := cursor^
+    for cursor^ < len(expr) && expr[cursor^] != ']' {
+        cursor^ += 1
+    }
+    if index_start == cursor^ || cursor^ >= len(expr) || expr[cursor^] != ']' do return
+    parsed_index := expr[index_start:cursor^]
+    if !history_is_logical_id(parsed_index) do return
+    cursor^ += 1
+    return parsed_count, parsed_index, true
+}
+
+history_enumerated_array_record_valid :: proc(record: ^History_Record, count: i64) -> bool {
+    if record == nil || record.kind != "enum" || count <= 0 || count != i64(len(record.enums)) do return false
+    minimum := record.enums[0].value
+    maximum := minimum
+    for entry, index in record.enums {
+        minimum = min(minimum, entry.value)
+        maximum = max(maximum, entry.value)
+        for previous_index in 0 ..< index {
+            if record.enums[previous_index].value == entry.value do return false
+        }
+    }
+    if maximum < minimum do return false
+    offset := count - 1
+    if minimum > max(i64) - offset do return false
+    return maximum == minimum + offset
+}
+
 history_type_node :: proc(
     expr: string,
     cursor: ^int,
@@ -507,6 +554,18 @@ history_type_node :: proc(
 ) -> bool {
     if cursor^ >= len(expr) do return false
     if depth > HISTORY_MANIFEST_MAX_TYPE_DEPTH do return false
+    if strings.has_prefix(expr[cursor^:], "enumerated_array[") {
+        count, index_id, header_ok := history_enumerated_array_header(expr, cursor, HISTORY_MANIFEST_MAX_ARRAY_LENGTH)
+        if !header_ok do return false
+        index, found := indexes[index_id]
+        if !found || !history_enumerated_array_record_valid(&manifest.records[index], count) do return false
+        if cursor^ >= len(expr) || expr[cursor^] != '<' do return false
+        cursor^ += 1
+        if !history_type_node(expr, cursor, manifest, indexes, false, depth + 1) do return false
+        if cursor^ >= len(expr) || expr[cursor^] != '>' do return false
+        cursor^ += 1
+        return true
+    }
     if strings.has_prefix(expr[cursor^:], "array[") {
         cursor^ += len("array[")
         length_start := cursor^
@@ -701,6 +760,19 @@ history_visit_type_node :: proc(
 ) -> bool {
     if cursor^ >= len(expr) do return false
     if depth > HISTORY_MANIFEST_MAX_TYPE_DEPTH do return false
+    if strings.has_prefix(expr[cursor^:], "enumerated_array[") {
+        count, index_id, header_ok := history_enumerated_array_header(expr, cursor, HISTORY_MANIFEST_MAX_ARRAY_LENGTH)
+        if !header_ok do return false
+        index, found := history_record_index(indexes, index_id)
+        if !found || !history_enumerated_array_record_valid(&manifest.records[index], count) do return false
+        if !history_visit_record(index, manifest, indexes, state, reachable) do return false
+        if cursor^ >= len(expr) || expr[cursor^] != '<' do return false
+        cursor^ += 1
+        if !history_visit_type_node(expr, cursor, manifest, indexes, state, reachable, depth + 1) do return false
+        if cursor^ >= len(expr) || expr[cursor^] != '>' do return false
+        cursor^ += 1
+        return true
+    }
     if strings.has_prefix(expr[cursor^:], "array[") {
         cursor^ += len("array[")
         length_start := cursor^

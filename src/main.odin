@@ -444,7 +444,7 @@ Fixture :: struct {
     customization_preview_yaw:                      f32 `fixture:"-"`,
 }
 
-FIXTURE_SCHEMA_VERSION :: 3
+FIXTURE_SCHEMA_VERSION :: 4
 
 Editor :: struct {
     using fixture:                      Fixture,

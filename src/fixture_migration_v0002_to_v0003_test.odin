@@ -12,7 +12,12 @@ when ODIN_TEST {
     fixture_migration_v0002_to_v0003_test_v2_payload :: proc(t: ^testing.T) -> ([]byte, bool) {
         historical := new(fixture_v0002.Fixture)
         historical.pilot.mode = .Driving
+        historical.architecture_brush_radius = 45
+        historical.aircraft.slots[0].kind = .Postale
+        historical.aircraft.slots[1].kind = .Libellula
+        historical.aircraft.slots[2].kind = .Libellula_Mk2
         historical.aircraft.active = .Libellula_Mk2
+        historical.aircraft.count = 3
         historical.structure_selected = 731
         historical.vehicle_showcase_target = "b3-v2-target"
         historical.active_lab_scene = "b3-v2-lab"
@@ -145,7 +150,7 @@ when ODIN_TEST {
         direct_result, direct_error, direct_ok := fixture_migration_run(
             v2_payload,
             2,
-            3,
+            FIXTURE_SCHEMA_VERSION,
             fixture_migration_test_allocator(&direct_state),
         )
         testing.expect(t, direct_ok && direct_error.kind == .None)
@@ -153,6 +158,8 @@ when ODIN_TEST {
             testing.expect(t, direct_result.fixture.occupant == .On_Foot)
             testing.expect(t, direct_result.fixture.pilot.mode == .Driving)
             testing.expect(t, direct_result.fixture.aircraft.active == .Libellula_Mk2)
+            testing.expect(t, direct_result.fixture.aircraft.count == 4)
+            testing.expect(t, direct_result.fixture.aircraft.slots[3].kind == .Rondine)
             testing.expect(t, direct_result.fixture.structure_selected == 731)
             testing.expect(t, direct_result.fixture.vehicle_showcase_target == "b3-v2-target")
             testing.expect(t, direct_result.fixture.active_lab_scene == "b3-v2-lab")
@@ -191,7 +198,7 @@ when ODIN_TEST {
         chained_result, chained_error, chained_ok := fixture_migration_run(
             v1_payload,
             1,
-            3,
+            FIXTURE_SCHEMA_VERSION,
             runtime.default_allocator(),
         )
         testing.expect(t, chained_ok && chained_error.kind == .None)
@@ -199,6 +206,8 @@ when ODIN_TEST {
             testing.expect(t, chained_result.fixture.occupant == .On_Foot)
             testing.expect(t, chained_result.fixture.pilot.mode == .Driving)
             testing.expect(t, chained_result.fixture.aircraft.active == .Libellula_Mk2)
+            testing.expect(t, chained_result.fixture.aircraft.count == 4)
+            testing.expect(t, chained_result.fixture.aircraft.slots[3].kind == .Rondine)
             testing.expect(t, chained_result.fixture.structure_selected == 4)
             testing.expect(t, chained_result.fixture.story_state.quest.definition_id == "two-island-story")
             testing.expect(t, chained_result.fixture.vehicle_showcase_target == "historical-target")
@@ -215,10 +224,11 @@ when ODIN_TEST {
             testing.expect(t, resolution.kind == .Scripted)
         }
         production_registry := fixture_migration_production_registry()
-        testing.expect(t, len(production_registry.steps) == 2)
-        if len(production_registry.steps) == 2 {
+        testing.expect(t, len(production_registry.steps) == 3)
+        if len(production_registry.steps) == 3 {
             first_step := production_registry.steps[0]
             second_step := production_registry.steps[1]
+            third_step := production_registry.steps[2]
             testing.expect(
                 t,
                 first_step.from_version == 1 &&
@@ -232,6 +242,13 @@ when ODIN_TEST {
                 second_step.to_version == 3 &&
                 second_step.wrapper == fixture_migration_step_v0002_to_v0003 &&
                 second_step.change_id == "field-add:adriatic:src.Fixture.occupant",
+            )
+            testing.expect(
+                t,
+                third_step.from_version == 3 &&
+                third_step.to_version == 4 &&
+                third_step.wrapper == fixture_migration_step_v0003_to_v0004 &&
+                third_step.change_id == FIXTURE_MIGRATION_V0003_SETTLEMENT_ID,
             )
         }
         nil_error := fixture_migration_v0002_to_v0003_resolve_occupant(nil)

@@ -474,14 +474,74 @@ schema_diff_parse_positive :: proc(text: string) -> (int, bool) {
     return history_parse_schema_version(text)
 }
 
+schema_diff_enumerated_array_header :: proc(
+    expr: string,
+    cursor: ^int,
+    limits: Schema_Diff_Limits,
+) -> (
+    count: i64,
+    index_id: string,
+    ok: bool,
+) {
+    if !strings.has_prefix(expr[cursor^:], "enumerated_array[") do return
+    cursor^ += len("enumerated_array[")
+    count_start := cursor^
+    for cursor^ < len(expr) && expr[cursor^] >= '0' && expr[cursor^] <= '9' {
+        cursor^ += 1
+    }
+    if count_start == cursor^ || cursor^ >= len(expr) || expr[cursor^] != ';' do return
+    parsed_count, count_ok := history_parse_i64(expr[count_start:cursor^], false)
+    if !count_ok || parsed_count <= 0 || parsed_count > i64(limits.max_array_length) do return
+    cursor^ += 1
+    index_start := cursor^
+    for cursor^ < len(expr) && expr[cursor^] != ']' {
+        cursor^ += 1
+    }
+    if index_start == cursor^ || cursor^ >= len(expr) || expr[cursor^] != ']' do return
+    parsed_index := expr[index_start:cursor^]
+    if !schema_diff_is_logical_id(parsed_index, limits) do return
+    cursor^ += 1
+    return parsed_count, parsed_index, true
+}
+
+schema_diff_enumerated_array_record_valid :: proc(record: ^Schema_Diff_Record, count: i64) -> bool {
+    if record == nil || record.kind != "enum" || count <= 0 || count != i64(len(record.enums)) do return false
+    minimum := record.enums[0].value
+    maximum := minimum
+    for entry, index in record.enums {
+        minimum = min(minimum, entry.value)
+        maximum = max(maximum, entry.value)
+        for previous_index in 0 ..< index {
+            if record.enums[previous_index].value == entry.value do return false
+        }
+    }
+    if maximum < minimum do return false
+    offset := count - 1
+    if minimum > max(i64) - offset do return false
+    return maximum == minimum + offset
+}
+
 schema_diff_type_node :: proc(
     expr: string,
     cursor: ^int,
+    snapshot: ^Schema_Diff_Snapshot,
     indexes: map[string]int,
     limits: Schema_Diff_Limits,
     depth: int,
 ) -> bool {
     if cursor^ >= len(expr) || depth > limits.max_type_depth do return false
+    if strings.has_prefix(expr[cursor^:], "enumerated_array[") {
+        count, index_id, header_ok := schema_diff_enumerated_array_header(expr, cursor, limits)
+        if !header_ok do return false
+        index, found := indexes[index_id]
+        if !found || !schema_diff_enumerated_array_record_valid(&snapshot.records[index], count) do return false
+        if cursor^ >= len(expr) || expr[cursor^] != '<' do return false
+        cursor^ += 1
+        if !schema_diff_type_node(expr, cursor, snapshot, indexes, limits, depth + 1) do return false
+        if cursor^ >= len(expr) || expr[cursor^] != '>' do return false
+        cursor^ += 1
+        return true
+    }
     if strings.has_prefix(expr[cursor^:], "array[") {
         cursor^ += len("array[")
         start := cursor^
@@ -494,14 +554,14 @@ schema_diff_type_node :: proc(
         cursor^ += 1
         if cursor^ >= len(expr) || expr[cursor^] != '<' do return false
         cursor^ += 1
-        if !schema_diff_type_node(expr, cursor, indexes, limits, depth + 1) do return false
+        if !schema_diff_type_node(expr, cursor, snapshot, indexes, limits, depth + 1) do return false
         if cursor^ >= len(expr) || expr[cursor^] != '>' do return false
         cursor^ += 1
         return true
     }
     if strings.has_prefix(expr[cursor^:], "dynamic<") {
         cursor^ += len("dynamic<")
-        if !schema_diff_type_node(expr, cursor, indexes, limits, depth + 1) do return false
+        if !schema_diff_type_node(expr, cursor, snapshot, indexes, limits, depth + 1) do return false
         if cursor^ >= len(expr) || expr[cursor^] != '>' do return false
         cursor^ += 1
         return true
@@ -520,13 +580,23 @@ schema_diff_type_node :: proc(
     return found
 }
 
-schema_diff_validate_type :: proc(expr: string, indexes: map[string]int, limits: Schema_Diff_Limits) -> bool {
+schema_diff_validate_type :: proc(
+    expr: string,
+    snapshot: ^Schema_Diff_Snapshot,
+    indexes: map[string]int,
+    limits: Schema_Diff_Limits,
+) -> bool {
     cursor := 0
-    return schema_diff_type_node(expr, &cursor, indexes, limits, 0) && cursor == len(expr)
+    return schema_diff_type_node(expr, &cursor, snapshot, indexes, limits, 0) && cursor == len(expr)
 }
 
-schema_diff_validate_target :: proc(expr: string, indexes: map[string]int, limits: Schema_Diff_Limits) -> bool {
-    return schema_diff_validate_type(expr, indexes, limits)
+schema_diff_validate_target :: proc(
+    expr: string,
+    snapshot: ^Schema_Diff_Snapshot,
+    indexes: map[string]int,
+    limits: Schema_Diff_Limits,
+) -> bool {
+    return schema_diff_validate_type(expr, snapshot, indexes, limits)
 }
 
 schema_diff_path :: proc(parent, child: string, allocator: mem.Allocator) -> (string, bool) {
@@ -1009,6 +1079,19 @@ schema_diff_visit_type_node :: proc(
     depth: int,
 ) -> bool {
     if cursor^ >= len(expr) || depth > limits.max_type_depth do return false
+    if strings.has_prefix(expr[cursor^:], "enumerated_array[") {
+        count, index_id, header_ok := schema_diff_enumerated_array_header(expr, cursor, limits)
+        if !header_ok do return false
+        index, found := indexes[index_id]
+        if !found || !schema_diff_enumerated_array_record_valid(&snapshot.records[index], count) do return false
+        if !schema_diff_visit_record(index, snapshot, indexes, state, reachable, limits) do return false
+        if cursor^ >= len(expr) || expr[cursor^] != '<' do return false
+        cursor^ += 1
+        if !schema_diff_visit_type_node(expr, cursor, snapshot, indexes, state, reachable, limits, depth + 1) do return false
+        if cursor^ >= len(expr) || expr[cursor^] != '>' do return false
+        cursor^ += 1
+        return true
+    }
     if strings.has_prefix(expr[cursor^:], "array[") {
         cursor^ += len("array[")
         start := cursor^
@@ -1140,7 +1223,7 @@ schema_diff_validate_snapshot :: proc(
         switch record.kind {
         case "struct":
             for field in record.fields {
-                if !schema_diff_validate_type(field.type, indexes, limits) {
+                if !schema_diff_validate_type(field.type, snapshot, indexes, limits) {
                     kind := Schema_Diff_Error_Kind(.Unresolved_Reference)
                     if schema_diff_type_has_builtin(field.type) do kind = .Invalid_Input
                     schema_diff_fail_child(
@@ -1213,7 +1296,7 @@ schema_diff_validate_snapshot :: proc(
             }
         case "alias", "distinct":
             target, target_found := history_detail_value(record.detail, "target")
-            if !target_found || !schema_diff_validate_target(target, indexes, limits) {
+            if !target_found || !schema_diff_validate_target(target, snapshot, indexes, limits) {
                 schema_diff_fail(
                     error,
                     .Unresolved_Reference,
@@ -1616,6 +1699,36 @@ schema_diff_mark_type_refs :: proc(
     if depth > limits.max_type_depth do return
     cursor := 0
     for cursor < len(expr) {
+        if strings.has_prefix(expr[cursor:], "enumerated_array[") {
+            count, index_id, header_ok := schema_diff_enumerated_array_header(expr, &cursor, limits)
+            if !header_ok do return
+            if index, found := new_indexes[index_id];
+               !found || !schema_diff_enumerated_array_record_valid(&new_snapshot.records[index], count) {
+                return
+            }
+            schema_diff_mark_type_refs(index_id, new_snapshot, old_indexes, new_indexes, supporting, limits, depth + 1)
+            if cursor >= len(expr) || expr[cursor] != '<' do return
+            cursor += 1
+            start := cursor
+            nested := 1
+            for cursor < len(expr) && nested > 0 {
+                if expr[cursor] == '<' do nested += 1
+                if expr[cursor] == '>' do nested -= 1
+                cursor += 1
+            }
+            if cursor > start {
+                schema_diff_mark_type_refs(
+                    expr[start:cursor - 1],
+                    new_snapshot,
+                    old_indexes,
+                    new_indexes,
+                    supporting,
+                    limits,
+                    depth + 1,
+                )
+            }
+            return
+        }
         if strings.has_prefix(expr[cursor:], "array[") {
             cursor += len("array[")
             for cursor < len(expr) && expr[cursor] != '<' {

@@ -103,6 +103,7 @@ fixture_occupant_derivation_covers_all_kinds_and_rejects_bad_links :: proc(t: ^t
     testing.expect(t, u8(vehicles.Fixture_Occupant.Postale) == 2)
     testing.expect(t, u8(vehicles.Fixture_Occupant.Libellula) == 3)
     testing.expect(t, u8(vehicles.Fixture_Occupant.Libellula_Mk2) == 4)
+    testing.expect(t, u8(vehicles.Fixture_Occupant.Rondine) == 5)
 
     active_kinds := [?]vehicles.Aircraft_Kind{.Postale, .Libellula, .Libellula_Mk2, .Rondine}
     character := vehicles.Character{}
@@ -157,7 +158,30 @@ fixture_occupant_derivation_covers_all_kinds_and_rejects_bad_links :: proc(t: ^t
     }
     libellula.driver = nil
     rondine.driver = &character
+    fixture_occupancy_test_expect(t, &character, &car, &postale, &libellula, &rondine, .Rondine, .Rondine, true)
+    rondine.driver = nil
     fixture_occupancy_test_expect(t, &character, &car, &postale, &libellula, &rondine, .Rondine, .On_Foot, false)
+    rondine.driver = &character
+    car.driver = &character
+    fixture_occupancy_test_expect(t, &character, &car, &postale, &libellula, &rondine, .Rondine, .On_Foot, false)
+    car.driver = nil
+    wrong_rondine_kinds := [?]vehicles.Aircraft_Kind{.Postale, .Libellula, .Libellula_Mk2}
+    for active in wrong_rondine_kinds {
+        fixture_occupancy_test_expect(t, &character, &car, &postale, &libellula, &rondine, active, .On_Foot, false)
+    }
+    foreign_rondine_driver := vehicles.Character{}
+    rondine.driver = &foreign_rondine_driver
+    fixture_occupancy_test_expect(t, &character, &car, &postale, &libellula, &rondine, .Rondine, .On_Foot, false)
+    rondine.driver = &character
+    car.driver = &foreign_rondine_driver
+    fixture_occupancy_test_expect(t, &character, &car, &postale, &libellula, &rondine, .Rondine, .On_Foot, false)
+    car.driver = nil
+    postale.driver = &foreign_rondine_driver
+    fixture_occupancy_test_expect(t, &character, &car, &postale, &libellula, &rondine, .Rondine, .On_Foot, false)
+    postale.driver = nil
+    libellula.driver = &foreign_rondine_driver
+    fixture_occupancy_test_expect(t, &character, &car, &postale, &libellula, &rondine, .Rondine, .On_Foot, false)
+    libellula.driver = nil
 
     character = vehicles.Character{}
     rondine.driver = nil

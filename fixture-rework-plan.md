@@ -34,9 +34,11 @@ schema tooling, migration execution, and agent workflow.
 
 ## Current phase
 
-Rebased checkpoint before milestone 4C. Current `main` introduces 118 persisted
-schema changes, so schema version 4 activation, portable enumerated-array
-support, and the 3→4 scripted migration now precede lifecycle milestone 4C.
+Milestone 4C: share fixture detach and pointer rebind lifecycle between hot
+reload and fixture load. Schema-v4 activation and migration are accepted.
+Current `main` introduces
+118 persisted schema changes, so schema version 4 activation and the 3→4
+scripted migration now precede lifecycle milestone 4C.
 M4B2B4C, M4B2B4B, M4B2B4A, and
 M4B2B4AR are accepted. Source schema version 3 and its history package are
 frozen. M4B2B3, M4B2B3R, and M4B2B3R2 are accepted.
@@ -47,7 +49,7 @@ M3F1, M3F1R, M3F2A, M3F2B, M4A, and M4AR are accepted.
 M3D2A, 3D2B1, 3D2B2, 3E1, 3E2, 3E3, and their repairs are accepted.
 Milestones 1 through 3B, 3CR, 3CR2, 3D1, 3D1R, 3D1R2, and 3D1R3 are
 accepted. Fixture schema versions 1 and 2 remain frozen and current source
-schema version is 3.
+schema version is 4.
 
 ## Seventh rebased baseline audit — 2026-07-30
 
@@ -8793,6 +8795,468 @@ No generated binary remains.
 The fixture change is ready to commit and rebase onto current main before any
 milestone 4C work starts.
 
+## Milestone 4R — Activate rebased schema version 4
+
+Current main changes the live fixture graph while frozen schema version 3 must
+remain immutable. Complete every 4R slice in one Jujutsu change and commit only
+after the final registry/codec gates are green. Never commit a source-under-v3,
+version-bump-only, manifest-only, history-only, unresolved-scaffold, or
+partially registered state.
+
+### Milestone 4R1 — Support enum-indexed portable arrays
+
+Teach the generic portable codec to encode, decode, describe, and validate
+Odin `[Enum]T` arrays with the same contiguous element bytes as fixed arrays
+while preserving their distinct reflected type identity.
+
+Acceptance:
+
+- `[story.Resident]u64` round-trips deterministically;
+- reflected enum index metadata, element type, count, width, and bounds are
+  validated before reading or writing elements;
+- malformed, gapped, duplicate, forged, width-mismatched, and truncated inputs
+  fail with exact paths and no destination mutation;
+- encoding and decoding allocate a constant number of times independent of
+  element count;
+- nil allocator, every allocation failure, error ownership, double disposal,
+  cycle/depth behavior, and zero leaks remain proven;
+- the existing 34-byte owned error-path leak is fixed;
+- existing portable fixed/dynamic array wire behavior remains byte-identical.
+
+Change only `packages/hs/portable.odin`, `tests/hs_portable_test.odin`, and this
+plan.
+
+#### M4R1 acceptance — 2026-07-29
+
+M4R1 is accepted. `Portable_Kind` values 0–10 remain exact and the new
+enum-indexed-array kind is appended at 11. The portable type table records both
+element and enum-index handles; discovery, graph validation, exact decode,
+tolerant decode, skip, and encode all validate the reflected enum range.
+
+Hostile proofs cover reordered and negative-minimum indices, sparse/duplicate
+metadata, forged base kind, signedness and width, truncation, nil allocators,
+sticky and one-shot OOM, error double disposal, and unchanged destinations.
+Independent review found no remaining correctness, ownership, or wire
+compatibility blocker after repairs.
+
+- focused portable tests pass 3/3 with zero leaks;
+- `make fixture-codec-test` passes 2/2 with zero leaks;
+- `make check` passes;
+- `make test` passes Rondine 19/19 and the main suite 617/618; the sole failure
+  is the expected frozen-v3 schema sentinel;
+- no generated binary remains.
+
+### Milestone 4R1H — Preserve enum-indexed history identity
+
+The live schema walker must not collapse Odin `[Enum]T` into `[N]T`. M4R1
+intentionally gives these reflected types distinct portable wire identities,
+so a collapsed v4 history package would make every future v4→v5 historical
+decode fail before its migration script runs.
+
+Add the backward-compatible manifest form
+`enumerated_array[N;logical-id]<element>`. The count keeps storage-size changes
+state-bearing; the logical enum ID lets history generation emit
+`[History_Type_NNNN]Element` and reproduce the original reflected type.
+
+Acceptance:
+
+- the source walker retains the validated dense enum count and logical ID;
+- the strict history parser validates syntax, caps, index existence, enum kind,
+  uniqueness, contiguity, and count before accepting a manifest;
+- history emission reproduces an Odin enum-indexed array;
+- schema diff validation and reachability traverse both index and element;
+- malformed, missing, non-enum, count-mismatched, duplicate, and gapped index
+  metadata fail closed with correct ownership and paths;
+- ordinary `array[N]<T>` and all frozen v1/v2/v3 manifests/history packages
+  remain byte-identical;
+- the corrected missing-target 3→4 report remains exactly 119/100/19 and
+  1,611 lines, 167 records, and 154 root fields.
+
+#### M4R1H acceptance — 2026-07-29
+
+M4R1H is accepted. The source manifest now records
+`enumerated_array[count;logical-id]<element>`, and the history emitter restores
+the enum index type instead of a numeric fixed array. Independent review found
+no grammar, caps, overflow, reachability, ownership, diagnostic, or wire
+identity defect.
+
+- focused walker/history/diff proofs pass 3/3 with zero leaks;
+- v1/v2/v3 history checks pass twice and their generated-source hashes remain
+  exact;
+- `make check` passes;
+- `make test` passes Rondine 19/19 and the main suite 619/620; the sole failure
+  is the expected frozen-v3 schema sentinel;
+- corrected 3→4 reports are byte-identical at 43,600 bytes with report SHA-256
+  `952f230dc3402e8429a23dd8940fca05eb7bd35a507c0f2b8c24005b3503509c`;
+- corrected candidate SHA-256 is
+  `52e66006f47b8e01db1201356959e9d8bd6871e4584d589117a8959323be5d99`;
+- report shape remains exactly 119/100/19 and 1,611 lines, 167 records, and 154
+  root fields;
+- no v4 artifact or generated binary remains.
+
+### Milestone 4R2 — Finalize the v4 source graph and report
+
+Append stable `vehicles.Fixture_Occupant.Rondine = 5`; keep values 0–4 exact.
+Derive `.Rondine` only from a distinct, internally consistent Rondine driver
+graph with active aircraft `.Rondine`. All aliases, nils, foreign drivers,
+wrong active kinds, and stray links fail without mutation.
+
+Extend schema retention/exclusion sentinels for all rebased root fields. Run
+the missing-target 3→4 report twice before bumping the source version.
+
+Acceptance:
+
+- report is byte-identical twice;
+- exactly one change is added to the audited baseline:
+  `Fixture_Occupant.Rondine`;
+- final pre-freeze report is 119 changes: 100 state and 19 supporting;
+- candidate has 1,611 lines, 167 records, and 154 root fields;
+- no manifest, history package, scaffold, or source-version bump exists yet.
+
+#### M4R2 acceptance — 2026-07-29
+
+M4R2 is accepted on the corrected enum-array schema grammar.
+`Fixture_Occupant.Rondine = 5` is appended without changing values 0–4.
+Derivation accepts only the exact reciprocal, distinct Rondine graph with no
+stray driver and active aircraft `.Rondine`. Independent review found the
+production branch and all rebase retention/exclusion sentinels clean; two
+missing negative proofs were added and pass.
+
+- occupancy focused proof passes 1/1 with zero leaks;
+- product fixture codec passes 2/2 across all six occupant values;
+- final production occupancy SHA-256 is
+  `4b7663518510eef90a78d8d0c766fe4b15af343073a4397d5d2420d39c12fde5`;
+- the only report delta from the audited 118-change baseline is
+  `Fixture_Occupant.Rondine`;
+- the final provisional v4 candidate and report hashes/counts are those
+  accepted in M4R1H;
+- source schema version remains 3 and no v4 manifest, history, scaffold, or
+  migration exists.
+
+### Milestone 4R3 — Freeze v4 schema, history, and scaffold
+
+Bump `FIXTURE_SCHEMA_VERSION` from 3 to 4 only after 4R2 is accepted. Generate
+and freeze `v0004.fixture-schema`, then generate and freeze the v4 historical
+package. Generate the 3→4 scaffold only after both v3 and v4 are immutable.
+
+Acceptance:
+
+- v4 manifest and history package generate twice byte-identically and compile;
+- v1/v2/v3 hashes and both resolved old migration hashes remain exact;
+- frozen-target tooling prefers v4 and never falls back from malformed v4;
+- 3→4 report stays exactly 119/100/19;
+- scaffold imports frozen v3, contains exactly 100 sorted unresolved
+  obligations, excludes 19 supporting changes, is odinfmt-clean, and refuses
+  overwrite;
+- schema, diff, history, and scaffold tests pin new counts and hashes.
+
+#### M4R3 acceptance — 2026-07-29
+
+M4R3 is accepted. Source schema version 4 is active. The manifest, historical
+package, and unresolved scaffold were generated in the required order,
+regenerated byte-identically, and independently reviewed against the frozen
+report.
+
+- v4 manifest SHA-256 is
+  `fad52f4e0a38b35fffdf29ae3ffb3f91251780fe0ce2dc5990beba76f1e518fa`;
+  it has 1,611 lines, 167 records, and 154 root fields;
+- v4 history SHA-256 is
+  `bc483f9afa929fd697868627ad8b0a7b46e03be61edb88670bc46825ec0a1076`;
+  it has 2,110 lines and 167 history IDs, compiles, and reflects
+  `resident_action_seen` as an enum-indexed array;
+- unresolved 3→4 scaffold SHA-256 is
+  `95d4d1b6e1b1d5b095f88e76ace11a8ee8fee0073a82c6be30d06218029ebf90`;
+  it contains exactly 100 sorted state obligations and no supporting change;
+- frozen 3→4 report remains 43,600 bytes and 119/100/19 with activated report
+  SHA-256
+  `563bd70951b04b72935f861866db973f8f2642debd016235192c6d637afc0f76`;
+- v1/v2/v3 manifest and history hashes, both old migration hashes, and the
+  occupancy hash remain exact;
+- four focused production tests and the tool matrix pass with zero leaks;
+- `make check`, schema, histories v1–v4, scaffold, and full tests pass;
+  the full suite is 622/622 plus Rondine 19/19;
+- diagnostic codec and migration targets fail only at the deliberately
+  unresolved and unregistered 3→4 boundary;
+- independent artifact review is clean and no generated binary remains.
+
+### Milestone 4R4 — Resolve the 3→4 scripted migration
+
+Implement one zero-allocation common transformation with exact frozen-source
+adapters. Split proofs into independently reviewable slices:
+
+1. enum mappings: preserve appended enums, remap shifted shoreline/tool/
+   settlement-failure values by name, reject forged discriminants;
+2. structural defaults: city alleys, terrain entrances, brush-radius
+   replacement, flight/Postale replacements, story expansion, and derived tail
+   discard;
+3. root defaults: farm yaw, authored wreck state, deterministic locked Rondine
+   runtime/visibility, and stable occupant preservation;
+4. settlement compatibility: validate all counts, widen routes 48→320,
+   preserve old state, zero new ownership/program/activity/diagnostic fields,
+   and never rerun mutable generation;
+5. exact v1/v2/v3 adapters, direct and chained execution, hostile atomic
+   failures, and allocation-failure sweeps.
+
+Ambiguous policies are scripted and pinned:
+
+- old settlement brush radius maps to `.Circle` plus `.Small` below 45,
+  `.Medium` below 85, otherwise `.Large`; non-finite or negative input fails;
+- new Postale aerodynamic fields use frozen product defaults, not future
+  constructors;
+- old valid settlement plans stay valid with unavailable new diagnostics;
+- `Settlement_Request.density` initializes to zero, never from network density;
+- derived mouse-tail state is discarded;
+- new wreck authoring state is `paint=false`, brush size `330`, yaw `0`, an
+  empty zeroed array, and count `0`;
+- migration requires exactly three old fleet slots, one each Postale,
+  Libellula, and Libellula Mk2, with a present active kind, then appends exact
+  slot `{kind=.Rondine, name="Rondine", available=false,
+  vehicle=nil}`; new Rondine runtime data is frozen literal zero state with its
+  vehicle locked and visibility false, while the old active kind and occupant
+  are preserved and Rondine is never inferred as occupant.
+
+Common apply allocates zero times. Preparation owns all allocations, validates
+before mutation, preserves source bytes, and is double-disposable and
+leak-free under every OOM point.
+
+#### M4R4 obligation audit — 2026-07-29
+
+The frozen scaffold partitions exactly as follows:
+
+- 34 enum obligations: appended building, landmark, resident, aircraft,
+  occupant, and mouse-accessory values preserve the old numeric domain;
+  shoreline `0..4` maps to `1..5`; authoring-tool `0..9` stays and `10..12`
+  maps to `11..13`; settlement-failure `0..4` stays and `5..16` maps to
+  `6..17`;
+- 26 structural obligations: all city alleys get zero controls/demand,
+  `.None` terminals, and `curve_ready=false`; airframes get literal
+  `parasitic_drag_area=1.33`; new Postale runtime fields are zero; story
+  additions are zero; every terrain structure entrance is `.Front`; removed
+  flight/Postale/tail fields are discarded; the old brush radius performs the
+  locked shape/preset conversion;
+- eight root obligations: farm yaw, literal locked/hidden Rondine state, and
+  the five frozen wreck-authoring defaults;
+- 32 settlement obligations: 31 additions initialize to zero and routes widen
+  from 48 to 320 while preserving every old slot and zeroing the tail.
+
+Migration validates all serialized carriers, including inactive fixed-array
+slots. Settlement preflight bounds are neighborhoods 96, macro sites 192,
+routes 48, blocks 128, sites 256, rejected sites 32, decorative foliage 32,
+terrain edits 192, purposes 256, route geometry points 12, and block corners
+8. Relevant scalar counts and statistics must be nonnegative.
+
+The implementation order is enum validation/remap, structural conversion,
+root defaults, settlement conversion, then exact v1/v2/v3 adapters. Each
+partial slice may leave later resolution entries `.Unresolved`, but it must
+mark only obligations it implements and return the first remaining exact
+change ID. No partial slice is registered.
+
+#### M4R4.1 acceptance — 2026-07-29
+
+The enum slice is accepted. Exactly 34 enum obligations are `.Scripted`; 66
+remain `.Unresolved`, and the first remaining ID is
+`field-add:adriatic:packages/architecture.City_Alley.curve_control_from`.
+
+The script validates all frozen v3 carriers before mutation, including both
+dynamic structure arrays, every inactive settlement structure slot, all eight
+aircraft slots, and every root enum carrier. Shifted enums are overwritten
+from the historical value; appended enums preserve the old numeric domain.
+The apply step allocates zero times and returns the first unresolved structural
+ID only after the enum mutation completes.
+
+- production script SHA-256 is
+  `0229fc88d3431b788a36344fc2c3aa82b07748314c2aed14c43668784c2be3ab`;
+- direct focused proof passes twice with zero leaks;
+- hostile proofs cover high and signed forged values for all nine domains,
+  both building enums in all five carrier families, full validation order,
+  atomic root and dynamic-backing snapshots, and destination length mismatch;
+- scaffold validation passes at exactly 34/66/0;
+- `make check`, schema, histories v1–v4, report, scaffold, and full tests pass;
+  the full suite remains 622/622 plus Rondine 19/19;
+- independent re-review is clean and no binary remains.
+
+#### M4R4.2 acceptance — 2026-07-29
+
+The structural slice is accepted. Exactly 26 more obligations are scripted,
+leaving the scaffold at 60 Scripted / 40 Unresolved / 0 Automatic. The first
+remaining ID is `field-add:adriatic:src.Fixture.farm_brush_yaw`.
+
+All enum and structural preflights complete before either apply step. The
+composition preserves the accepted R4.1 diagnostic contract: project/city
+destination length mismatches return the archetype ID, while alley length and
+brush-radius failures return structural IDs. An independent review caught and
+repaired a temporary ordering regression before acceptance.
+
+- production script SHA-256 is
+  `90c8b90e7698d35b6b5a42f55856fa4498700c52171b405edea8421d3200b5b9`;
+- both airframes receive literal drag area `1.33`; all new Postale, story,
+  alley, and entrance fields receive their locked defaults; removed runtime,
+  tuning, brush-radius, and tail state is consumed or discarded;
+- radius boundary, NaN/Inf/negative, dynamic-length, full composed enum
+  failure, inactive carrier, unrelated-field preservation, and zero-allocation
+  proofs pass;
+- enum and structural focused tests pass 2/2 twice with zero leaks;
+- scaffold validation passes at 60/40/0;
+- `make check`, schema, history, report, scaffold, and full tests pass; the
+  full suite remains 622/622 plus Rondine 19/19;
+- final graph re-review is clean and no binary remains.
+
+#### M4R4.3 acceptance — 2026-07-29
+
+The root-default slice is accepted. Exactly eight more obligations are
+scripted, leaving the scaffold at 68 Scripted / 32 Unresolved / 0 Automatic.
+The first remaining ID is
+`field-add:adriatic:src.Settlement_Metrics.dead_end_frontage`.
+
+All enum, structural, and root preflights complete before any apply step.
+Historical fleet state must contain exactly three active-range slots, one each
+of Postale, Libellula, and Libellula Mk2, with the active kind present. The
+apply step preserves those slots and the old active kind and occupant, appends
+the exact unavailable Rondine slot, installs the literal locked and hidden
+Rondine runtime, and initializes farm yaw and authored wreck state to their
+frozen defaults.
+
+- production script SHA-256 is
+  `f1a8cb1a052faad6d41b73d5b7da8fa7f171a2ffbcd6022858b96b7cd12897e2`;
+- all six historical fleet permutations, every old occupant, active variants,
+  exact preserved slot bytes/string headers, untouched tail slots, and frozen
+  Rondine/wreck byte oracles are pinned;
+- hostile proofs cover counts, destination mismatch, duplicate/missing kinds,
+  absent active kind, nil input, and simultaneous earlier/root failures with
+  exact diagnostic precedence and atomic snapshots;
+- enum, structural, and root focused tests pass 3/3 twice with zero leaks and
+  the composed apply step allocates zero times;
+- scaffold validation passes at 68/32/0;
+- `make check`, schema, histories v1–v4, report, scaffold, and full tests pass;
+  the report remains 43,600 bytes and 119/100/19, while the full suite remains
+  622/622 plus Rondine 19/19;
+- independent production and proof review is clean and no binary remains.
+
+#### M4R4.4 acceptance — 2026-07-29
+
+The settlement slice is accepted. All remaining 32 obligations are scripted,
+leaving the scaffold at 100 Scripted / 0 Unresolved / 0 Automatic. The full
+common v3→v4 transformation now succeeds after completing enum, structural,
+root, and settlement preflights before any mutation and applying those slices
+in the same order.
+
+The frozen v3 plan is the route oracle. All 48 route slots are converted
+field-by-field with validated enum casts, including inactive slots, and the
+new 272-slot tail is zeroed. The 31 new settlement fields receive exact
+literal-zero defaults; request density is never derived from network density.
+All old plan state remains untouched except the scripted delta, and generation
+is never rerun.
+
+- production script SHA-256 is
+  `abb7ba79049fd12096a7779eaa1281189913acc0a78e9afe567b3cb4d24b4e3d`;
+- preflight validates all nine bounded source counts and matching destination
+  counts, every fixed route and block nested count, all 30 historical scalar
+  statistic counts, metric counters, and every settlement enum carrier;
+- hostile proofs cover both bounds of every count family, inactive last-slot
+  corruption, all nine destination mismatches, nil input, and simultaneous
+  earlier-phase failures with exact diagnostic precedence and atomic
+  snapshots;
+- independent assertions pin all 31 defaults, every field of all 48 converted
+  routes, the full zero tail, and untouched old settlement state;
+- the focused enum, structural, root, and settlement suite passes 4/4 twice
+  with zero leaks, and the complete apply step allocates zero times;
+- scaffold validation passes at 100/0/0 and the resolved migration returns
+  success;
+- `make check`, schema, v4 history, scaffold, report, and full tests pass; the
+  report remains 43,600 bytes with SHA-256
+  `563bd70951b04b72935f861866db973f8f2642debd016235192c6d637afc0f76`,
+  while the full suite remains 622/622 plus Rondine 19/19;
+- codec and registered migration targets still stop at the expected
+  unregistered 3→4 boundary owned by M4R4.5;
+- independent production and repaired-proof review is clean, and no generated
+  binary remains.
+
+#### M4R4.5 acceptance — 2026-07-29
+
+The exact source adapter is accepted without activating the production
+registry. Direct version 3 sources exact-decode their frozen graph. Chained
+version 1 and 2 sources exact-authenticate the original payload, encode the
+already-migrated tentative state, tolerant-decode that projection into a fresh
+frozen-v3 oracle, restore the removed brush radius from the authenticated
+source, and call the single common v3→v4 transformation.
+
+The projection scratch arena is disjoint from the transaction arena. No
+scratch pointer escapes, no business rule is duplicated, and the original
+payload remains immutable. The wrapper accepts a later target so it remains a
+valid interior step in future chains, while production registry length stays
+two until M4R5.
+
+- runtime wrapper SHA-256 is
+  `37c7c4dbcbba26b124f697a4e8e8313d9e1942393423e5f4d0cc0f62eef9f6c9`;
+- portable writer OOM classification now distinguishes table, body, payload,
+  and exact-schema re-emission allocation failures from genuine payload limits
+  and schema mismatches; production portable SHA-256 is
+  `50fd898be7ce6966c4676ad778bf606f770dd9a01cdc0493ae81b0d5d772133a`;
+- direct v3, chained v2→3→4, and chained v1→2→3→4 preserve prior migrated
+  farm, story, occupant, dynamic-array, string, and settlement state before
+  applying all v4 defaults and remaps;
+- hostile proofs cover invalid contexts and arenas, exact-source truncation and
+  mismatch, original-radius recovery, settlement and fleet failures, earlier
+  step precedence, payload immutability, and atomic whole-state snapshots;
+- wrapper-only and full-runner OOM sweeps pass for original source versions 1,
+  2, and 3 with empty failures, double disposal, and zero leaks;
+- returned dynamics remain transaction-owned after scratch destruction and
+  accept an append;
+- adapter-focused tests pass 3/3 twice and portable writer tests pass 2/2
+  twice, all with zero leaks;
+- `make check`, schema, histories v1–v4, scaffold, report, and full tests pass;
+  the full suite is 623/623 plus Rondine 19/19;
+- the common transform hash remains
+  `abb7ba79049fd12096a7779eaa1281189913acc0a78e9afe567b3cb4d24b4e3d`;
+- codec and registered migration targets still stop only at the intentionally
+  unregistered 3→4 boundary;
+- independent adapter and writer re-review is clean, and no generated binary
+  remains.
+
+### Milestone 4R5 — Activate registry and codec through v4
+
+Append exact registry step 3→4 without changing frozen 1→2 or 2→3 sources.
+Current 4→4 decode uses exact schema validation. Historical v1/v2/v3 paths
+authenticate their own frozen source graphs and execute strict ordered chains.
+
+Acceptance:
+
+- direct v3, chained v2 and v1, and current v4 paths pass;
+- current codec round-trips all six occupant values, including Rondine 5;
+- story enum-indexed array state survives exact deterministic round-trip;
+- per-source OOM, immutable input, append ownership, error disposal, and atomic
+  failure proofs pass with zero leaks;
+- fixture schema/history/scaffold/report/check gates pass;
+- full project tests pass;
+- all old hashes and new v4 hashes are exact;
+- no generated binaries, probes, or unplanned artifacts remain.
+
+#### M4R5 acceptance — 2026-07-29
+
+Schema version 4 is fully active. The production registry is the exact
+contiguous chain `1→2→3→4`; the first two entries remain unchanged and the
+third uses the accepted frozen-v3 adapter and resolved common transformation.
+No fixture codec or container production change was needed.
+
+- production migration runtime SHA-256 is
+  `fc8d362ffd11d3e8b57bff21eb21088eada753ad07a97046adc9305c3fe5ede1`;
+- current 4→4 decode exact-validates and invokes no migration wrapper;
+- direct v3, chained v2 and v1, and current v4 production paths all pass and
+  match the independent custom-registry oracle;
+- current fixture round-trip covers all six occupant values and preserves two
+  distinct entries in the enum-indexed resident action array;
+- codec OOM sweeps cover source versions 1, 2, 3, and 4 with immutable inputs,
+  empty failures, double disposal, and zero leaks;
+- production migration tests pass 9/9 twice and codec tests pass 2/2 twice,
+  all with zero leak output;
+- `make check`, schema, histories v1–v4, scaffolds, deterministic reports, and
+  full tests pass; the full suite is 623/623 plus Rondine 19/19;
+- the 3→4 report remains 43,600 bytes with SHA-256
+  `563bd70951b04b72935f861866db973f8f2642debd016235192c6d637afc0f76`;
+- all frozen manifest, history, old migration, common 3→4, adapter runtime,
+  portable, codec, and occupancy hashes remain exact;
+- independent activation review is clean, and no binary or probe remains.
+
 ## Milestone 4C — Share detach and pointer rebind lifecycle
 
 Extract one product-local lifecycle contract used by hot reload and fixture
@@ -8803,8 +9267,8 @@ load:
 3. bind decoded identity to addresses inside the live `Editor`;
 4. reset invalid active sessions rather than preserving borrowed pointers.
 
-Rebind aircraft slots by kind to live Postale/Libellula vehicles, then restore
-pilot/driver links from the schema-3 occupant discriminator. Reject duplicate,
+Rebind aircraft slots by kind to live Postale/Libellula/Rondine vehicles, then
+restore pilot/driver links from the schema-4 occupant discriminator. Reject duplicate,
 missing, out-of-range, locked, or internally contradictory fleet/occupancy
 state before live mutation. Hot save must stop maintaining a separate pointer
 nil list, and hot load must call the same binder as fixture load.

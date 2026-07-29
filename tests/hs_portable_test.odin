@@ -56,6 +56,14 @@ Portable_Additive_Destination :: struct {
     added: string,
 }
 
+Portable_Exact_Short_Field :: struct {
+    a: i32,
+}
+
+Portable_Exact_Long_Field :: struct {
+    substantially_longer_field_name: i32,
+}
+
 Portable_Exact_Mode_Drift :: enum u8 {
     Idle    = 0,
     Sailing = 3,
@@ -143,6 +151,66 @@ Portable_Fixed_Enum_State :: struct {
     values: [3]Portable_Mode,
 }
 
+Portable_Enumerated_Index :: enum i8 {
+    Lower = 3,
+    Middle,
+    Upper,
+}
+
+Portable_Enumerated_Other_Index :: enum i8 {
+    Alpha = 3,
+    Beta,
+    Gamma,
+}
+
+Portable_Enumerated_State :: struct {
+    values: [Portable_Enumerated_Index]u64,
+}
+
+Portable_Enumerated_Other_State :: struct {
+    values: [Portable_Enumerated_Other_Index]u64,
+}
+
+Portable_Enumerated_Negative_Index :: enum i8 {
+    Low = -2,
+    Center,
+    High,
+}
+
+Portable_Enumerated_Negative_State :: struct {
+    values: [Portable_Enumerated_Negative_Index]u64,
+}
+
+Portable_Enumerated_Plain_State :: struct {
+    values: [3]u64,
+}
+
+Portable_Story_Index :: enum u8 {
+    R0,
+    R1,
+    R2,
+    R3,
+    R4,
+    R5,
+    R6,
+    R7,
+    R8,
+    R9,
+    R10,
+}
+
+Portable_Story_Enumerated_State :: struct {
+    values: [Portable_Story_Index]u64,
+}
+
+Portable_Enumerated_Allocation_One :: struct {
+    values: [1][Portable_Enumerated_Index]u64,
+}
+
+Portable_Enumerated_Allocation_Many :: struct {
+    values: [128][Portable_Enumerated_Index]u64,
+}
+
 Portable_Recursive_Node :: struct {
     value:    i32,
     children: [dynamic]Portable_Recursive_Node,
@@ -153,6 +221,21 @@ Portable_Test_Counting_Allocator :: struct {
     allocs:      int,
     outstanding: int,
     fail_at:     int,
+}
+
+Portable_Test_One_Shot_Allocator :: struct {
+    backing:     mem.Allocator,
+    allocs:      int,
+    outstanding: int,
+    fail_at:     int,
+    failed:      bool,
+}
+
+Portable_Test_All_Fault_Allocator :: struct {
+    backing:     mem.Allocator,
+    attempts:    int,
+    fail_at:     int,
+    outstanding: int,
 }
 
 portable_test_counting_allocator_proc :: proc(
@@ -177,6 +260,72 @@ portable_test_counting_allocator_proc :: proc(
     }
     if err == .None && mode == .Free {
         state.outstanding -= 1
+    }
+    return result, err
+}
+
+portable_test_one_shot_allocator_proc :: proc(
+    allocator_data: rawptr,
+    mode: runtime.Allocator_Mode,
+    size, alignment: int,
+    old_memory: rawptr,
+    old_size: int,
+    location := #caller_location,
+) -> (
+    []byte,
+    runtime.Allocator_Error,
+) {
+    state := (^Portable_Test_One_Shot_Allocator)(allocator_data)
+    if (mode == .Alloc || mode == .Alloc_Non_Zeroed) &&
+       !state.failed &&
+       state.fail_at >= 0 &&
+       state.allocs >= state.fail_at {
+        state.failed = true
+        return nil, .Out_Of_Memory
+    }
+    result, err := state.backing.procedure(state.backing.data, mode, size, alignment, old_memory, old_size, location)
+    if err == .None && (mode == .Alloc || mode == .Alloc_Non_Zeroed) {
+        state.allocs += 1
+        state.outstanding += 1
+    }
+    if err == .None && mode == .Free {
+        state.outstanding -= 1
+    }
+    return result, err
+}
+
+portable_test_all_fault_allocator_proc :: proc(
+    allocator_data: rawptr,
+    mode: runtime.Allocator_Mode,
+    size, alignment: int,
+    old_memory: rawptr,
+    old_size: int,
+    location := #caller_location,
+) -> (
+    []byte,
+    runtime.Allocator_Error,
+) {
+    state := (^Portable_Test_All_Fault_Allocator)(allocator_data)
+    allocation := mode == .Alloc || mode == .Alloc_Non_Zeroed || mode == .Resize || mode == .Resize_Non_Zeroed
+    if allocation {
+        attempt := state.attempts
+        state.attempts += 1
+        if state.fail_at >= 0 && attempt == state.fail_at do return nil, .Out_Of_Memory
+    }
+    result, err := state.backing.procedure(state.backing.data, mode, size, alignment, old_memory, old_size, location)
+    if err == nil {
+        switch mode {
+        case .Alloc, .Alloc_Non_Zeroed:
+            if result != nil do state.outstanding += 1
+        case .Free:
+            if old_memory != nil do state.outstanding -= 1
+        case .Free_All:
+            state.outstanding = 0
+        case .Resize, .Resize_Non_Zeroed:
+            if old_memory == nil && result != nil do state.outstanding += 1
+            if old_memory != nil && result == nil do state.outstanding -= 1
+        case .Query_Features, .Query_Info:
+        }
     }
     return result, err
 }
@@ -234,6 +383,10 @@ portable_test_put_u64 :: proc(data: []byte, offset: int, value: u64) {
     }
 }
 
+portable_test_put_i64 :: proc(data: []byte, offset: int, value: i64) {
+    portable_test_put_u64(data, offset, cast(u64)value)
+}
+
 portable_test_dispose_error :: proc(error: ^hs.Portable_Error) {
     hs.portable_error_dispose(error)
 }
@@ -287,6 +440,8 @@ portable_test_find_type_record :: proc(data: []byte, wanted: hs.Portable_Kind) -
         #partial switch kind {
         case .Array:
             cursor += 12
+        case .Enumerated_Array:
+            cursor += 16
         case .Dynamic_Array:
             cursor += 4
         case .Struct:
@@ -306,6 +461,19 @@ portable_test_find_type_record :: proc(data: []byte, wanted: hs.Portable_Kind) -
         case:
         }
         if kind == wanted do return start
+    }
+    return -1
+}
+
+portable_test_enum_value_offset :: proc(data: []byte, enum_record, field_index: int) -> int {
+    cursor := enum_record + 12
+    field_count := int(portable_test_u32(data, enum_record + 8))
+    if field_index < 0 || field_index >= field_count do return -1
+    for index in 0 ..< field_count {
+        name_length := int(portable_test_u32(data, cursor))
+        value_offset := cursor + 4 + name_length
+        if index == field_index do return value_offset
+        cursor = value_offset + 8
     }
     return -1
 }
@@ -833,6 +1001,837 @@ hs_portable_dynamic_to_fixed_validates_excess_enum_values :: proc(t: ^testing.T)
     delete(bad_excess)
     delete(data)
     delete(source.values)
+}
+
+@(test)
+hs_portable_enumerated_arrays_round_trip_and_preserve_index_semantics :: proc(t: ^testing.T) {
+    testing.expect(t, u8(hs.Portable_Kind.Array) == 8)
+    testing.expect(t, u8(hs.Portable_Kind.Enum) == 9)
+    testing.expect(t, u8(hs.Portable_Kind.Dynamic_Array) == 10)
+    testing.expect(t, u8(hs.Portable_Kind.Enumerated_Array) == 11)
+
+    source := Portable_Enumerated_State{}
+    source.values[.Lower] = 31
+    source.values[.Middle] = 41
+    source.values[.Upper] = 59
+    first, first_error, first_ok := hs.portable_encode(
+        portable_test_any(Portable_Enumerated_State, &source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, first_ok)
+    testing.expect(t, first_error.kind == .None)
+    if !first_ok do return
+    defer delete(first)
+    record := portable_test_find_type_record(first, .Enumerated_Array)
+    testing.expect(t, record >= 0)
+    testing.expect(t, portable_test_u32(first, record + 4) != 0)
+    testing.expect(t, portable_test_u32(first, record + 8) != 0)
+    testing.expect(t, portable_test_u32(first, record + 4) != portable_test_u32(first, record + 8))
+    testing.expect(t, portable_test_u32(first, record + 12) == 3)
+
+    second, second_error, second_ok := hs.portable_encode(
+        portable_test_any(Portable_Enumerated_State, &source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, second_ok)
+    testing.expect(t, second_error.kind == .None)
+    if second_ok {
+        testing.expect(t, len(first) == len(second))
+        testing.expect(t, string(first) == string(second))
+        delete(second)
+    }
+
+    exact_config := hs.portable_default_config()
+    exact_config.exact_schema = true
+    destination := Portable_Enumerated_State{}
+    error, ok := hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &destination),
+        first,
+        exact_config,
+        context.allocator,
+    )
+    testing.expect(t, ok)
+    testing.expect(t, error.kind == .None)
+    testing.expect(t, destination == source)
+    portable_test_dispose_error(&error)
+
+    plain := Portable_Enumerated_Plain_State {
+        values = {101, 102, 103},
+    }
+    plain_before := plain
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_Plain_State, &plain),
+        first,
+        exact_config,
+        context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Type_Mismatch)
+    testing.expect(t, plain == plain_before)
+    portable_test_dispose_error(&error)
+    portable_test_dispose_error(&error)
+
+    other := Portable_Enumerated_Other_State{}
+    other.values[.Alpha] = 201
+    other.values[.Beta] = 202
+    other.values[.Gamma] = 203
+    other_before := other
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_Other_State, &other),
+        first,
+        exact_config,
+        context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Type_Mismatch)
+    testing.expect(t, other == other_before)
+    portable_test_dispose_error(&error)
+
+    other = {}
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_Other_State, &other),
+        first,
+        alloc = context.allocator,
+    )
+    testing.expect(t, ok)
+    testing.expect(t, error.kind == .None)
+    testing.expect(t, other.values[.Alpha] == source.values[.Lower])
+    testing.expect(t, other.values[.Beta] == source.values[.Middle])
+    testing.expect(t, other.values[.Gamma] == source.values[.Upper])
+    portable_test_dispose_error(&error)
+
+    reordered := portable_test_copy(first)
+    enum_record := portable_test_find_type_record(reordered, .Enum)
+    first_value := portable_test_enum_value_offset(reordered, enum_record, 0)
+    second_value := portable_test_enum_value_offset(reordered, enum_record, 1)
+    third_value := portable_test_enum_value_offset(reordered, enum_record, 2)
+    testing.expect(t, first_value >= 0 && second_value >= 0 && third_value >= 0)
+    portable_test_put_i64(reordered, first_value, 5)
+    portable_test_put_i64(reordered, second_value, 3)
+    portable_test_put_i64(reordered, third_value, 4)
+    reordered_destination := Portable_Enumerated_State{}
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &reordered_destination),
+        reordered,
+        alloc = context.allocator,
+    )
+    testing.expect(t, ok)
+    testing.expect(t, error.kind == .None)
+    testing.expect(t, reordered_destination == source)
+    portable_test_dispose_error(&error)
+    delete(reordered)
+
+    negative_source := Portable_Enumerated_Negative_State{}
+    negative_source.values[.Low] = 101
+    negative_source.values[.Center] = 202
+    negative_source.values[.High] = 303
+    negative_data, negative_encode_error, negative_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Enumerated_Negative_State, &negative_source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, negative_encode_ok)
+    testing.expect(t, negative_encode_error.kind == .None)
+    if negative_encode_ok {
+        negative_enum_record := portable_test_find_type_record(negative_data, .Enum)
+        negative_first := portable_test_enum_value_offset(negative_data, negative_enum_record, 0)
+        negative_second := portable_test_enum_value_offset(negative_data, negative_enum_record, 1)
+        negative_third := portable_test_enum_value_offset(negative_data, negative_enum_record, 2)
+        testing.expect(t, negative_first >= 0 && negative_second >= 0 && negative_third >= 0)
+        portable_test_put_i64(negative_data, negative_first, 0)
+        portable_test_put_i64(negative_data, negative_second, -2)
+        portable_test_put_i64(negative_data, negative_third, -1)
+        negative_destination := Portable_Enumerated_Negative_State{}
+        negative_error, negative_ok := hs.portable_decode(
+            portable_test_any(Portable_Enumerated_Negative_State, &negative_destination),
+            negative_data,
+            alloc = context.allocator,
+        )
+        testing.expect(t, negative_ok)
+        testing.expect(t, negative_error.kind == .None)
+        testing.expect(t, negative_destination == negative_source)
+        portable_test_dispose_error(&negative_error)
+        delete(negative_data)
+    }
+
+    story_source := Portable_Story_Enumerated_State{}
+    for index in 0 ..< 11 {
+        story_source.values[Portable_Story_Index(index)] = u64(1000 + index * 17)
+    }
+    story_data, story_encode_error, story_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Story_Enumerated_State, &story_source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, story_encode_ok)
+    testing.expect(t, story_encode_error.kind == .None)
+    if story_encode_ok {
+        story_destination := Portable_Story_Enumerated_State{}
+        story_error, story_ok := hs.portable_decode(
+            portable_test_any(Portable_Story_Enumerated_State, &story_destination),
+            story_data,
+            exact_config,
+            context.allocator,
+        )
+        testing.expect(t, story_ok)
+        testing.expect(t, story_error.kind == .None)
+        testing.expect(t, story_destination == story_source)
+        portable_test_dispose_error(&story_error)
+        delete(story_data)
+    }
+}
+
+@(test)
+hs_portable_enumerated_array_metadata_is_hostile_safe :: proc(t: ^testing.T) {
+    source := Portable_Enumerated_State{}
+    source.values[.Lower] = 11
+    source.values[.Middle] = 22
+    source.values[.Upper] = 33
+    encoded, encode_error, encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Enumerated_State, &source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, encode_ok)
+    testing.expect(t, encode_error.kind == .None)
+    if !encode_ok do return
+    defer delete(encoded)
+    array_record := portable_test_find_type_record(encoded, .Enumerated_Array)
+    enum_record := portable_test_find_type_record(encoded, .Enum)
+    testing.expect(t, array_record >= 0)
+    testing.expect(t, enum_record >= 0)
+    if array_record < 0 || enum_record < 0 do return
+
+    bad_index_handle := portable_test_copy(encoded)
+    portable_test_put_u32(bad_index_handle, array_record + 8, 0)
+    error, ok := hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        bad_index_handle,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Handle)
+    portable_test_dispose_error(&error)
+    portable_test_dispose_error(&error)
+    delete(bad_index_handle)
+
+    wrong_index_kind := portable_test_copy(encoded)
+    portable_test_put_u32(wrong_index_kind, array_record + 8, portable_test_u32(wrong_index_kind, array_record + 4))
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        wrong_index_kind,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    portable_test_dispose_error(&error)
+    delete(wrong_index_kind)
+
+    base_record := portable_test_find_type_record(encoded, .Signed)
+    testing.expect(t, base_record >= 0)
+    if base_record < 0 do return
+
+    wider_base := portable_test_copy(encoded)
+    wider_base[base_record + 1] = 2
+    wider_destination := Portable_Enumerated_State{}
+    wider_destination.values[.Lower] = 401
+    wider_destination.values[.Middle] = 402
+    wider_destination.values[.Upper] = 403
+    wider_before := wider_destination
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &wider_destination),
+        wider_base,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Type_Mismatch)
+    testing.expect(t, error.path == "$.values")
+    testing.expect(t, error.message == "enumerated array index base does not match destination")
+    testing.expect(t, wider_destination == wider_before)
+    portable_test_dispose_error(&error)
+    portable_test_dispose_error(&error)
+    delete(wider_base)
+
+    unsigned_base := portable_test_copy(encoded)
+    unsigned_base[base_record] = byte(hs.Portable_Kind.Unsigned)
+    unsigned_base[base_record + 2] = 0
+    unsigned_destination := Portable_Enumerated_State{}
+    unsigned_destination.values[.Lower] = 501
+    unsigned_destination.values[.Middle] = 502
+    unsigned_destination.values[.Upper] = 503
+    unsigned_before := unsigned_destination
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &unsigned_destination),
+        unsigned_base,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Type_Mismatch)
+    testing.expect(t, error.path == "$.values")
+    testing.expect(t, error.message == "enumerated array index base does not match destination")
+    testing.expect(t, unsigned_destination == unsigned_before)
+    portable_test_dispose_error(&error)
+    portable_test_dispose_error(&error)
+    delete(unsigned_base)
+
+    bad_count := portable_test_copy(encoded)
+    portable_test_put_u64(bad_count, array_record + 12, 4)
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        bad_count,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    portable_test_dispose_error(&error)
+    delete(bad_count)
+
+    first_value := portable_test_enum_value_offset(encoded, enum_record, 0)
+    second_value := portable_test_enum_value_offset(encoded, enum_record, 1)
+    third_value := portable_test_enum_value_offset(encoded, enum_record, 2)
+    testing.expect(t, first_value >= 0 && second_value >= 0 && third_value >= 0)
+
+    duplicate := portable_test_copy(encoded)
+    portable_test_put_i64(duplicate, second_value, 3)
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        duplicate,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    portable_test_dispose_error(&error)
+    delete(duplicate)
+
+    gapped := portable_test_copy(encoded)
+    portable_test_put_i64(gapped, third_value, 6)
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        gapped,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    portable_test_dispose_error(&error)
+    delete(gapped)
+
+    overflowing := portable_test_copy(encoded)
+    portable_test_put_i64(overflowing, first_value, max(i64) - 1)
+    portable_test_put_i64(overflowing, second_value, max(i64))
+    portable_test_put_i64(overflowing, third_value, max(i64))
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        overflowing,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    portable_test_dispose_error(&error)
+    delete(overflowing)
+
+    cycle := portable_test_copy(encoded)
+    portable_test_put_u32(cycle, array_record + 4, 1)
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        cycle,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    portable_test_dispose_error(&error)
+    delete(cycle)
+
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        encoded[:len(encoded) - 1],
+        alloc = context.allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Truncated)
+    portable_test_dispose_error(&error)
+}
+
+@(test)
+hs_portable_enumerated_arrays_have_bounded_allocations_and_oom_cleanup :: proc(t: ^testing.T) {
+    one := Portable_Enumerated_Allocation_One{}
+    many := Portable_Enumerated_Allocation_Many{}
+    for outer in 0 ..< 128 {
+        many.values[outer][.Lower] = u64(outer * 3 + 1)
+        many.values[outer][.Middle] = u64(outer * 3 + 2)
+        many.values[outer][.Upper] = u64(outer * 3 + 3)
+    }
+    one.values[0][.Lower] = 1
+    one.values[0][.Middle] = 2
+    one.values[0][.Upper] = 3
+    one_data, one_encode_error, one_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Enumerated_Allocation_One, &one),
+        alloc = context.allocator,
+    )
+    many_data, many_encode_error, many_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Enumerated_Allocation_Many, &many),
+        alloc = context.allocator,
+    )
+    testing.expect(t, one_encode_ok && many_encode_ok)
+    testing.expect(t, one_encode_error.kind == .None && many_encode_error.kind == .None)
+    if !one_encode_ok || !many_encode_ok {
+        if one_encode_ok do delete(one_data)
+        if many_encode_ok do delete(many_data)
+        return
+    }
+    defer delete(one_data)
+    defer delete(many_data)
+
+    exact_config := hs.portable_default_config()
+    exact_config.exact_schema = true
+    one_allocator_state := Portable_Test_Counting_Allocator {
+        backing = context.allocator,
+        fail_at = -1,
+    }
+    one_allocator := mem.Allocator {
+        procedure = portable_test_counting_allocator_proc,
+        data      = rawptr(&one_allocator_state),
+    }
+    one_destination := Portable_Enumerated_Allocation_One{}
+    error, ok := hs.portable_decode(
+        portable_test_any(Portable_Enumerated_Allocation_One, &one_destination),
+        one_data,
+        exact_config,
+        one_allocator,
+    )
+    testing.expect(t, ok)
+    testing.expect(t, error.kind == .None)
+    testing.expect(t, one_destination == one)
+    testing.expect(t, one_allocator_state.outstanding == 0)
+    portable_test_dispose_error(&error)
+
+    many_allocator_state := Portable_Test_Counting_Allocator {
+        backing = context.allocator,
+        fail_at = -1,
+    }
+    many_allocator := mem.Allocator {
+        procedure = portable_test_counting_allocator_proc,
+        data      = rawptr(&many_allocator_state),
+    }
+    many_destination := Portable_Enumerated_Allocation_Many{}
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_Allocation_Many, &many_destination),
+        many_data,
+        exact_config,
+        many_allocator,
+    )
+    testing.expect(t, ok)
+    testing.expect(t, error.kind == .None)
+    testing.expect(t, many_destination == many)
+    testing.expect(t, many_allocator_state.outstanding == 0)
+    testing.expect(t, one_allocator_state.allocs == many_allocator_state.allocs)
+    portable_test_dispose_error(&error)
+
+    probe := Portable_Test_Counting_Allocator {
+        backing = context.allocator,
+        fail_at = -1,
+    }
+    probe_allocator := mem.Allocator {
+        procedure = portable_test_counting_allocator_proc,
+        data      = rawptr(&probe),
+    }
+    probe_data, probe_error, probe_ok := hs.portable_encode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        alloc = probe_allocator,
+    )
+    testing.expect(t, probe_ok)
+    testing.expect(t, probe_error.kind == .None)
+    testing.expect(t, probe.allocs > 0)
+    if probe_ok do delete(probe_data, probe_allocator)
+    portable_test_dispose_error(&probe_error)
+    testing.expect(t, probe.outstanding == 0)
+
+    for fail_at in 0 ..< probe.allocs {
+        failing := Portable_Test_Counting_Allocator {
+            backing = context.allocator,
+            fail_at = fail_at,
+        }
+        failing_allocator := mem.Allocator {
+            procedure = portable_test_counting_allocator_proc,
+            data      = rawptr(&failing),
+        }
+        failed_data, failed_error, failed_ok := hs.portable_encode(
+            portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+            alloc = failing_allocator,
+        )
+        testing.expect(t, !failed_ok)
+        testing.expect(t, failed_data == nil)
+        testing.expect(t, failed_error.kind == .Limit_Exceeded)
+        portable_test_dispose_error(&failed_error)
+        portable_test_dispose_error(&failed_error)
+        testing.expect(t, failing.outstanding == 0)
+    }
+
+    decode_probe := Portable_Test_Counting_Allocator {
+        backing = context.allocator,
+        fail_at = -1,
+    }
+    decode_probe_allocator := mem.Allocator {
+        procedure = portable_test_counting_allocator_proc,
+        data      = rawptr(&decode_probe),
+    }
+    decode_probe_destination := Portable_Enumerated_State{}
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &decode_probe_destination),
+        one_data,
+        exact_config,
+        decode_probe_allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Type_Mismatch)
+    portable_test_dispose_error(&error)
+    testing.expect(t, decode_probe.outstanding == 0)
+
+    source := Portable_Enumerated_State{}
+    source.values[.Lower] = 71
+    source.values[.Middle] = 72
+    source.values[.Upper] = 73
+    source_data, source_encode_error, source_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Enumerated_State, &source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, source_encode_ok)
+    testing.expect(t, source_encode_error.kind == .None)
+    if source_encode_ok {
+        decode_probe = {
+            backing = context.allocator,
+            fail_at = -1,
+        }
+        decode_probe_destination = {}
+        error, ok = hs.portable_decode(
+            portable_test_any(Portable_Enumerated_State, &decode_probe_destination),
+            source_data,
+            exact_config,
+            decode_probe_allocator,
+        )
+        testing.expect(t, ok)
+        testing.expect(t, error.kind == .None)
+        testing.expect(t, decode_probe_destination == source)
+        testing.expect(t, decode_probe.outstanding == 0)
+        portable_test_dispose_error(&error)
+
+        for fail_at in 0 ..< decode_probe.allocs {
+            failing := Portable_Test_Counting_Allocator {
+                backing = context.allocator,
+                fail_at = fail_at,
+            }
+            failing_allocator := mem.Allocator {
+                procedure = portable_test_counting_allocator_proc,
+                data      = rawptr(&failing),
+            }
+            failed_destination := Portable_Enumerated_State{}
+            failed_destination.values[.Lower] = 801
+            failed_destination.values[.Middle] = 802
+            failed_destination.values[.Upper] = 803
+            before := failed_destination
+            failed_error, failed_ok := hs.portable_decode(
+                portable_test_any(Portable_Enumerated_State, &failed_destination),
+                source_data,
+                exact_config,
+                failing_allocator,
+            )
+            testing.expect(t, !failed_ok)
+            testing.expect(t, failed_error.kind == .Limit_Exceeded)
+            testing.expect(t, failed_destination == before)
+            portable_test_dispose_error(&failed_error)
+            portable_test_dispose_error(&failed_error)
+            testing.expect(t, failing.outstanding == 0)
+        }
+        delete(source_data)
+    }
+
+    encode_probe := Portable_Test_One_Shot_Allocator {
+        backing = context.allocator,
+        fail_at = -1,
+    }
+    encode_probe_allocator := mem.Allocator {
+        procedure = portable_test_one_shot_allocator_proc,
+        data      = rawptr(&encode_probe),
+    }
+    encode_probe_data, encode_probe_error, encode_probe_ok := hs.portable_encode(
+        portable_test_any(Portable_Enumerated_State, &source),
+        alloc = encode_probe_allocator,
+    )
+    testing.expect(t, encode_probe_ok)
+    testing.expect(t, encode_probe_error.kind == .None)
+    testing.expect(t, encode_probe.allocs > 0)
+    if encode_probe_ok do delete(encode_probe_data, encode_probe_allocator)
+    portable_test_dispose_error(&encode_probe_error)
+    testing.expect(t, encode_probe.outstanding == 0)
+
+    encode_path_failures := 0
+    for fail_at in 0 ..< encode_probe.allocs {
+        failing := Portable_Test_One_Shot_Allocator {
+            backing = context.allocator,
+            fail_at = fail_at,
+        }
+        failing_allocator := mem.Allocator {
+            procedure = portable_test_one_shot_allocator_proc,
+            data      = rawptr(&failing),
+        }
+        failed_data, failed_error, failed_ok := hs.portable_encode(
+            portable_test_any(Portable_Enumerated_State, &source),
+            alloc = failing_allocator,
+        )
+        testing.expect(t, !failed_ok)
+        testing.expect(t, failed_data == nil)
+        testing.expect(t, failing.failed)
+        if failed_error.message == "field path allocation failed" {
+            encode_path_failures += 1
+            testing.expect(t, failed_error.kind == .Limit_Exceeded)
+            testing.expect(t, failed_error.path == "$")
+        }
+        portable_test_dispose_error(&failed_error)
+        portable_test_dispose_error(&failed_error)
+        testing.expect(t, failing.outstanding == 0)
+    }
+    testing.expect(t, encode_path_failures == 2)
+
+    additive_source := Portable_Additive_Source {
+        kept    = 601,
+        removed = 602,
+    }
+    additive_data, additive_encode_error, additive_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Additive_Source, &additive_source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, additive_encode_ok)
+    testing.expect(t, additive_encode_error.kind == .None)
+    if additive_encode_ok {
+        decode_path_probe := Portable_Test_One_Shot_Allocator {
+            backing = context.allocator,
+            fail_at = -1,
+        }
+        decode_path_probe_allocator := mem.Allocator {
+            procedure = portable_test_one_shot_allocator_proc,
+            data      = rawptr(&decode_path_probe),
+        }
+        additive_destination := Portable_Additive_Destination{}
+        additive_error, additive_ok := hs.portable_decode(
+            portable_test_any(Portable_Additive_Destination, &additive_destination),
+            additive_data,
+            alloc = decode_path_probe_allocator,
+        )
+        testing.expect(t, additive_ok)
+        testing.expect(t, additive_error.kind == .None)
+        testing.expect(t, additive_destination.kept == additive_source.kept)
+        testing.expect(t, decode_path_probe.outstanding == 0)
+        portable_test_dispose_error(&additive_error)
+
+        decode_path_failures := 0
+        for fail_at in 0 ..< decode_path_probe.allocs {
+            failing := Portable_Test_One_Shot_Allocator {
+                backing = context.allocator,
+                fail_at = fail_at,
+            }
+            failing_allocator := mem.Allocator {
+                procedure = portable_test_one_shot_allocator_proc,
+                data      = rawptr(&failing),
+            }
+            failed_destination := Portable_Additive_Destination{}
+            failed_error, failed_ok := hs.portable_decode(
+                portable_test_any(Portable_Additive_Destination, &failed_destination),
+                additive_data,
+                alloc = failing_allocator,
+            )
+            testing.expect(t, !failed_ok)
+            testing.expect(t, failing.failed)
+            if failed_error.message == "field path allocation failed" {
+                decode_path_failures += 1
+                testing.expect(t, failed_error.kind == .Limit_Exceeded)
+                testing.expect(t, failed_error.path == "$")
+            }
+            portable_test_dispose_error(&failed_error)
+            portable_test_dispose_error(&failed_error)
+            testing.expect(t, failing.outstanding == 0)
+        }
+        testing.expect(t, decode_path_failures == 2)
+        delete(additive_data)
+    }
+
+    nil_allocator := mem.Allocator{}
+    _, error, ok = hs.portable_encode(portable_test_any(Portable_Enumerated_State, &source), alloc = nil_allocator)
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Argument)
+    portable_test_dispose_error(&error)
+    error, ok = hs.portable_decode(
+        portable_test_any(Portable_Enumerated_State, &Portable_Enumerated_State{}),
+        nil,
+        alloc = nil_allocator,
+    )
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Argument)
+    portable_test_dispose_error(&error)
+}
+
+@(test)
+hs_portable_writer_oom_is_distinct_from_payload_limit :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+
+    source := portable_test_state()
+    config := portable_test_fixture_config()
+    expected, expected_error, expected_ok := hs.portable_encode(
+        portable_test_any(Portable_State, &source),
+        config,
+        context.allocator,
+    )
+    testing.expect(t, expected_ok && expected_error.kind == .None)
+    portable_test_dispose_error(&expected_error)
+    if !expected_ok do return
+    defer delete(expected)
+
+    probe := Portable_Test_One_Shot_Allocator {
+        backing = runtime.default_allocator(),
+        fail_at = -1,
+    }
+    probe_allocator := mem.Allocator {
+        procedure = portable_test_one_shot_allocator_proc,
+        data      = rawptr(&probe),
+    }
+    probe_data, probe_error, probe_ok := hs.portable_encode(
+        portable_test_any(Portable_State, &source),
+        config,
+        probe_allocator,
+    )
+    testing.expect(t, probe_ok && probe_error.kind == .None && probe.allocs > 0)
+    if probe_ok {
+        testing.expect(t, len(probe_data) == len(expected))
+        if len(probe_data) == len(expected) {
+            for byte_value, index in probe_data {
+                testing.expect(t, byte_value == expected[index])
+            }
+        }
+        delete(probe_data, probe_allocator)
+    }
+    portable_test_dispose_error(&probe_error)
+    testing.expect(t, probe.outstanding == 0)
+
+    table_writer_oom := false
+    body_writer_oom := false
+    payload_writer_oom := false
+    for fail_at in 0 ..< probe.allocs {
+        failing := Portable_Test_One_Shot_Allocator {
+            backing = runtime.default_allocator(),
+            fail_at = fail_at,
+        }
+        failing_allocator := mem.Allocator {
+            procedure = portable_test_one_shot_allocator_proc,
+            data      = rawptr(&failing),
+        }
+        failed_data, failed_error, failed_ok := hs.portable_encode(
+            portable_test_any(Portable_State, &source),
+            config,
+            failing_allocator,
+        )
+        testing.expect(t, !failed_ok && failed_data == nil && failing.failed)
+        testing.expect(t, failed_error.kind == .Limit_Exceeded && strings.contains(failed_error.message, "allocation"))
+        switch failed_error.message {
+        case "type table allocation failed":
+            table_writer_oom = true
+        case "value body allocation failed":
+            body_writer_oom = true
+        case "payload allocation failed":
+            payload_writer_oom = true
+        case:
+        }
+        portable_test_dispose_error(&failed_error)
+        portable_test_dispose_error(&failed_error)
+        testing.expect(t, failing.outstanding == 0)
+    }
+    testing.expect(t, table_writer_oom && body_writer_oom && payload_writer_oom)
+
+    limited_config := config
+    limited_config.limits.max_payload = hs.Portable_Header_Size
+    limited_data, limited_error, limited_ok := hs.portable_encode(
+        portable_test_any(Portable_State, &source),
+        limited_config,
+        context.allocator,
+    )
+    testing.expect(t, !limited_ok && limited_data == nil)
+    testing.expect(
+        t,
+        limited_error.kind == .Limit_Exceeded &&
+        limited_error.message == "type table exceeds payload limit" &&
+        !strings.contains(limited_error.message, "allocation"),
+    )
+    portable_test_dispose_error(&limited_error)
+    portable_test_dispose_error(&limited_error)
+
+    short_source := Portable_Exact_Short_Field {
+        a = 91,
+    }
+    short_data, short_error, short_ok := hs.portable_encode(
+        portable_test_any(Portable_Exact_Short_Field, &short_source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, short_ok && short_error.kind == .None)
+    portable_test_dispose_error(&short_error)
+    if !short_ok do return
+    defer delete(short_data)
+
+    exact_config := hs.portable_default_config()
+    exact_config.exact_schema = true
+    exact_probe := Portable_Test_All_Fault_Allocator {
+        backing = runtime.default_allocator(),
+        fail_at = -1,
+    }
+    exact_probe_allocator := mem.Allocator {
+        procedure = portable_test_all_fault_allocator_proc,
+        data      = rawptr(&exact_probe),
+    }
+    long_destination := Portable_Exact_Long_Field {
+        substantially_longer_field_name = 707,
+    }
+    exact_error, exact_ok := hs.portable_decode(
+        portable_test_any(Portable_Exact_Long_Field, &long_destination),
+        short_data,
+        exact_config,
+        exact_probe_allocator,
+    )
+    testing.expect(t, !exact_ok)
+    testing.expect(
+        t,
+        exact_error.kind == .Type_Mismatch &&
+        exact_error.message == "saved type table length does not match destination" &&
+        !strings.contains(exact_error.message, "allocation"),
+    )
+    testing.expect(t, long_destination.substantially_longer_field_name == 707)
+    portable_test_dispose_error(&exact_error)
+    portable_test_dispose_error(&exact_error)
+    testing.expect(t, exact_probe.attempts > 0 && exact_probe.outstanding == 0)
+
+    exact_table_allocation_failures := 0
+    for fail_at in 0 ..< exact_probe.attempts {
+        failing := Portable_Test_All_Fault_Allocator {
+            backing = runtime.default_allocator(),
+            fail_at = fail_at,
+        }
+        failing_allocator := mem.Allocator {
+            procedure = portable_test_all_fault_allocator_proc,
+            data      = rawptr(&failing),
+        }
+        failed_destination := Portable_Exact_Long_Field {
+            substantially_longer_field_name = 808,
+        }
+        failed_error, failed_ok := hs.portable_decode(
+            portable_test_any(Portable_Exact_Long_Field, &failed_destination),
+            short_data,
+            exact_config,
+            failing_allocator,
+        )
+        testing.expect(t, !failed_ok)
+        testing.expect(t, failed_error.kind == .Limit_Exceeded && strings.contains(failed_error.message, "allocation"))
+        if failed_error.message == "exact type table allocation failed" {
+            exact_table_allocation_failures += 1
+        }
+        testing.expect(t, failed_destination.substantially_longer_field_name == 808)
+        portable_test_dispose_error(&failed_error)
+        portable_test_dispose_error(&failed_error)
+        testing.expect(t, failing.outstanding == 0)
+    }
+    testing.expect(t, exact_table_allocation_failures >= 2)
 }
 
 @(test)

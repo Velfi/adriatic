@@ -155,6 +155,17 @@ when ODIN_TEST {
         current_snapshot := fixture_codec_test_copy(current)
         defer delete(current_snapshot)
 
+        v3_payload, v3_payload_ok := fixture_migration_v0003_runtime_v3_payload(t)
+        testing.expect(t, v3_payload_ok)
+        if !v3_payload_ok do return
+        v3, v3_error, v3_ok := fixture_file.fixture_container_encode(v3_payload, 3, alloc = context.allocator)
+        delete(v3_payload)
+        testing.expect(t, v3_ok && v3_error.kind == .None)
+        if !v3_ok do return
+        defer delete(v3)
+        v3_snapshot := fixture_codec_test_copy(v3)
+        defer delete(v3_snapshot)
+
         v2_payload, v2_payload_ok := fixture_codec_test_v2_payload(t)
         testing.expect(t, v2_payload_ok)
         if !v2_payload_ok do return
@@ -178,10 +189,17 @@ when ODIN_TEST {
         defer delete(v1_snapshot)
 
         current_allocation_count := fixture_codec_oom_test_success_count(t, current, current_snapshot)
+        v3_allocation_count := fixture_codec_oom_test_success_count(t, v3, v3_snapshot)
         v2_allocation_count := fixture_codec_oom_test_success_count(t, v2, v2_snapshot)
         v1_allocation_count := fixture_codec_oom_test_success_count(t, v1, v1_snapshot)
-        if current_allocation_count == 0 || v2_allocation_count == 0 || v1_allocation_count == 0 do return
+        if current_allocation_count == 0 ||
+           v3_allocation_count == 0 ||
+           v2_allocation_count == 0 ||
+           v1_allocation_count == 0 {
+            return
+        }
         fixture_codec_oom_test_sweep(t, current, current_snapshot, current_allocation_count)
+        fixture_codec_oom_test_sweep(t, v3, v3_snapshot, v3_allocation_count)
         fixture_codec_oom_test_sweep(t, v2, v2_snapshot, v2_allocation_count)
         fixture_codec_oom_test_sweep(t, v1, v1_snapshot, v1_allocation_count)
 

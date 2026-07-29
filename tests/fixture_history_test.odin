@@ -2,6 +2,7 @@ package tests
 
 import fixture_v0001 "../packages/fixture_history/v0001"
 import fixture_v0003 "../packages/fixture_history/v0003"
+import fixture_v0004 "../packages/fixture_history/v0004"
 import fixture_schema "../packages/fixture_schema"
 import "base:runtime"
 import "core:fmt"
@@ -23,6 +24,15 @@ import "core:testing"
 #assert(int(fixture_v0003.History_Type_0103.Postale) == 2)
 #assert(int(fixture_v0003.History_Type_0103.Libellula) == 3)
 #assert(int(fixture_v0003.History_Type_0103.Libellula_Mk2) == 4)
+#assert(fixture_v0004.FIXTURE_SCHEMA_VERSION == 4)
+#assert(offset_of(fixture_v0004.Fixture, occupant) >= 0)
+#assert(size_of(fixture_v0004.History_Type_0107) == size_of(u8))
+#assert(int(fixture_v0004.History_Type_0107.On_Foot) == 0)
+#assert(int(fixture_v0004.History_Type_0107.Car) == 1)
+#assert(int(fixture_v0004.History_Type_0107.Postale) == 2)
+#assert(int(fixture_v0004.History_Type_0107.Libellula) == 3)
+#assert(int(fixture_v0004.History_Type_0107.Libellula_Mk2) == 4)
+#assert(int(fixture_v0004.History_Type_0107.Rondine) == 5)
 
 HISTORY_SYNTHETIC_MANIFEST ::
     "format_version=1\n" +
@@ -57,6 +67,18 @@ HISTORY_LINE_ENUM_MANIFEST ::
     "field=adriatic:src.Fixture|name=mode|using=0|tag=|type=adriatic:src.Mode\n" +
     "type=adriatic:src.Mode|kind=enum|detail=using\\=0;base\\=builtin:u8\n" +
     "enum=adriatic:src.Mode|name=Too_High|value=256\n"
+
+HISTORY_ENUMERATED_ARRAY_MANIFEST ::
+    "format_version=1\n" +
+    "fixture_schema_version=1\n" +
+    "root=adriatic:src.Fixture\n" +
+    "type=adriatic:src.Fixture|kind=struct|detail=packed\\=0;raw_union\\=0;no_copy\\=0;all_or_none\\=0;simple\\=0;align\\=none;min_field_align\\=none;max_field_align\\=none\n" +
+    "field=adriatic:src.Fixture|name=slots|using=0|tag=|type=enumerated_array[3;adriatic:src.Index]<adriatic:src.Element>\n" +
+    "type=adriatic:src.Index|kind=enum|detail=using\\=0;base\\=builtin:i8\n" +
+    "enum=adriatic:src.Index|name=West|value=-1\n" +
+    "enum=adriatic:src.Index|name=Center|value=0\n" +
+    "enum=adriatic:src.Index|name=East|value=1\n" +
+    "type=adriatic:src.Element|kind=distinct|detail=target\\=builtin:u64\n"
 
 Fixture_History_Fault_Allocator :: struct {
     backing:     mem.Allocator,
@@ -225,6 +247,88 @@ fixture_history_manifest_accepts_frozen_grammar :: proc(t: ^testing.T) {
     testing.expect(t, strings.contains(generated, "[256][2]u8"))
     testing.expect(t, strings.contains(generated, ":: distinct i32"))
     testing.expect(t, strings.contains(generated, ":: enum i16"))
+}
+
+@(test)
+fixture_history_enumerated_arrays_are_exact_strict_and_owned :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    source := string(HISTORY_ENUMERATED_ARRAY_MANIFEST)
+    manifest, error, ok := fixture_schema.history_parse_manifest(transmute([]byte)source, context.allocator)
+    testing.expect(t, ok && error.kind == .None)
+    if !ok {
+        fixture_schema.history_error_dispose(&error)
+        return
+    }
+    defer fixture_schema.history_manifest_dispose(&manifest)
+    sha, sha_ok := fixture_schema.history_manifest_sha256_hex(transmute([]byte)source, context.allocator)
+    testing.expect(t, sha_ok)
+    if !sha_ok do return
+    defer delete(sha)
+    generated, generated_ok := fixture_schema.history_emit_package(&manifest, sha, context.allocator)
+    testing.expect(t, generated_ok)
+    if !generated_ok do return
+    defer delete(generated)
+    testing.expect(t, strings.contains(generated, "\tslots: [History_Type_0002]History_Type_0000,\n"))
+
+    index_record: ^fixture_schema.History_Record
+    for &record in manifest.records {
+        if record.id == "adriatic:src.Index" {
+            index_record = &record
+            break
+        }
+    }
+    testing.expect(t, index_record != nil)
+    if index_record != nil {
+        original_kind := index_record.kind
+        index_record.kind = "struct"
+        rejected, rejected_ok := fixture_schema.history_emit_package(&manifest, sha, context.allocator)
+        testing.expect(t, !rejected_ok && len(rejected) == 0)
+        delete(rejected)
+        index_record.kind = original_kind
+    }
+
+    hostile := [?]string {
+        history_replace(source, "enumerated_array[3;", "enumerated_array[2;"),
+        history_replace(source, ";adriatic:src.Index]", ";adriatic:src.Element]"),
+        history_replace(source, ";adriatic:src.Index]", ";adriatic:src.Missing]"),
+        history_replace(source, "enumerated_array[3;", "enumerated_array[3"),
+        history_replace(source, "name=East|value=1", "name=East|value=2"),
+    }
+    for invalid in hostile {
+        history_expect_failure_exact(t, invalid, .Unresolved_Reference, 5, "adriatic:src.Fixture.slots")
+        delete(invalid)
+    }
+    duplicate := history_replace(source, "name=East|value=1", "name=East|value=0")
+    history_expect_failure_exact(t, duplicate, .Invalid_Input, 9, "adriatic:src.Index.East")
+    delete(duplicate)
+
+    success_state := Fixture_History_Fault_Allocator {
+        backing    = runtime.default_allocator(),
+        fail_index = -1,
+    }
+    success_allocator := fixture_history_fault_allocator(&success_state)
+    owned, owned_error, owned_ok := fixture_schema.history_parse_manifest(transmute([]byte)source, success_allocator)
+    testing.expect(t, owned_ok && owned_error.kind == .None && success_state.attempts > 0)
+    fixture_schema.history_manifest_dispose(&owned)
+    fixture_schema.history_manifest_dispose(&owned)
+    fixture_schema.history_error_dispose(&owned_error)
+    fixture_schema.history_error_dispose(&owned_error)
+    testing.expect(t, success_state.outstanding == 0)
+    for fail_index in 0 ..< success_state.attempts {
+        state := Fixture_History_Fault_Allocator {
+            backing    = runtime.default_allocator(),
+            fail_index = fail_index,
+        }
+        allocator := fixture_history_fault_allocator(&state)
+        failed, failed_error, failed_ok := fixture_schema.history_parse_manifest(transmute([]byte)source, allocator)
+        testing.expect(t, !failed_ok && failed_error.kind == .Out_Of_Memory)
+        fixture_schema.history_manifest_dispose(&failed)
+        fixture_schema.history_manifest_dispose(&failed)
+        fixture_schema.history_error_dispose(&failed_error)
+        fixture_schema.history_error_dispose(&failed_error)
+        testing.expect(t, state.outstanding == 0)
+    }
 }
 
 @(test)
@@ -841,6 +945,115 @@ fixture_history_supports_later_schema_versions :: proc(t: ^testing.T) {
     )
     if !real_v3_history_sha_ok do return
     defer delete(real_v3_history_sha)
+
+    real_v4_data, real_v4_read_error := os.read_entire_file("fixtures/schema/v0004.fixture-schema", context.allocator)
+    testing.expect(t, real_v4_read_error == nil)
+    if real_v4_read_error != nil do return
+    defer delete(real_v4_data)
+    real_v4_manifest, real_v4_error, real_v4_ok := fixture_schema.history_parse_manifest(
+        real_v4_data,
+        context.allocator,
+    )
+    testing.expect(t, real_v4_ok && real_v4_error.kind == .None)
+    if !real_v4_ok {
+        fixture_schema.history_error_dispose(&real_v4_error)
+        return
+    }
+    defer fixture_schema.history_manifest_dispose(&real_v4_manifest)
+    testing.expect(t, real_v4_manifest.schema_version == 4 && len(real_v4_manifest.records) == 167)
+    v4_root_fields := 0
+    v4_occupant_found := false
+    v4_occupant_enum_found := false
+    v4_resident_action_seen_found := false
+    for record in real_v4_manifest.records {
+        if record.id == real_v4_manifest.root {
+            v4_root_fields = len(record.fields)
+            for field in record.fields {
+                if field.name == "occupant" {
+                    v4_occupant_found =
+                        !field.is_using &&
+                        field.tag == "" &&
+                        field.type == "adriatic:packages/vehicles.Fixture_Occupant"
+                }
+            }
+        }
+        if record.id == "adriatic:packages/vehicles.Fixture_Occupant" {
+            v4_occupant_enum_found =
+                record.kind == "enum" &&
+                record.detail == "using=0;base=builtin:u8" &&
+                len(record.enums) == 6 &&
+                record.enums[0].name == "On_Foot" &&
+                record.enums[0].value == 0 &&
+                record.enums[1].name == "Car" &&
+                record.enums[1].value == 1 &&
+                record.enums[2].name == "Postale" &&
+                record.enums[2].value == 2 &&
+                record.enums[3].name == "Libellula" &&
+                record.enums[3].value == 3 &&
+                record.enums[4].name == "Libellula_Mk2" &&
+                record.enums[4].value == 4 &&
+                record.enums[5].name == "Rondine" &&
+                record.enums[5].value == 5
+        }
+        if record.id == "adriatic:packages/story.State" {
+            for field in record.fields {
+                if field.name == "resident_action_seen" {
+                    v4_resident_action_seen_found =
+                        field.type == "enumerated_array[11;adriatic:packages/story.Resident]<builtin:u64>"
+                }
+            }
+        }
+    }
+    testing.expect(
+        t,
+        v4_root_fields == 154 && v4_occupant_found && v4_occupant_enum_found && v4_resident_action_seen_found,
+    )
+    real_v4_sha, real_v4_sha_ok := fixture_schema.history_manifest_sha256_hex(real_v4_data, context.allocator)
+    testing.expect(
+        t,
+        real_v4_sha_ok && real_v4_sha == "fad52f4e0a38b35fffdf29ae3ffb3f91251780fe0ce2dc5990beba76f1e518fa",
+    )
+    if !real_v4_sha_ok do return
+    defer delete(real_v4_sha)
+    real_v4_generated, real_v4_generated_ok := fixture_schema.history_emit_package(
+        &real_v4_manifest,
+        real_v4_sha,
+        context.allocator,
+    )
+    testing.expect(t, real_v4_generated_ok)
+    if !real_v4_generated_ok do return
+    defer delete(real_v4_generated)
+    testing.expect(t, strings.contains(real_v4_generated, "resident_action_seen: [History_Type_0079]u64,"))
+    real_v4_expected, real_v4_expected_error := os.read_entire_file(
+        "packages/fixture_history/v0004/schema.generated.odin",
+        context.allocator,
+    )
+    testing.expect(t, real_v4_expected_error == nil)
+    if real_v4_expected_error != nil do return
+    defer delete(real_v4_expected)
+    testing.expect(t, string(real_v4_expected) == real_v4_generated)
+    testing.expect(t, strings.count(string(real_v4_expected), "\n") == 2110)
+    testing.expect(t, strings.count(string(real_v4_expected), "// fixture-history-id: ") == 167)
+    real_v4_history_sha, real_v4_history_sha_ok := fixture_schema.history_manifest_sha256_hex(
+        real_v4_expected,
+        context.allocator,
+    )
+    testing.expect(
+        t,
+        real_v4_history_sha_ok &&
+        real_v4_history_sha == "bc483f9afa929fd697868627ad8b0a7b46e03be61edb88670bc46825ec0a1076",
+    )
+    if !real_v4_history_sha_ok do return
+    defer delete(real_v4_history_sha)
+    resident_actions_info := type_info_of(typeid_of([fixture_v0004.History_Type_0079]u64))
+    resident_actions, resident_actions_ok := resident_actions_info.variant.(runtime.Type_Info_Enumerated_Array)
+    testing.expect(
+        t,
+        resident_actions_ok &&
+        resident_actions.count == 11 &&
+        resident_actions.elem.id == typeid_of(u64) &&
+        resident_actions.index.id == typeid_of(fixture_v0004.History_Type_0079),
+    )
 
     invalid_versions := [?]string{"0", "-1", "+1", "01", "1 ", "1x", "10000", "9223372036854775808"}
     for version in invalid_versions {

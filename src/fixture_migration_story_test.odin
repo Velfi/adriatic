@@ -156,6 +156,12 @@ when ODIN_TEST {
         historical.architecture_city_plan.alleys[0].end_x = 401
         historical.architecture_city_plan.lamp_count = 1
         historical.architecture_city_plan.lamps[0].x = 501
+        historical.architecture_brush_radius = 44
+        historical.aircraft.slots[0].kind = .Postale
+        historical.aircraft.slots[1].kind = .Libellula
+        historical.aircraft.slots[2].kind = .Libellula_Mk2
+        historical.aircraft.active = .Postale
+        historical.aircraft.count = 3
 
         fixture_migration_story_test_apply_story(historical, test_case)
 

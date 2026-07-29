@@ -139,7 +139,7 @@ fixture_migration_step_v0001_to_v0002 :: proc(
     return step_error
 }
 
-fixture_migration_production_steps: [2]Fixture_Migration_Step = {
+fixture_migration_production_steps: [3]Fixture_Migration_Step = {
     {
         from_version = FIXTURE_MIGRATION_V0001_TO_V0002_FROM_VERSION,
         to_version = FIXTURE_MIGRATION_V0001_TO_V0002_TO_VERSION,
@@ -151,6 +151,12 @@ fixture_migration_production_steps: [2]Fixture_Migration_Step = {
         to_version = FIXTURE_MIGRATION_V0002_TO_V0003_TO_VERSION,
         wrapper = fixture_migration_step_v0002_to_v0003,
         change_id = "field-add:adriatic:src.Fixture.occupant",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0003_TO_V0004_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0003_TO_V0004_TO_VERSION,
+        wrapper = fixture_migration_step_v0003_to_v0004,
+        change_id = FIXTURE_MIGRATION_V0003_SETTLEMENT_ID,
     },
 }
 
