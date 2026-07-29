@@ -7,6 +7,32 @@ import "core:mem"
 import "core:strings"
 import "core:testing"
 
+#assert(int(hs.Portable_Kind.Invalid) == 0)
+#assert(int(hs.Portable_Kind.Bool) == 1)
+#assert(int(hs.Portable_Kind.Signed) == 2)
+#assert(int(hs.Portable_Kind.Unsigned) == 3)
+#assert(int(hs.Portable_Kind.Rune) == 4)
+#assert(int(hs.Portable_Kind.Float) == 5)
+#assert(int(hs.Portable_Kind.String) == 6)
+#assert(int(hs.Portable_Kind.Struct) == 7)
+#assert(int(hs.Portable_Kind.Array) == 8)
+#assert(int(hs.Portable_Kind.Enum) == 9)
+#assert(int(hs.Portable_Kind.Dynamic_Array) == 10)
+#assert(int(hs.Portable_Kind.Enumerated_Array) == 11)
+#assert(int(hs.Portable_Kind.Quaternion) == 12)
+#assert(size_of(runtime.Raw_Quaternion64) == 8)
+#assert(align_of(runtime.Raw_Quaternion64) == 2)
+#assert(offset_of(runtime.Raw_Quaternion64, imag) == 0)
+#assert(offset_of(runtime.Raw_Quaternion64, jmag) == 2)
+#assert(offset_of(runtime.Raw_Quaternion64, kmag) == 4)
+#assert(offset_of(runtime.Raw_Quaternion64, real) == 6)
+#assert(size_of(runtime.Raw_Quaternion128) == 16)
+#assert(align_of(runtime.Raw_Quaternion128) == 4)
+#assert(offset_of(runtime.Raw_Quaternion128, imag) == 0)
+#assert(offset_of(runtime.Raw_Quaternion128, jmag) == 4)
+#assert(offset_of(runtime.Raw_Quaternion128, kmag) == 8)
+#assert(offset_of(runtime.Raw_Quaternion128, real) == 12)
+
 Portable_Mode :: enum u8 {
     Idle    = 0,
     Sailing = 3,
@@ -216,6 +242,69 @@ Portable_Recursive_Node :: struct {
     children: [dynamic]Portable_Recursive_Node,
 }
 
+Portable_Quaternion_Index :: enum i8 {
+    Lower = 3,
+    Middle,
+    Upper,
+}
+
+Portable_Quaternion_Nested :: struct {
+    rotation: quaternion128,
+}
+
+Portable_Quaternion_Composite :: struct {
+    nested:         Portable_Quaternion_Nested,
+    fixed:          [2]quaternion64,
+    indexed:        [Portable_Quaternion_Index]quaternion128,
+    dynamic_values: [dynamic]quaternion64,
+}
+
+Portable_Quaternion_Extra_Source :: struct {
+    rotation: quaternion128,
+    kept:     u32,
+}
+
+Portable_Quaternion_Extra_Destination :: struct {
+    kept: u32,
+}
+
+Portable_Quaternion_Missing_Source :: struct {
+    kept: u32,
+}
+
+Portable_Quaternion_Missing_Destination :: struct {
+    rotation: quaternion128,
+    kept:     u32,
+}
+
+Portable_Quaternion128_Field :: struct {
+    rotation: quaternion128,
+}
+
+Portable_Quaternion64_Field :: struct {
+    rotation: quaternion64,
+}
+
+Portable_Quaternion_Array_Field :: struct {
+    rotation: [4]f32,
+}
+
+Portable_Quaternion_Scalar_Field :: struct {
+    rotation: f32,
+}
+
+Portable_Quaternion_Fixed_One :: struct {
+    values: [1]quaternion128,
+}
+
+Portable_Quaternion_Fixed_Many :: struct {
+    values: [128]quaternion128,
+}
+
+Portable_Quaternion_Dynamic :: struct {
+    values: [dynamic]quaternion128,
+}
+
 Portable_Test_Counting_Allocator :: struct {
     backing:     mem.Allocator,
     allocs:      int,
@@ -385,6 +474,48 @@ portable_test_put_u64 :: proc(data: []byte, offset: int, value: u64) {
 
 portable_test_put_i64 :: proc(data: []byte, offset: int, value: i64) {
     portable_test_put_u64(data, offset, cast(u64)value)
+}
+
+portable_test_quaternion64 :: proc(bits: [4]u16) -> quaternion64 {
+    raw := runtime.Raw_Quaternion64 {
+        imag = transmute(f16)bits[0],
+        jmag = transmute(f16)bits[1],
+        kmag = transmute(f16)bits[2],
+        real = transmute(f16)bits[3],
+    }
+    return transmute(quaternion64)raw
+}
+
+portable_test_quaternion128 :: proc(bits: [4]u32) -> quaternion128 {
+    raw := runtime.Raw_Quaternion128 {
+        imag = transmute(f32)bits[0],
+        jmag = transmute(f32)bits[1],
+        kmag = transmute(f32)bits[2],
+        real = transmute(f32)bits[3],
+    }
+    return transmute(quaternion128)raw
+}
+
+portable_test_quaternion64_bits :: proc(value: quaternion64) -> [4]u16 {
+    raw := transmute(runtime.Raw_Quaternion64)value
+    return {transmute(u16)raw.imag, transmute(u16)raw.jmag, transmute(u16)raw.kmag, transmute(u16)raw.real}
+}
+
+portable_test_quaternion128_bits :: proc(value: quaternion128) -> [4]u32 {
+    raw := transmute(runtime.Raw_Quaternion128)value
+    return {transmute(u32)raw.imag, transmute(u32)raw.jmag, transmute(u32)raw.kmag, transmute(u32)raw.real}
+}
+
+portable_test_bytes_equal :: proc(a, b: []byte) -> bool {
+    if len(a) != len(b) do return false
+    for value, index in a {
+        if value != b[index] do return false
+    }
+    return true
+}
+
+portable_test_body_start :: proc(data: []byte) -> int {
+    return hs.Portable_Header_Size + int(portable_test_u32(data, 20))
 }
 
 portable_test_dispose_error :: proc(error: ^hs.Portable_Error) {
@@ -2629,6 +2760,689 @@ hs_portable_nil_allocator_is_rejected :: proc(t: ^testing.T) {
     )
     testing.expect(t, !ok)
     testing.expect(t, error.kind == .Invalid_Argument)
+}
+
+@(test)
+hs_portable_quaternion_exact_wire_and_round_trip :: proc(t: ^testing.T) {
+    q64_bits := [4]u16{0x0001, 0x8000, 0x7e01, 0xfc00}
+    q64 := portable_test_quaternion64(q64_bits)
+    q64_data, q64_error, q64_ok := hs.portable_encode(portable_test_any(quaternion64, &q64))
+    testing.expect(t, q64_ok)
+    testing.expect(t, q64_error.kind == .None)
+    portable_test_dispose_error(&q64_error)
+    portable_test_dispose_error(&q64_error)
+    if q64_ok {
+        defer delete(q64_data)
+        testing.expect(t, len(q64_data) == hs.Portable_Header_Size + 4 + 8)
+        testing.expect(t, portable_test_u32(q64_data, 12) == 1)
+        testing.expect(t, portable_test_u32(q64_data, 16) == 1)
+        testing.expect(t, portable_test_u32(q64_data, 20) == 4)
+        testing.expect(t, portable_test_u32(q64_data, 24) == 8)
+        testing.expect(t, q64_data[hs.Portable_Header_Size] == byte(hs.Portable_Kind.Quaternion))
+        testing.expect(t, q64_data[hs.Portable_Header_Size + 1] == 8)
+        testing.expect(t, q64_data[hs.Portable_Header_Size + 2] == 0)
+        testing.expect(t, q64_data[hs.Portable_Header_Size + 3] == 0)
+        body := portable_test_body_start(q64_data)
+        expected := [8]byte{0x01, 0x00, 0x00, 0x80, 0x01, 0x7e, 0x00, 0xfc}
+        testing.expect(t, portable_test_bytes_equal(q64_data[body:], expected[:]))
+
+        sentinel_bits := [4]u16{0x3c00, 0x4000, 0x4200, 0x4400}
+        destination := portable_test_quaternion64(sentinel_bits)
+        decode_error, decode_ok := hs.portable_decode(portable_test_any(quaternion64, &destination), q64_data)
+        testing.expect(t, decode_ok)
+        testing.expect(t, decode_error.kind == .None)
+        testing.expect(t, portable_test_quaternion64_bits(destination) == q64_bits)
+        portable_test_dispose_error(&decode_error)
+        portable_test_dispose_error(&decode_error)
+
+        round_trip, round_trip_error, round_trip_ok := hs.portable_encode(
+            portable_test_any(quaternion64, &destination),
+        )
+        testing.expect(t, round_trip_ok)
+        testing.expect(t, round_trip_error.kind == .None)
+        if round_trip_ok {
+            testing.expect(t, portable_test_bytes_equal(round_trip, q64_data))
+            delete(round_trip)
+        }
+        portable_test_dispose_error(&round_trip_error)
+    }
+
+    q128_bits := [4]u32{0x0000_0001, 0x8000_0000, 0x7fc1_2345, 0xff80_0000}
+    q128 := portable_test_quaternion128(q128_bits)
+    q128_data, q128_error, q128_ok := hs.portable_encode(portable_test_any(quaternion128, &q128))
+    testing.expect(t, q128_ok)
+    testing.expect(t, q128_error.kind == .None)
+    portable_test_dispose_error(&q128_error)
+    portable_test_dispose_error(&q128_error)
+    if q128_ok {
+        defer delete(q128_data)
+        testing.expect(t, len(q128_data) == hs.Portable_Header_Size + 4 + 16)
+        testing.expect(t, portable_test_u32(q128_data, 12) == 1)
+        testing.expect(t, portable_test_u32(q128_data, 16) == 1)
+        testing.expect(t, portable_test_u32(q128_data, 20) == 4)
+        testing.expect(t, portable_test_u32(q128_data, 24) == 16)
+        testing.expect(t, q128_data[hs.Portable_Header_Size] == byte(hs.Portable_Kind.Quaternion))
+        testing.expect(t, q128_data[hs.Portable_Header_Size + 1] == 16)
+        testing.expect(t, q128_data[hs.Portable_Header_Size + 2] == 0)
+        testing.expect(t, q128_data[hs.Portable_Header_Size + 3] == 0)
+        body := portable_test_body_start(q128_data)
+        expected := [16]byte {
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x80,
+            0x45,
+            0x23,
+            0xc1,
+            0x7f,
+            0x00,
+            0x00,
+            0x80,
+            0xff,
+        }
+        testing.expect(t, portable_test_bytes_equal(q128_data[body:], expected[:]))
+
+        sentinel_bits := [4]u32{0x3f80_0000, 0x4000_0000, 0x4040_0000, 0x4080_0000}
+        destination := portable_test_quaternion128(sentinel_bits)
+        decode_error, decode_ok := hs.portable_decode(portable_test_any(quaternion128, &destination), q128_data)
+        testing.expect(t, decode_ok)
+        testing.expect(t, decode_error.kind == .None)
+        testing.expect(t, portable_test_quaternion128_bits(destination) == q128_bits)
+        portable_test_dispose_error(&decode_error)
+        portable_test_dispose_error(&decode_error)
+
+        round_trip, round_trip_error, round_trip_ok := hs.portable_encode(
+            portable_test_any(quaternion128, &destination),
+        )
+        testing.expect(t, round_trip_ok)
+        testing.expect(t, round_trip_error.kind == .None)
+        if round_trip_ok {
+            testing.expect(t, portable_test_bytes_equal(round_trip, q128_data))
+            delete(round_trip)
+        }
+        portable_test_dispose_error(&round_trip_error)
+    }
+}
+
+@(test)
+hs_portable_quaternion_nested_compatibility_and_atomic_failures :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+
+    q64_a_bits := [4]u16{0x0001, 0x8000, 0x7e01, 0xfc00}
+    q64_b_bits := [4]u16{0x3555, 0xb955, 0x7d01, 0x0400}
+    q128_a_bits := [4]u32{0x0000_0001, 0x8000_0000, 0x7fc1_2345, 0xff80_0000}
+    q128_b_bits := [4]u32{0x3eaa_aaab, 0xbf40_0000, 0x7fa0_0001, 0x0080_0000}
+    source := Portable_Quaternion_Composite {
+        nested = {rotation = portable_test_quaternion128(q128_a_bits)},
+        fixed = {portable_test_quaternion64(q64_a_bits), portable_test_quaternion64(q64_b_bits)},
+    }
+    source.indexed[.Lower] = portable_test_quaternion128(q128_b_bits)
+    source.indexed[.Middle] = portable_test_quaternion128(q128_a_bits)
+    source.indexed[.Upper] = portable_test_quaternion128(q128_b_bits)
+    source.dynamic_values = make([dynamic]quaternion64)
+    append(&source.dynamic_values, portable_test_quaternion64(q64_b_bits))
+    append(&source.dynamic_values, portable_test_quaternion64(q64_a_bits))
+    defer delete(source.dynamic_values)
+
+    encoded, encode_error, encode_ok := hs.portable_encode(portable_test_any(Portable_Quaternion_Composite, &source))
+    testing.expect(t, encode_ok)
+    testing.expect(t, encode_error.kind == .None)
+    portable_test_dispose_error(&encode_error)
+    if encode_ok {
+        defer delete(encoded)
+        original := portable_test_copy(encoded)
+        defer delete(original)
+        destination := Portable_Quaternion_Composite{}
+        decode_error, decode_ok := hs.portable_decode(
+            portable_test_any(Portable_Quaternion_Composite, &destination),
+            encoded,
+        )
+        testing.expect(t, decode_ok)
+        testing.expect(t, decode_error.kind == .None)
+        testing.expect(t, portable_test_quaternion128_bits(destination.nested.rotation) == q128_a_bits)
+        testing.expect(t, portable_test_quaternion64_bits(destination.fixed[0]) == q64_a_bits)
+        testing.expect(t, portable_test_quaternion64_bits(destination.fixed[1]) == q64_b_bits)
+        testing.expect(t, portable_test_quaternion128_bits(destination.indexed[.Lower]) == q128_b_bits)
+        testing.expect(t, portable_test_quaternion128_bits(destination.indexed[.Middle]) == q128_a_bits)
+        testing.expect(t, portable_test_quaternion128_bits(destination.indexed[.Upper]) == q128_b_bits)
+        testing.expect(t, len(destination.dynamic_values) == 2)
+        if len(destination.dynamic_values) == 2 {
+            testing.expect(t, portable_test_quaternion64_bits(destination.dynamic_values[0]) == q64_b_bits)
+            testing.expect(t, portable_test_quaternion64_bits(destination.dynamic_values[1]) == q64_a_bits)
+        }
+        if destination.dynamic_values != nil do delete(destination.dynamic_values)
+        portable_test_dispose_error(&decode_error)
+        portable_test_dispose_error(&decode_error)
+        testing.expect(t, portable_test_bytes_equal(encoded, original))
+    }
+
+    extra_source := Portable_Quaternion_Extra_Source {
+        rotation = portable_test_quaternion128(q128_a_bits),
+        kept     = 0x1234_5678,
+    }
+    extra_data, extra_encode_error, extra_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Quaternion_Extra_Source, &extra_source),
+    )
+    testing.expect(t, extra_encode_ok)
+    testing.expect(t, extra_encode_error.kind == .None)
+    portable_test_dispose_error(&extra_encode_error)
+    if extra_encode_ok {
+        extra_before := portable_test_copy(extra_data)
+        extra_destination := Portable_Quaternion_Extra_Destination {
+            kept = 0,
+        }
+        extra_error, extra_ok := hs.portable_decode(
+            portable_test_any(Portable_Quaternion_Extra_Destination, &extra_destination),
+            extra_data,
+        )
+        testing.expect(t, extra_ok)
+        testing.expect(t, extra_error.kind == .None)
+        testing.expect(t, extra_destination.kept == extra_source.kept)
+        testing.expect(t, portable_test_bytes_equal(extra_data, extra_before))
+        portable_test_dispose_error(&extra_error)
+        portable_test_dispose_error(&extra_error)
+        delete(extra_before)
+        delete(extra_data)
+    }
+
+    missing_source := Portable_Quaternion_Missing_Source {
+        kept = 0x8765_4321,
+    }
+    missing_data, missing_encode_error, missing_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Quaternion_Missing_Source, &missing_source),
+    )
+    testing.expect(t, missing_encode_ok)
+    testing.expect(t, missing_encode_error.kind == .None)
+    portable_test_dispose_error(&missing_encode_error)
+    if missing_encode_ok {
+        sentinel := portable_test_quaternion128(q128_b_bits)
+        missing_destination := Portable_Quaternion_Missing_Destination {
+            rotation = sentinel,
+            kept     = 0,
+        }
+        missing_error, missing_ok := hs.portable_decode(
+            portable_test_any(Portable_Quaternion_Missing_Destination, &missing_destination),
+            missing_data,
+        )
+        testing.expect(t, missing_ok)
+        testing.expect(t, missing_error.kind == .None)
+        testing.expect(t, portable_test_quaternion128_bits(missing_destination.rotation) == q128_b_bits)
+        testing.expect(t, missing_destination.kept == missing_source.kept)
+        portable_test_dispose_error(&missing_error)
+        portable_test_dispose_error(&missing_error)
+        delete(missing_data)
+    }
+
+    field_source := Portable_Quaternion128_Field {
+        rotation = portable_test_quaternion128(q128_a_bits),
+    }
+    field_data, field_encode_error, field_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Quaternion128_Field, &field_source),
+    )
+    testing.expect(t, field_encode_ok)
+    testing.expect(t, field_encode_error.kind == .None)
+    portable_test_dispose_error(&field_encode_error)
+    if field_encode_ok {
+        defer delete(field_data)
+        field_before := portable_test_copy(field_data)
+        defer delete(field_before)
+
+        q64_destination := Portable_Quaternion64_Field {
+            rotation = portable_test_quaternion64(q64_b_bits),
+        }
+        mismatch_error, mismatch_ok := hs.portable_decode(
+            portable_test_any(Portable_Quaternion64_Field, &q64_destination),
+            field_data,
+        )
+        testing.expect(t, !mismatch_ok)
+        testing.expect(t, mismatch_error.kind == .Type_Mismatch)
+        testing.expect(t, mismatch_error.path == "$.rotation")
+        testing.expect(t, portable_test_quaternion64_bits(q64_destination.rotation) == q64_b_bits)
+        portable_test_dispose_error(&mismatch_error)
+        portable_test_dispose_error(&mismatch_error)
+
+        array_destination := Portable_Quaternion_Array_Field {
+            rotation = {1, 2, 3, 4},
+        }
+        mismatch_error, mismatch_ok = hs.portable_decode(
+            portable_test_any(Portable_Quaternion_Array_Field, &array_destination),
+            field_data,
+        )
+        testing.expect(t, !mismatch_ok)
+        testing.expect(t, mismatch_error.kind == .Type_Mismatch)
+        testing.expect(t, mismatch_error.path == "$.rotation")
+        testing.expect(t, array_destination.rotation == [4]f32{1, 2, 3, 4})
+        portable_test_dispose_error(&mismatch_error)
+
+        scalar_destination := Portable_Quaternion_Scalar_Field {
+            rotation = 91.25,
+        }
+        mismatch_error, mismatch_ok = hs.portable_decode(
+            portable_test_any(Portable_Quaternion_Scalar_Field, &scalar_destination),
+            field_data,
+        )
+        testing.expect(t, !mismatch_ok)
+        testing.expect(t, mismatch_error.kind == .Type_Mismatch)
+        testing.expect(t, mismatch_error.path == "$.rotation")
+        testing.expect(t, scalar_destination.rotation == 91.25)
+        portable_test_dispose_error(&mismatch_error)
+
+        body_start := portable_test_body_start(field_data)
+        for body_bytes in 0 ..< 16 {
+            truncated := make([]byte, body_start + body_bytes)
+            copy(truncated, field_data[:body_start + body_bytes])
+            portable_test_put_u32(truncated, 24, u32(body_bytes))
+            truncated_before := portable_test_copy(truncated)
+            truncated_destination := Portable_Quaternion128_Field {
+                rotation = portable_test_quaternion128(q128_b_bits),
+            }
+            truncated_error, truncated_ok := hs.portable_decode(
+                portable_test_any(Portable_Quaternion128_Field, &truncated_destination),
+                truncated,
+            )
+            testing.expect(t, !truncated_ok)
+            testing.expect(t, truncated_error.kind == .Truncated)
+            testing.expect(t, truncated_error.path == "$.rotation")
+            testing.expect(t, truncated_error.offset == 0)
+            testing.expect(t, portable_test_quaternion128_bits(truncated_destination.rotation) == q128_b_bits)
+            testing.expect(t, portable_test_bytes_equal(truncated, truncated_before))
+            portable_test_dispose_error(&truncated_error)
+            portable_test_dispose_error(&truncated_error)
+            delete(truncated_before)
+            delete(truncated)
+        }
+
+        trailing := make([]byte, len(field_data) + 1)
+        copy(trailing, field_data)
+        trailing_before := portable_test_copy(trailing)
+        trailing_destination := Portable_Quaternion128_Field {
+            rotation = portable_test_quaternion128(q128_b_bits),
+        }
+        trailing_error, trailing_ok := hs.portable_decode(
+            portable_test_any(Portable_Quaternion128_Field, &trailing_destination),
+            trailing,
+        )
+        testing.expect(t, !trailing_ok)
+        testing.expect(t, trailing_error.kind == .Trailing_Bytes)
+        testing.expect(t, trailing_error.path == "$")
+        testing.expect(t, trailing_error.offset == len(field_data))
+        testing.expect(t, portable_test_quaternion128_bits(trailing_destination.rotation) == q128_b_bits)
+        testing.expect(t, portable_test_bytes_equal(trailing, trailing_before))
+        portable_test_dispose_error(&trailing_error)
+        portable_test_dispose_error(&trailing_error)
+        delete(trailing_before)
+        delete(trailing)
+        testing.expect(t, portable_test_bytes_equal(field_data, field_before))
+    }
+}
+
+@(test)
+hs_portable_quaternion_metadata_corruption_is_strict :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+
+    q64_bits := [4]u16{0x0001, 0x8000, 0x7e01, 0xfc00}
+    sentinel_bits := [4]u16{0x3c00, 0x4000, 0x4200, 0x4400}
+    source := portable_test_quaternion64(q64_bits)
+    encoded, encode_error, encode_ok := hs.portable_encode(portable_test_any(quaternion64, &source))
+    testing.expect(t, encode_ok)
+    testing.expect(t, encode_error.kind == .None)
+    portable_test_dispose_error(&encode_error)
+    portable_test_dispose_error(&encode_error)
+    if !encode_ok do return
+    defer delete(encoded)
+    original := portable_test_copy(encoded)
+    defer delete(original)
+
+    bad_kind := portable_test_copy(encoded)
+    bad_kind[hs.Portable_Header_Size] = byte(hs.Portable_Kind.Quaternion) + 1
+    destination := portable_test_quaternion64(sentinel_bits)
+    error, ok := hs.portable_decode(portable_test_any(quaternion64, &destination), bad_kind)
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    testing.expect(t, error.path == "$table")
+    testing.expect(t, error.offset == 4)
+    testing.expect(t, portable_test_quaternion64_bits(destination) == sentinel_bits)
+    portable_test_dispose_error(&error)
+    portable_test_dispose_error(&error)
+    delete(bad_kind)
+
+    invalid_widths := [4]u8{0, 4, 32, 255}
+    for width in invalid_widths {
+        bad_width := portable_test_copy(encoded)
+        bad_width[hs.Portable_Header_Size + 1] = width
+        destination = portable_test_quaternion64(sentinel_bits)
+        error, ok = hs.portable_decode(portable_test_any(quaternion64, &destination), bad_width)
+        testing.expect(t, !ok)
+        testing.expect(t, error.kind == .Invalid_Metadata)
+        testing.expect(t, error.path == "$table")
+        testing.expect(t, error.offset == 4)
+        testing.expect(t, portable_test_quaternion64_bits(destination) == sentinel_bits)
+        portable_test_dispose_error(&error)
+        portable_test_dispose_error(&error)
+        delete(bad_width)
+    }
+
+    bad_signed := portable_test_copy(encoded)
+    bad_signed[hs.Portable_Header_Size + 2] = 1
+    destination = portable_test_quaternion64(sentinel_bits)
+    error, ok = hs.portable_decode(portable_test_any(quaternion64, &destination), bad_signed)
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    testing.expect(t, error.path == "$table")
+    testing.expect(t, error.offset == 4)
+    testing.expect(t, portable_test_quaternion64_bits(destination) == sentinel_bits)
+    portable_test_dispose_error(&error)
+    portable_test_dispose_error(&error)
+    delete(bad_signed)
+
+    bad_reserved := portable_test_copy(encoded)
+    bad_reserved[hs.Portable_Header_Size + 3] = 1
+    destination = portable_test_quaternion64(sentinel_bits)
+    error, ok = hs.portable_decode(portable_test_any(quaternion64, &destination), bad_reserved)
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    testing.expect(t, error.path == "$table")
+    testing.expect(t, error.offset == 4)
+    testing.expect(t, portable_test_quaternion64_bits(destination) == sentinel_bits)
+    portable_test_dispose_error(&error)
+    portable_test_dispose_error(&error)
+    delete(bad_reserved)
+
+    table_bytes := int(portable_test_u32(encoded, 20))
+    body_start := portable_test_body_start(encoded)
+    trailing_table := make([]byte, len(encoded) + 1)
+    copy(trailing_table[:body_start], encoded[:body_start])
+    trailing_table[body_start] = 0
+    copy(trailing_table[body_start + 1:], encoded[body_start:])
+    portable_test_put_u32(trailing_table, 20, u32(table_bytes + 1))
+    trailing_table_before := portable_test_copy(trailing_table)
+    destination = portable_test_quaternion64(sentinel_bits)
+    error, ok = hs.portable_decode(portable_test_any(quaternion64, &destination), trailing_table)
+    testing.expect(t, !ok)
+    testing.expect(t, error.kind == .Invalid_Metadata)
+    testing.expect(t, error.path == "$table")
+    testing.expect(t, error.offset == 4)
+    testing.expect(t, portable_test_quaternion64_bits(destination) == sentinel_bits)
+    testing.expect(t, portable_test_bytes_equal(trailing_table, trailing_table_before))
+    portable_test_dispose_error(&error)
+    portable_test_dispose_error(&error)
+    delete(trailing_table_before)
+    delete(trailing_table)
+
+    q256: quaternion256
+    unsupported_data, unsupported_error, unsupported_ok := hs.portable_encode(portable_test_any(quaternion256, &q256))
+    testing.expect(t, !unsupported_ok)
+    testing.expect(t, unsupported_data == nil)
+    testing.expect(t, unsupported_error.kind == .Unsupported_Type)
+    testing.expect(t, unsupported_error.path == "$")
+    portable_test_dispose_error(&unsupported_error)
+    portable_test_dispose_error(&unsupported_error)
+    testing.expect(t, portable_test_bytes_equal(encoded, original))
+}
+
+@(test)
+hs_portable_quaternion_allocations_ownership_and_oom_cleanup :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+
+    q128_a_bits := [4]u32{0x0000_0001, 0x8000_0000, 0x7fc1_2345, 0xff80_0000}
+    q128_b_bits := [4]u32{0x3eaa_aaab, 0xbf40_0000, 0x7fa0_0001, 0x0080_0000}
+    one_source := Portable_Quaternion_Fixed_One {
+        values = {portable_test_quaternion128(q128_a_bits)},
+    }
+    many_source := Portable_Quaternion_Fixed_Many{}
+    for index in 0 ..< len(many_source.values) {
+        if index & 1 == 0 {
+            many_source.values[index] = portable_test_quaternion128(q128_a_bits)
+        } else {
+            many_source.values[index] = portable_test_quaternion128(q128_b_bits)
+        }
+    }
+
+    one_encode_state := Portable_Test_Counting_Allocator {
+        backing = runtime.default_allocator(),
+        fail_at = -1,
+    }
+    one_encode_allocator := mem.Allocator {
+        procedure = portable_test_counting_allocator_proc,
+        data      = rawptr(&one_encode_state),
+    }
+    one_data, one_encode_error, one_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Quaternion_Fixed_One, &one_source),
+        alloc = one_encode_allocator,
+    )
+    testing.expect(t, one_encode_ok)
+    testing.expect(t, one_encode_error.kind == .None)
+    portable_test_dispose_error(&one_encode_error)
+    portable_test_dispose_error(&one_encode_error)
+
+    many_encode_state := Portable_Test_Counting_Allocator {
+        backing = runtime.default_allocator(),
+        fail_at = -1,
+    }
+    many_encode_allocator := mem.Allocator {
+        procedure = portable_test_counting_allocator_proc,
+        data      = rawptr(&many_encode_state),
+    }
+    many_data, many_encode_error, many_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Quaternion_Fixed_Many, &many_source),
+        alloc = many_encode_allocator,
+    )
+    testing.expect(t, many_encode_ok)
+    testing.expect(t, many_encode_error.kind == .None)
+    portable_test_dispose_error(&many_encode_error)
+    portable_test_dispose_error(&many_encode_error)
+    testing.expect(t, one_encode_state.allocs == many_encode_state.allocs)
+
+    if one_encode_ok && many_encode_ok {
+        one_decode_state := Portable_Test_Counting_Allocator {
+            backing = runtime.default_allocator(),
+            fail_at = -1,
+        }
+        one_decode_allocator := mem.Allocator {
+            procedure = portable_test_counting_allocator_proc,
+            data      = rawptr(&one_decode_state),
+        }
+        one_destination := Portable_Quaternion_Fixed_One{}
+        one_decode_error, one_decode_ok := hs.portable_decode(
+            portable_test_any(Portable_Quaternion_Fixed_One, &one_destination),
+            one_data,
+            alloc = one_decode_allocator,
+        )
+        testing.expect(t, one_decode_ok)
+        testing.expect(t, one_decode_error.kind == .None)
+        testing.expect(t, portable_test_quaternion128_bits(one_destination.values[0]) == q128_a_bits)
+        portable_test_dispose_error(&one_decode_error)
+        portable_test_dispose_error(&one_decode_error)
+        testing.expect(t, one_decode_state.outstanding == 0)
+
+        many_decode_state := Portable_Test_Counting_Allocator {
+            backing = runtime.default_allocator(),
+            fail_at = -1,
+        }
+        many_decode_allocator := mem.Allocator {
+            procedure = portable_test_counting_allocator_proc,
+            data      = rawptr(&many_decode_state),
+        }
+        many_destination := Portable_Quaternion_Fixed_Many{}
+        many_decode_error, many_decode_ok := hs.portable_decode(
+            portable_test_any(Portable_Quaternion_Fixed_Many, &many_destination),
+            many_data,
+            alloc = many_decode_allocator,
+        )
+        testing.expect(t, many_decode_ok)
+        testing.expect(t, many_decode_error.kind == .None)
+        testing.expect(t, portable_test_quaternion128_bits(many_destination.values[0]) == q128_a_bits)
+        testing.expect(t, portable_test_quaternion128_bits(many_destination.values[127]) == q128_b_bits)
+        portable_test_dispose_error(&many_decode_error)
+        portable_test_dispose_error(&many_decode_error)
+        testing.expect(t, many_decode_state.outstanding == 0)
+        testing.expect(t, one_decode_state.allocs == many_decode_state.allocs)
+    }
+    if one_data != nil do delete(one_data, one_encode_allocator)
+    if many_data != nil do delete(many_data, many_encode_allocator)
+    testing.expect(t, one_encode_state.outstanding == 0)
+    testing.expect(t, many_encode_state.outstanding == 0)
+
+    dynamic_source := Portable_Quaternion_Dynamic {
+        values = make([dynamic]quaternion128, 2),
+    }
+    dynamic_source.values[0] = portable_test_quaternion128(q128_a_bits)
+    dynamic_source.values[1] = portable_test_quaternion128(q128_b_bits)
+    defer delete(dynamic_source.values)
+    dynamic_data, dynamic_encode_error, dynamic_encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Quaternion_Dynamic, &dynamic_source),
+    )
+    testing.expect(t, dynamic_encode_ok)
+    testing.expect(t, dynamic_encode_error.kind == .None)
+    portable_test_dispose_error(&dynamic_encode_error)
+    if !dynamic_encode_ok do return
+    defer delete(dynamic_data)
+    dynamic_before := portable_test_copy(dynamic_data)
+    defer delete(dynamic_before)
+
+    ownership_state := Portable_Test_Counting_Allocator {
+        backing = runtime.default_allocator(),
+        fail_at = -1,
+    }
+    ownership_allocator := mem.Allocator {
+        procedure = portable_test_counting_allocator_proc,
+        data      = rawptr(&ownership_state),
+    }
+    owned_destination := Portable_Quaternion_Dynamic{}
+    ownership_error, ownership_ok := hs.portable_decode(
+        portable_test_any(Portable_Quaternion_Dynamic, &owned_destination),
+        dynamic_data,
+        alloc = ownership_allocator,
+    )
+    testing.expect(t, ownership_ok)
+    testing.expect(t, ownership_error.kind == .None)
+    testing.expect(t, len(owned_destination.values) == 2)
+    if len(owned_destination.values) == 2 {
+        testing.expect(t, portable_test_quaternion128_bits(owned_destination.values[0]) == q128_a_bits)
+        testing.expect(t, portable_test_quaternion128_bits(owned_destination.values[1]) == q128_b_bits)
+    }
+    portable_test_dispose_error(&ownership_error)
+    portable_test_dispose_error(&ownership_error)
+    delete(owned_destination.values)
+    testing.expect(t, ownership_state.outstanding == 0)
+
+    encode_probe := Portable_Test_All_Fault_Allocator {
+        backing = runtime.default_allocator(),
+        fail_at = -1,
+    }
+    encode_probe_allocator := mem.Allocator {
+        procedure = portable_test_all_fault_allocator_proc,
+        data      = rawptr(&encode_probe),
+    }
+    probe_data, probe_error, probe_ok := hs.portable_encode(
+        portable_test_any(Portable_Quaternion_Dynamic, &dynamic_source),
+        alloc = encode_probe_allocator,
+    )
+    testing.expect(t, probe_ok)
+    testing.expect(t, probe_error.kind == .None)
+    testing.expect(t, encode_probe.attempts > 0)
+    if probe_data != nil do delete(probe_data, encode_probe_allocator)
+    portable_test_dispose_error(&probe_error)
+    portable_test_dispose_error(&probe_error)
+    testing.expect(t, encode_probe.outstanding == 0)
+
+    for fail_at in 0 ..< encode_probe.attempts {
+        failing := Portable_Test_All_Fault_Allocator {
+            backing = runtime.default_allocator(),
+            fail_at = fail_at,
+        }
+        failing_allocator := mem.Allocator {
+            procedure = portable_test_all_fault_allocator_proc,
+            data      = rawptr(&failing),
+        }
+        failed_data, failed_error, failed_ok := hs.portable_encode(
+            portable_test_any(Portable_Quaternion_Dynamic, &dynamic_source),
+            alloc = failing_allocator,
+        )
+        testing.expect(t, !failed_ok)
+        testing.expect(t, failed_data == nil)
+        testing.expect(t, failed_error.kind == .Limit_Exceeded)
+        if failed_data != nil do delete(failed_data, failing_allocator)
+        portable_test_dispose_error(&failed_error)
+        portable_test_dispose_error(&failed_error)
+        testing.expect(t, failing.outstanding == 0)
+    }
+
+    decode_probe := Portable_Test_All_Fault_Allocator {
+        backing = runtime.default_allocator(),
+        fail_at = -1,
+    }
+    decode_probe_allocator := mem.Allocator {
+        procedure = portable_test_all_fault_allocator_proc,
+        data      = rawptr(&decode_probe),
+    }
+    probe_destination := Portable_Quaternion_Dynamic{}
+    decode_probe_error, decode_probe_ok := hs.portable_decode(
+        portable_test_any(Portable_Quaternion_Dynamic, &probe_destination),
+        dynamic_data,
+        alloc = decode_probe_allocator,
+    )
+    testing.expect(t, decode_probe_ok)
+    testing.expect(t, decode_probe_error.kind == .None)
+    testing.expect(t, decode_probe.attempts > 0)
+    portable_test_dispose_error(&decode_probe_error)
+    portable_test_dispose_error(&decode_probe_error)
+    delete(probe_destination.values)
+    testing.expect(t, decode_probe.outstanding == 0)
+
+    for fail_at in 0 ..< decode_probe.attempts {
+        failing := Portable_Test_All_Fault_Allocator {
+            backing = runtime.default_allocator(),
+            fail_at = fail_at,
+        }
+        failing_allocator := mem.Allocator {
+            procedure = portable_test_all_fault_allocator_proc,
+            data      = rawptr(&failing),
+        }
+        failed_destination := Portable_Quaternion_Dynamic{}
+        failed_error, failed_ok := hs.portable_decode(
+            portable_test_any(Portable_Quaternion_Dynamic, &failed_destination),
+            dynamic_data,
+            alloc = failing_allocator,
+        )
+        testing.expect(t, !failed_ok)
+        testing.expect(t, failed_error.kind == .Limit_Exceeded)
+        if failed_destination.values != nil do delete(failed_destination.values)
+        portable_test_dispose_error(&failed_error)
+        portable_test_dispose_error(&failed_error)
+        testing.expect(t, failing.outstanding == 0)
+    }
+
+    nil_allocator := mem.Allocator{}
+    nil_data, nil_error, nil_ok := hs.portable_encode(
+        portable_test_any(quaternion128, &dynamic_source.values[0]),
+        alloc = nil_allocator,
+    )
+    testing.expect(t, !nil_ok)
+    testing.expect(t, nil_data == nil)
+    testing.expect(t, nil_error.kind == .Invalid_Argument)
+    portable_test_dispose_error(&nil_error)
+    portable_test_dispose_error(&nil_error)
+
+    nil_destination := portable_test_quaternion128(q128_b_bits)
+    nil_error, nil_ok = hs.portable_decode(
+        portable_test_any(quaternion128, &nil_destination),
+        dynamic_data,
+        alloc = nil_allocator,
+    )
+    testing.expect(t, !nil_ok)
+    testing.expect(t, nil_error.kind == .Invalid_Argument)
+    testing.expect(t, portable_test_quaternion128_bits(nil_destination) == q128_b_bits)
+    portable_test_dispose_error(&nil_error)
+    portable_test_dispose_error(&nil_error)
+    testing.expect(t, portable_test_bytes_equal(dynamic_data, dynamic_before))
 }
 
 @(test)

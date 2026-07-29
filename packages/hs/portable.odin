@@ -104,6 +104,7 @@ Portable_Kind :: enum u8 {
     Enum,
     Dynamic_Array,
     Enumerated_Array,
+    Quaternion,
 }
 
 Portable_Field :: struct {
@@ -262,6 +263,30 @@ portable_write_string :: proc(w: ^Portable_Writer, value: string) -> bool {
     return portable_write_u32(w, u32(len(value))) && portable_write_bytes(w, transmute([]byte)value)
 }
 
+portable_quaternion_width :: proc(info: ^rt.Type_Info) -> (width: u8, ok: bool) {
+    if info == nil do return 0, false
+    if _, variant_ok := info.variant.(rt.Type_Info_Quaternion); !variant_ok do return 0, false
+    switch info.id {
+    case quaternion64:
+        valid :=
+            info.size == 8 &&
+            info.align == 2 &&
+            align_of(quaternion64) == 2 &&
+            reflect.typeid_elem(info.id) == typeid_of(f16) &&
+            info.size == 4 * size_of(f16)
+        return 8, valid
+    case quaternion128:
+        valid :=
+            info.size == 16 &&
+            info.align == 4 &&
+            align_of(quaternion128) == 4 &&
+            reflect.typeid_elem(info.id) == typeid_of(f32) &&
+            info.size == 4 * size_of(f32)
+        return 16, valid
+    }
+    return 0, false
+}
+
 portable_type_kind :: proc(info: ^rt.Type_Info) -> (kind: Portable_Kind, width: u8, signed: bool, ok: bool) {
     if info == nil do return .Invalid, 0, false, false
     #partial switch value in info.variant {
@@ -274,6 +299,9 @@ portable_type_kind :: proc(info: ^rt.Type_Info) -> (kind: Portable_Kind, width: 
         return .Rune, u8(info.size), true, info.size == 4
     case rt.Type_Info_Float:
         return .Float, u8(info.size), false, info.size == 2 || info.size == 4 || info.size == 8
+    case rt.Type_Info_Quaternion:
+        quaternion_width, width_ok := portable_quaternion_width(info)
+        return .Quaternion, quaternion_width, false, width_ok
     case rt.Type_Info_String:
         return .String, 0, false, !value.is_cstring && value.encoding == .UTF_8
     case:
@@ -549,6 +577,30 @@ portable_encode_value :: proc(
         case 8:
             v := (^f64)(value.data)^
             return portable_write_u64(w, transmute(u64)v)
+        }
+    case .Quaternion:
+        width, metadata_ok := portable_quaternion_width(info)
+        if !metadata_ok || width != type.width {
+            portable_discovery_error(ctx, .Type_Mismatch, path, "quaternion metadata changed during encoding")
+            return false
+        }
+        switch type.width {
+        case 8:
+            quaternion_value := (^rt.Raw_Quaternion64)(value.data)
+            return(
+                portable_write_u16(w, transmute(u16)quaternion_value.imag) &&
+                portable_write_u16(w, transmute(u16)quaternion_value.jmag) &&
+                portable_write_u16(w, transmute(u16)quaternion_value.kmag) &&
+                portable_write_u16(w, transmute(u16)quaternion_value.real) \
+            )
+        case 16:
+            quaternion_value := (^rt.Raw_Quaternion128)(value.data)
+            return(
+                portable_write_u32(w, transmute(u32)quaternion_value.imag) &&
+                portable_write_u32(w, transmute(u32)quaternion_value.jmag) &&
+                portable_write_u32(w, transmute(u32)quaternion_value.kmag) &&
+                portable_write_u32(w, transmute(u32)quaternion_value.real) \
+            )
         }
     case .String:
         v := (^string)(value.data)^
@@ -961,6 +1013,17 @@ portable_saved_type_valid :: proc(type: Portable_Type, type_count: int, limits: 
         return type.width == 4 && type.signed
     case .Float:
         return (type.width == 2 || type.width == 4 || type.width == 8) && !type.signed
+    case .Quaternion:
+        return(
+            (type.width == 8 || type.width == 16) &&
+            !type.signed &&
+            type.elem == 0 &&
+            type.index == 0 &&
+            type.count == 0 &&
+            type.base == 0 &&
+            len(type.fields) == 0 &&
+            len(type.enum_fields) == 0 \
+        )
     case .String:
         return type.width == 0 && !type.signed
     case .Array:
@@ -1023,7 +1086,7 @@ portable_parse_type_table :: proc(
             portable_reader_fail(&reader, .Invalid_Metadata, "$table", "reserved type metadata is not zero")
             return types, reader.error, false
         }
-        if kind_byte > u8(Portable_Kind.Enumerated_Array) {
+        if kind_byte > u8(Portable_Kind.Quaternion) {
             portable_reader_fail(&reader, .Invalid_Metadata, "$table", "unknown type kind")
             return types, reader.error, false
         }
@@ -1427,7 +1490,7 @@ portable_skip_value :: proc(ctx: ^Portable_Decoder, handle: u32, path: string, d
     #partial switch type.kind {
     case .Bool:
         _, _ = portable_read_u8(&ctx.reader, path)
-    case .Signed, .Unsigned, .Rune, .Float:
+    case .Signed, .Unsigned, .Rune, .Float, .Quaternion:
         _, _ = portable_read_bytes(&ctx.reader, int(type.width), path)
     case .String:
         _, _ = portable_read_string(&ctx.reader, ctx.config.limits.max_string_bytes, path)
@@ -1598,6 +1661,36 @@ portable_decode_value :: proc(
                 return
             }
             (^string)(destination.data)^ = clone
+        }
+    case .Quaternion:
+        current_width, current_ok := portable_quaternion_width(current_info)
+        if !current_ok || current_width != saved.width || saved.signed {
+            portable_decoder_fail(ctx, .Type_Mismatch, path, "saved quaternion does not match destination")
+            return
+        }
+        bits, bits_ok := portable_read_bytes(&ctx.reader, int(saved.width), path)
+        if !bits_ok do return
+        switch saved.width {
+        case 8:
+            imag_bits := u16(bits[0]) | u16(bits[1]) << 8
+            jmag_bits := u16(bits[2]) | u16(bits[3]) << 8
+            kmag_bits := u16(bits[4]) | u16(bits[5]) << 8
+            real_bits := u16(bits[6]) | u16(bits[7]) << 8
+            value := (^rt.Raw_Quaternion64)(destination.data)
+            value.imag = transmute(f16)imag_bits
+            value.jmag = transmute(f16)jmag_bits
+            value.kmag = transmute(f16)kmag_bits
+            value.real = transmute(f16)real_bits
+        case 16:
+            imag_bits := u32(bits[0]) | u32(bits[1]) << 8 | u32(bits[2]) << 16 | u32(bits[3]) << 24
+            jmag_bits := u32(bits[4]) | u32(bits[5]) << 8 | u32(bits[6]) << 16 | u32(bits[7]) << 24
+            kmag_bits := u32(bits[8]) | u32(bits[9]) << 8 | u32(bits[10]) << 16 | u32(bits[11]) << 24
+            real_bits := u32(bits[12]) | u32(bits[13]) << 8 | u32(bits[14]) << 16 | u32(bits[15]) << 24
+            value := (^rt.Raw_Quaternion128)(destination.data)
+            value.imag = transmute(f32)imag_bits
+            value.jmag = transmute(f32)jmag_bits
+            value.kmag = transmute(f32)kmag_bits
+            value.real = transmute(f32)real_bits
         }
     case .Array:
         dynamic_info, dynamic_ok := current_info.variant.(rt.Type_Info_Dynamic_Array)

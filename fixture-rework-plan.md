@@ -9498,8 +9498,11 @@ Append quaternion support to the portable `hs` wire format without changing
 any existing `Portable_Kind` numeric value or old encoded byte stream.
 
 1. Probe Odin runtime type information for `quaternion64` and
-   `quaternion128` before editing; record component type/count, size, alignment,
-   and the exact `rt.Type_Info_Quaternion` shape.
+   `quaternion128` before editing; record component type, size, alignment,
+   component offsets/order, and the exact `rt.Type_Info_Quaternion` shape.
+   Locked Odin exposes no quaternion count query or variant payload, so the
+   exact built-in type ID, element type, total size, alignment, and four raw
+   component offsets form the supported shape proof.
 2. Append one `Portable_Kind.Quaternion` value. Encode its exact total width
    and require four homogeneous floating-point components. Support only
    quaternion64 and quaternion128; reject unsupported widths or malformed
@@ -9512,9 +9515,11 @@ any existing `Portable_Kind` numeric value or old encoded byte stream.
    fixed/enumerated/dynamic array traversal.
 5. Add exact byte fixtures for both widths, nested struct and all array forms,
    additive/removed-field compatibility, source/destination type or width
-   mismatch, forged kind/width/count, truncation/trailing data, nil allocator,
-   OOM/error ownership, double disposal, deterministic re-encode, and constant
-   allocation count across one versus many array elements.
+   mismatch, forged kind/width/signed/reserved metadata, trailing table bytes,
+   truncation/trailing body data, nil allocator, OOM/error ownership, double
+   disposal, deterministic re-encode, and constant allocation count across one
+   versus many array elements. Quaternion leaf records contain no serialized
+   count or child metadata.
 6. Keep schema manifests/history/migrations, fixture policy tags, and current
    schema version untouched. Current fixture codec remains blocked by the
    frozen-v4 mismatch until the policy/freeze slices.
@@ -9523,6 +9528,73 @@ Acceptance requires focused portable tests twice with zero leaks,
 `make check`, the M4R6A1 4→5 report/scaffold hashes, histories v1–v4, and all
 old portable/schema/migration hashes unchanged except the intentionally edited
 portable source and tests.
+
+#### M4R6A2 acceptance — 2026-07-29
+
+M4R6A2 is accepted. `Portable_Kind.Quaternion` is appended at value 12, leaving
+all prior kind values and old wire bytes stable. Runtime discovery accepts only
+the exact built-in `quaternion64` and `quaternion128` types, with f16/f32
+elements, widths 8/16, alignments 2/4, and the raw component order
+`imag`, `jmag`, `kmag`, `real`.
+
+- encoding writes every component bit pattern explicitly in little-endian
+  order; decoding reads the full 8- or 16-byte leaf before mutating any
+  destination component;
+- shared discovery, graph validation, exact table emission/parsing, skip,
+  compatibility, fixed/enumerated/dynamic array, and mismatch paths all treat
+  quaternion as a leaf;
+- four focused tests pass 4/4 twice after formatting with zero leaks, covering
+  exact q64/q128 bytes, NaN/sign/infinity bit preservation, nested and all array
+  forms, added/removed fields, q64/q128/array/scalar mismatches, unsupported
+  q256, every truncated leaf length, trailing body/table bytes, forged
+  kind/width/signed/reserved metadata, nil allocators, double disposal, input
+  immutability, dynamic ownership, full encode/decode allocation-failure
+  sweeps, and equal allocation counts for one versus 128 fixed elements;
+- independent review found every portable switch and ownership path complete;
+- `make check`, package checks, histories v1–v4, and all legacy frozen hashes
+  pass unchanged;
+- the production 4→5 report remains exactly 9,098 bytes with SHA-256
+  `edf30613795c0711c39efd3f82d7da68bd21589336f722cb367d8d8861f8336b`;
+- the unresolved scaffold remains exactly 76 lines and 2,405 bytes with
+  SHA-256
+  `378cc8036c9af1a44175d1833752e645c01c3b7e9830cdbebbb1a798fb3a48fd`,
+  and its locked scaffold check passes. The ambient standalone `odinfmt`
+  currently rewrites that unchanged generated file to a different byte form;
+  this is inherited A1 formatter drift and not caused by A2;
+- the full suite is 751/752 plus Rondine 19/19; the sole failure is the expected
+  frozen-v4/live-schema mismatch;
+- the new portable source SHA-256 is
+  `accfe53cdafc735f14139f3170f935f066d335a7c2a4cbeba87f79855d0ce27c`;
+  no binary, probe, temporary scaffold, or v5 artifact remains.
+
+### M4R6A3 — Apply the audited fixture policy tags
+
+Make only the exclusion changes already resolved by the M4R6A audit. Do not
+freeze v5, alter schema version, generate history/migrations, or change runtime
+behavior.
+
+1. Add `fixture:"-"` to `flight.Ace_Runtime.local_rate`; it is derived from
+   body orientation and `angular_velocity_world` before use.
+2. Add `fixture:"-"` to `postale.Runtime.telemetry` and
+   `postale.Runtime.ace_telemetry`, and to `libellula.Runtime.telemetry`. These
+   are per-step observations. Keep both vehicles' body state, flight model,
+   designer tuning, persistent ACE energy/edge state/edge seconds, controls,
+   and spawn orientation serialized.
+3. Add `fixture:"-"` to root `Editor.camera_target_lock`; it is capture/session
+   state. Keep the actual camera/editor viewpoint fields serialized.
+4. Do not exclude Rondine telemetry or wake state. Its prior drift intensity
+   and forward speed feed the next step and remain fixture-relevant until a
+   separate derivation proof exists.
+5. Add production sentinels proving every new exclusion and every nearby
+   required retention. Re-run schema generation twice into disposable output.
+   The post-policy 4→5 report must remove only the audited telemetry,
+   `local_rate`, and camera-lock records/fields; all 14 pre-policy structural
+   obligations must otherwise retain their intended meaning.
+
+Acceptance requires focused sentinels, `make check`, deterministic post-policy
+candidate/report/scaffold hashes, histories v1–v4 and every frozen hash
+unchanged, no committed v5 artifact, and a full suite whose only failure
+remains the expected frozen-v4/live-schema mismatch.
 
 ## Milestone 4D — Install owned state and rebuild runtime resources
 
