@@ -246,6 +246,21 @@ rule_init :: proc(
     }
 }
 
+rule_destroy :: proc(r: ^Rule, allocator := context.allocator) {
+    delete(r.input, allocator)
+    delete(r.output, allocator)
+    delete(r.binput, allocator)
+    for shifts in r.ishifts {
+        delete(shifts, allocator)
+    }
+    delete(r.ishifts, allocator)
+    for shifts in r.oshifts {
+        delete(shifts, allocator)
+    }
+    delete(r.oshifts, allocator)
+    r^ = {}
+}
+
 rule_same :: proc(a, b: ^Rule) -> bool {
     if a.im != b.im || a.om != b.om {
         return false

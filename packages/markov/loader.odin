@@ -684,12 +684,14 @@ load_rule :: proc(
         for r in sym_rules {
             append(&rules, r)
         }
+        delete(sym_rules)
     } else {
         // 3D symmetries
         sym_rules := rule_cube_symmetries(&base_rule, int(grid.c), rule_symmetry, allocator)
         for r in sym_rules {
             append(&rules, r)
         }
+        delete(sym_rules)
     }
 
     return rules[:], true
@@ -898,11 +900,13 @@ load_map_rule :: proc(
         for r in sym_rules {
             append(&rules, r)
         }
+        delete(sym_rules)
     } else {
         sym_rules := rule_cube_symmetries(&base_rule, int(gin.c), rule_symmetry, allocator)
         for r in sym_rules {
             append(&rules, r)
         }
+        delete(sym_rules)
     }
 
     return rules[:], true
@@ -934,6 +938,7 @@ load_rules :: proc(
             for r in rules {
                 append(&all_rules, r)
             }
+            delete(rules, allocator)
         }
     } else {
         // Single rule on the element itself
@@ -944,6 +949,7 @@ load_rules :: proc(
         for r in rules {
             append(&all_rules, r)
         }
+        delete(rules, allocator)
     }
 
     return all_rules[:], true

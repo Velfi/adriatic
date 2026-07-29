@@ -195,8 +195,16 @@ rule_square_symmetries :: proc(
             }
             if !found {
                 append(&result, rules[i])
+                // Ownership of the rule's allocations moves into result.
+                rules[i] = {}
             }
         }
+    }
+
+    // Every generated candidate not moved into result is scratch storage,
+    // including symmetry variants excluded by the subgroup or deduplication.
+    for &candidate in rules {
+        rule_destroy(&candidate, allocator)
     }
 
     return result
@@ -272,8 +280,14 @@ rule_cube_symmetries :: proc(
             }
             if !found {
                 append(&result, s[i])
+                // Ownership of the rule's allocations moves into result.
+                s[i] = {}
             }
         }
+    }
+
+    for &candidate in s {
+        rule_destroy(&candidate, allocator)
     }
 
     return result
