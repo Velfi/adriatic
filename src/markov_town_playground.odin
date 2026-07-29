@@ -165,13 +165,28 @@ settlement_park_site_clear :: proc(project: ^terrain.Project, x, z, width, depth
 }
 
 markov_town_add_grove :: proc(project: ^terrain.Project, x, z, width, depth, height: f32, seed: u32) {
-    structure := terrain.structure_make(x, z, width, depth, 0, height)
+    base_y := terrain.sample_height(project, 0, x, z)
+    structure := terrain.structure_make(x, z, width, depth, base_y, height)
     structure.kind = .Foliage
     structure.width = width
     structure.depth = depth
     structure.seed = seed
     structure.rotation = f32(seed & 255) / 255 * math.PI
     _ = terrain.add_structure(project, structure)
+}
+
+markov_town_reseat_park_groves :: proc(plan: ^Settlement_Plan, project: ^terrain.Project) {
+    if plan == nil || project == nil do return
+    for &site in plan.sites[:plan.site_count] {
+        if !site.accepted || site.kind != .Park do continue
+        base_y := terrain.sample_height(project, 0, site.structure.center_x, site.structure.center_z)
+        site.structure.base_y = base_y
+        for &structure in project.structures[:project.structure_count] {
+            if structure.id != site.structure.id do continue
+            structure.base_y = base_y
+            break
+        }
+    }
 }
 
 settlement_camera_site_clear :: proc(project: ^terrain.Project, x, z, clearance: f32) -> bool {
@@ -698,7 +713,8 @@ settlement_lab_configure :: proc(
                     decorative_index := editor.settlement_plan.decorative_foliage_count
                     grove_width := (8 + f32((decorative_index * 5) % 8)) * (.7 + .3 * scale) * grove_footprint_scale
                     grove_depth := (7 + f32((decorative_index * 3) % 7)) * (.7 + .3 * scale) * grove_footprint_scale
-                    grove := terrain.structure_make(x, z, grove_width, grove_depth, 0, grove_height)
+                    grove_base_y := terrain.sample_height(&editor.project, 0, x, z)
+                    grove := terrain.structure_make(x, z, grove_width, grove_depth, grove_base_y, grove_height)
                     grove.kind = .Foliage
                     grove.width = grove_width
                     grove.depth = grove_depth
@@ -757,12 +773,15 @@ settlement_lab_configure :: proc(
     // planned so a dense city cannot consume their structure capacity.
     plan := settlement_plan_generate_buildings(&editor.settlement_plan, &editor.project, &settlement_rng)
     settlement_plan_prepare_block_terrain(&editor.settlement_plan, &editor.project)
+    markov_town_reseat_park_groves(&editor.settlement_plan, &editor.project)
     settlement_plan_seat_project_architecture(&editor.project)
     settlement_plan_seat_city(&plan, &editor.project)
     _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
     decorative_budget := profile.scale == .City ? 12 : (profile.scale == .Town ? 8 : 4)
     decorative_commit_count := min(editor.settlement_plan.decorative_foliage_count, decorative_budget)
-    for structure in editor.settlement_plan.decorative_foliage[:decorative_commit_count] {
+    for &structure in editor.settlement_plan.decorative_foliage[:decorative_commit_count] {
+        structure.base_y =
+            terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
         _ = terrain.add_structure(&editor.project, structure)
     }
     settlement_plan_import_city(&editor.settlement_plan, &plan, &editor.project)

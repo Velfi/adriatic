@@ -3059,6 +3059,30 @@ settlement_reserved_site_counts_are_semantic :: proc(t: ^testing.T) {
 }
 
 @(test)
+settlement_park_groves_reseat_after_terrain_preparation :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer free(project)
+    terrain.init_project(project)
+    defer delete(project.structures)
+    center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
+    markov_town_add_grove(project, center, center, 12, 11, 15, 17)
+    testing.expect(t, project.structure_count > 0)
+    if project.structure_count <= 0 do return
+    grove_index := project.structure_count - 1
+    plan: Settlement_Plan
+    settlement_plan_record_reserved_site(&plan, project.structures[grove_index], .Park)
+    original_base_y := project.structures[grove_index].base_y
+
+    terrain.apply_stroke_with_hardness(project, .Raise, center, center, 40, 4, 1, .8)
+    prepared_base_y := terrain.sample_height(project, 0, center, center)
+    testing.expect(t, prepared_base_y > original_base_y)
+    markov_town_reseat_park_groves(&plan, project)
+
+    testing.expect_value(t, project.structures[grove_index].base_y, prepared_base_y)
+    testing.expect_value(t, plan.sites[0].structure.base_y, prepared_base_y)
+}
+
+@(test)
 settlement_route_anchors_exclude_fringe_tendrils :: proc(t: ^testing.T) {
     testing.expect(t, settlement_route_anchor_eligible(.City, .78))
     testing.expect(t, !settlement_route_anchor_eligible(.City, .781))
