@@ -3,10 +3,13 @@ package main
 import story "../packages/story"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
+import vehicles "../packages/vehicles"
+import "core:c"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import sdl "vendor:sdl3"
 
 LIVE_CONTROL_REQUEST_ENV :: "ADRIATIC_LIVE_CONTROL_REQUEST"
 LIVE_CONTROL_RESPONSE_ENV :: "ADRIATIC_LIVE_CONTROL_RESPONSE"
@@ -144,7 +147,9 @@ live_control_terrain_brush_response :: proc(editor: ^Editor, request_id: string)
         width, height = editor.curve_width, editor.curve_height
     case .Building:
         radius, strength, hardness =
-            editor.architecture_brush_radius, editor.architecture_brush_strength, editor.architecture_brush_hardness
+            settlement_brush_preset_span(editor.architecture_brush_preset) * .5,
+            editor.architecture_brush_strength,
+            editor.architecture_brush_hardness
     case .Marina:
         radius = editor.marina_brush_radius
     case .Farm:
@@ -178,6 +183,28 @@ live_control_parse_optional_f32 :: proc(value: string) -> (f32, bool) {
     return strconv.parse_f32(value)
 }
 
+live_control_audio_status_response :: proc(editor: ^Editor, request_id: string) -> string {
+    stream := editor.engine_audio.stream
+    queued_bytes, device_id := c.int(-1), sdl.AudioDeviceID(0)
+    if stream != nil {
+        queued_bytes = sdl.GetAudioStreamQueued(stream)
+        device_id = sdl.GetAudioStreamDevice(stream)
+    }
+    return fmt.aprintf(
+        `{"ok":true,"id":"%s","stream":%v,"device":%d,"queued_bytes":%d,"volume":%.3f,"muted":%v,"main_menu":%v,"pause_screen":"%v","console":%v,"in_map":%v}`,
+        request_id,
+        stream != nil,
+        device_id,
+        queued_bytes,
+        editor.gameplay_options.sound_fx_level,
+        sound_fx_muted(editor),
+        editor.main_menu_active,
+        editor.pause_screen,
+        editor.console.open,
+        editor.in_map,
+    )
+}
+
 live_control_poll :: proc(editor: ^Editor) {
     request_path := live_control_path(LIVE_CONTROL_REQUEST_ENV, LIVE_CONTROL_DEFAULT_REQUEST_PATH)
     if !os.exists(request_path) do return
@@ -194,14 +221,47 @@ live_control_poll :: proc(editor: ^Editor) {
     }
     request_id, payload := request[:separator], request[separator + 1:]
     command, arguments := "npc", payload
-    if payload == "terrain_brush_get" {
+    if payload == "terrain_brush_get" || payload == "audio_status" || payload == "rondine_stage" {
         command, arguments = payload, ""
     } else if command_separator := strings.index_byte(payload, '\t'); command_separator >= 0 {
         command, arguments = payload[:command_separator], payload[command_separator + 1:]
     }
     response: string
-    if command == "terrain_brush_get" {
+    if command == "rondine_stage" {
+        stage_rondine(editor)
+        if editor.rondine_visible {
+            player_place(
+                editor,
+                editor.rondine.vehicle.position,
+                .Aircraft_Selection,
+                editor.rondine.vehicle.yaw_radians,
+                false,
+            )
+            _, entered := vehicles.try_enter_nearest(
+                &editor.pilot,
+                []^vehicles.Vehicle{&editor.rondine.vehicle},
+            )
+            if entered {
+                response = fmt.aprintf(
+                    `{{"ok":true,"id":"%s","message":"Staged Rondine and entered it"}}`,
+                    request_id,
+                )
+            } else {
+                response = fmt.aprintf(
+                    `{{"ok":false,"id":"%s","error":"Rondine staged but player could not enter"}}`,
+                    request_id,
+                )
+            }
+        } else {
+            response = fmt.aprintf(
+                `{{"ok":false,"id":"%s","error":"Rondine could not find a clear-water spawn"}}`,
+                request_id,
+            )
+        }
+    } else if command == "terrain_brush_get" {
         response = live_control_terrain_brush_response(editor, request_id)
+    } else if command == "audio_status" {
+        response = live_control_audio_status_response(editor, request_id)
     } else if command == "terrain_brush_set" {
         fields := strings.split(arguments, "\t", context.temp_allocator)
         if len(fields) != 8 {
@@ -294,7 +354,11 @@ live_control_poll :: proc(editor: ^Editor) {
                     }
                 case .Building:
                     if fields[1] != "-" {
-                        editor.architecture_brush_radius = clamp(radius, terrain.BASE_CELL_SIZE, 400)
+                        diameter := radius * 2
+                        editor.architecture_brush_preset =
+                            diameter < 90 ? Settlement_Brush_Preset.Small :
+                            diameter < 170 ? Settlement_Brush_Preset.Medium :
+                                             Settlement_Brush_Preset.Large
                     }
                     if fields[2] != "-" do editor.architecture_brush_strength = clamp(strength, .02, 1)
                     if fields[3] != "-" do editor.architecture_brush_hardness = clamp(hardness, 0, 1)

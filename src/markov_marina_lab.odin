@@ -33,6 +33,53 @@ Marina_Geometry_Cache_Entry :: struct {
 markov_marina_plan: marina.Plan
 markov_marina_breakwater_focus_active: bool
 markov_marina_world_site_score: f32
+markov_marina_gallery_active: bool
+markov_marina_gallery_plans: [marina.SHORELINE_FORM_COUNT]marina.Plan
+markov_marina_gallery_count: int
+
+markov_marina_frontage_target :: proc(target: string) -> (marina.Shoreline_Form, bool) {
+    switch target {
+    case "natural":
+        return .Natural_Shore, true
+    case "straight":
+        return .Straight_Quay, true
+    case "west-apron":
+        return .West_Apron, true
+    case "east-apron":
+        return .East_Apron, true
+    case "split-aprons":
+        return .Split_Aprons, true
+    case "stepped-quays":
+        return .Stepped_Quays, true
+    }
+    return .Natural_Shore, false
+}
+
+markov_marina_gallery_generate :: proc() -> bool {
+    markov_marina_gallery_plans = {}
+    markov_marina_gallery_count = 0
+    found: [marina.SHORELINE_FORM_COUNT]bool
+    for seed := u32(0); seed < 2048 && markov_marina_gallery_count < marina.SHORELINE_FORM_COUNT; seed += 1 {
+        plan := marina.generate(seed, context.temp_allocator)
+        if !plan.valid do continue
+        form_index := int(plan.shoreline_form)
+        if form_index < 0 || form_index >= len(found) || found[form_index] do continue
+        column := form_index % 3
+        row := form_index / 3
+        plan.world_conditioned = true
+        plan.world_origin = {
+            (f32(column) - 1) * 125,
+            (f32(row) - .5) * 135,
+        }
+        plan.world_yaw = 0
+        markov_marina_gallery_plans[form_index] = plan
+        found[form_index] = true
+        markov_marina_gallery_count += 1
+    }
+    if markov_marina_gallery_count != marina.SHORELINE_FORM_COUNT do return false
+    markov_marina_plan = markov_marina_gallery_plans[int(marina.Shoreline_Form.Natural_Shore)]
+    return true
+}
 
 @(no_instrumentation)
 markov_marina_breakwater_random :: #force_inline proc(input: u32) -> f32 {
@@ -349,6 +396,14 @@ markov_marina_breakwater_camera :: proc() -> third_person.Camera_Pose {
 
 markov_marina_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
+    markov_marina_gallery_active = target == "gallery" || target == "complex"
+    frontage_form, frontage_view := markov_marina_frontage_target(target)
+    if (markov_marina_gallery_active || frontage_view) && !markov_marina_gallery_generate() do return false
+    if frontage_view {
+        markov_marina_plan = markov_marina_gallery_plans[int(frontage_form)]
+        markov_marina_plan.world_origin = {}
+        markov_marina_plan.world_yaw = 0
+    }
     seed := MARKOV_MARINA_DEFAULT_SEED
     inner_coast := target == "inner"
     world_conditioned := target == "world" || inner_coast
@@ -359,7 +414,9 @@ markov_marina_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         seed = u32(parsed)
     }
     markov_marina_world_site_score = 0
-    if world_conditioned {
+    if markov_marina_gallery_active || frontage_view {
+        markov_marina_world_site_score = 0
+    } else if world_conditioned {
         half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
         island_center := half_extent * terrain.DEFAULT_ISLAND_OFFSET
         island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
@@ -400,9 +457,10 @@ markov_marina_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if !world_conditioned do editor.project.sea_level = 0
     editor.boat_traffic = {}
     editor.marina_dinghy_borrowed = false
-    markov_marina_buoy_physics_create(editor)
+    if !markov_marina_gallery_active do markov_marina_buoy_physics_create(editor)
 
     for slip in markov_marina_plan.slips[:markov_marina_plan.slip_count] {
+        if markov_marina_gallery_active do break
         if !slip.occupied do continue
         position := marina.plan_world_position(&markov_marina_plan, slip.position)
         _ = boats.add_moored_agent(
@@ -413,6 +471,7 @@ markov_marina_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         )
     }
     route := markov_marina_plan.route
+    if markov_marina_gallery_active do route.count = 0
     if route.count > 1 {
         moving: boats.Agent
         moving.class = .Fishing
@@ -437,7 +496,12 @@ markov_marina_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     editor.atmosphere.weather = atmosphere.weather_for(.Clear)
     editor.atmosphere.paused = true
 
-    if target == "vesna" {
+    if markov_marina_gallery_active {
+        editor.camera_pose = third_person.camera_look_at(
+            {185, editor.project.sea_level + 260, 245},
+            {0, editor.project.sea_level, 0},
+        )
+    } else if target == "vesna" {
         dockmaster := markov_marina_dockmaster_position()
         editor.camera_pose = third_person.camera_near(
             {dockmaster.x, dockmaster.y + .48, dockmaster.z},
@@ -488,6 +552,12 @@ markov_marina_borrow_dinghy :: proc(ctx: ^dialogue.Context) {
     _ = dialogue_session.set_marina(&editor.dialogue_session, .Borrow_Dinghy)
 }
 
+marina_stage_rondine_result :: proc(ctx: ^dialogue.Context) {
+    if ctx == nil || ctx.data == nil do return
+    editor := cast(^Editor)ctx.data
+    _ = dialogue_session.set_marina(&editor.dialogue_session, .Stage_Rondine)
+}
+
 markov_marina_close_dialogue :: proc(ctx: ^dialogue.Context) {
     if ctx == nil || ctx.data == nil do return
     editor := cast(^Editor)ctx.data
@@ -497,10 +567,15 @@ markov_marina_close_dialogue :: proc(ctx: ^dialogue.Context) {
 open_markov_marina_dockmaster_dialogue :: proc(editor: ^Editor) -> bool {
     if editor == nil || !markov_marina_dockmaster_near(editor) do return false
     attendant_dialogue_definition_release(editor)
-    choice_count := editor.marina_dinghy_borrowed ? 1 : 2
+    choice_count := editor.marina_dinghy_borrowed ? 2 : 3
     choices := make([]dialogue.Choice, choice_count)
     if editor.marina_dinghy_borrowed {
         choices[0] = dialogue.choice(
+            "Stage Rondine outside the breakwater.",
+            dialogue.no_next_node,
+            effect = marina_stage_rondine_result,
+        )
+        choices[1] = dialogue.choice(
             "I will bring her back.",
             dialogue.no_next_node,
             effect = markov_marina_close_dialogue,
@@ -512,6 +587,11 @@ open_markov_marina_dockmaster_dialogue :: proc(editor: ^Editor) -> bool {
             effect = markov_marina_borrow_dinghy,
         )
         choices[1] = dialogue.choice(
+            "Stage Rondine outside the breakwater.",
+            dialogue.no_next_node,
+            effect = marina_stage_rondine_result,
+        )
+        choices[2] = dialogue.choice(
             "Not today, grazie.",
             dialogue.no_next_node,
             effect = markov_marina_close_dialogue,
@@ -526,6 +606,82 @@ open_markov_marina_dockmaster_dialogue :: proc(editor: ^Editor) -> bool {
         nodes      = nodes,
     }
     conversation, opened := dialogue.open(definition, {data = rawptr(editor), location_id = "markov_marina"})
+    if !opened do return false
+    dialogue_session.begin(&editor.dialogue_session, .Marina_Dockmaster)
+    editor.attendant_dialogue = conversation
+    editor.attendant_dialogue_open = true
+    editor.attendant_dialogue_focus = 0
+    dialogue_view_reset(editor)
+    game_input.reset_menu_repeat(&editor.runtime_input)
+    set_pointer_locked(false)
+    _ = sdl.ShowCursor()
+    return true
+}
+
+east_marina_plan :: proc(editor: ^Editor) -> ^marina.Plan {
+    if editor == nil || editor.default_marina_count <= 0 do return nil
+    for index in 0 ..< editor.default_marina_count {
+        if editor.default_marina_islands[index] == .East {
+            return &editor.default_marinas[index]
+        }
+    }
+    return nil
+}
+
+marin_position :: proc(editor: ^Editor) -> third_person.Vec3 {
+    plan := east_marina_plan(editor)
+    if plan == nil do return {}
+    office := plan.office
+    world := marina.plan_world_position(plan, {office.x + 4.6, office.z + 3.5})
+    ground := terrain.sample_height(&editor.project, 0, world.x, world.z)
+    return {world.x, max(ground, editor.project.sea_level + .62), world.z}
+}
+
+marin_near :: proc(editor: ^Editor) -> bool {
+    if editor == nil || !editor.in_map || lab_scene_is_active(editor, "markov-marina") ||
+       editor.pilot.mode != .On_Foot || east_marina_plan(editor) == nil {
+        return false
+    }
+    delta := editor.player.position - marin_position(editor)
+    return delta.x * delta.x + delta.z * delta.z <= 2.5 * 2.5
+}
+
+marin_speaker :: proc(_: ^dialogue.Context) -> string { return "MARIN" }
+
+marin_text :: proc(_: ^dialogue.Context) -> string {
+    return "La Rondine e pronta, ali ciste und motori caldi. I keep her fuori del breakwater, ready for il mare."
+}
+
+marin_handling_text :: proc(_: ^dialogue.Context) -> string {
+    return "Build speed straight, puis turn smooth, da. Hold the bank and lascia the outside wake carry il drift; release before la costa."
+}
+
+open_marin_dialogue :: proc(editor: ^Editor) -> bool {
+    if editor == nil || !marin_near(editor) do return false
+    attendant_dialogue_definition_release(editor)
+    choices := make([]dialogue.Choice, 2)
+    choices[0] = dialogue.choice(
+        "Stage Rondine in clear water.",
+        dialogue.no_next_node,
+        effect = marina_stage_rondine_result,
+    )
+    choices[1] = dialogue.choice(
+        "Explain the handling.",
+        1,
+    )
+    handling_choices := make([]dialogue.Choice, 2)
+    handling_choices[0] = dialogue.choice("Back.", 0)
+    handling_choices[1] = dialogue.choice(
+        "That is all, grazie.",
+        dialogue.no_next_node,
+        effect = markov_marina_close_dialogue,
+    )
+    nodes := make([]dialogue.Node, 2)
+    nodes[0] = dialogue.node("rondine-service", marin_text, choices, marin_speaker)
+    nodes[1] = dialogue.node("rondine-handling", marin_handling_text, handling_choices, marin_speaker)
+    definition := new(dialogue.Definition)
+    definition^ = {id = "marin_rondine_service", start_node = 0, nodes = nodes}
+    conversation, opened := dialogue.open(definition, {data = rawptr(editor), location_id = "east_marina"})
     if !opened do return false
     dialogue_session.begin(&editor.dialogue_session, .Marina_Dockmaster)
     editor.attendant_dialogue = conversation
@@ -943,6 +1099,12 @@ world_markov_marina_facility :: proc(
 }
 
 world_markov_marina :: proc(editor: ^Editor) {
+    if markov_marina_gallery_active {
+        for &plan in markov_marina_gallery_plans {
+            world_markov_marina_facility(editor, &plan, false)
+        }
+        return
+    }
     world_markov_marina_facility(editor, &markov_marina_plan, true, MARINA_GEOMETRY_CACHE_LAB)
 }
 
@@ -952,11 +1114,12 @@ markov_marina_draw_ui :: proc(_: ^Editor, width, height: i32) {
         x      = 22,
         y      = 22,
         width  = 420,
-        height = 182,
+        height = markov_marina_gallery_active ? 220 : 182,
     }
     rl.DrawRectangleRounded(panel, .12, 8, {10, 27, 37, 226})
     rl.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, {104, 168, 184, 255})
-    rl.DrawTextEx(rl.Font{}, "MARKOV MARINA", {38, 38}, 20, 1, {245, 238, 197, 255})
+    title: cstring = markov_marina_gallery_active ? "MARINA SHORELINE GALLERY" : "MARKOV MARINA"
+    rl.DrawTextEx(rl.Font{}, title, {38, 38}, 20, 1, {245, 238, 197, 255})
     occupied, moorings := 0, 0
     for slip in markov_marina_plan.slips[:markov_marina_plan.slip_count] {
         if slip.occupied do occupied += 1
@@ -996,6 +1159,8 @@ markov_marina_draw_ui :: proc(_: ^Editor, width, height: i32) {
     }
     frontage_name := "STRAIGHT QUAY"
     switch markov_marina_plan.shoreline_form {
+    case .Natural_Shore:
+        frontage_name = "NATURAL SHORE"
     case .Straight_Quay:
         frontage_name = "STRAIGHT QUAY"
     case .West_Apron:
@@ -1055,6 +1220,24 @@ markov_marina_draw_ui :: proc(_: ^Editor, width, height: i32) {
         overlap_color = {245, 132, 104, 255}
     }
     rl.DrawTextEx(rl.Font{}, overlap_label, {38, 176}, 13, 1, overlap_color)
+    if markov_marina_gallery_active {
+        rl.DrawTextEx(
+            rl.Font{},
+            "NATURAL  /  STRAIGHT  /  WEST APRON",
+            {38, 196},
+            12,
+            1,
+            {208, 239, 240, 255},
+        )
+        rl.DrawTextEx(
+            rl.Font{},
+            "EAST APRON  /  SPLIT APRONS  /  STEPPED QUAYS",
+            {38, 214},
+            12,
+            1,
+            {208, 239, 240, 255},
+        )
+    }
     _ = width
     _ = height
 }

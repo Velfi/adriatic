@@ -221,6 +221,19 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         suppress_infrastructure = true,
         suppress_procedural_circulation = true,
     },
+    {
+        name = "rondine-movement",
+        configure = rondine_movement_lab_configure,
+        world_overlay = world_rondine_movement_lab,
+        draw_ui = rondine_movement_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = true,
+    },
 }
 
 lab_scene_find :: proc(name: string) -> ^Lab_Scene_Definition {

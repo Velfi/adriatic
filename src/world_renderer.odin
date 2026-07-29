@@ -426,6 +426,24 @@ Road_Geometry_Cache_Chunk :: struct {
     radius:       f32,
 }
 
+Architecture_Alley_Render_Cache :: struct {
+    valid:           bool,
+    alley:           architecture.City_Alley,
+    curve_points:    [13][2]f32,
+    curve_distances: [13]f32,
+    curve_segments:  int,
+    curve_length:    f32,
+    grade:           f32,
+    start_height:    f32,
+    end_height:      f32,
+}
+
+Architecture_Alley_Overlap_Cache :: struct {
+    valid:     bool,
+    structure: terrain.Structure,
+    overlaps:  bool,
+}
+
 Foliage_Vertex :: struct {
     position: [3]f32,
     uv:       [2]f32,
@@ -549,134 +567,144 @@ Sky_Push :: struct {
 }
 
 World_Renderer :: struct {
-    editor:                            ^Editor,
-    ctx:                               ^engine.Vk_Context,
-    pipelines:                         [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    transparent_pipelines:             [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    shadow_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    dynamic_shadow:                    Dynamic_Shadow_State,
-    shadow_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    shadow_vertices:                   [dynamic]World_Vertex,
-    dynamic_caster_first:              int,
-    dynamic_caster_count:              int,
-    road_pipelines:                    [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    sky_pipelines:                     [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    particle_pipelines:                [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    foliage_pipelines:                 [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    grass_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    layout:                            vk.PipelineLayout,
-    sky_layout:                        vk.PipelineLayout,
-    foliage_layout:                    vk.PipelineLayout,
-    foliage_descriptor_layout:         vk.DescriptorSetLayout,
-    foliage_descriptor_pool:           vk.DescriptorPool,
-    foliage_descriptor:                vk.DescriptorSet,
-    bougainvillea_descriptor:          vk.DescriptorSet,
-    grass_descriptor:                  vk.DescriptorSet,
-    wildflower_descriptor:             vk.DescriptorSet,
-    foliage_atlas:                     resources.Image,
-    bougainvillea_atlas:               resources.Image,
-    grass_atlas:                       resources.Image,
-    wildflower_atlas:                  resources.Image,
-    vehicle_paint_atlas:               resources.Image,
-    soda_cap_logo:                     resources.Image,
-    architecture_material_atlas:       resources.Image,
-    business_sign_atlas:               resources.Image,
-    vehicle_paint_staging:             [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    vehicle_paint_descriptor_layout:   vk.DescriptorSetLayout,
-    vehicle_paint_descriptor_pool:     vk.DescriptorPool,
-    vehicle_paint_descriptor:          vk.DescriptorSet,
-    vertex:                            [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    static_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    static_index:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    road_vertex:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    foliage_vertex:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    grass_instance:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    wing_trail_vertex:                 [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    wing_trail_index:                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    vertices:                          [dynamic]World_Vertex,
-    late_transparent_vertices:         [dynamic]World_Vertex,
-    late_transparent_first:            int,
-    late_transparent_count:            int,
-    scene_daylight:                    f32,
-    static_vertices:                   [dynamic]World_Vertex,
-    static_indices:                    [dynamic]u32,
-    road_vertices:                     [dynamic]World_Vertex,
-    foliage_vertices:                  [dynamic]Foliage_Vertex,
-    bougainvillea_vertices:            [dynamic]Foliage_Vertex,
-    grass_instances:                   [dynamic]Grass_Instance,
-    wildflower_instances:              [dynamic]Grass_Instance,
-    wing_trail_vertices:               [dynamic]World_Vertex,
-    wing_trail_indices:                [dynamic]u16,
-    wing_trail_optimized_indices:      [dynamic]u16,
-    land_surface_samples:              [dynamic]World_Land_Surface_Sample,
-    player_vertex_first:               int,
-    player_vertex_count:               int,
-    player_shadow_receiver:            f32,
-    clipmap_vertex:                    [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
-    clipmap_index:                     engine.Vk_Buffer,
-    clipmap_full_indices:              u32,
-    clipmap_ring_first:                u32,
-    clipmap_ring_indices:              u32,
-    clipmap_revision:                  [engine.MAX_FRAMES_IN_FLIGHT]u64,
-    clipmap_center:                    [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
-    clipmap_valid:                     [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
-    clipmap_dirty:                     [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
-    clipmap_cache_vertex:              [terrain.CLIPMAP_LEVELS][dynamic]World_Vertex,
-    clipmap_cache_center:              [terrain.CLIPMAP_LEVELS][2]f32,
-    clipmap_cache_valid:               [terrain.CLIPMAP_LEVELS]bool,
-    clipmap_cache_revision:            u64,
-    clipmap_levels_generated:          u64,
-    clipmap_levels_copied:             u64,
-    grass_candidate_hits:              u64,
-    grass_candidate_misses:            u64,
-    grass_instances_emitted:           u64,
-    grass_chunk_cache:                 map[[2]int]^Ground_Grass_Chunk,
-    grass_chunk_clock:                 u64,
-    grass_cache_terrain_revision:      u64,
-    grass_cache_project_revision:      u64,
-    climbing_leaf_cache_builds:        u64,
-    climbing_leaf_cache_reuses:        u64,
-    town_mouse_cache_builds:           u64,
-    town_mouse_cache_reuses:           u64,
-    road_mesh:                         roads.Mesh,
-    road_graph:                        roads.Graph,
-    road_graph_valid:                  bool,
-    road_revision:                     u64,
-    road_geometry_cache:               [dynamic]World_Vertex,
-    road_geometry_chunks:              [dynamic]Road_Geometry_Cache_Chunk,
-    road_geometry_revision:            u64,
-    road_geometry_terrain_revision:    u64,
-    road_geometry_valid:               bool,
-    laundry_geometry_cache:            [dynamic]World_Vertex,
-    laundry_geometry_revision:         u64,
-    laundry_geometry_terrain_revision: u64,
-    laundry_geometry_valid:            bool,
-    pavement_query:                    roads.Pavement_Query,
-    pavement_query_graph:              roads.Graph,
-    pavement_query_graph_valid:        bool,
-    pavement_query_revision:           u64,
-    foliage_geometry_cache:            [dynamic]Foliage_Geometry_Cache_Entry,
-    static_geometry_cache:             [dynamic]Static_Geometry_Cache_Entry,
-    climbing_leaf_geometry_cache:      [dynamic]Climbing_Leaf_Geometry_Cache_Entry,
-    town_mouse_geometry_cache:         [TOWN_MOUSE_CACHE_COUNT]Town_Mouse_Geometry_Cache_Entry,
-    dialogue_portrait_geometry_cache:  [2]Town_Mouse_Geometry_Cache_Entry,
-    libellula_geometry_cache:          Libellula_Geometry_Cache_Entry,
-    marina_geometry_cache:             [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
-    structure_lod_counts:              [3]int,
-    structure_lod_cache_rebuilds:      u64,
-    structure_lod_world_vertices:      int,
-    structure_lod_foliage_vertices:    int,
-    static_visibility:                 Static_Visibility_Stats,
-    static_visibility_classification:  [dynamic]Static_Visibility_Classification,
-    structure_visibility_order:        [dynamic]Structure_Visibility_Order,
-    structure_visibility_centers:      [dynamic][2]f32,
-    structure_visibility_camera:       [2]f32,
-    structure_visibility_selected:     int,
-    structure_visibility_hovered:      int,
-    structure_visibility_order_valid:  bool,
-    structure_building_spans:          [dynamic]u8,
-    structure_candidates:              [dynamic]int,
-    initialized:                       bool,
+    editor:                              ^Editor,
+    ctx:                                 ^engine.Vk_Context,
+    pipelines:                           [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    transparent_pipelines:               [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    shadow_pipelines:                    [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    dynamic_shadow:                      Dynamic_Shadow_State,
+    shadow_vertex:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    shadow_vertices:                     [dynamic]World_Vertex,
+    dynamic_caster_first:                int,
+    dynamic_caster_count:                int,
+    road_pipelines:                      [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    sky_pipelines:                       [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    particle_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    foliage_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    grass_pipelines:                     [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    layout:                              vk.PipelineLayout,
+    sky_layout:                          vk.PipelineLayout,
+    foliage_layout:                      vk.PipelineLayout,
+    foliage_descriptor_layout:           vk.DescriptorSetLayout,
+    foliage_descriptor_pool:             vk.DescriptorPool,
+    foliage_descriptor:                  vk.DescriptorSet,
+    bougainvillea_descriptor:            vk.DescriptorSet,
+    grass_descriptor:                    vk.DescriptorSet,
+    wildflower_descriptor:               vk.DescriptorSet,
+    foliage_atlas:                       resources.Image,
+    bougainvillea_atlas:                 resources.Image,
+    grass_atlas:                         resources.Image,
+    wildflower_atlas:                    resources.Image,
+    vehicle_paint_atlas:                 resources.Image,
+    soda_cap_logo:                       resources.Image,
+    architecture_material_atlas:         resources.Image,
+    business_sign_atlas:                 resources.Image,
+    vehicle_paint_staging:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    vehicle_paint_descriptor_layout:     vk.DescriptorSetLayout,
+    vehicle_paint_descriptor_pool:       vk.DescriptorPool,
+    vehicle_paint_descriptor:            vk.DescriptorSet,
+    vertex:                              [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    static_vertex:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    static_index:                        [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    road_vertex:                         [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    foliage_vertex:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    grass_instance:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    wing_trail_vertex:                   [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    wing_trail_index:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    vertices:                            [dynamic]World_Vertex,
+    late_transparent_vertices:           [dynamic]World_Vertex,
+    late_transparent_first:              int,
+    late_transparent_count:              int,
+    scene_daylight:                      f32,
+    static_vertices:                     [dynamic]World_Vertex,
+    static_indices:                      [dynamic]u32,
+    road_vertices:                       [dynamic]World_Vertex,
+    foliage_vertices:                    [dynamic]Foliage_Vertex,
+    bougainvillea_vertices:              [dynamic]Foliage_Vertex,
+    grass_instances:                     [dynamic]Grass_Instance,
+    wildflower_instances:                [dynamic]Grass_Instance,
+    wing_trail_vertices:                 [dynamic]World_Vertex,
+    wing_trail_indices:                  [dynamic]u16,
+    wing_trail_optimized_indices:        [dynamic]u16,
+    land_surface_samples:                [dynamic]World_Land_Surface_Sample,
+    player_vertex_first:                 int,
+    player_vertex_count:                 int,
+    player_shadow_receiver:              f32,
+    clipmap_vertex:                      [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
+    clipmap_index:                       engine.Vk_Buffer,
+    clipmap_ring_index:                  [3][3]engine.Vk_Buffer,
+    clipmap_full_indices:                u32,
+    clipmap_ring_indices:                u32,
+    clipmap_revision:                    [engine.MAX_FRAMES_IN_FLIGHT]u64,
+    clipmap_center:                      [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
+    clipmap_valid:                       [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
+    clipmap_dirty:                       [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
+    clipmap_cache_vertex:                [terrain.CLIPMAP_LEVELS][dynamic]World_Vertex,
+    clipmap_scratch_vertex:              [terrain.CLIPMAP_LEVELS][dynamic]World_Vertex,
+    clipmap_cache_center:                [terrain.CLIPMAP_LEVELS][2]f32,
+    clipmap_cache_valid:                 [terrain.CLIPMAP_LEVELS]bool,
+    clipmap_cache_revision:              u64,
+    clipmap_levels_generated:            u64,
+    clipmap_levels_copied:               u64,
+    clipmap_full_rebuilds:               u64,
+    clipmap_incremental_shifts:          u64,
+    clipmap_cells_copied:                u64,
+    clipmap_cells_generated:             u64,
+    grass_candidate_hits:                u64,
+    grass_candidate_misses:              u64,
+    grass_instances_emitted:             u64,
+    grass_chunk_cache:                   map[[2]int]^Ground_Grass_Chunk,
+    grass_chunk_clock:                   u64,
+    grass_cache_terrain_revision:        u64,
+    grass_cache_project_revision:        u64,
+    climbing_leaf_cache_builds:          u64,
+    climbing_leaf_cache_reuses:          u64,
+    town_mouse_cache_builds:             u64,
+    town_mouse_cache_reuses:             u64,
+    road_mesh:                           roads.Mesh,
+    road_graph:                          roads.Graph,
+    road_graph_valid:                    bool,
+    road_revision:                       u64,
+    road_geometry_cache:                 [dynamic]World_Vertex,
+    road_geometry_chunks:                [dynamic]Road_Geometry_Cache_Chunk,
+    road_geometry_revision:              u64,
+    road_geometry_terrain_revision:      u64,
+    road_geometry_valid:                 bool,
+    architecture_alley_render_cache:     [dynamic]Architecture_Alley_Render_Cache,
+    architecture_alley_terrain_revision: u64,
+    architecture_alley_project_revision: u64,
+    architecture_alley_overlap_cache:    [dynamic]Architecture_Alley_Overlap_Cache,
+    architecture_alley_overlap_plan:     [dynamic]architecture.City_Alley,
+    laundry_geometry_cache:              [dynamic]World_Vertex,
+    laundry_geometry_revision:           u64,
+    laundry_geometry_terrain_revision:   u64,
+    laundry_geometry_valid:              bool,
+    pavement_query:                      roads.Pavement_Query,
+    pavement_query_graph:                roads.Graph,
+    pavement_query_graph_valid:          bool,
+    pavement_query_revision:             u64,
+    foliage_geometry_cache:              [dynamic]Foliage_Geometry_Cache_Entry,
+    static_geometry_cache:               [dynamic]Static_Geometry_Cache_Entry,
+    climbing_leaf_geometry_cache:        [dynamic]Climbing_Leaf_Geometry_Cache_Entry,
+    town_mouse_geometry_cache:           [TOWN_MOUSE_CACHE_COUNT]Town_Mouse_Geometry_Cache_Entry,
+    dialogue_portrait_geometry_cache:    [2]Town_Mouse_Geometry_Cache_Entry,
+    libellula_geometry_cache:            Libellula_Geometry_Cache_Entry,
+    marina_geometry_cache:               [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
+    structure_lod_counts:                [3]int,
+    structure_lod_cache_rebuilds:        u64,
+    structure_lod_world_vertices:        int,
+    structure_lod_foliage_vertices:      int,
+    static_visibility:                   Static_Visibility_Stats,
+    static_visibility_classification:    [dynamic]Static_Visibility_Classification,
+    structure_visibility_order:          [dynamic]Structure_Visibility_Order,
+    structure_visibility_centers:        [dynamic][2]f32,
+    structure_visibility_camera:         [2]f32,
+    structure_visibility_selected:       int,
+    structure_visibility_hovered:        int,
+    structure_visibility_order_valid:    bool,
+    structure_building_spans:            [dynamic]u8,
+    structure_candidates:                [dynamic]int,
+    initialized:                         bool,
 }
 
 world_renderer: World_Renderer
@@ -1800,13 +1828,66 @@ clipmap_vertex_color :: #force_inline proc(
     }
 }
 
+@(no_instrumentation)
+clipmap_level_center :: proc(target: [2]f32, grid_cell: f32) -> [2]f32 {
+    return {
+        f32(math.round(f64(target[0] / grid_cell))) * grid_cell,
+        f32(math.round(f64(target[1] / grid_cell))) * grid_cell,
+    }
+}
+
+@(no_instrumentation)
+clipmap_center_offset :: proc(old_center, new_center: [2]f32, grid_cell: f32) -> ([2]int, bool) {
+    raw_x := (new_center[0] - old_center[0]) / grid_cell
+    raw_z := (new_center[1] - old_center[1]) / grid_cell
+    offset := [2]int{int(math.round(f64(raw_x))), int(math.round(f64(raw_z)))}
+    aligned := abs(raw_x - f32(offset[0])) <= .001 && abs(raw_z - f32(offset[1])) <= .001
+    within_grid := abs(offset[0]) < CLIPMAP_GRID_RESOLUTION && abs(offset[1]) < CLIPMAP_GRID_RESOLUTION
+    return offset, aligned && within_grid
+}
+
+@(no_instrumentation)
+clipmap_shift_source :: #force_inline proc(x, z: int, offset: [2]int) -> (int, bool) {
+    source_x, source_z := x + offset[0], z + offset[1]
+    retained :=
+        source_x >= 0 && source_x < CLIPMAP_GRID_RESOLUTION && source_z >= 0 && source_z < CLIPMAP_GRID_RESOLUTION
+    if !retained do return 0, false
+    return source_z * CLIPMAP_GRID_RESOLUTION + source_x, true
+}
+
+@(no_instrumentation)
+clipmap_transition_weight :: #force_inline proc(level, x, z: int) -> f32 {
+    edge_distance := min(min(x, z), min(CLIPMAP_GRID_RESOLUTION - 1 - x, CLIPMAP_GRID_RESOLUTION - 1 - z))
+    if level >= terrain.CLIPMAP_LEVELS - 1 || edge_distance >= CLIPMAP_TRANSITION_WIDTH {
+        return 0
+    }
+    weight := 1 - f32(edge_distance) / f32(CLIPMAP_TRANSITION_WIDTH)
+    return weight * weight * (3 - 2 * weight)
+}
+
+clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: int, center: [2]f32, x, z: int) {
+    data := &editor.project.levels[level]
+    grid_cell := data.cell_size * 2
+    half_grid := f32(CLIPMAP_GRID_RESOLUTION - 1) * .5
+    world_x := center[0] + (f32(x) - half_grid) * grid_cell
+    world_z := center[1] + (f32(z) - half_grid) * grid_cell
+    transition_weight := clipmap_transition_weight(level, x, z)
+    height := terrain.sample_clipmap_transition_height(&editor.project, level, world_x, world_z, transition_weight)
+    vertex := world_vertex(
+        {world_x, height, world_z},
+        clipmap_vertex_color(editor, level, world_x, world_z, height, transition_weight),
+    )
+    vertex.kind = .Terrain
+    vertices[z * CLIPMAP_GRID_RESOLUTION + x] = vertex
+}
+
 clipmap_update_level :: proc(
     editor: ^Editor,
     vertices: []World_Vertex,
     level: int,
     center: [2]f32,
     dirty: ^Terrain_Dirty_Bounds = nil,
-) {
+) -> int {
     data := &editor.project.levels[level]
     grid_cell := data.cell_size * 2
     half_grid := f32(CLIPMAP_GRID_RESOLUTION - 1) * .5
@@ -1822,7 +1903,7 @@ clipmap_update_level :: proc(
            dirty.max_z + padding < grid_min_z ||
            dirty.min_x - padding > grid_max_x ||
            dirty.min_z - padding > grid_max_z {
-            return
+            return 0
         }
         min_x = clamp(
             int(math.floor(f64((dirty.min_x - padding - grid_min_x) / grid_cell))),
@@ -1845,33 +1926,48 @@ clipmap_update_level :: proc(
             CLIPMAP_GRID_RESOLUTION - 1,
         )
     }
+    generated := 0
     for z in min_z ..= max_z {
-        world_z := center[1] + (f32(z) - half_grid) * grid_cell
         for x in min_x ..= max_x {
-            world_x := center[0] + (f32(x) - half_grid) * grid_cell
-            edge_distance := min(min(x, z), min(CLIPMAP_GRID_RESOLUTION - 1 - x, CLIPMAP_GRID_RESOLUTION - 1 - z))
-            transition_weight: f32
-            if level < terrain.CLIPMAP_LEVELS - 1 && edge_distance < CLIPMAP_TRANSITION_WIDTH {
-                transition_weight = 1 - f32(edge_distance) / f32(CLIPMAP_TRANSITION_WIDTH)
-                // Smooth the morph so the transition band does not introduce
-                // a visible slope break while converging exactly at the edge.
-                transition_weight = transition_weight * transition_weight * (3 - 2 * transition_weight)
-            }
-            height := terrain.sample_clipmap_transition_height(
-                &editor.project,
-                level,
-                world_x,
-                world_z,
-                transition_weight,
-            )
-            vertex := world_vertex(
-                {world_x, height, world_z},
-                clipmap_vertex_color(editor, level, world_x, world_z, height, transition_weight),
-            )
-            vertex.kind = .Terrain
-            vertices[z * CLIPMAP_GRID_RESOLUTION + x] = vertex
+            clipmap_update_vertex(editor, vertices, level, center, x, z)
+            generated += 1
         }
     }
+    return generated
+}
+
+clipmap_shift_level :: proc(editor: ^Editor, level: int, old_center, new_center: [2]f32) -> (bool, int, int) {
+    grid_cell := editor.project.levels[level].cell_size * 2
+    offset, valid := clipmap_center_offset(old_center, new_center, grid_cell)
+    if !valid do return false, 0, 0
+
+    vertex_count := CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
+    if len(world_renderer.clipmap_scratch_vertex[level]) != vertex_count {
+        resize(&world_renderer.clipmap_scratch_vertex[level], vertex_count)
+    }
+    cache := world_renderer.clipmap_cache_vertex[level][:]
+    scratch := world_renderer.clipmap_scratch_vertex[level][:]
+    copied, generated := 0, 0
+    for z in 0 ..< CLIPMAP_GRID_RESOLUTION {
+        for x in 0 ..< CLIPMAP_GRID_RESOLUTION {
+            destination := z * CLIPMAP_GRID_RESOLUTION + x
+            source, retained := clipmap_shift_source(x, z, offset)
+            source_x, source_z := x + offset[0], z + offset[1]
+            morph_unchanged :=
+                retained &&
+                clipmap_transition_weight(level, x, z) == clipmap_transition_weight(level, source_x, source_z)
+            if morph_unchanged {
+                scratch[destination] = cache[source]
+                copied += 1
+            } else {
+                clipmap_update_vertex(editor, scratch, level, new_center, x, z)
+                generated += 1
+            }
+        }
+    }
+    world_renderer.clipmap_cache_vertex[level], world_renderer.clipmap_scratch_vertex[level] =
+        world_renderer.clipmap_scratch_vertex[level], world_renderer.clipmap_cache_vertex[level]
+    return true, copied, generated
 }
 
 @(no_instrumentation)
@@ -1981,12 +2077,10 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int) {
     dirty := &world_renderer.clipmap_dirty[frame_index]
     localized_revision :=
         cache_revision_changed && dirty.valid && !dirty.full_rebuild && dirty.revision == editor.terrain_revision
-    snap := editor.project.levels[0].cell_size * 2
-    center := [2]f32 {
-        f32(math.round(f64(editor.camera_pose.target.x / snap))) * snap,
-        f32(math.round(f64(editor.camera_pose.target.z / snap))) * snap,
-    }
+    target := [2]f32{editor.camera_pose.target.x, editor.camera_pose.target.z}
     for level in 0 ..< terrain.CLIPMAP_LEVELS {
+        grid_cell := editor.project.levels[level].cell_size * 2
+        center := clipmap_level_center(target, grid_cell)
         cache_center_changed :=
             !world_renderer.clipmap_cache_valid[level] || world_renderer.clipmap_cache_center[level] != center
         if cache_revision_changed || cache_center_changed {
@@ -1995,17 +2089,55 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int) {
                 resize(&world_renderer.clipmap_cache_vertex[level], vertex_count)
             }
             generate_profile := dio.flame_graph_begin(dio.flame_graph_current(), "clipmap_generate")
-            clipmap_update_level(
-                editor,
-                world_renderer.clipmap_cache_vertex[level][:],
-                level,
-                center,
-                localized_revision && !cache_center_changed ? dirty : nil,
-            )
+            generated, copied := 0, 0
+            shifted := false
+            if cache_center_changed {
+                if world_renderer.clipmap_cache_valid[level] && (!cache_revision_changed || localized_revision) {
+                    shifted, copied, generated = clipmap_shift_level(
+                        editor,
+                        level,
+                        world_renderer.clipmap_cache_center[level],
+                        center,
+                    )
+                }
+                if !shifted {
+                    generated = clipmap_update_level(
+                        editor,
+                        world_renderer.clipmap_cache_vertex[level][:],
+                        level,
+                        center,
+                    )
+                    world_renderer.clipmap_full_rebuilds += 1
+                } else {
+                    world_renderer.clipmap_incremental_shifts += 1
+                    world_renderer.clipmap_cells_copied += u64(copied)
+                    if localized_revision {
+                        generated += clipmap_update_level(
+                            editor,
+                            world_renderer.clipmap_cache_vertex[level][:],
+                            level,
+                            center,
+                            dirty,
+                        )
+                    }
+                }
+            } else if localized_revision {
+                generated = clipmap_update_level(
+                    editor,
+                    world_renderer.clipmap_cache_vertex[level][:],
+                    level,
+                    center,
+                    dirty,
+                )
+            } else {
+                generated = clipmap_update_level(editor, world_renderer.clipmap_cache_vertex[level][:], level, center)
+                world_renderer.clipmap_full_rebuilds += 1
+            }
             _ = dio.flame_graph_end(dio.flame_graph_current(), generate_profile)
             world_renderer.clipmap_cache_center[level] = center
             world_renderer.clipmap_cache_valid[level] = true
             world_renderer.clipmap_levels_generated += 1
+            world_renderer.clipmap_cells_generated += u64(generated)
         }
         if world_renderer.clipmap_revision[frame_index] != editor.terrain_revision ||
            !world_renderer.clipmap_valid[frame_index][level] ||
@@ -2029,6 +2161,25 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int) {
 }
 
 @(no_instrumentation)
+clipmap_ring_variant :: proc(frame_index, level: int) -> [2]int {
+    if level <= 0 || level >= terrain.CLIPMAP_LEVELS do return {1, 1}
+    fine_center := world_renderer.clipmap_center[frame_index][level - 1]
+    coarse_center := world_renderer.clipmap_center[frame_index][level]
+    fine_grid_cell := world_renderer.editor.project.levels[level - 1].cell_size * 2
+    offset_x := clamp(int(math.round(f64((fine_center[0] - coarse_center[0]) / fine_grid_cell))), -1, 1)
+    offset_z := clamp(int(math.round(f64((fine_center[1] - coarse_center[1]) / fine_grid_cell))), -1, 1)
+    return {offset_x + 1, offset_z + 1}
+}
+
+@(no_instrumentation)
+clipmap_ring_hole_bounds :: proc(offset: [2]int) -> [4]int {
+    hole_min_x := CLIPMAP_GRID_RESOLUTION / 4 + (offset[0] > 0 ? 1 : 0)
+    hole_min_z := CLIPMAP_GRID_RESOLUTION / 4 + (offset[1] > 0 ? 1 : 0)
+    hole_width := CLIPMAP_GRID_RESOLUTION / 2 - 1
+    return {hole_min_x, hole_min_z, hole_min_x + hole_width, hole_min_z + hole_width}
+}
+
+@(no_instrumentation)
 clipmap_append_cell :: #force_inline proc(indices: ^[dynamic]u32, x, z: int) {
     row := CLIPMAP_GRID_RESOLUTION
     a := u32(z * row + x)
@@ -2041,7 +2192,7 @@ clipmap_append_cell :: #force_inline proc(indices: ^[dynamic]u32, x, z: int) {
 }
 
 clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
-    indices := make([dynamic]u32, 0, CLIPMAP_FULL_INDEX_COUNT * 2)
+    indices := make([dynamic]u32, 0, CLIPMAP_FULL_INDEX_COUNT)
     defer delete(indices)
     for z in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
         for x in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
@@ -2049,25 +2200,53 @@ clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
         }
     }
     world_renderer.clipmap_full_indices = u32(len(indices))
-    world_renderer.clipmap_ring_first = u32(len(indices))
-    hole_min := CLIPMAP_GRID_RESOLUTION / 4
-    hole_max := CLIPMAP_GRID_RESOLUTION - hole_min - 1
-    for z in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
-        for x in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
-            if x >= hole_min && x < hole_max && z >= hole_min && z < hole_max do continue
-            clipmap_append_cell(&indices, x, z)
-        }
-    }
-    world_renderer.clipmap_ring_indices = u32(len(indices)) - world_renderer.clipmap_ring_first
-    if !engine.vk_create_host_buffer(
+    if !world_host_buffer_create(
         ctx,
         vk.DeviceSize(len(indices) * size_of(u32)),
         {.INDEX_BUFFER},
         &world_renderer.clipmap_index,
+        "world clipmap full index buffer",
     ) {
         return false
     }
     mem.copy_non_overlapping(world_renderer.clipmap_index.mapped, raw_data(indices[:]), len(indices) * size_of(u32))
+
+    // Adjacent centers differ by at most half a coarse cell in either axis.
+    // A 63-cell asymmetric hole follows that offset and leaves one coarse-cell
+    // overlap beneath the finer transition band, preventing cracks without
+    // requiring per-frame index generation.
+    for variant_z in 0 ..< 3 {
+        for variant_x in 0 ..< 3 {
+            clear(&indices)
+            offset_x, offset_z := variant_x - 1, variant_z - 1
+            hole := clipmap_ring_hole_bounds({offset_x, offset_z})
+            for z in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
+                for x in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
+                    if x >= hole[0] && x < hole[2] && z >= hole[1] && z < hole[3] {
+                        continue
+                    }
+                    clipmap_append_cell(&indices, x, z)
+                }
+            }
+            if world_renderer.clipmap_ring_indices == 0 {
+                world_renderer.clipmap_ring_indices = u32(len(indices))
+            }
+            if !world_host_buffer_create(
+                ctx,
+                vk.DeviceSize(len(indices) * size_of(u32)),
+                {.INDEX_BUFFER},
+                &world_renderer.clipmap_ring_index[variant_z][variant_x],
+                "world clipmap offset ring index buffer",
+            ) {
+                return false
+            }
+            mem.copy_non_overlapping(
+                world_renderer.clipmap_ring_index[variant_z][variant_x].mapped,
+                raw_data(indices[:]),
+                len(indices) * size_of(u32),
+            )
+        }
+    }
     return true
 }
 
@@ -3047,8 +3226,7 @@ world_sailor_hat_hull :: proc(center: third_person.Vec3, rotation: f32, color: r
             point := point_index < 0 ? top : rings[RING_COUNT - 1][point_index]
             vertex := world_eye_vertex(point, color, {0, 1, 0})
             vertex.kind = .Sailor_Hat
-            vertex.uv =
-                point_index < 0 ? [2]f32{.5, 1} : [2]f32{f32(point_index) / f32(SEGMENTS), 1}
+            vertex.uv = point_index < 0 ? [2]f32{.5, 1} : [2]f32{f32(point_index) / f32(SEGMENTS), 1}
             append(&world_renderer.vertices, vertex)
         }
     }
@@ -3781,9 +3959,12 @@ world_architecture_face_openings :: proc(
         case .Rear:
             local_x, local_z, yaw_offset = -horizontal, -structure.depth * .5 - face_offset, math.PI
         case .Left:
-            local_x, local_z, yaw_offset = -structure.width * .5 - face_offset, horizontal, -math.PI * .5
+            // world_glass_panel derives its outward normal from the pane yaw.
+            // A positive quarter turn points toward local -X (the left face).
+            local_x, local_z, yaw_offset = -structure.width * .5 - face_offset, horizontal, math.PI * .5
         case .Right:
-            local_x, local_z, yaw_offset = structure.width * .5 + face_offset, -horizontal, math.PI * .5
+            // Conversely, a negative quarter turn points toward local +X.
+            local_x, local_z, yaw_offset = structure.width * .5 + face_offset, -horizontal, -math.PI * .5
         }
         wx, wz := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
         color :=
@@ -5789,6 +5970,7 @@ world_architecture_mass :: proc(
                 }
             }
         }
+
     }
     if mixed_use && has_entrance {
         // Keep residential circulation independent from the shop. Each flank
@@ -7319,6 +7501,85 @@ world_architecture_alley_color :: proc(alley: architecture.City_Alley, preview, 
     return {157, 135, 99, 255}
 }
 
+world_architecture_alley_render_cache :: proc(
+    editor: ^Editor,
+    plan: ^architecture.City_Plan,
+    alley_index: int,
+) -> ^Architecture_Alley_Render_Cache {
+    if editor == nil || plan == nil || alley_index < 0 || alley_index >= plan.alley_count do return nil
+    if world_renderer.architecture_alley_terrain_revision != editor.terrain_revision ||
+       world_renderer.architecture_alley_project_revision != editor.project.revision {
+        for &entry in world_renderer.architecture_alley_render_cache do entry.valid = false
+        world_renderer.architecture_alley_terrain_revision = editor.terrain_revision
+        world_renderer.architecture_alley_project_revision = editor.project.revision
+    }
+    if len(world_renderer.architecture_alley_render_cache) < plan.alley_count {
+        resize(&world_renderer.architecture_alley_render_cache, plan.alley_count)
+    }
+    entry := &world_renderer.architecture_alley_render_cache[alley_index]
+    alley := plan.alleys[alley_index]
+    if entry.valid && entry.alley == alley do return entry
+
+    entry^ = {
+        valid = true,
+        alley = alley,
+    }
+    entry.start_height = terrain.sample_height(&editor.project, 0, alley.start_x, alley.start_z)
+    entry.end_height = terrain.sample_height(&editor.project, 0, alley.end_x, alley.end_z)
+    curve := settlement_access_alley_curve(plan, alley_index)
+    entry.curve_segments = settlement_access_curve_sample_count(curve)
+    entry.curve_points[0] = curve.points[0]
+    previous := entry.curve_points[0]
+    previous_height := terrain.sample_height(&editor.project, 0, previous[0], previous[1])
+    for curve_index in 1 ..= entry.curve_segments {
+        amount := f32(curve_index) / f32(entry.curve_segments)
+        current := settlement_access_curve_point(curve, amount)
+        entry.curve_points[curve_index] = current
+        run := linalg.length(current - previous)
+        current_height := terrain.sample_height(&editor.project, 0, current[0], current[1])
+        if run > .01 do entry.grade = max(entry.grade, math.abs(current_height - previous_height) / run)
+        entry.curve_distances[curve_index] = entry.curve_distances[curve_index - 1] + run
+        previous, previous_height = current, current_height
+    }
+    entry.curve_length = entry.curve_distances[entry.curve_segments]
+    return entry
+}
+
+world_architecture_alley_overlap_plan_sync :: proc(plan: ^architecture.City_Plan) {
+    if plan == nil do return
+    changed := len(world_renderer.architecture_alley_overlap_plan) != plan.alley_count
+    if !changed {
+        for alley, index in plan.alleys[:plan.alley_count] {
+            if world_renderer.architecture_alley_overlap_plan[index] != alley {
+                changed = true
+                break
+            }
+        }
+    }
+    if !changed do return
+    resize(&world_renderer.architecture_alley_overlap_plan, plan.alley_count)
+    copy(world_renderer.architecture_alley_overlap_plan[:], plan.alleys[:plan.alley_count])
+    for &entry in world_renderer.architecture_alley_overlap_cache do entry.valid = false
+}
+
+world_architecture_structure_overlaps_alley_cached :: proc(
+    plan: ^architecture.City_Plan,
+    structure: terrain.Structure,
+    structure_index: int,
+) -> bool {
+    if plan == nil || structure_index < 0 do return false
+    if len(world_renderer.architecture_alley_overlap_cache) <= structure_index {
+        resize(&world_renderer.architecture_alley_overlap_cache, structure_index + 1)
+    }
+    entry := &world_renderer.architecture_alley_overlap_cache[structure_index]
+    if !entry.valid || entry.structure != structure {
+        entry.valid = true
+        entry.structure = structure
+        entry.overlaps = settlement_access_structure_overlaps_alley(plan, structure)
+    }
+    return entry.overlaps
+}
+
 world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan, preview: bool = false) {
     if editor == nil || plan == nil do return
     for alley, alley_index in plan.alleys[:plan.alley_count] {
@@ -7330,29 +7591,43 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
         if !world_sphere_in_view(editor, {center_x, center_y, center_z}, length * .5 + alley.half_width + 1) {
             continue
         }
-        start_height := terrain.sample_height(&editor.project, 0, alley.start_x, alley.start_z)
-        end_height := terrain.sample_height(&editor.project, 0, alley.end_x, alley.end_z)
-        curve := settlement_access_alley_curve(plan, alley_index)
-        curve_segments := settlement_access_curve_sample_count(curve)
+        start_height := f32(0)
+        end_height := f32(0)
+        curve_segments := 0
         curve_points: [13][2]f32
         curve_distances: [13]f32
-        curve_points[0] = curve.points[0]
         grade := f32(0)
-        previous := curve_points[0]
-        previous_height := terrain.sample_height(&editor.project, 0, previous[0], previous[1])
-        for curve_index in 1 ..= curve_segments {
-            amount := f32(curve_index) / f32(curve_segments)
-            current := settlement_access_curve_point(curve, amount)
-            curve_points[curve_index] = current
-            run := linalg.length(current - previous)
-            current_height := terrain.sample_height(&editor.project, 0, current[0], current[1])
-            if run > .01 do grade = max(grade, math.abs(current_height - previous_height) / run)
-            curve_distances[curve_index] = curve_distances[curve_index - 1] + run
-            previous, previous_height = current, current_height
+        if !preview {
+            cache := world_architecture_alley_render_cache(editor, plan, alley_index)
+            if cache == nil do continue
+            start_height = cache.start_height
+            end_height = cache.end_height
+            curve_segments = cache.curve_segments
+            curve_points = cache.curve_points
+            curve_distances = cache.curve_distances
+            grade = cache.grade
+        } else {
+            start_height = terrain.sample_height(&editor.project, 0, alley.start_x, alley.start_z)
+            end_height = terrain.sample_height(&editor.project, 0, alley.end_x, alley.end_z)
+            curve := settlement_access_alley_curve(plan, alley_index)
+            curve_segments = settlement_access_curve_sample_count(curve)
+            curve_points[0] = curve.points[0]
+            previous := curve_points[0]
+            previous_height := terrain.sample_height(&editor.project, 0, previous[0], previous[1])
+            for curve_index in 1 ..= curve_segments {
+                amount := f32(curve_index) / f32(curve_segments)
+                current := settlement_access_curve_point(curve, amount)
+                curve_points[curve_index] = current
+                run := linalg.length(current - previous)
+                current_height := terrain.sample_height(&editor.project, 0, current[0], current[1])
+                if run > .01 do grade = max(grade, math.abs(current_height - previous_height) / run)
+                curve_distances[curve_index] = curve_distances[curve_index - 1] + run
+                previous, previous_height = current, current_height
+            }
         }
         curve_length := curve_distances[curve_segments]
         surface_color := world_architecture_alley_color(alley, preview, grade >= SETTLEMENT_ACCESS_STAIR_GRADE)
-        previous = curve_points[0]
+        previous := curve_points[0]
         for curve_index in 1 ..= curve_segments {
             current := curve_points[curve_index]
             segment_dx, segment_dz := current[0] - previous[0], current[1] - previous[1]
@@ -11119,6 +11394,7 @@ world_structures :: proc(editor: ^Editor) {
         world_renderer.structure_visibility_hovered = hovered_index
         world_renderer.structure_visibility_order_valid = true
     }
+    world_architecture_alley_overlap_plan_sync(&editor.architecture_city_plan)
     for ordered in world_renderer.structure_visibility_order {
         index := ordered.index
         structure := editor.project.structures[index]
@@ -11148,7 +11424,7 @@ world_structures :: proc(editor: ^Editor) {
         }
         if !force_visible &&
            structure.kind == .Foliage &&
-           settlement_access_structure_overlaps_alley(&editor.architecture_city_plan, structure) {
+           world_architecture_structure_overlaps_alley_cached(&editor.architecture_city_plan, structure, index) {
             world_renderer.static_visibility_classification[index] = .Empty
             stats.empty += 1
             continue
@@ -13127,7 +13403,338 @@ world_aircraft_in_view :: proc(editor: ^Editor, position: flight.Vec3, radius: f
     )
 }
 
+world_rondine_presentation_basis :: #force_inline proc(editor: ^Editor) -> flight.Basis {
+    basis := editor.rondine.body.basis
+    pitch := clamp(-editor.flight_control.pitch * .075 + editor.rondine.body.velocity.y * .018, -.1, .1)
+    pitch_c, pitch_s := math.cos(pitch), math.sin(pitch)
+    forward := basis.forward
+    up := basis.up
+    basis.forward = forward * pitch_c + up * pitch_s
+    basis.up = up * pitch_c - forward * pitch_s
+
+    heel := clamp(
+        -editor.rondine.steering * .14 -
+        editor.rondine.telemetry.slip * (.08 + editor.rondine.telemetry.drift_intensity * .14),
+        -.27,
+        .27,
+    )
+    c, s := math.cos(heel), math.sin(heel)
+    right := basis.right
+    up = basis.up
+    basis.right = right * c + up * s
+    basis.up = up * c - right * s
+    return basis
+}
+
+world_rondine_local :: #force_inline proc(editor: ^Editor, p: [3]f32) -> third_person.Vec3 {
+    body := editor.rondine.body
+    body.basis = world_rondine_presentation_basis(editor)
+    transform := world_aircraft_transform(body, 1)
+    return world_aircraft_vertex_world(transform, p)
+}
+
+world_rondine_box :: proc(editor: ^Editor, center, size: [3]f32, color: rl.Color) {
+    x, y, z := size[0] * .5, size[1] * .5, size[2] * .5
+    p := [8][3]f32 {
+        {center[0] - x, center[1] - y, center[2] - z},
+        {center[0] + x, center[1] - y, center[2] - z},
+        {center[0] + x, center[1] + y, center[2] - z},
+        {center[0] - x, center[1] + y, center[2] - z},
+        {center[0] - x, center[1] - y, center[2] + z},
+        {center[0] + x, center[1] - y, center[2] + z},
+        {center[0] + x, center[1] + y, center[2] + z},
+        {center[0] - x, center[1] + y, center[2] + z},
+    }
+    w: [8]third_person.Vec3
+    for point, index in p do w[index] = world_rondine_local(editor, point)
+    world_quad(w[0], w[3], w[2], w[1], color)
+    world_quad(w[4], w[5], w[6], w[7], color)
+    world_quad(w[0], w[4], w[7], w[3], color)
+    world_quad(w[1], w[2], w[6], w[5], color)
+    world_quad(w[3], w[7], w[6], w[2], color)
+    world_quad(w[0], w[1], w[5], w[4], color)
+}
+
+world_rondine_hull :: proc(editor: ^Editor, deck, side, keel: rl.Color) {
+    // A long, high bow and a tucked fore-keel make the monohull read as a
+    // swallow's small head flowing into a pale breast, not a blunt speedboat.
+    bow := world_rondine_local(editor, {0, .5, -5.72})
+    bow_keel := world_rondine_local(editor, {0, -.28, -5.12})
+    fore_l := world_rondine_local(editor, {-1.02, .88, -3.78})
+    fore_r := world_rondine_local(editor, {1.02, .88, -3.78})
+    beam_l := world_rondine_local(editor, {-1.22, .96, 1.72})
+    beam_r := world_rondine_local(editor, {1.22, .96, 1.72})
+    stern_l := world_rondine_local(editor, {-.76, .68, 4.65})
+    stern_r := world_rondine_local(editor, {.76, .68, 4.65})
+    chine_fore_l := world_rondine_local(editor, {-.9, -.02, -3.72})
+    chine_fore_r := world_rondine_local(editor, {.9, -.02, -3.72})
+    chine_aft_l := world_rondine_local(editor, {-1.03, -.12, 1.9})
+    chine_aft_r := world_rondine_local(editor, {1.03, -.12, 1.9})
+    stern_keel_l := world_rondine_local(editor, {-.58, -.08, 4.5})
+    stern_keel_r := world_rondine_local(editor, {.58, -.08, 4.5})
+    keel_fore := world_rondine_local(editor, {0, -.7, -2.75})
+    keel_aft := world_rondine_local(editor, {0, -.62, 3.75})
+
+    // One continuous flying-boat hull: broad deck, hard chines, and a single
+    // center keel. The tapered stern keeps it distinct from twin floats.
+    world_triangle(bow, fore_l, fore_r, deck)
+    world_quad(fore_l, beam_l, beam_r, fore_r, deck)
+    world_quad(beam_l, stern_l, stern_r, beam_r, deck)
+    world_triangle(bow, chine_fore_l, fore_l, side)
+    world_triangle(bow, fore_r, chine_fore_r, side)
+    world_triangle(bow, bow_keel, chine_fore_l, side)
+    world_triangle(bow, chine_fore_r, bow_keel, side)
+    world_triangle(bow_keel, chine_fore_r, chine_fore_l, keel)
+    world_quad(fore_l, chine_fore_l, chine_aft_l, beam_l, side)
+    world_quad(fore_r, beam_r, chine_aft_r, chine_fore_r, side)
+    world_quad(beam_l, chine_aft_l, stern_keel_l, stern_l, side)
+    world_quad(beam_r, stern_r, stern_keel_r, chine_aft_r, side)
+    world_triangle(bow_keel, keel_fore, chine_fore_l, keel)
+    world_triangle(bow_keel, chine_fore_r, keel_fore, keel)
+    world_quad(chine_fore_l, keel_fore, keel_aft, chine_aft_l, keel)
+    world_quad(chine_fore_r, chine_aft_r, keel_aft, keel_fore, keel)
+    world_triangle(chine_aft_l, keel_aft, stern_keel_l, side)
+    world_triangle(chine_aft_r, stern_keel_r, keel_aft, side)
+    world_quad(stern_l, stern_keel_l, stern_keel_r, stern_r, side)
+}
+
+world_rondine_propeller_blade :: proc(editor: ^Editor, center_x, angle, z: f32, color: rl.Color) {
+    c, s := math.cos(angle), math.sin(angle)
+    half_length, half_width := f32(1.08), f32(.075)
+    direction := [2]f32{c * half_length, s * half_length}
+    across := [2]f32{-s * half_width, c * half_width}
+    p := [4][3]f32 {
+        {center_x - direction[0] - across[0], .52 - direction[1] - across[1], z},
+        {center_x - direction[0] + across[0], .52 - direction[1] + across[1], z},
+        {center_x + direction[0] + across[0], .52 + direction[1] + across[1], z},
+        {center_x + direction[0] - across[0], .52 + direction[1] - across[1], z},
+    }
+    front: [4]third_person.Vec3
+    back: [4]third_person.Vec3
+    for point, index in p {
+        front[index] = world_rondine_local(editor, point)
+        back_point := point
+        back_point[2] += .08
+        back[index] = world_rondine_local(editor, back_point)
+    }
+    world_quad(front[0], front[1], front[2], front[3], color)
+    world_quad(back[3], back[2], back[1], back[0], color)
+    world_quad(front[0], back[0], back[1], front[1], color)
+    world_quad(front[1], back[1], back[2], front[2], color)
+    world_quad(front[2], back[2], back[3], front[3], color)
+    world_quad(front[3], back[3], back[0], front[0], color)
+}
+
+world_rondine_propeller_blur :: proc(editor: ^Editor, center_x, phase, strength: f32) {
+    if strength <= .01 do return
+    center := world_rondine_local(editor, {center_x, .52, 2.075})
+    segments :: 16
+    radius := f32(1.13)
+    alpha := u8(clamp(18 + strength * 42, 0, 68))
+    center_color := rl.Color{78, 87, 85, alpha}
+    edge_color := rl.Color{92, 105, 101, 0}
+    for segment in 0 ..< segments {
+        angle_a := phase + f32(segment) / segments * math.PI * 2
+        angle_b := phase + f32(segment + 1) / segments * math.PI * 2
+        a := world_rondine_local(
+            editor,
+            {center_x + math.cos(angle_a) * radius, .52 + math.sin(angle_a) * radius, 2.075},
+        )
+        b := world_rondine_local(
+            editor,
+            {center_x + math.cos(angle_b) * radius, .52 + math.sin(angle_b) * radius, 2.075},
+        )
+        world_triangle_colored(center, a, b, center_color, edge_color, edge_color)
+        world_triangle_colored(center, b, a, center_color, edge_color, edge_color)
+    }
+}
+
+world_rondine_propeller :: proc(editor: ^Editor, center_x, phase: f32, color: rl.Color) {
+    rotation := editor.rondine.propeller_turns * math.PI * 2 + phase
+    world_rondine_propeller_blade(editor, center_x, rotation, 2.08, color)
+    world_rondine_propeller_blade(editor, center_x, rotation + math.PI * .5, 2.09, color)
+    blur_strength := clamp((editor.rondine.throttle - .22) / .58, 0, 1)
+    world_rondine_propeller_blur(editor, center_x, phase * .37, blur_strength)
+    world_rondine_box(editor, {center_x, .52, 2.13}, {.36, .36, .28}, {205, 193, 153, 255})
+}
+
+world_rondine_tail_fin :: proc(editor: ^Editor, color, edge: rl.Color) {
+    // Keep directional stability without competing with the namesake fork:
+    // this is a low, aft-swept dorsal feather rather than a conventional
+    // upright airplane tail.
+    base_front_l := world_rondine_local(editor, {-.11, .66, 3.46})
+    base_front_r := world_rondine_local(editor, {.11, .66, 3.46})
+    base_rear_l := world_rondine_local(editor, {-.11, .66, 4.92})
+    base_rear_r := world_rondine_local(editor, {.11, .66, 4.92})
+    peak_l := world_rondine_local(editor, {-.08, 1.76, 4.58})
+    peak_r := world_rondine_local(editor, {.08, 1.76, 4.58})
+    world_triangle(base_front_l, base_rear_l, peak_l, color)
+    world_triangle(base_front_r, peak_r, base_rear_r, color)
+    world_quad(base_front_l, peak_l, peak_r, base_front_r, edge)
+    world_quad(base_rear_l, base_rear_r, peak_r, peak_l, edge)
+}
+
+world_rondine_nacelle :: proc(editor: ^Editor, center_x: f32, top, side, intake: rl.Color) {
+    front_z, rear_z := f32(-.62), f32(1.88)
+    front_half_x, rear_half_x := f32(.39), f32(.25)
+    front_low, front_high := f32(.28), f32(1.04)
+    rear_low, rear_high := f32(.4), f32(.9)
+    p := [8]third_person.Vec3 {
+        world_rondine_local(editor, {center_x - front_half_x, front_low, front_z}),
+        world_rondine_local(editor, {center_x + front_half_x, front_low, front_z}),
+        world_rondine_local(editor, {center_x + front_half_x, front_high, front_z}),
+        world_rondine_local(editor, {center_x - front_half_x, front_high, front_z}),
+        world_rondine_local(editor, {center_x - rear_half_x, rear_low, rear_z}),
+        world_rondine_local(editor, {center_x + rear_half_x, rear_low, rear_z}),
+        world_rondine_local(editor, {center_x + rear_half_x, rear_high, rear_z}),
+        world_rondine_local(editor, {center_x - rear_half_x, rear_high, rear_z}),
+    }
+    world_quad(p[0], p[3], p[2], p[1], intake)
+    world_quad(p[4], p[5], p[6], p[7], side)
+    world_quad(p[3], p[7], p[6], p[2], top)
+    world_quad(p[0], p[4], p[7], p[3], side)
+    world_quad(p[1], p[2], p[6], p[5], side)
+    world_quad(p[0], p[1], p[5], p[4], {30, 35, 36, 255})
+}
+
+world_rondine :: proc(editor: ^Editor) {
+    if editor == nil ||
+       !editor.rondine_visible ||
+       (!editor.vehicle_showcase_scene && !world_aircraft_in_view(editor, editor.rondine.body.position, 16)) {
+        return
+    }
+    cream := rl.Color{231, 216, 171, 255}
+    red := rl.Color{174, 54, 42, 255}
+    dark := rl.Color{41, 48, 51, 255}
+    cockpit := rl.Color{24, 31, 34, 255}
+    leather := rl.Color{113, 61, 43, 255}
+    glass := rl.Color{116, 181, 194, 190}
+
+    // Low planing hull, broad gull wing and twin pusher booms. The silhouette
+    // is deliberately legible from the long, low chase camera used at speed.
+    world_rondine_hull(editor, cream, {213, 194, 142, 255}, {161, 58, 44, 255})
+    // A restrained red throat marking follows the sharpened bow without
+    // turning the whole forebody into a separate colored block.
+    nose := world_rondine_local(editor, {0, .42, -5.67})
+    nose_l := world_rondine_local(editor, {-.72, -.14, -4.46})
+    nose_r := world_rondine_local(editor, {.72, -.14, -4.46})
+    nose_top := world_rondine_local(editor, {0, .58, -4.46})
+    world_triangle(nose, nose_l, nose_top, red)
+    world_triangle(nose, nose_top, nose_r, red)
+    world_triangle(nose, nose_r, nose_l, cream)
+    // A narrow waterline flash follows the monohull chines without breaking
+    // the cream deck into unrelated color blocks.
+    stripe_l_fore_top := world_rondine_local(editor, {-1.11, .53, -3.42})
+    stripe_l_fore_low := world_rondine_local(editor, {-1.04, .3, -3.42})
+    stripe_l_aft_low := world_rondine_local(editor, {-1.08, .22, 1.72})
+    stripe_l_aft_top := world_rondine_local(editor, {-1.2, .5, 1.72})
+    stripe_r_fore_top := world_rondine_local(editor, {1.11, .53, -3.42})
+    stripe_r_fore_low := world_rondine_local(editor, {1.04, .3, -3.42})
+    stripe_r_aft_low := world_rondine_local(editor, {1.08, .22, 1.72})
+    stripe_r_aft_top := world_rondine_local(editor, {1.2, .5, 1.72})
+    world_quad(stripe_l_fore_top, stripe_l_fore_low, stripe_l_aft_low, stripe_l_aft_top, red)
+    world_quad(stripe_r_fore_top, stripe_r_aft_top, stripe_r_aft_low, stripe_r_fore_low, red)
+
+    // An open launch-style cockpit keeps the little pilot exposed to the sea
+    // air. A dark inset sells the missing deck, while the coaming and seat
+    // remain chunky enough to read at gameplay distance.
+    // Sink the floor below the coaming so the opening has real depth from the
+    // chase camera instead of reading as a dark decal on the cream deck.
+    world_rondine_box(editor, {0, .84, -.15}, {1.52, .08, 2.22}, cockpit)
+    world_rondine_box(editor, {-.91, 1.08, -.15}, {.14, .25, 2.55}, cream)
+    world_rondine_box(editor, {.91, 1.08, -.15}, {.14, .25, 2.55}, cream)
+    world_rondine_box(editor, {0, 1.08, 1.1}, {1.82, .25, .16}, cream)
+    world_rondine_box(editor, {-.83, 1.25, -.15}, {.12, .12, 2.55}, leather)
+    world_rondine_box(editor, {.83, 1.25, -.15}, {.12, .12, 2.55}, leather)
+    world_rondine_box(editor, {0, 1.25, 1.06}, {1.55, .12, .12}, leather)
+    // Dark inner faces exaggerate the recess while leaving a slim, warm
+    // coaming highlight around the exposed pilot.
+    world_rondine_box(editor, {-.73, 1.03, -.15}, {.08, .36, 2.22}, cockpit)
+    world_rondine_box(editor, {.73, 1.03, -.15}, {.08, .36, 2.22}, cockpit)
+    world_rondine_box(editor, {0, 1.03, .94}, {1.48, .36, .08}, cockpit)
+    world_rondine_box(editor, {0, 1.18, .5}, {1.16, .52, .18}, leather)
+    world_rondine_box(editor, {0, 1.04, -.55}, {.9, .12, .72}, leather)
+    world_rondine_box(editor, {0, 1.2, -1.02}, {1.34, .35, .12}, dark)
+    windscreen_l := world_rondine_local(editor, {-.78, 1.1, -1.35})
+    windscreen_r := world_rondine_local(editor, {.78, 1.1, -1.35})
+    windscreen_rt := world_rondine_local(editor, {.64, 1.62, -1.08})
+    windscreen_lt := world_rondine_local(editor, {-.64, 1.62, -1.08})
+    world_quad(windscreen_l, windscreen_lt, windscreen_rt, windscreen_r, glass)
+    world_quad(windscreen_r, windscreen_rt, windscreen_lt, windscreen_l, glass)
+    // Keep the open cockpit mechanically legible: a framed screen, compact
+    // yoke, and brass-faced instruments are visible around the seated mouse.
+    world_rondine_box(editor, {-.72, 1.36, -1.2}, {.06, .58, .07}, dark)
+    world_rondine_box(editor, {.72, 1.36, -1.2}, {.06, .58, .07}, dark)
+    world_rondine_box(editor, {0, 1.33, -.56}, {.07, .48, .07}, dark)
+    world_rondine_box(editor, {0, 1.55, -.56}, {.7, .07, .08}, dark)
+    world_rondine_box(editor, {-.27, 1.31, -.96}, {.16, .13, .05}, {215, 184, 104, 255})
+    world_rondine_box(editor, {0, 1.31, -.96}, {.16, .13, .05}, {215, 184, 104, 255})
+    world_rondine_box(editor, {.27, 1.31, -.96}, {.16, .13, .05}, {215, 184, 104, 255})
+
+    // Long swept panels and needle tips give Rondine the planform of its
+    // namesake instead of a conventional rectangular light-aircraft wing.
+    wing_l_tip := world_rondine_local(editor, {-8.9, .79, .92})
+    wing_l_aft := world_rondine_local(editor, {-6.55, .66, 1.58})
+    wing_l_root_aft := world_rondine_local(editor, {-1.18, .44, 1.18})
+    wing_l_root := world_rondine_local(editor, {-1.03, .54, -.92})
+    wing_r_root := world_rondine_local(editor, {1.03, .54, -.92})
+    wing_r_root_aft := world_rondine_local(editor, {1.18, .44, 1.18})
+    wing_r_aft := world_rondine_local(editor, {6.55, .66, 1.58})
+    wing_r_tip := world_rondine_local(editor, {8.9, .79, .92})
+    wing_l_tip_low := world_rondine_local(editor, {-8.9, .64, .92})
+    wing_l_aft_low := world_rondine_local(editor, {-6.55, .51, 1.58})
+    wing_l_root_aft_low := world_rondine_local(editor, {-1.18, .29, 1.18})
+    wing_l_root_low := world_rondine_local(editor, {-1.03, .39, -.92})
+    wing_r_root_low := world_rondine_local(editor, {1.03, .39, -.92})
+    wing_r_root_aft_low := world_rondine_local(editor, {1.18, .29, 1.18})
+    wing_r_aft_low := world_rondine_local(editor, {6.55, .51, 1.58})
+    wing_r_tip_low := world_rondine_local(editor, {8.9, .64, .92})
+    wing_under := rl.Color{124, 42, 36, 255}
+    world_quad(wing_l_tip, wing_l_aft, wing_l_root_aft, wing_l_root, red)
+    world_quad(wing_r_root, wing_r_root_aft, wing_r_aft, wing_r_tip, red)
+    wing_l_tip_inner := world_rondine_local(editor, {-7.55, .75, .7})
+    wing_l_aft_inner := world_rondine_local(editor, {-5.55, .62, 1.5})
+    wing_r_tip_inner := world_rondine_local(editor, {7.55, .75, .7})
+    wing_r_aft_inner := world_rondine_local(editor, {5.55, .62, 1.5})
+    world_quad(wing_l_tip, wing_l_aft, wing_l_aft_inner, wing_l_tip_inner, cream)
+    world_quad(wing_r_tip_inner, wing_r_aft_inner, wing_r_aft, wing_r_tip, cream)
+    world_quad(wing_l_tip_low, wing_l_root_low, wing_l_root_aft_low, wing_l_aft_low, wing_under)
+    world_quad(wing_r_root_low, wing_r_tip_low, wing_r_aft_low, wing_r_root_aft_low, wing_under)
+    world_quad(wing_l_tip, wing_l_root, wing_l_root_low, wing_l_tip_low, wing_under)
+    world_quad(wing_l_aft, wing_l_tip, wing_l_tip_low, wing_l_aft_low, wing_under)
+    world_quad(wing_l_root_aft, wing_l_aft, wing_l_aft_low, wing_l_root_aft_low, wing_under)
+    world_quad(wing_r_root, wing_r_tip, wing_r_tip_low, wing_r_root_low, wing_under)
+    world_quad(wing_r_tip, wing_r_aft, wing_r_aft_low, wing_r_tip_low, wing_under)
+    world_quad(wing_r_aft, wing_r_root_aft, wing_r_root_aft_low, wing_r_aft_low, wing_under)
+    tail_l_root := world_rondine_local(editor, {-.3, .62, 3.78})
+    tail_l_outer := world_rondine_local(editor, {-3.05, .64, 4.18})
+    tail_l_tip := world_rondine_local(editor, {-4.05, .6, 6.65})
+    tail_l_inner := world_rondine_local(editor, {-.68, .58, 4.92})
+    tail_r_root := world_rondine_local(editor, {.3, .62, 3.78})
+    tail_r_inner := world_rondine_local(editor, {.68, .58, 4.92})
+    tail_r_tip := world_rondine_local(editor, {4.05, .6, 6.65})
+    tail_r_outer := world_rondine_local(editor, {3.05, .64, 4.18})
+    world_quad(tail_l_root, tail_l_inner, tail_l_tip, tail_l_outer, red)
+    world_quad(tail_r_root, tail_r_outer, tail_r_tip, tail_r_inner, red)
+    world_quad(tail_l_outer, tail_l_tip, tail_l_inner, tail_l_root, red)
+    world_quad(tail_r_inner, tail_r_tip, tail_r_outer, tail_r_root, red)
+    tail_l_tip_inner := world_rondine_local(editor, {-3.05, .65, 5.62})
+    tail_l_tip_outer := world_rondine_local(editor, {-3.62, .65, 5.5})
+    tail_r_tip_inner := world_rondine_local(editor, {3.05, .65, 5.62})
+    tail_r_tip_outer := world_rondine_local(editor, {3.62, .65, 5.5})
+    world_triangle(tail_l_tip, tail_l_tip_inner, tail_l_tip_outer, cream)
+    world_triangle(tail_r_tip, tail_r_tip_outer, tail_r_tip_inner, cream)
+    // Red upper fairings preserve the continuous swept-wing read from above;
+    // the dark flanks still make the pusher machinery legible in profile.
+    world_rondine_nacelle(editor, -3.8, red, {34, 41, 43, 255}, cream)
+    world_rondine_nacelle(editor, 3.8, red, {34, 41, 43, 255}, cream)
+    world_rondine_propeller(editor, -3.8, 0, {67, 72, 70, 230})
+    world_rondine_propeller(editor, 3.8, math.PI * .25, {67, 72, 70, 230})
+    world_rondine_tail_fin(editor, red, {126, 42, 36, 255})
+}
+
 world_aircraft :: proc(editor: ^Editor) {
+    world_rondine(editor)
     if editor.postale_visible && world_aircraft_in_view(editor, editor.postale.body.position, 18) {
         postale_paint_layer := f32(vehicle_paint_layer_index(.Postale))
         postale_propeller_blur := aircraft_propeller_blur_amount(editor.postale.throttle)
@@ -13248,6 +13855,3883 @@ world_aircraft :: proc(editor: ^Editor) {
     }
 }
 
+world_rondine_spray_streak :: proc(
+    camera: Perspective_Camera,
+    position, direction: third_person.Vec3,
+    size: f32,
+    color: rl.Color,
+) {
+    direction_length := f32(math.sqrt(f64(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)))
+    if direction_length <= .001 do return
+    unit_direction := direction / direction_length
+    // Build the ribbon width perpendicular to both its trajectory and the
+    // view direction. A fixed `camera.right` width collapses when a streak
+    // travels laterally across the screen and shears steep droplets into
+    // broad wedges. This cross product keeps every procedural needle thin,
+    // trajectory-aligned, and camera-facing without a sprite billboard.
+    width_axis :=
+        third_person.Vec3 {
+            camera.forward.y * unit_direction.z -
+            camera.forward.z * unit_direction.y,
+            camera.forward.z * unit_direction.x -
+            camera.forward.x * unit_direction.z,
+            camera.forward.x * unit_direction.y -
+            camera.forward.y * unit_direction.x,
+        }
+    width_length :=
+        f32(
+            math.sqrt(
+                f64(
+                    width_axis.x * width_axis.x +
+                    width_axis.y * width_axis.y +
+                    width_axis.z * width_axis.z,
+                ),
+            ),
+        )
+    if width_length > .001 {
+        width_axis /= width_length
+    } else {
+        width_axis = camera.right
+    }
+    half_width := width_axis * (size * .34)
+    tail := position - unit_direction * (size * .55)
+    tip := position + unit_direction * (size * 2.4)
+    clear := rl.Color{color.r, color.g, color.b, 0}
+    world_triangle_colored(tail - half_width, tail + half_width, tip, clear, clear, color)
+}
+
+world_rondine_triangle_colored :: proc(
+    a, b, c: third_person.Vec3,
+    color_a, color_b, color_c: rl.Color,
+    mirrored: bool,
+) {
+    if mirrored {
+        world_triangle_colored(a, c, b, color_a, color_c, color_b)
+    } else {
+        world_triangle_colored(a, b, c, color_a, color_b, color_c)
+    }
+}
+
+world_rondine_triangle_double_sided :: proc(
+    a, b, c: third_person.Vec3,
+    color_a, color_b, color_c: rl.Color,
+) {
+    world_triangle_colored(a, b, c, color_a, color_b, color_c)
+    world_triangle_colored(a, c, b, color_a, color_c, color_b)
+}
+
+world_rondine_spray_bead :: proc(
+    camera: Perspective_Camera,
+    position: third_person.Vec3,
+    size: f32,
+    color: rl.Color,
+) {
+    if color.a <= 1 || size <= .001 do return
+    // Four fading triangles make a tiny camera-facing droplet head. Keeping
+    // the center opaque and every outer point transparent preserves the
+    // faceted procedural language while avoiding a hard diamond silhouette.
+    horizontal := camera.right * size
+    vertical := camera.up * (size * 1.18)
+    clear := rl.Color{color.r, color.g, color.b, 0}
+    top := position + vertical
+    right := position + horizontal
+    bottom := position - vertical
+    left := position - horizontal
+    world_rondine_triangle_double_sided(position, top, right, color, clear, clear)
+    world_rondine_triangle_double_sided(position, right, bottom, color, clear, clear)
+    world_rondine_triangle_double_sided(position, bottom, left, color, clear, clear)
+    world_rondine_triangle_double_sided(position, left, top, color, clear, clear)
+}
+
+world_rondine_surface_chip :: proc(
+    position, tangent, radial: third_person.Vec3,
+    half_length, half_width: f32,
+    color: rl.Color,
+    double_sided := false,
+) {
+    tangent_axis := tangent
+    tangent_length :=
+        f32(
+            math.sqrt(
+                f64(
+                    tangent_axis.x * tangent_axis.x +
+                    tangent_axis.y * tangent_axis.y +
+                    tangent_axis.z * tangent_axis.z,
+                ),
+            ),
+        )
+    if tangent_length > .0001 do tangent_axis /= tangent_length
+    radial_axis := radial
+    radial_length :=
+        f32(
+            math.sqrt(
+                f64(
+                    radial_axis.x * radial_axis.x +
+                    radial_axis.y * radial_axis.y +
+                    radial_axis.z * radial_axis.z,
+                ),
+            ),
+        )
+    if radial_length > .0001 do radial_axis /= radial_length
+    // Remove any component parallel to the length axis. Most callers provide
+    // an approximate perpendicular assembled from forward/right weights; a
+    // small shared component otherwise shears the two triangles into a kite
+    // and changes apparent width with maneuver direction.
+    radial_axis -=
+        tangent_axis *
+        linalg.dot(radial_axis, tangent_axis)
+    radial_length =
+        f32(
+            math.sqrt(
+                f64(
+                    radial_axis.x * radial_axis.x +
+                    radial_axis.y * radial_axis.y +
+                    radial_axis.z * radial_axis.z,
+                ),
+            ),
+        )
+    if radial_length > .0001 {
+        radial_axis /= radial_length
+    } else {
+        // Surface details are horizontal, so a 90-degree turn in XZ is a
+        // stable fallback for degenerate or accidentally parallel inputs.
+        radial_axis = {-tangent_axis.z, 0, tangent_axis.x}
+    }
+    clear := rl.Color{color.r, color.g, color.b, 0}
+    leading := position + tangent_axis * half_length
+    trailing := position - tangent_axis * half_length
+    outer := position + radial_axis * half_width
+    inner := position - radial_axis * half_width
+    if double_sided {
+        world_rondine_triangle_double_sided(leading, outer, trailing, clear, color, clear)
+        world_rondine_triangle_double_sided(leading, trailing, inner, clear, clear, color)
+    } else {
+        world_triangle_colored(leading, outer, trailing, clear, color, clear)
+        world_triangle_colored(leading, trailing, inner, clear, clear, color)
+    }
+}
+
+world_rondine_wake_hash :: proc(serial, pressure_role, salt: u32) -> u32 {
+    value := serial * u32(1664525) + u32(1013904223)
+    value += pressure_role * u32(374761393) + salt * u32(668265263)
+    value = (value ~ (value >> 13)) * u32(1274126177)
+    return value ~ (value >> 16)
+}
+
+world_rondine_live_variation :: proc(epoch: u32, blend: f32, pressure_role, salt: u32) -> f32 {
+    first := f32(world_rondine_wake_hash(epoch, pressure_role, salt) % 1024) / 1023
+    second := f32(world_rondine_wake_hash(epoch + 1, pressure_role, salt) % 1024) / 1023
+    t := clamp(blend, 0, 1)
+    smooth := t * t * (3 - 2 * t)
+    return first + (second - first) * smooth
+}
+
+world_rondine_surface_heading :: proc(editor: ^Editor) -> third_person.Vec3 {
+    if editor == nil do return {0, 0, -1}
+    body_forward := third_person.Vec3 {
+        editor.rondine.body.basis.forward.x,
+        0,
+        editor.rondine.body.basis.forward.z,
+    }
+    horizontal_velocity := third_person.Vec3 {
+        editor.rondine.body.velocity.x,
+        0,
+        editor.rondine.body.velocity.z,
+    }
+    horizontal_speed :=
+        f32(
+            math.sqrt(
+                f64(
+                    horizontal_velocity.x * horizontal_velocity.x +
+                    horizontal_velocity.z * horizontal_velocity.z,
+                ),
+            ),
+        )
+    if horizontal_speed <= .01 do return body_forward
+    travel_forward := horizontal_velocity / horizontal_speed
+    travel_blend := clamp(math.abs(editor.rondine.telemetry.slip) * 1.8, 0, .72)
+    heading := body_forward * (1 - travel_blend) + travel_forward * travel_blend
+    heading_length :=
+        f32(math.sqrt(f64(heading.x * heading.x + heading.z * heading.z)))
+    if heading_length <= .01 do return body_forward
+    return heading / heading_length
+}
+
+world_rondine_wake_fans :: proc(editor: ^Editor) {
+    if editor == nil || !editor.rondine_visible do return
+    sea_y := editor.project.sea_level + .06
+    camera := perspective_camera(
+        editor.camera_pose,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
+    )
+    // Hold live procedural layouts for four spatial wake samples. At planing
+    // speed this produces short coherent spray bursts instead of reseeding
+    // every few milliseconds and buzzing between unrelated silhouettes.
+    live_spray_epoch := editor.rondine.wake_serial >> 2
+    live_spray_blend :=
+        clamp(
+            (
+                f32(editor.rondine.wake_serial & u32(3)) +
+                clamp(editor.rondine.wake_distance / 1.25, 0, 1)
+            ) /
+            4,
+            0,
+            1,
+        )
+    drift_strength := editor.rondine.telemetry.drift_intensity
+    countersteer := editor.rondine.telemetry.countersteer
+    drift_kick := editor.rondine.telemetry.drift_kick
+    hookup_kick := editor.rondine.telemetry.hookup_kick
+    surface_impact := editor.rondine.telemetry.surface_impact
+    surge_intensity := editor.rondine.telemetry.surge_intensity
+    brake_intensity := editor.rondine.telemetry.brake_intensity
+    drift_transition := editor.rondine.telemetry.drift_transition
+    contact_strength :=
+        clamp(
+            editor.rondine.telemetry.spray_intensity +
+            drift_strength * .38 +
+            drift_kick * .34 +
+            hookup_kick * .22 +
+            surface_impact * .82,
+            0,
+            1.55,
+        )
+    if contact_strength > .02 {
+        contact_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
+        body_forward := third_person.Vec3 {
+            editor.rondine.body.basis.forward.x,
+            0,
+            editor.rondine.body.basis.forward.z,
+        }
+        contact_forward := world_rondine_surface_heading(editor)
+        contact_right := third_person.Vec3{editor.rondine.body.basis.right.x, 0, editor.rondine.body.basis.right.z}
+        contact_back := -contact_forward
+        body_back := -body_forward
+        stern := contact_base + body_back * 3.7
+
+        // A landing slaps the full hull footprint into the surface. Radial
+        // needles provide the fast bright edge while varied elevation keeps
+        // the burst from reading as a flat, mechanically perfect star.
+        if surface_impact > .06 {
+            impact_visibility := f32(math.sqrt(f64(surface_impact)))
+            slap_alpha :=
+                u8(clamp(218 * impact_visibility, 0, 224))
+            slap_color := rl.Color{234, 253, 247, slap_alpha}
+            // The main bar crosses the hull beam and expands with impact
+            // energy. Its transparent tips keep it from becoming a hard white
+            // plank while supplying the large-scale pressure beat that the
+            // radial needles sit on top of.
+            world_rondine_surface_chip(
+                stern + contact_back * (.30 + surface_impact * .22),
+                contact_right,
+                contact_forward,
+                1.18 + surface_impact * .78,
+                .070 + impact_visibility * .055,
+                slap_color,
+                double_sided = true,
+            )
+            // A shorter rebound knuckle sits just forward of the stern bar.
+            // Slight yaw relative to the beam prevents the two marks reading
+            // as a repeated symbol while keeping both outside the aircraft's
+            // screen-space occlusion.
+            rebound_contact :=
+                stern +
+                contact_forward * (.32 + surface_impact * .18)
+            rebound_tangent :=
+                contact_right * .94 +
+                contact_back * .18
+            rebound_radial :=
+                contact_forward +
+                contact_right * .12
+            world_rondine_surface_chip(
+                rebound_contact,
+                rebound_tangent,
+                rebound_radial,
+                .58 + surface_impact * .34,
+                .050 + impact_visibility * .035,
+                {
+                    slap_color.r,
+                    slap_color.g,
+                    slap_color.b,
+                    u8(f32(slap_alpha) * .74),
+                },
+                double_sided = true,
+            )
+
+            for ray in 0 ..< 8 {
+                ray_f := f32(ray)
+                variation :=
+                    world_rondine_live_variation(
+                        live_spray_epoch,
+                        live_spray_blend,
+                        u32(ray & 1),
+                        u32(140 + ray),
+                    )
+                angle := ray_f / 8 * math.TAU + (variation - .5) * .16
+                cosine, sine := math.cos(angle), math.sin(angle)
+                radial := contact_right * cosine + contact_forward * sine
+                position := contact_base + radial * (.48 + variation * .30)
+                position.y += .05 + variation * .11
+                direction :=
+                    radial * (1.05 + variation * .50) +
+                    contact_back * (.14 + surface_impact * .18) +
+                    third_person.Vec3{0, .20 + variation * .42, 0}
+                impact_alpha :=
+                    u8(clamp((156 + variation * 78) * surface_impact, 0, 228))
+                impact_color := rl.Color{234, 253, 247, impact_alpha}
+                world_rondine_spray_streak(
+                    camera,
+                    position,
+                    direction,
+                    .30 + surface_impact * .42 + variation * .16,
+                    impact_color,
+                )
+            }
+        }
+
+        // The forward chines touch first while planing. Two narrow whiskers
+        // begin beneath the nose and stream aft into the larger stern sheets,
+        // visually attaching the entire effect to the hull. Their low profile
+        // keeps them distinct from the tall, drift-only rooster crown.
+        chine_surface_fraction :=
+            clamp(1 - editor.rondine.telemetry.height / 1.35, 0, 1)
+        chine_strength :=
+            clamp(
+                editor.rondine.telemetry.wake_intensity * .88 +
+                drift_strength * .16,
+                0,
+                1,
+            ) *
+            chine_surface_fraction
+        if chine_strength > .08 {
+            for side in 0 ..< 2 {
+                side_sign := side == 0 ? f32(-1) : f32(1)
+                variation :=
+                    world_rondine_live_variation(
+                        live_spray_epoch,
+                        live_spray_blend,
+                        u32(side),
+                        20,
+                    )
+                root :=
+                    contact_base +
+                    body_forward * (1.32 + variation * .18) +
+                    contact_right * (side_sign * .46)
+                tail :=
+                    root +
+                    contact_back * (1.18 + chine_strength * .92 + variation * .24) +
+                    contact_right * (side_sign * (.13 + variation * .10))
+                crest := root + (tail - root) * (.42 + variation * .10)
+                crest.y += .08 + chine_strength * .24 + variation * .07
+                chine_alpha := u8(clamp((102 + variation * 62) * chine_strength, 0, 164))
+                chine_foam := rl.Color{226, 250, 244, chine_alpha}
+                chine_mist := rl.Color{143, 216, 223, u8(f32(chine_alpha) * .42)}
+                chine_clear := rl.Color{chine_foam.r, chine_foam.g, chine_foam.b, 0}
+                world_rondine_triangle_colored(
+                    root,
+                    tail,
+                    crest,
+                    chine_foam,
+                    chine_clear,
+                    chine_mist,
+                    side == 1,
+                )
+                whisker_direction :=
+                    contact_back * (.72 + variation * .22) +
+                    contact_right * (side_sign * (.17 + variation * .16)) +
+                    third_person.Vec3{0, .08 + variation * .10, 0}
+                world_rondine_spray_streak(
+                    camera,
+                    crest,
+                    whisker_direction,
+                    .10 + chine_strength * .09 + variation * .045,
+                    chine_foam,
+                )
+            }
+        }
+
+        for side in 0 ..< 2 {
+            side_sign := side == 0 ? f32(-1) : f32(1)
+            root := stern + contact_right * (side_sign * .62)
+            inner := root + contact_back * (1.60 + contact_strength * 2.20)
+            crest :=
+                root +
+                contact_back * (1.40 + contact_strength * 3.40) +
+                contact_right * (side_sign * (.40 + contact_strength * 1.15))
+            crest.y += .40 + contact_strength * 2.40
+            alpha := u8(clamp(158 + contact_strength * 105, 0, 244))
+            foam := rl.Color{226, 249, 243, alpha}
+            mist := rl.Color{147, 220, 226, u8(f32(alpha) * .52)}
+            world_rondine_triangle_colored(root, inner, crest, foam, foam, mist, side == 1)
+        }
+
+        // Mid-slip carve pressure gathers into one low loaded-side shoulder.
+        // It rises above planing chevrons but stays decisively below the
+        // multi-panel hero crown reserved for an actual loss of grip.
+        live_slip := math.abs(editor.rondine.telemetry.slip)
+        carve_entry := clamp((live_slip - .055) / .075, 0, 1)
+        carve_exit := clamp((.245 - live_slip) / .085, 0, 1)
+        carve_shoulder_strength :=
+            carve_entry *
+            carve_exit *
+            clamp(contact_strength * .58 + drift_strength * .44, 0, 1)
+        if carve_shoulder_strength > .04 {
+            carve_loaded_side :=
+                editor.rondine.telemetry.slip < 0 ? f32(-1) : f32(1)
+            shoulder_visibility :=
+                f32(math.sqrt(f64(carve_shoulder_strength)))
+            shoulder_root :=
+                stern +
+                contact_right * (carve_loaded_side * .48)
+            shoulder_foot :=
+                shoulder_root +
+                contact_back * (1.28 + carve_shoulder_strength * .72) +
+                contact_right *
+                (carve_loaded_side * (.58 + carve_shoulder_strength * .36))
+            shoulder_crest := (shoulder_root + shoulder_foot) * .5
+            shoulder_crest +=
+                contact_right *
+                (carve_loaded_side * (.12 + carve_shoulder_strength * .10))
+            shoulder_crest.y +=
+                .32 +
+                carve_shoulder_strength * .92
+            shoulder_alpha :=
+                u8(
+                    clamp(
+                        (116 + carve_shoulder_strength * 62) *
+                        shoulder_visibility,
+                        0,
+                        158,
+                    ),
+                )
+            shoulder_foam := rl.Color{224, 249, 244, shoulder_alpha}
+            shoulder_mist :=
+                rl.Color {
+                    166,
+                    226,
+                    230,
+                    u8(f32(shoulder_alpha) * .54),
+                }
+            shoulder_clear :=
+                rl.Color{shoulder_foam.r, shoulder_foam.g, shoulder_foam.b, 0}
+            world_rondine_triangle_double_sided(
+                shoulder_root,
+                shoulder_foot,
+                shoulder_crest,
+                shoulder_foam,
+                shoulder_clear,
+                shoulder_mist,
+            )
+            shoulder_direction :=
+                contact_back * .62 +
+                contact_right * (carve_loaded_side * .48) +
+                third_person.Vec3{0, .10, 0}
+            world_rondine_spray_streak(
+                camera,
+                shoulder_crest,
+                shoulder_direction,
+                .13 + carve_shoulder_strength * .16,
+                {
+                    233,
+                    253,
+                    247,
+                    u8(clamp(176 * shoulder_visibility, 0, 184)),
+                },
+            )
+        }
+
+        // A hard slide throws a brief crown of overlapping sheets from the
+        // loaded side of the stern. Three unequal prongs give the active drift
+        // a hero-scale accent while remaining dormant during normal planing.
+        deep_slip_gate := clamp((live_slip - .16) / .18, 0, 1)
+        if drift_strength > .22 && deep_slip_gate > .01 || drift_kick > .05 {
+            loaded_side := editor.rondine.telemetry.slip < 0 ? f32(-1) : f32(1)
+            // Drift intensity spends much of a controllable sustained slide in
+            // the .3-.6 range. Starting the visual ramp at .35 left that useful
+            // handling band with an almost transparent crown, even though the
+            // wake geometry was already fully established. Bring the large
+            // silhouette in earlier; the separate kick rays still reserve the
+            // sharpest burst for the instant grip breaks.
+            crown_strength :=
+                max(
+                    clamp((drift_strength - .18) / .62, 0, 1) *
+                    deep_slip_gate,
+                    drift_kick,
+                )
+            crown_visibility := f32(math.sqrt(f64(crown_strength)))
+            crown_mirrored := loaded_side > 0
+
+            // A broken crescent joins the three hero prongs into one readable
+            // loaded-side silhouette. Each translucent panel follows the same
+            // rising-and-falling arc, with narrow water-colored gaps between
+            // panels so it still reads as torn spray rather than a solid sail.
+            // Keeping it behind the brighter prongs creates a proper
+            // large/medium hierarchy at normal chase-camera distance.
+            for panel in 0 ..< 5 {
+                panel_f := f32(panel)
+                arc_start := .035 + panel_f * .19
+                arc_end := arc_start + .205
+                start_hump := f32(math.sin(f64(arc_start * math.PI)))
+                end_hump := f32(math.sin(f64(arc_end * math.PI)))
+                lower_start :=
+                    stern +
+                    contact_right *
+                    (loaded_side * (.64 + arc_start * (3.35 + crown_strength * .90))) +
+                    contact_back * (.38 + arc_start * (3.70 + crown_strength * 1.55))
+                lower_end :=
+                    stern +
+                    contact_right *
+                    (loaded_side * (.64 + arc_end * (3.35 + crown_strength * .90))) +
+                    contact_back * (.38 + arc_end * (3.70 + crown_strength * 1.55))
+                // Pinch the top edge toward the panel center and sweep it
+                // outward/back. A full-width vertical top made these panels
+                // look like translucent fins; this trapezoidal lean reads as
+                // water being peeled off the loaded chine at speed.
+                panel_center := (lower_start + lower_end) * .5
+                upper_start :=
+                    panel_center +
+                    (lower_start - panel_center) * .56 +
+                    contact_right *
+                    (loaded_side * (.12 + crown_strength * .16)) +
+                    contact_back * (.18 + panel_f * .08)
+                upper_end :=
+                    panel_center +
+                    (lower_end - panel_center) * .56 +
+                    contact_right *
+                    (loaded_side * (.12 + crown_strength * .16)) +
+                    contact_back * (.18 + panel_f * .08)
+                upper_start.y +=
+                    .35 +
+                    start_hump * (1.05 + crown_strength * 2.35)
+                upper_end.y +=
+                    .35 +
+                    end_hump * (1.05 + crown_strength * 2.35)
+                curtain_alpha :=
+                    u8(
+                        clamp(
+                            (142 + start_hump * 76 - panel_f * 4) *
+                            crown_visibility,
+                            0,
+                            210,
+                        ),
+                    )
+                curtain_foam := rl.Color{224, 250, 244, curtain_alpha}
+                curtain_mist :=
+                    rl.Color {
+                        164,
+                        226,
+                        230,
+                        u8(f32(curtain_alpha) * .52),
+                    }
+                curtain_clear :=
+                    rl.Color{curtain_foam.r, curtain_foam.g, curtain_foam.b, 0}
+                world_rondine_triangle_double_sided(
+                    lower_start,
+                    lower_end,
+                    upper_end,
+                    curtain_clear,
+                    curtain_clear,
+                    curtain_mist,
+                )
+                world_rondine_triangle_double_sided(
+                    lower_start,
+                    upper_end,
+                    upper_start,
+                    curtain_clear,
+                    curtain_mist,
+                    curtain_foam,
+                )
+                crest_direction := upper_end - upper_start
+                crest_alpha :=
+                    u8(
+                        clamp(
+                            (198 + start_hump * 54 - panel_f * 5) *
+                            crown_visibility,
+                            0,
+                            236,
+                        ),
+                    )
+                world_rondine_spray_streak(
+                    camera,
+                    (upper_start + upper_end) * .5,
+                    crest_direction,
+                    .17 + crown_strength * .16 + start_hump * .060,
+                    {235, 254, 248, crest_alpha},
+                )
+            }
+
+            for prong in 0 ..< 3 {
+                prong_f := f32(prong)
+                root :=
+                    stern +
+                    contact_right * (loaded_side * (.48 + prong_f * .22)) +
+                    contact_back * (prong_f * .18)
+                foot :=
+                    root +
+                    contact_back * (2.20 + prong_f * .94 + crown_strength * 1.55) +
+                    contact_right * (loaded_side * (.90 + prong_f * .58))
+                crest := (root + foot) * .5
+                crest += contact_right * (loaded_side * (.18 + prong_f * .12))
+                crest.y += .85 + crown_strength * (2.65 - prong_f * .25)
+                crown_alpha := u8(clamp((228 - prong_f * 22) * crown_visibility, 0, 228))
+                crown_foam := rl.Color{229, 251, 245, crown_alpha}
+                crown_mist := rl.Color{190, 235, 234, u8(f32(crown_alpha) * .78)}
+                crown_clear := rl.Color{crown_foam.r, crown_foam.g, crown_foam.b, 0}
+                world_rondine_triangle_colored(root, foot, crest, crown_foam, crown_clear, crown_mist, crown_mirrored)
+                crown_tip := crest + contact_right * (loaded_side * (.22 + prong_f * .16))
+                crown_tip.y -= .12 + prong_f * .05
+                world_rondine_triangle_colored(foot, crown_tip, crest, crown_clear, crown_clear, crown_foam, crown_mirrored)
+            }
+
+            // Fine bright needles run through the larger translucent crown.
+            // They give the hero-scale sheet internal motion without another
+            // filled fan or any sprite-facing orientation problem.
+            for needle in 0 ..< 5 {
+                needle_f := f32(needle)
+                variation :=
+                    world_rondine_live_variation(
+                        live_spray_epoch,
+                        live_spray_blend,
+                        1,
+                        u32(30 + needle),
+                    )
+                position :=
+                    stern +
+                    contact_right * (loaded_side * (.58 + needle_f * .29)) +
+                    contact_back * (.18 + needle_f * .34)
+                position.y += .08 + needle_f * .07 + variation * .16
+                direction :=
+                    contact_back * (1.02 - needle_f * .24 + variation * .22) +
+                    contact_right * (loaded_side * (.42 + needle_f * .46 + variation * .24)) +
+                    third_person.Vec3{0, .34 + needle_f * .16 + variation * .34, 0}
+                needle_alpha := u8(clamp((145 + variation * 70) * crown_visibility, 0, 215))
+                needle_color := rl.Color{232, 253, 247, needle_alpha}
+                world_rondine_spray_streak(
+                    camera,
+                    position,
+                    direction,
+                    .25 + crown_strength * .22 + variation * .12,
+                    needle_color,
+                )
+            }
+
+            // A dense crown of detached splash heads softens the top edge of
+            // the faceted curtain. Their staggered heights and positions turn
+            // the five overlapping panels into one turbulent mass instead of
+            // exposing a row of individual triangle tips.
+            for splash in 0 ..< 8 {
+                splash_f := f32(splash)
+                variation :=
+                    world_rondine_live_variation(
+                        live_spray_epoch,
+                        live_spray_blend,
+                        1,
+                        u32(360 + splash),
+                    )
+                crown_progress := (splash_f + .35 + variation * .28) / 8
+                crown_hump := f32(math.sin(f64(crown_progress * math.PI)))
+                splash_position :=
+                    stern +
+                    contact_right *
+                    (loaded_side * (.92 + crown_progress * (3.35 + crown_strength * .90))) +
+                    contact_back *
+                    (.52 + crown_progress * (3.20 + crown_strength * 1.35))
+                splash_position.y +=
+                    .52 +
+                    crown_hump * (1.18 + crown_strength * 2.40) +
+                    (variation - .5) * .34
+                splash_direction :=
+                    contact_back * (.34 + variation * .34) +
+                    contact_right *
+                    (loaded_side * (.42 + crown_progress * .55)) +
+                    third_person.Vec3 {
+                        0,
+                        .38 + crown_hump * .62 + variation * .28,
+                        0,
+                    }
+                splash_alpha :=
+                    u8(
+                        clamp(
+                            (178 + variation * 66) *
+                            crown_visibility,
+                            0,
+                            232,
+                        ),
+                    )
+                splash_color := rl.Color{235, 254, 248, splash_alpha}
+                world_rondine_spray_streak(
+                    camera,
+                    splash_position,
+                    splash_direction,
+                    .12 + variation * .13 + crown_strength * .08,
+                    splash_color,
+                )
+                world_rondine_spray_bead(
+                    camera,
+                    splash_position +
+                    linalg.normalize0(splash_direction) * (.20 + variation * .14),
+                    .040 + variation * .030 + crown_strength * .016,
+                    splash_color,
+                )
+            }
+
+            // A rapid breakaway gets its own radial snap, distinct from the
+            // crown that persists through a sustained drift. The rays spread
+            // across height and lateral angle, then vanish with drift_kick.
+            if drift_kick > .08 {
+                kick_root := stern + contact_right * (loaded_side * .72)
+                for ray in 0 ..< 3 {
+                    ray_f := f32(ray)
+                    variation :=
+                        world_rondine_live_variation(
+                            live_spray_epoch,
+                            live_spray_blend,
+                            1,
+                            u32(60 + ray),
+                        )
+                    position :=
+                        kick_root +
+                        contact_back * (ray_f * .18) +
+                        contact_right * (loaded_side * (ray_f - 1) * .18)
+                    position.y += .08 + ray_f * .09 + variation * .11
+                    direction :=
+                        contact_back * (1.35 - ray_f * .50 + variation * .10) +
+                        contact_right * (loaded_side * (.16 + ray_f * .74 + variation * .12)) +
+                        third_person.Vec3{0, .24 + ray_f * .34 + variation * .18, 0}
+                    kick_alpha := u8(clamp((168 + variation * 62) * drift_kick, 0, 225))
+                    kick_color := rl.Color{235, 254, 248, kick_alpha}
+                    world_rondine_spray_streak(
+                        camera,
+                        position,
+                        direction,
+                        .76 + drift_kick * .64 + ray_f * .08 + variation * .14,
+                        kick_color,
+                    )
+                }
+            }
+        }
+
+        // When lateral grip hooks back up, two symmetric inward sprays cross
+        // behind the stern. This is deliberately unlike the one-sided
+        // breakaway fan: a brief visual "clap" as the hull straightens.
+        if hookup_kick > .08 {
+            for side in 0 ..< 2 {
+                side_sign := side == 0 ? f32(-1) : f32(1)
+                for ray in 0 ..< 2 {
+                    ray_f := f32(ray)
+                    variation :=
+                        world_rondine_live_variation(
+                            live_spray_epoch,
+                            live_spray_blend,
+                            u32(side),
+                            u32(70 + ray),
+                        )
+                    position :=
+                        stern +
+                        contact_right * (side_sign * (.62 + ray_f * .18)) +
+                        contact_back * (ray_f * .16)
+                    position.y += .10 + variation * .12
+                    direction :=
+                        contact_back * (.72 + ray_f * .24 + variation * .14) +
+                        contact_right * (-side_sign * (.44 + ray_f * .30 + variation * .12)) +
+                        third_person.Vec3{0, .34 + ray_f * .20 + variation * .18, 0}
+                    hookup_alpha := u8(clamp((150 + variation * 62) * hookup_kick, 0, 210))
+                    hookup_color := rl.Color{232, 253, 247, hookup_alpha}
+                    world_rondine_spray_streak(
+                        camera,
+                        position,
+                        direction,
+                        .46 + hookup_kick * .48 + ray_f * .10,
+                        hookup_color,
+                    )
+                }
+            }
+        }
+
+        // Countersteer while the hull is still sliding cuts two low hooks
+        // across the established wake. Keeping them close to the surface and
+        // opposite the loaded spray makes this read as pilot correction,
+        // distinct from both the tall breakaway crown and symmetric hookup.
+        if countersteer > .06 {
+            loaded_side := editor.rondine.telemetry.slip < 0 ? f32(-1) : f32(1)
+            for cut in 0 ..< 3 {
+                cut_f := f32(cut)
+                variation :=
+                    world_rondine_live_variation(
+                        live_spray_epoch,
+                        live_spray_blend,
+                        1,
+                        u32(170 + cut),
+                    )
+                position :=
+                    stern +
+                    contact_right * (loaded_side * (.48 + cut_f * .18)) +
+                    contact_back * (.12 + cut_f * .20)
+                position.y += .055 + variation * .075
+                direction :=
+                    contact_back * (.48 + cut_f * .16 + variation * .12) -
+                    contact_right *
+                    (loaded_side * (.58 + cut_f * .26 + variation * .16)) +
+                    third_person.Vec3{0, .08 + cut_f * .045 + variation * .07, 0}
+                cut_alpha :=
+                    u8(clamp((126 + variation * 68) * countersteer, 0, 194))
+                cut_color := rl.Color{229, 252, 246, cut_alpha}
+                world_rondine_spray_streak(
+                    camera,
+                    position,
+                    direction,
+                    .24 + countersteer * .24 + cut_f * .055,
+                    cut_color,
+                )
+            }
+
+            // A bright, low snap brace crosses the stern at the moment the
+            // pilot steers back into the slide. Spray streaks communicate
+            // motion but can vanish edge-on; paired surface chips make the
+            // correction readable from chase and inspection cameras alike.
+            counter_visibility := f32(math.sqrt(f64(countersteer)))
+            brace_alpha := u8(clamp(198 * counter_visibility, 0, 202))
+            brace_color := rl.Color{233, 253, 247, brace_alpha}
+            brace_tangent :=
+                contact_right * (-loaded_side * .92) +
+                contact_back * .24
+            brace_radial :=
+                contact_back +
+                contact_right * (loaded_side * .14)
+            for brace in 0 ..< 2 {
+                brace_f := f32(brace)
+                brace_position :=
+                    stern +
+                    contact_back * (.58 + brace_f * .26) +
+                    contact_right * (loaded_side * (.18 - brace_f * .12))
+                brace_position.y += .031
+                world_rondine_surface_chip(
+                    brace_position,
+                    brace_tangent,
+                    brace_radial,
+                    .20 + counter_visibility * .16 - brace_f * .025,
+                    .034 + counter_visibility * .018,
+                    {brace_color.r, brace_color.g, brace_color.b, u8(f32(brace_alpha) * (1 - brace_f * .24))},
+                    double_sided = true,
+                )
+            }
+
+            // Countersteer briefly catches water on the side opposite the
+            // established drift wall. One lower, shorter sheet makes that
+            // pressure transfer readable at gameplay distance without
+            // competing with the tall loaded-side crown.
+            catch_side := -loaded_side
+            catch_root :=
+                stern +
+                contact_right * (catch_side * .46) +
+                contact_back * .10
+            catch_foot :=
+                catch_root +
+                contact_back * (1.04 + countersteer * .68) +
+                contact_right *
+                (catch_side * (.66 + countersteer * .58))
+            catch_crest := (catch_root + catch_foot) * .5
+            catch_crest +=
+                contact_right *
+                (catch_side * (.13 + countersteer * .12))
+            catch_crest.y +=
+                .42 +
+                counter_visibility * 1.38
+            catch_alpha :=
+                u8(
+                    clamp(
+                        (168 + countersteer * 72) *
+                        counter_visibility,
+                        0,
+                        184,
+                    ),
+                )
+            catch_foam := rl.Color{228, 251, 245, catch_alpha}
+            catch_mist :=
+                rl.Color {
+                    176,
+                    231,
+                    232,
+                    u8(f32(catch_alpha) * .56),
+                }
+            catch_clear :=
+                rl.Color{catch_foam.r, catch_foam.g, catch_foam.b, 0}
+            world_rondine_triangle_double_sided(
+                catch_root,
+                catch_foot,
+                catch_crest,
+                catch_foam,
+                catch_clear,
+                catch_mist,
+            )
+            catch_tip :=
+                catch_crest +
+                contact_right * (catch_side * (.16 + countersteer * .16)) +
+                contact_back * .12
+            catch_tip.y -= .09
+            world_rondine_triangle_double_sided(
+                catch_foot,
+                catch_tip,
+                catch_crest,
+                catch_clear,
+                catch_clear,
+                catch_foam,
+            )
+            catch_ridge_direction :=
+                contact_back * .44 +
+                contact_right * (catch_side * .58) +
+                third_person.Vec3{0, .12, 0}
+            world_rondine_spray_streak(
+                camera,
+                catch_crest,
+                catch_ridge_direction,
+                .14 + countersteer * .18,
+                {
+                    235,
+                    254,
+                    248,
+                    u8(clamp(188 * counter_visibility, 0, 194)),
+                },
+            )
+        }
+
+        // A hard bank can bring the low wingtip close enough to rake the
+        // surface. Derive clearance from hull skim height plus the wing's
+        // vertical bank displacement; level planing keeps both tips safely
+        // dormant, while an aggressive correction lights only the low side.
+        wing_half_span := f32(4.65)
+        wing_presentation_basis := world_rondine_presentation_basis(editor)
+        loaded_wing_side :=
+            editor.rondine.telemetry.slip < 0 ? f32(-1) : f32(1)
+        for side in 0 ..< 2 {
+            side_sign := side == 0 ? f32(-1) : f32(1)
+            if side_sign != loaded_wing_side do continue
+            low_tip_displacement :=
+                max(
+                    -wing_presentation_basis.right.y *
+                    side_sign *
+                    wing_half_span,
+                    f32(0),
+                )
+            // Lateral hull load compresses the loaded outboard skim even when
+            // presentation heel is deliberately restrained for readability.
+            // This lets a sustained slide rake one side while level, no-slip
+            // planing remains exactly dormant.
+            loaded_tip_compression := f32(0)
+            if side_sign == loaded_wing_side {
+                loaded_tip_compression =
+                    math.abs(editor.rondine.telemetry.slip) * .72 +
+                    drift_strength * .10
+            }
+            tip_proximity :=
+                clamp(
+                    (max(low_tip_displacement, loaded_tip_compression) - .10) /
+                    .62,
+                    0,
+                    1,
+                )
+            tip_strength :=
+                tip_proximity *
+                clamp(
+                    contact_strength * .62 +
+                    drift_strength * .58 +
+                    countersteer * .34,
+                    0,
+                    1,
+                )
+            if tip_strength <= .045 do continue
+            tip_visibility := f32(math.sqrt(f64(tip_strength)))
+            tip_root :=
+                contact_base +
+                contact_right * (side_sign * (wing_half_span + .28)) +
+                contact_back * .62
+            tip_root.y += .045
+            // The original rake streaks supplied motion but disappeared at
+            // chase distance. A translucent triangular sheet gives the skim a
+            // large-scale silhouette while keeping its root pinned outside
+            // the propwash footprint.
+            tip_sheet_foot :=
+                tip_root +
+                contact_back * (1.18 + tip_strength * .82) +
+                contact_right * (side_sign * (.38 + tip_strength * .34))
+            tip_sheet_crest := (tip_root + tip_sheet_foot) * .5
+            tip_sheet_crest +=
+                contact_right * (side_sign * (.48 + tip_strength * .48))
+            tip_sheet_crest.y += .58 + tip_strength * 1.80
+            tip_sheet_alpha :=
+                u8(clamp(205 * tip_visibility, 0, 214))
+            tip_sheet_foam := rl.Color{226, 251, 245, tip_sheet_alpha}
+            tip_sheet_mist :=
+                rl.Color {
+                    148,
+                    220,
+                    227,
+                    u8(f32(tip_sheet_alpha) * .48),
+                }
+            tip_sheet_clear :=
+                rl.Color{tip_sheet_foam.r, tip_sheet_foam.g, tip_sheet_foam.b, 0}
+            for tip_panel in 0 ..< 3 {
+                panel_start := f32(tip_panel) / 3
+                panel_end := f32(tip_panel + 1) / 3
+                lower_start :=
+                    tip_root +
+                    (tip_sheet_foot - tip_root) * panel_start
+                lower_end :=
+                    tip_root +
+                    (tip_sheet_foot - tip_root) * panel_end
+                start_hump :=
+                    f32(math.sin(f64(panel_start * math.PI)))
+                end_hump :=
+                    f32(math.sin(f64(panel_end * math.PI)))
+                upper_start :=
+                    lower_start +
+                    (tip_sheet_crest - lower_start) *
+                    (start_hump * .92)
+                upper_end :=
+                    lower_end +
+                    (tip_sheet_crest - lower_end) *
+                    (end_hump * .92)
+                world_rondine_triangle_double_sided(
+                    lower_start,
+                    lower_end,
+                    upper_end,
+                    tip_sheet_clear,
+                    tip_sheet_clear,
+                    tip_sheet_mist,
+                )
+                world_rondine_triangle_double_sided(
+                    lower_start,
+                    upper_end,
+                    upper_start,
+                    tip_sheet_clear,
+                    tip_sheet_mist,
+                    tip_sheet_foam,
+                )
+            }
+            for rake in 0 ..< 2 {
+                rake_f := f32(rake)
+                variation :=
+                    world_rondine_live_variation(
+                        live_spray_epoch,
+                        live_spray_blend,
+                        u32(side),
+                        u32(310 + rake),
+                    )
+                position :=
+                    tip_root +
+                    contact_back * (rake_f * .16) +
+                    contact_right *
+                    (side_sign * (variation - .5) * .10)
+                direction :=
+                    contact_back *
+                    (.78 + rake_f * .24 + variation * .22) +
+                    contact_right *
+                    (side_sign * (.20 + rake_f * .24 + variation * .16)) +
+                    third_person.Vec3 {
+                        0,
+                        .24 + rake_f * .18 + variation * .24,
+                        0,
+                    }
+                rake_alpha :=
+                    u8(
+                        clamp(
+                            (154 + variation * 64 - rake_f * 18) *
+                            tip_visibility,
+                            0,
+                            212,
+                        ),
+                    )
+                rake_color := rl.Color{233, 253, 247, rake_alpha}
+                world_rondine_spray_streak(
+                    camera,
+                    position,
+                    direction,
+                    .48 + tip_strength * .66 + rake_f * .12,
+                    rake_color,
+                )
+                bead_position :=
+                    position +
+                    linalg.normalize0(direction) *
+                    (.62 + tip_strength * .38 + rake_f * .14)
+                world_rondine_spray_bead(
+                    camera,
+                    bead_position,
+                    .045 + tip_visibility * .030 + rake_f * .006,
+                    {235, 254, 248, u8(f32(rake_alpha) * .78)},
+                )
+            }
+            crown_bead_position :=
+                tip_sheet_crest +
+                contact_right * (side_sign * .16)
+            crown_bead_position.y += .10
+            world_rondine_spray_bead(
+                camera,
+                crown_bead_position,
+                .052 + tip_visibility * .038,
+                {235, 254, 248, u8(f32(tip_sheet_alpha) * .86)},
+            )
+            // A short diagonal scar anchors the airborne rake to the water.
+            // It sits outside the propwash footprint, so the player can read
+            // that the wing—not the engine—touched the surface.
+            scrawl_tangent :=
+                contact_back * .78 +
+                contact_right * (side_sign * .36)
+            scrawl_radial :=
+                contact_right * side_sign -
+                contact_back * .18
+            scrawl_alpha :=
+                u8(clamp(188 * tip_visibility, 0, 194))
+            world_rondine_surface_chip(
+                tip_root + contact_back * .16,
+                scrawl_tangent,
+                scrawl_radial,
+                .22 + tip_strength * .20,
+                .032 + tip_strength * .020,
+                {230, 252, 246, scrawl_alpha},
+                double_sided = true,
+            )
+        }
+
+        // The pusher propellers sit well outside the hull. Their downwash
+        // strikes the surface as a second, narrower pair of spray sheets,
+        // visually tying the wake to Rondine's full span instead of making all
+        // of the water energy appear to originate at the centerline.
+        // A sliding Rondine loads the wide pusher contact points even when the
+        // generic hull-contact spray has already settled. Feeding drift
+        // directly into prop wash keeps the live effect spanning the aircraft
+        // instead of collapsing into a faint centerline wake during a stable
+        // Tokyo-drift-style slide.
+        propwash_strength :=
+            clamp(
+                contact_strength * (.52 + drift_strength * .38) +
+                drift_strength * .34,
+                0,
+                1.15,
+            )
+        if propwash_strength > .08 {
+            for side in 0 ..< 2 {
+                side_sign := side == 0 ? f32(-1) : f32(1)
+                outside := clamp(1 + side_sign * editor.rondine.telemetry.slip * 1.25, .55, 1.45)
+                root :=
+                    contact_base +
+                    contact_right * (side_sign * 3.8) +
+                    body_back * .35
+                heel_offset := editor.rondine.telemetry.slip * drift_strength * 1.25
+                foot :=
+                    root +
+                    contact_back * (1.2 + propwash_strength * 1.8) +
+                    contact_right * (side_sign * (.18 + propwash_strength * .42) + heel_offset)
+                crest :=
+                    root +
+                    contact_back * (.55 + propwash_strength * .9) +
+                    contact_right * (side_sign * .12)
+                crest.y += .25 + propwash_strength * 1.20 * outside
+                edge :=
+                    foot +
+                    contact_right * (side_sign * (.22 + propwash_strength * .38) * outside)
+                prop_alpha := u8(clamp(172 * propwash_strength * outside, 0, 214))
+                prop_foam := rl.Color{224, 249, 243, prop_alpha}
+                prop_mist := rl.Color{143, 217, 224, u8(f32(prop_alpha) * .48)}
+                prop_clear := rl.Color{prop_foam.r, prop_foam.g, prop_foam.b, 0}
+                world_rondine_triangle_colored(root, foot, crest, prop_foam, prop_foam, prop_mist, side == 1)
+                world_rondine_triangle_colored(foot, edge, crest, prop_foam, prop_clear, prop_mist, side == 1)
+
+                // Low, bright prop-bite chips remain legible when the taller
+                // translucent sheet is edge-on to the chase camera. Their
+                // staggered placement also shows the prop contact sweeping
+                // rearward rather than appearing as a static point under the
+                // wing.
+                bite_alpha := u8(clamp(172 * propwash_strength * outside, 0, 205))
+                bite_color := rl.Color{229, 252, 246, bite_alpha}
+                for bite in 0 ..< 2 {
+                    bite_f := f32(bite)
+                    bite_position :=
+                        root +
+                        contact_back * (.42 + bite_f * .38) +
+                        contact_right *
+                        (side_sign * (.08 + bite_f * .09 + heel_offset * .12))
+                    bite_position.y += .025
+                    bite_tangent :=
+                        contact_back * (.78 + bite_f * .14) +
+                        contact_right * (side_sign * (.26 + outside * .12))
+                    bite_radial :=
+                        contact_right * side_sign - contact_back * (.08 + bite_f * .05)
+                    world_rondine_surface_chip(
+                        bite_position,
+                        bite_tangent,
+                        bite_radial,
+                        .14 + propwash_strength * .10 - bite_f * .018,
+                        .028 + propwash_strength * .014,
+                        {bite_color.r, bite_color.g, bite_color.b, u8(f32(bite_alpha) * (1 - bite_f * .24))},
+                    )
+                }
+
+                // Each pusher contact flicks off two narrow filaments. The
+                // loaded prop gets longer, brighter trajectories while the
+                // unloaded side remains a quieter positional cue.
+                pressure_role := outside >= 1 ? u32(1) : u32(0)
+                for filament in 0 ..< 2 {
+                    filament_f := f32(filament)
+                    variation :=
+                        world_rondine_live_variation(
+                            live_spray_epoch,
+                            live_spray_blend,
+                            pressure_role,
+                            u32(50 + side * 2 + filament),
+                        )
+                    prop_phase :=
+                        math.sin(
+                            (
+                                editor.rondine.propeller_turns +
+                                f32(side) * .5 +
+                                filament_f * .19
+                            ) *
+                            math.TAU,
+                        )
+                    filament_position :=
+                        root +
+                        contact_back * (.68 + filament_f * .46) +
+                        contact_right *
+                        (side_sign * (.10 + filament_f * .18 + prop_phase * .07))
+                    filament_position.y += .18 + variation * .24 + prop_phase * .055
+                    filament_direction :=
+                        contact_back * (.54 + variation * .32) +
+                        contact_right *
+                        (side_sign * (.68 + filament_f * .38 + variation * .26 + prop_phase * .12)) +
+                        third_person.Vec3 {
+                            0,
+                            .36 + filament_f * .22 + variation * .34 + prop_phase * .10,
+                            0,
+                        }
+                    filament_alpha := u8(clamp((105 + variation * 62) * propwash_strength * outside, 0, 195))
+                    filament_color := rl.Color{229, 252, 246, filament_alpha}
+                    world_rondine_spray_streak(
+                        camera,
+                        filament_position,
+                        filament_direction,
+                        (.42 + variation * .20 + filament_f * .10) *
+                        outside *
+                        (1 + prop_phase * .10),
+                        filament_color,
+                    )
+                }
+            }
+        }
+
+    }
+    // Straight planing throws a few low, fast needles from the stern. Speed
+    // is the reliable source for this always-fresh cue; wake/contact intensity
+    // intentionally settles near zero during a stable run. Height and drift
+    // still gate it away before flight or asymmetric spray choreography.
+    planing_spark_surface :=
+        editor.rondine.grounded ? f32(1) :
+        clamp(1 - editor.rondine.telemetry.height / 1.25, 0, 1)
+    planing_spark_strength :=
+        clamp((editor.rondine.telemetry.speed - 18) / 28, 0, 1) *
+        planing_spark_surface *
+        clamp(
+            1 -
+            math.abs(editor.rondine.telemetry.slip) * .55 -
+            drift_strength * 2.4,
+            0,
+            1,
+        )
+    if planing_spark_strength > .02 {
+        spark_base :=
+            third_person.Vec3 {
+                editor.rondine.body.position.x,
+                sea_y,
+                editor.rondine.body.position.z,
+            }
+        spark_back := -world_rondine_surface_heading(editor)
+        spark_right :=
+            third_person.Vec3 {
+                editor.rondine.body.basis.right.x,
+                0,
+                editor.rondine.body.basis.right.z,
+            }
+        planing_spark_visibility :=
+            f32(math.sqrt(f64(planing_spark_strength)))
+        for spark in 0 ..< 4 {
+            spark_f := f32(spark)
+            side_sign := spark & 1 == 0 ? f32(-1) : f32(1)
+            variation :=
+                world_rondine_live_variation(
+                    live_spray_epoch,
+                    live_spray_blend,
+                    u32(spark & 1),
+                    u32(210 + spark),
+                )
+            spark_position :=
+                spark_base +
+                spark_back * (1.65 + spark_f * .52 + variation * .24) +
+                spark_right *
+                (side_sign * (.82 + spark_f * .18 + variation * .18))
+            spark_position.y += .18 + spark_f * .045 + variation * .12
+            spark_direction :=
+                spark_back * (.88 + spark_f * .16 + variation * .22) +
+                spark_right *
+                (side_sign * (.38 + spark_f * .13 + variation * .16)) +
+                third_person.Vec3{0, .22 + spark_f * .055 + variation * .14, 0}
+            spark_alpha :=
+                u8(
+                    clamp(
+                        (138 + variation * 64) *
+                        planing_spark_visibility,
+                        0,
+                        205,
+                    ),
+                )
+            world_rondine_spray_streak(
+                camera,
+                spark_position,
+                spark_direction,
+                .38 + spark_f * .085 + variation * .12,
+                {232, 253, 247, spark_alpha},
+            )
+        }
+    }
+
+    // The twin pushers also cut short rotating ticks into the surface during
+    // steady high-speed contact. Unlike the taller contact-spray sheets these
+    // are speed-driven, so the full-span engine signature remains present
+    // after transient spray intensity settles.
+    prop_tick_strength :=
+        clamp(
+            (editor.rondine.telemetry.speed - 16) / 30 +
+            surge_intensity * .24,
+            0,
+            1,
+        ) *
+        planing_spark_surface
+    if prop_tick_strength > .04 {
+        prop_tick_base :=
+            third_person.Vec3 {
+                editor.rondine.body.position.x,
+                sea_y,
+                editor.rondine.body.position.z,
+            }
+        prop_tick_back := -world_rondine_surface_heading(editor)
+        prop_tick_right :=
+            third_person.Vec3 {
+                editor.rondine.body.basis.right.x,
+                0,
+                editor.rondine.body.basis.right.z,
+            }
+        prop_tick_visibility :=
+            f32(math.sqrt(f64(prop_tick_strength)))
+        for side in 0 ..< 2 {
+            side_sign := side == 0 ? f32(-1) : f32(1)
+            for tick in 0 ..< 2 {
+                tick_f := f32(tick)
+                prop_phase :=
+                    math.sin(
+                        (
+                            editor.rondine.propeller_turns +
+                            f32(side) * .5 +
+                            tick_f * .22
+                        ) *
+                        math.TAU,
+                    )
+                tick_position :=
+                    prop_tick_base +
+                    prop_tick_right *
+                    (side_sign * (3.78 + prop_phase * .12)) +
+                    prop_tick_back * (.62 + tick_f * .42)
+                tick_position.y +=
+                    .10 +
+                    tick_f * .05 +
+                    max(prop_phase, f32(0)) * .10
+                tick_direction :=
+                    prop_tick_back * (.64 + tick_f * .16) +
+                    prop_tick_right *
+                    (side_sign * (.28 + prop_phase * .16)) +
+                    third_person.Vec3 {
+                        0,
+                        .14 + tick_f * .07 + max(prop_phase, f32(0)) * .12,
+                        0,
+                    }
+                tick_alpha :=
+                    u8(
+                        clamp(
+                            (118 + tick_f * 26 + prop_phase * 18) *
+                            prop_tick_visibility,
+                            0,
+                            176,
+                        ),
+                    )
+                world_rondine_spray_streak(
+                    camera,
+                    tick_position,
+                    tick_direction,
+                    .24 + tick_f * .07 + math.abs(prop_phase) * .05,
+                    {226, 250, 245, tick_alpha},
+                )
+                tick_surface_position := tick_position
+                tick_surface_position.y = sea_y + .038
+                tick_tangent :=
+                    prop_tick_back * (.72 + tick_f * .10) +
+                    prop_tick_right *
+                    (side_sign * (.24 + prop_phase * .12))
+                tick_radial :=
+                    prop_tick_right * side_sign -
+                    prop_tick_back * (.10 + tick_f * .04)
+                world_rondine_surface_chip(
+                    tick_surface_position,
+                    tick_tangent,
+                    tick_radial,
+                    .14 + tick_f * .04 + math.abs(prop_phase) * .025,
+                    .028 + prop_tick_visibility * .012,
+                    {226, 250, 245, u8(f32(tick_alpha) * .86)},
+                    double_sided = true,
+                )
+            }
+        }
+    }
+    // Opening the throttle compresses a broad transverse patch behind the
+    // stern before resolving into the two rotating prop tracks. Three broken
+    // bars provide a brief large-to-medium launch cadence; steady cruise
+    // drops them completely while retaining the small prop ticks.
+    surge_strength :=
+        surge_intensity *
+        planing_spark_surface *
+        clamp(1 - drift_strength * 1.8, 0, 1)
+    if surge_strength > .04 {
+        surge_base :=
+            third_person.Vec3 {
+                editor.rondine.body.position.x,
+                sea_y + .041,
+                editor.rondine.body.position.z,
+            }
+        surge_back := -world_rondine_surface_heading(editor)
+        surge_right :=
+            third_person.Vec3 {
+                editor.rondine.body.basis.right.x,
+                0,
+                editor.rondine.body.basis.right.z,
+            }
+        surge_visibility := f32(math.sqrt(f64(surge_strength)))
+        for bar in 0 ..< 3 {
+            bar_f := f32(bar)
+            side_offset := bar & 1 == 0 ? f32(-1) : f32(1)
+            bar_position :=
+                surge_base +
+                surge_back * (2.8 + bar_f * .72) +
+                surge_right * (side_offset * (.10 + bar_f * .06))
+            bar_tangent :=
+                surge_right +
+                surge_back * (side_offset * (.08 + bar_f * .035))
+            bar_radial :=
+                surge_back -
+                surge_right * (side_offset * .10)
+            bar_alpha :=
+                u8(
+                    clamp(
+                        (186 - bar_f * 24) *
+                        surge_visibility,
+                        0,
+                        202,
+                    ),
+                )
+            world_rondine_surface_chip(
+                bar_position,
+                bar_tangent,
+                bar_radial,
+                1.28 + surge_visibility * .62 - bar_f * .16,
+                .105 + surge_visibility * .045 - bar_f * .010,
+                {232, 253, 247, bar_alpha},
+                double_sided = true,
+            )
+        }
+    }
+    // Power-over combines the launch compression with lateral hull load.
+    // Rather than drawing the straight transverse bars through a slide, peel
+    // that energy into a single outside rooster tail: one broad lifted sheet,
+    // several stepped ribs, and a crown of fine droplets.
+    power_over_strength :=
+        clamp(surge_intensity * drift_strength * 3.2, 0, 1) *
+        planing_spark_surface
+    if power_over_strength > .045 {
+        power_visibility := f32(math.sqrt(f64(power_over_strength)))
+        power_base :=
+            third_person.Vec3 {
+                editor.rondine.body.position.x,
+                sea_y + .047,
+                editor.rondine.body.position.z,
+            }
+        power_back := -world_rondine_surface_heading(editor)
+        power_right :=
+            third_person.Vec3 {
+                editor.rondine.body.basis.right.x,
+                0,
+                editor.rondine.body.basis.right.z,
+            }
+        power_side := math.sign(editor.rondine.steering)
+        if math.abs(editor.rondine.telemetry.slip) > .025 {
+            power_side = math.sign(editor.rondine.telemetry.slip)
+        }
+        if power_side == 0 do power_side = 1
+        power_root :=
+            power_base +
+            power_back * 3.40 +
+            power_right * (power_side * .90)
+        power_heel :=
+            power_base +
+            power_back * 6.40 +
+            power_right * (power_side * 1.70)
+        power_crown :=
+            power_base +
+            power_back * 4.40 +
+            power_right * (power_side * (3.25 + power_visibility * 1.10))
+        power_crown.y += 1.50 + power_visibility * 2.80
+        power_alpha := u8(clamp(206 * power_visibility, 0, 218))
+        power_foam := rl.Color{232, 254, 248, power_alpha}
+        power_mist := rl.Color{135, 211, 222, u8(f32(power_alpha) * .40)}
+        for power_panel in 0 ..< 4 {
+            panel_start := f32(power_panel) / 4
+            panel_end := f32(power_panel + 1) / 4
+            panel_lower_start :=
+                power_root +
+                (power_heel - power_root) * panel_start
+            panel_lower_end :=
+                power_root +
+                (power_heel - power_root) * panel_end
+            panel_start_hump :=
+                f32(math.sin(f64(panel_start * math.PI)))
+            panel_end_hump :=
+                f32(math.sin(f64(panel_end * math.PI)))
+            panel_upper_start :=
+                panel_lower_start +
+                (power_crown - panel_lower_start) *
+                (panel_start_hump * .92)
+            panel_upper_end :=
+                panel_lower_end +
+                (power_crown - panel_lower_end) *
+                (panel_end_hump * .92)
+            panel_lower_clear :=
+                rl.Color {
+                    power_foam.r,
+                    power_foam.g,
+                    power_foam.b,
+                    u8(f32(power_alpha) * .32),
+                }
+            world_rondine_triangle_double_sided(
+                panel_lower_start,
+                panel_lower_end,
+                panel_upper_end,
+                panel_lower_clear,
+                panel_lower_clear,
+                power_mist,
+            )
+            world_rondine_triangle_double_sided(
+                panel_lower_start,
+                panel_upper_end,
+                panel_upper_start,
+                panel_lower_clear,
+                power_mist,
+                power_foam,
+            )
+        }
+        for rib in 0 ..< 3 {
+            rib_f := f32(rib)
+            rib_root :=
+                power_base +
+                power_back * (3.70 + rib_f * .58) +
+                power_right * (power_side * (1.02 + rib_f * .22))
+            rib_tip :=
+                rib_root +
+                power_right * (power_side * (.72 + power_visibility * .30))
+            rib_tip.y += .30 + power_visibility * (.54 - rib_f * .08)
+            rib_width := power_back * (.11 + rib_f * .018)
+            rib_color :=
+                rl.Color {
+                    229,
+                    253,
+                    247,
+                    u8(f32(power_alpha) * (.82 - rib_f * .17)),
+                }
+            world_rondine_triangle_double_sided(
+                rib_root - rib_width,
+                rib_root + rib_width,
+                rib_tip,
+                rib_color,
+                rib_color,
+                {rib_color.r, rib_color.g, rib_color.b, 0},
+            )
+        }
+        for droplet in 0 ..< 5 {
+            droplet_f := f32(droplet)
+            droplet_position :=
+                power_crown +
+                power_back * ((droplet_f - 2) * .14) +
+                power_right *
+                (power_side * ((droplet_f - 2) * .17))
+            droplet_position.y +=
+                .10 +
+                (.24 - math.abs(droplet_f - 2) * .045) *
+                power_visibility
+            world_rondine_spray_bead(
+                camera,
+                droplet_position,
+                .062 + power_visibility * .031 - math.abs(droplet_f - 2) * .004,
+                {231, 254, 248, u8(f32(power_alpha) * (.72 - math.abs(droplet_f - 2) * .075))},
+            )
+        }
+    }
+    // When lateral slip crosses through center and loads the opposite side,
+    // throw a few lifted beads from the live stern. The decisive crossed
+    // slashes and hooks are stamped into wake history below so they stay fixed
+    // at the actual crossover instead of sliding along with the aircraft.
+    transition_strength :=
+        drift_transition *
+        planing_spark_surface
+    if transition_strength > .04 {
+        transition_visibility := f32(math.sqrt(f64(transition_strength)))
+        transition_base :=
+            third_person.Vec3 {
+                editor.rondine.body.position.x,
+                sea_y + .046,
+                editor.rondine.body.position.z,
+            }
+        transition_back := -world_rondine_surface_heading(editor)
+        transition_right :=
+            third_person.Vec3 {
+                editor.rondine.body.basis.right.x,
+                0,
+                editor.rondine.body.basis.right.z,
+            }
+        transition_side := editor.rondine.slip_side
+        if transition_side == 0 do transition_side = math.sign(editor.rondine.steering)
+        if transition_side == 0 do transition_side = 1
+        transition_alpha := u8(clamp(206 * transition_visibility, 0, 218))
+        for bead in 0 ..< 4 {
+            bead_f := f32(bead)
+            bead_position :=
+                transition_base +
+                transition_back * (3.72 + bead_f * .24) +
+                transition_right *
+                (transition_side * (.72 + bead_f * .21))
+            bead_position.y +=
+                .24 +
+                transition_visibility * (.28 + bead_f * .08)
+            world_rondine_spray_bead(
+                camera,
+                bead_position,
+                .052 + transition_visibility * .025 - bead_f * .003,
+                {232, 254, 248, u8(f32(transition_alpha) * (.70 - bead_f * .10))},
+            )
+        }
+    }
+    // Chopping the throttle pulls the prop wash inward instead of producing
+    // the broad launch-pressure bars. A low suction pocket supplies the large
+    // read, paired converging crests the medium read, and short inner teeth
+    // carry the pinch into the ordinary prop tracks.
+    brake_strength :=
+        brake_intensity *
+        planing_spark_surface *
+        clamp(1 - drift_strength * 1.35, 0, 1)
+    if brake_strength > .04 {
+        brake_base :=
+            third_person.Vec3 {
+                editor.rondine.body.position.x,
+                sea_y + .039,
+                editor.rondine.body.position.z,
+            }
+        brake_back := -world_rondine_surface_heading(editor)
+        brake_right :=
+            third_person.Vec3 {
+                editor.rondine.body.basis.right.x,
+                0,
+                editor.rondine.body.basis.right.z,
+            }
+        brake_visibility := f32(math.sqrt(f64(brake_strength)))
+        pocket_alpha := u8(clamp(76 * brake_visibility, 0, 82))
+        world_rondine_surface_chip(
+            brake_base + brake_back * 3.65,
+            brake_right,
+            brake_back,
+            1.22 + brake_visibility * .52,
+            .24 + brake_visibility * .10,
+            {42, 112, 121, pocket_alpha},
+            double_sided = true,
+        )
+        for side in 0 ..< 2 {
+            side_sign := side == 0 ? f32(-1) : f32(1)
+            crest_alpha := u8(clamp(174 * brake_visibility, 0, 188))
+            crest_position :=
+                brake_base +
+                brake_back * (3.15 + f32(side) * .18) +
+                brake_right * (side_sign * .72)
+            crest_tangent :=
+                brake_back * .78 -
+                brake_right * (side_sign * .63)
+            crest_radial :=
+                brake_right * -side_sign +
+                brake_back * .12
+            world_rondine_surface_chip(
+                crest_position,
+                crest_tangent,
+                crest_radial,
+                .82 + brake_visibility * .28,
+                .095 + brake_visibility * .035,
+                {224, 249, 244, crest_alpha},
+                double_sided = true,
+            )
+            for tooth in 0 ..< 2 {
+                tooth_f := f32(tooth)
+                tooth_position :=
+                    brake_base +
+                    brake_back * (4.05 + tooth_f * .48) +
+                    brake_right * (side_sign * (.34 - tooth_f * .11))
+                world_rondine_surface_chip(
+                    tooth_position,
+                    brake_right * -side_sign + brake_back * .24,
+                    brake_back,
+                    .24 + brake_visibility * .09,
+                    .035 + brake_visibility * .012,
+                    {232, 253, 247, u8(f32(crest_alpha) * (.82 - tooth_f * .15))},
+                    double_sided = true,
+                )
+            }
+        }
+    }
+    // Steering through the throttle chop tears one edge of the symmetric
+    // suction pinch upward. The outside sheet is the large gesture, its
+    // staggered surface splinters are the medium cadence, and camera-facing
+    // beads supply the brief small-scale glitter at the curling tip.
+    brake_flick_strength :=
+        brake_strength *
+        clamp(math.abs(editor.rondine.steering) * 2.4, 0, 1)
+    if brake_flick_strength > .05 {
+        flick_visibility := f32(math.sqrt(f64(brake_flick_strength)))
+        flick_base :=
+            third_person.Vec3 {
+                editor.rondine.body.position.x,
+                sea_y + .045,
+                editor.rondine.body.position.z,
+            }
+        flick_back := -world_rondine_surface_heading(editor)
+        flick_right :=
+            third_person.Vec3 {
+                editor.rondine.body.basis.right.x,
+                0,
+                editor.rondine.body.basis.right.z,
+            }
+        flick_side := editor.rondine.steering >= 0 ? f32(1) : f32(-1)
+        sheet_root :=
+            flick_base +
+            flick_back * 3.05 +
+            flick_right * (flick_side * .72)
+        sheet_inner :=
+            flick_base +
+            flick_back * 4.25 +
+            flick_right * (flick_side * .28)
+        sheet_tip :=
+            flick_base +
+            flick_back * 3.72 +
+            flick_right * (flick_side * (1.72 + flick_visibility * .42))
+        sheet_tip.y += .42 + flick_visibility * .72
+        sheet_alpha := u8(clamp(182 * flick_visibility, 0, 196))
+        sheet_foam := rl.Color{229, 252, 246, sheet_alpha}
+        sheet_mist := rl.Color{145, 218, 225, u8(f32(sheet_alpha) * .48)}
+        world_rondine_triangle_double_sided(
+            sheet_root,
+            sheet_inner,
+            sheet_tip,
+            sheet_foam,
+            {sheet_foam.r, sheet_foam.g, sheet_foam.b, u8(f32(sheet_alpha) * .66)},
+            sheet_mist,
+        )
+        for splinter in 0 ..< 3 {
+            splinter_f := f32(splinter)
+            splinter_position :=
+                flick_base +
+                flick_back * (3.35 + splinter_f * .48) +
+                flick_right *
+                (flick_side * (1.02 + splinter_f * .22))
+            world_rondine_surface_chip(
+                splinter_position,
+                flick_back * (.62 + splinter_f * .08) +
+                flick_right * (flick_side * .78),
+                flick_right * flick_side - flick_back * .15,
+                .36 + flick_visibility * .13 - splinter_f * .035,
+                .048 + flick_visibility * .018,
+                {230, 253, 247, u8(f32(sheet_alpha) * (.86 - splinter_f * .16))},
+                double_sided = true,
+            )
+        }
+        for bead in 0 ..< 4 {
+            bead_f := f32(bead)
+            bead_position :=
+                sheet_tip +
+                flick_back * (bead_f * .17) +
+                flick_right * (flick_side * (bead_f * .15))
+            bead_position.y += .08 + bead_f * .13
+            world_rondine_spray_bead(
+                camera,
+                bead_position,
+                .055 + flick_visibility * .025 - bead_f * .004,
+                {225, 252, 247, u8(f32(sheet_alpha) * (.72 - bead_f * .11))},
+            )
+        }
+    }
+    // Historical samples remain fixed in the water after liftoff, but the
+    // unsampled stern fan must not follow the aircraft into the air. Taper it
+    // through the last meter and a half of ground effect for a clean handoff
+    // rather than an abrupt cutoff at the grounded flag.
+    live_surface_fraction :=
+        clamp(1 - editor.rondine.telemetry.height / 1.5, 0, 1)
+    live_strength :=
+        editor.rondine.telemetry.wake_intensity *
+        live_surface_fraction
+    if live_strength > .02 {
+        live_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
+        live_forward := world_rondine_surface_heading(editor)
+        live_right := third_person.Vec3{editor.rondine.body.basis.right.x, 0, editor.rondine.body.basis.right.z}
+        live_back := -live_forward
+        live_turn := clamp(editor.rondine.telemetry.turn_rate * 3 + editor.rondine.telemetry.slip * 1.8, -1, 1)
+        for side in 0 ..< 2 {
+            side_sign := side == 0 ? f32(-1) : f32(1)
+            outside := clamp(1 + side_sign * live_turn * .45, .55, 1.45)
+            root := live_base + live_right * (side_sign * .68)
+            inner := root + live_back * 2.20 + live_right * (side_sign * .24)
+            outer := root + live_back * (4.30 * outside) + live_right * (side_sign * 1.22 * outside)
+            crest := root + live_back * (2.85 * outside) + live_right * (side_sign * .72 * outside)
+            crest.y += .70 + live_strength * 1.40
+            alpha := u8(clamp(48 + 154 * live_strength * outside, 0, 205))
+            foam := rl.Color{228, 251, 245, alpha}
+            mist := rl.Color{151, 224, 228, u8(f32(alpha) * .64)}
+            world_rondine_triangle_colored(root, inner, crest, foam, foam, mist, side == 1)
+            world_rondine_triangle_colored(
+                root,
+                crest,
+                outer,
+                foam,
+                mist,
+                {foam.r, foam.g, foam.b, 0},
+                side == 1,
+            )
+        }
+
+        // A short chain of boiling foam bridges the live stern burst to the
+        // sampled historical churn. Unequal spacing and alternating offsets
+        // keep these patches from becoming a painted center stripe.
+        for boil in 0 ..< 4 {
+            boil_f := f32(boil)
+            variation :=
+                world_rondine_live_variation(
+                    live_spray_epoch,
+                    live_spray_blend,
+                    0,
+                    u32(40 + boil),
+                )
+            lateral_variation := variation * 2 - 1
+            center :=
+                live_base +
+                live_back * (1.05 + boil_f * (.72 + variation * .16)) +
+                live_right * (lateral_variation * .18)
+            center.y += .016
+            half_length := .32 + live_strength * .22 + variation * .14
+            half_width := .17 + live_strength * .15 + variation * .11
+            front := center - live_back * half_length
+            rear := center + live_back * half_length
+            left := center - live_right * half_width
+            right := center + live_right * half_width
+            boil_alpha := u8(clamp((158 + variation * 82) * live_strength, 0, 224))
+            boil_foam := rl.Color{228, 251, 245, boil_alpha}
+            boil_clear := rl.Color{151, 220, 225, 0}
+            world_triangle_colored(front, right, rear, boil_clear, boil_foam, boil_clear)
+            world_triangle_colored(front, rear, left, boil_clear, boil_clear, boil_foam)
+        }
+
+    }
+    // Join successive pressure marks into curved ribbons. Building a complete
+    // fan at every sample made a hard saw-tooth silhouette during a drift;
+    // shared sections keep the wake continuous while preserving its faceted,
+    // procedural triangle language.
+    for sample_index in 1 ..< editor.rondine.wake_count {
+        older := editor.rondine.wake[sample_index - 1]
+        newer := editor.rondine.wake[sample_index]
+        older_fade_linear := clamp(1 - older.age / older.lifetime, 0, 1)
+        newer_fade_linear := clamp(1 - newer.age / newer.lifetime, 0, 1)
+        // Foam loses opacity faster than its disturbance loses width. Squared
+        // decay keeps the fresh wake bold while letting its broad tail dissolve
+        // into the ocean instead of ending as a long, uniformly bright rail.
+        older_fade := older_fade_linear * older_fade_linear
+        newer_fade := newer_fade_linear * newer_fade_linear
+        older_detail_window := max(f32(1.15), older.lifetime * .82)
+        newer_detail_window := max(f32(1.15), newer.lifetime * .82)
+        older_detail_fade := clamp(1 - older.age / older_detail_window, 0, 1)
+        newer_detail_fade := clamp(1 - newer.age / newer_detail_window, 0, 1)
+        older_fade *= older_detail_fade * older_detail_fade
+        newer_fade *= newer_detail_fade * newer_detail_fade
+        if older_fade <= .01 && newer_fade <= .01 do continue
+        older_base := third_person.Vec3{older.position.x, sea_y, older.position.z}
+        newer_base := third_person.Vec3{newer.position.x, sea_y, newer.position.z}
+        // The chase camera can overtake old pressure marks during a sustained
+        // drift. Let those sections pass underneath instead of clipping a
+        // meter-wide surface triangle against the near plane.
+        segment_center := (older_base + newer_base) * .5
+        segment_depth := linalg.dot(segment_center - camera.position, camera.forward)
+        if segment_depth < 7.5 do continue
+        camera_fade := clamp((segment_depth - 7.5) / 5.5, 0, 1)
+        // Preserve the broad water response at distance while retiring detail
+        // in perceptual order: flecks/curls first, then raised breakers and
+        // shards. This prevents far trail sections collapsing into sparkly
+        // sub-pixel noise without shortening the readable wake silhouette.
+        fine_distance_fade := clamp((95 - segment_depth) / 35, 0, 1)
+        medium_distance_fade := clamp((145 - segment_depth) / 60, 0, 1)
+        older_fade *= camera_fade
+        newer_fade *= camera_fade
+        older_right := third_person.Vec3{older.right.x, 0, older.right.z}
+        newer_right := third_person.Vec3{newer.right.x, 0, newer.right.z}
+        // Stored turn is steering input, whose sign is opposite the resulting
+        // yaw rate. Convert it before combining with slip so historical foam
+        // stays on the same loaded side as the live spray and rooster crown.
+        older_turn := clamp(-older.turn + older.slip * 1.8, -1, 1)
+        newer_turn := clamp(-newer.turn + newer.slip * 1.8, -1, 1)
+        // The broad center trough intentionally carries less foam than its
+        // pressure rails, but close-range planing needs a little aeration so
+        // it does not read as an untouched strip of ocean. Deterministic
+        // paired bubble chips follow each sampled segment; occasional bead
+        // heads suggest bubbles popping above the surface. Both retire with
+        // the fine-detail distance band.
+        trough_aeration_strength :=
+            (older.strength * older_fade + newer.strength * newer_fade) *
+            .5 *
+            clamp(1 - (math.abs(older.slip) + math.abs(newer.slip)) * .9, .28, 1) *
+            fine_distance_fade
+        trough_hash := world_rondine_wake_hash(older.serial, 0, 410)
+        if trough_aeration_strength > .08 && trough_hash % 4 != 0 {
+            trough_segment := newer_base - older_base
+            trough_right := linalg.normalize0(older_right + newer_right)
+            for bubble in 0 ..< 2 {
+                bubble_f := f32(bubble)
+                bubble_seed :=
+                    world_rondine_wake_hash(
+                        older.serial,
+                        0,
+                        u32(420 + bubble),
+                    )
+                bubble_variation := f32(bubble_seed % 31) / 30
+                bubble_along := .28 + bubble_f * .39 + (bubble_variation - .5) * .12
+                bubble_side := bubble == 0 ? f32(-1) : f32(1)
+                bubble_position :=
+                    older_base +
+                    trough_segment * bubble_along +
+                    trough_right *
+                    (bubble_side * (.08 + bubble_variation * .15))
+                bubble_position.y += .026
+                bubble_alpha :=
+                    u8(
+                        clamp(
+                            (92 + bubble_variation * 74) *
+                            trough_aeration_strength,
+                            0,
+                            158,
+                        ),
+                    )
+                bubble_color := rl.Color{224, 249, 244, bubble_alpha}
+                world_rondine_surface_chip(
+                    bubble_position,
+                    trough_segment +
+                    trough_right * (bubble_side * .18),
+                    trough_right,
+                    .070 + bubble_variation * .052,
+                    .026 + trough_aeration_strength * .018,
+                    bubble_color,
+                    double_sided = true,
+                )
+                if bubble_seed % 5 == 0 && segment_depth < 72 {
+                    pop_position := bubble_position
+                    pop_position.y += .045 + bubble_variation * .055
+                    world_rondine_spray_bead(
+                        camera,
+                        pop_position,
+                        .020 + bubble_variation * .014,
+                        {232, 253, 247, u8(f32(bubble_alpha) * .82)},
+                    )
+                }
+            }
+        }
+        for side in 0 ..< 2 {
+            side_sign := side == 0 ? f32(-1) : f32(1)
+            older_outside := clamp(1 + side_sign * older_turn * .62, .38, 1.62)
+            newer_outside := clamp(1 + side_sign * newer_turn * .62, .38, 1.62)
+            pressure_role := older_outside >= 1 ? u32(1) : u32(0)
+            tail_dropout :=
+                older_fade < .28 &&
+                newer_fade < .36 &&
+                world_rondine_wake_hash(older.serial, pressure_role, 1) % 5 == 0
+            if tail_dropout do continue
+            older_spread_age := min(older.age, f32(1.25))
+            newer_spread_age := min(newer.age, f32(1.25))
+            older_inner_width := .58 + older_spread_age * .34
+            newer_inner_width := .58 + newer_spread_age * .34
+            older_edge_variation :=
+                .78 +
+                f32(world_rondine_wake_hash(older.serial, pressure_role, 2) % 13) * .035
+            newer_edge_variation :=
+                .78 +
+                f32(world_rondine_wake_hash(newer.serial, pressure_role, 2) % 13) * .035
+            older_outer_width := (.92 + older_spread_age * 2.25) * older_outside * older_edge_variation
+            newer_outer_width := (.92 + newer_spread_age * 2.25) * newer_outside * newer_edge_variation
+            older_inner := older_base + older_right * (side_sign * older_inner_width)
+            newer_inner := newer_base + newer_right * (side_sign * newer_inner_width)
+            older_outer := older_base + older_right * (side_sign * older_outer_width)
+            newer_outer := newer_base + newer_right * (side_sign * newer_outer_width)
+            older_alpha := u8(clamp(205 * older.strength * older_fade * older_outside, 0, 232))
+            newer_alpha := u8(clamp(205 * newer.strength * newer_fade * newer_outside, 0, 232))
+            // Freshly aerated water is warm and almost white; as bubbles
+            // collapse, shift the surviving pressure mark back toward the
+            // ocean's turquoise. This age hierarchy reserves the brightest
+            // values for live spray, shards, and individual impact flecks.
+            older_aeration := clamp(older_fade_linear * 1.35, 0, 1)
+            newer_aeration := clamp(newer_fade_linear * 1.35, 0, 1)
+            older_foam :=
+                rl.Color {
+                    u8(166 + older_aeration * 62),
+                    u8(221 + older_aeration * 29),
+                    u8(226 + older_aeration * 19),
+                    older_alpha,
+                }
+            newer_foam :=
+                rl.Color {
+                    u8(166 + newer_aeration * 62),
+                    u8(221 + newer_aeration * 29),
+                    u8(226 + newer_aeration * 19),
+                    newer_alpha,
+                }
+            older_clear :=
+                rl.Color {
+                    u8(142 + older_aeration * 20),
+                    u8(208 + older_aeration * 18),
+                    u8(218 + older_aeration * 8),
+                    u8(f32(older_alpha) * .42),
+                }
+            newer_clear :=
+                rl.Color {
+                    u8(142 + newer_aeration * 20),
+                    u8(208 + newer_aeration * 18),
+                    u8(218 + newer_aeration * 8),
+                    u8(f32(newer_alpha) * .42),
+                }
+            older_band_outer := older_inner + (older_outer - older_inner) * (.24 + older_fade * .16)
+            newer_band_outer := newer_inner + (newer_outer - newer_inner) * (.24 + newer_fade * .16)
+            // A continuous translucent under-ribbon carries the main foam
+            // mass. Bright packets still articulate churn on top, but their
+            // triangular gaps no longer define the entire silhouette.
+            older_band_base :=
+                rl.Color {
+                    older_foam.r,
+                    older_foam.g,
+                    older_foam.b,
+                    u8(f32(older_foam.a) * .44),
+                }
+            newer_band_base :=
+                rl.Color {
+                    newer_foam.r,
+                    newer_foam.g,
+                    newer_foam.b,
+                    u8(f32(newer_foam.a) * .44),
+                }
+            older_band_clear :=
+                rl.Color {
+                    older_clear.r,
+                    older_clear.g,
+                    older_clear.b,
+                    u8(f32(older_clear.a) * .72),
+                }
+            newer_band_clear :=
+                rl.Color {
+                    newer_clear.r,
+                    newer_clear.g,
+                    newer_clear.b,
+                    u8(f32(newer_clear.a) * .72),
+                }
+            world_rondine_triangle_colored(
+                older_inner,
+                newer_inner,
+                newer_band_outer,
+                older_band_base,
+                newer_band_base,
+                newer_band_clear,
+                side == 1,
+            )
+            world_rondine_triangle_colored(
+                older_inner,
+                newer_band_outer,
+                older_band_outer,
+                older_band_base,
+                newer_band_clear,
+                older_band_clear,
+                side == 1,
+            )
+            // Keep the underlying pressure rim continuous, but punch
+            // deterministic gaps into the bright foam rail. A solid ribbon
+            // reads as a vector line from the chase camera; packets read as
+            // successive breaking crests.
+            foam_packet_hash := world_rondine_wake_hash(older.serial, pressure_role, 6)
+            // Leave real water-colored gaps between foam packets. At the old
+            // roughly-even duty cycle adjacent segments frequently joined
+            // into long vector-like rails, especially from the movement-lab
+            // camera. The loaded edge remains busier, but neither side can
+            // become a continuous painted stripe.
+            foam_packet := pressure_role == 1 ? foam_packet_hash % 8 < 7 : foam_packet_hash % 5 < 4
+            if foam_packet {
+                packet_inset :=
+                    .10 +
+                    f32((foam_packet_hash >> 7) % 13) /
+                    100
+                packet_start_inner :=
+                    older_inner +
+                    (newer_inner - older_inner) * packet_inset
+                packet_end_inner :=
+                    older_inner +
+                    (newer_inner - older_inner) * (1 - packet_inset)
+                packet_start_outer :=
+                    older_band_outer +
+                    (newer_band_outer - older_band_outer) * packet_inset
+                packet_end_outer :=
+                    older_band_outer +
+                    (newer_band_outer - older_band_outer) * (1 - packet_inset)
+                packet_mid_inner :=
+                    (packet_start_inner + packet_end_inner) * .5
+                packet_mid_outer :=
+                    (packet_start_outer + packet_end_outer) * .5
+                packet_tip_clear :=
+                    rl.Color{older_foam.r, older_foam.g, older_foam.b, 0}
+                packet_mid_foam :=
+                    rl.Color {
+                        u8((u16(older_foam.r) + u16(newer_foam.r)) / 2),
+                        u8((u16(older_foam.g) + u16(newer_foam.g)) / 2),
+                        u8((u16(older_foam.b) + u16(newer_foam.b)) / 2),
+                        u8((u16(older_foam.a) + u16(newer_foam.a)) / 2),
+                    }
+                packet_mid_clear :=
+                    rl.Color {
+                        u8((u16(older_clear.r) + u16(newer_clear.r)) / 2),
+                        u8((u16(older_clear.g) + u16(newer_clear.g)) / 2),
+                        u8((u16(older_clear.b) + u16(newer_clear.b)) / 2),
+                        u8((u16(older_clear.a) + u16(newer_clear.a)) / 2),
+                    }
+                world_rondine_triangle_colored(
+                    packet_start_inner,
+                    packet_mid_inner,
+                    packet_mid_outer,
+                    packet_tip_clear,
+                    packet_mid_foam,
+                    packet_mid_clear,
+                    side == 1,
+                )
+                world_rondine_triangle_colored(
+                    packet_start_inner,
+                    packet_start_outer,
+                    packet_mid_outer,
+                    packet_tip_clear,
+                    packet_tip_clear,
+                    packet_mid_clear,
+                    side == 1,
+                )
+                world_rondine_triangle_colored(
+                    packet_mid_inner,
+                    packet_end_inner,
+                    packet_end_outer,
+                    packet_mid_foam,
+                    packet_tip_clear,
+                    packet_tip_clear,
+                    side == 1,
+                )
+                world_rondine_triangle_colored(
+                    packet_mid_inner,
+                    packet_end_outer,
+                    packet_mid_outer,
+                    packet_mid_foam,
+                    packet_tip_clear,
+                    packet_mid_clear,
+                    side == 1,
+                )
+            }
+
+            // Retain a faint outside pressure edge without filling the entire
+            // fan between it and the inner foam band. This keeps the wake's
+            // broad drift silhouette while avoiding a screen-sized solid
+            // triangle in the low chase camera.
+            older_rim_inner := older_outer + (older_inner - older_outer) * .11
+            newer_rim_inner := newer_outer + (newer_inner - newer_outer) * .11
+            older_rim := rl.Color{177, 232, 233, u8(f32(older_alpha) * .24)}
+            newer_rim := rl.Color{177, 232, 233, u8(f32(newer_alpha) * .24)}
+            rim_packet :=
+                world_rondine_wake_hash(older.serial, pressure_role, 7) % 7 <
+                (pressure_role == 1 ? u32(6) : u32(5))
+            if rim_packet {
+                world_rondine_triangle_colored(
+                    older_rim_inner,
+                    newer_rim_inner,
+                    newer_outer,
+                    older_rim,
+                    newer_rim,
+                    newer_clear,
+                    side == 1,
+                )
+                world_rondine_triangle_colored(
+                    older_rim_inner,
+                    newer_outer,
+                    older_outer,
+                    older_rim,
+                    newer_clear,
+                    older_clear,
+                    side == 1,
+                )
+            }
+
+            // Tiny surface flecks sit between the bright inner packet and the
+            // faint pressure rim. Reconstructing them from the sample serial
+            // keeps every glint fixed in the water instead of swimming with
+            // the camera. The loaded side receives a second fleck, while the
+            // alternating sample gate prevents a continuous dotted rail.
+            fleck_strength :=
+                (older.strength * older_fade + newer.strength * newer_fade) *
+                .5 *
+                clamp(.6 + (older_outside - .7) * .65, .45, 1.2) *
+                fine_distance_fade
+            if older.serial % 2 == 0 && older.age < 1.28 && fleck_strength > .10 {
+                fleck_count := pressure_role == 1 ? 2 : 1
+                segment_direction := newer_base - older_base
+                for fleck in 0 ..< fleck_count {
+                    seed :=
+                        world_rondine_wake_hash(
+                            older.serial,
+                            pressure_role,
+                            u32(100 + side * 3 + fleck),
+                        )
+                    if seed % 5 == 0 do continue
+                    along := .20 + f32((seed >> 3) % 53) / 88
+                    across := .18 + f32((seed >> 9) % 59) / 82
+                    inner_position := older_inner + (newer_inner - older_inner) * along
+                    outer_position := older_outer + (newer_outer - older_outer) * along
+                    position := inner_position + (outer_position - inner_position) * across
+                    position.y += .028
+                    outward :=
+                        (older_right + newer_right) *
+                        (side_sign * (.08 + f32((seed >> 15) % 17) * .006))
+                    direction := segment_direction * .36 + outward
+                    variation := f32((seed >> 20) % 29) / 28
+                    fleck_alpha := u8(clamp((112 + variation * 72) * fleck_strength, 0, 174))
+                    fleck_color := rl.Color{229, 252, 246, fleck_alpha}
+                    world_rondine_spray_streak(
+                        camera,
+                        position,
+                        direction,
+                        .055 + variation * .075,
+                        fleck_color,
+                    )
+                }
+            }
+
+            // Surface-level breakers interrupt the loaded rail at irregular
+            // intervals. They provide medium-scale foam detail even when the
+            // taller shards are edge-on to the chase camera.
+            breaker_step :=
+                pressure_role == 1 &&
+                older.age < 1.05 &&
+                world_rondine_wake_hash(older.serial, pressure_role, 5) % 7 < 3
+            breaker_strength :=
+                older.strength *
+                max(older_fade, newer_fade) *
+                medium_distance_fade
+            if breaker_step && breaker_strength > .14 {
+                breaker_root := (older_band_outer + newer_band_outer) * .5
+                breaker_tip :=
+                    breaker_root +
+                    older_right *
+                    (side_sign * (.16 + breaker_strength * .28))
+                breaker_root.y += .022
+                breaker_tip.y += .026
+                breaker_alpha := u8(clamp(145 * breaker_strength, 0, 160))
+                breaker_foam := rl.Color{225, 249, 243, breaker_alpha}
+                breaker_clear := rl.Color{151, 220, 225, 0}
+                world_rondine_triangle_colored(
+                    older_band_outer,
+                    newer_band_outer,
+                    breaker_tip,
+                    older_clear,
+                    newer_clear,
+                    breaker_foam,
+                    side == 1,
+                )
+                breaker_tail := breaker_root + (breaker_tip - breaker_root) * .55
+                world_rondine_triangle_colored(
+                    newer_band_outer,
+                    breaker_tail,
+                    breaker_tip,
+                    newer_clear,
+                    breaker_clear,
+                    breaker_foam,
+                    side == 1,
+                )
+            }
+
+            // Sparse raised shards catch the light on the outside of a hard
+            // drift. Their alternating placement breaks up the ribbon without
+            // introducing particles, textures, or camera-facing billboards.
+            shard_step := world_rondine_wake_hash(older.serial, pressure_role, 3) % 5 < 2
+            shard_strength :=
+                older.strength *
+                older_fade *
+                clamp(.28 + (older_outside - .7) * 1.15, .18, 1) *
+                medium_distance_fade
+            if shard_step && shard_strength > .12 && older.age < .9 {
+                along := (older_outer + newer_outer) * .5
+                crest := along + older_right * (side_sign * (.22 + older.age * .18))
+                crest.y += .38 + shard_strength * 1.70
+                shard_alpha := u8(clamp(150 * shard_strength, 0, 190))
+                shard_foam := rl.Color{221, 248, 242, shard_alpha}
+                shard_mist := rl.Color{137, 215, 223, u8(f32(shard_alpha) * .5)}
+                world_rondine_triangle_colored(
+                    older_outer,
+                    newer_outer,
+                    crest,
+                    older_clear,
+                    newer_clear,
+                    shard_mist,
+                    side == 1,
+                )
+                tip := crest + older_right * (side_sign * (.18 + shard_strength * .42))
+                tip.y -= .08
+                world_rondine_triangle_colored(
+                    newer_outer,
+                    tip,
+                    crest,
+                    newer_clear,
+                    {shard_foam.r, shard_foam.g, shard_foam.b, 0},
+                    shard_foam,
+                    side == 1,
+                )
+            }
+
+            // Strong slides also comb the loaded pressure field sideways.
+            // These short transverse crests are fixed to the sampled water,
+            // so they read as turbulent claw marks instead of particles that
+            // follow the aircraft. Their diagonal alternates slightly from
+            // packet to packet to avoid forming another regular herringbone.
+            claw_strength :=
+                clamp(math.abs(older.slip) * 3.15, 0, 1) *
+                older.strength *
+                max(older_fade, newer_fade) *
+                medium_distance_fade
+            claw_step :=
+                pressure_role == 1 &&
+                older.age < 1.08 &&
+                world_rondine_wake_hash(older.serial, pressure_role, 188) % 5 < 2
+            if claw_step && claw_strength > .16 {
+                claw_seed := world_rondine_wake_hash(older.serial, pressure_role, 189)
+                claw_variation := f32(claw_seed % 23) / 22
+                claw_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
+                claw_center :=
+                    older_inner +
+                    (older_outer - older_inner) *
+                    (.30 + claw_variation * .32)
+                claw_center += (newer_base - older_base) * (.24 + claw_variation * .34)
+                claw_center.y += .036
+                claw_tangent :=
+                    older_right * (side_sign * (.84 + claw_variation * .18)) +
+                    claw_forward * (.16 + claw_variation * .20)
+                claw_radial :=
+                    claw_forward - older_right * (side_sign * (.10 + claw_variation * .12))
+                claw_alpha := u8(clamp((132 + claw_variation * 52) * claw_strength, 0, 188))
+                claw_color := rl.Color{226, 250, 244, claw_alpha}
+                for tooth in 0 ..< 2 {
+                    tooth_f := f32(tooth)
+                    tooth_position :=
+                        claw_center -
+                        claw_forward * (tooth_f * (.15 + claw_variation * .06)) +
+                        older_right * (side_sign * tooth_f * .06)
+                    world_rondine_surface_chip(
+                        tooth_position,
+                        claw_tangent,
+                        claw_radial,
+                        .18 + claw_strength * .13 - tooth_f * .025,
+                        .028 + claw_strength * .018,
+                        {claw_color.r, claw_color.g, claw_color.b, u8(f32(claw_alpha) * (1 - tooth_f * .22))},
+                    )
+                }
+            }
+        }
+
+        // Recent high-slip samples retain the outboard rake as a sparse chain
+        // of fixed skip scars. This bridges the live wing-adjacent burst into
+        // the historical trail without drawing a second continuous foam rail.
+        outboard_skip_strength :=
+            clamp(math.abs(older.slip) * 2.45, 0, 1) *
+            older.strength *
+            older_fade *
+            medium_distance_fade
+        outboard_skip_step :=
+            older.age < 1.12 &&
+            world_rondine_wake_hash(older.serial, 0, 322) % 4 == 1
+        if outboard_skip_step && outboard_skip_strength > .14 {
+            skip_seed := world_rondine_wake_hash(older.serial, 0, 323)
+            skip_variation := f32(skip_seed % 29) / 28
+            skip_loaded_side := older.slip < 0 ? f32(-1) : f32(1)
+            skip_forward :=
+                third_person.Vec3{older.forward.x, 0, older.forward.z}
+            skip_center :=
+                older_base +
+                older_right *
+                (
+                    skip_loaded_side *
+                    (4.72 + older.age * .18 + skip_variation * .16)
+                ) +
+                (newer_base - older_base) * (.18 + skip_variation * .28)
+            skip_center.y += .040
+            skip_tangent :=
+                skip_forward * (.76 + skip_variation * .16) +
+                older_right *
+                (skip_loaded_side * (.24 + skip_variation * .22))
+            skip_radial :=
+                older_right * skip_loaded_side -
+                skip_forward * (.12 + skip_variation * .12)
+            skip_alpha :=
+                u8(
+                    clamp(
+                        (142 + skip_variation * 54) *
+                        outboard_skip_strength,
+                        0,
+                        190,
+                    ),
+                )
+            skip_color := rl.Color{228, 251, 245, skip_alpha}
+            world_rondine_surface_chip(
+                skip_center,
+                skip_tangent,
+                skip_radial,
+                .20 + outboard_skip_strength * .16 + skip_variation * .08,
+                .028 + outboard_skip_strength * .018,
+                skip_color,
+                double_sided = true,
+            )
+            // A smaller echo behind the main scar gives each contact a quick
+            // two-beat skip instead of a solitary decorative dash.
+            if fine_distance_fade > .08 {
+                echo_alpha :=
+                    u8(f32(skip_alpha) * .52 * fine_distance_fade)
+                world_rondine_surface_chip(
+                    skip_center -
+                    skip_forward * (.19 + skip_variation * .09) -
+                    older_right *
+                    (skip_loaded_side * (.05 + skip_variation * .04)),
+                    skip_tangent -
+                    older_right * (skip_loaded_side * .10),
+                    skip_radial,
+                    .12 + outboard_skip_strength * .08,
+                    .020 + outboard_skip_strength * .010,
+                    {218, 248, 243, echo_alpha},
+                    double_sided = true,
+                )
+            }
+        }
+
+        // Hard lateral motion leaves a small suction curl on the unloaded
+        // side of the hull path. Three short, age-rotated glints imply a foam
+        // hook without drawing a complete ring, and sample-serial phase keeps
+        // the mark fixed in world space as the chase camera moves.
+        curl_strength :=
+            clamp(math.abs(older.slip) * 2.7, 0, 1) *
+            older.strength *
+            older_fade *
+            fine_distance_fade
+        if curl_strength > .12 && older.age < 1.18 && older.serial % 3 == 1 {
+            older_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
+            unloaded_sign := older_turn >= 0 ? f32(-1) : f32(1)
+            curl_seed := world_rondine_wake_hash(older.serial, 0, 120)
+            curl_variation := f32(curl_seed % 17) / 16
+            curl_center :=
+                older_base +
+                older_right *
+                (unloaded_sign * (.34 + older.age * .28 + curl_variation * .12))
+            curl_center.y += .038
+            curl_radius := .18 + older.age * .16 + curl_variation * .08
+            curl_phase :=
+                older.age * math.TAU * .72 +
+                f32((curl_seed >> 6) % 31) / 31 * math.TAU
+            for curl_tick in 0 ..< 3 {
+                tick_f := f32(curl_tick)
+                angle := curl_phase + unloaded_sign * (tick_f - 1) * .52
+                cosine, sine := math.cos(angle), math.sin(angle)
+                radial := older_right * cosine + older_forward * sine
+                tangent :=
+                    (older_right * -sine + older_forward * cosine) *
+                    unloaded_sign
+                position := curl_center + radial * curl_radius
+                tick_alpha :=
+                    u8(
+                        clamp(
+                            (112 + (2 - tick_f) * 24 + curl_variation * 35) *
+                            curl_strength,
+                            0,
+                            178,
+                        ),
+                    )
+                tick_color := rl.Color{229, 252, 246, tick_alpha}
+                world_rondine_spray_streak(
+                    camera,
+                    position,
+                    tangent,
+                    .075 + curl_strength * .07 + tick_f * .018,
+                    tick_color,
+                )
+            }
+        }
+
+        // Samples laid down during active countersteer retain a brief
+        // herringbone stitch. Each paired chip crosses the hull path in the
+        // correction direction, recording where the pilot caught the slide
+        // after the live skim-cuts have vanished from the stern.
+        sampled_countersteer :=
+            (
+                older.countersteer * older_fade +
+                newer.countersteer * newer_fade
+            ) *
+            .5 *
+            medium_distance_fade
+        if sampled_countersteer > .08 &&
+           older.age < 1.35 &&
+           older.serial % 2 == 0 {
+            stitch_center := (older_base + newer_base) * .5
+            stitch_center.y += .034
+            stitch_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
+            stitch_alpha :=
+                u8(clamp(176 * sampled_countersteer, 0, 184))
+            stitch_color := rl.Color{225, 250, 244, stitch_alpha}
+            for stitch_side in 0 ..< 2 {
+                side_sign := stitch_side == 0 ? f32(-1) : f32(1)
+                position :=
+                    stitch_center +
+                    older_right * (side_sign * (.13 + sampled_countersteer * .08))
+                tangent :=
+                    stitch_forward * .42 +
+                    older_right * (side_sign * .82)
+                radial :=
+                    older_right * .42 -
+                    stitch_forward * (side_sign * .82)
+                world_rondine_surface_chip(
+                    position,
+                    tangent,
+                    radial,
+                    .13 + sampled_countersteer * .09,
+                    .032 + sampled_countersteer * .018,
+                    stitch_color,
+                    double_sided = true,
+                )
+            }
+        }
+
+        // A soft pressure trough gives the wake a large-scale water response
+        // without filling the fan with white foam. The center is subtly
+        // darkened while both edges dissolve completely into the ocean.
+        older_trough_seed := world_rondine_wake_hash(older.serial, 0, 210)
+        newer_trough_seed := world_rondine_wake_hash(newer.serial, 0, 210)
+        // Broad water displacement should roll in coherent cells, not change
+        // width at every 1.25m sample. Blend a deterministic value across
+        // groups of four samples; smaller foam details retain their sharper
+        // per-sample variation on top.
+        older_trough_variation :=
+            world_rondine_live_variation(
+                older.serial >> 2,
+                f32(older.serial & u32(3)) / 4,
+                0,
+                210,
+            )
+        newer_trough_variation :=
+            world_rondine_live_variation(
+                newer.serial >> 2,
+                f32(newer.serial & u32(3)) / 4,
+                0,
+                210,
+            )
+        older_trough_meander :=
+            (older_trough_variation * 2 - 1) *
+            (.055 + math.abs(older.slip) * .34)
+        newer_trough_meander :=
+            (newer_trough_variation * 2 - 1) *
+            (.055 + math.abs(newer.slip) * .34)
+        older_trough_center := older_base + older_right * older_trough_meander
+        newer_trough_center := newer_base + newer_right * newer_trough_meander
+        older_trough_center.y -= .015
+        newer_trough_center.y -= .015
+        older_trough_width :=
+            (
+                .42 +
+                older.age * .52 +
+                older.strength * .24 +
+                math.abs(older.slip) * 1.15
+            ) *
+            (.84 + older_trough_variation * .32)
+        newer_trough_width :=
+            (
+                .42 +
+                newer.age * .52 +
+                newer.strength * .24 +
+                math.abs(newer.slip) * 1.15
+            ) *
+            (.84 + newer_trough_variation * .32)
+        older_trough_left := older_trough_center - older_right * older_trough_width
+        older_trough_right := older_trough_center + older_right * older_trough_width
+        newer_trough_left := newer_trough_center - newer_right * newer_trough_width
+        newer_trough_right := newer_trough_center + newer_right * newer_trough_width
+        older_trough_energy :=
+            clamp(older.strength + math.abs(older.slip) * .72, 0, 1.28)
+        newer_trough_energy :=
+            clamp(newer.strength + math.abs(newer.slip) * .72, 0, 1.28)
+        older_trough_depth_variation :=
+            .70 +
+            f32((older_trough_seed >> 8) % 31) /
+            100
+        newer_trough_depth_variation :=
+            .70 +
+            f32((newer_trough_seed >> 8) % 31) /
+            100
+        // Rare four-sample low-pressure cells interrupt the long trough at
+        // the same spatial scale as its width/meander variation. They never
+        // remove the broad silhouette, but stop a far wake from resolving
+        // into one uniformly dark triangular strip.
+        older_trough_breath :=
+            world_rondine_wake_hash(older.serial >> 2, 0, 224) % 7 == 2 ? f32(.48) : f32(1)
+        newer_trough_breath :=
+            world_rondine_wake_hash(newer.serial >> 2, 0, 224) % 7 == 2 ? f32(.48) : f32(1)
+        older_trough_alpha :=
+            u8(
+                clamp(
+                    54 *
+                    older_trough_energy *
+                    older_fade_linear *
+                    camera_fade *
+                    older_trough_depth_variation *
+                    older_trough_breath,
+                    0,
+                    58,
+                ),
+            )
+        newer_trough_alpha :=
+            u8(
+                clamp(
+                    54 *
+                    newer_trough_energy *
+                    newer_fade_linear *
+                    camera_fade *
+                    newer_trough_depth_variation *
+                    newer_trough_breath,
+                    0,
+                    58,
+                ),
+            )
+        older_trough := rl.Color{28, 109, 139, older_trough_alpha}
+        newer_trough := rl.Color{28, 109, 139, newer_trough_alpha}
+        trough_clear := rl.Color{28, 109, 139, 0}
+        world_rondine_triangle_colored(
+            older_trough_left,
+            newer_trough_left,
+            newer_trough_center,
+            trough_clear,
+            trough_clear,
+            newer_trough,
+            false,
+        )
+        world_rondine_triangle_colored(
+            older_trough_left,
+            newer_trough_center,
+            older_trough_center,
+            trough_clear,
+            newer_trough,
+            older_trough,
+            false,
+        )
+        world_rondine_triangle_colored(
+            older_trough_center,
+            newer_trough_center,
+            newer_trough_right,
+            older_trough,
+            newer_trough,
+            trough_clear,
+            true,
+        )
+        world_rondine_triangle_colored(
+            older_trough_center,
+            newer_trough_right,
+            older_trough_right,
+            older_trough,
+            trough_clear,
+            trough_clear,
+            true,
+        )
+
+        // Hard slides leave sparse pressure knots inside the loaded half of
+        // the trough. A dark tapered eye carries the medium-scale mass while
+        // a short pale lip on its outside edge makes the rotation readable.
+        // The cadence is deliberately slow so these resemble broad vortices,
+        // not another row of decorative flecks.
+        eddy_strength :=
+            clamp(math.abs(older.slip) * 2.8, 0, 1) *
+            older.strength *
+            older_fade_linear *
+            medium_distance_fade *
+            camera_fade
+        eddy_step :=
+            older.age < 2.15 &&
+            world_rondine_wake_hash(older.serial, 0, 218) % 6 == 1
+        if eddy_step && eddy_strength > .12 {
+            eddy_seed := world_rondine_wake_hash(older.serial, 0, 219)
+            eddy_variation := f32(eddy_seed % 29) / 28
+            eddy_loaded_sign := older_turn < 0 ? f32(-1) : f32(1)
+            eddy_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
+            eddy_center :=
+                older_trough_center +
+                older_right *
+                (
+                    eddy_loaded_sign *
+                    older_trough_width *
+                    (.28 + eddy_variation * .19)
+                )
+            eddy_center.y += .017
+            eddy_tangent :=
+                eddy_forward * (.82 + eddy_variation * .12) +
+                older_right * (eddy_loaded_sign * (.18 + eddy_variation * .24))
+            eddy_radial :=
+                older_right * eddy_loaded_sign -
+                eddy_forward * (.10 + eddy_variation * .14)
+            eddy_alpha :=
+                u8(clamp((48 + eddy_variation * 34) * eddy_strength, 0, 76))
+            world_rondine_surface_chip(
+                eddy_center,
+                eddy_tangent,
+                eddy_radial,
+                .34 + eddy_strength * .28 + eddy_variation * .14,
+                .12 + eddy_strength * .08,
+                {25, 101, 133, eddy_alpha},
+                double_sided = true,
+            )
+            lip_alpha :=
+                u8(clamp((126 + eddy_variation * 48) * eddy_strength, 0, 168))
+            world_rondine_surface_chip(
+                eddy_center +
+                older_right *
+                (eddy_loaded_sign * (.13 + eddy_strength * .08)) +
+                eddy_forward * (.06 + eddy_variation * .08),
+                eddy_tangent +
+                older_right * (eddy_loaded_sign * .18),
+                eddy_radial,
+                .19 + eddy_strength * .13 + eddy_variation * .07,
+                .024 + eddy_strength * .014,
+                {213, 246, 242, lip_alpha},
+                double_sided = true,
+            )
+            // Two offset curl fragments complete a broken orbital gesture
+            // around the pressure eye. Unequal radii and fading keep the
+            // three-beat mark from reading as a literal ring or repeated icon.
+            for curl in 0 ..< 2 {
+                curl_f := f32(curl)
+                curl_side := curl == 0 ? f32(-1) : f32(1)
+                curl_center :=
+                    eddy_center +
+                    eddy_forward *
+                    (curl_side * (.22 + curl_f * .09 + eddy_variation * .06)) +
+                    older_right *
+                    (
+                        eddy_loaded_sign *
+                        (.18 + curl_f * .13 + eddy_variation * .08)
+                    )
+                curl_center.y += .010 + curl_f * .006
+                curl_tangent :=
+                    eddy_forward * (.34 + curl_f * .16) -
+                    older_right *
+                    (
+                        eddy_loaded_sign *
+                        curl_side *
+                        (.78 - curl_f * .10)
+                    )
+                curl_radial :=
+                    older_right * eddy_loaded_sign +
+                    eddy_forward * (curl_side * .24)
+                curl_alpha :=
+                    u8(
+                        clamp(
+                            f32(lip_alpha) * (.92 - curl_f * .22),
+                            0,
+                            168,
+                        ),
+                    )
+                world_rondine_surface_chip(
+                    curl_center,
+                    curl_tangent,
+                    curl_radial,
+                    .22 + eddy_strength * .16 - curl_f * .022,
+                    .032 + eddy_strength * .016,
+                    {213, 246, 242, curl_alpha},
+                    double_sided = true,
+                )
+            }
+        }
+
+        // Broken center churn records the actual curved hull path between the
+        // two pressure ribbons. Deliberate gaps keep it foam-like instead of
+        // turning the wake into a continuous painted stripe.
+        churn_hash := world_rondine_wake_hash(older.serial, 0, 4)
+        churn_step := churn_hash % 7 < 3
+        churn_strength := (older.strength * older_fade + newer.strength * newer_fade) * .5
+        if churn_step && churn_strength > .07 && older.age < 1.45 {
+            alternating := churn_hash & 1 == 0 ? f32(-1) : f32(1)
+            older_width := .16 + older.age * .11 + churn_strength * .24
+            newer_width := .16 + newer.age * .11 + churn_strength * .24
+            older_center := older_base + older_right * (alternating * .13)
+            newer_center := newer_base + newer_right * (alternating * -.13)
+            older_center.y += .022
+            newer_center.y += .022
+            older_left := older_center - older_right * older_width
+            older_right_edge := older_center + older_right * older_width
+            newer_left := newer_center - newer_right * newer_width
+            newer_right_edge := newer_center + newer_right * newer_width
+            churn_alpha := u8(clamp(178 * churn_strength, 0, 188))
+            churn_aeration := clamp((older_fade_linear + newer_fade_linear) * .68, 0, 1)
+            churn_foam :=
+                rl.Color {
+                    u8(174 + churn_aeration * 52),
+                    u8(225 + churn_aeration * 24),
+                    u8(229 + churn_aeration * 14),
+                    churn_alpha,
+                }
+            churn_clear :=
+                rl.Color {
+                    u8(145 + churn_aeration * 12),
+                    u8(210 + churn_aeration * 11),
+                    u8(219 + churn_aeration * 6),
+                    u8(f32(churn_alpha) * .14),
+                }
+            world_triangle_colored(older_left, newer_left, newer_right_edge, churn_clear, churn_foam, churn_foam)
+            world_triangle_colored(older_left, newer_right_edge, older_right_edge, churn_clear, churn_foam, churn_clear)
+
+            // One compact aerated boil interrupts the segment silhouette.
+            // It carries some of the center energy as a discrete patch after
+            // reducing the packet duty cycle above, avoiding both an empty
+            // trail and long joined strips.
+            boil_variation := f32((churn_hash >> 6) % 29) / 28
+            boil_center :=
+                older_center +
+                (newer_center - older_center) *
+                (.28 + boil_variation * .44)
+            boil_center +=
+                older_right * ((boil_variation * 2 - 1) * .11)
+            boil_center.y += .012
+            boil_tangent :=
+                newer_center - older_center +
+                older_right * ((boil_variation * 2 - 1) * .18)
+            boil_radial :=
+                older_right - boil_tangent * .06
+            boil_alpha := u8(f32(churn_alpha) * (.74 + boil_variation * .18))
+            world_rondine_surface_chip(
+                boil_center,
+                boil_tangent,
+                boil_radial,
+                .11 + churn_strength * .10 + boil_variation * .05,
+                .050 + churn_strength * .025,
+                {churn_foam.r, churn_foam.g, churn_foam.b, boil_alpha},
+            )
+        }
+
+        // Straight-line planing needs a medium-scale cadence of its own.
+        // Sparse paired transom chevrons imply rapid pressure pulses without
+        // becoming continuous rails. As slip rises they yield completely to
+        // the asymmetric breakers, claws, and drift crown.
+        planing_alignment :=
+            clamp(1 - max(math.abs(older.slip), math.abs(newer.slip)) * 7.5, 0, 1)
+        planing_pulse :=
+            (older.strength * older_fade + newer.strength * newer_fade) *
+            .5 *
+            planing_alignment *
+            medium_distance_fade
+        planing_step :=
+            older.serial % 2 == 1 &&
+            older.age < 1.45
+        if planing_step && planing_pulse > .12 {
+            pulse_center := (older_base + newer_base) * .5
+            pulse_center.y += .034
+            pulse_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
+            pulse_visibility := f32(math.sqrt(f64(planing_pulse)))
+            pulse_alpha := u8(clamp(208 * pulse_visibility, 0, 208))
+            pulse_color := rl.Color{224, 250, 244, pulse_alpha}
+            pulse_width := .64 + older.age * .38 + planing_pulse * .24
+            for side in 0 ..< 2 {
+                side_sign := side == 0 ? f32(-1) : f32(1)
+                pulse_position :=
+                    pulse_center +
+                    older_right * (side_sign * pulse_width)
+                pulse_tangent :=
+                    pulse_forward * .46 +
+                    older_right * (side_sign * .84)
+                pulse_radial :=
+                    older_right * side_sign - pulse_forward * .18
+                world_rondine_surface_chip(
+                    pulse_position,
+                    pulse_tangent,
+                    pulse_radial,
+                    .25 + pulse_visibility * .15,
+                    .048 + pulse_visibility * .024,
+                    pulse_color,
+                    double_sided = true,
+                )
+            }
+        }
+
+        // The twin pushers leave a second, wider cadence than the transom
+        // chevrons. Sparse crossed pulses sit beneath the two downwash tracks,
+        // giving straight planing a recognizable engine signature while the
+        // strong slip gate prevents them leaking into drift choreography.
+        prop_track_step :=
+            older.serial % 4 == 0 &&
+            older.age < .96
+        if prop_track_step && planing_pulse > .14 {
+            prop_track_forward :=
+                third_person.Vec3{older.forward.x, 0, older.forward.z}
+            prop_track_visibility :=
+                f32(math.sqrt(f64(planing_pulse)))
+            for track_side in 0 ..< 2 {
+                side_sign := track_side == 0 ? f32(-1) : f32(1)
+                track_seed :=
+                    world_rondine_wake_hash(
+                        older.serial,
+                        u32(track_side),
+                        334,
+                    )
+                track_variation := f32(track_seed % 23) / 22
+                track_center :=
+                    older_base +
+                    (newer_base - older_base) *
+                    (.24 + track_variation * .34) +
+                    older_right *
+                    (
+                        side_sign *
+                        (2.10 + older.age * .16 + track_variation * .12)
+                    )
+                track_center.y += .036
+                track_alpha :=
+                    u8(
+                        clamp(
+                            (126 + track_variation * 42) *
+                            prop_track_visibility,
+                            0,
+                            158,
+                        ),
+                    )
+                track_color := rl.Color{220, 248, 243, track_alpha}
+                first_tangent :=
+                    prop_track_forward * .72 +
+                    older_right * (side_sign * .42)
+                first_radial :=
+                    older_right * side_sign -
+                    prop_track_forward * .18
+                second_tangent :=
+                    prop_track_forward * .66 -
+                    older_right * (side_sign * .38)
+                second_radial :=
+                    older_right * side_sign +
+                    prop_track_forward * .16
+                world_rondine_surface_chip(
+                    track_center,
+                    first_tangent,
+                    first_radial,
+                    .12 + prop_track_visibility * .075 + track_variation * .035,
+                    .022 + prop_track_visibility * .010,
+                    track_color,
+                    double_sided = true,
+                )
+                world_rondine_surface_chip(
+                    track_center - prop_track_forward * .035,
+                    second_tangent,
+                    second_radial,
+                    .10 + prop_track_visibility * .060,
+                    .019 + prop_track_visibility * .009,
+                    {
+                        track_color.r,
+                        track_color.g,
+                        track_color.b,
+                        u8(f32(track_alpha) * .72),
+                    },
+                    double_sided = true,
+                )
+            }
+        }
+
+        // A committed carve sits between planing chevrons and full drift
+        // turbulence. Three-chip scallops gather on the loaded edge, replacing
+        // the single bright rail with discrete curved pressure pulses. Deep
+        // slip retires them before the drift claws and breakers take over.
+        carve_slip := max(math.abs(older.slip), math.abs(newer.slip))
+        carve_entry := clamp((carve_slip - .035) / .075, 0, 1)
+        carve_exit := clamp((.24 - carve_slip) / .075, 0, 1)
+        carve_pulse :=
+            (older.strength * older_fade + newer.strength * newer_fade) *
+            .5 *
+            carve_entry *
+            carve_exit *
+            medium_distance_fade
+        carve_step :=
+            older.serial % 3 == 2 &&
+            older.age < 1.12
+        if carve_step && carve_pulse > .10 {
+            loaded_sign := older_turn >= 0 ? f32(1) : f32(-1)
+            carve_center := (older_base + newer_base) * .5
+            carve_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
+            carve_center +=
+                older_right *
+                (loaded_sign * (.72 + older.age * .34 + carve_pulse * .22))
+            carve_center.y += .036
+            carve_visibility := f32(math.sqrt(f64(carve_pulse)))
+            carve_alpha := u8(clamp(184 * carve_visibility, 0, 188))
+            carve_color := rl.Color{227, 251, 245, carve_alpha}
+            for scallop in 0 ..< 3 {
+                scallop_f := f32(scallop)
+                arc := scallop_f - 1
+                position :=
+                    carve_center +
+                    carve_forward * (arc * (.17 + older.age * .04)) +
+                    older_right * (loaded_sign * (1 - math.abs(arc)) * .08)
+                tangent :=
+                    carve_forward * (.38 + scallop_f * .12) +
+                    older_right * (loaded_sign * (.78 - scallop_f * .18))
+                radial :=
+                    older_right * loaded_sign - carve_forward * (arc * .16)
+                world_rondine_surface_chip(
+                    position,
+                    tangent,
+                    radial,
+                    .14 + carve_visibility * .09 - math.abs(arc) * .012,
+                    .032 + carve_visibility * .015,
+                    {carve_color.r, carve_color.g, carve_color.b, u8(f32(carve_alpha) * (1 - math.abs(arc) * .16))},
+                    double_sided = true,
+                )
+            }
+        }
+    }
+
+    // A switchback stamps its large and medium crossover geometry into the
+    // water at the actual slip-sign change. The slashes slowly separate while
+    // the hooks continue toward the newly loaded side, leaving a short,
+    // readable hinge between the two drift arcs.
+    for sample in editor.rondine.wake[:editor.rondine.wake_count] {
+        if sample.transition <= .04 do continue
+        center := third_person.Vec3{sample.position.x, sea_y + .030, sample.position.z}
+        depth := linalg.dot(center - camera.position, camera.forward)
+        if depth < 7.5 do continue
+        camera_fade := clamp((depth - 7.5) / 5.5, 0, 1)
+        life_fade := clamp(1 - sample.age / sample.lifetime, 0, 1)
+        stamped_transition_strength := sample.transition * life_fade * life_fade * camera_fade
+        if stamped_transition_strength <= .025 do continue
+        stamped_transition_visibility := f32(math.sqrt(f64(stamped_transition_strength)))
+        forward := third_person.Vec3{sample.forward.x, 0, sample.forward.z}
+        right := third_person.Vec3{sample.right.x, 0, sample.right.z}
+        back := -forward
+        loaded_side := sample.slip < 0 ? f32(-1) : f32(1)
+        stamped_transition_alpha := u8(clamp(216 * stamped_transition_visibility, 0, 224))
+        for slash in 0 ..< 2 {
+            slash_f := f32(slash)
+            slash_sign := slash == 0 ? f32(-1) : f32(1)
+            slash_position :=
+                center +
+                back * (.34 + slash_f * .24 + sample.age * .24) +
+                right *
+                (loaded_side * slash_sign * (.10 + sample.age * .16))
+            slash_tangent :=
+                back * .72 +
+                right * (loaded_side * slash_sign)
+            world_rondine_surface_chip(
+                slash_position,
+                slash_tangent,
+                right * (loaded_side * slash_sign) - back * .18,
+                1.18 + stamped_transition_visibility * .44 - slash_f * .10,
+                .105 + stamped_transition_visibility * .038,
+                {232, 254, 248, u8(f32(stamped_transition_alpha) * (1 - slash_f * .15))},
+                double_sided = true,
+            )
+        }
+        for hook in 0 ..< 3 {
+            hook_f := f32(hook)
+            hook_position :=
+                center +
+                back * (.82 + hook_f * .43 + sample.age * .30) +
+                right *
+                (loaded_side * (.48 + hook_f * .30 + sample.age * .18))
+            hook_tangent :=
+                right * loaded_side +
+                back * (.58 - hook_f * .08)
+            world_rondine_surface_chip(
+                hook_position,
+                hook_tangent,
+                back - right * (loaded_side * .20),
+                .42 + stamped_transition_visibility * .17 - hook_f * .035,
+                .052 + stamped_transition_visibility * .019,
+                {228, 253, 247, u8(f32(stamped_transition_alpha) * (.86 - hook_f * .18))},
+                double_sided = true,
+            )
+        }
+    }
+
+    // One expanding broken ring remains where the hull first broke loose.
+    // It is stamped by the runtime once per kick episode, giving the water a
+    // persistent "skid-start" scar without allocating a particle emitter.
+    for sample in editor.rondine.wake[:editor.rondine.wake_count] {
+        if sample.kick <= .01 do continue
+        center := third_person.Vec3{sample.position.x, sea_y + .025, sample.position.z}
+        depth := linalg.dot(center - camera.position, camera.forward)
+        if depth < 7.5 do continue
+        camera_fade := clamp((depth - 7.5) / 5.5, 0, 1)
+        event_bead_distance_fade := clamp((92 - depth) / 34, 0, 1)
+        life_fade := clamp(1 - sample.age / sample.lifetime, 0, 1)
+        scar_strength := sample.kick * life_fade * camera_fade
+        if scar_strength <= .025 do continue
+        scar_visibility := f32(math.sqrt(f64(scar_strength)))
+        forward := third_person.Vec3{sample.forward.x, 0, sample.forward.z}
+        right := third_person.Vec3{sample.right.x, 0, sample.right.z}
+        radius := .88 + sample.age * 1.78
+        for spoke in 0 ..< 12 {
+            seed := world_rondine_wake_hash(sample.serial, 1, u32(80 + spoke))
+            if seed % 5 >= 3 do continue
+            variation := f32((seed >> 4) % 17) / 16
+            angle_jitter := (variation - .5) * .20
+            angle := f32(spoke) / 12 * math.TAU + angle_jitter
+            cosine, sine := math.cos(angle), math.sin(angle)
+            radial := right * cosine + forward * sine
+            tangent := right * -sine + forward * cosine
+            spoke_radius := radius * (.84 + variation * .32)
+            position := center + radial * spoke_radius
+            scar_alpha := u8(clamp((176 + variation * 68) * scar_visibility, 0, 232))
+            scar_color := rl.Color{229, 252, 246, scar_alpha}
+            fragment_length := .24 + sample.age * .15 + variation * .17
+            fragment_width := .055 + scar_visibility * .058 + variation * .032
+            world_rondine_surface_chip(
+                position,
+                tangent,
+                radial,
+                fragment_length,
+                fragment_width,
+                scar_color,
+                double_sided = true,
+            )
+        }
+
+        // The expanding ring marks the impulse location, while this short
+        // asymmetric gouge records which side actually broke traction. It
+        // begins behind the loaded stern so it remains visible while the
+        // center of the ring is still occluded by the aircraft.
+        loaded_sign := sample.slip < 0 ? f32(-1) : f32(1)
+        back := -forward
+        gouge_alpha := u8(clamp(214 * scar_visibility, 0, 224))
+        gouge_color := rl.Color{233, 253, 247, gouge_alpha}
+        for gouge in 0 ..< 3 {
+            gouge_f := f32(gouge)
+            gouge_position :=
+                center +
+                back * (.58 + sample.age * .62 + gouge_f * .24) +
+                right * (loaded_sign * (.22 + gouge_f * .18))
+            gouge_position.y += .012
+            gouge_tangent :=
+                back * (.48 + gouge_f * .10) +
+                right * (loaded_sign * (.82 + gouge_f * .08))
+            gouge_radial :=
+                right * loaded_sign - back * (.12 + gouge_f * .05)
+            world_rondine_surface_chip(
+                gouge_position,
+                gouge_tangent,
+                gouge_radial,
+                .20 + scar_visibility * .16 - gouge_f * .018,
+                .038 + scar_visibility * .022,
+                {gouge_color.r, gouge_color.g, gouge_color.b, u8(f32(gouge_alpha) * (1 - gouge_f * .19))},
+                double_sided = true,
+            )
+        }
+
+        // Breakaway leaves a one-sided fan of ballistic beads at the skid
+        // origin. This is deliberately unlike touchdown's radial burst: every
+        // trajectory favors the loaded side and trails aft, preserving the
+        // direction of the initial loss of grip after the live kick rays move
+        // away with the aircraft.
+        if sample.age < .52 {
+            for bead in 0 ..< 5 {
+                seed := world_rondine_wake_hash(sample.serial, 1, u32(250 + bead))
+                variation := f32(seed % 31) / 30
+                spread := (f32(bead) - 2) * .16 + (variation - .5) * .12
+                launch_direction :=
+                    right * (loaded_sign * (.76 + spread)) +
+                    back * (.34 + variation * .38)
+                launch_speed := 1.15 + variation * 1.25
+                lift_speed := 1.15 + variation * 1.20
+                bead_position :=
+                    center +
+                    right * (loaded_sign * .34) +
+                    launch_direction * (sample.age * launch_speed)
+                bead_position.y +=
+                    .08 +
+                    sample.age * lift_speed -
+                    3.15 * sample.age * sample.age
+                bead_direction :=
+                    launch_direction * launch_speed +
+                    third_person.Vec3 {
+                        0,
+                        lift_speed - 6.3 * sample.age,
+                        0,
+                    }
+                bead_life := clamp(1 - sample.age / .52, 0, 1)
+                bead_alpha :=
+                    u8(
+                        clamp(
+                            (136 + variation * 78) *
+                            scar_visibility *
+                            bead_life *
+                            event_bead_distance_fade,
+                            0,
+                            210,
+                        ),
+                    )
+                bead_color := rl.Color{232, 253, 247, bead_alpha}
+                bead_streak_size := .070 + variation * .090
+                world_rondine_spray_streak(
+                    camera,
+                    bead_position,
+                    bead_direction,
+                    bead_streak_size,
+                    bead_color,
+                )
+                world_rondine_spray_bead(
+                    camera,
+                    bead_position +
+                    linalg.normalize0(bead_direction) * (bead_streak_size * 2.4),
+                    .022 + variation * .018,
+                    bead_color,
+                )
+            }
+        }
+    }
+
+    // The hull slap leaves an expanding, elliptical broken ring. Its long
+    // axis runs across the hull beam, distinguishing touchdown from the round
+    // breakaway scar and the crossed hookup zipper.
+    for sample in editor.rondine.wake[:editor.rondine.wake_count] {
+        if sample.impact <= .04 do continue
+        center := third_person.Vec3{sample.position.x, sea_y + .027, sample.position.z}
+        depth := linalg.dot(center - camera.position, camera.forward)
+        if depth < 7.5 do continue
+        camera_fade := clamp((depth - 7.5) / 5.5, 0, 1)
+        event_bead_distance_fade := clamp((92 - depth) / 34, 0, 1)
+        life_fade := clamp(1 - sample.age / sample.lifetime, 0, 1)
+        ring_strength := sample.impact * life_fade * camera_fade
+        if ring_strength <= .025 do continue
+        ring_visibility := f32(math.sqrt(f64(ring_strength)))
+        forward := third_person.Vec3{sample.forward.x, 0, sample.forward.z}
+        right := third_person.Vec3{sample.right.x, 0, sample.right.z}
+        radius := .78 + sample.age * 2.8
+        for spoke in 0 ..< 10 {
+            seed := world_rondine_wake_hash(sample.serial, 0, u32(150 + spoke))
+            if seed % 5 == 0 do continue
+            variation := f32((seed >> 3) % 19) / 18
+            angle := f32(spoke) / 10 * math.TAU + (variation - .5) * .14
+            cosine, sine := math.cos(angle), math.sin(angle)
+            radial := right * cosine + forward * (sine * .58)
+            tangent := right * -sine + forward * (cosine * .58)
+            position := center + radial * radius * (.88 + variation * .24)
+            ring_alpha :=
+                u8(clamp((174 + variation * 70) * ring_visibility, 0, 224))
+            ring_color := rl.Color{228, 251, 245, ring_alpha}
+            fragment_length := .22 + sample.age * .15 + variation * .13
+            fragment_width := .052 + ring_visibility * .042 + variation * .028
+            world_rondine_surface_chip(
+                position,
+                tangent,
+                radial,
+                fragment_length,
+                fragment_width,
+                ring_color,
+                double_sided = true,
+            )
+            // Every second outer chip echoes inward at lower contrast. This
+            // sparse rebound ripple supplies a medium-scale beat beneath the
+            // large touchdown ellipse without becoming a second solid ring.
+            if spoke % 2 == 0 {
+                inner_position := center + radial * radius * (.48 + variation * .08)
+                rebound_alpha := u8(f32(ring_alpha) * .48)
+                rebound_color := rl.Color{210, 242, 239, rebound_alpha}
+                world_rondine_surface_chip(
+                    inner_position,
+                    tangent,
+                    radial,
+                    fragment_length * .62,
+                    fragment_width * .72,
+                    rebound_color,
+                    double_sided = true,
+                )
+            }
+        }
+
+        // A hull slap begins as a beam-wide pressure bar before resolving
+        // into the expanding ellipse. Two offset chips keep the bar broken
+        // and directional while making touchdown unmistakable beneath the
+        // aircraft during its strongest frames.
+        slap_alpha := u8(clamp(218 * ring_visibility, 0, 226))
+        slap_color := rl.Color{234, 253, 247, slap_alpha}
+        for slap in 0 ..< 2 {
+            slap_f := f32(slap)
+            slap_position :=
+                center +
+                forward *
+                ((slap_f - .5) * (.20 + sample.age * .42))
+            slap_position.y += .012
+            world_rondine_surface_chip(
+                slap_position,
+                right,
+                forward,
+                .46 +
+                sample.age * 1.05 +
+                ring_visibility * .26 -
+                slap_f * .04,
+                .055 + ring_visibility * .028,
+                {slap_color.r, slap_color.g, slap_color.b, u8(f32(slap_alpha) * (1 - slap_f * .22))},
+                double_sided = true,
+            )
+        }
+
+        // Fine ballistic beads remain at the impact site after the live hull
+        // burst has moved away with the aircraft. Reconstructing their arcs
+        // from sample age gives touchdown a short sparkling tail without a
+        // particle emitter or mutable per-droplet state.
+        if sample.age < .58 {
+            for bead in 0 ..< 6 {
+                seed := world_rondine_wake_hash(sample.serial, 0, u32(230 + bead))
+                variation := f32(seed % 29) / 28
+                angle :=
+                    f32(bead) / 6 * math.TAU +
+                    (variation - .5) * .28
+                cosine, sine := math.cos(angle), math.sin(angle)
+                radial := right * cosine + forward * (sine * .72)
+                launch_speed := 1.25 + variation * 1.15
+                lift_speed := 1.45 + variation * 1.05
+                bead_position :=
+                    center +
+                    radial * (sample.age * launch_speed)
+                bead_position.y +=
+                    .10 +
+                    sample.age * lift_speed -
+                    3.4 * sample.age * sample.age
+                bead_direction :=
+                    radial * launch_speed +
+                    third_person.Vec3 {
+                        0,
+                        lift_speed - 6.8 * sample.age,
+                        0,
+                    }
+                bead_life := clamp(1 - sample.age / .58, 0, 1)
+                bead_alpha :=
+                    u8(
+                        clamp(
+                            (142 + variation * 74) *
+                            ring_visibility *
+                            bead_life *
+                            event_bead_distance_fade,
+                            0,
+                            214,
+                        ),
+                    )
+                bead_color := rl.Color{232, 253, 247, bead_alpha}
+                bead_streak_size := .075 + variation * .085
+                world_rondine_spray_streak(
+                    camera,
+                    bead_position,
+                    bead_direction,
+                    bead_streak_size,
+                    bead_color,
+                )
+                world_rondine_spray_bead(
+                    camera,
+                    bead_position +
+                    linalg.normalize0(bead_direction) * (bead_streak_size * 2.4),
+                    .024 + variation * .018,
+                    bead_color,
+                )
+            }
+        }
+    }
+
+    // Liftoff leaves a final feathered release mark where the hull stops
+    // loading the water. It points aft and narrows toward the last contact,
+    // visually opposing touchdown's broad transverse slap.
+    for sample in editor.rondine.wake[:editor.rondine.wake_count] {
+        if sample.release <= .04 do continue
+        center := third_person.Vec3{sample.position.x, sea_y + .028, sample.position.z}
+        depth := linalg.dot(center - camera.position, camera.forward)
+        if depth < 7.5 do continue
+        camera_fade := clamp((depth - 7.5) / 5.5, 0, 1)
+        release_bead_distance_fade := clamp((92 - depth) / 34, 0, 1)
+        life_fade := clamp(1 - sample.age / sample.lifetime, 0, 1)
+        release_strength := sample.release * life_fade * life_fade * camera_fade
+        if release_strength <= .02 do continue
+        release_visibility := f32(math.sqrt(f64(release_strength)))
+        forward := third_person.Vec3{sample.forward.x, 0, sample.forward.z}
+        right := third_person.Vec3{sample.right.x, 0, sample.right.z}
+        back := -forward
+
+        // A broad suction knuckle is the large beat; it quickly fades into
+        // the narrower paired quill marks behind it.
+        knuckle_alpha :=
+            u8(clamp(188 * release_visibility, 0, 202))
+        knuckle_color := rl.Color{225, 250, 244, knuckle_alpha}
+        world_rondine_surface_chip(
+            center + back * (.12 + sample.age * .22),
+            right,
+            back,
+            .42 + sample.age * .38 + release_visibility * .16,
+            .060 + release_visibility * .026,
+            knuckle_color,
+            double_sided = true,
+        )
+
+        // Four paired quills converge toward the final hull-contact point.
+        // Their staggered lengths give the mark a directional feather shape
+        // instead of another symmetric ring.
+        for quill in 0 ..< 4 {
+            quill_f := f32(quill)
+            quill_seed :=
+                world_rondine_wake_hash(sample.serial, 0, u32(360 + quill))
+            quill_variation := f32(quill_seed % 19) / 18
+            for side in 0 ..< 2 {
+                side_sign := side == 0 ? f32(-1) : f32(1)
+                lateral_width :=
+                    .54 - quill_f * .105 + quill_variation * .06
+                quill_position :=
+                    center +
+                    back * (.28 + quill_f * .25 + sample.age * .18) +
+                    right * (side_sign * lateral_width)
+                quill_position.y += .010
+                quill_tangent :=
+                    back * (.74 + quill_f * .08) -
+                    right * (side_sign * (.34 + quill_f * .07))
+                quill_radial :=
+                    right * side_sign + back * .16
+                quill_alpha :=
+                    u8(
+                        clamp(
+                            (174 + quill_variation * 42) *
+                            release_visibility *
+                            (1 - quill_f * .13),
+                            0,
+                            210,
+                        ),
+                    )
+                world_rondine_surface_chip(
+                    quill_position,
+                    quill_tangent,
+                    quill_radial,
+                    .18 + release_visibility * .11 - quill_f * .012,
+                    .032 + release_visibility * .014,
+                    {230, 252, 246, quill_alpha},
+                    double_sided = true,
+                )
+            }
+        }
+
+        // Four tiny beads peel aft and fall back toward the release feather.
+        // Their low, converging trajectories contrast touchdown's high radial
+        // explosion and complete the small-scale layer of the liftoff beat.
+        if sample.age < .48 {
+            for bead in 0 ..< 4 {
+                bead_f := f32(bead)
+                side_sign := bead & 1 == 0 ? f32(-1) : f32(1)
+                seed :=
+                    world_rondine_wake_hash(
+                        sample.serial,
+                        u32(bead & 1),
+                        u32(390 + bead),
+                    )
+                variation := f32(seed % 23) / 22
+                launch_direction :=
+                    back * (.62 + bead_f * .10 + variation * .18) +
+                    right *
+                    (side_sign * (.34 + bead_f * .08 + variation * .12))
+                launch_speed := .78 + variation * .62
+                lift_speed := .62 + variation * .48
+                bead_position :=
+                    center +
+                    right * (side_sign * (.18 + bead_f * .055)) +
+                    launch_direction * (sample.age * launch_speed)
+                bead_position.y +=
+                    .14 +
+                    sample.age * lift_speed -
+                    3.45 * sample.age * sample.age
+                bead_direction :=
+                    launch_direction * launch_speed +
+                    third_person.Vec3 {
+                        0,
+                        lift_speed - 6.9 * sample.age,
+                        0,
+                    }
+                bead_life := clamp(1 - sample.age / .48, 0, 1)
+                bead_alpha :=
+                    u8(
+                        clamp(
+                            (142 + variation * 62) *
+                            release_visibility *
+                            bead_life *
+                            release_bead_distance_fade,
+                            0,
+                            205,
+                        ),
+                    )
+                bead_color := rl.Color{232, 253, 247, bead_alpha}
+                bead_streak_size := .060 + variation * .070
+                world_rondine_spray_streak(
+                    camera,
+                    bead_position,
+                    bead_direction,
+                    bead_streak_size,
+                    bead_color,
+                )
+                world_rondine_spray_bead(
+                    camera,
+                    bead_position +
+                    linalg.normalize0(bead_direction) * (bead_streak_size * 2.2),
+                    .020 + variation * .014,
+                    bead_color,
+                )
+            }
+        }
+    }
+
+    // Grip recovery is stamped into the trail as a short converging zipper.
+    // Unlike the live hookup clap, these paired surface stitches remain at the
+    // exact places where lateral energy collapsed, making the end of a drift
+    // readable for a moment after the boat has already straightened.
+    for sample in editor.rondine.wake[:editor.rondine.wake_count] {
+        if sample.hookup <= .06 do continue
+        center := third_person.Vec3{sample.position.x, sea_y + .032, sample.position.z}
+        depth := linalg.dot(center - camera.position, camera.forward)
+        if depth < 7.5 do continue
+        camera_fade := clamp((depth - 7.5) / 5.5, 0, 1)
+        event_bead_distance_fade := clamp((92 - depth) / 34, 0, 1)
+        life_fade := clamp(1 - sample.age / sample.lifetime, 0, 1)
+        stitch_strength := sample.hookup * life_fade * life_fade * camera_fade
+        if stitch_strength <= .035 do continue
+        forward := third_person.Vec3{sample.forward.x, 0, sample.forward.z}
+        right := third_person.Vec3{sample.right.x, 0, sample.right.z}
+        back := -forward
+        serial_variation :=
+            f32(world_rondine_wake_hash(sample.serial, 0, 130) % 17) /
+            16
+        stitch_visibility := f32(math.sqrt(f64(stitch_strength)))
+        for side in 0 ..< 2 {
+            side_sign := side == 0 ? f32(-1) : f32(1)
+            position :=
+                center +
+                right * (side_sign * (.42 + serial_variation * .18)) +
+                back * (serial_variation * .10)
+            direction :=
+                back * (.22 + serial_variation * .13) -
+                right * (side_sign * (.72 + stitch_strength * .30))
+            stitch_alpha :=
+                u8(clamp((136 + serial_variation * 52) * stitch_strength, 0, 194))
+            stitch_color := rl.Color{228, 252, 246, stitch_alpha}
+            world_rondine_spray_streak(
+                camera,
+                position,
+                direction,
+                .14 + stitch_strength * .16 + serial_variation * .055,
+                stitch_color,
+            )
+        }
+
+        // Three paired surface teeth close toward the centerline behind the
+        // transient spray clap. Unlike countersteer's repeated herringbone,
+        // this is a single short V whose spacing collapses rearward, clearly
+        // communicating that lateral grip has rejoined.
+        zipper_alpha := u8(clamp(204 * stitch_visibility, 0, 210))
+        zipper_color := rl.Color{232, 253, 247, zipper_alpha}
+        for tooth in 0 ..< 3 {
+            tooth_f := f32(tooth)
+            lateral_width := .48 - tooth_f * .13
+            for side in 0 ..< 2 {
+                side_sign := side == 0 ? f32(-1) : f32(1)
+                tooth_position :=
+                    center +
+                    back * (.16 + tooth_f * .24) +
+                    right * (side_sign * lateral_width)
+                tooth_position.y += .012
+                tooth_tangent :=
+                    back * (.38 + tooth_f * .06) -
+                    right * (side_sign * (.82 - tooth_f * .08))
+                tooth_radial :=
+                    right * side_sign + back * .12
+                tooth_alpha :=
+                    u8(f32(zipper_alpha) * (1 - tooth_f * .16))
+                world_rondine_surface_chip(
+                    tooth_position,
+                    tooth_tangent,
+                    tooth_radial,
+                    .16 + stitch_visibility * .11 - tooth_f * .012,
+                    .034 + stitch_visibility * .016,
+                    {zipper_color.r, zipper_color.g, zipper_color.b, tooth_alpha},
+                    double_sided = true,
+                )
+            }
+        }
+
+        // A low pair of broad closing collars supplies the large-scale mass
+        // behind the zipper. Each collar sweeps inward from the former drift
+        // shoulders, then the small center knot marks where the two pressure
+        // fronts meet. The soft-edged surface chips keep this planted on the
+        // water instead of reading as another airborne spray fan.
+        collar_alpha := u8(clamp(112 * stitch_visibility, 0, 138))
+        collar_color := rl.Color{211, 247, 241, collar_alpha}
+        for side in 0 ..< 2 {
+            side_sign := side == 0 ? f32(-1) : f32(1)
+            collar_position :=
+                center +
+                back * (.33 + serial_variation * .08) +
+                right * (side_sign * .34)
+            collar_tangent := back * .46 - right * (side_sign * .88)
+            collar_radial := right * side_sign + back * .52
+            world_rondine_surface_chip(
+                collar_position,
+                collar_tangent,
+                collar_radial,
+                .46 + stitch_visibility * .17,
+                .105 + stitch_visibility * .035,
+                collar_color,
+                true,
+            )
+        }
+        knot_alpha := u8(clamp(174 * stitch_visibility, 0, 192))
+        knot_color := rl.Color{236, 255, 249, knot_alpha}
+        knot_position := center + back * .66
+        knot_position.y += .018
+        world_rondine_surface_chip(
+            knot_position,
+            back,
+            right,
+            .18 + stitch_visibility * .08,
+            .065 + stitch_visibility * .025,
+            knot_color,
+            true,
+        )
+        world_rondine_surface_chip(
+            knot_position,
+            right,
+            back,
+            .10 + stitch_visibility * .04,
+            .045 + stitch_visibility * .018,
+            knot_color,
+            true,
+        )
+
+        // Four small beads cross inward above the stored zipper, echoing the
+        // live hookup clap after the aircraft has moved on. Their opposing
+        // trajectories make recovery feel like pressure collapsing back
+        // toward the centerline rather than another outward impact burst.
+        if sample.age < .46 {
+            for side in 0 ..< 2 {
+                side_sign := side == 0 ? f32(-1) : f32(1)
+                for bead in 0 ..< 2 {
+                    seed :=
+                        world_rondine_wake_hash(
+                            sample.serial,
+                            u32(side),
+                            u32(270 + bead),
+                        )
+                    variation := f32(seed % 23) / 22
+                    bead_f := f32(bead)
+                    launch_direction :=
+                        back * (.34 + bead_f * .18 + variation * .18) -
+                        right *
+                        (side_sign * (.78 + bead_f * .22 + variation * .16))
+                    launch_speed := .88 + variation * .72
+                    lift_speed := 1.00 + bead_f * .20 + variation * .72
+                    bead_position :=
+                        center +
+                        right * (side_sign * (.48 + bead_f * .12)) +
+                        launch_direction * (sample.age * launch_speed)
+                    bead_position.y +=
+                        .08 +
+                        sample.age * lift_speed -
+                        3.0 * sample.age * sample.age
+                    bead_direction :=
+                        launch_direction * launch_speed +
+                        third_person.Vec3 {
+                            0,
+                            lift_speed - 6.0 * sample.age,
+                            0,
+                        }
+                    bead_life := clamp(1 - sample.age / .46, 0, 1)
+                    bead_alpha :=
+                        u8(
+                            clamp(
+                                (136 + variation * 70) *
+                                stitch_visibility *
+                                bead_life *
+                                event_bead_distance_fade,
+                                0,
+                                202,
+                            ),
+                        )
+                    bead_color := rl.Color{232, 253, 247, bead_alpha}
+                    bead_streak_size := .065 + variation * .075
+                    world_rondine_spray_streak(
+                        camera,
+                        bead_position,
+                        bead_direction,
+                        bead_streak_size,
+                        bead_color,
+                    )
+                    world_rondine_spray_bead(
+                        camera,
+                        bead_position +
+                        linalg.normalize0(bead_direction) * (bead_streak_size * 2.4),
+                        .020 + variation * .016,
+                        bead_color,
+                    )
+                }
+            }
+        }
+    }
+
+    // Fine spray: deterministic ballistic droplets provide the small-scale
+    // layer. They are reconstructed from recent wake samples, so this remains
+    // a procedural effect with no atlas, emitter allocation, or saved state.
+    for sample in editor.rondine.wake[:editor.rondine.wake_count] {
+        if sample.age > .88 || sample.strength < .16 || sample.serial % 2 != 0 do continue
+        base := third_person.Vec3{sample.position.x, sea_y, sample.position.z}
+        sample_depth := linalg.dot(base - camera.position, camera.forward)
+        if sample_depth < 7.5 do continue
+        sample_camera_fade := clamp((sample_depth - 7.5) / 5.5, 0, 1)
+        droplet_distance_fade := clamp((92 - sample_depth) / 34, 0, 1)
+        if droplet_distance_fade <= .02 do continue
+        right := third_person.Vec3{sample.right.x, 0, sample.right.z}
+        back := -third_person.Vec3{sample.forward.x, 0, sample.forward.z}
+        turn := clamp(-sample.turn + sample.slip * 1.8, -1, 1)
+        for side in 0 ..< 2 {
+            side_sign := side == 0 ? f32(-1) : f32(1)
+            outside := clamp(1 + side_sign * turn * .62, .38, 1.62)
+            pressure_role := outside >= 1 ? u32(1) : u32(0)
+            droplet_count := outside > 1 ? 5 : 3
+            for droplet in 0 ..< droplet_count {
+                seed := world_rondine_wake_hash(sample.serial, pressure_role, u32(10 + droplet))
+                variation := f32(seed % 13) / 12
+                launch_height := .32 + variation * .72
+                outward_speed := (.72 + variation * 1.35) * outside
+                rear_speed := .4 + f32((seed >> 2) % 7) * .11
+                age := sample.age
+                // Launch slightly above the surface and solve the descending
+                // water crossing analytically. The old `y < sea + .035`
+                // clamp treated the first few rising frames as landed, then
+                // let the bead skate indefinitely along the water. Keeping a
+                // stable impact time gives every fleck one clean airborne arc
+                // and one anchored surface response.
+                launch_clearance := f32(.08)
+                water_clearance := f32(.035)
+                gravity_half := f32(1.45)
+                landing_time :=
+                    (
+                        launch_height +
+                        f32(
+                            math.sqrt(
+                                f64(
+                                    launch_height * launch_height +
+                                    4 * gravity_half *
+                                    (launch_clearance - water_clearance),
+                                ),
+                            ),
+                        )
+                    ) /
+                    (2 * gravity_half)
+                flight_age := min(age, landing_time)
+                position :=
+                    base +
+                    right * (side_sign * (.72 + outward_speed * flight_age)) +
+                    back * (rear_speed * flight_age)
+                position.y +=
+                    launch_clearance +
+                    launch_height * flight_age -
+                    gravity_half * flight_age * flight_age
+                landed := age >= landing_time
+                if landed do position.y = sea_y + water_clearance
+                max_life := f32(.78)
+                life := max(max_life - age, f32(.01))
+                direction :=
+                    right * (side_sign * outward_speed) +
+                    back * rear_speed +
+                    third_person.Vec3{0, launch_height - 2.9 * flight_age, 0}
+                opacity :=
+                    clamp(life / max_life, 0, 1) *
+                    sample_camera_fade *
+                    droplet_distance_fade
+                droplet_color := rl.Color {
+                    224,
+                    250,
+                    245,
+                    u8((165 + variation * 68) * opacity),
+                }
+                // One heavier bead per loaded-side burst supplies a readable
+                // medium-small accent; the rest remain fine tapered needles.
+                bead_scale := pressure_role == 1 && droplet == 0 ? f32(1.55) : f32(1)
+                streak_size := (.11 + variation * .15) * bead_scale
+                world_rondine_spray_streak(camera, position, direction, streak_size, droplet_color)
+                if pressure_role == 1 && droplet == 0 && !landed {
+                    world_rondine_spray_bead(
+                        camera,
+                        position +
+                        linalg.normalize0(direction) * (streak_size * 2.4),
+                        .032 + variation * .026,
+                        droplet_color,
+                    )
+                }
+
+                // The heavy loaded-side bead leaves a brief anchored skip
+                // crown when its ballistic path reconnects with the surface.
+                // The crossed streaks provide the medium-small read while two
+                // expanding chips add a tiny concentric water response.
+                if landed && pressure_role == 1 && droplet == 0 {
+                    impact_age := age - landing_time
+                    impact_life := clamp(1 - impact_age / .20, 0, 1)
+                    impact_alpha := u8(128 * opacity * impact_life)
+                    impact_color := rl.Color{220, 248, 243, impact_alpha}
+                    impact_outward := right * side_sign + back * (.18 + variation * .18)
+                    impact_cross := back - right * (side_sign * (.24 + variation * .16))
+                    world_rondine_spray_streak(camera, position, impact_outward, .18 + variation * .09, impact_color)
+                    world_rondine_spray_streak(
+                        camera,
+                        position + back * .045,
+                        impact_cross,
+                        .12 + variation * .06,
+                        {impact_color.r, impact_color.g, impact_color.b, u8(f32(impact_alpha) * .72)},
+                    )
+                    if impact_life > .02 {
+                        chip_radius := .055 + impact_age * .58
+                        world_rondine_surface_chip(
+                            position + impact_outward * (impact_age * .16),
+                            impact_cross,
+                            impact_outward,
+                            chip_radius,
+                            .018 + impact_life * .018,
+                            {224, 250, 244, u8(f32(impact_alpha) * .82)},
+                        )
+                        world_rondine_surface_chip(
+                            position - impact_outward * (impact_age * .10),
+                            impact_outward,
+                            impact_cross,
+                            chip_radius * .62,
+                            .014 + impact_life * .012,
+                            {215, 246, 242, u8(f32(impact_alpha) * .54)},
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 world_vehicle_showcase :: proc(editor: ^Editor) {
     // The showcase is intentionally self-contained: the vehicle is presented
     // against the sky with no island, runway, floor, or town geometry.
@@ -13257,18 +17741,45 @@ world_vehicle_showcase :: proc(editor: ^Editor) {
     } else if editor.vehicle_showcase_target == "libellula" || editor.vehicle_showcase_target == "libellula-mk2" {
         world_aircraft(editor)
         world_showcase_aircraft_pilot(editor, editor.libellula.body.position, editor.libellula.body.basis)
+    } else if editor.vehicle_showcase_target == "rondine" {
+        p := editor.rondine.body.position
+        y := editor.project.sea_level
+        extent := f32(90)
+        // Rondine's defining presentation is its relationship to the water.
+        // Give its showcase a local ocean card so the paired wake fans never
+        // disappear against the otherwise sky-only vehicle backdrop.
+        world_quad(
+            {p.x - extent, y, p.z - extent},
+            {p.x - extent, y, p.z + extent},
+            {p.x + extent, y, p.z + extent},
+            {p.x + extent, y, p.z - extent},
+            {74, 145, 170, 255},
+        )
+        world_aircraft(editor)
+        world_rondine_wake_fans(editor)
+        world_showcase_aircraft_pilot(
+            editor,
+            editor.rondine.body.position,
+            world_rondine_presentation_basis(editor),
+            seat_height = .92,
+        )
     } else {
         world_car(editor)
         world_showcase_car_pilot(editor)
     }
 }
 
-world_showcase_aircraft_pilot :: proc(editor: ^Editor, position: flight.Vec3, basis: flight.Basis) {
+world_showcase_aircraft_pilot :: proc(
+    editor: ^Editor,
+    position: flight.Vec3,
+    basis: flight.Basis,
+    seat_height: f32 = .55,
+) {
     rotation := math.atan2(-basis.forward.x, -basis.forward.z)
     seat_position := third_person.Vec3 {
-        position.x + basis.up.x * .55,
-        position.y + basis.up.y * .55,
-        position.z + basis.up.z * .55,
+        position.x + basis.up.x * seat_height,
+        position.y + basis.up.y * seat_height,
+        position.z + basis.up.z * seat_height,
     }
     world_mouse_model_parented(
         editor,
@@ -13286,6 +17797,22 @@ world_showcase_aircraft_pilot :: proc(editor: ^Editor, position: flight.Vec3, ba
             hide_hind_feet = true,
         },
         basis,
+    )
+}
+
+world_rondine_pilot :: proc(editor: ^Editor) {
+    if editor == nil ||
+       !editor.in_map ||
+       !editor.rondine_visible ||
+       editor.pilot.mode != .Driving ||
+       editor.pilot.vehicle != &editor.rondine.vehicle {
+        return
+    }
+    world_showcase_aircraft_pilot(
+        editor,
+        editor.rondine.body.position,
+        world_rondine_presentation_basis(editor),
+        seat_height = .92,
     )
 }
 
@@ -15177,11 +19704,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         crown_y := head_y + .145
         crown_z := head_z + .065
         canvas := rl.Color{242, 239, 221, 255}
-        world_sailor_hat_hull(
-            local_point(p, rotation, crown_x, crown_y, crown_z),
-            rotation,
-            canvas,
-        )
+        world_sailor_hat_hull(local_point(p, rotation, crown_x, crown_y, crown_z), rotation, canvas)
     }
 
     if model.scarf_enabled {
@@ -15866,11 +20389,7 @@ Business_Sign_Kind :: enum {
     Aerodromo,
 }
 
-world_business_sign_face :: proc(
-    center: third_person.Vec3,
-    rotation, width, height: f32,
-    kind: Business_Sign_Kind,
-) {
+world_business_sign_face :: proc(center: third_person.Vec3, rotation, width, height: f32, kind: Business_Sign_Kind) {
     outward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
     right := third_person.Vec3{math.cos(rotation), 0, math.sin(rotation)}
     tile_width := f32(1) / 5
@@ -15879,16 +20398,8 @@ world_business_sign_face :: proc(
     for segment in 0 ..< segments {
         angle_0 := f32(segment) / f32(segments) * 2 * math.PI
         angle_1 := f32(segment + 1) / f32(segments) * 2 * math.PI
-        local_0 := third_person.Vec3{
-            math.cos(angle_0) * width * .48,
-            math.sin(angle_0) * height * .43,
-            0,
-        }
-        local_1 := third_person.Vec3{
-            math.cos(angle_1) * width * .48,
-            math.sin(angle_1) * height * .43,
-            0,
-        }
+        local_0 := third_person.Vec3{math.cos(angle_0) * width * .48, math.sin(angle_0) * height * .43, 0}
+        local_1 := third_person.Vec3{math.cos(angle_1) * width * .48, math.sin(angle_1) * height * .43, 0}
         points := [3]third_person.Vec3 {
             center,
             center + right * local_0.x + third_person.Vec3{0, local_0.y, 0},
@@ -15896,14 +20407,8 @@ world_business_sign_face :: proc(
         }
         uvs := [3][2]f32 {
             {tile_u + tile_width * .5, .5},
-            {
-                tile_u + (.5 + math.cos(angle_0) * .48) * tile_width,
-                .5 - math.sin(angle_0) * .43,
-            },
-            {
-                tile_u + (.5 + math.cos(angle_1) * .48) * tile_width,
-                .5 - math.sin(angle_1) * .43,
-            },
+            {tile_u + (.5 + math.cos(angle_0) * .48) * tile_width, .5 - math.sin(angle_0) * .43},
+            {tile_u + (.5 + math.cos(angle_1) * .48) * tile_width, .5 - math.sin(angle_1) * .43},
         }
         for vertex_index in 0 ..< 3 {
             vertex := world_vertex(points[vertex_index], {255, 255, 255, 255})
@@ -15915,12 +20420,7 @@ world_business_sign_face :: proc(
     }
 }
 
-world_business_sign :: proc(
-    center: third_person.Vec3,
-    rotation: f32,
-    kind: Business_Sign_Kind,
-    width: f32 = 1.72,
-) {
+world_business_sign :: proc(center: third_person.Vec3, rotation: f32, kind: Business_Sign_Kind, width: f32 = 1.72) {
     height := width
     // These are enamel wall plaques, not projecting box signs. Keep enough
     // edge to catch a highlight without presenting a black slab from the side.
@@ -15950,19 +20450,8 @@ world_business_sign :: proc(
     // read as several unrelated props when viewed edge-on.
     for side in -1 ..= 1 {
         if side == 0 do continue
-        cleat_x, cleat_z := world_rotate_xz(
-            center.x,
-            center.z,
-            f32(side) * width * .27,
-            -.105,
-            rotation,
-        )
-        world_box_rotated(
-            {cleat_x, center.y + height * .25, cleat_z},
-            {.10, .16, .18},
-            rotation,
-            rim,
-        )
+        cleat_x, cleat_z := world_rotate_xz(center.x, center.z, f32(side) * width * .27, -.105, rotation)
+        world_box_rotated({cleat_x, center.y + height * .25, cleat_z}, {.10, .16, .18}, rotation, rim)
     }
 }
 
@@ -15986,13 +20475,7 @@ world_business_sign_for_resident :: proc(editor: ^Editor, resident: story.Reside
         frontage_clearance = 2.4
     }
     plaque_half_depth := f32(.075 * .5)
-    x, z := world_rotate_xz(
-        position.x,
-        position.z,
-        side * 1.45,
-        -frontage_clearance + plaque_half_depth,
-        rotation,
-    )
+    x, z := world_rotate_xz(position.x, position.z, side * 1.45, -frontage_clearance + plaque_half_depth, rotation)
     world_business_sign({x, position.y + 2.44, z}, rotation, kind)
 }
 
@@ -16065,6 +20548,26 @@ world_marta :: proc(editor: ^Editor) {
     if story.resident_has_unseen_action(&editor.story_state, .Marta) {
         world_mouse_interaction_indicator(editor, position)
     }
+}
+
+world_marin :: proc(editor: ^Editor) {
+    if editor == nil || !editor.in_map || east_marina_plan(editor) == nil do return
+    position := marin_position(editor)
+    if !world_sphere_in_view(editor, position + third_person.Vec3{0, 1.2, 0}, 2, 4) do return
+    delta := third_person.Vec3{editor.player.position.x - position.x, 0, editor.player.position.z - position.z}
+    facing := math.atan2(-delta.x, -delta.z)
+    world_mouse_model(
+        editor,
+        {
+            position = position,
+            rotation = math.PI - facing,
+            build = 1.05,
+            snout_length = .96,
+            accessory = .Paper_Boat,
+            grounded = true,
+        },
+    )
+    world_mouse_interaction_indicator(editor, position)
 }
 
 world_gerta :: proc(editor: ^Editor) {
@@ -16173,9 +20676,7 @@ world_story_resident_home_pose :: proc(
         structures := editor.project.structures[:editor.project.structure_count]
         for structure, structure_index in structures {
             identity := architecture.architecture_resolve_legacy_identity(structure)
-            storefront :=
-                identity.archetype == .Shop_House ||
-                identity.archetype == .Mixed_Use_Dwelling
+            storefront := identity.archetype == .Shop_House || identity.archetype == .Mixed_Use_Dwelling
             if structure.kind != .Architecture || structure.height > 60 || !storefront do continue
             island_dx, island_dz := structure.center_x - island_center, structure.center_z - island_center
             if island_dx * island_dx + island_dz * island_dz > island_radius * island_radius do continue
@@ -16302,6 +20803,59 @@ world_story_resident_position :: proc(
     }
     home_position, _, found := world_story_resident_home_pose(editor, resident)
     return home_position, found
+}
+
+world_settlement_inhabitants :: proc(editor: ^Editor) {
+    if editor == nil || editor.settlement_plan.inhabitant_count <= 0 do return
+    animated := 0
+    elapsed := f32(rl.GetTime())
+    camera := [2]f32{editor.camera_pose.position.x, editor.camera_pose.position.z}
+    for inhabitant, inhabitant_index in editor.settlement_plan.inhabitants[:editor.settlement_plan.inhabitant_count] {
+        if inhabitant.home_activity < 0 || inhabitant.home_activity >= editor.settlement_plan.activity_point_count {
+            continue
+        }
+        home := editor.settlement_plan.activity_points[inhabitant.home_activity].position
+        point := home
+        tangent := [2]f32{0, 1}
+        distance_to_camera := linalg.length(home - camera)
+        if distance_to_camera <= 135 && animated < 24 && editor.architecture_city_plan.alley_count > 0 {
+            alley_index := int(inhabitant.seed % u32(editor.architecture_city_plan.alley_count))
+            alley := editor.architecture_city_plan.alleys[alley_index]
+            start := [2]f32{alley.start_x, alley.start_z}
+            finish := [2]f32{alley.end_x, alley.end_z}
+            phase := elapsed * (.055 + f32((inhabitant.seed >> 8) & 15) * .0025) + f32(inhabitant.seed & 255) / 255
+            amount := .5 - .5 * f32(math.cos(f64(phase * 2 * math.PI)))
+            point = start * (1 - amount) + finish * amount
+            tangent = finish - start
+            if f32(math.sin(f64(phase * 2 * math.PI))) < 0 do tangent = -tangent
+            ground := terrain.sample_height(&editor.project, 0, point[0], point[1])
+            if ground <= editor.project.sea_level + .35 do continue
+            world_mouse_model_scaled(
+                editor,
+                {
+                    position = {point[0], ground, point[1]},
+                    rotation = math.PI - math.atan2(tangent[0], tangent[1]),
+                    build = .82 + f32((inhabitant.seed >> 12) & 15) / 50,
+                    snout_length = .9 + f32((inhabitant.seed >> 16) & 15) / 35,
+                    fur = Mouse_Fur((inhabitant.seed >> 20) % 6),
+                    pattern = Mouse_Fur_Pattern((inhabitant.seed >> 24) % 6),
+                    grounded = true,
+                },
+                .82,
+            )
+            animated += 1
+            continue
+        }
+        if distance_to_camera > 420 do continue
+        // Mid/far inhabitants use a tiny batched silhouette instead of a full
+        // articulated mouse. It is deterministic and shares the world vertex
+        // stream with other static settlement dressing.
+        ground := terrain.sample_height(&editor.project, 0, point[0], point[1])
+        if ground <= editor.project.sea_level + .35 do continue
+        tint := inhabitant.worker ? rl.Color{83, 103, 111, 210} : rl.Color{104, 86, 70, 205}
+        world_box_rotated({point[0], ground + .43, point[1]}, {.28, .66, .23}, 0, tint)
+        world_box_rotated({point[0], ground + .85, point[1]}, {.32, .30, .30}, 0, tint)
+    }
 }
 
 world_story_meeting :: proc(editor: ^Editor) {
@@ -16557,6 +21111,83 @@ world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, colo
     }
 }
 
+world_settlement_brush_segment :: proc(editor: ^Editor, a, b: [2]f32, color: rl.Color) {
+    delta := b - a
+    length := linalg.length(delta)
+    if editor == nil || length <= .001 do return
+    normal := [2]f32{-delta[1] / length, delta[0] / length} * .32
+    ah := terrain.sample_height(&editor.project, 0, a[0], a[1]) + .13
+    bh := terrain.sample_height(&editor.project, 0, b[0], b[1]) + .13
+    points := [4]third_person.Vec3 {
+        {a[0] - normal[0], ah, a[1] - normal[1]},
+        {a[0] + normal[0], ah, a[1] + normal[1]},
+        {b[0] + normal[0], bh, b[1] + normal[1]},
+        {b[0] - normal[0], bh, b[1] - normal[1]},
+    }
+    world_quad(points[0], points[1], points[2], points[3], color)
+    world_quad(points[3], points[2], points[1], points[0], color)
+}
+
+world_settlement_brush_outline :: proc(editor: ^Editor) {
+    if editor == nil do return
+    center := [2]f32{editor.cursor_world_x, editor.cursor_world_z}
+    if editor.architecture_painting do center = {editor.architecture_last_x, editor.architecture_last_z}
+    piece := Settlement_Brush_Piece {
+        shape    = editor.architecture_brush_shape,
+        preset   = editor.architecture_brush_preset,
+        center   = center,
+        rotation = editor.architecture_brush_rotation,
+        density  = editor.architecture_brush_strength,
+        hardness = editor.architecture_brush_hardness,
+    }
+    span := settlement_brush_preset_span(piece.preset)
+    local_points: [98][2]f32
+    point_count := 0
+    switch piece.shape {
+    case .Circle:
+        point_count = 48
+        for index in 0 ..< point_count {
+            angle := f32(index) / f32(point_count) * 2 * math.PI
+            local_points[index] = {math.cos(angle) * span * .5, math.sin(angle) * span * .5}
+        }
+    case .Square:
+        point_count = 4
+        local_points[0], local_points[1] = {-span * .5, -span * .5}, {span * .5, -span * .5}
+        local_points[2], local_points[3] = {span * .5, span * .5}, {-span * .5, span * .5}
+    case .Rectangle:
+        point_count = 4
+        local_points[0], local_points[1] = {-span * .5, -span * .275}, {span * .5, -span * .275}
+        local_points[2], local_points[3] = {span * .5, span * .275}, {-span * .5, span * .275}
+    case .Macaroni:
+        intervals := 32
+        thickness := span * .28
+        centerline := span * .5 - thickness * .5
+        outer, inner := centerline + thickness * .5, centerline - thickness * .5
+        for index in 0 ..= intervals {
+            angle := -math.PI / 3 + f32(index) / f32(intervals) * 2 * math.PI / 3
+            local_points[point_count] = {math.cos(angle) * outer, math.sin(angle) * outer}
+            point_count += 1
+        }
+        for index := intervals; index >= 0; index -= 1 {
+            angle := -math.PI / 3 + f32(index) / f32(intervals) * 2 * math.PI / 3
+            local_points[point_count] = {math.cos(angle) * inner, math.sin(angle) * inner}
+            point_count += 1
+        }
+    }
+    cosine, sine := math.cos(piece.rotation), math.sin(piece.rotation)
+    for index in 0 ..< point_count {
+        next := (index + 1) % point_count
+        a_local, b_local := local_points[index], local_points[next]
+        a := piece.center + [2]f32{a_local[0] * cosine - a_local[1] * sine, a_local[0] * sine + a_local[1] * cosine}
+        b := piece.center + [2]f32{b_local[0] * cosine - b_local[1] * sine, b_local[0] * sine + b_local[1] * cosine}
+        color := rl.Color{116, 226, 191, 190}
+        if !settlement_brush_point_developable(&editor.project, (a + b) * .5, SETTLEMENT_TOWN.max_slope) {
+            color = {229, 105, 90, 205}
+        }
+        world_settlement_brush_segment(editor, a, b, color)
+    }
+}
+
 world_brush :: proc(editor: ^Editor) {
     formation_brush := editor.authoring_tool == .Formations || editor.authoring_tool == .Foliage
     if editor.in_map ||
@@ -16585,7 +21216,7 @@ world_brush :: proc(editor: ^Editor) {
         color = {168, 239, 220, 88}
     case .Structure:
         color = {90, 102, 112, 86}
-        radius = editor.architecture_brush_radius
+        radius = settlement_brush_preset_span(editor.architecture_brush_preset) * .5
         hardness = editor.architecture_brush_hardness
         if editor.marina_paint_mode {
             color = editor.marina_preview_valid ? rl.Color{128, 211, 166, 92} : rl.Color{218, 105, 86, 104}
@@ -16610,6 +21241,10 @@ world_brush :: proc(editor: ^Editor) {
         }
     }
     if rl.IsMouseButtonDown(.RIGHT) do color = {245, 126, 112, 108}
+    if editor.architecture_paint_mode {
+        world_settlement_brush_outline(editor)
+        return
+    }
     world_brush_disc(editor, x, z, radius, .09, color)
     // A denser inner disc makes the hardness setting legible at the cursor:
     // harder brushes have a larger, more opaque core while the outer disc
@@ -16786,9 +21421,7 @@ ground_grass_chunk_build :: proc(
     return chunk
 }
 
-ground_grass_chunk_get :: proc(
-    key: [2]int,
-) -> ^Ground_Grass_Chunk {
+ground_grass_chunk_get :: proc(key: [2]int) -> ^Ground_Grass_Chunk {
     chunk, found := world_renderer.grass_chunk_cache[key]
     if !found do return nil
     chunk.last_used = world_renderer.grass_chunk_clock
@@ -16817,18 +21450,18 @@ ground_grass_cache_stream_disc :: proc(
                 if max(abs(offset_x), abs(offset_z)) != ring do continue
                 chunk_x := center_chunk_x + offset_x
                 chunk_z := center_chunk_z + offset_z
-            chunk_min_x := f32(chunk_x) * GROUND_GRASS_CHUNK_WORLD_SIZE
-            chunk_min_z := f32(chunk_z) * GROUND_GRASS_CHUNK_WORLD_SIZE
-            closest_x := clamp(field_x, chunk_min_x, chunk_min_x + GROUND_GRASS_CHUNK_WORLD_SIZE)
-            closest_z := clamp(field_z, chunk_min_z, chunk_min_z + GROUND_GRASS_CHUNK_WORLD_SIZE)
-            dx, dz := closest_x - field_x, closest_z - field_z
-            if dx * dx + dz * dz > radius_squared do continue
-            key := [2]int{chunk_x, chunk_z}
-            chunk, found := world_renderer.grass_chunk_cache[key]
-            complete := found && chunk.built_cells >= GROUND_GRASS_CHUNK_CELLS * GROUND_GRASS_CHUNK_CELLS
-            if complete do continue
+                chunk_min_x := f32(chunk_x) * GROUND_GRASS_CHUNK_WORLD_SIZE
+                chunk_min_z := f32(chunk_z) * GROUND_GRASS_CHUNK_WORLD_SIZE
+                closest_x := clamp(field_x, chunk_min_x, chunk_min_x + GROUND_GRASS_CHUNK_WORLD_SIZE)
+                closest_z := clamp(field_z, chunk_min_z, chunk_min_z + GROUND_GRASS_CHUNK_WORLD_SIZE)
+                dx, dz := closest_x - field_x, closest_z - field_z
+                if dx * dx + dz * dz > radius_squared do continue
+                key := [2]int{chunk_x, chunk_z}
+                chunk, found := world_renderer.grass_chunk_cache[key]
+                complete := found && chunk.built_cells >= GROUND_GRASS_CHUNK_CELLS * GROUND_GRASS_CHUNK_CELLS
+                if complete do continue
                 cell_budget := min(STREAMING_CELLS_PER_CHUNK, remaining_cells^)
-            _ = ground_grass_chunk_build(editor, key, building_footprints, circulation_plan, cell_budget)
+                _ = ground_grass_chunk_build(editor, key, building_footprints, circulation_plan, cell_budget)
                 remaining_cells^ -= cell_budget
                 if remaining_cells^ <= 0 do return
             }
@@ -17055,12 +21688,15 @@ world_build :: proc(editor: ^Editor) {
     world_character(editor)
     world_renderer.player_vertex_count = len(world_renderer.vertices) - world_renderer.player_vertex_first
     world_postale_pilot(editor)
+    world_rondine_pilot(editor)
     // Persistent characters and their interaction landmarks must be submitted
     // before the capacity-limited procedural town and vegetation passes.
     world_attendant_kiosk(editor)
     world_marta(editor)
     world_gerta(editor)
+    world_marin(editor)
     world_town_mice(editor)
+    world_settlement_inhabitants(editor)
     world_authored_farmland(editor)
     world_authored_wrecks(editor)
     lab_scene_draw_world_overlay(editor)
@@ -17076,6 +21712,7 @@ world_build :: proc(editor: ^Editor) {
     world_vehicle_particles(editor)
     world_petal_particles(editor)
     world_wing_trails(editor)
+    world_rondine_wake_fans(editor)
     world_wind_streaks(editor)
     // Keep transparent municipal pools contiguous at the end of the existing
     // world buffer. The render graph submits this range only after roads and
@@ -18911,6 +23548,9 @@ world_renderer_destroy :: proc() {
         }
     }
     engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_index)
+    for &row in world_renderer.clipmap_ring_index {
+        for &buffer in row do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    }
     roads.mesh_destroy(&world_renderer.road_mesh)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.transparent_pipelines)
@@ -18951,6 +23591,9 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.road_vertices)
     delete(world_renderer.road_geometry_cache)
     delete(world_renderer.road_geometry_chunks)
+    delete(world_renderer.architecture_alley_render_cache)
+    delete(world_renderer.architecture_alley_overlap_cache)
+    delete(world_renderer.architecture_alley_overlap_plan)
     delete(world_renderer.laundry_geometry_cache)
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)
@@ -18964,6 +23607,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.land_surface_samples)
     delete(world_renderer.shadow_vertices)
     for &vertices in world_renderer.clipmap_cache_vertex do delete(vertices)
+    for &vertices in world_renderer.clipmap_scratch_vertex do delete(vertices)
     for &entry in world_renderer.foliage_geometry_cache {
         delete(entry.world_vertices)
         delete(entry.foliage_vertices)

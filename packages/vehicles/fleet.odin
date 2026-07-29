@@ -8,6 +8,7 @@ Aircraft_Kind :: enum u8 {
     Postale,
     Libellula,
     Libellula_Mk2,
+    Rondine,
 }
 
 Aircraft_Slot :: struct {
@@ -81,6 +82,8 @@ aircraft_kind_name :: proc(kind: Aircraft_Kind) -> string {
         return "LIBELLULA"
     case .Libellula_Mk2:
         return "LIBELLULA MK2"
+    case .Rondine:
+        return "RONDINE"
     }
     return "AIRCRAFT"
 }

@@ -26,6 +26,7 @@ import particle_systems "../packages/particles"
 import postale_game "../packages/postale"
 import quest "../packages/quest"
 import roads "../packages/roads"
+import rondine_game "../packages/rondine"
 import spray_audio "../packages/spray_audio"
 import story "../packages/story"
 import tarot "../packages/tarot"
@@ -74,18 +75,21 @@ Crash_Recovery_Phase :: enum u8 {
 }
 
 Structure_History_State :: struct {
-    structures:            [dynamic]terrain.Structure,
-    count:                 int,
-    next_id:               u64,
-    road_graph:            roads.Graph,
-    city_density:          [terrain.CITY_DENSITY_SAMPLES]u8,
-    climbing_leaf_density: [terrain.CITY_DENSITY_SAMPLES]u8,
-    marina_plan:           marina.Plan,
-    marina_authored:       bool,
-    farms:                 [FARM_INSTANCE_CAPACITY]Farm_Instance,
-    farm_count:            int,
-    wrecks:                [WRECK_INSTANCE_CAPACITY]Wreck_Instance,
-    wreck_count:           int,
+    structures:                   [dynamic]terrain.Structure,
+    count:                        int,
+    next_id:                      u64,
+    road_graph:                   roads.Graph,
+    city_density:                 [terrain.CITY_DENSITY_SAMPLES]u8,
+    climbing_leaf_density:        [terrain.CITY_DENSITY_SAMPLES]u8,
+    marina_plan:                  marina.Plan,
+    marina_authored:              bool,
+    farms:                        [FARM_INSTANCE_CAPACITY]Farm_Instance,
+    farm_count:                   int,
+    wrecks:                       [WRECK_INSTANCE_CAPACITY]Wreck_Instance,
+    wreck_count:                  int,
+    settlement_brush_pieces:      [SETTLEMENT_BRUSH_PIECE_CAPACITY]Settlement_Brush_Piece,
+    settlement_brush_piece_count: int,
+    settlement_next_component_id: u32,
 }
 
 Terrain_History_State :: struct {
@@ -155,7 +159,10 @@ Fixture :: struct {
     architecture_city_plan:                         architecture.City_Plan,
     architecture_dirty_bounds:                      architecture.City_Bounds `fixture:"-"`,
     architecture_last_x, architecture_last_z:       f32 `fixture:"-"`,
-    architecture_brush_radius:                      f32,
+    architecture_drag_x, architecture_drag_z:       f32 `fixture:"-"`,
+    architecture_brush_rotation:                    f32 `fixture:"-"`,
+    architecture_brush_shape:                       Settlement_Brush_Shape,
+    architecture_brush_preset:                      Settlement_Brush_Preset,
     architecture_brush_strength:                    f32,
     architecture_brush_hardness:                    f32,
     marina_paint_mode:                              bool,
@@ -193,8 +200,9 @@ Fixture :: struct {
     wreck_preview_x, wreck_preview_z:               f32,
     wreck_preview_revision:                         u64,
     wreck_preview_seed_offset:                      u32,
-    default_marinas:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan,
-    default_marina_count:                           int,
+    default_marinas:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan `hs:"-"`,
+    default_marina_islands:                         [len(terrain.DEFAULT_ISLAND_SIGNS)]story.Island `hs:"-"`,
+    default_marina_count:                           int `hs:"-"`,
     climbing_leaf_paint_mode:                       bool,
     climbing_leaf_painting:                         bool `fixture:"-"`,
     climbing_leaf_last_x, climbing_leaf_last_z:     f32 `fixture:"-"`,
@@ -301,9 +309,11 @@ Fixture :: struct {
     car_trailer_yaw:                                f32,
     postale:                                        postale_game.Runtime,
     libellula:                                      libellula_game.Runtime,
+    rondine:                                        rondine_game.Runtime,
     aircraft:                                       vehicles.Aircraft_Fleet,
     postale_visible:                                bool,
     libellula_visible:                              bool,
+    rondine_visible:                                bool,
     vehicle_showcase_scene:                         bool,
     wildflower_lab_scene:                           bool,
     vehicle_showcase_target:                        string,
@@ -630,12 +640,15 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.postale = postale_game.new_runtime(postale_spawn_position(editor))
     libellula_spawn := libellula_spawn_position(editor)
     editor.libellula = libellula_game.new_runtime({libellula_spawn.x, libellula_spawn.y, libellula_spawn.z})
+    editor.rondine = rondine_game.new_runtime(rondine_spawn_position(editor))
     editor.aircraft = {}
     vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula_Mk2, "Libellula Mk2", &editor.libellula.vehicle, false)
+    vehicles.aircraft_fleet_add(&editor.aircraft, .Rondine, "Rondine", &editor.rondine.vehicle, false)
     editor.postale_visible = true
     editor.libellula_visible = true
+    editor.rondine_visible = false
     editor.libellula.vehicle.locked = true
 
     editor.car = vehicles.default_vehicle(car_spawn_position(editor))
@@ -689,6 +702,91 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.landing_wheel_speed = 0
 }
 
+hot_state_rebind_aircraft_fleet :: proc(editor: ^Editor) {
+    if editor == nil do return
+
+    active := editor.aircraft.active
+    postale_available := true
+    libellula_available := false
+    libellula_mk2_available := false
+    rondine_available := false
+    rondine_present := false
+    for slot in editor.aircraft.slots[:editor.aircraft.count] {
+        switch slot.kind {
+        case .Postale:
+            postale_available = slot.available
+        case .Libellula:
+            libellula_available = slot.available
+        case .Libellula_Mk2:
+            libellula_mk2_available = slot.available
+        case .Rondine:
+            rondine_available = slot.available
+            rondine_present = true
+        }
+    }
+    if !rondine_present {
+        editor.rondine = rondine_game.new_runtime(rondine_spawn_position(editor))
+        editor.rondine_visible = false
+        editor.rondine.vehicle.locked = true
+    }
+
+    editor.aircraft = {}
+    vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, postale_available)
+    vehicles.aircraft_fleet_add(
+        &editor.aircraft,
+        .Libellula,
+        "Libellula",
+        &editor.libellula.vehicle,
+        libellula_available,
+    )
+    vehicles.aircraft_fleet_add(
+        &editor.aircraft,
+        .Libellula_Mk2,
+        "Libellula Mk2",
+        &editor.libellula.vehicle,
+        libellula_mk2_available,
+    )
+    vehicles.aircraft_fleet_add(&editor.aircraft, .Rondine, "Rondine", &editor.rondine.vehicle, rondine_available)
+    editor.aircraft.active = active
+}
+
+hot_state_rebind_engine_audio :: proc(
+    editor: ^Editor,
+    stream: ^sdl.AudioStream,
+    aux_mix: engine_sound.Aux_Mix_Callback = nil,
+    aux_userdata: rawptr = nil,
+) {
+    if editor == nil do return
+    editor.engine_audio.stream = stream
+    editor.engine_audio.aux_mix = aux_mix
+    editor.engine_audio.aux_userdata = aux_userdata
+}
+
+Ambient_Audio_Mix :: struct {
+    wind:  ^wind_audio.Runtime,
+    ocean: ^ocean_audio.Runtime,
+    spray: ^spray_audio.Runtime,
+}
+
+ambient_audio_mix :: proc(userdata: rawptr, output: []f32) {
+    mix := cast(^Ambient_Audio_Mix)userdata
+    if mix == nil do return
+    stereo: [engine_sound.BUFFER_SAMPLES * engine_sound.AUDIO_CHANNELS]f32
+    stereo_samples := stereo[:len(output)]
+    if mix.wind != nil {
+        wind_audio.render(&mix.wind.synth, stereo_samples)
+        for &sample, index in output do sample += stereo[index]
+    }
+    if mix.ocean != nil {
+        ocean_audio.render(&mix.ocean.synth, stereo_samples)
+        for &sample, index in output do sample += stereo[index]
+    }
+    if mix.spray != nil {
+        spray_audio.render(&mix.spray.synth, stereo_samples)
+        for &sample, index in output do sample += stereo[index]
+    }
+}
+
 structure_history_capture :: proc(editor: ^Editor, state: ^Structure_History_State) {
     if editor == nil || state == nil do return
     state.count = editor.project.structure_count
@@ -702,6 +800,9 @@ structure_history_capture :: proc(editor: ^Editor, state: ^Structure_History_Sta
     state.farm_count = editor.farm_count
     state.wrecks = editor.wrecks
     state.wreck_count = editor.wreck_count
+    state.settlement_brush_pieces = editor.settlement_plan.brush_pieces
+    state.settlement_brush_piece_count = editor.settlement_plan.brush_piece_count
+    state.settlement_next_component_id = editor.settlement_plan.next_brush_component_id
     resize(&state.structures, state.count)
     copy(state.structures[:], editor.project.structures[:state.count])
 }
@@ -721,6 +822,9 @@ structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_Sta
     editor.farm_count = state.farm_count
     editor.wrecks = state.wrecks
     editor.wreck_count = state.wreck_count
+    editor.settlement_plan.brush_pieces = state.settlement_brush_pieces
+    editor.settlement_plan.brush_piece_count = state.settlement_brush_piece_count
+    editor.settlement_plan.next_brush_component_id = state.settlement_next_component_id
     editor.project.revision += 1
     if editor.structure_selected >= editor.project.structure_count do editor.structure_selected = -1
     if editor.road_selected_node >= editor.project.road_graph.node_count do editor.road_selected_node = -1
@@ -860,7 +964,8 @@ terrain_file_feedback :: proc(editor: ^Editor, message: cstring) {
 
 terrain_project_save :: proc(editor: ^Editor) {
     if editor == nil do return
-    if terrain.save_project(&editor.project, TERRAIN_PROJECT_PATH) {
+    if terrain.save_project(&editor.project, TERRAIN_PROJECT_PATH) &&
+       settlement_brush_store_save(&editor.settlement_plan) {
         editor.terrain_saved_revision = editor.project.revision
         terrain_file_feedback(editor, "PROJECT SAVED")
     } else {
@@ -884,6 +989,7 @@ architecture_regenerate_all :: proc(editor: ^Editor) {
 terrain_project_load :: proc(editor: ^Editor) {
     if editor == nil do return
     if terrain.load_project(&editor.project, TERRAIN_PROJECT_PATH) {
+        _ = settlement_brush_store_load(&editor.settlement_plan)
         // Parcels are transient and deterministic. Refit all architecture to
         // the saved roads and density instead of persisting product-specific
         // lot data in terrain.Project.
@@ -1636,12 +1742,30 @@ seed_player_benchmark :: proc(editor: ^Editor) {
     editor.camera_pose = third_person.camera_pose(editor.player.position, editor.camera)
 }
 
+seed_ocean_flight_benchmark :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.aircraft.active = .Rondine
+    editor.postale_visible = false
+    editor.libellula_visible = false
+    editor.rondine_visible = true
+    editor.rondine.vehicle.locked = false
+    editor.rondine.spawn_position = rondine_spawn_position(editor)
+    rondine_game.reset(&editor.rondine, editor.project.sea_level)
+    editor.pilot.position = editor.rondine.vehicle.position
+    _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.rondine.vehicle})
+    if !entered do return
+    editor.in_map = true
+    editor.map_time = f32(rl.GetTime())
+    chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
+    editor.camera_pose = editor.flight_camera.pose
+}
 
 seed_land_flight_benchmark :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.aircraft.active = .Postale
     editor.postale_visible = true
     editor.libellula_visible = false
+    editor.rondine_visible = false
     editor.pilot.position = editor.postale.vehicle.position
     _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
     if !entered do return
@@ -1785,6 +1909,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
     case "grass_disabled":
         seed_player_benchmark(editor)
         editor.benchmark_ground_grass_disabled = true
+    case "ocean_flight":
+        seed_ocean_flight_benchmark(editor)
     case "land_flight":
         seed_land_flight_benchmark(editor)
     case "land_flight_cold":
@@ -1813,6 +1939,7 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "player" &&
        scenario != "grass" &&
        scenario != "grass_disabled" &&
+       scenario != "ocean_flight" &&
        scenario != "land_flight" &&
        scenario != "land_flight_cold" &&
        scenario != "zora" &&
@@ -1906,7 +2033,7 @@ benchmark_report :: proc(
     road_vertex_capacity := int(world_buffer_min_size(world_renderer.road_vertex[:]) / size_of(World_Vertex))
     road_vertex_utilization := f64(road_vertex_count) / f64(max(road_vertex_capacity, 1))
     fmt.printf(
-        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"empty\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}},\"caches\":{{\"clipmap_generated\":%d,\"clipmap_copied\":%d,\"grass_hits\":%d,\"grass_misses\":%d,\"grass_emitted\":%d,\"climbing_leaf_builds\":%d,\"climbing_leaf_reuses\":%d,\"town_mouse_builds\":%d,\"town_mouse_reuses\":%d}}}}}}\n",
+        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"empty\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}},\"caches\":{{\"clipmap_generated\":%d,\"clipmap_copied\":%d,\"clipmap_full_rebuilds\":%d,\"clipmap_incremental_shifts\":%d,\"clipmap_cells_copied\":%d,\"clipmap_cells_generated\":%d,\"grass_hits\":%d,\"grass_misses\":%d,\"grass_emitted\":%d,\"climbing_leaf_builds\":%d,\"climbing_leaf_reuses\":%d,\"town_mouse_builds\":%d,\"town_mouse_reuses\":%d}}}}}}\n",
         scenario,
         len(sorted),
         window_width,
@@ -1950,6 +2077,10 @@ benchmark_report :: proc(
         world_renderer.static_visibility.atlas_fragmentation,
         world_renderer.clipmap_levels_generated,
         world_renderer.clipmap_levels_copied,
+        world_renderer.clipmap_full_rebuilds,
+        world_renderer.clipmap_incremental_shifts,
+        world_renderer.clipmap_cells_copied,
+        world_renderer.clipmap_cells_generated,
         world_renderer.grass_candidate_hits,
         world_renderer.grass_candidate_misses,
         world_renderer.grass_instances_emitted,
@@ -2346,55 +2477,26 @@ seed_city_capture :: proc(editor: ^Editor) {
 seed_default_island_towns :: proc(editor: ^Editor) {
     if editor == nil do return
     architecture.city_plan_destroy(&editor.architecture_city_plan)
-    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    // These are village identities, not repeated invocations of one anonymous
-    // town. Keep their seeds explicit and stable so layout changes in one
-    // village never silently make the other village its twin.
-    village_seeds := [len(terrain.DEFAULT_ISLAND_SIGNS)]u32 {
-        0xA71D3,
-        0xD911C,
-    }
-    village_regions := [len(terrain.DEFAULT_ISLAND_SIGNS)]buildings.Region {
-        .Adriatic,
-        .Aegean,
-    }
-    // Put each settlement across the island from its runway apron. A short
-    // cobblestone frontage gives the ordinary painted-density parcel planner
-    // the same street skeleton it receives from an authored road.
+    town_seeds := [len(terrain.DEFAULT_ISLAND_SIGNS)]u32{0xA71D3, 0xD911C}
+    settlement_regions := [len(terrain.DEFAULT_ISLAND_SIGNS)]Settlement_Region{.Adriatic, .Aegean}
     for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
-        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        town_z := island_center + sign * terrain.DEFAULT_TOWN_OFFSET
-        seed := village_seeds[island_index]
-        road_start_x, road_finish_x := island_center - 78, island_center + 78
-        road_start_y := terrain.sample_height(&editor.project, 0, road_start_x, town_z)
-        road_finish_y := terrain.sample_height(&editor.project, 0, road_finish_x, town_z)
-        road_start := roads.add_node(&editor.project.road_graph, {road_start_x, road_start_y, town_z}, 0)
-        road_finish := roads.add_node(&editor.project.road_graph, {road_finish_x, road_finish_y, town_z}, 0)
-        if road_start >= 0 && road_finish >= 0 {
-            _ = roads.add_straight_edge(&editor.project.road_graph, road_start, road_finish, 5.5, 1.4, .Cobblestone)
-        }
-
-        town_bounds := architecture.City_Bounds {
-            island_center - 108,
-            town_z - 68,
-            island_center + 108,
-            town_z + 68,
-            true,
-        }
-        _ = architecture.city_density_stamp(&editor.project.city_density, island_center, town_z, 82, .20, .70)
-        plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, town_bounds, seed)
-        region := village_regions[island_index]
-        architecture.city_plan_set_region(&plan, region)
+        seed := town_seeds[island_index]
         first_structure := editor.project.structure_count
-        _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, town_bounds, &plan)
-        append(&editor.architecture_city_plan.structures, ..plan.structures[:plan.count])
-        append(&editor.architecture_city_plan.parcels, ..plan.parcels[:plan.parcel_count])
-        append(&editor.architecture_city_plan.alleys, ..plan.alleys[:plan.alley_count])
-        append(&editor.architecture_city_plan.lamps, ..plan.lamps[:plan.lamp_count])
-        editor.architecture_city_plan.count += plan.count
-        editor.architecture_city_plan.parcel_count += plan.parcel_count
-        editor.architecture_city_plan.alley_count += plan.alley_count
-        editor.architecture_city_plan.lamp_count += plan.lamp_count
+        target := fmt.tprintf("%d", seed)
+        if !settlement_lab_configure(
+            editor,
+            target,
+            SETTLEMENT_TOWN,
+            settlement_regions[island_index],
+            sign,
+            false,
+            true,
+        ) {
+            fmt.eprintf("default island town generation failed for island %d\n", island_index)
+            continue
+        }
+        town_center := editor.settlement_plan.request.center
+        region := settlement_building_region(settlement_regions[island_index])
         // Give every island a permanent postal counter on its main street.
         // Promote an existing central parcel so the office inherits the
         // generated town's frontage, access, and regional architecture.
@@ -2403,9 +2505,7 @@ seed_default_island_towns :: proc(editor: ^Editor) {
         for structure_index in first_structure ..< editor.project.structure_count {
             structure := &editor.project.structures[structure_index]
             if structure.kind != .Architecture || structure.height > 60 do continue
-            score :=
-                math.abs(structure.center_z - town_z) * 2 +
-                math.abs(structure.center_x - island_center)
+            score := math.abs(structure.center_z - town_center[1]) * 2 + math.abs(structure.center_x - town_center[0])
             if score < post_office_score {
                 post_office_score = score
                 post_office_index = structure_index
@@ -2424,7 +2524,7 @@ seed_default_island_towns :: proc(editor: ^Editor) {
                 post_office.seed,
             )
         }
-        // Every village also needs a deterministic commercial address. In
+        // Every town also needs a deterministic commercial address. In
         // particular, Zora's home pose deliberately looks for a storefront on
         // the Aegean island; leaving this to density luck made Fortuna (and
         // therefore Zora) disappear for otherwise valid town plans.
@@ -2435,10 +2535,8 @@ seed_default_island_towns :: proc(editor: ^Editor) {
             structure := &editor.project.structures[structure_index]
             if structure.kind != .Architecture || structure.height > 60 do continue
             // Prefer a separate end of the main street so the postal and
-            // commercial landmarks give each generated village two anchors.
-            score :=
-                math.abs(structure.center_x - island_center) * 2 +
-                math.abs(structure.center_z - town_z)
+            // commercial landmarks give each generated town two anchors.
+            score := math.abs(structure.center_x - town_center[0]) * 2 + math.abs(structure.center_z - town_center[1])
             if score > storefront_score {
                 storefront_score = score
                 storefront_index = structure_index
@@ -2469,7 +2567,6 @@ seed_default_island_towns :: proc(editor: ^Editor) {
                 .68,
             )
         }
-        architecture.city_plan_destroy(&plan)
     }
     editor.architecture_node_mode = true
 }
@@ -2491,12 +2588,11 @@ seed_default_island_marinas :: proc(editor: ^Editor) {
             {-sign * diagonal, -sign * diagonal},
             island_radius * 1.8,
         )
-        site, suitability := markov_marina_find_world_site(&editor.project, shoreline_anchor)
-        if suitability <= 0 do continue
         seed := u32(0x4d415249 + island_index * 0x9e3779b9)
-        plan, _ := markov_marina_generate_valid_for_site(seed, &site)
+        plan, _, _ := markov_marina_generate_world_plan(&editor.project, shoreline_anchor, seed)
         if !plan.valid do continue
         editor.default_marinas[editor.default_marina_count] = plan
+        editor.default_marina_islands[editor.default_marina_count] = sign > 0 ? story.Island.East : story.Island.West
         editor.default_marina_count += 1
     }
 }
@@ -2513,10 +2609,11 @@ capture_target_is_storefront_night :: proc(target: string) -> bool {
 
 configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = "") -> bool {
     if editor == nil do return false
-    if target_arg == "west-town-review" {
+    if target_arg == "west-town-review" || target_arg == "east-town-review" {
         half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-        center := -half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        town_z := center - terrain.DEFAULT_TOWN_OFFSET
+        island_sign := target_arg == "west-town-review" ? f32(-1) : f32(1)
+        center := island_sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        town_z := center + island_sign * terrain.DEFAULT_TOWN_OFFSET
         focus_y := terrain.sample_height(&editor.project, 0, center, town_z) + 4
         editor.capture_world_only = true
         editor.architecture_node_mode = true
@@ -2900,16 +2997,75 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
 architecture_paint_commit :: proc(editor: ^Editor) {
     if editor == nil || !editor.architecture_painting do return
     structure_history_push_undo(editor)
-    rebuild_bounds := architecture.city_bounds_expand(editor.architecture_dirty_bounds, 48)
-    _ = architecture.city_commit_plan(
-        &editor.project,
-        &editor.architecture_density_preview,
-        rebuild_bounds,
-        &editor.architecture_preview_plan,
-    )
-    // Reconstruct the full transient parcel/alley cache after the bounded
-    // paint commit so previously generated districts remain visible.
-    architecture_regenerate_all(editor)
+    piece := architecture_brush_current_piece(editor, rl.IsMouseButtonReleased(.RIGHT))
+    editor.project.city_density = editor.architecture_density_preview
+    if piece.erased {
+        for index := editor.project.structure_count - 1; index >= 0; index -= 1 {
+            structure := editor.project.structures[index]
+            if structure.kind != .Architecture || settlement_structure_is_landmark(structure) do continue
+            if settlement_brush_weight(piece, {structure.center_x, structure.center_z}) > .01 {
+                _ = terrain.remove_structure(&editor.project, index)
+            }
+        }
+    } else {
+        owner_piece_id := u32(editor.settlement_plan.brush_piece_count + 1)
+        _ = settlement_brush_ensure_primary_route(&editor.settlement_plan, &editor.project, piece, owner_piece_id)
+        rebuild_bounds := architecture.city_bounds_expand(editor.architecture_dirty_bounds, 48)
+        refreshed := architecture.city_plan_density(
+            &editor.project,
+            &editor.architecture_density_preview,
+            rebuild_bounds,
+        )
+        architecture.city_plan_replace(&editor.architecture_preview_plan, refreshed)
+        for candidate, candidate_index in editor.architecture_preview_plan.structures[:editor.architecture_preview_plan.count] {
+            if settlement_brush_weight(piece, {candidate.center_x, candidate.center_z}) <= .01 do continue
+            overlaps := false
+            for existing in editor.project.structures[:editor.project.structure_count] {
+                if existing.kind == .Architecture && architecture.city_structure_overlaps(candidate, existing) {
+                    overlaps = true
+                    break
+                }
+            }
+            if overlaps do continue
+            structure_seed := candidate.seed
+            added := terrain.add_structure(&editor.project, candidate)
+            if added < 0 do break
+            editor.project.structures[added].seed = structure_seed
+            append(&editor.architecture_city_plan.structures, candidate)
+            editor.architecture_city_plan.count += 1
+            if candidate_index < editor.architecture_preview_plan.parcel_count {
+                parcel := editor.architecture_preview_plan.parcels[candidate_index]
+                append(&editor.architecture_city_plan.parcels, parcel)
+                editor.architecture_city_plan.parcel_count += 1
+                if editor.settlement_plan.site_count < len(editor.settlement_plan.sites) {
+                    site_index := editor.settlement_plan.site_count
+                    editor.settlement_plan.sites[site_index] = {
+                        structure = candidate,
+                        parcel    = parcel,
+                        kind      = .Ordinary,
+                        tissue    = settlement_nearest_tissue(
+                            &editor.settlement_plan,
+                            candidate.center_x,
+                            candidate.center_z,
+                        ),
+                        density   = parcel.density,
+                        attached  = parcel.attached,
+                        accepted  = true,
+                        purpose   = Settlement_Building_Purpose(candidate.building.purpose),
+                    }
+                    editor.settlement_plan.site_piece_ids[site_index] = owner_piece_id
+                    editor.settlement_plan.site_count += 1
+                }
+            }
+        }
+        for alley in editor.architecture_preview_plan.alleys[:editor.architecture_preview_plan.alley_count] {
+            midpoint := [2]f32{(alley.start_x + alley.end_x) * .5, (alley.start_z + alley.end_z) * .5}
+            if settlement_brush_weight(piece, midpoint) <= .01 do continue
+            append(&editor.architecture_city_plan.alleys, alley)
+            editor.architecture_city_plan.alley_count += 1
+        }
+    }
+    editor.project.revision += 1
     editor.architecture_painting = false
     architecture.city_plan_destroy(&editor.architecture_preview_plan)
     editor.architecture_dirty_bounds = {}
@@ -2922,53 +3078,77 @@ architecture_paint_refresh_preview :: proc(editor: ^Editor) {
     architecture.city_plan_replace(&editor.architecture_preview_plan, plan)
 }
 
-architecture_paint_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: bool, refresh: bool = true) {
+architecture_brush_current_piece :: proc(editor: ^Editor, erase: bool) -> Settlement_Brush_Piece {
+    if editor == nil do return {}
+    return {
+        shape = editor.architecture_brush_shape,
+        preset = editor.architecture_brush_preset,
+        center = {editor.architecture_last_x, editor.architecture_last_z},
+        rotation = editor.architecture_brush_rotation,
+        density = editor.architecture_brush_strength,
+        hardness = editor.architecture_brush_hardness,
+        seed = u32(editor.settlement_plan.brush_piece_count + 1) * 0x9e3779b9,
+        erased = erase,
+    }
+}
+
+architecture_paint_stamp :: proc(editor: ^Editor, piece: Settlement_Brush_Piece, refresh: bool = true) {
     if editor == nil do return
-    bounds := architecture.city_density_stamp(
-        &editor.architecture_density_preview,
-        world_x,
-        world_z,
-        editor.architecture_brush_radius,
-        editor.architecture_brush_strength * .08,
-        editor.architecture_brush_hardness,
-        erase,
-    )
+    maximum_slope := SETTLEMENT_TOWN.max_slope
+    bounds := settlement_brush_apply_piece(&editor.architecture_density_preview, &editor.project, piece, maximum_slope)
     editor.architecture_dirty_bounds = architecture.city_bounds_union(editor.architecture_dirty_bounds, bounds)
     if refresh do architecture_paint_refresh_preview(editor)
 }
 
 architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || !editor.architecture_paint_mode do return
-    if !cursor_hit {
-        if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) do architecture_paint_commit(editor)
-        return
-    }
     pressed := rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT)
     down := rl.IsMouseButtonDown(.LEFT) || rl.IsMouseButtonDown(.RIGHT)
-    if pressed {
+    released := rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)
+    if pressed && cursor_hit {
         editor.architecture_painting = true
         editor.architecture_density_preview = editor.project.city_density
         architecture.city_plan_destroy(&editor.architecture_preview_plan)
         editor.architecture_dirty_bounds = {}
         editor.architecture_last_x, editor.architecture_last_z = world_x, world_z
-        architecture_paint_stamp(editor, world_x, world_z, rl.IsMouseButtonDown(.RIGHT))
+        editor.architecture_drag_x, editor.architecture_drag_z = world_x, world_z
+        editor.architecture_brush_rotation = 0
+        architecture_paint_stamp(editor, architecture_brush_current_piece(editor, rl.IsMouseButtonDown(.RIGHT)))
     }
-    if editor.architecture_painting && down && !pressed {
+    if editor.architecture_painting && down && cursor_hit && !pressed {
+        editor.architecture_drag_x, editor.architecture_drag_z = world_x, world_z
         dx, dz := world_x - editor.architecture_last_x, world_z - editor.architecture_last_z
-        distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
-        step := max(editor.architecture_brush_radius * .22, terrain.BASE_CELL_SIZE * .35)
-        stamps := max(int(math.ceil(f64(distance / step))), 1)
-        for stamp in 1 ..= stamps {
-            amount := f32(stamp) / f32(stamps)
-            x := editor.architecture_last_x + dx * amount
-            z := editor.architecture_last_z + dz * amount
-            architecture_paint_stamp(editor, x, z, rl.IsMouseButtonDown(.RIGHT), false)
+        if dx * dx + dz * dz > 1 {
+            editor.architecture_brush_rotation = f32(math.atan2(f64(dz), f64(dx)))
         }
-        architecture_paint_refresh_preview(editor)
-        editor.architecture_last_x, editor.architecture_last_z = world_x, world_z
+        editor.architecture_density_preview = editor.project.city_density
+        editor.architecture_dirty_bounds = {}
+        architecture_paint_stamp(editor, architecture_brush_current_piece(editor, rl.IsMouseButtonDown(.RIGHT)))
     }
-    if editor.architecture_painting && (rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)) {
+    if editor.architecture_painting && released {
+        piece := architecture_brush_current_piece(editor, rl.IsMouseButtonReleased(.RIGHT))
         architecture_paint_commit(editor)
+        if editor.settlement_plan.brush_piece_count < len(editor.settlement_plan.brush_pieces) {
+            settlement_brush_assign_component(&editor.settlement_plan, &piece)
+            editor.settlement_plan.brush_pieces[editor.settlement_plan.brush_piece_count] = piece
+            editor.settlement_plan.brush_piece_count += 1
+            editor.settlement_plan.program = settlement_program_compile(
+                &editor.settlement_plan,
+                &editor.project,
+                piece.component_id,
+            )
+            settlement_brush_ensure_anchors(&editor.settlement_plan, &editor.project, piece)
+            settlement_program_assign_new_purposes(
+                &editor.settlement_plan,
+                &editor.project,
+                piece.component_id,
+                u32(editor.settlement_plan.brush_piece_count),
+            )
+            settlement_program_measure_placed(&editor.settlement_plan, &editor.project, piece.component_id)
+            settlement_population_allocate(&editor.settlement_plan, &editor.project)
+            settlement_brush_generate_vegetation(&editor.settlement_plan, &editor.project, piece)
+            fmt.println("settlement brush:", settlement_program_report(&editor.settlement_plan))
+        }
     }
 }
 
@@ -3496,7 +3676,9 @@ aircraft_reset :: proc(editor: ^Editor) {
         _ = markov_wreck_reset_postale(editor)
         return
     }
-    if editor.aircraft.active != .Postale {
+    if editor.aircraft.active == .Rondine {
+        rondine_game.reset(&editor.rondine, editor.project.sea_level)
+    } else if editor.aircraft.active != .Postale {
         ground := terrain.sample_height(
             &editor.project,
             0,
@@ -3792,7 +3974,19 @@ postale_normal_world :: #force_inline proc(runtime: ^postale_game.Runtime, norma
 
 aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
     body := aircraft_render_body(editor)
-    if editor.aircraft.active != .Postale {
+    if editor.aircraft.active == .Rondine {
+        return {
+            position = body.position,
+            basis = body.basis,
+            airspeed = editor.rondine.telemetry.speed,
+            roll_input = editor.flight_control.roll,
+            grounded = editor.rondine.grounded,
+            follow_distance = 15.5,
+            follow_height = 4.2,
+            follow_side = 2.1,
+            focus_height = .8,
+        }
+    } else if editor.aircraft.active != .Postale {
         return {
             position = body.position,
             basis = body.basis,
@@ -3837,6 +4031,7 @@ aircraft_render_body :: proc(editor: ^Editor) -> flight.Body_State {
 
 @(no_instrumentation)
 active_aircraft_body :: #force_inline proc(editor: ^Editor) -> ^flight.Body_State {
+    if editor != nil && editor.aircraft.active == .Rondine do return &editor.rondine.body
     if editor != nil && editor.aircraft.active != .Postale do return &editor.libellula.body
     if editor == nil do return nil
     return &editor.postale.body
@@ -3850,12 +4045,14 @@ active_aircraft_vehicle :: proc(editor: ^Editor) -> ^vehicles.Vehicle {
 }
 
 active_aircraft_throttle :: proc(editor: ^Editor) -> f32 {
+    if editor != nil && editor.aircraft.active == .Rondine do return editor.rondine.throttle
     if editor != nil && editor.aircraft.active != .Postale do return editor.libellula.throttle
     if editor == nil do return 0
     return editor.postale.throttle
 }
 
 active_aircraft_airspeed :: proc(editor: ^Editor) -> f32 {
+    if editor != nil && editor.aircraft.active == .Rondine do return editor.rondine.telemetry.speed
     if editor != nil && editor.aircraft.active != .Postale do return linalg.length(editor.libellula.body.velocity)
     if editor == nil do return 0
     return editor.postale.telemetry.airspeed
@@ -3882,7 +4079,13 @@ postale_flyby_shake :: proc(editor: ^Editor) -> f32 {
     return strongest * speed_strength
 }
 
+rondine_drift_shake :: proc(editor: ^Editor) -> f32 {
+    if editor == nil || editor.aircraft.active != .Rondine || editor.rondine.crashed do return 0
+    return editor.rondine.telemetry.drift_intensity * .42
+}
+
 active_aircraft_ground_clearance :: proc(editor: ^Editor) -> f32 {
+    if editor != nil && editor.aircraft.active == .Rondine do return rondine_game.GROUND_CLEARANCE
     if editor != nil && editor.aircraft.active != .Postale do return editor.libellula.tuning.ground_clearance
     return postale_game.GROUND_CLEARANCE
 }
@@ -3892,6 +4095,14 @@ libellula_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET + 12
     z := half_extent * terrain.DEFAULT_ISLAND_OFFSET + 8
     return {x, terrain.sample_height(&editor.project, 0, x, z) + 2.1, z}
+}
+
+rondine_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    center := half_extent * terrain.DEFAULT_ISLAND_OFFSET
+    offset := half_extent * terrain.DEFAULT_ISLAND_RADIUS * .92
+    x, z := center - offset, center - offset
+    return {x, editor.project.sea_level + rondine_game.GROUND_CLEARANCE, z}
 }
 
 attendant_spawn_position :: proc(editor: ^Editor, _: third_person.Vec3) -> third_person.Vec3 {
@@ -4112,13 +4323,19 @@ open_attendant_dialogue :: proc(editor: ^Editor, resident: story.Resident = .Mar
     menu_choices[7] = dialogue.choice("Nothing, grazie.", dialogue.no_next_node, effect = marta_menu_close)
 
     editor.attendant_dialogue_vehicle_choice_count = 0
-    aircraft_choices := make([]dialogue.Choice, editor.aircraft.count + 1)
-    for slot, index in editor.aircraft.slots[:editor.aircraft.count] {
+    airfield_aircraft_count := 0
+    for slot in editor.aircraft.slots[:editor.aircraft.count] {
+        if slot.kind != .Rondine do airfield_aircraft_count += 1
+    }
+    aircraft_choices := make([]dialogue.Choice, airfield_aircraft_count + 1)
+    for slot in editor.aircraft.slots[:editor.aircraft.count] {
+        if slot.kind == .Rondine do continue
+        index := editor.attendant_dialogue_vehicle_choice_count
         aircraft_choices[index] = dialogue.choice(slot.name, dialogue.no_next_node)
         editor.attendant_dialogue_vehicle_choices[index] = slot.kind
         editor.attendant_dialogue_vehicle_choice_count += 1
     }
-    aircraft_choices[editor.aircraft.count] = dialogue.choice("Back", 0)
+    aircraft_choices[airfield_aircraft_count] = dialogue.choice("Back", 0)
     back_choices := make([]dialogue.Choice, 1)
     back_choices[0] = dialogue.choice("Grazie. Anything else?", 0)
 
@@ -4166,7 +4383,8 @@ attendant_dialogue_definition_release :: proc(editor: ^Editor) {
             delete(definition.nodes)
             free(definition)
         case .Marina_Dockmaster:
-            if len(definition.nodes) > 0 do delete(definition.nodes[0].choices)
+            // Marina definitions own one distinct choice slice per node.
+            for &node in definition.nodes do delete(node.choices)
             delete(definition.nodes)
             free(definition)
         case .None, .Story:
@@ -4377,6 +4595,81 @@ marta_select_aircraft :: proc(editor: ^Editor, target: vehicles.Aircraft_Kind) {
     )
 }
 
+rondine_footprint_is_clear_water :: proc(editor: ^Editor, position: flight.Vec3, basis: flight.Basis) -> bool {
+    if editor == nil do return false
+    forward_samples := [4]f32{-4.5, -1.5, 1.5, 4.5}
+    lateral_samples := [5]f32{-8.3, -4.2, 0, 4.2, 8.3}
+    for forward_offset in forward_samples {
+        for lateral_offset in lateral_samples {
+            x := position.x + basis.forward.x * forward_offset + basis.right.x * lateral_offset
+            z := position.z + basis.forward.z * forward_offset + basis.right.z * lateral_offset
+            terrain_height := terrain.sample_height(&editor.project, 0, x, z)
+            surface := terrain.structure_collision_surface_height(&editor.project, x, z, terrain_height)
+            if surface > editor.project.sea_level + .15 do return false
+        }
+    }
+    return true
+}
+
+rondine_marina_spawn :: proc(
+    editor: ^Editor,
+    plan: ^marina.Plan,
+) -> (
+    position: flight.Vec3,
+    basis: flight.Basis,
+    found: bool,
+) {
+    if editor == nil || plan == nil || plan.route.count < 2 do return
+    outer := marina.plan_world_position(plan, plan.route.points[0])
+    inner := marina.plan_world_position(plan, plan.route.points[1])
+    outward := flight.Vec3{outer.x - inner.x, 0, outer.z - inner.z}
+    length := linalg.length(outward)
+    if length <= .01 do return
+    outward /= length
+    right := linalg.cross(outward, flight.Vec3{0, 1, 0})
+    basis = {
+        forward = outward,
+        up      = {0, 1, 0},
+        right   = right,
+    }
+    // Search progressively farther outside the entrance, then fan sideways.
+    // Every candidate clears the complete hull and wing footprint.
+    lateral_offsets := [5]f32{0, -14, 14, -28, 28}
+    for distance in 18 ..= 90 {
+        if distance % 6 != 0 do continue
+        for lateral in lateral_offsets {
+            candidate := flight.Vec3 {
+                outer.x + outward.x * f32(distance) + right.x * lateral,
+                editor.project.sea_level + rondine_game.GROUND_CLEARANCE,
+                outer.z + outward.z * f32(distance) + right.z * lateral,
+            }
+            if rondine_footprint_is_clear_water(editor, candidate, basis) {
+                return candidate, basis, true
+            }
+        }
+    }
+    return
+}
+
+stage_rondine :: proc(editor: ^Editor) {
+    if editor == nil do return
+    plan := east_marina_plan(editor)
+    if lab_scene_is_active(editor, "markov-marina") {
+        plan = &markov_marina_plan
+    }
+    spawn, basis, found := rondine_marina_spawn(editor, plan)
+    if !found do return
+    editor.rondine.spawn_position = spawn
+    editor.rondine.spawn_basis = basis
+    rondine_game.reset(&editor.rondine, editor.project.sea_level)
+    _ = vehicles.aircraft_fleet_unlock(&editor.aircraft, .Rondine)
+    _ = vehicles.aircraft_fleet_switch(&editor.aircraft, .Rondine)
+    editor.rondine_visible = true
+    editor.rondine.vehicle.locked = false
+    editor.postale.vehicle.locked = true
+    editor.libellula.vehicle.locked = true
+}
+
 attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
     if editor == nil || !editor.attendant_dialogue_open do return
     romance_before := editor.story_state.romance
@@ -4431,6 +4724,8 @@ attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
         switch marina_result {
         case .Borrow_Dinghy:
             editor.marina_dinghy_borrowed = true
+        case .Stage_Rondine:
+            stage_rondine(editor)
         case .None, .Close:
         }
     case .None, .Story:
@@ -5528,7 +5823,46 @@ draw_vsi_inset :: proc(center: rl.Vector2, radius, vertical_speed: f32) {
     draw_instrument_text(readout, {capsule.x - readout_size.x - 3, readout_y}, 8, 0, climb)
 }
 
+draw_rondine_instruments :: proc(editor: ^Editor, width, height: i32) {
+    panel_width := min(f32(width) - 32, f32(520))
+    panel_height := f32(68)
+    panel_left := f32(width) * .5 - panel_width * .5
+    panel_top := f32(height) - panel_height - 14
+    panel := rl.Rectangle{panel_left, panel_top, panel_width, panel_height}
+    draw_flight_console_panel(panel, 34, {r = 10, g = 25, b = 27, a = 238})
+
+    labels := [5]cstring{"SPEED", "SKIM", "SLIP", "DRIFT", "THROTTLE"}
+    values := [5]cstring {
+        fmt.ctprintf("%.0f m/s", editor.rondine.telemetry.speed),
+        fmt.ctprintf("%.1f m", editor.rondine.telemetry.height),
+        fmt.ctprintf("%+.0f%%", editor.rondine.telemetry.slip * 100),
+        fmt.ctprintf("%.0f%%", editor.rondine.telemetry.drift_intensity * 100),
+        fmt.ctprintf("%.0f%%", editor.rondine.throttle * 100),
+    }
+    column_width := panel_width / 5
+    for label, index in labels {
+        x := panel_left + column_width * (f32(index) + .5)
+        if index > 0 {
+            separator_x := panel_left + column_width * f32(index)
+            draw_antialiased_line(
+                {separator_x, panel_top + 12},
+                {separator_x, panel_top + panel_height - 12},
+                1,
+                {94, 130, 127, 130},
+            )
+        }
+        label_size := rl.MeasureTextEx(rl.Font{}, label, 9, .5)
+        value_size := rl.MeasureTextEx(rl.Font{}, values[index], 17, .5)
+        rl.DrawTextEx(rl.Font{}, label, {x - label_size.x * .5, panel_top + 12}, 9, .5, {150, 192, 187, 255})
+        rl.DrawTextEx(rl.Font{}, values[index], {x - value_size.x * .5, panel_top + 32}, 17, .5, {242, 221, 154, 255})
+    }
+}
+
 draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f32) {
+    if editor.aircraft.active == .Rondine {
+        draw_rondine_instruments(editor, width, height)
+        return
+    }
     panel_width := min(f32(width) - 32, f32(620))
     panel_height := f32(184)
     panel_left := f32(width) * .5 - panel_width * .5
@@ -6454,7 +6788,7 @@ draw_editor_context :: proc(editor: ^Editor) {
     } else if editor.architecture_painting {
         message = fmt.tprintf(
             "PAINTING CITY DENSITY  radius %.0f m  |  LMB darken  RMB lighten  Wheel zoom  Shift flow  Alt hardness",
-            editor.architecture_brush_radius,
+            settlement_brush_preset_span(editor.architecture_brush_preset) * .5,
         )
     } else if editor.climbing_leaf_painting {
         message = fmt.tprintf(
@@ -6538,7 +6872,9 @@ crash_recovery_relocate :: proc(editor: ^Editor) {
     editor.pilot.vehicle = nil
     editor.pilot.mode = .On_Foot
 
-    if editor.aircraft.active != .Postale {
+    if editor.aircraft.active == .Rondine {
+        rondine_game.reset(&editor.rondine, editor.project.sea_level)
+    } else if editor.aircraft.active != .Postale {
         ground := terrain.sample_height(
             &editor.project,
             0,
@@ -6655,7 +6991,11 @@ car_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
 @(no_instrumentation)
 driving_aircraft :: #force_inline proc(editor: ^Editor) -> bool {
     if editor == nil || editor.pilot.mode != .Driving do return false
-    return editor.pilot.vehicle == &editor.postale.vehicle || editor.pilot.vehicle == &editor.libellula.vehicle
+    return(
+        editor.pilot.vehicle == &editor.postale.vehicle ||
+        editor.pilot.vehicle == &editor.libellula.vehicle ||
+        editor.pilot.vehicle == &editor.rondine.vehicle \
+    )
 }
 
 driving_car :: proc(editor: ^Editor) -> bool {
@@ -6783,8 +7123,9 @@ car_physics_step :: proc(
     handbrake: bool,
     surface: vehicles.Car_Drive_Surface,
     delta_seconds: f32,
+    listener_yaw: f32,
 ) -> (
-    impact_severity, impact_slide_speed, impact_obliqueness: f32,
+    impact_severity, impact_slide_speed, impact_obliqueness, impact_pan: f32,
 ) {
     if editor == nil || editor.car_physics_vehicle == nil || delta_seconds <= 0 do return
     body := physics.vehicle_body(editor.car_physics_vehicle)
@@ -6830,6 +7171,15 @@ car_physics_step :: proc(
         velocity[2],
         delta_seconds,
     )
+    if impact_severity > 0 {
+        impact_pan = engine_sound.vehicle_impact_pan(
+            velocity_before[0],
+            velocity_before[2],
+            velocity[0],
+            velocity[2],
+            listener_yaw,
+        )
+    }
     previous_yaw := editor.car.yaw_radians
     editor.car.position = {position[0], position[1] - .74, position[2]}
     editor.car.yaw_radians = car_physics_yaw(body_rotation)
@@ -6934,6 +7284,7 @@ vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
     if aircraft_radius <= 0 do aircraft_radius = 2.5
     attendant_resident, _, attendant_near := nearest_service_attendant(editor)
     dockmaster_near := markov_marina_dockmaster_near(editor)
+    harbor_mechanic_near := marin_near(editor)
     story_resident, _, story_near := nearest_story_resident(editor, require_action = true)
     trailer_near := car_trailer_interaction_near(editor)
     car_near := car_distance <= car_radius * car_radius
@@ -6948,6 +7299,12 @@ vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
             return fmt.ctprintf("PRESS %s TO TALK TO VESNA", controller_face_label(editor, .West))
         }
         return "PRESS F TO TALK TO VESNA"
+    }
+    if harbor_mechanic_near {
+        if controller_prompt_active(editor) {
+            return fmt.ctprintf("PRESS %s TO TALK TO MARIN", controller_face_label(editor, .West))
+        }
+        return "PRESS F TO TALK TO MARIN"
     }
     if story_near {
         if controller_prompt_active(editor) {
@@ -6995,7 +7352,12 @@ vehicle_showcase_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
         third_person.look(&editor.camera, -mouse_delta.x, mouse_delta.y, .006)
     }
     editor.camera.distance = clamp(editor.camera.distance - rl.GetMouseWheelMove() * .7, 2.5, 30)
-    editor.camera_pose = third_person.camera_pose(third_person.Vec3{0, editor.camera.height, 0}, editor.camera)
+    target := third_person.Vec3{0, editor.camera.height, 0}
+    if editor.vehicle_showcase_target == "rondine" {
+        position := editor.rondine.body.position
+        target = {position.x, position.y + editor.camera.height, position.z}
+    }
+    editor.camera_pose = third_person.camera_pose(target, editor.camera)
 }
 
 editor_camera_pose :: proc() -> third_person.Camera_Pose {
@@ -7844,6 +8206,7 @@ adriatic_run :: proc(
     if capture_wildflower_lab_mode do capture_lab_name = "wildflower"
     if capture_kind == .Boat_Lab do capture_lab_name = "boat"
     if capture_kind == .Mouse_Gait_Lab do capture_lab_name = "mouse-gait"
+    if capture_kind == .Rondine_Movement_Lab do capture_lab_name = "rondine-movement"
     if capture_kind == .Markov_Wreck do capture_lab_name = "markov-wreck"
     if capture_kind == .Markov_Marina do capture_lab_name = "markov-marina"
     if capture_kind == .Markov_Farmland do capture_lab_name = "markov-farmland"
@@ -7856,6 +8219,7 @@ adriatic_run :: proc(
         capture_kind == .Shadow_Lab ||
         capture_kind == .Boat_Lab ||
         capture_kind == .Mouse_Gait_Lab ||
+        capture_kind == .Rondine_Movement_Lab ||
         capture_kind == .Markov_Wreck ||
         capture_kind == .Markov_Marina ||
         capture_kind == .Markov_Farmland
@@ -7956,35 +8320,14 @@ adriatic_run :: proc(
     reload_requested := false
     defer if !reload_requested do rl.DestroyPersistentState()
     wind_sound: wind_audio.Runtime
-    wind_audio_ready := false
-    if !capture_mode && !benchmark_mode {
-        wind_audio_ready = wind_audio.init(&wind_sound)
-        if wind_audio_ready {
-            defer wind_audio.destroy(&wind_sound)
-        } else {
-            fmt.eprintf("wind audio unavailable: %s\n", sdl.GetError())
-        }
-    }
+    wind_audio_ready := !capture_mode && !benchmark_mode
+    if wind_audio_ready do wind_sound.synth = wind_audio.new_synth()
     ocean_sound: ocean_audio.Runtime
-    ocean_audio_ready := false
-    if !capture_mode && !benchmark_mode {
-        ocean_audio_ready = ocean_audio.init(&ocean_sound)
-        if ocean_audio_ready {
-            defer ocean_audio.destroy(&ocean_sound)
-        } else {
-            fmt.eprintf("ocean audio unavailable: %s\n", sdl.GetError())
-        }
-    }
+    ocean_audio_ready := !capture_mode && !benchmark_mode
+    if ocean_audio_ready do ocean_sound.synth = ocean_audio.new_synth()
     spray_sound: spray_audio.Runtime
-    spray_audio_ready := false
-    if !capture_mode && !benchmark_mode {
-        spray_audio_ready = spray_audio.init(&spray_sound)
-        if spray_audio_ready {
-            defer spray_audio.destroy(&spray_sound)
-        } else {
-            fmt.eprintf("spray audio unavailable: %s\n", sdl.GetError())
-        }
-    }
+    spray_audio_ready := !capture_mode && !benchmark_mode
+    if spray_audio_ready do spray_sound.synth = spray_audio.new_synth()
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .20, "Tuning the sea and wind...", postcard)
     }
@@ -7997,8 +8340,26 @@ adriatic_run :: proc(
     story.init_catalog(&editor.story_catalog)
     story.init_quest_catalog(&editor.story_quest_catalog)
     _ = story.ensure_quest_progress(&editor.story_state)
+    // CoreAudio can report success while producing silence when several SDL
+    // logical streams target the Bluetooth default device. Keep one reliable
+    // stream until ambient synthesis is folded into this master mixer.
     engine_audio_ready := !capture_mode && !benchmark_mode && engine_sound.open(&editor.engine_audio)
-    if engine_audio_ready do defer engine_sound.close(&editor.engine_audio)
+    engine_audio_stream := editor.engine_audio.stream
+    defer if engine_audio_ready do engine_sound.close(&editor.engine_audio)
+    fmt.eprintf(
+        "audio init: ready=%v stream=%v device=%d paused=%v gain=%.3f error=%s\n",
+        engine_audio_ready,
+        editor.engine_audio.stream != nil,
+        editor.engine_audio.stream != nil ? sdl.GetAudioStreamDevice(editor.engine_audio.stream) : 0,
+        editor.engine_audio.stream != nil ? sdl.AudioStreamDevicePaused(editor.engine_audio.stream) : true,
+        editor.engine_audio.stream != nil ? sdl.GetAudioStreamGain(editor.engine_audio.stream) : 0,
+        sdl.GetError(),
+    )
+    ambient_mix := Ambient_Audio_Mix{&wind_sound, &ocean_sound, &spray_sound}
+    if engine_audio_ready {
+        editor.engine_audio.aux_mix = ambient_audio_mix
+        editor.engine_audio.aux_userdata = &ambient_mix
+    }
     vehicle_paint_history_init(editor)
     defer vehicle_paint_history_destroy(editor)
     vehicles.libellula_mesh_init(&editor.libellula_visual_mesh)
@@ -8058,7 +8419,8 @@ adriatic_run :: proc(
     editor.road_width = 7
     editor.road_shoulder_width = 1.25
     editor.road_pavement = .Asphalt
-    editor.architecture_brush_radius = terrain.BASE_CELL_SIZE * 4.0
+    editor.architecture_brush_shape = .Circle
+    editor.architecture_brush_preset = .Small
     editor.architecture_brush_strength = .55
     editor.architecture_brush_hardness = .45
     editor.marina_brush_radius = 60
@@ -8131,13 +8493,17 @@ adriatic_run :: proc(
     editor.postale = postale_game.new_runtime(postale_spawn_position(editor))
     libellula_spawn := libellula_spawn_position(editor)
     editor.libellula = libellula_game.new_runtime({libellula_spawn.x, libellula_spawn.y, libellula_spawn.z})
+    editor.rondine = rondine_game.new_runtime(rondine_spawn_position(editor))
     editor.attendant_position = attendant_spawn_position(editor, editor.libellula.vehicle.position)
     editor.gerta_position = gerta_spawn_position(editor)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula_Mk2, "Libellula Mk2", &editor.libellula.vehicle, false)
+    vehicles.aircraft_fleet_add(&editor.aircraft, .Rondine, "Rondine", &editor.rondine.vehicle, false)
     editor.postale_visible = true
     editor.libellula_visible = true
+    editor.rondine_visible = false
+    editor.rondine.vehicle.locked = true
     editor.libellula.vehicle.locked = true
     editor.car = vehicles.default_vehicle(car_spawn_position(editor))
     editor.car.interaction_radius = 2.2
@@ -8204,7 +8570,9 @@ adriatic_run :: proc(
             editor.atmosphere.weather = atmosphere.weather_for(.Clear)
             editor.atmosphere.paused = true
         } else if capture_building_mode {
-            if capture_target == "mouse-town" || capture_target == "west-town-review" {
+            if capture_target == "mouse-town" ||
+               capture_target == "west-town-review" ||
+               capture_target == "east-town-review" {
                 seed_default_island_towns(editor)
                 authoring_select_tool(editor, .Building)
                 editor.structure_selected = -1
@@ -8463,15 +8831,145 @@ adriatic_run :: proc(
         editor.in_map = true
         editor.map_time = f32(rl.GetTime())
         if capture_flight_mode {
-            _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
+            capture_vehicle := &editor.postale.vehicle
+            rondine_capture :=
+                capture_target == "rondine" ||
+                capture_target == "rondine-launch" ||
+                capture_target == "rondine-landing" ||
+                capture_target == "rondine-drift" ||
+                capture_target == "rondine-countersteer" ||
+                capture_target == "rondine-countersteer-left" ||
+                capture_target == "rondine-breakaway" ||
+                capture_target == "rondine-hookup"
+            if rondine_capture {
+                editor.aircraft.active = .Rondine
+                editor.postale_visible = false
+                editor.libellula_visible = false
+                editor.rondine_visible = true
+                editor.rondine.vehicle.locked = false
+                editor.rondine.spawn_position = rondine_spawn_position(editor)
+                rondine_game.reset(&editor.rondine, editor.project.sea_level)
+                editor.pilot.position = editor.rondine.vehicle.position
+                capture_vehicle = &editor.rondine.vehicle
+            }
+            _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{capture_vehicle})
             if entered {
                 // Give the flight capture a reproducible airborne state so visual
                 // verification exercises the wing-trail and wind-response systems.
-                editor.postale.body.position.y += 85
-                editor.postale.body.velocity = editor.postale.body.basis.forward * 58
-                editor.postale.grounded = false
-                editor.postale.was_grounded = false
-                editor.postale.throttle = .82
+                if rondine_capture {
+                    rondine_drift_capture := capture_target == "rondine-drift"
+                    rondine_countersteer_capture :=
+                        capture_target == "rondine-countersteer" ||
+                        capture_target == "rondine-countersteer-left"
+                    rondine_countersteer_left :=
+                        capture_target == "rondine-countersteer-left"
+                    rondine_breakaway_capture := capture_target == "rondine-breakaway"
+                    rondine_hookup_capture := capture_target == "rondine-hookup"
+                    rondine_landing_capture := capture_target == "rondine-landing"
+                    if rondine_drift_capture ||
+                       rondine_countersteer_capture ||
+                       rondine_breakaway_capture ||
+                       rondine_hookup_capture {
+                        editor.rondine.tuning.takeoff_speed = 200
+                    }
+                    if rondine_countersteer_capture {
+                        initial_roll := rondine_countersteer_left ? f32(-1) : f32(1)
+                        for _ in 0 ..< 540 {
+                            rondine_game.step(
+                                &editor.rondine,
+                                {throttle_up = true, roll = initial_roll},
+                                editor.project.sea_level,
+                                1.0 / 120.0,
+                            )
+                        }
+                        for _ in 0 ..< 64 {
+                            rondine_game.step(
+                                &editor.rondine,
+                                {throttle_up = true, roll = -initial_roll},
+                                editor.project.sea_level,
+                                1.0 / 120.0,
+                            )
+                        }
+                    } else if rondine_breakaway_capture {
+                        for _ in 0 ..< 520 {
+                            rondine_game.step(
+                                &editor.rondine,
+                                {throttle_up = true},
+                                editor.project.sea_level,
+                                1.0 / 120.0,
+                            )
+                        }
+                        for _ in 0 ..< 34 {
+                            rondine_game.step(
+                                &editor.rondine,
+                                {throttle_up = true, roll = 1},
+                                editor.project.sea_level,
+                                1.0 / 120.0,
+                            )
+                        }
+                    } else if rondine_hookup_capture {
+                        for _ in 0 ..< 540 {
+                            rondine_game.step(
+                                &editor.rondine,
+                                {throttle_up = true, roll = 1},
+                                editor.project.sea_level,
+                                1.0 / 120.0,
+                            )
+                        }
+                        for _ in 0 ..< 34 {
+                            rondine_game.step(
+                                &editor.rondine,
+                                {throttle_up = true},
+                                editor.project.sea_level,
+                                1.0 / 120.0,
+                            )
+                        }
+                    } else if rondine_landing_capture {
+                        for _ in 0 ..< 480 {
+                            rondine_game.step(
+                                &editor.rondine,
+                                {throttle_up = true},
+                                editor.project.sea_level,
+                                1.0 / 120.0,
+                            )
+                        }
+                        editor.rondine.body.position.y =
+                            editor.project.sea_level +
+                            rondine_game.GROUND_CLEARANCE +
+                            .2
+                        editor.rondine.body.velocity.y = -8
+                        editor.rondine.grounded = false
+                        editor.rondine.wake_distance = 1.2
+                        rondine_game.step(
+                            &editor.rondine,
+                            {throttle_up = true},
+                            editor.project.sea_level,
+                            .05,
+                        )
+                    } else {
+                        // Let the launch target clear the surface decisively;
+                        // this makes it a useful negative reference for
+                        // surface-only spray and chine-contact verification.
+                        step_count := capture_target == "rondine-launch" ? 480 : (rondine_drift_capture ? 720 : 640)
+                        for _ in 0 ..< step_count {
+                            rondine_game.step(
+                                &editor.rondine,
+                                {
+                                    throttle_up = true,
+                                    roll = rondine_drift_capture ? f32(1) : (capture_target == "rondine-launch" ? f32(0) : f32(.18)),
+                                },
+                                editor.project.sea_level,
+                                1.0 / 120.0,
+                            )
+                        }
+                    }
+                } else {
+                    editor.postale.body.position.y += 85
+                    editor.postale.body.velocity = editor.postale.body.basis.forward * 58
+                    editor.postale.grounded = false
+                    editor.postale.was_grounded = false
+                    editor.postale.throttle = .82
+                }
                 atmosphere.set_weather_override(&editor.atmosphere, .Windy)
                 editor.atmosphere.weather = atmosphere.weather_for(.Windy)
                 editor.atmosphere.paused = true
@@ -8916,9 +9414,14 @@ adriatic_run :: proc(
         if target == "postale-overhead" || target == "postale-overhead-front" || target == "postale-overhead-rear" {
             target = "postale"
         }
-        if target != "postale" && target != "libellula" && target != "libellula-mk2" && target != "car" {
+        if target == "rondine-drift" || target == "rondine-overhead" do target = "rondine"
+        if target != "postale" &&
+           target != "libellula" &&
+           target != "libellula-mk2" &&
+           target != "rondine" &&
+           target != "car" {
             fmt.eprintf(
-                "vehicle showcase target must be postale, postale-overhead[-front|-rear], libellula, libellula-mk2, or car\n",
+                "vehicle showcase target must be postale, postale-overhead[-front|-rear], libellula, libellula-mk2, rondine[-drift|-overhead], or car\n",
             )
             return .Quit
         }
@@ -8929,13 +9432,18 @@ adriatic_run :: proc(
         if target == "postale" do editor.aircraft.active = .Postale
         if target == "libellula" do editor.aircraft.active = .Libellula
         if target == "libellula-mk2" do editor.aircraft.active = .Libellula_Mk2
+        if target == "rondine" do editor.aircraft.active = .Rondine
         editor.postale_visible = target == "postale"
         editor.libellula_visible = target == "libellula" || target == "libellula-mk2"
+        editor.rondine_visible = target == "rondine"
         editor.libellula.vehicle.locked = false
+        editor.rondine.vehicle.locked = false
         editor.postale.body.position = {0, postale_game.GROUND_CLEARANCE, 0}
         editor.postale.vehicle.position = {0, postale_game.GROUND_CLEARANCE, 0}
         editor.libellula.body.position = {0, libellula_game.GROUND_CLEARANCE, 0}
         editor.libellula.vehicle.position = {0, libellula_game.GROUND_CLEARANCE, 0}
+        editor.rondine.spawn_position = {0, rondine_game.GROUND_CLEARANCE, 0}
+        rondine_game.reset(&editor.rondine, 0)
         editor.car.position = {}
         editor.car.yaw_radians = -math.PI * .5
         // Default showcase framing: aligned with the vehicle's forward axis,
@@ -8946,9 +9454,14 @@ adriatic_run :: proc(
             distance      = 6.2,
             height        = 1,
         }
+        if target == "rondine" {
+            editor.camera.distance = 16
+            editor.camera.height = 1.4
+        }
         editor.pilot.position = {}
         if target == "postale" do editor.pilot.position.y = postale_game.GROUND_CLEARANCE
         if target == "libellula" || target == "libellula-mk2" do editor.pilot.position.y = libellula_game.GROUND_CLEARANCE
+        if target == "rondine" do editor.pilot.position.y = rondine_game.GROUND_CLEARANCE
         editor.pilot.mode = .On_Foot
         editor.pilot.vehicle = nil
         if target == "postale" {
@@ -8971,6 +9484,36 @@ adriatic_run :: proc(
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.libellula.vehicle})
             if !entered do return .Quit
             editor.camera_pose = third_person.camera_look_at({6, 5.8, 10}, {0, 1.2, 0})
+        } else if target == "rondine" {
+            if showcase_view == "rondine-drift" {
+                for _ in 0 ..< 720 {
+                    rondine_game.step(&editor.rondine, {throttle_up = true, roll = .82}, 0, 1.0 / 120.0)
+                }
+                // Preserve the staged turn, telemetry, and wake, but do not
+                // let the showcase vehicle outrun its deliberately composed
+                // camera while the capture frames settle.
+                editor.rondine.body.velocity = {}
+                editor.rondine.body.angular_velocity = {}
+            }
+            editor.pilot.position = editor.rondine.vehicle.position
+            _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.rondine.vehicle})
+            if !entered do return .Quit
+            p := editor.rondine.body.position
+            forward := editor.rondine.body.basis.forward
+            right := editor.rondine.body.basis.right
+            if showcase_view == "rondine-overhead" {
+                editor.camera_pose = third_person.camera_look_at({p.x + .01, p.y + 24, p.z - .12}, {p.x, p.y, p.z})
+            } else if showcase_view == "rondine-drift" {
+                editor.camera_pose = third_person.camera_look_at(
+                    {p.x - forward.x * 18 + right.x * 7, p.y + 8, p.z - forward.z * 18 + right.z * 7},
+                    {p.x - forward.x * 4.5, editor.project.sea_level + .35, p.z - forward.z * 4.5},
+                )
+            } else {
+                editor.camera_pose = third_person.camera_look_at(
+                    {p.x + forward.x * 13 + right.x * 6, p.y + 5.8, p.z + forward.z * 13 + right.z * 6},
+                    {p.x + forward.x, p.y + .45, p.z + forward.z},
+                )
+            }
         } else {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
             if !entered do return .Quit
@@ -9050,6 +9593,23 @@ adriatic_run :: proc(
             state_loaded = true
         case .Missing:
         }
+    }
+    if state_loaded &&
+       !capture_mode &&
+       !interactive_lab_mode &&
+       (!benchmark_mode ||
+               benchmark_scenario == "editor" ||
+               benchmark_scenario == "terrain_edit" ||
+               benchmark_scenario == "formation_edit") {
+        // Default marinas are generated runtime world content, not save data.
+        // Rebuild them from the terrain that was just deserialized.
+        seed_default_island_marinas(editor)
+    }
+    if state_loaded {
+        hot_state_rebind_aircraft_fleet(editor)
+        // The serialized Editor intentionally clears process-owned audio
+        // pointers. Reattach the stream opened by this process after loading.
+        hot_state_rebind_engine_audio(editor, engine_audio_stream, ambient_audio_mix, &ambient_mix)
     }
     // Catalog slices point into this Editor instance and must never retain
     // addresses serialized from a previous hot-loaded dylib.
@@ -9138,7 +9698,7 @@ adriatic_run :: proc(
                 editor.atmosphere.weather.precipitation,
                 editor.atmosphere.weather.severity,
                 wind_direction,
-                pause_menu_is_open(editor),
+                sound_fx_muted(editor),
             )
         }
         if ocean_audio_ready {
@@ -9166,7 +9726,7 @@ adriatic_run :: proc(
                 &ocean_sound,
                 wind_speed,
                 editor.atmosphere.weather.severity,
-                pause_menu_is_open(editor),
+                sound_fx_muted(editor),
                 listener_height_above_sea,
                 shore_proximity,
                 ocean_direction,
@@ -9180,7 +9740,7 @@ adriatic_run :: proc(
             if screen_width > 0 {
                 spray_pan = clamp(rl.GetMousePosition().x / f32(screen_width) * 2 - 1, -1, 1)
             }
-            spray_audio.update(&spray_sound, spray_active, spray_intensity, spray_pan, pause_menu_is_open(editor))
+            spray_audio.update(&spray_sound, spray_active, spray_intensity, spray_pan, sound_fx_muted(editor))
         }
         if !pause_menu_is_open(editor) && editor.active_lab_scene != "" {
             _ = lab_scene_process_input(editor)
@@ -9414,6 +9974,7 @@ adriatic_run :: proc(
         crash_profile := engine_sound.Crash_Profile.Car
         crash_wetness := clamp(editor.atmosphere.weather.precipitation, 0, 1)
         crash_obliqueness := f32(0)
+        crash_pan := f32(0)
         footstep_triggered := false
         footstep_intensity := f32(0)
         footstep_surface := engine_sound.Footstep_Surface.Grass
@@ -9481,7 +10042,9 @@ adriatic_run :: proc(
                     for editor.aircraft_fixed_accumulator >= AIRCRAFT_FIXED_STEP {
                         body := active_aircraft_body(editor)
                         was_crashed := editor.postale.crashed
-                        if editor.aircraft.active != .Postale {
+                        if editor.aircraft.active == .Rondine {
+                            was_crashed = editor.rondine.crashed
+                        } else if editor.aircraft.active != .Postale {
                             was_crashed = editor.libellula.crashed
                         }
                         impact_vertical_speed := max(-body.velocity.y, f32(0))
@@ -9498,7 +10061,28 @@ adriatic_run :: proc(
                             body.position.z,
                             ground,
                         )
-                        if editor.aircraft.active != .Postale {
+                        if editor.aircraft.active == .Rondine {
+                            rondine_game.step(
+                                &editor.rondine,
+                                {
+                                    throttle_up = control.throttle_up,
+                                    throttle_down = control.throttle_down,
+                                    pitch = control.pitch,
+                                    roll = control.roll,
+                                    yaw = control.yaw,
+                                },
+                                editor.project.sea_level,
+                                f32(AIRCRAFT_FIXED_STEP),
+                            )
+                            if !rondine_footprint_is_clear_water(
+                                   editor,
+                                   editor.rondine.body.position,
+                                   editor.rondine.body.basis,
+                               ) &&
+                               editor.rondine.telemetry.speed > 8 {
+                                rondine_game.crash(&editor.rondine)
+                            }
+                        } else if editor.aircraft.active != .Postale {
                             libellula_game.step(
                                 &editor.libellula,
                                 {
@@ -9530,13 +10114,17 @@ adriatic_run :: proc(
                             _ = markov_wreck_aircraft_collision_step(editor)
                         }
                         is_crashed := editor.postale.crashed
-                        if editor.aircraft.active != .Postale {
+                        if editor.aircraft.active == .Rondine {
+                            is_crashed = editor.rondine.crashed
+                        } else if editor.aircraft.active != .Postale {
                             is_crashed = editor.libellula.crashed
                         }
                         if !was_crashed && is_crashed {
                             crash_recovery_begin(editor, {body.position.x, body.position.y, body.position.z})
-                            crash_profile =
-                                editor.aircraft.active == .Postale ? engine_sound.Crash_Profile.Fixed_Wing : engine_sound.Crash_Profile.Rotorcraft
+                            crash_profile = engine_sound.Crash_Profile.Fixed_Wing
+                            if editor.aircraft.active == .Libellula || editor.aircraft.active == .Libellula_Mk2 {
+                                crash_profile = engine_sound.Crash_Profile.Rotorcraft
+                            }
                             crash_severity = max(
                                 crash_severity,
                                 clamp(impact_vertical_speed / 18 + touchdown_speed / 75, .2, 1),
@@ -9590,7 +10178,9 @@ adriatic_run :: proc(
                     }
                     vehicles.sync_driver(&editor.pilot)
                     can_exit := postale_game.can_exit(&editor.postale)
-                    if editor.aircraft.active != .Postale {
+                    if editor.aircraft.active == .Rondine {
+                        can_exit = rondine_game.can_exit(&editor.rondine)
+                    } else if editor.aircraft.active != .Postale {
                         can_exit = libellula_game.can_exit(&editor.libellula)
                     }
                     if input_action_pressed(.Interact) && can_exit {
@@ -9604,7 +10194,7 @@ adriatic_run :: proc(
                         &editor.flight_camera,
                         aircraft_camera_target(editor),
                         min(delta_seconds, .05),
-                        postale_flyby_shake(editor),
+                        max(postale_flyby_shake(editor), rondine_drift_shake(editor)),
                     )
                     editor.camera_pose = editor.flight_camera.pose
                 } else {
@@ -9638,18 +10228,21 @@ adriatic_run :: proc(
                             editor,
                             {editor.car.position.x, editor.car.position.y, editor.car.position.z},
                         )
-                        car_impact_severity, car_impact_slide_speed, car_impact_obliqueness := car_physics_step(
-                            editor,
-                            clamp(throttle, -1, 1),
-                            clamp(steering, -1, 1),
-                            handbrake,
-                            drive_surface,
-                            min(delta_seconds, .05),
-                        )
+                        car_impact_severity, car_impact_slide_speed, car_impact_obliqueness, car_impact_pan :=
+                            car_physics_step(
+                                editor,
+                                clamp(throttle, -1, 1),
+                                clamp(steering, -1, 1),
+                                handbrake,
+                                drive_surface,
+                                min(delta_seconds, .05),
+                                listener_yaw,
+                            )
                         if car_impact_severity > 0 {
                             crash_severity = max(crash_severity, car_impact_severity)
                             crash_slide_speed = car_impact_slide_speed
                             crash_obliqueness = car_impact_obliqueness
+                            crash_pan = car_impact_pan
                             crash_surface = crash_surface_from_dust(dust_surface)
                             terrain_height := terrain.sample_height(
                                 &editor.project,
@@ -9807,15 +10400,22 @@ adriatic_run :: proc(
                         editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
                         if input_action_pressed(.Interact) {
                             dockmaster_interacted := open_markov_marina_dockmaster_dialogue(editor)
+                            marin_interacted := !dockmaster_interacted && open_marin_dialogue(editor)
                             resident, _, story_near := nearest_story_resident(editor, require_action = true)
                             story_interacted :=
-                                !dockmaster_interacted && story_near && open_story_dialogue(editor, resident)
+                                !dockmaster_interacted &&
+                                !marin_interacted &&
+                                story_near &&
+                                open_story_dialogue(editor, resident)
                             trailer_interacted := false
                             entered := false
-                            if !dockmaster_interacted && !story_interacted {
+                            if !dockmaster_interacted && !marin_interacted && !story_interacted {
                                 trailer_interacted = car_trailer_interact(editor)
                             }
-                            if !dockmaster_interacted && !story_interacted && !trailer_interacted {
+                            if !dockmaster_interacted &&
+                               !marin_interacted &&
+                               !story_interacted &&
+                               !trailer_interacted {
                                 _, entered = vehicles.try_enter_nearest(
                                     &editor.pilot,
                                     []^vehicles.Vehicle{&editor.car, active_aircraft_vehicle(editor)},
@@ -9828,6 +10428,7 @@ adriatic_run :: proc(
                                     chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
                                 }
                             } else if !dockmaster_interacted &&
+                               !marin_interacted &&
                                !story_interacted &&
                                !trailer_interacted &&
                                libellula_attendant_near(editor) {
@@ -9905,7 +10506,12 @@ adriatic_run :: proc(
                 editor.camera_pose.position.z,
             )
             editor.camera_pose = third_person.camera_above_height(editor.camera_pose, camera_ground, .35)
-            editor.camera_pose = gameplay_physics_resolve_camera(editor, editor.camera_pose)
+            // Settlement plan views intentionally start their collision ray on
+            // authored ground and look almost straight down. Resolving that ray
+            // collapses the overhead camera onto its target.
+            if !editor.settlement_vertical_map {
+                editor.camera_pose = gameplay_physics_resolve_camera(editor, editor.camera_pose)
+            }
         }
         if benchmark_scenario == "terrain_edit" && frame >= benchmark_warmup {
             edit_frame := frame - benchmark_warmup
@@ -9993,6 +10599,17 @@ adriatic_run :: proc(
                         editor.postale.throttle * clamp(editor.postale.flight_runtime.engine_output, 0, 1)
                     engine_controls.propeller_mix = 1
                     engine_controls.propeller_airspeed = clamp(editor.postale.telemetry.airspeed / 65, 0, 1)
+                    engine_controls.damage = editor.postale.structural_damage
+                } else if editor.aircraft.active == .Rondine {
+                    engine_controls.rate = .14 + editor.rondine.throttle * .86
+                    engine_controls.power = editor.rondine.throttle
+                    engine_controls.propeller_mix = 1
+                    engine_controls.propeller_airspeed = clamp(
+                        editor.rondine.telemetry.speed / editor.rondine.tuning.maximum_speed,
+                        0,
+                        1,
+                    )
+                    engine_controls.damage = editor.rondine.crashed ? 1 : 0
                 } else {
                     rotor_rate :=
                         (editor.libellula.telemetry.rotor_rpm_normalized.x +
@@ -10010,10 +10627,6 @@ adriatic_run :: proc(
                     engine_controls.rotor_rate_c = clamp(editor.libellula.telemetry.rotor_rpm_normalized.z, 0, 1)
                     engine_controls.power = editor.libellula.throttle * clamp(available_power, 0, 1)
                     engine_controls.rotor_mix = 1
-                }
-                if editor.aircraft.active == .Postale {
-                    engine_controls.damage = editor.postale.structural_damage
-                } else {
                     engine_controls.damage = editor.libellula.crashed ? 1 : 0
                 }
             } else if driving_car(editor) {
@@ -10113,7 +10726,25 @@ adriatic_run :: proc(
             }
         }
         if engine_audio_ready {
-            if pause_menu_is_open(editor) || !editor.attendant_dialogue_open {
+            _ = sdl.SetAudioStreamGain(editor.engine_audio.stream, editor.gameplay_options.sound_fx_level)
+            if frame == 60 {
+                fmt.eprintf(
+                    "audio runtime: stream=%v device=%d paused=%v queued=%d gain=%.3f volume=%.3f muted=%v menu=%v pause=%v console=%v map=%v\n",
+                    editor.engine_audio.stream != nil,
+                    sdl.GetAudioStreamDevice(editor.engine_audio.stream),
+                    sdl.AudioStreamDevicePaused(editor.engine_audio.stream),
+                    sdl.GetAudioStreamQueued(editor.engine_audio.stream),
+                    sdl.GetAudioStreamGain(editor.engine_audio.stream),
+                    editor.gameplay_options.sound_fx_level,
+                    sound_fx_muted(editor),
+                    editor.main_menu_active,
+                    editor.pause_screen,
+                    editor.console.open,
+                    editor.in_map,
+                )
+            }
+            if pause_menu_is_open(editor) ||
+               (!editor.attendant_dialogue_open && !lab_scene_is_active(editor, "dialogue-sound")) {
                 engine_sound.dialogue_voice_stop(&editor.engine_audio)
             }
             engine_sound.update(
@@ -10133,8 +10764,9 @@ adriatic_run :: proc(
                 crash_profile,
                 crash_wetness,
                 crash_obliqueness,
+                crash_pan,
                 footstep_slide,
-                pause_menu_is_open(editor),
+                sound_fx_muted(editor),
             )
         }
         editor.landing_wheel_squeal = max(0, editor.landing_wheel_squeal - simulation_delta * 1.65)
@@ -10156,7 +10788,7 @@ adriatic_run :: proc(
         // Player captures wait long enough for the Verlet tail and pose blends
         // to settle; frame two only showed the first few links as a short nub.
         capture_frame :=
-            capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Markov_Marina ? 20 : 2
+            capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina ? 20 : 2
         if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.

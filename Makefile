@@ -164,7 +164,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fmt check test clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fmt check test test-rondine clean
 
 all: build
 
@@ -766,7 +766,10 @@ check: doctor
 	$(ODIN) check packages/atmosphere $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/cinematic $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 
-test: doctor $(DEV_DIR)/libadriatic_mesh.a
+test-rondine: doctor
+	$(ODIN) test packages/rondine $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS)
+
+test: doctor $(DEV_DIR)/libadriatic_mesh.a test-rondine
 	$(ODIN) test tests $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -lc++"
 
 clean:

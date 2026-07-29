@@ -21,6 +21,7 @@ Airfield_Result :: enum {
 Marina_Result :: enum {
     None,
     Borrow_Dinghy,
+    Stage_Rondine,
     Close,
 }
 
