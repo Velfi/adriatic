@@ -119,14 +119,17 @@ settlement_access_alley_curve :: proc(
     city_plan: ^architecture.City_Plan,
     alley_index: int,
 ) -> Settlement_Access_Curve {
-    curve := settlement_access_alley_curve_raw(city_plan, alley_index)
+    curve: Settlement_Access_Curve
     if city_plan == nil || alley_index < 0 || alley_index >= city_plan.alley_count do return curve
     alley := city_plan.alleys[alley_index]
     if alley.curve_ready {
+        curve.points[0] = {alley.start_x, alley.start_z}
         curve.points[1] = alley.curve_control_from
         curve.points[2] = alley.curve_control_to
+        curve.points[3] = {alley.end_x, alley.end_z}
         return curve
     }
+    curve = settlement_access_alley_curve_raw(city_plan, alley_index)
     ignore_structure := -1
     terminals := [2]architecture.City_Alley_Terminal{alley.start_terminal, alley.end_terminal}
     endpoints := [2][2]f32{curve.points[0], curve.points[3]}
