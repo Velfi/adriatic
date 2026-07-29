@@ -49,9 +49,12 @@ Capture_Kind :: enum {
 }
 
 Capture_Request :: struct {
-    kind:        Capture_Kind,
-    output_path: string,
-    target:      string,
+    kind:          Capture_Kind,
+    output_path:   string,
+    target:        string,
+    window_width:  int,
+    window_height: int,
+    settle_frames: int,
 }
 
 CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night}

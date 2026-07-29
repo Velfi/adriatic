@@ -231,6 +231,15 @@ dialogue_voice_profile :: proc(resident: story.Resident) -> engine_sound.Dialogu
     return {340, 140, .55, .6, .1, 340}
 }
 
+dialogue_current_resident :: proc(editor: ^Editor) -> story.Resident {
+    if editor == nil do return .Marta
+    current := dialogue.current(&editor.attendant_dialogue)
+    if current == nil do return editor.dialogue_resident
+    speaker := current.speaker(&editor.attendant_dialogue.ctx)
+    if resident, found := story.resident_from_speaker(speaker); found do return resident
+    return editor.dialogue_resident
+}
+
 dialogue_view_reset :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.attendant_dialogue_view = {
@@ -268,7 +277,7 @@ dialogue_view_update :: proc(editor: ^Editor, delta_seconds: f32) {
             engine_sound.dialogue_voice_trigger_grapheme(
                 &editor.engine_audio,
                 text[start:view.revealed_bytes],
-                dialogue_voice_profile(editor.dialogue_resident),
+                dialogue_voice_profile(dialogue_current_resident(editor)),
                 cadence_hint,
                 next_grapheme,
                 dialogue_voice_word_progress(text, start, view.revealed_bytes),
@@ -575,7 +584,7 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     dialogue_draw_live_portrait(
         editor,
         layout.npc_card,
-        editor.dialogue_resident,
+        dialogue_current_resident(editor),
         false,
         !player_active,
         revealing ? f32(.12) : 0,

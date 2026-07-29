@@ -13,6 +13,11 @@ adriatic_cli_usage :: proc() {
     fmt.println("  adriatic --lab <name> [target]")
     fmt.println("  adriatic dialogue-preview <output.wav> [preset] [text] [formant-shift] [base-pitch] [expression]")
     fmt.println("  adriatic capture <mode> <output.png> [target]")
+    fmt.println("  adriatic capture <mode> --output <output.png> [options]")
+    fmt.println("    --target <name>       capture-specific target")
+    fmt.println("    --width <pixels>      window width (320–7680)")
+    fmt.println("    --height <pixels>     window height (240–4320)")
+    fmt.println("    --settle-frames <n>   frame to capture (0–4096)")
     fmt.println("    building targets: <ordinal>, ground-<ordinal>, cypress, mouse-town")
     fmt.println("  adriatic capture bougainvillea [output-directory] [seed ...]")
     fmt.println("")
@@ -100,6 +105,24 @@ adriatic_cli_bougainvillea :: proc(args: []string) -> bool {
     return true
 }
 
+adriatic_cli_parse_bounded_int :: proc(
+    option, value: string,
+    minimum, maximum: int,
+) -> (int, bool) {
+    parsed, ok := strconv.parse_int(value)
+    if !ok || parsed < minimum || parsed > maximum {
+        fmt.eprintf(
+            "adriatic: %s must be an integer from %d to %d, got %s\n",
+            option,
+            minimum,
+            maximum,
+            value,
+        )
+        return 0, false
+    }
+    return int(parsed), true
+}
+
 adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     if len(args) < 2 do return false, true
     if args[1] == "help" || args[1] == "--help" || args[1] == "-h" {
@@ -120,26 +143,98 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         adriatic_cli_usage()
         return true, false
     }
-    if len(args) < 4 {
+    requested_output := ""
+    target := ""
+    window_width, window_height := 0, 0
+    settle_frames := -1
+    positional_count := 0
+    index := 3
+    for index < len(args) {
+        argument := args[index]
+        if argument == "--output" ||
+           argument == "--target" ||
+           argument == "--width" ||
+           argument == "--height" ||
+           argument == "--settle-frames" {
+            if index + 1 >= len(args) {
+                fmt.eprintf("adriatic: %s requires a value\n", argument)
+                return true, false
+            }
+            value := args[index + 1]
+            switch argument {
+            case "--output":
+                if requested_output != "" {
+                    fmt.eprintln("adriatic: output path was specified more than once")
+                    return true, false
+                }
+                requested_output = value
+            case "--target":
+                if target != "" {
+                    fmt.eprintln("adriatic: target was specified more than once")
+                    return true, false
+                }
+                target = value
+            case "--width":
+                parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 320, 7680)
+                if !ok do return true, false
+                window_width = parsed
+            case "--height":
+                parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 240, 4320)
+                if !ok do return true, false
+                window_height = parsed
+            case "--settle-frames":
+                parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 0, 4096)
+                if !ok do return true, false
+                settle_frames = parsed
+            }
+            index += 2
+            continue
+        }
+        if len(argument) >= 2 && argument[:2] == "--" {
+            fmt.eprintf("adriatic: unknown capture option: %s\n", argument)
+            return true, false
+        }
+        if positional_count == 0 {
+            if requested_output != "" {
+                fmt.eprintln("adriatic: output path was specified more than once")
+                return true, false
+            }
+            requested_output = argument
+        } else if positional_count == 1 {
+            if target != "" {
+                fmt.eprintln("adriatic: target was specified more than once")
+                return true, false
+            }
+            target = argument
+        } else {
+            fmt.eprintf("adriatic: unexpected capture argument: %s\n", argument)
+            return true, false
+        }
+        positional_count += 1
+        index += 1
+    }
+    if requested_output == "" {
         fmt.eprintf("adriatic: capture %s requires an output path\n", mode)
         return true, false
     }
-    output, resolved := adriatic_cli_absolute_path(args[3])
+    output, resolved := adriatic_cli_absolute_path(requested_output)
     if !resolved do return true, false
     if err := os.make_directory_all(os.dir(output)); err != nil && err != .Exist {
         fmt.eprintf("adriatic: cannot create output directory: %v\n", err)
         return true, false
     }
-    target := len(args) >= 5 ? args[4] : ""
     if target == "" && len(mode) >= 6 && mode[:6] == "player" do target = mode
     if err := os.remove(output); err != nil && err != .Not_Exist {
         fmt.eprintf("adriatic: cannot replace %s: %v\n", output, err)
         return true, false
     }
     request := Capture_Request {
-        kind        = kind,
-        output_path = output,
-        target      = target,
+        kind          = kind,
+        output_path   = output,
+        target        = target,
+        window_width  = window_width,
+        window_height = window_height,
+        settle_frames = settle_frames,
     }
     _ = adriatic_run(nil, request = &request)
     info, screenshot_error := os.stat(output, context.temp_allocator)

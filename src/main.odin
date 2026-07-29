@@ -2556,16 +2556,21 @@ seed_default_island_towns :: proc(editor: ^Editor) {
                 storefront.seed,
             )
         }
-        for structure in editor.project.structures[first_structure:editor.project.structure_count] {
-            if structure.kind != .Architecture || structure.height > 60 do continue
-            _ = architecture.city_density_stamp(
-                &editor.project.climbing_leaf_density,
-                structure.center_x,
-                structure.center_z,
-                max(structure.width, structure.depth) * .56,
-                .78,
-                .68,
-            )
+        // A rejected town plan can roll its staged structures back below the
+        // count captured before generation. In that case there is no new
+        // architecture range to decorate.
+        if first_structure < editor.project.structure_count {
+            for structure in editor.project.structures[first_structure:editor.project.structure_count] {
+                if structure.kind != .Architecture || structure.height > 60 do continue
+                _ = architecture.city_density_stamp(
+                    &editor.project.climbing_leaf_density,
+                    structure.center_x,
+                    structure.center_z,
+                    max(structure.width, structure.depth) * .56,
+                    .78,
+                    .68,
+                )
+            }
         }
     }
     editor.architecture_node_mode = true
@@ -4155,6 +4160,9 @@ attendant_menu_text :: proc(ctx: ^dialogue.Context) -> string {
             "Questo magneto has una fine crack, comme a hair. Gerta keeps un replacement on west island; she must inspect the old magneto before she trusts it." \
         )
     }
+    if editor != nil && editor.story_state.airfield_errand == .Completed {
+        return "Ciao. The replacement magneto starts before my coffee now. How can io help vous?"
+    }
     return "Ciao. How can io help vous?"
 }
 gerta_menu_text :: proc(ctx: ^dialogue.Context) -> string {
@@ -4164,7 +4172,49 @@ gerta_menu_text :: proc(ctx: ^dialogue.Context) -> string {
             "Ja, same series. Marta keeps ogni machine until it becomes family. Take the replacement magneto—and do not let il mare taste it." \
         )
     }
+    if editor != nil && editor.story_state.airfield_errand == .Completed {
+        return "Dobar dan. Marta reports the replacement magneto behaves—her word, not mine. What can sua sister do for you?"
+    }
     return "Dobar dan. Marta manages the east apron; what can sua sister do for you?"
+}
+attendant_magneto_accept_text :: proc(_: ^dialogue.Context) -> string {
+    return "Wrap the broken magneto in this oilcloth, dobro, then bring it to Gerta on west island. She trusts a machine after inspection—and a courier after dry socks."
+}
+gerta_magneto_handoff_text :: proc(_: ^dialogue.Context) -> string {
+    return "Same series, stessa stubborn crack. Marta kept the old magneto running two summers past reason; naturally, it waited for her to be correct. Take this replacement magneto east."
+}
+attendant_magneto_return_text :: proc(_: ^dialogue.Context) -> string {
+    return "Gerta's replacement magneto, dry as a ledger. Und this knot is hers—she still thinks io open parcels with my teeth. Grazie; the aeroplano can return to work."
+}
+attendant_magneto_memory_text :: proc(ctx: ^dialogue.Context) -> string {
+    if ctx == nil do return ""
+    return story.magneto_memory_text(story.Resident(ctx.resident_index))
+}
+attendant_magneto_favor_marta_text :: proc(ctx: ^dialogue.Context) -> string {
+    if ctx == nil do return ""
+    return story.magneto_opinion_text(story.Resident(ctx.resident_index), .Marta)
+}
+attendant_magneto_favor_gerta_text :: proc(ctx: ^dialogue.Context) -> string {
+    if ctx == nil do return ""
+    return story.magneto_opinion_text(story.Resident(ctx.resident_index), .Gerta)
+}
+attendant_magneto_accept_careful_text :: proc(_: ^dialogue.Context) -> string {
+    return story.magneto_accept_careful_text()
+}
+attendant_magneto_accept_inspection_text :: proc(_: ^dialogue.Context) -> string {
+    return story.magneto_accept_inspection_text()
+}
+attendant_magneto_handoff_crack_text :: proc(_: ^dialogue.Context) -> string {
+    return story.magneto_handoff_crack_text()
+}
+attendant_magneto_handoff_marta_text :: proc(_: ^dialogue.Context) -> string {
+    return story.magneto_handoff_marta_text()
+}
+attendant_magneto_return_dry_text :: proc(_: ^dialogue.Context) -> string {
+    return story.magneto_return_dry_text()
+}
+attendant_magneto_return_knot_text :: proc(_: ^dialogue.Context) -> string {
+    return story.magneto_return_knot_text()
 }
 attendant_aircraft_text :: proc(_: ^dialogue.Context) -> string {
     return "Which aeroplano should io place on la line?"
@@ -4208,6 +4258,16 @@ attendant_local_news_text :: proc(ctx: ^dialogue.Context) -> string {
         return "Pane goes east, lamp glass goes west.\nSolo the courier does not know what la dinner note says."
     }
     return ""
+}
+
+attendant_local_news_warm_text :: proc(ctx: ^dialogue.Context) -> string {
+    if ctx == nil do return ""
+    return story.airfield_news_warm_text(story.Resident(ctx.resident_index))
+}
+
+attendant_local_news_discreet_text :: proc(ctx: ^dialogue.Context) -> string {
+    if ctx == nil do return ""
+    return story.airfield_news_discreet_text(story.Resident(ctx.resident_index))
 }
 
 attendant_weather_text :: proc(ctx: ^dialogue.Context) -> string {
@@ -4268,6 +4328,11 @@ can_return_marta_magneto :: proc(ctx: ^dialogue.Context) -> bool {
     )
 }
 
+can_revisit_magneto :: proc(ctx: ^dialogue.Context) -> bool {
+    editor := attendant_context_editor(ctx)
+    return editor != nil && editor.story_state.airfield_errand == .Completed
+}
+
 accept_marta_magneto :: proc(ctx: ^dialogue.Context) {
     if editor := attendant_context_editor(ctx); editor != nil {
         _ = story.accept_airfield_errand(&editor.story_state)
@@ -4300,27 +4365,32 @@ dialogue_session_reset :: proc(editor: ^Editor) {
 open_attendant_dialogue :: proc(editor: ^Editor, resident: story.Resident = .Marta) {
     if editor == nil || (resident != .Marta && resident != .Gerta) do return
     attendant_dialogue_definition_release(editor)
-    menu_choices := make([]dialogue.Choice, 8)
+    menu_choices := make([]dialogue.Choice, 9)
     menu_choices[0] = dialogue.choice(
         "I can bring the broken magneto to Gerta.",
+        4,
         condition = can_accept_marta_magneto,
         effect = accept_marta_magneto,
     )
     menu_choices[1] = dialogue.choice(
         "Give Gerta the broken magneto.",
+        5,
         condition = can_handoff_gerta_magneto,
         effect = handoff_gerta_magneto,
     )
     menu_choices[2] = dialogue.choice(
         "Give Marta the replacement magneto.",
+        6,
         condition = can_return_marta_magneto,
         effect = return_marta_magneto,
     )
-    menu_choices[3] = dialogue.choice("Paint an aeroplane", dialogue.no_next_node, effect = marta_menu_paint)
-    menu_choices[4] = dialogue.choice("Choose an aeroplane", 1)
-    menu_choices[5] = dialogue.choice("Any local news?", 2)
-    menu_choices[6] = dialogue.choice("How is the weather?", 3)
-    menu_choices[7] = dialogue.choice("Nothing, grazie.", dialogue.no_next_node, effect = marta_menu_close)
+    menu_choices[3] =
+        dialogue.choice("How is the replacement magneto behaving?", 7, condition = can_revisit_magneto)
+    menu_choices[4] = dialogue.choice("Paint an aeroplane", dialogue.no_next_node, effect = marta_menu_paint)
+    menu_choices[5] = dialogue.choice("Choose an aeroplane", 1)
+    menu_choices[6] = dialogue.choice("Any local news?", 2)
+    menu_choices[7] = dialogue.choice("How is the weather?", 3)
+    menu_choices[8] = dialogue.choice("Nothing, grazie.", dialogue.no_next_node, effect = marta_menu_close)
 
     editor.attendant_dialogue_vehicle_choice_count = 0
     airfield_aircraft_count := 0
@@ -4336,16 +4406,119 @@ open_attendant_dialogue :: proc(editor: ^Editor, resident: story.Resident = .Mar
         editor.attendant_dialogue_vehicle_choice_count += 1
     }
     aircraft_choices[airfield_aircraft_count] = dialogue.choice("Back", 0)
-    back_choices := make([]dialogue.Choice, 1)
-    back_choices[0] = dialogue.choice("Grazie. Anything else?", 0)
+    local_news_choices := make([]dialogue.Choice, 2)
+    local_news_choices[0] = dialogue.choice("They seem to be finding their way.", 10)
+    local_news_choices[1] = dialogue.choice("These islands notice everything.", 11)
+    weather_back_choices := make([]dialogue.Choice, 1)
+    weather_back_choices[0] = dialogue.choice("Grazie. Anything else?", 0)
+    local_news_warm_close_choices := make([]dialogue.Choice, 1)
+    local_news_warm_close_choices[0] = dialogue.choice("Anything else before I go?", 0)
+    local_news_discreet_close_choices := make([]dialogue.Choice, 1)
+    local_news_discreet_close_choices[0] = dialogue.choice("Anything else before I go?", 0)
+    magneto_accept_choices := make([]dialogue.Choice, 2)
+    magneto_accept_choices[0] = dialogue.choice("I'll protect the oilcloth and magneto.", 16)
+    magneto_accept_choices[1] = dialogue.choice("Does Gerta inspect couriers too?", 17)
+    magneto_accept_careful_close_choices := make([]dialogue.Choice, 1)
+    magneto_accept_careful_close_choices[0] = dialogue.choice("West island, then.")
+    magneto_accept_inspection_close_choices := make([]dialogue.Choice, 1)
+    magneto_accept_inspection_close_choices[0] = dialogue.choice("I'll arrive with dry socks.")
+    magneto_handoff_choices := make([]dialogue.Choice, 2)
+    magneto_handoff_choices[0] = dialogue.choice("The crack is finer than it looked.", 12)
+    magneto_handoff_choices[1] = dialogue.choice("Marta kept it going a long time.", 13)
+    magneto_return_choices := make([]dialogue.Choice, 2)
+    magneto_return_choices[0] = dialogue.choice("The replacement stayed dry.", 14)
+    magneto_return_choices[1] = dialogue.choice("Gerta tied the knot twice.", 15)
+    magneto_handoff_crack_close_choices := make([]dialogue.Choice, 1)
+    magneto_handoff_crack_close_choices[0] = dialogue.choice("I'll take the replacement magneto east.")
+    magneto_handoff_marta_close_choices := make([]dialogue.Choice, 1)
+    magneto_handoff_marta_close_choices[0] = dialogue.choice("I'll take the replacement magneto east.")
+    magneto_return_dry_close_choices := make([]dialogue.Choice, 1)
+    magneto_return_dry_close_choices[0] = dialogue.choice("Let's hear it start.")
+    magneto_return_knot_close_choices := make([]dialogue.Choice, 1)
+    magneto_return_knot_close_choices[0] = dialogue.choice("Let's hear it start.")
+    magneto_memory_choices := make([]dialogue.Choice, 2)
+    magneto_memory_choices[0] = dialogue.choice("Marta was right about the old magneto.", 8)
+    magneto_memory_choices[1] = dialogue.choice("Gerta was right to replace the magneto.", 9)
+    magneto_marta_close_choices := make([]dialogue.Choice, 1)
+    magneto_marta_close_choices[0] = dialogue.choice("I'll preserve the diplomatic version.")
+    magneto_gerta_close_choices := make([]dialogue.Choice, 1)
+    magneto_gerta_close_choices[0] = dialogue.choice("I'll preserve the diplomatic version.")
 
-    nodes := make([]dialogue.Node, 4)
+    nodes := make([]dialogue.Node, 18)
     speaker := resident == .Gerta ? gerta_speaker : attendant_speaker
     menu_text := resident == .Gerta ? gerta_menu_text : attendant_menu_text
     nodes[0] = dialogue.node("services", menu_text, menu_choices, speaker)
     nodes[1] = dialogue.node("aircraft", attendant_aircraft_text, aircraft_choices, speaker)
-    nodes[2] = dialogue.node("local-news", attendant_local_news_text, back_choices, speaker)
-    nodes[3] = dialogue.node("weather", attendant_weather_text, back_choices, speaker)
+    nodes[2] = dialogue.node("local-news", attendant_local_news_text, local_news_choices, speaker)
+    nodes[3] = dialogue.node("weather", attendant_weather_text, weather_back_choices, speaker)
+    nodes[4] =
+        dialogue.node("magneto-accepted", attendant_magneto_accept_text, magneto_accept_choices, speaker)
+    nodes[5] =
+        dialogue.node("magneto-handoff", gerta_magneto_handoff_text, magneto_handoff_choices, speaker)
+    nodes[6] =
+        dialogue.node("magneto-returned", attendant_magneto_return_text, magneto_return_choices, speaker)
+    nodes[7] =
+        dialogue.node("magneto-memory", attendant_magneto_memory_text, magneto_memory_choices, speaker)
+    nodes[8] = dialogue.node(
+        "magneto-favor-marta",
+        attendant_magneto_favor_marta_text,
+        magneto_marta_close_choices,
+        speaker,
+    )
+    nodes[9] = dialogue.node(
+        "magneto-favor-gerta",
+        attendant_magneto_favor_gerta_text,
+        magneto_gerta_close_choices,
+        speaker,
+    )
+    nodes[10] = dialogue.node(
+        "local-news-warm",
+        attendant_local_news_warm_text,
+        local_news_warm_close_choices,
+        speaker,
+    )
+    nodes[11] = dialogue.node(
+        "local-news-discreet",
+        attendant_local_news_discreet_text,
+        local_news_discreet_close_choices,
+        speaker,
+    )
+    nodes[12] = dialogue.node(
+        "magneto-handoff-crack",
+        attendant_magneto_handoff_crack_text,
+        magneto_handoff_crack_close_choices,
+        speaker,
+    )
+    nodes[13] = dialogue.node(
+        "magneto-handoff-marta",
+        attendant_magneto_handoff_marta_text,
+        magneto_handoff_marta_close_choices,
+        speaker,
+    )
+    nodes[14] = dialogue.node(
+        "magneto-return-dry",
+        attendant_magneto_return_dry_text,
+        magneto_return_dry_close_choices,
+        speaker,
+    )
+    nodes[15] = dialogue.node(
+        "magneto-return-knot",
+        attendant_magneto_return_knot_text,
+        magneto_return_knot_close_choices,
+        speaker,
+    )
+    nodes[16] = dialogue.node(
+        "magneto-accept-careful",
+        attendant_magneto_accept_careful_text,
+        magneto_accept_careful_close_choices,
+        speaker,
+    )
+    nodes[17] = dialogue.node(
+        "magneto-accept-inspection",
+        attendant_magneto_accept_inspection_text,
+        magneto_accept_inspection_close_choices,
+        speaker,
+    )
     definition := new(dialogue.Definition)
     definition^ = {
         id         = resident == .Gerta ? "gerta_services" : "marta_services",
@@ -4375,11 +4548,8 @@ attendant_dialogue_definition_release :: proc(editor: ^Editor) {
     if definition := editor.attendant_dialogue.definition; definition != nil {
         switch editor.dialogue_session.kind {
         case .Airfield_Services:
-            // The local-news and weather nodes intentionally share the same
-            // backing choice slice, so release it once through node two.
-            if len(definition.nodes) > 0 do delete(definition.nodes[0].choices)
-            if len(definition.nodes) > 1 do delete(definition.nodes[1].choices)
-            if len(definition.nodes) > 2 do delete(definition.nodes[2].choices)
+            // Airfield definitions own one distinct choice slice per node.
+            for &node in definition.nodes do delete(node.choices)
             delete(definition.nodes)
             free(definition)
         case .Marina_Dockmaster:
@@ -8278,6 +8448,9 @@ adriatic_run :: proc(
         initial_width = 854
         initial_height = 480
     }
+    // Explicit CLI dimensions take precedence over mode and target presets.
+    if request != nil && request.window_width > 0 do initial_width = i32(request.window_width)
+    if request != nil && request.window_height > 0 do initial_height = i32(request.window_height)
     _ = rl.SetBodyFontPath("assets/fonts/NotoSans-Regular.ttf")
     _ = rl.SetDisplayFontPath("assets/fonts/NotoSerif-Regular.ttf")
     unicode_fallbacks := [?]cstring {
@@ -8597,6 +8770,23 @@ adriatic_run :: proc(
             atmosphere.set_weather_override(&editor.atmosphere, .Clear)
             editor.atmosphere.weather = atmosphere.weather_for(.Clear)
             editor.atmosphere.paused = true
+            if capture_target == "dialogue-opening" ||
+               capture_target == "dialogue-warm" ||
+               capture_target == "dialogue-discreet" {
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, .Niko) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    if capture_target == "dialogue-warm" {
+                        _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    } else if capture_target == "dialogue-discreet" {
+                        _ = dialogue.choose(&editor.attendant_dialogue, 1)
+                    }
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
         } else if capture_building_mode {
             if capture_target == "mouse-town" ||
                capture_target == "west-town-review" ||
@@ -9060,12 +9250,20 @@ adriatic_run :: proc(
            (capture_target == "marta" ||
                    capture_target == "gerta" ||
                    capture_target == "marta-dialogue" ||
+                   capture_target == "marta-dialogue-magneto" ||
+                   capture_target == "marta-dialogue-return" ||
+                   capture_target == "marta-dialogue-memory" ||
+                   capture_target == "marta-dialogue-news" ||
                    capture_target == "marta-dialogue-unicode" ||
                    capture_target == "marta-dialogue-dark" ||
-                   capture_target == "gerta-dialogue") {
+                   capture_target == "gerta-dialogue" ||
+                   capture_target == "gerta-dialogue-magneto") {
             editor.camera_target_lock = false
             editor.postale_visible = false
-            gerta_capture := capture_target == "gerta" || capture_target == "gerta-dialogue"
+            gerta_capture :=
+                capture_target == "gerta" ||
+                capture_target == "gerta-dialogue" ||
+                capture_target == "gerta-dialogue-magneto"
             attendant := gerta_capture ? editor.gerta_position : editor.attendant_position
             editor.player.position = {
                 attendant.x + 20,
@@ -9075,9 +9273,14 @@ adriatic_run :: proc(
             editor.pilot.position = editor.player.position
             // Dialogue captures render through the in-map presentation path.
             if capture_target == "marta-dialogue" ||
+               capture_target == "marta-dialogue-magneto" ||
+               capture_target == "marta-dialogue-return" ||
+               capture_target == "marta-dialogue-memory" ||
+               capture_target == "marta-dialogue-news" ||
                capture_target == "marta-dialogue-unicode" ||
                capture_target == "marta-dialogue-dark" ||
-               capture_target == "gerta-dialogue" {
+               capture_target == "gerta-dialogue" ||
+               capture_target == "gerta-dialogue-magneto" {
                 editor.in_map = true
                 editor.map_time = f32(rl.GetTime())
                 editor.player.grounded = true
@@ -9090,30 +9293,161 @@ adriatic_run :: proc(
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
             if capture_target == "marta-dialogue" ||
+               capture_target == "marta-dialogue-magneto" ||
+               capture_target == "marta-dialogue-return" ||
+               capture_target == "marta-dialogue-memory" ||
+               capture_target == "marta-dialogue-news" ||
                capture_target == "marta-dialogue-unicode" ||
                capture_target == "marta-dialogue-dark" ||
-               capture_target == "gerta-dialogue" {
+               capture_target == "gerta-dialogue" ||
+               capture_target == "gerta-dialogue-magneto" {
+                if capture_target == "marta-dialogue-memory" {
+                    editor.story_state.airfield_errand = .Completed
+                } else if capture_target == "marta-dialogue-news" {
+                    editor.story_state.romance = .Together
+                } else if capture_target == "gerta-dialogue-magneto" {
+                    _ = story.accept_airfield_errand(&editor.story_state)
+                } else if capture_target == "marta-dialogue-return" {
+                    _ = story.accept_airfield_errand(&editor.story_state)
+                    _ = story.handoff_broken_magneto(&editor.story_state)
+                }
                 open_attendant_dialogue(editor, gerta_capture ? .Gerta : .Marta)
-                if capture_target == "marta-dialogue-unicode" {
+                if capture_target == "marta-dialogue-magneto" {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                } else if capture_target == "marta-dialogue-memory" {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                } else if capture_target == "gerta-dialogue-magneto" ||
+                              capture_target == "marta-dialogue-return" {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                } else if capture_target == "marta-dialogue-news" {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 3)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                } else if capture_target == "marta-dialogue-unicode" {
                     _ = dialogue.choose(&editor.attendant_dialogue, 2)
+                    dialogue_view_reset(editor)
                     dialogue_view_complete_reveal(editor)
                 }
             }
         }
         if capture_target == "niko" ||
+           capture_target == "niko-handoff" ||
+           capture_target == "niko-repeat-handoff" ||
+           capture_target == "niko-meeting" ||
+           capture_target == "niko-together" ||
            capture_target == "iva" ||
+           capture_target == "iva-handoff" ||
+           capture_target == "iva-repeat-handoff" ||
+           capture_target == "iva-together" ||
            capture_target == "bojan" ||
+           capture_target == "bojan-inspect-choices" ||
+           capture_target == "bojan-repair-payoff" ||
+           capture_target == "bojan-repaired-check" ||
            capture_target == "zora" ||
-           capture_target == "zora-reading" {
+           capture_target == "zora-choices" ||
+           capture_target == "zora-reading" ||
+           capture_target == "zora-recall" ||
+           capture_target == "vesna-repeat" ||
+           capture_target == "petar-repeat" ||
+           capture_target == "anica-repeat" ||
+           capture_target == "toma-post-handoff" ||
+           capture_target == "toma-post-receipt-cycle2" ||
+           capture_target == "lena-post-handoff" ||
+           capture_target == "lena-post-receipt" {
             seed_default_island_towns(editor)
             resident := story.Resident.Niko
             switch capture_target {
-            case "iva":
+            case "iva", "iva-handoff", "iva-repeat-handoff", "iva-together":
                 resident = .Iva
-            case "bojan":
+            case "bojan", "bojan-inspect-choices", "bojan-repair-payoff", "bojan-repaired-check":
                 resident = .Bojan
-            case "zora", "zora-reading":
+            case "zora", "zora-choices", "zora-reading", "zora-recall":
                 resident = .Zora
+            case "vesna-repeat":
+                resident = .Vesna
+            case "petar-repeat":
+                resident = .Petar
+            case "anica-repeat":
+                resident = .Anica
+            case "toma-post-handoff", "toma-post-receipt-cycle2":
+                resident = .Toma
+            case "lena-post-handoff", "lena-post-receipt":
+                resident = .Lena
+            }
+            if capture_target == "niko-together" || capture_target == "iva-together" {
+                editor.story_state.romance = .Together
+                editor.story_state.repeat_deliveries = 2
+            }
+            if capture_target == "niko-repeat-handoff" {
+                _ = story.accept_airfield_errand(&editor.story_state)
+                _ = story.handoff_broken_magneto(&editor.story_state)
+                _ = story.return_replacement_magneto(&editor.story_state)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Iva)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Niko)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Iva)
+                _ = story.report_crash(&editor.story_state)
+                _ = story.diagnose_crash(&editor.story_state)
+                _ = story.apply_wing_patch(&editor.story_state)
+                _ = story.verify_repair(&editor.story_state)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Niko)
+                _ = story.complete_meeting(&editor.story_state)
+            }
+            if capture_target == "iva-repeat-handoff" {
+                _ = story.accept_airfield_errand(&editor.story_state)
+                _ = story.handoff_broken_magneto(&editor.story_state)
+                _ = story.return_replacement_magneto(&editor.story_state)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Iva)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Niko)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Iva)
+                _ = story.report_crash(&editor.story_state)
+                _ = story.diagnose_crash(&editor.story_state)
+                _ = story.apply_wing_patch(&editor.story_state)
+                _ = story.verify_repair(&editor.story_state)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Niko)
+                _ = story.complete_meeting(&editor.story_state)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Lena)
+            }
+            if capture_target == "niko-handoff" {
+                _ = story.accept_airfield_errand(&editor.story_state)
+                _ = story.handoff_broken_magneto(&editor.story_state)
+                _ = story.return_replacement_magneto(&editor.story_state)
+            } else if capture_target == "niko-meeting" {
+                _ = story.accept_airfield_errand(&editor.story_state)
+                _ = story.handoff_broken_magneto(&editor.story_state)
+                _ = story.return_replacement_magneto(&editor.story_state)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Iva)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Niko)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Iva)
+                _ = story.report_crash(&editor.story_state)
+                _ = story.diagnose_crash(&editor.story_state)
+                _ = story.apply_wing_patch(&editor.story_state)
+                _ = story.verify_repair(&editor.story_state)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Niko)
+            } else if capture_target == "iva-handoff" {
+                _ = story.accept_airfield_errand(&editor.story_state)
+                _ = story.handoff_broken_magneto(&editor.story_state)
+                _ = story.return_replacement_magneto(&editor.story_state)
+                _ = story.begin_delivery(&editor.story_state)
+                _ = story.complete_delivery(&editor.story_state, .Iva)
             }
             position, found := world_story_resident_position(editor, resident)
             if found {
@@ -9134,7 +9468,7 @@ adriatic_run :: proc(
                 third_person.camera_set_active(&editor.cameras, .Inspection)
                 editor.camera_pose = inspection_pose
             }
-            if capture_target == "zora-reading" {
+            if capture_target == "zora-reading" || capture_target == "zora-recall" {
                 // Dialogue captures render through the in-map presentation path.
                 if found {
                     editor.player.position = {
@@ -9153,7 +9487,281 @@ adriatic_run :: proc(
                 editor.map_time = f32(rl.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, .Zora) {
+                    if capture_target == "zora-recall" {
+                        _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                        attendant_dialogue_definition_release(editor)
+                        if open_story_dialogue(editor, .Zora) {
+                            _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                            dialogue_view_reset(editor)
+                            dialogue_view_complete_reveal(editor)
+                        }
+                    } else {
+                        _ = dialogue.choose(&editor.attendant_dialogue, 1)
+                        dialogue_view_reset(editor)
+                        dialogue_view_complete_reveal(editor)
+                    }
+                }
+            }
+            if capture_target == "zora-choices" {
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                editor.story_state.tarot_readings = 0
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, .Zora) {
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
+            if capture_target == "lena-post-receipt" {
+                // Exercise the actual recurring-delivery path so the captured
+                // receipt reflects state after its completion effect.
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if story.begin_post_delivery(&editor.story_state) &&
+                   open_story_dialogue(editor, .Lena) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
+            if capture_target == "toma-post-receipt-cycle2" {
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                for _ in 0 ..< 5 {
+                    if !story.begin_post_delivery(&editor.story_state) do break
+                    recipient := editor.story_state.delivery.to
+                    if !story.complete_delivery(&editor.story_state, recipient) do break
+                }
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if story.begin_post_delivery(&editor.story_state) &&
+                   open_story_dialogue(editor, .Toma) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
                     _ = dialogue.choose(&editor.attendant_dialogue, 1)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
+            if capture_target == "toma-post-handoff" || capture_target == "lena-post-handoff" {
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                if capture_target == "lena-post-handoff" {
+                    editor.story_state.repeat_deliveries = 1
+                }
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, resident) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
+            if capture_target == "bojan-repaired-check" {
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                editor.story_state.repair = .Repaired
+                editor.story_state.romance = .Together
+                editor.story_state.repeat_deliveries = 2
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, .Bojan) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
+            if capture_target == "bojan-inspect-choices" {
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                editor.story_state.repair = .Crash_Reported
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, .Bojan) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
+            if capture_target == "bojan-repair-payoff" {
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                _ = story.accept_airfield_errand(&editor.story_state)
+                _ = story.handoff_broken_magneto(&editor.story_state)
+                _ = story.return_replacement_magneto(&editor.story_state)
+                _ = story.report_crash(&editor.story_state)
+                _ = story.diagnose_crash(&editor.story_state)
+                _ = story.apply_wing_patch(&editor.story_state)
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, .Bojan) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
+            if capture_target == "vesna-repeat" ||
+               capture_target == "petar-repeat" ||
+               capture_target == "anica-repeat" {
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                editor.story_state.clinic_visits =
+                    capture_target == "anica-repeat" ? 2 :
+                    capture_target == "petar-repeat" ? 4 :
+                    3
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, resident) {
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
+            if capture_target == "niko-together" || capture_target == "iva-together" {
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, resident) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
+                }
+            }
+            if capture_target == "niko-handoff" ||
+               capture_target == "niko-repeat-handoff" ||
+               capture_target == "niko-meeting" ||
+               capture_target == "iva-handoff" ||
+               capture_target == "iva-repeat-handoff" {
+                if found {
+                    editor.player.position = {
+                        position.x + 1.6,
+                        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                        position.z,
+                    }
+                    editor.player.facing_yaw_radians = math.atan2(
+                        editor.player.position.x - position.x,
+                        editor.player.position.z - position.z,
+                    )
+                    editor.pilot.position = editor.player.position
+                    editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
+                }
+                editor.in_map = true
+                editor.map_time = f32(rl.GetTime())
+                editor.player.grounded = true
+                if open_story_dialogue(editor, resident) {
+                    _ = dialogue.choose(&editor.attendant_dialogue, 0)
+                    dialogue_view_reset(editor)
+                    dialogue_view_complete_reveal(editor)
                 }
             }
         }
@@ -10817,10 +11425,11 @@ adriatic_run :: proc(
         // to settle; frame two only showed the first few links as a short nub.
         capture_frame :=
             capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina ? 20 : 2
+        if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
         if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.
-        if capture_mode && frame >= 32 do break
+        if capture_mode && frame >= max(32, capture_frame + 12) do break
         if instrument_duration_seconds > 0 && rl.GetTime() - instrument_started_at >= instrument_duration_seconds {
             editor.quit_requested = true
         }

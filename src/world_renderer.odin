@@ -21050,12 +21050,21 @@ world_story_meeting :: proc(editor: ^Editor) {
         )
     }
 
-    facing_niko := math.atan2(iva.x - niko.x, iva.z - niko.z)
-    facing_iva := math.atan2(niko.x - iva.x, niko.z - iva.z)
+    niko_draw, iva_draw := niko, iva
+    iva_portrait_scale := f32(.96)
+    if editor.attendant_dialogue_open && dialogue_current_resident(editor) == .Iva {
+        niko_draw, iva_draw = iva, niko
+        // Iva's long snout and flower silhouette fill considerably more of
+        // Niko's nearer portrait position. Scale the promoted speaker so her
+        // ears and accessory remain inside the dialogue card.
+        iva_portrait_scale = .72
+    }
+    facing_niko := math.atan2(iva_draw.x - niko_draw.x, iva_draw.z - niko_draw.z)
+    facing_iva := math.atan2(niko_draw.x - iva_draw.x, niko_draw.z - iva_draw.z)
     world_town_mouse_model_scaled_cached(
         editor,
         {
-            position = niko,
+            position = niko_draw,
             rotation = math.PI - facing_niko,
             build = 1.12,
             snout_length = .94,
@@ -21070,7 +21079,7 @@ world_story_meeting :: proc(editor: ^Editor) {
     world_town_mouse_model_scaled_cached(
         editor,
         {
-            position = iva,
+            position = iva_draw,
             rotation = math.PI - facing_iva,
             build = .86,
             snout_length = 1.16,
@@ -21081,7 +21090,7 @@ world_story_meeting :: proc(editor: ^Editor) {
             scarf_color = {177, 65, 73, 255},
             grounded = true,
         },
-        .96,
+        iva_portrait_scale,
         TOWN_MOUSE_CACHE_COUNT - 1,
     )
     if story.resident_has_unseen_action(&editor.story_state, .Niko) {
