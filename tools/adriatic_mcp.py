@@ -70,6 +70,12 @@ def focus(subject: str, name: str, timeout: float = 5.0) -> dict[str, object]:
 
 TOOLS = [
     {
+        "name": "audio_status",
+        "title": "Get Audio Status",
+        "description": "Read engine-audio stream, queue, gain, and global mute state from the running game.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
         "name": "npc_focus",
         "title": "Focus NPC",
         "description": "Focus the running game's inspection camera on an NPC by name (case-insensitive).",
@@ -148,7 +154,7 @@ def handle(message: dict[str, object]) -> None:
     elif method == "tools/call":
         params = message.get("params") or {}
         tool_name = params.get("name") if isinstance(params, dict) else None
-        if tool_name not in {"npc_focus", "business_focus", "terrain_brush_get", "terrain_brush_set"}:
+        if tool_name not in {"audio_status", "npc_focus", "business_focus", "terrain_brush_get", "terrain_brush_set"}:
             reply(request_id, error={"code": -32602, "message": "unknown tool"})
             return
         arguments = params.get("arguments") or {}
@@ -156,7 +162,11 @@ def handle(message: dict[str, object]) -> None:
             reply(request_id, error={"code": -32602, "message": "tool arguments must be an object"})
             return
         try:
-            if tool_name in {"npc_focus", "business_focus"}:
+            if tool_name == "audio_status":
+                if arguments:
+                    raise ValueError("audio_status takes no arguments")
+                result = live_control("audio_status")
+            elif tool_name in {"npc_focus", "business_focus"}:
                 if set(arguments) != {"name"} or not isinstance(arguments["name"], str):
                     raise ValueError(f"{tool_name} requires only a string name")
                 focus_tool = focus_npc if tool_name == "npc_focus" else focus_business

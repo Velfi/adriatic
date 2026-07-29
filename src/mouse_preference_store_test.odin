@@ -33,6 +33,7 @@ when ODIN_TEST {
         source.mouse_scarf_color = {17, 83, 241, 255}
         source.gameplay_options = gameplay_options_default()
         source.gameplay_options.look_sensitivity = .021
+        source.gameplay_options.sound_fx_level = .35
         source.gameplay_options.invert_look_y = true
         source.gameplay_options.show_hud = false
         source.gameplay_options.crunchiness = .P720

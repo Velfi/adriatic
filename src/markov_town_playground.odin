@@ -206,10 +206,10 @@ settlement_map_frame :: proc(
     fallback_center: [2]f32,
     fallback_radius: f32,
 ) -> (
-    focus: [2]f32,
+    focus: third_person.Vec3,
     height: f32,
 ) {
-    focus = fallback_center
+    focus = {fallback_center[0], 0, fallback_center[1]}
     height = clamp(fallback_radius * 1.18, f32(125), f32(320))
     if project == nil do return
     minimum_x, minimum_z := f32(1e30), f32(1e30)
@@ -224,10 +224,15 @@ settlement_map_frame :: proc(
         maximum_z = max(maximum_z, structure.center_z + extent)
         count += 1
     }
-    if count == 0 do return
-    focus = {(minimum_x + maximum_x) * .5, (minimum_z + maximum_z) * .5}
-    span := max(maximum_x - minimum_x, maximum_z - minimum_z)
-    height = clamp(max(span * 1.05, fallback_radius * .75), f32(95), f32(320))
+    if count > 0 {
+        focus.x = (minimum_x + maximum_x) * .5
+        focus.z = (minimum_z + maximum_z) * .5
+        span := max(maximum_x - minimum_x, maximum_z - minimum_z)
+        height = clamp(max(span * 1.05, fallback_radius * .75), f32(95), f32(320))
+    }
+    // Keep the authored clearance relative to the fixture terrain so slope
+    // and waterfront variants retain the same plan-view composition.
+    focus.y = terrain.sample_height(project, 0, focus.x, focus.z)
     return
 }
 
@@ -260,6 +265,9 @@ settlement_lab_configure :: proc(
     target: string,
     profile: Settlement_Profile,
     region: Settlement_Region,
+    island_sign: f32 = 1,
+    configure_presentation: bool = true,
+    append_city_plan: bool = false,
 ) -> bool {
     if editor == nil do return false
     fixture, vertical_map, seed_target := settlement_lab_target_parse(target)
@@ -283,15 +291,34 @@ settlement_lab_configure :: proc(
     if len(density_frames) == 0 do return false
     density_frame := density_frames[len(density_frames) - 1]
 
-    center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-    town_z := center + 105
-    if fixture == .Waterfront do town_z = center + 180
+    sign := island_sign < 0 ? f32(-1) : f32(1)
+    center := sign * f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
+    town_z := center + sign * 105
+    if fixture == .Waterfront do town_z = center + sign * 180
     if fixture == .Slope {
         // Place the settlement on the shoulder of a deterministic broad ridge.
         // Two feathered raises make the fixture steep enough to exercise route
         // grade and contour logic without producing an isolated volcano.
-        terrain.apply_stroke_with_hardness(&editor.project, .Raise, center, town_z - 115, 225, 24, 1, .18)
-        terrain.apply_stroke_with_hardness(&editor.project, .Raise, center + 55, town_z - 95, 155, 13, 1, .24)
+        terrain.apply_stroke_with_hardness(
+            &editor.project,
+            .Raise,
+            center,
+            town_z - sign * 115,
+            225,
+            24,
+            1,
+            .18,
+        )
+        terrain.apply_stroke_with_hardness(
+            &editor.project,
+            .Raise,
+            center + sign * 55,
+            town_z - sign * 95,
+            155,
+            13,
+            1,
+            .24,
+        )
     }
     scale := profile.world_cell / SETTLEMENT_CITY.world_cell
     radius := 245 * scale
@@ -785,7 +812,19 @@ settlement_lab_configure :: proc(
         _ = terrain.add_structure(&editor.project, structure)
     }
     settlement_plan_import_city(&editor.settlement_plan, &plan, &editor.project)
-    architecture.city_plan_replace(&editor.architecture_city_plan, plan)
+    if append_city_plan {
+        append(&editor.architecture_city_plan.structures, ..plan.structures[:plan.count])
+        append(&editor.architecture_city_plan.parcels, ..plan.parcels[:plan.parcel_count])
+        append(&editor.architecture_city_plan.alleys, ..plan.alleys[:plan.alley_count])
+        append(&editor.architecture_city_plan.lamps, ..plan.lamps[:plan.lamp_count])
+        editor.architecture_city_plan.count += plan.count
+        editor.architecture_city_plan.parcel_count += plan.parcel_count
+        editor.architecture_city_plan.alley_count += plan.alley_count
+        editor.architecture_city_plan.lamp_count += plan.lamp_count
+        architecture.city_plan_destroy(&plan)
+    } else {
+        architecture.city_plan_replace(&editor.architecture_city_plan, plan)
+    }
     _ = settlement_village_attach_farmland(editor)
     settlement_plan_measure(&editor.settlement_plan)
     editor.settlement_plan.acceptance_failure = settlement_plan_acceptance_failure(
@@ -868,24 +907,26 @@ settlement_lab_configure :: proc(
         )
     }
 
-    editor.capture_player_walk_pose = true
-    editor.postale_visible = false
-    editor.car.position = {center + 600, 0, town_z + 600}
-    editor.libellula.vehicle.position = {center + 650, 0, town_z + 650}
-    editor.architecture_node_mode = true
     camera := third_person.default_camera()
-    camera.yaw_radians = -.72
-    camera.pitch_radians = .12
-    switch profile.scale {
-    case .City:
-        camera.distance = 92
-    case .Town:
-        camera.distance = 72
-    case .Village:
-        camera.distance = 70
+    if configure_presentation {
+        editor.capture_player_walk_pose = true
+        editor.postale_visible = false
+        editor.car.position = {center + 600, 0, town_z + 600}
+        editor.libellula.vehicle.position = {center + 650, 0, town_z + 650}
+        editor.architecture_node_mode = true
+        camera.yaw_radians = -.72
+        camera.pitch_radians = .12
+        switch profile.scale {
+        case .City:
+            camera.distance = 92
+        case .Town:
+            camera.distance = 72
+        case .Village:
+            camera.distance = 70
+        }
+        lab_scene_configure_camera(editor, {core_x, 6, core_z}, camera)
     }
-    lab_scene_configure_camera(editor, {core_x, 6, core_z}, camera)
-    if editor.settlement_plan.route_count > 0 {
+    if configure_presentation && editor.settlement_plan.route_count > 0 {
         look_x, look_z := core_x, core_z
         if plan.count > 0 {
             look_x, look_z = 0, 0
@@ -967,15 +1008,14 @@ settlement_lab_configure :: proc(
             third_person.camera_set_active(&editor.cameras, .Inspection)
         }
     }
-    if vertical_map {
+    if configure_presentation && vertical_map {
         map_focus, map_height := settlement_map_frame(&editor.project, {core_x, core_z}, radius)
-        focus := third_person.Vec3{map_focus[0], 0, map_focus[1]}
         overhead := third_person.Camera_Pose {
-            position = {map_focus[0], map_height, map_focus[1] + map_height * .065},
-            target   = focus,
+            position = {map_focus.x, map_focus.y + map_height, map_focus.z + map_height * .065},
+            target   = map_focus,
         }
         editor.settlement_diagnostic_layer = -1
-        editor.editor_focus = focus
+        editor.editor_focus = map_focus
         editor.camera_pose = overhead
         third_person.camera_set_pose(&editor.cameras, .Inspection, overhead)
         third_person.camera_set_active(&editor.cameras, .Inspection)

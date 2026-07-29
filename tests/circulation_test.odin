@@ -20,6 +20,34 @@ circulation_area_contains_rotated_rectangles :: proc(t: ^testing.T) {
 }
 
 @(test)
+circulation_plazas_are_passages_and_overlap_crossing_streets :: proc(t: ^testing.T) {
+    plaza := circulation.Area {
+        center_x = 10,
+        center_z = 20,
+        width = 18,
+        length = 12,
+        kind = .Plaza,
+    }
+    crossing := circulation.Area {
+        center_x = 10,
+        center_z = 20,
+        width = 30,
+        length = 5,
+        rotation = math.PI * .5,
+        kind = .Street,
+    }
+    clear := crossing
+    clear.center_x = 40
+
+    testing.expect(t, circulation.area_is_passage(plaza.kind))
+    testing.expect(t, circulation.area_overlaps(plaza, crossing))
+    testing.expect(t, !circulation.area_overlaps(plaza, clear))
+    nearest_x, nearest_z := circulation.area_nearest_point(plaza, 10, 40)
+    testing.expect_value(t, nearest_x, f32(10))
+    testing.expect_value(t, nearest_z, f32(26))
+}
+
+@(test)
 circulation_query_unifies_authored_edges_and_generated_areas :: proc(t: ^testing.T) {
     graph: roads.Graph
     from := roads.add_node(&graph, {0, 2, 0})

@@ -14,6 +14,33 @@ Settlement_Region :: enum {
     Aegean,
 }
 
+Settlement_Brush_Shape :: enum u8 {
+    Square,
+    Rectangle,
+    Circle,
+    Macaroni,
+}
+
+Settlement_Brush_Preset :: enum u8 {
+    Small,
+    Medium,
+    Large,
+}
+
+SETTLEMENT_BRUSH_PIECE_CAPACITY :: 64
+
+Settlement_Brush_Piece :: struct {
+    shape:        Settlement_Brush_Shape,
+    preset:       Settlement_Brush_Preset,
+    center:       [2]f32,
+    rotation:     f32,
+    density:      f32,
+    hardness:     f32,
+    seed:         u32,
+    component_id: u32,
+    erased:       bool,
+}
+
 Settlement_Tissue :: enum u8 {
     Venetian_Mercantile,
     Dalmatian_Planned,
@@ -183,7 +210,54 @@ Settlement_Request :: struct {
     seed:   u32,
     center: [2]f32,
     radius: f32,
+    density: f32,
 }
+
+Settlement_Program_Count :: struct {
+    target:  int,
+    minimum: int,
+    placed:  int,
+    reduced: int,
+}
+
+Settlement_Program :: struct {
+    ordinary:                 Settlement_Program_Count,
+    purposes:                 [8]Settlement_Program_Count,
+    landmarks:               Settlement_Program_Count,
+    plazas:                  Settlement_Program_Count,
+    parks:                   Settlement_Program_Count,
+    vegetation:              Settlement_Program_Count,
+    residents:               Settlement_Program_Count,
+    workers:                 Settlement_Program_Count,
+    developable_area:        f32,
+    target_coverage:         f32,
+    canonical_footprint:     f32,
+    infeasible_essential:    bool,
+}
+
+Settlement_Activity_Kind :: enum u8 {
+    Home,
+    Work,
+    Plaza,
+    Park,
+    Street,
+}
+
+Settlement_Activity_Point :: struct {
+    position:  [2]f32,
+    kind:      Settlement_Activity_Kind,
+    site_index: int,
+}
+
+Settlement_Inhabitant :: struct {
+    home_activity: int,
+    work_activity: int,
+    seed:          u32,
+    worker:        bool,
+}
+
+SETTLEMENT_ACTIVITY_CAPACITY :: 512
+SETTLEMENT_INHABITANT_CAPACITY :: 256
 
 SETTLEMENT_NEIGHBORHOOD_CAPACITY :: 96
 SETTLEMENT_MACRO_CELL_CAPACITY :: 192
@@ -318,12 +392,21 @@ Settlement_Acceptance_Failure :: enum {
 
 Settlement_Plan :: struct {
     request:                      Settlement_Request,
+    brush_pieces:                 [SETTLEMENT_BRUSH_PIECE_CAPACITY]Settlement_Brush_Piece,
+    brush_piece_count:            int,
+    next_brush_component_id:      u32,
+    program:                      Settlement_Program,
+    activity_points:              [SETTLEMENT_ACTIVITY_CAPACITY]Settlement_Activity_Point,
+    activity_point_count:         int,
+    inhabitants:                  [SETTLEMENT_INHABITANT_CAPACITY]Settlement_Inhabitant,
+    inhabitant_count:             int,
     village_reason:               Village_Reason,
     neighborhoods:                [SETTLEMENT_NEIGHBORHOOD_CAPACITY]Settlement_Neighborhood,
     neighborhood_count:           int,
     macro_cells:                  [SETTLEMENT_MACRO_CELL_CAPACITY]Settlement_Neighborhood,
     macro_cell_count:             int,
     routes:                       [SETTLEMENT_PLANNED_ROUTE_CAPACITY]Settlement_Planned_Route,
+    route_piece_ids:              [SETTLEMENT_PLANNED_ROUTE_CAPACITY]u32,
     route_count:                  int,
     access_routes_truncated:      bool,
     access_required_count:        int,
@@ -346,6 +429,7 @@ Settlement_Plan :: struct {
     blocks:                       [SETTLEMENT_BLOCK_CAPACITY]Settlement_Block,
     block_count:                  int,
     sites:                        [SETTLEMENT_SITE_CAPACITY]Settlement_Site,
+    site_piece_ids:               [SETTLEMENT_SITE_CAPACITY]u32,
     site_count:                   int,
     rejected_sites:               [32]Settlement_Site,
     rejected_site_count:          int,

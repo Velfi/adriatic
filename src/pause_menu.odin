@@ -23,6 +23,7 @@ PAUSE_MENU_BUTTON_COUNT :: 5
 
 Gameplay_Options :: struct {
     look_sensitivity:    f32,
+    sound_fx_level:      f32,
     invert_look_x:       bool,
     invert_look_y:       bool,
     invert_flight_pitch: bool,
@@ -43,6 +44,7 @@ Crunchiness :: enum {
 gameplay_options_default :: proc() -> Gameplay_Options {
     return {
         look_sensitivity = .012,
+        sound_fx_level = 1,
         invert_look_x = true,
         invert_look_y = false,
         invert_flight_pitch = false,
@@ -86,6 +88,15 @@ pause_menu_is_open :: #force_inline proc(editor: ^Editor) -> bool {
     return editor != nil && (editor.console.open || editor.main_menu_active || editor.pause_screen != .Closed)
 }
 
+// Keep audio live while Options is visible so changes to the sound-effects
+// slider can be heard immediately. Other overlays retain the existing mute.
+@(no_instrumentation)
+sound_fx_muted :: #force_inline proc(editor: ^Editor) -> bool {
+    if editor == nil do return true
+    if editor.pause_screen == .Options do return false
+    return pause_menu_is_open(editor)
+}
+
 @(no_instrumentation)
 pause_menu_panel :: #force_inline proc(width, height: i32, options: bool) -> rl.Rectangle {
     panel_width := min(f32(500), f32(width) - 40)
@@ -113,10 +124,10 @@ main_menu_button_bounds :: #force_inline proc(panel: rl.Rectangle, row: int) -> 
     return {panel.x + 42, panel.y + 128 + f32(row) * 62, panel.width - 84, 48}
 }
 
-OPTIONS_ROW_COUNT :: 10
+OPTIONS_ROW_COUNT :: 11
 OPTIONS_RESTORE_FOCUS :: OPTIONS_ROW_COUNT
 OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
-OPTIONS_CONTENT_HEIGHT :: f32(786)
+OPTIONS_CONTENT_HEIGHT :: f32(858)
 
 @(no_instrumentation)
 options_menu_viewport :: #force_inline proc(panel: rl.Rectangle) -> rl.Rectangle {
@@ -137,7 +148,7 @@ options_menu_row_bounds :: #force_inline proc(panel: rl.Rectangle, row: int, scr
 @(no_instrumentation)
 options_menu_restore_bounds :: #force_inline proc(panel: rl.Rectangle, scroll_y: f32 = 0) -> rl.Rectangle {
     viewport := options_menu_viewport(panel)
-    return {panel.x + 44, viewport.y + 730 - scroll_y, panel.width - 88, 46}
+    return {panel.x + 44, viewport.y + 802 - scroll_y, panel.width - 88, 46}
 }
 
 @(no_instrumentation)
@@ -356,24 +367,30 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
             .024,
         )
     case 1:
-        editor.gameplay_options.invert_look_x = direction > 0
+        editor.gameplay_options.sound_fx_level = clamp(
+            editor.gameplay_options.sound_fx_level + f32(direction) * .05,
+            0,
+            1,
+        )
     case 2:
-        editor.gameplay_options.invert_look_y = direction > 0
+        editor.gameplay_options.invert_look_x = direction > 0
     case 3:
-        editor.gameplay_options.invert_flight_pitch = direction > 0
+        editor.gameplay_options.invert_look_y = direction > 0
     case 4:
-        editor.gameplay_options.show_hud = direction > 0
+        editor.gameplay_options.invert_flight_pitch = direction > 0
     case 5:
+        editor.gameplay_options.show_hud = direction > 0
+    case 6:
         selected := clamp(int(editor.gameplay_options.crunchiness) + direction, 0, 3)
         editor.gameplay_options.crunchiness = Crunchiness(selected)
         crunchiness_apply(editor.gameplay_options.crunchiness)
-    case 6:
+    case 7:
         editor.gameplay_options.dither_mode = dither_adjust_mode(editor.gameplay_options.dither_mode, direction)
         dither_apply(editor)
-    case 7:
+    case 8:
         editor.gameplay_options.hdr_exposure = direction > 0
         dither_apply(editor)
-    case 8:
+    case 9:
         editor.gameplay_options.theme_mode = direction > 0 ? .Dark : .Light
         ui_theme_set_mode(editor.gameplay_options.theme_mode)
     }
@@ -427,21 +444,21 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     confirm := input_action_pressed(.Menu_Accept)
     if confirm {
         switch editor.options_focus {
-        case 1:
-            editor.gameplay_options.invert_look_x = !editor.gameplay_options.invert_look_x
         case 2:
-            editor.gameplay_options.invert_look_y = !editor.gameplay_options.invert_look_y
+            editor.gameplay_options.invert_look_x = !editor.gameplay_options.invert_look_x
         case 3:
-            editor.gameplay_options.invert_flight_pitch = !editor.gameplay_options.invert_flight_pitch
+            editor.gameplay_options.invert_look_y = !editor.gameplay_options.invert_look_y
         case 4:
+            editor.gameplay_options.invert_flight_pitch = !editor.gameplay_options.invert_flight_pitch
+        case 5:
             editor.gameplay_options.show_hud = !editor.gameplay_options.show_hud
-        case 6:
+        case 7:
             editor.gameplay_options.dither_mode = dither_next_mode(editor.gameplay_options.dither_mode)
             dither_apply(editor)
-        case 7:
+        case 8:
             editor.gameplay_options.hdr_exposure = !editor.gameplay_options.hdr_exposure
             dither_apply(editor)
-        case 8:
+        case 9:
             editor.gameplay_options.theme_mode = editor.gameplay_options.theme_mode == .Dark ? .Light : .Dark
             ui_theme_set_mode(editor.gameplay_options.theme_mode)
         case OPTIONS_RESTORE_FOCUS:
@@ -449,7 +466,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
             crunchiness_apply(editor.gameplay_options.crunchiness)
             dither_apply(editor)
             ui_theme_set_mode(editor.gameplay_options.theme_mode)
-        case 9:
+        case 10:
             editor.pause_screen = .Customization
             editor.customization_focus = 0
         case OPTIONS_BACK_FOCUS:
@@ -457,10 +474,11 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
             editor.options_scroll_dragging = false
         }
         if editor.options_focus != 0 &&
-           editor.options_focus != 5 &&
+           editor.options_focus != 1 &&
            editor.options_focus != 6 &&
            editor.options_focus != 7 &&
-           editor.options_focus != 8 {
+           editor.options_focus != 8 &&
+           editor.options_focus != 9 {
             return
         }
     }
@@ -521,27 +539,35 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         normalized := clamp((mouse.x - track.x) / track.width, 0, 1)
         editor.gameplay_options.look_sensitivity = .004 + normalized * .020
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 1, scroll_y)) {
+    sound_fx := options_menu_row_bounds(panel, 1, scroll_y)
+    sound_fx_track := options_menu_slider_track(sound_fx)
+    if content_hovered &&
+       rl.IsMouseButtonDown(.LEFT) &&
+       rl.CheckCollisionPointRec(mouse, {sound_fx_track.x - 8, sound_fx_track.y - 12, sound_fx_track.width + 16, 30}) {
         editor.options_focus = 1
-        editor.gameplay_options.invert_look_x = !editor.gameplay_options.invert_look_x
-        return
+        editor.gameplay_options.sound_fx_level = clamp((mouse.x - sound_fx_track.x) / sound_fx_track.width, 0, 1)
     }
     if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 2, scroll_y)) {
         editor.options_focus = 2
-        editor.gameplay_options.invert_look_y = !editor.gameplay_options.invert_look_y
+        editor.gameplay_options.invert_look_x = !editor.gameplay_options.invert_look_x
         return
     }
     if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 3, scroll_y)) {
         editor.options_focus = 3
-        editor.gameplay_options.invert_flight_pitch = !editor.gameplay_options.invert_flight_pitch
+        editor.gameplay_options.invert_look_y = !editor.gameplay_options.invert_look_y
         return
     }
     if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 4, scroll_y)) {
         editor.options_focus = 4
+        editor.gameplay_options.invert_flight_pitch = !editor.gameplay_options.invert_flight_pitch
+        return
+    }
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 5, scroll_y)) {
+        editor.options_focus = 5
         editor.gameplay_options.show_hud = !editor.gameplay_options.show_hud
         return
     }
-    crunchiness := options_menu_row_bounds(panel, 5, scroll_y)
+    crunchiness := options_menu_row_bounds(panel, 6, scroll_y)
     segment_gap := f32(6)
     segment_width := (crunchiness.width - segment_gap * 3) / 4
     if content_hovered && pressed {
@@ -553,7 +579,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
                 30,
             }
             if rl.CheckCollisionPointRec(mouse, segment) {
-                editor.options_focus = 5
+                editor.options_focus = 6
                 editor.gameplay_options.crunchiness = Crunchiness(index)
                 crunchiness_apply(editor.gameplay_options.crunchiness)
                 return
@@ -568,7 +594,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         ui_theme_set_mode(editor.gameplay_options.theme_mode)
         return
     }
-    dither := options_menu_row_bounds(panel, 6, scroll_y)
+    dither := options_menu_row_bounds(panel, 7, scroll_y)
     dither_gap := f32(6)
     dither_segment_width := (dither.width - dither_gap * 3) / 4
     if content_hovered && pressed {
@@ -580,27 +606,27 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
                 30,
             }
             if rl.CheckCollisionPointRec(mouse, segment) {
-                editor.options_focus = 6
+                editor.options_focus = 7
                 editor.gameplay_options.dither_mode = Dither_Mode(index)
                 dither_apply(editor)
                 return
             }
         }
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 7, scroll_y)) {
-        editor.options_focus = 7
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 8, scroll_y)) {
+        editor.options_focus = 8
         editor.gameplay_options.hdr_exposure = !editor.gameplay_options.hdr_exposure
         dither_apply(editor)
         return
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 8, scroll_y)) {
-        editor.options_focus = 8
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 9, scroll_y)) {
+        editor.options_focus = 9
         editor.gameplay_options.theme_mode = editor.gameplay_options.theme_mode == .Dark ? .Light : .Dark
         ui_theme_set_mode(editor.gameplay_options.theme_mode)
         return
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 9, scroll_y)) {
-        editor.options_focus = 9
+    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 10, scroll_y)) {
+        editor.options_focus = 10
         editor.pause_screen = .Customization
         editor.customization_focus = 0
         return
@@ -893,33 +919,56 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     rl.DrawCircleV(knob, 9, ui_theme_surface_elevated())
     rl.DrawCircleV(knob, 3, ui_theme_accent())
 
-    options_menu_draw_toggle(
-        options_menu_row_bounds(panel, 1, scroll_y),
-        "INVERT HORIZONTAL LOOK",
-        editor.gameplay_options.invert_look_x,
-        editor.options_focus == 1,
-    )
+    sound_fx := options_menu_row_bounds(panel, 1, scroll_y)
+    sound_fx_hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), sound_fx)
+    sound_fx_fill := sound_fx_hovered ? ui_theme_control_hover() : ui_theme_control()
+    sound_fx_border := sound_fx_hovered ? ui_theme_border_strong() : ui_theme_border()
+    if editor.options_focus == 1 {
+        sound_fx_fill = ui_theme_surface_elevated()
+        sound_fx_border = ui_theme_focus()
+    }
+    rl.DrawRectangleRounded(sound_fx, .1, 8, sound_fx_fill)
+    rl.DrawRectangleRoundedLinesEx(sound_fx, .1, 8, editor.options_focus == 1 ? 2 : 1, sound_fx_border)
+    ui_draw_text(.Label, "SOUND FX LEVEL", {sound_fx.x + 14, sound_fx.y + 8}, .4, ui_theme_text())
+    sound_fx_value := fmt.ctprintf("%d%%", int(editor.gameplay_options.sound_fx_level * 100 + .5))
+    sound_fx_value_size := ui_measure_text(.Data, sound_fx_value, .3)
+    ui_draw_text(.Data, sound_fx_value, {sound_fx.x + sound_fx.width - sound_fx_value_size.x - 14, sound_fx.y + 8}, .3, ui_theme_accent())
+    sound_fx_track := options_menu_slider_track(sound_fx)
+    rl.DrawRectangleRounded(sound_fx_track, 1, 6, ui_theme_border(180))
+    sound_fx_normalized := clamp(editor.gameplay_options.sound_fx_level, 0, 1)
+    rl.DrawRectangleRounded({sound_fx_track.x, sound_fx_track.y, sound_fx_track.width * sound_fx_normalized, sound_fx_track.height}, 1, 6, ui_theme_accent())
+    sound_fx_knob := rl.Vector2{sound_fx_track.x + sound_fx_track.width * sound_fx_normalized, sound_fx_track.y + sound_fx_track.height * .5}
+    rl.DrawCircleV({sound_fx_knob.x, sound_fx_knob.y + 2}, 9, ui_theme_scrim(80))
+    rl.DrawCircleV(sound_fx_knob, 9, ui_theme_surface_elevated())
+    rl.DrawCircleV(sound_fx_knob, 3, ui_theme_accent())
+
     options_menu_draw_toggle(
         options_menu_row_bounds(panel, 2, scroll_y),
-        "INVERT VERTICAL LOOK",
-        editor.gameplay_options.invert_look_y,
+        "INVERT HORIZONTAL LOOK",
+        editor.gameplay_options.invert_look_x,
         editor.options_focus == 2,
     )
     options_menu_draw_toggle(
         options_menu_row_bounds(panel, 3, scroll_y),
-        "INVERT FLIGHT PITCH",
-        editor.gameplay_options.invert_flight_pitch,
+        "INVERT VERTICAL LOOK",
+        editor.gameplay_options.invert_look_y,
         editor.options_focus == 3,
     )
     options_menu_draw_toggle(
         options_menu_row_bounds(panel, 4, scroll_y),
-        "SHOW ON-SCREEN INFO",
-        editor.gameplay_options.show_hud,
+        "INVERT FLIGHT PITCH",
+        editor.gameplay_options.invert_flight_pitch,
         editor.options_focus == 4,
     )
+    options_menu_draw_toggle(
+        options_menu_row_bounds(panel, 5, scroll_y),
+        "SHOW ON-SCREEN INFO",
+        editor.gameplay_options.show_hud,
+        editor.options_focus == 5,
+    )
 
-    crunchiness := options_menu_row_bounds(panel, 5, scroll_y)
-    if editor.options_focus == 5 {
+    crunchiness := options_menu_row_bounds(panel, 6, scroll_y)
+    if editor.options_focus == 6 {
         rl.DrawRectangleRounded(
             {crunchiness.x - 4, crunchiness.y - 4, crunchiness.width + 8, crunchiness.height + 8},
             .08,
@@ -946,8 +995,8 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         )
     }
 
-    dither := options_menu_row_bounds(panel, 6, scroll_y)
-    if editor.options_focus == 6 {
+    dither := options_menu_row_bounds(panel, 7, scroll_y)
+    if editor.options_focus == 7 {
         rl.DrawRectangleRounded(
             {dither.x - 4, dither.y - 4, dither.width + 8, dither.height + 8},
             .08,
@@ -975,20 +1024,20 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     }
 
     options_menu_draw_toggle(
-        options_menu_row_bounds(panel, 7, scroll_y),
+        options_menu_row_bounds(panel, 8, scroll_y),
         "HDR EXPOSURE",
         editor.gameplay_options.hdr_exposure,
-        editor.options_focus == 7,
-    )
-
-    options_menu_draw_toggle(
-        options_menu_row_bounds(panel, 8, scroll_y),
-        "DARK MODE",
-        editor.gameplay_options.theme_mode == .Dark,
         editor.options_focus == 8,
     )
 
-    pause_menu_button(options_menu_row_bounds(panel, 9, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 9)
+    options_menu_draw_toggle(
+        options_menu_row_bounds(panel, 9, scroll_y),
+        "DARK MODE",
+        editor.gameplay_options.theme_mode == .Dark,
+        editor.options_focus == 9,
+    )
+
+    pause_menu_button(options_menu_row_bounds(panel, 10, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 10)
 
     pause_menu_button(
         options_menu_restore_bounds(panel, scroll_y),

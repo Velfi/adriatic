@@ -6,7 +6,157 @@ import terrain "../packages/terrain"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
+import "core:os"
 import "core:testing"
+
+@(test)
+settlement_brush_fixed_presets_and_shape_masks :: proc(t: ^testing.T) {
+    testing.expect_value(t, settlement_brush_preset_span(.Small), f32(60))
+    testing.expect_value(t, settlement_brush_preset_span(.Medium), f32(120))
+    testing.expect_value(t, settlement_brush_preset_span(.Large), f32(220))
+
+    circle := Settlement_Brush_Piece{shape = .Circle, preset = .Small, density = 1, hardness = 1}
+    testing.expect(t, settlement_brush_signed_distance(circle, {0, 0}) < 0)
+    testing.expect(t, math.abs(settlement_brush_signed_distance(circle, {30, 0})) < .001)
+    testing.expect(t, settlement_brush_signed_distance(circle, {31, 0}) > 0)
+
+    square := circle
+    square.shape = .Square
+    testing.expect(t, settlement_brush_signed_distance(square, {29, 29}) < 0)
+    testing.expect(t, settlement_brush_signed_distance(square, {31, 0}) > 0)
+
+    rectangle := circle
+    rectangle.shape = .Rectangle
+    testing.expect(t, settlement_brush_signed_distance(rectangle, {29, 16}) < 0)
+    testing.expect(t, settlement_brush_signed_distance(rectangle, {0, 17}) > 0)
+}
+
+@(test)
+settlement_brush_macaroni_is_a_bounded_curved_arc :: proc(t: ^testing.T) {
+    piece := Settlement_Brush_Piece{shape = .Macaroni, preset = .Small, density = 1, hardness = .5}
+    thickness := settlement_brush_preset_span(piece.preset) * .28
+    centerline_radius := settlement_brush_preset_span(piece.preset) * .5 - thickness * .5
+    testing.expect(t, settlement_brush_signed_distance(piece, {centerline_radius, 0}) < 0)
+    testing.expect(t, settlement_brush_signed_distance(piece, {-centerline_radius, 0}) > 0)
+    endpoint := [2]f32 {
+        f32(math.cos(f64(math.PI / 3))) * centerline_radius,
+        f32(math.sin(f64(math.PI / 3))) * centerline_radius,
+    }
+    testing.expect(t, settlement_brush_signed_distance(piece, endpoint) < 0)
+}
+
+@(test)
+settlement_density_smooth_max_is_bounded_and_non_accumulating :: proc(t: ^testing.T) {
+    testing.expect_value(t, settlement_density_smooth_max(.3, .8), f32(.8))
+    repeated := settlement_density_smooth_max(.8, .8)
+    testing.expect(t, math.abs(repeated - .8) < .0001)
+    testing.expect(t, settlement_density_smooth_max(.76, .8) >= .76)
+    testing.expect(t, settlement_density_smooth_max(.76, .8) <= .8)
+}
+
+@(test)
+settlement_brush_components_attach_within_the_connection_margin :: proc(t: ^testing.T) {
+    plan: Settlement_Plan
+    first := Settlement_Brush_Piece{shape = .Circle, preset = .Small, center = {0, 0}}
+    settlement_brush_assign_component(&plan, &first)
+    plan.brush_pieces[0] = first
+    plan.brush_piece_count = 1
+    nearby := Settlement_Brush_Piece{shape = .Square, preset = .Small, center = {80, 0}}
+    settlement_brush_assign_component(&plan, &nearby)
+    testing.expect_value(t, nearby.component_id, first.component_id)
+    remote := Settlement_Brush_Piece{shape = .Square, preset = .Small, center = {200, 0}}
+    settlement_brush_assign_component(&plan, &remote)
+    testing.expect(t, remote.component_id != first.component_id)
+}
+
+@(test)
+settlement_brush_store_round_trips_authored_pieces :: proc(t: ^testing.T) {
+    path := "/tmp/adriatic-settlement-brush-roundtrip.bin"
+    defer os.remove(path)
+    source: Settlement_Plan
+    source.brush_piece_count = 2
+    source.next_brush_component_id = 7
+    source.brush_pieces[0] = {
+        shape = .Macaroni,
+        preset = .Large,
+        center = {12, -34},
+        rotation = .75,
+        density = .62,
+        hardness = .41,
+        seed = 99,
+        component_id = 6,
+    }
+    source.brush_pieces[1] = {
+        shape = .Rectangle,
+        preset = .Small,
+        center = {-8, 5},
+        rotation = -.2,
+        density = .38,
+        hardness = .8,
+        seed = 101,
+        component_id = 7,
+        erased = true,
+    }
+    testing.expect(t, settlement_brush_store_save(&source, path))
+    loaded: Settlement_Plan
+    testing.expect(t, settlement_brush_store_load(&loaded, path))
+    testing.expect_value(t, loaded.brush_piece_count, 2)
+    testing.expect_value(t, loaded.next_brush_component_id, u32(7))
+    testing.expect_value(t, loaded.brush_pieces[0], source.brush_pieces[0])
+    testing.expect_value(t, loaded.brush_pieces[1], source.brush_pieces[1])
+}
+
+@(test)
+settlement_program_scale_promotes_at_fixed_building_thresholds :: proc(t: ^testing.T) {
+    testing.expect_value(t, settlement_program_scale_from_target(8), Settlement_Scale.Village)
+    testing.expect_value(t, settlement_program_scale_from_target(23), Settlement_Scale.Village)
+    testing.expect_value(t, settlement_program_scale_from_target(24), Settlement_Scale.Town)
+    testing.expect_value(t, settlement_program_scale_from_target(69), Settlement_Scale.Town)
+    testing.expect_value(t, settlement_program_scale_from_target(70), Settlement_Scale.City)
+}
+
+@(test)
+settlement_brush_piece_compiles_domain_program_and_primary_route :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    plan: Settlement_Plan
+    plan.request = {
+        region = .Adriatic,
+        scale = .Village,
+        seed = 81,
+        center = {0, 0},
+        radius = 60,
+    }
+    piece := Settlement_Brush_Piece {
+        shape = .Rectangle,
+        preset = .Medium,
+        center = {0, 0},
+        rotation = .35,
+        density = .58,
+        hardness = .62,
+        seed = 81,
+    }
+    settlement_brush_assign_component(&plan, &piece)
+    plan.brush_pieces[0] = piece
+    plan.brush_piece_count = 1
+    field: [terrain.CITY_DENSITY_SAMPLES]u8
+    bounds := settlement_brush_apply_piece(&field, project, piece, SETTLEMENT_VILLAGE.max_slope)
+    testing.expect(t, bounds.valid)
+    nonzero := 0
+    for value in field {
+        if value > 0 do nonzero += 1
+    }
+    testing.expect(t, nonzero > 0)
+    plan.program = settlement_program_compile(&plan, project, piece.component_id)
+    testing.expect(t, plan.program.developable_area > 0)
+    testing.expect(t, plan.program.ordinary.target >= plan.program.ordinary.minimum)
+    initial_edges := project.road_graph.edge_count
+    testing.expect(t, settlement_brush_ensure_primary_route(&plan, project, piece, 1))
+    testing.expect_value(t, project.road_graph.edge_count, initial_edges + 1)
+    testing.expect_value(t, plan.route_count, 1)
+    testing.expect_value(t, plan.route_piece_ids[0], u32(1))
+}
 
 @(test)
 settlement_rng_is_deterministic :: proc(t: ^testing.T) {
@@ -1547,6 +1697,28 @@ settlement_pedestrian_access_respects_oriented_building_footprints :: proc(t: ^t
     // small circular proxy previously used for pedestrian clearance.
     testing.expect(t, !settlement_pedestrian_segment_clear(&city, {-12, 12}, {12, -12}))
     testing.expect(t, settlement_pedestrian_segment_clear(&city, {0, 15}, {15, 0}))
+}
+
+@(test)
+settlement_building_placement_reserves_existing_route_corridors :: proc(t: ^testing.T) {
+    plan: Settlement_Plan
+    plan.routes[0].geometry.points[0] = {-30, 0}
+    plan.routes[0].geometry.points[1] = {30, 0}
+    plan.routes[0].geometry.count = 2
+    plan.routes[0].width = 4
+    plan.routes[0].shoulder = 1
+    plan.route_count = 1
+
+    crossing := terrain.structure_make(0, 0, 8, 10, 0, 7)
+    testing.expect(t, !settlement_structure_routes_clear(&plan, crossing))
+
+    frontage := crossing
+    frontage.center_z = 20
+    testing.expect(t, settlement_structure_routes_clear(&plan, frontage))
+
+    frontage.rotation = math.PI * .5
+    frontage.center_z = 7
+    testing.expect(t, !settlement_structure_routes_clear(&plan, frontage))
 }
 
 @(test)
@@ -3408,8 +3580,9 @@ settlement_map_frame_follows_constructed_bounds :: proc(t: ^testing.T) {
     _ = terrain.add_structure(project, first)
     _ = terrain.add_structure(project, second)
     focus, height := settlement_map_frame(project, {500, 500}, 50)
-    testing.expect(t, math.abs(focus[0] - 50) < .01)
-    testing.expect(t, math.abs(focus[1] - 10) < .01)
+    testing.expect(t, math.abs(focus.x - 50) < .01)
+    testing.expect(t, math.abs(focus.z - 10) < .01)
+    testing.expect_value(t, focus.y, terrain.sample_height(project, 0, focus.x, focus.z))
     testing.expect(t, height > 127 && height < 130)
 }
 

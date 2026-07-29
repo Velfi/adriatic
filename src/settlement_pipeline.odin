@@ -1132,6 +1132,29 @@ settlement_pedestrian_segment_clear :: proc(city_plan: ^architecture.City_Plan, 
     return true
 }
 
+settlement_structure_routes_clear :: proc(
+    plan: ^Settlement_Plan,
+    structure: terrain.Structure,
+    clearance: f32 = .35,
+) -> bool {
+    if plan == nil do return false
+    for route in plan.routes[:plan.route_count] {
+        if route.geometry.count < 2 do continue
+        corridor_clearance := route.width * .5 + route.shoulder + max(clearance, f32(0))
+        for point_index in 0 ..< route.geometry.count - 1 {
+            if settlement_segment_intersects_structure_clearance(
+                route.geometry.points[point_index],
+                route.geometry.points[point_index + 1],
+                structure,
+                corridor_clearance,
+            ) {
+                return false
+            }
+        }
+    }
+    return true
+}
+
 // Bounded local lattice used for collision-aware doorway routing.
 SETTLEMENT_ACCESS_GRID :: 61
 SETTLEMENT_ACCESS_HEADINGS :: 8
@@ -5705,6 +5728,14 @@ settlement_plan_generate_buildings :: proc(
                 rotation = settlement_rotation_face_point(rotation, {x, z}, group_center)
             }
             if terrain.sample_height(project, 0, x, z) <= project.sea_level + .6 {
+                settlement_plan_record_rejected_site(settlement, x, z, frontage, depth, rotation)
+                continue
+            }
+            candidate_structure := terrain.structure_make(x, z, frontage, depth, 0, .25)
+            candidate_structure.width = frontage
+            candidate_structure.depth = depth
+            candidate_structure.rotation = rotation
+            if !settlement_structure_routes_clear(settlement, candidate_structure) {
                 settlement_plan_record_rejected_site(settlement, x, z, frontage, depth, rotation)
                 continue
             }

@@ -29,6 +29,7 @@ Target :: struct {
     grounded:        bool,
     follow_distance: f32,
     follow_height:   f32,
+    follow_side:     f32,
     focus_height:    f32,
     fixed_framing:   bool,
 }
@@ -149,6 +150,7 @@ desired_pose :: proc(target: Target, orbit_yaw, orbit_pitch: f32) -> third_perso
     position :=
         target.position +
         behind * follow_distance +
+        target.basis.right * target.follow_side +
         flight.Vec3{0, follow_height + framing_camera + orbit_pitch * 8, 0}
     look_ahead := LOOK_AHEAD
     grounded_focus: f32

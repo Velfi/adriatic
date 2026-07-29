@@ -112,6 +112,18 @@ markov_marina_world_site_rejects_blocked_entrance :: proc(t: ^testing.T) {
 }
 
 @(test)
+markov_marina_accepts_small_organic_shoreline_variations :: proc(t: ^testing.T) {
+    site := marina.default_site()
+    marina.set_site_cell(&site, 3, 3, .Water)
+    marina.set_site_cell(&site, 8, 4, .Land)
+    plan := marina.generate_for_site(7123, &site)
+    testing.expect(t, plan.valid)
+    testing.expect(t, plan.site_conformance_badness > 0)
+    testing.expect(t, plan.site_conformance_badness <= marina.MAX_SITE_CONFORMANCE_BADNESS)
+    testing.expect(t, marina.plan_conforms_to_site(&plan, &site))
+}
+
+@(test)
 markov_marina_seed_matrix_preserves_navigation_and_berths :: proc(t: ^testing.T) {
     seeds := [8]u32{0, 1, 7, 41, 7123, 99181, 0x4d415249, 0xffffffff}
     for seed in seeds {
@@ -315,5 +327,5 @@ markov_marina_uses_varied_quay_frontages :: proc(t: ^testing.T) {
         testing.expect(t, plan.valid)
         observed[int(plan.shoreline_form)] = true
     }
-    testing.expect_value(t, observed, [marina.SHORELINE_FORM_COUNT]bool{true, true, true, true, true})
+    testing.expect_value(t, observed, [marina.SHORELINE_FORM_COUNT]bool{true, true, true, true, true, true})
 }

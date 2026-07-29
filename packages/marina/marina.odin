@@ -91,6 +91,7 @@ Boundary_Form :: enum u8 {
 BOUNDARY_FORM_COUNT :: 5
 
 Shoreline_Form :: enum u8 {
+    Natural_Shore,
     Straight_Quay,
     West_Apron,
     East_Apron,
@@ -98,7 +99,7 @@ Shoreline_Form :: enum u8 {
     Stepped_Quays,
 }
 
-SHORELINE_FORM_COUNT :: 5
+SHORELINE_FORM_COUNT :: 6
 
 Section_Form :: enum u8 {
     Straight,
@@ -191,6 +192,8 @@ Plan :: struct {
     generation_quality:        f32,
     valid:                     bool,
 }
+
+MAX_SITE_CONFORMANCE_BADNESS :: f32(0.03)
 
 @(no_instrumentation)
 cell_index :: #force_inline proc(x, z: int) -> int {
@@ -691,7 +694,19 @@ measure_site_conformance :: proc(plan: ^Plan, site: ^Site) -> f32 {
 }
 
 plan_conforms_to_site :: proc(plan: ^Plan, site: ^Site) -> bool {
-    return plan != nil && measure_site_conformance(plan, site) == 0
+    if plan == nil do return false
+    if site == nil || !site.enabled do return true
+    if measure_site_conformance(plan, site) > MAX_SITE_CONFORMANCE_BADNESS do return false
+    for z in 0 ..< GRID_HEIGHT {
+        for x in 0 ..< GRID_WIDTH {
+            if site_cell(site, x, z) != .Blocked do continue
+            #partial switch cell(plan, x, z) {
+            case .Main_Pier, .Finger_Pier, .Slip, .Mooring, .Channel:
+                return false
+            }
+        }
+    }
+    return true
 }
 
 measure_spacing :: proc(plan: ^Plan) -> (density, badness_density: f32) {
@@ -911,6 +926,8 @@ quality_score :: proc(plan: ^Plan) -> f32 {
     density_error := abs(plan.fill_density - plan.target_fill_density)
     frontage_interest := f32(0)
     switch plan.shoreline_form {
+    case .Natural_Shore:
+        frontage_interest = .10
     case .Straight_Quay:
     case .West_Apron, .East_Apron:
         frontage_interest = .02
@@ -982,22 +999,25 @@ choose_shoreline_form :: proc(style: Basin_Style, roll: u32) -> Shoreline_Form {
     value := int(roll % 100)
     switch style {
     case .Fishing_Quay, .Working_Port, .Boat_Yard:
-        if value < 18 do return .Straight_Quay
-        if value < 41 do return .West_Apron
-        if value < 64 do return .East_Apron
-        if value < 84 do return .Split_Aprons
+        if value < 12 do return .Natural_Shore
+        if value < 27 do return .Straight_Quay
+        if value < 47 do return .West_Apron
+        if value < 67 do return .East_Apron
+        if value < 86 do return .Split_Aprons
         return .Stepped_Quays
     case .Civic_Marina, .Ferry_Quay:
-        if value < 30 do return .Straight_Quay
-        if value < 47 do return .West_Apron
-        if value < 64 do return .East_Apron
-        if value < 84 do return .Split_Aprons
+        if value < 8 do return .Natural_Shore
+        if value < 32 do return .Straight_Quay
+        if value < 49 do return .West_Apron
+        if value < 66 do return .East_Apron
+        if value < 85 do return .Split_Aprons
         return .Stepped_Quays
     case .Island_Harbour, .Stone_Cove, .Lagoon_Marina:
-        if value < 34 do return .Straight_Quay
-        if value < 49 do return .West_Apron
-        if value < 64 do return .East_Apron
-        if value < 78 do return .Split_Aprons
+        if value < 34 do return .Natural_Shore
+        if value < 46 do return .Straight_Quay
+        if value < 59 do return .West_Apron
+        if value < 72 do return .East_Apron
+        if value < 84 do return .Split_Aprons
         return .Stepped_Quays
     }
     return .Straight_Quay
@@ -1022,11 +1042,12 @@ add_quay_apron :: proc(plan: ^Plan, state: []u8, start_x, end_x, front_z: int) {
 
 build_shoreline :: proc(plan: ^Plan, state: []u8, form: Shoreline_Form, seed: u32) {
     if plan == nil do return
-    for x in 0 ..< GRID_WIDTH do set_cell(plan, x, 4, .Quay)
-    add_quay(plan, 0, 4, GRID_WIDTH - 1, 4, 5)
     depth_variation := seed_bit(seed, 10) ? 1 : 0
     switch form {
+    case .Natural_Shore:
     case .Straight_Quay:
+        for x in 0 ..< GRID_WIDTH do set_cell(plan, x, 4, .Quay)
+        add_quay(plan, 0, 4, GRID_WIDTH - 1, 4, 5)
     case .West_Apron:
         add_quay_apron(plan, state, 6, 11, 5 + depth_variation)
     case .East_Apron:
@@ -1510,7 +1531,7 @@ generate_candidate_for_site :: proc(
     plan.site_conformance_badness = measure_site_conformance(&plan, site)
     plan.fill_density_error = abs(plan.fill_density - plan.target_fill_density)
     plan.generation_quality = quality_score(&plan)
-    plan.valid = validate(&plan) && plan.site_conformance_badness == 0
+    plan.valid = validate(&plan) && plan_conforms_to_site(&plan, site)
     return plan
 }
 

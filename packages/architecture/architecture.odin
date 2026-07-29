@@ -212,6 +212,7 @@ circulation_plan_add_town :: proc(plan: ^circulation.Plan, project: ^terrain.Pro
     lane_a := min_z + (max_z - min_z) / 3
     lane_b := min_z + (max_z - min_z) * 2 / 3
     road_span := max(max_x - min_x + 36, f32(160))
+    public_area_start := plan.count
     lanes := [2]f32{lane_a, lane_b}
     for lane_z in lanes {
         _ = circulation.plan_add(
@@ -250,28 +251,32 @@ circulation_plan_add_town :: proc(plan: ^circulation.Plan, project: ^terrain.Pro
         door_x := frontage.center_x - sine * (frontage.depth * .5 + .22)
         door_z := frontage.center_z + cosine * (frontage.depth * .5 + .22)
         front_x, front_z := -math.sin(structure.rotation), math.cos(structure.rotation)
-        target_lane := f32(1e9)
+        target_x, target_z := f32(1e9), f32(1e9)
         target_distance := f32(1e9)
-        candidates := [2]f32{lane_a, lane_b}
-        for candidate in candidates {
-            candidate_dx, candidate_dz := center_x - door_x, candidate - door_z
+        // Streets and plazas are both public passage surfaces. Connect each
+        // threshold to the nearest forward-facing boundary and let movement
+        // continue across that surface; do not lay a duplicate path through a
+        // plaza as though the square were an obstacle.
+        public_area_count := plan.count
+        for candidate in plan.areas[public_area_start:public_area_count] {
+            if !circulation.area_is_passage(candidate.kind) || candidate.source == .Derived do continue
+            candidate_x, candidate_z := circulation.area_nearest_point(candidate, door_x, door_z)
+            candidate_dx, candidate_dz := candidate_x - door_x, candidate_z - door_z
             if candidate_dx * front_x + candidate_dz * front_z < 0 do continue
             candidate_distance := candidate_dx * candidate_dx + candidate_dz * candidate_dz
             if candidate_distance < target_distance {
-                target_lane = candidate
+                target_x, target_z = candidate_x, candidate_z
                 target_distance = candidate_distance
             }
         }
         if target_distance >= 1e9 do continue
-        lane_direction := target_lane >= door_z ? f32(1) : f32(-1)
-        target_z := target_lane - lane_direction * 3
-        path_dx, path_dz := center_x - door_x, target_z - door_z
+        path_dx, path_dz := target_x - door_x, target_z - door_z
         path_length := f32(math.sqrt(f64(path_dx * path_dx + path_dz * path_dz)))
         if path_length <= 1.5 do continue
         _ = circulation.plan_add(
             plan,
             {
-                center_x = (door_x + center_x) * .5,
+                center_x = (door_x + target_x) * .5,
                 center_z = (door_z + target_z) * .5,
                 width = 3.6,
                 length = path_length,

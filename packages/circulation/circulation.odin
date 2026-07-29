@@ -68,6 +68,55 @@ area_contains :: proc(area: Area, x, z: f32) -> bool {
     return math.abs(local_x) <= area.width * .5 && math.abs(local_z) <= area.length * .5
 }
 
+// Every public circulation surface can carry a pedestrian passage. In
+// particular, a plaza is not an obstacle that requires a second path or road
+// surface to be laid over it.
+area_is_passage :: proc(kind: Area_Kind) -> bool {
+    switch kind {
+    case .Street, .Path, .Plaza, .Forecourt:
+        return true
+    }
+    return false
+}
+
+area_nearest_point :: proc(area: Area, x, z: f32) -> (nearest_x, nearest_z: f32) {
+    local_x, local_z := area_local_point(area, x, z)
+    local_x = clamp(local_x, -area.width * .5, area.width * .5)
+    local_z = clamp(local_z, -area.length * .5, area.length * .5)
+    cosine, sine := math.cos(area.rotation), math.sin(area.rotation)
+    return area.center_x + local_x * cosine - local_z * sine,
+           area.center_z + local_x * sine + local_z * cosine
+}
+
+area_overlaps :: proc(a, b: Area) -> bool {
+    a_cosine, a_sine := math.cos(a.rotation), math.sin(a.rotation)
+    b_cosine, b_sine := math.cos(b.rotation), math.sin(b.rotation)
+    delta_x, delta_z := b.center_x - a.center_x, b.center_z - a.center_z
+    // Separating-axis test for two oriented rectangles. Local +X and +Z from
+    // both rectangles are the only axes that can separate them.
+    axes := [4][2]f32 {
+        {a_cosine, a_sine},
+        {-a_sine, a_cosine},
+        {b_cosine, b_sine},
+        {-b_sine, b_cosine},
+    }
+    a_x := [2]f32{a_cosine, a_sine}
+    a_z := [2]f32{-a_sine, a_cosine}
+    b_x := [2]f32{b_cosine, b_sine}
+    b_z := [2]f32{-b_sine, b_cosine}
+    for axis in axes {
+        center_distance := math.abs(delta_x * axis[0] + delta_z * axis[1])
+        a_radius :=
+            math.abs(a_x[0] * axis[0] + a_x[1] * axis[1]) * a.width * .5 +
+            math.abs(a_z[0] * axis[0] + a_z[1] * axis[1]) * a.length * .5
+        b_radius :=
+            math.abs(b_x[0] * axis[0] + b_x[1] * axis[1]) * b.width * .5 +
+            math.abs(b_z[0] * axis[0] + b_z[1] * axis[1]) * b.length * .5
+        if center_distance > a_radius + b_radius do return false
+    }
+    return true
+}
+
 @(no_instrumentation)
 area_distance :: #force_inline proc(area: Area, x, z: f32) -> f32 {
     local_x, local_z := area_local_point(area, x, z)

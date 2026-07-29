@@ -372,7 +372,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         if editor.road_selected_node >= 0 do return "Extend or connect the selected node; right-click to end the chain."
         return "Click terrain to start a road; click a node to connect or branch."
     }
-    if editor.architecture_painting do return "Paint city density; release to commit the preview."
+    if editor.architecture_paint_mode do return "Drag to orient one settlement piece; release to stamp. Right-drag erases."
     if editor.curve_drawing do return editor.curve_cliff_mode ? "Draw the cliff path; release to commit." : "Draw the ridge path; release to commit."
     if editor.formation_brush_painting do return "Release to commit the brush stroke."
     if editor.structure_placing do return "Drag the footprint; wheel zooms; Shift changes size; Alt changes height."
@@ -396,7 +396,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Cliff:
         return "Draw a freehand cliff. Wheel zooms; Shift adjusts width and height."
     case .Building:
-        return "Left darkens density; right lightens. Wheel zooms; Shift flow; Alt hardness."
+        return "Choose a shape and preset, then drag to orient it. Left adds; right erases."
     case .Marina:
         return "Left places a complete shoreline-oriented marina; right removes it."
     case .Farm:
@@ -612,18 +612,24 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         )
         row += 1
     case .Building:
-        editor_ui_slider_draw(
-            editor_ui_slider_bounds(layout, row),
-            "RADIUS (m)",
-            editor.architecture_brush_radius,
-            terrain.BASE_CELL_SIZE,
-            400,
-            1,
-        )
+        bounds := editor_ui_slider_bounds(layout, row)
+        half := (bounds.width - 6) * .5
+        ui_draw_text(.Label, "SHAPE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "SQUARE", editor.architecture_brush_shape == .Square)
+        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 24, half, 30}, "RECTANGLE", editor.architecture_brush_shape == .Rectangle)
+        editor_ui_panel_button({bounds.x, bounds.y + 58, half, 30}, "CIRCLE", editor.architecture_brush_shape == .Circle)
+        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 58, half, 30}, "MACARONI", editor.architecture_brush_shape == .Macaroni)
+        row += 2
+        bounds = editor_ui_slider_bounds(layout, row)
+        third := (bounds.width - 12) / 3
+        ui_draw_text(.Label, "PRESET", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        editor_ui_panel_button({bounds.x, bounds.y + 24, third, 30}, "SMALL", editor.architecture_brush_preset == .Small)
+        editor_ui_panel_button({bounds.x + third + 6, bounds.y + 24, third, 30}, "MEDIUM", editor.architecture_brush_preset == .Medium)
+        editor_ui_panel_button({bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}, "LARGE", editor.architecture_brush_preset == .Large)
         row += 1
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
-            "FLOW",
+            "DENSITY",
             editor.architecture_brush_strength,
             .02,
             1,
@@ -1024,16 +1030,28 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         )
         row += 1
     case .Building:
-        _ = editor_ui_slider_input(
-            editor,
-            layout,
-            6,
-            row,
-            &editor.architecture_brush_radius,
-            terrain.BASE_CELL_SIZE,
-            400,
-            terrain.BASE_CELL_SIZE,
-        )
+        bounds := editor_ui_slider_bounds(layout, row)
+        half := (bounds.width - 6) * .5
+        if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, half, 30}) {
+            editor.architecture_brush_shape = .Square
+        } else if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 24, half, 30}) {
+            editor.architecture_brush_shape = .Rectangle
+        } else if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 58, half, 30}) {
+            editor.architecture_brush_shape = .Circle
+        } else if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 58, half, 30}) {
+            editor.architecture_brush_shape = .Macaroni
+        }
+        row += 2
+        bounds = editor_ui_slider_bounds(layout, row)
+        third := (bounds.width - 12) / 3
+        if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, third, 30}) {
+            editor.architecture_brush_preset = .Small
+        } else if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x + third + 6, bounds.y + 24, third, 30}) {
+            editor.architecture_brush_preset = .Medium
+        } else if pressed &&
+                  rl.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}) {
+            editor.architecture_brush_preset = .Large
+        }
         row += 1
         _ = editor_ui_slider_input(editor, layout, 7, row, &editor.architecture_brush_strength, .02, 1, .01)
         row += 1

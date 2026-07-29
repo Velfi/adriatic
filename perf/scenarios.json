@@ -83,6 +83,10 @@
       "enabled": false,
       "description": "Matched on-foot scene with only ground-grass generation and rendering disabled."
     },
+    "ocean_flight": {
+      "enabled": false,
+      "description": "Low-altitude flight over shallow open water, exercising camera-following surface detail."
+    },
     "land_flight": {
       "enabled": false,
       "description": "Deterministic moving low-altitude flight over grass-covered land."
