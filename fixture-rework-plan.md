@@ -10038,6 +10038,36 @@ Acceptance criteria:
 - Saving always writes the newest schema version.
 - User/session preferences and root runtime state remain unchanged.
 
+Accepted as accelerated fixture-finish slice 2.
+
+- The editor inspector's SAVE/LOAD actions and capture-guarded Ctrl+S/Ctrl+O
+  shortcuts now use the fixed working-directory `adriatic.fixture` playground.
+  The low-level terrain project controls remain available separately.
+- Save heap-stages the roughly 48 MB `Fixture`, detaches lifecycle pointers
+  without mutating the live Editor, and encodes through the current codec.
+  Two consecutive saves are byte-identical and the container header is always
+  `FIXTURE_SCHEMA_VERSION`.
+- The file is written through an exclusive sibling temporary, complete
+  short-write loop, sync, close, and one same-filesystem rename. Partial/zero
+  writes and open, sync, close, rename, or cleanup failures cannot replace the
+  prior target.
+- Load owns the file bytes and delegates installation to
+  `fixture_editor_load`, so current fixtures and true frozen-v1 fixtures share
+  the same migration-aware atomic runtime rebuild.
+- Round-trip coverage restores representative terrain, structure, story,
+  occupant, and paint state while preserving preferences, texture handles,
+  base and visual mesh allocations, and audio I/O. The loaded state survives
+  three physics steps and final teardown.
+- Hostile file operations, corrupt input, invalid allocators, the store
+  snapshot allocation boundary, and codec-entry allocation failure preserve
+  the target and live Editor, remove temporary files, support double error
+  disposal, and leave zero outstanding allocations. Exhaustive inner codec
+  allocation sweeps remain owned by the codec suite rather than repeating a
+  48 MB fixture encode for every store-wrapper proof.
+
+Acceptance gates pass: focused editor store 3/3 after formatting, `make check`,
+and full tests 753/753 plus Rondine 19/19, with zero leak reports.
+
 ## Midpoint sunk-cost check
 
 Stop after milestone 5 and confirm the core behavior is demonstrable. If a

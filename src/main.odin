@@ -10743,8 +10743,8 @@ adriatic_run :: proc(
                 if !control_key_down() && rl.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
             }
             if !imgui_captures_keyboard() && rl.IsKeyPressed(.F) do editor_focus_terrain(editor)
-            if control_key_down() && rl.IsKeyPressed(.S) do terrain_project_save(editor)
-            if control_key_down() && rl.IsKeyPressed(.O) do terrain_project_load(editor)
+            if !imgui_captures_keyboard() && control_key_down() && rl.IsKeyPressed(.S) do fixture_editor_save(editor)
+            if !imgui_captures_keyboard() && control_key_down() && rl.IsKeyPressed(.O) do fixture_editor_restore(editor)
             if !imgui_captures_keyboard() && editor.tool != .Structure && control_key_down() && rl.IsKeyPressed(.Z) {
                 terrain_undo(editor)
             }

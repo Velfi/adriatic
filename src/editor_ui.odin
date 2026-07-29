@@ -913,6 +913,9 @@ editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
     rl.DrawRectangle(0, 0, width, i32(EDITOR_UI_TOP_HEIGHT), {22, 25, 29, 248})
     rl.DrawLineEx({0, EDITOR_UI_TOP_HEIGHT - 1}, {f32(width), EDITOR_UI_TOP_HEIGHT - 1}, 1, {65, 72, 81, 255})
     project_state: cstring = editor.project.revision == editor.terrain_saved_revision ? "SAVED" : "UNSAVED"
+    if editor.terrain_file_status != nil && f32(rl.GetTime()) < editor.terrain_file_status_until {
+        project_state = editor.terrain_file_status
+    }
     status := fmt.ctprintf("%s", project_state)
     status_size := ui_measure_text(.Data, status, .4)
     ui_draw_text(.Data, status, {f32(width) - status_size.x - 16, 18}, .4, {151, 161, 172, 255})
@@ -1221,9 +1224,9 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
 
     if pressed {
         if rl.CheckCollisionPointRec(mouse, editor_ui_small_action_bounds(layout, 0)) {
-            terrain_project_save(editor)
+            fixture_editor_save(editor)
         } else if rl.CheckCollisionPointRec(mouse, editor_ui_small_action_bounds(layout, 1)) {
-            terrain_project_load(editor)
+            fixture_editor_restore(editor)
         } else if rl.CheckCollisionPointRec(mouse, editor_ui_small_action_bounds(layout, 2)) {
             terrain_panel_undo(editor)
         } else if rl.CheckCollisionPointRec(mouse, editor_ui_small_action_bounds(layout, 3)) {
