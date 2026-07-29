@@ -720,6 +720,7 @@ World_Renderer :: struct {
     vehicle_paint_descriptor_layout:              vk.DescriptorSetLayout,
     vehicle_paint_descriptor_pool:                vk.DescriptorPool,
     vehicle_paint_descriptor:                     vk.DescriptorSet,
+    vehicle_paint_dirty_layers:                   [VEHICLE_PAINT_AIRCRAFT_COUNT]bool,
     vertex:                                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     static_vertex:                                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     static_index:                                 [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
@@ -2481,6 +2482,32 @@ world_terrain_invalidate_all :: proc(editor: ^Editor) {
     for &entry in world_renderer.foliage_geometry_cache do entry.valid = false
     for &entry in world_renderer.climbing_leaf_geometry_cache do entry.valid = false
     for &entry in world_renderer.town_mouse_geometry_cache do entry.valid = false
+}
+
+world_renderer_fixture_invalidate :: proc(editor: ^Editor) {
+    if editor == nil do return
+    world_terrain_invalidate_all(editor)
+    world_renderer.dynamic_shadow.frame_prepared = false
+    world_renderer.road_graph_valid = false
+    world_renderer.road_revision = 0
+    world_renderer.road_geometry_valid = false
+    world_renderer.road_geometry_revision = 0
+    world_renderer.road_geometry_terrain_revision = 0
+    world_renderer.architecture_alley_terrain_revision = 0
+    world_renderer.architecture_alley_project_revision = 0
+    for &entry in world_renderer.architecture_alley_render_cache do entry.valid = false
+    for &entry in world_renderer.architecture_alley_overlap_cache do entry.valid = false
+    clear(&world_renderer.architecture_alley_overlap_plan)
+    for &entry in world_renderer.architecture_street_area_cache do entry.valid = false
+    world_renderer.laundry_geometry_valid = false
+    world_renderer.laundry_geometry_revision = 0
+    world_renderer.laundry_geometry_terrain_revision = 0
+    world_renderer.pavement_query_graph_valid = false
+    world_renderer.pavement_query_revision = 0
+    world_renderer.structure_visibility_order_valid = false
+    for &entry in world_renderer.dialogue_portrait_geometry_cache do entry.valid = false
+    world_renderer.libellula_geometry_cache.valid = false
+    for &entry in world_renderer.marina_geometry_cache do entry.valid = false
 }
 
 world_structure_storage_ensure :: proc(count: int) {
@@ -23837,9 +23864,22 @@ vehicle_paint_atlas_create :: proc(ctx: ^engine.Vk_Context, out: ^resources.Imag
     return true
 }
 
+vehicle_paint_atlas_invalidate_all :: proc() {
+    for &dirty in world_renderer.vehicle_paint_dirty_layers do dirty = true
+}
+
 vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_index: int) {
+    pending_layer := -1
+    for dirty, layer in world_renderer.vehicle_paint_dirty_layers {
+        if dirty {
+            pending_layer = layer
+            break
+        }
+    }
     if editor == nil ||
-       (!editor.vehicle_paint_texture_dirty && !editor.vehicle_paint_preview_texture_dirty) ||
+       (!editor.vehicle_paint_texture_dirty &&
+               !editor.vehicle_paint_preview_texture_dirty &&
+               pending_layer < 0) ||
        cmd == nil ||
        frame_index < 0 ||
        frame_index >= engine.MAX_FRAMES_IN_FLIGHT {
@@ -23847,24 +23887,37 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
     }
     staging := &world_renderer.vehicle_paint_staging[frame_index]
     if staging.handle == vk.Buffer(0) || staging.mapped == nil do return
-    mem.copy_non_overlapping(staging.mapped, raw_data(vehicle_paint_pixels(editor)), VEHICLE_PAINT_TEXTURE_BYTE_COUNT)
-    staging_pixels := mem.slice_ptr(cast([^]u8)staging.mapped, VEHICLE_PAINT_TEXTURE_BYTE_COUNT)
-    for preview_alpha, byte_index in editor.vehicle_paint_preview_pixels {
-        if byte_index % 4 != 3 || preview_alpha == 0 do continue
-        pixel := byte_index - 3
-        blend := f32(preview_alpha) / 255
-        staging_pixels[pixel] = u8(
-            f32(editor.vehicle_paint_preview_pixels[pixel]) * blend + f32(staging_pixels[pixel]) * (1 - blend),
-        )
-        staging_pixels[pixel + 1] = u8(
-            f32(editor.vehicle_paint_preview_pixels[pixel + 1]) * blend + f32(staging_pixels[pixel + 1]) * (1 - blend),
-        )
-        staging_pixels[pixel + 2] = u8(
-            f32(editor.vehicle_paint_preview_pixels[pixel + 2]) * blend + f32(staging_pixels[pixel + 2]) * (1 - blend),
-        )
-        staging_pixels[pixel + 3] = max(staging_pixels[pixel + 3], preview_alpha)
+    active_layer := vehicle_paint_layer_index(editor.aircraft.active)
+    layer_index := active_layer
+    if !editor.vehicle_paint_texture_dirty &&
+       !editor.vehicle_paint_preview_texture_dirty &&
+       pending_layer >= 0 {
+        layer_index = pending_layer
     }
-    layer := u32(vehicle_paint_layer_index(editor.aircraft.active))
+    mem.copy_non_overlapping(
+        staging.mapped,
+        raw_data(editor.vehicle_paint_layers[layer_index][:]),
+        VEHICLE_PAINT_TEXTURE_BYTE_COUNT,
+    )
+    staging_pixels := mem.slice_ptr(cast([^]u8)staging.mapped, VEHICLE_PAINT_TEXTURE_BYTE_COUNT)
+    if layer_index == active_layer {
+        for preview_alpha, byte_index in editor.vehicle_paint_preview_pixels {
+            if byte_index % 4 != 3 || preview_alpha == 0 do continue
+            pixel := byte_index - 3
+            blend := f32(preview_alpha) / 255
+            staging_pixels[pixel] = u8(
+                f32(editor.vehicle_paint_preview_pixels[pixel]) * blend + f32(staging_pixels[pixel]) * (1 - blend),
+            )
+            staging_pixels[pixel + 1] = u8(
+                f32(editor.vehicle_paint_preview_pixels[pixel + 1]) * blend + f32(staging_pixels[pixel + 1]) * (1 - blend),
+            )
+            staging_pixels[pixel + 2] = u8(
+                f32(editor.vehicle_paint_preview_pixels[pixel + 2]) * blend + f32(staging_pixels[pixel + 2]) * (1 - blend),
+            )
+            staging_pixels[pixel + 3] = max(staging_pixels[pixel + 3], preview_alpha)
+        }
+    }
+    layer := u32(layer_index)
     barrier := vk.ImageMemoryBarrier2 {
         sType = .IMAGE_MEMORY_BARRIER_2,
         srcStageMask = {.FRAGMENT_SHADER},
@@ -23909,8 +23962,11 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
     barrier.oldLayout = .TRANSFER_DST_OPTIMAL
     barrier.newLayout = .SHADER_READ_ONLY_OPTIMAL
     vk.CmdPipelineBarrier2(cmd, &dependency)
-    editor.vehicle_paint_texture_dirty = false
-    editor.vehicle_paint_preview_texture_dirty = false
+    world_renderer.vehicle_paint_dirty_layers[layer_index] = false
+    if layer_index == active_layer {
+        editor.vehicle_paint_texture_dirty = false
+        editor.vehicle_paint_preview_texture_dirty = false
+    }
 }
 
 world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {

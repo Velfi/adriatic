@@ -9996,6 +9996,36 @@ live editor and its owner unchanged. Successful loads must survive multiple
 simulation/render frames and final destruction with no invalid handles or
 allocator mismatch.
 
+Accepted together with milestone 7 as accelerated fixture-finish slice 1.
+
+- `fixture_editor_load` decodes the container through the production migration
+  registry, validates the migrated fixture and lifecycle bindings, stages all
+  fallible allocations and physics creation, then atomically installs the
+  fixture and transfers its arena owner.
+- The live root retains renderer assets, mesh resources, audio I/O callbacks,
+  preferences, and other non-fixture Editor state. Successful installation
+  rebuilds gameplay/car physics, paint scratch/history, story catalogs,
+  dialogue/input/audio session state, circulation state, projected faces,
+  dither state, and renderer/terrain/paint invalidation.
+- Repeated current-v5 loads and a true frozen-v1 container both bind pointers
+  to the destination Editor. Dynamic history and city-plan storage remains
+  usable after replacement; three subsequent car simulation steps and final
+  teardown preserve valid ownership.
+- Invalid containers, hostile counts, invalid lifecycle bindings, non-finite
+  terrain and aircraft state, invalid aircraft orientation/tuning, every
+  caller-allocator failure point, and double error disposal leave the live
+  fixture, owner, physics handles, paint storage, root resources, and source
+  bytes unchanged with zero outstanding allocations.
+- Active lab scenes are rejected before staging because their exit hooks are
+  not reversible. A successful load exits a known current lab only after all
+  fallible staging has completed.
+- Independent review found a mid-session history descriptor use-after-free;
+  structure history destruction now clears each freed state and regression
+  coverage pushes new undo/redo entries across repeated fixture loads.
+
+Acceptance gates pass: focused editor load 3/3 after formatting, `make check`,
+and full tests 753/753 plus Rondine 19/19, with zero leak reports.
+
 ## Milestone 5 — Save and load the current schema in the editor
 
 Expose level-designer save/load actions for current-version fixtures. Migration

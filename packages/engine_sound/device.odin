@@ -27,8 +27,16 @@ Device :: struct {
     aux_userdata:   rawptr,
 }
 
-open :: proc(device: ^Device, playback_device: sdl.AudioDeviceID = 0) -> bool {
-    if device == nil do return false
+reset_runtime_preserving_io :: proc(device: ^Device) {
+    if device == nil do return
+    stream := device.stream
+    aux_mix := device.aux_mix
+    aux_userdata := device.aux_userdata
+    device^ = {
+        stream       = stream,
+        aux_mix      = aux_mix,
+        aux_userdata = aux_userdata,
+    }
     device.synth = new()
     device.slip_synth = new_slip()
     device.roll_synth = new_roll()
@@ -41,6 +49,11 @@ open :: proc(device: ^Device, playback_device: sdl.AudioDeviceID = 0) -> bool {
     device.tire_width = {}
     device.mix_state = {}
     device.mute_gain = 1
+}
+
+open :: proc(device: ^Device, playback_device: sdl.AudioDeviceID = 0) -> bool {
+    if device == nil do return false
+    reset_runtime_preserving_io(device)
     if !sdl.InitSubSystem(sdl.INIT_AUDIO) do return false
     spec := sdl.AudioSpec {
         format   = .F32,

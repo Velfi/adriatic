@@ -448,6 +448,7 @@ FIXTURE_SCHEMA_VERSION :: 5
 
 Editor :: struct {
     using fixture:                      Fixture,
+    fixture_owner:                      Fixture_Migration_Result `hs:"-"`,
     main_menu_active:                   bool,
     main_menu_focus:                    int,
     console:                            Game_Console,
@@ -878,15 +879,35 @@ structure_redo :: proc(editor: ^Editor) {
     structure_history_restore(editor, &editor.structure_redo[editor.structure_redo_count])
 }
 
+fixture_storage_destroy :: proc(fixture: ^Fixture) {
+    if fixture == nil do return
+    terrain.destroy_project(&fixture.project)
+    architecture.city_plan_destroy(&fixture.architecture_preview_plan)
+    architecture.city_plan_destroy(&fixture.architecture_city_plan)
+    delete(fixture.circulation_structures)
+    fixture.circulation_structures = nil
+}
+
+structure_history_storage_destroy :: proc(editor: ^Editor) {
+    if editor == nil do return
+    for &state in editor.structure_undo {
+        delete(state.structures)
+        state = {}
+    }
+    for &state in editor.structure_redo {
+        delete(state.structures)
+        state = {}
+    }
+    editor.structure_undo_count = 0
+    editor.structure_redo_count = 0
+    editor.terrain_undo_count = 0
+    editor.terrain_redo_count = 0
+}
+
 structure_storage_destroy :: proc(editor: ^Editor) {
     if editor == nil do return
-    terrain.destroy_project(&editor.project)
-    architecture.city_plan_destroy(&editor.architecture_preview_plan)
-    architecture.city_plan_destroy(&editor.architecture_city_plan)
-    delete(editor.circulation_structures)
-    editor.circulation_structures = nil
-    for &state in editor.structure_undo do delete(state.structures)
-    for &state in editor.structure_redo do delete(state.structures)
+    fixture_storage_destroy(&editor.fixture)
+    structure_history_storage_destroy(editor)
 }
 
 terrain_history_capture :: proc(editor: ^Editor, state: ^Terrain_History_State) {
@@ -8498,6 +8519,7 @@ hot_state_save :: proc(editor: ^Editor, path: string) -> bool {
 
     state := new(Editor, context.temp_allocator)
     state^ = editor^
+    state.fixture_owner = {}
     lifecycle_error := fixture_lifecycle_detach(&editor.fixture, &state.fixture)
     if lifecycle_error.kind != .None do return false
     state.car_physics_world = nil
@@ -8547,10 +8569,10 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
     // the blob, so release these before it replaces their descriptors.
     vehicles.libellula_mesh_destroy(&editor.libellula_visual_mesh)
     delete(editor.libellula_projected_faces)
+    attendant_dialogue_definition_release(editor)
+    fixture_editor_paint_history_destroy(editor)
     structure_storage_destroy(editor)
-    editor.attendant_dialogue = {}
-    editor.attendant_dialogue_open = false
-    editor.dialogue_session = {}
+    fixture_migration_result_dispose(&editor.fixture_owner)
 
     identical := hs.deserialize(editor, payload, {.Dynamics}, context.allocator)
     _ = identical // hs already used mem.copy for every identical subtree.
@@ -8845,6 +8867,7 @@ adriatic_run :: proc(
     }
     editor := new(Editor)
     defer free(editor)
+    defer fixture_migration_result_dispose(&editor.fixture_owner)
     defer attendant_dialogue_definition_release(editor)
     defer structure_storage_destroy(editor)
     defer dio.flame_graph_destroy(&editor.flame_graph)
@@ -8876,7 +8899,7 @@ adriatic_run :: proc(
         editor.engine_audio.aux_userdata = &ambient_mix
     }
     vehicle_paint_history_init(editor)
-    defer vehicle_paint_history_destroy(editor)
+    defer fixture_editor_paint_history_destroy(editor)
     vehicles.libellula_mesh_init(&editor.libellula_visual_mesh)
     defer vehicles.libellula_mesh_destroy(&editor.libellula_visual_mesh)
     vehicles.libellula_mesh_init(&editor.libellula_mk2_visual_mesh)
