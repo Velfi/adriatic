@@ -200,7 +200,7 @@ car_generator_lab_car :: proc(plan: cars.Plan, origin: third_person.Vec3, yaw: f
                 plan.fender_radius * 1.14,
                 yaw,
                 body,
-                .Lit,
+                .BRDF,
             )
         }
         // A slim running board visually joins the arches without returning to
@@ -218,7 +218,7 @@ car_generator_lab_car :: proc(plan: cars.Plan, origin: third_person.Vec3, yaw: f
     car_generator_lab_box(origin, yaw, 0, .55, -plan.length * .538, plan.width * .72, .06, .06, chrome)
     for side in sides {
         lamp := car_generator_lab_local(origin, yaw, side * plan.width * .30, .72, -plan.length * .52)
-        world_ellipsoid_rotated(lamp, .11, .11, .07, yaw, {247, 215, 134, 255}, .Lit)
+        world_ellipsoid_rotated(lamp, .11, .11, .07, yaw, {247, 215, 134, 255}, .BRDF)
     }
     // Narrow chrome grille bars and a tiny bonnet mascot are deliberately
     // toy-like period punctuation.

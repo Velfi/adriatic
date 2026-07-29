@@ -359,9 +359,9 @@ shadow_append_triangle :: proc(a, b, c: third_person.Vec3) {
     color := world_color(rl.Color{255, 255, 255, 255})
     append(
         &world_renderer.shadow_vertices,
-        World_Vertex{{a.x, a.y, a.z}, color, .Plain, {0, 1, 0}, {}, {}},
-        World_Vertex{{b.x, b.y, b.z}, color, .Plain, {0, 1, 0}, {}, {}},
-        World_Vertex{{c.x, c.y, c.z}, color, .Plain, {0, 1, 0}, {}, {}},
+        World_Vertex{{a.x, a.y, a.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
+        World_Vertex{{b.x, b.y, b.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
+        World_Vertex{{c.x, c.y, c.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
     )
 }
 

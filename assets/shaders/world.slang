@@ -64,12 +64,12 @@ struct VertexOutput {
     float2 uv : TEXCOORD5;
 };
 
-static const uint MATERIAL_PLAIN = 0;
+static const uint MATERIAL_UNSHADED = 0;
 static const uint MATERIAL_WATER = 1;
 static const uint MATERIAL_TERRAIN = 2;
 static const uint MATERIAL_FOLIAGE = 3;
 static const uint MATERIAL_ROAD = 4;
-static const uint MATERIAL_LIT = 5;
+static const uint MATERIAL_BRDF = 5;
 static const uint MATERIAL_EYE = 6;
 static const uint MATERIAL_VEHICLE = 7;
 static const uint MATERIAL_ACORN = 8;
@@ -158,7 +158,7 @@ VertexOutput shadow_vertex(VertexInput input) {
     output.color = 0;
     output.depth = depth;
     output.world_position = world_position;
-    output.kind = MATERIAL_PLAIN;
+    output.kind = MATERIAL_UNSHADED;
     output.normal = float3(0, 1, 0);
     output.material = 0;
     output.uv = 0;
@@ -1410,7 +1410,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         case MATERIAL_ROAD:
             base = shade_road(input);
             break;
-        case MATERIAL_LIT:
+        case MATERIAL_BRDF:
         case MATERIAL_VEHICLE:
             base = shade_imported_material(input);
             break;
@@ -1575,7 +1575,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         ));
         if (surface_normal.y < 0.0) surface_normal = -surface_normal;
     }
-    if (input.kind == MATERIAL_PLAIN ||
+    if (input.kind == MATERIAL_UNSHADED ||
         input.kind == MATERIAL_TERRAIN ||
         input.kind == MATERIAL_FOLIAGE ||
         input.kind == MATERIAL_ROAD) {

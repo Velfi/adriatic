@@ -387,12 +387,12 @@ when ODIN_TEST {
 }
 
 World_Material_Kind :: enum u32 {
-    Plain,
+    Unshaded,
     Water,
     Terrain,
     Foliage,
     Road,
-    Lit,
+    BRDF,
     Eye,
     Vehicle,
     Acorn,
@@ -970,7 +970,7 @@ world_scene_moonlight :: proc(sky: atmosphere.Sky_State) -> f32 {
 
 @(no_instrumentation)
 world_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .Plain, {0, 1, 0}, {}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .BRDF, {0, 1, 0}, {0, .9}, {}}
 }
 
 @(no_instrumentation)
@@ -998,7 +998,21 @@ world_eye_vertex :: #force_inline proc(
 
 @(no_instrumentation)
 world_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color) {
-    append(&world_renderer.vertices, world_vertex(a, color), world_vertex(b, color), world_vertex(c, color))
+    world_triangle_material(a, b, c, color, .BRDF)
+}
+
+@(no_instrumentation)
+world_triangle_material :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color, kind: World_Material_Kind) {
+    vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
+    normal := linalg.normalize0(linalg.cross(b - a, c - a))
+    for &vertex in vertices {
+        vertex.kind = kind
+        vertex.normal = {normal.x, normal.y, normal.z}
+        if kind == .BRDF {
+            vertex.material = {0, .9}
+        }
+    }
+    append(&world_renderer.vertices, ..vertices[:])
 }
 
 @(no_instrumentation)
@@ -1014,7 +1028,7 @@ world_triangle_smooth_lit :: #force_inline proc(
     vertices: [3]World_Vertex
     for index in 0 ..< 3 {
         vertices[index] = world_vertex(points[index], colors[index])
-        vertices[index].kind = .Lit
+        vertices[index].kind = .BRDF
         normal := linalg.normalize0(normals[index])
         vertices[index].normal = {normal.x, normal.y, normal.z}
         vertices[index].material = {0, clamp(roughness, .04, 1)}
@@ -1069,7 +1083,18 @@ world_aircraft_triangle_smooth :: #force_inline proc(
 
 @(no_instrumentation)
 world_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
-    append(&world_renderer.vertices, world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c))
+    vertices := [3]World_Vertex {
+        world_vertex(a, color_a),
+        world_vertex(b, color_b),
+        world_vertex(c, color_c),
+    }
+    normal := linalg.normalize0(linalg.cross(b - a, c - a))
+    for &vertex in vertices {
+        vertex.kind = .BRDF
+        vertex.normal = {normal.x, normal.y, normal.z}
+        vertex.material = {0, .9}
+    }
+    append(&world_renderer.vertices, ..vertices[:])
 }
 
 world_greek_asset_vertex :: proc(
@@ -1081,7 +1106,7 @@ world_greek_asset_vertex :: proc(
     return {
         {point.x, point.y, point.z},
         color,
-        .Lit,
+        .BRDF,
         {normal.x, normal.y, normal.z},
         {clamp(metallic, 0, 1), clamp(roughness, .04, 1)},
         {},
@@ -1215,7 +1240,12 @@ world_quad_material :: #force_inline proc(a, b, c, d: third_person.Vec3, color: 
         world_vertex(c, color),
         world_vertex(d, color),
     }
-    for &vertex in vertices do vertex.kind = kind
+    normal := linalg.normalize0(linalg.cross(b - a, c - a))
+    for &vertex in vertices {
+        vertex.kind = kind
+        vertex.normal = {normal.x, normal.y, normal.z}
+        if kind == .BRDF do vertex.material = {0, .9}
+    }
     append(&world_renderer.vertices, ..vertices[:])
 }
 
@@ -1453,7 +1483,7 @@ world_boat_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color, part: b
     vertex_c := world_vertex(c, color)
     vertices := [3]^World_Vertex{&vertex_a, &vertex_b, &vertex_c}
     for vertex in vertices {
-        vertex.kind = .Lit
+        vertex.kind = .BRDF
         vertex.normal = {normal.x, normal.y, normal.z}
         vertex.material = {metallic, roughness}
     }
@@ -2881,6 +2911,7 @@ world_ellipsoid_rotated :: proc(
                     normals[point_latitude][point_longitude],
                 )
                 vertex.kind = material_kind
+                if material_kind == .BRDF do vertex.material = {0, .9}
                 if material_kind == .Acorn {
                     vertex.uv = {
                         f32(point_longitude) / f32(LONGITUDE_SEGMENTS),
@@ -2898,10 +2929,8 @@ world_ellipsoid_rotated :: proc(
     }
 }
 
-// A softly faceted ellipsoid for cloth and other matte props. Unlike the eye
-// ellipsoid it deliberately uses the plain material, avoiding hard wet-looking
-// highlights on pale fabric.
-world_ellipsoid_plain_oriented :: proc(
+// A softly faceted, material-backed ellipsoid for cloth and other matte props.
+world_ellipsoid_matte_oriented :: proc(
     center: third_person.Vec3,
     radius_x, radius_y, radius_z, rotation, roll: f32,
     color: rl.Color,
@@ -2938,12 +2967,12 @@ world_ellipsoid_plain_oriented :: proc(
     }
 }
 
-world_ellipsoid_plain_rotated :: proc(
+world_ellipsoid_matte_rotated :: proc(
     center: third_person.Vec3,
     radius_x, radius_y, radius_z, rotation: f32,
     color: rl.Color,
 ) {
-    world_ellipsoid_plain_oriented(center, radius_x, radius_y, radius_z, rotation, 0, color)
+    world_ellipsoid_matte_oriented(center, radius_x, radius_y, radius_z, rotation, 0, color)
 }
 
 // One closed, connected shell for the bottle-cap hat. The alternating outer
@@ -6663,7 +6692,7 @@ world_architecture_mass :: proc(
                                     .035,
                                     structure.rotation,
                                     produce == 0 ? rl.Color{179, 83, 57, 255} : rl.Color{177, 139, 65, 255},
-                                    .Plain,
+                                    .BRDF,
                                 )
                             }
                         case 2:
@@ -6775,7 +6804,7 @@ world_architecture_mass :: proc(
                                     .045,
                                     structure.rotation,
                                     fruit_color,
-                                    .Plain,
+                                    .BRDF,
                                 )
                             }
                         case 2:
@@ -19745,7 +19774,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         puff_offsets := [5]f32{-.145, -.072, 0, .078, .150}
         for puff_x in puff_offsets {
             side := puff_x / .150
-            world_ellipsoid_plain_rotated(
+            world_ellipsoid_matte_rotated(
                 local_point(
                     p,
                     rotation,
@@ -19910,7 +19939,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
 
         // A close-fitting oval band seats the beret on the skull. Keeping this
         // rounded avoids the rigid shelf and dangling corner of a box brim.
-        world_ellipsoid_plain_oriented(
+        world_ellipsoid_matte_oriented(
             local_point(p, rotation, crown_x + .010, crown_y - .006, crown_z - .004),
             .202,
             .026,
@@ -19921,7 +19950,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
         // The crown leans to the mouse's left: a broad main disk establishes
         // the silhouette while the overlapping lobe makes the drape feel soft.
-        world_ellipsoid_plain_oriented(
+        world_ellipsoid_matte_oriented(
             local_point(p, rotation, crown_x - .045, crown_y + .036, crown_z - .004),
             .276,
             .073,
@@ -19930,7 +19959,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             beret_roll,
             felt,
         )
-        world_ellipsoid_plain_oriented(
+        world_ellipsoid_matte_oriented(
             local_point(p, rotation, crown_x - .142, crown_y + .016, crown_z - .002),
             .145,
             .058,
@@ -19941,7 +19970,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
         // A restrained highlight follows the upper fold instead of reading as
         // a separate cap sitting on top.
-        world_ellipsoid_plain_oriented(
+        world_ellipsoid_matte_oriented(
             local_point(p, rotation, crown_x - .105, crown_y + .086, crown_z + .025),
             .138,
             .025,
@@ -19989,7 +20018,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // Build the hatband as an oval collar so it remains continuous in
         // front and three-quarter views. The small buckle gives it a focal
         // point without obscuring the face.
-        world_ellipsoid_plain_rotated(
+        world_ellipsoid_matte_rotated(
             local_point(p, rotation, crown_x, crown_y + .005, crown_z),
             .250,
             .038,
@@ -20431,7 +20460,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // opens between those independently posed surfaces at deep flexion.
         shoulder_socket_center := fore_shoulder
         shoulder_socket_center.y += .018
-        world_ellipsoid_rotated(shoulder_socket_center, .046, .050, .052, rotation, fore_socket_color, .Plain)
+        world_ellipsoid_rotated(shoulder_socket_center, .046, .050, .052, rotation, fore_socket_color, .BRDF)
         world_mouse_limb_hull(fore_points[:], fore_radii[:], fore_colors[:], model_forward)
         // Paws are low pads lying in the ground plane. The former vertical
         // discs presented their extrusion as a rectangular bar in profile.
