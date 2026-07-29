@@ -338,6 +338,46 @@ fixture_schema_diff_v0003_to_v0004_frozen_report :: proc(
     return built_report, true
 }
 
+fixture_schema_diff_v0004_to_live_v0005_report :: proc(
+    t: ^testing.T,
+) -> (
+    report: fixture_schema.Schema_Diff_Report,
+    ok: bool,
+) {
+    repo_root, root_error := os.get_working_directory(context.allocator)
+    testing.expect(t, root_error == nil)
+    if root_error != nil do return {}, false
+
+    frozen, frozen_error := os.read_entire_file(fixture_schema.manifest_path(repo_root, 4), context.allocator)
+    testing.expect(t, frozen_error == nil)
+    if frozen_error != nil do return {}, false
+    defer delete(frozen)
+
+    collection_root := fmt.tprintf("%s/zelda-engine/packages", repo_root)
+    candidate, candidate_version, candidate_ok, diagnostics := fixture_schema.build_manifest_report(
+        repo_root,
+        collection_root,
+    )
+    testing.expect(t, candidate_ok && candidate_version == 4 && diagnostics == "")
+    if !candidate_ok do return {}, false
+    defer delete(candidate)
+
+    built_report, error, report_ok := fixture_schema.schema_diff_build_report(
+        frozen,
+        transmute([]byte)candidate,
+        4,
+        5,
+        context.allocator,
+    )
+    testing.expect(t, report_ok && error.kind == .None)
+    fixture_schema.schema_diff_error_dispose(&error)
+    if !report_ok {
+        fixture_schema.schema_diff_report_dispose(&built_report)
+        return {}, false
+    }
+    return built_report, true
+}
+
 @(test)
 fixture_schema_diff_v0002_to_v0003_frozen_is_exact :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
@@ -509,6 +549,75 @@ fixture_schema_diff_v0003_to_v0004_frozen_is_exact :: proc(t: ^testing.T) {
     rendered_again, rendered_again_ok := fixture_schema.schema_diff_report_render(&parsed, context.allocator)
     testing.expect(t, rendered_again_ok && rendered_again == rendered)
     if rendered_again_ok do delete(rendered_again)
+}
+
+@(test)
+fixture_schema_diff_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    first, first_ok := fixture_schema_diff_v0004_to_live_v0005_report(t)
+    if !first_ok do return
+    defer fixture_schema.schema_diff_report_dispose(&first)
+    second, second_ok := fixture_schema_diff_v0004_to_live_v0005_report(t)
+    if !second_ok do return
+    defer fixture_schema.schema_diff_report_dispose(&second)
+
+    expected_ids := [?]string {
+        "field-add:adriatic:packages/flight.Body_State.angular_velocity_world",
+        "field-add:adriatic:packages/flight.Body_State.orientation",
+        "field-add:adriatic:packages/libellula.Runtime.spawn_orientation",
+        "field-add:adriatic:packages/postale.Runtime.ace_runtime",
+        "field-add:adriatic:packages/postale.Runtime.ace_telemetry",
+        "field-add:adriatic:packages/postale.Runtime.ace_tuning",
+        "field-add:adriatic:packages/postale.Runtime.flight_model",
+        "field-add:adriatic:packages/postale.Runtime.spawn_orientation",
+        "field-order:adriatic:packages/flight.Body_State",
+        "field-order:adriatic:packages/libellula.Runtime",
+        "field-remove:adriatic:packages/flight.Body_State.angular_velocity",
+        "field-remove:adriatic:packages/flight.Body_State.basis",
+        "field-remove:adriatic:packages/libellula.Runtime.spawn_basis",
+        "field-remove:adriatic:packages/postale.Runtime.spawn_basis",
+        "type-add:adriatic:packages/flight.Ace_Edge_State",
+        "type-add:adriatic:packages/flight.Ace_Runtime",
+        "type-add:adriatic:packages/flight.Ace_Telemetry",
+        "type-add:adriatic:packages/flight.Ace_Tuning",
+        "type-add:adriatic:packages/postale.Flight_Model",
+    }
+    testing.expect(t, first.from_version == 4 && first.to_version == 5)
+    testing.expect(t, len(first.changes) == len(expected_ids))
+    for change, index in first.changes {
+        testing.expect(t, change.id == expected_ids[index])
+        if strings.has_suffix(change.id, ".orientation") {
+            testing.expect(t, strings.contains(change.after, "type=builtin:quaternion128"))
+        }
+    }
+    state_count, supporting_count := fixture_schema.schema_diff_report_counts(&first)
+    testing.expect(t, state_count == 14 && supporting_count == 5)
+    testing.expect(t, first.frozen_sha256 == "fad52f4e0a38b35fffdf29ae3ffb3f91251780fe0ce2dc5990beba76f1e518fa")
+    testing.expect(t, first.candidate_sha256 == "7d0ec2be99a2cbdf53ec6ee3caa7c7ea86cda5d9a287d8e194106d29ba34762b")
+    testing.expect(
+        t,
+        first.candidate_line_count == 1658 &&
+        first.candidate_record_count == 172 &&
+        first.candidate_root_fields == 154,
+    )
+
+    first_rendered, first_render_ok := fixture_schema.schema_diff_report_render(&first, context.allocator)
+    second_rendered, second_render_ok := fixture_schema.schema_diff_report_render(&second, context.allocator)
+    testing.expect(
+        t,
+        first_render_ok && second_render_ok && first_rendered == second_rendered && len(first_rendered) == 9098,
+    )
+    if first_render_ok {
+        rendered_sha, sha_ok := fixture_schema.history_manifest_sha256_hex(
+            transmute([]byte)first_rendered,
+            context.allocator,
+        )
+        testing.expect(t, sha_ok && rendered_sha == "edf30613795c0711c39efd3f82d7da68bd21589336f722cb367d8d8861f8336b")
+        if sha_ok do delete(rendered_sha)
+        delete(first_rendered)
+    }
+    if second_render_ok do delete(second_rendered)
 }
 
 schema_diff_test_mode_entries :: proc(extra := "") -> string {
@@ -698,6 +807,50 @@ fixture_schema_diff_synthetic_change_kinds :: proc(t: ^testing.T) {
         if !ok do continue
         testing.expect(t, schema_diff_test_has_kind(&report, expected_kinds[index]))
         fixture_schema.schema_diff_report_dispose(&report)
+    }
+}
+
+@(test)
+fixture_schema_diff_classifies_quaternion_field_changes :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    frozen_fields := schema_diff_test_join(
+        schema_diff_test_field(DIFF_TEST_ROOT, "removed", "0", "", "builtin:quaternion64"),
+        schema_diff_test_field(DIFF_TEST_ROOT, "changed", "0", "", "builtin:quaternion64"),
+    )
+    candidate_fields := schema_diff_test_join(
+        schema_diff_test_field(DIFF_TEST_ROOT, "changed", "0", "", "builtin:quaternion128"),
+        schema_diff_test_field(DIFF_TEST_ROOT, "added", "0", "", "dynamic<array[2]<builtin:quaternion128>>"),
+    )
+    frozen := schema_diff_test_manifest(DIFF_TEST_ROOT, schema_diff_test_struct(DIFF_TEST_ROOT, frozen_fields))
+    candidate := schema_diff_test_manifest(DIFF_TEST_ROOT, schema_diff_test_struct(DIFF_TEST_ROOT, candidate_fields))
+    report, ok := schema_diff_test_report_for(t, frozen, candidate)
+    if !ok do return
+    defer fixture_schema.schema_diff_report_dispose(&report)
+    expected_ids := [?]string {
+        "field-add:adriatic:src.Fixture.added",
+        "field-order:adriatic:src.Fixture",
+        "field-remove:adriatic:src.Fixture.removed",
+        "field-type:adriatic:src.Fixture.changed",
+    }
+    testing.expect(t, len(report.changes) == len(expected_ids))
+    for change, index in report.changes {
+        testing.expect(
+            t,
+            change.id == expected_ids[index] && change.class == .State && change.policy == .Script_Required,
+        )
+        #partial switch change.kind {
+        case .Field_Add:
+            testing.expect(t, strings.contains(change.after, "dynamic<array[2]<builtin:quaternion128>>"))
+        case .Field_Remove:
+            testing.expect(t, strings.contains(change.before, "type=builtin:quaternion64"))
+        case .Field_Type:
+            testing.expect(t, change.before == "builtin:quaternion64" && change.after == "builtin:quaternion128")
+        case .Field_Order:
+            testing.expect(t, change.before == "removed,changed" && change.after == "changed,added")
+        case:
+            testing.expect(t, false)
+        }
     }
 }
 

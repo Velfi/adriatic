@@ -33,6 +33,8 @@ import "core:testing"
 #assert(int(fixture_v0004.History_Type_0107.Libellula) == 3)
 #assert(int(fixture_v0004.History_Type_0107.Libellula_Mk2) == 4)
 #assert(int(fixture_v0004.History_Type_0107.Rondine) == 5)
+#assert(size_of(quaternion64) == 8)
+#assert(size_of(quaternion128) == 16)
 
 HISTORY_SYNTHETIC_MANIFEST ::
     "format_version=1\n" +
@@ -79,6 +81,19 @@ HISTORY_ENUMERATED_ARRAY_MANIFEST ::
     "enum=adriatic:src.Index|name=Center|value=0\n" +
     "enum=adriatic:src.Index|name=East|value=1\n" +
     "type=adriatic:src.Element|kind=distinct|detail=target\\=builtin:u64\n"
+
+HISTORY_QUATERNION_MANIFEST ::
+    "format_version=1\n" +
+    "fixture_schema_version=1\n" +
+    "root=adriatic:src.Fixture\n" +
+    "type=adriatic:src.Fixture|kind=struct|detail=packed\\=0;raw_union\\=0;no_copy\\=0;all_or_none\\=0;simple\\=0;align\\=none;min_field_align\\=none;max_field_align\\=none\n" +
+    "field=adriatic:src.Fixture|name=q64|using=0|tag=|type=builtin:quaternion64\n" +
+    "field=adriatic:src.Fixture|name=q128|using=0|tag=|type=builtin:quaternion128\n" +
+    "field=adriatic:src.Fixture|name=fixed|using=0|tag=|type=array[2]<builtin:quaternion64>\n" +
+    "field=adriatic:src.Fixture|name=dynamic_values|using=0|tag=|type=dynamic<array[2]<builtin:quaternion128>>\n" +
+    "field=adriatic:src.Fixture|name=payloads|using=0|tag=|type=dynamic<array[1]<adriatic:src.Payload>>\n" +
+    "type=adriatic:src.Payload|kind=struct|detail=packed\\=0;raw_union\\=0;no_copy\\=0;all_or_none\\=0;simple\\=0;align\\=none;min_field_align\\=none;max_field_align\\=none\n" +
+    "field=adriatic:src.Payload|name=rotation|using=0|tag=|type=builtin:quaternion128\n"
 
 Fixture_History_Fault_Allocator :: struct {
     backing:     mem.Allocator,
@@ -332,6 +347,115 @@ fixture_history_enumerated_arrays_are_exact_strict_and_owned :: proc(t: ^testing
 }
 
 @(test)
+fixture_history_quaternions_are_exact_nested_and_strict :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    source := string(HISTORY_QUATERNION_MANIFEST)
+    manifest, error, ok := fixture_schema.history_parse_manifest(transmute([]byte)source, context.allocator)
+    testing.expect(t, ok && error.kind == .None)
+    fixture_schema.history_error_dispose(&error)
+    if !ok do return
+    defer fixture_schema.history_manifest_dispose(&manifest)
+    testing.expect(t, len(manifest.records) == 2 && len(manifest.records[0].fields) == 5)
+
+    sha, sha_ok := fixture_schema.history_manifest_sha256_hex(transmute([]byte)source, context.allocator)
+    testing.expect(t, sha_ok)
+    if !sha_ok do return
+    defer delete(sha)
+    generated, generated_ok := fixture_schema.history_emit_package(&manifest, sha, context.allocator)
+    testing.expect(t, generated_ok)
+    if !generated_ok do return
+    defer delete(generated)
+    testing.expect(t, strings.contains(generated, "\tq64: quaternion64,\n"))
+    testing.expect(t, strings.contains(generated, "\tq128: quaternion128,\n"))
+    testing.expect(t, strings.contains(generated, "\tfixed: [2]quaternion64,\n"))
+    testing.expect(t, strings.contains(generated, "\tdynamic_values: [dynamic][2]quaternion128,\n"))
+    testing.expect(t, strings.contains(generated, "\trotation: quaternion128,\n"))
+
+    root, root_error := os.make_directory_temp("", "fixture-history-quaternion-*", context.allocator)
+    testing.expect(t, root_error == nil)
+    if root_error == nil {
+        defer os.remove_all(root)
+        package_file, file_error := filepath.join({root, "schema.generated.odin"}, context.allocator)
+        testing.expect(t, file_error == nil)
+        if file_error == nil {
+            testing.expect(t, os.write_entire_file(package_file, generated) == nil)
+            parsed, parse_ok := parser.parse_package_from_path(root)
+            testing.expect(t, parsed != nil && parse_ok)
+        }
+    }
+
+    quaternion32 := history_replace(source, "builtin:quaternion64", "builtin:quaternion32")
+    history_expect_failure_exact(t, quaternion32, .Invalid_Input, 5, "adriatic:src.Fixture.q64")
+    delete(quaternion32)
+    quaternion256 := history_replace(source, "builtin:quaternion128", "builtin:quaternion256")
+    history_expect_failure_exact(t, quaternion256, .Invalid_Input, 6, "adriatic:src.Fixture.q128")
+    delete(quaternion256)
+    malformed := history_replace(source, "builtin:quaternion64", "builtin:quaternion64x")
+    history_expect_failure_exact(t, malformed, .Invalid_Input, 5, "adriatic:src.Fixture.q64")
+    delete(malformed)
+    raw := history_replace(source, "builtin:quaternion64", "quaternion64")
+    history_expect_failure_exact(t, raw, .Unresolved_Reference, 5, "adriatic:src.Fixture.q64")
+    delete(raw)
+    raw_nested := history_replace(source, "array[2]<builtin:quaternion64>", "array[2]<quaternion64>")
+    history_expect_failure_exact(t, raw_nested, .Unresolved_Reference, 7, "adriatic:src.Fixture.fixed")
+    delete(raw_nested)
+
+    quaternion_enum := history_replace(
+        source,
+        "field=adriatic:src.Fixture|name=q64|using=0|tag=|type=builtin:quaternion64",
+        "field=adriatic:src.Fixture|name=q64|using=0|tag=|type=adriatic:src.Mode",
+    )
+    quaternion_enum = history_join(
+        quaternion_enum,
+        "type=adriatic:src.Mode|kind=enum|detail=using\\=0;base\\=builtin:quaternion64\n" +
+        "enum=adriatic:src.Mode|name=Invalid|value=0\n",
+    )
+    history_expect_failure_exact(t, quaternion_enum, .Invalid_Input, 12, "adriatic:src.Mode")
+    delete(quaternion_enum)
+
+    unreachable := history_join(
+        source,
+        "type=adriatic:src.Orphan|kind=struct|detail=packed\\=0;raw_union\\=0;no_copy\\=0;all_or_none\\=0;simple\\=0;align\\=none;min_field_align\\=none;max_field_align\\=none\n" +
+        "field=adriatic:src.Orphan|name=rotation|using=0|tag=|type=builtin:quaternion64\n",
+    )
+    history_expect_failure_exact(t, unreachable, .Unreachable_Record, 12, "adriatic:src.Orphan")
+    delete(unreachable)
+
+    success_state := Fixture_History_Fault_Allocator {
+        backing    = runtime.default_allocator(),
+        fail_index = -1,
+    }
+    success_allocator := fixture_history_fault_allocator(&success_state)
+    owned, owned_error, owned_ok := fixture_schema.history_parse_manifest(transmute([]byte)source, success_allocator)
+    testing.expect(t, owned_ok && owned_error.kind == .None && success_state.attempts > 0)
+    fixture_schema.history_manifest_dispose(&owned)
+    fixture_schema.history_manifest_dispose(&owned)
+    fixture_schema.history_error_dispose(&owned_error)
+    fixture_schema.history_error_dispose(&owned_error)
+    testing.expect(t, success_state.outstanding == 0)
+    for fail_index in 0 ..< success_state.attempts {
+        state := Fixture_History_Fault_Allocator {
+            backing    = runtime.default_allocator(),
+            fail_index = fail_index,
+        }
+        allocator := fixture_history_fault_allocator(&state)
+        failed, failed_error, failed_ok := fixture_schema.history_parse_manifest(transmute([]byte)source, allocator)
+        testing.expect(t, !failed_ok && failed_error.kind == .Out_Of_Memory)
+        fixture_schema.history_manifest_dispose(&failed)
+        fixture_schema.history_manifest_dispose(&failed)
+        fixture_schema.history_error_dispose(&failed_error)
+        fixture_schema.history_error_dispose(&failed_error)
+        testing.expect(t, state.outstanding == 0)
+    }
+    nil_manifest, nil_error, nil_ok := fixture_schema.history_parse_manifest(transmute([]byte)source, mem.Allocator{})
+    testing.expect(t, !nil_ok && nil_error.kind == .Out_Of_Memory)
+    fixture_schema.history_manifest_dispose(&nil_manifest)
+    fixture_schema.history_error_dispose(&nil_error)
+    fixture_schema.history_error_dispose(&nil_error)
+}
+
+@(test)
 fixture_history_manifest_rejects_malformed_inputs :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -393,11 +517,6 @@ fixture_history_manifest_rejects_malformed_inputs :: proc(t: ^testing.T) {
     history_expect_failure_kind(
         t,
         history_replace(source, "type=builtin:i16", "type=builtin:complex64"),
-        .Invalid_Input,
-    )
-    history_expect_failure_kind(
-        t,
-        history_replace(source, "type=builtin:i16", "type=builtin:quaternion64"),
         .Invalid_Input,
     )
     history_expect_failure_kind(t, history_replace(source, "raw_union\\=0", "raw_union\\=1"), .Invalid_Input)

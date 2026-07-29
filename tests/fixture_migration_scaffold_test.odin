@@ -27,6 +27,23 @@ MIGRATION_SCAFFOLD_EXPECTED_STATE_IDS :: [?]string {
     "field-type:adriatic:packages/terrain.Project.structures",
 }
 
+MIGRATION_V0004_TO_V0005_STATE_IDS :: [?]string {
+    "field-add:adriatic:packages/flight.Body_State.angular_velocity_world",
+    "field-add:adriatic:packages/flight.Body_State.orientation",
+    "field-add:adriatic:packages/libellula.Runtime.spawn_orientation",
+    "field-add:adriatic:packages/postale.Runtime.ace_runtime",
+    "field-add:adriatic:packages/postale.Runtime.ace_telemetry",
+    "field-add:adriatic:packages/postale.Runtime.ace_tuning",
+    "field-add:adriatic:packages/postale.Runtime.flight_model",
+    "field-add:adriatic:packages/postale.Runtime.spawn_orientation",
+    "field-order:adriatic:packages/flight.Body_State",
+    "field-order:adriatic:packages/libellula.Runtime",
+    "field-remove:adriatic:packages/flight.Body_State.angular_velocity",
+    "field-remove:adriatic:packages/flight.Body_State.basis",
+    "field-remove:adriatic:packages/libellula.Runtime.spawn_basis",
+    "field-remove:adriatic:packages/postale.Runtime.spawn_basis",
+}
+
 MIGRATION_V0003_TO_V0004_STRUCTURAL_IDS :: [?]string {
     "field-add:adriatic:packages/architecture.City_Alley.curve_control_from",
     "field-add:adriatic:packages/architecture.City_Alley.curve_control_to",
@@ -308,6 +325,59 @@ fixture_migration_scaffold_production_render_parse_validate :: proc(t: ^testing.
     fixture_schema.migration_scaffold_dispose(&parsed)
     fixture_schema.migration_scaffold_error_dispose(&parse_error)
     testing.expect(t, report.frozen_sha256 == before_sha)
+}
+
+@(test)
+fixture_migration_scaffold_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    report, report_ok := fixture_schema_diff_v0004_to_live_v0005_report(t)
+    if !report_ok do return
+    defer fixture_schema.schema_diff_report_dispose(&report)
+
+    source, error, render_ok := fixture_schema.migration_scaffold_render(&report, context.allocator)
+    testing.expect(t, render_ok && error.kind == .None)
+    fixture_schema.migration_scaffold_error_dispose(&error)
+    if !render_ok do return
+    defer delete(source)
+    second, second_error, second_ok := fixture_schema.migration_scaffold_render(&report, context.allocator)
+    testing.expect(t, second_ok && second_error.kind == .None && second == source)
+    fixture_schema.migration_scaffold_error_dispose(&second_error)
+    if second_ok do delete(second)
+
+    line_count := 0
+    for value in source {
+        if value == '\n' do line_count += 1
+    }
+    testing.expect(t, line_count == 76 && len(source) == 2405)
+    source_sha, sha_ok := fixture_schema.history_manifest_sha256_hex(transmute([]byte)source, context.allocator)
+    testing.expect(t, sha_ok && source_sha == "378cc8036c9af1a44175d1833752e645c01c3b7e9830cdbebbb1a798fb3a48fd")
+    if sha_ok do delete(source_sha)
+
+    scaffold, parse_error, parse_ok := fixture_schema.migration_scaffold_parse(
+        transmute([]byte)source,
+        context.allocator,
+    )
+    testing.expect(t, parse_ok && parse_error.kind == .None)
+    fixture_schema.migration_scaffold_error_dispose(&parse_error)
+    if !parse_ok {
+        fixture_schema.migration_scaffold_dispose(&scaffold)
+        return
+    }
+    defer fixture_schema.migration_scaffold_dispose(&scaffold)
+    testing.expect(
+        t,
+        scaffold.from_version == 4 &&
+        scaffold.to_version == 5 &&
+        len(scaffold.resolutions) == len(MIGRATION_V0004_TO_V0005_STATE_IDS),
+    )
+    state_ids := MIGRATION_V0004_TO_V0005_STATE_IDS
+    for resolution, index in scaffold.resolutions {
+        testing.expect(t, resolution.change_id == state_ids[index] && resolution.kind == .Unresolved)
+    }
+    validation_error, validation_ok := fixture_schema.migration_scaffold_validate(&scaffold, &report)
+    testing.expect(t, validation_ok && validation_error.kind == .None)
+    fixture_schema.migration_scaffold_error_dispose(&validation_error)
 }
 
 @(test)

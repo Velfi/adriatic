@@ -9367,6 +9367,163 @@ immutable.
 Do not begin M4D until current-schema encode/decode, every historical chain,
 schema/history/scaffold checks, and the full test suite are green again.
 
+### M4R6A read-only audit — 2026-07-29
+
+The current source candidate is 1,658 lines, 172 records, and 154 root fields,
+with SHA-256
+`7d0ec2be99a2cbdf53ec6ee3caa7c7ea86cda5d9a287d8e194106d29ba34762b`.
+Frozen v4 remains 1,611 lines, 167 records, and 154 root fields, with SHA-256
+`fad52f4e0a38b35fffdf29ae3ffb3f91251780fe0ce2dc5990beba76f1e518fa`.
+
+The production `migration-diff 4 5` command cannot yet produce the semantic
+report. It deterministically fails at manifest line 279, path
+`adriatic:packages/flight.Body_State.orientation`, because the extractor emits
+`builtin:quaternion128` while the strict history/diff scalar grammar does not
+recognize quaternion builtins. Scaffold generation fails at the same boundary.
+This field is durable simulation state and must not be excluded to bypass the
+tooling gap. `hs.portable` independently lacks runtime quaternion support, so
+manifest recognition alone will not restore fixture codec gates.
+
+A disposable parser-recognition probe, removed after the audit, exposes the
+pre-policy 4→live report:
+
+- 9,098 bytes, SHA-256
+  `edf30613795c0711c39efd3f82d7da68bd21589336f722cb367d8d8861f8336b`;
+- 19 changes: 14 state changes and five supporting type additions;
+- the temporary unresolved scaffold is 76 lines and 2,405 bytes, SHA-256
+  `378cc8036c9af1a44175d1833752e645c01c3b7e9830cdbebbb1a798fb3a48fd`.
+
+The 14 state obligations are:
+
+1. add `flight.Body_State.angular_velocity_world`;
+2. add `flight.Body_State.orientation`;
+3. add `libellula.Runtime.spawn_orientation`;
+4. add `postale.Runtime.ace_runtime`;
+5. add `postale.Runtime.ace_telemetry`;
+6. add `postale.Runtime.ace_tuning`;
+7. add `postale.Runtime.flight_model`;
+8. add `postale.Runtime.spawn_orientation`;
+9. change `flight.Body_State` field order/shape;
+10. replace the Libellula spawn field at its existing position;
+11. remove `flight.Body_State.angular_velocity`;
+12. remove `flight.Body_State.basis`;
+13. remove `libellula.Runtime.spawn_basis`;
+14. remove `postale.Runtime.spawn_basis`.
+
+The five supporting additions are `flight.Ace_Edge_State`,
+`flight.Ace_Runtime`, `flight.Ace_Telemetry`, `flight.Ace_Tuning`, and
+`postale.Flight_Model`.
+
+State policy is locked before v5 generation:
+
+- keep body pose, velocity, world angular velocity, and orientation for all
+  aircraft;
+- migrate old body basis with `flight.orientation_from_basis` and copy old
+  angular velocity directly to `angular_velocity_world`;
+- migrate Postale and Libellula spawn basis to spawn orientation;
+- keep Postale `flight_model`, all 22 `ace_tuning` controls, and
+  `ace_runtime.energy`, `edge_state`, and `edge_seconds`;
+- historical Postale defaults are `.Current_Aero`, the exact
+  `postale.ace_tuning_preset()`, and zero/`.Free`/zero ACE runtime state;
+- exclude `Ace_Runtime.local_rate`, which is recomputed from orientation and
+  world angular velocity before use;
+- exclude Postale ACE telemetry plus existing Postale and Libellula telemetry;
+- retain Rondine telemetry for now because its prior-frame forward speed and
+  drift intensity affect the next step;
+- exclude the pre-existing `camera_target_lock` capture-session flag;
+- keep existing durable story fields; the story additions were already
+  resolved and frozen in v4.
+
+### M4R6A1 — Add quaternion manifest/history support
+
+This is the next implementation slice. It changes only the strict schema
+manifest/history/diff/scaffold layer and its focused tests.
+
+1. Prove supported Odin spellings with a disposable compile probe before
+   editing.
+2. Extend the shared strict scalar grammar with exactly the quaternion builtins
+   accepted by the source extractor (`quaternion64` and `quaternion128`).
+   Preserve their exact widths and keep them invalid as enum bases.
+3. Ensure validation, reachability, semantic diff, history emission, and
+   scaffold rendering accept these builtins in fields and nested fixed/dynamic
+   arrays without relaxing logical-ID or malformed-type checks.
+4. Add hostile spelling/width/nesting tests, exact source-line/path errors,
+   nil allocator and OOM/error-disposal coverage, and generated-history compile
+   proof.
+5. Make the real `migration-diff 4 5` command produce the deterministic
+   pre-policy 9,098-byte, 19/14/5 report and make temporary 4→5 scaffold
+   generation/check deterministic. Do not retain the scaffold or any v5
+   manifest/history package.
+6. Keep `Portable_Kind` and `hs.portable` unchanged; runtime quaternion wire
+   support is M4R6A2.
+
+Acceptance requires the focused history, diff, and scaffold tests, their
+existing OOM sweeps, `make check`, histories v1–v4, old scaffolds/reports, and
+all frozen hashes. Current schema, codec, migration, and full-suite failures
+remain expected until later M4R6 slices.
+
+#### M4R6A1 acceptance — 2026-07-29
+
+M4R6A1 is accepted. The only production change adds a distinct quaternion
+scalar classification with exact `quaternion64` width 8 and `quaternion128`
+width 16. Quaternion fields still require the canonical `builtin:` prefix,
+unknown widths and raw spellings fail at exact source paths, and quaternion
+remains invalid as an enum base. Existing history emission, semantic diff, and
+scaffold code require no special cases beyond the shared scalar grammar.
+
+- disposable syntax and generated-history compile proofs pass under the locked
+  Odin compiler and leave no artifact;
+- four new focused tests pass 4/4 twice, the full history/diff/scaffold set
+  passes 37/37, and all report zero leaks;
+- parser fault injection covers every allocation, nil allocator, double
+  disposal, exact error paths, nested arrays, reachability, and exact emitter
+  spelling;
+- the production 4→5 report now succeeds twice at 9,098 bytes, SHA-256
+  `edf30613795c0711c39efd3f82d7da68bd21589336f722cb367d8d8861f8336b`,
+  with exactly 19 changes split 14 state and five supporting;
+- the temporary unresolved scaffold generates/checks at 76 lines and 2,405
+  bytes, SHA-256
+  `378cc8036c9af1a44175d1833752e645c01c3b7e9830cdbebbb1a798fb3a48fd`,
+  with exactly 14 unresolved IDs and byte-identical `odinfmt` output;
+- `make check`, histories v1–v4, all legacy scaffolds/reports, and their frozen
+  hashes pass unchanged;
+- the full suite is 747/748 plus Rondine 19/19; the sole failure remains the
+  expected frozen-v4/live-schema mismatch;
+- independent review is clean, and no binary, probe, v5 manifest/history
+  package, or scaffold remains.
+
+### M4R6A2 — Add portable quaternion wire support
+
+Append quaternion support to the portable `hs` wire format without changing
+any existing `Portable_Kind` numeric value or old encoded byte stream.
+
+1. Probe Odin runtime type information for `quaternion64` and
+   `quaternion128` before editing; record component type/count, size, alignment,
+   and the exact `rt.Type_Info_Quaternion` shape.
+2. Append one `Portable_Kind.Quaternion` value. Encode its exact total width
+   and require four homogeneous floating-point components. Support only
+   quaternion64 and quaternion128; reject unsupported widths or malformed
+   runtime/type-table combinations.
+3. Write and read the four components in canonical component order using the
+   existing little-endian float-bit policy. Never raw-copy host padding or
+   depend on host endianness. Preserve every float bit pattern exactly.
+4. Treat quaternion as a leaf in shared graph discovery, cycle validation,
+   encode/decode, skip/unknown-field handling, schema validation, limits, and
+   fixed/enumerated/dynamic array traversal.
+5. Add exact byte fixtures for both widths, nested struct and all array forms,
+   additive/removed-field compatibility, source/destination type or width
+   mismatch, forged kind/width/count, truncation/trailing data, nil allocator,
+   OOM/error ownership, double disposal, deterministic re-encode, and constant
+   allocation count across one versus many array elements.
+6. Keep schema manifests/history/migrations, fixture policy tags, and current
+   schema version untouched. Current fixture codec remains blocked by the
+   frozen-v4 mismatch until the policy/freeze slices.
+
+Acceptance requires focused portable tests twice with zero leaks,
+`make check`, the M4R6A1 4→5 report/scaffold hashes, histories v1–v4, and all
+old portable/schema/migration hashes unchanged except the intentionally edited
+portable source and tests.
+
 ## Milestone 4D — Install owned state and rebuild runtime resources
 
 Decode into temporary owned state, validate it, preserve root runtime

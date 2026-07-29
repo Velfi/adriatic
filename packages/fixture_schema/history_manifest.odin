@@ -252,6 +252,7 @@ History_Scalar_Kind :: enum {
     Unsigned,
     Rune,
     Float,
+    Quaternion,
     String,
 }
 
@@ -295,6 +296,10 @@ history_scalar :: proc(name: string) -> History_Scalar {
         return {kind = .Float, width = 4}
     case "f64":
         return {kind = .Float, width = 8}
+    case "quaternion64":
+        return {kind = .Quaternion, width = 8}
+    case "quaternion128":
+        return {kind = .Quaternion, width = 16}
     case "string":
         return {kind = .String}
     }
