@@ -34,11 +34,15 @@ schema tooling, migration execution, and agent workflow.
 
 ## Current phase
 
-Milestone 4C: share fixture detach and pointer rebind lifecycle between hot
-reload and fixture load. Schema-v4 activation and migration are accepted.
-Current `main` introduces
-118 persisted schema changes, so schema version 4 activation and the 3→4
-scripted migration now precede lifecycle milestone 4C.
+Milestone 4C is accepted. Before M4D, reconcile the seventh rebased baseline:
+the fixture changes now sit on the ACE flight/story rewrite, whose new
+fixture-reachable state no longer matches frozen schema v4. Audit the complete
+4→live diff, choose the next schema version, and generate/resolve its migration
+without modifying frozen v1–v4 artifacts.
+
+Schema-v4 activation and migration remain accepted. The prior rebased baseline
+introduced 118 persisted schema changes, which were resolved by schema version
+4 and the 3→4 scripted migration.
 M4B2B4C, M4B2B4B, M4B2B4A, and
 M4B2B4AR are accepted. Source schema version 3 and its history package are
 frozen. M4B2B3, M4B2B3R, and M4B2B3R2 are accepted.
@@ -9272,6 +9276,96 @@ restore pilot/driver links from the schema-4 occupant discriminator. Reject dupl
 missing, out-of-range, locked, or internally contradictory fleet/occupancy
 state before live mutation. Hot save must stop maintaining a separate pointer
 nil list, and hot load must call the same binder as fixture load.
+
+### M4C locked relationship policy — 2026-07-29
+
+Implement one product-local, allocation-free lifecycle boundary:
+
+1. validate the exact live four-kind fleet and derive occupant identity from
+   the reciprocal live pointer graph;
+2. shallow-copy the source fixture into caller-owned scratch, write the
+   derived identity, and detach all relationship pointers from the copy without
+   mutating the source;
+3. preflight a decoded fixture with no mutation, requiring exact unique
+   Postale, Libellula, Libellula Mk2, and Rondine slots, a present valid active
+   kind, nil borrowed pointers, a valid occupant, and an unlocked occupied
+   physical vehicle;
+4. bind only destination-owned addresses, preserving slot order, names,
+   availability, active kind, and all other serialized state.
+
+Libellula and Libellula Mk2 intentionally share the one Libellula vehicle;
+active kind disambiguates their occupant identity. Other physical vehicles
+must be distinct.
+
+For detached state, the stable occupant discriminator is authoritative and the
+binder canonicalizes `pilot.mode`. This is required because accepted v1/v2
+migrations produce `.On_Foot` identity while preserving an old `.Driving`
+mode. A fully live graph is validated by deriving its identity; stale
+`Fixture.occupant` never invalidates save because production did not previously
+maintain it.
+
+Availability remains durable authored state but is not a bind policy. Only the
+occupied physical vehicle's `locked` flag rejects restoration. This avoids
+inventing an invariant not guaranteed by frozen histories.
+
+Malformed, missing, duplicate, out-of-range, hybrid, foreign, locked, or
+contradictory relationship state fails before the first mutation. Hot load
+returns `.Invalid`, and its existing caller restarts cleanly. Fixture load will
+reject before install. Broad physics, audio, dialogue, cinematic, input, and
+resource rebuilding remains M4D.
+
+M4C does not add fixture file/editor actions. It replaces only the duplicated
+hot-save pointer nil list and fleet-only hot-load repair with the shared
+derive/detach/bind contract.
+
+### M4C acceptance — 2026-07-29
+
+M4C is accepted on the seventh rebased baseline.
+
+- one allocation-free lifecycle derives live occupant identity, detaches a
+  copied fixture, prepares a pointer-free bind plan, and applies it using only
+  destination-owned addresses;
+- strict preflight rejects invalid counts, forged kinds and discriminants,
+  duplicate or missing fleet kinds, borrowed or foreign pointers, partial
+  reciprocal graphs, active-kind mismatches, and locked occupied vehicles
+  before relation mutation;
+- Libellula and Libellula Mk2 retain their intentional shared physical vehicle,
+  slot order/name/availability remain durable, and historical
+  `On_Foot`/`Driving` disagreement canonicalizes from the occupant identity;
+- hot save uses the shared detach boundary, hot load uses the shared bind
+  boundary, the permissive three-slot repair path is removed, and the old
+  relation-specific pointer nil list no longer exists;
+- focused lifecycle tests pass 4/4 twice with one test thread and zero leak
+  diagnostics, covering all six identities, hostile atomic failures,
+  destination ownership, authored availability, and valid plus malformed hot
+  files;
+- `make check`, histories v1–v4, scaffold checks 1→2/2→3/3→4, deterministic
+  historical reports, and Rondine 19/19 pass;
+- independent lifecycle review is clean, `src/main.odin` contains only the
+  four intended integration hunks, and no generated binary or probe remains.
+
+The seventh rebase moved fixture change `mwytpkmk` from main parent
+`vxzsozzw` (`Add settlement brush planning tools`) to `vxzsuvoltqks`
+(`chore: ignore local imgui settings`), bringing in the ACE flight/story
+rewrite. This is a separate schema boundary: frozen v4 first differs at
+manifest line 196, where live discovery introduces `flight.Ace_Edge_State`
+before the expected `flight.Airframe`. Consequently schema check fails,
+codec tests stop 0/2 at current-schema validation, migration tests pass only
+the registry-rejection case 1/9, and the full repository suite is 743/744
+with only the frozen-schema assertion failing; Rondine remains 19/19. M4C
+does not alter or regenerate schema, history, codec, or migration artifacts.
+
+## Milestone 4R6 — Reconcile seventh-rebase fixture schema
+
+Before M4D, audit the complete frozen-v4-to-live candidate diff introduced by
+the ACE flight/story rewrite. Classify every new reachable field as durable,
+derived, or session-owned. Then activate the next schema version and migration
+using the existing manifest, history, diff, scaffold, registry, and codec
+workflow. Frozen versions 1–4 and migrations 1→2, 2→3, and 3→4 remain
+immutable.
+
+Do not begin M4D until current-schema encode/decode, every historical chain,
+schema/history/scaffold checks, and the full test suite are green again.
 
 ## Milestone 4D — Install owned state and rebuild runtime resources
 

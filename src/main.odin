@@ -747,54 +747,6 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.landing_wheel_speed = 0
 }
 
-hot_state_rebind_aircraft_fleet :: proc(editor: ^Editor) {
-    if editor == nil do return
-
-    active := editor.aircraft.active
-    postale_available := true
-    libellula_available := false
-    libellula_mk2_available := false
-    rondine_available := false
-    rondine_present := false
-    for slot in editor.aircraft.slots[:editor.aircraft.count] {
-        switch slot.kind {
-        case .Postale:
-            postale_available = slot.available
-        case .Libellula:
-            libellula_available = slot.available
-        case .Libellula_Mk2:
-            libellula_mk2_available = slot.available
-        case .Rondine:
-            rondine_available = slot.available
-            rondine_present = true
-        }
-    }
-    if !rondine_present {
-        editor.rondine = rondine_game.new_runtime(rondine_spawn_position(editor))
-        editor.rondine_visible = false
-        editor.rondine.vehicle.locked = true
-    }
-
-    editor.aircraft = {}
-    vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, postale_available)
-    vehicles.aircraft_fleet_add(
-        &editor.aircraft,
-        .Libellula,
-        "Libellula",
-        &editor.libellula.vehicle,
-        libellula_available,
-    )
-    vehicles.aircraft_fleet_add(
-        &editor.aircraft,
-        .Libellula_Mk2,
-        "Libellula Mk2",
-        &editor.libellula.vehicle,
-        libellula_mk2_available,
-    )
-    vehicles.aircraft_fleet_add(&editor.aircraft, .Rondine, "Rondine", &editor.rondine.vehicle, rondine_available)
-    editor.aircraft.active = active
-}
-
 hot_state_rebind_engine_audio :: proc(
     editor: ^Editor,
     stream: ^sdl.AudioStream,
@@ -8546,16 +8498,12 @@ hot_state_save :: proc(editor: ^Editor, path: string) -> bool {
 
     state := new(Editor, context.temp_allocator)
     state^ = editor^
-    state.pilot.vehicle = nil
-    state.car.driver = nil
+    lifecycle_error := fixture_lifecycle_detach(&editor.fixture, &state.fixture)
+    if lifecycle_error.kind != .None do return false
     state.car_physics_world = nil
     state.car_physics_vehicle = nil
     state.gameplay_physics = {}
     state.engine_audio.stream = nil
-    state.postale.vehicle.driver = nil
-    state.libellula.vehicle.driver = nil
-    state.rondine.vehicle.driver = nil
-    for &slot in state.aircraft.slots do slot.vehicle = nil
 
     // These values belong to the loaded dylib or the GPU. Never preserve their
     // pointers across an unload. Canvas textures live in the host-owned canvas
@@ -8606,6 +8554,8 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
 
     identical := hs.deserialize(editor, payload, {.Dynamics}, context.allocator)
     _ = identical // hs already used mem.copy for every identical subtree.
+    lifecycle_error := fixture_lifecycle_bind(&editor.fixture)
+    if lifecycle_error.kind != .None do return .Invalid
 
     editor.libellula_visual_mesh = {}
     vehicles.libellula_mesh_init(&editor.libellula_visual_mesh)
@@ -10595,7 +10545,6 @@ adriatic_run :: proc(
         seed_default_island_marinas(editor)
     }
     if state_loaded {
-        hot_state_rebind_aircraft_fleet(editor)
         // The serialized Editor intentionally clears process-owned audio
         // pointers. Reattach the stream opened by this process after loading.
         hot_state_rebind_engine_audio(editor, engine_audio_stream, ambient_audio_mix, &ambient_mix)
