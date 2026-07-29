@@ -13,6 +13,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  adriatic")
     fmt.println("  adriatic --shadow-lab")
     fmt.println("  adriatic --lab <name> [target]")
+    fmt.println("  adriatic fixture-upgrade [--dry-run] <file-or-directory>")
     fmt.println("  adriatic dialogue-preview <output.wav> [preset] [text] [formant-shift] [base-pitch] [expression]")
     fmt.println("  adriatic capture <mode> <output.png> [target]")
     fmt.println("  adriatic capture <mode> --output <output.png> [options]")
@@ -146,6 +147,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         adriatic_cli_usage()
         return true, true
     }
+    if args[1] == "fixture-upgrade" do return true, adriatic_cli_fixture_upgrade(args)
     if args[1] == "dialogue-preview" do return true, dialogue_voice_preview_cli(args)
     if args[1] != "capture" do return false, true
     if len(args) < 3 {

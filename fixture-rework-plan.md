@@ -10117,6 +10117,35 @@ Acceptance criteria:
 - Re-running against current fixtures is a no-op.
 - Custom Odin migration scripts can resolve ambiguous changes.
 
+Accepted as accelerated fixture-finish slice 3.
+
+- `adriatic fixture-upgrade [--dry-run] <file-or-directory>` is handled before
+  graphics startup. Explicit regular files accept any extension; directories
+  recurse through regular `.fixture` files in deterministic lexical order,
+  skip symlinks, and enforce depth and file-count caps.
+- Every file is container-validated and decoded through the production
+  migration registry, including dry-run and current-version inputs. Historical
+  state therefore executes the same compiled automatic and scripted Odin
+  migrations used by editor load.
+- Dry-run reports planned source-to-current migrations and writes zero bytes.
+  A real upgrade encodes the migrated fixture with the current schema and uses
+  the editor store's shared exclusive-temp, complete-write, sync, close, and
+  atomic-rename path.
+- Valid current fixtures are byte-for-byte no-ops. True frozen-v1 and v4
+  fixtures upgrade to v5, retain scripted story/quest/occupant semantics, and
+  become no-ops on the next run. Unrelated files and current files in the same
+  directory remain unchanged.
+- Corrupt, future-version, migration-invalid, unreadable, partial/zero-write,
+  sync, close, and rename failures preserve the exact target and remove the
+  temporary file. Invalid allocators and bounded wrapper OOM points dispose
+  all owned paths, codec results, and nested errors with zero outstanding
+  allocations. Directory batches are atomic per file; earlier successful
+  files may remain upgraded and a rerun safely completes the rest.
+
+Acceptance gates pass: focused upgrader 3/3, shared editor-store regression
+3/3, `make check`, and full tests 753/753 plus Rondine 19/19, with zero leak
+reports. Independent bounded review found no production correctness blocker.
+
 ## Milestone 9 — Add schema guardrails and agent skill
 
 Create a repository skill for agents changing `Fixture` or any reachable

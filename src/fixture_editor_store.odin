@@ -172,37 +172,17 @@ fixture_editor_store_open_temporary :: proc(
     return nil, "", fixture_editor_store_error(.Open_Temporary, target_path, .Exist), false
 }
 
-fixture_editor_save_to_path_with_options :: proc(
-    editor: ^Editor,
+fixture_editor_store_replace_bytes_with_options :: proc(
     path: string,
+    data: []byte,
     options: Fixture_Editor_Store_Options,
-    alloc := context.allocator,
 ) -> (
     error: Fixture_Editor_Store_Error,
     ok: bool,
 ) {
-    if editor == nil ||
-       len(path) == 0 ||
-       alloc.procedure == nil ||
-       !fixture_editor_store_file_ops_valid(options.operations) {
+    if len(path) == 0 || !fixture_editor_store_file_ops_valid(options.operations) {
         return fixture_editor_store_error(.Invalid_Argument, path), false
     }
-
-    snapshot_bytes, allocation_error := mem.alloc_bytes(size_of(Fixture), align_of(Fixture), alloc)
-    if allocation_error != nil || snapshot_bytes == nil {
-        return fixture_editor_store_error(.Out_Of_Memory, path), false
-    }
-    defer delete(snapshot_bytes, alloc)
-    snapshot := cast(^Fixture)raw_data(snapshot_bytes)
-    snapshot^ = editor.fixture
-    if lifecycle_error := fixture_lifecycle_detach(&editor.fixture, snapshot); lifecycle_error.kind != .None {
-        return {kind = .Lifecycle, path = path, lifecycle = lifecycle_error}, false
-    }
-    container, codec_error, encoded := fixture_codec_encode(snapshot, alloc)
-    if !encoded {
-        return {kind = .Codec, path = path, codec = codec_error}, false
-    }
-    defer delete(container, alloc)
 
     operations := options.operations
     file, temporary_path, open_error, opened := fixture_editor_store_open_temporary(path, options)
@@ -217,9 +197,9 @@ fixture_editor_save_to_path_with_options :: proc(
     }
 
     offset := 0
-    for offset < len(container) {
-        written, write_error := operations.write(operations.data, file, container[offset:])
-        remaining := len(container) - offset
+    for offset < len(data) {
+        written, write_error := operations.write(operations.data, file, data[offset:])
+        remaining := len(data) - offset
         if write_error != nil || written <= 0 || written > remaining {
             error = fixture_editor_store_error(
                 .Write_Temporary,
@@ -255,6 +235,41 @@ fixture_editor_save_to_path_with_options :: proc(
         return error, false
     }
     return {}, true
+}
+
+fixture_editor_save_to_path_with_options :: proc(
+    editor: ^Editor,
+    path: string,
+    options: Fixture_Editor_Store_Options,
+    alloc := context.allocator,
+) -> (
+    error: Fixture_Editor_Store_Error,
+    ok: bool,
+) {
+    if editor == nil ||
+       len(path) == 0 ||
+       alloc.procedure == nil ||
+       !fixture_editor_store_file_ops_valid(options.operations) {
+        return fixture_editor_store_error(.Invalid_Argument, path), false
+    }
+
+    snapshot_bytes, allocation_error := mem.alloc_bytes(size_of(Fixture), align_of(Fixture), alloc)
+    if allocation_error != nil || snapshot_bytes == nil {
+        return fixture_editor_store_error(.Out_Of_Memory, path), false
+    }
+    defer delete(snapshot_bytes, alloc)
+    snapshot := cast(^Fixture)raw_data(snapshot_bytes)
+    snapshot^ = editor.fixture
+    if lifecycle_error := fixture_lifecycle_detach(&editor.fixture, snapshot); lifecycle_error.kind != .None {
+        return {kind = .Lifecycle, path = path, lifecycle = lifecycle_error}, false
+    }
+    container, codec_error, encoded := fixture_codec_encode(snapshot, alloc)
+    if !encoded {
+        return {kind = .Codec, path = path, codec = codec_error}, false
+    }
+    defer delete(container, alloc)
+
+    return fixture_editor_store_replace_bytes_with_options(path, container, options)
 }
 
 fixture_editor_save_to_path :: proc(
