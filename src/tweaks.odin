@@ -211,22 +211,23 @@ Presentation_Tweak :: struct {
 }
 
 Tweak_State :: struct {
-    terrain:                        Terrain_Tweak,
-    atmosphere:                     atmosphere.Atmosphere,
-    player:                         third_person.Config,
-    player_animation:               Player_Animation_Tweak,
-    player_tail:                    mouse_tail.Config,
-    camera:                         Camera_Tweak,
-    world:                          World_Tweak,
-    particles:                      Particle_Tweak,
-    car:                            vehicles.Car_Drive_Tune,
-    car_vehicle:                    Vehicle_Tweak,
-    postale_airframe:               flight.Airframe,
-    postale_runtime:                flight.Runtime,
-    postale_tuning:                 postale_game.Tuning,
-    postale_vehicle:                Vehicle_Tweak,
+    terrain:            Terrain_Tweak,
+    atmosphere:         atmosphere.Atmosphere,
+    player:             third_person.Config,
+    player_animation:   Player_Animation_Tweak,
+    player_tail:        mouse_tail.Config,
+    camera:             Camera_Tweak,
+    world:              World_Tweak,
+    particles:          Particle_Tweak,
+    car:                vehicles.Car_Drive_Tune,
+    car_vehicle:        Vehicle_Tweak,
+    postale_airframe:   flight.Airframe,
+    postale_runtime:    flight.Runtime,
+    postale_ace_tuning: flight.Ace_Tuning,
+    postale_tuning:     postale_game.Tuning,
+    postale_vehicle:    Vehicle_Tweak,
     postale_transform_tester_gizmo: bool `fixture:"-"`,
-    presentation:                   Presentation_Tweak,
+    presentation:       Presentation_Tweak,
 }
 
 tweak_default_player :: proc() -> third_person.Config {
@@ -401,6 +402,7 @@ tweak_default_state :: proc() -> Tweak_State {
         car_vehicle = {interaction_radius = 3, exit_distance = 1.45},
         postale_airframe = flight.postale_airframe(),
         postale_runtime = flight.default_runtime(),
+        postale_ace_tuning = postale_game.ace_tuning_preset(),
         postale_tuning = postale_game.default_tuning(),
         postale_vehicle = {interaction_radius = 2.5, exit_distance = 2.2},
         postale_transform_tester_gizmo = false,
@@ -430,6 +432,7 @@ tweak_sync_from_editor :: proc(editor: ^Editor) {
     }
     editor.tweak.postale_airframe = editor.postale.airframe
     editor.tweak.postale_runtime = editor.postale.flight_runtime
+    editor.tweak.postale_ace_tuning = editor.postale.ace_tuning
     editor.tweak.postale_tuning = editor.postale.tuning
     editor.tweak.postale_vehicle = {
         interaction_radius = editor.postale.vehicle.interaction_radius,
@@ -468,6 +471,7 @@ tweak_apply_to_editor :: proc(editor: ^Editor) {
     editor.car.locked = state.car_vehicle.locked
     editor.postale.airframe = state.postale_airframe
     editor.postale.flight_runtime = state.postale_runtime
+    editor.postale.ace_tuning = state.postale_ace_tuning
     editor.postale.tuning = state.postale_tuning
     editor.postale.vehicle.interaction_radius = state.postale_vehicle.interaction_radius
     editor.postale.vehicle.exit_distance = state.postale_vehicle.exit_distance
@@ -1040,37 +1044,24 @@ tweak_draw_car :: proc(editor: ^Editor) {
     }
 }
 
-tweak_draw_postale :: proc(editor: ^Editor) {
+tweak_draw_postale_current_aero :: proc(editor: ^Editor) {
     a := &editor.tweak.postale_airframe
-    if tweak_section("Flight model", true) {
-        if im.Button("Reset active aircraft") do aircraft_reset(editor)
-        if im.RadioButton("Current Aero", editor.postale.flight_model == .Current_Aero) {
-            editor.postale.flight_model = .Current_Aero
-        }
-        im.SameLine()
-        if im.RadioButton("Ace Arcade", editor.postale.flight_model == .Ace_Arcade) {
-            editor.postale.flight_model = .Ace_Arcade
-            editor.postale.ace_runtime = flight.default_ace_runtime(editor.postale.body, editor.postale.ace_tuning)
-            editor.postale.ace_runtime.energy = .75
-            editor.postale.ace_telemetry = {
-                pace       = linalg.length(editor.postale.body.velocity),
-                energy     = editor.postale.ace_runtime.energy,
-                edge_state = editor.postale.ace_runtime.edge_state,
-            }
-        }
-    }
-    if tweak_section("Airframe", true) {
+
+    if im.CollapsingHeader("Airframe and propulsion") {
         im.Text("Layout: fixed wing (%d)", a.flight_layout)
         tweak_drag_f32("Mass kg", &a.mass_kg, 1, 50000, 1)
         tweak_drag_f32("Maximum gross mass kg", &a.maximum_gross_mass_kg, 1, 50000, 1)
         tweak_drag_f32("Wing area", &a.wing_area, .1, 500, .1)
-        tweak_drag_f32("Lift scale", &a.lift_scale, 0, 10, .01)
-        tweak_drag_f32("Drag scale", &a.drag_scale, 0, 10, .01)
-        tweak_drag_f32("Parasitic drag area", &a.parasitic_drag_area, .01, 20, .01)
         tweak_drag_f32("Power per engine kw", &a.rated_power_per_engine_kw, 0, 5000, 1)
         tweak_drag_f32("Propeller efficiency", &a.propeller_efficiency, 0, 1, .01)
         tweak_drag_f32("Static thrust", &a.static_thrust_per_engine, 0, 100000, 10)
         tweak_drag_f32("Engine count", &a.engine_count, 1, 8, .1)
+    }
+
+    if im.CollapsingHeader("Aerodynamics") {
+        tweak_drag_f32("Lift scale", &a.lift_scale, 0, 10, .01)
+        tweak_drag_f32("Drag scale", &a.drag_scale, 0, 10, .01)
+        tweak_drag_f32("Parasitic drag area", &a.parasitic_drag_area, .01, 20, .01)
         tweak_drag_f32("Wing incidence deg", &a.wing_incidence_degrees, -30, 30, .1)
         tweak_drag_f32("Lift curve slope", &a.lift_curve_slope_per_degree, 0, 1, .001)
         tweak_drag_f32("Zero lift angle deg", &a.zero_lift_angle_degrees, -30, 30, .1)
@@ -1079,6 +1070,9 @@ tweak_draw_postale :: proc(editor: ^Editor) {
         tweak_drag_f32("Post stall angle deg", &a.post_stall_angle_degrees, 0, 120, .1)
         tweak_drag_f32("Post stall lift", &a.post_stall_lift_coefficient, 0, 2, .01)
         tweak_drag_f32("Induced drag", &a.induced_drag_factor, 0, 1, .001)
+    }
+
+    if im.CollapsingHeader("Stability and control") {
         tweak_drag_f32("Trim angle deg", &a.trim_angle_of_attack_degrees, -30, 30, .1)
         tweak_drag_f32("Pitch stability", &a.pitch_stability, 0, 1000000, 100)
         tweak_drag_f32("Pitch damping", &a.pitch_damping, 0, 1000000, 100)
@@ -1089,67 +1083,159 @@ tweak_draw_postale :: proc(editor: ^Editor) {
         tweak_drag_f32("Pitch control", &a.pitch_control_scale, 0, 3, .01)
         tweak_drag_f32("Roll control", &a.roll_control_scale, 0, 3, .01)
         tweak_drag_f32("Yaw control", &a.yaw_control_scale, 0, 3, .01)
+    }
+
+    if im.CollapsingHeader("Water handling") {
         im.Checkbox("Water capable", &a.water_capable)
         tweak_drag_f32("Planing start", &a.water_planing_start_speed, 0, 100, .1)
         tweak_drag_f32("Planing full", &a.water_planing_full_speed, 0, 100, .1)
         tweak_drag_f32("Planing reference", &a.water_planing_reference_speed, 0, 100, .1)
         tweak_drag_f32("Water plow drag", &a.water_plow_drag_scale, 0, 10, .01)
     }
-    if tweak_section("Runtime modifiers") {
-        tweak_drag_f32("Engine output", &editor.tweak.postale_runtime.engine_output, 0, 1, .01)
-        tweak_drag_f32("Control authority", &editor.tweak.postale_runtime.control_authority, 0, 2, .01)
-        tweak_drag_f32("Drag multiplier", &editor.tweak.postale_runtime.drag_multiplier, 0, 5, .01)
-        im.Checkbox("Controls damaged", &editor.tweak.postale_runtime.controls_damaged)
+}
+
+tweak_draw_postale_ace_arcade :: proc(editor: ^Editor) {
+    tuning := &editor.tweak.postale_ace_tuning
+
+    if im.CollapsingHeader("Tempo") {
+        tweak_drag_f32("Pace", &tuning.pace, 0, 1, .01)
+        tweak_drag_f32("Punch", &tuning.punch, 0, 1, .01)
+        tweak_drag_f32("Coast", &tuning.coast, 0, 1, .01)
+        tweak_drag_f32("Brake", &tuning.brake, 0, 1, .01)
     }
-    if tweak_section("Safety") {
-        tweak_drag_f32("Ground clearance", &editor.tweak.postale_tuning.ground_clearance, 0, 5, .01)
-        tweak_drag_f32("Safe bank radians", &editor.tweak.postale_tuning.safe_bank_radians, 0, math.PI, .01)
-        tweak_drag_f32(
-            "Gear compression distance",
-            &editor.tweak.postale_tuning.gear_compression_distance,
-            .05,
-            2,
-            .01,
-        )
-        tweak_drag_f32("Gear damping ratio", &editor.tweak.postale_tuning.gear_damping_ratio, 0, 2, .01)
-        tweak_drag_f32("Smooth landing load", &editor.tweak.postale_tuning.smooth_landing_load, 1, 10, .1)
-        tweak_drag_f32("Hard landing load", &editor.tweak.postale_tuning.hard_landing_load, 1, 10, .1)
-        tweak_drag_f32("Ultimate landing load", &editor.tweak.postale_tuning.ultimate_landing_load, 1, 15, .1)
-        tweak_drag_f32("Safe exit speed", &editor.tweak.postale_tuning.safe_exit_speed, 0, 20, .1)
+
+    if im.CollapsingHeader("Control character") {
+        tweak_drag_f32("Roll snap", &tuning.roll_snap, 0, 1, .01)
+        tweak_drag_f32("Pull strength", &tuning.pull_strength, 0, 1, .01)
+        tweak_drag_f32("Rudder bite", &tuning.rudder_bite, 0, 1, .01)
+        tweak_drag_f32("Weight", &tuning.weight, 0, 1, .01)
+        tweak_drag_f32("Settle", &tuning.settle, 0, 1, .01)
     }
-    if tweak_section("Controls") {
-        tweak_drag_f32("Throttle up rate", &editor.tweak.postale_tuning.throttle_up_rate, 0, 20, .01)
-        tweak_drag_f32("Throttle down rate", &editor.tweak.postale_tuning.throttle_down_rate, 0, 20, .01)
-        tweak_drag_f32("Pitch increase rate", &editor.tweak.postale_tuning.pitch_rate_increase, 0, 50, .01)
-        tweak_drag_f32("Pitch decrease rate", &editor.tweak.postale_tuning.pitch_rate_decrease, 0, 50, .01)
-        tweak_drag_f32("Roll increase rate", &editor.tweak.postale_tuning.roll_rate_increase, 0, 50, .01)
-        tweak_drag_f32("Roll decrease rate", &editor.tweak.postale_tuning.roll_rate_decrease, 0, 50, .01)
-        tweak_drag_f32("Yaw increase rate", &editor.tweak.postale_tuning.yaw_rate_increase, 0, 50, .01)
-        tweak_drag_f32("Yaw decrease rate", &editor.tweak.postale_tuning.yaw_rate_decrease, 0, 50, .01)
-        tweak_drag_f32("Flap response", &editor.tweak.postale_tuning.flap_response, 0, 20, .01)
-        tweak_drag_f32("Flap auto throttle", &editor.tweak.postale_tuning.flap_auto_throttle, 0, 1, .01)
-        tweak_drag_f32("Flap auto speed", &editor.tweak.postale_tuning.flap_auto_speed, 0, 200, .1)
+
+    if im.CollapsingHeader("Flight path") {
+        tweak_drag_f32("Air grip", &tuning.air_grip, 0, 1, .01)
+        tweak_drag_f32("Drift", &tuning.drift, 0, 1, .01)
+        tweak_drag_f32("Turn hold", &tuning.turn_hold, 0, 1, .01)
+        tweak_drag_f32("Climb generosity", &tuning.climb_generosity, 0, 1, .01)
+        tweak_drag_f32("Dive payoff", &tuning.dive_payoff, 0, 1, .01)
     }
-    if tweak_section("Ground and takeoff") {
-        tweak_drag_f32("Ground brake", &editor.tweak.postale_tuning.ground_brake, 0, 20, .01)
-        tweak_drag_f32("Ground coast", &editor.tweak.postale_tuning.ground_coast, 0, 20, .01)
-        tweak_drag_f32("Ground steer fast", &editor.tweak.postale_tuning.ground_steer_fast, 0, 20, .01)
-        tweak_drag_f32("Ground steer slow", &editor.tweak.postale_tuning.ground_steer_slow, 0, 20, .01)
-        tweak_drag_f32("Takeoff throttle", &editor.tweak.postale_tuning.takeoff_throttle, 0, 1, .01)
-        tweak_drag_f32("Takeoff speed scale", &editor.tweak.postale_tuning.takeoff_speed_scale, 0, 2, .01)
-        tweak_drag_f32("Takeoff pitch", &editor.tweak.postale_tuning.takeoff_pitch, 0, 1, .01)
-        tweak_drag_f32("Takeoff ground time", &editor.tweak.postale_tuning.takeoff_ground_time, 0, 2, .01)
+
+    if im.CollapsingHeader("Edge behavior") {
+        tweak_drag_f32("Hang time", &tuning.hang_time, 0, 1, .01)
+        tweak_drag_f32("Break drama", &tuning.break_drama, 0, 1, .01)
+        tweak_drag_f32("Recovery punch", &tuning.recovery_punch, 0, 1, .01)
+        tweak_drag_f32("Low-speed authority", &tuning.low_speed_authority, 0, 1, .01)
     }
-    if tweak_section("Propeller") {
-        tweak_drag_f32("Propeller base rate", &editor.tweak.postale_tuning.propeller_base_rate, 0, 50, .01)
-        tweak_drag_f32("Propeller throttle rate", &editor.tweak.postale_tuning.propeller_throttle_rate, 0, 100, .1)
+
+    if im.CollapsingHeader("Assistance") {
+        tweak_drag_f32("Steadiness", &tuning.steadiness, 0, 1, .01)
+        tweak_drag_f32("Line hold", &tuning.line_hold, 0, 1, .01)
+        tweak_drag_f32("Commitment", &tuning.commitment, 0, 1, .01)
+        tweak_drag_f32("Exit catch", &tuning.exit_catch, 0, 1, .01)
     }
-    if tweak_section("Diagnostics") {
-        im.Checkbox("Transform tester gizmo", &editor.tweak.postale_transform_tester_gizmo)
-        im.Text("Airspeed: %.2f", postale_game.selected_airspeed(&editor.postale))
+}
+
+tweak_draw_postale_shared :: proc(editor: ^Editor) {
+    runtime := &editor.tweak.postale_runtime
+    tuning := &editor.tweak.postale_tuning
+
+    if im.CollapsingHeader("Model modifiers") {
+        tweak_drag_f32("Engine output", &runtime.engine_output, 0, 1, .01)
+        tweak_drag_f32("Control authority", &runtime.control_authority, 0, 1, .01)
+        if editor.postale.flight_model == .Current_Aero {
+            tweak_drag_f32("Drag multiplier", &runtime.drag_multiplier, 0, 5, .01)
+        }
+        im.Checkbox("Controls damaged", &runtime.controls_damaged)
+    }
+
+    if im.CollapsingHeader("Landing safety") {
+        tweak_drag_f32("Ground clearance", &tuning.ground_clearance, 0, 5, .01)
+        tweak_drag_f32("Safe bank radians", &tuning.safe_bank_radians, 0, math.PI, .01)
+        tweak_drag_f32("Gear compression distance", &tuning.gear_compression_distance, .05, 2, .01)
+        tweak_drag_f32("Gear damping ratio", &tuning.gear_damping_ratio, 0, 2, .01)
+        tweak_drag_f32("Smooth landing load", &tuning.smooth_landing_load, 1, 10, .1)
+        tweak_drag_f32("Hard landing load", &tuning.hard_landing_load, 1, 10, .1)
+        tweak_drag_f32("Ultimate landing load", &tuning.ultimate_landing_load, 1, 15, .1)
+        tweak_drag_f32("Safe exit speed", &tuning.safe_exit_speed, 0, 20, .1)
+    }
+
+    if im.CollapsingHeader("Input shaping") {
+        tweak_drag_f32("Throttle up rate", &tuning.throttle_up_rate, 0, 20, .01)
+        tweak_drag_f32("Throttle down rate", &tuning.throttle_down_rate, 0, 20, .01)
+        tweak_drag_f32("Pitch increase rate", &tuning.pitch_rate_increase, 0, 50, .01)
+        tweak_drag_f32("Pitch decrease rate", &tuning.pitch_rate_decrease, 0, 50, .01)
+        tweak_drag_f32("Roll increase rate", &tuning.roll_rate_increase, 0, 50, .01)
+        tweak_drag_f32("Roll decrease rate", &tuning.roll_rate_decrease, 0, 50, .01)
+        tweak_drag_f32("Yaw increase rate", &tuning.yaw_rate_increase, 0, 50, .01)
+        tweak_drag_f32("Yaw decrease rate", &tuning.yaw_rate_decrease, 0, 50, .01)
+        tweak_drag_f32("Flap response", &tuning.flap_response, 0, 20, .01)
+        tweak_drag_f32("Flap auto throttle", &tuning.flap_auto_throttle, 0, 1, .01)
+        tweak_drag_f32("Flap auto speed", &tuning.flap_auto_speed, 0, 200, .1)
+    }
+
+    if im.CollapsingHeader("Ground and takeoff") {
+        tweak_drag_f32("Ground brake", &tuning.ground_brake, 0, 20, .01)
+        tweak_drag_f32("Ground coast", &tuning.ground_coast, 0, 20, .01)
+        tweak_drag_f32("Ground steer fast", &tuning.ground_steer_fast, 0, 20, .01)
+        tweak_drag_f32("Ground steer slow", &tuning.ground_steer_slow, 0, 20, .01)
+        tweak_drag_f32("Takeoff throttle", &tuning.takeoff_throttle, 0, 1, .01)
+        tweak_drag_f32("Takeoff speed scale", &tuning.takeoff_speed_scale, 0, 2, .01)
+        tweak_drag_f32("Takeoff pitch", &tuning.takeoff_pitch, 0, 1, .01)
+        tweak_drag_f32("Takeoff ground time", &tuning.takeoff_ground_time, 0, 2, .01)
+    }
+
+    if im.CollapsingHeader("Propeller presentation") {
+        tweak_drag_f32("Propeller base rate", &tuning.propeller_base_rate, 0, 50, .01)
+        tweak_drag_f32("Propeller throttle rate", &tuning.propeller_throttle_rate, 0, 100, .1)
+    }
+}
+
+tweak_draw_postale_diagnostics :: proc(editor: ^Editor) {
+    im.SeparatorText("Diagnostics")
+    switch editor.postale.flight_model {
+    case .Current_Aero:
+        im.Text("Airspeed: %.2f", editor.postale.telemetry.airspeed)
         im.Text("AoA: %.2f deg", editor.postale.telemetry.angle_of_attack_degrees)
         im.Text("Stalling: %s", editor.postale.telemetry.is_stalling ? "yes" : "no")
+    case .Ace_Arcade:
+        telemetry := &editor.postale.ace_telemetry
+        im.Text("Pace: %.2f", telemetry.pace)
+        im.Text("Energy: %.2f", telemetry.energy)
+        im.Text("Track grip: %.2f", telemetry.track_grip)
+        im.Text("Attitude/track angle: %.2f rad", telemetry.attitude_track_angle)
+        im.TextUnformatted(fmt.ctprintf("Edge: %v", telemetry.edge_state))
     }
+}
+
+tweak_draw_postale :: proc(editor: ^Editor) {
+    im.SeparatorText("Flight model")
+    if im.RadioButton("Current Aero", editor.postale.flight_model == .Current_Aero) {
+        editor.postale.flight_model = .Current_Aero
+    }
+    im.SameLine()
+    if im.RadioButton("Ace Arcade", editor.postale.flight_model == .Ace_Arcade) {
+        editor.postale.flight_model = .Ace_Arcade
+        editor.postale.ace_runtime = flight.default_ace_runtime(editor.postale.body, editor.postale.ace_tuning)
+        editor.postale.ace_runtime.energy = .75
+        editor.postale.ace_telemetry = {
+            pace       = linalg.length(editor.postale.body.velocity),
+            energy     = editor.postale.ace_runtime.energy,
+            edge_state = editor.postale.ace_runtime.edge_state,
+        }
+    }
+    if im.Button("Reset active aircraft") do aircraft_reset(editor)
+
+    im.SeparatorText("Selected model")
+    switch editor.postale.flight_model {
+    case .Current_Aero:
+        tweak_draw_postale_current_aero(editor)
+    case .Ace_Arcade:
+        tweak_draw_postale_ace_arcade(editor)
+    }
+
+    im.SeparatorText("Shared Postale")
+    tweak_draw_postale_shared(editor)
+    tweak_draw_postale_diagnostics(editor)
 }
 
 tweak_draw_presentation :: proc(editor: ^Editor) {
