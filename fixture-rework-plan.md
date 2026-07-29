@@ -9670,6 +9670,131 @@ M4R6B1 is accepted. The official exclusive installer created only
 - no formatter touched the generated file, and no runtime wrapper, registry
   change, v5 manifest/history package, binary, or temporary artifact exists.
 
+### M4R6B2A — Resolve the pure v4→5 structural migration
+
+Implement and prove the allocation-free historical-v4-to-live transformation.
+Keep runtime payload decoding, chained-source projection, registry dispatch, and
+schema activation out of this slice.
+
+1. Resolve the 17 scaffold entries explicitly:
+   - mark the seven new durable fields and the four consumed legacy fields
+     `.Scripted`;
+   - mark the field-order change and the five derived/session field or type
+     removals `.Automatic`;
+   - leave no `.Unresolved` entry. The result is 11 scripted and six automatic
+     resolutions.
+2. Preflight all historical values used by the conversion before mutating the
+   tentative fixture:
+   - Postale, Libellula, and Rondine body angular velocities must be finite;
+   - those three body bases plus both Postale and Libellula spawn bases must
+     contain only finite components, unit axes within `0.001`, pairwise
+     orthogonality within `0.001`, and right-handed
+     `abs(dot(cross(forward, up), right) - 1) <= 0.001`;
+   - lock both accepted boundary values and just-outside failures in tests.
+   - one historical compatibility exception is required: v3→4 deliberately
+     created an entirely zeroed Rondine with `vehicle.locked = true`,
+     `rondine_visible = false`, and a non-Rondine active aircraft. Accept only
+     that exact inactive zero body and canonicalize its orientation to
+     identity. Any active-Rondine selector, visible, unlocked, or partially
+     nonzero near-miss with a zero/malformed basis must fail.
+3. After all preflight succeeds, copy each historical world-space
+   `angular_velocity` to live `angular_velocity_world`, convert every validated
+   body basis with `flight.orientation_from_basis`, and convert both spawn
+   bases to spawn orientations.
+4. Initialize Postale's new durable state deterministically:
+   `flight_model = .Current_Aero`, `ace_tuning = postale.ace_tuning_preset()`,
+   and `ace_runtime = flight.default_ace_runtime(body, ace_tuning)` after body
+   orientation is installed. Pin persistent runtime fields at energy `0`,
+   edge state `.Free`, and edge seconds `0`; `local_rate` is derived only.
+5. Preserve every field already decoded by name. Dropped telemetry,
+   `camera_target_lock`, and removed supporting types require no target
+   mutation.
+6. Add focused structural tests for all three bodies and both spawns, the exact
+   inactive-zero Rondine compatibility case and hostile near-misses, exact
+   defaults, unrelated-field preservation, all hostile basis/angular families,
+   preflight-all/apply-all atomicity, resolution counts/IDs, nil target, and a
+   fail-on-first-allocation allocator proving the migration step performs zero
+   allocations.
+
+Only the resolved migration source and its focused structural test may change.
+Do not add the v4→5 runtime wrapper, production registry entry, v5
+manifest/history package, schema-version bump, or codec dispatch.
+
+Acceptance requires the structural tests three consecutive times with zero
+leaks, scaffold check, focused policy/diff/scaffold tests, `make check`,
+histories v1–v4 and all frozen hashes unchanged, no binary or v5 artifact, and
+the full suite with only the expected frozen-v4/live-schema mismatch.
+
+M4R6B2A is accepted. The resolved migration is 321 lines with SHA-256
+`9db4ccdf67f0f488c5e4bf92b55b2ab9483001cd71284354851abf9ab07a2097`;
+its 489-line structural proof has SHA-256
+`6bc9d12225533f08ecfb2088ab4592641fab6c89592632c37c081e6e7288d5fb`.
+The exact three focused tests pass three post-format runs in 14.885s, 13.009s,
+and 12.950s with zero leaks. `make fixture-migration-test` passes 9/9;
+policy/diff/scaffold passes 3/3; the 4→5 scaffold check, `make check`, and
+history checks v1–v4 pass. All frozen hashes remain exact. The full gate passes
+Rondine 19/19 and 752/753 main tests with only the expected
+`fixture_schema_production_graph_matches_frozen_v4` mismatch and no leak
+warnings. Independent review accepted the active-Rondine guard, adjacent-f32
+tolerance witnesses, full atomic snapshots, and allocator-matched cleanup. No
+binary, temporary/probe, v5 schema, v5 history, runtime wrapper, registry, or
+codec artifact exists.
+
+### M4R6B2B — Add the unregistered v4→5 runtime wrapper and full chain proof
+
+Wrap the pure structural step in owned historical decoding and prove direct-v4
+and chained-v1/v2/v3 execution. Keep the production registry at its current
+three steps until schema v5 is activated; use a test-local four-step registry.
+
+1. Add `fixture_migration_step_v0004_to_v0005` with the existing step-context
+   ABI. Reject nil context/target, source versions outside 1–4, targets below
+   five, any step endpoints other than 4→5, non-dynamic-arena transaction
+   allocators, and invalid backing arenas before allocation or mutation.
+2. Create a disjoint historical arena from the transaction arena's block
+   allocator and destroy it on every path.
+3. For direct v4 input, exact-decode the original payload into
+   `fixture_v0004.Fixture` and call the pure core.
+4. For chained v1/v2/v3 input:
+   - exact-decode the original frozen source first, so a projected tentative
+     fixture can never authenticate malformed or wrong-version bytes;
+   - encode the already migrated tentative live fixture and non-exact-decode it
+     into frozen v4 as the common named-field projection;
+   - overlay Postale and Libellula body `angular_velocity`/`basis` and both
+     `spawn_basis` values from the exact original source. These names were
+     replaced in live schema and cannot be recovered from the projected
+     tentative fixture;
+   - synthesize the exact inactive-zero Rondine state introduced by v3→4:
+     hidden, locked, non-Rondine active selector, zero body/basis. Do not invent
+     an older-source Rondine pose.
+5. Classify exact-source failures as `.Historical_Decode`, projection
+   encode/decode failures as `.Step_Failure`, and allocator failures as
+   `.Out_Of_Memory`. Dispose every portable error and temporary payload exactly
+   once.
+6. Add a test-local registry containing 1→2, 2→3, 3→4, and the new 4→5 wrapper.
+   Do not change `fixture_migration_production_steps` or
+   `fixture_migration_production_registry`.
+7. Prove direct v4 and complete v1→5, v2→5, and v3→5 chains with distinct
+   historical angular velocities and bases. Pin all five derived orientations,
+   three world angular velocities, Postale defaults, preservation of unrelated
+   state, and canonical zero Rondine for pre-v4 sources.
+8. Prove malformed exact payloads, invalid contexts/endpoints/allocators,
+   hostile historical bases/angular values, projection failures, and every
+   allocation failure. All failures must publish no result, preserve caller
+   ownership, report the expected kind/change ID, dispose twice safely where
+   public disposal is involved, and leave zero outstanding allocations.
+9. Prove the production registry is still exactly three steps ending at v4 and
+   that production codec behavior is unchanged before activation.
+
+Only the new runtime wrapper, its focused tests, and this plan may change. Do
+not change the pure B2A core, production registry, codec dispatch, schema
+version, v5 manifest/history package, or any frozen artifact.
+
+Acceptance requires focused direct/chained/runtime-hostile tests three
+consecutive times, the existing migration suite, codec tests, scaffold check,
+focused policy/diff/scaffold tests, `make check`, histories v1–v4, all frozen
+hashes unchanged, no v5 artifact or binary, and the full suite with only the
+expected frozen-v4/live-schema mismatch.
+
 ## Milestone 4D — Install owned state and rebuild runtime resources
 
 Decode into temporary owned state, validate it, preserve root runtime
