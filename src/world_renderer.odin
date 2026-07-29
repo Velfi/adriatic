@@ -3595,9 +3595,6 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
     if !ceremonial_roof && roof_style == .Parapet {
         roof_color := rl.Color{229, 226, 211, 255}
         chimney_color := rl.Color{221, 218, 203, 255}
-        if world_renderer.editor != nil && world_renderer.editor.capture_world_only {
-            chimney_color = {0, 255, 255, 255}
-        }
         chimney_width, chimney_height := f32(1.1), f32(1.3)
         if identity.region != .Aegean {
             roof_bytes := architecture.architecture_roof_color(structure.seed)
@@ -4325,7 +4322,7 @@ world_architecture_mass :: proc(
         panel_x, panel_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
-            50,
+            0,
             structure.depth * .5 + .07,
             structure.rotation,
         )
