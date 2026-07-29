@@ -2,6 +2,7 @@ package main
 
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
+import fountains "../packages/fountains"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:fmt"
@@ -74,6 +75,7 @@ Settlement_Site_Kind :: enum u8 {
     Ordinary,
     Landmark,
     Park,
+    Ruin,
     Rejected,
 }
 
@@ -325,15 +327,20 @@ Settlement_Block :: struct {
 }
 
 Settlement_Site :: struct {
-    structure:     terrain.Structure,
-    parcel:        architecture.City_Parcel,
-    kind:          Settlement_Site_Kind,
-    tissue:        Settlement_Tissue,
-    density:       f32,
-    attached:      bool,
-    accepted:      bool,
-    landmark_kind: Settlement_Landmark_Kind,
-    purpose:       Settlement_Building_Purpose,
+    structure:           terrain.Structure,
+    parcel:              architecture.City_Parcel,
+    kind:                Settlement_Site_Kind,
+    tissue:              Settlement_Tissue,
+    density:             f32,
+    attached:            bool,
+    accepted:            bool,
+    landmark_kind:       Settlement_Landmark_Kind,
+    purpose:             Settlement_Building_Purpose,
+    fountain_style:      fountains.Style,
+    fountain_radius:     f32,
+    fountain_jet_count:  int,
+    fountain_jet_height: f32,
+    fountain_enabled:    bool,
 }
 
 Settlement_Terrain_Edit :: struct {
@@ -357,45 +364,45 @@ Settlement_Scalar_Stats :: struct {
 }
 
 Settlement_Metrics :: struct {
-    route_length:              Settlement_Scalar_Stats,
-    route_width:               Settlement_Scalar_Stats,
-    route_grade:               Settlement_Scalar_Stats,
-    route_length_by_class:     [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
-    route_width_by_class:      [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
-    intersection_spacing:      Settlement_Scalar_Stats,
-    dead_end_frontage:         Settlement_Scalar_Stats,
-    block_short_side:          Settlement_Scalar_Stats,
-    block_long_side:           Settlement_Scalar_Stats,
-    block_area:                Settlement_Scalar_Stats,
-    block_aspect:              Settlement_Scalar_Stats,
-    block_irregularity:        Settlement_Scalar_Stats,
-    parcel_frontage:           Settlement_Scalar_Stats,
-    parcel_depth:              Settlement_Scalar_Stats,
-    building_height:           Settlement_Scalar_Stats,
-    building_footprint:        Settlement_Scalar_Stats,
-    building_floors:           Settlement_Scalar_Stats,
-    network_density:           f32,
-    road_badness:              f32,
-    attached_share:            f32,
-    density_band_count:        [3]int,
-    wide_route_share:          f32,
-    minor_route_share:         f32,
-    fabric_aspect_ratio:       f32,
-    fabric_quadrants:          int,
-    drivable_dead_end_share:   f32,
-    degree_four_plus_count:    int,
-    paved_length_per_building: f32,
+    route_length:               Settlement_Scalar_Stats,
+    route_width:                Settlement_Scalar_Stats,
+    route_grade:                Settlement_Scalar_Stats,
+    route_length_by_class:      [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
+    route_width_by_class:       [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
+    intersection_spacing:       Settlement_Scalar_Stats,
+    dead_end_frontage:          Settlement_Scalar_Stats,
+    block_short_side:           Settlement_Scalar_Stats,
+    block_long_side:            Settlement_Scalar_Stats,
+    block_area:                 Settlement_Scalar_Stats,
+    block_aspect:               Settlement_Scalar_Stats,
+    block_irregularity:         Settlement_Scalar_Stats,
+    parcel_frontage:            Settlement_Scalar_Stats,
+    parcel_depth:               Settlement_Scalar_Stats,
+    building_height:            Settlement_Scalar_Stats,
+    building_footprint:         Settlement_Scalar_Stats,
+    building_floors:            Settlement_Scalar_Stats,
+    network_density:            f32,
+    road_badness:               f32,
+    attached_share:             f32,
+    density_band_count:         [3]int,
+    wide_route_share:           f32,
+    minor_route_share:          f32,
+    fabric_aspect_ratio:        f32,
+    fabric_quadrants:           int,
+    drivable_dead_end_share:    f32,
+    degree_four_plus_count:     int,
+    paved_length_per_building:  f32,
     public_paving_per_building: f32,
-    access_repair_share:       f32,
-    public_route_count:        int,
-    public_component_count:    int,
-    public_cycle_count:        int,
-    public_max_degree:         int,
-    landmark_count:            int,
-    park_count:                int,
-    rejected_count:            int,
-    cut_volume:                f32,
-    fill_volume:               f32,
+    access_repair_share:        f32,
+    public_route_count:         int,
+    public_component_count:     int,
+    public_cycle_count:         int,
+    public_max_degree:          int,
+    landmark_count:             int,
+    park_count:                 int,
+    rejected_count:             int,
+    cut_volume:                 f32,
+    fill_volume:                f32,
 }
 
 Settlement_Acceptance_Failure :: enum {
@@ -599,14 +606,22 @@ settlement_route_width_sample :: proc(rng: ^Settlement_Rng, class: Settlement_Ro
 // back into the landscape without requiring a runtime traffic simulation.
 settlement_route_use_intensity :: proc(class: Settlement_Route_Class) -> f32 {
     switch class {
-    case .Civic_Spine: return .96
-    case .Waterfront:  return .82
-    case .Connector:   return .78
-    case .Street:      return .64
-    case .Lane:        return .38
-    case .Ridge:       return .34
-    case .Alley:       return .16
-    case .Stair:       return .08
+    case .Civic_Spine:
+        return .96
+    case .Waterfront:
+        return .82
+    case .Connector:
+        return .78
+    case .Street:
+        return .64
+    case .Lane:
+        return .38
+    case .Ridge:
+        return .34
+    case .Alley:
+        return .16
+    case .Stair:
+        return .08
     }
     return 1
 }
@@ -748,7 +763,7 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
             plan.metrics.landmark_count += 1
         } else if site.kind == .Park {
             plan.metrics.park_count += 1
-        } else {
+        } else if site.kind == .Ordinary {
             append(&frontages, site.parcel.frontage_width)
             append(&depths, site.parcel.depth)
             append(&heights, site.structure.height)
@@ -928,10 +943,10 @@ settlement_plan_acceptance_failure :: proc(
     if !settlement_plan_required_routes_connected(plan) do return .Disconnected_Anchors
     if plan.request.scale == .Village &&
        (plan.metrics.public_component_count != 1 ||
-        plan.metrics.public_cycle_count > 0 ||
-        plan.metrics.public_max_degree > 3 ||
-        plan.metrics.public_route_count > 4 ||
-        plan.metrics.public_paving_per_building > 18) {
+               plan.metrics.public_cycle_count > 0 ||
+               plan.metrics.public_max_degree > 3 ||
+               plan.metrics.public_route_count > 4 ||
+               plan.metrics.public_paving_per_building > 18) {
         return .Road_Topology
     }
     if plan.access_connected_count < plan.access_required_count do return .Building_Access

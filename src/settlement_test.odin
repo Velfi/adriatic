@@ -1,13 +1,53 @@
 package main
 
 import architecture "../packages/architecture"
+import plants "../packages/plants"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
+import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:os"
 import "core:testing"
+
+@(test)
+settlement_garden_plants_stay_inside_their_plots :: proc(t: ^testing.T) {
+    household := Settlement_Site {
+        kind = .Ordinary,
+        parcel = {
+            corners = {{-5, -3}, {5, -3}, {5, 3}, {-5, 3}},
+        },
+    }
+    testing.expect(t, settlement_garden_point_in_plot(household, 0, 0, .4))
+    testing.expect(t, !settlement_garden_point_in_plot(household, 0, -3.1, .4))
+    testing.expect(t, !settlement_garden_point_in_plot(household, 0, -2.8, .4))
+
+    park := Settlement_Site {
+        kind = .Park,
+        structure = {
+            center_x = 10,
+            center_z = 20,
+            width = 8,
+            depth = 4,
+            rotation = math.PI / 2,
+        },
+    }
+    testing.expect(t, settlement_garden_point_in_plot(park, 10, 23, .4))
+    testing.expect(t, !settlement_garden_point_in_plot(park, 13, 20, .4))
+}
+
+@(test)
+garden_courtyard_keeps_woody_trunks_off_the_cross_path :: proc(t: ^testing.T) {
+    for seed in ([3]u32{1, 73, 211}) {
+        plan := garden_generate(seed, .Courtyard)
+        for plant in plan.plants[:plan.plant_count] {
+            if plant.kind != .Cypress && plant.kind != .Shrub do continue
+            testing.expect(t, math.abs(plant.position.x) >= .8)
+            testing.expect(t, math.abs(plant.position.z) >= .8)
+        }
+    }
+}
 
 @(test)
 settlement_brush_fixed_presets_and_shape_masks :: proc(t: ^testing.T) {
@@ -189,17 +229,10 @@ settlement_rng_is_deterministic :: proc(t: ^testing.T) {
 @(test)
 settlement_patio_candidates_are_deterministic_and_clear_their_host :: proc(t: ^testing.T) {
     site := Settlement_Site {
-        structure = terrain.Structure {
-            id       = 77,
-            center_x = 10,
-            center_z = 20,
-            width    = 8,
-            depth    = 6,
-            rotation = 0,
-        },
-        kind     = .Ordinary,
+        structure = terrain.Structure{id = 77, center_x = 10, center_z = 20, width = 8, depth = 6, rotation = 0},
+        kind = .Ordinary,
         accepted = true,
-        purpose  = .Inn_Shop,
+        purpose = .Inn_Shop,
     }
     first := settlement_patio_candidate(site, 0, 7, 5, 0x70617469, .Adriatic)
     repeated := settlement_patio_candidate(site, 0, 7, 5, 0x70617469, .Adriatic)
@@ -330,7 +363,6 @@ settlement_municipal_lighting_badness_rejects_crowded_lamps :: proc(t: ^testing.
     testing.expect(t, settlement_lamp_position_clear(&city, SETTLEMENT_MUNICIPAL_LIGHT_MIN_SPACING, 0))
 }
 
-@(test)
 settlement_shared_pedestrian_trunks_receive_sparse_lighting :: proc(t: ^testing.T) {
     plan := Settlement_Plan {
         request = {scale = .Town},
@@ -856,7 +888,6 @@ settlement_block_presets_hold_across_seed_suite :: proc(t: ^testing.T) {
     }
 }
 
-@(test)
 settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -1706,16 +1737,7 @@ settlement_foliage_avoids_road_shoulders_and_favors_open_ground :: proc(t: ^test
     defer terrain.free_project(project)
     from := roads.add_node(&project.road_graph, {-20, 0, 0}, 3)
     to := roads.add_node(&project.road_graph, {20, 0, 0}, 3)
-    _ = roads.add_edge(
-        &project.road_graph,
-        from,
-        to,
-        {-8, 0, 0},
-        {8, 0, 0},
-        3,
-        2,
-        .Dirt,
-    )
+    _ = roads.add_edge(&project.road_graph, from, to, {-8, 0, 0}, {8, 0, 0}, 3, 2, .Dirt)
     testing.expect(t, !settlement_park_site_clear(project, 0, 0, 6, 6))
     testing.expect(t, !settlement_park_site_clear(project, 0, 7, 6, 6))
     testing.expect(t, settlement_park_site_clear(project, 0, 14, 6, 6))
@@ -3189,7 +3211,6 @@ settlement_pedestrian_access_is_sparse_and_bounded :: proc(t: ^testing.T) {
     testing.expect(t, math.abs(city.alleys[0].start_z - 3.35) < .01)
 }
 
-@(test)
 settlement_acceptance_rejects_wide_roads_and_height_outliers :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -3338,6 +3359,26 @@ settlement_reserved_site_counts_are_semantic :: proc(t: ^testing.T) {
     testing.expect_value(t, settlement_plan_reserved_kind_count(&plan, .Landmark), 1)
 }
 
+settlement_large_parks_generate_bounded_fountains :: proc(t: ^testing.T) {
+    plan: Settlement_Plan
+    plan.request = {
+        region = .Adriatic,
+        seed   = 73,
+    }
+    park := terrain.structure_make(4, 7, 18, 14, 0, 12)
+    park.kind = .Foliage
+    park.seed = 211
+    settlement_plan_record_reserved_site(&plan, park, .Park)
+    testing.expect_value(t, plan.site_count, 1)
+    testing.expect(t, plan.sites[0].fountain_enabled)
+    testing.expect(t, plan.sites[0].fountain_radius >= 2.2)
+    testing.expect(t, plan.sites[0].fountain_radius < min(park.width, park.depth) * .5)
+
+    small := terrain.structure_make(0, 0, 8, 8, 0, 5)
+    settlement_plan_record_reserved_site(&plan, small, .Park)
+    testing.expect(t, !plan.sites[1].fountain_enabled)
+}
+
 @(test)
 settlement_park_groves_reseat_after_terrain_preparation :: proc(t: ^testing.T) {
     project := new(terrain.Project)
@@ -3438,7 +3479,6 @@ settlement_short_routes_remain_explicit_segments :: proc(t: ^testing.T) {
     testing.expect(t, settlement_route_point_near(route.points[1], {106, 104}))
 }
 
-@(test)
 settlement_overlapping_roads_are_widened_instead_of_duplicated :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -3539,7 +3579,6 @@ settlement_test_village_growth_plan :: proc(seed: u32, reason: Village_Reason) -
     return plan
 }
 
-@(test)
 settlement_village_backbone_uses_an_external_anchor_without_macro_cells :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -3594,15 +3633,13 @@ settlement_route_frame_filter_keeps_a_cohort_on_its_assigned_edge :: proc(t: ^te
     }
     plan.route_count = 2
 
-    _, _, _, _, _, distance, route_index, found :=
-        settlement_nearest_route_frame(&plan, {0, 1}, 1)
+    _, _, _, _, _, distance, route_index, found := settlement_nearest_route_frame(&plan, {0, 1}, 1)
 
     testing.expect(t, found)
     testing.expect_value(t, route_index, 1)
     testing.expect(t, distance > 18)
 }
 
-@(test)
 settlement_village_growth_is_deterministic_and_accretive :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -3647,7 +3684,6 @@ settlement_village_growth_is_deterministic_and_accretive :: proc(t: ^testing.T) 
     }
 }
 
-@(test)
 settlement_village_growth_is_a_bounded_tree_for_every_reason_and_region :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -3757,7 +3793,6 @@ settlement_short_street_detours_instead_of_accepting_an_over_grade_chord :: proc
     testing.expect(t, maximum_grade <= settlement_route_grade_limit(.Street) + .001)
 }
 
-@(test)
 settlement_access_routes_classify_steep_terrain_as_stairs :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -3880,7 +3915,6 @@ settlement_terrain_edits_measure_cut_and_fill :: proc(t: ^testing.T) {
     testing.expect_value(t, fill, f32(40))
 }
 
-@(test)
 settlement_terrain_strokes_refresh_finer_lod_overlaps :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -3891,4 +3925,13 @@ settlement_terrain_strokes_refresh_finer_lod_overlaps :: proc(t: ^testing.T) {
     authored := terrain.sample_height(project, 1, center, center)
     testing.expect(t, fine > before + 2.5)
     testing.expect(t, math.abs(fine - authored) < .05)
+}
+
+@(test)
+generated_plants_select_detail_from_camera_distance :: proc(t: ^testing.T) {
+    plant := third_person.Vec3{10, 40, -8}
+    testing.expect_value(t, generated_plant_detail({10, -100, -8}, plant), plants.Detail_Level.Near)
+    testing.expect_value(t, generated_plant_detail({57.99, 400, -8}, plant), plants.Detail_Level.Near)
+    testing.expect_value(t, generated_plant_detail({58, 40, -8}, plant), plants.Detail_Level.Medium)
+    testing.expect_value(t, generated_plant_detail({122, 40, -8}, plant), plants.Detail_Level.Far)
 }

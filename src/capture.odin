@@ -33,12 +33,17 @@ Capture_Kind :: enum {
     Car_Generator_Lab,
     Patio_Lab,
     Garden_Lab,
+    Plant_Generator_Lab,
+    Leaf_Generator_Lab,
+    Flower_Generator_Lab,
+    Fountain_Generator_Lab,
     Lighthouse_Lab,
     Mouse_Gait_Lab,
     Rondine_Movement_Lab,
     Markov_Wreck,
     Markov_Farmland,
     Markov_Marina,
+    Ruins_Lab,
     Markov_Town,
     Markov_City,
     Markov_Village,
@@ -150,6 +155,92 @@ CAPTURE_SKY_TARGETS := [?]string{"sun", "sun-air", "sun-away", "moon", "stars"}
 CAPTURE_MOUSE_GAIT_TARGETS := [?]string{"stop-spray"}
 CAPTURE_PATIO_TARGETS := [?]string{"coastal", "courtyard", "evening"}
 CAPTURE_GARDEN_TARGETS := [?]string{"courtyard", "kitchen", "wild", "alternate"}
+CAPTURE_PLANT_GENERATOR_TARGETS := [?]string {
+    "gallery",
+    "olive",
+    "olive-71",
+    "olive-79",
+    "olive-young",
+    "olive-growing",
+    "olive-medium",
+    "olive-far",
+    "olive-trunk",
+    "cypress",
+    "cypress-seed-<seed>",
+    "cypress-cones",
+    "cypress-base",
+    "cypress-young",
+    "cypress-growing",
+    "cypress-medium",
+    "cypress-far",
+    "grapevine",
+    "fig",
+    "lemon",
+    "lemon-seed-<seed>",
+    "lemon-fruit",
+    "lemon-young",
+    "lemon-medium",
+    "lemon-far",
+    "pomegranate",
+    "almond",
+    "oleander",
+    "bougainvillea",
+    "rosemary",
+    "stone-pine",
+    "bay-laurel",
+    "carob",
+    "strawberry-tree",
+    "myrtle",
+    "mastic",
+    "lavender",
+    "thyme",
+    "sage",
+    "prickly-pear",
+    "pelargonium",
+    "pelargonium-lifecycle-0",
+    "pelargonium-lifecycle-1",
+    "pelargonium-lifecycle-2",
+    "pelargonium-lifecycle-3",
+    "pelargonium-lifecycle-4",
+    "pelargonium-lifecycle-5",
+    "pelargonium-lifecycle-6",
+    "pelargonium-lifecycle-7",
+    "pelargonium-lifecycle-8",
+    "pelargonium-lifecycle-9",
+    "pelargonium-lifecycle-10",
+    "pelargonium-lifecycle-11",
+    "pelargonium-lifecycle-12",
+    "pelargonium-lifecycle-13",
+    "pelargonium-lifecycle-14",
+    "pelargonium-lifecycle-15",
+    "pelargonium-lifecycle100-<0..99>",
+    "young",
+    "medium",
+    "far",
+    "constrained",
+}
+CAPTURE_FLOWER_GENERATOR_TARGETS := [?]string {
+    "gallery",
+    "lifecycle",
+    "rounded",
+    "pointed",
+    "notched",
+    "strap",
+    "ovate",
+    "spatulate",
+    "lanceolate",
+    "spiral",
+    "double",
+    "bud",
+    "opening",
+    "half-open",
+    "bloom",
+    "fruit-set",
+    "immature",
+    "ripening",
+    "ripe",
+}
+CAPTURE_FOUNTAIN_GENERATOR_TARGETS := [?]string{"tiered", "bowl", "courtyard"}
 CAPTURE_LIGHTHOUSE_TARGETS := [?]string {
     "adriatic",
     "aegean",
@@ -175,6 +266,12 @@ capture_targets :: proc(kind: Capture_Kind) -> []string {
         return CAPTURE_PATIO_TARGETS[:]
     case .Garden_Lab:
         return CAPTURE_GARDEN_TARGETS[:]
+    case .Plant_Generator_Lab:
+        return CAPTURE_PLANT_GENERATOR_TARGETS[:]
+    case .Flower_Generator_Lab:
+        return CAPTURE_FLOWER_GENERATOR_TARGETS[:]
+    case .Fountain_Generator_Lab:
+        return CAPTURE_FOUNTAIN_GENERATOR_TARGETS[:]
     case .Lighthouse_Lab:
         return CAPTURE_LIGHTHOUSE_TARGETS[:]
     case .Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night:
@@ -247,6 +344,20 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Patio_Lab, true
     case "garden-lab":
         return .Garden_Lab, true
+    case "plant-generator":
+        return .Plant_Generator_Lab, true
+    case "plant-generator-lab":
+        return .Plant_Generator_Lab, true
+    case "leaf-generator":
+        return .Leaf_Generator_Lab, true
+    case "leaf-generator-lab":
+        return .Leaf_Generator_Lab, true
+    case "flower-generator":
+        return .Flower_Generator_Lab, true
+    case "flower-generator-lab":
+        return .Flower_Generator_Lab, true
+    case "fountain-generator", "fountain-generator-lab":
+        return .Fountain_Generator_Lab, true
     case "lighthouse-lab":
         return .Lighthouse_Lab, true
     case "mouse-gait-lab":
@@ -259,6 +370,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Markov_Marina, true
     case "markov-farmland":
         return .Markov_Farmland, true
+    case "ruins", "ruins-lab":
+        return .Ruins_Lab, true
     case "markov-town":
         return .Markov_Town, true
     case "markov-city":

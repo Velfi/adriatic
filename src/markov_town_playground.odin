@@ -585,8 +585,10 @@ settlement_lab_configure :: proc(
         editor.settlement_plan.macro_cell_count += 1
     }
     if profile.scale == .Village {
-        editor.settlement_plan.village_reason =
-            settlement_village_reason_pick(&editor.settlement_plan, &editor.project)
+        editor.settlement_plan.village_reason = settlement_village_reason_pick(
+            &editor.settlement_plan,
+            &editor.project,
+        )
     }
     settlement_plan_build_macro_routes(&editor.settlement_plan, &editor.project, &settlement_rng)
     settlement_plan_split_route_intersections(&editor.settlement_plan)
@@ -614,6 +616,10 @@ settlement_lab_configure :: proc(
             )
         }
     }
+    // Ruins are inherited anchors in the urban fabric. Reserve them before
+    // civic landmarks and ordinary parcels so later growth routes around the
+    // archaeological footprint instead of painting ruins over finished lots.
+    _ = settlement_ruins_generate(&editor.settlement_plan, &editor.project)
     // Civic anchors occupy meaningful positions: historic core first, then
     // low harbor ground, high sacred/fortified ground, and outer districts.
     landmark_target := 1

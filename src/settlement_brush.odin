@@ -2,6 +2,7 @@ package main
 
 import architecture "../packages/architecture"
 import roads "../packages/roads"
+import ruins "../packages/ruins"
 import terrain "../packages/terrain"
 import "core:fmt"
 import "core:math"
@@ -698,6 +699,13 @@ settlement_brush_ensure_anchors :: proc(
 ) {
     if plan == nil || project == nil || piece.erased do return
     empty_city: architecture.City_Plan
+    if settlement_brush_component_reserved_count(plan, piece.component_id, .Ruin) == 0 {
+        span := settlement_brush_preset_span(piece.preset)
+        tangent := [2]f32{math.cos(piece.rotation), math.sin(piece.rotation)}
+        point := piece.center - tangent * span * .34
+        mode := piece.preset == .Small ? ruins.Mode.Ruin : .Complex
+        _ = settlement_ruin_try_place(plan, project, point, piece.seed ~ 0x5255494e, mode)
+    }
     landmark_count := settlement_brush_component_reserved_count(plan, piece.component_id, .Landmark)
     for ordinal in landmark_count ..< plan.program.landmarks.minimum {
         placed := false

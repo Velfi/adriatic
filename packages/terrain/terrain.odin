@@ -74,6 +74,7 @@ Formation_Kind :: enum {
     Cliff,
     Foliage,
     Architecture,
+    Ruins,
 }
 
 LEGACY_STRUCTURE_CAPACITY :: 256
@@ -574,12 +575,7 @@ add_default_runways :: proc(project: ^Project) -> bool {
     return true
 }
 
-terrain_erode_default_level :: proc(
-    data: ^Clipmap_Level,
-    scratch: []f32,
-    half_extent: f32,
-    iterations: int = 2,
-) {
+terrain_erode_default_level :: proc(data: ^Clipmap_Level, scratch: []f32, half_extent: f32, iterations: int = 2) {
     if data == nil || len(scratch) < SAMPLES_PER_LEVEL || iterations <= 0 do return
     constraints := default_terrain_constraints(half_extent)
     talus := .32 + data.cell_size * .035
@@ -591,16 +587,14 @@ terrain_erode_default_level :: proc(
                 index := sample_index(x, z)
                 height := scratch[index]
                 neighbor_average :=
-                    (
-                        scratch[sample_index(x - 1, z)] +
+                    (scratch[sample_index(x - 1, z)] +
                         scratch[sample_index(x + 1, z)] +
                         scratch[sample_index(x, z - 1)] +
                         scratch[sample_index(x, z + 1)] +
                         scratch[sample_index(x - 1, z - 1)] +
                         scratch[sample_index(x + 1, z - 1)] +
                         scratch[sample_index(x - 1, z + 1)] +
-                        scratch[sample_index(x + 1, z + 1)]
-                    ) /
+                        scratch[sample_index(x + 1, z + 1)]) /
                     8
                 delta := neighbor_average - height
                 excess := math.abs(delta) - talus
@@ -647,8 +641,12 @@ init_project :: proc(result: ^Project) {
             for x in 0 ..< TERRAIN_RESOLUTION {
                 world_x := data.origin_x + f32(x) * data.cell_size
                 world_z := data.origin_z + f32(z) * data.cell_size
-                data.heights[sample_index(x, z)] =
-                    default_height_filtered(world_x, world_z, authored_half_extent, data.cell_size)
+                data.heights[sample_index(x, z)] = default_height_filtered(
+                    world_x,
+                    world_z,
+                    authored_half_extent,
+                    data.cell_size,
+                )
             }
         }
         terrain_erode_default_level(data, erosion_scratch, authored_half_extent)
@@ -696,6 +694,8 @@ formation_kind_next :: proc(kind: Formation_Kind) -> Formation_Kind {
     case .Foliage:
         return .Box
     case .Architecture:
+        return .Box
+    case .Ruins:
         return .Box
     }
     return .Box
@@ -1010,7 +1010,9 @@ default_island_signed_distance :: proc(
 default_natural_land_height :: proc(
     constraints: ^[12]Terrain_Constraint,
     world_x, world_z: f32,
-) -> (height, signed_distance: f32) {
+) -> (
+    height, signed_distance: f32,
+) {
     west := default_island_signed_distance(constraints, 0, world_x, world_z)
     east := default_island_signed_distance(constraints, 1, world_x, world_z)
     signed_distance = min(west, east)

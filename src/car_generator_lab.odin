@@ -40,17 +40,28 @@ car_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     switch target {
     case "alternate", "seed-1984":
         car_generator_lab_seed = 1984
-    case "sedan": selected = 0
-    case "sedan-side": selected, side_view = 0, true
-    case "coupe": selected = 1
-    case "coupe-side": selected, side_view = 1, true
-    case "pickup", "truck": selected = 2
-    case "pickup-side", "truck-side": selected, side_view = 2, true
-    case "delivery", "van": selected = 3
-    case "delivery-side", "van-side": selected, side_view = 3, true
-    case "delivery-rear", "van-rear": selected, rear_view = 3, true
-    case "woody", "estate": selected = 4
-    case "woody-side", "estate-side": selected, side_view = 4, true
+    case "sedan":
+        selected = 0
+    case "sedan-side":
+        selected, side_view = 0, true
+    case "coupe":
+        selected = 1
+    case "coupe-side":
+        selected, side_view = 1, true
+    case "pickup", "truck":
+        selected = 2
+    case "pickup-side", "truck-side":
+        selected, side_view = 2, true
+    case "delivery", "van":
+        selected = 3
+    case "delivery-side", "van-side":
+        selected, side_view = 3, true
+    case "delivery-rear", "van-rear":
+        selected, rear_view = 3, true
+    case "woody", "estate":
+        selected = 4
+    case "woody-side", "estate-side":
+        selected, side_view = 4, true
     }
     car_generator_lab_select(editor, selected)
     if side_view {
@@ -126,11 +137,16 @@ car_generator_lab_tapered :: proc(
 
 car_generator_lab_colors :: proc(palette: cars.Palette) -> (body, accent, timber: rl.Color) {
     switch palette {
-    case .Sage: return {113, 139, 113, 255}, {224, 213, 177, 255}, {132, 91, 53, 255}
-    case .Cream: return {219, 205, 163, 255}, {122, 61, 47, 255}, {143, 96, 54, 255}
-    case .Oxblood: return {126, 48, 45, 255}, {225, 198, 137, 255}, {146, 93, 52, 255}
-    case .Petrol: return {47, 104, 111, 255}, {210, 190, 142, 255}, {137, 87, 48, 255}
-    case .Mustard: return {190, 143, 49, 255}, {72, 84, 76, 255}, {130, 82, 45, 255}
+    case .Sage:
+        return {113, 139, 113, 255}, {224, 213, 177, 255}, {132, 91, 53, 255}
+    case .Cream:
+        return {219, 205, 163, 255}, {122, 61, 47, 255}, {143, 96, 54, 255}
+    case .Oxblood:
+        return {126, 48, 45, 255}, {225, 198, 137, 255}, {146, 93, 52, 255}
+    case .Petrol:
+        return {47, 104, 111, 255}, {210, 190, 142, 255}, {137, 87, 48, 255}
+    case .Mustard:
+        return {190, 143, 49, 255}, {72, 84, 76, 255}, {130, 82, 45, 255}
     }
     return {120, 130, 120, 255}, {220, 210, 180, 255}, {140, 90, 50, 255}
 }
@@ -147,25 +163,26 @@ car_generator_lab_generated_mesh :: proc(
         source_a := generated.vertices[generated.indices[first + 0]]
         source_b := generated.vertices[generated.indices[first + 1]]
         source_c := generated.vertices[generated.indices[first + 2]]
-        a := car_generator_lab_local(
-            origin, yaw, source_a.position[0], source_a.position[1], source_a.position[2],
-        )
-        b := car_generator_lab_local(
-            origin, yaw, source_b.position[0], source_b.position[1], source_b.position[2],
-        )
-        c := car_generator_lab_local(
-            origin, yaw, source_c.position[0], source_c.position[1], source_c.position[2],
-        )
+        a := car_generator_lab_local(origin, yaw, source_a.position[0], source_a.position[1], source_a.position[2])
+        b := car_generator_lab_local(origin, yaw, source_b.position[0], source_b.position[1], source_b.position[2])
+        c := car_generator_lab_local(origin, yaw, source_c.position[0], source_c.position[1], source_c.position[2])
         normal := linalg.normalize0(linalg.cross(b - a, c - a))
         color := body
         switch source_a.part {
-        case .Body: color = body
-        case .Glass: color = glass
-        case .Trim: color = accent
-        case .Timber: color = timber
-        case .Tire: color = {34, 38, 36, 255}
-        case .Whitewall: color = {221, 213, 185, 255}
-        case .Chrome: color = {194, 194, 177, 255}
+        case .Body:
+            color = body
+        case .Glass:
+            color = glass
+        case .Trim:
+            color = accent
+        case .Timber:
+            color = timber
+        case .Tire:
+            color = {34, 38, 36, 255}
+        case .Whitewall:
+            color = {221, 213, 185, 255}
+        case .Chrome:
+            color = {194, 194, 177, 255}
         }
         if source_a.part == .Glass {
             // Glazing is deliberately double-sided: station-generated panes
@@ -190,9 +207,7 @@ car_generator_lab_car :: proc(plan: cars.Plan, origin: third_person.Vec3, yaw: f
     // tiny cars the rounded "four paws" stance of period European coachwork.
     for side in sides {
         for axle in axles {
-            fender := car_generator_lab_local(
-                origin, yaw, side * plan.width * .485, plan.wheel_radius * 1.02, axle,
-            )
+            fender := car_generator_lab_local(origin, yaw, side * plan.width * .485, plan.wheel_radius * 1.02, axle)
             world_ellipsoid_rotated(
                 fender,
                 plan.wheel_width * .62,
@@ -206,8 +221,15 @@ car_generator_lab_car :: proc(plan: cars.Plan, origin: third_person.Vec3, yaw: f
         // A slim running board visually joins the arches without returning to
         // the slab-sided lower body of the first pass.
         car_generator_lab_box(
-            origin, yaw, side * plan.width * .515, .235, 0,
-            plan.wheel_width * .72, .055, plan.wheelbase * .58, dark,
+            origin,
+            yaw,
+            side * plan.width * .515,
+            .235,
+            0,
+            plan.wheel_width * .72,
+            .055,
+            plan.wheelbase * .58,
+            dark,
         )
     }
     // Submit the indexed body after the mudguards: its wheel regions are last
@@ -224,8 +246,15 @@ car_generator_lab_car :: proc(plan: cars.Plan, origin: third_person.Vec3, yaw: f
     // toy-like period punctuation.
     for bar in -2 ..= 2 {
         car_generator_lab_box(
-            origin, yaw, f32(bar) * .07, .65, -plan.length * .543,
-            .025, .24 - math.abs(f32(bar)) * .025, .025, chrome,
+            origin,
+            yaw,
+            f32(bar) * .07,
+            .65,
+            -plan.length * .543,
+            .025,
+            .24 - math.abs(f32(bar)) * .025,
+            .025,
+            chrome,
         )
     }
     car_generator_lab_box(origin, yaw, 0, .91, -plan.length * .43, .035, .10, .035, chrome)
@@ -245,13 +274,7 @@ world_car_generator_lab :: proc(_: ^Editor) {
         if car_generator_lab_selected >= 0 && index != car_generator_lab_selected do continue
         x, z := f32(0), f32(0)
         if car_generator_lab_selected < 0 {
-            gallery_positions := [5][2]f32 {
-                {-3.35, -.90},
-                {0, -1.55},
-                {3.35, -.90},
-                {-1.75, 1.45},
-                {1.75, 1.45},
-            }
+            gallery_positions := [5][2]f32{{-3.35, -.90}, {0, -1.55}, {3.35, -.90}, {-1.75, 1.45}, {1.75, 1.45}}
             x, z = gallery_positions[index][0], gallery_positions[index][1]
         }
         plan := cars.generate(kind, car_generator_lab_seed + u32(index) * 31)
@@ -260,7 +283,12 @@ world_car_generator_lab :: proc(_: ^Editor) {
 }
 
 car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    panel := rl.Rectangle{x = 22, y = 22, width = 510, height = 205}
+    panel := rl.Rectangle {
+        x      = 22,
+        y      = 22,
+        width  = 510,
+        height = 205,
+    }
     rl.DrawRectangleRounded(panel, .10, 8, {20, 28, 29, 230})
     rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {196, 167, 106, 255})
     rl.DrawTextEx(rl.Font{}, "EUROPEAN CAR GENERATOR", {38, 38}, 20, 1, {247, 226, 176, 255})
@@ -272,8 +300,12 @@ car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         topology := cars.mesh(plan)
         label := fmt.ctprintf(
             "%d  %s   %.2f x %.2f m   %d V / %d I",
-            index + 1, cars.kind_name(kind), plan.length, plan.width,
-            topology.vertex_count, topology.index_count,
+            index + 1,
+            cars.kind_name(kind),
+            plan.length,
+            plan.width,
+            topology.vertex_count,
+            topology.index_count,
         )
         color := index == car_generator_lab_selected ? rl.Color{247, 205, 121, 255} : rl.Color{224, 219, 197, 255}
         rl.DrawTextEx(rl.Font{}, label, {38, 107 + f32(index) * 15}, 12, 1, color)

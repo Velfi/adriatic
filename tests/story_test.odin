@@ -4,6 +4,7 @@ import dialogue "../packages/dialogue"
 import quest "../packages/quest"
 import story "../packages/story"
 import tarot "../packages/tarot"
+import "core:strings"
 import "core:testing"
 
 repair_aircraft :: proc(t: ^testing.T, state: ^story.State) {
@@ -813,6 +814,23 @@ clinic_residents_respond_to_the_players_tone :: proc(t: ^testing.T) {
     testing.expect(t, anica_opened)
     testing.expect(t, dialogue.choose(&anica, 1))
     testing.expect(t, dialogue.current(&anica).id == "anica-sea")
+}
+
+@(test)
+clinic_residents_explain_a_fall_and_possible_concussion_dreams :: proc(t: ^testing.T) {
+    state := story.State {
+        clinic_visits                = 1,
+        last_clinic_visit_was_tumble = true,
+    }
+    ctx := dialogue.Context {
+        data        = rawptr(&state),
+        location_id = "clinic",
+    }
+
+    testing.expect(t, strings.contains(story.vesna_text(&ctx), "ti ha visto"))
+    testing.expect(t, strings.contains(story.vesna_text(&ctx), "concussion"))
+    testing.expect(t, strings.contains(story.petar_text(&ctx), "sogni"))
+    testing.expect(t, strings.contains(story.anica_text(&ctx), "tumble"))
 }
 
 @(test)

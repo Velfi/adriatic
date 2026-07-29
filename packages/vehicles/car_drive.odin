@@ -106,10 +106,7 @@ car_drive_arcade_steering :: proc(steering: f32) -> f32 {
 // owns the physical steering geometry; this product-level curve keeps digital
 // input precise in town without making a full-lock key press twitchy near the
 // sedan's top speed.
-car_drive_speed_sensitive_steering :: proc(
-    steering, longitudinal_speed: f32,
-    tune := CAR_DRIVE_SEDAN_TUNE,
-) -> f32 {
+car_drive_speed_sensitive_steering :: proc(steering, longitudinal_speed: f32, tune := CAR_DRIVE_SEDAN_TUNE) -> f32 {
     if tune.max_forward <= .01 do return 0
     speed_ratio := clamp(math.abs(longitudinal_speed) / tune.max_forward, 0, 1)
     authority := 1 - speed_ratio * (1 - clamp(tune.high_speed_steering, 0, 1))

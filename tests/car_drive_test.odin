@@ -62,11 +62,7 @@ car_drive_physics_steering_loses_lock_at_speed_and_in_reverse :: proc(t: ^testin
 car_drive_slip_telemetry_measures_angle_not_absolute_side_speed :: proc(t: ^testing.T) {
     testing.expect(t, vehicles.car_drive_slip_angle_amount(10, 0) == 0)
     testing.expect(t, math.abs(vehicles.car_drive_slip_angle_amount(1, 1) - 1) < .001)
-    testing.expect(
-        t,
-        vehicles.car_drive_slip_angle_amount(4, 2) >
-            vehicles.car_drive_slip_angle_amount(16, 2),
-    )
+    testing.expect(t, vehicles.car_drive_slip_angle_amount(4, 2) > vehicles.car_drive_slip_angle_amount(16, 2))
     testing.expect(t, vehicles.car_drive_slip_angle_amount(0, 20) == 1)
 }
 

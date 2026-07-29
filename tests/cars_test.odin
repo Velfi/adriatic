@@ -44,8 +44,7 @@ compact_car_seeds_vary_multiple_topology_channels :: proc(t: ^testing.T) {
             plan := cars.generate(kind, u32(seed))
             min_wheel, max_wheel = min(min_wheel, plan.wheel_radius), max(max_wheel, plan.wheel_radius)
             min_cabin, max_cabin = min(min_cabin, plan.cabin_height), max(max_cabin, plan.cabin_height)
-            min_wheelbase, max_wheelbase =
-                min(min_wheelbase, plan.wheelbase), max(max_wheelbase, plan.wheelbase)
+            min_wheelbase, max_wheelbase = min(min_wheelbase, plan.wheelbase), max(max_wheelbase, plan.wheelbase)
         }
         testing.expect(t, max_wheel - min_wheel >= .025)
         testing.expect(t, max_cabin - min_cabin >= .035)
@@ -78,14 +77,12 @@ compact_coupe_uses_two_door_fastback_topology :: proc(t: ^testing.T) {
     sedan := cars.mesh(sedan_plan)
     coupe_rear_roof, sedan_rear_roof := f32(0), f32(0)
     for vertex in coupe.vertices[:coupe.vertex_count] {
-        if vertex.part == .Glass &&
-           vertex.position[2] > coupe_plan.cabin_offset + coupe_plan.cabin_length * .40 {
+        if vertex.part == .Glass && vertex.position[2] > coupe_plan.cabin_offset + coupe_plan.cabin_length * .40 {
             coupe_rear_roof = max(coupe_rear_roof, vertex.position[1])
         }
     }
     for vertex in sedan.vertices[:sedan.vertex_count] {
-        if vertex.part == .Glass &&
-           vertex.position[2] > sedan_plan.cabin_offset + sedan_plan.cabin_length * .40 {
+        if vertex.part == .Glass && vertex.position[2] > sedan_plan.cabin_offset + sedan_plan.cabin_length * .40 {
             sedan_rear_roof = max(sedan_rear_roof, vertex.position[1])
         }
     }
@@ -131,9 +128,7 @@ compact_car_meshes_have_complete_non_degenerate_topology :: proc(t: ^testing.T) 
             face_vertices := [3]cars.Vertex{a, b, c}
             for vertex in face_vertices {
                 testing.expect(t, abs(vertex.position[0]) <= plan.width * .60)
-                if vertex.part == .Tire ||
-                   vertex.part == .Whitewall ||
-                   vertex.part == .Chrome {
+                if vertex.part == .Tire || vertex.part == .Whitewall || vertex.part == .Chrome {
                     testing.expect(t, vertex.position[1] >= -.001)
                 } else {
                     testing.expect(t, vertex.position[1] >= .15)

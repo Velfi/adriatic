@@ -207,7 +207,7 @@ formation_is_solid :: #force_inline proc(kind: terrain.Formation_Kind) -> bool {
     switch kind {
     case .Foliage:
         return false
-    case .Box, .Rock, .Spire, .Mountain, .Ridge, .Cliff, .Architecture:
+    case .Box, .Rock, .Spire, .Mountain, .Ridge, .Cliff, .Architecture, .Ruins:
         return true
     }
     return false

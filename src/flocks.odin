@@ -2,6 +2,7 @@ package main
 
 import boats "../packages/boats"
 import flocks "../packages/flocks"
+import harbor "../packages/harbor"
 import marina "../packages/marina"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -75,9 +76,9 @@ world_flocks_step :: proc(editor: ^Editor, dt: f32) {
     if editor == nil do return
     anchors: [flocks.MAX_FLOCKS]flocks.Anchor
     count := 0
-    for &plan, index in editor.default_marinas[:editor.default_marina_count] {
+    for &plan, index in editor.default_harbors[:editor.default_marina_count] {
         if count >= len(anchors) do break
-        office := marina.plan_world_position(&plan, {plan.office.x, plan.office.z})
+        office := plan.office
         anchors[count] = {
             position      = {office.x, editor.project.sea_level, office.z},
             kind          = .Harbor,
@@ -118,9 +119,9 @@ world_flocks_step :: proc(editor: ^Editor, dt: f32) {
 
     ground_anchors: [flocks.MAX_FLOCKS]flocks.Anchor
     ground_count := 0
-    for &plan, index in editor.default_marinas[:editor.default_marina_count] {
+    for &plan, index in editor.default_harbors[:editor.default_marina_count] {
         if ground_count >= len(ground_anchors) do break
-        office := marina.plan_world_position(&plan, {plan.office.x + 4.6, plan.office.z + 3.5})
+        office := harbor.add(plan.office, harbor.add(harbor.scale(plan.tangent, 4.6), harbor.scale(plan.outward, 3.5)))
         ground_anchors[ground_count] = {
             position = {office.x, mouse_surface_height(editor, office.x, office.z), office.z},
             kind     = .Harbor,

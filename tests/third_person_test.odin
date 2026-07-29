@@ -343,3 +343,20 @@ third_person_camera_system_switches_named_slots :: proc(t: ^testing.T) {
     third_person.camera_set_active(&system, .Player)
     testing.expect(t, third_person.camera_active_pose(&system).position.z == 5)
 }
+@(test)
+physics_backed_step_updates_velocity_without_preintegrating_position :: proc(t: ^testing.T) {
+    state := third_person.State {
+        position = {10, 4, -7},
+        grounded = true,
+    }
+    start := state.position
+    third_person.step(
+        &state,
+        {move_y = 1, grounded = true, ground_normal = {0, 1, 0}},
+        third_person.default_config(),
+        .1,
+        integrate_position = false,
+    )
+    testing.expect_value(t, state.position, start)
+    testing.expect(t, state.velocity.x != 0 || state.velocity.z != 0)
+}

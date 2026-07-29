@@ -1,6 +1,7 @@
 package main
 
 import architecture "../packages/architecture"
+import fountains "../packages/fountains"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
@@ -645,7 +646,9 @@ settlement_growth_record :: proc(
     age: f32,
     target, route_index: int,
 ) {
-    if plan == nil || route_index < 0 || route_index >= plan.route_count ||
+    if plan == nil ||
+       route_index < 0 ||
+       route_index >= plan.route_count ||
        plan.growth_event_count >= len(plan.growth_events) {
         return
     }
@@ -672,8 +675,7 @@ settlement_growth_route_grade :: proc(project: ^terrain.Project, route: Settleme
         distance := linalg.length(b - a)
         if distance <= .01 do continue
         grade :=
-            math.abs(terrain.sample_height(project, 0, b[0], b[1]) -
-                     terrain.sample_height(project, 0, a[0], a[1])) /
+            math.abs(terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1])) /
             distance
         maximum = max(maximum, grade)
     }
@@ -805,10 +807,11 @@ settlement_growth_route_clear_of_tree :: proc(
                 existing := plan.routes[event.route_index].geometry
                 for existing_index in 0 ..< existing.count - 1 {
                     if settlement_point_segment_distance_squared(
-                        point,
-                        existing.points[existing_index],
-                        existing.points[existing_index + 1],
-                    ) < clearance_squared {
+                           point,
+                           existing.points[existing_index],
+                           existing.points[existing_index + 1],
+                       ) <
+                       clearance_squared {
                         return false
                     }
                 }
@@ -822,7 +825,10 @@ settlement_village_external_anchor :: proc(
     plan: ^Settlement_Plan,
     project: ^terrain.Project,
     root: int,
-) -> (anchor: [2]f32, found: bool) {
+) -> (
+    anchor: [2]f32,
+    found: bool,
+) {
     if plan == nil || project == nil || root < 0 || root >= plan.neighborhood_count do return
     root_point := plan.neighborhoods[root].center
     root_height := terrain.sample_height(project, 0, root_point[0], root_point[1])
@@ -866,11 +872,7 @@ settlement_village_external_anchor :: proc(
     return
 }
 
-settlement_plan_build_village_routes :: proc(
-    plan: ^Settlement_Plan,
-    project: ^terrain.Project,
-    rng: ^Settlement_Rng,
-) {
+settlement_plan_build_village_routes :: proc(plan: ^Settlement_Plan, project: ^terrain.Project, rng: ^Settlement_Rng) {
     if plan == nil || project == nil || rng == nil || plan.neighborhood_count < 2 do return
     root := 0
     for neighborhood, index in plan.neighborhoods[:plan.neighborhood_count] {
@@ -887,15 +889,9 @@ settlement_plan_build_village_routes :: proc(
         backbone_class = .Ridge
     case .Route_Stop, .Agricultural_Terrace:
     }
-    backbone := settlement_route_find(
-        project,
-        anchor[0],
-        anchor[1],
-        root_point[0],
-        root_point[1],
-        backbone_class,
-    )
-    if backbone.count < 2 || settlement_route_crosses_sea(project, backbone) ||
+    backbone := settlement_route_find(project, anchor[0], anchor[1], root_point[0], root_point[1], backbone_class)
+    if backbone.count < 2 ||
+       settlement_route_crosses_sea(project, backbone) ||
        settlement_growth_route_grade(project, backbone) > settlement_route_grade_limit(backbone_class) ||
        backbone.count > 5 ||
        settlement_growth_route_double_backs(backbone) ||
@@ -914,7 +910,8 @@ settlement_plan_build_village_routes :: proc(
         target := -1
         for neighborhood, index in plan.neighborhoods[:plan.neighborhood_count] {
             if visited[index] || neighborhood.suitability <= .05 do continue
-            if target < 0 || neighborhood.age < plan.neighborhoods[target].age ||
+            if target < 0 ||
+               neighborhood.age < plan.neighborhoods[target].age ||
                (neighborhood.age == plan.neighborhoods[target].age && index < target) {
                 target = index
             }
@@ -948,7 +945,7 @@ settlement_plan_build_village_routes :: proc(
             insertion := index
             for insertion > 0 &&
                 linalg.length(nodes[order[insertion]] - plan.neighborhoods[target].center) <
-                linalg.length(nodes[order[insertion - 1]] - plan.neighborhoods[target].center) {
+                    linalg.length(nodes[order[insertion - 1]] - plan.neighborhoods[target].center) {
                 order[insertion], order[insertion - 1] = order[insertion - 1], order[insertion]
                 insertion -= 1
             }
@@ -5510,11 +5507,7 @@ settlement_plan_generate_village_buildings :: proc(
                 x, z = center[0], center[1]
             }
             candidate_route_origin, candidate_route_tangent, candidate_route_normal, candidate_route_width, candidate_route_shoulder, candidate_route_distance, candidate_route_index, candidate_route_found :=
-                settlement_nearest_route_frame(
-                    plan,
-                    {x, z},
-                    resource_purpose ? -1 : cohort_route_index,
-                )
+                settlement_nearest_route_frame(plan, {x, z}, resource_purpose ? -1 : cohort_route_index)
             if candidate_route_found &&
                !resource_purpose &&
                purpose != .Farmstead &&
@@ -5536,11 +5529,7 @@ settlement_plan_generate_village_buildings :: proc(
                 x += (frontage_x - x) * frontage_pull
                 z += (frontage_z - z) * frontage_pull
                 candidate_route_origin, candidate_route_tangent, candidate_route_normal, candidate_route_width, candidate_route_shoulder, candidate_route_distance, candidate_route_index, candidate_route_found =
-                    settlement_nearest_route_frame(
-                        plan,
-                        {x, z},
-                        cohort_route_index,
-                    )
+                    settlement_nearest_route_frame(plan, {x, z}, cohort_route_index)
             }
             height_at_site := terrain.sample_height(project, 0, x, z)
             if height_at_site <= project.sea_level + .6 do continue
@@ -5581,8 +5570,7 @@ settlement_plan_generate_village_buildings :: proc(
             } else if gradient_length > .001 {
                 rotation = f32(math.atan2(f64(-gradient[0]), f64(gradient[1])))
             }
-            if (civic_route_frontage || (cohort_route_index >= 0 && candidate_route_found)) &&
-               !resource_purpose {
+            if (civic_route_frontage || (cohort_route_index >= 0 && candidate_route_found)) && !resource_purpose {
                 rotation = settlement_rotation_face_point(rotation, {x, z}, candidate_route_origin)
             } else {
                 rotation = settlement_rotation_face_point(rotation, {x, z}, placement_center)
@@ -6581,13 +6569,23 @@ settlement_plan_record_reserved_site :: proc(
     landmark_kind: Settlement_Landmark_Kind = {},
 ) {
     if plan == nil || plan.site_count >= len(plan.sites) do return
-    plan.sites[plan.site_count] = {
+    site := Settlement_Site {
         structure     = structure,
         kind          = kind,
         landmark_kind = landmark_kind,
         tissue        = settlement_nearest_tissue(plan, structure.center_x, structure.center_z),
         accepted      = true,
     }
+    if kind == .Park && min(structure.width, structure.depth) >= 10 {
+        radius := clamp(min(structure.width, structure.depth) * .18, f32(2.2), f32(4.6))
+        style := plan.request.region == .Aegean ? fountains.Style.Bowl : fountains.Style.Courtyard
+        site.fountain_style = style
+        site.fountain_radius = radius
+        site.fountain_jet_count = clamp(int(radius * 2.5), 6, 14)
+        site.fountain_jet_height = radius * .62
+        site.fountain_enabled = true
+    }
+    plan.sites[plan.site_count] = site
     plan.site_count += 1
 }
 

@@ -262,8 +262,7 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
 
     forward_speed = linalg.dot(runtime.body.velocity, basis.forward)
     lateral_speed = linalg.dot(runtime.body.velocity, basis.right)
-    longitudinal_acceleration :=
-        (forward_speed - previous_forward_speed) / dt
+    longitudinal_acceleration := (forward_speed - previous_forward_speed) / dt
     surge_target :=
         clamp((longitudinal_acceleration - 1.2) / 6.8, 0, 1) *
         clamp((math.abs(forward_speed) - 7) / 18, 0, 1) *
@@ -315,16 +314,16 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
         surge_intensity  = runtime.surge_intensity,
         brake_intensity  = runtime.brake_intensity,
         drift_transition = runtime.drift_transition,
-        slip            = slip,
-        drift_intensity = drift_intensity,
-        countersteer    = countersteer,
-        drift_kick      = runtime.drift_kick,
-        hookup_kick     = runtime.hookup_kick,
-        surface_impact  = runtime.surface_impact,
-        surface_release = runtime.surface_release,
-        turn_rate       = runtime.body.angular_velocity_world.y,
-        height          = max(f32(0), runtime.body.position.y - sea_level - GROUND_CLEARANCE),
-        wake_intensity  = clamp(
+        slip             = slip,
+        drift_intensity  = drift_intensity,
+        countersteer     = countersteer,
+        drift_kick       = runtime.drift_kick,
+        hookup_kick      = runtime.hookup_kick,
+        surface_impact   = runtime.surface_impact,
+        surface_release  = runtime.surface_release,
+        turn_rate        = runtime.body.angular_velocity_world.y,
+        height           = max(f32(0), runtime.body.position.y - sea_level - GROUND_CLEARANCE),
+        wake_intensity   = clamp(
             (math.abs(forward_speed) - 12) / 48 + drift_intensity * .42,
             0,
             1,
@@ -353,15 +352,11 @@ maybe_spawn_wake :: proc(runtime: ^Runtime, dt: f32) {
     runtime.wake_distance += runtime.telemetry.speed * dt
     spacing := f32(1.25)
     if runtime.wake_distance < spacing do return
-    horizontal_speed :=
-        f32(
-            math.sqrt(
-                f64(
-                    runtime.body.velocity.x * runtime.body.velocity.x +
-                    runtime.body.velocity.z * runtime.body.velocity.z,
-                ),
-            ),
-        )
+    horizontal_speed := f32(
+        math.sqrt(
+            f64(runtime.body.velocity.x * runtime.body.velocity.x + runtime.body.velocity.z * runtime.body.velocity.z),
+        ),
+    )
     basis := flight.basis_from_orientation(runtime.body.orientation)
     travel_direction := basis.forward
     if horizontal_speed > .01 {
@@ -413,14 +408,14 @@ maybe_spawn_wake :: proc(runtime: ^Runtime, dt: f32) {
             2.75,
         )
         runtime.wake[runtime.wake_count] = {
-            serial   = runtime.wake_serial,
-            position = position,
-            forward  = basis.forward,
-            right    = basis.right,
-            lifetime = lifetime,
-            strength = strength,
-            slip     = runtime.telemetry.slip,
-            turn     = clamp(runtime.steering, -1, 1),
+            serial       = runtime.wake_serial,
+            position     = position,
+            forward      = basis.forward,
+            right        = basis.right,
+            lifetime     = lifetime,
+            strength     = strength,
+            slip         = runtime.telemetry.slip,
+            turn         = clamp(runtime.steering, -1, 1),
             countersteer = runtime.telemetry.countersteer,
             kick         = kick_marker,
             hookup       = runtime.telemetry.hookup_kick,

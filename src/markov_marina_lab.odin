@@ -6,7 +6,9 @@ import boats "../packages/boats"
 import dialogue "../packages/dialogue"
 import dialogue_session "../packages/dialogue_session"
 import game_input "../packages/game_input"
+import harbor "../packages/harbor"
 import marina "../packages/marina"
+import plants "../packages/plants"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -36,6 +38,89 @@ markov_marina_world_site_score: f32
 markov_marina_gallery_active: bool
 markov_marina_gallery_plans: [marina.SHORELINE_FORM_COUNT]marina.Plan
 markov_marina_gallery_count: int
+shoreline_harbor_lab_active: bool
+shoreline_harbor_lab_plan: harbor.Harbor_Plan
+shoreline_harbor_lab_intervention: harbor.Harbor_Intervention
+
+shoreline_harbor_lab_configure :: proc(editor: ^Editor, index: int) -> bool {
+    if editor == nil || index < 0 || index >= 10 do return false
+    sign := index < 5 ? f32(-1) : f32(1)
+    center, _ := terrain.default_island_center(sign)
+    radius := f32(terrain.WORLD_SIZE_METERS * .5) * terrain.DEFAULT_ISLAND_RADIUS
+    local_index := index % 5
+    // Five distinct aspects on each generated island: channel-facing,
+    // crosswind shoulders, outer coast, and an oblique cove search.
+    angle := (sign < 0 ? f32(.25) : f32(1.25)) * math.PI + (f32(local_index) - 2) * math.PI * .22
+    direction := harbor.Vec2{math.cos(angle), math.sin(angle)}
+    approximate := harbor.Vec2{center + direction.x * radius, center + direction.z * radius}
+    preferred_scale := f32(170 + (index * 67) % 280)
+    seed := u32(0x48415242 + index * 0x9e3779b9)
+    role :=
+        index % 4 == 0 ? harbor.Settlement_Role.Working_Port : index % 3 == 0 ? harbor.Settlement_Role.Village : harbor.Settlement_Role.Town
+    survey := harbor.survey_coast(&editor.project, approximate, max(preferred_scale * 1.7, 420))
+    program := harbor.derive_harbor_program(role, 420 + index * 135, seed)
+    fallback_site := harbor.select_harbor_site(&editor.project, &survey, &program, seed)
+    if !fallback_site.valid do return false
+    shoreline_harbor_lab_intervention = harbor.generate_for_survey(&editor.project, &survey, &program, seed)
+    accepted := shoreline_harbor_lab_intervention.valid
+    site := accepted ? shoreline_harbor_lab_intervention.site : fallback_site
+    if accepted {
+        harbor.apply_harbor_terrain(&editor.project, &shoreline_harbor_lab_intervention)
+        shoreline_harbor_lab_plan = harbor.finalize_intervention(&shoreline_harbor_lab_intervention)
+    } else {
+        // A rejected intervention is a deliberate untouched-coast result.
+        // Keep the lab camera and terrain active without fabricating structures.
+        shoreline_harbor_lab_plan = {}
+        shoreline_harbor_lab_plan.origin = site.anchor
+        shoreline_harbor_lab_plan.tangent = site.tangent
+        shoreline_harbor_lab_plan.outward = site.outward
+        shoreline_harbor_lab_plan.sea_level = site.sea_level
+        shoreline_harbor_lab_plan.office = harbor.add(site.anchor, harbor.scale(site.outward, -18))
+        shoreline_harbor_lab_plan.diagnostics.footprint_diameter = site.preferred_scale
+        // This is a valid lab display plan with deliberately zero works; the
+        // intervention itself remains invalid and cannot enter gameplay.
+        shoreline_harbor_lab_plan.valid = true
+    }
+    shoreline_harbor_lab_active = true
+    editor.default_marina_count = 0
+    editor.marina_authored = false
+    editor.in_map = true
+    editor.capture_world_only = true
+    editor.postale_visible = false
+    editor.libellula_visible = false
+    editor.boat_traffic = {}
+    atmosphere.set_world_minutes(&editor.atmosphere, 9 * 60 + 10)
+    atmosphere.set_weather_override(&editor.atmosphere, .Clear)
+    editor.atmosphere.weather = atmosphere.weather_for(.Clear)
+    editor.atmosphere.paused = true
+    plan := &shoreline_harbor_lab_plan
+    span := plan.diagnostics.footprint_diameter
+    target := third_person.Vec3 {
+        plan.origin.x + plan.outward.x * span * .22,
+        editor.project.sea_level,
+        plan.origin.z + plan.outward.z * span * .22,
+    }
+    eye := third_person.Vec3 {
+        target.x - plan.outward.x * span * .62 + plan.tangent.x * span * .28,
+        editor.project.sea_level + span * .52,
+        target.z - plan.outward.z * span * .62 + plan.tangent.z * span * .28,
+    }
+    // High, steep backland can otherwise bury a sea-relative inspection
+    // camera inside the island and produce an empty horizon-only capture.
+    eye.y = max(eye.y, terrain.sample_height(&editor.project, 0, eye.x, eye.z) + span * .14)
+    editor.camera_pose = third_person.camera_look_at(eye, target)
+    third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+    third_person.camera_set_active(&editor.cameras, .Inspection)
+    // Keep terrain clipmap focus on the surveyed coast even when construction
+    // is rejected, so the lab shows an untouched shoreline rather than empty
+    // ocean around the previous player position.
+    player_y := max(
+        terrain.sample_height(&editor.project, 0, plan.office.x, plan.office.z) + .7,
+        editor.project.sea_level + .7,
+    )
+    player_place(editor, {plan.office.x, player_y, plan.office.z}, .Scene_Setup)
+    return true
+}
 
 markov_marina_frontage_target :: proc(target: string) -> (marina.Shoreline_Form, bool) {
     switch target {
@@ -382,6 +467,14 @@ markov_marina_breakwater_camera :: proc() -> third_person.Camera_Pose {
 
 markov_marina_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
+    shoreline_harbor_lab_active = false
+    shoreline_prefix := "shoreline-"
+    if len(target) > len(shoreline_prefix) && target[:len(shoreline_prefix)] == shoreline_prefix {
+        if index, ok := strconv.parse_int(target[len(shoreline_prefix):]); ok {
+            return shoreline_harbor_lab_configure(editor, index)
+        }
+        return false
+    }
     markov_marina_gallery_active = target == "gallery" || target == "complex"
     frontage_form, frontage_view := markov_marina_frontage_target(target)
     if (markov_marina_gallery_active || frontage_view) && !markov_marina_gallery_generate() do return false
@@ -614,11 +707,20 @@ east_marina_plan :: proc(editor: ^Editor) -> ^marina.Plan {
     return nil
 }
 
+east_harbor_plan :: proc(editor: ^Editor) -> ^harbor.Harbor_Plan {
+    if editor == nil || editor.default_marina_count <= 0 do return nil
+    for index in 0 ..< editor.default_marina_count {
+        if editor.default_marina_islands[index] == .East {
+            return &editor.default_harbors[index]
+        }
+    }
+    return nil
+}
+
 marin_position :: proc(editor: ^Editor) -> third_person.Vec3 {
-    plan := east_marina_plan(editor)
+    plan := east_harbor_plan(editor)
     if plan == nil do return {}
-    office := plan.office
-    world := marina.plan_world_position(plan, {office.x + 4.6, office.z + 3.5})
+    world := harbor.add(plan.office, harbor.add(harbor.scale(plan.tangent, 4.6), harbor.scale(plan.outward, 3.5)))
     ground := terrain.sample_height(&editor.project, 0, world.x, world.z)
     return {world.x, max(ground, editor.project.sea_level + .62), world.z}
 }
@@ -1002,6 +1104,32 @@ world_markov_marina_static_geometry :: proc(plan: ^marina.Plan) {
     office := markov_marina_office_structure(plan)
     world_architecture(office, nil)
 
+    // Salt-tolerant, generated planting softens the landward office edge
+    // without occupying navigable quay cells. Keeping this in presentation
+    // code leaves the marina plan and its collision rules product-neutral.
+    office_local := plan.office
+    for offset, plant_index in ([3]f32{-3.1, 0, 3.1}) {
+        local := marina.Vec2{office_local.x + offset, office_local.z - 4.05}
+        position := marina.plan_world_position(plan, local)
+        world_vertical_prism(
+            {position.x, .47, position.z},
+            .48,
+            .48,
+            .68,
+            plan.world_yaw + math.PI / 8,
+            {151, 91, 58, 255},
+        )
+        species :=
+            plant_index == 1 ? plants.Species.Myrtle : plants.Species.Oleander
+        _ = world_generated_plant(
+            species,
+            u64(plan.layout_seed) + u64(plant_index + 1) * 0x9e3779b97f4a7c15,
+            {position.x, .82, position.z},
+            plant_index == 1 ? .86 : .78,
+            plan.world_yaw + f32(plant_index) * .41,
+        )
+    }
+
     for prop in plan.props[:plan.prop_count] {
         markov_marina_prop(prop, plan)
     }
@@ -1090,7 +1218,55 @@ world_markov_marina_facility :: proc(
     world_renderer.dynamic_caster_count = len(world_renderer.vertices) - world_renderer.dynamic_caster_first
 }
 
+world_shoreline_harbor_facility :: proc(editor: ^Editor, plan: ^harbor.Harbor_Plan, preview: bool = false) {
+    if editor == nil || plan == nil || !plan.valid do return
+    first := len(world_renderer.vertices)
+    for path in plan.structures[:plan.structure_count] {
+        for point_index in 0 ..< path.count - 1 {
+            a, b := path.points[point_index], path.points[point_index + 1]
+            dx, dz := b.x - a.x, b.z - a.z
+            segment_length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            if segment_length <= .01 do continue
+            yaw := math.atan2(-dx, dz)
+            center := third_person.Vec3{(a.x + b.x) * .5, editor.project.sea_level + .18, (a.z + b.z) * .5}
+            color := rl.Color{142, 101, 57, 255}
+            height := f32(.44)
+            switch path.kind {
+            case .Quay:
+                color, height = {171, 164, 146, 255}, .68
+            case .Breakwater:
+                color, height = {120, 123, 120, 255}, 1.2
+            case .Pier:
+            case .Natural_Jetty:
+                color, height = {119, 116, 102, 255}, .82
+            }
+            world_box_rotated(center, {path.width, height, segment_length}, yaw, color)
+        }
+    }
+    for berth, berth_index in plan.berths[:plan.berth_count] {
+        if berth.kind == .Swing_Mooring {
+            markov_marina_buoy_model(
+                {berth.position.x, editor.project.sea_level + .48, berth.position.z},
+                berth_index,
+                berth.occupied,
+            )
+        }
+        if berth.occupied {
+            world_npc_boat(
+                berth.class,
+                {berth.position.x, editor.project.sea_level + .18, berth.position.z},
+                berth.yaw,
+            )
+        }
+    }
+    if preview do world_markov_marina_preview_tint(first)
+}
+
 world_markov_marina :: proc(editor: ^Editor) {
+    if shoreline_harbor_lab_active {
+        world_shoreline_harbor_facility(editor, &shoreline_harbor_lab_plan)
+        return
+    }
     if markov_marina_gallery_active {
         for &plan in markov_marina_gallery_plans {
             world_markov_marina_facility(editor, &plan, false)
@@ -1101,6 +1277,7 @@ world_markov_marina :: proc(editor: ^Editor) {
 }
 
 markov_marina_draw_ui :: proc(_: ^Editor, width, height: i32) {
+    if shoreline_harbor_lab_active do return
     if markov_marina_breakwater_focus_active do return
     panel := rl.Rectangle {
         x      = 22,

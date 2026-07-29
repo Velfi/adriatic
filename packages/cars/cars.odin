@@ -103,10 +103,14 @@ box :: proc(mesh: ^Mesh, center, size: [3]f32, part: Part) {
     x, y, z := center[0], center[1], center[2]
     hx, hy, hz := size[0] * .5, size[1] * .5, size[2] * .5
     p := [8][3]f32 {
-        {x - hx, y - hy, z - hz}, {x + hx, y - hy, z - hz},
-        {x + hx, y - hy, z + hz}, {x - hx, y - hy, z + hz},
-        {x - hx, y + hy, z - hz}, {x + hx, y + hy, z - hz},
-        {x + hx, y + hy, z + hz}, {x - hx, y + hy, z + hz},
+        {x - hx, y - hy, z - hz},
+        {x + hx, y - hy, z - hz},
+        {x + hx, y - hy, z + hz},
+        {x - hx, y - hy, z + hz},
+        {x - hx, y + hy, z - hz},
+        {x + hx, y + hy, z - hz},
+        {x + hx, y + hy, z + hz},
+        {x - hx, y + hy, z + hz},
     }
     quad(mesh, p[0], p[4], p[5], p[1], part)
     quad(mesh, p[3], p[2], p[6], p[7], part)
@@ -116,11 +120,7 @@ box :: proc(mesh: ^Mesh, center, size: [3]f32, part: Part) {
     quad(mesh, p[0], p[1], p[2], p[3], part)
 }
 
-wheel_disc :: proc(
-    mesh: ^Mesh,
-    x, y, z, radius, outward: f32,
-    part: Part,
-) {
+wheel_disc :: proc(mesh: ^Mesh, x, y, z, radius, outward: f32, part: Part) {
     SEGMENTS :: 12
     center := [3]f32{x, y, z}
     for segment in 0 ..< SEGMENTS {
@@ -136,10 +136,7 @@ wheel_disc :: proc(
     }
 }
 
-wheel :: proc(
-    mesh: ^Mesh,
-    x, y, z, half_width, radius, outward: f32,
-) {
+wheel :: proc(mesh: ^Mesh, x, y, z, half_width, radius, outward: f32) {
     SEGMENTS :: 12
     inner_x := x - outward * half_width
     outer_x := x + outward * half_width
@@ -168,11 +165,16 @@ wheel :: proc(
 
 kind_name :: proc(kind: Kind) -> string {
     switch kind {
-    case .Sedan: return "40s SEDAN"
-    case .Coupe: return "SPORT COUPE"
-    case .Pickup: return "MARKET PICKUP"
-    case .Delivery: return "DELIVERY VAN"
-    case .Woody: return "WOODY ESTATE"
+    case .Sedan:
+        return "40s SEDAN"
+    case .Coupe:
+        return "SPORT COUPE"
+    case .Pickup:
+        return "MARKET PICKUP"
+    case .Delivery:
+        return "DELIVERY VAN"
+    case .Woody:
+        return "WOODY ESTATE"
     }
     return "CAR"
 }
@@ -240,11 +242,7 @@ generate :: proc(kind: Kind, seed: u32) -> Plan {
     plan.wheel_radius = clamp(plan.wheel_radius + seed_variation(seed, 3, .006), f32(.29), f32(.34))
     plan.wheelbase += seed_variation(seed, 6, .018)
     plan.belt_height += seed_variation(seed, 9, .010)
-    plan.cabin_height = clamp(
-        plan.cabin_height + seed_variation(seed, 12, .012),
-        f32(.60),
-        f32(.94),
-    )
+    plan.cabin_height = clamp(plan.cabin_height + seed_variation(seed, 12, .012), f32(.60), f32(.94))
     plan.cabin_length += seed_variation(seed, 15, .020)
     plan.hood_length += seed_variation(seed, 18, .015)
     plan.wheelbase = clamp(plan.wheelbase, plan.length * .55, plan.length * .67)
@@ -279,19 +277,32 @@ mesh :: proc(plan: Plan) -> Mesh {
     axle_t := plan.wheelbase * .5 / plan.length
     arch_t := plan.wheel_radius * 1.18 / plan.length
     station_t := [STATIONS]f32 {
-        -.50, -.46,
-        -axle_t - arch_t, -axle_t - arch_t * .55, -axle_t, -axle_t + arch_t * .55, -axle_t + arch_t,
-        -.16, -.05, .06, .16,
-        axle_t - arch_t, axle_t - arch_t * .55, axle_t, axle_t + arch_t * .55, axle_t + arch_t,
-        .39, .44, .47, .49, .50,
+        -.50,
+        -.46,
+        -axle_t - arch_t,
+        -axle_t - arch_t * .55,
+        -axle_t,
+        -axle_t + arch_t * .55,
+        -axle_t + arch_t,
+        -.16,
+        -.05,
+        .06,
+        .16,
+        axle_t - arch_t,
+        axle_t - arch_t * .55,
+        axle_t,
+        axle_t + arch_t * .55,
+        axle_t + arch_t,
+        .39,
+        .44,
+        .47,
+        .49,
+        .50,
     }
     rings: [STATIONS][8][3]f32
     for t, index in station_t {
         z := t * plan.length
-        arch_distance := min(
-            abs(z + plan.wheelbase * .5),
-            abs(z - plan.wheelbase * .5),
-        )
+        arch_distance := min(abs(z + plan.wheelbase * .5), abs(z - plan.wheelbase * .5))
         arch_amount := clamp(1 - arch_distance / (plan.wheel_radius * 1.18), f32(0), f32(1))
         bottom_y := .20 + arch_amount * (plan.wheel_radius * 1.02 - .20)
 
@@ -412,14 +423,18 @@ mesh :: proc(plan: Plan) -> Mesh {
         upper_y := plan.belt_height + plan.cabin_height * .54
         quad(
             &result,
-            {-outer_x, lower_y, rear_z}, {-inner_x, lower_y, rear_z},
-            {-inner_x, upper_y, rear_z}, {-outer_x, upper_y, rear_z},
+            {-outer_x, lower_y, rear_z},
+            {-inner_x, lower_y, rear_z},
+            {-inner_x, upper_y, rear_z},
+            {-outer_x, upper_y, rear_z},
             .Glass,
         )
         quad(
             &result,
-            {inner_x, lower_y, rear_z}, {outer_x, lower_y, rear_z},
-            {outer_x, upper_y, rear_z}, {inner_x, upper_y, rear_z},
+            {inner_x, lower_y, rear_z},
+            {outer_x, lower_y, rear_z},
+            {outer_x, upper_y, rear_z},
+            {inner_x, upper_y, rear_z},
             .Glass,
         )
     }
@@ -444,7 +459,7 @@ mesh :: proc(plan: Plan) -> Mesh {
         rail_x := plan.width * .43
         box(&result, {0, .64, bed_center}, {plan.width * .72, .07, bed_length}, .Trim)
         box(&result, {-rail_x, .80, bed_center}, {.08, .34, bed_length}, .Body)
-        box(&result, { rail_x, .80, bed_center}, {.08, .34, bed_length}, .Body)
+        box(&result, {rail_x, .80, bed_center}, {.08, .34, bed_length}, .Body)
         box(&result, {0, .80, bed_rear}, {plan.width * .90, .34, .08}, .Body)
     }
     if plan.kind == .Delivery {
@@ -455,15 +470,8 @@ mesh :: proc(plan: Plan) -> Mesh {
         cargo_length := cargo_rear - cargo_front
         cargo_center := (cargo_front + cargo_rear) * .5
         panel_sides := [2]f32{-1, 1}
-        panel_posts := [3]f32 {
-            cargo_front,
-            cargo_center,
-            cargo_rear,
-        }
-        panel_rails := [2]f32 {
-            plan.belt_height + plan.cabin_height * .10,
-            plan.belt_height + plan.cabin_height * .64,
-        }
+        panel_posts := [3]f32{cargo_front, cargo_center, cargo_rear}
+        panel_rails := [2]f32{plan.belt_height + plan.cabin_height * .10, plan.belt_height + plan.cabin_height * .64}
         for side in panel_sides {
             x := side * plan.width * .408
             for z in panel_posts {

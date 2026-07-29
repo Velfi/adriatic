@@ -161,14 +161,7 @@ patio_lounge_chair :: proc(center: third_person.Vec3, yaw: f32, color: rl.Color)
     world_quad(back_right_low, back_right_high, back_left_high, back_left_low, color)
     // Dark rails outline the inclined fabric panel and keep it legible against
     // an umbrella of the same accent color.
-    world_box_between(
-        back_left_low,
-        back_left_high,
-        patio_local_point({0, 0, 0}, 1, 0, 0, yaw),
-        .10,
-        .10,
-        PATIO_METAL,
-    )
+    world_box_between(back_left_low, back_left_high, patio_local_point({0, 0, 0}, 1, 0, 0, yaw), .10, .10, PATIO_METAL)
     world_box_between(
         back_right_low,
         back_right_high,
@@ -214,24 +207,26 @@ patio_umbrella :: proc(center: third_person.Vec3, radius: f32, color_a, color_b:
     world_vertical_prism({center.x, center.y + .05, center.z}, .62, .62, .10, math.PI / 8, PATIO_STONE_DARK)
 }
 
-patio_planter :: proc(center: third_person.Vec3) {
+patio_planter :: proc(center: third_person.Vec3, simple_foliage: bool = true) {
     world_vertical_prism({center.x, center.y + .38, center.z}, .62, .62, .76, math.PI / 8, {167, 85, 52, 255})
     world_vertical_prism({center.x, center.y + .79, center.z}, .52, .52, .10, math.PI / 8, {75, 55, 40, 255})
+    if !simple_foliage do return
     for offset in ([5][2]f32{{0, 0}, {-.3, .1}, {.3, .08}, {-.12, -.26}, {.18, -.22}}) {
-        world_vertical_prism({center.x + offset[0], center.y + 1.15, center.z + offset[1]}, .22, .22, .75, 0, PATIO_GREEN)
+        world_vertical_prism(
+            {center.x + offset[0], center.y + 1.15, center.z + offset[1]},
+            .22,
+            .22,
+            .75,
+            0,
+            PATIO_GREEN,
+        )
     }
 }
 
 patio_table_centerpiece :: proc(center: third_person.Vec3, color: rl.Color) {
     if patio_lab_evening {
         world_vertical_prism({center.x, center.y + .93, center.z}, .16, .16, .20, 0, PATIO_METAL)
-        world_emissive_fixture_box(
-            {center.x, center.y + 1.11, center.z},
-            {.30, .34, .30},
-            0,
-            {255, 205, 118, 255},
-            2,
-        )
+        world_emissive_fixture_box({center.x, center.y + 1.11, center.z}, {.30, .34, .30}, 0, {255, 205, 118, 255}, 2)
         world_box_rotated({center.x, center.y + 1.31, center.z}, {.36, .08, .36}, 0, PATIO_METAL)
         return
     }
@@ -500,7 +495,12 @@ world_patio_lab :: proc(_: ^Editor) {
 }
 
 patio_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    panel := rl.Rectangle{x = 22, y = 22, width = 500, height = 92}
+    panel := rl.Rectangle {
+        x      = 22,
+        y      = 22,
+        width  = 500,
+        height = 92,
+    }
     rl.DrawRectangleRounded(panel, .12, 8, {27, 35, 30, 224})
     rl.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, {172, 141, 89, 255})
     rl.DrawTextEx(rl.Font{}, "PROCEDURAL PATIO LAB", {38, 38}, 20, 1, {248, 232, 188, 255})

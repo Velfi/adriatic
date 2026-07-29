@@ -30,10 +30,10 @@ postale_checkpoint_round_trips_owned_state_and_preserves_driver :: proc(t: ^test
     }
     runtime.airframe.mass_kg = 1830
     runtime.flight_runtime = {
-        engine_output        = .81,
-        control_authority    = .72,
-        drag_multiplier      = 1.3,
-        controls_damaged     = true,
+        engine_output     = .81,
+        control_authority = .72,
+        drag_multiplier   = 1.3,
+        controls_damaged  = true,
     }
     runtime.telemetry = {
         airspeed                = 47,

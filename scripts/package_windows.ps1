@@ -159,6 +159,7 @@ $Shaders = Join-Path $Build "shaders"
 New-Item -ItemType Directory -Force -Path $Shaders | Out-Null
 $ShaderJobs = @(
 	@("world.slang", "vertex_main", "vertex", "world.vert.spv"),
+	@("world.slang", "instance_vertex_main", "vertex", "world-instance.vert.spv"),
 	@("world.slang", "fragment_main", "fragment", "world.frag.spv"),
 	@("sky.slang", "sky_vertex", "vertex", "world-sky.vert.spv"),
 	@("sky.slang", "sky_fragment", "fragment", "world-sky.frag.spv"),

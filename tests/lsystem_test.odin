@@ -60,3 +60,31 @@ lsystem_rejects_malformed_and_unbounded_words :: proc(t: ^testing.T) {
     testing.expect_value(t, limited.error, lsystem.Expand_Error.Symbol_Limit)
     testing.expect_value(t, len(limited.word), 0)
 }
+
+@(test)
+lsystem_interpreter_jitter_is_seeded_and_varies :: proc(t: ^testing.T) {
+    source := "F[+F][-F][&F][^F]"
+    word := transmute([]u8)source
+    config := lsystem.Turtle_Config {
+        step         = 1,
+        step_jitter  = .2,
+        angle        = .5,
+        angle_jitter = .15,
+        seed         = 42,
+    }
+    a := lsystem.interpret(word, config)
+    b := lsystem.interpret(word, config)
+    config.seed = 43
+    c := lsystem.interpret(word, config)
+    defer lsystem.destroy_plant(&a.plant)
+    defer lsystem.destroy_plant(&b.plant)
+    defer lsystem.destroy_plant(&c.plant)
+    testing.expect_value(t, a.error, lsystem.Interpret_Error.None)
+    testing.expect_value(t, b.error, lsystem.Interpret_Error.None)
+    testing.expect_value(t, c.error, lsystem.Interpret_Error.None)
+    testing.expect_value(t, len(a.plant.segments), len(b.plant.segments))
+    for segment, index in a.plant.segments {
+        testing.expect_value(t, segment.end, b.plant.segments[index].end)
+    }
+    testing.expect(t, a.plant.segments[1].end != c.plant.segments[1].end)
+}

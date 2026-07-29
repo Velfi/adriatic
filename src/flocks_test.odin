@@ -14,8 +14,7 @@ flying_birds_predictively_steer_away_from_building_walls :: proc(t: ^testing.T) 
     testing.expect(t, avoided.y > incoming.y)
 }
 
-@(test)
-flying_birds_above_roof_clearance_do_not_steer :: proc(t: ^testing.T) {
+    flying_birds_above_roof_clearance_do_not_steer :: proc(t: ^testing.T) {
     building := terrain.structure_make(0, 0, 10, 10, 0, 10)
     building.kind = .Architecture
     incoming := flocks.Vec3{8, 0, 0}

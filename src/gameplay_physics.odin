@@ -1,7 +1,9 @@
 package main
 
 import boats "../packages/boats"
+import harbor "../packages/harbor"
 import marina "../packages/marina"
+import ruins "../packages/ruins"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
@@ -120,6 +122,72 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
         if structure.kind == .Foliage || structure.width <= 0 || structure.depth <= 0 || structure.height <= 0 {
             continue
         }
+        // A ruins structure is only a persistence/culling envelope. Using it
+        // as a collider seals the whole generated site, including every
+        // doorway and court.
+        if structure.kind == .Ruins {
+            plan := settlement_ruin_plan(structure)
+            for building, building_index in plan.buildings[:plan.building_count] {
+                slab := gameplay_physics_add_static_box(
+                    state,
+                    {building.width * .5 + .35, .08, building.depth * .5 + .35},
+                    {building.center.x, building.base_y + .08, building.center.z},
+                    building.yaw,
+                    u64(0x2800_0000) | (u64(index & 0xfff) << 12) | u64(building_index & 0xfff),
+                )
+                if slab != physics.INVALID_BODY do append(&state.static_bodies, slab)
+
+                for side_index in 0 ..< 4 {
+                    horizontal := side_index == 0 || side_index == 2
+                    length := horizontal ? building.width : building.depth
+                    fixed :=
+                        side_index == 0 ? -building.depth * .5 : side_index == 2 ? building.depth * .5 : side_index == 1 ? building.width * .5 : -building.width * .5
+                    segments := max(int(math.ceil(length / 2.2)), 2)
+                    segment_length := length / f32(segments)
+                    for segment in 0 ..< segments {
+                        salt := u32(side_index * 31 + segment) * 0x9e3779b9
+                        damage_roll := ruins.random01(building.seed ~ salt)
+                        if damage_roll < building.damage * .24 do continue
+                        along := -length * .5 + segment_length * (f32(segment) + .5)
+                        if side_index == building.entrance_side && math.abs(along) < segment_length * .7 do continue
+                        collapse_distance := f32(1000)
+                        if building.collapsed_sides & u8(1 << u32(side_index)) != 0 {
+                            collapse_distance = math.abs(along - building.collapse_centers[side_index])
+                            if collapse_distance < segment_length * .72 do continue
+                        }
+                        height_factor :=
+                            .34 + (1 - building.damage) * .58 + ruins.random01(building.seed ~ salt ~ 2) * .32
+                        if collapse_distance < segment_length * 1.65 {
+                            height_factor *= .28 + collapse_distance / (segment_length * 1.65) * .32
+                        }
+                        height := max(building.wall_height * height_factor, f32(.55))
+                        local_x, local_z := horizontal ? along : fixed, horizontal ? fixed : along
+                        cosine, sine := math.cos(building.yaw), math.sin(building.yaw)
+                        center := physics.Vec3 {
+                            building.center.x + local_x * cosine - local_z * sine,
+                            building.base_y + height * .5 + .16,
+                            building.center.z + local_x * sine + local_z * cosine,
+                        }
+                        half_extent := physics.Vec3{.29, height * .5, segment_length * .5 + .04}
+                        if horizontal {
+                            half_extent = {segment_length * .5 + .04, height * .5, .29}
+                        }
+                        body := gameplay_physics_add_static_box(
+                            state,
+                            half_extent,
+                            center,
+                            building.yaw,
+                            u64(0x2900_0000) |
+                            (u64(index & 0xff) << 16) |
+                            (u64(building_index & 0xff) << 8) |
+                            u64((side_index * 32 + segment) & 0xff),
+                        )
+                        if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+                    }
+                }
+            }
+            continue
+        }
         half_extent := physics.Vec3 {
             max(structure.width * .5, f32(.02)),
             max(structure.height * .5, f32(.02)),
@@ -136,56 +204,108 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
         )
         if body != physics.INVALID_BODY do append(&state.static_bodies, body)
     }
-    for &plan, marina_index in editor.default_marinas[:editor.default_marina_count] {
-        if !plan.valid do continue
-        for segment, segment_index in plan.segments[:plan.segment_count] {
-            a := marina.plan_world_position(&plan, segment.a)
-            b := marina.plan_world_position(&plan, segment.b)
-            dx, dz := b.x - a.x, b.z - a.z
-            length := f32(math.sqrt(f64(dx * dx + dz * dz)))
-            if length <= .01 do continue
-            yaw := math.atan2(-dx, dz)
-            half_yaw := yaw * .5
-            half_height := segment.kind == .Breakwater ? f32(.8) : f32(.45)
-            diagonal_main_pier := segment.kind == .Main_Pier && abs(dx) > f32(.01) && abs(dz) > f32(.01)
-            endpoint_accurate := segment.kind == .Breakwater || segment.kind == .Quay || diagonal_main_pier
-            body_length := endpoint_accurate ? length : length + segment.width
-            body := physics.add_box_layered(
-                state.world,
-                {segment.width * .5, half_height, body_length * .5},
-                {(a.x + b.x) * .5, editor.project.sea_level + half_height * .25, (a.z + b.z) * .5},
-                rotation = {0, math.sin(half_yaw), 0, math.cos(half_yaw)},
-                user_data = u64(0x4000_0000) | (u64(marina_index & 0xff) << 16) | u64(segment_index & 0xffff),
+    // Patios are generated presentation objects rather than terrain
+    // structures, so explicitly give their paving and major furniture a
+    // physics representation.
+    for patio, patio_index in editor.settlement_patios[:editor.settlement_patio_count] {
+        slab := gameplay_physics_add_static_box(
+            state,
+            {patio.width * .5, .18, patio.depth * .5},
+            {patio.center[0], patio.base_y - .16, patio.center[1]},
+            patio.rotation,
+            u64(0x2a00_0000) | u64(patio_index),
+        )
+        if slab != physics.INVALID_BODY do append(&state.static_bodies, slab)
+
+        furniture_center := settlement_patio_point(patio, 0, .04, 0)
+        table := gameplay_physics_add_static_box(
+            state,
+            {.72, .76, .72},
+            {furniture_center.x, furniture_center.y + .76, furniture_center.z},
+            patio.rotation,
+            u64(0x2b00_0000) | (u64(patio_index) << 4),
+        )
+        if table != physics.INVALID_BODY do append(&state.static_bodies, table)
+
+        chair_count := 2 + int((patio.seed >> 12) & 1) * 2
+        chair_radius := min(patio.width, patio.depth) * .36
+        rotation_offset := f32((patio.seed >> 16) & 255) / 255 * math.PI * 2
+        for chair_index in 0 ..< chair_count {
+            angle := rotation_offset + f32(chair_index) * math.PI * 2 / f32(chair_count)
+            local_x, local_z := math.cos(angle) * chair_radius, math.sin(angle) * chair_radius
+            point := settlement_patio_point(patio, local_x, .04, local_z)
+            chair := gameplay_physics_add_static_box(
+                state,
+                {.575, .66, .525},
+                {point.x, point.y + .66, point.z},
+                patio.rotation + angle - math.PI / 2,
+                u64(0x2b80_0000) | (u64(patio_index) << 4) | u64(chair_index),
             )
-            if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+            if chair != physics.INVALID_BODY do append(&state.static_bodies, chair)
+        }
+        if patio.seed & 2 != 0 {
+            point := settlement_patio_point(patio, 0, .04, patio.depth * .5 - .58)
+            bench := gameplay_physics_add_static_box(
+                state,
+                {2.1, .62, .48},
+                {point.x, point.y + .62, point.z},
+                patio.rotation + math.PI,
+                u64(0x2bc0_0000) | u64(patio_index),
+            )
+            if bench != physics.INVALID_BODY do append(&state.static_bodies, bench)
         }
 
-        office := marina.plan_world_position(&plan, plan.office)
-        office_half_yaw := plan.world_yaw * .5
+        planter_x, planter_z := patio.width * .5 - .55, patio.depth * .5 - .55
+        planter_points := [2]third_person.Vec3 {
+            settlement_patio_point(patio, -planter_x, .04, planter_z),
+            settlement_patio_point(patio, planter_x, .04, -planter_z),
+        }
+        for point, planter_index in planter_points {
+            planter := gameplay_physics_add_static_box(
+                state,
+                {.48, .52, .48},
+                {point.x, point.y + .52, point.z},
+                patio.rotation,
+                u64(0x2c00_0000) | (u64(patio_index) << 4) | u64(planter_index),
+            )
+            if planter != physics.INVALID_BODY do append(&state.static_bodies, planter)
+        }
+    }
+    for &plan, marina_index in editor.default_harbors[:editor.default_marina_count] {
+        if !plan.valid do continue
+        for path, path_index in plan.structures[:plan.structure_count] {
+            for point_index in 0 ..< path.count - 1 {
+                a, b := path.points[point_index], path.points[point_index + 1]
+                dx, dz := b.x - a.x, b.z - a.z
+                segment_length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+                if segment_length <= .01 do continue
+                yaw := math.atan2(-dx, dz)
+                half_yaw := yaw * .5
+                half_height := path.kind == .Breakwater ? f32(.8) : f32(.45)
+                body := physics.add_box_layered(
+                    state.world,
+                    {path.width * .5, half_height, segment_length * .5},
+                    {(a.x + b.x) * .5, editor.project.sea_level + half_height * .25, (a.z + b.z) * .5},
+                    rotation = {0, math.sin(half_yaw), 0, math.cos(half_yaw)},
+                    user_data = u64(0x4000_0000) |
+                    (u64(marina_index & 0xff) << 16) |
+                    u64((path_index * harbor.STRUCTURE_POINT_CAPACITY + point_index) & 0xffff),
+                )
+                if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+            }
+        }
+
+        office := plan.office
         office_body := physics.add_box_layered(
             state.world,
             {4.1, 2.4, 3.2},
             {office.x, editor.project.sea_level + 2.4, office.z},
-            rotation = {0, math.sin(office_half_yaw), 0, math.cos(office_half_yaw)},
             user_data = u64(0x4100_0000) | u64(marina_index),
         )
         if office_body != physics.INVALID_BODY do append(&state.static_bodies, office_body)
 
-        for prop, prop_index in plan.props[:plan.prop_count] {
-            radius := marina.prop_collision_radius(prop.kind)
-            if radius <= 0 do continue
-            position := marina.plan_world_position(&plan, prop.position)
-            body := physics.add_box_layered(
-                state.world,
-                {radius, .7, radius},
-                {position.x, editor.project.sea_level + .7, position.z},
-                user_data = u64(0x4200_0000) | (u64(marina_index & 0xff) << 16) | u64(prop_index & 0xffff),
-            )
-            if body != physics.INVALID_BODY do append(&state.static_bodies, body)
-        }
-
-        for berth, berth_index in plan.slips[:plan.slip_count] {
-            position := marina.plan_world_position(&plan, berth.position)
+        for berth, berth_index in plan.berths[:plan.berth_count] {
+            position := berth.position
             if berth.kind == .Swing_Mooring {
                 radius := marina.MOORING_BUOY_COLLISION_RADIUS
                 buoy_body := physics.add_box_layered(
@@ -198,7 +318,7 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
             }
             if !berth.occupied do continue
             spec := boats.specifications(berth.class)
-            yaw := marina.plan_world_yaw(&plan, berth.yaw)
+            yaw := berth.yaw
             half_yaw := yaw * .5
             boat_body := physics.add_box_layered(
                 state.world,
@@ -213,6 +333,23 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
         }
     }
     state.structure_revision = editor.project.revision
+}
+
+gameplay_physics_add_static_box :: proc(
+    state: ^Gameplay_Physics,
+    half_extent, position: physics.Vec3,
+    yaw: f32,
+    user_data: u64,
+) -> physics.Body_ID {
+    if state == nil || state.world == nil do return physics.INVALID_BODY
+    half_yaw := yaw * .5
+    return physics.add_box_layered(
+        state.world,
+        half_extent,
+        position,
+        rotation = {0, math.sin(half_yaw), 0, math.cos(half_yaw)},
+        user_data = user_data,
+    )
 }
 
 gameplay_physics_create :: proc(editor: ^Editor) -> bool {

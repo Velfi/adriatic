@@ -14,21 +14,23 @@ car_lab_show_ui := true
 
 car_lab_surface_name :: proc(surface: particle_systems.Dust_Surface) -> string {
     switch surface {
-    case .Grass: return "GRASS"
-    case .Asphalt: return "ASPHALT"
-    case .Gravel: return "GRAVEL"
-    case .Cobblestone: return "COBBLE"
-    case .Dirt: return "DIRT"
-    case .Sand: return "SAND"
+    case .Grass:
+        return "GRASS"
+    case .Asphalt:
+        return "ASPHALT"
+    case .Gravel:
+        return "GRAVEL"
+    case .Cobblestone:
+        return "COBBLE"
+    case .Dirt:
+        return "DIRT"
+    case .Sand:
+        return "SAND"
     }
     return "UNKNOWN"
 }
 
-car_lab_place_on_pavement :: proc(
-    editor: ^Editor,
-    pavement: roads.Pavement,
-    edge_amount: f32 = .18,
-) -> bool {
+car_lab_place_on_pavement :: proc(editor: ^Editor, pavement: roads.Pavement, edge_amount: f32 = .18) -> bool {
     if editor == nil do return false
     edge_index := -1
     for edge, index in editor.project.road_graph.edges[:editor.project.road_graph.edge_count] {
@@ -84,8 +86,10 @@ car_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     neglected_cobble := false
     car_lab_show_ui = true
     switch target {
-    case "gravel": pavement = .Gravel
-    case "cobble", "cobblestone": pavement = .Cobblestone
+    case "gravel":
+        pavement = .Gravel
+    case "cobble", "cobblestone":
+        pavement = .Cobblestone
     case "cobble-clean":
         pavement = .Cobblestone
         car_lab_show_ui = false
@@ -108,7 +112,8 @@ car_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         atmosphere.set_world_minutes(&editor.atmosphere, 16 * 60)
         atmosphere.set_weather_override(&editor.atmosphere, .Storm)
         editor.atmosphere.weather = atmosphere.weather_for(.Storm)
-    case "dirt": pavement = .Dirt
+    case "dirt":
+        pavement = .Dirt
     }
     if all_cobble_junction {
         for &edge in editor.project.road_graph.edges[:editor.project.road_graph.edge_count] {
@@ -142,7 +147,12 @@ car_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     center_surface, center_grip := road_car_surface(editor, editor.car.position)
     speed := vehicles.car_drive_speed(editor.car_drive)
     bump := car_surface_bump_acceleration(center_surface, editor.car.position, speed)
-    panel := rl.Rectangle{x = 20, y = 20, width = 410, height = 258}
+    panel := rl.Rectangle {
+        x      = 20,
+        y      = 20,
+        width  = 410,
+        height = 258,
+    }
     rl.DrawRectangleRounded(panel, .08, 8, {12, 22, 29, 230})
     rl.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {191, 157, 94, 255})
     rl.DrawTextEx(rl.Font{}, "CAR PHYSICS LAB", {36, 35}, 21, 1, {247, 225, 168, 255})

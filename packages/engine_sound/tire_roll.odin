@@ -14,25 +14,25 @@ Roll_Controls :: struct {
 
 Roll_Synth :: struct {
     speed, roughness, bump, wetness, damage, hardness, looseness, level: f32,
-    hydroplane_mix:                                                f32,
-    noise_state:                                                   u32,
-    road_low, road_body:                                           f32,
-    water_low:                                                     f32,
-    tread_phase:                                                   f32,
-    rear_tread_phase:                                              f32,
-    knock_phase:                                                   f32,
-    knock_interval:                                                f32,
-    knock_level:                                                   f32,
-    knock_count:                                                   u32,
-    spray_phase:                                                   f32,
-    spray_interval:                                                f32,
-    spray_level:                                                   f32,
-    spray_count:                                                   u32,
-    hydroplane_phase:                                              f32,
-    wobble_phase:                                                  f32,
-    wobble_ring_phase:                                             f32,
-    wobble_level:                                                  f32,
-    wobble_count:                                                  u32,
+    hydroplane_mix:                                                      f32,
+    noise_state:                                                         u32,
+    road_low, road_body:                                                 f32,
+    water_low:                                                           f32,
+    tread_phase:                                                         f32,
+    rear_tread_phase:                                                    f32,
+    knock_phase:                                                         f32,
+    knock_interval:                                                      f32,
+    knock_level:                                                         f32,
+    knock_count:                                                         u32,
+    spray_phase:                                                         f32,
+    spray_interval:                                                      f32,
+    spray_level:                                                         f32,
+    spray_count:                                                         u32,
+    hydroplane_phase:                                                    f32,
+    wobble_phase:                                                        f32,
+    wobble_ring_phase:                                                   f32,
+    wobble_level:                                                        f32,
+    wobble_count:                                                        u32,
 }
 
 new_roll :: proc(seed := u32(0x85ebca6b)) -> Roll_Synth {
@@ -109,11 +109,7 @@ render_roll_add :: proc(synth: ^Roll_Synth, controls: Roll_Controls, samples: []
             strength := .12 + (noise(&synth.noise_state) + 1) * .10
             material_knock := .42 + synth.looseness * .48 + synth.hardness * .22
             synth.knock_level +=
-                strength *
-                synth.roughness *
-                synth.roughness *
-                material_knock *
-                (1 + synth.bump * 1.15)
+                strength * synth.roughness * synth.roughness * material_knock * (1 + synth.bump * 1.15)
             synth.knock_interval = .55 + (noise(&synth.noise_state) + 1) * .45
             synth.knock_count += 1
         }

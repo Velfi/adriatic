@@ -7,11 +7,13 @@ import buildings "../packages/buildings"
 import circulation "../packages/circulation"
 import dio "../packages/dio"
 import flight "../packages/flight"
+import fountains "../packages/fountains"
 import mouse_gait "../packages/mouse_gait"
 import mouse_kinematics "../packages/mouse_kinematics"
 import mouse_paws "../packages/mouse_paws"
 import mouse_tail "../packages/mouse_tail"
 import particles "../packages/particles"
+import plants "../packages/plants"
 import plazas "../packages/plazas"
 import render_graph "../packages/render_graph"
 import roads "../packages/roads"
@@ -405,6 +407,9 @@ World_Material_Kind :: enum u32 {
     Sailor_Hat,
     Sign,
     Lighthouse_Glitter,
+    Leaf,
+    Petal,
+    Fountain_Water,
 }
 
 World_Vertex :: struct {
@@ -470,6 +475,22 @@ Grass_Instance :: struct {
     size:   [2]f32,
     tile:   u32,
     color:  [4]f32,
+}
+
+World_Mesh_Instance :: struct {
+    basis_x_translation_x: [4]f32,
+    basis_y_translation_y: [4]f32,
+    basis_z_translation_z: [4]f32,
+    color:                 [4]f32,
+    normal_override:       [4]f32,
+}
+
+World_Instance_Mesh :: struct {
+    first_vertex:   u32,
+    first_index:    u32,
+    index_count:    u32,
+    first_instance: u32,
+    instances:      [dynamic]World_Mesh_Instance,
 }
 
 Architecture_Grass_Footprint :: struct {
@@ -607,6 +628,7 @@ World_Renderer :: struct {
     particle_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     foliage_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     grass_pipelines:                     [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    instance_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     layout:                              vk.PipelineLayout,
     sky_layout:                          vk.PipelineLayout,
     foliage_layout:                      vk.PipelineLayout,
@@ -634,6 +656,9 @@ World_Renderer :: struct {
     road_vertex:                         [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     foliage_vertex:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     grass_instance:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    instance_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    instance_index:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    instance_data:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     wing_trail_vertex:                   [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     wing_trail_index:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vertices:                            [dynamic]World_Vertex,
@@ -648,6 +673,10 @@ World_Renderer :: struct {
     bougainvillea_vertices:              [dynamic]Foliage_Vertex,
     grass_instances:                     [dynamic]Grass_Instance,
     wildflower_instances:                [dynamic]Grass_Instance,
+    instance_vertices:                   [dynamic]World_Vertex,
+    instance_indices:                    [dynamic]u32,
+    instance_flattened:                  [dynamic]World_Mesh_Instance,
+    instance_meshes:                     [dynamic]World_Instance_Mesh,
     wing_trail_vertices:                 [dynamic]World_Vertex,
     wing_trail_indices:                  [dynamic]u16,
     wing_trail_optimized_indices:        [dynamic]u16,
@@ -853,6 +882,33 @@ world_frame_geometry_buffers_ensure :: proc(frame: int) -> bool {
     ) {
         return false
     }
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.instance_vertex[frame],
+        vk.DeviceSize(len(world_renderer.instance_vertices) * size_of(World_Vertex)),
+        {.VERTEX_BUFFER},
+        "world instance mesh vertex buffer",
+    ) {
+        return false
+    }
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.instance_index[frame],
+        vk.DeviceSize(len(world_renderer.instance_indices) * size_of(u32)),
+        {.INDEX_BUFFER},
+        "world instance mesh index buffer",
+    ) {
+        return false
+    }
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.instance_data[frame],
+        vk.DeviceSize(len(world_renderer.instance_flattened) * size_of(World_Mesh_Instance)),
+        {.VERTEX_BUFFER},
+        "world mesh instance buffer",
+    ) {
+        return false
+    }
     return true
 }
 
@@ -867,6 +923,41 @@ world_buffer_min_size :: proc(buffers: []engine.Vk_Buffer) -> u64 {
     minimum := u64(buffers[0].size)
     for buffer in buffers[1:] do minimum = min(minimum, u64(buffer.size))
     return minimum
+}
+
+world_instance_meshes_clear :: proc() {
+    for &mesh in world_renderer.instance_meshes do delete(mesh.instances)
+    clear(&world_renderer.instance_meshes)
+    clear(&world_renderer.instance_vertices)
+    clear(&world_renderer.instance_indices)
+    clear(&world_renderer.instance_flattened)
+}
+
+world_instance_mesh_add :: proc(vertices: []World_Vertex, indices: []u32) -> int {
+    if len(vertices) == 0 || len(indices) == 0 do return -1
+    mesh := World_Instance_Mesh {
+        first_vertex = u32(len(world_renderer.instance_vertices)),
+        first_index  = u32(len(world_renderer.instance_indices)),
+        index_count  = u32(len(indices)),
+        instances    = make([dynamic]World_Mesh_Instance, 0, 64),
+    }
+    append(&world_renderer.instance_vertices, ..vertices)
+    append(&world_renderer.instance_indices, ..indices)
+    append(&world_renderer.instance_meshes, mesh)
+    return len(world_renderer.instance_meshes) - 1
+}
+
+world_instance_mesh_emit :: proc(mesh_index: int, instance: World_Mesh_Instance) {
+    if mesh_index < 0 || mesh_index >= len(world_renderer.instance_meshes) do return
+    append(&world_renderer.instance_meshes[mesh_index].instances, instance)
+}
+
+world_instances_flatten :: proc() {
+    clear(&world_renderer.instance_flattened)
+    for &mesh in world_renderer.instance_meshes {
+        mesh.first_instance = u32(len(world_renderer.instance_flattened))
+        append(&world_renderer.instance_flattened, ..mesh.instances[:])
+    }
 }
 
 @(no_instrumentation)
@@ -979,6 +1070,11 @@ world_water_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Col
 }
 
 @(no_instrumentation)
+world_fountain_water_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
+    return {{point.x, point.y, point.z}, world_color(color), .Fountain_Water, {0, 1, 0}, {}, {}}
+}
+
+@(no_instrumentation)
 world_foliage_vertex :: #force_inline proc(
     point: third_person.Vec3,
     color: rl.Color,
@@ -1009,6 +1105,9 @@ world_triangle_material :: #force_inline proc(a, b, c: third_person.Vec3, color:
         vertex.kind = kind
         vertex.normal = {normal.x, normal.y, normal.z}
         if kind == .BRDF {
+            // Generic procedural solids are matte dielectric surfaces. Keep
+            // callers on the shared material/lighting path without requiring
+            // every primitive builder to repeat the default material values.
             vertex.material = {0, .9}
         }
     }
@@ -1215,13 +1314,15 @@ world_triangle_foliage :: #force_inline proc(
     a, b, c: third_person.Vec3,
     color_a, color_b, color_c: rl.Color,
     normal_a, normal_b, normal_c: third_person.Vec3,
+    material_kind: World_Material_Kind = .Foliage,
 ) {
-    append(
-        &world_renderer.vertices,
+    vertices := [3]World_Vertex {
         world_foliage_vertex(a, color_a, normal_a),
         world_foliage_vertex(b, color_b, normal_b),
         world_foliage_vertex(c, color_c, normal_c),
-    )
+    }
+    for &vertex in vertices do vertex.kind = material_kind
+    append(&world_renderer.vertices, ..vertices[:])
 }
 
 @(no_instrumentation)
@@ -1426,6 +1527,29 @@ world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.
         world_water_vertex(a, color),
         world_water_vertex(c, color),
         world_water_vertex(d, color),
+    )
+}
+
+@(no_instrumentation)
+world_water_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
+    append(
+        &world_renderer.vertices,
+        world_water_vertex(a, color_a),
+        world_water_vertex(b, color_b),
+        world_water_vertex(c, color_c),
+    )
+}
+
+@(no_instrumentation)
+world_fountain_water_triangle_colored :: #force_inline proc(
+    a, b, c: third_person.Vec3,
+    color_a, color_b, color_c: rl.Color,
+) {
+    append(
+        &world_renderer.vertices,
+        world_fountain_water_vertex(a, color_a),
+        world_fountain_water_vertex(b, color_b),
+        world_fountain_water_vertex(c, color_c),
     )
 }
 
@@ -2495,6 +2619,59 @@ world_box_rotated_material :: proc(
 }
 
 @(no_instrumentation)
+world_quad_lit :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color, metallic, roughness: f32) {
+    normal := linalg.normalize0(linalg.cross(b - a, c - a))
+    vertices := [6]World_Vertex {
+        world_vertex(a, color),
+        world_vertex(b, color),
+        world_vertex(c, color),
+        world_vertex(a, color),
+        world_vertex(c, color),
+        world_vertex(d, color),
+    }
+    for &vertex in vertices {
+        vertex.kind = .BRDF
+        vertex.normal = {normal.x, normal.y, normal.z}
+        vertex.material = {clamp(metallic, 0, 1), clamp(roughness, .04, 1)}
+    }
+    append(&world_renderer.vertices, ..vertices[:])
+}
+
+// Shared weathered architectural metal. Its moderate response gives exterior
+// ironwork a readable highlight without making aged or painted pieces chrome.
+world_metal_box_rotated :: proc(
+    center: third_person.Vec3,
+    size: third_person.Vec3,
+    rotation: f32,
+    color: rl.Color,
+    metallic: f32 = .68,
+    roughness: f32 = .48,
+) {
+    x, y, z := size.x * .5, size.y * .5, size.z * .5
+    p: [8]third_person.Vec3
+    local := [8][3]f32 {
+        {-x, -y, -z},
+        {x, -y, -z},
+        {x, y, -z},
+        {-x, y, -z},
+        {-x, -y, z},
+        {x, -y, z},
+        {x, y, z},
+        {-x, y, z},
+    }
+    for index in 0 ..< 8 {
+        world_x, world_z := world_rotate_xz(center.x, center.z, local[index][0], local[index][2], rotation)
+        p[index] = {world_x, center.y + local[index][1], world_z}
+    }
+    world_quad_lit(p[0], p[3], p[2], p[1], color, metallic, roughness)
+    world_quad_lit(p[4], p[5], p[6], p[7], color, metallic, roughness)
+    world_quad_lit(p[0], p[4], p[7], p[3], color, metallic, roughness)
+    world_quad_lit(p[1], p[2], p[6], p[5], color, metallic, roughness)
+    world_quad_lit(p[3], p[7], p[6], p[2], color, metallic, roughness)
+    world_quad_lit(p[0], p[1], p[5], p[4], color, metallic, roughness)
+}
+
+@(no_instrumentation)
 world_quad_emissive_fixture :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color, fixture_kind: f32) {
     vertices := [6]World_Vertex {
         world_vertex(a, color),
@@ -2836,6 +3013,7 @@ world_vertical_disc_rotated :: proc(
     center: third_person.Vec3,
     radius_x, radius_y, depth, rotation: f32,
     color: rl.Color,
+    material_kind: World_Material_Kind = .BRDF,
 ) {
     SEGMENTS :: 12
     back, front: [SEGMENTS]third_person.Vec3
@@ -2855,9 +3033,9 @@ world_vertical_disc_rotated :: proc(
     }
     for segment in 0 ..< SEGMENTS {
         next := (segment + 1) % SEGMENTS
-        world_triangle(back_center, back[next], back[segment], color)
-        world_triangle(front_center, front[segment], front[next], color)
-        world_quad(back[segment], back[next], front[next], front[segment], color)
+        world_triangle_material(back_center, back[next], back[segment], color, material_kind)
+        world_triangle_material(front_center, front[segment], front[next], color, material_kind)
+        world_quad_material(back[segment], back[next], front[next], front[segment], color, material_kind)
     }
 }
 
@@ -2930,6 +3108,8 @@ world_ellipsoid_rotated :: proc(
 }
 
 // A softly faceted, material-backed ellipsoid for cloth and other matte props.
+// Flat face normals preserve the tailored low-poly shape while high roughness
+// avoids the hard wet-looking highlights used by the specialized eye material.
 world_ellipsoid_matte_oriented :: proc(
     center: third_person.Vec3,
     radius_x, radius_y, radius_z, rotation, roll: f32,
@@ -4167,13 +4347,18 @@ world_architecture_balcony :: proc(
     // Front frame: continuous top and lower rails with closely spaced,
     // grounded balusters. This reads as a guard instead of a row of floating
     // sticks, especially against bright glass.
-    world_box_rotated(
+    world_metal_box_rotated(
         {fascia_x, rail_top_y, fascia_z},
         {rail_width + .12, top_rail_height, .09},
         structure.rotation,
         iron,
     )
-    world_box_rotated({fascia_x, lower_rail_y, fascia_z}, {rail_width, .055, rail_depth}, structure.rotation, iron)
+    world_metal_box_rotated(
+        {fascia_x, lower_rail_y, fascia_z},
+        {rail_width, .055, rail_depth},
+        structure.rotation,
+        iron,
+    )
     for baluster in -3 ..= 3 {
         baluster_x, baluster_z := world_rotate_xz(
             structure.center_x,
@@ -4182,7 +4367,7 @@ world_architecture_balcony :: proc(
             front_z,
             structure.rotation,
         )
-        world_box_rotated(
+        world_metal_box_rotated(
             {baluster_x, (rail_base_y + rail_top_y) * .5, baluster_z},
             {.05, rail_height, rail_depth},
             structure.rotation,
@@ -4207,7 +4392,7 @@ world_architecture_balcony :: proc(
                 return_center_z,
                 structure.rotation,
             )
-            world_box_rotated(
+            world_metal_box_rotated(
                 {return_x, rail_y, return_z},
                 {.075, rail_y == rail_top_y ? top_rail_height : f32(.055), return_depth},
                 structure.rotation,
@@ -4223,7 +4408,7 @@ world_architecture_balcony :: proc(
                 post_local_z,
                 structure.rotation,
             )
-            world_box_rotated(
+            world_metal_box_rotated(
                 {post_x, (rail_base_y + rail_top_y) * .5, post_z},
                 {.06, rail_height, rail_depth},
                 structure.rotation,
@@ -4859,7 +5044,7 @@ world_architecture_mass :: proc(
             structure.depth * .5 + .365,
             structure.rotation,
         )
-        world_box_rotated(
+        world_metal_box_rotated(
             {handle_x, structure.base_y + step_height + door_height * .50, handle_z},
             {.11, .11, .10},
             structure.rotation,
@@ -5241,7 +5426,7 @@ world_architecture_mass :: proc(
             structure.depth * .5 + .29,
             structure.rotation,
         )
-        world_box_rotated(
+        world_metal_box_rotated(
             {bracket_x, lantern_y + .18, bracket_z},
             {.08, .40, .10},
             structure.rotation,
@@ -5254,7 +5439,7 @@ world_architecture_mass :: proc(
             structure.depth * .5 + .40,
             structure.rotation,
         )
-        world_box_rotated({lamp_x, lantern_y, lamp_z}, {.34, .44, .22}, structure.rotation, {65, 59, 52, 255})
+        world_metal_box_rotated({lamp_x, lantern_y, lamp_z}, {.34, .44, .22}, structure.rotation, {65, 59, 52, 255})
         glass_x, glass_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -5462,7 +5647,7 @@ world_architecture_mass :: proc(
                     structure.depth * .5 + 1.82,
                     structure.rotation,
                 )
-                world_box_rotated(
+                world_metal_box_rotated(
                     {rail_x, canopy_y[4], rail_z},
                     {awning_width + .16, .11, .11},
                     structure.rotation,
@@ -5653,7 +5838,7 @@ world_architecture_mass :: proc(
                         structure.depth * .5 + .10,
                         structure.rotation,
                     )
-                    world_box_rotated(
+                    world_metal_box_rotated(
                         {awning_bracket_x, arm_rear_y - .23, awning_bracket_z},
                         {.10, .58, .10},
                         structure.rotation,
@@ -7365,7 +7550,14 @@ world_architecture_mixed_use_service_door :: proc(
         handle_local_z,
         structure.rotation,
     )
-    world_box_rotated({handle_x, structure.base_y + 1.48, handle_z}, {.07, .07, .10}, yaw, {205, 164, 84, 255})
+    world_metal_box_rotated(
+        {handle_x, structure.base_y + 1.48, handle_z},
+        {.07, .07, .10},
+        yaw,
+        {205, 164, 84, 255},
+        .82,
+        .34,
+    )
 }
 
 world_architecture_mixed_use_service_path :: proc(
@@ -8047,14 +8239,7 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
         // Each sampled span is rendered as a capsule rather than an isolated
         // rectangle. Overlapping round pads remove polygonal outside corners
         // and make neighboring curves melt into a single walked surface.
-        world_land_surface_disc(
-            editor,
-            previous[0],
-            previous[1],
-            alley.half_width,
-            .13,
-            surface_color,
-        )
+        world_land_surface_disc(editor, previous[0], previous[1], alley.half_width, .13, surface_color)
         for curve_index in 1 ..= curve_segments {
             current := curve_points[curve_index]
             segment_dx, segment_dz := current[0] - previous[0], current[1] - previous[1]
@@ -8070,14 +8255,7 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
                     .13,
                     surface_color,
                 )
-                world_land_surface_disc(
-                    editor,
-                    current[0],
-                    current[1],
-                    alley.half_width,
-                    .13,
-                    surface_color,
-                )
+                world_land_surface_disc(editor, current[0], current[1], alley.half_width, .13, surface_color)
             }
             previous = current
         }
@@ -8783,7 +8961,7 @@ world_formation_sea_vegetation_band :: proc(
         top_radius = 1 - fraction * .25
     case .Ridge:
         top_radius = 1 - fraction * .30
-    case .Box, .Cliff, .Foliage, .Architecture:
+    case .Box, .Cliff, .Foliage, .Architecture, .Ruins:
         return
     }
     top_radius = max(top_radius, f32(.2))
@@ -8845,6 +9023,8 @@ world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project 
         world_foliage_formation(structure, terrain.BASE_CELL_SIZE, lod)
     case .Architecture:
         world_architecture(structure, project, lod)
+    case .Ruins:
+        world_settlement_ruin(structure, lod)
     }
     world_formation_sea_vegetation_band(structure, project, lod)
 }
@@ -9937,6 +10117,7 @@ world_foliage_ground_rosette :: proc(x, z, base_y, width, height: f32, seed: u32
             root_normal,
             leaf_normal,
             tip_normal,
+            .Leaf,
         )
         world_triangle_foliage(
             root,
@@ -9948,6 +10129,7 @@ world_foliage_ground_rosette :: proc(x, z, base_y, width, height: f32, seed: u32
             root_normal,
             tip_normal,
             leaf_normal,
+            .Leaf,
         )
     }
 }
@@ -11516,12 +11698,12 @@ world_architecture_municipal_lamp_fixture :: proc(editor: ^Editor, center_x, cen
     base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
     metal := rl.Color{82, 91, 87, 255}
     world_box_rotated({center_x, base_y + .14, center_z}, {.46, .28, .46}, rotation, {91, 91, 79, 255})
-    world_box_rotated({center_x, base_y + 2.25, center_z}, {.13, 4.35, .13}, rotation, metal)
+    world_metal_box_rotated({center_x, base_y + 2.25, center_z}, {.13, 4.35, .13}, rotation, metal)
 
     arm_x, arm_z := world_rotate_xz(center_x, center_z, 0, .34, rotation)
-    world_box_rotated({arm_x, base_y + 4.33, arm_z}, {.13, .13, .78}, rotation, metal)
+    world_metal_box_rotated({arm_x, base_y + 4.33, arm_z}, {.13, .13, .78}, rotation, metal)
     fixture_x, fixture_z := world_rotate_xz(center_x, center_z, 0, .72, rotation)
-    world_box_rotated({fixture_x, base_y + 4.16, fixture_z}, {.40, .14, .34}, rotation, metal)
+    world_metal_box_rotated({fixture_x, base_y + 4.16, fixture_z}, {.40, .14, .34}, rotation, metal)
     world_emissive_fixture_box(
         {fixture_x, base_y + 4.065, fixture_z},
         {.30, .06, .26},
@@ -11581,14 +11763,14 @@ world_architecture_municipal_lamp :: proc(editor: ^Editor, center_x, center_z, r
     base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
     if !world_sphere_in_view(editor, {center_x, base_y + 2.2, center_z}, 8.75, .5) do return
     world_architecture_municipal_lamp_fixture(editor, center_x, center_z, rotation)
-	world_architecture_municipal_lamp_effects(editor, center_x, center_z, rotation, roadway)
+    world_architecture_municipal_lamp_effects(editor, center_x, center_z, rotation, roadway)
 }
 
 world_town_mouse_wheel_position :: proc(area: circulation.Area) -> (x, z: f32) {
-	wheel_radius := f32(1.68)
-	local_x := max(-area.width * .5 + wheel_radius + .6, area.width * .5 - wheel_radius - .8)
-	local_z := min(area.length * .24, area.length * .5 - wheel_radius - .55)
-	return world_rotate_xz(area.center_x, area.center_z, local_x, local_z, area.rotation)
+    wheel_radius := f32(1.68)
+    local_x := max(-area.width * .5 + wheel_radius + .6, area.width * .5 - wheel_radius - .8)
+    local_z := min(area.length * .24, area.length * .5 - wheel_radius - .55)
+    return world_rotate_xz(area.center_x, area.center_z, local_x, local_z, area.rotation)
 }
 
 world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud_cover: f32) {
@@ -11612,20 +11794,20 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     road := rl.Color{117, 119, 110, 255}
     shoulder := rl.Color{177, 164, 135, 255}
     path_color := rl.Color{194, 184, 157, 255}
-	if len(world_renderer.architecture_street_area_cache) < plan.count {
-		resize(&world_renderer.architecture_street_area_cache, plan.count)
-	}
-	primary_plaza_index := -1
-	primary_plaza_area := f32(0)
-	for candidate, candidate_index in plan.areas[:plan.count] {
-		if candidate.kind != .Plaza do continue
-		candidate_area := candidate.width * candidate.length
-		if candidate_area > primary_plaza_area {
-			primary_plaza_area = candidate_area
-			primary_plaza_index = candidate_index
-		}
-	}
-	for area, area_index in plan.areas[:plan.count] {
+    if len(world_renderer.architecture_street_area_cache) < plan.count {
+        resize(&world_renderer.architecture_street_area_cache, plan.count)
+    }
+    primary_plaza_index := -1
+    primary_plaza_area := f32(0)
+    for candidate, candidate_index in plan.areas[:plan.count] {
+        if candidate.kind != .Plaza do continue
+        candidate_area := candidate.width * candidate.length
+        if candidate_area > primary_plaza_area {
+            primary_plaza_area = candidate_area
+            primary_plaza_index = candidate_index
+        }
+    }
+    for area, area_index in plan.areas[:plan.count] {
         area_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z)
         area_radius := f32(math.sqrt(f64(area.width * area.width + area.length * area.length))) * .5 + 2
         if !world_sphere_in_view(editor, {area.center_x, area_y, area.center_z}, area_radius) do continue
@@ -11726,7 +11908,25 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                         color,
                     )
                 }
-				for corner_x in -1 ..= 1 {
+                // Cache the civic fountain's stonework and water surface with
+                // the paving; only its time-dependent effects are emitted
+                // after the static cache below.
+                if area_index != primary_plaza_index && min(area.width, area.length) >= 16 {
+                    fountain_radius := clamp(min(area.width, area.length) * .16, f32(2.4), f32(5.2))
+                    fountain_style := fountains.Style(plazas.mix(seed ~ 0xA53C91E5) % 3)
+                    fountain := fountains.generate(
+                        seed ~ 0xF017A17,
+                        {
+                            radius = fountain_radius,
+                            style = fountain_style,
+                            jet_count = clamp(int(fountain_radius * 2.5), 6, 16),
+                            jet_height = fountain_radius * .72,
+                        },
+                    )
+                    fountain_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z) + .24
+                    world_fountain_structure(&fountain, {area.center_x, fountain_y, area.center_z}, area.rotation)
+                }
+                for corner_x in -1 ..= 1 {
                     if corner_x == 0 do continue
                     for corner_z in -1 ..= 1 {
                         if corner_z == 0 do continue
@@ -11740,10 +11940,10 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                         // local +Z rotates to (-sin(theta), cos(theta)); negate
                         // target X so the cantilever actually faces the square.
                         facing := f32(math.atan2(f64(lamp_x - area.center_x), f64(area.center_z - lamp_z)))
-						world_architecture_municipal_lamp_fixture(editor, lamp_x, lamp_z, facing)
-					}
-				}
-			case .Path, .Forecourt:
+                        world_architecture_municipal_lamp_fixture(editor, lamp_x, lamp_z, facing)
+                    }
+                }
+            case .Path, .Forecourt:
                 world_land_surface_rotated(
                     editor,
                     area.center_x,
@@ -11761,22 +11961,35 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
             cache.project_revision = editor.project.revision
             cache.terrain_revision = editor.terrain_revision
             cache.valid = true
-		}
+        }
 
-		if area_index == primary_plaza_index {
-			wheel_x, wheel_z := world_town_mouse_wheel_position(area)
-			wheel_y := terrain.sample_height(&editor.project, 0, wheel_x, wheel_z)
-			world_town_mouse_wheel(
-				wheel_x,
-				wheel_y,
-				wheel_z,
-				area.rotation,
-				mouse_wheel_angle,
-				mouse_wheel_jolt,
-			)
-		}
+        // Fountain spray, droplets, and impact rings depend on time. Emit only
+        // those effects outside the plaza geometry cache so civic fountains
+        // animate without rebuilding their stonework every frame.
+        if area.kind == .Plaza && area_index != primary_plaza_index && min(area.width, area.length) >= 16 {
+            seed := u32(i32(area.center_x * 10)) ~ (u32(i32(area.center_z * 10)) * u32(0x9e3779b9))
+            fountain_radius := clamp(min(area.width, area.length) * .16, f32(2.4), f32(5.2))
+            fountain_style := fountains.Style(plazas.mix(seed ~ 0xA53C91E5) % 3)
+            fountain := fountains.generate(
+                seed ~ 0xF017A17,
+                {
+                    radius = fountain_radius,
+                    style = fountain_style,
+                    jet_count = clamp(int(fountain_radius * 2.5), 6, 16),
+                    jet_height = fountain_radius * .72,
+                },
+            )
+            fountain_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z) + .24
+            world_fountain_effects(&fountain, {area.center_x, fountain_y, area.center_z}, area.rotation)
+        }
 
-		// Halos are camera-facing/daylight-sensitive and pools must remain in
+        if area_index == primary_plaza_index {
+            wheel_x, wheel_z := world_town_mouse_wheel_position(area)
+            wheel_y := terrain.sample_height(&editor.project, 0, wheel_x, wheel_z)
+            world_town_mouse_wheel(wheel_x, wheel_y, wheel_z, area.rotation, mouse_wheel_angle, mouse_wheel_jolt)
+        }
+
+        // Halos are camera-facing/daylight-sensitive and pools must remain in
         // the late transparent submission, so regenerate only these effects.
         if area.kind == .Street && editor.architecture_city_plan.lamp_count == 0 {
             lamp_count := clamp(int(area.width / 22), 2, 6)
@@ -11846,6 +12059,7 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
         }
     }
     world_architecture_laundry_webbing(editor)
+    world_settlement_gardens(editor)
     // Cypress accents mark the two lane intersections and give the graph town
     // a readable Mediterranean scale cue without changing terrain data.
     for x_side in -1 ..= 1 {
@@ -11869,6 +12083,124 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                     olive_base,
                     u32((x_side + 3) * 53 + (z_side + 3) * 17 + buildings * 9),
                 )
+            }
+        }
+    }
+}
+
+// Derive inhabited gardens from accepted settlement sites. The same
+// settlement seed always produces the same planting, and previews remain
+// presentation-only instead of mutating terrain structures.
+settlement_park_has_fountain :: proc(editor: ^Editor, structure_id: u64) -> bool {
+    if editor == nil || !editor.settlement_plan.valid do return false
+    for site in editor.settlement_plan.sites[:editor.settlement_plan.site_count] {
+        if site.accepted && site.kind == .Park && site.structure.id == structure_id && site.fountain_enabled {
+            return true
+        }
+    }
+    return false
+}
+
+settlement_garden_point_in_plot :: proc(site: Settlement_Site, x, z: f32, inset: f32 = 0) -> bool {
+    point := [2]f32{x, z}
+    corners := site.parcel.corners
+    if site.kind == .Park {
+        half_width := max(site.structure.width * .5 - inset, f32(0))
+        half_depth := max(site.structure.depth * .5 - inset, f32(0))
+        if half_width <= 0 || half_depth <= 0 do return false
+        sine, cosine := math.sin(site.structure.rotation), math.cos(site.structure.rotation)
+        delta := point - [2]f32{site.structure.center_x, site.structure.center_z}
+        local_x := delta[0] * cosine + delta[1] * sine
+        local_z := -delta[0] * sine + delta[1] * cosine
+        return math.abs(local_x) <= half_width && math.abs(local_z) <= half_depth
+    }
+
+    winding := f32(0)
+    for corner_index in 0 ..< len(corners) {
+        a := corners[corner_index]
+        b := corners[(corner_index + 1) % len(corners)]
+        edge := b - a
+        edge_length := linalg.length(edge)
+        if edge_length <= .001 do return false
+        cross := edge[0] * (point[1] - a[1]) - edge[1] * (point[0] - a[0])
+        if math.abs(cross) <= inset * edge_length do return false
+        if winding == 0 {
+            winding = cross
+        } else if cross * winding < 0 {
+            return false
+        }
+    }
+    return true
+}
+
+world_settlement_gardens :: proc(editor: ^Editor) {
+    if editor == nil || !editor.settlement_plan.valid do return
+    for site, site_index in editor.settlement_plan.sites[:editor.settlement_plan.site_count] {
+        if !site.accepted || (site.kind != .Ordinary && site.kind != .Park) do continue
+        structure := site.structure
+        seed := garden_hash(structure.seed ~ editor.settlement_plan.request.seed ~ u32(site_index * 0x9e37))
+        is_park := site.kind == .Park
+        has_fountain := is_park && site.fountain_enabled
+        is_farmstead := site.purpose == .Farmstead
+        // Attached and dense homes already receive façade pots and climbing
+        // growth. Ground gardens belong to parks, farmsteads, and detached lots.
+        if !is_park && !is_farmstead && (site.attached || site.density > .38 || seed & 3 == 0) do continue
+
+        count := is_park ? (has_fountain ? 12 : 7) : (is_farmstead ? 5 : 3)
+        radius_x := max(structure.width * (is_park ? f32(.42) : f32(.62)), f32(3.5))
+        radius_z := max(structure.depth * (is_park ? f32(.34) : f32(.60)), f32(3.2))
+        if has_fountain {
+            fountain := fountains.generate(
+                structure.seed ~ editor.settlement_plan.request.seed ~ 0xF017A17,
+                {
+                    radius = site.fountain_radius,
+                    style = site.fountain_style,
+                    jet_count = site.fountain_jet_count,
+                    jet_height = site.fountain_jet_height,
+                },
+            )
+            fountain_y := terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
+            world_fountain(&fountain, {structure.center_x, fountain_y, structure.center_z}, structure.rotation)
+            radius_x = max(radius_x, site.fountain_radius + 2.3)
+            radius_z = max(radius_z, site.fountain_radius + 2.3)
+        }
+        for plant_index in 0 ..< count {
+            mixed := garden_hash(seed ~ u32(plant_index + 1) * u32(0x85ebca6b))
+            along := (f32((mixed >> 8) & 255) / 255 - .5) * radius_x * 1.55
+            local_z := -radius_z
+            if is_park {
+                angle := f32(plant_index) / f32(count) * math.PI * 2
+                along = math.cos(angle) * radius_x
+                local_z = math.sin(angle) * radius_z
+            }
+            x, z := world_rotate_xz(structure.center_x, structure.center_z, along, local_z, structure.rotation)
+            clearance := is_park ? f32(1.4) : f32(1.8)
+            // Collision clearance alone does not establish ownership: a clear
+            // sample behind a house can lie beyond its parcel on an access
+            // path. Keep every garden anchor (and therefore every woody trunk)
+            // inset inside the site's actual plot.
+            if !settlement_garden_point_in_plot(site, x, z, clearance * .25) do continue
+            // The park's reserved foliage footprint is itself a project
+            // structure, so only household gardens use the generic collision
+            // query; park plants intentionally live inside that reservation.
+            if !is_park && !architecture.city_accent_site_clear(&editor.project, x, z, clearance, .4) do continue
+            base_y := terrain.sample_height(&editor.project, 0, x, z)
+            if !world_sphere_in_view(editor, {x, base_y + 3, z}, 5, 2) do continue
+            plant_seed := mixed ~ u32(0x504c414e)
+            if is_park && plant_index % 3 == 0 {
+                world_architecture_cypress(x, z, base_y, plant_seed)
+            } else if is_farmstead && plant_index == 0 {
+                world_architecture_olive(x, z, base_y, plant_seed)
+            } else {
+                palette := [4]rl.Color {
+                    {72, 119, 57, 255},
+                    {103, 137, 65, 255},
+                    {185, 91, 105, 255},
+                    {216, 178, 74, 255},
+                }
+                color := palette[int((mixed >> 16) & 3)]
+                height := .45 + f32((mixed >> 24) & 255) / 255 * .48
+                world_grass_card({x, base_y + height * .5, z}, .52 + height * .24, height, int(mixed % 16), color)
             }
         }
     }
@@ -11978,10 +12310,10 @@ world_structures :: proc(editor: ^Editor) {
         world_before := len(world_renderer.vertices) + len(world_renderer.static_indices)
         foliage_vertices_before := len(world_renderer.foliage_vertices)
         bougainvillea_vertices_before := len(world_renderer.bougainvillea_vertices)
-        if structure.kind == .Foliage {
+        if structure.kind == .Foliage && !settlement_park_has_fountain(editor, structure.id) {
             world_foliage_formation_cached(structure, index, force_near)
             world_renderer.structure_lod_counts[int(world_renderer.foliage_geometry_cache[index].lod)] += 1
-        } else {
+        } else if structure.kind != .Foliage {
             world_static_formation_cached(structure, index, &editor.project, force_near)
             world_renderer.structure_lod_counts[int(world_renderer.static_geometry_cache[index].lod)] += 1
         }
@@ -12234,6 +12566,29 @@ world_climbing_leaf_vine :: proc(
         detail_tier = architecture.bougainvillea_detail_tier(camera_distance)
         crown_detail_fade = architecture.bougainvillea_crown_detail_fade(camera_distance)
     }
+    // The catalog proposes the biological leader hierarchy. The established
+    // façade router below remains authoritative for masonry clearance and
+    // smooth detours, so adopting the L-system does not regress windows,
+    // doors, planters, laundry, or the existing validation silhouettes.
+    support := plants.Support_Surface {
+        width   = max(structure.width, f32(1)),
+        height  = max(vine_height, f32(1)),
+        plane_z = surface_z,
+        root_x  = 0,
+    }
+    skeleton_detail :=
+        detail_tier >= 2 ? plants.Detail_Level.Near : detail_tier == 1 ? plants.Detail_Level.Medium : plants.Detail_Level.Far
+    skeleton := plants.generate(
+        {
+            species = .Bougainvillea,
+            seed = u64(plant_seed),
+            maturity = vine_maturity,
+            detail = skeleton_detail,
+            habit = .Wall_Trained,
+            support = &support,
+        },
+    )
+    defer plants.destroy(&skeleton)
     root_scale := .78 + vine_maturity * .42
     stem_start := structure.base_y + .12 + f32(seed % 5) * .28
     planter_rooted := false
@@ -12271,6 +12626,11 @@ world_climbing_leaf_vine :: proc(
         if structure.kind == .Architecture {
             divergence := t * t * (3 - 2 * t)
             trained_x := root_local_x + (local_x - root_local_x) * divergence
+            if skeleton.error == .None {
+                proposed := plants.main_leader_sample(&skeleton.plant, t)
+                proposed_offset := (proposed[0] - support.root_x) / max(support.width, f32(1))
+                trained_x += proposed_offset * structure.width * divergence * .35
+            }
             // Multiple leaders share an exact basal origin, then acquire
             // independent shape only as their woody paths diverge.
             sway = trained_x - local_x + sway * divergence
@@ -13468,8 +13828,8 @@ world_climbing_leaf_vine :: proc(
                         bloom_center.y - direction_y * bloom_height * .58 + perpendicular_y * bloom_width,
                         bloom_center.z - direction_z * bloom_height * .58 + perpendicular_z * bloom_width,
                     }
-                    world_triangle(bract_tip, bract_left, bract_right, bloom_color)
-                    world_triangle(bract_tip, bract_right, bract_left, bloom_color)
+                    world_triangle_material(bract_tip, bract_left, bract_right, bloom_color, .Petal)
+                    world_triangle_material(bract_tip, bract_right, bract_left, bloom_color, .Petal)
                     if bract_index == 2 {
                         flower_center := bloom_center
                         flower_center.x += average_normal.x * .018
@@ -14537,25 +14897,11 @@ world_rondine_live_variation :: proc(epoch: u32, blend: f32, pressure_role, salt
 world_rondine_surface_heading :: proc(editor: ^Editor) -> third_person.Vec3 {
     if editor == nil do return {0, 0, -1}
     basis := flight.basis_from_orientation(editor.rondine.body.orientation)
-    body_forward := third_person.Vec3 {
-        basis.forward.x,
-        0,
-        basis.forward.z,
-    }
-    horizontal_velocity := third_person.Vec3 {
-        editor.rondine.body.velocity.x,
-        0,
-        editor.rondine.body.velocity.z,
-    }
-    horizontal_speed :=
-        f32(
-            math.sqrt(
-                f64(
-                    horizontal_velocity.x * horizontal_velocity.x +
-                    horizontal_velocity.z * horizontal_velocity.z,
-                ),
-            ),
-        )
+    body_forward := third_person.Vec3{basis.forward.x, 0, basis.forward.z}
+    horizontal_velocity := third_person.Vec3{editor.rondine.body.velocity.x, 0, editor.rondine.body.velocity.z}
+    horizontal_speed := f32(
+        math.sqrt(f64(horizontal_velocity.x * horizontal_velocity.x + horizontal_velocity.z * horizontal_velocity.z)),
+    )
     if horizontal_speed <= .01 do return body_forward
     travel_forward := horizontal_velocity / horizontal_speed
     travel_blend := clamp(math.abs(editor.rondine.telemetry.slip) * 1.8, 0, .72)
@@ -14601,11 +14947,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     )
     if contact_strength > .02 {
         contact_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
-        body_forward := third_person.Vec3 {
-            rondine_basis.forward.x,
-            0,
-            rondine_basis.forward.z,
-        }
+        body_forward := third_person.Vec3{rondine_basis.forward.x, 0, rondine_basis.forward.z}
         contact_forward := world_rondine_surface_heading(editor)
         contact_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
         contact_back := -contact_forward
@@ -15337,14 +15679,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     if planing_spark_strength > .02 {
         spark_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
         spark_back := -world_rondine_surface_heading(editor)
-        spark_right :=
-            third_person.Vec3 {
-                rondine_basis.right.x,
-                0,
-                rondine_basis.right.z,
-            }
-        planing_spark_visibility :=
-            f32(math.sqrt(f64(planing_spark_strength)))
+        spark_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
+        planing_spark_visibility := f32(math.sqrt(f64(planing_spark_strength)))
         for spark in 0 ..< 4 {
             spark_f := f32(spark)
             side_sign := spark & 1 == 0 ? f32(-1) : f32(1)
@@ -15383,14 +15719,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     if prop_tick_strength > .04 {
         prop_tick_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
         prop_tick_back := -world_rondine_surface_heading(editor)
-        prop_tick_right :=
-            third_person.Vec3 {
-                rondine_basis.right.x,
-                0,
-                rondine_basis.right.z,
-            }
-        prop_tick_visibility :=
-            f32(math.sqrt(f64(prop_tick_strength)))
+        prop_tick_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
+        prop_tick_visibility := f32(math.sqrt(f64(prop_tick_strength)))
         for side in 0 ..< 2 {
             side_sign := side == 0 ? f32(-1) : f32(1)
             for tick in 0 ..< 2 {
@@ -15438,12 +15768,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     if surge_strength > .04 {
         surge_base := third_person.Vec3{editor.rondine.body.position.x, sea_y + .041, editor.rondine.body.position.z}
         surge_back := -world_rondine_surface_heading(editor)
-        surge_right :=
-            third_person.Vec3 {
-                rondine_basis.right.x,
-                0,
-                rondine_basis.right.z,
-        }
+        surge_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
         surge_visibility := f32(math.sqrt(f64(surge_strength)))
         for bar in 0 ..< 3 {
             bar_f := f32(bar)
@@ -15473,12 +15798,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         power_visibility := f32(math.sqrt(f64(power_over_strength)))
         power_base := third_person.Vec3{editor.rondine.body.position.x, sea_y + .047, editor.rondine.body.position.z}
         power_back := -world_rondine_surface_heading(editor)
-        power_right :=
-            third_person.Vec3 {
-                rondine_basis.right.x,
-                0,
-                rondine_basis.right.z,
-        }
+        power_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
         power_side := math.sign(editor.rondine.steering)
         if math.abs(editor.rondine.telemetry.slip) > .025 {
             power_side = math.sign(editor.rondine.telemetry.slip)
@@ -15563,12 +15883,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             editor.rondine.body.position.z,
         }
         transition_back := -world_rondine_surface_heading(editor)
-        transition_right :=
-            third_person.Vec3 {
-                rondine_basis.right.x,
-                0,
-                rondine_basis.right.z,
-        }
+        transition_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
         transition_side := editor.rondine.slip_side
         if transition_side == 0 do transition_side = math.sign(editor.rondine.steering)
         if transition_side == 0 do transition_side = 1
@@ -15596,12 +15911,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     if brake_strength > .04 {
         brake_base := third_person.Vec3{editor.rondine.body.position.x, sea_y + .039, editor.rondine.body.position.z}
         brake_back := -world_rondine_surface_heading(editor)
-        brake_right :=
-            third_person.Vec3 {
-                rondine_basis.right.x,
-                0,
-                rondine_basis.right.z,
-        }
+        brake_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
         brake_visibility := f32(math.sqrt(f64(brake_strength)))
         pocket_alpha := u8(clamp(76 * brake_visibility, 0, 82))
         world_rondine_surface_chip(
@@ -15655,12 +15965,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         flick_visibility := f32(math.sqrt(f64(brake_flick_strength)))
         flick_base := third_person.Vec3{editor.rondine.body.position.x, sea_y + .045, editor.rondine.body.position.z}
         flick_back := -world_rondine_surface_heading(editor)
-        flick_right :=
-            third_person.Vec3 {
-                rondine_basis.right.x,
-                0,
-                rondine_basis.right.z,
-        }
+        flick_right := third_person.Vec3{rondine_basis.right.x, 0, rondine_basis.right.z}
         flick_side := editor.rondine.steering >= 0 ? f32(1) : f32(-1)
         sheet_root := flick_base + flick_back * 3.05 + flick_right * (flick_side * .72)
         sheet_inner := flick_base + flick_back * 4.25 + flick_right * (flick_side * .28)
@@ -19644,6 +19949,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 .018,
                 flower_yaw,
                 petal_color,
+                .Petal,
             )
         }
         world_vertical_disc_rotated(
@@ -22139,18 +22445,13 @@ world_build :: proc(editor: ^Editor) {
     // instead of silently dropping vehicles at the end of the frame.
     world_ocean(editor)
     for index in 0 ..< editor.default_marina_count {
-        world_markov_marina_facility(
-            editor,
-            &editor.default_marinas[index],
-            false,
-            MARINA_GEOMETRY_CACHE_DEFAULT_FIRST + index,
-        )
+        world_shoreline_harbor_facility(editor, &editor.default_harbors[index])
     }
     if editor.marina_authored {
-        world_markov_marina_facility(editor, &editor.marina_authored_plan, false, MARINA_GEOMETRY_CACHE_AUTHORED)
+        world_shoreline_harbor_facility(editor, &editor.harbor_authored_plan)
     }
     if editor.marina_paint_mode && editor.marina_preview_valid {
-        world_markov_marina_facility(editor, &editor.marina_preview_plan, false, MARINA_GEOMETRY_CACHE_PREVIEW, true)
+        world_shoreline_harbor_facility(editor, &editor.harbor_preview_plan, true)
     }
     if !lab_scene_suppresses_infrastructure(editor) do world_infrastructure(editor)
     world_roads(editor)
@@ -23230,6 +23531,55 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     }
     failure_stage = "world graphics pipelines"
     if !render3d.create_color_pipeline_variants(ctx, &info, .D32_SFLOAT, &world_renderer.pipelines) do return false
+    instance_vert: engine.Vk_Shader_Module
+    if !engine.vk_load_shader_module_with_fallback(
+        ctx,
+        "assets/shaders/world.slang",
+        "shaders/world-instance.vert",
+        .Vertex,
+        "instance_vertex_main",
+        &instance_vert,
+    ) {
+        return false
+    }
+    defer engine.vk_destroy_shader_module(ctx, &instance_vert)
+    instance_stages := stages
+    instance_stages[0].module = instance_vert.handle
+    instance_bindings := [2]vk.VertexInputBindingDescription {
+        {binding = 0, stride = u32(size_of(World_Vertex)), inputRate = .VERTEX},
+        {binding = 1, stride = u32(size_of(World_Mesh_Instance)), inputRate = .INSTANCE},
+    }
+    instance_attrs := [11]vk.VertexInputAttributeDescription {
+        {location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, position))},
+        {location = 1, binding = 0, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Vertex, color))},
+        {location = 2, binding = 0, format = .R32_UINT, offset = u32(offset_of(World_Vertex, kind))},
+        {location = 3, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, normal))},
+        {location = 4, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, material))},
+        {location = 5, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, uv))},
+        {location = 6, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, basis_x_translation_x))},
+        {location = 7, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, basis_y_translation_y))},
+        {location = 8, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, basis_z_translation_z))},
+        {location = 9, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, color))},
+        {location = 10, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, normal_override))},
+    }
+    instance_vi := vk.PipelineVertexInputStateCreateInfo {
+        sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        vertexBindingDescriptionCount   = 2,
+        pVertexBindingDescriptions      = raw_data(instance_bindings[:]),
+        vertexAttributeDescriptionCount = 11,
+        pVertexAttributeDescriptions    = raw_data(instance_attrs[:]),
+    }
+    instance_info := info
+    instance_info.pStages = raw_data(instance_stages[:])
+    instance_info.pVertexInputState = &instance_vi
+    if !render3d.create_color_pipeline_variants(
+        ctx,
+        &instance_info,
+        .D32_SFLOAT,
+        &world_renderer.instance_pipelines,
+    ) {
+        return false
+    }
     transparent_depth := depth
     transparent_depth.depthWriteEnable = false
     transparent_info := info
@@ -23878,6 +24228,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         clipmap_update(editor, int(pass.frame.frame_index))
     }
     frame_index := int(pass.frame.frame_index)
+    world_instances_flatten()
     if !world_frame_geometry_buffers_ensure(frame_index) do return
     buffer := &world_renderer.vertex[frame_index]
     static_vertex_buffer := &world_renderer.static_vertex[frame_index]
@@ -23885,6 +24236,9 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     road_buffer := &world_renderer.road_vertex[frame_index]
     foliage_buffer := &world_renderer.foliage_vertex[frame_index]
     grass_instance_buffer := &world_renderer.grass_instance[frame_index]
+    instance_vertex_buffer := &world_renderer.instance_vertex[frame_index]
+    instance_index_buffer := &world_renderer.instance_index[frame_index]
+    instance_data_buffer := &world_renderer.instance_data[frame_index]
     wing_trail_vertex_buffer := &world_renderer.wing_trail_vertex[frame_index]
     wing_trail_index_buffer := &world_renderer.wing_trail_index[frame_index]
     if len(world_renderer.vertices) > 0 {
@@ -23945,6 +24299,27 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             destination,
             raw_data(world_renderer.wildflower_instances[:]),
             len(world_renderer.wildflower_instances) * size_of(Grass_Instance),
+        )
+    }
+    if len(world_renderer.instance_vertices) > 0 {
+        mem.copy_non_overlapping(
+            instance_vertex_buffer.mapped,
+            raw_data(world_renderer.instance_vertices[:]),
+            len(world_renderer.instance_vertices) * size_of(World_Vertex),
+        )
+    }
+    if len(world_renderer.instance_indices) > 0 {
+        mem.copy_non_overlapping(
+            instance_index_buffer.mapped,
+            raw_data(world_renderer.instance_indices[:]),
+            len(world_renderer.instance_indices) * size_of(u32),
+        )
+    }
+    if len(world_renderer.instance_flattened) > 0 {
+        mem.copy_non_overlapping(
+            instance_data_buffer.mapped,
+            raw_data(world_renderer.instance_flattened[:]),
+            len(world_renderer.instance_flattened) * size_of(World_Mesh_Instance),
         )
     }
     if len(world_renderer.wing_trail_vertices) > 0 {
@@ -24026,6 +24401,9 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         road_buffer              = road_buffer,
         foliage_buffer           = foliage_buffer,
         grass_instance_buffer    = grass_instance_buffer,
+        instance_vertex_buffer   = instance_vertex_buffer,
+        instance_index_buffer    = instance_index_buffer,
+        instance_data_buffer     = instance_data_buffer,
         wing_trail_vertex_buffer = wing_trail_vertex_buffer,
         wing_trail_index_buffer  = wing_trail_index_buffer,
         offset                   = offset,
@@ -24050,6 +24428,7 @@ world_renderer_attach :: proc(editor: ^Editor) {
 world_renderer_destroy :: proc() {
     if !world_renderer.initialized do return
     _ = vk.DeviceWaitIdle(world_renderer.ctx.device)
+    generated_plant_cache_destroy()
     imgui_destroy()
     for &buffer in world_renderer.vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.static_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
@@ -24057,6 +24436,9 @@ world_renderer_destroy :: proc() {
     for &buffer in world_renderer.road_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.foliage_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.grass_instance do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.instance_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.instance_index do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.instance_data do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.vehicle_paint_staging do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.wing_trail_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.wing_trail_index do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
@@ -24080,6 +24462,7 @@ world_renderer_destroy :: proc() {
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.particle_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.foliage_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.grass_pipelines)
+    render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.instance_pipelines)
     resources.image_destroy(&world_renderer.foliage_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.bougainvillea_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.grass_atlas, world_renderer.ctx)
@@ -24120,6 +24503,11 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.bougainvillea_vertices)
     delete(world_renderer.grass_instances)
     delete(world_renderer.wildflower_instances)
+    world_instance_meshes_clear()
+    delete(world_renderer.instance_vertices)
+    delete(world_renderer.instance_indices)
+    delete(world_renderer.instance_flattened)
+    delete(world_renderer.instance_meshes)
     ground_grass_cache_clear()
     delete(world_renderer.grass_chunk_cache)
     delete(world_renderer.wing_trail_vertices)

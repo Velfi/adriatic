@@ -2,6 +2,7 @@ package architecture
 
 import buildings "../buildings"
 import circulation "../circulation"
+import plants "../plants"
 import roads "../roads"
 import terrain "../terrain"
 import "core:math"
@@ -902,8 +903,7 @@ architecture_frontage_rotation :: proc(tangent_x, tangent_z, frontage_side: f32)
 
 @(no_instrumentation)
 bougainvillea_maturity :: #force_inline proc(growth_density: f32) -> f32 {
-    maturity := clamp((growth_density - .035) / (.72 - .035), 0, 1)
-    return maturity * maturity * (3 - 2 * maturity)
+    return plants.maturity_for_species(.Bougainvillea, growth_density)
 }
 
 @(no_instrumentation)
@@ -998,19 +998,12 @@ bougainvillea_secondary_leader_strength :: #force_inline proc(maturity: f32) -> 
 }
 
 bougainvillea_woody_compliance :: proc(maturity: f32) -> f32 {
-    // Green juvenile leaders follow gusts readily. Lignified, wall-trained
-    // trunks retain only a small amount of movement at full maturity.
-    return 1 - clamp(maturity, 0, 1) * .86
+    return plants.woody_wind_compliance(.Bougainvillea, maturity)
 }
 
 @(no_instrumentation)
 bougainvillea_detail_tier :: #force_inline proc(camera_distance: f32) -> int {
-    // Preserve the trained silhouette throughout the city, but reserve tiny
-    // bark, support, and layered-card details for distances where they occupy
-    // meaningful screen area.
-    if camera_distance < 48 do return 2
-    if camera_distance < 112 do return 1
-    return 0
+    return plants.detail_tier(camera_distance)
 }
 
 @(no_instrumentation)

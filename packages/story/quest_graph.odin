@@ -497,6 +497,7 @@ apply_quest_projection :: proc(state: ^State, graph_state: ^quest.State, catalog
     state.has_recovery_kit = clinic_water > 0
     state.completed_deliveries =
         first_letter + first_reply + invitation + acceptance + post + clinic_medicine + clinic_linens + clinic_water
-    state.stamps_earned = first_letter + first_reply + invitation + acceptance + post + magneto_back + state.bonus_stamps
+    state.stamps_earned =
+        first_letter + first_reply + invitation + acceptance + post + magneto_back + state.bonus_stamps
     return true
 }

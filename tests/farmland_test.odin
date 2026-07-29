@@ -29,6 +29,17 @@ markov_farmland_is_valid_deterministic_and_seeded :: proc(t: ^testing.T) {
 }
 
 @(test)
+farmland_always_reserves_a_kitchen_garden :: proc(t: ^testing.T) {
+    sizes := [3][2]int{{7, 7}, {8, 8}, {25, 19}}
+    for dimensions in sizes {
+        plan := farmland.generate_sized(73, dimensions[0], dimensions[1])
+        testing.expect(t, plan.garden_span >= 1)
+        testing.expect(t, plan.garden_x >= 0 && plan.garden_x + plan.garden_span <= plan.width)
+        testing.expect(t, plan.garden_z >= 0 && plan.garden_z + plan.garden_span <= plan.height)
+    }
+}
+
+@(test)
 markov_farmland_partitions_cover_the_grid_exactly :: proc(t: ^testing.T) {
     plan := farmland.generate(41)
     coverage: [farmland.GRID_WIDTH * farmland.GRID_HEIGHT]u8

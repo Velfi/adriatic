@@ -167,9 +167,12 @@ Turtle_Config :: struct {
     up:           Vec3,
     step:         f32,
     step_scale:   f32,
+    step_jitter:  f32,
     angle:        f32,
+    angle_jitter: f32,
     radius:       f32,
     radius_scale: f32,
+    seed:         u64,
 }
 
 Interpret_Error :: enum {
@@ -242,13 +245,16 @@ interpret :: proc(word: []u8, config: Turtle_Config) -> Interpret_Result {
         result.error = .Invalid_Basis
         return result
     }
+    random := cfg.seed
+    if random == 0 do random = 1
     stack := make([dynamic]Turtle_State)
     defer delete(stack)
 
     for symbol in word {
         switch symbol {
         case 'F':
-            next := state.position + state.forward * state.step
+            jitter := (f32(random_next(&random) >> 40) / f32(1 << 24) * 2 - 1) * cfg.step_jitter
+            next := state.position + state.forward * state.step * max(.05, 1 + jitter)
             append(
                 &result.plant.segments,
                 Segment {
@@ -266,19 +272,25 @@ interpret :: proc(word: []u8, config: Turtle_Config) -> Interpret_Result {
             state.position += state.forward * state.step
             state.step *= cfg.step_scale
         case '+':
-            rotate_turtle(&state, state.up, cfg.angle)
+            jitter := (f32(random_next(&random) >> 40) / f32(1 << 24) * 2 - 1) * cfg.angle_jitter
+            rotate_turtle(&state, state.up, cfg.angle + jitter)
         case '-':
-            rotate_turtle(&state, state.up, -cfg.angle)
+            jitter := (f32(random_next(&random) >> 40) / f32(1 << 24) * 2 - 1) * cfg.angle_jitter
+            rotate_turtle(&state, state.up, -(cfg.angle + jitter))
         case '&':
             right := linalg.cross(state.forward, state.up)
-            rotate_turtle(&state, right, cfg.angle)
+            jitter := (f32(random_next(&random) >> 40) / f32(1 << 24) * 2 - 1) * cfg.angle_jitter
+            rotate_turtle(&state, right, cfg.angle + jitter)
         case '^':
             right := linalg.cross(state.forward, state.up)
-            rotate_turtle(&state, right, -cfg.angle)
+            jitter := (f32(random_next(&random) >> 40) / f32(1 << 24) * 2 - 1) * cfg.angle_jitter
+            rotate_turtle(&state, right, -(cfg.angle + jitter))
         case '\\':
-            rotate_turtle(&state, state.forward, cfg.angle)
+            jitter := (f32(random_next(&random) >> 40) / f32(1 << 24) * 2 - 1) * cfg.angle_jitter
+            rotate_turtle(&state, state.forward, cfg.angle + jitter)
         case '/':
-            rotate_turtle(&state, state.forward, -cfg.angle)
+            jitter := (f32(random_next(&random) >> 40) / f32(1 << 24) * 2 - 1) * cfg.angle_jitter
+            rotate_turtle(&state, state.forward, -(cfg.angle + jitter))
         case '|':
             rotate_turtle(&state, state.up, math.PI)
         case '[':

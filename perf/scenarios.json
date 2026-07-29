@@ -116,6 +116,10 @@
       "enabled": false,
       "description": "Playground shadow fixture with thin, broad, angled, overlapping, and elevated casters."
     },
+    "garden": {
+      "enabled": false,
+      "description": "Generated courtyard garden exercising L-system branches, leaves, flowers, and mesh optimization."
+    },
     "boids_10k": {
       "enabled": false,
       "description": "Ten thousand simulated and rendered seabird boids arranged as 1,112 local flocks."

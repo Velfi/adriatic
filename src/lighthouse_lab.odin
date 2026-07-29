@@ -127,13 +127,7 @@ world_lighthouse_lab :: proc(editor: ^Editor) {
     // looked like a missing chunk beneath the lighthouse.
     water := rl.Color{39, 100, 128, 255}
     extent := f32(90)
-    world_water_quad(
-        {-extent, 0, -extent},
-        {-extent, 0, extent},
-        {extent, 0, extent},
-        {extent, 0, -extent},
-        water,
-    )
+    world_water_quad({-extent, 0, -extent}, {-extent, 0, extent}, {extent, 0, extent}, {extent, 0, -extent}, water)
 }
 
 lighthouse_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {

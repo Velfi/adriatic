@@ -56,6 +56,51 @@ wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32, prepared_plan: ^ci
     return !surface.on_surface
 }
 
+// Standalone foliage masses use the sixth palette family for their flowering
+// crown. Keep the same deterministic choice here so blossom shedding always
+// agrees with the tree the renderer presents, without adding mutable per-tree
+// state to authored terrain structures.
+flowering_tree :: proc(structure: terrain.Structure) -> bool {
+    if structure.kind != .Foliage || structure.seed % 6 != 5 do return false
+    wide, narrow := max(structure.width, structure.depth), min(structure.width, structure.depth)
+    is_forest := wide >= 105 && narrow > 0 && wide / narrow < 1.8 && structure.height >= 58
+    is_hedge := narrow > 0 && wide / narrow >= 2.35
+    return !is_forest && !is_hedge && structure.height >= terrain.BASE_CELL_SIZE
+}
+
+flowering_tree_wind_shedding :: proc(
+    editor: ^Editor,
+    observer: third_person.Vec3,
+) -> (
+    origin: third_person.Vec3,
+    intensity: f32,
+    found: bool,
+) {
+    if editor == nil do return
+    wind := editor.atmosphere.weather.wind
+    wind_speed := f32(math.sqrt(f64(wind[0] * wind[0] + wind[1] * wind[1])))
+    // Clear weather remains quiet. The windy preset just crosses the onset,
+    // while storms drive a sustained shower rather than an abrupt burst.
+    intensity = clamp((wind_speed - 7.5) / 8.5, 0, 1)
+    if intensity <= 0 do return
+
+    best_distance_squared := f32(60 * 60)
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if !flowering_tree(structure) do continue
+        dx, dz := structure.center_x - observer.x, structure.center_z - observer.z
+        distance_squared := dx * dx + dz * dz
+        if distance_squared >= best_distance_squared do continue
+        best_distance_squared = distance_squared
+        origin = {structure.center_x, structure.base_y + structure.height * .72, structure.center_z}
+        found = true
+    }
+    if found {
+        proximity := 1 - f32(math.sqrt(f64(best_distance_squared))) / 60
+        intensity *= clamp(.35 + proximity * .65, 0, 1)
+    }
+    return
+}
+
 wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
     if editor == nil do return
     if !editor.in_map || dt <= 0 {
@@ -84,13 +129,24 @@ wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
         flower_density = 0
     }
     wind := editor.atmosphere.weather.wind
+    petal_origin := third_person.Vec3{origin.x, ground_height, origin.z}
+    petal_motion := motion
+    petal_intensity := disturbance * flower_density
+    tree_origin, tree_intensity, tree_found := flowering_tree_wind_shedding(editor, origin)
+    if tree_found && tree_intensity > petal_intensity {
+        petal_origin = tree_origin
+        // A detached blossom inherits a little downwind crown velocity before
+        // the particle integrator's continuous wind advection takes over.
+        petal_motion = {wind[0] * .18, .15, wind[1] * .18}
+        petal_intensity = tree_intensity
+    }
     particle_systems.step_petals(
         &editor.petal_effects,
         dt,
-        {origin.x, ground_height, origin.z},
-        {motion.x, motion.y, motion.z},
+        {petal_origin.x, petal_origin.y, petal_origin.z},
+        {petal_motion.x, petal_motion.y, petal_motion.z},
         {wind[0], 0, wind[1]},
-        disturbance * flower_density,
+        petal_intensity,
     )
 }
 

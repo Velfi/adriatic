@@ -144,9 +144,10 @@ look :: proc(camera: ^Camera, yaw_delta, pitch_delta, sensitivity: f32) {
     camera.pitch_radians = clamp(camera.pitch_radians + pitch_delta * sensitivity, -.85, 1.2)
 }
 
-// step updates the controller's desired motion. Apply State.position and
-// State.velocity to the product's kinematic or dynamic physics body afterward.
-step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32) {
+// step updates desired motion and, by default, integrates the standalone
+// controller position. Physics-backed callers disable integration and let
+// their character sweep own all continuous movement.
+step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32, integrate_position: bool = true) {
     if state == nil || delta_seconds <= 0 do return
 
     move_x := clamp(input.move_x, -1, 1)
@@ -310,7 +311,7 @@ step :: proc(state: ^State, input: Input, config: Config, delta_seconds: f32) {
             max_f32(config.facing_turn_speed, 0) * delta_seconds,
         )
     }
-    state.position = state.position + state.velocity * delta_seconds
+    if integrate_position do state.position = state.position + state.velocity * delta_seconds
     state.boost_seconds = max_f32(state.boost_seconds - delta_seconds, 0)
     if move_amount <= .0001 && new_speed <= .1 {
         state.running = false

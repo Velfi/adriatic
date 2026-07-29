@@ -146,6 +146,7 @@ ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/nu
 HOT_ODIN_SOURCES := $(shell find src packages "$(ZELDA_ENGINE_PACKAGES)" -type f -name '*.odin' 2>/dev/null)
 HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/world.vert.spv \
+	$(HOT_SHADER_DIR)/world-instance.vert.spv \
 	$(HOT_SHADER_DIR)/world.frag.spv \
 	$(HOT_SHADER_DIR)/player-shadow.vert.spv \
 	$(HOT_SHADER_DIR)/player-shadow.frag.spv \
@@ -164,7 +165,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fmt check test test-rondine clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fmt check test test-src test-rondine clean
 
 all: build
 
@@ -219,7 +220,7 @@ assets-validation: shaders
 
 build: doctor assets-dev $(DEV_APP)
 
-shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/dynamic-shadow.vert.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
+shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world-instance.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/dynamic-shadow.vert.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
 
 build/generated/shaders/foliage.vert.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)
@@ -244,6 +245,10 @@ build/generated/shaders/particles.frag.spv: assets/shaders/particles.slang
 build/generated/shaders/world.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+build/generated/shaders/world-instance.vert.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry instance_vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
 
 build/generated/shaders/world.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
@@ -298,6 +303,10 @@ $(DEV_DIR)/shaders/wireframe.vert.spv: build/generated/shaders/wireframe.vert.sp
 	cp $< $@
 
 $(DEV_DIR)/shaders/world.vert.spv: build/generated/shaders/world.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(DEV_DIR)/shaders/world-instance.vert.spv: build/generated/shaders/world-instance.vert.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -373,6 +382,10 @@ $(RELEASE_DIR)/shaders/world.vert.spv: build/generated/shaders/world.vert.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(RELEASE_DIR)/shaders/world-instance.vert.spv: build/generated/shaders/world-instance.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(RELEASE_DIR)/shaders/world.frag.spv: build/generated/shaders/world.frag.spv
 	@mkdir -p $(@D)
 	cp $< $@
@@ -391,6 +404,8 @@ $(RELEASE_DIR)/shaders/dynamic-shadow.vert.spv: build/generated/shaders/dynamic-
 
 $(DEV_APP): $(DEV_DIR)/shaders/dynamic-shadow.vert.spv
 $(RELEASE_APP): $(RELEASE_DIR)/shaders/dynamic-shadow.vert.spv
+$(DEV_APP): $(DEV_DIR)/shaders/world-instance.vert.spv
+$(RELEASE_APP): $(RELEASE_DIR)/shaders/world-instance.vert.spv
 
 $(RELEASE_DIR)/shaders/world-sky.vert.spv: build/generated/shaders/world-sky.vert.spv
 	@mkdir -p $(@D)
@@ -455,6 +470,10 @@ $(HOT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_signposts.c
 $(HOT_SHADER_DIR)/world.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/world-instance.vert.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry instance_vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
 
 $(HOT_SHADER_DIR)/world.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
@@ -771,7 +790,10 @@ check: doctor
 test-rondine: doctor
 	$(ODIN) test packages/rondine $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS)
 
-test: doctor $(DEV_DIR)/libadriatic_mesh.a test-rondine
+test-src: $(DEV_APP)
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
+
+test: doctor $(DEV_DIR)/libadriatic_mesh.a test-rondine test-src
 	$(ODIN) test tests $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -lc++"
 
 clean:

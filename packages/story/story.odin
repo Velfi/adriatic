@@ -81,36 +81,37 @@ Delivery :: struct {
 }
 
 State :: struct {
-    quest:                 quest.State,
-    romance:               Romance_Stage,
-    repair:                Repair_Stage,
-    airfield_errand:       Airfield_Errand_Stage,
-    delivery:              Delivery,
-    completed_deliveries:  int,
-    repeat_deliveries:     int,
-    stamps_earned:         int,
-    bonus_stamps:          int,
-    careful_deliveries:    int,
-    expressive_deliveries: int,
-    magneto_wrapped:       bool,
-    weather_reading_done:  bool,
-    medicine_delivered:    bool,
-    linens_delivered:      bool,
-    water_delivered:       bool,
-    has_weather_briefing:  bool,
-    has_clinic_satchel:    bool,
-    has_dry_wrap:          bool,
-    has_recovery_kit:      bool,
-    has_wing_patch:        bool,
-    tarot_readings:        int,
-    tarot_seed:            u32,
-    tarot_last_moment:     u32,
-    tarot_layout:          tarot.Layout,
-    clinic_visits:         int,
+    quest:                        quest.State,
+    romance:                      Romance_Stage,
+    repair:                       Repair_Stage,
+    airfield_errand:              Airfield_Errand_Stage,
+    delivery:                     Delivery,
+    completed_deliveries:         int,
+    repeat_deliveries:            int,
+    stamps_earned:                int,
+    bonus_stamps:                 int,
+    careful_deliveries:           int,
+    expressive_deliveries:        int,
+    magneto_wrapped:              bool,
+    weather_reading_done:         bool,
+    medicine_delivered:           bool,
+    linens_delivered:             bool,
+    water_delivered:              bool,
+    has_weather_briefing:         bool,
+    has_clinic_satchel:           bool,
+    has_dry_wrap:                 bool,
+    has_recovery_kit:             bool,
+    has_wing_patch:               bool,
+    tarot_readings:               int,
+    tarot_seed:                   u32,
+    tarot_last_moment:            u32,
+    tarot_layout:                 tarot.Layout,
+    clinic_visits:                int,
+    last_clinic_visit_was_tumble: bool,
     // Quest punctuation is a notification, not a permanent label. Remember
     // the action state last seen in conversation so it stays gone until that
     // resident has something new to say or do.
-    resident_action_seen:  [Resident]u64,
+    resident_action_seen:         [Resident]u64,
 }
 
 resident_name :: proc(resident: Resident) -> string {
@@ -268,13 +269,37 @@ begin_local_delivery :: proc(state: ^State, kind: Delivery_Kind) -> bool {
     #partial switch kind {
     case .Clinic_Medicine:
         node = .Clinic_Medicine
-        delivery = {active = true, kind = kind, from = .Vesna, to = .Anica, origin = .West, destination = .East, subject = "Dr Vesna's clinic medicine"}
+        delivery = {
+            active      = true,
+            kind        = kind,
+            from        = .Vesna,
+            to          = .Anica,
+            origin      = .West,
+            destination = .East,
+            subject     = "Dr Vesna's clinic medicine",
+        }
     case .Clinic_Linens:
         node = .Clinic_Linens
-        delivery = {active = true, kind = kind, from = .Petar, to = .Anica, origin = .West, destination = .East, subject = "Petar's dry clinic linens"}
+        delivery = {
+            active      = true,
+            kind        = kind,
+            from        = .Petar,
+            to          = .Anica,
+            origin      = .West,
+            destination = .East,
+            subject     = "Petar's dry clinic linens",
+        }
     case .Clinic_Water:
         node = .Clinic_Water
-        delivery = {active = true, kind = kind, from = .Anica, to = .Vesna, origin = .East, destination = .West, subject = "Anica's sealed drinking water"}
+        delivery = {
+            active      = true,
+            kind        = kind,
+            from        = .Anica,
+            to          = .Vesna,
+            origin      = .East,
+            destination = .West,
+            subject     = "Anica's sealed drinking water",
+        }
     case:
         return false
     }
@@ -349,11 +374,23 @@ complete_delivery :: proc(state: ^State, recipient: Resident) -> bool {
             key  = "post-route",
         }
     case .Clinic_Medicine:
-        event = {kind = .Deliver, key = "clinic-medicine", target = "anica"}
+        event = {
+            kind   = .Deliver,
+            key    = "clinic-medicine",
+            target = "anica",
+        }
     case .Clinic_Linens:
-        event = {kind = .Deliver, key = "clinic-linens", target = "anica"}
+        event = {
+            kind   = .Deliver,
+            key    = "clinic-linens",
+            target = "anica",
+        }
     case .Clinic_Water:
-        event = {kind = .Deliver, key = "clinic-water", target = "vesna"}
+        event = {
+            kind   = .Deliver,
+            key    = "clinic-water",
+            target = "vesna",
+        }
     case .None:
         return false
     }
@@ -582,6 +619,11 @@ vesna_text :: proc(ctx: ^dialogue.Context) -> string {
             "Anica's sealed water, arrivata west et ancora intatta. Dobro—una clinica può preparare prudenza avant che qualcuno ne abbia bisogno." \
         )
     }
+    if state != nil && state.last_clinic_visit_was_tumble {
+        return(
+            "Qualcuno ti ha visto fare una bella tumble, et ti hanno portato qui. Niente rotto, dobro—but una concussion può fare sogni très strani. Repos, acqua, und dimmi se il mondo continua a inventare cose." \
+        )
+    }
     if state == nil || state.clinic_visits == 0 {
         return(
             "La clinica è calme, dobro. Mais teniamo un letto pronto, perché i piloti confondono fortuna mit meteo." \
@@ -640,6 +682,11 @@ vesna_repeat_memory_close :: proc(_: ^dialogue.Context) -> string {
 
 petar_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
+    if state != nil && state.last_clinic_visit_was_tumble {
+        return(
+            "Qualcuno ha visto la tua tumble et ha chiamato la clinica. Se ricordi sogni completamente pazzi, blame la concussion, non le linens; loro hanno alibi puliti." \
+        )
+    }
     if state == nil || state.clinic_visits == 0 {
         return "Io lavo le clinic linens ogni mattina. Das non è una invitation a occupare il letto, capito?"
     }
@@ -700,6 +747,11 @@ anica_text :: proc(ctx: ^dialogue.Context) -> string {
     if state != nil && state.delivery.active && state.delivery.kind == .Clinic_Linens {
         return(
             "Petar's dry clinic linens hanno battuto la bura. Mettili qui, avant che il vento presenti un reclamo tardivo." \
+        )
+    }
+    if state != nil && state.last_clinic_visit_was_tumble {
+        return(
+            "Un vicino ti ha visto prendere una tumble et ci ha avvisati. Potresti aver avuto sogni de concussion molto strani; acqua prima, puis racconta solo quelli che ancora sembrano reali." \
         )
     }
     if state == nil || state.clinic_visits == 0 {
@@ -1234,7 +1286,13 @@ niko_text :: proc(ctx: ^dialogue.Context) -> string {
             return "Il motor di Bojan ha traversé la baia all'alba. È questa la regatta acceptance di Iva?"
         case .Repeat_Westbound:
             return "Le verre de lampe viaggia malissimo. Spero Iva l'abbia preparato meglio di moi."
-        case .None, .First_Letter, .Regatta_Invitation, .Repeat_Eastbound, .Clinic_Medicine, .Clinic_Linens, .Clinic_Water:
+        case .None,
+             .First_Letter,
+             .Regatta_Invitation,
+             .Repeat_Eastbound,
+             .Clinic_Medicine,
+             .Clinic_Linens,
+             .Clinic_Water:
         }
     }
     switch state.romance {
@@ -1420,7 +1478,13 @@ iva_text :: proc(ctx: ^dialogue.Context) -> string {
             return "La regatta invitation di Niko diventa plus droite quand finge di non essere nervoso."
         case .Repeat_Eastbound:
             return "La posta dell'isola profuma comme se Niko confondesse la route postale con una dispensa."
-        case .None, .First_Reply, .Regatta_Acceptance, .Repeat_Westbound, .Clinic_Medicine, .Clinic_Linens, .Clinic_Water:
+        case .None,
+             .First_Reply,
+             .Regatta_Acceptance,
+             .Repeat_Westbound,
+             .Clinic_Medicine,
+             .Clinic_Linens,
+             .Clinic_Water:
         }
     }
     switch state.romance {
@@ -2316,7 +2380,11 @@ init_catalog :: proc(catalog: ^Catalog) {
         dialogue.choice("I have time. Lay out the full cross.", 1, can_deal_tarot, deal_cross),
         dialogue.choice("Remind me what I should watch for.", 3, can_recall_tarot),
         dialogue.choice("Another time, grazie."),
-        dialogue.choice("Get an airfield weather reading.", condition = can_accept_weather_errand, effect = accept_weather_errand),
+        dialogue.choice(
+            "Get an airfield weather reading.",
+            condition = can_accept_weather_errand,
+            effect = accept_weather_errand,
+        ),
     }
     catalog.zora_reading_choices = {
         dialogue.choice("What should I watch for?", 2),
@@ -2346,8 +2414,16 @@ init_catalog :: proc(catalog: ^Catalog) {
         dialogue.choice("The landing looked softer from above.", 2, clinic_is_first_visit),
         dialogue.choice("I checked the weather. It wasn't enough.", 3, clinic_is_repeat_visit),
         dialogue.choice("I remembered where my glasses go.", 4, clinic_is_repeat_visit),
-        dialogue.choice("Carry the clinic medicine east.", condition = can_accept_clinic_medicine, effect = accept_clinic_medicine),
-        dialogue.choice("Give Vesna the sealed water.", condition = has_clinic_water, effect = complete_vesna_delivery),
+        dialogue.choice(
+            "Carry the clinic medicine east.",
+            condition = can_accept_clinic_medicine,
+            effect = accept_clinic_medicine,
+        ),
+        dialogue.choice(
+            "Give Vesna the sealed water.",
+            condition = has_clinic_water,
+            effect = complete_vesna_delivery,
+        ),
     }
     catalog.vesna_close_choices[0] = dialogue.choice("I'll check the weather first.")
     catalog.vesna_nodes = {
@@ -2367,7 +2443,11 @@ init_catalog :: proc(catalog: ^Catalog) {
         dialogue.choice("The window was closer.", 2, clinic_is_first_visit),
         dialogue.choice("The door was not involved this time.", 3, clinic_is_repeat_visit),
         dialogue.choice("Do the linens recognize me now?", 4, clinic_is_repeat_visit),
-        dialogue.choice("Carry the dry clinic linens east.", condition = can_accept_clinic_linens, effect = accept_clinic_linens),
+        dialogue.choice(
+            "Carry the dry clinic linens east.",
+            condition = can_accept_clinic_linens,
+            effect = accept_clinic_linens,
+        ),
     }
     catalog.petar_close_choices[0] = dialogue.choice("I'll keep the linens out of it.")
     catalog.petar_nodes = {
@@ -2387,9 +2467,21 @@ init_catalog :: proc(catalog: ^Catalog) {
         dialogue.choice("I thought the sea was keeping count.", 2, clinic_is_first_visit),
         dialogue.choice("Water first. I remembered.", 3, clinic_is_repeat_visit),
         dialogue.choice("Should I reserve this bed by name?", 4, clinic_is_repeat_visit),
-        dialogue.choice("Give Anica the clinic medicine.", condition = has_clinic_medicine, effect = complete_anica_delivery),
-        dialogue.choice("Give Anica the dry clinic linens.", condition = has_clinic_linens, effect = complete_anica_delivery),
-        dialogue.choice("Carry the sealed water west.", condition = can_accept_clinic_water, effect = accept_clinic_water),
+        dialogue.choice(
+            "Give Anica the clinic medicine.",
+            condition = has_clinic_medicine,
+            effect = complete_anica_delivery,
+        ),
+        dialogue.choice(
+            "Give Anica the dry clinic linens.",
+            condition = has_clinic_linens,
+            effect = complete_anica_delivery,
+        ),
+        dialogue.choice(
+            "Carry the sealed water west.",
+            condition = can_accept_clinic_water,
+            effect = accept_clinic_water,
+        ),
     }
     catalog.anica_close_choices[0] = dialogue.choice("I'll make the next appointment quieter.")
     catalog.anica_nodes = {

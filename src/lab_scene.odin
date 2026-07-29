@@ -92,6 +92,19 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         suppress_shadows = true,
     },
     {
+        name = "ruins",
+        configure = ruins_lab_configure,
+        world_overlay = world_ruins_lab,
+        process_input = ruins_lab_process_input,
+        draw_ui = ruins_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
+    {
         name = "markov-city",
         configure = markov_city_lab_configure,
         world_overlay = world_markov_town_wanderers,
@@ -228,6 +241,47 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         world_overlay = world_garden_lab,
         process_input = garden_lab_process_input,
         draw_ui = garden_lab_draw_ui,
+        exit = garden_lab_exit,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
+    {
+        name = "plant-generator",
+        configure = plant_generator_lab_configure,
+        world_overlay = world_plant_generator_lab,
+        process_input = plant_generator_lab_process_input,
+        draw_ui = plant_generator_lab_draw_ui,
+        exit = plant_generator_lab_exit,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
+    {
+        name = "leaf-generator",
+        configure = leaf_generator_lab_configure,
+        world_overlay = world_leaf_generator_lab,
+        process_input = leaf_generator_lab_process_input,
+        draw_ui = leaf_generator_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
+    {
+        name = "flower-generator",
+        configure = flower_generator_lab_configure,
+        world_overlay = world_flower_generator_lab,
+        process_input = flower_generator_lab_process_input,
+        draw_ui = flower_generator_lab_draw_ui,
         isolate_content = true,
         enter_gameplay = true,
         replace_world = true,
@@ -277,6 +331,19 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         world_overlay = world_lighthouse_lab,
         process_input = lighthouse_lab_process_input,
         draw_ui = lighthouse_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
+    {
+        name = "fountain-generator",
+        configure = fountain_lab_configure,
+        world_overlay = world_fountain_generator_lab,
+        process_input = fountain_lab_process_input,
+        draw_ui = fountain_lab_draw_ui,
         isolate_content = true,
         enter_gameplay = true,
         replace_world = true,
@@ -414,6 +481,7 @@ lab_scene_draw_world_overlay :: proc(editor: ^Editor) {
 
 lab_scene_draw_world :: proc(editor: ^Editor) -> bool {
     if editor == nil || editor.active_lab_scene == "" do return false
+    if shoreline_harbor_lab_active do return false
     definition := lab_scene_find(editor.active_lab_scene)
     if definition == nil || !definition.replace_world do return false
     if definition.world_overlay != nil do definition.world_overlay(editor)
@@ -438,6 +506,7 @@ lab_scene_draw_ui :: proc(editor: ^Editor, width, height: i32) -> bool {
 
 lab_scene_replaces_world :: proc(editor: ^Editor) -> bool {
     if editor == nil || editor.active_lab_scene == "" do return false
+    if shoreline_harbor_lab_active do return false
     definition := lab_scene_find(editor.active_lab_scene)
     return definition != nil && definition.replace_world
 }

@@ -41,20 +41,23 @@ air_style_append_motion :: proc(
         state.body.angular_velocity_world = flight.local_to_world(basis, local_rate)
         state.body.velocity = basis.forward * state.pace
         state.body.position += state.body.velocity * AIR_STYLE_TEST_DT
-        append(samples, air_style.Motion_Sample {
-            previous_body = previous,
-            body = state.body,
-            pace = state.pace,
-            intent = {
-                pitch = air_style_sign(local_rate.x),
-                yaw = air_style_sign(local_rate.y),
-                roll = air_style_sign(local_rate.z),
-                throttle = 1,
+        append(
+            samples,
+            air_style.Motion_Sample {
+                previous_body = previous,
+                body = state.body,
+                pace = state.pace,
+                intent = {
+                    pitch = air_style_sign(local_rate.x),
+                    yaw = air_style_sign(local_rate.y),
+                    roll = air_style_sign(local_rate.z),
+                    throttle = 1,
+                },
+                ground_clearance = max(state.body.position.y, f32(0)),
+                recovery_margin = 1,
+                delta_seconds = AIR_STYLE_TEST_DT,
             },
-            ground_clearance = max(state.body.position.y, f32(0)),
-            recovery_margin = 1,
-            delta_seconds = AIR_STYLE_TEST_DT,
-        })
+        )
     }
 }
 
@@ -69,15 +72,18 @@ air_style_append_falling_hold :: proc(
         state.body.angular_velocity_world = {}
         state.body.velocity = basis.forward * state.pace + flight.Vec3{0, -12, 0}
         state.body.position += state.body.velocity * AIR_STYLE_TEST_DT
-        append(samples, air_style.Motion_Sample {
-            previous_body = previous,
-            body = state.body,
-            pace = linalg.length(state.body.velocity),
-            intent = {yaw = 1, throttle = 1},
-            ground_clearance = max(state.body.position.y, f32(0)),
-            recovery_margin = 1,
-            delta_seconds = AIR_STYLE_TEST_DT,
-        })
+        append(
+            samples,
+            air_style.Motion_Sample {
+                previous_body = previous,
+                body = state.body,
+                pace = linalg.length(state.body.velocity),
+                intent = {yaw = 1, throttle = 1},
+                ground_clearance = max(state.body.position.y, f32(0)),
+                recovery_margin = 1,
+                delta_seconds = AIR_STYLE_TEST_DT,
+            },
+        )
     }
 }
 

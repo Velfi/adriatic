@@ -91,7 +91,7 @@ Grip_Profile :: struct {
 }
 
 Roughness_Profile :: struct {
-    acceleration:                   f32,
+    acceleration:                     f32,
     wavelength, secondary_wavelength: f32,
 }
 

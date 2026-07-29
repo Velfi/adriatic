@@ -444,6 +444,43 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
         }
     }
 
+    // Every farm reserves a compact kitchen garden inside its enclosure.
+    // Overlaying it avoids changing the parcel/hedge topology of small farms.
+    if plan.garden_span > 0 {
+        gx0, gz0 := f32(plan.garden_x), f32(plan.garden_z)
+        gx1, gz1 := gx0 + f32(plan.garden_span), gz0 + f32(plan.garden_span)
+        farmland_patch(editor, gx0, gz0, gx1, gz1, {91, 69, 45, 255}, .21)
+        if !farmland_render_preview && detail_fade > .18 {
+            samples := plan.garden_span * 4
+            garden_palette := [4]rl.Color {
+                {72, 124, 55, 255},
+                {108, 139, 62, 255},
+                {151, 92, 72, 255},
+                {205, 174, 76, 255},
+            }
+            for row in 0 ..< samples {
+                for column in 0 ..< samples {
+                    sample := row * samples + column
+                    mixed := farmland.mix(plan.seed ~ u32(sample) * u32(0x9e3779b9) ~ u32(0x47415244))
+                    x := gx0 + (f32(column) + .5) * f32(plan.garden_span) / f32(samples)
+                    z := gz0 + (f32(row) + .5) * f32(plan.garden_span) / f32(samples)
+                    if !farmland_surface_is_safe(editor, x, z) do continue
+                    point := farmland_world_point(editor, x, z, .04)
+                    height := .32 + f32((mixed >> 16) & 255) / 255 * .44
+                    color := garden_palette[int((mixed >> 12) & 3)]
+                    color.a = u8(clamp(detail_fade * 255, 0, 255))
+                    world_grass_card(
+                        {point.x, point.y + height * .5, point.z},
+                        .30 + height * .18,
+                        height,
+                        int(mixed % 16),
+                        color,
+                    )
+                }
+            }
+        }
+    }
+
     // Only larger field systems need an internal access spine. On compact
     // one- and two-field holdings it read as another arbitrary subdivision.
     if plan.parcel_count >= 3 {

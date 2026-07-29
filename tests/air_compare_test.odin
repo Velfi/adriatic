@@ -7,10 +7,7 @@ import "core:math/bits"
 import "core:mem"
 import "core:testing"
 
-air_compare_expect_samples_equal :: proc(
-    t: ^testing.T,
-    a, b: []air_compare.Sample,
-) {
+air_compare_expect_samples_equal :: proc(t: ^testing.T, a, b: []air_compare.Sample) {
     testing.expect(t, len(a) == len(b))
     if len(a) != len(b) do return
     for sample, index in a {
@@ -18,10 +15,7 @@ air_compare_expect_samples_equal :: proc(
     }
 }
 
-air_compare_expect_runs_equal :: proc(
-    t: ^testing.T,
-    a, b: air_compare.Run_Result,
-) {
+air_compare_expect_runs_equal :: proc(t: ^testing.T, a, b: air_compare.Run_Result) {
     testing.expect(t, a.final_checkpoint == b.final_checkpoint)
     testing.expect(t, a.metrics == b.metrics)
     air_compare_expect_samples_equal(t, a.samples, b.samples)
@@ -90,8 +84,15 @@ air_compare_rejects_invalid_scenarios_and_accepts_empty_run :: proc(t: ^testing.
 
 @(test)
 air_compare_command_segments_expand_exactly_and_reject_bad_counts :: proc(t: ^testing.T) {
-    first := flight.Control_Command{pitch = .25, throttle = .7}
-    second := flight.Control_Command{roll = -.5, yaw = .3, throttle = 1}
+    first := flight.Control_Command {
+        pitch    = .25,
+        throttle = .7,
+    }
+    second := flight.Control_Command {
+        roll     = -.5,
+        yaw      = .3,
+        throttle = 1,
+    }
     segments := [?]air_compare.Command_Segment {
         {steps = 2, command = first},
         {steps = 0, command = {pitch = 1}},
@@ -115,15 +116,11 @@ air_compare_command_segments_expand_exactly_and_reject_bad_counts :: proc(t: ^te
         testing.expect(t, command == commands[index])
     }
 
-    zero, zero_ok := air_compare.expand_command_segments(
-        []air_compare.Command_Segment{{steps = 0}},
-    )
+    zero, zero_ok := air_compare.expand_command_segments([]air_compare.Command_Segment{{steps = 0}})
     testing.expect(t, zero_ok)
     testing.expect(t, zero == nil)
 
-    negative, negative_ok := air_compare.expand_command_segments(
-        []air_compare.Command_Segment{{steps = -1}},
-    )
+    negative, negative_ok := air_compare.expand_command_segments([]air_compare.Command_Segment{{steps = -1}})
     testing.expect(t, !negative_ok)
     testing.expect(t, negative == nil)
 
@@ -182,15 +179,12 @@ air_compare_derives_rotation_extrema_and_recovery_from_samples :: proc(t: ^testi
     for &sample, index in samples {
         sample = {
             body = {
-                position               = {f32(index), altitudes[index], 0},
-                orientation            = flight.identity_orientation(),
+                position = {f32(index), altitudes[index], 0},
+                orientation = flight.identity_orientation(),
                 angular_velocity_world = {0, 0, -2},
             },
             pace = paces[index],
-            ace_telemetry = {
-                pace       = paces[index],
-                edge_state = states[index],
-            },
+            ace_telemetry = {pace = paces[index], edge_state = states[index]},
         }
     }
 

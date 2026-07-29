@@ -16,6 +16,7 @@ import farmland "../packages/farmland"
 import flight "../packages/flight"
 import flocks "../packages/flocks"
 import game_input "../packages/game_input"
+import harbor "../packages/harbor"
 import hot_abi "../packages/hot_abi"
 import hs "../packages/hs"
 import libellula_game "../packages/libellula"
@@ -67,6 +68,12 @@ AIRCRAFT_MAX_CATCH_UP :: f64(.1)
 CRASH_MESSAGE_SECONDS :: f32(1.15)
 CRASH_FADE_OUT_SECONDS :: f32(.65)
 CRASH_FADE_IN_SECONDS :: f32(.85)
+PLAYER_FALL_RECOVERY_DEPTH :: f32(30)
+
+Crash_Recovery_Cause :: enum u8 {
+    Crash,
+    Tumble,
+}
 
 Crash_Recovery_Phase :: enum u8 {
     Inactive,
@@ -83,6 +90,8 @@ Structure_History_State :: struct {
     city_density:                 [terrain.CITY_DENSITY_SAMPLES]u8,
     climbing_leaf_density:        [terrain.CITY_DENSITY_SAMPLES]u8,
     marina_plan:                  marina.Plan,
+    harbor_plan:                  harbor.Harbor_Plan,
+    harbor_intervention:          harbor.Harbor_Intervention,
     marina_authored:              bool,
     farms:                        [FARM_INSTANCE_CAPACITY]Farm_Instance,
     farm_count:                   int,
@@ -170,6 +179,10 @@ Fixture :: struct {
     marina_authored:                                bool,
     marina_authored_plan:                           marina.Plan,
     marina_preview_plan:                            marina.Plan,
+    harbor_authored_plan:                           harbor.Harbor_Plan,
+    harbor_preview_plan:                            harbor.Harbor_Plan,
+    harbor_authored_intervention:                   harbor.Harbor_Intervention,
+    harbor_preview_intervention:                    harbor.Harbor_Intervention,
     marina_preview_valid:                           bool,
     marina_preview_x, marina_preview_z:             f32,
     marina_preview_variation:                       u32,
@@ -202,6 +215,10 @@ Fixture :: struct {
     wreck_preview_revision:                         u64,
     wreck_preview_seed_offset:                      u32,
     default_marinas:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan `hs:"-"`,
+    default_harbors:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]harbor.Harbor_Plan `hs:"-"`,
+    default_harbor_interventions:                   [len(
+        terrain.DEFAULT_ISLAND_SIGNS,
+    )]harbor.Harbor_Intervention `hs:"-"`,
     default_marina_islands:                         [len(terrain.DEFAULT_ISLAND_SIGNS)]story.Island `hs:"-"`,
     default_marina_count:                           int `hs:"-"`,
     climbing_leaf_paint_mode:                       bool,
@@ -260,6 +277,7 @@ Fixture :: struct {
     crash_recovery_phase:                           Crash_Recovery_Phase `fixture:"-"`,
     crash_recovery_seconds:                         f32 `fixture:"-"`,
     crash_recovery_position:                        third_person.Vec3 `fixture:"-"`,
+    crash_recovery_cause:                           Crash_Recovery_Cause `fixture:"-"`,
     player:                                         third_person.State,
     player_stride_phase:                            f32,
     player_gait_weight:                             f32,
@@ -821,6 +839,8 @@ structure_history_capture :: proc(editor: ^Editor, state: ^Structure_History_Sta
     state.city_density = editor.project.city_density
     state.climbing_leaf_density = editor.project.climbing_leaf_density
     state.marina_plan = editor.marina_authored_plan
+    state.harbor_plan = editor.harbor_authored_plan
+    state.harbor_intervention = editor.harbor_authored_intervention
     state.marina_authored = editor.marina_authored
     state.farms = editor.farms
     state.farm_count = editor.farm_count
@@ -843,6 +863,8 @@ structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_Sta
     editor.project.city_density = state.city_density
     editor.project.climbing_leaf_density = state.climbing_leaf_density
     editor.marina_authored_plan = state.marina_plan
+    editor.harbor_authored_plan = state.harbor_plan
+    editor.harbor_authored_intervention = state.harbor_intervention
     editor.marina_authored = state.marina_authored
     editor.farms = state.farms
     editor.farm_count = state.farm_count
@@ -1058,6 +1080,8 @@ formation_kind_name :: proc(kind: terrain.Formation_Kind) -> cstring {
         return "FOLIAGE"
     case .Architecture:
         return "ADRIATIC NODES"
+    case .Ruins:
+        return "RUINS"
     }
     return "FORMATION"
 }
@@ -1952,6 +1976,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         seed_municipal_route_night_benchmark(editor)
     case "shadow_lab":
         _ = lab_scene_load(editor, {definition = lab_scene_find("shadow")})
+    case "garden":
+        _ = lab_scene_load(editor, {definition = lab_scene_find("garden"), target = "courtyard"})
     case "boids_10k":
         _ = lab_scene_load(editor, {definition = lab_scene_find("boid"), target = "stress-10k"})
     case "boids_0":
@@ -1977,6 +2003,7 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "municipal_route_night" &&
        scenario != "municipal_route_night_storm" &&
        scenario != "shadow_lab" &&
+       scenario != "garden" &&
        scenario != "boids_0" &&
        scenario != "boids_10k" {
         editor.editor_camera.distance = 260
@@ -2047,8 +2074,18 @@ benchmark_report :: proc(
     p95 := benchmark_percentile(sorted, .95)
     p99 := benchmark_percentile(sorted, .99)
     maximum := sorted[len(sorted) - 1]
-    world_vertex_count := len(world_renderer.vertices) + len(world_renderer.static_indices)
-    world_unique_vertex_count := len(world_renderer.vertices) + len(world_renderer.static_vertices)
+    instance_index_count := 0
+    for mesh in world_renderer.instance_meshes {
+        instance_index_count += int(mesh.index_count) * len(mesh.instances)
+    }
+    world_vertex_count :=
+        len(world_renderer.vertices) +
+        len(world_renderer.static_indices) +
+        instance_index_count
+    world_unique_vertex_count :=
+        len(world_renderer.vertices) +
+        len(world_renderer.static_vertices) +
+        len(world_renderer.instance_vertices)
     road_vertex_count := len(world_renderer.road_vertices)
     foliage_vertex_count :=
         len(world_renderer.foliage_vertices) +
@@ -2714,7 +2751,16 @@ seed_default_island_marinas :: proc(editor: ^Editor) {
         seed := u32(0x4d415249 + island_index * 0x9e3779b9)
         plan, _, _ := markov_marina_generate_world_plan(&editor.project, shoreline_anchor, seed)
         if !plan.valid do continue
+        town_x, town_z := terrain.default_town_center(sign)
+        survey := harbor.survey_coast(&editor.project, {town_x, town_z}, 720)
+        program := harbor.derive_harbor_program(.Town, 960 + island_index * 420, seed)
+        intervention := harbor.generate_for_survey(&editor.project, &survey, &program, seed)
+        if !intervention.valid do continue
+        harbor.apply_harbor_terrain(&editor.project, &intervention)
+        harbor_plan := harbor.finalize_intervention(&intervention)
         editor.default_marinas[editor.default_marina_count] = plan
+        editor.default_harbors[editor.default_marina_count] = harbor_plan
+        editor.default_harbor_interventions[editor.default_marina_count] = intervention
         editor.default_marina_islands[editor.default_marina_count] = sign > 0 ? story.Island.East : story.Island.West
         editor.default_marina_count += 1
     }
@@ -3313,19 +3359,27 @@ marina_brush_refresh_preview :: proc(editor: ^Editor, world_x, world_z: f32, rer
     editor.marina_preview_x, editor.marina_preview_z = world_x, world_z
     editor.marina_preview_valid = false
     editor.marina_preview_plan = {}
-    if site_suitability < MARINA_BRUSH_MINIMUM_SUITABILITY {
+    editor.harbor_preview_plan = {}
+    editor.harbor_preview_intervention = {}
+    seed := u32(abs(int(world_x * 17))) ~ u32(abs(int(world_z * 31))) ~ editor.marina_preview_variation * 0x85ebca6b
+    survey := harbor.survey_coast(&editor.project, {world_x, world_z}, max(editor.marina_brush_radius * 5, f32(420)))
+    program := harbor.derive_harbor_program(.Town, int(editor.marina_brush_radius * 12), seed)
+    if survey.site_count == 0 {
         editor.marina_brush_status = .Unsuitable
         return
     }
-    seed := u32(abs(int(world_x * 17))) ~ u32(abs(int(world_z * 31))) ~ editor.marina_preview_variation * 0x85ebca6b
+    intervention := harbor.generate_for_survey(&editor.project, &survey, &program, seed)
+    harbor_candidate := harbor.finalize_intervention(&intervention)
     candidate, suitability, attempts := markov_marina_generate_world_plan(&editor.project, shoreline, seed)
     editor.marina_brush_attempts = attempts
-    if !candidate.valid {
+    if !candidate.valid || !harbor_candidate.valid {
         editor.marina_brush_status = .No_Valid_Layout
         return
     }
     editor.marina_brush_suitability = suitability
     editor.marina_preview_plan = candidate
+    editor.harbor_preview_plan = harbor_candidate
+    editor.harbor_preview_intervention = intervention
     editor.marina_preview_valid = true
     editor.marina_brush_status = .Preview
 }
@@ -3345,6 +3399,9 @@ marina_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, curso
     if !rl.IsMouseButtonPressed(.LEFT) || !editor.marina_preview_valid do return
     structure_history_push_undo(editor)
     editor.marina_authored_plan = editor.marina_preview_plan
+    editor.harbor_authored_plan = editor.harbor_preview_plan
+    editor.harbor_authored_intervention = editor.harbor_preview_intervention
+    harbor.apply_harbor_terrain(&editor.project, &editor.harbor_authored_intervention)
     editor.marina_authored = true
     editor.marina_preview_valid = false
     editor.project.revision += 1
@@ -4168,11 +4225,7 @@ aircraft_render_body :: proc(editor: ^Editor) -> flight.Body_State {
     result := body
     result.position = linalg.lerp(previous.position, body.position, alpha)
     result.velocity = linalg.lerp(previous.velocity, body.velocity, alpha)
-    result.angular_velocity_world = linalg.lerp(
-        previous.angular_velocity_world,
-        body.angular_velocity_world,
-        alpha,
-    )
+    result.angular_velocity_world = linalg.lerp(previous.angular_velocity_world, body.angular_velocity_world, alpha)
     result.orientation = flight.interpolate_orientation(previous.orientation, body.orientation, alpha)
     return result
 }
@@ -7174,11 +7227,16 @@ crash_recovery_active :: proc(editor: ^Editor) -> bool {
     return editor != nil && editor.crash_recovery_phase != .Inactive
 }
 
-crash_recovery_begin :: proc(editor: ^Editor, crash_position: third_person.Vec3) {
+crash_recovery_begin :: proc(
+    editor: ^Editor,
+    crash_position: third_person.Vec3,
+    cause: Crash_Recovery_Cause = .Crash,
+) {
     if editor == nil || crash_recovery_active(editor) do return
     editor.crash_recovery_phase = .Message
     editor.crash_recovery_seconds = 0
     editor.crash_recovery_position = crash_position
+    editor.crash_recovery_cause = cause
     editor.flight_control = {}
 }
 
@@ -7238,6 +7296,7 @@ crash_recovery_relocate :: proc(editor: ^Editor) {
     }
     player_place(editor, clinic, .Crash_Recovery)
     editor.story_state.clinic_visits += 1
+    editor.story_state.last_clinic_visit_was_tumble = editor.crash_recovery_cause == .Tumble
     editor.flight_control = {}
     editor.aircraft_fixed_accumulator = 0
     editor.aircraft_previous_body_valid = false
@@ -7283,7 +7342,7 @@ crash_recovery_draw :: proc(editor: ^Editor, width, height: i32) {
         rl.DrawRectangle(0, 0, width, height, {5, 8, 12, u8(clamp(fade * 255, 0, 255))})
     }
     if editor.crash_recovery_phase == .Message || editor.crash_recovery_phase == .Fade_Out {
-        label: cstring = "YOU CRASHED"
+        label: cstring = editor.crash_recovery_cause == .Tumble ? "YOU TOOK A TUMBLE" : "YOU CRASHED"
         size := rl.MeasureTextEx(rl.Font{}, label, 34, 2)
         text_alpha := u8(clamp((1 - fade) * 255, 0, 255))
         rl.DrawTextEx(
@@ -8567,12 +8626,17 @@ adriatic_run :: proc(
     if capture_kind == .Car_Generator_Lab do capture_lab_name = "car-generator"
     if capture_kind == .Patio_Lab do capture_lab_name = "patio"
     if capture_kind == .Garden_Lab do capture_lab_name = "garden"
+    if capture_kind == .Plant_Generator_Lab do capture_lab_name = "plant-generator"
+    if capture_kind == .Leaf_Generator_Lab do capture_lab_name = "leaf-generator"
+    if capture_kind == .Flower_Generator_Lab do capture_lab_name = "flower-generator"
+    if capture_kind == .Fountain_Generator_Lab do capture_lab_name = "fountain-generator"
     if capture_kind == .Lighthouse_Lab do capture_lab_name = "lighthouse"
     if capture_kind == .Mouse_Gait_Lab do capture_lab_name = "mouse-gait"
     if capture_kind == .Rondine_Movement_Lab do capture_lab_name = "rondine-movement"
     if capture_kind == .Markov_Wreck do capture_lab_name = "markov-wreck"
     if capture_kind == .Markov_Marina do capture_lab_name = "markov-marina"
     if capture_kind == .Markov_Farmland do capture_lab_name = "markov-farmland"
+    if capture_kind == .Ruins_Lab do capture_lab_name = "ruins"
     capture_lab_mode := capture_lab_name != ""
     capture_map_mode =
         capture_map_mode ||
@@ -8585,12 +8649,17 @@ adriatic_run :: proc(
         capture_kind == .Car_Generator_Lab ||
         capture_kind == .Patio_Lab ||
         capture_kind == .Garden_Lab ||
+        capture_kind == .Plant_Generator_Lab ||
+        capture_kind == .Leaf_Generator_Lab ||
+        capture_kind == .Flower_Generator_Lab ||
+        capture_kind == .Fountain_Generator_Lab ||
         capture_kind == .Lighthouse_Lab ||
         capture_kind == .Mouse_Gait_Lab ||
         capture_kind == .Rondine_Movement_Lab ||
         capture_kind == .Markov_Wreck ||
         capture_kind == .Markov_Marina ||
-        capture_kind == .Markov_Farmland
+        capture_kind == .Markov_Farmland ||
+        capture_kind == .Ruins_Lab
     capture_target := request != nil ? request.target : (capture_mode && len(args) >= 4 ? args[3] : "")
     clean_settlement_capture := false
     CLEAN_SETTLEMENT_CAPTURE_PREFIX :: "clean-"
@@ -8715,6 +8784,8 @@ adriatic_run :: proc(
     defer attendant_dialogue_definition_release(editor)
     defer structure_storage_destroy(editor)
     defer dio.flame_graph_destroy(&editor.flame_graph)
+    defer garden_lab_destroy_lsystem()
+    defer plant_generator_destroy()
     defer greek_asset_destroy(editor)
     defer mailbag_pouch_asset_destroy(editor)
     story.init_catalog(&editor.story_catalog)
@@ -10969,16 +11040,8 @@ adriatic_run :: proc(
                             min(delta_seconds, .05),
                             particle_systems.Vec3{left_tip.x, left_tip.y, left_tip.z},
                             particle_systems.Vec3{right_tip.x, right_tip.y, right_tip.z},
-                            particle_systems.Vec3 {
-                                basis.forward.x,
-                                basis.forward.y,
-                                basis.forward.z,
-                            },
-                            particle_systems.Vec3 {
-                                basis.up.x,
-                                basis.up.y,
-                                basis.up.z,
-                            },
+                            particle_systems.Vec3{basis.forward.x, basis.forward.y, basis.forward.z},
+                            particle_systems.Vec3{basis.up.x, basis.up.y, basis.up.z},
                             particle_systems.Vec3 {
                                 editor.atmosphere.weather.wind[0],
                                 0,
@@ -11183,8 +11246,17 @@ adriatic_run :: proc(
                         )
                         player_vertical_speed_before := editor.player.velocity.y
                         if !town_mouse_wheel_mounted {
-                            third_person.step(&editor.player, input, editor.tweak.player, frame_seconds)
+                            third_person.step(
+                                &editor.player,
+                                input,
+                                editor.tweak.player,
+                                frame_seconds,
+                                integrate_position = false,
+                            )
                             _ = gameplay_physics_resolve_player(editor, frame_seconds)
+                            if editor.player.position.y < editor.project.sea_level - PLAYER_FALL_RECOVERY_DEPTH {
+                                crash_recovery_begin(editor, editor.player.position, .Tumble)
+                            }
                         }
                         player_animation_update(editor, frame_seconds)
                         player_horizontal_speed := f32(
@@ -11537,8 +11609,11 @@ adriatic_run :: proc(
                     engine_controls.power =
                         editor.postale.throttle * clamp(editor.postale.flight_runtime.engine_output, 0, 1)
                     engine_controls.propeller_mix = 1
-                    engine_controls.propeller_airspeed =
-                        clamp(postale_game.selected_airspeed(&editor.postale) / 65, 0, 1)
+                    engine_controls.propeller_airspeed = clamp(
+                        postale_game.selected_airspeed(&editor.postale) / 65,
+                        0,
+                        1,
+                    )
                     engine_controls.damage = editor.postale.structural_damage
                 } else if editor.aircraft.active == .Rondine {
                     engine_controls.rate = .14 + editor.rondine.throttle * .86
@@ -11727,7 +11802,7 @@ adriatic_run :: proc(
         // Player captures wait long enough for the Verlet tail and pose blends
         // to settle; frame two only showed the first few links as a short nub.
         capture_frame :=
-            capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina ? 20 : 2
+            capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
         if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
         if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
         // Vulkan screenshot readback completes asynchronously; retain several

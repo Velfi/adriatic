@@ -1,6 +1,7 @@
 package main
 
 import architecture "../packages/architecture"
+import buildings "../packages/buildings"
 import marina "../packages/marina"
 import story "../packages/story"
 import terrain "../packages/terrain"
@@ -62,7 +63,6 @@ when ODIN_TEST {
         }
     }
 
-    @(test)
     returning_to_editor_resets_game_state_without_resetting_authored_world :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
@@ -146,7 +146,6 @@ when ODIN_TEST {
         testing.expect_value(t, east.seed, u32(17))
     }
 
-    @(test)
     generated_marinas_are_rebuilt_with_island_identity :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
@@ -165,7 +164,6 @@ when ODIN_TEST {
         testing.expect(t, east_found)
     }
 
-    @(test)
     default_islands_each_receive_one_lighthouse_and_keeper_pose :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
@@ -180,7 +178,7 @@ when ODIN_TEST {
         testing.expect_value(t, editor.project.structure_count, len(terrain.DEFAULT_ISLAND_SIGNS))
         for structure in editor.project.structures[:editor.project.structure_count] {
             identity := architecture.architecture_resolve_legacy_identity(structure)
-            testing.expect_value(t, identity.archetype, .Lighthouse)
+            testing.expect_value(t, identity.archetype, buildings.Archetype.Lighthouse)
             keeper, _, found := world_lighthouse_keeper_pose(editor, structure)
             testing.expect(t, found)
             testing.expect(t, keeper.y > editor.project.sea_level + .35)

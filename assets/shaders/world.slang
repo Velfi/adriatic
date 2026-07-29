@@ -53,6 +53,20 @@ struct VertexInput {
     float2 uv : TEXCOORD5;
 };
 
+struct InstanceVertexInput {
+    float3 position : POSITION;
+    float4 color : COLOR0;
+    uint kind : TEXCOORD0;
+    float3 normal : NORMAL0;
+    float2 material : TEXCOORD1;
+    float2 uv : TEXCOORD5;
+    float4 basis_x_translation_x : TEXCOORD6;
+    float4 basis_y_translation_y : TEXCOORD7;
+    float4 basis_z_translation_z : TEXCOORD8;
+    float4 instance_color : TEXCOORD9;
+    float4 normal_override : TEXCOORD10;
+};
+
 struct VertexOutput {
     float4 position : SV_Position;
     float4 color : COLOR0;
@@ -82,6 +96,9 @@ static const uint MATERIAL_EMISSIVE_HALO = 14;
 static const uint MATERIAL_SAILOR_HAT = 15;
 static const uint MATERIAL_SIGN = 16;
 static const uint MATERIAL_LIGHTHOUSE_GLITTER = 17;
+static const uint MATERIAL_LEAF = 18;
+static const uint MATERIAL_PETAL = 19;
+static const uint MATERIAL_FOUNTAIN_WATER = 20;
 
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
 // Decode them before interpolation, lighting, and fog blending; the sRGB
@@ -102,7 +119,9 @@ float3 srgb_to_linear(float3 color) {
 VertexOutput vertex_main(VertexInput input) {
     VertexOutput output;
     float3 world_position = input.position;
-    if (input.kind == MATERIAL_FOLIAGE) {
+    if (input.kind == MATERIAL_FOLIAGE ||
+        input.kind == MATERIAL_LEAF ||
+        input.kind == MATERIAL_PETAL) {
         float2 wind = push.water.zw;
         float wind_speed = length(wind);
         float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
@@ -129,6 +148,58 @@ VertexOutput vertex_main(VertexInput input) {
     output.world_position = world_position;
     output.kind = input.kind;
     output.normal = input.normal;
+    output.material = input.material;
+    output.uv = input.uv;
+    return output;
+}
+
+[shader("vertex")]
+VertexOutput instance_vertex_main(InstanceVertexInput input) {
+    VertexOutput output;
+    float3 world_position =
+        input.basis_x_translation_x.xyz * input.position.x +
+        input.basis_y_translation_y.xyz * input.position.y +
+        input.basis_z_translation_z.xyz * input.position.z +
+        float3(
+            input.basis_x_translation_x.w,
+            input.basis_y_translation_y.w,
+            input.basis_z_translation_z.w
+        );
+    float3 world_normal = input.normal_override.w > .5
+        ? normalize(input.normal_override.xyz)
+        : normalize(
+            input.basis_x_translation_x.xyz * input.normal.x +
+            input.basis_y_translation_y.xyz * input.normal.y +
+            input.basis_z_translation_z.xyz * input.normal.z
+        );
+    if (input.kind == MATERIAL_FOLIAGE ||
+        input.kind == MATERIAL_LEAF ||
+        input.kind == MATERIAL_PETAL) {
+        float2 wind = push.water.zw;
+        float wind_speed = length(wind);
+        float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
+        float crown_weight = smoothstep(-.08, .76, world_normal.y);
+        float phase = dot(world_position.xz, float2(.021, -.016)) +
+                      push.water.x * (.34 + wind_speed * .012);
+        float broad_sway = sin(phase) + sin(phase * .47 + 1.9) * .34;
+        float amplitude = lerp(.20, 1.18, saturate(wind_speed / 14.0 + push.water.y * .24));
+        world_position.xz += wind_direction * broad_sway * amplitude * crown_weight;
+        world_position.y += sin(phase * .73 - .8) * amplitude * .075 * crown_weight;
+    }
+    float3 view = world_position - push.camera_position.xyz;
+    float depth = dot(view, push.camera_forward.xyz);
+    float x = dot(view, push.camera_right.xyz) * push.projection.x / push.projection.y;
+    float y = dot(view, push.camera_up.xyz) * push.projection.x;
+    float near_plane = push.camera_position.w;
+    float far_plane = push.camera_right.w;
+    float clip_z = far_plane / (far_plane - near_plane) * depth -
+                   far_plane * near_plane / (far_plane - near_plane);
+    output.position = float4(x, -y, clip_z, depth);
+    output.color = float4(srgb_to_linear(input.instance_color.rgb), input.instance_color.a);
+    output.depth = depth;
+    output.world_position = world_position;
+    output.kind = input.kind;
+    output.normal = world_normal;
     output.material = input.material;
     output.uv = input.uv;
     return output;
@@ -830,6 +901,46 @@ float3 shade_foliage(VertexOutput input) {
     return saturate(color);
 }
 
+// Thin botanical surfaces have no meaningful volume at world scale. Treat
+// them as two-sided diffuse sheets and add colored forward scattering when
+// the sun is behind them. Petals transmit more light and spread it more
+// broadly than chlorophyll-dense leaves.
+float3 shade_thin_transmission(VertexOutput input, bool petal) {
+    float3 view_direction =
+        normalize(push.camera_position.xyz - input.world_position);
+    float3 normal = normalize(input.normal);
+    if (dot(normal, view_direction) < 0.0) normal = -normal;
+
+    float3 sun_direction = normalize(push.sun.xyz);
+    float front_light = saturate(dot(normal, sun_direction));
+    float back_light = saturate(dot(-normal, sun_direction));
+    float daylight = saturate(push.sun.w);
+    float visibility =
+        dynamic_shadow_visibility(input.world_position, normal);
+
+    float wrap = saturate((dot(normal, sun_direction) + .42) / 1.42);
+    float body_light =
+        .24 + wrap * .50 * visibility * lerp(.32, 1.0, daylight);
+    float transmission_strength = petal ? .72 : .48;
+    float transmission =
+        pow(back_light, petal ? 1.35 : 1.8) *
+        transmission_strength * visibility * daylight;
+
+    // Absorption enriches the material's own hue instead of washing thin
+    // silhouettes toward white. Leaves retain a warm yellow-green vein glow;
+    // petals keep their authored pigment.
+    float luma = dot(input.color.rgb, float3(.2126, .7152, .0722));
+    float3 transmitted_color = petal
+        ? saturate(input.color.rgb * 1.18 + luma * .06)
+        : saturate(input.color.rgb * float3(1.18, 1.34, .72));
+    float rim = pow(1.0 - saturate(dot(normal, view_direction)), 2.0);
+    float3 result =
+        input.color.rgb * body_light +
+        transmitted_color * transmission +
+        input.color.rgb * rim * .06;
+    return saturate(result);
+}
+
 float3 shade_road(VertexOutput input) {
     float2 uv = input.normal.xy;
     float pavement = input.normal.z;
@@ -1291,6 +1402,60 @@ float3 shade_water(VertexOutput input) {
     return saturate(color);
 }
 
+float3 shade_fountain_water(VertexOutput input) {
+    float2 p = input.world_position.xz;
+    float time = push.water.x;
+    float3 color = input.color.rgb;
+    float daylight = saturate(push.sun.w);
+    float3 shallow_tint = lerp(
+        float3(.035, .12, .16),
+        float3(.10, .43, .53),
+        daylight
+    );
+    color = lerp(color, shallow_tint, .68);
+
+    // Fountain basins are shallow, bounded water. Keep their authored color
+    // and add compact crossing ripples instead of the ocean's kilometre-scale
+    // depth, coast, wind-lane, and swell response.
+    float phase_a = dot(p, normalize(float2(.91, .42))) * 7.4 - time * 1.65;
+    float phase_b = dot(p, normalize(float2(-.36, .93))) * 11.2 + time * 1.13;
+    float2 ripple_c = normalize(float2(.68, -.73));
+    float phase_c = dot(p, ripple_c) * 15.5 - time * 2.1;
+    float2 slope =
+        normalize(float2(.91, .42)) * cos(phase_a) * .065 +
+        normalize(float2(-.36, .93)) * cos(phase_b) * .035;
+    slope += ripple_c * cos(phase_c) * .025;
+
+    float3 normal = normalize(float3(-slope.x, 1.0, -slope.y));
+    float3 view = normalize(push.camera_position.xyz - input.world_position);
+    float facing = saturate(dot(normal, view));
+    float fresnel = .035 + .42 * pow(1.0 - facing, 4.0);
+    float3 sky_tint = lerp(float3(.045, .12, .18), float3(.22, .58, .67), daylight);
+    color = lerp(color, sky_tint, fresnel * .38);
+
+    float wave_field =
+        sin(phase_a) * .50 +
+        sin(phase_b) * .31 +
+        sin(phase_c) * .19;
+    // Broad moving value bands remain visible from garden and plaza cameras;
+    // the narrower crest highlight then gives close views a wet sparkle.
+    color *= 1.0 + wave_field * .075;
+    float crossing = smoothstep(.18, .72, wave_field);
+    color = lerp(color, float3(.28, .68, .74), crossing * .075);
+    float crest = smoothstep(.72, .96, wave_field);
+    color = lerp(color, float3(.56, .84, .87), crest * .16);
+
+    float3 sun_dir = normalize(push.sun.xyz);
+    float3 half_vector = normalize(sun_dir + view);
+    float highlight = pow(saturate(dot(normal, half_vector)), 96.0) * daylight;
+    color += float3(1.0, .91, .72) * highlight * .32;
+
+    // Shallow fountain water should remain legible under overcast and night
+    // lighting rather than collapsing to the ocean's deep-water value.
+    color *= lerp(.82, 1.08, daylight);
+    return saturate(color);
+}
+
 float4 shade_lighthouse_glitter(VertexOutput input) {
     float night = 1.0 - smoothstep(.0, .34, saturate(push.sun.w));
     float strength = saturate(input.material.x) * night;
@@ -1404,8 +1569,17 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         case MATERIAL_WATER:
             base = shade_water(input);
             break;
+        case MATERIAL_FOUNTAIN_WATER:
+            base = shade_fountain_water(input);
+            break;
         case MATERIAL_FOLIAGE:
             base = shade_foliage(input);
+            break;
+        case MATERIAL_LEAF:
+            base = shade_thin_transmission(input, false);
+            break;
+        case MATERIAL_PETAL:
+            base = shade_thin_transmission(input, true);
             break;
         case MATERIAL_ROAD:
             base = shade_road(input);
@@ -1578,6 +1752,8 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     if (input.kind == MATERIAL_UNSHADED ||
         input.kind == MATERIAL_TERRAIN ||
         input.kind == MATERIAL_FOLIAGE ||
+        input.kind == MATERIAL_LEAF ||
+        input.kind == MATERIAL_PETAL ||
         input.kind == MATERIAL_ROAD) {
         float visibility = dynamic_shadow_visibility(input.world_position, surface_normal);
         // These palette-authored materials already contain their ambient/key
@@ -1585,7 +1761,8 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         // shadows do not crush that authored ambient illumination.
         base *= lerp(.72, 1.0, visibility);
     }
-    if (input.kind == MATERIAL_WATER) {
+    if (input.kind == MATERIAL_WATER ||
+        input.kind == MATERIAL_FOUNTAIN_WATER) {
         // Nearby boats and aircraft use the mapped caster pass. Let the water
         // receive their softened silhouettes without crushing its animated
         // pigment and glint response.

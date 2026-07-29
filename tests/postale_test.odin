@@ -38,11 +38,7 @@ Takeoff_Run :: struct {
     peak_ground_pitch: f32,
 }
 
-run_takeoff :: proc(
-    mass_kg: f32,
-    wind: flight.Vec3 = {},
-    model: postale.Flight_Model = .Current_Aero,
-) -> Takeoff_Run {
+run_takeoff :: proc(mass_kg: f32, wind: flight.Vec3 = {}, model: postale.Flight_Model = .Current_Aero) -> Takeoff_Run {
     runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     runtime.flight_model = model
     runtime.airframe.mass_kg = mass_kg

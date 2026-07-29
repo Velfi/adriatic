@@ -44,6 +44,9 @@ Plan :: struct {
     tradition:    Tradition,
     parcels:      [PARCEL_CAPACITY]Parcel,
     parcel_count: int,
+    garden_x:     int,
+    garden_z:     int,
+    garden_span:  int,
     valid:        bool,
 }
 
@@ -182,6 +185,12 @@ generate_sized_for_tradition :: proc(
         parcel.phase = f32(roll & 255) / 255
         parcel.tint = accent
     }
+    // A kitchen garden is an embedded feature rather than a field parcel:
+    // compact farms retain their single enclosure and large farms do not gain
+    // an artificial hedge solely to separate household produce.
+    plan.garden_span = clamp(min(plan.width, plan.height) / 5, 1, 3)
+    plan.garden_x = (mix(seed ~ u32(0x47415244)) & 1) == 0 ? 1 : plan.width - plan.garden_span - 1
+    plan.garden_z = (mix(seed ~ u32(0x4b495443)) & 1) == 0 ? 1 : plan.height - plan.garden_span - 1
     plan.valid = plan.parcel_count >= 1
     return plan
 }

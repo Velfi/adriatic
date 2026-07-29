@@ -14,6 +14,9 @@ Render_Graph_Context :: struct {
     road_buffer:              ^engine.Vk_Buffer,
     foliage_buffer:           ^engine.Vk_Buffer,
     grass_instance_buffer:    ^engine.Vk_Buffer,
+    instance_vertex_buffer:   ^engine.Vk_Buffer,
+    instance_index_buffer:    ^engine.Vk_Buffer,
+    instance_data_buffer:     ^engine.Vk_Buffer,
     wing_trail_vertex_buffer: ^engine.Vk_Buffer,
     wing_trail_index_buffer:  ^engine.Vk_Buffer,
     offset:                   vk.DeviceSize,
@@ -92,6 +95,28 @@ render_graph_geometry :: proc(user_data: rawptr) {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.static_vertex_buffer.handle, &ctx.offset)
         vk.CmdBindIndexBuffer(cmd, ctx.static_index_buffer.handle, 0, .UINT32)
         vk.CmdDrawIndexed(cmd, u32(len(world_renderer.static_indices)), 1, 0, 0, 0)
+    }
+    if len(world_renderer.instance_flattened) > 0 {
+        vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.instance_pipelines[ctx.pipeline_index])
+        buffers := [2]vk.Buffer {
+            ctx.instance_vertex_buffer.handle,
+            ctx.instance_data_buffer.handle,
+        }
+        offsets := [2]vk.DeviceSize{0, 0}
+        vk.CmdBindVertexBuffers(cmd, 0, 2, raw_data(buffers[:]), raw_data(offsets[:]))
+        vk.CmdBindIndexBuffer(cmd, ctx.instance_index_buffer.handle, 0, .UINT32)
+        for mesh in world_renderer.instance_meshes {
+            if len(mesh.instances) == 0 do continue
+            vk.CmdDrawIndexed(
+                cmd,
+                mesh.index_count,
+                u32(len(mesh.instances)),
+                mesh.first_index,
+                i32(mesh.first_vertex),
+                mesh.first_instance,
+            )
+        }
+        vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.pipelines[ctx.pipeline_index])
     }
     if len(world_renderer.wing_trail_optimized_indices) > 0 {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.wing_trail_vertex_buffer.handle, &ctx.offset)

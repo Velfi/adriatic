@@ -1,7 +1,8 @@
 package main
 
-import third_person "../packages/third_person"
+import plants "../packages/plants"
 import terrain "../packages/terrain"
+import third_person "../packages/third_person"
 import "core:math"
 import "core:math/linalg"
 import rl "zelda_engine:canvas2d"
@@ -44,10 +45,7 @@ settlement_patio_route_clear :: proc(plan: ^Settlement_Plan, patio: Settlement_P
     return true
 }
 
-settlement_patio_terrain_seat :: proc(
-    project: ^terrain.Project,
-    patio: ^Settlement_Patio,
-) -> bool {
+settlement_patio_terrain_seat :: proc(project: ^terrain.Project, patio: ^Settlement_Patio) -> bool {
     if project == nil || patio == nil do return false
     tangent := [2]f32{math.cos(patio.rotation), math.sin(patio.rotation)}
     normal := [2]f32{-tangent[1], tangent[0]}
@@ -124,8 +122,7 @@ settlement_patios_contain_point :: proc(editor: ^Editor, x, z: f32, padding: f32
         dx, dz := x - patio.center[0], z - patio.center[1]
         local_x := dx * cosine + dz * sine
         local_z := -dx * sine + dz * cosine
-        if math.abs(local_x) <= patio.width * .5 + padding &&
-           math.abs(local_z) <= patio.depth * .5 + padding {
+        if math.abs(local_x) <= patio.width * .5 + padding && math.abs(local_z) <= patio.depth * .5 + padding {
             return true
         }
     }
@@ -156,13 +153,13 @@ settlement_patio_candidate :: proc(
         patio_width, patio_depth = depth, width
     }
     return {
-        center   = {structure.center_x, structure.center_z} + direction * distance,
-        width    = patio_width,
-        depth    = patio_depth,
+        center = {structure.center_x, structure.center_z} + direction * distance,
+        width = patio_width,
+        depth = patio_depth,
         rotation = structure.rotation,
-        seed     = seed,
-        host_id  = structure.id,
-        style    = style,
+        seed = seed,
+        host_id = structure.id,
+        style = style,
     }
 }
 
@@ -221,11 +218,7 @@ settlement_patios_generate :: proc(editor: ^Editor) {
 
 settlement_patio_point :: proc(patio: Settlement_Patio, x, y, z: f32) -> third_person.Vec3 {
     cosine, sine := math.cos(patio.rotation), math.sin(patio.rotation)
-    return {
-        patio.center[0] + x * cosine - z * sine,
-        patio.base_y + y,
-        patio.center[1] + x * sine + z * cosine,
-    }
+    return {patio.center[0] + x * cosine - z * sine, patio.base_y + y, patio.center[1] + x * sine + z * cosine}
 }
 
 world_settlement_patio :: proc(patio: Settlement_Patio) {
@@ -257,8 +250,26 @@ world_settlement_patio :: proc(patio: Settlement_Patio) {
     }
     planter_x := patio.width * .5 - .55
     planter_z := patio.depth * .5 - .55
-    patio_planter(settlement_patio_point(patio, -planter_x, .04, planter_z))
-    patio_planter(settlement_patio_point(patio, planter_x, .04, -planter_z))
+    planter_a := settlement_patio_point(patio, -planter_x, .04, planter_z)
+    planter_b := settlement_patio_point(patio, planter_x, .04, -planter_z)
+    patio_planter(planter_a, false)
+    patio_planter(planter_b, false)
+    patio_species :=
+        patio.style == .Aegean ? plants.Species.Pelargonium : plants.Species.Rosemary
+    _ = world_generated_plant(
+        patio_species,
+        u64(patio.seed) ~ 0x706174696f5f706c,
+        {planter_a.x, planter_a.y + .84, planter_a.z},
+        patio.style == .Aegean ? .72 : .88,
+        patio.rotation,
+    )
+    _ = world_generated_plant(
+        patio.seed & 4 != 0 ? plants.Species.Lavender : patio_species,
+        u64(patio.seed) ~ 0x706174696f5f7072,
+        {planter_b.x, planter_b.y + .84, planter_b.z},
+        patio.style == .Aegean ? .72 : .88,
+        patio.rotation + math.PI,
+    )
 }
 
 world_settlement_patios :: proc(editor: ^Editor) {
