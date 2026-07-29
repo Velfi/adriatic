@@ -9927,6 +9927,61 @@ for all four transitions. Preserve all old hashes and record new exact v5
 manifest/history/report and production-registry hashes. No binary, probe,
 temporary, or stray v5 artifact may remain.
 
+### M4R6B3 acceptance
+
+Accepted as one integrated activation change.
+
+- Frozen schema v5 is 1,637 lines, 169 records, and 153 root fields with
+  SHA-256 `85bc521bfd104574d88204d6522be2aa05e935241516a92dea91be75c8a3d012`.
+- Generated history v5 is 2,142 lines and 169 records with SHA-256
+  `f1fe28caa1c86e7d3df2f9a5bba0cde8fb1e4ed50ae66756b3fb6fb71178b5ca`.
+- The frozen 4→5 report is deterministic at 9,664 bytes and 21 changes:
+  17 fixture-state and four supporting changes. Its SHA-256 is
+  `201fa98588b3417b0cc6e9f6938096c7a7ec7dafd1f736cc1b84f78c999fdbe4`.
+- The unresolved renderer remains 88 lines and 2,797 bytes with SHA-256
+  `1c0cb64086b2408303850f8fe76feef592adbdc8af5155a2c7167a962a92a05e`.
+  The resolved migration remains
+  `9db4ccdf67f0f488c5e4bf92b55b2ab9483001cd71284354851abf9ab07a2097`
+  with 11 scripted, six automatic, and zero unresolved obligations.
+- The production registry is the exact contiguous 1→2→3→4→5 chain. Its
+  source SHA-256 is
+  `94a394a36754b9fb130ae90d06a59a9ebace97496389ba1cb50012267f347e9e`.
+- Current v5 plus true frozen v1/v2/v3/v4 containers pass deterministic
+  migration-aware codec round trips, immutable-input checks, exact invalid-v4
+  failure IDs, result ownership, and independent allocation-failure sweeps.
+  Production codec source remains
+  `4dd4c036c99863fbbac797992abb54fc6119f69ea5adf2f7bd82c13533a50dcb`.
+
+Independent reviews found no schema/tooling, registry, migration-test, codec,
+ownership, or coverage defects. Final gates pass: migration 15/15 in
+6m20.493s, codec 2/2 in 2m17.397s, full tests 753/753 plus Rondine 19/19,
+`make check`, schema v5 check, history v5 check/compile, and frozen 4→5
+scaffold check. No generated binary or probe remains. The redundant repeated
+gate runs from the original handoff were intentionally replaced by one final
+integrated pass after the user selected speed mode.
+
+### Accelerated fixture finish
+
+The remaining work is collapsed into four outcome slices. These supersede the
+ceremonial milestone boundaries below; their behavioral requirements still
+apply where relevant.
+
+1. Combine owned-state installation, migration-on-load, and live runtime
+   rebuild into one atomic editor-load path. This merges milestones 4D and 7.
+2. Add the level-designer save/load UI and current-schema file workflow from
+   milestone 5.
+3. Add the batch on-disk upgrader by reusing the same decode/migrate/encode
+   path from milestone 8.
+4. Add schema guardrails, the required agent skill, and only release-blocking
+   integration polish from milestones 9 and 10.
+
+Milestone 6's additional generic complex-migration automation is deferred.
+The accepted frozen diff, scaffold, scripted-resolution, history, registry,
+and codec path already provide the required non-automated escape hatch.
+During accelerated work, run the narrow changed test once while developing
+and the full relevant gates once before each commit. Repeat only a failing or
+flaky gate.
+
 ## Milestone 4D — Install owned state and rebuild runtime resources
 
 Decode into temporary owned state, validate it, preserve root runtime

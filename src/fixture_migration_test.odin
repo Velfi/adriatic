@@ -24,6 +24,7 @@ when ODIN_TEST {
 
     fixture_migration_test_historical_payload :: proc(t: ^testing.T) -> ([]byte, bool) {
         historical := new(fixture_v0001.Fixture)
+        fixture_migration_v0004_runtime_seed_legacy_flight(historical, 1)
         historical.project.sea_level = f32(12.75)
         historical.project.revision = 77
         historical.project.structures[0].id = 0x1111
@@ -623,8 +624,8 @@ when ODIN_TEST {
         fixture_migration_test_expect_rejected(
             t,
             payload,
-            5,
-            5,
+            6,
+            6,
             fixture_migration_production_registry(),
             .Unsupported_Version,
         )
@@ -632,7 +633,7 @@ when ODIN_TEST {
             t,
             payload,
             1,
-            5,
+            6,
             fixture_migration_production_registry(),
             .Unsupported_Version,
         )

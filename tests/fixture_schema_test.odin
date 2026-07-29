@@ -66,7 +66,7 @@ build_synthetic :: proc(repo: Synthetic_Repo) -> (manifest, diagnostics: string,
 }
 
 @(test)
-fixture_schema_production_graph_matches_frozen_v4 :: proc(t: ^testing.T) {
+fixture_schema_production_graph_matches_frozen_v5 :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     repo_root, repo_err := os.get_working_directory(context.allocator)
@@ -79,8 +79,8 @@ fixture_schema_production_graph_matches_frozen_v4 :: proc(t: ^testing.T) {
     )
     testing.expect(t, generated_ok)
     testing.expect(t, diagnostics == "")
-    testing.expect(t, version == 4)
-    stored_path := fixture_schema.manifest_path(repo_root, 4)
+    testing.expect(t, version == 5)
+    stored_path := fixture_schema.manifest_path(repo_root, 5)
     stored, read_err := os.read_entire_file(stored_path, context.allocator)
     testing.expect(t, read_err == nil)
     if read_err != nil do return
@@ -106,6 +106,14 @@ fixture_schema_production_graph_matches_frozen_v4 :: proc(t: ^testing.T) {
             "field=adriatic:packages/story.State|name=resident_action_seen|using=0|tag=|type=enumerated_array[11;adriatic:packages/story.Resident]<builtin:u64>",
         ),
     )
+    quaternion_fields := [?]string {
+        "field=adriatic:packages/flight.Body_State|name=orientation|using=0|tag=|type=builtin:quaternion128",
+        "field=adriatic:packages/libellula.Runtime|name=spawn_orientation|using=0|tag=|type=builtin:quaternion128",
+        "field=adriatic:packages/postale.Runtime|name=spawn_orientation|using=0|tag=|type=builtin:quaternion128",
+    }
+    for field in quaternion_fields {
+        testing.expect(t, strings.contains(generated, field))
+    }
     retained_names := [?]string {
         "marina_authored_plan",
         "farms",
@@ -226,7 +234,7 @@ fixture_schema_production_policy_excludes_only_derived_session_state :: proc(t: 
     )
     testing.expect(t, generated_ok)
     testing.expect(t, diagnostics == "")
-    testing.expect(t, version == 4)
+    testing.expect(t, version == 5)
     if !generated_ok do return
 
     excluded_fields := [?]string {

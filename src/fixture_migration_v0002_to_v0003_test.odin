@@ -11,6 +11,7 @@ import "core:testing"
 when ODIN_TEST {
     fixture_migration_v0002_to_v0003_test_v2_payload :: proc(t: ^testing.T) -> ([]byte, bool) {
         historical := new(fixture_v0002.Fixture)
+        fixture_migration_v0004_runtime_seed_legacy_flight(historical, 2)
         historical.pilot.mode = .Driving
         historical.architecture_brush_radius = 45
         historical.aircraft.slots[0].kind = .Postale
@@ -222,34 +223,6 @@ when ODIN_TEST {
             resolution := FIXTURE_MIGRATION_V0002_TO_V0003_RESOLUTIONS[0]
             testing.expect(t, resolution.change_id == "field-add:adriatic:src.Fixture.occupant")
             testing.expect(t, resolution.kind == .Scripted)
-        }
-        production_registry := fixture_migration_production_registry()
-        testing.expect(t, len(production_registry.steps) == 3)
-        if len(production_registry.steps) == 3 {
-            first_step := production_registry.steps[0]
-            second_step := production_registry.steps[1]
-            third_step := production_registry.steps[2]
-            testing.expect(
-                t,
-                first_step.from_version == 1 &&
-                first_step.to_version == 2 &&
-                first_step.wrapper == fixture_migration_step_v0001_to_v0002 &&
-                first_step.change_id == "field-add:adriatic:packages/farmland.Plan.height",
-            )
-            testing.expect(
-                t,
-                second_step.from_version == 2 &&
-                second_step.to_version == 3 &&
-                second_step.wrapper == fixture_migration_step_v0002_to_v0003 &&
-                second_step.change_id == "field-add:adriatic:src.Fixture.occupant",
-            )
-            testing.expect(
-                t,
-                third_step.from_version == 3 &&
-                third_step.to_version == 4 &&
-                third_step.wrapper == fixture_migration_step_v0003_to_v0004 &&
-                third_step.change_id == FIXTURE_MIGRATION_V0003_SETTLEMENT_ID,
-            )
         }
         nil_error := fixture_migration_v0002_to_v0003_resolve_occupant(nil)
         testing.expect(t, nil_error.kind == .Invalid_Argument)

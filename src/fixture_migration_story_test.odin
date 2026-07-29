@@ -146,6 +146,7 @@ when ODIN_TEST {
 
     fixture_migration_story_test_container :: proc(test_case: Fixture_Migration_Story_Test_Case) -> ([]byte, bool) {
         historical := new(fixture_v0001.Fixture)
+        fixture_migration_v0004_runtime_seed_legacy_flight(historical, 1)
         historical.project.structure_count = 1
         historical.project.structures[0].id = 0x101
         historical.architecture_city_plan.count = 1

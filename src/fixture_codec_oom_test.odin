@@ -155,53 +155,47 @@ when ODIN_TEST {
         current_snapshot := fixture_codec_test_copy(current)
         defer delete(current_snapshot)
 
-        v3_payload, v3_payload_ok := fixture_migration_v0003_runtime_v3_payload(t)
-        testing.expect(t, v3_payload_ok)
-        if !v3_payload_ok do return
-        v3, v3_error, v3_ok := fixture_file.fixture_container_encode(v3_payload, 3, alloc = context.allocator)
-        delete(v3_payload)
-        testing.expect(t, v3_ok && v3_error.kind == .None)
-        if !v3_ok do return
-        defer delete(v3)
-        v3_snapshot := fixture_codec_test_copy(v3)
-        defer delete(v3_snapshot)
-
-        v2_payload, v2_payload_ok := fixture_codec_test_v2_payload(t)
-        testing.expect(t, v2_payload_ok)
-        if !v2_payload_ok do return
-        v2, v2_error, v2_ok := fixture_file.fixture_container_encode(v2_payload, 2, alloc = context.allocator)
-        delete(v2_payload)
-        testing.expect(t, v2_ok && v2_error.kind == .None)
-        if !v2_ok do return
-        defer delete(v2)
-        v2_snapshot := fixture_codec_test_copy(v2)
-        defer delete(v2_snapshot)
-
-        v1_payload, v1_payload_ok := fixture_migration_v0002_to_v0003_test_v1_payload(t)
-        testing.expect(t, v1_payload_ok)
-        if !v1_payload_ok do return
-        v1, v1_error, v1_ok := fixture_file.fixture_container_encode(v1_payload, 1, alloc = context.allocator)
-        delete(v1_payload)
-        testing.expect(t, v1_ok && v1_error.kind == .None)
-        if !v1_ok do return
-        defer delete(v1)
-        v1_snapshot := fixture_codec_test_copy(v1)
-        defer delete(v1_snapshot)
+        historical: [4][]byte
+        historical_snapshots: [4][]byte
+        historical_ready := true
+        for version in 1 ..= 4 {
+            container, container_ok := fixture_codec_test_historical_container(t, version)
+            historical[version - 1] = container
+            historical_ready = historical_ready && container_ok
+            if container_ok {
+                historical_snapshots[version - 1] = fixture_codec_test_copy(container)
+            }
+        }
+        defer {
+            for index in 0 ..< len(historical) {
+                delete(historical[index])
+                delete(historical_snapshots[index])
+            }
+        }
+        if !historical_ready do return
 
         current_allocation_count := fixture_codec_oom_test_success_count(t, current, current_snapshot)
-        v3_allocation_count := fixture_codec_oom_test_success_count(t, v3, v3_snapshot)
-        v2_allocation_count := fixture_codec_oom_test_success_count(t, v2, v2_snapshot)
-        v1_allocation_count := fixture_codec_oom_test_success_count(t, v1, v1_snapshot)
-        if current_allocation_count == 0 ||
-           v3_allocation_count == 0 ||
-           v2_allocation_count == 0 ||
-           v1_allocation_count == 0 {
-            return
+        historical_allocation_counts: [4]int
+        all_counts_ready := current_allocation_count > 0
+        for container, index in historical {
+            historical_allocation_counts[index] = fixture_codec_oom_test_success_count(
+                t,
+                container,
+                historical_snapshots[index],
+            )
+            all_counts_ready = all_counts_ready && historical_allocation_counts[index] > 0
         }
+        if !all_counts_ready do return
+
         fixture_codec_oom_test_sweep(t, current, current_snapshot, current_allocation_count)
-        fixture_codec_oom_test_sweep(t, v3, v3_snapshot, v3_allocation_count)
-        fixture_codec_oom_test_sweep(t, v2, v2_snapshot, v2_allocation_count)
-        fixture_codec_oom_test_sweep(t, v1, v1_snapshot, v1_allocation_count)
+        for container, index in historical {
+            fixture_codec_oom_test_sweep(
+                t,
+                container,
+                historical_snapshots[index],
+                historical_allocation_counts[index],
+            )
+        }
 
         tiny_payload := []byte{0x5a}
         tiny, tiny_error, tiny_ok := fixture_file.fixture_container_encode(tiny_payload, 1, alloc = context.allocator)

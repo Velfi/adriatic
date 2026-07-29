@@ -3,9 +3,8 @@ package main
 import architecture "../packages/architecture"
 import fixture_file "../packages/fixture_file"
 import fixture_v0001 "../packages/fixture_history/v0001"
-import fixture_v0002 "../packages/fixture_history/v0002"
+import flight "../packages/flight"
 import hs "../packages/hs"
-import quest "../packages/quest"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
@@ -157,6 +156,31 @@ when ODIN_TEST {
         source.car.locked = false
         source.postale.throttle = f32(.62)
         source.libellula.throttle = f32(.38)
+        source.postale.body.angular_velocity_world = {1, 2, 3}
+        source.libellula.body.angular_velocity_world = {-4, 5, -6}
+        source.rondine.body.angular_velocity_world = {7, 8, 9}
+        source.postale.body.orientation = flight.orientation_from_basis(fixture_migration_v0004_runtime_basis(0))
+        source.libellula.body.orientation = flight.orientation_from_basis(fixture_migration_v0004_runtime_basis(1))
+        source.rondine.body.orientation = flight.orientation_from_basis(fixture_migration_v0004_runtime_basis(2))
+        source.postale.spawn_orientation = flight.orientation_from_basis(fixture_migration_v0004_runtime_basis(3))
+        source.libellula.spawn_orientation = flight.orientation_from_basis(fixture_migration_v0004_runtime_basis(4))
+        source.postale.flight_model = .Ace_Arcade
+        source.postale.ace_tuning = {
+            pace       = f32(.11),
+            roll_snap  = f32(.22),
+            air_grip   = f32(.33),
+            exit_catch = f32(.44),
+        }
+        source.postale.ace_runtime = {
+            energy       = f32(.71),
+            edge_state   = .Hang,
+            edge_seconds = f32(1.25),
+            local_rate   = {91, 92, 93},
+        }
+        source.postale.telemetry.airspeed = 94
+        source.postale.ace_telemetry.pace = 95
+        source.libellula.telemetry.total_thrust = 96
+        source.camera_target_lock = true
         source.aircraft.count = 1
         source.aircraft.active = .Postale
         source.aircraft.slots[0] = {
@@ -263,6 +287,39 @@ when ODIN_TEST {
         return source
     }
 
+    fixture_codec_test_expect_current_v5 :: proc(t: ^testing.T, source, decoded: ^Fixture) {
+        testing.expect(
+            t,
+            decoded.postale.body.angular_velocity_world == source.postale.body.angular_velocity_world &&
+            decoded.libellula.body.angular_velocity_world == source.libellula.body.angular_velocity_world &&
+            decoded.rondine.body.angular_velocity_world == source.rondine.body.angular_velocity_world,
+        )
+        testing.expect(
+            t,
+            decoded.postale.body.orientation == source.postale.body.orientation &&
+            decoded.libellula.body.orientation == source.libellula.body.orientation &&
+            decoded.rondine.body.orientation == source.rondine.body.orientation &&
+            decoded.postale.spawn_orientation == source.postale.spawn_orientation &&
+            decoded.libellula.spawn_orientation == source.libellula.spawn_orientation,
+        )
+        testing.expect(
+            t,
+            decoded.postale.flight_model == .Ace_Arcade &&
+            decoded.postale.ace_tuning == source.postale.ace_tuning &&
+            decoded.postale.ace_runtime.energy == source.postale.ace_runtime.energy &&
+            decoded.postale.ace_runtime.edge_state == source.postale.ace_runtime.edge_state &&
+            decoded.postale.ace_runtime.edge_seconds == source.postale.ace_runtime.edge_seconds,
+        )
+        testing.expect(
+            t,
+            decoded.postale.ace_runtime.local_rate == flight.Vec3{} &&
+            decoded.postale.telemetry.airspeed == 0 &&
+            decoded.postale.ace_telemetry.pace == 0 &&
+            decoded.libellula.telemetry.total_thrust == 0 &&
+            !decoded.camera_target_lock,
+        )
+    }
+
     fixture_codec_test_bytes_equal :: proc(left, right: []byte) -> bool {
         if len(left) != len(right) do return false
         for index in 0 ..< len(left) {
@@ -317,44 +374,108 @@ when ODIN_TEST {
         return invalid, encode_ok
     }
 
-    fixture_codec_test_v2_payload :: proc(t: ^testing.T) -> ([]byte, bool) {
-        arena, arena_ok := fixture_migration_arena_allocate(context.allocator)
-        testing.expect(t, arena_ok)
-        if !arena_ok do return nil, false
-        defer fixture_migration_arena_dispose(arena, context.allocator)
-
-        allocator := mem.dynamic_arena_allocator(arena)
-        historical := new(fixture_v0002.Fixture, allocator)
-        testing.expect(t, historical != nil)
-        if historical == nil do return nil, false
-
-        historical.pilot.mode = .Driving
-        historical.architecture_brush_radius = 45
-        historical.aircraft.slots[0].kind = .Postale
-        historical.aircraft.slots[1].kind = .Libellula
-        historical.aircraft.slots[2].kind = .Libellula_Mk2
-        historical.aircraft.active = .Libellula_Mk2
-        historical.aircraft.count = 3
-        historical.structure_selected = 731
-        historical.vehicle_showcase_target = "codec-v2-target"
-        historical.active_lab_scene = "codec-v2-lab"
-        historical.architecture_city_plan.lamps = make([dynamic]fixture_v0002.History_Type_0001, 1, allocator)
-        historical.architecture_city_plan.lamp_count = 1
-        historical.architecture_city_plan.lamps[0] = {
-            x   = 73,
-            z   = -37,
-            yaw = f32(.375),
+    fixture_codec_test_historical_payload :: proc(t: ^testing.T, version: int) -> ([]byte, bool) {
+        switch version {
+        case 1:
+            return fixture_migration_v0004_runtime_v1_payload(t)
+        case 2:
+            return fixture_migration_v0004_runtime_v2_payload(t)
+        case 3:
+            return fixture_migration_v0004_runtime_v3_payload(t)
+        case 4:
+            return fixture_migration_v0004_runtime_v4_payload(t)
         }
+        testing.expect(t, false)
+        return nil, false
+    }
 
-        payload, portable_error, ok := hs.portable_encode(
-            any{data = rawptr(historical), id = typeid_of(fixture_v0002.Fixture)},
-            fixture_codec_historical_portable_config(),
-            context.allocator,
+    fixture_codec_test_historical_container :: proc(t: ^testing.T, version: int) -> ([]byte, bool) {
+        payload, payload_ok := fixture_codec_test_historical_payload(t, version)
+        testing.expect(t, payload_ok)
+        if !payload_ok do return nil, false
+        defer delete(payload)
+        container, container_error, container_ok := fixture_file.fixture_container_encode(
+            payload,
+            u32(version),
+            alloc = context.allocator,
         )
-        testing.expect(t, ok && portable_error.kind == .None)
-        hs.portable_error_dispose(&portable_error)
-        hs.portable_error_dispose(&portable_error)
-        return payload, ok
+        testing.expect(t, container_ok && container_error.kind == .None)
+        return container, container_ok
+    }
+
+    fixture_codec_test_expect_historical_round_trip :: proc(t: ^testing.T, container: []byte, version: int) {
+        snapshot := fixture_codec_test_copy(container)
+        defer delete(snapshot)
+        first, first_error, first_ok := fixture_codec_decode(container, context.allocator)
+        second, second_error, second_ok := fixture_codec_decode(container, context.allocator)
+        testing.expect(t, first_ok && first_error.kind == .None)
+        testing.expect(t, second_ok && second_error.kind == .None)
+
+        if first_ok && second_ok {
+            first_encoded, first_encode_error, first_encoded_ok := fixture_codec_encode(
+                first.fixture,
+                context.allocator,
+            )
+            second_encoded, second_encode_error, second_encoded_ok := fixture_codec_encode(
+                second.fixture,
+                context.allocator,
+            )
+            testing.expect(t, first_encoded_ok && first_encode_error.kind == .None)
+            testing.expect(t, second_encoded_ok && second_encode_error.kind == .None)
+            if first_encoded_ok && second_encoded_ok {
+                view, view_error, view_ok := fixture_file.fixture_container_decode(first_encoded)
+                testing.expect(t, view_ok && view_error.kind == .None)
+                testing.expect(t, view.schema_version == u32(FIXTURE_SCHEMA_VERSION))
+                testing.expect(t, fixture_codec_test_bytes_equal(first_encoded, second_encoded))
+            }
+            if first_encoded_ok do delete(first_encoded)
+            if second_encoded_ok do delete(second_encoded)
+            fixture_codec_error_dispose(&first_encode_error)
+            fixture_codec_error_dispose(&first_encode_error)
+            fixture_codec_error_dispose(&second_encode_error)
+            fixture_codec_error_dispose(&second_encode_error)
+
+            fixture_migration_v0004_runtime_expect_result(t, &first, version)
+            fixture_migration_v0004_runtime_expect_result(t, &second, version)
+        }
+        testing.expect(t, fixture_codec_test_bytes_equal(container, snapshot))
+        fixture_codec_error_dispose(&first_error)
+        fixture_codec_error_dispose(&first_error)
+        fixture_codec_error_dispose(&second_error)
+        fixture_codec_error_dispose(&second_error)
+        fixture_migration_result_dispose(&first)
+        fixture_migration_result_dispose(&first)
+        fixture_migration_result_dispose(&second)
+        fixture_migration_result_dispose(&second)
+        testing.expect(t, fixture_migration_result_empty(&first) && fixture_migration_result_empty(&second))
+    }
+
+    fixture_codec_test_expect_v4_migration_failure :: proc(
+        t: ^testing.T,
+        payload: []byte,
+        expected_change_id: string,
+    ) {
+        container, container_error, container_ok := fixture_file.fixture_container_encode(
+            payload,
+            4,
+            alloc = context.allocator,
+        )
+        testing.expect(t, container_ok && container_error.kind == .None)
+        if !container_ok do return
+        defer delete(container)
+        snapshot := fixture_codec_test_copy(container)
+        defer delete(snapshot)
+        result, error, ok := fixture_codec_decode(container, context.allocator)
+        testing.expect(
+            t,
+            !ok &&
+            error.kind == .Migration &&
+            error.migration.kind == .Step_Failure &&
+            error.migration.change_id == expected_change_id &&
+            fixture_migration_result_empty(&result) &&
+            fixture_codec_test_bytes_equal(container, snapshot),
+        )
+        fixture_codec_test_expect_empty(t, &result, &error)
     }
 
     @(test)
@@ -385,6 +506,7 @@ when ODIN_TEST {
                 testing.expect(t, occupant_ok && occupant_error.kind == .None)
                 if occupant_ok {
                     testing.expect(t, occupant_result.fixture.occupant == occupant)
+                    fixture_codec_test_expect_current_v5(t, source, occupant_result.fixture)
                     testing.expect(t, occupant_result.fixture.pilot.mode == .On_Foot)
                     testing.expect(t, occupant_result.fixture.aircraft.active == .Postale)
                     testing.expect(
@@ -475,6 +597,7 @@ when ODIN_TEST {
         decoded := current_result.fixture
         testing.expect(t, decoded != nil)
         if decode_ok {
+            fixture_codec_test_expect_current_v5(t, source, decoded)
             testing.expect(t, decoded.project.sea_level == source.project.sea_level)
             testing.expect(t, decoded.project.revision == source.project.revision)
             testing.expect(t, decoded.project.structures[0].id == source.project.structures[0].id)
@@ -578,179 +701,11 @@ when ODIN_TEST {
         fixture_migration_result_dispose(&current_result)
         testing.expect(t, fixture_migration_result_empty(&current_result))
 
-        v2_payload, v2_payload_ok := fixture_codec_test_v2_payload(t)
-        testing.expect(t, v2_payload_ok)
-        if v2_payload_ok {
-            v2_container, v2_container_error, v2_container_ok := fixture_file.fixture_container_encode(
-                v2_payload,
-                fixture_v0002.FIXTURE_SCHEMA_VERSION,
-                alloc = context.allocator,
-            )
-            testing.expect(t, v2_container_ok && v2_container_error.kind == .None)
-            delete(v2_payload)
-            if v2_container_ok {
-                v2_snapshot := fixture_codec_test_copy(v2_container)
-                v2_result, v2_error, v2_ok := fixture_codec_decode(v2_container, context.allocator)
-                v2_result_again, v2_error_again, v2_ok_again := fixture_codec_decode(v2_container, context.allocator)
-                testing.expect(t, v2_ok && v2_error.kind == .None)
-                testing.expect(t, v2_ok_again && v2_error_again.kind == .None)
-                if v2_ok && v2_ok_again {
-                    testing.expect(t, v2_result.fixture.occupant == .On_Foot)
-                    testing.expect(t, v2_result.fixture.pilot.mode == .Driving)
-                    testing.expect(t, v2_result.fixture.aircraft.active == .Libellula_Mk2)
-                    testing.expect(t, v2_result.fixture.structure_selected == 731)
-                    testing.expect(t, v2_result.fixture.vehicle_showcase_target == "codec-v2-target")
-                    testing.expect(t, v2_result.fixture.active_lab_scene == "codec-v2-lab")
-                    testing.expect(t, v2_result.fixture.architecture_city_plan.lamp_count == 1)
-                    testing.expect(t, len(v2_result.fixture.architecture_city_plan.lamps) == 1)
-                    testing.expect(t, v2_result.fixture.architecture_city_plan.lamps[0].x == 73)
-                    testing.expect(t, v2_result.fixture.architecture_city_plan.lamps[0].z == -37)
-
-                    v2_encoded, v2_encode_error, v2_encoded_ok := fixture_codec_encode(
-                        v2_result.fixture,
-                        context.allocator,
-                    )
-                    v2_encoded_again, v2_encode_error_again, v2_encoded_again_ok := fixture_codec_encode(
-                        v2_result_again.fixture,
-                        context.allocator,
-                    )
-                    testing.expect(t, v2_encoded_ok && v2_encode_error.kind == .None)
-                    testing.expect(t, v2_encoded_again_ok && v2_encode_error_again.kind == .None)
-                    if v2_encoded_ok && v2_encoded_again_ok {
-                        v2_encoded_view, v2_encoded_view_error, v2_encoded_view_ok :=
-                            fixture_file.fixture_container_decode(v2_encoded)
-                        testing.expect(t, v2_encoded_view_ok && v2_encoded_view_error.kind == .None)
-                        testing.expect(t, v2_encoded_view.schema_version == u32(FIXTURE_SCHEMA_VERSION))
-                        testing.expect(t, fixture_codec_test_bytes_equal(v2_encoded, v2_encoded_again))
-                    }
-                    if v2_encoded_ok do delete(v2_encoded)
-                    if v2_encoded_again_ok do delete(v2_encoded_again)
-                    fixture_codec_error_dispose(&v2_encode_error)
-                    fixture_codec_error_dispose(&v2_encode_error)
-                    fixture_codec_error_dispose(&v2_encode_error_again)
-                    fixture_codec_error_dispose(&v2_encode_error_again)
-
-                    v2_lamps := cast(^runtime.Raw_Dynamic_Array)(&v2_result.fixture.architecture_city_plan.lamps)
-                    testing.expect(t, v2_lamps.allocator.data == rawptr(v2_result.arena))
-                    previous_v2_lamp_length := len(v2_result.fixture.architecture_city_plan.lamps)
-                    append(&v2_result.fixture.architecture_city_plan.lamps, architecture.City_Lamp{x = 9003})
-                    testing.expect(
-                        t,
-                        len(v2_result.fixture.architecture_city_plan.lamps) == previous_v2_lamp_length + 1,
-                    )
-                    testing.expect(
-                        t,
-                        v2_result.fixture.architecture_city_plan.lamps[previous_v2_lamp_length].x == 9003,
-                    )
-                }
-                testing.expect(t, fixture_codec_test_bytes_equal(v2_snapshot, v2_container))
-                fixture_codec_error_dispose(&v2_error)
-                fixture_codec_error_dispose(&v2_error)
-                fixture_codec_error_dispose(&v2_error_again)
-                fixture_codec_error_dispose(&v2_error_again)
-                fixture_migration_result_dispose(&v2_result)
-                fixture_migration_result_dispose(&v2_result)
-                fixture_migration_result_dispose(&v2_result_again)
-                fixture_migration_result_dispose(&v2_result_again)
-                testing.expect(t, fixture_migration_result_empty(&v2_result))
-                testing.expect(t, fixture_migration_result_empty(&v2_result_again))
-                delete(v2_snapshot)
-                delete(v2_container)
-            }
-        }
-
-        v1_payload, v1_payload_ok := fixture_migration_v0002_to_v0003_test_v1_payload(t)
-        testing.expect(t, v1_payload_ok)
-        if v1_payload_ok {
-            v1_container, v1_container_error, v1_container_ok := fixture_file.fixture_container_encode(
-                v1_payload,
-                1,
-                alloc = context.allocator,
-            )
-            testing.expect(t, v1_container_ok)
-            testing.expect(t, v1_container_error.kind == .None)
-            delete(v1_payload)
-            if v1_container_ok {
-                v1_snapshot := fixture_codec_test_copy(v1_container)
-                v1_view, v1_view_error, v1_view_ok := fixture_file.fixture_container_decode(v1_container)
-                testing.expect(t, v1_view_ok && v1_view_error.kind == .None)
-                testing.expect(t, v1_view.schema_version == 1)
-
-                v1_result, v1_error, v1_ok := fixture_codec_decode(v1_container, context.allocator)
-                v1_result_again, v1_error_again, v1_ok_again := fixture_codec_decode(v1_container, context.allocator)
-                testing.expect(t, v1_ok && v1_ok_again)
-                testing.expect(t, v1_error.kind == .None && v1_error_again.kind == .None)
-                if v1_ok && v1_ok_again {
-                    v1_fixture := v1_result.fixture
-                    testing.expect(t, v1_fixture.project.sea_level == f32(12.75))
-                    testing.expect(t, v1_fixture.project.revision == 77)
-                    testing.expect(t, v1_fixture.project.structure_count == 1)
-                    testing.expect(t, len(v1_fixture.project.structures) == 1)
-                    testing.expect(t, v1_fixture.project.structures[0].id == 0x1111)
-                    testing.expect(t, v1_fixture.architecture_city_plan.count == 1)
-                    testing.expect(t, len(v1_fixture.architecture_city_plan.structures) == 1)
-                    testing.expect(t, len(v1_fixture.architecture_city_plan.parcels) == 1)
-                    testing.expect(t, len(v1_fixture.architecture_city_plan.alleys) == 1)
-                    testing.expect(t, len(v1_fixture.architecture_city_plan.lamps) == 1)
-                    testing.expect(t, v1_fixture.farm_count == 1)
-                    testing.expect(t, v1_fixture.farms[0].plan.width == 25)
-                    testing.expect(t, v1_fixture.farms[0].plan.height == 19)
-                    testing.expect(t, v1_fixture.farms[0].scale_x == 1)
-                    testing.expect(t, v1_fixture.farms[0].scale_z == 1)
-                    testing.expect(t, v1_fixture.vehicle_showcase_target == "historical-target")
-                    testing.expect(t, v1_fixture.active_lab_scene == "historical-lab")
-                    testing.expect(t, v1_fixture.story_state.quest.definition_id == "two-island-story")
-                    testing.expect(t, v1_fixture.story_state.quest.revision == 1)
-                    testing.expect(t, v1_fixture.tracked_quest_node == quest.no_node)
-                    testing.expect(t, !v1_fixture.quest_tracking_suppressed)
-                    testing.expect(t, v1_fixture.quest_tracking_revision == 1)
-                    testing.expect(t, v1_fixture.occupant == .On_Foot)
-                    testing.expect(t, v1_fixture.pilot.mode == .Driving)
-                    testing.expect(t, v1_fixture.aircraft.active == .Libellula_Mk2)
-                    v1_lamps := cast(^runtime.Raw_Dynamic_Array)(&v1_fixture.architecture_city_plan.lamps)
-                    testing.expect(t, v1_lamps.allocator.data == rawptr(v1_result.arena))
-
-                    v1_encoded, v1_encode_error, v1_encoded_ok := fixture_codec_encode(
-                        v1_result.fixture,
-                        context.allocator,
-                    )
-                    v1_encoded_again, v1_encode_error_again, v1_encoded_again_ok := fixture_codec_encode(
-                        v1_result_again.fixture,
-                        context.allocator,
-                    )
-                    testing.expect(t, v1_encoded_ok && v1_encoded_again_ok)
-                    testing.expect(t, v1_encode_error.kind == .None && v1_encode_error_again.kind == .None)
-                    if v1_encoded_ok && v1_encoded_again_ok {
-                        v1_encoded_view, v1_encoded_view_error, v1_encoded_view_ok :=
-                            fixture_file.fixture_container_decode(v1_encoded)
-                        testing.expect(t, v1_encoded_view_ok && v1_encoded_view_error.kind == .None)
-                        testing.expect(t, v1_encoded_view.schema_version == u32(FIXTURE_SCHEMA_VERSION))
-                        testing.expect(t, fixture_codec_test_bytes_equal(v1_encoded, v1_encoded_again))
-                    }
-                    if v1_encoded_ok do delete(v1_encoded)
-                    if v1_encoded_again_ok do delete(v1_encoded_again)
-                    fixture_codec_error_dispose(&v1_encode_error)
-                    fixture_codec_error_dispose(&v1_encode_error_again)
-                    fixture_codec_error_dispose(&v1_encode_error)
-                    fixture_codec_error_dispose(&v1_encode_error_again)
-
-                    previous_v1_lamp_length := len(v1_fixture.architecture_city_plan.lamps)
-                    append(&v1_fixture.architecture_city_plan.lamps, architecture.City_Lamp{x = 9002})
-                    testing.expect(t, len(v1_fixture.architecture_city_plan.lamps) == previous_v1_lamp_length + 1)
-                    testing.expect(t, v1_fixture.architecture_city_plan.lamps[previous_v1_lamp_length].x == 9002)
-                }
-                testing.expect(t, fixture_codec_test_bytes_equal(v1_snapshot, v1_container))
-                fixture_codec_error_dispose(&v1_error)
-                fixture_codec_error_dispose(&v1_error)
-                fixture_codec_error_dispose(&v1_error_again)
-                fixture_codec_error_dispose(&v1_error_again)
-                fixture_migration_result_dispose(&v1_result)
-                fixture_migration_result_dispose(&v1_result)
-                fixture_migration_result_dispose(&v1_result_again)
-                fixture_migration_result_dispose(&v1_result_again)
-                delete(v1_snapshot)
-                delete(v1_container)
-            }
+        for version in 1 ..= 4 {
+            historical_container, historical_ok := fixture_codec_test_historical_container(t, version)
+            if !historical_ok do continue
+            fixture_codec_test_expect_historical_round_trip(t, historical_container, version)
+            delete(historical_container)
         }
 
         nil_allocator: mem.Allocator
@@ -830,6 +785,22 @@ when ODIN_TEST {
                 fixture_codec_test_expect_empty(t, &invalid_result, &invalid_error)
                 delete(invalid_container)
             }
+        }
+
+        bad_basis, bad_basis_ok := fixture_migration_v0004_runtime_v4_payload(t, invalid_basis = true)
+        bad_angular, bad_angular_ok := fixture_migration_v0004_runtime_v4_payload(t, invalid_angular = true)
+        testing.expect(t, bad_basis_ok && bad_angular_ok)
+        if bad_basis_ok {
+            fixture_codec_test_expect_v4_migration_failure(
+                t,
+                bad_basis,
+                FIXTURE_MIGRATION_V0004_TO_V0005_BODY_ORIENTATION_ID,
+            )
+            delete(bad_basis)
+        }
+        if bad_angular_ok {
+            fixture_codec_test_expect_v4_migration_failure(t, bad_angular, FIXTURE_MIGRATION_V0004_TO_V0005_ANGULAR_ID)
+            delete(bad_angular)
         }
         testing.expect(t, fixture_codec_test_bytes_equal(first_snapshot, first))
         testing.expect(t, container_size > 0)

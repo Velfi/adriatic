@@ -20,6 +20,7 @@ when ODIN_TEST {
         bool,
     ) {
         historical := new(fixture_v0001.Fixture)
+        fixture_migration_v0004_runtime_seed_legacy_flight(historical, 1)
         historical.project.structure_count = terrain_count
         historical.project.structures[0].id = 0x100
         historical.project.structures[255].id = 0x1ff

@@ -331,10 +331,10 @@ fixture_migration_scaffold_production_render_parse_validate :: proc(t: ^testing.
 }
 
 @(test)
-fixture_migration_scaffold_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
+fixture_migration_scaffold_v0004_to_v0005_frozen_is_exact :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-    report, report_ok := fixture_schema_diff_v0004_to_live_v0005_report(t)
+    report, report_ok := fixture_schema_diff_v0004_to_v0005_frozen_report(t)
     if !report_ok do return
     defer fixture_schema.schema_diff_report_dispose(&report)
 
@@ -381,6 +381,58 @@ fixture_migration_scaffold_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
     validation_error, validation_ok := fixture_schema.migration_scaffold_validate(&scaffold, &report)
     testing.expect(t, validation_ok && validation_error.kind == .None)
     fixture_schema.migration_scaffold_error_dispose(&validation_error)
+
+    repo_root, root_error := os.get_working_directory(context.allocator)
+    testing.expect(t, root_error == nil)
+    if root_error != nil do return
+    resolved_path := fmt.tprintf("%s/src/fixture_migration_v0004_to_v0005.odin", repo_root)
+    resolved_source, read_error := os.read_entire_file(resolved_path, context.allocator)
+    testing.expect(t, read_error == nil)
+    if read_error != nil do return
+    defer delete(resolved_source)
+    resolved_sha, resolved_sha_ok := fixture_schema.history_manifest_sha256_hex(resolved_source, context.allocator)
+    testing.expect(
+        t,
+        resolved_sha_ok && resolved_sha == "9db4ccdf67f0f488c5e4bf92b55b2ab9483001cd71284354851abf9ab07a2097",
+    )
+    if !resolved_sha_ok do return
+    defer delete(resolved_sha)
+
+    resolved, resolved_parse_error, resolved_ok := fixture_schema.migration_scaffold_parse(
+        resolved_source,
+        context.allocator,
+    )
+    testing.expect(t, resolved_ok && resolved_parse_error.kind == .None)
+    fixture_schema.migration_scaffold_error_dispose(&resolved_parse_error)
+    if !resolved_ok {
+        fixture_schema.migration_scaffold_dispose(&resolved)
+        return
+    }
+    defer fixture_schema.migration_scaffold_dispose(&resolved)
+    testing.expect(
+        t,
+        resolved.from_version == 4 &&
+        resolved.to_version == 5 &&
+        len(resolved.resolutions) == len(MIGRATION_V0004_TO_V0005_STATE_IDS),
+    )
+    scripted_count := 0
+    automatic_count := 0
+    unresolved_count := 0
+    for resolution, index in resolved.resolutions {
+        testing.expect(t, resolution.change_id == state_ids[index])
+        switch resolution.kind {
+        case .Scripted:
+            scripted_count += 1
+        case .Automatic:
+            automatic_count += 1
+        case .Unresolved:
+            unresolved_count += 1
+        }
+    }
+    testing.expect(t, scripted_count == 11 && automatic_count == 6 && unresolved_count == 0)
+    resolved_validation_error, resolved_validation_ok := fixture_schema.migration_scaffold_validate(&resolved, &report)
+    testing.expect(t, resolved_validation_ok && resolved_validation_error.kind == .None)
+    fixture_schema.migration_scaffold_error_dispose(&resolved_validation_error)
 }
 
 @(test)

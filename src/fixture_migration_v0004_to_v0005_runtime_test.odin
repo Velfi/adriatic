@@ -71,7 +71,7 @@ when ODIN_TEST {
         fixture_migration_v0004_runtime_set_vec3(&destination.right, source.right)
     }
 
-    fixture_migration_v0004_runtime_seed_legacy :: proc(source: ^$T, source_version: int) {
+    fixture_migration_v0004_runtime_seed_legacy_flight :: proc(source: ^$T, source_version: int) {
         base := f32(source_version * 10)
         fixture_migration_v0004_runtime_set_vec3(&source.postale.body.angular_velocity, {base + 1, base + 2, base + 3})
         fixture_migration_v0004_runtime_set_basis(
@@ -94,6 +94,11 @@ when ODIN_TEST {
             &source.libellula.spawn_basis,
             fixture_migration_v0004_runtime_basis((source_version + 2) % 5),
         )
+    }
+
+    fixture_migration_v0004_runtime_seed_legacy :: proc(source: ^$T, source_version: int) {
+        base := f32(source_version * 10)
+        fixture_migration_v0004_runtime_seed_legacy_flight(source, source_version)
         fixture_migration_v0004_runtime_set_vec3(&source.postale.body.position, {base + 7, base + 8, base + 9})
         fixture_migration_v0004_runtime_set_vec3(&source.postale.body.velocity, {base + 10, base + 11, base + 12})
         source.architecture_brush_strength = base + 13
@@ -432,7 +437,7 @@ when ODIN_TEST {
                 payload,
                 source_version,
                 5,
-                fixture_migration_v0004_runtime_registry(),
+                fixture_migration_production_registry(),
                 fixture_migration_test_allocator(&state),
             )
             testing.expect(
@@ -510,18 +515,31 @@ when ODIN_TEST {
         production := fixture_migration_production_registry()
         testing.expect(
             t,
-            FIXTURE_SCHEMA_VERSION == 4 &&
-            len(production.steps) == 3 &&
+            FIXTURE_SCHEMA_VERSION == 5 &&
+            len(production.steps) == 4 &&
+            production.steps[0].from_version == 1 &&
+            production.steps[0].to_version == 2 &&
+            production.steps[0].wrapper == fixture_migration_step_v0001_to_v0002 &&
+            production.steps[0].change_id == "field-add:adriatic:packages/farmland.Plan.height" &&
+            production.steps[1].from_version == 2 &&
+            production.steps[1].to_version == 3 &&
+            production.steps[1].wrapper == fixture_migration_step_v0002_to_v0003 &&
+            production.steps[1].change_id == "field-add:adriatic:src.Fixture.occupant" &&
             production.steps[2].from_version == 3 &&
             production.steps[2].to_version == 4 &&
-            production.steps[2].wrapper == fixture_migration_step_v0003_to_v0004,
+            production.steps[2].wrapper == fixture_migration_step_v0003_to_v0004 &&
+            production.steps[2].change_id == FIXTURE_MIGRATION_V0003_SETTLEMENT_ID &&
+            production.steps[3].from_version == 4 &&
+            production.steps[3].to_version == 5 &&
+            production.steps[3].wrapper == fixture_migration_step_v0004_to_v0005 &&
+            production.steps[3].change_id == FIXTURE_MIGRATION_V0004_TO_V0005_BODY_ORIENTATION_ID,
         )
 
         result, migration_error, migrated := fixture_migration_run_with_registry(
             v4,
             4,
             5,
-            fixture_migration_v0004_runtime_registry(),
+            production,
             runtime.default_allocator(),
         )
         testing.expect(t, migrated && migration_error.kind == .None)
@@ -542,6 +560,28 @@ when ODIN_TEST {
         }
         fixture_migration_error_dispose(&migration_error)
         fixture_migration_result_dispose(&result)
+
+        provenance_state := fixture_migration_test_allocator_state {
+            base    = runtime.default_allocator(),
+            fail_at = -1,
+        }
+        provenance_result, provenance_error, provenance_ok := fixture_migration_run(
+            v4,
+            5,
+            5,
+            fixture_migration_test_allocator(&provenance_state),
+        )
+        testing.expect(t, !provenance_ok && provenance_error.kind == .Tentative_Decode)
+        testing.expect(t, fixture_migration_result_empty(&provenance_result))
+        fixture_migration_error_dispose(&provenance_error)
+        fixture_migration_result_dispose(&provenance_result)
+        testing.expect(t, provenance_state.outstanding == 0)
+
+        future_result, future_error, future_ok := fixture_migration_run(v4, 5, 6, runtime.default_allocator())
+        testing.expect(t, !future_ok && future_error.kind == .Unsupported_Version)
+        testing.expect(t, fixture_migration_result_empty(&future_result))
+        fixture_migration_error_dispose(&future_error)
+        fixture_migration_result_dispose(&future_result)
     }
 
     fixture_migration_v0004_runtime_expect_invalid_context :: proc(
@@ -716,7 +756,7 @@ when ODIN_TEST {
                 hostile_payload,
                 hostile_versions[index],
                 5,
-                fixture_migration_v0004_runtime_registry(),
+                fixture_migration_production_registry(),
                 fixture_migration_test_allocator(&hostile_state),
             )
             testing.expect(
@@ -811,7 +851,7 @@ when ODIN_TEST {
             payload,
             source_version,
             5,
-            fixture_migration_v0004_runtime_registry(),
+            fixture_migration_production_registry(),
             fixture_migration_test_allocator(&measurement_state),
         )
         allocation_calls := measurement_state.allocation_calls
@@ -831,7 +871,7 @@ when ODIN_TEST {
                 payload,
                 source_version,
                 5,
-                fixture_migration_v0004_runtime_registry(),
+                fixture_migration_production_registry(),
                 fixture_migration_test_allocator(&state),
             )
             testing.expect(

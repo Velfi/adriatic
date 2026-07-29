@@ -338,7 +338,7 @@ fixture_schema_diff_v0003_to_v0004_frozen_report :: proc(
     return built_report, true
 }
 
-fixture_schema_diff_v0004_to_live_v0005_report :: proc(
+fixture_schema_diff_v0004_to_v0005_frozen_report :: proc(
     t: ^testing.T,
 ) -> (
     report: fixture_schema.Schema_Diff_Report,
@@ -353,18 +353,14 @@ fixture_schema_diff_v0004_to_live_v0005_report :: proc(
     if frozen_error != nil do return {}, false
     defer delete(frozen)
 
-    collection_root := fmt.tprintf("%s/zelda-engine/packages", repo_root)
-    candidate, candidate_version, candidate_ok, diagnostics := fixture_schema.build_manifest_report(
-        repo_root,
-        collection_root,
-    )
-    testing.expect(t, candidate_ok && candidate_version == 4 && diagnostics == "")
-    if !candidate_ok do return {}, false
+    candidate, candidate_error := os.read_entire_file(fixture_schema.manifest_path(repo_root, 5), context.allocator)
+    testing.expect(t, candidate_error == nil)
+    if candidate_error != nil do return {}, false
     defer delete(candidate)
 
     built_report, error, report_ok := fixture_schema.schema_diff_build_report(
         frozen,
-        transmute([]byte)candidate,
+        candidate,
         4,
         5,
         context.allocator,
@@ -552,13 +548,13 @@ fixture_schema_diff_v0003_to_v0004_frozen_is_exact :: proc(t: ^testing.T) {
 }
 
 @(test)
-fixture_schema_diff_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
+fixture_schema_diff_v0004_to_v0005_frozen_is_exact :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-    first, first_ok := fixture_schema_diff_v0004_to_live_v0005_report(t)
+    first, first_ok := fixture_schema_diff_v0004_to_v0005_frozen_report(t)
     if !first_ok do return
     defer fixture_schema.schema_diff_report_dispose(&first)
-    second, second_ok := fixture_schema_diff_v0004_to_live_v0005_report(t)
+    second, second_ok := fixture_schema_diff_v0004_to_v0005_frozen_report(t)
     if !second_ok do return
     defer fixture_schema.schema_diff_report_dispose(&second)
 
@@ -596,7 +592,7 @@ fixture_schema_diff_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
     state_count, supporting_count := fixture_schema.schema_diff_report_counts(&first)
     testing.expect(t, state_count == 17 && supporting_count == 4)
     testing.expect(t, first.frozen_sha256 == "fad52f4e0a38b35fffdf29ae3ffb3f91251780fe0ce2dc5990beba76f1e518fa")
-    testing.expect(t, first.candidate_sha256 == "9c608e6ceed237e0398b362817521c1cb10d55056b4f17a462a4bbdf52b4b25b")
+    testing.expect(t, first.candidate_sha256 == "85bc521bfd104574d88204d6522be2aa05e935241516a92dea91be75c8a3d012")
     testing.expect(
         t,
         first.candidate_line_count == 1637 &&
@@ -615,7 +611,7 @@ fixture_schema_diff_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
             transmute([]byte)first_rendered,
             context.allocator,
         )
-        testing.expect(t, sha_ok && rendered_sha == "32d69b16b5f8fcb7d5767a2a4f2e503982d1c3f68636200f1421b5eb6accd872")
+        testing.expect(t, sha_ok && rendered_sha == "201fa98588b3417b0cc6e9f6938096c7a7ec7dafd1f736cc1b84f78c999fdbe4")
         if sha_ok do delete(rendered_sha)
         delete(first_rendered)
     }

@@ -266,6 +266,67 @@ when ODIN_TEST {
             "field-add:adriatic:src.Fixture.draft_v5",
         )
 
+        v5_path := fixture_schema.manifest_path(repo_root, 5)
+        testing.expect(t, migration_candidate_test_write(t, v5_path, live_v5_draft))
+        changed_live_v5_source :=
+            "package src\n\n" +
+            "FIXTURE_SCHEMA_VERSION :: 5\n\n" +
+            "Fixture :: struct {\n" +
+            "    value: u8,\n" +
+            "    target_v4: u16,\n" +
+            "    draft_v5: u32,\n" +
+            "    later_draft_v5: u64,\n" +
+            "}\n"
+        testing.expect(t, migration_candidate_test_write(t, source_path, changed_live_v5_source))
+        changed_live_v5_manifest, changed_live_v5_version, changed_live_v5_ok := migration_candidate_test_build(
+            t,
+            repo_root,
+            collection_root,
+        )
+        testing.expect(
+            t,
+            changed_live_v5_ok && changed_live_v5_version == 5 && changed_live_v5_manifest != live_v5_draft,
+        )
+        if !changed_live_v5_ok do return
+        defer delete(changed_live_v5_manifest)
+
+        frozen_v5_candidate, frozen_v5_ok := migration_candidate_data(repo_root, collection_root, 4, 5)
+        testing.expect(t, frozen_v5_ok && string(frozen_v5_candidate) == live_v5_draft)
+        if !frozen_v5_ok do return
+        defer delete(frozen_v5_candidate)
+        migration_candidate_test_report(
+            t,
+            transmute([]byte)v4_frozen,
+            frozen_v5_candidate,
+            4,
+            5,
+            "field-add:adriatic:src.Fixture.draft_v5",
+        )
+
+        testing.expect(t, migration_candidate_test_write(t, v5_path, malformed))
+        malformed_v5_candidate, malformed_v5_ok := migration_candidate_data(repo_root, collection_root, 4, 5)
+        testing.expect(t, malformed_v5_ok && string(malformed_v5_candidate) == malformed)
+        if !malformed_v5_ok do return
+        defer delete(malformed_v5_candidate)
+        malformed_v5_report, malformed_v5_error, malformed_v5_report_ok := fixture_schema.schema_diff_build_report(
+            transmute([]byte)v4_frozen,
+            malformed_v5_candidate,
+            4,
+            5,
+            context.allocator,
+        )
+        testing.expect(t, !malformed_v5_report_ok && malformed_v5_error.kind != .None)
+        if malformed_v5_report_ok do fixture_schema.schema_diff_report_dispose(&malformed_v5_report)
+        fixture_schema.schema_diff_error_dispose(&malformed_v5_error)
+
+        testing.expect(t, os.remove(v5_path) == nil)
+        testing.expect(t, os.make_directory(v5_path) == nil)
+        unreadable_v5_candidate, unreadable_v5_ok := migration_candidate_data(repo_root, collection_root, 4, 5)
+        testing.expect(t, !unreadable_v5_ok && len(unreadable_v5_candidate) == 0)
+        delete(unreadable_v5_candidate)
+        testing.expect(t, os.remove_all(v5_path) == nil)
+        testing.expect(t, migration_candidate_test_write(t, v5_path, live_v5_draft))
+
         testing.expect(t, migration_candidate_test_write(t, v4_path, malformed))
         malformed_v4_candidate, malformed_v4_ok := migration_candidate_data(repo_root, collection_root, 3, 4)
         testing.expect(t, malformed_v4_ok && string(malformed_v4_candidate) == malformed)

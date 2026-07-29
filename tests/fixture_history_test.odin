@@ -3,6 +3,7 @@ package tests
 import fixture_v0001 "../packages/fixture_history/v0001"
 import fixture_v0003 "../packages/fixture_history/v0003"
 import fixture_v0004 "../packages/fixture_history/v0004"
+import fixture_v0005 "../packages/fixture_history/v0005"
 import fixture_schema "../packages/fixture_schema"
 import "base:runtime"
 import "core:fmt"
@@ -33,6 +34,15 @@ import "core:testing"
 #assert(int(fixture_v0004.History_Type_0107.Libellula) == 3)
 #assert(int(fixture_v0004.History_Type_0107.Libellula_Mk2) == 4)
 #assert(int(fixture_v0004.History_Type_0107.Rondine) == 5)
+#assert(fixture_v0005.FIXTURE_SCHEMA_VERSION == 5)
+#assert(offset_of(fixture_v0005.Fixture, occupant) >= 0)
+#assert(size_of(fixture_v0005.History_Type_0109) == size_of(u8))
+#assert(int(fixture_v0005.History_Type_0109.On_Foot) == 0)
+#assert(int(fixture_v0005.History_Type_0109.Car) == 1)
+#assert(int(fixture_v0005.History_Type_0109.Postale) == 2)
+#assert(int(fixture_v0005.History_Type_0109.Libellula) == 3)
+#assert(int(fixture_v0005.History_Type_0109.Libellula_Mk2) == 4)
+#assert(int(fixture_v0005.History_Type_0109.Rondine) == 5)
 #assert(size_of(quaternion64) == 8)
 #assert(size_of(quaternion128) == 16)
 
@@ -1173,6 +1183,169 @@ fixture_history_supports_later_schema_versions :: proc(t: ^testing.T) {
         resident_actions.elem.id == typeid_of(u64) &&
         resident_actions.index.id == typeid_of(fixture_v0004.History_Type_0079),
     )
+
+    real_v5_data, real_v5_read_error := os.read_entire_file("fixtures/schema/v0005.fixture-schema", context.allocator)
+    testing.expect(t, real_v5_read_error == nil)
+    if real_v5_read_error != nil do return
+    defer delete(real_v5_data)
+    real_v5_manifest, real_v5_error, real_v5_ok := fixture_schema.history_parse_manifest(
+        real_v5_data,
+        context.allocator,
+    )
+    testing.expect(t, real_v5_ok && real_v5_error.kind == .None)
+    if !real_v5_ok {
+        fixture_schema.history_error_dispose(&real_v5_error)
+        return
+    }
+    defer fixture_schema.history_manifest_dispose(&real_v5_manifest)
+    testing.expect(t, real_v5_manifest.schema_version == 5 && len(real_v5_manifest.records) == 169)
+    v5_root_fields := 0
+    v5_occupant_found := false
+    v5_body_shape_found := false
+    v5_libellula_shape_found := false
+    v5_postale_shape_found := false
+    v5_ace_runtime_shape_found := false
+    for record in real_v5_manifest.records {
+        switch record.id {
+        case real_v5_manifest.root:
+            v5_root_fields = len(record.fields)
+            camera_target_lock_found := false
+            for field in record.fields {
+                if field.name == "occupant" {
+                    v5_occupant_found =
+                        !field.is_using &&
+                        field.tag == "" &&
+                        field.type == "adriatic:packages/vehicles.Fixture_Occupant"
+                }
+                if field.name == "camera_target_lock" do camera_target_lock_found = true
+            }
+            testing.expect(t, !camera_target_lock_found)
+        case "adriatic:packages/flight.Body_State":
+            angular_velocity_world_found := false
+            orientation_found := false
+            removed_field_found := false
+            for field in record.fields {
+                if field.name == "angular_velocity_world" {
+                    angular_velocity_world_found =
+                        !field.is_using && field.tag == "" && field.type == "adriatic:packages/flight.Vec3"
+                }
+                if field.name == "orientation" {
+                    orientation_found = !field.is_using && field.tag == "" && field.type == "builtin:quaternion128"
+                }
+                if field.name == "angular_velocity" || field.name == "basis" do removed_field_found = true
+            }
+            v5_body_shape_found =
+                len(record.fields) == 4 && angular_velocity_world_found && orientation_found && !removed_field_found
+        case "adriatic:packages/libellula.Runtime":
+            spawn_orientation_found := false
+            excluded_field_found := false
+            for field in record.fields {
+                if field.name == "spawn_orientation" {
+                    spawn_orientation_found =
+                        !field.is_using && field.tag == "" && field.type == "builtin:quaternion128"
+                }
+                if field.name == "spawn_basis" || field.name == "telemetry" do excluded_field_found = true
+            }
+            v5_libellula_shape_found = spawn_orientation_found && !excluded_field_found
+        case "adriatic:packages/postale.Runtime":
+            flight_model_found := false
+            ace_tuning_found := false
+            ace_runtime_found := false
+            spawn_orientation_found := false
+            excluded_field_found := false
+            for field in record.fields {
+                switch field.name {
+                case "flight_model":
+                    flight_model_found =
+                        !field.is_using && field.tag == "" && field.type == "adriatic:packages/postale.Flight_Model"
+                case "ace_tuning":
+                    ace_tuning_found =
+                        !field.is_using && field.tag == "" && field.type == "adriatic:packages/flight.Ace_Tuning"
+                case "ace_runtime":
+                    ace_runtime_found =
+                        !field.is_using && field.tag == "" && field.type == "adriatic:packages/flight.Ace_Runtime"
+                case "spawn_orientation":
+                    spawn_orientation_found =
+                        !field.is_using && field.tag == "" && field.type == "builtin:quaternion128"
+                case "spawn_basis", "telemetry", "ace_telemetry":
+                    excluded_field_found = true
+                }
+            }
+            v5_postale_shape_found =
+                flight_model_found &&
+                ace_tuning_found &&
+                ace_runtime_found &&
+                spawn_orientation_found &&
+                !excluded_field_found
+        case "adriatic:packages/flight.Ace_Runtime":
+            energy_found := false
+            edge_state_found := false
+            edge_seconds_found := false
+            local_rate_found := false
+            for field in record.fields {
+                switch field.name {
+                case "energy":
+                    energy_found = !field.is_using && field.tag == "" && field.type == "builtin:f32"
+                case "edge_state":
+                    edge_state_found =
+                        !field.is_using && field.tag == "" && field.type == "adriatic:packages/flight.Ace_Edge_State"
+                case "edge_seconds":
+                    edge_seconds_found = !field.is_using && field.tag == "" && field.type == "builtin:f32"
+                case "local_rate":
+                    local_rate_found = true
+                }
+            }
+            v5_ace_runtime_shape_found =
+                len(record.fields) == 3 && energy_found && edge_state_found && edge_seconds_found && !local_rate_found
+        }
+    }
+    testing.expect(
+        t,
+        v5_root_fields == 153 &&
+        v5_occupant_found &&
+        v5_body_shape_found &&
+        v5_libellula_shape_found &&
+        v5_postale_shape_found &&
+        v5_ace_runtime_shape_found,
+    )
+    real_v5_sha, real_v5_sha_ok := fixture_schema.history_manifest_sha256_hex(real_v5_data, context.allocator)
+    testing.expect(
+        t,
+        real_v5_sha_ok && real_v5_sha == "85bc521bfd104574d88204d6522be2aa05e935241516a92dea91be75c8a3d012",
+    )
+    if !real_v5_sha_ok do return
+    defer delete(real_v5_sha)
+    real_v5_generated, real_v5_generated_ok := fixture_schema.history_emit_package(
+        &real_v5_manifest,
+        real_v5_sha,
+        context.allocator,
+    )
+    testing.expect(t, real_v5_generated_ok)
+    if !real_v5_generated_ok do return
+    defer delete(real_v5_generated)
+    testing.expect(t, strings.contains(real_v5_generated, "orientation: quaternion128,"))
+    testing.expect(t, strings.contains(real_v5_generated, "spawn_orientation: quaternion128,"))
+    real_v5_expected, real_v5_expected_error := os.read_entire_file(
+        "packages/fixture_history/v0005/schema.generated.odin",
+        context.allocator,
+    )
+    testing.expect(t, real_v5_expected_error == nil)
+    if real_v5_expected_error != nil do return
+    defer delete(real_v5_expected)
+    testing.expect(t, string(real_v5_expected) == real_v5_generated)
+    testing.expect(t, strings.count(string(real_v5_expected), "\n") == 2142)
+    testing.expect(t, strings.count(string(real_v5_expected), "// fixture-history-id: ") == 169)
+    real_v5_history_sha, real_v5_history_sha_ok := fixture_schema.history_manifest_sha256_hex(
+        real_v5_expected,
+        context.allocator,
+    )
+    testing.expect(
+        t,
+        real_v5_history_sha_ok &&
+        real_v5_history_sha == "f1fe28caa1c86e7d3df2f9a5bba0cde8fb1e4ed50ae66756b3fb6fb71178b5ca",
+    )
+    if !real_v5_history_sha_ok do return
+    defer delete(real_v5_history_sha)
 
     invalid_versions := [?]string{"0", "-1", "+1", "01", "1 ", "1x", "10000", "9223372036854775808"}
     for version in invalid_versions {

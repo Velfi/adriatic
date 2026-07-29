@@ -54,6 +54,7 @@ when ODIN_TEST {
     ) {
         source := new(fixture_v0001.Fixture)
         fixture_migration_v0003_runtime_seed_common(source, 44, 11)
+        fixture_migration_v0004_runtime_seed_legacy_flight(source, 1)
         if invalid_radius do source.architecture_brush_radius = -1
         source.project.structure_count = 1
         source.project.structures[0].id = 101
@@ -70,6 +71,7 @@ when ODIN_TEST {
     fixture_migration_v0003_runtime_v2_payload :: proc(t: ^testing.T, invalid_radius := false) -> ([]byte, bool) {
         source := new(fixture_v0002.Fixture)
         fixture_migration_v0003_runtime_seed_common(source, 45, 21)
+        fixture_migration_v0004_runtime_seed_legacy_flight(source, 2)
         if invalid_radius do source.architecture_brush_radius = -1
         source.project.structures = make([dynamic]fixture_v0002.History_Type_0087, 1, context.allocator)
         source.architecture_city_plan.structures = make([dynamic]fixture_v0002.History_Type_0087, 1, context.allocator)
@@ -100,6 +102,7 @@ when ODIN_TEST {
     ) {
         source := new(fixture_v0003.Fixture)
         fixture_migration_v0003_runtime_seed_common(source, 85, 31)
+        fixture_migration_v0004_runtime_seed_legacy_flight(source, 3)
         if invalid_radius do source.architecture_brush_radius = -1
         if invalid_aircraft_count do source.aircraft.count = 2
         source.occupant = .Libellula
@@ -419,7 +422,7 @@ when ODIN_TEST {
             payload,
             source_version,
             4,
-            fixture_migration_production_registry(),
+            fixture_migration_v0003_runtime_registry(),
             fixture_migration_test_allocator(&state),
         )
         testing.expect(
@@ -448,7 +451,7 @@ when ODIN_TEST {
             payload,
             source_version,
             4,
-            fixture_migration_production_registry(),
+            fixture_migration_v0003_runtime_registry(),
             fixture_migration_test_allocator(&measurement_state),
         )
         allocation_calls := measurement_state.allocation_calls
@@ -466,7 +469,7 @@ when ODIN_TEST {
                 payload,
                 source_version,
                 4,
-                fixture_migration_production_registry(),
+                fixture_migration_v0003_runtime_registry(),
                 fixture_migration_test_allocator(&state),
             )
             testing.expect(
@@ -540,10 +543,11 @@ when ODIN_TEST {
                     second_error.kind == .None &&
                     fixture_migration_test_bytes_equal(first, second),
                 )
-                production_result, production_error, production_ok := fixture_migration_run(
+                production_result, production_error, production_ok := fixture_migration_run_with_registry(
                     payload,
                     index + 1,
                     4,
+                    fixture_migration_v0003_runtime_registry(),
                     runtime.default_allocator(),
                 )
                 testing.expect(t, production_ok && production_error.kind == .None)
@@ -588,8 +592,6 @@ when ODIN_TEST {
         testing.expect(t, fixture_migration_test_bytes_equal(v1_payload, v1_snapshot))
         testing.expect(t, fixture_migration_test_bytes_equal(v2_payload, v2_snapshot))
         testing.expect(t, fixture_migration_test_bytes_equal(v3_payload, v3_snapshot))
-        production := fixture_migration_production_registry()
-        testing.expect(t, len(production.steps) == 3)
     }
 
     @(test)
@@ -779,7 +781,7 @@ when ODIN_TEST {
                 payload,
                 index + 1,
                 4,
-                fixture_migration_production_registry(),
+                fixture_migration_v0003_runtime_registry(),
                 runtime.default_allocator(),
             )
             testing.expect(
@@ -813,8 +815,6 @@ when ODIN_TEST {
             testing.expect(t, future_state.outstanding == 0)
         }
 
-        production := fixture_migration_production_registry()
-        testing.expect(t, len(production.steps) == 3)
     }
 
     @(test)
@@ -840,7 +840,5 @@ when ODIN_TEST {
             fixture_migration_v0003_runtime_wrapper_oom_sweep(t, payload, index + 1)
             fixture_migration_v0003_runtime_runner_oom_sweep(t, payload, index + 1)
         }
-        production := fixture_migration_production_registry()
-        testing.expect(t, len(production.steps) == 3)
     }
 }
