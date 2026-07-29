@@ -1,0 +1,32 @@
+{
+  "skill_name": "fixture-state",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a soil_quality u8 field to farmland.Plan and make it part of saved fixture state. Existing committed fixtures must keep loading.",
+      "expected_output": "Triggers the complete fixture schema workflow: proves farmland.Plan is reachable, runs the pre-change schema check, bumps the schema version, creates only a new immutable manifest and history package, reviews and resolves the adjacent migration with an intentional soil_quality default, preserves a contiguous registry, tests direct and chained migration plus hostile, OOM, codec, lifecycle, Editor, and upgrader paths, upgrades committed fixtures by CLI dry-run then real run, and finishes with schema, check, test, and jj --git evidence.",
+      "files": [
+        "packages/farmland/farmland.odin",
+        "src/main.odin"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Rename the serialized story quest State field completion_counts to completions without losing old fixture progress.",
+      "expected_output": "Triggers fixture evolution and treats the semantic rename as explicit Odin migration logic rather than blind remove and add. It bumps one adjacent version, freezes new manifest and history artifacts without rewriting old history, maps every old completion count exactly, verifies story and quest goldens and direct and chained migrations with hostile and OOM atomicity, batch-upgrades fixtures through the real CLI, and reports all gates and jj --git scope.",
+      "files": [
+        "packages/quest/quest.odin",
+        "packages/story/story.odin",
+        "src/main.odin"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Change the Vulkan world shadow cache invalidation so a stale shadow map rebuilds on the next frame. Do not touch fixture state.",
+      "expected_output": "Does not trigger fixture schema evolution after proving the cache is root or derived and unreachable from Fixture. It makes only the renderer cache change and its focused validation, with no schema-version bump, manifest, history, migration generation, fixture upgrade, or other schema churn.",
+      "files": [
+        "src/world_renderer.odin"
+      ]
+    }
+  ]
+}

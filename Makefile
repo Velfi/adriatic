@@ -811,7 +811,7 @@ fmt:
 	find hot src packages tests -type f -name '*.odin' ! -path 'packages/spy/span.odin' \
 		-exec sh -c 'for file do "$$0" -w "$$file" || exit 1; done' "$(ODINFMT)" {} +
 
-check: doctor
+check: fixture-schema-check
 	$(ODIN) check src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS)
 	$(ODIN) check packages/flight $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/third_person $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point

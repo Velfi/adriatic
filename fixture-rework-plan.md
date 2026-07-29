@@ -10172,6 +10172,30 @@ Acceptance criteria:
 - The skill triggers for relevant game-state changes and stays quiet for
   unrelated source changes.
 
+Accepted as part of accelerated fixture-finish slice 4.
+
+- The repository skill
+  `.agents/skills/fixture-state/SKILL.md` treats fixtures as versioned light
+  game saves and triggers for the `Fixture`/promoted `Editor` boundary, every
+  reachable nested type or shape constant, fixture tags, schema artifacts,
+  migrations, rebases, and committed fixture assets.
+- Its workflow requires pre/post schema checks, a full reachability and rebase
+  audit, immutable new manifests/history, adjacent semantic diff/scaffold,
+  explicit Odin for ambiguous rename/remove/split/merge obligations, contiguous
+  registry steps, direct/chained goldens, hostile and OOM proofs, editor
+  load/store and upgrader gates, fixture-asset dry-run/upgrade, and `jj
+  diff --git` review.
+- The skill explicitly stays quiet for code proven unreachable from Fixture,
+  including unrelated renderer caches, build plumbing, and prose-only
+  narrative changes.
+- `.agents/skills/fixture-state/evals/evals.json` records the required concrete
+  additive `farmland.Plan` field, semantic story/quest rename, and unrelated
+  Vulkan shadow-cache cases. Bounded independent probes returned the expected
+  trigger decisions: yes, yes with an explicit value-preserving migration,
+  and no schema workflow respectively.
+- Normal `make check` now runs `fixture-schema-check` first. The current frozen
+  v5 manifest passes before all normal Odin package checks.
+
 ## Milestone 10 — Integration and polish
 
 Run full fixture, migration, build, test, and representative playground checks.
@@ -10183,6 +10207,26 @@ Acceptance criteria:
 - Golden fixtures migrate successfully.
 - Representative playgrounds reproduce expected state.
 - No known runtime handles or transient pointers enter fixture payloads.
+
+Accepted as the final part of accelerated fixture-finish slice 4.
+
+- The real development application builds successfully, and
+  `build/dev/adriatic fixture-upgrade --dry-run fixtures` exits through the CLI
+  before graphics startup with zero files and zero writes because the
+  repository currently contains no committed `.fixture` assets.
+- Frozen v1 through v5 history, contiguous migrations, schema-derived field
+  exclusion, lifecycle rebinding, and the destination-owned Editor fixture
+  remain covered by the accepted codec, lifecycle, migration, and schema
+  suites. Prior immutable manifests, history packages, and migrations remain
+  untouched.
+- Representative current and frozen-v1 playgrounds load into the live Editor,
+  reproduce terrain, structures, story/quest, occupant, paint, and physics
+  state, preserve root runtime resources, survive simulation steps, save
+  deterministically, reload, and batch-upgrade without leaks.
+- Final cumulative gates on the completed tree are green: schema-aware
+  `make check`, real `make build`, focused editor load 3/3, editor store 3/3,
+  batch upgrader 3/3, migration 15/15, current codec 2/2, full tests 753/753
+  plus Rondine 19/19, and zero leak reports.
 
 ## Explicitly separate work
 
