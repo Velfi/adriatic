@@ -9650,6 +9650,26 @@ histories v1–v4, exact candidate/report/scaffold hashes, all frozen hashes
 unchanged, no generated binary or other v5 artifact, and the full suite with
 only the expected frozen-v4/live-schema mismatch.
 
+#### M4R6B1 acceptance — 2026-07-29
+
+M4R6B1 is accepted. The official exclusive installer created only
+`src/fixture_migration_v0004_to_v0005.odin`.
+
+- the source is exactly 88 lines and 2,797 bytes with SHA-256
+  `1c0cb64086b2408303850f8fe76feef592adbdc8af5155a2c7167a962a92a05e`;
+- all 17 state change IDs exactly match the sorted post-policy golden and remain
+  `.Unresolved`;
+- a second official install fails with `already exists` and leaves the source
+  hash unchanged; the official scaffold check passes twice;
+- focused policy/diff/scaffold tests pass 3/3 twice with zero leaks;
+- `make check`, histories v1–v4, and all candidate/report/frozen hashes pass;
+- the full suite remains 752/753 plus Rondine 19/19, with only the expected
+  frozen-v4/live-schema mismatch;
+- independent review confirms the generated imports, constants, `#by_ptr`
+  source ABI, target pointer, allocator, and unresolved return are exact;
+- no formatter touched the generated file, and no runtime wrapper, registry
+  change, v5 manifest/history package, binary, or temporary artifact exists.
+
 ## Milestone 4D — Install owned state and rebuild runtime resources
 
 Decode into temporary owned state, validate it, preserve root runtime
