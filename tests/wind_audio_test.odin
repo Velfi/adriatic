@@ -69,6 +69,31 @@ strong_wind_adds_wandering_gust_gated_aeolian_modes :: proc(t: ^testing.T) {
 }
 
 @(test)
+wind_gusts_brighten_air_texture_relative_to_lulls :: proc(t: ^testing.T) {
+    gust, lull := wind_audio.new_synth(10), wind_audio.new_synth(10)
+    gust.strength, gust.target_strength = 1, 1
+    lull.strength, lull.target_strength = 1, 1
+    gust.gust_phase = math.PI / 2
+    lull.gust_phase = math.PI * 3 / 2
+    gust_samples, lull_samples: [8192]f32
+    wind_audio.render(&gust, gust_samples[:])
+    wind_audio.render(&lull, lull_samples[:])
+    testing.expect(t, gust.gust_value > lull.gust_value)
+
+    gust_energy, lull_energy := f64(0), f64(0)
+    gust_detail, lull_detail := f64(0), f64(0)
+    for index in 2 ..< len(gust_samples) {
+        gust_energy += f64(gust_samples[index] * gust_samples[index])
+        lull_energy += f64(lull_samples[index] * lull_samples[index])
+        gust_delta := gust_samples[index] - gust_samples[index - 2]
+        lull_delta := lull_samples[index] - lull_samples[index - 2]
+        gust_detail += f64(gust_delta * gust_delta)
+        lull_detail += f64(lull_delta * lull_delta)
+    }
+    testing.expect(t, gust_detail / gust_energy > lull_detail / lull_energy)
+}
+
+@(test)
 wind_airflow_combines_weather_and_motion_without_exceeding_unity :: proc(t: ^testing.T) {
     calm := wind_audio.airflow_strength(0, 0)
     weather := wind_audio.airflow_strength(8, 0)
@@ -201,6 +226,54 @@ rain_uses_aperiodic_density_and_heavy_splats :: proc(t: ^testing.T) {
         downpour_energy += f64(downpour_samples[index] * downpour_samples[index])
     }
     testing.expect(t, downpour_energy > drizzle_energy * 2)
+}
+
+@(test)
+rain_impacts_excite_seeded_inharmonic_surface_modes :: proc(t: ^testing.T) {
+    resonant := wind_audio.new_synth(191)
+    resonant.precipitation, resonant.target_precipitation = 1, 1
+    resonant.drop_timer = 100
+    resonant.drop_voices[0] = {
+        left      = .8,
+        right     = .2,
+        frequency = 1_200,
+    }
+    plain := resonant
+    plain.drop_voices[0].left, plain.drop_voices[0].right = 0, 0
+    resonant_sample, plain_sample: [wind_audio.CHANNELS]f32
+    wind_audio.render(&resonant, resonant_sample[:])
+    wind_audio.render(&plain, plain_sample[:])
+
+    expected_a := resonant.drop_voices[0].frequency / wind_audio.SAMPLE_RATE
+    expected_b := resonant.drop_voices[0].frequency * 1.613 / wind_audio.SAMPLE_RATE
+    testing.expect(t, math.abs(f64(resonant.drop_voices[0].phase_a - expected_a)) < 1e-6)
+    testing.expect(t, math.abs(f64(resonant.drop_voices[0].phase_b - expected_b)) < 1e-6)
+    left_resonance := resonant_sample[0] - plain_sample[0]
+    right_resonance := resonant_sample[1] - plain_sample[1]
+    testing.expect(t, left_resonance != 0)
+    testing.expect(t, math.abs(f64(left_resonance)) > math.abs(f64(right_resonance)) * 3)
+}
+
+@(test)
+dense_rain_preserves_overlapping_drop_resonances :: proc(t: ^testing.T) {
+    synth := wind_audio.new_synth(193)
+    synth.precipitation, synth.target_precipitation = 1, 1
+    frame: [wind_audio.CHANNELS]f32
+    for _ in 0 ..< wind_audio.RAIN_DROP_VOICE_COUNT {
+        synth.drop_timer = 0
+        wind_audio.render(&synth, frame[:])
+    }
+
+    active_voices := 0
+    for voice in synth.drop_voices {
+        if voice.left + voice.right > .01 {
+            active_voices += 1
+            testing.expect(t, voice.phase_a > 0)
+            testing.expect(t, voice.frequency >= 780 && voice.frequency <= 2_500)
+        }
+    }
+    testing.expect_value(t, active_voices, wind_audio.RAIN_DROP_VOICE_COUNT)
+    testing.expect_value(t, synth.next_drop_voice, 0)
 }
 
 @(test)

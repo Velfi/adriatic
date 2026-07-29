@@ -96,6 +96,25 @@ ocean_breaker_cadence_varies_smoothly_across_waves :: proc(t: ^testing.T) {
 }
 
 @(test)
+ocean_waves_form_slow_deterministic_energy_sets :: proc(t: ^testing.T) {
+    a, b := ocean_audio.new_synth(36), ocean_audio.new_synth(36)
+    initial_strength := a.wave_set_strength
+    samples_a, samples_b: [4096]f32
+    rendered_frames := 0
+    for rendered_frames < ocean_audio.SAMPLE_RATE * 24 {
+        ocean_audio.render(&a, samples_a[:])
+        ocean_audio.render(&b, samples_b[:])
+        testing.expect(t, samples_a == samples_b)
+        rendered_frames += len(samples_a) / ocean_audio.CHANNELS
+    }
+
+    testing.expect(t, a.wave_set_strength >= .92 && a.wave_set_strength <= 1.08)
+    testing.expect(t, a.wave_set_strength != initial_strength)
+    testing.expect(t, a.wave_set_phase == b.wave_set_phase)
+    testing.expect(t, a.target_wave_strength == b.target_wave_strength)
+}
+
+@(test)
 ocean_breaker_rising_edge_adds_seeded_crest_collapse :: proc(t: ^testing.T) {
     synth := ocean_audio.new_synth(38)
     samples: [4096]f32

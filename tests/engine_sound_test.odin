@@ -43,7 +43,32 @@ engine_sound_firing_excites_combustion_resonator :: proc(t: ^testing.T) {
     samples: [engine_sound.SAMPLE_RATE / 4]f32
     engine_sound.render(&synth, {rate = .58, power = .9, active = true}, samples[:])
     resonator_motion := math.abs(synth.combustion_body) + math.abs(synth.combustion_velocity)
+    high_resonator_motion := math.abs(synth.combustion_body_high) + math.abs(synth.combustion_velocity_high)
     testing.expect(t, resonator_motion > .001)
+    testing.expect(t, high_resonator_motion > .001)
+}
+
+@(test)
+engine_rotation_has_seeded_subtle_timing_wander :: proc(t: ^testing.T) {
+    first, matching, different := engine_sound.new(14), engine_sound.new(14), engine_sound.new(15)
+    first_samples, matching_samples, different_samples: [engine_sound.SAMPLE_RATE]f32
+    controls := engine_sound.Controls {
+        rate   = .12,
+        power  = .18,
+        active = true,
+    }
+    engine_sound.render(&first, controls, first_samples[:])
+    engine_sound.render(&matching, controls, matching_samples[:])
+    engine_sound.render(&different, controls, different_samples[:])
+
+    testing.expect(t, first_samples == matching_samples)
+    testing.expect(t, first.firing_phase == matching.firing_phase)
+    testing.expect(t, first.firing_phase != different.firing_phase)
+    testing.expect(t, abs(first.rpm_wander_low) < .2)
+    phase_difference := abs(first.firing_phase - different.firing_phase)
+    phase_difference = min(phase_difference, 1 - phase_difference)
+    testing.expect(t, phase_difference > .000001)
+    testing.expect(t, phase_difference < .05)
 }
 
 @(test)
@@ -287,16 +312,21 @@ car_gear_shift_transient_decays_and_stays_bounded :: proc(t: ^testing.T) {
     synth := engine_sound.new(25)
     samples: [engine_sound.SAMPLE_RATE / 4]f32
     controls := engine_sound.Controls {
-        rate   = .7,
-        power  = .8,
-        active = true,
+        rate             = .7,
+        power            = .8,
+        transmission_mix = 1,
+        active           = true,
     }
     engine_sound.render(&synth, controls, samples[:])
     engine_sound.trigger_shift(&synth)
     testing.expect(t, synth.shift_envelope == 1)
+    testing.expect(t, synth.shift_reengage_count == 0)
     engine_sound.render(&synth, controls, samples[:])
 
     testing.expect(t, synth.shift_envelope < .01)
+    testing.expect(t, synth.shift_reengage_count == 1)
+    testing.expect(t, synth.shift_age > .052)
+    testing.expect(t, synth.shift_reengage_level < .001)
     for sample in samples {
         testing.expect(t, math.abs(sample) <= .92)
     }
@@ -394,6 +424,23 @@ engine_sound_start_and_shutdown_have_bounded_procedural_transients :: proc(t: ^t
     }
     testing.expect(t, start_energy > .1)
     testing.expect(t, stop_energy > .01)
+}
+
+@(test)
+rapid_restart_uses_shorter_hot_catch_than_cold_start :: proc(t: ^testing.T) {
+    cold, coasting := engine_sound.new(39), engine_sound.new(39)
+    engine_sound.trigger_start(&cold)
+    coasting.level = .88
+    coasting.rate = .67
+    coasting.shutdown_envelope = .6
+    engine_sound.trigger_start(&coasting)
+
+    testing.expect(t, cold.starter_envelope == 1)
+    testing.expect(t, cold.starter_age == 0)
+    testing.expect(t, coasting.starter_envelope < cold.starter_envelope)
+    testing.expect(t, coasting.starter_envelope >= .22)
+    testing.expect(t, coasting.starter_age > 0)
+    testing.expect(t, coasting.shutdown_envelope == 0)
 }
 
 @(test)
@@ -887,6 +934,30 @@ dry_asphalt_slip_develops_stronger_stick_slip_breakup :: proc(t: ^testing.T) {
 }
 
 @(test)
+dry_asphalt_squeal_moves_between_seeded_belt_modes :: proc(t: ^testing.T) {
+    dry, matching, wet := engine_sound.new_slip(451), engine_sound.new_slip(451), engine_sound.new_slip(451)
+    controls := engine_sound.Slip_Controls {
+        amount  = .98,
+        speed   = .92,
+        surface = .Asphalt,
+        active  = true,
+    }
+    dry_samples, matching_samples, wet_samples: [engine_sound.SAMPLE_RATE]f32
+    engine_sound.render_slip_add(&dry, controls, dry_samples[:])
+    engine_sound.render_slip_add(&matching, controls, matching_samples[:])
+    controls.wetness = 1
+    engine_sound.render_slip_add(&wet, controls, wet_samples[:])
+
+    testing.expect(t, dry_samples == matching_samples)
+    testing.expect(t, dry.squeal_mode_count >= 2)
+    testing.expect(t, dry.squeal_mode_count == matching.squeal_mode_count)
+    testing.expect(t, abs(dry.squeal_mode_target) <= .06)
+    testing.expect(t, abs(dry.squeal_mode_offset) <= .06)
+    testing.expect(t, wet.squeal_mode_count == 0)
+    testing.expect(t, wet.squeal_mode_offset == 0)
+}
+
+@(test)
 loose_surface_slip_throws_seeded_aggregate_strikes :: proc(t: ^testing.T) {
     asphalt, gravel, wet_gravel := engine_sound.new_slip(46), engine_sound.new_slip(46), engine_sound.new_slip(46)
     asphalt_samples, gravel_samples, wet_samples: [engine_sound.SAMPLE_RATE / 2]f32
@@ -953,6 +1024,53 @@ tire_roll_render_is_deterministic_across_callback_chunks :: proc(t: ^testing.T) 
         engine_sound.render_roll_add(&chunked, controls, chunked_samples[offset:offset + count])
     }
     testing.expect(t, whole_samples == chunked_samples)
+}
+
+@(test)
+tire_roll_surface_impacts_use_aperiodic_seeded_intervals :: proc(t: ^testing.T) {
+    first, matching := engine_sound.new_roll(45), engine_sound.new_roll(45)
+    controls := engine_sound.Roll_Controls {
+        speed     = 1,
+        roughness = 1,
+        wetness   = 1,
+        surface   = .Gravel,
+        active    = true,
+    }
+    knock_samples, spray_samples: [64]int
+    knock_events, spray_events := 0, 0
+    previous_knocks, previous_sprays := u32(0), u32(0)
+    first_sample, matching_sample: [1]f32
+    for sample_index in 0 ..< engine_sound.SAMPLE_RATE {
+        engine_sound.render_roll_add(&first, controls, first_sample[:])
+        engine_sound.render_roll_add(&matching, controls, matching_sample[:])
+        testing.expect(t, first_sample == matching_sample)
+        if first.knock_count != previous_knocks {
+            if knock_events < len(knock_samples) do knock_samples[knock_events] = sample_index
+            knock_events += 1
+            previous_knocks = first.knock_count
+        }
+        if first.spray_count != previous_sprays {
+            if spray_events < len(spray_samples) do spray_samples[spray_events] = sample_index
+            spray_events += 1
+            previous_sprays = first.spray_count
+        }
+    }
+
+    testing.expect(t, knock_events >= 8 && knock_events <= len(knock_samples))
+    testing.expect(t, spray_events >= 8 && spray_events <= len(spray_samples))
+    knock_reference := knock_samples[1] - knock_samples[0]
+    spray_reference := spray_samples[1] - spray_samples[0]
+    varied_knocks, varied_sprays := 0, 0
+    for index in 2 ..< knock_events {
+        if knock_samples[index] - knock_samples[index - 1] != knock_reference do varied_knocks += 1
+    }
+    for index in 2 ..< spray_events {
+        if spray_samples[index] - spray_samples[index - 1] != spray_reference do varied_sprays += 1
+    }
+    testing.expect(t, varied_knocks >= knock_events / 2)
+    testing.expect(t, varied_sprays >= spray_events / 2)
+    testing.expect(t, first.knock_count == matching.knock_count)
+    testing.expect(t, first.spray_count == matching.spray_count)
 }
 
 @(test)
@@ -1096,4 +1214,112 @@ wet_wheel_slip_shifts_squeal_into_water_scrub :: proc(t: ^testing.T) {
     }
     testing.expect(t, difference > 1)
     testing.expect(t, wet.wetness > .7)
+}
+
+@(test)
+interleaved_master_processing_preserves_independent_stereo_channels :: proc(t: ^testing.T) {
+    states: [2]engine_sound.Mix_State
+    samples := [8]f32{.2, -.4, .3, -.1, -.25, .35, .1, -.2}
+    left := [4]f32{samples[0], samples[2], samples[4], samples[6]}
+    right := [4]f32{samples[1], samples[3], samples[5], samples[7]}
+    left_state, right_state: engine_sound.Mix_State
+    engine_sound.process_mix(&left_state, left[:])
+    engine_sound.process_mix(&right_state, right[:])
+    engine_sound.process_mix_interleaved(states[:], samples[:], 2)
+
+    for index in 0 ..< 4 {
+        testing.expect(t, samples[index * 2] == left[index])
+        testing.expect(t, samples[index * 2 + 1] == right[index])
+    }
+}
+
+@(test)
+stereo_limiter_links_peak_gain_to_preserve_image_balance :: proc(t: ^testing.T) {
+    states: [2]engine_sound.Mix_State
+    samples := [2]f32{1.2, .6}
+    input_ratio := samples[0] / samples[1]
+    engine_sound.process_mix_interleaved(states[:], samples[:], 2)
+
+    testing.expect(t, abs(samples[0]) < engine_sound.MASTER_CEILING)
+    testing.expect(t, abs(samples[1]) < engine_sound.MASTER_CEILING)
+    testing.expect(t, math.abs(f64(samples[0] / samples[1] - input_ratio)) < 1e-6)
+}
+
+@(test)
+stereo_limiter_recovers_smoothly_after_peak :: proc(t: ^testing.T) {
+    states: [2]engine_sound.Mix_State
+    peak := [2]f32{1.4, -.7}
+    engine_sound.process_mix_interleaved(states[:], peak[:], 2)
+    captured_gain := states[0].limiter_gain
+    testing.expect(t, captured_gain > 0 && captured_gain < 1)
+
+    quiet := [2]f32{.1, -.05}
+    engine_sound.process_mix_interleaved(states[:], quiet[:], 2)
+    testing.expect(t, states[0].limiter_gain > captured_gain)
+    testing.expect(t, states[0].limiter_gain < 1)
+    testing.expect(t, abs(quiet[0]) < .1)
+}
+
+@(test)
+powertrain_width_is_stereo_distinct_and_exactly_mono_compatible :: proc(t: ^testing.T) {
+    state: engine_sound.Source_Width_State
+    mono := [64]f32{}
+    for index in 0 ..< len(mono) {
+        mono[index] = f32(math.sin(f64(index) * .37)) * .3
+    }
+    stereo: [len(mono) * 2]f32
+    engine_sound.widen_source_stereo(&state, mono[:], stereo[:], .12)
+
+    difference := f32(0)
+    for index in 0 ..< len(mono) {
+        left, right := stereo[index * 2], stereo[index * 2 + 1]
+        difference += abs(left - right)
+        testing.expect(t, math.abs(f64((left + right) * .5 - mono[index])) < 1e-6)
+    }
+    testing.expect(t, difference > .1)
+}
+
+@(test)
+additive_source_width_preserves_existing_mix_and_mono_sum :: proc(t: ^testing.T) {
+    state: engine_sound.Source_Width_State
+    mono := [32]f32{}
+    stereo := [len(mono) * 2]f32{}
+    for index in 0 ..< len(mono) {
+        mono[index] = f32(math.sin(f64(index) * .51)) * .22
+        stereo[index * 2] = .1
+        stereo[index * 2 + 1] = -.06
+    }
+    engine_sound.widen_source_stereo(&state, mono[:], stereo[:], .14, true)
+
+    for index in 0 ..< len(mono) {
+        added_left := stereo[index * 2] - .1
+        added_right := stereo[index * 2 + 1] + .06
+        collapsed := (added_left + added_right) * .5
+        testing.expect(t, math.abs(f64(collapsed - mono[index])) < 1e-6)
+    }
+}
+
+@(test)
+device_mute_fade_duration_is_independent_of_channel_count :: proc(t: ^testing.T) {
+    mono_gain, stereo_gain := f32(1), f32(1)
+    mono: [4096]f32
+    stereo: [len(mono) * 2]f32
+    for &sample in mono do sample = 1
+    for &sample in stereo do sample = 1
+    engine_sound.apply_device_mute(&mono_gain, mono[:], true)
+    engine_sound.apply_device_mute(&stereo_gain, stereo[:], true, 2)
+
+    testing.expect(t, math.abs(f64(mono_gain - stereo_gain)) < 1e-6)
+    for index in 0 ..< len(mono) {
+        collapsed := (stereo[index * 2] + stereo[index * 2 + 1]) * .5
+        testing.expect(t, math.abs(f64(collapsed - mono[index])) < .0001)
+    }
+}
+
+@(test)
+audio_queue_target_balances_responsiveness_and_hitch_margin :: proc(t: ^testing.T) {
+    queue_seconds := f32(engine_sound.TARGET_QUEUED_FRAMES) / engine_sound.SAMPLE_RATE
+    testing.expect(t, engine_sound.TARGET_QUEUED_FRAMES >= engine_sound.BUFFER_SAMPLES * 2)
+    testing.expect(t, queue_seconds < .05)
+    testing.expect(t, queue_seconds > .04)
 }

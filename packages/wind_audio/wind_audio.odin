@@ -7,6 +7,15 @@ import sdl "vendor:sdl3"
 SAMPLE_RATE :: 48_000
 CHANNELS :: 2
 CALLBACK_SAMPLES :: 4096
+RAIN_DROP_VOICE_COUNT :: 4
+
+Rain_Drop_Voice :: struct {
+    left:      f32,
+    right:     f32,
+    phase_a:   f32,
+    phase_b:   f32,
+    frequency: f32,
+}
 
 Synth :: struct {
     random_state:          u32,
@@ -26,6 +35,7 @@ Synth :: struct {
     right_air_low:         f32,
     gust_phase:            f32,
     gust_noise_low:        f32,
+    gust_value:            f32,
     crosswind_low:         f32,
     whistle_wander_low:    f32,
     whistle_phase_a:       f32,
@@ -36,8 +46,8 @@ Synth :: struct {
     splat_low_left:        f32,
     splat_low_right:       f32,
     drop_timer:            f32,
-    drop_left:             f32,
-    drop_right:            f32,
+    drop_voices:           [RAIN_DROP_VOICE_COUNT]Rain_Drop_Voice,
+    next_drop_voice:       int,
     heavy_drop_timer:      f32,
     heavy_drop_left:       f32,
     heavy_drop_right:      f32,
@@ -62,6 +72,7 @@ Runtime :: struct {
     synth:             Synth,
     stream:            ^sdl.AudioStream,
     owns_audio_system: bool,
+    manual_feed:       bool,
 }
 
 new_synth :: proc(seed: u32 = 0x6d2b79f5) -> Synth {
@@ -211,6 +222,7 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
         periodic_gust :=
             .72 + .16 * f32(math.sin(f64(synth.gust_phase))) + .07 * f32(math.sin(f64(synth.gust_phase * 2.37 + 1.4)))
         gust := clamp(periodic_gust + synth.gust_noise_low * 42, .38, 1.14)
+        synth.gust_value = gust
         synth.gust_phase += phase_step
         if synth.gust_phase >= 2 * math.PI do synth.gust_phase -= 2 * math.PI
 
@@ -221,6 +233,9 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
         directional_crosswind := synth.direction * synth.strength * .18
         crosswind := clamp(turbulent_crosswind + directional_crosswind, -.29, .29)
         gain := synth.strength * synth.strength * gust
+        gust_brightness := clamp((gust - .52) / .62, 0, 1)
+        body_gain := .67 - gust_brightness * .10
+        air_gain := .115 + gust_brightness * .105
 
         // At high airflow, gaps and rigging shed narrow aeolian modes above
         // the broadband rush. Gusts breathe the resonances in and out while
@@ -244,8 +259,19 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
                 wind_drive := .86 + synth.strength * .34
                 drop_strength := (.55 + (next_noise(synth) + 1) * .35) * wind_drive
                 pan := clamp(next_noise(synth) * .78 + synth.direction * .34, -1, 1)
-                synth.drop_left += drop_strength * (1 - pan) * .5
-                synth.drop_right += drop_strength * (1 + pan) * .5
+                // A raindrop excites a tiny surface mode rather than
+                // producing a one-sided DC pulse. The seeded pitch range
+                // suggests varied nearby materials without turning rainfall
+                // into a fixed pitched texture. Independent voices allow
+                // adjacent arrivals to decay naturally through dense rain.
+                pitch_variation := (next_noise(synth) + 1) * .5
+                voice := &synth.drop_voices[synth.next_drop_voice]
+                voice^ = {
+                    left      = drop_strength * (1 - pan) * .5,
+                    right     = drop_strength * (1 + pan) * .5,
+                    frequency = 780 + pitch_variation * 1_720,
+                }
+                synth.next_drop_voice = (synth.next_drop_voice + 1) % RAIN_DROP_VOICE_COUNT
                 drop_rate := (4 + synth.precipitation * 52) * (.82 + synth.strength * .56)
                 interval_variation := .48 + (next_noise(synth) + 1) * .44
                 synth.drop_timer = interval_variation / drop_rate
@@ -266,10 +292,23 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
                 }
             }
         }
-        synth.drop_left *= drop_decay
-        synth.drop_right *= drop_decay
         synth.heavy_drop_left *= heavy_drop_decay
         synth.heavy_drop_right *= heavy_drop_decay
+        drop_resonance_left, drop_resonance_right := f32(0), f32(0)
+        for &voice in synth.drop_voices {
+            voice.left *= drop_decay
+            voice.right *= drop_decay
+            if abs(voice.left) + abs(voice.right) < .000001 do continue
+            voice.phase_a += voice.frequency / sample_rate
+            voice.phase_b += voice.frequency * 1.613 / sample_rate
+            voice.phase_a -= math.floor(voice.phase_a)
+            voice.phase_b -= math.floor(voice.phase_b)
+            resonance :=
+                f32(math.sin(f64(voice.phase_a * 2 * math.PI))) * .76 +
+                f32(math.sin(f64(voice.phase_b * 2 * math.PI))) * .24
+            drop_resonance_left += resonance * voice.left
+            drop_resonance_right += resonance * voice.right
+        }
         rain_gain := synth.precipitation * synth.precipitation
         heavy_splat_left := (noise - synth.splat_low_left) * synth.heavy_drop_left
         heavy_splat_right := (stereo_noise - synth.splat_low_right) * synth.heavy_drop_right
@@ -279,13 +318,13 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
         rain_left :=
             ((noise - synth.rain_low_left) * .13 +
                 driven_streak_left +
-                synth.drop_left * .16 +
+                drop_resonance_left * .16 +
                 heavy_splat_left * .20) *
             rain_gain
         rain_right :=
             ((stereo_noise - synth.rain_low_right) * .13 +
                 driven_streak_right +
-                synth.drop_right * .16 +
+                drop_resonance_right * .16 +
                 heavy_splat_right * .20) *
             rain_gain
         rain_crosswind := synth.direction * synth.precipitation * .17
@@ -369,7 +408,7 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
         thunder_right := thunder * (1 + thunder_pan * thunder_spread)
         output[frame * 2] =
             clamp(
-                (body * .62 * (1 - crosswind) + left_air * .16) * gain +
+                (body * body_gain * (1 - crosswind) + left_air * air_gain) * gain +
                 whistle * (1 - whistle_pan) +
                 rain_left +
                 thunder_left,
@@ -379,7 +418,7 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
             synth.mute_gain
         output[frame * 2 + 1] =
             clamp(
-                (body * .62 * (1 + crosswind) + right_air * .16) * gain +
+                (body * body_gain * (1 + crosswind) + right_air * air_gain) * gain +
                 whistle * (1 + whistle_pan) +
                 rain_right +
                 thunder_right,
@@ -404,7 +443,7 @@ audio_callback :: proc "c" (userdata: rawptr, stream: ^sdl.AudioStream, addition
     }
 }
 
-init :: proc(runtime: ^Runtime) -> bool {
+init :: proc(runtime: ^Runtime, playback_device: sdl.AudioDeviceID = 0) -> bool {
     runtime.synth = new_synth()
     already_initialized := sdl.WasInit(sdl.INIT_AUDIO) != {}
     if !already_initialized {
@@ -416,7 +455,16 @@ init :: proc(runtime: ^Runtime) -> bool {
         channels = CHANNELS,
         freq     = SAMPLE_RATE,
     }
-    runtime.stream = sdl.OpenAudioDeviceStream(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_callback, runtime)
+    if playback_device != 0 {
+        runtime.stream = sdl.CreateAudioStream(&spec, nil)
+        if runtime.stream != nil && !sdl.BindAudioStream(playback_device, runtime.stream) {
+            sdl.DestroyAudioStream(runtime.stream)
+            runtime.stream = nil
+        }
+        runtime.manual_feed = runtime.stream != nil
+    } else {
+        runtime.stream = sdl.OpenAudioDeviceStream(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_callback, runtime)
+    }
     if runtime.stream == nil {
         if runtime.owns_audio_system {
             sdl.QuitSubSystem(sdl.INIT_AUDIO)
@@ -424,7 +472,7 @@ init :: proc(runtime: ^Runtime) -> bool {
         }
         return false
     }
-    if !sdl.ResumeAudioStreamDevice(runtime.stream) {
+    if playback_device == 0 && !sdl.ResumeAudioStreamDevice(runtime.stream) {
         sdl.DestroyAudioStream(runtime.stream)
         runtime.stream = nil
         if runtime.owns_audio_system {
@@ -445,17 +493,38 @@ update :: proc(
     direction: f32 = 0,
     muted: bool = false,
 ) {
-    if runtime.stream == nil do return
+    if runtime == nil do return
     strength := airflow_strength(weather_speed, motion_speed)
     rain := clamp(precipitation, 0, 1)
     storm := clamp(storm_severity, 0, 1)
-    if sdl.LockAudioStream(runtime.stream) {
+    if runtime.stream == nil {
+        set_strength(&runtime.synth, strength)
+        set_direction(&runtime.synth, direction)
+        set_precipitation(&runtime.synth, rain)
+        set_storm_severity(&runtime.synth, storm)
+        set_muted(&runtime.synth, muted)
+    } else if sdl.LockAudioStream(runtime.stream) {
         set_strength(&runtime.synth, strength)
         set_direction(&runtime.synth, direction)
         set_precipitation(&runtime.synth, rain)
         set_storm_severity(&runtime.synth, storm)
         set_muted(&runtime.synth, muted)
         sdl.UnlockAudioStream(runtime.stream)
+    }
+    if runtime.manual_feed {
+        queued_samples := int(sdl.GetAudioStreamQueued(runtime.stream)) / size_of(f32)
+        target_samples := SAMPLE_RATE / 10 * CHANNELS
+        samples: [CALLBACK_SAMPLES]f32
+        for queued_samples < target_samples {
+            count := min(target_samples - queued_samples, CALLBACK_SAMPLES)
+            count -= count % CHANNELS
+            if count == 0 do break
+            render(&runtime.synth, samples[:count])
+            if !sdl.PutAudioStreamData(runtime.stream, raw_data(samples[:count]), c.int(count * size_of(f32))) {
+                break
+            }
+            queued_samples += count
+        }
     }
 }
 

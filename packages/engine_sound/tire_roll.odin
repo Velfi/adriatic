@@ -20,9 +20,13 @@ Roll_Synth :: struct {
     tread_phase:                                                   f32,
     rear_tread_phase:                                              f32,
     knock_phase:                                                   f32,
+    knock_interval:                                                f32,
     knock_level:                                                   f32,
+    knock_count:                                                   u32,
     spray_phase:                                                   f32,
+    spray_interval:                                                f32,
     spray_level:                                                   f32,
+    spray_count:                                                   u32,
     hydroplane_phase:                                              f32,
     wobble_phase:                                                  f32,
     wobble_ring_phase:                                             f32,
@@ -31,7 +35,7 @@ Roll_Synth :: struct {
 }
 
 new_roll :: proc(seed := u32(0x85ebca6b)) -> Roll_Synth {
-    return {noise_state = seed, rear_tread_phase = .37}
+    return {noise_state = seed, rear_tread_phase = .37, knock_interval = 1, spray_interval = 1}
 }
 
 // render_roll_add models the tire contact patch rather than the engine. Speed
@@ -97,11 +101,13 @@ render_roll_add :: proc(synth: ^Roll_Synth, controls: Roll_Controls, samples: []
         // their strength, keeping asphalt subdued and gravel lively.
         knock_hz := (3 + synth.speed * 27) * (.18 + synth.roughness * .82)
         synth.knock_phase += knock_hz * seconds_per_sample
-        if synth.knock_phase >= 1 {
-            synth.knock_phase -= 1
+        if synth.knock_phase >= synth.knock_interval {
+            synth.knock_phase -= synth.knock_interval
             strength := .12 + (noise(&synth.noise_state) + 1) * .10
             material_knock := .42 + synth.looseness * .48 + synth.hardness * .22
             synth.knock_level += strength * synth.roughness * synth.roughness * material_knock
+            synth.knock_interval = .55 + (noise(&synth.noise_state) + 1) * .45
+            synth.knock_count += 1
         }
         synth.knock_level *= f32(math.exp(f64(-115 * seconds_per_sample)))
         knock := synth.knock_level * (synth.road_low * .5 + .5)
@@ -111,9 +117,11 @@ render_roll_add :: proc(synth: ^Roll_Synth, controls: Roll_Controls, samples: []
         // slowly after precipitation stops.
         spray_hz := (2 + synth.speed * 34) * synth.wetness
         synth.spray_phase += spray_hz * seconds_per_sample
-        if synth.spray_phase >= 1 {
-            synth.spray_phase -= 1
+        if synth.spray_phase >= synth.spray_interval {
+            synth.spray_phase -= synth.spray_interval
             synth.spray_level += (.18 + (noise(&synth.noise_state) + 1) * .11) * synth.wetness
+            synth.spray_interval = .55 + (noise(&synth.noise_state) + 1) * .45
+            synth.spray_count += 1
         }
         synth.spray_level *= f32(math.exp(f64(-82 * seconds_per_sample)))
         water_hiss := (road - synth.water_low) * synth.wetness * (.08 + synth.speed * .13)

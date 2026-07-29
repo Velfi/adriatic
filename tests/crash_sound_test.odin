@@ -422,6 +422,22 @@ severe_dry_crashes_add_profile_shaped_brittle_fracture :: proc(t: ^testing.T) {
 }
 
 @(test)
+glass_resonances_advance_at_their_configured_frequencies :: proc(t: ^testing.T) {
+    synth := engine_sound.new_crash(941)
+    engine_sound.trigger_crash(&synth, 1, 0, 0, .Asphalt, .Car)
+    synth.glass_phase_a = 0
+    synth.glass_phase_b = 0
+    frequency_a, frequency_b := synth.glass_frequency_a, synth.glass_frequency_b
+    sample: [1]f32
+    engine_sound.render_crash_add(&synth, sample[:])
+
+    expected_a := frequency_a / engine_sound.SAMPLE_RATE
+    expected_b := frequency_b / engine_sound.SAMPLE_RATE
+    testing.expect(t, math.abs(f64(synth.glass_phase_a - expected_a)) < 1e-6)
+    testing.expect(t, math.abs(f64(synth.glass_phase_b - expected_b)) < 1e-6)
+}
+
+@(test)
 severe_car_crash_adds_delayed_tire_pressure_rupture :: proc(t: ^testing.T) {
     light, car, fixed_wing, submerged :=
         engine_sound.new_crash(94), engine_sound.new_crash(94), engine_sound.new_crash(94), engine_sound.new_crash(94)
@@ -569,6 +585,45 @@ crash_mixer_preserves_active_tail_when_another_impact_starts :: proc(t: ^testing
 }
 
 @(test)
+crash_voices_preserve_individual_spatial_positions :: proc(t: ^testing.T) {
+    mixer := engine_sound.new_crash_mixer(99)
+    blunt := engine_sound.trigger_crash_mixer(&mixer, .8, 0, .1, .Asphalt, .Car, 0, 0, -1)
+    glancing := engine_sound.trigger_crash_mixer(&mixer, .8, 0, .8, .Asphalt, .Car, 0, 1, 1)
+
+    testing.expect(t, math.abs(f64(mixer.voices[blunt].pan + .1)) < 1e-6)
+    testing.expect(t, math.abs(f64(mixer.voices[glancing].pan - .4)) < 1e-6)
+}
+
+@(test)
+vehicle_impact_pan_projects_the_contact_source_into_listener_space :: proc(t: ^testing.T) {
+    // A solver impulse toward the left means the contacted object is right.
+    testing.expect(t, engine_sound.vehicle_impact_pan(0, 0, -8, 0, 0) == 1)
+    testing.expect(t, engine_sound.vehicle_impact_pan(0, 0, 8, 0, 0) == -1)
+    testing.expect(t, math.abs(f64(engine_sound.vehicle_impact_pan(0, 0, 0, 8, 0))) < 1e-6)
+    testing.expect(t, engine_sound.vehicle_impact_pan(0, 0, 0, 0, 1.2) == 0)
+    testing.expect(t, engine_sound.vehicle_impact_pan(0, 0, 0, -8, math.PI / 2) < -.999)
+}
+
+@(test)
+stereo_crash_render_collapses_exactly_to_mono :: proc(t: ^testing.T) {
+    mono, stereo := engine_sound.new_crash_mixer(100), engine_sound.new_crash_mixer(100)
+    engine_sound.trigger_crash_mixer(&mono, .82, 0, .7, .Gravel, .Car, .2, .9, .8)
+    engine_sound.trigger_crash_mixer(&stereo, .82, 0, .7, .Gravel, .Car, .2, .9, .8)
+    mono_samples: [2048]f32
+    stereo_samples: [len(mono_samples) * 2]f32
+    engine_sound.render_crash_mixer_add(&mono, mono_samples[:])
+    engine_sound.render_crash_mixer_stereo_add(&stereo, stereo_samples[:])
+
+    stereo_difference := f64(0)
+    for index in 0 ..< len(mono_samples) {
+        left, right := stereo_samples[index * 2], stereo_samples[index * 2 + 1]
+        testing.expect(t, math.abs(f64((left + right) * .5 - mono_samples[index])) < 1e-6)
+        stereo_difference += math.abs(f64(left - right))
+    }
+    testing.expect(t, stereo_difference > .1)
+}
+
+@(test)
 crash_mixer_is_deterministic_and_reuses_voices_in_bounded_order :: proc(t: ^testing.T) {
     a, b := engine_sound.new_crash_mixer(101), engine_sound.new_crash_mixer(101)
     a_samples, b_samples: [4096]f32
@@ -593,6 +648,7 @@ saturated_crash_mixer_steals_the_least_audible_tail :: proc(t: ^testing.T) {
     mixer.voices[0].age = mixer.voices[0].duration * .35
     mixer.voices[1].age = mixer.voices[1].duration * .92
     mixer.voices[1].last_output = .24
+    mixer.voices[1].pan = -.3
     mixer.voices[2].age = mixer.voices[2].duration * .55
     mixer.voices[3].age = mixer.voices[3].duration * .18
 
@@ -602,7 +658,8 @@ saturated_crash_mixer_steals_the_least_audible_tail :: proc(t: ^testing.T) {
     )
     stolen := engine_sound.trigger_crash_mixer(&mixer, .7)
     testing.expect(t, stolen == 1)
-    testing.expect(t, math.abs(f64(mixer.stolen_tail - .24)) < 1e-6)
+    testing.expect(t, math.abs(f64(mixer.stolen_tail_left - .312)) < 1e-6)
+    testing.expect(t, math.abs(f64(mixer.stolen_tail_right - .168)) < 1e-6)
     testing.expect(t, mixer.voices[1].age == 0)
     testing.expect(t, mixer.voices[0].age > 0)
     testing.expect(t, mixer.voices[2].age > 0)
@@ -618,11 +675,13 @@ stolen_crash_voice_crossfades_from_its_terminal_sample :: proc(t: ^testing.T) {
     }
     with_tail.voices[3].age = with_tail.voices[3].duration * .96
     with_tail.voices[3].last_output = -.3
+    with_tail.voices[3].pan = .25
     stolen := engine_sound.trigger_crash_mixer(&with_tail, .65)
     testing.expect(t, stolen == 3)
 
     without_tail := with_tail
-    without_tail.stolen_tail = 0
+    without_tail.stolen_tail_left = 0
+    without_tail.stolen_tail_right = 0
     with_samples, without_samples: [1024]f32
     engine_sound.render_crash_mixer_add(&with_tail, with_samples[:])
     engine_sound.render_crash_mixer_add(&without_tail, without_samples[:])
@@ -630,7 +689,20 @@ stolen_crash_voice_crossfades_from_its_terminal_sample :: proc(t: ^testing.T) {
     last_difference := math.abs(f64(with_samples[len(with_samples) - 1] - without_samples[len(without_samples) - 1]))
     testing.expect(t, math.abs(first_difference - .3) < 1e-5)
     testing.expect(t, last_difference < first_difference * .03)
-    testing.expect(t, math.abs(f64(with_tail.stolen_tail)) < .01)
+    testing.expect(t, math.abs(f64(with_tail.stolen_tail_left)) < .01)
+    testing.expect(t, math.abs(f64(with_tail.stolen_tail_right)) < .01)
+
+    stereo_tail := with_tail
+    no_stereo_tail := with_tail
+    stereo_tail.stolen_tail_left = -.3 * .75
+    stereo_tail.stolen_tail_right = -.3 * 1.25
+    no_stereo_tail.stolen_tail_left = 0
+    no_stereo_tail.stolen_tail_right = 0
+    with_stereo, without_stereo: [2]f32
+    engine_sound.render_crash_mixer_stereo_add(&stereo_tail, with_stereo[:])
+    engine_sound.render_crash_mixer_stereo_add(&no_stereo_tail, without_stereo[:])
+    testing.expect(t, math.abs(f64((with_stereo[0] - without_stereo[0]) - -.225)) < 1e-6)
+    testing.expect(t, math.abs(f64((with_stereo[1] - without_stereo[1]) - -.375)) < 1e-6)
 }
 
 energy :: proc(samples: []f32) -> f32 {

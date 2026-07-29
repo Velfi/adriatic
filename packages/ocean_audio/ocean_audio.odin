@@ -25,6 +25,8 @@ Synth :: struct {
     wave_strength:        f32,
     target_wave_strength: f32,
     wave_variation:       f32,
+    wave_set_phase:       f32,
+    wave_set_strength:    f32,
     swell_rate:           f32,
     target_swell_rate:    f32,
     wave_count:           u32,
@@ -70,14 +72,17 @@ Runtime :: struct {
     synth:             Synth,
     stream:            ^sdl.AudioStream,
     owns_audio_system: bool,
+    manual_feed:       bool,
 }
 
 new_synth :: proc(seed: u32 = 0x4f434541) -> Synth {
+    stable_seed := seed == 0 ? u32(0x4f434541) : seed
     synth := Synth {
         settings = {volume = .24, surf = .78, foam = .52, depth = .42},
-        random_state = seed == 0 ? 0x4f434541 : seed,
+        random_state = stable_seed,
         foam_phase = .37,
         shore_phase = .83,
+        wave_set_phase = f32(stable_seed & 0xffff) / 65_535 * 2 * math.PI,
         gain = 1,
         target_gain = 1,
         presence = 1,
@@ -85,8 +90,9 @@ new_synth :: proc(seed: u32 = 0x4f434541) -> Synth {
         sea_state = .25,
         target_sea_state = .25,
     }
+    synth.wave_set_strength = .92 + (.5 + .5 * f32(math.sin(f64(synth.wave_set_phase)))) * .16
     synth.wave_variation = (next_noise(&synth) + 1) * .5
-    synth.target_wave_strength = .72 + synth.sea_state * .28 + synth.wave_variation * .32
+    synth.target_wave_strength = (.72 + synth.sea_state * .28 + synth.wave_variation * .32) * synth.wave_set_strength
     synth.wave_strength = synth.target_wave_strength
     synth.target_swell_rate = .96 + (next_noise(&synth) + 1) * .10
     synth.swell_rate = synth.target_swell_rate
@@ -102,7 +108,8 @@ set_conditions :: proc "contextless" (synth: ^Synth, wind_speed, storm_severity:
     wind_state := clamp(wind_speed / 18, 0, 1)
     storm_state := clamp(storm_severity, 0, 1)
     synth.target_sea_state = clamp(max(wind_state, storm_state * .92), 0, 1)
-    synth.target_wave_strength = .72 + synth.target_sea_state * .28 + synth.wave_variation * .32
+    synth.target_wave_strength =
+        (.72 + synth.target_sea_state * .28 + synth.wave_variation * .32) * synth.wave_set_strength
     synth.target_direction = clamp(direction, -1, 1)
 }
 
@@ -156,6 +163,7 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
     secondary_step := f32(2 * math.PI * .113 / sample_rate)
     foam_step := f32(2 * math.PI * .037 / sample_rate)
     shore_step := f32(2 * math.PI * .019 / sample_rate)
+    wave_set_step := f32(2 * math.PI * .013 / sample_rate)
     gain_smoothing := f32(1 - math.exp(f64(-12 / sample_rate)))
     presence_smoothing := f32(1 - math.exp(f64(-.9 / sample_rate)))
     wave_smoothing := f32(1 - math.exp(f64(-.65 / sample_rate)))
@@ -175,6 +183,11 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
         synth.direction += (synth.target_direction - synth.direction) * direction_smoothing
         synth.wave_strength += (synth.target_wave_strength - synth.wave_strength) * wave_smoothing
         synth.swell_rate += (synth.target_swell_rate - synth.swell_rate) * cadence_smoothing
+        synth.wave_set_phase += wave_set_step * (.88 + synth.sea_state * .24)
+        if synth.wave_set_phase >= 2 * math.PI do synth.wave_set_phase -= 2 * math.PI
+        set_primary := .5 + .5 * f32(math.sin(f64(synth.wave_set_phase)))
+        set_secondary := .5 + .5 * f32(math.sin(f64(synth.wave_set_phase * .47 + 1.3)))
+        synth.wave_set_strength = .92 + (set_primary * .72 + set_secondary * .28) * .16
         white_left := next_noise(synth)
         white_right := next_noise(synth)
         tempo := .82 + synth.sea_state * .72
@@ -187,7 +200,8 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
             // Each arriving wave gets a new seeded energy target, avoiding an
             // identical breaker on every primary swell cycle.
             synth.wave_variation = (next_noise(synth) + 1) * .5
-            synth.target_wave_strength = .72 + synth.target_sea_state * .28 + synth.wave_variation * .32
+            synth.target_wave_strength =
+                (.72 + synth.target_sea_state * .28 + synth.wave_variation * .32) * synth.wave_set_strength
             synth.target_swell_rate = .96 + (next_noise(synth) + 1) * .10
             synth.wave_count += 1
         }
@@ -365,7 +379,7 @@ audio_callback :: proc "c" (userdata: rawptr, stream: ^sdl.AudioStream, addition
     }
 }
 
-init :: proc(runtime: ^Runtime) -> bool {
+init :: proc(runtime: ^Runtime, playback_device: sdl.AudioDeviceID = 0) -> bool {
     if runtime == nil do return false
     runtime.synth = new_synth()
     if sdl.WasInit(sdl.INIT_AUDIO) == {} {
@@ -377,13 +391,22 @@ init :: proc(runtime: ^Runtime) -> bool {
         channels = CHANNELS,
         freq     = SAMPLE_RATE,
     }
-    runtime.stream = sdl.OpenAudioDeviceStream(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_callback, runtime)
+    if playback_device != 0 {
+        runtime.stream = sdl.CreateAudioStream(&spec, nil)
+        if runtime.stream != nil && !sdl.BindAudioStream(playback_device, runtime.stream) {
+            sdl.DestroyAudioStream(runtime.stream)
+            runtime.stream = nil
+        }
+        runtime.manual_feed = runtime.stream != nil
+    } else {
+        runtime.stream = sdl.OpenAudioDeviceStream(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_callback, runtime)
+    }
     if runtime.stream == nil {
         if runtime.owns_audio_system do sdl.QuitSubSystem(sdl.INIT_AUDIO)
         runtime.owns_audio_system = false
         return false
     }
-    if !sdl.ResumeAudioStreamDevice(runtime.stream) {
+    if playback_device == 0 && !sdl.ResumeAudioStreamDevice(runtime.stream) {
         sdl.DestroyAudioStream(runtime.stream)
         runtime.stream = nil
         if runtime.owns_audio_system do sdl.QuitSubSystem(sdl.INIT_AUDIO)
@@ -402,12 +425,31 @@ update :: proc(
     shore_proximity: f32 = 1,
     direction: f32 = 0,
 ) {
-    if runtime == nil || runtime.stream == nil do return
-    if sdl.LockAudioStream(runtime.stream) {
+    if runtime == nil do return
+    if runtime.stream == nil {
+        set_conditions(&runtime.synth, wind_speed, storm_severity, direction)
+        set_muted(&runtime.synth, muted)
+        set_listener_environment(&runtime.synth, listener_height_above_sea, shore_proximity)
+    } else if sdl.LockAudioStream(runtime.stream) {
         set_conditions(&runtime.synth, wind_speed, storm_severity, direction)
         set_muted(&runtime.synth, muted)
         set_listener_environment(&runtime.synth, listener_height_above_sea, shore_proximity)
         sdl.UnlockAudioStream(runtime.stream)
+    }
+    if runtime.manual_feed {
+        queued_samples := int(sdl.GetAudioStreamQueued(runtime.stream)) / size_of(f32)
+        target_samples := SAMPLE_RATE / 10 * CHANNELS
+        samples: [CALLBACK_SAMPLES]f32
+        for queued_samples < target_samples {
+            count := min(target_samples - queued_samples, CALLBACK_SAMPLES)
+            count -= count % CHANNELS
+            if count == 0 do break
+            render(&runtime.synth, samples[:count])
+            if !sdl.PutAudioStreamData(runtime.stream, raw_data(samples[:count]), c.int(count * size_of(f32))) {
+                break
+            }
+            queued_samples += count
+        }
     }
 }
 

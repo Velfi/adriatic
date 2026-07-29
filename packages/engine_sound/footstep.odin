@@ -14,34 +14,44 @@ Footstep_Surface :: enum u8 {
 FOOTSTEP_VOICE_COUNT :: 4
 
 Footstep_Mixer :: struct {
-    voices:      [FOOTSTEP_VOICE_COUNT]Footstep_Synth,
-    next_voice:  int,
-    stolen_tail: f32,
+    voices:            [FOOTSTEP_VOICE_COUNT]Footstep_Synth,
+    next_voice:        int,
+    next_side:         f32,
+    stolen_tail_left:  f32,
+    stolen_tail_right: f32,
 }
 
 Footstep_Synth :: struct {
-    noise_state:   u32,
-    age:           f32,
-    duration:      f32,
-    intensity:     f32,
-    landing_mix:   f32,
-    wetness:       f32,
-    hardness:      f32,
-    grit:          f32,
-    body_low:      f32,
-    detail_low:    f32,
-    tap_phase:     f32,
-    tap_hz:        f32,
-    toe_low:       f32,
-    toe_phase:     f32,
-    toe_hz:        f32,
-    toe_delay:     f32,
-    landing_slide: f32,
-    slide_low:     f32,
-    slide_phase:   f32,
-    water_low:     f32,
-    water_detail:  f32,
-    last_output:   f32,
+    noise_state:    u32,
+    age:            f32,
+    duration:       f32,
+    intensity:      f32,
+    landing_mix:    f32,
+    wetness:        f32,
+    hardness:       f32,
+    grit:           f32,
+    body_low:       f32,
+    detail_low:     f32,
+    tap_phase:      f32,
+    tap_hz:         f32,
+    toe_low:        f32,
+    toe_phase:      f32,
+    toe_hz:         f32,
+    toe_delay:      f32,
+    landing_slide:  f32,
+    slide_low:      f32,
+    slide_phase:    f32,
+    water_low:      f32,
+    water_detail:   f32,
+    grain_phase:    f32,
+    grain_interval: f32,
+    grain_rate:     f32,
+    grain_level:    f32,
+    grain_tone:     f32,
+    grain_low:      f32,
+    grain_count:    u32,
+    pan:            f32,
+    last_output:    f32,
 }
 
 new_footstep :: proc(seed := u32(0x50415753)) -> Footstep_Synth {
@@ -55,6 +65,7 @@ new_footstep_mixer :: proc(seed := u32(0x50415753)) -> Footstep_Mixer {
         voice_seed := base_seed ~ (u32(index + 1) * u32(0x85ebca6b))
         mixer.voices[index] = new_footstep(voice_seed)
     }
+    mixer.next_side = -.14
     return mixer
 }
 
@@ -86,20 +97,26 @@ trigger_footstep :: proc(
     synth.slide_phase = 0
     synth.water_low = 0
     synth.water_detail = 0
+    synth.grain_phase = 0
+    synth.grain_interval = .58 + (noise(&synth.noise_state) + 1) * .42
+    synth.grain_level = 0
+    synth.grain_tone = 0
+    synth.grain_low = 0
+    synth.grain_count = 0
     synth.last_output = 0
     switch surface {
     case .Grass:
-        synth.hardness, synth.grit, synth.tap_hz, synth.duration = .12, .28, 58, .18
+        synth.hardness, synth.grit, synth.tap_hz, synth.duration, synth.grain_rate = .12, .28, 58, .18, 34
     case .Dirt:
-        synth.hardness, synth.grit, synth.tap_hz, synth.duration = .24, .48, 66, .17
+        synth.hardness, synth.grit, synth.tap_hz, synth.duration, synth.grain_rate = .24, .48, 66, .17, 58
     case .Sand:
-        synth.hardness, synth.grit, synth.tap_hz, synth.duration = .08, .68, 48, .20
+        synth.hardness, synth.grit, synth.tap_hz, synth.duration, synth.grain_rate = .08, .68, 48, .20, 92
     case .Gravel:
-        synth.hardness, synth.grit, synth.tap_hz, synth.duration = .46, .92, 92, .15
+        synth.hardness, synth.grit, synth.tap_hz, synth.duration, synth.grain_rate = .46, .92, 92, .15, 138
     case .Cobblestone:
-        synth.hardness, synth.grit, synth.tap_hz, synth.duration = .82, .54, 138, .13
+        synth.hardness, synth.grit, synth.tap_hz, synth.duration, synth.grain_rate = .82, .54, 138, .13, 20
     case .Asphalt:
-        synth.hardness, synth.grit, synth.tap_hz, synth.duration = .72, .22, 116, .12
+        synth.hardness, synth.grit, synth.tap_hz, synth.duration, synth.grain_rate = .72, .22, 116, .12, 10
     }
     if landing {
         synth.duration += .09 + synth.landing_slide * .10
@@ -152,9 +169,26 @@ trigger_footstep_mixer :: proc(
                 quietest = audibility
             }
         }
-        mixer.stolen_tail = clamp(mixer.stolen_tail + mixer.voices[voice_index].last_output, f32(-.45), f32(.45))
+        stolen_voice := &mixer.voices[voice_index]
+        mixer.stolen_tail_left = clamp(
+            mixer.stolen_tail_left + stolen_voice.last_output * (1 - stolen_voice.pan),
+            f32(-.45),
+            f32(.45),
+        )
+        mixer.stolen_tail_right = clamp(
+            mixer.stolen_tail_right + stolen_voice.last_output * (1 + stolen_voice.pan),
+            f32(-.45),
+            f32(.45),
+        )
     }
     trigger_footstep(&mixer.voices[voice_index], intensity, surface, landing, wetness, landing_slide)
+    if landing {
+        mixer.voices[voice_index].pan = 0
+    } else {
+        if mixer.next_side == 0 do mixer.next_side = -.14
+        mixer.voices[voice_index].pan = mixer.next_side
+        mixer.next_side = -mixer.next_side
+    }
     mixer.next_voice = (voice_index + 1) % FOOTSTEP_VOICE_COUNT
     return voice_index
 }
@@ -178,6 +212,29 @@ render_footstep_add :: proc(synth: ^Footstep_Synth, samples: []f32) {
         synth.slide_low += (rough - synth.slide_low) * (.055 + synth.hardness * .075)
         synth.water_low += (rough - synth.water_low) * (.012 + synth.hardness * .018)
         synth.water_detail += (rough - synth.water_detail) * (.08 + synth.hardness * .10)
+
+        // Loose ground is a cloud of short, irregular particle contacts, not
+        // merely continuous noise. Seeded micro-grains give gravel individual
+        // stone ticks and sand a denser, softer cascade without sacrificing
+        // deterministic playback.
+        grain_density := synth.grain_rate * (1 - progress * .72) * (.65 + synth.intensity * .35)
+        synth.grain_phase += grain_density * seconds_per_sample
+        if synth.grain_phase >= synth.grain_interval {
+            synth.grain_phase -= synth.grain_interval
+            variation := (noise(&synth.noise_state) + 1) * .5
+            synth.grain_level = (.35 + variation * .65) * synth.grit
+            synth.grain_tone = 420 + variation * 2_300 + synth.hardness * 1_100
+            // A renewal interval avoids the machine-like cadence produced by
+            // a fixed grain clock while preserving the requested mean
+            // aggregate density.
+            synth.grain_interval = .58 + (noise(&synth.noise_state) + 1) * .42
+            synth.grain_count += 1
+        }
+        grain_excitation := noise(&synth.noise_state)
+        synth.grain_low +=
+            (grain_excitation - synth.grain_low) * clamp(synth.grain_tone / SAMPLE_RATE, f32(.01), f32(.12))
+        grain_tick := (grain_excitation - synth.grain_low) * synth.grain_level
+        synth.grain_level *= f32(math.exp(f64(-(150 + synth.hardness * 210) * seconds_per_sample)))
 
         synth.tap_phase += synth.tap_hz * (1 - progress * .12) * seconds_per_sample
         synth.tap_phase -= math.floor(synth.tap_phase)
@@ -222,6 +279,7 @@ render_footstep_add :: proc(synth: ^Footstep_Synth, samples: []f32) {
         contact :=
             (body * (.62 + synth.landing_mix * .58) +
                 grit * .22 +
+                grain_tick * .14 * grit_envelope +
                 tap * (.42 + synth.landing_mix * .18) +
                 toe_tap * .34 * toe_mix +
                 toe_scuff * .20 * toe_mix +
@@ -243,8 +301,39 @@ render_footstep_mixer_add :: proc(mixer: ^Footstep_Mixer, samples: []f32) {
     }
     tail_decay := f32(math.exp(f64(-220.0 / SAMPLE_RATE)))
     for &sample in samples {
-        sample += mixer.stolen_tail
-        mixer.stolen_tail *= tail_decay
-        if abs(mixer.stolen_tail) < .000001 do mixer.stolen_tail = 0
+        sample += (mixer.stolen_tail_left + mixer.stolen_tail_right) * .5
+        mixer.stolen_tail_left *= tail_decay
+        mixer.stolen_tail_right *= tail_decay
+        if abs(mixer.stolen_tail_left) < .000001 do mixer.stolen_tail_left = 0
+        if abs(mixer.stolen_tail_right) < .000001 do mixer.stolen_tail_right = 0
+    }
+}
+
+render_footstep_mixer_stereo_add :: proc(mixer: ^Footstep_Mixer, stereo: []f32) {
+    if mixer == nil do return
+    frame_count := len(stereo) / 2
+    scratch: [BUFFER_SAMPLES]f32
+    for &voice in mixer.voices {
+        offset := 0
+        for offset < frame_count {
+            count := min(BUFFER_SAMPLES, frame_count - offset)
+            for index in 0 ..< count do scratch[index] = 0
+            render_footstep_add(&voice, scratch[:count])
+            for index in 0 ..< count {
+                sample := scratch[index]
+                stereo[(offset + index) * 2] += sample * (1 - voice.pan)
+                stereo[(offset + index) * 2 + 1] += sample * (1 + voice.pan)
+            }
+            offset += count
+        }
+    }
+    tail_decay := f32(math.exp(f64(-220.0 / SAMPLE_RATE)))
+    for frame in 0 ..< frame_count {
+        stereo[frame * 2] += mixer.stolen_tail_left
+        stereo[frame * 2 + 1] += mixer.stolen_tail_right
+        mixer.stolen_tail_left *= tail_decay
+        mixer.stolen_tail_right *= tail_decay
+        if abs(mixer.stolen_tail_left) < .000001 do mixer.stolen_tail_left = 0
+        if abs(mixer.stolen_tail_right) < .000001 do mixer.stolen_tail_right = 0
     }
 }

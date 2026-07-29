@@ -19,6 +19,7 @@ Synth :: struct {
     pan:               f32,
     target_pan:        f32,
     can_pressure:      f32,
+    aerosol_spread:    f32,
     pressure_low:      f32,
     hiss_low_left:     f32,
     hiss_low_right:    f32,
@@ -43,6 +44,7 @@ Runtime :: struct {
     synth:             Synth,
     stream:            ^sdl.AudioStream,
     owns_audio_system: bool,
+    manual_feed:       bool,
 }
 
 new_synth :: proc(seed: u32 = 0x53505259) -> Synth {
@@ -132,13 +134,16 @@ render :: proc "contextless" (synth: ^Synth, output: []f32, sample_rate: f32 = S
 
         shared := next_noise(synth)
         side := next_noise(synth)
-        left_noise := shared * .82 + side * .18
-        right_noise := shared * .82 - side * .18
-        synth.flutter_noise_low += (shared - synth.flutter_noise_low) * flutter_cutoff
         // Greater can pressure moves the atomizer body upward and opens more
-        // of the bright aerosol band.
+        // of the bright aerosol band. A weak jet remains spatially coherent;
+        // stronger atomization exposes more independent side turbulence and
+        // widens the perceived spray cone.
         effective_pressure := .58 + synth.can_pressure * .42
         effective_intensity := synth.intensity * effective_pressure
+        synth.aerosol_spread = .07 + effective_intensity * .17
+        left_noise := shared * (1 - synth.aerosol_spread) + side * synth.aerosol_spread
+        right_noise := shared * (1 - synth.aerosol_spread) - side * synth.aerosol_spread
+        synth.flutter_noise_low += (shared - synth.flutter_noise_low) * flutter_cutoff
         body_cutoff := body_low_intensity + (body_high_intensity - body_low_intensity) * effective_intensity
         hiss_cutoff := hiss_low_intensity + (hiss_high_intensity - hiss_low_intensity) * effective_intensity
         synth.pressure_low += (shared - synth.pressure_low) * pressure_cutoff
@@ -245,7 +250,7 @@ audio_callback :: proc "c" (userdata: rawptr, stream: ^sdl.AudioStream, addition
     }
 }
 
-init :: proc(runtime: ^Runtime) -> bool {
+init :: proc(runtime: ^Runtime, playback_device: sdl.AudioDeviceID = 0) -> bool {
     if runtime == nil do return false
     runtime.synth = new_synth()
     if sdl.WasInit(sdl.INIT_AUDIO) == {} {
@@ -257,13 +262,22 @@ init :: proc(runtime: ^Runtime) -> bool {
         channels = CHANNELS,
         freq     = SAMPLE_RATE,
     }
-    runtime.stream = sdl.OpenAudioDeviceStream(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_callback, runtime)
+    if playback_device != 0 {
+        runtime.stream = sdl.CreateAudioStream(&spec, nil)
+        if runtime.stream != nil && !sdl.BindAudioStream(playback_device, runtime.stream) {
+            sdl.DestroyAudioStream(runtime.stream)
+            runtime.stream = nil
+        }
+        runtime.manual_feed = runtime.stream != nil
+    } else {
+        runtime.stream = sdl.OpenAudioDeviceStream(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_callback, runtime)
+    }
     if runtime.stream == nil {
         if runtime.owns_audio_system do sdl.QuitSubSystem(sdl.INIT_AUDIO)
         runtime.owns_audio_system = false
         return false
     }
-    if !sdl.ResumeAudioStreamDevice(runtime.stream) {
+    if playback_device == 0 && !sdl.ResumeAudioStreamDevice(runtime.stream) {
         sdl.DestroyAudioStream(runtime.stream)
         runtime.stream = nil
         if runtime.owns_audio_system do sdl.QuitSubSystem(sdl.INIT_AUDIO)
@@ -274,11 +288,29 @@ init :: proc(runtime: ^Runtime) -> bool {
 }
 
 update :: proc(runtime: ^Runtime, active: bool, intensity: f32 = .7, pan: f32 = 0, muted: bool = false) {
-    if runtime == nil || runtime.stream == nil do return
-    if sdl.LockAudioStream(runtime.stream) {
+    if runtime == nil do return
+    if runtime.stream == nil {
+        set_active(&runtime.synth, active, intensity, pan)
+        set_muted(&runtime.synth, muted)
+    } else if sdl.LockAudioStream(runtime.stream) {
         set_active(&runtime.synth, active, intensity, pan)
         set_muted(&runtime.synth, muted)
         sdl.UnlockAudioStream(runtime.stream)
+    }
+    if runtime.manual_feed {
+        queued_samples := int(sdl.GetAudioStreamQueued(runtime.stream)) / size_of(f32)
+        target_samples := SAMPLE_RATE / 10 * CHANNELS
+        samples: [CALLBACK_SAMPLES]f32
+        for queued_samples < target_samples {
+            count := min(target_samples - queued_samples, CALLBACK_SAMPLES)
+            count -= count % CHANNELS
+            if count == 0 do break
+            render(&runtime.synth, samples[:count])
+            if !sdl.PutAudioStreamData(runtime.stream, raw_data(samples[:count]), c.int(count * size_of(f32))) {
+                break
+            }
+            queued_samples += count
+        }
     }
 }
 

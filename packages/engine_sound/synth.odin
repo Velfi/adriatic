@@ -52,10 +52,18 @@ Synth :: struct {
     turbine_phase:                                                                                                          f32,
     starter_phase:                                                                                                          f32,
     noise_state:                                                                                                            u32,
+    rpm_noise_state:                                                                                                        u32,
+    rpm_wander_low:                                                                                                         f32,
     low_pass:                                                                                                               f32,
     combustion_body:                                                                                                        f32,
     combustion_velocity:                                                                                                    f32,
+    combustion_body_high:                                                                                                   f32,
+    combustion_velocity_high:                                                                                               f32,
     shift_envelope:                                                                                                         f32,
+    shift_age:                                                                                                              f32,
+    shift_reengage_phase:                                                                                                   f32,
+    shift_reengage_level:                                                                                                   f32,
+    shift_reengage_count:                                                                                                   u32,
     starter_envelope:                                                                                                       f32,
     starter_age:                                                                                                            f32,
     shutdown_envelope:                                                                                                      f32,
@@ -82,7 +90,13 @@ Synth :: struct {
 }
 
 new :: proc(seed := u32(0x6d2b79f5)) -> Synth {
-    return {noise_state = seed, rotor_phase_b = .31, rotor_phase_c = .67}
+    stable_seed := seed == 0 ? u32(0x6d2b79f5) : seed
+    return {
+        noise_state = stable_seed,
+        rpm_noise_state = stable_seed ~ 0x9e3779b9,
+        rotor_phase_b = .31,
+        rotor_phase_c = .67,
+    }
 }
 
 approach :: proc(current, target, rate, seconds: f32) -> f32 {
@@ -165,13 +179,18 @@ car_rate_from_speed :: proc(speed_normalized: f32) -> f32 {
 trigger_shift :: proc(synth: ^Synth) {
     if synth == nil do return
     synth.shift_envelope = 1
-    synth.combustion_velocity += 58 * synth.level * (1 - synth.rotor_mix)
+    synth.shift_age = 0
+    synth.shift_reengage_level = 0
+    synth.combustion_velocity += 16 * synth.level * (1 - synth.rotor_mix)
 }
 
 trigger_start :: proc(synth: ^Synth) {
     if synth == nil do return
-    synth.starter_envelope = 1
-    synth.starter_age = 0
+    residual_rotation := clamp(max(synth.level, synth.rate), 0, 1)
+    // Re-engaging while the crankshaft or turbine is still coasting should
+    // produce a brief hot catch, not replay the full cold starter gesture.
+    synth.starter_envelope = max(1 - residual_rotation * .76, f32(.22))
+    synth.starter_age = residual_rotation * .07
     synth.starter_phase = 0
     synth.shutdown_envelope = 0
 }
@@ -229,6 +248,7 @@ render :: proc(synth: ^Synth, controls: Controls, samples: []f32) {
     target_level := controls.active ? f32(1) : f32(0)
     seconds_per_sample := f32(1.0 / SAMPLE_RATE)
     shift_decay := f32(math.exp(f64(-24 * seconds_per_sample)))
+    shift_reengage_decay := f32(math.exp(f64(-72 * seconds_per_sample)))
     starter_decay := f32(math.exp(f64(-4.8 * seconds_per_sample)))
     shutdown_decay := f32(math.exp(f64(-10.5 * seconds_per_sample)))
     throttle_decay := f32(math.exp(f64(-15 * seconds_per_sample)))
@@ -258,7 +278,18 @@ render :: proc(synth: ^Synth, controls: Controls, samples: []f32) {
         )
         synth.level = approach(synth.level, target_level, controls.active ? f32(7) : f32(12), seconds_per_sample)
 
-        crank_hz := 18 + synth.rate * 92
+        // Combustion torque and governor response never hold a mathematically
+        // perfect period. A separate very-low-passed noise source introduces
+        // subtle cycle timing drift, strongest at idle and when damaged,
+        // without changing the commanded average RPM.
+        rpm_noise := noise(&synth.rpm_noise_state)
+        synth.rpm_wander_low += (rpm_noise - synth.rpm_wander_low) * .00032
+        wander_depth :=
+            (.0035 + (1 - synth.rate) * .0105) *
+            (1 - synth.power * .32) *
+            (1 + synth.damage * 1.4) *
+            (1 - synth.rotor_mix * .55)
+        crank_hz := (18 + synth.rate * 92) * (1 + synth.rpm_wander_low * wander_depth)
         firing_hz := crank_hz * 2
         propeller_hz := 10 + synth.rate * 48
         propeller_tip_hz := 430 + synth.rate * 970 + synth.propeller_airspeed * 180
@@ -320,6 +351,12 @@ render :: proc(synth: ^Synth, controls: Controls, samples: []f32) {
             }
             synth.combustion_velocity +=
                 (42 + synth.power * 78) * firing_variation * firing_strength * synth.level * (1 - synth.rotor_mix)
+            // A stiffer head/exhaust mode receives less energy and decays
+            // faster than the block fundamental. Its different response to
+            // load prevents each firing event from sounding like the same
+            // single resonant thud.
+            synth.combustion_velocity_high +=
+                (26 + synth.power * 52) * firing_variation * firing_strength * synth.level * (1 - synth.rotor_mix)
             if synth.overrun_envelope > .01 && synth.rotor_mix < .75 && noise(&synth.noise_state) > .18 {
                 synth.overrun_level += (.28 + synth.rate * .24) * synth.overrun_envelope * (1 - synth.rotor_mix)
             }
@@ -377,9 +414,19 @@ render :: proc(synth: ^Synth, controls: Controls, samples: []f32) {
         synth.combustion_velocity -= synth.combustion_body * body_angular * body_angular * seconds_per_sample
         synth.combustion_velocity *= f32(math.exp(f64(-105 * seconds_per_sample)))
         synth.combustion_body += synth.combustion_velocity * seconds_per_sample
+        body_high_hz := 185 + synth.rate * 115 + synth.power * 28
+        body_high_angular := body_high_hz * TAU
+        synth.combustion_velocity_high -=
+            synth.combustion_body_high * body_high_angular * body_high_angular * seconds_per_sample
+        synth.combustion_velocity_high *= f32(math.exp(f64(-(168 + synth.power * 26) * seconds_per_sample)))
+        synth.combustion_body_high += synth.combustion_velocity_high * seconds_per_sample
 
         light_mechanical := crank * .18 + harmonic * .12 + pulse_sine * .04
-        loaded_combustion := firing_pulse * .27 + synth.low_pass * .18 + synth.combustion_body * .62
+        loaded_combustion :=
+            firing_pulse * .25 +
+            synth.low_pass * .17 +
+            synth.combustion_body * .57 +
+            synth.combustion_body_high * (.24 + synth.power * .12)
         piston_signal := light_mechanical + loaded_combustion * synth.power
         intake := rough - synth.low_pass
 
@@ -525,15 +572,38 @@ render :: proc(synth: ^Synth, controls: Controls, samples: []f32) {
         shutdown_signal := shutdown_wave * synth.shutdown_envelope * .13
 
         // A short torque cut exposes the resonant driveline thump triggered by
-        // the gearbox without discontinuously muting the engine.
+        // the gearbox without discontinuously muting the engine. Re-engagement
+        // follows after the unload interval instead of landing on the same
+        // sample as the torque cut.
+        previous_shift_age := synth.shift_age
+        if synth.shift_envelope > .00001 {
+            synth.shift_age += seconds_per_sample
+            if previous_shift_age < .052 && synth.shift_age >= .052 {
+                synth.shift_reengage_phase = 0
+                synth.shift_reengage_level = (.10 + synth.power * .15) * synth.transmission_mix * (1 - synth.rotor_mix)
+                synth.combustion_velocity += 46 * synth.level * (1 - synth.rotor_mix)
+                synth.shift_reengage_count += 1
+            }
+        }
+        synth.shift_reengage_phase += (68 + synth.rate * 46) * seconds_per_sample
+        synth.shift_reengage_phase -= math.floor(synth.shift_reengage_phase)
+        shift_reengage :=
+            math.sin(synth.shift_reengage_phase * TAU) * synth.shift_reengage_level * (.72 + synth.power * .28)
         torque_cut := 1 - synth.shift_envelope * .28
         amplitude := (.16 + synth.power * .28) * synth.level * torque_cut
         sample = clamp(
-            signal * amplitude + throttle_signal + overrun_signal + coast_signal + starter_signal + shutdown_signal,
+            signal * amplitude +
+            throttle_signal +
+            overrun_signal +
+            coast_signal +
+            starter_signal +
+            shutdown_signal +
+            shift_reengage,
             -.92,
             .92,
         )
         synth.shift_envelope *= shift_decay
+        synth.shift_reengage_level *= shift_reengage_decay
         synth.throttle_envelope *= throttle_decay
         synth.overrun_envelope *= overrun_decay
         synth.misfire_envelope *= misfire_decay

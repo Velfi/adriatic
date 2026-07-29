@@ -24,9 +24,10 @@ Vehicle_Impact_Detector :: struct {
 CRASH_VOICE_COUNT :: 4
 
 Crash_Mixer :: struct {
-    voices:      [CRASH_VOICE_COUNT]Crash_Synth,
-    next_voice:  int,
-    stolen_tail: f32,
+    voices:            [CRASH_VOICE_COUNT]Crash_Synth,
+    next_voice:        int,
+    stolen_tail_left:  f32,
+    stolen_tail_right: f32,
 }
 
 detect_vehicle_impact :: proc(
@@ -80,6 +81,18 @@ vehicle_audio_damage_step :: proc(current, impact_severity, delta_seconds: f32) 
     return clamp(damage, 0, 1)
 }
 
+vehicle_impact_pan :: proc(before_x, before_z, after_x, after_z, listener_yaw: f32) -> f32 {
+    // The solver impulse points away from the contacted object, so invert it
+    // to recover the apparent collision-source direction.
+    source_x := before_x - after_x
+    source_z := before_z - after_z
+    magnitude := f32(math.sqrt(f64(source_x * source_x + source_z * source_z)))
+    if magnitude < .001 do return 0
+    right_x := f32(math.cos(f64(listener_yaw)))
+    right_z := -f32(math.sin(f64(listener_yaw)))
+    return clamp((source_x * right_x + source_z * right_z) / magnitude, -1, 1)
+}
+
 Crash_Synth :: struct {
     noise_state:         u32,
     age:                 f32,
@@ -89,6 +102,7 @@ Crash_Synth :: struct {
     surface_wetness:     f32,
     slide_speed:         f32,
     obliqueness:         f32,
+    pan:                 f32,
     surface:             Crash_Surface,
     profile:             Crash_Profile,
     body_scale:          f32,
@@ -190,6 +204,7 @@ trigger_crash :: proc(
     profile: Crash_Profile = .Car,
     surface_wetness: f32 = 0,
     obliqueness: f32 = 0,
+    pan: f32 = 0,
 ) {
     if synth == nil do return
     synth.age = 0
@@ -198,6 +213,7 @@ trigger_crash :: proc(
     synth.surface_wetness = clamp(surface_wetness, 0, 1)
     synth.slide_speed = clamp(slide_speed, 0, 1)
     synth.obliqueness = clamp(obliqueness, 0, 1)
+    synth.pan = clamp(pan, -1, 1) * (.10 + synth.obliqueness * .30)
     synth.surface = surface
     synth.profile = profile
     glass_profile := f32(1)
@@ -369,6 +385,7 @@ trigger_crash_mixer :: proc(
     profile: Crash_Profile = .Car,
     surface_wetness: f32 = 0,
     obliqueness: f32 = 0,
+    pan: f32 = 0,
 ) -> int {
     if mixer == nil do return -1
     voice_index := mixer.next_voice
@@ -394,7 +411,17 @@ trigger_crash_mixer :: proc(
         // Preserve the old voice's final sample, then decay it quickly in the
         // mixer. This bridges the replacement boundary without retaining a
         // full fifth synthesis voice.
-        mixer.stolen_tail = clamp(mixer.stolen_tail + mixer.voices[voice_index].last_output, f32(-.65), f32(.65))
+        stolen_voice := &mixer.voices[voice_index]
+        mixer.stolen_tail_left = clamp(
+            mixer.stolen_tail_left + stolen_voice.last_output * (1 - stolen_voice.pan),
+            f32(-.65),
+            f32(.65),
+        )
+        mixer.stolen_tail_right = clamp(
+            mixer.stolen_tail_right + stolen_voice.last_output * (1 + stolen_voice.pan),
+            f32(-.65),
+            f32(.65),
+        )
     }
     trigger_crash(
         &mixer.voices[voice_index],
@@ -405,6 +432,7 @@ trigger_crash_mixer :: proc(
         profile,
         surface_wetness,
         obliqueness,
+        pan,
     )
     mixer.next_voice = (voice_index + 1) % CRASH_VOICE_COUNT
     return voice_index
@@ -726,8 +754,39 @@ render_crash_mixer_add :: proc(mixer: ^Crash_Mixer, samples: []f32) {
     }
     tail_decay := f32(math.exp(f64(-185.0 / SAMPLE_RATE)))
     for &sample in samples {
-        sample += mixer.stolen_tail
-        mixer.stolen_tail *= tail_decay
-        if abs(mixer.stolen_tail) < .000001 do mixer.stolen_tail = 0
+        sample += (mixer.stolen_tail_left + mixer.stolen_tail_right) * .5
+        mixer.stolen_tail_left *= tail_decay
+        mixer.stolen_tail_right *= tail_decay
+        if abs(mixer.stolen_tail_left) < .000001 do mixer.stolen_tail_left = 0
+        if abs(mixer.stolen_tail_right) < .000001 do mixer.stolen_tail_right = 0
+    }
+}
+
+render_crash_mixer_stereo_add :: proc(mixer: ^Crash_Mixer, stereo: []f32) {
+    if mixer == nil do return
+    frame_count := len(stereo) / 2
+    scratch: [BUFFER_SAMPLES]f32
+    for &voice in mixer.voices {
+        offset := 0
+        for offset < frame_count {
+            count := min(BUFFER_SAMPLES, frame_count - offset)
+            for index in 0 ..< count do scratch[index] = 0
+            render_crash_add(&voice, scratch[:count])
+            for index in 0 ..< count {
+                sample := scratch[index]
+                stereo[(offset + index) * 2] += sample * (1 - voice.pan)
+                stereo[(offset + index) * 2 + 1] += sample * (1 + voice.pan)
+            }
+            offset += count
+        }
+    }
+    tail_decay := f32(math.exp(f64(-185.0 / SAMPLE_RATE)))
+    for frame in 0 ..< frame_count {
+        stereo[frame * 2] += mixer.stolen_tail_left
+        stereo[frame * 2 + 1] += mixer.stolen_tail_right
+        mixer.stolen_tail_left *= tail_decay
+        mixer.stolen_tail_right *= tail_decay
+        if abs(mixer.stolen_tail_left) < .000001 do mixer.stolen_tail_left = 0
+        if abs(mixer.stolen_tail_right) < .000001 do mixer.stolen_tail_right = 0
     }
 }

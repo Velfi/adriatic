@@ -130,6 +130,55 @@ soft_surface_toe_contact_emphasizes_scuff_over_tap :: proc(t: ^testing.T) {
 }
 
 @(test)
+loose_surfaces_produce_deterministic_density_controlled_micro_grains :: proc(t: ^testing.T) {
+    gravel, matching, asphalt :=
+        engine_sound.new_footstep(63), engine_sound.new_footstep(63), engine_sound.new_footstep(63)
+    gravel_samples, matching_samples, asphalt_samples: [engine_sound.SAMPLE_RATE / 4]f32
+    engine_sound.trigger_footstep(&gravel, .8, .Gravel)
+    engine_sound.trigger_footstep(&matching, .8, .Gravel)
+    engine_sound.trigger_footstep(&asphalt, .8, .Asphalt)
+    engine_sound.render_footstep_add(&gravel, gravel_samples[:])
+    engine_sound.render_footstep_add(&matching, matching_samples[:])
+    engine_sound.render_footstep_add(&asphalt, asphalt_samples[:])
+
+    testing.expect(t, gravel_samples == matching_samples)
+    testing.expect(t, gravel.grain_count == matching.grain_count)
+    testing.expect(t, gravel.grain_count > asphalt.grain_count * 5)
+    testing.expect(t, gravel.grain_count >= 8)
+}
+
+@(test)
+loose_surface_grains_use_aperiodic_seeded_intervals :: proc(t: ^testing.T) {
+    first, matching := engine_sound.new_footstep(65), engine_sound.new_footstep(65)
+    engine_sound.trigger_footstep(&first, 1, .Gravel)
+    engine_sound.trigger_footstep(&matching, 1, .Gravel)
+    event_samples: [32]int
+    event_count := 0
+    previous_count := u32(0)
+    first_sample, matching_sample: [1]f32
+    for sample_index in 0 ..< engine_sound.SAMPLE_RATE / 4 {
+        engine_sound.render_footstep_add(&first, first_sample[:])
+        engine_sound.render_footstep_add(&matching, matching_sample[:])
+        testing.expect(t, first_sample == matching_sample)
+        if first.grain_count != previous_count {
+            event_samples[event_count] = sample_index
+            event_count += 1
+            previous_count = first.grain_count
+        }
+    }
+
+    testing.expect(t, event_count >= 8)
+    distinct_intervals := 0
+    reference_interval := event_samples[1] - event_samples[0]
+    for index in 2 ..< event_count {
+        interval := event_samples[index] - event_samples[index - 1]
+        if interval != reference_interval do distinct_intervals += 1
+    }
+    testing.expect(t, distinct_intervals >= event_count / 2)
+    testing.expect(t, first.grain_count == matching.grain_count)
+}
+
+@(test)
 wet_footsteps_add_surface_appropriate_water_contact :: proc(t: ^testing.T) {
     dry, wet_asphalt, wet_dirt :=
         engine_sound.new_footstep(67), engine_sound.new_footstep(67), engine_sound.new_footstep(67)
@@ -188,13 +237,16 @@ saturated_footstep_mixer_steals_quietest_tail_click_free :: proc(t: ^testing.T) 
     }
     mixer.voices[2].age = mixer.voices[2].duration * .96
     mixer.voices[2].last_output = .2
+    mixer.voices[2].pan = -.14
     stolen := engine_sound.trigger_footstep_mixer(&mixer, .7, .Grass)
     testing.expect(t, stolen == 2)
-    testing.expect(t, math.abs(f64(mixer.stolen_tail - .2)) < 1e-6)
+    testing.expect(t, math.abs(f64(mixer.stolen_tail_left - .228)) < 1e-6)
+    testing.expect(t, math.abs(f64(mixer.stolen_tail_right - .172)) < 1e-6)
 
     with_tail := mixer
     without_tail := mixer
-    without_tail.stolen_tail = 0
+    without_tail.stolen_tail_left = 0
+    without_tail.stolen_tail_right = 0
     with_samples, without_samples: [1024]f32
     engine_sound.render_footstep_mixer_add(&with_tail, with_samples[:])
     engine_sound.render_footstep_mixer_add(&without_tail, without_samples[:])
@@ -202,4 +254,50 @@ saturated_footstep_mixer_steals_quietest_tail_click_free :: proc(t: ^testing.T) 
     last_difference := math.abs(f64(with_samples[len(with_samples) - 1] - without_samples[len(without_samples) - 1]))
     testing.expect(t, math.abs(first_difference - .2) < 1e-5)
     testing.expect(t, last_difference < first_difference * .02)
+
+    stereo_tail := mixer
+    no_stereo_tail := mixer
+    no_stereo_tail.stolen_tail_left = 0
+    no_stereo_tail.stolen_tail_right = 0
+    with_stereo, without_stereo: [2]f32
+    engine_sound.render_footstep_mixer_stereo_add(&stereo_tail, with_stereo[:])
+    engine_sound.render_footstep_mixer_stereo_add(&no_stereo_tail, without_stereo[:])
+    testing.expect(t, math.abs(f64((with_stereo[0] - without_stereo[0]) - .228)) < 1e-6)
+    testing.expect(t, math.abs(f64((with_stereo[1] - without_stereo[1]) - .172)) < 1e-6)
+}
+
+@(test)
+ordinary_footsteps_alternate_stereo_side_while_landings_stay_centered :: proc(t: ^testing.T) {
+    mixer := engine_sound.new_footstep_mixer(83)
+    left := engine_sound.trigger_footstep_mixer(&mixer, .8, .Cobblestone)
+    right := engine_sound.trigger_footstep_mixer(&mixer, .8, .Cobblestone)
+    landing := engine_sound.trigger_footstep_mixer(&mixer, .8, .Cobblestone, true)
+    testing.expect(t, mixer.voices[left].pan < 0)
+    testing.expect(t, mixer.voices[right].pan > 0)
+    testing.expect(t, mixer.voices[landing].pan == 0)
+
+    stereo: [4096 * 2]f32
+    engine_sound.render_footstep_mixer_stereo_add(&mixer, stereo[:])
+    left_energy, right_energy := f64(0), f64(0)
+    for frame in 0 ..< len(stereo) / 2 {
+        left_energy += f64(stereo[frame * 2] * stereo[frame * 2])
+        right_energy += f64(stereo[frame * 2 + 1] * stereo[frame * 2 + 1])
+    }
+    testing.expect(t, left_energy > 0)
+    testing.expect(t, right_energy > 0)
+}
+
+@(test)
+stereo_footstep_render_collapses_exactly_to_mono_render :: proc(t: ^testing.T) {
+    mono_mixer, stereo_mixer := engine_sound.new_footstep_mixer(89), engine_sound.new_footstep_mixer(89)
+    engine_sound.trigger_footstep_mixer(&mono_mixer, .72, .Gravel)
+    engine_sound.trigger_footstep_mixer(&stereo_mixer, .72, .Gravel)
+    mono: [2048]f32
+    stereo: [len(mono) * 2]f32
+    engine_sound.render_footstep_mixer_add(&mono_mixer, mono[:])
+    engine_sound.render_footstep_mixer_stereo_add(&stereo_mixer, stereo[:])
+    for index in 0 ..< len(mono) {
+        collapsed := (stereo[index * 2] + stereo[index * 2 + 1]) * .5
+        testing.expect(t, math.abs(f64(collapsed - mono[index])) < 1e-6)
+    }
 }

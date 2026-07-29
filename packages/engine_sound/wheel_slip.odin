@@ -20,6 +20,10 @@ Slip_Synth :: struct {
     squeal_phase:                                       f32,
     squeal_phase_secondary:                             f32,
     stick_phase:                                        f32,
+    squeal_mode_offset:                                 f32,
+    squeal_mode_target:                                 f32,
+    squeal_mode_timer:                                  f32,
+    squeal_mode_count:                                  u32,
     aggregate_timer:                                    f32,
     aggregate_phase:                                    f32,
     aggregate_hz:                                       f32,
@@ -77,12 +81,32 @@ render_slip_add :: proc(synth: ^Slip_Synth, controls: Slip_Controls, samples: []
         scrub := rough - synth.noise_low
         synth.wander_low += (rough - synth.wander_low) * .0007
 
+        // Strong dry stick-slip shifts between nearby tire-belt modes rather
+        // than sustaining one electronic pitch indefinitely. Seeded targets
+        // are approached smoothly; water and loose ground suppress the mode
+        // changes along with the coherent rubber squeal.
+        if synth.stick_depth > .4 {
+            synth.squeal_mode_timer -= seconds_per_sample
+            if synth.squeal_mode_timer <= 0 {
+                mode_variation := noise(&synth.noise_state)
+                interval_variation := (noise(&synth.noise_state) + 1) * .5
+                synth.squeal_mode_target = mode_variation * (.025 + synth.stick_depth * .035)
+                synth.squeal_mode_timer = .16 + interval_variation * .44
+                synth.squeal_mode_count += 1
+            }
+        } else {
+            synth.squeal_mode_target = 0
+            synth.squeal_mode_timer = 0
+        }
+        synth.squeal_mode_offset = approach(synth.squeal_mode_offset, synth.squeal_mode_target, 6, seconds_per_sample)
+
         // Separate phases keep the detuned mode continuous when the primary
         // oscillator wraps. Slow noise wander prevents a sterile fixed tone.
         squeal_hz :=
             (520 + synth.speed * 980 + synth.amount * 210 + synth.wander_low * 34) *
             (1 - synth.wetness * .18) *
-            (1 - synth.looseness * .12)
+            (1 - synth.looseness * .12) *
+            (1 + synth.squeal_mode_offset)
         synth.squeal_phase += squeal_hz * seconds_per_sample
         synth.squeal_phase_secondary += squeal_hz * 1.037 * seconds_per_sample
         synth.squeal_phase -= math.floor(synth.squeal_phase)

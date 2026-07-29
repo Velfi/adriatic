@@ -246,6 +246,30 @@ lower_can_pressure_softens_and_reduces_sustained_spray :: proc(t: ^testing.T) {
 }
 
 @(test)
+strong_atomization_widens_the_aerosol_plume :: proc(t: ^testing.T) {
+    narrow, wide := spray_audio.new_synth(60), spray_audio.new_synth(60)
+    spray_audio.set_active(&narrow, true, .05)
+    spray_audio.set_active(&wide, true, 1)
+    narrow.intensity, wide.intensity = .05, 1
+    narrow_samples, wide_samples: [spray_audio.SAMPLE_RATE]f32
+    spray_audio.render(&narrow, narrow_samples[:])
+    spray_audio.render(&wide, wide_samples[:])
+
+    testing.expect(t, wide.aerosol_spread > narrow.aerosol_spread * 2)
+    narrow_side, wide_side := f64(0), f64(0)
+    narrow_mid, wide_mid := f64(0), f64(0)
+    for frame in 0 ..< len(narrow_samples) / spray_audio.CHANNELS {
+        narrow_left, narrow_right := narrow_samples[frame * 2], narrow_samples[frame * 2 + 1]
+        wide_left, wide_right := wide_samples[frame * 2], wide_samples[frame * 2 + 1]
+        narrow_side += f64((narrow_left - narrow_right) * (narrow_left - narrow_right))
+        wide_side += f64((wide_left - wide_right) * (wide_left - wide_right))
+        narrow_mid += f64((narrow_left + narrow_right) * (narrow_left + narrow_right))
+        wide_mid += f64((wide_left + wide_right) * (wide_left + wide_right))
+    }
+    testing.expect(t, wide_side / wide_mid > narrow_side / narrow_mid * 2)
+}
+
+@(test)
 spray_pan_tracks_cursor_direction_and_moves_smoothly :: proc(t: ^testing.T) {
     left, right := spray_audio.new_synth(61), spray_audio.new_synth(61)
     spray_audio.set_active(&left, true, .8, -1)
