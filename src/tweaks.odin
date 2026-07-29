@@ -996,9 +996,9 @@ tweak_draw_lab_switcher :: proc(editor: ^Editor) {
 imgui_draw_tweaks :: proc(editor: ^Editor) {
     if editor == nil || !editor.tweak_panel_visible do return
     tweak_sync_from_editor(editor)
-    // Keep the panel between the tool palette and the custom inspector.
-    im.SetNextWindowPos({570, 150}, im.Cond.Always)
-    im.SetNextWindowSize({390, 540}, im.Cond.Always)
+    // Set initial placement and size; ImGui persists later user changes.
+    im.SetNextWindowPos({570, 150}, im.Cond.FirstUseEver)
+    im.SetNextWindowSize({390, 540}, im.Cond.FirstUseEver)
     if im.Begin("Adriatic Tweaks") {
         if im.Button("Save tweaks") do tweak_save_editor(editor)
         im.SameLine()
