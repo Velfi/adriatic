@@ -165,7 +165,7 @@ live_control_terrain_brush_response :: proc(editor: ^Editor, request_id: string)
         size = editor.greek_asset_scale
     }
     return fmt.aprintf(
-        `{"ok":true,"id":"%s","tool":"%s","radius":%.3f,"strength":%.3f,"hardness":%.3f,"width":%.3f,"height":%.3f,"size":%.3f,"mode":"%s"}`,
+        `{{"ok":true,"id":"%s","tool":"%s","radius":%.3f,"strength":%.3f,"hardness":%.3f,"width":%.3f,"height":%.3f,"size":%.3f,"mode":"%s"}}`,
         request_id,
         live_control_terrain_brush_name(editor),
         radius,
@@ -191,7 +191,7 @@ live_control_audio_status_response :: proc(editor: ^Editor, request_id: string) 
         device_id = sdl.GetAudioStreamDevice(stream)
     }
     return fmt.aprintf(
-        `{"ok":true,"id":"%s","stream":%v,"device":%d,"queued_bytes":%d,"volume":%.3f,"muted":%v,"main_menu":%v,"pause_screen":"%v","console":%v,"in_map":%v}`,
+        `{{"ok":true,"id":"%s","stream":%v,"device":%d,"queued_bytes":%d,"volume":%.3f,"muted":%v,"main_menu":%v,"pause_screen":"%v","console":%v,"in_map":%v}}`,
         request_id,
         stream != nil,
         device_id,
@@ -221,13 +221,25 @@ live_control_poll :: proc(editor: ^Editor) {
     }
     request_id, payload := request[:separator], request[separator + 1:]
     command, arguments := "npc", payload
-    if payload == "terrain_brush_get" || payload == "audio_status" || payload == "rondine_stage" {
+    if payload == "terrain_brush_get" ||
+       payload == "audio_status" ||
+       payload == "rondine_stage" ||
+       payload == "gameplay" {
         command, arguments = payload, ""
     } else if command_separator := strings.index_byte(payload, '\t'); command_separator >= 0 {
         command, arguments = payload[:command_separator], payload[command_separator + 1:]
     }
     response: string
-    if command == "rondine_stage" {
+    if command == "gameplay" {
+        editor.main_menu_active = false
+        editor.pause_screen = .Closed
+        editor_spawn_into_world(editor)
+        response = fmt.aprintf(
+            `{{"ok":true,"id":"%s","in_map":%v,"message":"Entered gameplay"}}`,
+            request_id,
+            editor.in_map,
+        )
+    } else if command == "rondine_stage" {
         stage_rondine(editor)
         if editor.rondine_visible {
             player_place(
@@ -265,7 +277,8 @@ live_control_poll :: proc(editor: ^Editor) {
     } else if command == "terrain_brush_set" {
         fields := strings.split(arguments, "\t", context.temp_allocator)
         if len(fields) != 8 {
-            response = fmt.aprintf(`{"ok":false,"id":"%s","error":"malformed terrain brush settings"}`, request_id)
+            response =
+                fmt.aprintf(`{{"ok":false,"id":"%s","error":"malformed terrain brush settings"}}`, request_id)
         } else {
             radius, radius_ok := live_control_parse_optional_f32(fields[1])
             strength, strength_ok := live_control_parse_optional_f32(fields[2])
@@ -298,7 +311,8 @@ live_control_poll :: proc(editor: ^Editor) {
                !height_ok ||
                !size_ok ||
                !mode_ok {
-                response = fmt.aprintf(`{"ok":false,"id":"%s","error":"invalid terrain brush settings"}`, request_id)
+                response =
+                    fmt.aprintf(`{{"ok":false,"id":"%s","error":"invalid terrain brush settings"}}`, request_id)
             } else {
                 switch fields[0] {
                 case "sculpt":
@@ -403,7 +417,7 @@ live_control_poll :: proc(editor: ^Editor) {
         }
         if focused {
             response = fmt.aprintf(
-                `{"ok":true,"id":"%s","%s":"%s","message":"Focused %s"}`,
+                `{{"ok":true,"id":"%s","%s":"%s","message":"Focused %s"}}`,
                 request_id,
                 subject,
                 focused_name,
@@ -411,7 +425,7 @@ live_control_poll :: proc(editor: ^Editor) {
             )
         } else {
             response = fmt.aprintf(
-                `{"ok":false,"id":"%s","error":"%s","requested":"%s"}`,
+                `{{"ok":false,"id":"%s","error":"%s","requested":"%s"}}`,
                 request_id,
                 not_found,
                 arguments,

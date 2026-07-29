@@ -8126,9 +8126,21 @@ adriatic_run :: proc(
     }
     benchmark_mode := benchmark_requested && len(args) >= 9
     instrument_duration_seconds: f64
+    instrument_window_width, instrument_window_height := 1280, 720
+    instrument_world_width, instrument_world_height := ADRIATIC_WORLD_WIDTH, ADRIATIC_WORLD_HEIGHT
     if len(args) >= 3 && args[1] == "--instrument-seconds" {
         parsed, ok := strconv.parse_f64(args[2])
         if ok do instrument_duration_seconds = max(parsed, 0)
+        if len(args) >= 7 {
+            parsed_int, parsed_ok := strconv.parse_int(args[3])
+            if parsed_ok do instrument_window_width = clamp(int(parsed_int), 320, 7680)
+            parsed_int, parsed_ok = strconv.parse_int(args[4])
+            if parsed_ok do instrument_window_height = clamp(int(parsed_int), 240, 4320)
+            parsed_int, parsed_ok = strconv.parse_int(args[5])
+            if parsed_ok do instrument_world_width = parsed_int == 0 ? 0 : clamp(int(parsed_int), 320, 7680)
+            parsed_int, parsed_ok = strconv.parse_int(args[6])
+            if parsed_ok do instrument_world_height = parsed_int == 0 ? 0 : clamp(int(parsed_int), 180, 4320)
+        }
     }
     loading_preview_mode := len(args) >= 3 && args[1] == "--loading-preview"
     loading_preview_output := loading_preview_mode ? args[2] : ""
@@ -8239,11 +8251,27 @@ adriatic_run :: proc(
     if loading_preview_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     rl.SetConfigFlags(flags)
     rl.SetWorldRenderSize(
-        u32(benchmark_mode ? benchmark_world_width : ADRIATIC_WORLD_WIDTH),
-        u32(benchmark_mode ? benchmark_world_height : ADRIATIC_WORLD_HEIGHT),
+        u32(
+            benchmark_mode ? benchmark_world_width :
+            instrument_duration_seconds > 0 ? instrument_world_width :
+            ADRIATIC_WORLD_WIDTH,
+        ),
+        u32(
+            benchmark_mode ? benchmark_world_height :
+            instrument_duration_seconds > 0 ? instrument_world_height :
+            ADRIATIC_WORLD_HEIGHT,
+        ),
     )
-    initial_width := i32(benchmark_mode ? benchmark_window_width : 1280)
-    initial_height := i32(benchmark_mode ? benchmark_window_height : 720)
+    initial_width := i32(
+        benchmark_mode ? benchmark_window_width :
+        instrument_duration_seconds > 0 ? instrument_window_width :
+        1280,
+    )
+    initial_height := i32(
+        benchmark_mode ? benchmark_window_height :
+        instrument_duration_seconds > 0 ? instrument_window_height :
+        720,
+    )
     if capture_kind == .Narrow do initial_width = 1000
     if capture_kind == .Compact do initial_width = 760
     if capture_target == "quest-log-480" {

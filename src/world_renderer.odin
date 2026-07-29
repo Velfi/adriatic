@@ -517,14 +517,30 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
 TOWN_MOUSE_CACHE_COUNT :: len(terrain.DEFAULT_ISLAND_SIGNS) * 7 + 4
 TOWN_MOUSE_ANIMATION_HZ :: f32(30)
 TOWN_MOUSE_TERRAIN_RADIUS :: f32(2.5)
+TOWN_MOUSE_GROUND_SAMPLE_COUNT :: 32
 
 Town_Mouse_Geometry_Cache_Entry :: struct {
-    valid:            bool,
-    model:            Mouse_Model,
-    scale:            f32,
-    animation_bucket: i64,
-    wind:             [2]f32,
-    vertices:         [dynamic]World_Vertex,
+    valid:                       bool,
+    model:                       Mouse_Model,
+    scale:                       f32,
+    animation_bucket:            i64,
+    wind:                        [2]f32,
+    project_revision:            u64,
+    terrain_revision:            u64,
+    ground_valid:                bool,
+    ground_model:                Mouse_Model,
+    ground_scale:                f32,
+    ground_project_revision:     u64,
+    ground_terrain_revision:     u64,
+    ground_sample_count:         int,
+    ground_samples:              [TOWN_MOUSE_GROUND_SAMPLE_COUNT]f32,
+    vertices:                    [dynamic]World_Vertex,
+}
+
+Town_Mouse_Ground_Cache_Context :: struct {
+    entry:  ^Town_Mouse_Geometry_Cache_Entry,
+    reuse:  bool,
+    cursor: int,
 }
 
 Libellula_Geometry_Cache_Entry :: struct {
@@ -542,6 +558,13 @@ Terrain_Dirty_Bounds :: struct {
     revision:     u64,
     min_x, min_z: f32,
     max_x, max_z: f32,
+}
+
+Architecture_Street_Area_Cache :: struct {
+    valid: bool,
+    area: circulation.Area,
+    project_revision, terrain_revision: u64,
+    vertices: [dynamic]World_Vertex,
 }
 
 World_Push :: struct {
@@ -661,6 +684,8 @@ World_Renderer :: struct {
     climbing_leaf_cache_reuses:          u64,
     town_mouse_cache_builds:             u64,
     town_mouse_cache_reuses:             u64,
+    town_mouse_ground_cache_hits:        u64,
+    town_mouse_ground_cache_misses:      u64,
     road_mesh:                           roads.Mesh,
     road_graph:                          roads.Graph,
     road_graph_valid:                    bool,
@@ -675,6 +700,7 @@ World_Renderer :: struct {
     architecture_alley_project_revision: u64,
     architecture_alley_overlap_cache:    [dynamic]Architecture_Alley_Overlap_Cache,
     architecture_alley_overlap_plan:     [dynamic]architecture.City_Alley,
+    architecture_street_area_cache:      [dynamic]Architecture_Street_Area_Cache,
     laundry_geometry_cache:              [dynamic]World_Vertex,
     laundry_geometry_revision:           u64,
     laundry_geometry_terrain_revision:   u64,
@@ -708,6 +734,7 @@ World_Renderer :: struct {
 }
 
 world_renderer: World_Renderer
+town_mouse_ground_cache_context: ^Town_Mouse_Ground_Cache_Context
 climbing_leaf_card_capture: ^[dynamic]Bougainvillea_Card_Descriptor
 
 when ODIN_OS == .Windows {
@@ -11077,13 +11104,8 @@ world_architecture_grass_height_scale :: proc(footprints: []Architecture_Grass_F
     return scale
 }
 
-world_architecture_municipal_lamp :: proc(editor: ^Editor, center_x, center_z, rotation: f32, roadway: bool = true) {
+world_architecture_municipal_lamp_fixture :: proc(editor: ^Editor, center_x, center_z, rotation: f32) {
     base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
-    // Circulation areas can intersect the frustum while individual lamps sit
-    // far outside it. Cull against the widest roadway pool plus the fixture
-    // height so visible light never pops, while off-screen boxes, pool
-    // triangles, and halo cards are not submitted.
-    if !world_sphere_in_view(editor, {center_x, base_y + 2.2, center_z}, 8.75, .5) do return
     metal := rl.Color{82, 91, 87, 255}
     world_box_rotated({center_x, base_y + .14, center_z}, {.46, .28, .46}, rotation, {91, 91, 79, 255})
     world_box_rotated({center_x, base_y + 2.25, center_z}, {.13, 4.35, .13}, rotation, metal)
@@ -11099,6 +11121,12 @@ world_architecture_municipal_lamp :: proc(editor: ^Editor, center_x, center_z, r
         {255, 210, 140, 255},
         2,
     )
+}
+
+world_architecture_municipal_lamp_effects :: proc(editor: ^Editor, center_x, center_z, rotation: f32, roadway: bool = true) {
+    base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
+    if !world_sphere_in_view(editor, {center_x, base_y + 2.2, center_z}, 8.75, .5) do return
+    fixture_x, fixture_z := world_rotate_xz(center_x, center_z, 0, .72, rotation)
     world_billboard_material_uv(
         editor,
         {fixture_x, base_y + 4.04, fixture_z},
@@ -11137,6 +11165,13 @@ world_architecture_municipal_lamp :: proc(editor: ^Editor, center_x, center_z, r
     )
 }
 
+world_architecture_municipal_lamp :: proc(editor: ^Editor, center_x, center_z, rotation: f32, roadway: bool = true) {
+    base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
+    if !world_sphere_in_view(editor, {center_x, base_y + 2.2, center_z}, 8.75, .5) do return
+    world_architecture_municipal_lamp_fixture(editor, center_x, center_z, rotation)
+    world_architecture_municipal_lamp_effects(editor, center_x, center_z, rotation, roadway)
+}
+
 world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud_cover: f32) {
     if editor == nil || lab_scene_suppresses_procedural_circulation(editor) do return
     min_x, max_x := f32(1e9), f32(-1e9)
@@ -11158,10 +11193,21 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     road := rl.Color{117, 119, 110, 255}
     shoulder := rl.Color{177, 164, 135, 255}
     path_color := rl.Color{194, 184, 157, 255}
-    for area in plan.areas[:plan.count] {
+    if len(world_renderer.architecture_street_area_cache) < plan.count {
+        resize(&world_renderer.architecture_street_area_cache, plan.count)
+    }
+    for area, area_index in plan.areas[:plan.count] {
         area_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z)
         area_radius := f32(math.sqrt(f64(area.width * area.width + area.length * area.length))) * .5 + 2
         if !world_sphere_in_view(editor, {area.center_x, area_y, area.center_z}, area_radius) do continue
+        cache := &world_renderer.architecture_street_area_cache[area_index]
+        cache_valid := cache.valid && cache.area == area &&
+            cache.project_revision == editor.project.revision &&
+            cache.terrain_revision == editor.terrain_revision
+        if cache_valid {
+            append(&world_renderer.vertices, ..cache.vertices[:])
+        } else {
+        first := len(world_renderer.vertices)
         switch area.kind {
         case .Street:
             world_land_surface_rotated(editor, area.center_x, area.center_z, area.width, 5.5, area.rotation, .12, road)
@@ -11189,7 +11235,7 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                     along := -area.width * .5 + area.width * (f32(lamp) + .5) / f32(lamp_count)
                     side := lamp % 2 == 0 ? f32(-1) : f32(1)
                     lamp_x, lamp_z := world_rotate_xz(area.center_x, area.center_z, along, side * 3.65, area.rotation)
-                    world_architecture_municipal_lamp(
+                    world_architecture_municipal_lamp_fixture(
                         editor,
                         lamp_x,
                         lamp_z,
@@ -11248,7 +11294,7 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                     // local +Z rotates to (-sin(theta), cos(theta)); negate
                     // target X so the cantilever actually faces the square.
                     facing := f32(math.atan2(f64(lamp_x - area.center_x), f64(area.center_z - lamp_z)))
-                    world_architecture_municipal_lamp(editor, lamp_x, lamp_z, facing, false)
+                    world_architecture_municipal_lamp_fixture(editor, lamp_x, lamp_z, facing)
                 }
             }
         case .Path, .Forecourt:
@@ -11262,6 +11308,35 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                 .20,
                 path_color,
             )
+        }
+        clear(&cache.vertices)
+        append(&cache.vertices, ..world_renderer.vertices[first:])
+        cache.area = area
+        cache.project_revision = editor.project.revision
+        cache.terrain_revision = editor.terrain_revision
+        cache.valid = true
+        }
+
+        // Halos are camera-facing/daylight-sensitive and pools must remain in
+        // the late transparent submission, so regenerate only these effects.
+        if area.kind == .Street && editor.architecture_city_plan.lamp_count == 0 {
+            lamp_count := clamp(int(area.width / 22), 2, 6)
+            for lamp in 0 ..< lamp_count {
+                along := -area.width * .5 + area.width * (f32(lamp) + .5) / f32(lamp_count)
+                side := lamp % 2 == 0 ? f32(-1) : f32(1)
+                lamp_x, lamp_z := world_rotate_xz(area.center_x, area.center_z, along, side * 3.65, area.rotation)
+                world_architecture_municipal_lamp_effects(editor, lamp_x, lamp_z, area.rotation + (side < 0 ? f32(0) : f32(math.PI)))
+            }
+        } else if area.kind == .Plaza {
+            for corner_x in -1 ..= 1 {
+                if corner_x == 0 do continue
+                for corner_z in -1 ..= 1 {
+                    if corner_z == 0 do continue
+                    lamp_x, lamp_z := world_rotate_xz(area.center_x, area.center_z, f32(corner_x) * (area.width * .5 - 1.4), f32(corner_z) * (area.length * .5 - 1.4), area.rotation)
+                    facing := f32(math.atan2(f64(lamp_x - area.center_x), f64(area.center_z - lamp_z)))
+                    world_architecture_municipal_lamp_effects(editor, lamp_x, lamp_z, facing, false)
+                }
+            }
         }
     }
 
@@ -18485,6 +18560,25 @@ mouse_surface_height :: proc(editor: ^Editor, x, z: f32) -> f32 {
     return height
 }
 
+mouse_surface_height_for_model :: proc(editor: ^Editor, x, z: f32) -> f32 {
+    cache := town_mouse_ground_cache_context
+    if cache == nil do return mouse_surface_height(editor, x, z)
+    sample_index := cache.cursor
+    cache.cursor += 1
+    if cache.reuse && sample_index < cache.entry.ground_sample_count {
+        world_renderer.town_mouse_ground_cache_hits += 1
+        return cache.entry.ground_samples[sample_index]
+    }
+
+    height := mouse_surface_height(editor, x, z)
+    world_renderer.town_mouse_ground_cache_misses += 1
+    if sample_index < len(cache.entry.ground_samples) {
+        cache.entry.ground_samples[sample_index] = height
+        cache.entry.ground_sample_count = max(cache.entry.ground_sample_count, sample_index + 1)
+    }
+    return height
+}
+
 MOUSE_CONTACT_SKIN :: f32(.006)
 
 mouse_ground_contact :: proc(
@@ -18493,7 +18587,7 @@ mouse_ground_contact :: proc(
     half_height: f32,
     planted: bool,
 ) -> third_person.Vec3 {
-    floor := mouse_surface_height(editor, point.x, point.z) + half_height + MOUSE_CONTACT_SKIN
+    floor := mouse_surface_height_for_model(editor, point.x, point.z) + half_height + MOUSE_CONTACT_SKIN
     result := point
     result.y = planted ? floor : max(result.y, floor)
     return result
@@ -18715,6 +18809,49 @@ world_mouse_model_scaled :: proc(editor: ^Editor, model: Mouse_Model, scale: f32
     }
 }
 
+town_mouse_ground_cache_matches :: proc(
+    entry: ^Town_Mouse_Geometry_Cache_Entry,
+    model: Mouse_Model,
+    scale: f32,
+    project_revision, terrain_revision: u64,
+) -> bool {
+    return entry != nil &&
+           entry.ground_valid &&
+           entry.ground_model == model &&
+           entry.ground_scale == scale &&
+           entry.ground_project_revision == project_revision &&
+           entry.ground_terrain_revision == terrain_revision
+}
+
+when ODIN_TEST {
+    @(test)
+    town_mouse_ground_cache_keys_stationary_model_and_world_revisions :: proc(t: ^testing.T) {
+        model := Mouse_Model {
+            position = {12, 3, -8},
+            rotation = .4,
+            build = 1.1,
+            grounded = true,
+        }
+        entry := Town_Mouse_Geometry_Cache_Entry {
+            ground_valid = true,
+            ground_model = model,
+            ground_scale = .9,
+            ground_project_revision = 7,
+            ground_terrain_revision = 11,
+        }
+        testing.expect(t, town_mouse_ground_cache_matches(&entry, model, .9, 7, 11))
+        moved := model
+        moved.position.x += .01
+        testing.expect(t, !town_mouse_ground_cache_matches(&entry, moved, .9, 7, 11))
+        ungrounded := model
+        ungrounded.grounded = false
+        testing.expect(t, !town_mouse_ground_cache_matches(&entry, ungrounded, .9, 7, 11))
+        testing.expect(t, !town_mouse_ground_cache_matches(&entry, model, 1, 7, 11))
+        testing.expect(t, !town_mouse_ground_cache_matches(&entry, model, .9, 8, 11))
+        testing.expect(t, !town_mouse_ground_cache_matches(&entry, model, .9, 7, 12))
+    }
+}
+
 world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model, scale: f32, cache_index: int) {
     if editor == nil || cache_index < 0 || cache_index >= TOWN_MOUSE_CACHE_COUNT {
         world_mouse_model_scaled(editor, model, scale)
@@ -18733,7 +18870,9 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
        entry.model == model &&
        entry.scale == scale &&
        entry.animation_bucket == animation_bucket &&
-       entry.wind == wind {
+       entry.wind == wind &&
+       entry.project_revision == editor.project.revision &&
+       entry.terrain_revision == editor.terrain_revision {
         world_renderer.town_mouse_cache_reuses += 1
         profile := dio.flame_graph_begin(dio.flame_graph_current(), "town_mouse_cache_reuse")
         append(&world_renderer.vertices, ..entry.vertices[:])
@@ -18745,7 +18884,26 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
 
     first := len(world_renderer.vertices)
+    ground_cache_reuse := town_mouse_ground_cache_matches(
+        entry,
+        model,
+        scale,
+        editor.project.revision,
+        editor.terrain_revision,
+    )
+    if !ground_cache_reuse do entry.ground_sample_count = 0
+    ground_cache := Town_Mouse_Ground_Cache_Context {
+        entry = entry,
+        reuse = ground_cache_reuse,
+    }
+    town_mouse_ground_cache_context = &ground_cache
     world_mouse_model_scaled(editor, model, scale)
+    town_mouse_ground_cache_context = nil
+    entry.ground_valid = true
+    entry.ground_model = model
+    entry.ground_scale = scale
+    entry.ground_project_revision = editor.project.revision
+    entry.ground_terrain_revision = editor.terrain_revision
     clear(&entry.vertices)
     if first < len(world_renderer.vertices) {
         append(&entry.vertices, ..world_renderer.vertices[first:])
@@ -18755,6 +18913,8 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
     entry.scale = scale
     entry.animation_bucket = animation_bucket
     entry.wind = wind
+    entry.project_revision = editor.project.revision
+    entry.terrain_revision = editor.terrain_revision
 }
 
 world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
@@ -18766,7 +18926,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     p := model.position
     if model.grounded {
         raw_height := terrain.sample_height(&editor.project, 0, p.x, p.z)
-        p.y += mouse_surface_height(editor, p.x, p.z) - raw_height
+        p.y += mouse_surface_height_for_model(editor, p.x, p.z) - raw_height
     }
     rotation := model.rotation
     @(no_instrumentation)
@@ -19001,7 +19161,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         {
             parent = 3,
             bind_position = {0, .69, .20},
-            position = {head_sway + head_turn_x, head_y, head_z + .20},
+            // Sniffing belongs to the head pose so the connected snout hull
+            // travels with the nose, whiskers, and teeth attached to its tip.
+            position = {head_sway + head_turn_x, head_y, head_z + .20 + sniff},
             pitch = run_weight * .055 - bound * .060 + slope_pitch * .42 + scurry_lean * .42,
             roll = body_roll * .22,
         },
@@ -19046,7 +19208,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     )
     muzzle_x := posed_muzzle_tip.x
     muzzle_y := posed_muzzle_tip.y + .010
-    muzzle_z := posed_muzzle_tip.z + sniff
+    muzzle_z := posed_muzzle_tip.z
     world_tapered_disc_depth_rotated(
         local_point(p, rotation, muzzle_x, muzzle_y, muzzle_z + .012),
         .028,
@@ -20213,7 +20375,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             tail_radii[tail_index] = editor.tweak.player_tail.radius * (1 - weight * .48)
             tail_colors[tail_index] = paw
             tail_floor :=
-                mouse_surface_height(editor, point.position.x, point.position.z) +
+                mouse_surface_height_for_model(editor, point.position.x, point.position.z) +
                 tail_radii[tail_index] +
                 MOUSE_CONTACT_SKIN
             tail_points[tail_index].y = max(tail_points[tail_index].y, tail_floor)
@@ -20240,7 +20402,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                         tail_points[tail_index].z * (1 - amount) + tail_points[tail_index + 1].z * amount,
                     }
                     radius := tail_radii[tail_index] * (1 - amount) + tail_radii[tail_index + 1] * amount
-                    floor := mouse_surface_height(editor, sample.x, sample.z) + radius + MOUSE_CONTACT_SKIN
+                    floor := mouse_surface_height_for_model(editor, sample.x, sample.z) + radius + MOUSE_CONTACT_SKIN
                     penetration := floor - sample.y
                     if penetration > 0 {
                         // Apply the full correction at both ends so their
@@ -20280,7 +20442,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             tail_colors[tail_index] = paw
             if model.grounded {
                 surface :=
-                    mouse_surface_height(editor, tail_points[tail_index].x, tail_points[tail_index].z) +
+                    mouse_surface_height_for_model(editor, tail_points[tail_index].x, tail_points[tail_index].z) +
                     tail_radii[tail_index] +
                     MOUSE_CONTACT_SKIN
                 tail_points[tail_index].y = max(tail_points[tail_index].y, surface)
@@ -23594,6 +23756,8 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.architecture_alley_render_cache)
     delete(world_renderer.architecture_alley_overlap_cache)
     delete(world_renderer.architecture_alley_overlap_plan)
+    for &entry in world_renderer.architecture_street_area_cache do delete(entry.vertices)
+    delete(world_renderer.architecture_street_area_cache)
     delete(world_renderer.laundry_geometry_cache)
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)

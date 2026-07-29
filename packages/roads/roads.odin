@@ -10,6 +10,7 @@ MAX_JUNCTION_POINTS :: MAX_EDGES * 2
 EDGE_LANE_COUNT :: 6
 END_CAP_SEGMENTS :: 8
 PAVEMENT_QUERY_SEGMENTS :: 12
+PAVEMENT_QUERY_LEAF_EDGES :: 4
 
 Vec3 :: [3]f32
 
@@ -57,8 +58,27 @@ Pavement_Hit :: struct {
 }
 
 Pavement_Query :: struct {
-    points:     [MAX_EDGES][PAVEMENT_QUERY_SEGMENTS + 1]Vec3,
-    edge_count: int,
+    points:                    [MAX_EDGES][PAVEMENT_QUERY_SEGMENTS + 1]Vec3,
+    edge_bounds:               [MAX_EDGES]Pavement_Query_Bounds,
+    edge_order:                [MAX_EDGES]int,
+    nodes:                     [MAX_EDGES * 2 - 1]Pavement_Query_Node,
+    edge_count:                int,
+    node_count:                int,
+    // Exposed for tests and profiling. This is the number of edge splines
+    // whose segments were examined by the most recent query.
+    last_candidate_edge_count: int,
+}
+
+Pavement_Query_Bounds :: struct {
+    min_x, min_z: f32,
+    max_x, max_z: f32,
+}
+
+Pavement_Query_Node :: struct {
+    bounds:       Pavement_Query_Bounds,
+    max_radius:   f32,
+    first, count: int,
+    left, right:  int,
 }
 
 Grip_Profile :: struct {
@@ -317,28 +337,135 @@ edge_tangent :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
     )
 }
 
+pavement_query_bounds_union :: proc(a, b: Pavement_Query_Bounds) -> Pavement_Query_Bounds {
+    return {
+        min(a.min_x, b.min_x),
+        min(a.min_z, b.min_z),
+        max(a.max_x, b.max_x),
+        max(a.max_z, b.max_z),
+    }
+}
+
+pavement_query_build_node :: proc(graph: ^Graph, query: ^Pavement_Query, first, count: int) -> int {
+    node_index := query.node_count
+    query.node_count += 1
+    node := &query.nodes[node_index]
+    node.first = first
+    node.count = count
+    node.left = -1
+    node.right = -1
+
+    first_edge := query.edge_order[first]
+    node.bounds = query.edge_bounds[first_edge]
+    node.max_radius = graph.edges[first_edge].half_width + graph.edges[first_edge].shoulder_width
+    for cursor in first + 1 ..< first + count {
+        edge_index := query.edge_order[cursor]
+        node.bounds = pavement_query_bounds_union(node.bounds, query.edge_bounds[edge_index])
+        node.max_radius = max(
+            node.max_radius,
+            graph.edges[edge_index].half_width + graph.edges[edge_index].shoulder_width,
+        )
+    }
+    if count <= PAVEMENT_QUERY_LEAF_EDGES do return node_index
+
+    extent_x := node.bounds.max_x - node.bounds.min_x
+    extent_z := node.bounds.max_z - node.bounds.min_z
+    split_x := extent_x >= extent_z
+    // MAX_EDGES is deliberately small, so an in-place insertion sort keeps
+    // construction allocation-free without making query-time work linear.
+    for cursor in first + 1 ..< first + count {
+        edge_index := query.edge_order[cursor]
+        edge_bounds := query.edge_bounds[edge_index]
+        center := edge_bounds.min_z + edge_bounds.max_z
+        if split_x do center = edge_bounds.min_x + edge_bounds.max_x
+        insertion := cursor
+        for insertion > first {
+            other_index := query.edge_order[insertion - 1]
+            other_bounds := query.edge_bounds[other_index]
+            other_center := other_bounds.min_z + other_bounds.max_z
+            if split_x do other_center = other_bounds.min_x + other_bounds.max_x
+            if other_center < center || (other_center == center && other_index < edge_index) do break
+            query.edge_order[insertion] = other_index
+            insertion -= 1
+        }
+        query.edge_order[insertion] = edge_index
+    }
+
+    left_count := count / 2
+    node.left = pavement_query_build_node(graph, query, first, left_count)
+    node.right = pavement_query_build_node(graph, query, first + left_count, count - left_count)
+    return node_index
+}
+
 pavement_query_build :: proc(graph: ^Graph, query: ^Pavement_Query) {
     if query == nil do return
     query^ = {}
     if graph == nil do return
     query.edge_count = graph.edge_count
     for edge, edge_index in graph.edges[:graph.edge_count] {
+        query.edge_order[edge_index] = edge_index
         for segment in 0 ..= PAVEMENT_QUERY_SEGMENTS {
             query.points[edge_index][segment] = edge_point(graph, edge, f32(segment) / PAVEMENT_QUERY_SEGMENTS)
         }
+        first := query.points[edge_index][0]
+        bounds := Pavement_Query_Bounds {first.x, first.z, first.x, first.z}
+        for point in query.points[edge_index][1:] {
+            bounds.min_x = min(bounds.min_x, point.x)
+            bounds.min_z = min(bounds.min_z, point.z)
+            bounds.max_x = max(bounds.max_x, point.x)
+            bounds.max_z = max(bounds.max_z, point.z)
+        }
+        query.edge_bounds[edge_index] = bounds
     }
+    if graph.edge_count > 0 do _ = pavement_query_build_node(graph, query, 0, graph.edge_count)
 }
 
-pavement_at_cached :: proc(graph: ^Graph, query: ^Pavement_Query, position: Vec3) -> Pavement_Hit {
-    hit := Pavement_Hit {
-        edge_index = -1,
-        distance   = f32(1e9),
+pavement_query_bounds_distance_squared :: #force_inline proc(bounds: Pavement_Query_Bounds, position: Vec3) -> f32 {
+    delta_x := max(max(bounds.min_x - position.x, f32(0)), position.x - bounds.max_x)
+    delta_z := max(max(bounds.min_z - position.z, f32(0)), position.z - bounds.max_z)
+    return delta_x * delta_x + delta_z * delta_z
+}
+
+Pavement_Query_State :: struct {
+    hit, surface_hit:                           Pavement_Hit,
+    best_distance_squared:                      f32,
+    best_surface_distance_squared:              f32,
+}
+
+pavement_query_node :: proc(
+    graph: ^Graph,
+    query: ^Pavement_Query,
+    node_index: int,
+    position: Vec3,
+    state: ^Pavement_Query_State,
+) {
+    node := &query.nodes[node_index]
+    bounds_distance_squared := pavement_query_bounds_distance_squared(node.bounds, position)
+    radius := node.max_radius
+    within_possible_surface :=
+        position.x >= node.bounds.min_x - radius &&
+        position.x <= node.bounds.max_x + radius &&
+        position.z >= node.bounds.min_z - radius &&
+        position.z <= node.bounds.max_z + radius
+    if bounds_distance_squared > state.best_distance_squared && !within_possible_surface do return
+
+    if node.left >= 0 {
+        left_distance := pavement_query_bounds_distance_squared(query.nodes[node.left].bounds, position)
+        right_distance := pavement_query_bounds_distance_squared(query.nodes[node.right].bounds, position)
+        if right_distance < left_distance {
+            pavement_query_node(graph, query, node.right, position, state)
+            pavement_query_node(graph, query, node.left, position, state)
+        } else {
+            pavement_query_node(graph, query, node.left, position, state)
+            pavement_query_node(graph, query, node.right, position, state)
+        }
+        return
     }
-    surface_hit := hit
-    if graph == nil || query == nil || query.edge_count != graph.edge_count do return hit
-    best_distance_squared := f32(1e18)
-    best_surface_distance_squared := f32(1e18)
-    for edge, edge_index in graph.edges[:graph.edge_count] {
+
+    for cursor in node.first ..< node.first + node.count {
+        edge_index := query.edge_order[cursor]
+        edge := graph.edges[edge_index]
+        query.last_candidate_edge_count += 1
         previous := query.points[edge_index][0]
         for segment in 1 ..= PAVEMENT_QUERY_SEGMENTS {
             current := query.points[edge_index][segment]
@@ -361,32 +488,53 @@ pavement_at_cached :: proc(graph: ^Graph, query: ^Pavement_Query, position: Vec3
             distance_squared := delta_x * delta_x + delta_z * delta_z
             on_surface :=
                 distance_squared <= (edge.half_width + edge.shoulder_width) * (edge.half_width + edge.shoulder_width)
-            if distance_squared < best_distance_squared {
-                best_distance_squared = distance_squared
-                hit.pavement = edge.pavement
-                hit.edge_index = edge_index
-                hit.height = closest_y
-                hit.on_surface = on_surface
+            if distance_squared < state.best_distance_squared ||
+               (distance_squared == state.best_distance_squared &&
+                (state.hit.edge_index < 0 || edge_index < state.hit.edge_index)) {
+                state.best_distance_squared = distance_squared
+                state.hit.pavement = edge.pavement
+                state.hit.edge_index = edge_index
+                state.hit.height = closest_y
+                state.hit.on_surface = on_surface
             }
             // Surface membership is the union of every road corridor. A
             // nearby narrow branch must not make a point on a wider road look
             // off-road merely because that branch has the closest centerline.
-            if on_surface && distance_squared < best_surface_distance_squared {
-                best_surface_distance_squared = distance_squared
-                surface_hit.pavement = edge.pavement
-                surface_hit.edge_index = edge_index
-                surface_hit.height = closest_y
-                surface_hit.on_surface = true
+            if on_surface &&
+               (distance_squared < state.best_surface_distance_squared ||
+                (distance_squared == state.best_surface_distance_squared &&
+                 (state.surface_hit.edge_index < 0 || edge_index < state.surface_hit.edge_index))) {
+                state.best_surface_distance_squared = distance_squared
+                state.surface_hit.pavement = edge.pavement
+                state.surface_hit.edge_index = edge_index
+                state.surface_hit.height = closest_y
+                state.surface_hit.on_surface = true
             }
             previous = current
         }
     }
-    if surface_hit.edge_index >= 0 {
-        surface_hit.distance = f32(math.sqrt(f64(best_surface_distance_squared)))
-        return surface_hit
+}
+
+pavement_at_cached :: proc(graph: ^Graph, query: ^Pavement_Query, position: Vec3) -> Pavement_Hit {
+    hit := Pavement_Hit {
+        edge_index = -1,
+        distance   = f32(1e9),
     }
-    if hit.edge_index >= 0 do hit.distance = f32(math.sqrt(f64(best_distance_squared)))
-    return hit
+    if graph == nil || query == nil || query.edge_count != graph.edge_count do return hit
+    query.last_candidate_edge_count = 0
+    state := Pavement_Query_State {
+        hit                           = hit,
+        surface_hit                   = hit,
+        best_distance_squared         = f32(1e18),
+        best_surface_distance_squared = f32(1e18),
+    }
+    if query.node_count > 0 do pavement_query_node(graph, query, 0, position, &state)
+    if state.surface_hit.edge_index >= 0 {
+        state.surface_hit.distance = f32(math.sqrt(f64(state.best_surface_distance_squared)))
+        return state.surface_hit
+    }
+    if state.hit.edge_index >= 0 do state.hit.distance = f32(math.sqrt(f64(state.best_distance_squared)))
+    return state.hit
 }
 
 pavement_at :: proc(graph: ^Graph, position: Vec3) -> Pavement_Hit {
