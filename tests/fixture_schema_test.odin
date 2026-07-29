@@ -213,6 +213,63 @@ fixture_schema_production_graph_matches_frozen_v4 :: proc(t: ^testing.T) {
 }
 
 @(test)
+fixture_schema_production_policy_excludes_only_derived_session_state :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    repo_root, repo_err := os.get_working_directory(context.allocator)
+    testing.expect(t, repo_err == nil)
+    if repo_err != nil do return
+
+    generated, version, generated_ok, diagnostics := fixture_schema.build_manifest_report(
+        repo_root,
+        fmt.tprintf("%s/zelda-engine/packages", repo_root),
+    )
+    testing.expect(t, generated_ok)
+    testing.expect(t, diagnostics == "")
+    testing.expect(t, version == 4)
+    if !generated_ok do return
+
+    excluded_fields := [?]string {
+        "field=adriatic:packages/flight.Ace_Runtime|name=local_rate|",
+        "field=adriatic:packages/postale.Runtime|name=telemetry|",
+        "field=adriatic:packages/postale.Runtime|name=ace_telemetry|",
+        "field=adriatic:packages/libellula.Runtime|name=telemetry|",
+        "field=adriatic:src.Fixture|name=camera_target_lock|",
+    }
+    for field in excluded_fields {
+        testing.expect(t, !strings.contains(generated, field))
+    }
+
+    retained_fields := [?]string {
+        "field=adriatic:packages/flight.Ace_Runtime|name=energy|",
+        "field=adriatic:packages/flight.Ace_Runtime|name=edge_state|",
+        "field=adriatic:packages/flight.Ace_Runtime|name=edge_seconds|",
+        "field=adriatic:packages/postale.Runtime|name=body|",
+        "field=adriatic:packages/postale.Runtime|name=flight_model|",
+        "field=adriatic:packages/postale.Runtime|name=ace_tuning|",
+        "field=adriatic:packages/postale.Runtime|name=ace_runtime|",
+        "field=adriatic:packages/postale.Runtime|name=spawn_orientation|",
+        "field=adriatic:packages/libellula.Runtime|name=body|",
+        "field=adriatic:packages/libellula.Runtime|name=tuning|",
+        "field=adriatic:packages/libellula.Runtime|name=spawn_orientation|",
+        "field=adriatic:src.Fixture|name=camera|",
+        "field=adriatic:src.Fixture|name=camera_pose|",
+        "field=adriatic:src.Fixture|name=cameras|",
+        "field=adriatic:src.Fixture|name=flight_camera|",
+        "field=adriatic:src.Fixture|name=editor_camera|",
+        "field=adriatic:src.Fixture|name=editor_focus|",
+        "field=adriatic:packages/rondine.Runtime|name=telemetry|",
+        "field=adriatic:packages/rondine.Runtime|name=wake|",
+        "field=adriatic:packages/rondine.Runtime|name=wake_count|",
+        "field=adriatic:packages/rondine.Runtime|name=wake_distance|",
+        "field=adriatic:packages/rondine.Runtime|name=wake_serial|",
+    }
+    for field in retained_fields {
+        testing.expect(t, strings.contains(generated, field))
+    }
+}
+
+@(test)
 fixture_schema_synthetic_failures_fail_closed :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()

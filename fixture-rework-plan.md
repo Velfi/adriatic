@@ -9596,6 +9596,60 @@ candidate/report/scaffold hashes, histories v1–v4 and every frozen hash
 unchanged, no committed v5 artifact, and a full suite whose only failure
 remains the expected frozen-v4/live-schema mismatch.
 
+#### M4R6A3 acceptance — 2026-07-29
+
+M4R6A3 is accepted. The production diff is exactly five tag additions:
+`flight.Ace_Runtime.local_rate`, both Postale telemetry fields, Libellula
+telemetry, and root `camera_target_lock`. No runtime behavior or schema version
+changed.
+
+- a separate live-manifest policy test proves all five exclusions and 22
+  fully-qualified neighboring retentions, including ACE persistent state,
+  both vehicles' body/tuning/spawn state, editor camera state, and all Rondine
+  telemetry/wake fields;
+- independent review confirms each excluded value is recomputed or
+  session-only, while Rondine's prior telemetry and wake feed the next step;
+- the deterministic post-policy candidate is 1,637 lines, 151,533 bytes, 169
+  records, and 153 root fields, SHA-256
+  `9c608e6ceed237e0398b362817521c1cb10d55056b4f17a462a4bbdf52b4b25b`;
+- the exact 4→5 report is 9,664 bytes, SHA-256
+  `32d69b16b5f8fcb7d5767a2a4f2e503982d1c3f68636200f1421b5eb6accd872`,
+  with 21 changes split 17 state and four supporting;
+- the exact unresolved scaffold is 88 lines and 2,797 bytes, SHA-256
+  `1c0cb64086b2408303850f8fe76feef592adbdc8af5155a2c7167a962a92a05e`,
+  with 17 ordered unresolved IDs. Its check and two deterministic renders
+  pass;
+- the v4→live diff/scaffold goldens were updated only for this audited policy
+  change. All earlier-version and synthetic goldens remain untouched;
+- focused policy/diff/scaffold tests pass 3/3 twice after formatting with zero
+  leaks; `make check` and histories v1–v4 pass;
+- the full suite is 752/753 plus Rondine 19/19; the sole failure remains the
+  expected frozen-v4/live-schema mismatch;
+- every frozen schema/history/migration hash remains exact, and no binary,
+  probe, temporary scaffold, or v5 artifact remains.
+
+### M4R6B1 — Install the exact unresolved 4→5 scaffold
+
+Use the production CLI installer to create the migration source boundary before
+writing any migration logic.
+
+1. Install only `src/fixture_migration_v0004_to_v0005.odin` through
+   `migration-scaffold 4 5`. Do not hand-author, overwrite, or reformat the
+   generated source.
+2. Lock the generated file at 88 lines, 2,797 bytes, and SHA-256
+   `1c0cb64086b2408303850f8fe76feef592adbdc8af5155a2c7167a962a92a05e`.
+   It must contain exactly the 17 sorted state IDs already pinned by the
+   scaffold golden, all `.Unresolved`.
+3. Run the official scaffold check against the live candidate twice and prove
+   exclusive-install/no-overwrite behavior. Do not add a runtime wrapper,
+   registry dispatch, v5 manifest/history package, schema-version bump, or
+   migration implementation in this slice.
+
+Acceptance requires the focused diff/scaffold/policy tests, `make check`,
+histories v1–v4, exact candidate/report/scaffold hashes, all frozen hashes
+unchanged, no generated binary or other v5 artifact, and the full suite with
+only the expected frozen-v4/live-schema mismatch.
+
 ## Milestone 4D — Install owned state and rebuild runtime resources
 
 Decode into temporary owned state, validate it, preserve root runtime

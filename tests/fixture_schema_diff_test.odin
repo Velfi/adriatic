@@ -567,21 +567,23 @@ fixture_schema_diff_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
         "field-add:adriatic:packages/flight.Body_State.orientation",
         "field-add:adriatic:packages/libellula.Runtime.spawn_orientation",
         "field-add:adriatic:packages/postale.Runtime.ace_runtime",
-        "field-add:adriatic:packages/postale.Runtime.ace_telemetry",
         "field-add:adriatic:packages/postale.Runtime.ace_tuning",
         "field-add:adriatic:packages/postale.Runtime.flight_model",
         "field-add:adriatic:packages/postale.Runtime.spawn_orientation",
         "field-order:adriatic:packages/flight.Body_State",
-        "field-order:adriatic:packages/libellula.Runtime",
         "field-remove:adriatic:packages/flight.Body_State.angular_velocity",
         "field-remove:adriatic:packages/flight.Body_State.basis",
         "field-remove:adriatic:packages/libellula.Runtime.spawn_basis",
+        "field-remove:adriatic:packages/libellula.Runtime.telemetry",
         "field-remove:adriatic:packages/postale.Runtime.spawn_basis",
+        "field-remove:adriatic:packages/postale.Runtime.telemetry",
+        "field-remove:adriatic:src.Fixture.camera_target_lock",
         "type-add:adriatic:packages/flight.Ace_Edge_State",
         "type-add:adriatic:packages/flight.Ace_Runtime",
-        "type-add:adriatic:packages/flight.Ace_Telemetry",
         "type-add:adriatic:packages/flight.Ace_Tuning",
         "type-add:adriatic:packages/postale.Flight_Model",
+        "type-remove:adriatic:packages/flight.Telemetry",
+        "type-remove:adriatic:packages/flight.Tri_Rotor_Telemetry",
     }
     testing.expect(t, first.from_version == 4 && first.to_version == 5)
     testing.expect(t, len(first.changes) == len(expected_ids))
@@ -592,28 +594,28 @@ fixture_schema_diff_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
         }
     }
     state_count, supporting_count := fixture_schema.schema_diff_report_counts(&first)
-    testing.expect(t, state_count == 14 && supporting_count == 5)
+    testing.expect(t, state_count == 17 && supporting_count == 4)
     testing.expect(t, first.frozen_sha256 == "fad52f4e0a38b35fffdf29ae3ffb3f91251780fe0ce2dc5990beba76f1e518fa")
-    testing.expect(t, first.candidate_sha256 == "7d0ec2be99a2cbdf53ec6ee3caa7c7ea86cda5d9a287d8e194106d29ba34762b")
+    testing.expect(t, first.candidate_sha256 == "9c608e6ceed237e0398b362817521c1cb10d55056b4f17a462a4bbdf52b4b25b")
     testing.expect(
         t,
-        first.candidate_line_count == 1658 &&
-        first.candidate_record_count == 172 &&
-        first.candidate_root_fields == 154,
+        first.candidate_line_count == 1637 &&
+        first.candidate_record_count == 169 &&
+        first.candidate_root_fields == 153,
     )
 
     first_rendered, first_render_ok := fixture_schema.schema_diff_report_render(&first, context.allocator)
     second_rendered, second_render_ok := fixture_schema.schema_diff_report_render(&second, context.allocator)
     testing.expect(
         t,
-        first_render_ok && second_render_ok && first_rendered == second_rendered && len(first_rendered) == 9098,
+        first_render_ok && second_render_ok && first_rendered == second_rendered && len(first_rendered) == 9664,
     )
     if first_render_ok {
         rendered_sha, sha_ok := fixture_schema.history_manifest_sha256_hex(
             transmute([]byte)first_rendered,
             context.allocator,
         )
-        testing.expect(t, sha_ok && rendered_sha == "edf30613795c0711c39efd3f82d7da68bd21589336f722cb367d8d8861f8336b")
+        testing.expect(t, sha_ok && rendered_sha == "32d69b16b5f8fcb7d5767a2a4f2e503982d1c3f68636200f1421b5eb6accd872")
         if sha_ok do delete(rendered_sha)
         delete(first_rendered)
     }

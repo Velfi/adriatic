@@ -28,7 +28,7 @@ Ace_Runtime :: struct {
     energy:       f32,
     edge_state:   Ace_Edge_State,
     edge_seconds: f32,
-    local_rate:   Vec3,
+    local_rate:   Vec3 `fixture:"-"`,
 }
 
 Ace_Telemetry :: struct {

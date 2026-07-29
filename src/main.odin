@@ -411,7 +411,7 @@ Fixture :: struct {
     quest_log_focus:                                int `fixture:"-"`,
     quest_log_scroll:                               int `fixture:"-"`,
     dialogue_resident:                              story.Resident `fixture:"-"`,
-    camera_target_lock:                             bool,
+    camera_target_lock:                             bool `fixture:"-"`,
     flight_control:                                 postale_game.Control `fixture:"-"`,
     atmosphere:                                     atmosphere.Atmosphere,
     vehicle_effects:                                particle_systems.Vehicle_Effects,

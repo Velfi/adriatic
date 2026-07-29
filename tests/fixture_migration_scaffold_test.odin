@@ -32,16 +32,19 @@ MIGRATION_V0004_TO_V0005_STATE_IDS :: [?]string {
     "field-add:adriatic:packages/flight.Body_State.orientation",
     "field-add:adriatic:packages/libellula.Runtime.spawn_orientation",
     "field-add:adriatic:packages/postale.Runtime.ace_runtime",
-    "field-add:adriatic:packages/postale.Runtime.ace_telemetry",
     "field-add:adriatic:packages/postale.Runtime.ace_tuning",
     "field-add:adriatic:packages/postale.Runtime.flight_model",
     "field-add:adriatic:packages/postale.Runtime.spawn_orientation",
     "field-order:adriatic:packages/flight.Body_State",
-    "field-order:adriatic:packages/libellula.Runtime",
     "field-remove:adriatic:packages/flight.Body_State.angular_velocity",
     "field-remove:adriatic:packages/flight.Body_State.basis",
     "field-remove:adriatic:packages/libellula.Runtime.spawn_basis",
+    "field-remove:adriatic:packages/libellula.Runtime.telemetry",
     "field-remove:adriatic:packages/postale.Runtime.spawn_basis",
+    "field-remove:adriatic:packages/postale.Runtime.telemetry",
+    "field-remove:adriatic:src.Fixture.camera_target_lock",
+    "type-remove:adriatic:packages/flight.Telemetry",
+    "type-remove:adriatic:packages/flight.Tri_Rotor_Telemetry",
 }
 
 MIGRATION_V0003_TO_V0004_STRUCTURAL_IDS :: [?]string {
@@ -349,9 +352,9 @@ fixture_migration_scaffold_v0004_to_live_v0005_is_exact :: proc(t: ^testing.T) {
     for value in source {
         if value == '\n' do line_count += 1
     }
-    testing.expect(t, line_count == 76 && len(source) == 2405)
+    testing.expect(t, line_count == 88 && len(source) == 2797)
     source_sha, sha_ok := fixture_schema.history_manifest_sha256_hex(transmute([]byte)source, context.allocator)
-    testing.expect(t, sha_ok && source_sha == "378cc8036c9af1a44175d1833752e645c01c3b7e9830cdbebbb1a798fb3a48fd")
+    testing.expect(t, sha_ok && source_sha == "1c0cb64086b2408303850f8fe76feef592adbdc8af5155a2c7167a962a92a05e")
     if sha_ok do delete(source_sha)
 
     scaffold, parse_error, parse_ok := fixture_schema.migration_scaffold_parse(

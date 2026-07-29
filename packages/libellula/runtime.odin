@@ -34,7 +34,7 @@ Runtime :: struct {
     vehicle:           vehicles.Vehicle,
     airframe:          flight.Tri_Rotor_Airframe,
     flight_runtime:    flight.Tri_Rotor_Runtime,
-    telemetry:         flight.Tri_Rotor_Telemetry,
+    telemetry:         flight.Tri_Rotor_Telemetry `fixture:"-"`,
     tuning:            Tuning,
     spawn_position:    flight.Vec3,
     spawn_orientation: quaternion128,
