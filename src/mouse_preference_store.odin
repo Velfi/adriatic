@@ -208,18 +208,23 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
         editor.mouse_pattern = Mouse_Fur_Pattern(payload.pattern)
         editor.mouse_headgear = Mouse_Accessory(payload.headgear)
         editor.mouse_scarf_enabled = payload.scarf_enabled
-        editor.mouse_scarf_color = {payload.scarf_color[0], payload.scarf_color[1], payload.scarf_color[2], payload.scarf_color[3]}
+        editor.mouse_scarf_color = {
+            payload.scarf_color[0],
+            payload.scarf_color[1],
+            payload.scarf_color[2],
+            payload.scarf_color[3],
+        }
         editor.gameplay_options = {
-            look_sensitivity = payload.look_sensitivity,
-            sound_fx_level = 1,
-            invert_look_x = payload.invert_look_x,
-            invert_look_y = payload.invert_look_y,
+            look_sensitivity    = payload.look_sensitivity,
+            sound_fx_level      = 1,
+            invert_look_x       = payload.invert_look_x,
+            invert_look_y       = payload.invert_look_y,
             invert_flight_pitch = payload.invert_flight_pitch,
-            show_hud = payload.show_hud,
-            crunchiness = Crunchiness(payload.crunchiness),
-            dither_mode = Dither_Mode(payload.dither_mode),
-            hdr_exposure = payload.hdr_exposure,
-            theme_mode = UI_Theme_Mode(payload.theme_mode),
+            show_hud            = payload.show_hud,
+            crunchiness         = Crunchiness(payload.crunchiness),
+            dither_mode         = Dither_Mode(payload.dither_mode),
+            hdr_exposure        = payload.hdr_exposure,
+            theme_mode          = UI_Theme_Mode(payload.theme_mode),
         }
         return true
     }

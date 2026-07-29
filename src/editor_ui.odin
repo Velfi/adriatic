@@ -615,17 +615,45 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         bounds := editor_ui_slider_bounds(layout, row)
         half := (bounds.width - 6) * .5
         ui_draw_text(.Label, "SHAPE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "SQUARE", editor.architecture_brush_shape == .Square)
-        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 24, half, 30}, "RECTANGLE", editor.architecture_brush_shape == .Rectangle)
-        editor_ui_panel_button({bounds.x, bounds.y + 58, half, 30}, "CIRCLE", editor.architecture_brush_shape == .Circle)
-        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 58, half, 30}, "MACARONI", editor.architecture_brush_shape == .Macaroni)
+        editor_ui_panel_button(
+            {bounds.x, bounds.y + 24, half, 30},
+            "SQUARE",
+            editor.architecture_brush_shape == .Square,
+        )
+        editor_ui_panel_button(
+            {bounds.x + half + 6, bounds.y + 24, half, 30},
+            "RECTANGLE",
+            editor.architecture_brush_shape == .Rectangle,
+        )
+        editor_ui_panel_button(
+            {bounds.x, bounds.y + 58, half, 30},
+            "CIRCLE",
+            editor.architecture_brush_shape == .Circle,
+        )
+        editor_ui_panel_button(
+            {bounds.x + half + 6, bounds.y + 58, half, 30},
+            "MACARONI",
+            editor.architecture_brush_shape == .Macaroni,
+        )
         row += 2
         bounds = editor_ui_slider_bounds(layout, row)
         third := (bounds.width - 12) / 3
         ui_draw_text(.Label, "PRESET", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        editor_ui_panel_button({bounds.x, bounds.y + 24, third, 30}, "SMALL", editor.architecture_brush_preset == .Small)
-        editor_ui_panel_button({bounds.x + third + 6, bounds.y + 24, third, 30}, "MEDIUM", editor.architecture_brush_preset == .Medium)
-        editor_ui_panel_button({bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}, "LARGE", editor.architecture_brush_preset == .Large)
+        editor_ui_panel_button(
+            {bounds.x, bounds.y + 24, third, 30},
+            "SMALL",
+            editor.architecture_brush_preset == .Small,
+        )
+        editor_ui_panel_button(
+            {bounds.x + third + 6, bounds.y + 24, third, 30},
+            "MEDIUM",
+            editor.architecture_brush_preset == .Medium,
+        )
+        editor_ui_panel_button(
+            {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30},
+            "LARGE",
+            editor.architecture_brush_preset == .Large,
+        )
         row += 1
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
@@ -1048,8 +1076,7 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             editor.architecture_brush_preset = .Small
         } else if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x + third + 6, bounds.y + 24, third, 30}) {
             editor.architecture_brush_preset = .Medium
-        } else if pressed &&
-                  rl.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}) {
+        } else if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}) {
             editor.architecture_brush_preset = .Large
         }
         row += 1

@@ -18,6 +18,10 @@ Quest_Node :: enum int {
     Post_Route,
     Magneto_Westbound,
     Magneto_Eastbound,
+    Weather_Reading,
+    Clinic_Medicine,
+    Clinic_Linens,
+    Clinic_Water,
 }
 
 quest_node_id :: proc(node: Quest_Node) -> quest.Node_ID {
@@ -49,8 +53,12 @@ Quest_Catalog :: struct {
     acceptance_requirements:   [1]quest.Requirement,
     meeting_requirements:      [1]quest.Requirement,
     stamp_reward:              [1]quest.Reward,
-    starts:                    [2]quest.Node_ID,
-    nodes:                     [13]quest.Node,
+    weather_reward:            [1]quest.Reward,
+    medicine_reward:           [1]quest.Reward,
+    linens_reward:             [1]quest.Reward,
+    water_reward:              [1]quest.Reward,
+    starts:                    [6]quest.Node_ID,
+    nodes:                     [17]quest.Node,
     definition:                quest.Definition,
 }
 
@@ -71,6 +79,10 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
     post := quest_node_id(.Post_Route)
     magneto_out := quest_node_id(.Magneto_Westbound)
     magneto_back := quest_node_id(.Magneto_Eastbound)
+    weather_reading := quest_node_id(.Weather_Reading)
+    clinic_medicine := quest_node_id(.Clinic_Medicine)
+    clinic_linens := quest_node_id(.Clinic_Linens)
+    clinic_water := quest_node_id(.Clinic_Water)
 
     catalog.magneto_out_successors = {magneto_back, first_letter, crash}
     catalog.first_letter_successors = {first_reply}
@@ -97,13 +109,17 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
     catalog.acceptance_requirements = {{node = ready}}
     catalog.meeting_requirements = {{node = acceptance}}
     catalog.stamp_reward = {{key = "stamp", amount = 1}}
-    catalog.starts = {magneto_out, post}
+    catalog.weather_reward = {{key = "weather-briefing", amount = 1}}
+    catalog.medicine_reward = {{key = "clinic-satchel", amount = 1}}
+    catalog.linens_reward = {{key = "dry-wrap", amount = 1}}
+    catalog.water_reward = {{key = "recovery-kit", amount = 1}}
+    catalog.starts = {magneto_out, post, weather_reading, clinic_medicine, clinic_linens, clinic_water}
 
     catalog.nodes = {
         {
             id = first_letter,
             key = "first-letter",
-            title = "Deliver Niko's sealed letter to Iva",
+            title = "A Recipe for a Clear Morning",
             instruction = "Carry Niko's sealed letter across the water and place it in Iva's hands.",
             location = "East island lighthouse",
             kind = .Objective,
@@ -117,7 +133,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = first_reply,
             key = "first-reply",
-            title = "Return Iva's reply to Niko",
+            title = "The Lighthouse Keeper's Reply",
             instruction = "Keep Iva's reply sealed until it reaches Niko at the bakery.",
             location = "West island bakery",
             kind = .Objective,
@@ -129,7 +145,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = invitation,
             key = "regatta-invitation",
-            title = "Deliver Niko's regatta invitation",
+            title = "An Invitation Across the Water",
             instruction = "Bring Niko's invitation to Iva before the regatta.",
             location = "East island lighthouse",
             kind = .Objective,
@@ -141,7 +157,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = crash,
             key = "crash-reported",
-            title = "Ask Bojan about the landing",
+            title = "The Honest Version",
             instruction = "Find Bojan and get the honest version of what happened to his aeroplane.",
             location = "West island airfield",
             kind = .Objective,
@@ -154,7 +170,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = diagnosed,
             key = "wing-diagnosed",
-            title = "Inspect the torn wing",
+            title = "Canvas and Crosswind",
             instruction = "Inspect Bojan's wing closely enough to identify what the repair needs.",
             location = "West island airfield",
             kind = .Objective,
@@ -165,7 +181,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = patched,
             key = "wing-patched",
-            title = "Apply the canvas patch",
+            title = "A Patch for Bojan's Wing",
             instruction = "Stretch Bojan's canvas patch over the torn wing panel.",
             location = "West island airfield",
             kind = .Objective,
@@ -176,7 +192,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = repaired,
             key = "repair-verified",
-            title = "Verify the aircraft repair",
+            title = "Three Checks Before Flight",
             instruction = "Turn the propeller and verify that the repaired wing is ready to fly.",
             location = "West island airfield",
             kind = .Objective,
@@ -195,7 +211,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = acceptance,
             key = "regatta-acceptance",
-            title = "Return Iva's regatta acceptance to Niko",
+            title = "Meet Me Beneath the Blue Awning",
             instruction = "Bring Iva's regatta acceptance to Niko beneath the blue awning.",
             location = "West island bakery",
             kind = .Objective,
@@ -207,7 +223,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = meeting,
             key = "awning-meeting",
-            title = "Join Niko and Iva beneath the blue awning",
+            title = "Beneath the Blue Awning",
             instruction = "Visit Niko and Iva beneath the blue awning after Iva's arrival for the regatta.",
             location = "West island regatta",
             kind = .Objective,
@@ -218,7 +234,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = post,
             key = "post-route",
-            title = "Carry the island post",
+            title = "The Island Post",
             instruction = "Keep the letters, bread, and lamp glass moving between the two islands.",
             location = "Across the water",
             kind = .Objective,
@@ -230,7 +246,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = magneto_out,
             key = "broken-magneto",
-            title = "Bring Marta's broken magneto to Gerta",
+            title = "A Spark Across the Water",
             instruction = "Carry the cracked magneto across the water so Gerta can match it to her spare.",
             location = "West island airfield",
             kind = .Objective,
@@ -242,13 +258,61 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
         {
             id = magneto_back,
             key = "replacement-magneto",
-            title = "Return Gerta's replacement magneto to Marta",
+            title = "A Dry Return",
             instruction = "Keep the replacement magneto dry and bring it back to Marta at the east airfield.",
             location = "East island airfield",
             kind = .Objective,
             objective = {kind = .Deliver, key = "replacement-magneto", target = "marta"},
             requirements = catalog.magneto_back_requirements[:],
             rewards = catalog.stamp_reward[:],
+        },
+        {
+            id = weather_reading,
+            key = "weather-reading",
+            title = "Three Signs of Weather",
+            instruction = "Ask for a weather reading at either airfield, then compare it with the real sky.",
+            location = "Either island airfield",
+            kind = .Objective,
+            objective = {kind = .Inspect, key = "weather-reading"},
+            rewards = catalog.weather_reward[:],
+            requires_acceptance = true,
+            hide_until_accepted = true,
+        },
+        {
+            id = clinic_medicine,
+            key = "clinic-medicine",
+            title = "The Quiet Crossing",
+            instruction = "Carry Dr Vesna's clinic medicine east to Anica without mixing it into the island post.",
+            location = "East island clinic",
+            kind = .Objective,
+            objective = {kind = .Deliver, key = "clinic-medicine", target = "anica"},
+            rewards = catalog.medicine_reward[:],
+            requires_acceptance = true,
+            hide_until_accepted = true,
+        },
+        {
+            id = clinic_linens,
+            key = "clinic-linens",
+            title = "Linens Before the Bura",
+            instruction = "Carry Petar's dry clinic linens east to Anica before the bura reaches the bay.",
+            location = "East island clinic",
+            kind = .Objective,
+            objective = {kind = .Deliver, key = "clinic-linens", target = "anica"},
+            rewards = catalog.linens_reward[:],
+            requires_acceptance = true,
+            hide_until_accepted = true,
+        },
+        {
+            id = clinic_water,
+            key = "clinic-water",
+            title = "Water Before Bravura",
+            instruction = "Carry Anica's sealed drinking water west to Dr Vesna at the clinic.",
+            location = "West island clinic",
+            kind = .Objective,
+            objective = {kind = .Deliver, key = "clinic-water", target = "vesna"},
+            rewards = catalog.water_reward[:],
+            requires_acceptance = true,
+            hide_until_accepted = true,
         },
     }
     catalog.definition = {
@@ -378,6 +442,10 @@ apply_quest_projection :: proc(state: ^State, graph_state: ^quest.State, catalog
     post := quest.completion_count(graph_state, definition, quest_node_id(.Post_Route))
     magneto_out := quest.completion_count(graph_state, definition, quest_node_id(.Magneto_Westbound))
     magneto_back := quest.completion_count(graph_state, definition, quest_node_id(.Magneto_Eastbound))
+    weather_reading := quest.completion_count(graph_state, definition, quest_node_id(.Weather_Reading))
+    clinic_medicine := quest.completion_count(graph_state, definition, quest_node_id(.Clinic_Medicine))
+    clinic_linens := quest.completion_count(graph_state, definition, quest_node_id(.Clinic_Linens))
+    clinic_water := quest.completion_count(graph_state, definition, quest_node_id(.Clinic_Water))
 
     switch {
     case meeting > 0:
@@ -419,7 +487,16 @@ apply_quest_projection :: proc(state: ^State, graph_state: ^quest.State, catalog
     }
 
     state.repeat_deliveries = post
-    state.completed_deliveries = first_letter + first_reply + invitation + acceptance + post
-    state.stamps_earned = state.completed_deliveries + magneto_back
+    state.weather_reading_done = weather_reading > 0
+    state.medicine_delivered = clinic_medicine > 0
+    state.linens_delivered = clinic_linens > 0
+    state.water_delivered = clinic_water > 0
+    state.has_weather_briefing = weather_reading > 0
+    state.has_clinic_satchel = clinic_medicine > 0
+    state.has_dry_wrap = clinic_linens > 0
+    state.has_recovery_kit = clinic_water > 0
+    state.completed_deliveries =
+        first_letter + first_reply + invitation + acceptance + post + clinic_medicine + clinic_linens + clinic_water
+    state.stamps_earned = first_letter + first_reply + invitation + acceptance + post + magneto_back + state.bonus_stamps
     return true
 }

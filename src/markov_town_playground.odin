@@ -8,6 +8,7 @@ import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
 import "core:strconv"
 import rl "zelda_engine:canvas2d"
 
@@ -152,6 +153,14 @@ markov_town_add_landmark :: proc(project: ^terrain.Project, x, z, width, depth, 
 settlement_park_site_clear :: proc(project: ^terrain.Project, x, z, width, depth: f32) -> bool {
     if project == nil do return false
     radius := f32(math.sqrt(f64(width * width + depth * depth))) * .5
+    // Groves should occupy residual open land, never pavement or its shoulder.
+    // Use the conservative enclosing footprint because the foliage rotation is
+    // chosen after the site is accepted.
+    empty_city: architecture.City_Plan
+    diameter := radius * 2
+    if !settlement_structure_clear(project, &empty_city, x, z, diameter, diameter, 0, 2) {
+        return false
+    }
     for structure in project.structures[:project.structure_count] {
         if structure.kind != .Architecture && structure.kind != .Foliage do continue
         other_radius := f32(math.sqrt(f64(structure.width * structure.width + structure.depth * structure.depth))) * .5
@@ -270,6 +279,8 @@ settlement_lab_configure :: proc(
     append_city_plan: bool = false,
 ) -> bool {
     if editor == nil do return false
+    if !append_city_plan do editor.settlement_patio_count = 0
+    patio_capture := target == "patio"
     fixture, vertical_map, seed_target := settlement_lab_target_parse(target)
     editor.settlement_vertical_map = vertical_map
     seed := 0x4d4a54
@@ -292,23 +303,17 @@ settlement_lab_configure :: proc(
     density_frame := density_frames[len(density_frames) - 1]
 
     sign := island_sign < 0 ? f32(-1) : f32(1)
-    center := sign * f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-    town_z := center + sign * 105
-    if fixture == .Waterfront do town_z = center + sign * 180
+    center, town_z := terrain.default_town_center(sign)
+    if fixture == .Waterfront {
+        marina_x, marina_z := terrain.default_marina_direction(sign)
+        center += marina_x * 75
+        town_z += marina_z * 75
+    }
     if fixture == .Slope {
         // Place the settlement on the shoulder of a deterministic broad ridge.
         // Two feathered raises make the fixture steep enough to exercise route
         // grade and contour logic without producing an isolated volcano.
-        terrain.apply_stroke_with_hardness(
-            &editor.project,
-            .Raise,
-            center,
-            town_z - sign * 115,
-            225,
-            24,
-            1,
-            .18,
-        )
+        terrain.apply_stroke_with_hardness(&editor.project, .Raise, center, town_z - sign * 115, 225, 24, 1, .18)
         terrain.apply_stroke_with_hardness(
             &editor.project,
             .Raise,
@@ -579,6 +584,10 @@ settlement_lab_configure :: proc(
         editor.settlement_plan.macro_cells[editor.settlement_plan.macro_cell_count] = macro
         editor.settlement_plan.macro_cell_count += 1
     }
+    if profile.scale == .Village {
+        editor.settlement_plan.village_reason =
+            settlement_village_reason_pick(&editor.settlement_plan, &editor.project)
+    }
     settlement_plan_build_macro_routes(&editor.settlement_plan, &editor.project, &settlement_rng)
     settlement_plan_split_route_intersections(&editor.settlement_plan)
     _ = settlement_plan_simplify_route_capacity(
@@ -740,6 +749,10 @@ settlement_lab_configure :: proc(
                     decorative_index := editor.settlement_plan.decorative_foliage_count
                     grove_width := (8 + f32((decorative_index * 5) % 8)) * (.7 + .3 * scale) * grove_footprint_scale
                     grove_depth := (7 + f32((decorative_index * 3) % 7)) * (.7 + .3 * scale) * grove_footprint_scale
+                    if !settlement_park_site_clear(&editor.project, x, z, grove_width, grove_depth) {
+                        foliage_index += 1
+                        continue
+                    }
                     grove_base_y := terrain.sample_height(&editor.project, 0, x, z)
                     grove := terrain.structure_make(x, z, grove_width, grove_depth, grove_base_y, grove_height)
                     grove.kind = .Foliage
@@ -807,11 +820,11 @@ settlement_lab_configure :: proc(
     decorative_budget := profile.scale == .City ? 12 : (profile.scale == .Town ? 8 : 4)
     decorative_commit_count := min(editor.settlement_plan.decorative_foliage_count, decorative_budget)
     for &structure in editor.settlement_plan.decorative_foliage[:decorative_commit_count] {
-        structure.base_y =
-            terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
+        structure.base_y = terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
         _ = terrain.add_structure(&editor.project, structure)
     }
     settlement_plan_import_city(&editor.settlement_plan, &plan, &editor.project)
+    settlement_patios_generate(editor)
     if append_city_plan {
         append(&editor.architecture_city_plan.structures, ..plan.structures[:plan.count])
         append(&editor.architecture_city_plan.parcels, ..plan.parcels[:plan.parcel_count])
@@ -1018,6 +1031,32 @@ settlement_lab_configure :: proc(
         editor.editor_focus = map_focus
         editor.camera_pose = overhead
         third_person.camera_set_pose(&editor.cameras, .Inspection, overhead)
+        third_person.camera_set_active(&editor.cameras, .Inspection)
+    }
+    if configure_presentation && patio_capture && editor.settlement_patio_count > 0 {
+        patio := editor.settlement_patios[0]
+        outward := [2]f32{math.cos(patio.rotation), math.sin(patio.rotation)}
+        for structure in editor.project.structures[:editor.project.structure_count] {
+            if structure.id != patio.host_id do continue
+            delta := patio.center - [2]f32{structure.center_x, structure.center_z}
+            length := linalg.length(delta)
+            if length > .01 do outward = delta / length
+            break
+        }
+        right := [2]f32{-outward[1], outward[0]}
+        patio_pose := third_person.camera_look_at(
+            {
+                patio.center[0] + outward[0] * 13 + right[0] * 4.5,
+                patio.base_y + 7.2,
+                patio.center[1] + outward[1] * 13 + right[1] * 4.5,
+            },
+            {patio.center[0], patio.base_y + 1.1, patio.center[1]},
+        )
+        editor.settlement_diagnostic_layer = -1
+        editor.capture_world_only = true
+        editor.editor_focus = patio_pose.target
+        editor.camera_pose = patio_pose
+        third_person.camera_set_pose(&editor.cameras, .Inspection, patio_pose)
         third_person.camera_set_active(&editor.cameras, .Inspection)
     }
     return true

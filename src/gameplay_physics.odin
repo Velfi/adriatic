@@ -1,6 +1,7 @@
 package main
 
 import boats "../packages/boats"
+import marina "../packages/marina"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
@@ -68,6 +69,8 @@ player_place :: proc(
     editor.player_gait_weight = 0
     editor.player_airborne_weight = 0
     editor.player_animation_previous_speed = 0
+    editor.player_body_softness = {}
+    editor.player_stop_spray_speed = 0
     editor.player_placement_reason = reason
     editor.player_placement_revision += 1
     gameplay_physics_teleport_player(editor)
@@ -95,7 +98,7 @@ gameplay_physics_add_terrain :: proc(editor: ^Editor) -> bool {
         state.terrain[level_index] = physics.add_height_field(
             state.world,
             collision_heights,
-            terrain.RING_RESOLUTION,
+            terrain.TERRAIN_RESOLUTION,
             {level.origin_x, 0, level.origin_z},
             {level.cell_size, 1, level.cell_size},
             4,
@@ -132,6 +135,82 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
             user_data = u64(0x2000_0000) | u64(index),
         )
         if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+    }
+    for &plan, marina_index in editor.default_marinas[:editor.default_marina_count] {
+        if !plan.valid do continue
+        for segment, segment_index in plan.segments[:plan.segment_count] {
+            a := marina.plan_world_position(&plan, segment.a)
+            b := marina.plan_world_position(&plan, segment.b)
+            dx, dz := b.x - a.x, b.z - a.z
+            length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            if length <= .01 do continue
+            yaw := math.atan2(-dx, dz)
+            half_yaw := yaw * .5
+            half_height := segment.kind == .Breakwater ? f32(.8) : f32(.45)
+            diagonal_main_pier := segment.kind == .Main_Pier && abs(dx) > f32(.01) && abs(dz) > f32(.01)
+            endpoint_accurate := segment.kind == .Breakwater || segment.kind == .Quay || diagonal_main_pier
+            body_length := endpoint_accurate ? length : length + segment.width
+            body := physics.add_box_layered(
+                state.world,
+                {segment.width * .5, half_height, body_length * .5},
+                {(a.x + b.x) * .5, editor.project.sea_level + half_height * .25, (a.z + b.z) * .5},
+                rotation = {0, math.sin(half_yaw), 0, math.cos(half_yaw)},
+                user_data = u64(0x4000_0000) | (u64(marina_index & 0xff) << 16) | u64(segment_index & 0xffff),
+            )
+            if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+        }
+
+        office := marina.plan_world_position(&plan, plan.office)
+        office_half_yaw := plan.world_yaw * .5
+        office_body := physics.add_box_layered(
+            state.world,
+            {4.1, 2.4, 3.2},
+            {office.x, editor.project.sea_level + 2.4, office.z},
+            rotation = {0, math.sin(office_half_yaw), 0, math.cos(office_half_yaw)},
+            user_data = u64(0x4100_0000) | u64(marina_index),
+        )
+        if office_body != physics.INVALID_BODY do append(&state.static_bodies, office_body)
+
+        for prop, prop_index in plan.props[:plan.prop_count] {
+            radius := marina.prop_collision_radius(prop.kind)
+            if radius <= 0 do continue
+            position := marina.plan_world_position(&plan, prop.position)
+            body := physics.add_box_layered(
+                state.world,
+                {radius, .7, radius},
+                {position.x, editor.project.sea_level + .7, position.z},
+                user_data = u64(0x4200_0000) | (u64(marina_index & 0xff) << 16) | u64(prop_index & 0xffff),
+            )
+            if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+        }
+
+        for berth, berth_index in plan.slips[:plan.slip_count] {
+            position := marina.plan_world_position(&plan, berth.position)
+            if berth.kind == .Swing_Mooring {
+                radius := marina.MOORING_BUOY_COLLISION_RADIUS
+                buoy_body := physics.add_box_layered(
+                    state.world,
+                    {radius, .45, radius},
+                    {position.x, editor.project.sea_level + .45, position.z},
+                    user_data = u64(0x4300_0000) | (u64(marina_index & 0xff) << 16) | u64(berth_index & 0xffff),
+                )
+                if buoy_body != physics.INVALID_BODY do append(&state.static_bodies, buoy_body)
+            }
+            if !berth.occupied do continue
+            spec := boats.specifications(berth.class)
+            yaw := marina.plan_world_yaw(&plan, berth.yaw)
+            half_yaw := yaw * .5
+            boat_body := physics.add_box_layered(
+                state.world,
+                {spec.beam * .42, max(spec.draft * .5, f32(.18)), spec.length * .45},
+                {position.x, editor.project.sea_level, position.z},
+                rotation = {0, math.sin(half_yaw), 0, math.cos(half_yaw)},
+                user_data = u64(0x4400_0000) | (u64(marina_index & 0xff) << 16) | u64(berth_index & 0xffff),
+                layer = .Boat,
+                friction = .35,
+            )
+            if boat_body != physics.INVALID_BODY do append(&state.static_bodies, boat_body)
+        }
     }
     state.structure_revision = editor.project.revision
 }
@@ -245,10 +324,10 @@ gameplay_physics_sync_revisions :: proc(editor: ^Editor) {
                     state.terrain[level_index],
                     0,
                     0,
-                    terrain.RING_RESOLUTION,
-                    terrain.RING_RESOLUTION,
+                    terrain.TERRAIN_RESOLUTION,
+                    terrain.TERRAIN_RESOLUTION,
                     collision_heights,
-                    terrain.RING_RESOLUTION,
+                    terrain.TERRAIN_RESOLUTION,
                 ) &&
                 updated
         }

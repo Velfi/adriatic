@@ -147,7 +147,8 @@ live_control_terrain_brush_response :: proc(editor: ^Editor, request_id: string)
         width, height = editor.curve_width, editor.curve_height
     case .Building:
         radius, strength, hardness =
-            settlement_brush_preset_span(editor.architecture_brush_preset) * .5,
+            settlement_brush_preset_span(editor.architecture_brush_preset) *
+            .5,
             editor.architecture_brush_strength,
             editor.architecture_brush_hardness
     case .Marina:
@@ -249,15 +250,9 @@ live_control_poll :: proc(editor: ^Editor) {
                 editor.rondine.vehicle.yaw_radians,
                 false,
             )
-            _, entered := vehicles.try_enter_nearest(
-                &editor.pilot,
-                []^vehicles.Vehicle{&editor.rondine.vehicle},
-            )
+            _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.rondine.vehicle})
             if entered {
-                response = fmt.aprintf(
-                    `{{"ok":true,"id":"%s","message":"Staged Rondine and entered it"}}`,
-                    request_id,
-                )
+                response = fmt.aprintf(`{{"ok":true,"id":"%s","message":"Staged Rondine and entered it"}}`, request_id)
             } else {
                 response = fmt.aprintf(
                     `{{"ok":false,"id":"%s","error":"Rondine staged but player could not enter"}}`,
@@ -277,8 +272,7 @@ live_control_poll :: proc(editor: ^Editor) {
     } else if command == "terrain_brush_set" {
         fields := strings.split(arguments, "\t", context.temp_allocator)
         if len(fields) != 8 {
-            response =
-                fmt.aprintf(`{{"ok":false,"id":"%s","error":"malformed terrain brush settings"}}`, request_id)
+            response = fmt.aprintf(`{{"ok":false,"id":"%s","error":"malformed terrain brush settings"}}`, request_id)
         } else {
             radius, radius_ok := live_control_parse_optional_f32(fields[1])
             strength, strength_ok := live_control_parse_optional_f32(fields[2])
@@ -311,8 +305,7 @@ live_control_poll :: proc(editor: ^Editor) {
                !height_ok ||
                !size_ok ||
                !mode_ok {
-                response =
-                    fmt.aprintf(`{{"ok":false,"id":"%s","error":"invalid terrain brush settings"}}`, request_id)
+                response = fmt.aprintf(`{{"ok":false,"id":"%s","error":"invalid terrain brush settings"}}`, request_id)
             } else {
                 switch fields[0] {
                 case "sculpt":
@@ -370,9 +363,7 @@ live_control_poll :: proc(editor: ^Editor) {
                     if fields[1] != "-" {
                         diameter := radius * 2
                         editor.architecture_brush_preset =
-                            diameter < 90 ? Settlement_Brush_Preset.Small :
-                            diameter < 170 ? Settlement_Brush_Preset.Medium :
-                                             Settlement_Brush_Preset.Large
+                            diameter < 90 ? Settlement_Brush_Preset.Small : diameter < 170 ? Settlement_Brush_Preset.Medium : Settlement_Brush_Preset.Large
                     }
                     if fields[2] != "-" do editor.architecture_brush_strength = clamp(strength, .02, 1)
                     if fields[3] != "-" do editor.architecture_brush_hardness = clamp(hardness, 0, 1)

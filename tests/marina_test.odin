@@ -55,6 +55,28 @@ markov_marina_mooring_field_reserves_swing_room :: proc(t: ^testing.T) {
 }
 
 @(test)
+markov_marina_sheltered_harbors_prefer_mooring_fields :: proc(t: ^testing.T) {
+    sheltered_count, field_count := 0, 0
+    for seed in 0 ..< 128 {
+        plan := marina.generate(u32(seed))
+        if plan.style != .Island_Harbour && plan.style != .Lagoon_Marina do continue
+        sheltered_count += 1
+        testing.expect(t, plan.valid)
+        if plan.section_form_counts[int(marina.Section_Form.Mooring_Field)] == 0 do continue
+        field_count += 1
+        mooring_count := 0
+        for berth in plan.slips[:plan.slip_count] {
+            if berth.kind == .Swing_Mooring do mooring_count += 1
+        }
+        testing.expect(t, mooring_count >= 2)
+        testing.expect(t, marina.slips_have_clearance(&plan))
+        testing.expect(t, marina.slips_clear_structures(&plan))
+    }
+    testing.expect(t, sheltered_count > 0)
+    testing.expect(t, field_count > 0)
+}
+
+@(test)
 markov_marina_uses_full_length_finger_piers :: proc(t: ^testing.T) {
     plan: marina.Plan
     for &value in plan.cells do value = .Water

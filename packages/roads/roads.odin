@@ -26,6 +26,9 @@ Edge :: struct {
     half_width:               f32,
     shoulder_width:           f32,
     pavement:                 Pavement,
+    // Normalized circulation intensity. One is a maintained, frequently used
+    // road; zero is neglected enough for vegetation to reclaim its joints.
+    use_intensity:            f32,
 }
 
 Graph :: struct {
@@ -87,12 +90,19 @@ Grip_Profile :: struct {
     rolling_resistance: f32,
 }
 
+Roughness_Profile :: struct {
+    acceleration:                   f32,
+    wavelength, secondary_wavelength: f32,
+}
+
 Vertex :: struct {
-    position: Vec3,
-    normal:   Vec3,
-    uv:       [2]f32,
-    surface:  Surface,
-    pavement: Pavement,
+    position:        Vec3,
+    normal:          Vec3,
+    uv:              [2]f32,
+    surface:         Surface,
+    pavement:        Pavement,
+    road_half_width: f32,
+    use_intensity:   f32,
 }
 
 Mesh :: struct {
@@ -153,6 +163,7 @@ add_edge :: proc(
     width: f32,
     shoulder_width: f32 = 1,
     pavement: Pavement = .Asphalt,
+    use_intensity: f32 = 1,
 ) -> int {
     if graph == nil ||
        graph.edge_count >= MAX_EDGES ||
@@ -173,6 +184,7 @@ add_edge :: proc(
         half_width     = width * .5,
         shoulder_width = max(shoulder_width, f32(0)),
         pavement       = pavement,
+        use_intensity  = clamp(use_intensity, f32(0), f32(1)),
     }
     graph.edge_count += 1
     return index
@@ -184,6 +196,7 @@ add_straight_edge :: proc(
     width: f32,
     shoulder_width: f32 = 1,
     pavement: Pavement = .Asphalt,
+    use_intensity: f32 = 1,
 ) -> int {
     if graph == nil || from < 0 || to < 0 || from >= graph.node_count || to >= graph.node_count do return -1
     start := graph.nodes[from].position
@@ -197,6 +210,7 @@ add_straight_edge :: proc(
         width,
         shoulder_width,
         pavement,
+        use_intensity,
     )
 }
 
@@ -240,6 +254,37 @@ pavement_grip :: proc(pavement: Pavement) -> Grip_Profile {
         return {longitudinal = .62, lateral = .54, rolling_resistance = 1.30}
     }
     return {longitudinal = 1, lateral = 1, rolling_resistance = 1}
+}
+
+// Microprofile dimensions are deliberately longer than literal aggregate:
+// the vehicle solver samples at 60 Hz, so sub-centimetre detail would alias
+// into random impulses at road speed. The two incommensurate waves remain
+// deterministic in world space and read as material texture through the
+// suspension rather than as camera noise.
+pavement_roughness :: proc(pavement: Pavement) -> Roughness_Profile {
+    switch pavement {
+    case .Asphalt:
+        return {acceleration = .06, wavelength = 1.8, secondary_wavelength = .73}
+    case .Gravel:
+        return {acceleration = .62, wavelength = .82, secondary_wavelength = .37}
+    case .Cobblestone:
+        return {acceleration = 1.85, wavelength = .64, secondary_wavelength = .29}
+    case .Dirt:
+        return {acceleration = .88, wavelength = 1.7, secondary_wavelength = .61}
+    }
+    return {}
+}
+
+pavement_bump_acceleration :: proc(pavement: Pavement, x, z, speed: f32) -> f32 {
+    profile := pavement_roughness(pavement)
+    if profile.acceleration <= 0 || profile.wavelength <= 0 || profile.secondary_wavelength <= 0 do return 0
+    speed_response := clamp((math.abs(speed) - .35) / 4.5, 0, 1)
+    if speed_response <= 0 do return 0
+    primary_distance := x * .83 + z * .56
+    secondary_distance := x * -.31 + z * .95
+    primary := math.sin(primary_distance * 2 * math.PI / profile.wavelength)
+    secondary := math.sin(secondary_distance * 2 * math.PI / profile.secondary_wavelength + 1.17)
+    return (primary * .72 + secondary * .28) * profile.acceleration * speed_response
 }
 
 offroad_grip :: proc() -> Grip_Profile {
@@ -338,12 +383,7 @@ edge_tangent :: proc(graph: ^Graph, edge: Edge, t: f32) -> Vec3 {
 }
 
 pavement_query_bounds_union :: proc(a, b: Pavement_Query_Bounds) -> Pavement_Query_Bounds {
-    return {
-        min(a.min_x, b.min_x),
-        min(a.min_z, b.min_z),
-        max(a.max_x, b.max_x),
-        max(a.max_z, b.max_z),
-    }
+    return {min(a.min_x, b.min_x), min(a.min_z, b.min_z), max(a.max_x, b.max_x), max(a.max_z, b.max_z)}
 }
 
 pavement_query_build_node :: proc(graph: ^Graph, query: ^Pavement_Query, first, count: int) -> int {
@@ -408,7 +448,7 @@ pavement_query_build :: proc(graph: ^Graph, query: ^Pavement_Query) {
             query.points[edge_index][segment] = edge_point(graph, edge, f32(segment) / PAVEMENT_QUERY_SEGMENTS)
         }
         first := query.points[edge_index][0]
-        bounds := Pavement_Query_Bounds {first.x, first.z, first.x, first.z}
+        bounds := Pavement_Query_Bounds{first.x, first.z, first.x, first.z}
         for point in query.points[edge_index][1:] {
             bounds.min_x = min(bounds.min_x, point.x)
             bounds.min_z = min(bounds.min_z, point.z)
@@ -427,9 +467,9 @@ pavement_query_bounds_distance_squared :: #force_inline proc(bounds: Pavement_Qu
 }
 
 Pavement_Query_State :: struct {
-    hit, surface_hit:                           Pavement_Hit,
-    best_distance_squared:                      f32,
-    best_surface_distance_squared:              f32,
+    hit, surface_hit:              Pavement_Hit,
+    best_distance_squared:         f32,
+    best_surface_distance_squared: f32,
 }
 
 pavement_query_node :: proc(
@@ -490,7 +530,7 @@ pavement_query_node :: proc(
                 distance_squared <= (edge.half_width + edge.shoulder_width) * (edge.half_width + edge.shoulder_width)
             if distance_squared < state.best_distance_squared ||
                (distance_squared == state.best_distance_squared &&
-                (state.hit.edge_index < 0 || edge_index < state.hit.edge_index)) {
+                       (state.hit.edge_index < 0 || edge_index < state.hit.edge_index)) {
                 state.best_distance_squared = distance_squared
                 state.hit.pavement = edge.pavement
                 state.hit.edge_index = edge_index
@@ -502,8 +542,8 @@ pavement_query_node :: proc(
             // off-road merely because that branch has the closest centerline.
             if on_surface &&
                (distance_squared < state.best_surface_distance_squared ||
-                (distance_squared == state.best_surface_distance_squared &&
-                 (state.surface_hit.edge_index < 0 || edge_index < state.surface_hit.edge_index))) {
+                       (distance_squared == state.best_surface_distance_squared &&
+                               (state.surface_hit.edge_index < 0 || edge_index < state.surface_hit.edge_index))) {
                 state.best_surface_distance_squared = distance_squared
                 state.surface_hit.pavement = edge.pavement
                 state.surface_hit.edge_index = edge_index
@@ -676,6 +716,8 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
                     uv = {lane_uv[lane], distance_along},
                     surface = surface,
                     pavement = edge.pavement,
+                    road_half_width = edge.half_width,
+                    use_intensity = edge.use_intensity,
                 },
             )
         }
@@ -809,6 +851,8 @@ bake_end_cap :: proc(
                     uv = {.335 + fraction * .33, 0},
                     surface = .Road,
                     pavement = edge.pavement,
+                    road_half_width = edge.half_width,
+                    use_intensity = edge.use_intensity,
                 },
             )
             shoulder_arc[sample] = mesh_vertex(
@@ -819,6 +863,8 @@ bake_end_cap :: proc(
                     uv = {.20 + fraction * .60, 0},
                     surface = .Shoulder,
                     pavement = edge.pavement,
+                    road_half_width = edge.half_width,
+                    use_intensity = edge.use_intensity,
                 },
             )
             verge_arc[sample] = mesh_vertex(
@@ -829,6 +875,8 @@ bake_end_cap :: proc(
                     uv = {fraction, 0},
                     surface = .Verge,
                     pavement = edge.pavement,
+                    road_half_width = edge.half_width,
+                    use_intensity = edge.use_intensity,
                 },
             )
         }
@@ -836,7 +884,15 @@ bake_end_cap :: proc(
 
     center := mesh_vertex(
         mesh,
-        {position = center_position, normal = normal, uv = {.5, 0}, surface = .Junction, pavement = edge.pavement},
+        {
+            position = center_position,
+            normal = normal,
+            uv = {.5, 0},
+            surface = .Junction,
+            pavement = edge.pavement,
+            road_half_width = edge.half_width,
+            use_intensity = edge.use_intensity,
+        },
     )
     for segment in 0 ..< END_CAP_SEGMENTS {
         mesh_triangle(mesh, center, road_arc[segment], road_arc[segment + 1])
@@ -874,16 +930,30 @@ bake_junction :: proc(
     if linalg.dot(normal, normal) <= .000001 do normal = {0, 1, 0}
     pavement := Pavement.Asphalt
     widest: f32 = -1
+    incident_use_sum: f32
+    incident_count: int
     for edge in graph.edges[:graph.edge_count] {
-        if (edge.from == node_index || edge.to == node_index) && edge.half_width > widest {
-            widest = edge.half_width
-            pavement = edge.pavement
+        if edge.from == node_index || edge.to == node_index {
+            incident_use_sum += edge.use_intensity
+            incident_count += 1
+            if edge.half_width > widest {
+                widest = edge.half_width
+                pavement = edge.pavement
+            }
         }
     }
     center_position := node.position + normal * (settings.surface_lift + .002)
     center := mesh_vertex(
         mesh,
-        {position = center_position, normal = normal, uv = {.5, .5}, surface = .Junction, pavement = pavement},
+        {
+            position = center_position,
+            normal = normal,
+            uv = {.5, .5},
+            surface = .Junction,
+            pavement = pavement,
+            road_half_width = max(widest, f32(0)),
+            use_intensity = incident_count > 0 ? incident_use_sum / f32(incident_count) : 1,
+        },
     )
     for index in 0 ..< point_count {
         next := (index + 1) % point_count

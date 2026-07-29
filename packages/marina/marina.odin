@@ -649,6 +649,43 @@ add_mooring_field :: proc(plan: ^Plan, state: []u8, start_x, start_z: int, colum
     }
 }
 
+style_uses_mooring_field :: proc(style: Basin_Style, seed: u32) -> bool {
+    switch style {
+    case .Island_Harbour, .Lagoon_Marina:
+        return true
+    case .Stone_Cove:
+        return (seed & 3) != 0
+    case .Civic_Marina:
+        return (seed & 7) == 0
+    case .Fishing_Quay, .Working_Port, .Ferry_Quay, .Boat_Yard:
+        return false
+    }
+    return false
+}
+
+seed_mooring_field :: proc(plan: ^Plan, state: []u8, seed: u32) -> bool {
+    if plan == nil || !style_uses_mooring_field(plan.style, seed) do return false
+    prefer_west := seed_bit(seed, 14)
+    for side_attempt in 0 ..< 2 {
+        west := side_attempt == 0 ? prefer_west : !prefer_west
+        trial := plan^
+        field_x := west ? 6 : 20
+        // Longitudinal pairs fit inside the protected basin while preserving
+        // a full 24 m watch-circle separation and the central arrival lane.
+        add_mooring_field(&trial, state, field_x, 8, 1, 2)
+        if trial.section_form_counts[int(Section_Form.Mooring_Field)] ==
+           plan.section_form_counts[int(Section_Form.Mooring_Field)] {
+            continue
+        }
+        if !slips_have_clearance(&trial) do continue
+        if measure_structure_overlaps(&trial) > 0 do continue
+        if !structures_have_breakwater_clearance(&trial) do continue
+        plan^ = trial
+        return true
+    }
+    return false
+}
+
 is_spacing_structure :: proc(value: Cell) -> bool {
     return(
         value == .Quay ||
@@ -945,6 +982,13 @@ quality_score :: proc(plan: ^Plan) -> f32 {
     if plan.section_form_counts[int(Section_Form.Island_Quay)] > 0 do section_interest += .025
     if plan.section_form_counts[int(Section_Form.Forked_Pier)] > 0 do section_interest += .035
     if plan.section_form_counts[int(Section_Form.Mooring_Field)] > 0 do section_interest += .04
+    missing_mooring_field := f32(0)
+    if (plan.style == .Island_Harbour || plan.style == .Lagoon_Marina) &&
+       plan.section_form_counts[int(Section_Form.Mooring_Field)] == 0 {
+        // A sheltered-harbor candidate without any swinging berths has failed
+        // its archetype even when its generic density score is attractive.
+        missing_mooring_field = .4
+    }
     return clamp(
         plan.spacing_badness_density +
         plan.berth_spacing_badness * 1.5 +
@@ -952,7 +996,8 @@ quality_score :: proc(plan: ^Plan) -> f32 {
         plan.site_conformance_badness * 2 +
         density_error * 2 -
         frontage_interest -
-        section_interest,
+        section_interest +
+        missing_mooring_field,
         0,
         2,
     )
@@ -1415,6 +1460,12 @@ generate_candidate_for_site :: proc(
     for z in 5 ..< GRID_HEIGHT {
         for x in 12 ..= 14 do set_cell(&plan, x, z, .Channel)
     }
+
+    // Sheltered and low-density harbor styles reserve their mooring field
+    // before pier proposals consume the only water room large enough for
+    // complete swing circles. Other styles can still discover a field through
+    // the stochastic section grammar.
+    _ = seed_mooring_field(&plan, state, layout_seed)
 
     // Fill the basin from stochastic section proposals. The central channel,
     // outer maneuvering band, and water lanes are immutable negative space;

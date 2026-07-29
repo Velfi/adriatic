@@ -15,7 +15,12 @@ settlement_brush_fixed_presets_and_shape_masks :: proc(t: ^testing.T) {
     testing.expect_value(t, settlement_brush_preset_span(.Medium), f32(120))
     testing.expect_value(t, settlement_brush_preset_span(.Large), f32(220))
 
-    circle := Settlement_Brush_Piece{shape = .Circle, preset = .Small, density = 1, hardness = 1}
+    circle := Settlement_Brush_Piece {
+        shape    = .Circle,
+        preset   = .Small,
+        density  = 1,
+        hardness = 1,
+    }
     testing.expect(t, settlement_brush_signed_distance(circle, {0, 0}) < 0)
     testing.expect(t, math.abs(settlement_brush_signed_distance(circle, {30, 0})) < .001)
     testing.expect(t, settlement_brush_signed_distance(circle, {31, 0}) > 0)
@@ -33,7 +38,12 @@ settlement_brush_fixed_presets_and_shape_masks :: proc(t: ^testing.T) {
 
 @(test)
 settlement_brush_macaroni_is_a_bounded_curved_arc :: proc(t: ^testing.T) {
-    piece := Settlement_Brush_Piece{shape = .Macaroni, preset = .Small, density = 1, hardness = .5}
+    piece := Settlement_Brush_Piece {
+        shape    = .Macaroni,
+        preset   = .Small,
+        density  = 1,
+        hardness = .5,
+    }
     thickness := settlement_brush_preset_span(piece.preset) * .28
     centerline_radius := settlement_brush_preset_span(piece.preset) * .5 - thickness * .5
     testing.expect(t, settlement_brush_signed_distance(piece, {centerline_radius, 0}) < 0)
@@ -57,14 +67,26 @@ settlement_density_smooth_max_is_bounded_and_non_accumulating :: proc(t: ^testin
 @(test)
 settlement_brush_components_attach_within_the_connection_margin :: proc(t: ^testing.T) {
     plan: Settlement_Plan
-    first := Settlement_Brush_Piece{shape = .Circle, preset = .Small, center = {0, 0}}
+    first := Settlement_Brush_Piece {
+        shape  = .Circle,
+        preset = .Small,
+        center = {0, 0},
+    }
     settlement_brush_assign_component(&plan, &first)
     plan.brush_pieces[0] = first
     plan.brush_piece_count = 1
-    nearby := Settlement_Brush_Piece{shape = .Square, preset = .Small, center = {80, 0}}
+    nearby := Settlement_Brush_Piece {
+        shape  = .Square,
+        preset = .Small,
+        center = {80, 0},
+    }
     settlement_brush_assign_component(&plan, &nearby)
     testing.expect_value(t, nearby.component_id, first.component_id)
-    remote := Settlement_Brush_Piece{shape = .Square, preset = .Small, center = {200, 0}}
+    remote := Settlement_Brush_Piece {
+        shape  = .Square,
+        preset = .Small,
+        center = {200, 0},
+    }
     settlement_brush_assign_component(&plan, &remote)
     testing.expect(t, remote.component_id != first.component_id)
 }
@@ -77,25 +99,25 @@ settlement_brush_store_round_trips_authored_pieces :: proc(t: ^testing.T) {
     source.brush_piece_count = 2
     source.next_brush_component_id = 7
     source.brush_pieces[0] = {
-        shape = .Macaroni,
-        preset = .Large,
-        center = {12, -34},
-        rotation = .75,
-        density = .62,
-        hardness = .41,
-        seed = 99,
+        shape        = .Macaroni,
+        preset       = .Large,
+        center       = {12, -34},
+        rotation     = .75,
+        density      = .62,
+        hardness     = .41,
+        seed         = 99,
         component_id = 6,
     }
     source.brush_pieces[1] = {
-        shape = .Rectangle,
-        preset = .Small,
-        center = {-8, 5},
-        rotation = -.2,
-        density = .38,
-        hardness = .8,
-        seed = 101,
+        shape        = .Rectangle,
+        preset       = .Small,
+        center       = {-8, 5},
+        rotation     = -.2,
+        density      = .38,
+        hardness     = .8,
+        seed         = 101,
         component_id = 7,
-        erased = true,
+        erased       = true,
     }
     testing.expect(t, settlement_brush_store_save(&source, path))
     loaded: Settlement_Plan
@@ -123,19 +145,19 @@ settlement_brush_piece_compiles_domain_program_and_primary_route :: proc(t: ^tes
     plan: Settlement_Plan
     plan.request = {
         region = .Adriatic,
-        scale = .Village,
-        seed = 81,
+        scale  = .Village,
+        seed   = 81,
         center = {0, 0},
         radius = 60,
     }
     piece := Settlement_Brush_Piece {
-        shape = .Rectangle,
-        preset = .Medium,
-        center = {0, 0},
+        shape    = .Rectangle,
+        preset   = .Medium,
+        center   = {0, 0},
         rotation = .35,
-        density = .58,
+        density  = .58,
         hardness = .62,
-        seed = 81,
+        seed     = 81,
     }
     settlement_brush_assign_component(&plan, &piece)
     plan.brush_pieces[0] = piece
@@ -162,6 +184,48 @@ settlement_brush_piece_compiles_domain_program_and_primary_route :: proc(t: ^tes
 settlement_rng_is_deterministic :: proc(t: ^testing.T) {
     a, b := settlement_rng_new(0x51a7), settlement_rng_new(0x51a7)
     for _ in 0 ..< 256 do testing.expect_value(t, settlement_rng_u32(&a), settlement_rng_u32(&b))
+}
+
+@(test)
+settlement_patio_candidates_are_deterministic_and_clear_their_host :: proc(t: ^testing.T) {
+    site := Settlement_Site {
+        structure = terrain.Structure {
+            id       = 77,
+            center_x = 10,
+            center_z = 20,
+            width    = 8,
+            depth    = 6,
+            rotation = 0,
+        },
+        kind     = .Ordinary,
+        accepted = true,
+        purpose  = .Inn_Shop,
+    }
+    first := settlement_patio_candidate(site, 0, 7, 5, 0x70617469, .Adriatic)
+    repeated := settlement_patio_candidate(site, 0, 7, 5, 0x70617469, .Adriatic)
+    testing.expect_value(t, first, repeated)
+    testing.expect_value(t, first.host_id, u64(77))
+    testing.expect(
+        t,
+        settlement_oriented_rectangles_clear(
+            site.structure.center_x,
+            site.structure.center_z,
+            site.structure.width,
+            site.structure.depth,
+            site.structure.rotation,
+            first.center[0],
+            first.center[1],
+            first.width,
+            first.depth,
+            first.rotation,
+            1,
+        ),
+    )
+
+    side := settlement_patio_candidate(site, 2, 7, 5, 0x70617469, .Adriatic)
+    testing.expect_value(t, side.width, f32(5))
+    testing.expect_value(t, side.depth, f32(7))
+    testing.expect(t, side.center[0] < site.structure.center_x)
 }
 
 @(test)
@@ -1284,8 +1348,10 @@ settlement_tissue_weights_are_regional :: proc(t: ^testing.T) {
 settlement_landmark_sequences_are_region_specific :: proc(t: ^testing.T) {
     testing.expect_value(t, settlement_landmark_kind(.Adriatic, 0), Settlement_Landmark_Kind.Campanile)
     testing.expect_value(t, settlement_landmark_kind(.Adriatic, 1), Settlement_Landmark_Kind.Palace_Loggia)
+    testing.expect_value(t, settlement_landmark_kind(.Adriatic, 3), Settlement_Landmark_Kind.Lighthouse)
     testing.expect_value(t, settlement_landmark_kind(.Aegean, 0), Settlement_Landmark_Kind.Cycladic_Bell)
-    testing.expect_value(t, settlement_landmark_kind(.Aegean, 2), Settlement_Landmark_Kind.Monastery)
+    testing.expect_value(t, settlement_landmark_kind(.Aegean, 2), Settlement_Landmark_Kind.Lighthouse)
+    testing.expect_value(t, settlement_landmark_kind(.Aegean, 3), Settlement_Landmark_Kind.Monastery)
 }
 
 @(test)
@@ -1632,6 +1698,27 @@ settlement_parks_do_not_consume_civic_frontage :: proc(t: ^testing.T) {
     _ = terrain.add_structure(project, landmark)
     testing.expect(t, !settlement_park_site_clear(project, 9, 0, 10, 10))
     testing.expect(t, settlement_park_site_clear(project, 24, 0, 10, 10))
+}
+
+@(test)
+settlement_foliage_avoids_road_shoulders_and_favors_open_ground :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    from := roads.add_node(&project.road_graph, {-20, 0, 0}, 3)
+    to := roads.add_node(&project.road_graph, {20, 0, 0}, 3)
+    _ = roads.add_edge(
+        &project.road_graph,
+        from,
+        to,
+        {-8, 0, 0},
+        {8, 0, 0},
+        3,
+        2,
+        .Dirt,
+    )
+    testing.expect(t, !settlement_park_site_clear(project, 0, 0, 6, 6))
+    testing.expect(t, !settlement_park_site_clear(project, 0, 7, 6, 6))
+    testing.expect(t, settlement_park_site_clear(project, 0, 14, 6, 6))
 }
 
 @(test)
@@ -2720,6 +2807,27 @@ settlement_access_surface_queries_follow_relaxed_curve_not_chord :: proc(t: ^tes
 }
 
 @(test)
+settlement_access_three_way_junction_preserves_the_soft_through_line :: proc(t: ^testing.T) {
+    city: architecture.City_Plan
+    defer architecture.city_plan_destroy(&city)
+    append(
+        &city.alleys,
+        architecture.City_Alley{start_x = -10, end_x = 0, half_width = .5},
+        architecture.City_Alley{start_x = 0, end_x = 10, half_width = .5},
+        architecture.City_Alley{start_x = 0, end_z = 8, half_width = .5},
+    )
+    city.alley_count = 3
+
+    incoming := settlement_access_alley_endpoint_tangent(&city, 0, 1)
+    outgoing := settlement_access_alley_endpoint_tangent(&city, 1, 0)
+    branch := settlement_access_alley_endpoint_tangent(&city, 2, 0)
+
+    testing.expect(t, linalg.dot(incoming, [2]f32{1, 0}) > .99)
+    testing.expect(t, linalg.dot(outgoing, [2]f32{1, 0}) > .99)
+    testing.expect(t, linalg.dot(branch, [2]f32{0, 1}) > .55)
+}
+
+@(test)
 settlement_curved_access_falls_back_before_clipping_rotated_building :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
@@ -3404,6 +3512,184 @@ settlement_required_anchors_must_share_one_route_component :: proc(t: ^testing.T
     testing.expect(t, !settlement_plan_required_routes_connected(&plan))
     plan.routes[1].geometry.points[0] = {10, 0}
     testing.expect(t, settlement_plan_required_routes_connected(&plan))
+}
+
+settlement_test_village_growth_plan :: proc(seed: u32, reason: Village_Reason) -> Settlement_Plan {
+    plan: Settlement_Plan
+    plan.request = {
+        region = .Adriatic,
+        scale  = .Village,
+        seed   = seed,
+        center = {0, 0},
+        radius = 120,
+    }
+    plan.village_reason = reason
+    centers := [4][2]f32{{0, 0}, {-35, 0}, {34, 18}, {4, 42}}
+    for center, index in centers {
+        plan.neighborhoods[index] = {
+            center      = center,
+            radius      = 28,
+            density     = .28 + f32(index) * .01,
+            age         = f32(index) * .07,
+            suitability = 1,
+            tissue      = .Hillside_Accretion,
+        }
+    }
+    plan.neighborhood_count = len(centers)
+    return plan
+}
+
+@(test)
+settlement_village_backbone_uses_an_external_anchor_without_macro_cells :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    plan := settlement_test_village_growth_plan(73, .Route_Stop)
+    rng := settlement_rng_new(73)
+
+    settlement_plan_build_macro_routes(&plan, project, &rng)
+
+    testing.expect_value(t, plan.macro_cell_count, 0)
+    testing.expect(t, plan.growth_event_count >= 1)
+    backbone := plan.routes[plan.growth_events[0].route_index].geometry
+    root := plan.neighborhoods[0].center
+    external := backbone.points[0]
+    testing.expect(t, linalg.length(external - root) >= plan.request.radius * .44)
+    for neighborhood in plan.neighborhoods[:plan.neighborhood_count] {
+        testing.expect(t, !settlement_route_point_near(external, neighborhood.center, 1))
+    }
+}
+
+@(test)
+settlement_growth_topology_does_not_merge_nearby_disconnected_routes :: proc(t: ^testing.T) {
+    plan: Settlement_Plan
+    plan.request.scale = .Village
+    for route_index in 0 ..< 2 {
+        plan.routes[route_index].geometry.points[0] = {0, f32(route_index)}
+        plan.routes[route_index].geometry.points[1] = {10, f32(route_index)}
+        plan.routes[route_index].geometry.count = 2
+        plan.routes[route_index].drivable = true
+        plan.growth_events[route_index].route_index = route_index
+    }
+    plan.route_count = 2
+    plan.growth_event_count = 2
+
+    topology := settlement_growth_topology(&plan)
+    settlement_plan_measure(&plan)
+
+    testing.expect_value(t, topology.node_count, 4)
+    testing.expect_value(t, topology.edge_count, 2)
+    testing.expect_value(t, plan.metrics.public_component_count, 2)
+}
+
+@(test)
+settlement_route_frame_filter_keeps_a_cohort_on_its_assigned_edge :: proc(t: ^testing.T) {
+    plan: Settlement_Plan
+    for route_index in 0 ..< 2 {
+        plan.routes[route_index].geometry.points[0] = {-10, f32(route_index * 20)}
+        plan.routes[route_index].geometry.points[1] = {10, f32(route_index * 20)}
+        plan.routes[route_index].geometry.count = 2
+        plan.routes[route_index].drivable = true
+        plan.routes[route_index].width = 3
+    }
+    plan.route_count = 2
+
+    _, _, _, _, _, distance, route_index, found :=
+        settlement_nearest_route_frame(&plan, {0, 1}, 1)
+
+    testing.expect(t, found)
+    testing.expect_value(t, route_index, 1)
+    testing.expect(t, distance > 18)
+}
+
+@(test)
+settlement_village_growth_is_deterministic_and_accretive :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    first := settlement_test_village_growth_plan(91, .Route_Stop)
+    second := settlement_test_village_growth_plan(91, .Route_Stop)
+    first_rng := settlement_rng_new(91)
+    second_rng := settlement_rng_new(91)
+
+    settlement_plan_build_village_routes(&first, project, &first_rng)
+    settlement_plan_build_village_routes(&second, project, &second_rng)
+    settlement_plan_split_route_intersections(&first)
+    settlement_plan_split_route_intersections(&second)
+
+    testing.expect(t, first.growth_event_count >= 1 && first.growth_event_count <= 3)
+    testing.expect_value(t, first.growth_event_count, second.growth_event_count)
+    testing.expect_value(t, first.route_count, second.route_count)
+    testing.expect_value(t, first.growth_events[0].kind, Settlement_Growth_Event_Kind.Backbone)
+    testing.expect(t, first.routes[first.growth_events[0].route_index].required)
+    for event, event_index in first.growth_events[:first.growth_event_count] {
+        other := second.growth_events[event_index]
+        testing.expect_value(t, event.kind, other.kind)
+        testing.expect_value(t, event.target_neighborhood, other.target_neighborhood)
+        testing.expect_value(t, event.route_index, other.route_index)
+        testing.expect(t, event.kind != .Densification)
+        testing.expect(t, settlement_route_point_near(event.frontage_start, other.frontage_start))
+        testing.expect(t, settlement_route_point_near(event.frontage_finish, other.frontage_finish))
+        if event.kind == .Exploration {
+            testing.expect(t, event.route_index > 0)
+            route := first.routes[event.route_index].geometry
+            joined := false
+            for prior in first.routes[:event.route_index] {
+                prior_geometry := prior.geometry
+                for point in prior_geometry.points[:prior_geometry.count] {
+                    if settlement_route_point_near(point, route.points[route.count - 1], 2) {
+                        joined = true
+                    }
+                }
+            }
+            testing.expect(t, joined)
+        }
+    }
+}
+
+@(test)
+settlement_village_growth_is_a_bounded_tree_for_every_reason_and_region :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    for region in Settlement_Region {
+        for reason in Village_Reason {
+            plan := settlement_test_village_growth_plan(u32(41 + int(region) * 17 + int(reason)), reason)
+            plan.request.region = region
+            rng := settlement_rng_new(plan.request.seed)
+            settlement_plan_build_village_routes(&plan, project, &rng)
+            settlement_plan_split_route_intersections(&plan)
+            topology := settlement_growth_topology(&plan)
+            testing.expect(t, plan.growth_event_count >= 1 && plan.growth_event_count <= 3)
+            testing.expect(t, plan.routes[plan.growth_events[0].route_index].required)
+            testing.expect_value(t, topology.edge_count - topology.node_count + 1, 0)
+            for node_index in 0 ..< topology.node_count {
+                degree := 0
+                for edge in topology.edges[:topology.edge_count] {
+                    if edge[0] == node_index || edge[1] == node_index do degree += 1
+                }
+                testing.expect(t, degree <= 3)
+            }
+        }
+    }
+}
+
+@(test)
+settlement_village_growth_preserves_the_required_backbone_at_optional_capacity :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    plan := settlement_test_village_growth_plan(17, .Upland_Pastoral)
+    // Leave room for exactly the required route; all exploration is optional.
+    plan.route_count = SETTLEMENT_PLANNED_ROUTE_CAPACITY - 1
+    rng := settlement_rng_new(17)
+
+    settlement_plan_build_village_routes(&plan, project, &rng)
+
+    testing.expect_value(t, plan.route_count, SETTLEMENT_PLANNED_ROUTE_CAPACITY)
+    testing.expect_value(t, plan.growth_event_count, 1)
+    testing.expect_value(t, plan.growth_events[0].kind, Settlement_Growth_Event_Kind.Backbone)
+    testing.expect(t, plan.routes[plan.growth_events[0].route_index].required)
 }
 
 @(test)

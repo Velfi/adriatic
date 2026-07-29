@@ -25,6 +25,7 @@ Archetype :: enum u8 {
     // Appended to preserve the serialized values of established archetypes.
     Mixed_Use_Dwelling,
     Post_Office,
+    Lighthouse,
 }
 
 Purpose :: enum u8 {
@@ -55,6 +56,7 @@ Landmark_Kind :: enum u8 {
     Cycladic_Bell,
     // Appended to preserve the serialized values of established landmarks.
     Post_Office,
+    Lighthouse,
 }
 
 Identity :: struct {
@@ -86,7 +88,15 @@ is_habitable :: proc(archetype: Archetype) -> bool {
          .Market_Hall,
          .Post_Office:
         return true
-    case .Workshop, .Barn_Granary, .Mill, .Fishery, .Storehouse, .Campanile, .Fortress_Gate, .Cycladic_Bell:
+    case .Workshop,
+         .Barn_Granary,
+         .Mill,
+         .Fishery,
+         .Storehouse,
+         .Campanile,
+         .Fortress_Gate,
+         .Cycladic_Bell,
+         .Lighthouse:
         return false
     }
     return true

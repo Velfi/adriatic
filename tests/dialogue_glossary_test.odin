@@ -24,8 +24,10 @@ dialogue_glossary_finds_elided_terms :: proc(t: ^testing.T) {
 dialogue_glossary_keeps_opaque_regional_terms :: proc(t: ^testing.T) {
     bura, found_bura := dialogue_glossary.english_for("bura")
     persiana, found_persiana := dialogue_glossary.english_for("persiana")
+    preko, found_preko := dialogue_glossary.english_for("preko")
     testing.expect(t, found_bura && bura == "strong north wind")
     testing.expect(t, found_persiana && persiana == "window shutter")
+    testing.expect(t, found_preko && preko == "across")
 }
 
 @(test)

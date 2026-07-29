@@ -288,6 +288,13 @@ quest_log_draw :: proc(editor: ^Editor, width, height: i32) {
         ui_theme_text_muted(),
     )
     stamps := fmt.ctprintf("%d STAMPS", editor.story_state.stamps_earned)
+    if editor.story_state.bonus_stamps > 0 {
+        stamps = fmt.ctprintf(
+            "%d STAMPS · %d MERIT",
+            editor.story_state.stamps_earned,
+            editor.story_state.bonus_stamps,
+        )
+    }
     stamp_size := ui_measure_text(.Data, stamps, .35)
     ui_draw_text(
         .Data,

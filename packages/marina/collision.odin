@@ -3,6 +3,8 @@ package marina
 import boats "../boats"
 import "core:math"
 
+MOORING_BUOY_COLLISION_RADIUS :: f32(.35)
+
 resolve_segment_circle :: proc(segment: Segment, plan: ^Plan, position: Vec2, radius: f32) -> (Vec2, bool) {
     a := plan_world_position(plan, segment.a)
     b := plan_world_position(plan, segment.b)
@@ -48,6 +50,34 @@ resolve_office_circle :: proc(plan: ^Plan, position: Vec2, radius: f32) -> (Vec2
     return {center.x + local_x * cosine + local_z * sine, center.z - local_x * sine + local_z * cosine}, true
 }
 
+prop_collision_radius :: proc(kind: Prop_Kind) -> f32 {
+    switch kind {
+    case .Lamp:
+        return .12
+    case .Beacon:
+        return .68
+    case .Bollard:
+        return .24
+    case .Crates:
+        return 1.05
+    case .Nets:
+        return 1.1
+    }
+    return 0
+}
+
+resolve_point_circle :: proc(center, position: Vec2, obstacle_radius, radius: f32) -> (Vec2, bool) {
+    clearance := obstacle_radius + radius
+    delta := Vec2{position.x - center.x, position.z - center.z}
+    distance_squared := delta.x * delta.x + delta.z * delta.z
+    if distance_squared >= clearance * clearance do return position, false
+    if distance_squared > .000001 {
+        scale := clearance / f32(math.sqrt(f64(distance_squared)))
+        return {center.x + delta.x * scale, center.z + delta.z * scale}, true
+    }
+    return {center.x + clearance, center.z}, true
+}
+
 // resolve_circle derives collision directly from the generated plan. Occupied
 // slips are included because those boats are rendered from the plan rather
 // than necessarily appearing in the global traffic list.
@@ -71,9 +101,24 @@ resolve_circle :: proc(plan: ^Plan, position: Vec2, radius: f32) -> (Vec2, bool)
             result = corrected
             changed, collided = true, true
         }
+        for prop in plan.props[:plan.prop_count] {
+            center := plan_world_position(plan, prop.position)
+            prop_position, prop_hit := resolve_point_circle(center, result, prop_collision_radius(prop.kind), radius)
+            if prop_hit {
+                result = prop_position
+                changed, collided = true, true
+            }
+        }
         for slip in plan.slips[:plan.slip_count] {
-            if !slip.occupied do continue
             world := plan_world_position(plan, slip.position)
+            if slip.kind == .Swing_Mooring {
+                buoy_position, buoy_hit := resolve_point_circle(world, result, MOORING_BUOY_COLLISION_RADIUS, radius)
+                if buoy_hit {
+                    result = buoy_position
+                    changed, collided = true, true
+                }
+            }
+            if !slip.occupied do continue
             agent := boats.Agent {
                 class    = slip.class,
                 position = {world.x, world.z},

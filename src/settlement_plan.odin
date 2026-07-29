@@ -84,6 +84,12 @@ Village_Reason :: enum u8 {
     Upland_Pastoral,
 }
 
+Settlement_Growth_Event_Kind :: enum u8 {
+    Backbone,
+    Exploration,
+    Densification,
+}
+
 Settlement_Building_Purpose :: enum u8 {
     Dwelling,
     Farmstead,
@@ -104,6 +110,7 @@ Settlement_Landmark_Kind :: enum u8 {
     Harbor_Office,
     Market_Hall,
     Cycladic_Bell,
+    Lighthouse,
 }
 
 settlement_building_region :: proc(region: Settlement_Region) -> buildings.Region {
@@ -150,6 +157,8 @@ settlement_building_landmark :: proc(kind: Settlement_Landmark_Kind) -> building
         return .Market_Hall
     case .Cycladic_Bell:
         return .Cycladic_Bell
+    case .Lighthouse:
+        return .Lighthouse
     }
     return .None
 }
@@ -205,11 +214,11 @@ Settlement_Terrain_Edit_Kind :: enum u8 {
 }
 
 Settlement_Request :: struct {
-    region: Settlement_Region,
-    scale:  Settlement_Scale,
-    seed:   u32,
-    center: [2]f32,
-    radius: f32,
+    region:  Settlement_Region,
+    scale:   Settlement_Scale,
+    seed:    u32,
+    center:  [2]f32,
+    radius:  f32,
     density: f32,
 }
 
@@ -221,18 +230,18 @@ Settlement_Program_Count :: struct {
 }
 
 Settlement_Program :: struct {
-    ordinary:                 Settlement_Program_Count,
-    purposes:                 [8]Settlement_Program_Count,
-    landmarks:               Settlement_Program_Count,
-    plazas:                  Settlement_Program_Count,
-    parks:                   Settlement_Program_Count,
-    vegetation:              Settlement_Program_Count,
-    residents:               Settlement_Program_Count,
-    workers:                 Settlement_Program_Count,
-    developable_area:        f32,
-    target_coverage:         f32,
-    canonical_footprint:     f32,
-    infeasible_essential:    bool,
+    ordinary:             Settlement_Program_Count,
+    purposes:             [8]Settlement_Program_Count,
+    landmarks:            Settlement_Program_Count,
+    plazas:               Settlement_Program_Count,
+    parks:                Settlement_Program_Count,
+    vegetation:           Settlement_Program_Count,
+    residents:            Settlement_Program_Count,
+    workers:              Settlement_Program_Count,
+    developable_area:     f32,
+    target_coverage:      f32,
+    canonical_footprint:  f32,
+    infeasible_essential: bool,
 }
 
 Settlement_Activity_Kind :: enum u8 {
@@ -244,8 +253,8 @@ Settlement_Activity_Kind :: enum u8 {
 }
 
 Settlement_Activity_Point :: struct {
-    position:  [2]f32,
-    kind:      Settlement_Activity_Kind,
+    position:   [2]f32,
+    kind:       Settlement_Activity_Kind,
     site_index: int,
 }
 
@@ -261,6 +270,7 @@ SETTLEMENT_INHABITANT_CAPACITY :: 256
 
 SETTLEMENT_NEIGHBORHOOD_CAPACITY :: 96
 SETTLEMENT_MACRO_CELL_CAPACITY :: 192
+SETTLEMENT_GROWTH_EVENT_CAPACITY :: 96
 // Drivable routes are bounded independently by roads.MAX_NODES/MAX_EDGES.
 // This plan also retains one compact chain for each pedestrian-network branch,
 // so dense cities need headroom proportional to the site capacity.
@@ -291,6 +301,16 @@ Settlement_Planned_Route :: struct {
     drivable:      bool,
     average_grade: f32,
     maximum_grade: f32,
+}
+
+Settlement_Growth_Event :: struct {
+    kind:                Settlement_Growth_Event_Kind,
+    age:                 f32,
+    order:               int,
+    target_neighborhood: int,
+    route_index:         int,
+    frontage_start:      [2]f32,
+    frontage_finish:     [2]f32,
 }
 
 Settlement_Block :: struct {
@@ -337,36 +357,45 @@ Settlement_Scalar_Stats :: struct {
 }
 
 Settlement_Metrics :: struct {
-    route_length:          Settlement_Scalar_Stats,
-    route_width:           Settlement_Scalar_Stats,
-    route_grade:           Settlement_Scalar_Stats,
-    route_length_by_class: [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
-    route_width_by_class:  [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
-    intersection_spacing:  Settlement_Scalar_Stats,
-    dead_end_frontage:     Settlement_Scalar_Stats,
-    block_short_side:      Settlement_Scalar_Stats,
-    block_long_side:       Settlement_Scalar_Stats,
-    block_area:            Settlement_Scalar_Stats,
-    block_aspect:          Settlement_Scalar_Stats,
-    block_irregularity:    Settlement_Scalar_Stats,
-    parcel_frontage:       Settlement_Scalar_Stats,
-    parcel_depth:          Settlement_Scalar_Stats,
-    building_height:       Settlement_Scalar_Stats,
-    building_footprint:    Settlement_Scalar_Stats,
-    building_floors:       Settlement_Scalar_Stats,
-    network_density:       f32,
-    road_badness:          f32,
-    attached_share:        f32,
-    density_band_count:    [3]int,
-    wide_route_share:      f32,
-    minor_route_share:     f32,
-    fabric_aspect_ratio:   f32,
-    fabric_quadrants:      int,
-    landmark_count:        int,
-    park_count:            int,
-    rejected_count:        int,
-    cut_volume:            f32,
-    fill_volume:           f32,
+    route_length:              Settlement_Scalar_Stats,
+    route_width:               Settlement_Scalar_Stats,
+    route_grade:               Settlement_Scalar_Stats,
+    route_length_by_class:     [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
+    route_width_by_class:      [SETTLEMENT_ROUTE_CLASS_COUNT]Settlement_Scalar_Stats,
+    intersection_spacing:      Settlement_Scalar_Stats,
+    dead_end_frontage:         Settlement_Scalar_Stats,
+    block_short_side:          Settlement_Scalar_Stats,
+    block_long_side:           Settlement_Scalar_Stats,
+    block_area:                Settlement_Scalar_Stats,
+    block_aspect:              Settlement_Scalar_Stats,
+    block_irregularity:        Settlement_Scalar_Stats,
+    parcel_frontage:           Settlement_Scalar_Stats,
+    parcel_depth:              Settlement_Scalar_Stats,
+    building_height:           Settlement_Scalar_Stats,
+    building_footprint:        Settlement_Scalar_Stats,
+    building_floors:           Settlement_Scalar_Stats,
+    network_density:           f32,
+    road_badness:              f32,
+    attached_share:            f32,
+    density_band_count:        [3]int,
+    wide_route_share:          f32,
+    minor_route_share:         f32,
+    fabric_aspect_ratio:       f32,
+    fabric_quadrants:          int,
+    drivable_dead_end_share:   f32,
+    degree_four_plus_count:    int,
+    paved_length_per_building: f32,
+    public_paving_per_building: f32,
+    access_repair_share:       f32,
+    public_route_count:        int,
+    public_component_count:    int,
+    public_cycle_count:        int,
+    public_max_degree:         int,
+    landmark_count:            int,
+    park_count:                int,
+    rejected_count:            int,
+    cut_volume:                f32,
+    fill_volume:               f32,
 }
 
 Settlement_Acceptance_Failure :: enum {
@@ -375,6 +404,7 @@ Settlement_Acceptance_Failure :: enum {
     Wide_Route_Share,
     Required_Route,
     Disconnected_Anchors,
+    Road_Topology,
     Building_Access,
     Route_Grade,
     Submerged_Route,
@@ -424,8 +454,11 @@ Settlement_Plan :: struct {
     access_widened_segments:      int,
     access_max_shared_width_step: f32,
     access_orphan_endpoints:      int,
+    access_repair_count:          int,
     road_badness_sum:             f32,
     road_badness_count:           int,
+    growth_events:                [SETTLEMENT_GROWTH_EVENT_CAPACITY]Settlement_Growth_Event,
+    growth_event_count:           int,
     blocks:                       [SETTLEMENT_BLOCK_CAPACITY]Settlement_Block,
     block_count:                  int,
     sites:                        [SETTLEMENT_SITE_CAPACITY]Settlement_Site,
@@ -561,6 +594,23 @@ settlement_route_width_sample :: proc(rng: ^Settlement_Rng, class: Settlement_Ro
     return 3
 }
 
+// Route hierarchy is also a useful stable proxy for long-term wear. It keeps
+// civic streets maintained while allowing quiet lanes and alleys to weather
+// back into the landscape without requiring a runtime traffic simulation.
+settlement_route_use_intensity :: proc(class: Settlement_Route_Class) -> f32 {
+    switch class {
+    case .Civic_Spine: return .96
+    case .Waterfront:  return .82
+    case .Connector:   return .78
+    case .Street:      return .64
+    case .Lane:        return .38
+    case .Ridge:       return .34
+    case .Alley:       return .16
+    case .Stair:       return .08
+    }
+    return 1
+}
+
 settlement_route_length :: proc(route: Settlement_Route) -> f32 {
     total: f32
     for index in 0 ..< route.count - 1 {
@@ -585,6 +635,47 @@ settlement_stats :: proc(values: []f32) -> Settlement_Scalar_Stats {
         mean   = sum / f32(len(sorted)),
         p90    = sorted[(len(sorted) - 1) * 90 / 100],
         max    = sorted[len(sorted) - 1],
+    }
+    return result
+}
+
+settlement_growth_topology :: proc(plan: ^Settlement_Plan) -> Settlement_Route_Topology {
+    result: Settlement_Route_Topology
+    if plan == nil do return result
+    for event in plan.growth_events[:plan.growth_event_count] {
+        if event.route_index < 0 || event.route_index >= plan.route_count do continue
+        geometry := plan.routes[event.route_index].geometry
+        indices: [SETTLEMENT_ROUTE_CAPACITY]int
+        for point, point_index in geometry.points[:geometry.count] {
+            node_index := -1
+            for existing, existing_index in result.nodes[:result.node_count] {
+                if settlement_route_point_near(existing, point, .0001) {
+                    node_index = existing_index
+                    break
+                }
+            }
+            if node_index < 0 {
+                if result.node_count >= len(result.nodes) do return result
+                node_index = result.node_count
+                result.nodes[result.node_count] = point
+                result.node_count += 1
+            }
+            indices[point_index] = node_index
+        }
+        for point_index in 0 ..< geometry.count - 1 {
+            from, to := indices[point_index], indices[point_index + 1]
+            if from == to do continue
+            duplicate := false
+            for edge in result.edges[:result.edge_count] {
+                if (edge[0] == from && edge[1] == to) || (edge[0] == to && edge[1] == from) {
+                    duplicate = true
+                    break
+                }
+            }
+            if duplicate || result.edge_count >= len(result.edges) do continue
+            result.edges[result.edge_count] = {from, to}
+            result.edge_count += 1
+        }
     }
     return result
 }
@@ -690,6 +781,7 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
     topology := settlement_plan_route_topology(plan)
     intersection_nodes: [roads.MAX_NODES]int
     intersection_count := 0
+    drivable_dead_ends := 0
     for node_index in 0 ..< topology.node_count {
         degree := 0
         for edge in topology.edges[:topology.edge_count] {
@@ -698,7 +790,9 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
         if degree >= 3 {
             intersection_nodes[intersection_count] = node_index
             intersection_count += 1
+            if degree >= 4 do plan.metrics.degree_four_plus_count += 1
         } else if degree == 1 {
+            drivable_dead_ends += 1
             point := topology.nodes[node_index]
             nearest_frontage := f32(1e30)
             for site in plan.sites[:plan.site_count] {
@@ -723,6 +817,46 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
     }
     plan.metrics.intersection_spacing = settlement_stats(intersection_spacings[:])
     plan.metrics.dead_end_frontage = settlement_stats(dead_end_frontages[:])
+    if plan.request.scale == .Village && plan.growth_event_count > 0 {
+        growth := settlement_growth_topology(plan)
+        plan.metrics.public_route_count = plan.growth_event_count
+        components := 0
+        visited: [roads.MAX_NODES]bool
+        queue: [roads.MAX_NODES]int
+        for root in 0 ..< growth.node_count {
+            if visited[root] do continue
+            components += 1
+            queue[0], visited[root] = root, true
+            queue_start, queue_end := 0, 1
+            for queue_start < queue_end {
+                current := queue[queue_start]
+                queue_start += 1
+                degree := 0
+                for edge in growth.edges[:growth.edge_count] {
+                    neighbor := -1
+                    if edge[0] == current {
+                        neighbor = edge[1]
+                    } else if edge[1] == current {
+                        neighbor = edge[0]
+                    }
+                    if neighbor < 0 do continue
+                    degree += 1
+                    if !visited[neighbor] {
+                        visited[neighbor] = true
+                        queue[queue_end] = neighbor
+                        queue_end += 1
+                    }
+                }
+                plan.metrics.public_max_degree = max(plan.metrics.public_max_degree, degree)
+                if degree >= 4 do plan.metrics.degree_four_plus_count += 1
+            }
+        }
+        plan.metrics.public_component_count = components
+        plan.metrics.public_cycle_count = max(growth.edge_count - growth.node_count + components, 0)
+    }
+    if topology.node_count > 0 {
+        plan.metrics.drivable_dead_end_share = f32(drivable_dead_ends) / f32(topology.node_count)
+    }
     plan.metrics.block_short_side = settlement_stats(block_short[:])
     plan.metrics.block_long_side = settlement_stats(block_long[:])
     plan.metrics.block_area = settlement_stats(block_areas[:])
@@ -742,6 +876,17 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
             total_route_length / (math.PI * plan.request.radius * plan.request.radius) * 1000
     }
     if fabric_count > 0 do plan.metrics.attached_share = f32(attached_count) / f32(fabric_count)
+    if fabric_count > 0 {
+        plan.metrics.paved_length_per_building = total_route_length / f32(fabric_count)
+        public_length: f32
+        for event in plan.growth_events[:plan.growth_event_count] {
+            if event.route_index >= 0 && event.route_index < plan.route_count {
+                public_length += settlement_route_length(plan.routes[event.route_index].geometry)
+            }
+        }
+        plan.metrics.public_paving_per_building = public_length / f32(fabric_count)
+        plan.metrics.access_repair_share = f32(plan.access_repair_count) / f32(fabric_count)
+    }
     if fabric_count > 0 {
         fabric_center_x /= f32(fabric_count)
         fabric_center_z /= f32(fabric_count)
@@ -781,6 +926,14 @@ settlement_plan_acceptance_failure :: proc(
     }
     if plan.metrics.wide_route_share > wide_route_limit do return .Wide_Route_Share
     if !settlement_plan_required_routes_connected(plan) do return .Disconnected_Anchors
+    if plan.request.scale == .Village &&
+       (plan.metrics.public_component_count != 1 ||
+        plan.metrics.public_cycle_count > 0 ||
+        plan.metrics.public_max_degree > 3 ||
+        plan.metrics.public_route_count > 4 ||
+        plan.metrics.public_paving_per_building > 18) {
+        return .Road_Topology
+    }
     if plan.access_connected_count < plan.access_required_count do return .Building_Access
     for route in plan.routes[:plan.route_count] {
         if route.required && route.geometry.count < 2 do return .Required_Route

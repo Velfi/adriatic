@@ -109,8 +109,10 @@ architecture_regeneration_preserves_seeded_styles :: proc(t: ^testing.T) {
 architecture_append_generation_keeps_both_island_towns :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
-    first_created := architecture.generate_append(project, -1300, -1418, 0xA71D3)
-    second_created := architecture.generate_append(project, 1300, 1418, 0xD911C)
+    west_x, west_z := terrain.default_town_center(-1)
+    east_x, east_z := terrain.default_town_center(1)
+    first_created := architecture.generate_append(project, west_x, west_z, 0xA71D3)
+    second_created := architecture.generate_append(project, east_x, east_z, 0xD911C)
     testing.expect(t, first_created >= 12)
     testing.expect(t, second_created >= 12)
     testing.expect(t, project.structure_count == first_created + second_created)
@@ -756,8 +758,7 @@ low_density_island_town_does_not_spawn_deep_alley_branches :: proc(t: ^testing.T
     project := terrain.new_project()
     defer terrain.free_project(project)
     field: [terrain.CITY_DENSITY_SAMPLES]u8
-    center := -f32(terrain.WORLD_SIZE_METERS * .5) * terrain.DEFAULT_ISLAND_OFFSET
-    town_z := center - terrain.DEFAULT_TOWN_OFFSET
+    center, town_z := terrain.default_town_center(-1)
     bounds := architecture.City_Bounds{center - 108, town_z - 68, center + 108, town_z + 68, true}
 
     road_start := roads.add_node(&project.road_graph, {center - 78, 4.5, town_z}, 0)
@@ -888,6 +889,14 @@ architecture_context_resolves_explicit_and_contextual_archetypes :: proc(t: ^tes
         42,
     )
     testing.expect_value(t, townhouse.archetype, buildings.Archetype.Townhouse)
+
+    lighthouse := architecture.architecture_identity(
+        {region = .Adriatic, landmark_kind = .Lighthouse, purpose_explicit = true},
+        91,
+    )
+    testing.expect_value(t, lighthouse.archetype, buildings.Archetype.Lighthouse)
+    testing.expect(t, buildings.is_landmark(lighthouse))
+    testing.expect(t, !buildings.is_habitable(lighthouse.archetype))
 
     waterfront := architecture.Architecture_Context {
         density          = .45,

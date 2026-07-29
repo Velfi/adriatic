@@ -252,6 +252,23 @@ spawn_dust :: proc(effects: ^Vehicle_Effects, contact: Vehicle_Contact, intensit
     effects.dust_count += 1
 }
 
+spawn_stop_spray :: proc(effects: ^Vehicle_Effects, contact: Vehicle_Contact, travel_direction: Vec3, intensity: f32) {
+    if effects == nil || !contact.grounded do return
+    strength := clamp(intensity, f32(0), f32(1))
+    count := 3 + int(strength * 3)
+    for _ in 0 ..< count {
+        if effects.dust_count >= MAX_DUST_PARTICLES do break
+        spawn_dust(effects, contact, .35 + strength * .55)
+        particle := &effects.dust[effects.dust_count - 1]
+        forward_scatter := .40 + next_random(&effects.seed) * (.60 + strength * .60)
+        side_scatter := (next_random(&effects.seed) - .5) * (.45 + strength * .35)
+        particle.velocity.x += -travel_direction.x * forward_scatter - travel_direction.z * side_scatter
+        particle.velocity.z += -travel_direction.z * forward_scatter + travel_direction.x * side_scatter
+        particle.velocity.y += .06 + next_random(&effects.seed) * (.08 + strength * .12)
+        particle.size *= .95
+    }
+}
+
 step_vehicle_effects :: proc(
     effects: ^Vehicle_Effects,
     delta_seconds: f32,

@@ -36,7 +36,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  foliage-forest-golden, foliage-forest-wind-a, foliage-forest-wind-b")
     fmt.println("  foliage-forest-low-wind-a, foliage-forest-low-wind-b, foliage-stress")
     fmt.println(
-        "  grass-wind, wildflower-lab, shadow-lab, boat-lab, mouse-gait-lab, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina",
+        "  grass-wind, wildflower-lab, shadow-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, lighthouse-lab, mouse-gait-lab, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina",
     )
     fmt.println("  markov-city, markov-town, markov-village, aegean-city, aegean-town, aegean-village")
     fmt.println("  narrow, compact, sky-noon, sky-sunset, sky-storm, sky-night, player-*")
@@ -113,28 +113,16 @@ adriatic_cli_bougainvillea :: proc(args: []string) -> bool {
     return true
 }
 
-adriatic_cli_parse_bounded_int :: proc(
-    option, value: string,
-    minimum, maximum: int,
-) -> (int, bool) {
+adriatic_cli_parse_bounded_int :: proc(option, value: string, minimum, maximum: int) -> (int, bool) {
     parsed, ok := strconv.parse_int(value)
     if !ok || parsed < minimum || parsed > maximum {
-        fmt.eprintf(
-            "adriatic: %s must be an integer from %d to %d, got %s\n",
-            option,
-            minimum,
-            maximum,
-            value,
-        )
+        fmt.eprintf("adriatic: %s must be an integer from %d to %d, got %s\n", option, minimum, maximum, value)
         return 0, false
     }
     return int(parsed), true
 }
 
-adriatic_cli_parse_f32_components :: proc(
-    option, value: string,
-    count: int,
-) -> ([3]f32, bool) {
+adriatic_cli_parse_f32_components :: proc(option, value: string, count: int) -> ([3]f32, bool) {
     result: [3]f32
     parts := strings.split(value, ",", context.temp_allocator)
     if len(parts) != count {
@@ -331,22 +319,22 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         return true, false
     }
     request := Capture_Request {
-        kind          = kind,
-        output_path   = output,
-        target        = target,
-        window_width  = window_width,
-        window_height = window_height,
-        settle_frames = settle_frames,
-        camera_eye = camera_eye,
-        camera_look_at = camera_look_at,
-        camera_eye_set = camera_eye_set,
-        camera_look_at_set = camera_look_at_set,
+        kind                 = kind,
+        output_path          = output,
+        target               = target,
+        window_width         = window_width,
+        window_height        = window_height,
+        settle_frames        = settle_frames,
+        camera_eye           = camera_eye,
+        camera_look_at       = camera_look_at,
+        camera_eye_set       = camera_eye_set,
+        camera_look_at_set   = camera_look_at_set,
         camera_orbit_degrees = camera_orbit,
-        camera_orbit_set = camera_orbit_set,
-        camera_distance = camera_distance,
-        camera_distance_set = camera_distance_set,
-        camera_offset = camera_offset,
-        camera_offset_set = camera_offset_set,
+        camera_orbit_set     = camera_orbit_set,
+        camera_distance      = camera_distance,
+        camera_distance_set  = camera_distance_set,
+        camera_offset        = camera_offset,
+        camera_offset_set    = camera_offset_set,
     }
     _ = adriatic_run(nil, request = &request)
     info, screenshot_error := os.stat(output, context.temp_allocator)

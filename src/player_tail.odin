@@ -75,6 +75,7 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
 player_tail_update :: proc(editor: ^Editor, delta_seconds: f32) {
     if editor == nil || !editor.in_map || editor.pilot.mode != .On_Foot do return
     player_scarf_rotation_update(editor, delta_seconds)
+    player_mailbag_motion_update(editor, delta_seconds)
     root, backward := player_tail_root(editor)
     mouse_tail.step(
         &editor.player_tail,
@@ -84,6 +85,41 @@ player_tail_update :: proc(editor: ^Editor, delta_seconds: f32) {
         editor.tweak.player_tail,
         delta_seconds,
         editor_circulation_plan(editor),
+    )
+}
+
+player_mailbag_motion_update :: proc(editor: ^Editor, delta_seconds: f32) {
+    if editor == nil || delta_seconds <= 0 do return
+    delta := min(delta_seconds, f32(.05))
+    // The fitted harness turns with the torso. Only the pouch mass lags, and
+    // only by a few centimetres, so the accessory reads as loaded canvas
+    // without sliding freely over the animal's back.
+    yaw_target := clamp(-editor.player.turn_amount * .075, -.085, .085)
+    roll_target := clamp(-editor.player_turn_pose * .045, -.055, .055)
+    vertical_target := clamp(-editor.player.velocity.y * .0035, -.018, .018)
+    player_animation_spring(
+        &editor.mouse_mailbag_yaw_lag,
+        &editor.mouse_mailbag_yaw_velocity,
+        yaw_target,
+        42,
+        12,
+        delta,
+    )
+    player_animation_spring(
+        &editor.mouse_mailbag_roll_lag,
+        &editor.mouse_mailbag_roll_velocity,
+        roll_target,
+        48,
+        13,
+        delta,
+    )
+    player_animation_spring(
+        &editor.mouse_mailbag_vertical_lag,
+        &editor.mouse_mailbag_vertical_velocity,
+        vertical_target,
+        55,
+        14,
+        delta,
     )
 }
 

@@ -47,6 +47,30 @@ car_drive_arcade_input_has_precise_center_and_full_lock :: proc(t: ^testing.T) {
 }
 
 @(test)
+car_drive_physics_steering_loses_lock_at_speed_and_in_reverse :: proc(t: ^testing.T) {
+    tune := vehicles.CAR_DRIVE_SEDAN_TUNE
+    town := vehicles.car_drive_speed_sensitive_steering(1, 6, tune)
+    fast := vehicles.car_drive_speed_sensitive_steering(1, tune.max_forward, tune)
+    reverse := vehicles.car_drive_speed_sensitive_steering(1, -6, tune)
+    testing.expect(t, town > fast)
+    testing.expect(t, math.abs(fast - tune.high_speed_steering) < .001)
+    testing.expect(t, reverse < town)
+    testing.expect(t, vehicles.car_drive_speed_sensitive_steering(.25, 0, tune) < .25)
+}
+
+@(test)
+car_drive_slip_telemetry_measures_angle_not_absolute_side_speed :: proc(t: ^testing.T) {
+    testing.expect(t, vehicles.car_drive_slip_angle_amount(10, 0) == 0)
+    testing.expect(t, math.abs(vehicles.car_drive_slip_angle_amount(1, 1) - 1) < .001)
+    testing.expect(
+        t,
+        vehicles.car_drive_slip_angle_amount(4, 2) >
+            vehicles.car_drive_slip_angle_amount(16, 2),
+    )
+    testing.expect(t, vehicles.car_drive_slip_angle_amount(0, 20) == 1)
+}
+
+@(test)
 car_drive_arcade_turning_is_quick_in_town_and_stable_at_speed :: proc(t: ^testing.T) {
     tune := vehicles.CAR_DRIVE_SEDAN_TUNE
     crawl_rate := math.abs(vehicles.car_drive_target_yaw_rate(1, 2, 0, tune))

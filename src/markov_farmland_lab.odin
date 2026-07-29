@@ -719,9 +719,9 @@ markov_farmland_lab_apply_terrain :: proc(editor: ^Editor, kind: Farmland_Lab_Te
     markov_farmland_lab_terrain = kind
     for level in 0 ..< terrain.CLIPMAP_LEVELS {
         data := &editor.project.levels[level]
-        for z in 0 ..< terrain.RING_RESOLUTION {
+        for z in 0 ..< terrain.TERRAIN_RESOLUTION {
             world_z := data.origin_z + f32(z) * data.cell_size
-            for x in 0 ..< terrain.RING_RESOLUTION {
+            for x in 0 ..< terrain.TERRAIN_RESOLUTION {
                 world_x := data.origin_x + f32(x) * data.cell_size
                 index := terrain.sample_index(x, z)
                 data.heights[index] = markov_farmland_lab_height(kind, world_x, world_z)

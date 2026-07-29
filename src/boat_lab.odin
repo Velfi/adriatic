@@ -7,9 +7,9 @@ import "core:fmt"
 import "core:math"
 import rl "zelda_engine:canvas2d"
 
-BOAT_LAB_CLASSES := [4]boats.Class{.Motor, .Sail, .Fishing, .Tug}
+BOAT_LAB_CLASSES := [5]boats.Class{.Motor, .Sail, .Fishing, .Tug, .Dinghy}
 
-boat_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
+boat_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
     editor.in_map = true
     editor.capture_world_only = true
@@ -41,6 +41,15 @@ boat_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
     atmosphere.set_weather_override(&editor.atmosphere, .Clear)
     editor.atmosphere.weather = atmosphere.weather_for(.Clear)
     editor.atmosphere.paused = true
+
+    if target == "dinghy" {
+        editor.boat_traffic = {}
+        _ = boats.add_moored_agent(&editor.boat_traffic, .Dinghy, {0, 0}, .12)
+        editor.camera_pose = third_person.camera_look_at({3.0, 2.15, -3.65}, {0, .38, 0})
+        third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+        third_person.camera_set_active(&editor.cameras, .Inspection)
+        return true
+    }
 
     editor.camera_pose = third_person.camera_look_at({45, 28, 52}, {0, 2.8, 0})
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
@@ -78,7 +87,7 @@ boat_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         x      = 22,
         y      = 22,
         width  = 410,
-        height = 158,
+        height = 179,
     }
     rl.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
     rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
@@ -92,7 +101,7 @@ boat_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
             {38, 70 + f32(index) * 21},
             13,
             1,
-            index == 3 ? rl.Color{247, 189, 115, 255} : rl.Color{208, 239, 240, 255},
+            index >= 3 ? rl.Color{247, 189, 115, 255} : rl.Color{208, 239, 240, 255},
         )
     }
     _ = width

@@ -21,12 +21,7 @@ markov_symmetry_releases_unselected_candidates :: proc(t: ^testing.T) {
     base: markov.Rule
     markov.rule_init(&base, input, {2, 1, 1}, output, {2, 1, 1}, 2, 1, allocator)
 
-    rules := markov.rule_square_symmetries(
-        &base,
-        2,
-        markov.SYMMETRY_2D_IDENTITY,
-        allocator,
-    )
+    rules := markov.rule_square_symmetries(&base, 2, markov.SYMMETRY_2D_IDENTITY, allocator)
     testing.expect_value(t, len(rules), 1)
 
     for &rule in rules {

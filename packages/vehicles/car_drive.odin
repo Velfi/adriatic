@@ -102,6 +102,30 @@ car_drive_arcade_steering :: proc(steering: f32) -> f32 {
     return math.sign(steering) * curved
 }
 
+// Reduce steering lock progressively at road speed. The Jolt vehicle still
+// owns the physical steering geometry; this product-level curve keeps digital
+// input precise in town without making a full-lock key press twitchy near the
+// sedan's top speed.
+car_drive_speed_sensitive_steering :: proc(
+    steering, longitudinal_speed: f32,
+    tune := CAR_DRIVE_SEDAN_TUNE,
+) -> f32 {
+    if tune.max_forward <= .01 do return 0
+    speed_ratio := clamp(math.abs(longitudinal_speed) / tune.max_forward, 0, 1)
+    authority := 1 - speed_ratio * (1 - clamp(tune.high_speed_steering, 0, 1))
+    if longitudinal_speed < 0 do authority *= tune.reverse_steering
+    return car_drive_arcade_steering(steering) * authority
+}
+
+// Report chassis slip as an angle rather than raw lateral speed. A given
+// sideways velocity is severe near a stop but only a small correction when
+// most of the car's travel is forward. Forty-five degrees maps to full-scale
+// telemetry for tire audio, dust, and camera feedback.
+car_drive_slip_angle_amount :: proc(longitudinal_speed, lateral_speed: f32) -> f32 {
+    slip_angle := math.abs(math.atan2(lateral_speed, max(math.abs(longitudinal_speed), f32(1))))
+    return clamp(slip_angle / (math.PI * .25), 0, 1)
+}
+
 car_drive_target_yaw_rate :: proc(
     steering, longitudinal_speed, handbrake_amount: f32,
     tune := CAR_DRIVE_SEDAN_TUNE,

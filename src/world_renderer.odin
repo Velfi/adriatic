@@ -28,6 +28,7 @@ import "core:testing"
 import vk "vendor:vulkan"
 import rl "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
+import gltf "zelda_engine:gltf"
 import render3d "zelda_engine:render3d"
 import resources "zelda_engine:render_resources"
 
@@ -45,7 +46,7 @@ WILDFLOWER_INSTANCE_INITIAL_CAPACITY :: 4_000
 WING_TRAIL_VERTEX_CAPACITY :: particles.MAX_WING_TRAIL_PARTICLES * 8
 WING_TRAIL_INDEX_CAPACITY :: (particles.MAX_WING_TRAIL_PARTICLES - 2) * 8 * 6 + 8 * 6
 SHADOW_VERTEX_INITIAL_CAPACITY :: 180_000
-CLIPMAP_GRID_RESOLUTION :: (terrain.RING_RESOLUTION - 1) / 2 + 2
+CLIPMAP_GRID_RESOLUTION :: (terrain.TERRAIN_RESOLUTION - 1) / 2 + 2
 CLIPMAP_VERTEX_COUNT :: CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLUTION - 1) * 6
 CLIPMAP_TRANSITION_WIDTH :: 4
@@ -403,6 +404,7 @@ World_Material_Kind :: enum u32 {
     Emissive_Halo,
     Sailor_Hat,
     Sign,
+    Lighthouse_Glitter,
 }
 
 World_Vertex :: struct {
@@ -520,21 +522,21 @@ TOWN_MOUSE_TERRAIN_RADIUS :: f32(2.5)
 TOWN_MOUSE_GROUND_SAMPLE_COUNT :: 32
 
 Town_Mouse_Geometry_Cache_Entry :: struct {
-    valid:                       bool,
-    model:                       Mouse_Model,
-    scale:                       f32,
-    animation_bucket:            i64,
-    wind:                        [2]f32,
-    project_revision:            u64,
-    terrain_revision:            u64,
-    ground_valid:                bool,
-    ground_model:                Mouse_Model,
-    ground_scale:                f32,
-    ground_project_revision:     u64,
-    ground_terrain_revision:     u64,
-    ground_sample_count:         int,
-    ground_samples:              [TOWN_MOUSE_GROUND_SAMPLE_COUNT]f32,
-    vertices:                    [dynamic]World_Vertex,
+    valid:                   bool,
+    model:                   Mouse_Model,
+    scale:                   f32,
+    animation_bucket:        i64,
+    wind:                    [2]f32,
+    project_revision:        u64,
+    terrain_revision:        u64,
+    ground_valid:            bool,
+    ground_model:            Mouse_Model,
+    ground_scale:            f32,
+    ground_project_revision: u64,
+    ground_terrain_revision: u64,
+    ground_sample_count:     int,
+    ground_samples:          [TOWN_MOUSE_GROUND_SAMPLE_COUNT]f32,
+    vertices:                [dynamic]World_Vertex,
 }
 
 Town_Mouse_Ground_Cache_Context :: struct {
@@ -561,10 +563,10 @@ Terrain_Dirty_Bounds :: struct {
 }
 
 Architecture_Street_Area_Cache :: struct {
-    valid: bool,
-    area: circulation.Area,
+    valid:                              bool,
+    area:                               circulation.Area,
     project_revision, terrain_revision: u64,
-    vertices: [dynamic]World_Vertex,
+    vertices:                           [dynamic]World_Vertex,
 }
 
 World_Push :: struct {
@@ -1634,16 +1636,16 @@ world_road_editor_link :: proc(a, b: roads.Vec3, width: f32, color: rl.Color) {
 world_road_vertex :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color) -> World_Vertex {
     point := road_world_point(editor, vertex)
     // Road UV and pavement live in the normal channel because the dedicated
-    // road pass does not need the generic mesh normal. This keeps the existing
-    // compact vertex format and draw call while giving the fragment shader
-    // stable material-space coordinates.
+    // road pass reconstructs its geometric normal. Half-width and a junction
+    // flag travel in material. Road use intensity travels in the otherwise
+    // unused UV channel; the shader already receives world position directly.
     return {
         {point.x, point.y, point.z},
         world_color(color),
         .Road,
         {vertex.uv[0], vertex.uv[1], f32(vertex.pavement)},
-        {},
-        {},
+        {vertex.road_half_width, vertex.surface == .Junction ? 1 : 0},
+        {vertex.use_intensity, 0},
     }
 }
 
@@ -3593,6 +3595,9 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
     if !ceremonial_roof && roof_style == .Parapet {
         roof_color := rl.Color{229, 226, 211, 255}
         chimney_color := rl.Color{221, 218, 203, 255}
+        if world_renderer.editor != nil && world_renderer.editor.capture_world_only {
+            chimney_color = {0, 255, 255, 255}
+        }
         chimney_width, chimney_height := f32(1.1), f32(1.3)
         if identity.region != .Aegean {
             roof_bytes := architecture.architecture_roof_color(structure.seed)
@@ -7399,11 +7404,369 @@ world_architecture_entrance_oriented :: proc(source: terrain.Structure) -> terra
     return result
 }
 
+world_lighthouse_beam_angle :: proc(structure: terrain.Structure, elapsed_seconds: f32) -> f32 {
+    revolution_seconds := f32(8.0)
+    seed_phase := f32(structure.seed % 4096) / 4096 * math.TAU
+    return seed_phase + elapsed_seconds * math.TAU / revolution_seconds
+}
+
+world_lighthouse_beam_visibility :: proc(
+    structure: terrain.Structure,
+    point_x, point_z: f32,
+    elapsed_seconds: f32,
+) -> f32 {
+    dx, dz := point_x - structure.center_x, point_z - structure.center_z
+    distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    if distance < 2 || distance > 72 do return 0
+    angle := world_lighthouse_beam_angle(structure, elapsed_seconds)
+    forward_x, forward_z := math.sin(angle), math.cos(angle)
+    along := dx * forward_x + dz * forward_z
+    if along <= 0 do return 0
+    across := math.abs(dx * forward_z - dz * forward_x)
+    half_width := .45 + along * .085
+    if across >= half_width do return 0
+    edge_fade := 1 - across / half_width
+    distance_fade := 1 - clamp((distance - 48) / 24, 0, 1)
+    return edge_fade * edge_fade * distance_fade
+}
+
+world_architecture_lighthouse_beam :: proc(editor: ^Editor, structure: terrain.Structure, source_y: f32) {
+    if editor == nil do return
+    night_strength := clamp((.38 - world_renderer.scene_daylight) / .38, 0, 1)
+    if night_strength <= .001 do return
+
+    elapsed := f32(rl.GetTime())
+    angle := world_lighthouse_beam_angle(structure, elapsed)
+    forward_x, forward_z := math.sin(angle), math.cos(angle)
+    right_x, right_z := forward_z, -forward_x
+    source := third_person.Vec3{structure.center_x, source_y, structure.center_z}
+    near_distance, far_distance := f32(1.2), f32(62)
+    near_half_width, far_half_width := f32(.28), f32(5.6)
+    middle_distance := f32(24)
+    middle_half_width := f32(2.35)
+    far_y := source_y - 2.2
+    near_center := third_person.Vec3 {
+        source.x + forward_x * near_distance,
+        source.y,
+        source.z + forward_z * near_distance,
+    }
+    far_center := third_person.Vec3{source.x + forward_x * far_distance, far_y, source.z + forward_z * far_distance}
+    middle_t := middle_distance / far_distance
+    middle_center := third_person.Vec3 {
+        source.x + forward_x * middle_distance,
+        source.y + (far_y - source.y) * middle_t,
+        source.z + forward_z * middle_distance,
+    }
+    near_left := third_person.Vec3 {
+        near_center.x - right_x * near_half_width,
+        near_center.y,
+        near_center.z - right_z * near_half_width,
+    }
+    near_right := third_person.Vec3 {
+        near_center.x + right_x * near_half_width,
+        near_center.y,
+        near_center.z + right_z * near_half_width,
+    }
+    far_left := third_person.Vec3 {
+        far_center.x - right_x * far_half_width,
+        far_center.y,
+        far_center.z - right_z * far_half_width,
+    }
+    far_right := third_person.Vec3 {
+        far_center.x + right_x * far_half_width,
+        far_center.y,
+        far_center.z + right_z * far_half_width,
+    }
+    middle_left := third_person.Vec3 {
+        middle_center.x - right_x * middle_half_width,
+        middle_center.y,
+        middle_center.z - right_z * middle_half_width,
+    }
+    middle_right := third_person.Vec3 {
+        middle_center.x + right_x * middle_half_width,
+        middle_center.y,
+        middle_center.z + right_z * middle_half_width,
+    }
+    warm_near := rl.Color{255, 241, 190, u8(42 * night_strength)}
+    warm_middle := rl.Color{255, 232, 155, u8(14 * night_strength)}
+    warm_far := rl.Color{255, 221, 130, u8(2 * night_strength)}
+    core_near := rl.Color{255, 249, 215, u8(58 * night_strength)}
+    core_middle := rl.Color{255, 239, 180, u8(20 * night_strength)}
+    clear_far := rl.Color{255, 229, 151, 0}
+
+    // Layered crossed sheets produce a bright optical core inside a broad,
+    // soft atmospheric volume. The middle ring prevents a single linear fade
+    // from losing the entire beam within a few metres of the lantern.
+    first := len(world_renderer.vertices)
+    world_quad_colored(
+        near_left,
+        near_right,
+        middle_right,
+        middle_left,
+        warm_near,
+        warm_near,
+        warm_middle,
+        warm_middle,
+    )
+    world_quad_colored(middle_left, middle_right, far_right, far_left, warm_middle, warm_middle, warm_far, warm_far)
+    core_near_left := third_person.Vec3 {
+        near_center.x - right_x * near_half_width * .36,
+        near_center.y + .015,
+        near_center.z - right_z * near_half_width * .36,
+    }
+    core_near_right := third_person.Vec3 {
+        near_center.x + right_x * near_half_width * .36,
+        near_center.y + .015,
+        near_center.z + right_z * near_half_width * .36,
+    }
+    core_middle_left := third_person.Vec3 {
+        middle_center.x - right_x * middle_half_width * .30,
+        middle_center.y + .015,
+        middle_center.z - right_z * middle_half_width * .30,
+    }
+    core_middle_right := third_person.Vec3 {
+        middle_center.x + right_x * middle_half_width * .30,
+        middle_center.y + .015,
+        middle_center.z + right_z * middle_half_width * .30,
+    }
+    world_quad_colored(
+        core_near_left,
+        core_near_right,
+        core_middle_right,
+        core_middle_left,
+        core_near,
+        core_near,
+        core_middle,
+        core_middle,
+    )
+    vertical_near_low := third_person.Vec3{near_center.x, near_center.y - .22, near_center.z}
+    vertical_near_high := third_person.Vec3{near_center.x, near_center.y + .22, near_center.z}
+    vertical_far_low := third_person.Vec3{far_center.x, far_center.y - 2.6, far_center.z}
+    vertical_far_high := third_person.Vec3{far_center.x, far_center.y + 2.6, far_center.z}
+    world_quad_colored(
+        vertical_near_low,
+        vertical_near_high,
+        vertical_far_high,
+        vertical_far_low,
+        warm_middle,
+        warm_middle,
+        clear_far,
+        clear_far,
+    )
+    // Beam energy is authored light, not a surface receiving moonlight.
+    for &vertex in world_renderer.vertices[first:] do vertex.kind = .Emissive
+    append(&world_renderer.late_transparent_vertices, ..world_renderer.vertices[first:])
+    resize(&world_renderer.vertices, first)
+
+    // Use the ocean shader's facet response rather than authored light decals:
+    // the overlay only bounds work; each fragment independently decides
+    // whether its animated wave normal reflects the lantern toward the camera.
+    shimmer_center_x := source.x + forward_x * 34
+    shimmer_center_z := source.z + forward_z * 34
+    shimmer_first := len(world_renderer.vertices)
+    world_ellipse_material_uv(
+        {shimmer_center_x, editor.project.sea_level + .055, shimmer_center_z},
+        25,
+        4.2,
+        angle,
+        {255, 225, 154, u8(178 * night_strength)},
+        .Lighthouse_Glitter,
+    )
+    for &vertex in world_renderer.vertices[shimmer_first:] {
+        // The Fresnel lens collimates the lamp into an effectively directional
+        // sheet. Store the water-to-light direction just as the world push
+        // stores the Sun direction; the shader then runs the same facet model.
+        vertex.normal = {-forward_x, .16, -forward_z}
+        vertex.material = {night_strength, 0}
+    }
+    append(&world_renderer.late_transparent_vertices, ..world_renderer.vertices[shimmer_first:])
+    resize(&world_renderer.vertices, shimmer_first)
+    // Offset the aureole through the lantern glass in the direction of travel
+    // so the optical source remains visible instead of depth-testing entirely
+    // inside the opaque cage.
+    world_billboard_material_uv(
+        editor,
+        {source.x + forward_x * .72, source.y, source.z + forward_z * .72},
+        1.45,
+        1.45,
+        {255, 232, 168, u8(58 * night_strength)},
+        .Emissive_Halo,
+        true,
+    )
+}
+
+world_architecture_lighthouse :: proc(structure: terrain.Structure, lod: Structure_LOD = .Near) {
+    base_y := structure.base_y
+    tower_height := max(structure.height, f32(14))
+    base_radius := clamp(min(structure.width, structure.depth) * .36, f32(2.4), f32(5.2))
+    shaft_top := base_y + tower_height
+    masonry := rl.Color{224, 218, 194, 255}
+    if architecture.architecture_resolve_legacy_identity(structure).region == .Aegean {
+        masonry = {235, 232, 216, 255}
+    }
+    band := (structure.seed & 1) == 0 ? rl.Color{151, 57, 42, 255} : rl.Color{63, 91, 101, 255}
+    dark_metal := rl.Color{49, 55, 54, 255}
+    beacon := rl.Color{255, 226, 139, 255}
+
+    // Slightly narrowing stacked drums make the silhouette read as a tapered
+    // stone tower while reusing the renderer's deterministic octagonal tube.
+    DRUMS :: 5
+    for drum in 0 ..< DRUMS {
+        low := base_y + tower_height * f32(drum) / DRUMS
+        high := base_y + tower_height * f32(drum + 1) / DRUMS + .04
+        radius := base_radius * (1 - f32(drum) * .055)
+        color := masonry
+        if drum == 2 do color = band
+        world_tube_between(
+            {structure.center_x, low, structure.center_z},
+            {structure.center_x, high, structure.center_z},
+            {0, 0, 1},
+            radius,
+            radius,
+            color,
+        )
+    }
+    world_tube_between(
+        {structure.center_x, base_y, structure.center_z},
+        {structure.center_x, base_y + .48, structure.center_z},
+        {0, 0, 1},
+        base_radius + .38,
+        base_radius + .38,
+        formation_face_color(masonry, math.PI, 0),
+    )
+
+    gallery_radius := base_radius * .98
+    world_tube_between(
+        {structure.center_x, shaft_top, structure.center_z},
+        {structure.center_x, shaft_top + .40, structure.center_z},
+        {0, 0, 1},
+        gallery_radius,
+        gallery_radius,
+        dark_metal,
+    )
+    lantern_radius := base_radius * .55
+    lantern_low := shaft_top + .40
+    lantern_high := lantern_low + max(base_radius * .82, f32(2.5))
+    // Build the lantern room from the shared pane material instead of a
+    // translucent plain tube. Its established interior-light channel retains
+    // sky reflection by day and reveals the warm beacon through the glass
+    // when the nighttime light is active.
+    pane_height := lantern_high - lantern_low
+    pane_half_angle := f32(math.PI / 8)
+    pane_center_radius := lantern_radius * math.cos(pane_half_angle)
+    pane_width := lantern_radius * 2 * math.sin(pane_half_angle) * 1.015
+    pane_interior := rl.Color{246, 211, 150, 255}
+    for pane in 0 ..< 8 {
+        pane_angle := (f32(pane) + .5) * math.PI * .25
+        pane_x := structure.center_x + math.cos(pane_angle) * pane_center_radius
+        pane_z := structure.center_z + math.sin(pane_angle) * pane_center_radius
+        world_glass_panel(
+            {pane_x, (lantern_low + lantern_high) * .5, pane_z},
+            pane_width,
+            pane_height,
+            pane_angle - math.PI * .5,
+            pane_interior,
+            1,
+        )
+    }
+    world_tube_between(
+        {structure.center_x, lantern_low + .10, structure.center_z},
+        {structure.center_x, lantern_high - .10, structure.center_z},
+        {0, 0, 1},
+        .22,
+        .22,
+        beacon,
+    )
+    world_emissive_fixture_box(
+        {structure.center_x, (lantern_low + lantern_high) * .5, structure.center_z},
+        {.52, .72, .52},
+        structure.rotation,
+        beacon,
+        3,
+    )
+    world_tube_between(
+        {structure.center_x, lantern_high, structure.center_z},
+        {structure.center_x, lantern_high + .36, structure.center_z},
+        {0, 0, 1},
+        lantern_radius + .24,
+        lantern_radius + .24,
+        dark_metal,
+    )
+    roof_tip := third_person.Vec3{structure.center_x, lantern_high + 1.65, structure.center_z}
+    for segment in 0 ..< 8 {
+        angle_a := f32(segment) * math.PI * .25
+        angle_b := f32(segment + 1) * math.PI * .25
+        a := third_person.Vec3 {
+            structure.center_x + math.cos(angle_a) * (lantern_radius + .30),
+            lantern_high + .36,
+            structure.center_z + math.sin(angle_a) * (lantern_radius + .30),
+        }
+        b := third_person.Vec3 {
+            structure.center_x + math.cos(angle_b) * (lantern_radius + .30),
+            lantern_high + .36,
+            structure.center_z + math.sin(angle_b) * (lantern_radius + .30),
+        }
+        world_triangle(a, roof_tip, b, band)
+    }
+    world_tube_between(roof_tip, {roof_tip.x, roof_tip.y + .72, roof_tip.z}, {0, 0, 1}, .09, .09, dark_metal)
+
+    editor := world_renderer.editor
+    if editor != nil {
+        source_y := (lantern_low + lantern_high) * .5
+        world_billboard_material_uv(
+            editor,
+            {structure.center_x, source_y, structure.center_z},
+            1.7,
+            1.7,
+            {255, 229, 160, 54},
+            .Emissive_Halo,
+            true,
+        )
+        world_architecture_lighthouse_beam(editor, structure, source_y)
+    }
+
+    if lod == .Far do return
+    rail_y := shaft_top + 1.18
+    for segment in 0 ..< 8 {
+        angle_a := f32(segment) * math.PI * .25
+        angle_b := f32(segment + 1) * math.PI * .25
+        a := third_person.Vec3 {
+            structure.center_x + math.cos(angle_a) * gallery_radius,
+            rail_y,
+            structure.center_z + math.sin(angle_a) * gallery_radius,
+        }
+        b := third_person.Vec3 {
+            structure.center_x + math.cos(angle_b) * gallery_radius,
+            rail_y,
+            structure.center_z + math.sin(angle_b) * gallery_radius,
+        }
+        world_tube_between(a, b, {0, 1, 0}, .045, .045, dark_metal)
+        world_tube_between({a.x, shaft_top + .35, a.z}, a, {0, 0, 1}, .045, .045, dark_metal)
+    }
+    // Sparse slit windows keep the tower massive and provide scale.
+    for level in 0 ..< 3 {
+        angle := structure.rotation + f32(level) * math.PI * .5
+        window_x := structure.center_x + math.sin(angle) * (base_radius + .025)
+        window_z := structure.center_z + math.cos(angle) * (base_radius + .025)
+        world_box_rotated(
+            {window_x, base_y + tower_height * (.24 + f32(level) * .20), window_z},
+            {.62, 1.15, .10},
+            -angle,
+            {48, 67, 69, 255},
+        )
+    }
+}
+
 world_architecture_oriented :: proc(
     structure: terrain.Structure,
     project: ^terrain.Project,
     lod: Structure_LOD = .Near,
 ) {
+    identity := architecture.architecture_resolve_legacy_identity(structure)
+    if identity.archetype == .Lighthouse {
+        world_architecture_lighthouse(structure, lod)
+        return
+    }
     footprint := architecture.architecture_footprint(structure)
     if footprint.count <= 1 {
         layout := architecture.architecture_opening_layout(structure, 0, 0)
@@ -7655,6 +8018,17 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
         curve_length := curve_distances[curve_segments]
         surface_color := world_architecture_alley_color(alley, preview, grade >= SETTLEMENT_ACCESS_STAIR_GRADE)
         previous := curve_points[0]
+        // Each sampled span is rendered as a capsule rather than an isolated
+        // rectangle. Overlapping round pads remove polygonal outside corners
+        // and make neighboring curves melt into a single walked surface.
+        world_land_surface_disc(
+            editor,
+            previous[0],
+            previous[1],
+            alley.half_width,
+            .13,
+            surface_color,
+        )
         for curve_index in 1 ..= curve_segments {
             current := curve_points[curve_index]
             segment_dx, segment_dz := current[0] - previous[0], current[1] - previous[1]
@@ -7667,6 +8041,14 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
                     segment_length + .04,
                     alley.half_width * 2,
                     f32(math.atan2(f64(segment_dz), f64(segment_dx))),
+                    .13,
+                    surface_color,
+                )
+                world_land_surface_disc(
+                    editor,
+                    current[0],
+                    current[1],
+                    alley.half_width,
                     .13,
                     surface_color,
                 )
@@ -11123,7 +11505,11 @@ world_architecture_municipal_lamp_fixture :: proc(editor: ^Editor, center_x, cen
     )
 }
 
-world_architecture_municipal_lamp_effects :: proc(editor: ^Editor, center_x, center_z, rotation: f32, roadway: bool = true) {
+world_architecture_municipal_lamp_effects :: proc(
+    editor: ^Editor,
+    center_x, center_z, rotation: f32,
+    roadway: bool = true,
+) {
     base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
     if !world_sphere_in_view(editor, {center_x, base_y + 2.2, center_z}, 8.75, .5) do return
     fixture_x, fixture_z := world_rotate_xz(center_x, center_z, 0, .72, rotation)
@@ -11169,7 +11555,14 @@ world_architecture_municipal_lamp :: proc(editor: ^Editor, center_x, center_z, r
     base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
     if !world_sphere_in_view(editor, {center_x, base_y + 2.2, center_z}, 8.75, .5) do return
     world_architecture_municipal_lamp_fixture(editor, center_x, center_z, rotation)
-    world_architecture_municipal_lamp_effects(editor, center_x, center_z, rotation, roadway)
+	world_architecture_municipal_lamp_effects(editor, center_x, center_z, rotation, roadway)
+}
+
+world_town_mouse_wheel_position :: proc(area: circulation.Area) -> (x, z: f32) {
+	wheel_radius := f32(1.68)
+	local_x := max(-area.width * .5 + wheel_radius + .6, area.width * .5 - wheel_radius - .8)
+	local_z := min(area.length * .24, area.length * .5 - wheel_radius - .55)
+	return world_rotate_xz(area.center_x, area.center_z, local_x, local_z, area.rotation)
 }
 
 world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud_cover: f32) {
@@ -11193,93 +11586,186 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     road := rl.Color{117, 119, 110, 255}
     shoulder := rl.Color{177, 164, 135, 255}
     path_color := rl.Color{194, 184, 157, 255}
-    if len(world_renderer.architecture_street_area_cache) < plan.count {
-        resize(&world_renderer.architecture_street_area_cache, plan.count)
-    }
-    for area, area_index in plan.areas[:plan.count] {
+	if len(world_renderer.architecture_street_area_cache) < plan.count {
+		resize(&world_renderer.architecture_street_area_cache, plan.count)
+	}
+	primary_plaza_index := -1
+	primary_plaza_area := f32(0)
+	for candidate, candidate_index in plan.areas[:plan.count] {
+		if candidate.kind != .Plaza do continue
+		candidate_area := candidate.width * candidate.length
+		if candidate_area > primary_plaza_area {
+			primary_plaza_area = candidate_area
+			primary_plaza_index = candidate_index
+		}
+	}
+	for area, area_index in plan.areas[:plan.count] {
         area_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z)
         area_radius := f32(math.sqrt(f64(area.width * area.width + area.length * area.length))) * .5 + 2
         if !world_sphere_in_view(editor, {area.center_x, area_y, area.center_z}, area_radius) do continue
         cache := &world_renderer.architecture_street_area_cache[area_index]
-        cache_valid := cache.valid && cache.area == area &&
+        cache_valid :=
+            cache.valid &&
+            cache.area == area &&
             cache.project_revision == editor.project.revision &&
             cache.terrain_revision == editor.terrain_revision
         if cache_valid {
             append(&world_renderer.vertices, ..cache.vertices[:])
         } else {
-        first := len(world_renderer.vertices)
-        switch area.kind {
-        case .Street:
-            world_land_surface_rotated(editor, area.center_x, area.center_z, area.width, 5.5, area.rotation, .12, road)
-            for side in -1 ..= 1 {
-                if side == 0 do continue
-                offset_x := -math.sin(area.rotation) * f32(side) * 3.05
-                offset_z := math.cos(area.rotation) * f32(side) * 3.05
+            first := len(world_renderer.vertices)
+            switch area.kind {
+            case .Street:
                 world_land_surface_rotated(
                     editor,
-                    area.center_x + offset_x,
-                    area.center_z + offset_z,
+                    area.center_x,
+                    area.center_z,
                     area.width,
-                    .35,
+                    5.5,
                     area.rotation,
-                    .15,
-                    shoulder,
+                    .12,
+                    road,
                 )
-            }
-            // Settlement routes author their own clearance-tested lamps. The
-            // fallback grid exists for legacy/capture city plans; rendering
-            // both systems produces clustered posts and stacked pools.
-            if editor.architecture_city_plan.lamp_count == 0 {
-                lamp_count := clamp(int(area.width / 22), 2, 6)
-                for lamp in 0 ..< lamp_count {
-                    along := -area.width * .5 + area.width * (f32(lamp) + .5) / f32(lamp_count)
-                    side := lamp % 2 == 0 ? f32(-1) : f32(1)
-                    lamp_x, lamp_z := world_rotate_xz(area.center_x, area.center_z, along, side * 3.65, area.rotation)
-                    world_architecture_municipal_lamp_fixture(
+                for side in -1 ..= 1 {
+                    if side == 0 do continue
+                    offset_x := -math.sin(area.rotation) * f32(side) * 3.05
+                    offset_z := math.cos(area.rotation) * f32(side) * 3.05
+                    world_land_surface_rotated(
                         editor,
-                        lamp_x,
-                        lamp_z,
-                        area.rotation + (side < 0 ? f32(0) : f32(math.PI)),
+                        area.center_x + offset_x,
+                        area.center_z + offset_z,
+                        area.width,
+                        .35,
+                        area.rotation,
+                        .15,
+                        shoulder,
                     )
                 }
-            }
-        case .Plaza:
-            seed := u32(i32(area.center_x * 10)) ~ (u32(i32(area.center_z * 10)) * u32(0x9e3779b9))
-            plaza := plazas.generate(seed, area.width, area.length)
-            for piece, piece_index in plaza.paving[:plaza.paving_count] {
-                piece_x, piece_z := world_rotate_xz(area.center_x, area.center_z, piece.x, piece.z, area.rotation)
-                color := rl.Color{184, 177, 158, 255}
-                if piece.kind == .Border do color = {116, 111, 103, 255}
-                if piece.kind == .Mosaic || piece.kind == .Inlay {
-                    mosaic_palette := [3]rl.Color{{77, 112, 119, 255}, {174, 91, 67, 255}, {211, 190, 135, 255}}
-                    color = mosaic_palette[piece.tone]
+                // Settlement routes author their own clearance-tested lamps. The
+                // fallback grid exists for legacy/capture city plans; rendering
+                // both systems produces clustered posts and stacked pools.
+                if editor.architecture_city_plan.lamp_count == 0 {
+                    lamp_count := clamp(int(area.width / 22), 2, 6)
+                    for lamp in 0 ..< lamp_count {
+                        along := -area.width * .5 + area.width * (f32(lamp) + .5) / f32(lamp_count)
+                        side := lamp % 2 == 0 ? f32(-1) : f32(1)
+                        lamp_x, lamp_z := world_rotate_xz(
+                            area.center_x,
+                            area.center_z,
+                            along,
+                            side * 3.65,
+                            area.rotation,
+                        )
+                        world_architecture_municipal_lamp_fixture(
+                            editor,
+                            lamp_x,
+                            lamp_z,
+                            area.rotation + (side < 0 ? f32(0) : f32(math.PI)),
+                        )
+                    }
                 }
-                // Mosaic bars deliberately cross one another. Giving every
-                // decorative piece the same lift made those intersections
-                // coplanar and unstable in the depth buffer. Preserve the
-                // layered design with a sub-centimetre, deterministic stack;
-                // inlays sit above the mosaic as the final repair layer.
-                lift := f32(.16)
-                switch piece.kind {
-                case .Border:
-                    lift = .19
-                case .Mosaic:
-                    lift = .22 + f32(piece_index - 5) * .0005
-                case .Inlay:
-                    lift = .24 + f32(piece_index - 21) * .0005
-                case .Field:
+            case .Plaza:
+                seed := u32(i32(area.center_x * 10)) ~ (u32(i32(area.center_z * 10)) * u32(0x9e3779b9))
+                plaza := plazas.generate(seed, area.width, area.length)
+                for piece, piece_index in plaza.paving[:plaza.paving_count] {
+                    piece_x, piece_z := world_rotate_xz(area.center_x, area.center_z, piece.x, piece.z, area.rotation)
+                    color := rl.Color{184, 177, 158, 255}
+                    if piece.kind == .Border do color = {116, 111, 103, 255}
+                    if piece.kind == .Mosaic || piece.kind == .Inlay {
+                        mosaic_palette := [3]rl.Color{{77, 112, 119, 255}, {174, 91, 67, 255}, {211, 190, 135, 255}}
+                        color = mosaic_palette[piece.tone]
+                    }
+                    // Mosaic bars deliberately cross one another. Giving every
+                    // decorative piece the same lift made those intersections
+                    // coplanar and unstable in the depth buffer. Preserve the
+                    // layered design with a sub-centimetre, deterministic stack;
+                    // inlays sit above the mosaic as the final repair layer.
+                    lift := f32(.16)
+                    switch piece.kind {
+                    case .Border:
+                        lift = .19
+                    case .Mosaic:
+                        lift = .22 + f32(piece_index - 5) * .0005
+                    case .Inlay:
+                        lift = .24 + f32(piece_index - 21) * .0005
+                    case .Field:
+                    }
+                    world_land_surface_rotated(
+                        editor,
+                        piece_x,
+                        piece_z,
+                        piece.width,
+                        piece.length,
+                        area.rotation + piece.rotation,
+                        lift,
+                        color,
+                    )
                 }
+				for corner_x in -1 ..= 1 {
+                    if corner_x == 0 do continue
+                    for corner_z in -1 ..= 1 {
+                        if corner_z == 0 do continue
+                        lamp_x, lamp_z := world_rotate_xz(
+                            area.center_x,
+                            area.center_z,
+                            f32(corner_x) * (area.width * .5 - 1.4),
+                            f32(corner_z) * (area.length * .5 - 1.4),
+                            area.rotation,
+                        )
+                        // local +Z rotates to (-sin(theta), cos(theta)); negate
+                        // target X so the cantilever actually faces the square.
+                        facing := f32(math.atan2(f64(lamp_x - area.center_x), f64(area.center_z - lamp_z)))
+						world_architecture_municipal_lamp_fixture(editor, lamp_x, lamp_z, facing)
+					}
+				}
+			case .Path, .Forecourt:
                 world_land_surface_rotated(
                     editor,
-                    piece_x,
-                    piece_z,
-                    piece.width,
-                    piece.length,
-                    area.rotation + piece.rotation,
-                    lift,
-                    color,
+                    area.center_x,
+                    area.center_z,
+                    area.width,
+                    area.length,
+                    area.rotation,
+                    .20,
+                    path_color,
                 )
             }
+            clear(&cache.vertices)
+            append(&cache.vertices, ..world_renderer.vertices[first:])
+            cache.area = area
+            cache.project_revision = editor.project.revision
+            cache.terrain_revision = editor.terrain_revision
+            cache.valid = true
+		}
+
+		if area_index == primary_plaza_index {
+			wheel_x, wheel_z := world_town_mouse_wheel_position(area)
+			wheel_y := terrain.sample_height(&editor.project, 0, wheel_x, wheel_z)
+			world_town_mouse_wheel(
+				wheel_x,
+				wheel_y,
+				wheel_z,
+				area.rotation,
+				mouse_wheel_angle,
+				mouse_wheel_jolt,
+			)
+		}
+
+		// Halos are camera-facing/daylight-sensitive and pools must remain in
+        // the late transparent submission, so regenerate only these effects.
+        if area.kind == .Street && editor.architecture_city_plan.lamp_count == 0 {
+            lamp_count := clamp(int(area.width / 22), 2, 6)
+            for lamp in 0 ..< lamp_count {
+                along := -area.width * .5 + area.width * (f32(lamp) + .5) / f32(lamp_count)
+                side := lamp % 2 == 0 ? f32(-1) : f32(1)
+                lamp_x, lamp_z := world_rotate_xz(area.center_x, area.center_z, along, side * 3.65, area.rotation)
+                world_architecture_municipal_lamp_effects(
+                    editor,
+                    lamp_x,
+                    lamp_z,
+                    area.rotation + (side < 0 ? f32(0) : f32(math.PI)),
+                )
+            }
+        } else if area.kind == .Plaza {
             for corner_x in -1 ..= 1 {
                 if corner_x == 0 do continue
                 for corner_z in -1 ..= 1 {
@@ -11291,48 +11777,6 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                         f32(corner_z) * (area.length * .5 - 1.4),
                         area.rotation,
                     )
-                    // local +Z rotates to (-sin(theta), cos(theta)); negate
-                    // target X so the cantilever actually faces the square.
-                    facing := f32(math.atan2(f64(lamp_x - area.center_x), f64(area.center_z - lamp_z)))
-                    world_architecture_municipal_lamp_fixture(editor, lamp_x, lamp_z, facing)
-                }
-            }
-        case .Path, .Forecourt:
-            world_land_surface_rotated(
-                editor,
-                area.center_x,
-                area.center_z,
-                area.width,
-                area.length,
-                area.rotation,
-                .20,
-                path_color,
-            )
-        }
-        clear(&cache.vertices)
-        append(&cache.vertices, ..world_renderer.vertices[first:])
-        cache.area = area
-        cache.project_revision = editor.project.revision
-        cache.terrain_revision = editor.terrain_revision
-        cache.valid = true
-        }
-
-        // Halos are camera-facing/daylight-sensitive and pools must remain in
-        // the late transparent submission, so regenerate only these effects.
-        if area.kind == .Street && editor.architecture_city_plan.lamp_count == 0 {
-            lamp_count := clamp(int(area.width / 22), 2, 6)
-            for lamp in 0 ..< lamp_count {
-                along := -area.width * .5 + area.width * (f32(lamp) + .5) / f32(lamp_count)
-                side := lamp % 2 == 0 ? f32(-1) : f32(1)
-                lamp_x, lamp_z := world_rotate_xz(area.center_x, area.center_z, along, side * 3.65, area.rotation)
-                world_architecture_municipal_lamp_effects(editor, lamp_x, lamp_z, area.rotation + (side < 0 ? f32(0) : f32(math.PI)))
-            }
-        } else if area.kind == .Plaza {
-            for corner_x in -1 ..= 1 {
-                if corner_x == 0 do continue
-                for corner_z in -1 ..= 1 {
-                    if corner_z == 0 do continue
-                    lamp_x, lamp_z := world_rotate_xz(area.center_x, area.center_z, f32(corner_x) * (area.width * .5 - 1.4), f32(corner_z) * (area.length * .5 - 1.4), area.rotation)
                     facing := f32(math.atan2(f64(lamp_x - area.center_x), f64(area.center_z - lamp_z)))
                     world_architecture_municipal_lamp_effects(editor, lamp_x, lamp_z, facing, false)
                 }
@@ -13937,7 +14381,9 @@ world_rondine_spray_streak :: proc(
     size: f32,
     color: rl.Color,
 ) {
-    direction_length := f32(math.sqrt(f64(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)))
+    direction_length := f32(
+        math.sqrt(f64(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)),
+    )
     if direction_length <= .001 do return
     unit_direction := direction / direction_length
     // Build the ribbon width perpendicular to both its trajectory and the
@@ -13945,25 +14391,14 @@ world_rondine_spray_streak :: proc(
     // travels laterally across the screen and shears steep droplets into
     // broad wedges. This cross product keeps every procedural needle thin,
     // trajectory-aligned, and camera-facing without a sprite billboard.
-    width_axis :=
-        third_person.Vec3 {
-            camera.forward.y * unit_direction.z -
-            camera.forward.z * unit_direction.y,
-            camera.forward.z * unit_direction.x -
-            camera.forward.x * unit_direction.z,
-            camera.forward.x * unit_direction.y -
-            camera.forward.y * unit_direction.x,
-        }
-    width_length :=
-        f32(
-            math.sqrt(
-                f64(
-                    width_axis.x * width_axis.x +
-                    width_axis.y * width_axis.y +
-                    width_axis.z * width_axis.z,
-                ),
-            ),
-        )
+    width_axis := third_person.Vec3 {
+        camera.forward.y * unit_direction.z - camera.forward.z * unit_direction.y,
+        camera.forward.z * unit_direction.x - camera.forward.x * unit_direction.z,
+        camera.forward.x * unit_direction.y - camera.forward.y * unit_direction.x,
+    }
+    width_length := f32(
+        math.sqrt(f64(width_axis.x * width_axis.x + width_axis.y * width_axis.y + width_axis.z * width_axis.z)),
+    )
     if width_length > .001 {
         width_axis /= width_length
     } else {
@@ -13988,20 +14423,12 @@ world_rondine_triangle_colored :: proc(
     }
 }
 
-world_rondine_triangle_double_sided :: proc(
-    a, b, c: third_person.Vec3,
-    color_a, color_b, color_c: rl.Color,
-) {
+world_rondine_triangle_double_sided :: proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
     world_triangle_colored(a, b, c, color_a, color_b, color_c)
     world_triangle_colored(a, c, b, color_a, color_c, color_b)
 }
 
-world_rondine_spray_bead :: proc(
-    camera: Perspective_Camera,
-    position: third_person.Vec3,
-    size: f32,
-    color: rl.Color,
-) {
+world_rondine_spray_bead :: proc(camera: Perspective_Camera, position: third_person.Vec3, size: f32, color: rl.Color) {
     if color.a <= 1 || size <= .001 do return
     // Four fading triangles make a tiny camera-facing droplet head. Keeping
     // the center opaque and every outer point transparent preserves the
@@ -14026,46 +14453,25 @@ world_rondine_surface_chip :: proc(
     double_sided := false,
 ) {
     tangent_axis := tangent
-    tangent_length :=
-        f32(
-            math.sqrt(
-                f64(
-                    tangent_axis.x * tangent_axis.x +
-                    tangent_axis.y * tangent_axis.y +
-                    tangent_axis.z * tangent_axis.z,
-                ),
-            ),
-        )
+    tangent_length := f32(
+        math.sqrt(
+            f64(tangent_axis.x * tangent_axis.x + tangent_axis.y * tangent_axis.y + tangent_axis.z * tangent_axis.z),
+        ),
+    )
     if tangent_length > .0001 do tangent_axis /= tangent_length
     radial_axis := radial
-    radial_length :=
-        f32(
-            math.sqrt(
-                f64(
-                    radial_axis.x * radial_axis.x +
-                    radial_axis.y * radial_axis.y +
-                    radial_axis.z * radial_axis.z,
-                ),
-            ),
-        )
+    radial_length := f32(
+        math.sqrt(f64(radial_axis.x * radial_axis.x + radial_axis.y * radial_axis.y + radial_axis.z * radial_axis.z)),
+    )
     if radial_length > .0001 do radial_axis /= radial_length
     // Remove any component parallel to the length axis. Most callers provide
     // an approximate perpendicular assembled from forward/right weights; a
     // small shared component otherwise shears the two triangles into a kite
     // and changes apparent width with maneuver direction.
-    radial_axis -=
-        tangent_axis *
-        linalg.dot(radial_axis, tangent_axis)
-    radial_length =
-        f32(
-            math.sqrt(
-                f64(
-                    radial_axis.x * radial_axis.x +
-                    radial_axis.y * radial_axis.y +
-                    radial_axis.z * radial_axis.z,
-                ),
-            ),
-        )
+    radial_axis -= tangent_axis * linalg.dot(radial_axis, tangent_axis)
+    radial_length = f32(
+        math.sqrt(f64(radial_axis.x * radial_axis.x + radial_axis.y * radial_axis.y + radial_axis.z * radial_axis.z)),
+    )
     if radial_length > .0001 {
         radial_axis /= radial_length
     } else {
@@ -14128,8 +14534,7 @@ world_rondine_surface_heading :: proc(editor: ^Editor) -> third_person.Vec3 {
     travel_forward := horizontal_velocity / horizontal_speed
     travel_blend := clamp(math.abs(editor.rondine.telemetry.slip) * 1.8, 0, .72)
     heading := body_forward * (1 - travel_blend) + travel_forward * travel_blend
-    heading_length :=
-        f32(math.sqrt(f64(heading.x * heading.x + heading.z * heading.z)))
+    heading_length := f32(math.sqrt(f64(heading.x * heading.x + heading.z * heading.z)))
     if heading_length <= .01 do return body_forward
     return heading / heading_length
 }
@@ -14146,16 +14551,11 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     // speed this produces short coherent spray bursts instead of reseeding
     // every few milliseconds and buzzing between unrelated silhouettes.
     live_spray_epoch := editor.rondine.wake_serial >> 2
-    live_spray_blend :=
-        clamp(
-            (
-                f32(editor.rondine.wake_serial & u32(3)) +
-                clamp(editor.rondine.wake_distance / 1.25, 0, 1)
-            ) /
-            4,
-            0,
-            1,
-        )
+    live_spray_blend := clamp(
+        (f32(editor.rondine.wake_serial & u32(3)) + clamp(editor.rondine.wake_distance / 1.25, 0, 1)) / 4,
+        0,
+        1,
+    )
     drift_strength := editor.rondine.telemetry.drift_intensity
     countersteer := editor.rondine.telemetry.countersteer
     drift_kick := editor.rondine.telemetry.drift_kick
@@ -14164,16 +14564,15 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     surge_intensity := editor.rondine.telemetry.surge_intensity
     brake_intensity := editor.rondine.telemetry.brake_intensity
     drift_transition := editor.rondine.telemetry.drift_transition
-    contact_strength :=
-        clamp(
-            editor.rondine.telemetry.spray_intensity +
-            drift_strength * .38 +
-            drift_kick * .34 +
-            hookup_kick * .22 +
-            surface_impact * .82,
-            0,
-            1.55,
-        )
+    contact_strength := clamp(
+        editor.rondine.telemetry.spray_intensity +
+        drift_strength * .38 +
+        drift_kick * .34 +
+        hookup_kick * .22 +
+        surface_impact * .82,
+        0,
+        1.55,
+    )
     if contact_strength > .02 {
         contact_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
         body_forward := third_person.Vec3 {
@@ -14192,8 +14591,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // the burst from reading as a flat, mechanically perfect star.
         if surface_impact > .06 {
             impact_visibility := f32(math.sqrt(f64(surface_impact)))
-            slap_alpha :=
-                u8(clamp(218 * impact_visibility, 0, 224))
+            slap_alpha := u8(clamp(218 * impact_visibility, 0, 224))
             slap_color := rl.Color{234, 253, 247, slap_alpha}
             // The main bar crosses the hull beam and expands with impact
             // energy. Its transparent tips keep it from becoming a hard white
@@ -14212,39 +14610,27 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // Slight yaw relative to the beam prevents the two marks reading
             // as a repeated symbol while keeping both outside the aircraft's
             // screen-space occlusion.
-            rebound_contact :=
-                stern +
-                contact_forward * (.32 + surface_impact * .18)
-            rebound_tangent :=
-                contact_right * .94 +
-                contact_back * .18
-            rebound_radial :=
-                contact_forward +
-                contact_right * .12
+            rebound_contact := stern + contact_forward * (.32 + surface_impact * .18)
+            rebound_tangent := contact_right * .94 + contact_back * .18
+            rebound_radial := contact_forward + contact_right * .12
             world_rondine_surface_chip(
                 rebound_contact,
                 rebound_tangent,
                 rebound_radial,
                 .58 + surface_impact * .34,
                 .050 + impact_visibility * .035,
-                {
-                    slap_color.r,
-                    slap_color.g,
-                    slap_color.b,
-                    u8(f32(slap_alpha) * .74),
-                },
+                {slap_color.r, slap_color.g, slap_color.b, u8(f32(slap_alpha) * .74)},
                 double_sided = true,
             )
 
             for ray in 0 ..< 8 {
                 ray_f := f32(ray)
-                variation :=
-                    world_rondine_live_variation(
-                        live_spray_epoch,
-                        live_spray_blend,
-                        u32(ray & 1),
-                        u32(140 + ray),
-                    )
+                variation := world_rondine_live_variation(
+                    live_spray_epoch,
+                    live_spray_blend,
+                    u32(ray & 1),
+                    u32(140 + ray),
+                )
                 angle := ray_f / 8 * math.TAU + (variation - .5) * .16
                 cosine, sine := math.cos(angle), math.sin(angle)
                 radial := contact_right * cosine + contact_forward * sine
@@ -14254,8 +14640,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     radial * (1.05 + variation * .50) +
                     contact_back * (.14 + surface_impact * .18) +
                     third_person.Vec3{0, .20 + variation * .42, 0}
-                impact_alpha :=
-                    u8(clamp((156 + variation * 78) * surface_impact, 0, 228))
+                impact_alpha := u8(clamp((156 + variation * 78) * surface_impact, 0, 228))
                 impact_color := rl.Color{234, 253, 247, impact_alpha}
                 world_rondine_spray_streak(
                     camera,
@@ -14271,30 +14656,14 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // begin beneath the nose and stream aft into the larger stern sheets,
         // visually attaching the entire effect to the hull. Their low profile
         // keeps them distinct from the tall, drift-only rooster crown.
-        chine_surface_fraction :=
-            clamp(1 - editor.rondine.telemetry.height / 1.35, 0, 1)
+        chine_surface_fraction := clamp(1 - editor.rondine.telemetry.height / 1.35, 0, 1)
         chine_strength :=
-            clamp(
-                editor.rondine.telemetry.wake_intensity * .88 +
-                drift_strength * .16,
-                0,
-                1,
-            ) *
-            chine_surface_fraction
+            clamp(editor.rondine.telemetry.wake_intensity * .88 + drift_strength * .16, 0, 1) * chine_surface_fraction
         if chine_strength > .08 {
             for side in 0 ..< 2 {
                 side_sign := side == 0 ? f32(-1) : f32(1)
-                variation :=
-                    world_rondine_live_variation(
-                        live_spray_epoch,
-                        live_spray_blend,
-                        u32(side),
-                        20,
-                    )
-                root :=
-                    contact_base +
-                    body_forward * (1.32 + variation * .18) +
-                    contact_right * (side_sign * .46)
+                variation := world_rondine_live_variation(live_spray_epoch, live_spray_blend, u32(side), 20)
+                root := contact_base + body_forward * (1.32 + variation * .18) + contact_right * (side_sign * .46)
                 tail :=
                     root +
                     contact_back * (1.18 + chine_strength * .92 + variation * .24) +
@@ -14305,15 +14674,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 chine_foam := rl.Color{226, 250, 244, chine_alpha}
                 chine_mist := rl.Color{143, 216, 223, u8(f32(chine_alpha) * .42)}
                 chine_clear := rl.Color{chine_foam.r, chine_foam.g, chine_foam.b, 0}
-                world_rondine_triangle_colored(
-                    root,
-                    tail,
-                    crest,
-                    chine_foam,
-                    chine_clear,
-                    chine_mist,
-                    side == 1,
-                )
+                world_rondine_triangle_colored(root, tail, crest, chine_foam, chine_clear, chine_mist, side == 1)
                 whisker_direction :=
                     contact_back * (.72 + variation * .22) +
                     contact_right * (side_sign * (.17 + variation * .16)) +
@@ -14350,48 +14711,22 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         carve_entry := clamp((live_slip - .055) / .075, 0, 1)
         carve_exit := clamp((.245 - live_slip) / .085, 0, 1)
         carve_shoulder_strength :=
-            carve_entry *
-            carve_exit *
-            clamp(contact_strength * .58 + drift_strength * .44, 0, 1)
+            carve_entry * carve_exit * clamp(contact_strength * .58 + drift_strength * .44, 0, 1)
         if carve_shoulder_strength > .04 {
-            carve_loaded_side :=
-                editor.rondine.telemetry.slip < 0 ? f32(-1) : f32(1)
-            shoulder_visibility :=
-                f32(math.sqrt(f64(carve_shoulder_strength)))
-            shoulder_root :=
-                stern +
-                contact_right * (carve_loaded_side * .48)
+            carve_loaded_side := editor.rondine.telemetry.slip < 0 ? f32(-1) : f32(1)
+            shoulder_visibility := f32(math.sqrt(f64(carve_shoulder_strength)))
+            shoulder_root := stern + contact_right * (carve_loaded_side * .48)
             shoulder_foot :=
                 shoulder_root +
                 contact_back * (1.28 + carve_shoulder_strength * .72) +
-                contact_right *
-                (carve_loaded_side * (.58 + carve_shoulder_strength * .36))
+                contact_right * (carve_loaded_side * (.58 + carve_shoulder_strength * .36))
             shoulder_crest := (shoulder_root + shoulder_foot) * .5
-            shoulder_crest +=
-                contact_right *
-                (carve_loaded_side * (.12 + carve_shoulder_strength * .10))
-            shoulder_crest.y +=
-                .32 +
-                carve_shoulder_strength * .92
-            shoulder_alpha :=
-                u8(
-                    clamp(
-                        (116 + carve_shoulder_strength * 62) *
-                        shoulder_visibility,
-                        0,
-                        158,
-                    ),
-                )
+            shoulder_crest += contact_right * (carve_loaded_side * (.12 + carve_shoulder_strength * .10))
+            shoulder_crest.y += .32 + carve_shoulder_strength * .92
+            shoulder_alpha := u8(clamp((116 + carve_shoulder_strength * 62) * shoulder_visibility, 0, 158))
             shoulder_foam := rl.Color{224, 249, 244, shoulder_alpha}
-            shoulder_mist :=
-                rl.Color {
-                    166,
-                    226,
-                    230,
-                    u8(f32(shoulder_alpha) * .54),
-                }
-            shoulder_clear :=
-                rl.Color{shoulder_foam.r, shoulder_foam.g, shoulder_foam.b, 0}
+            shoulder_mist := rl.Color{166, 226, 230, u8(f32(shoulder_alpha) * .54)}
+            shoulder_clear := rl.Color{shoulder_foam.r, shoulder_foam.g, shoulder_foam.b, 0}
             world_rondine_triangle_double_sided(
                 shoulder_root,
                 shoulder_foot,
@@ -14401,20 +14736,13 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 shoulder_mist,
             )
             shoulder_direction :=
-                contact_back * .62 +
-                contact_right * (carve_loaded_side * .48) +
-                third_person.Vec3{0, .10, 0}
+                contact_back * .62 + contact_right * (carve_loaded_side * .48) + third_person.Vec3{0, .10, 0}
             world_rondine_spray_streak(
                 camera,
                 shoulder_crest,
                 shoulder_direction,
                 .13 + carve_shoulder_strength * .16,
-                {
-                    233,
-                    253,
-                    247,
-                    u8(clamp(176 * shoulder_visibility, 0, 184)),
-                },
+                {233, 253, 247, u8(clamp(176 * shoulder_visibility, 0, 184))},
             )
         }
 
@@ -14430,12 +14758,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // wake geometry was already fully established. Bring the large
             // silhouette in earlier; the separate kick rays still reserve the
             // sharpest burst for the instant grip breaks.
-            crown_strength :=
-                max(
-                    clamp((drift_strength - .18) / .62, 0, 1) *
-                    deep_slip_gate,
-                    drift_kick,
-                )
+            crown_strength := max(clamp((drift_strength - .18) / .62, 0, 1) * deep_slip_gate, drift_kick)
             crown_visibility := f32(math.sqrt(f64(crown_strength)))
             crown_mirrored := loaded_side > 0
 
@@ -14453,13 +14776,11 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 end_hump := f32(math.sin(f64(arc_end * math.PI)))
                 lower_start :=
                     stern +
-                    contact_right *
-                    (loaded_side * (.64 + arc_start * (3.35 + crown_strength * .90))) +
+                    contact_right * (loaded_side * (.64 + arc_start * (3.35 + crown_strength * .90))) +
                     contact_back * (.38 + arc_start * (3.70 + crown_strength * 1.55))
                 lower_end :=
                     stern +
-                    contact_right *
-                    (loaded_side * (.64 + arc_end * (3.35 + crown_strength * .90))) +
+                    contact_right * (loaded_side * (.64 + arc_end * (3.35 + crown_strength * .90))) +
                     contact_back * (.38 + arc_end * (3.70 + crown_strength * 1.55))
                 // Pinch the top edge toward the panel center and sweep it
                 // outward/back. A full-width vertical top made these panels
@@ -14469,40 +14790,19 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 upper_start :=
                     panel_center +
                     (lower_start - panel_center) * .56 +
-                    contact_right *
-                    (loaded_side * (.12 + crown_strength * .16)) +
+                    contact_right * (loaded_side * (.12 + crown_strength * .16)) +
                     contact_back * (.18 + panel_f * .08)
                 upper_end :=
                     panel_center +
                     (lower_end - panel_center) * .56 +
-                    contact_right *
-                    (loaded_side * (.12 + crown_strength * .16)) +
+                    contact_right * (loaded_side * (.12 + crown_strength * .16)) +
                     contact_back * (.18 + panel_f * .08)
-                upper_start.y +=
-                    .35 +
-                    start_hump * (1.05 + crown_strength * 2.35)
-                upper_end.y +=
-                    .35 +
-                    end_hump * (1.05 + crown_strength * 2.35)
-                curtain_alpha :=
-                    u8(
-                        clamp(
-                            (142 + start_hump * 76 - panel_f * 4) *
-                            crown_visibility,
-                            0,
-                            210,
-                        ),
-                    )
+                upper_start.y += .35 + start_hump * (1.05 + crown_strength * 2.35)
+                upper_end.y += .35 + end_hump * (1.05 + crown_strength * 2.35)
+                curtain_alpha := u8(clamp((142 + start_hump * 76 - panel_f * 4) * crown_visibility, 0, 210))
                 curtain_foam := rl.Color{224, 250, 244, curtain_alpha}
-                curtain_mist :=
-                    rl.Color {
-                        164,
-                        226,
-                        230,
-                        u8(f32(curtain_alpha) * .52),
-                    }
-                curtain_clear :=
-                    rl.Color{curtain_foam.r, curtain_foam.g, curtain_foam.b, 0}
+                curtain_mist := rl.Color{164, 226, 230, u8(f32(curtain_alpha) * .52)}
+                curtain_clear := rl.Color{curtain_foam.r, curtain_foam.g, curtain_foam.b, 0}
                 world_rondine_triangle_double_sided(
                     lower_start,
                     lower_end,
@@ -14520,15 +14820,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     curtain_foam,
                 )
                 crest_direction := upper_end - upper_start
-                crest_alpha :=
-                    u8(
-                        clamp(
-                            (198 + start_hump * 54 - panel_f * 5) *
-                            crown_visibility,
-                            0,
-                            236,
-                        ),
-                    )
+                crest_alpha := u8(clamp((198 + start_hump * 54 - panel_f * 5) * crown_visibility, 0, 236))
                 world_rondine_spray_streak(
                     camera,
                     (upper_start + upper_end) * .5,
@@ -14540,10 +14832,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
 
             for prong in 0 ..< 3 {
                 prong_f := f32(prong)
-                root :=
-                    stern +
-                    contact_right * (loaded_side * (.48 + prong_f * .22)) +
-                    contact_back * (prong_f * .18)
+                root := stern + contact_right * (loaded_side * (.48 + prong_f * .22)) + contact_back * (prong_f * .18)
                 foot :=
                     root +
                     contact_back * (2.20 + prong_f * .94 + crown_strength * 1.55) +
@@ -14558,7 +14847,15 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 world_rondine_triangle_colored(root, foot, crest, crown_foam, crown_clear, crown_mist, crown_mirrored)
                 crown_tip := crest + contact_right * (loaded_side * (.22 + prong_f * .16))
                 crown_tip.y -= .12 + prong_f * .05
-                world_rondine_triangle_colored(foot, crown_tip, crest, crown_clear, crown_clear, crown_foam, crown_mirrored)
+                world_rondine_triangle_colored(
+                    foot,
+                    crown_tip,
+                    crest,
+                    crown_clear,
+                    crown_clear,
+                    crown_foam,
+                    crown_mirrored,
+                )
             }
 
             // Fine bright needles run through the larger translucent crown.
@@ -14566,13 +14863,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // filled fan or any sprite-facing orientation problem.
             for needle in 0 ..< 5 {
                 needle_f := f32(needle)
-                variation :=
-                    world_rondine_live_variation(
-                        live_spray_epoch,
-                        live_spray_blend,
-                        1,
-                        u32(30 + needle),
-                    )
+                variation := world_rondine_live_variation(live_spray_epoch, live_spray_blend, 1, u32(30 + needle))
                 position :=
                     stern +
                     contact_right * (loaded_side * (.58 + needle_f * .29)) +
@@ -14599,43 +14890,19 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // exposing a row of individual triangle tips.
             for splash in 0 ..< 8 {
                 splash_f := f32(splash)
-                variation :=
-                    world_rondine_live_variation(
-                        live_spray_epoch,
-                        live_spray_blend,
-                        1,
-                        u32(360 + splash),
-                    )
+                variation := world_rondine_live_variation(live_spray_epoch, live_spray_blend, 1, u32(360 + splash))
                 crown_progress := (splash_f + .35 + variation * .28) / 8
                 crown_hump := f32(math.sin(f64(crown_progress * math.PI)))
                 splash_position :=
                     stern +
-                    contact_right *
-                    (loaded_side * (.92 + crown_progress * (3.35 + crown_strength * .90))) +
-                    contact_back *
-                    (.52 + crown_progress * (3.20 + crown_strength * 1.35))
-                splash_position.y +=
-                    .52 +
-                    crown_hump * (1.18 + crown_strength * 2.40) +
-                    (variation - .5) * .34
+                    contact_right * (loaded_side * (.92 + crown_progress * (3.35 + crown_strength * .90))) +
+                    contact_back * (.52 + crown_progress * (3.20 + crown_strength * 1.35))
+                splash_position.y += .52 + crown_hump * (1.18 + crown_strength * 2.40) + (variation - .5) * .34
                 splash_direction :=
                     contact_back * (.34 + variation * .34) +
-                    contact_right *
-                    (loaded_side * (.42 + crown_progress * .55)) +
-                    third_person.Vec3 {
-                        0,
-                        .38 + crown_hump * .62 + variation * .28,
-                        0,
-                    }
-                splash_alpha :=
-                    u8(
-                        clamp(
-                            (178 + variation * 66) *
-                            crown_visibility,
-                            0,
-                            232,
-                        ),
-                    )
+                    contact_right * (loaded_side * (.42 + crown_progress * .55)) +
+                    third_person.Vec3{0, .38 + crown_hump * .62 + variation * .28, 0}
+                splash_alpha := u8(clamp((178 + variation * 66) * crown_visibility, 0, 232))
                 splash_color := rl.Color{235, 254, 248, splash_alpha}
                 world_rondine_spray_streak(
                     camera,
@@ -14646,8 +14913,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 )
                 world_rondine_spray_bead(
                     camera,
-                    splash_position +
-                    linalg.normalize0(splash_direction) * (.20 + variation * .14),
+                    splash_position + linalg.normalize0(splash_direction) * (.20 + variation * .14),
                     .040 + variation * .030 + crown_strength * .016,
                     splash_color,
                 )
@@ -14660,17 +14926,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 kick_root := stern + contact_right * (loaded_side * .72)
                 for ray in 0 ..< 3 {
                     ray_f := f32(ray)
-                    variation :=
-                        world_rondine_live_variation(
-                            live_spray_epoch,
-                            live_spray_blend,
-                            1,
-                            u32(60 + ray),
-                        )
+                    variation := world_rondine_live_variation(live_spray_epoch, live_spray_blend, 1, u32(60 + ray))
                     position :=
-                        kick_root +
-                        contact_back * (ray_f * .18) +
-                        contact_right * (loaded_side * (ray_f - 1) * .18)
+                        kick_root + contact_back * (ray_f * .18) + contact_right * (loaded_side * (ray_f - 1) * .18)
                     position.y += .08 + ray_f * .09 + variation * .11
                     direction :=
                         contact_back * (1.35 - ray_f * .50 + variation * .10) +
@@ -14697,17 +14955,14 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 side_sign := side == 0 ? f32(-1) : f32(1)
                 for ray in 0 ..< 2 {
                     ray_f := f32(ray)
-                    variation :=
-                        world_rondine_live_variation(
-                            live_spray_epoch,
-                            live_spray_blend,
-                            u32(side),
-                            u32(70 + ray),
-                        )
+                    variation := world_rondine_live_variation(
+                        live_spray_epoch,
+                        live_spray_blend,
+                        u32(side),
+                        u32(70 + ray),
+                    )
                     position :=
-                        stern +
-                        contact_right * (side_sign * (.62 + ray_f * .18)) +
-                        contact_back * (ray_f * .16)
+                        stern + contact_right * (side_sign * (.62 + ray_f * .18)) + contact_back * (ray_f * .16)
                     position.y += .10 + variation * .12
                     direction :=
                         contact_back * (.72 + ray_f * .24 + variation * .14) +
@@ -14734,25 +14989,15 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             loaded_side := editor.rondine.telemetry.slip < 0 ? f32(-1) : f32(1)
             for cut in 0 ..< 3 {
                 cut_f := f32(cut)
-                variation :=
-                    world_rondine_live_variation(
-                        live_spray_epoch,
-                        live_spray_blend,
-                        1,
-                        u32(170 + cut),
-                    )
+                variation := world_rondine_live_variation(live_spray_epoch, live_spray_blend, 1, u32(170 + cut))
                 position :=
-                    stern +
-                    contact_right * (loaded_side * (.48 + cut_f * .18)) +
-                    contact_back * (.12 + cut_f * .20)
+                    stern + contact_right * (loaded_side * (.48 + cut_f * .18)) + contact_back * (.12 + cut_f * .20)
                 position.y += .055 + variation * .075
                 direction :=
                     contact_back * (.48 + cut_f * .16 + variation * .12) -
-                    contact_right *
-                    (loaded_side * (.58 + cut_f * .26 + variation * .16)) +
+                    contact_right * (loaded_side * (.58 + cut_f * .26 + variation * .16)) +
                     third_person.Vec3{0, .08 + cut_f * .045 + variation * .07, 0}
-                cut_alpha :=
-                    u8(clamp((126 + variation * 68) * countersteer, 0, 194))
+                cut_alpha := u8(clamp((126 + variation * 68) * countersteer, 0, 194))
                 cut_color := rl.Color{229, 252, 246, cut_alpha}
                 world_rondine_spray_streak(
                     camera,
@@ -14770,12 +15015,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             counter_visibility := f32(math.sqrt(f64(countersteer)))
             brace_alpha := u8(clamp(198 * counter_visibility, 0, 202))
             brace_color := rl.Color{233, 253, 247, brace_alpha}
-            brace_tangent :=
-                contact_right * (-loaded_side * .92) +
-                contact_back * .24
-            brace_radial :=
-                contact_back +
-                contact_right * (loaded_side * .14)
+            brace_tangent := contact_right * (-loaded_side * .92) + contact_back * .24
+            brace_radial := contact_back + contact_right * (loaded_side * .14)
             for brace in 0 ..< 2 {
                 brace_f := f32(brace)
                 brace_position :=
@@ -14799,41 +15040,18 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // pressure transfer readable at gameplay distance without
             // competing with the tall loaded-side crown.
             catch_side := -loaded_side
-            catch_root :=
-                stern +
-                contact_right * (catch_side * .46) +
-                contact_back * .10
+            catch_root := stern + contact_right * (catch_side * .46) + contact_back * .10
             catch_foot :=
                 catch_root +
                 contact_back * (1.04 + countersteer * .68) +
-                contact_right *
-                (catch_side * (.66 + countersteer * .58))
+                contact_right * (catch_side * (.66 + countersteer * .58))
             catch_crest := (catch_root + catch_foot) * .5
-            catch_crest +=
-                contact_right *
-                (catch_side * (.13 + countersteer * .12))
-            catch_crest.y +=
-                .42 +
-                counter_visibility * 1.38
-            catch_alpha :=
-                u8(
-                    clamp(
-                        (168 + countersteer * 72) *
-                        counter_visibility,
-                        0,
-                        184,
-                    ),
-                )
+            catch_crest += contact_right * (catch_side * (.13 + countersteer * .12))
+            catch_crest.y += .42 + counter_visibility * 1.38
+            catch_alpha := u8(clamp((168 + countersteer * 72) * counter_visibility, 0, 184))
             catch_foam := rl.Color{228, 251, 245, catch_alpha}
-            catch_mist :=
-                rl.Color {
-                    176,
-                    231,
-                    232,
-                    u8(f32(catch_alpha) * .56),
-                }
-            catch_clear :=
-                rl.Color{catch_foam.r, catch_foam.g, catch_foam.b, 0}
+            catch_mist := rl.Color{176, 231, 232, u8(f32(catch_alpha) * .56)}
+            catch_clear := rl.Color{catch_foam.r, catch_foam.g, catch_foam.b, 0}
             world_rondine_triangle_double_sided(
                 catch_root,
                 catch_foot,
@@ -14842,10 +15060,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 catch_clear,
                 catch_mist,
             )
-            catch_tip :=
-                catch_crest +
-                contact_right * (catch_side * (.16 + countersteer * .16)) +
-                contact_back * .12
+            catch_tip := catch_crest + contact_right * (catch_side * (.16 + countersteer * .16)) + contact_back * .12
             catch_tip.y -= .09
             world_rondine_triangle_double_sided(
                 catch_foot,
@@ -14856,20 +15071,13 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 catch_foam,
             )
             catch_ridge_direction :=
-                contact_back * .44 +
-                contact_right * (catch_side * .58) +
-                third_person.Vec3{0, .12, 0}
+                contact_back * .44 + contact_right * (catch_side * .58) + third_person.Vec3{0, .12, 0}
             world_rondine_spray_streak(
                 camera,
                 catch_crest,
                 catch_ridge_direction,
                 .14 + countersteer * .18,
-                {
-                    235,
-                    254,
-                    248,
-                    u8(clamp(188 * counter_visibility, 0, 194)),
-                },
+                {235, 254, 248, u8(clamp(188 * counter_visibility, 0, 194))},
             )
         }
 
@@ -14879,50 +15087,25 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // dormant, while an aggressive correction lights only the low side.
         wing_half_span := f32(4.65)
         wing_presentation_basis := world_rondine_presentation_basis(editor)
-        loaded_wing_side :=
-            editor.rondine.telemetry.slip < 0 ? f32(-1) : f32(1)
+        loaded_wing_side := editor.rondine.telemetry.slip < 0 ? f32(-1) : f32(1)
         for side in 0 ..< 2 {
             side_sign := side == 0 ? f32(-1) : f32(1)
             if side_sign != loaded_wing_side do continue
-            low_tip_displacement :=
-                max(
-                    -wing_presentation_basis.right.y *
-                    side_sign *
-                    wing_half_span,
-                    f32(0),
-                )
+            low_tip_displacement := max(-wing_presentation_basis.right.y * side_sign * wing_half_span, f32(0))
             // Lateral hull load compresses the loaded outboard skim even when
             // presentation heel is deliberately restrained for readability.
             // This lets a sustained slide rake one side while level, no-slip
             // planing remains exactly dormant.
             loaded_tip_compression := f32(0)
             if side_sign == loaded_wing_side {
-                loaded_tip_compression =
-                    math.abs(editor.rondine.telemetry.slip) * .72 +
-                    drift_strength * .10
+                loaded_tip_compression = math.abs(editor.rondine.telemetry.slip) * .72 + drift_strength * .10
             }
-            tip_proximity :=
-                clamp(
-                    (max(low_tip_displacement, loaded_tip_compression) - .10) /
-                    .62,
-                    0,
-                    1,
-                )
+            tip_proximity := clamp((max(low_tip_displacement, loaded_tip_compression) - .10) / .62, 0, 1)
             tip_strength :=
-                tip_proximity *
-                clamp(
-                    contact_strength * .62 +
-                    drift_strength * .58 +
-                    countersteer * .34,
-                    0,
-                    1,
-                )
+                tip_proximity * clamp(contact_strength * .62 + drift_strength * .58 + countersteer * .34, 0, 1)
             if tip_strength <= .045 do continue
             tip_visibility := f32(math.sqrt(f64(tip_strength)))
-            tip_root :=
-                contact_base +
-                contact_right * (side_sign * (wing_half_span + .28)) +
-                contact_back * .62
+            tip_root := contact_base + contact_right * (side_sign * (wing_half_span + .28)) + contact_back * .62
             tip_root.y += .045
             // The original rake streaks supplied motion but disappeared at
             // chase distance. A translucent triangular sheet gives the skim a
@@ -14933,42 +15116,21 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 contact_back * (1.18 + tip_strength * .82) +
                 contact_right * (side_sign * (.38 + tip_strength * .34))
             tip_sheet_crest := (tip_root + tip_sheet_foot) * .5
-            tip_sheet_crest +=
-                contact_right * (side_sign * (.48 + tip_strength * .48))
+            tip_sheet_crest += contact_right * (side_sign * (.48 + tip_strength * .48))
             tip_sheet_crest.y += .58 + tip_strength * 1.80
-            tip_sheet_alpha :=
-                u8(clamp(205 * tip_visibility, 0, 214))
+            tip_sheet_alpha := u8(clamp(205 * tip_visibility, 0, 214))
             tip_sheet_foam := rl.Color{226, 251, 245, tip_sheet_alpha}
-            tip_sheet_mist :=
-                rl.Color {
-                    148,
-                    220,
-                    227,
-                    u8(f32(tip_sheet_alpha) * .48),
-                }
-            tip_sheet_clear :=
-                rl.Color{tip_sheet_foam.r, tip_sheet_foam.g, tip_sheet_foam.b, 0}
+            tip_sheet_mist := rl.Color{148, 220, 227, u8(f32(tip_sheet_alpha) * .48)}
+            tip_sheet_clear := rl.Color{tip_sheet_foam.r, tip_sheet_foam.g, tip_sheet_foam.b, 0}
             for tip_panel in 0 ..< 3 {
                 panel_start := f32(tip_panel) / 3
                 panel_end := f32(tip_panel + 1) / 3
-                lower_start :=
-                    tip_root +
-                    (tip_sheet_foot - tip_root) * panel_start
-                lower_end :=
-                    tip_root +
-                    (tip_sheet_foot - tip_root) * panel_end
-                start_hump :=
-                    f32(math.sin(f64(panel_start * math.PI)))
-                end_hump :=
-                    f32(math.sin(f64(panel_end * math.PI)))
-                upper_start :=
-                    lower_start +
-                    (tip_sheet_crest - lower_start) *
-                    (start_hump * .92)
-                upper_end :=
-                    lower_end +
-                    (tip_sheet_crest - lower_end) *
-                    (end_hump * .92)
+                lower_start := tip_root + (tip_sheet_foot - tip_root) * panel_start
+                lower_end := tip_root + (tip_sheet_foot - tip_root) * panel_end
+                start_hump := f32(math.sin(f64(panel_start * math.PI)))
+                end_hump := f32(math.sin(f64(panel_end * math.PI)))
+                upper_start := lower_start + (tip_sheet_crest - lower_start) * (start_hump * .92)
+                upper_end := lower_end + (tip_sheet_crest - lower_end) * (end_hump * .92)
                 world_rondine_triangle_double_sided(
                     lower_start,
                     lower_end,
@@ -14988,37 +15150,19 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             }
             for rake in 0 ..< 2 {
                 rake_f := f32(rake)
-                variation :=
-                    world_rondine_live_variation(
-                        live_spray_epoch,
-                        live_spray_blend,
-                        u32(side),
-                        u32(310 + rake),
-                    )
+                variation := world_rondine_live_variation(
+                    live_spray_epoch,
+                    live_spray_blend,
+                    u32(side),
+                    u32(310 + rake),
+                )
                 position :=
-                    tip_root +
-                    contact_back * (rake_f * .16) +
-                    contact_right *
-                    (side_sign * (variation - .5) * .10)
+                    tip_root + contact_back * (rake_f * .16) + contact_right * (side_sign * (variation - .5) * .10)
                 direction :=
-                    contact_back *
-                    (.78 + rake_f * .24 + variation * .22) +
-                    contact_right *
-                    (side_sign * (.20 + rake_f * .24 + variation * .16)) +
-                    third_person.Vec3 {
-                        0,
-                        .24 + rake_f * .18 + variation * .24,
-                        0,
-                    }
-                rake_alpha :=
-                    u8(
-                        clamp(
-                            (154 + variation * 64 - rake_f * 18) *
-                            tip_visibility,
-                            0,
-                            212,
-                        ),
-                    )
+                    contact_back * (.78 + rake_f * .24 + variation * .22) +
+                    contact_right * (side_sign * (.20 + rake_f * .24 + variation * .16)) +
+                    third_person.Vec3{0, .24 + rake_f * .18 + variation * .24, 0}
+                rake_alpha := u8(clamp((154 + variation * 64 - rake_f * 18) * tip_visibility, 0, 212))
                 rake_color := rl.Color{233, 253, 247, rake_alpha}
                 world_rondine_spray_streak(
                     camera,
@@ -15027,10 +15171,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     .48 + tip_strength * .66 + rake_f * .12,
                     rake_color,
                 )
-                bead_position :=
-                    position +
-                    linalg.normalize0(direction) *
-                    (.62 + tip_strength * .38 + rake_f * .14)
+                bead_position := position + linalg.normalize0(direction) * (.62 + tip_strength * .38 + rake_f * .14)
                 world_rondine_spray_bead(
                     camera,
                     bead_position,
@@ -15038,9 +15179,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     {235, 254, 248, u8(f32(rake_alpha) * .78)},
                 )
             }
-            crown_bead_position :=
-                tip_sheet_crest +
-                contact_right * (side_sign * .16)
+            crown_bead_position := tip_sheet_crest + contact_right * (side_sign * .16)
             crown_bead_position.y += .10
             world_rondine_spray_bead(
                 camera,
@@ -15051,14 +15190,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // A short diagonal scar anchors the airborne rake to the water.
             // It sits outside the propwash footprint, so the player can read
             // that the wing—not the engine—touched the surface.
-            scrawl_tangent :=
-                contact_back * .78 +
-                contact_right * (side_sign * .36)
-            scrawl_radial :=
-                contact_right * side_sign -
-                contact_back * .18
-            scrawl_alpha :=
-                u8(clamp(188 * tip_visibility, 0, 194))
+            scrawl_tangent := contact_back * .78 + contact_right * (side_sign * .36)
+            scrawl_radial := contact_right * side_sign - contact_back * .18
+            scrawl_alpha := u8(clamp(188 * tip_visibility, 0, 194))
             world_rondine_surface_chip(
                 tip_root + contact_back * .16,
                 scrawl_tangent,
@@ -15079,34 +15213,20 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // directly into prop wash keeps the live effect spanning the aircraft
         // instead of collapsing into a faint centerline wake during a stable
         // Tokyo-drift-style slide.
-        propwash_strength :=
-            clamp(
-                contact_strength * (.52 + drift_strength * .38) +
-                drift_strength * .34,
-                0,
-                1.15,
-            )
+        propwash_strength := clamp(contact_strength * (.52 + drift_strength * .38) + drift_strength * .34, 0, 1.15)
         if propwash_strength > .08 {
             for side in 0 ..< 2 {
                 side_sign := side == 0 ? f32(-1) : f32(1)
                 outside := clamp(1 + side_sign * editor.rondine.telemetry.slip * 1.25, .55, 1.45)
-                root :=
-                    contact_base +
-                    contact_right * (side_sign * 3.8) +
-                    body_back * .35
+                root := contact_base + contact_right * (side_sign * 3.8) + body_back * .35
                 heel_offset := editor.rondine.telemetry.slip * drift_strength * 1.25
                 foot :=
                     root +
                     contact_back * (1.2 + propwash_strength * 1.8) +
                     contact_right * (side_sign * (.18 + propwash_strength * .42) + heel_offset)
-                crest :=
-                    root +
-                    contact_back * (.55 + propwash_strength * .9) +
-                    contact_right * (side_sign * .12)
+                crest := root + contact_back * (.55 + propwash_strength * .9) + contact_right * (side_sign * .12)
                 crest.y += .25 + propwash_strength * 1.20 * outside
-                edge :=
-                    foot +
-                    contact_right * (side_sign * (.22 + propwash_strength * .38) * outside)
+                edge := foot + contact_right * (side_sign * (.22 + propwash_strength * .38) * outside)
                 prop_alpha := u8(clamp(172 * propwash_strength * outside, 0, 214))
                 prop_foam := rl.Color{224, 249, 243, prop_alpha}
                 prop_mist := rl.Color{143, 217, 224, u8(f32(prop_alpha) * .48)}
@@ -15126,14 +15246,11 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     bite_position :=
                         root +
                         contact_back * (.42 + bite_f * .38) +
-                        contact_right *
-                        (side_sign * (.08 + bite_f * .09 + heel_offset * .12))
+                        contact_right * (side_sign * (.08 + bite_f * .09 + heel_offset * .12))
                     bite_position.y += .025
                     bite_tangent :=
-                        contact_back * (.78 + bite_f * .14) +
-                        contact_right * (side_sign * (.26 + outside * .12))
-                    bite_radial :=
-                        contact_right * side_sign - contact_back * (.08 + bite_f * .05)
+                        contact_back * (.78 + bite_f * .14) + contact_right * (side_sign * (.26 + outside * .12))
+                    bite_radial := contact_right * side_sign - contact_back * (.08 + bite_f * .05)
                     world_rondine_surface_chip(
                         bite_position,
                         bite_tangent,
@@ -15150,46 +15267,31 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 pressure_role := outside >= 1 ? u32(1) : u32(0)
                 for filament in 0 ..< 2 {
                     filament_f := f32(filament)
-                    variation :=
-                        world_rondine_live_variation(
-                            live_spray_epoch,
-                            live_spray_blend,
-                            pressure_role,
-                            u32(50 + side * 2 + filament),
-                        )
-                    prop_phase :=
-                        math.sin(
-                            (
-                                editor.rondine.propeller_turns +
-                                f32(side) * .5 +
-                                filament_f * .19
-                            ) *
-                            math.TAU,
-                        )
+                    variation := world_rondine_live_variation(
+                        live_spray_epoch,
+                        live_spray_blend,
+                        pressure_role,
+                        u32(50 + side * 2 + filament),
+                    )
+                    prop_phase := math.sin(
+                        (editor.rondine.propeller_turns + f32(side) * .5 + filament_f * .19) * math.TAU,
+                    )
                     filament_position :=
                         root +
                         contact_back * (.68 + filament_f * .46) +
-                        contact_right *
-                        (side_sign * (.10 + filament_f * .18 + prop_phase * .07))
+                        contact_right * (side_sign * (.10 + filament_f * .18 + prop_phase * .07))
                     filament_position.y += .18 + variation * .24 + prop_phase * .055
                     filament_direction :=
                         contact_back * (.54 + variation * .32) +
-                        contact_right *
-                        (side_sign * (.68 + filament_f * .38 + variation * .26 + prop_phase * .12)) +
-                        third_person.Vec3 {
-                            0,
-                            .36 + filament_f * .22 + variation * .34 + prop_phase * .10,
-                            0,
-                        }
+                        contact_right * (side_sign * (.68 + filament_f * .38 + variation * .26 + prop_phase * .12)) +
+                        third_person.Vec3{0, .36 + filament_f * .22 + variation * .34 + prop_phase * .10, 0}
                     filament_alpha := u8(clamp((105 + variation * 62) * propwash_strength * outside, 0, 195))
                     filament_color := rl.Color{229, 252, 246, filament_alpha}
                     world_rondine_spray_streak(
                         camera,
                         filament_position,
                         filament_direction,
-                        (.42 + variation * .20 + filament_f * .10) *
-                        outside *
-                        (1 + prop_phase * .10),
+                        (.42 + variation * .20 + filament_f * .10) * outside * (1 + prop_phase * .10),
                         filament_color,
                     )
                 }
@@ -15201,26 +15303,13 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     // is the reliable source for this always-fresh cue; wake/contact intensity
     // intentionally settles near zero during a stable run. Height and drift
     // still gate it away before flight or asymmetric spray choreography.
-    planing_spark_surface :=
-        editor.rondine.grounded ? f32(1) :
-        clamp(1 - editor.rondine.telemetry.height / 1.25, 0, 1)
+    planing_spark_surface := editor.rondine.grounded ? f32(1) : clamp(1 - editor.rondine.telemetry.height / 1.25, 0, 1)
     planing_spark_strength :=
         clamp((editor.rondine.telemetry.speed - 18) / 28, 0, 1) *
         planing_spark_surface *
-        clamp(
-            1 -
-            math.abs(editor.rondine.telemetry.slip) * .55 -
-            drift_strength * 2.4,
-            0,
-            1,
-        )
+        clamp(1 - math.abs(editor.rondine.telemetry.slip) * .55 - drift_strength * 2.4, 0, 1)
     if planing_spark_strength > .02 {
-        spark_base :=
-            third_person.Vec3 {
-                editor.rondine.body.position.x,
-                sea_y,
-                editor.rondine.body.position.z,
-            }
+        spark_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
         spark_back := -world_rondine_surface_heading(editor)
         spark_right :=
             third_person.Vec3 {
@@ -15233,33 +15322,22 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         for spark in 0 ..< 4 {
             spark_f := f32(spark)
             side_sign := spark & 1 == 0 ? f32(-1) : f32(1)
-            variation :=
-                world_rondine_live_variation(
-                    live_spray_epoch,
-                    live_spray_blend,
-                    u32(spark & 1),
-                    u32(210 + spark),
-                )
+            variation := world_rondine_live_variation(
+                live_spray_epoch,
+                live_spray_blend,
+                u32(spark & 1),
+                u32(210 + spark),
+            )
             spark_position :=
                 spark_base +
                 spark_back * (1.65 + spark_f * .52 + variation * .24) +
-                spark_right *
-                (side_sign * (.82 + spark_f * .18 + variation * .18))
+                spark_right * (side_sign * (.82 + spark_f * .18 + variation * .18))
             spark_position.y += .18 + spark_f * .045 + variation * .12
             spark_direction :=
                 spark_back * (.88 + spark_f * .16 + variation * .22) +
-                spark_right *
-                (side_sign * (.38 + spark_f * .13 + variation * .16)) +
+                spark_right * (side_sign * (.38 + spark_f * .13 + variation * .16)) +
                 third_person.Vec3{0, .22 + spark_f * .055 + variation * .14, 0}
-            spark_alpha :=
-                u8(
-                    clamp(
-                        (138 + variation * 64) *
-                        planing_spark_visibility,
-                        0,
-                        205,
-                    ),
-                )
+            spark_alpha := u8(clamp((138 + variation * 64) * planing_spark_visibility, 0, 205))
             world_rondine_spray_streak(
                 camera,
                 spark_position,
@@ -15275,20 +15353,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     // are speed-driven, so the full-span engine signature remains present
     // after transient spray intensity settles.
     prop_tick_strength :=
-        clamp(
-            (editor.rondine.telemetry.speed - 16) / 30 +
-            surge_intensity * .24,
-            0,
-            1,
-        ) *
-        planing_spark_surface
+        clamp((editor.rondine.telemetry.speed - 16) / 30 + surge_intensity * .24, 0, 1) * planing_spark_surface
     if prop_tick_strength > .04 {
-        prop_tick_base :=
-            third_person.Vec3 {
-                editor.rondine.body.position.x,
-                sea_y,
-                editor.rondine.body.position.z,
-            }
+        prop_tick_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
         prop_tick_back := -world_rondine_surface_heading(editor)
         prop_tick_right :=
             third_person.Vec3 {
@@ -15302,42 +15369,17 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             side_sign := side == 0 ? f32(-1) : f32(1)
             for tick in 0 ..< 2 {
                 tick_f := f32(tick)
-                prop_phase :=
-                    math.sin(
-                        (
-                            editor.rondine.propeller_turns +
-                            f32(side) * .5 +
-                            tick_f * .22
-                        ) *
-                        math.TAU,
-                    )
+                prop_phase := math.sin((editor.rondine.propeller_turns + f32(side) * .5 + tick_f * .22) * math.TAU)
                 tick_position :=
                     prop_tick_base +
-                    prop_tick_right *
-                    (side_sign * (3.78 + prop_phase * .12)) +
+                    prop_tick_right * (side_sign * (3.78 + prop_phase * .12)) +
                     prop_tick_back * (.62 + tick_f * .42)
-                tick_position.y +=
-                    .10 +
-                    tick_f * .05 +
-                    max(prop_phase, f32(0)) * .10
+                tick_position.y += .10 + tick_f * .05 + max(prop_phase, f32(0)) * .10
                 tick_direction :=
                     prop_tick_back * (.64 + tick_f * .16) +
-                    prop_tick_right *
-                    (side_sign * (.28 + prop_phase * .16)) +
-                    third_person.Vec3 {
-                        0,
-                        .14 + tick_f * .07 + max(prop_phase, f32(0)) * .12,
-                        0,
-                    }
-                tick_alpha :=
-                    u8(
-                        clamp(
-                            (118 + tick_f * 26 + prop_phase * 18) *
-                            prop_tick_visibility,
-                            0,
-                            176,
-                        ),
-                    )
+                    prop_tick_right * (side_sign * (.28 + prop_phase * .16)) +
+                    third_person.Vec3{0, .14 + tick_f * .07 + max(prop_phase, f32(0)) * .12, 0}
+                tick_alpha := u8(clamp((118 + tick_f * 26 + prop_phase * 18) * prop_tick_visibility, 0, 176))
                 world_rondine_spray_streak(
                     camera,
                     tick_position,
@@ -15348,12 +15390,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 tick_surface_position := tick_position
                 tick_surface_position.y = sea_y + .038
                 tick_tangent :=
-                    prop_tick_back * (.72 + tick_f * .10) +
-                    prop_tick_right *
-                    (side_sign * (.24 + prop_phase * .12))
-                tick_radial :=
-                    prop_tick_right * side_sign -
-                    prop_tick_back * (.10 + tick_f * .04)
+                    prop_tick_back * (.72 + tick_f * .10) + prop_tick_right * (side_sign * (.24 + prop_phase * .12))
+                tick_radial := prop_tick_right * side_sign - prop_tick_back * (.10 + tick_f * .04)
                 world_rondine_surface_chip(
                     tick_surface_position,
                     tick_tangent,
@@ -15370,47 +15408,25 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     // stern before resolving into the two rotating prop tracks. Three broken
     // bars provide a brief large-to-medium launch cadence; steady cruise
     // drops them completely while retaining the small prop ticks.
-    surge_strength :=
-        surge_intensity *
-        planing_spark_surface *
-        clamp(1 - drift_strength * 1.8, 0, 1)
+    surge_strength := surge_intensity * planing_spark_surface * clamp(1 - drift_strength * 1.8, 0, 1)
     if surge_strength > .04 {
-        surge_base :=
-            third_person.Vec3 {
-                editor.rondine.body.position.x,
-                sea_y + .041,
-                editor.rondine.body.position.z,
-            }
+        surge_base := third_person.Vec3{editor.rondine.body.position.x, sea_y + .041, editor.rondine.body.position.z}
         surge_back := -world_rondine_surface_heading(editor)
         surge_right :=
             third_person.Vec3 {
                 rondine_basis.right.x,
                 0,
                 rondine_basis.right.z,
-            }
+        }
         surge_visibility := f32(math.sqrt(f64(surge_strength)))
         for bar in 0 ..< 3 {
             bar_f := f32(bar)
             side_offset := bar & 1 == 0 ? f32(-1) : f32(1)
             bar_position :=
-                surge_base +
-                surge_back * (2.8 + bar_f * .72) +
-                surge_right * (side_offset * (.10 + bar_f * .06))
-            bar_tangent :=
-                surge_right +
-                surge_back * (side_offset * (.08 + bar_f * .035))
-            bar_radial :=
-                surge_back -
-                surge_right * (side_offset * .10)
-            bar_alpha :=
-                u8(
-                    clamp(
-                        (186 - bar_f * 24) *
-                        surge_visibility,
-                        0,
-                        202,
-                    ),
-                )
+                surge_base + surge_back * (2.8 + bar_f * .72) + surge_right * (side_offset * (.10 + bar_f * .06))
+            bar_tangent := surge_right + surge_back * (side_offset * (.08 + bar_f * .035))
+            bar_radial := surge_back - surge_right * (side_offset * .10)
+            bar_alpha := u8(clamp((186 - bar_f * 24) * surge_visibility, 0, 202))
             world_rondine_surface_chip(
                 bar_position,
                 bar_tangent,
@@ -15426,41 +15442,25 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     // Rather than drawing the straight transverse bars through a slide, peel
     // that energy into a single outside rooster tail: one broad lifted sheet,
     // several stepped ribs, and a crown of fine droplets.
-    power_over_strength :=
-        clamp(surge_intensity * drift_strength * 3.2, 0, 1) *
-        planing_spark_surface
+    power_over_strength := clamp(surge_intensity * drift_strength * 3.2, 0, 1) * planing_spark_surface
     if power_over_strength > .045 {
         power_visibility := f32(math.sqrt(f64(power_over_strength)))
-        power_base :=
-            third_person.Vec3 {
-                editor.rondine.body.position.x,
-                sea_y + .047,
-                editor.rondine.body.position.z,
-            }
+        power_base := third_person.Vec3{editor.rondine.body.position.x, sea_y + .047, editor.rondine.body.position.z}
         power_back := -world_rondine_surface_heading(editor)
         power_right :=
             third_person.Vec3 {
                 rondine_basis.right.x,
                 0,
                 rondine_basis.right.z,
-            }
+        }
         power_side := math.sign(editor.rondine.steering)
         if math.abs(editor.rondine.telemetry.slip) > .025 {
             power_side = math.sign(editor.rondine.telemetry.slip)
         }
         if power_side == 0 do power_side = 1
-        power_root :=
-            power_base +
-            power_back * 3.40 +
-            power_right * (power_side * .90)
-        power_heel :=
-            power_base +
-            power_back * 6.40 +
-            power_right * (power_side * 1.70)
-        power_crown :=
-            power_base +
-            power_back * 4.40 +
-            power_right * (power_side * (3.25 + power_visibility * 1.10))
+        power_root := power_base + power_back * 3.40 + power_right * (power_side * .90)
+        power_heel := power_base + power_back * 6.40 + power_right * (power_side * 1.70)
+        power_crown := power_base + power_back * 4.40 + power_right * (power_side * (3.25 + power_visibility * 1.10))
         power_crown.y += 1.50 + power_visibility * 2.80
         power_alpha := u8(clamp(206 * power_visibility, 0, 218))
         power_foam := rl.Color{232, 254, 248, power_alpha}
@@ -15468,31 +15468,13 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         for power_panel in 0 ..< 4 {
             panel_start := f32(power_panel) / 4
             panel_end := f32(power_panel + 1) / 4
-            panel_lower_start :=
-                power_root +
-                (power_heel - power_root) * panel_start
-            panel_lower_end :=
-                power_root +
-                (power_heel - power_root) * panel_end
-            panel_start_hump :=
-                f32(math.sin(f64(panel_start * math.PI)))
-            panel_end_hump :=
-                f32(math.sin(f64(panel_end * math.PI)))
-            panel_upper_start :=
-                panel_lower_start +
-                (power_crown - panel_lower_start) *
-                (panel_start_hump * .92)
-            panel_upper_end :=
-                panel_lower_end +
-                (power_crown - panel_lower_end) *
-                (panel_end_hump * .92)
-            panel_lower_clear :=
-                rl.Color {
-                    power_foam.r,
-                    power_foam.g,
-                    power_foam.b,
-                    u8(f32(power_alpha) * .32),
-                }
+            panel_lower_start := power_root + (power_heel - power_root) * panel_start
+            panel_lower_end := power_root + (power_heel - power_root) * panel_end
+            panel_start_hump := f32(math.sin(f64(panel_start * math.PI)))
+            panel_end_hump := f32(math.sin(f64(panel_end * math.PI)))
+            panel_upper_start := panel_lower_start + (power_crown - panel_lower_start) * (panel_start_hump * .92)
+            panel_upper_end := panel_lower_end + (power_crown - panel_lower_end) * (panel_end_hump * .92)
+            panel_lower_clear := rl.Color{power_foam.r, power_foam.g, power_foam.b, u8(f32(power_alpha) * .32)}
             world_rondine_triangle_double_sided(
                 panel_lower_start,
                 panel_lower_end,
@@ -15513,21 +15495,11 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         for rib in 0 ..< 3 {
             rib_f := f32(rib)
             rib_root :=
-                power_base +
-                power_back * (3.70 + rib_f * .58) +
-                power_right * (power_side * (1.02 + rib_f * .22))
-            rib_tip :=
-                rib_root +
-                power_right * (power_side * (.72 + power_visibility * .30))
+                power_base + power_back * (3.70 + rib_f * .58) + power_right * (power_side * (1.02 + rib_f * .22))
+            rib_tip := rib_root + power_right * (power_side * (.72 + power_visibility * .30))
             rib_tip.y += .30 + power_visibility * (.54 - rib_f * .08)
             rib_width := power_back * (.11 + rib_f * .018)
-            rib_color :=
-                rl.Color {
-                    229,
-                    253,
-                    247,
-                    u8(f32(power_alpha) * (.82 - rib_f * .17)),
-                }
+            rib_color := rl.Color{229, 253, 247, u8(f32(power_alpha) * (.82 - rib_f * .17))}
             world_rondine_triangle_double_sided(
                 rib_root - rib_width,
                 rib_root + rib_width,
@@ -15542,12 +15514,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             droplet_position :=
                 power_crown +
                 power_back * ((droplet_f - 2) * .14) +
-                power_right *
-                (power_side * ((droplet_f - 2) * .17))
-            droplet_position.y +=
-                .10 +
-                (.24 - math.abs(droplet_f - 2) * .045) *
-                power_visibility
+                power_right * (power_side * ((droplet_f - 2) * .17))
+            droplet_position.y += .10 + (.24 - math.abs(droplet_f - 2) * .045) * power_visibility
             world_rondine_spray_bead(
                 camera,
                 droplet_position,
@@ -15560,24 +15528,21 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     // throw a few lifted beads from the live stern. The decisive crossed
     // slashes and hooks are stamped into wake history below so they stay fixed
     // at the actual crossover instead of sliding along with the aircraft.
-    transition_strength :=
-        drift_transition *
-        planing_spark_surface
+    transition_strength := drift_transition * planing_spark_surface
     if transition_strength > .04 {
         transition_visibility := f32(math.sqrt(f64(transition_strength)))
-        transition_base :=
-            third_person.Vec3 {
-                editor.rondine.body.position.x,
-                sea_y + .046,
-                editor.rondine.body.position.z,
-            }
+        transition_base := third_person.Vec3 {
+            editor.rondine.body.position.x,
+            sea_y + .046,
+            editor.rondine.body.position.z,
+        }
         transition_back := -world_rondine_surface_heading(editor)
         transition_right :=
             third_person.Vec3 {
                 rondine_basis.right.x,
                 0,
                 rondine_basis.right.z,
-            }
+        }
         transition_side := editor.rondine.slip_side
         if transition_side == 0 do transition_side = math.sign(editor.rondine.steering)
         if transition_side == 0 do transition_side = 1
@@ -15587,11 +15552,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             bead_position :=
                 transition_base +
                 transition_back * (3.72 + bead_f * .24) +
-                transition_right *
-                (transition_side * (.72 + bead_f * .21))
-            bead_position.y +=
-                .24 +
-                transition_visibility * (.28 + bead_f * .08)
+                transition_right * (transition_side * (.72 + bead_f * .21))
+            bead_position.y += .24 + transition_visibility * (.28 + bead_f * .08)
             world_rondine_spray_bead(
                 camera,
                 bead_position,
@@ -15604,24 +15566,16 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     // the broad launch-pressure bars. A low suction pocket supplies the large
     // read, paired converging crests the medium read, and short inner teeth
     // carry the pinch into the ordinary prop tracks.
-    brake_strength :=
-        brake_intensity *
-        planing_spark_surface *
-        clamp(1 - drift_strength * 1.35, 0, 1)
+    brake_strength := brake_intensity * planing_spark_surface * clamp(1 - drift_strength * 1.35, 0, 1)
     if brake_strength > .04 {
-        brake_base :=
-            third_person.Vec3 {
-                editor.rondine.body.position.x,
-                sea_y + .039,
-                editor.rondine.body.position.z,
-            }
+        brake_base := third_person.Vec3{editor.rondine.body.position.x, sea_y + .039, editor.rondine.body.position.z}
         brake_back := -world_rondine_surface_heading(editor)
         brake_right :=
             third_person.Vec3 {
                 rondine_basis.right.x,
                 0,
                 rondine_basis.right.z,
-            }
+        }
         brake_visibility := f32(math.sqrt(f64(brake_strength)))
         pocket_alpha := u8(clamp(76 * brake_visibility, 0, 82))
         world_rondine_surface_chip(
@@ -15636,16 +15590,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         for side in 0 ..< 2 {
             side_sign := side == 0 ? f32(-1) : f32(1)
             crest_alpha := u8(clamp(174 * brake_visibility, 0, 188))
-            crest_position :=
-                brake_base +
-                brake_back * (3.15 + f32(side) * .18) +
-                brake_right * (side_sign * .72)
-            crest_tangent :=
-                brake_back * .78 -
-                brake_right * (side_sign * .63)
-            crest_radial :=
-                brake_right * -side_sign +
-                brake_back * .12
+            crest_position := brake_base + brake_back * (3.15 + f32(side) * .18) + brake_right * (side_sign * .72)
+            crest_tangent := brake_back * .78 - brake_right * (side_sign * .63)
+            crest_radial := brake_right * -side_sign + brake_back * .12
             world_rondine_surface_chip(
                 crest_position,
                 crest_tangent,
@@ -15677,37 +15624,21 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     // suction pinch upward. The outside sheet is the large gesture, its
     // staggered surface splinters are the medium cadence, and camera-facing
     // beads supply the brief small-scale glitter at the curling tip.
-    brake_flick_strength :=
-        brake_strength *
-        clamp(math.abs(editor.rondine.steering) * 2.4, 0, 1)
+    brake_flick_strength := brake_strength * clamp(math.abs(editor.rondine.steering) * 2.4, 0, 1)
     if brake_flick_strength > .05 {
         flick_visibility := f32(math.sqrt(f64(brake_flick_strength)))
-        flick_base :=
-            third_person.Vec3 {
-                editor.rondine.body.position.x,
-                sea_y + .045,
-                editor.rondine.body.position.z,
-            }
+        flick_base := third_person.Vec3{editor.rondine.body.position.x, sea_y + .045, editor.rondine.body.position.z}
         flick_back := -world_rondine_surface_heading(editor)
         flick_right :=
             third_person.Vec3 {
                 rondine_basis.right.x,
                 0,
                 rondine_basis.right.z,
-            }
+        }
         flick_side := editor.rondine.steering >= 0 ? f32(1) : f32(-1)
-        sheet_root :=
-            flick_base +
-            flick_back * 3.05 +
-            flick_right * (flick_side * .72)
-        sheet_inner :=
-            flick_base +
-            flick_back * 4.25 +
-            flick_right * (flick_side * .28)
-        sheet_tip :=
-            flick_base +
-            flick_back * 3.72 +
-            flick_right * (flick_side * (1.72 + flick_visibility * .42))
+        sheet_root := flick_base + flick_back * 3.05 + flick_right * (flick_side * .72)
+        sheet_inner := flick_base + flick_back * 4.25 + flick_right * (flick_side * .28)
+        sheet_tip := flick_base + flick_back * 3.72 + flick_right * (flick_side * (1.72 + flick_visibility * .42))
         sheet_tip.y += .42 + flick_visibility * .72
         sheet_alpha := u8(clamp(182 * flick_visibility, 0, 196))
         sheet_foam := rl.Color{229, 252, 246, sheet_alpha}
@@ -15725,12 +15656,10 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             splinter_position :=
                 flick_base +
                 flick_back * (3.35 + splinter_f * .48) +
-                flick_right *
-                (flick_side * (1.02 + splinter_f * .22))
+                flick_right * (flick_side * (1.02 + splinter_f * .22))
             world_rondine_surface_chip(
                 splinter_position,
-                flick_back * (.62 + splinter_f * .08) +
-                flick_right * (flick_side * .78),
+                flick_back * (.62 + splinter_f * .08) + flick_right * (flick_side * .78),
                 flick_right * flick_side - flick_back * .15,
                 .36 + flick_visibility * .13 - splinter_f * .035,
                 .048 + flick_visibility * .018,
@@ -15740,10 +15669,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         }
         for bead in 0 ..< 4 {
             bead_f := f32(bead)
-            bead_position :=
-                sheet_tip +
-                flick_back * (bead_f * .17) +
-                flick_right * (flick_side * (bead_f * .15))
+            bead_position := sheet_tip + flick_back * (bead_f * .17) + flick_right * (flick_side * (bead_f * .15))
             bead_position.y += .08 + bead_f * .13
             world_rondine_spray_bead(
                 camera,
@@ -15757,11 +15683,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
     // unsampled stern fan must not follow the aircraft into the air. Taper it
     // through the last meter and a half of ground effect for a clean handoff
     // rather than an abrupt cutoff at the grounded flag.
-    live_surface_fraction :=
-        clamp(1 - editor.rondine.telemetry.height / 1.5, 0, 1)
-    live_strength :=
-        editor.rondine.telemetry.wake_intensity *
-        live_surface_fraction
+    live_surface_fraction := clamp(1 - editor.rondine.telemetry.height / 1.5, 0, 1)
+    live_strength := editor.rondine.telemetry.wake_intensity * live_surface_fraction
     if live_strength > .02 {
         live_base := third_person.Vec3{editor.rondine.body.position.x, sea_y, editor.rondine.body.position.z}
         live_forward := world_rondine_surface_heading(editor)
@@ -15780,15 +15703,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             foam := rl.Color{228, 251, 245, alpha}
             mist := rl.Color{151, 224, 228, u8(f32(alpha) * .64)}
             world_rondine_triangle_colored(root, inner, crest, foam, foam, mist, side == 1)
-            world_rondine_triangle_colored(
-                root,
-                crest,
-                outer,
-                foam,
-                mist,
-                {foam.r, foam.g, foam.b, 0},
-                side == 1,
-            )
+            world_rondine_triangle_colored(root, crest, outer, foam, mist, {foam.r, foam.g, foam.b, 0}, side == 1)
         }
 
         // A short chain of boiling foam bridges the live stern burst to the
@@ -15796,13 +15711,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // keep these patches from becoming a painted center stripe.
         for boil in 0 ..< 4 {
             boil_f := f32(boil)
-            variation :=
-                world_rondine_live_variation(
-                    live_spray_epoch,
-                    live_spray_blend,
-                    0,
-                    u32(40 + boil),
-                )
+            variation := world_rondine_live_variation(live_spray_epoch, live_spray_blend, 0, u32(40 + boil))
             lateral_variation := variation * 2 - 1
             center :=
                 live_base +
@@ -15885,35 +15794,20 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             trough_right := linalg.normalize0(older_right + newer_right)
             for bubble in 0 ..< 2 {
                 bubble_f := f32(bubble)
-                bubble_seed :=
-                    world_rondine_wake_hash(
-                        older.serial,
-                        0,
-                        u32(420 + bubble),
-                    )
+                bubble_seed := world_rondine_wake_hash(older.serial, 0, u32(420 + bubble))
                 bubble_variation := f32(bubble_seed % 31) / 30
                 bubble_along := .28 + bubble_f * .39 + (bubble_variation - .5) * .12
                 bubble_side := bubble == 0 ? f32(-1) : f32(1)
                 bubble_position :=
                     older_base +
                     trough_segment * bubble_along +
-                    trough_right *
-                    (bubble_side * (.08 + bubble_variation * .15))
+                    trough_right * (bubble_side * (.08 + bubble_variation * .15))
                 bubble_position.y += .026
-                bubble_alpha :=
-                    u8(
-                        clamp(
-                            (92 + bubble_variation * 74) *
-                            trough_aeration_strength,
-                            0,
-                            158,
-                        ),
-                    )
+                bubble_alpha := u8(clamp((92 + bubble_variation * 74) * trough_aeration_strength, 0, 158))
                 bubble_color := rl.Color{224, 249, 244, bubble_alpha}
                 world_rondine_surface_chip(
                     bubble_position,
-                    trough_segment +
-                    trough_right * (bubble_side * .18),
+                    trough_segment + trough_right * (bubble_side * .18),
                     trough_right,
                     .070 + bubble_variation * .052,
                     .026 + trough_aeration_strength * .018,
@@ -15946,12 +15840,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             newer_spread_age := min(newer.age, f32(1.25))
             older_inner_width := .58 + older_spread_age * .34
             newer_inner_width := .58 + newer_spread_age * .34
-            older_edge_variation :=
-                .78 +
-                f32(world_rondine_wake_hash(older.serial, pressure_role, 2) % 13) * .035
-            newer_edge_variation :=
-                .78 +
-                f32(world_rondine_wake_hash(newer.serial, pressure_role, 2) % 13) * .035
+            older_edge_variation := .78 + f32(world_rondine_wake_hash(older.serial, pressure_role, 2) % 13) * .035
+            newer_edge_variation := .78 + f32(world_rondine_wake_hash(newer.serial, pressure_role, 2) % 13) * .035
             older_outer_width := (.92 + older_spread_age * 2.25) * older_outside * older_edge_variation
             newer_outer_width := (.92 + newer_spread_age * 2.25) * newer_outside * newer_edge_variation
             older_inner := older_base + older_right * (side_sign * older_inner_width)
@@ -15966,67 +15856,39 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // values for live spray, shards, and individual impact flecks.
             older_aeration := clamp(older_fade_linear * 1.35, 0, 1)
             newer_aeration := clamp(newer_fade_linear * 1.35, 0, 1)
-            older_foam :=
-                rl.Color {
-                    u8(166 + older_aeration * 62),
-                    u8(221 + older_aeration * 29),
-                    u8(226 + older_aeration * 19),
-                    older_alpha,
-                }
-            newer_foam :=
-                rl.Color {
-                    u8(166 + newer_aeration * 62),
-                    u8(221 + newer_aeration * 29),
-                    u8(226 + newer_aeration * 19),
-                    newer_alpha,
-                }
-            older_clear :=
-                rl.Color {
-                    u8(142 + older_aeration * 20),
-                    u8(208 + older_aeration * 18),
-                    u8(218 + older_aeration * 8),
-                    u8(f32(older_alpha) * .42),
-                }
-            newer_clear :=
-                rl.Color {
-                    u8(142 + newer_aeration * 20),
-                    u8(208 + newer_aeration * 18),
-                    u8(218 + newer_aeration * 8),
-                    u8(f32(newer_alpha) * .42),
-                }
+            older_foam := rl.Color {
+                u8(166 + older_aeration * 62),
+                u8(221 + older_aeration * 29),
+                u8(226 + older_aeration * 19),
+                older_alpha,
+            }
+            newer_foam := rl.Color {
+                u8(166 + newer_aeration * 62),
+                u8(221 + newer_aeration * 29),
+                u8(226 + newer_aeration * 19),
+                newer_alpha,
+            }
+            older_clear := rl.Color {
+                u8(142 + older_aeration * 20),
+                u8(208 + older_aeration * 18),
+                u8(218 + older_aeration * 8),
+                u8(f32(older_alpha) * .42),
+            }
+            newer_clear := rl.Color {
+                u8(142 + newer_aeration * 20),
+                u8(208 + newer_aeration * 18),
+                u8(218 + newer_aeration * 8),
+                u8(f32(newer_alpha) * .42),
+            }
             older_band_outer := older_inner + (older_outer - older_inner) * (.24 + older_fade * .16)
             newer_band_outer := newer_inner + (newer_outer - newer_inner) * (.24 + newer_fade * .16)
             // A continuous translucent under-ribbon carries the main foam
             // mass. Bright packets still articulate churn on top, but their
             // triangular gaps no longer define the entire silhouette.
-            older_band_base :=
-                rl.Color {
-                    older_foam.r,
-                    older_foam.g,
-                    older_foam.b,
-                    u8(f32(older_foam.a) * .44),
-                }
-            newer_band_base :=
-                rl.Color {
-                    newer_foam.r,
-                    newer_foam.g,
-                    newer_foam.b,
-                    u8(f32(newer_foam.a) * .44),
-                }
-            older_band_clear :=
-                rl.Color {
-                    older_clear.r,
-                    older_clear.g,
-                    older_clear.b,
-                    u8(f32(older_clear.a) * .72),
-                }
-            newer_band_clear :=
-                rl.Color {
-                    newer_clear.r,
-                    newer_clear.g,
-                    newer_clear.b,
-                    u8(f32(newer_clear.a) * .72),
-                }
+            older_band_base := rl.Color{older_foam.r, older_foam.g, older_foam.b, u8(f32(older_foam.a) * .44)}
+            newer_band_base := rl.Color{newer_foam.r, newer_foam.g, newer_foam.b, u8(f32(newer_foam.a) * .44)}
+            older_band_clear := rl.Color{older_clear.r, older_clear.g, older_clear.b, u8(f32(older_clear.a) * .72)}
+            newer_band_clear := rl.Color{newer_clear.r, newer_clear.g, newer_clear.b, u8(f32(newer_clear.a) * .72)}
             world_rondine_triangle_colored(
                 older_inner,
                 newer_inner,
@@ -16057,42 +15919,26 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // become a continuous painted stripe.
             foam_packet := pressure_role == 1 ? foam_packet_hash % 8 < 7 : foam_packet_hash % 5 < 4
             if foam_packet {
-                packet_inset :=
-                    .10 +
-                    f32((foam_packet_hash >> 7) % 13) /
-                    100
-                packet_start_inner :=
-                    older_inner +
-                    (newer_inner - older_inner) * packet_inset
-                packet_end_inner :=
-                    older_inner +
-                    (newer_inner - older_inner) * (1 - packet_inset)
-                packet_start_outer :=
-                    older_band_outer +
-                    (newer_band_outer - older_band_outer) * packet_inset
-                packet_end_outer :=
-                    older_band_outer +
-                    (newer_band_outer - older_band_outer) * (1 - packet_inset)
-                packet_mid_inner :=
-                    (packet_start_inner + packet_end_inner) * .5
-                packet_mid_outer :=
-                    (packet_start_outer + packet_end_outer) * .5
-                packet_tip_clear :=
-                    rl.Color{older_foam.r, older_foam.g, older_foam.b, 0}
-                packet_mid_foam :=
-                    rl.Color {
-                        u8((u16(older_foam.r) + u16(newer_foam.r)) / 2),
-                        u8((u16(older_foam.g) + u16(newer_foam.g)) / 2),
-                        u8((u16(older_foam.b) + u16(newer_foam.b)) / 2),
-                        u8((u16(older_foam.a) + u16(newer_foam.a)) / 2),
-                    }
-                packet_mid_clear :=
-                    rl.Color {
-                        u8((u16(older_clear.r) + u16(newer_clear.r)) / 2),
-                        u8((u16(older_clear.g) + u16(newer_clear.g)) / 2),
-                        u8((u16(older_clear.b) + u16(newer_clear.b)) / 2),
-                        u8((u16(older_clear.a) + u16(newer_clear.a)) / 2),
-                    }
+                packet_inset := .10 + f32((foam_packet_hash >> 7) % 13) / 100
+                packet_start_inner := older_inner + (newer_inner - older_inner) * packet_inset
+                packet_end_inner := older_inner + (newer_inner - older_inner) * (1 - packet_inset)
+                packet_start_outer := older_band_outer + (newer_band_outer - older_band_outer) * packet_inset
+                packet_end_outer := older_band_outer + (newer_band_outer - older_band_outer) * (1 - packet_inset)
+                packet_mid_inner := (packet_start_inner + packet_end_inner) * .5
+                packet_mid_outer := (packet_start_outer + packet_end_outer) * .5
+                packet_tip_clear := rl.Color{older_foam.r, older_foam.g, older_foam.b, 0}
+                packet_mid_foam := rl.Color {
+                    u8((u16(older_foam.r) + u16(newer_foam.r)) / 2),
+                    u8((u16(older_foam.g) + u16(newer_foam.g)) / 2),
+                    u8((u16(older_foam.b) + u16(newer_foam.b)) / 2),
+                    u8((u16(older_foam.a) + u16(newer_foam.a)) / 2),
+                }
+                packet_mid_clear := rl.Color {
+                    u8((u16(older_clear.r) + u16(newer_clear.r)) / 2),
+                    u8((u16(older_clear.g) + u16(newer_clear.g)) / 2),
+                    u8((u16(older_clear.b) + u16(newer_clear.b)) / 2),
+                    u8((u16(older_clear.a) + u16(newer_clear.a)) / 2),
+                }
                 world_rondine_triangle_colored(
                     packet_start_inner,
                     packet_mid_inner,
@@ -16140,8 +15986,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             older_rim := rl.Color{177, 232, 233, u8(f32(older_alpha) * .24)}
             newer_rim := rl.Color{177, 232, 233, u8(f32(newer_alpha) * .24)}
             rim_packet :=
-                world_rondine_wake_hash(older.serial, pressure_role, 7) % 7 <
-                (pressure_role == 1 ? u32(6) : u32(5))
+                world_rondine_wake_hash(older.serial, pressure_role, 7) % 7 < (pressure_role == 1 ? u32(6) : u32(5))
             if rim_packet {
                 world_rondine_triangle_colored(
                     older_rim_inner,
@@ -16177,12 +16022,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 fleck_count := pressure_role == 1 ? 2 : 1
                 segment_direction := newer_base - older_base
                 for fleck in 0 ..< fleck_count {
-                    seed :=
-                        world_rondine_wake_hash(
-                            older.serial,
-                            pressure_role,
-                            u32(100 + side * 3 + fleck),
-                        )
+                    seed := world_rondine_wake_hash(older.serial, pressure_role, u32(100 + side * 3 + fleck))
                     if seed % 5 == 0 do continue
                     along := .20 + f32((seed >> 3) % 53) / 88
                     across := .18 + f32((seed >> 9) % 59) / 82
@@ -16190,20 +16030,12 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     outer_position := older_outer + (newer_outer - older_outer) * along
                     position := inner_position + (outer_position - inner_position) * across
                     position.y += .028
-                    outward :=
-                        (older_right + newer_right) *
-                        (side_sign * (.08 + f32((seed >> 15) % 17) * .006))
+                    outward := (older_right + newer_right) * (side_sign * (.08 + f32((seed >> 15) % 17) * .006))
                     direction := segment_direction * .36 + outward
                     variation := f32((seed >> 20) % 29) / 28
                     fleck_alpha := u8(clamp((112 + variation * 72) * fleck_strength, 0, 174))
                     fleck_color := rl.Color{229, 252, 246, fleck_alpha}
-                    world_rondine_spray_streak(
-                        camera,
-                        position,
-                        direction,
-                        .055 + variation * .075,
-                        fleck_color,
-                    )
+                    world_rondine_spray_streak(camera, position, direction, .055 + variation * .075, fleck_color)
                 }
             }
 
@@ -16214,16 +16046,10 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 pressure_role == 1 &&
                 older.age < 1.05 &&
                 world_rondine_wake_hash(older.serial, pressure_role, 5) % 7 < 3
-            breaker_strength :=
-                older.strength *
-                max(older_fade, newer_fade) *
-                medium_distance_fade
+            breaker_strength := older.strength * max(older_fade, newer_fade) * medium_distance_fade
             if breaker_step && breaker_strength > .14 {
                 breaker_root := (older_band_outer + newer_band_outer) * .5
-                breaker_tip :=
-                    breaker_root +
-                    older_right *
-                    (side_sign * (.16 + breaker_strength * .28))
+                breaker_tip := breaker_root + older_right * (side_sign * (.16 + breaker_strength * .28))
                 breaker_root.y += .022
                 breaker_tip.y += .026
                 breaker_alpha := u8(clamp(145 * breaker_strength, 0, 160))
@@ -16255,10 +16081,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // introducing particles, textures, or camera-facing billboards.
             shard_step := world_rondine_wake_hash(older.serial, pressure_role, 3) % 5 < 2
             shard_strength :=
-                older.strength *
-                older_fade *
-                clamp(.28 + (older_outside - .7) * 1.15, .18, 1) *
-                medium_distance_fade
+                older.strength * older_fade * clamp(.28 + (older_outside - .7) * 1.15, .18, 1) * medium_distance_fade
             if shard_step && shard_strength > .12 && older.age < .9 {
                 along := (older_outer + newer_outer) * .5
                 crest := along + older_right * (side_sign * (.22 + older.age * .18))
@@ -16306,17 +16129,13 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 claw_seed := world_rondine_wake_hash(older.serial, pressure_role, 189)
                 claw_variation := f32(claw_seed % 23) / 22
                 claw_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
-                claw_center :=
-                    older_inner +
-                    (older_outer - older_inner) *
-                    (.30 + claw_variation * .32)
+                claw_center := older_inner + (older_outer - older_inner) * (.30 + claw_variation * .32)
                 claw_center += (newer_base - older_base) * (.24 + claw_variation * .34)
                 claw_center.y += .036
                 claw_tangent :=
                     older_right * (side_sign * (.84 + claw_variation * .18)) +
                     claw_forward * (.16 + claw_variation * .20)
-                claw_radial :=
-                    claw_forward - older_right * (side_sign * (.10 + claw_variation * .12))
+                claw_radial := claw_forward - older_right * (side_sign * (.10 + claw_variation * .12))
                 claw_alpha := u8(clamp((132 + claw_variation * 52) * claw_strength, 0, 188))
                 claw_color := rl.Color{226, 250, 244, claw_alpha}
                 for tooth in 0 ..< 2 {
@@ -16341,44 +16160,23 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // of fixed skip scars. This bridges the live wing-adjacent burst into
         // the historical trail without drawing a second continuous foam rail.
         outboard_skip_strength :=
-            clamp(math.abs(older.slip) * 2.45, 0, 1) *
-            older.strength *
-            older_fade *
-            medium_distance_fade
-        outboard_skip_step :=
-            older.age < 1.12 &&
-            world_rondine_wake_hash(older.serial, 0, 322) % 4 == 1
+            clamp(math.abs(older.slip) * 2.45, 0, 1) * older.strength * older_fade * medium_distance_fade
+        outboard_skip_step := older.age < 1.12 && world_rondine_wake_hash(older.serial, 0, 322) % 4 == 1
         if outboard_skip_step && outboard_skip_strength > .14 {
             skip_seed := world_rondine_wake_hash(older.serial, 0, 323)
             skip_variation := f32(skip_seed % 29) / 28
             skip_loaded_side := older.slip < 0 ? f32(-1) : f32(1)
-            skip_forward :=
-                third_person.Vec3{older.forward.x, 0, older.forward.z}
+            skip_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
             skip_center :=
                 older_base +
-                older_right *
-                (
-                    skip_loaded_side *
-                    (4.72 + older.age * .18 + skip_variation * .16)
-                ) +
+                older_right * (skip_loaded_side * (4.72 + older.age * .18 + skip_variation * .16)) +
                 (newer_base - older_base) * (.18 + skip_variation * .28)
             skip_center.y += .040
             skip_tangent :=
                 skip_forward * (.76 + skip_variation * .16) +
-                older_right *
-                (skip_loaded_side * (.24 + skip_variation * .22))
-            skip_radial :=
-                older_right * skip_loaded_side -
-                skip_forward * (.12 + skip_variation * .12)
-            skip_alpha :=
-                u8(
-                    clamp(
-                        (142 + skip_variation * 54) *
-                        outboard_skip_strength,
-                        0,
-                        190,
-                    ),
-                )
+                older_right * (skip_loaded_side * (.24 + skip_variation * .22))
+            skip_radial := older_right * skip_loaded_side - skip_forward * (.12 + skip_variation * .12)
+            skip_alpha := u8(clamp((142 + skip_variation * 54) * outboard_skip_strength, 0, 190))
             skip_color := rl.Color{228, 251, 245, skip_alpha}
             world_rondine_surface_chip(
                 skip_center,
@@ -16392,15 +16190,12 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // A smaller echo behind the main scar gives each contact a quick
             // two-beat skip instead of a solitary decorative dash.
             if fine_distance_fade > .08 {
-                echo_alpha :=
-                    u8(f32(skip_alpha) * .52 * fine_distance_fade)
+                echo_alpha := u8(f32(skip_alpha) * .52 * fine_distance_fade)
                 world_rondine_surface_chip(
                     skip_center -
                     skip_forward * (.19 + skip_variation * .09) -
-                    older_right *
-                    (skip_loaded_side * (.05 + skip_variation * .04)),
-                    skip_tangent -
-                    older_right * (skip_loaded_side * .10),
+                    older_right * (skip_loaded_side * (.05 + skip_variation * .04)),
+                    skip_tangent - older_right * (skip_loaded_side * .10),
                     skip_radial,
                     .12 + outboard_skip_strength * .08,
                     .020 + outboard_skip_strength * .010,
@@ -16414,43 +16209,24 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // side of the hull path. Three short, age-rotated glints imply a foam
         // hook without drawing a complete ring, and sample-serial phase keeps
         // the mark fixed in world space as the chase camera moves.
-        curl_strength :=
-            clamp(math.abs(older.slip) * 2.7, 0, 1) *
-            older.strength *
-            older_fade *
-            fine_distance_fade
+        curl_strength := clamp(math.abs(older.slip) * 2.7, 0, 1) * older.strength * older_fade * fine_distance_fade
         if curl_strength > .12 && older.age < 1.18 && older.serial % 3 == 1 {
             older_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
             unloaded_sign := older_turn >= 0 ? f32(-1) : f32(1)
             curl_seed := world_rondine_wake_hash(older.serial, 0, 120)
             curl_variation := f32(curl_seed % 17) / 16
-            curl_center :=
-                older_base +
-                older_right *
-                (unloaded_sign * (.34 + older.age * .28 + curl_variation * .12))
+            curl_center := older_base + older_right * (unloaded_sign * (.34 + older.age * .28 + curl_variation * .12))
             curl_center.y += .038
             curl_radius := .18 + older.age * .16 + curl_variation * .08
-            curl_phase :=
-                older.age * math.TAU * .72 +
-                f32((curl_seed >> 6) % 31) / 31 * math.TAU
+            curl_phase := older.age * math.TAU * .72 + f32((curl_seed >> 6) % 31) / 31 * math.TAU
             for curl_tick in 0 ..< 3 {
                 tick_f := f32(curl_tick)
                 angle := curl_phase + unloaded_sign * (tick_f - 1) * .52
                 cosine, sine := math.cos(angle), math.sin(angle)
                 radial := older_right * cosine + older_forward * sine
-                tangent :=
-                    (older_right * -sine + older_forward * cosine) *
-                    unloaded_sign
+                tangent := (older_right * -sine + older_forward * cosine) * unloaded_sign
                 position := curl_center + radial * curl_radius
-                tick_alpha :=
-                    u8(
-                        clamp(
-                            (112 + (2 - tick_f) * 24 + curl_variation * 35) *
-                            curl_strength,
-                            0,
-                            178,
-                        ),
-                    )
+                tick_alpha := u8(clamp((112 + (2 - tick_f) * 24 + curl_variation * 35) * curl_strength, 0, 178))
                 tick_color := rl.Color{229, 252, 246, tick_alpha}
                 world_rondine_spray_streak(
                     camera,
@@ -16467,32 +16243,18 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // correction direction, recording where the pilot caught the slide
         // after the live skim-cuts have vanished from the stern.
         sampled_countersteer :=
-            (
-                older.countersteer * older_fade +
-                newer.countersteer * newer_fade
-            ) *
-            .5 *
-            medium_distance_fade
-        if sampled_countersteer > .08 &&
-           older.age < 1.35 &&
-           older.serial % 2 == 0 {
+            (older.countersteer * older_fade + newer.countersteer * newer_fade) * .5 * medium_distance_fade
+        if sampled_countersteer > .08 && older.age < 1.35 && older.serial % 2 == 0 {
             stitch_center := (older_base + newer_base) * .5
             stitch_center.y += .034
             stitch_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
-            stitch_alpha :=
-                u8(clamp(176 * sampled_countersteer, 0, 184))
+            stitch_alpha := u8(clamp(176 * sampled_countersteer, 0, 184))
             stitch_color := rl.Color{225, 250, 244, stitch_alpha}
             for stitch_side in 0 ..< 2 {
                 side_sign := stitch_side == 0 ? f32(-1) : f32(1)
-                position :=
-                    stitch_center +
-                    older_right * (side_sign * (.13 + sampled_countersteer * .08))
-                tangent :=
-                    stitch_forward * .42 +
-                    older_right * (side_sign * .82)
-                radial :=
-                    older_right * .42 -
-                    stitch_forward * (side_sign * .82)
+                position := stitch_center + older_right * (side_sign * (.13 + sampled_countersteer * .08))
+                tangent := stitch_forward * .42 + older_right * (side_sign * .82)
+                radial := older_right * .42 - stitch_forward * (side_sign * .82)
                 world_rondine_surface_chip(
                     position,
                     tangent,
@@ -16514,96 +16276,68 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // width at every 1.25m sample. Blend a deterministic value across
         // groups of four samples; smaller foam details retain their sharper
         // per-sample variation on top.
-        older_trough_variation :=
-            world_rondine_live_variation(
-                older.serial >> 2,
-                f32(older.serial & u32(3)) / 4,
-                0,
-                210,
-            )
-        newer_trough_variation :=
-            world_rondine_live_variation(
-                newer.serial >> 2,
-                f32(newer.serial & u32(3)) / 4,
-                0,
-                210,
-            )
-        older_trough_meander :=
-            (older_trough_variation * 2 - 1) *
-            (.055 + math.abs(older.slip) * .34)
-        newer_trough_meander :=
-            (newer_trough_variation * 2 - 1) *
-            (.055 + math.abs(newer.slip) * .34)
+        older_trough_variation := world_rondine_live_variation(
+            older.serial >> 2,
+            f32(older.serial & u32(3)) / 4,
+            0,
+            210,
+        )
+        newer_trough_variation := world_rondine_live_variation(
+            newer.serial >> 2,
+            f32(newer.serial & u32(3)) / 4,
+            0,
+            210,
+        )
+        older_trough_meander := (older_trough_variation * 2 - 1) * (.055 + math.abs(older.slip) * .34)
+        newer_trough_meander := (newer_trough_variation * 2 - 1) * (.055 + math.abs(newer.slip) * .34)
         older_trough_center := older_base + older_right * older_trough_meander
         newer_trough_center := newer_base + newer_right * newer_trough_meander
         older_trough_center.y -= .015
         newer_trough_center.y -= .015
         older_trough_width :=
-            (
-                .42 +
-                older.age * .52 +
-                older.strength * .24 +
-                math.abs(older.slip) * 1.15
-            ) *
+            (.42 + older.age * .52 + older.strength * .24 + math.abs(older.slip) * 1.15) *
             (.84 + older_trough_variation * .32)
         newer_trough_width :=
-            (
-                .42 +
-                newer.age * .52 +
-                newer.strength * .24 +
-                math.abs(newer.slip) * 1.15
-            ) *
+            (.42 + newer.age * .52 + newer.strength * .24 + math.abs(newer.slip) * 1.15) *
             (.84 + newer_trough_variation * .32)
         older_trough_left := older_trough_center - older_right * older_trough_width
         older_trough_right := older_trough_center + older_right * older_trough_width
         newer_trough_left := newer_trough_center - newer_right * newer_trough_width
         newer_trough_right := newer_trough_center + newer_right * newer_trough_width
-        older_trough_energy :=
-            clamp(older.strength + math.abs(older.slip) * .72, 0, 1.28)
-        newer_trough_energy :=
-            clamp(newer.strength + math.abs(newer.slip) * .72, 0, 1.28)
-        older_trough_depth_variation :=
-            .70 +
-            f32((older_trough_seed >> 8) % 31) /
-            100
-        newer_trough_depth_variation :=
-            .70 +
-            f32((newer_trough_seed >> 8) % 31) /
-            100
+        older_trough_energy := clamp(older.strength + math.abs(older.slip) * .72, 0, 1.28)
+        newer_trough_energy := clamp(newer.strength + math.abs(newer.slip) * .72, 0, 1.28)
+        older_trough_depth_variation := .70 + f32((older_trough_seed >> 8) % 31) / 100
+        newer_trough_depth_variation := .70 + f32((newer_trough_seed >> 8) % 31) / 100
         // Rare four-sample low-pressure cells interrupt the long trough at
         // the same spatial scale as its width/meander variation. They never
         // remove the broad silhouette, but stop a far wake from resolving
         // into one uniformly dark triangular strip.
-        older_trough_breath :=
-            world_rondine_wake_hash(older.serial >> 2, 0, 224) % 7 == 2 ? f32(.48) : f32(1)
-        newer_trough_breath :=
-            world_rondine_wake_hash(newer.serial >> 2, 0, 224) % 7 == 2 ? f32(.48) : f32(1)
-        older_trough_alpha :=
-            u8(
-                clamp(
-                    54 *
-                    older_trough_energy *
-                    older_fade_linear *
-                    camera_fade *
-                    older_trough_depth_variation *
-                    older_trough_breath,
-                    0,
-                    58,
-                ),
-            )
-        newer_trough_alpha :=
-            u8(
-                clamp(
-                    54 *
-                    newer_trough_energy *
-                    newer_fade_linear *
-                    camera_fade *
-                    newer_trough_depth_variation *
-                    newer_trough_breath,
-                    0,
-                    58,
-                ),
-            )
+        older_trough_breath := world_rondine_wake_hash(older.serial >> 2, 0, 224) % 7 == 2 ? f32(.48) : f32(1)
+        newer_trough_breath := world_rondine_wake_hash(newer.serial >> 2, 0, 224) % 7 == 2 ? f32(.48) : f32(1)
+        older_trough_alpha := u8(
+            clamp(
+                54 *
+                older_trough_energy *
+                older_fade_linear *
+                camera_fade *
+                older_trough_depth_variation *
+                older_trough_breath,
+                0,
+                58,
+            ),
+        )
+        newer_trough_alpha := u8(
+            clamp(
+                54 *
+                newer_trough_energy *
+                newer_fade_linear *
+                camera_fade *
+                newer_trough_depth_variation *
+                newer_trough_breath,
+                0,
+                58,
+            ),
+        )
         older_trough := rl.Color{28, 109, 139, older_trough_alpha}
         newer_trough := rl.Color{28, 109, 139, newer_trough_alpha}
         trough_clear := rl.Color{28, 109, 139, 0}
@@ -16655,9 +16389,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             older_fade_linear *
             medium_distance_fade *
             camera_fade
-        eddy_step :=
-            older.age < 2.15 &&
-            world_rondine_wake_hash(older.serial, 0, 218) % 6 == 1
+        eddy_step := older.age < 2.15 && world_rondine_wake_hash(older.serial, 0, 218) % 6 == 1
         if eddy_step && eddy_strength > .12 {
             eddy_seed := world_rondine_wake_hash(older.serial, 0, 219)
             eddy_variation := f32(eddy_seed % 29) / 28
@@ -16665,21 +16397,13 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             eddy_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
             eddy_center :=
                 older_trough_center +
-                older_right *
-                (
-                    eddy_loaded_sign *
-                    older_trough_width *
-                    (.28 + eddy_variation * .19)
-                )
+                older_right * (eddy_loaded_sign * older_trough_width * (.28 + eddy_variation * .19))
             eddy_center.y += .017
             eddy_tangent :=
                 eddy_forward * (.82 + eddy_variation * .12) +
                 older_right * (eddy_loaded_sign * (.18 + eddy_variation * .24))
-            eddy_radial :=
-                older_right * eddy_loaded_sign -
-                eddy_forward * (.10 + eddy_variation * .14)
-            eddy_alpha :=
-                u8(clamp((48 + eddy_variation * 34) * eddy_strength, 0, 76))
+            eddy_radial := older_right * eddy_loaded_sign - eddy_forward * (.10 + eddy_variation * .14)
+            eddy_alpha := u8(clamp((48 + eddy_variation * 34) * eddy_strength, 0, 76))
             world_rondine_surface_chip(
                 eddy_center,
                 eddy_tangent,
@@ -16689,15 +16413,12 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 {25, 101, 133, eddy_alpha},
                 double_sided = true,
             )
-            lip_alpha :=
-                u8(clamp((126 + eddy_variation * 48) * eddy_strength, 0, 168))
+            lip_alpha := u8(clamp((126 + eddy_variation * 48) * eddy_strength, 0, 168))
             world_rondine_surface_chip(
                 eddy_center +
-                older_right *
-                (eddy_loaded_sign * (.13 + eddy_strength * .08)) +
+                older_right * (eddy_loaded_sign * (.13 + eddy_strength * .08)) +
                 eddy_forward * (.06 + eddy_variation * .08),
-                eddy_tangent +
-                older_right * (eddy_loaded_sign * .18),
+                eddy_tangent + older_right * (eddy_loaded_sign * .18),
                 eddy_radial,
                 .19 + eddy_strength * .13 + eddy_variation * .07,
                 .024 + eddy_strength * .014,
@@ -16712,33 +16433,14 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 curl_side := curl == 0 ? f32(-1) : f32(1)
                 curl_center :=
                     eddy_center +
-                    eddy_forward *
-                    (curl_side * (.22 + curl_f * .09 + eddy_variation * .06)) +
-                    older_right *
-                    (
-                        eddy_loaded_sign *
-                        (.18 + curl_f * .13 + eddy_variation * .08)
-                    )
+                    eddy_forward * (curl_side * (.22 + curl_f * .09 + eddy_variation * .06)) +
+                    older_right * (eddy_loaded_sign * (.18 + curl_f * .13 + eddy_variation * .08))
                 curl_center.y += .010 + curl_f * .006
                 curl_tangent :=
                     eddy_forward * (.34 + curl_f * .16) -
-                    older_right *
-                    (
-                        eddy_loaded_sign *
-                        curl_side *
-                        (.78 - curl_f * .10)
-                    )
-                curl_radial :=
-                    older_right * eddy_loaded_sign +
-                    eddy_forward * (curl_side * .24)
-                curl_alpha :=
-                    u8(
-                        clamp(
-                            f32(lip_alpha) * (.92 - curl_f * .22),
-                            0,
-                            168,
-                        ),
-                    )
+                    older_right * (eddy_loaded_sign * curl_side * (.78 - curl_f * .10))
+                curl_radial := older_right * eddy_loaded_sign + eddy_forward * (curl_side * .24)
+                curl_alpha := u8(clamp(f32(lip_alpha) * (.92 - curl_f * .22), 0, 168))
                 world_rondine_surface_chip(
                     curl_center,
                     curl_tangent,
@@ -16771,40 +16473,38 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             newer_right_edge := newer_center + newer_right * newer_width
             churn_alpha := u8(clamp(178 * churn_strength, 0, 188))
             churn_aeration := clamp((older_fade_linear + newer_fade_linear) * .68, 0, 1)
-            churn_foam :=
-                rl.Color {
-                    u8(174 + churn_aeration * 52),
-                    u8(225 + churn_aeration * 24),
-                    u8(229 + churn_aeration * 14),
-                    churn_alpha,
-                }
-            churn_clear :=
-                rl.Color {
-                    u8(145 + churn_aeration * 12),
-                    u8(210 + churn_aeration * 11),
-                    u8(219 + churn_aeration * 6),
-                    u8(f32(churn_alpha) * .14),
-                }
+            churn_foam := rl.Color {
+                u8(174 + churn_aeration * 52),
+                u8(225 + churn_aeration * 24),
+                u8(229 + churn_aeration * 14),
+                churn_alpha,
+            }
+            churn_clear := rl.Color {
+                u8(145 + churn_aeration * 12),
+                u8(210 + churn_aeration * 11),
+                u8(219 + churn_aeration * 6),
+                u8(f32(churn_alpha) * .14),
+            }
             world_triangle_colored(older_left, newer_left, newer_right_edge, churn_clear, churn_foam, churn_foam)
-            world_triangle_colored(older_left, newer_right_edge, older_right_edge, churn_clear, churn_foam, churn_clear)
+            world_triangle_colored(
+                older_left,
+                newer_right_edge,
+                older_right_edge,
+                churn_clear,
+                churn_foam,
+                churn_clear,
+            )
 
             // One compact aerated boil interrupts the segment silhouette.
             // It carries some of the center energy as a discrete patch after
             // reducing the packet duty cycle above, avoiding both an empty
             // trail and long joined strips.
             boil_variation := f32((churn_hash >> 6) % 29) / 28
-            boil_center :=
-                older_center +
-                (newer_center - older_center) *
-                (.28 + boil_variation * .44)
-            boil_center +=
-                older_right * ((boil_variation * 2 - 1) * .11)
+            boil_center := older_center + (newer_center - older_center) * (.28 + boil_variation * .44)
+            boil_center += older_right * ((boil_variation * 2 - 1) * .11)
             boil_center.y += .012
-            boil_tangent :=
-                newer_center - older_center +
-                older_right * ((boil_variation * 2 - 1) * .18)
-            boil_radial :=
-                older_right - boil_tangent * .06
+            boil_tangent := newer_center - older_center + older_right * ((boil_variation * 2 - 1) * .18)
+            boil_radial := older_right - boil_tangent * .06
             boil_alpha := u8(f32(churn_alpha) * (.74 + boil_variation * .18))
             world_rondine_surface_chip(
                 boil_center,
@@ -16820,16 +16520,10 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // Sparse paired transom chevrons imply rapid pressure pulses without
         // becoming continuous rails. As slip rises they yield completely to
         // the asymmetric breakers, claws, and drift crown.
-        planing_alignment :=
-            clamp(1 - max(math.abs(older.slip), math.abs(newer.slip)) * 7.5, 0, 1)
+        planing_alignment := clamp(1 - max(math.abs(older.slip), math.abs(newer.slip)) * 7.5, 0, 1)
         planing_pulse :=
-            (older.strength * older_fade + newer.strength * newer_fade) *
-            .5 *
-            planing_alignment *
-            medium_distance_fade
-        planing_step :=
-            older.serial % 2 == 1 &&
-            older.age < 1.45
+            (older.strength * older_fade + newer.strength * newer_fade) * .5 * planing_alignment * medium_distance_fade
+        planing_step := older.serial % 2 == 1 && older.age < 1.45
         if planing_step && planing_pulse > .12 {
             pulse_center := (older_base + newer_base) * .5
             pulse_center.y += .034
@@ -16840,14 +16534,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             pulse_width := .64 + older.age * .38 + planing_pulse * .24
             for side in 0 ..< 2 {
                 side_sign := side == 0 ? f32(-1) : f32(1)
-                pulse_position :=
-                    pulse_center +
-                    older_right * (side_sign * pulse_width)
-                pulse_tangent :=
-                    pulse_forward * .46 +
-                    older_right * (side_sign * .84)
-                pulse_radial :=
-                    older_right * side_sign - pulse_forward * .18
+                pulse_position := pulse_center + older_right * (side_sign * pulse_width)
+                pulse_tangent := pulse_forward * .46 + older_right * (side_sign * .84)
+                pulse_radial := older_right * side_sign - pulse_forward * .18
                 world_rondine_surface_chip(
                     pulse_position,
                     pulse_tangent,
@@ -16864,55 +16553,25 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // chevrons. Sparse crossed pulses sit beneath the two downwash tracks,
         // giving straight planing a recognizable engine signature while the
         // strong slip gate prevents them leaking into drift choreography.
-        prop_track_step :=
-            older.serial % 4 == 0 &&
-            older.age < .96
+        prop_track_step := older.serial % 4 == 0 && older.age < .96
         if prop_track_step && planing_pulse > .14 {
-            prop_track_forward :=
-                third_person.Vec3{older.forward.x, 0, older.forward.z}
-            prop_track_visibility :=
-                f32(math.sqrt(f64(planing_pulse)))
+            prop_track_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
+            prop_track_visibility := f32(math.sqrt(f64(planing_pulse)))
             for track_side in 0 ..< 2 {
                 side_sign := track_side == 0 ? f32(-1) : f32(1)
-                track_seed :=
-                    world_rondine_wake_hash(
-                        older.serial,
-                        u32(track_side),
-                        334,
-                    )
+                track_seed := world_rondine_wake_hash(older.serial, u32(track_side), 334)
                 track_variation := f32(track_seed % 23) / 22
                 track_center :=
                     older_base +
-                    (newer_base - older_base) *
-                    (.24 + track_variation * .34) +
-                    older_right *
-                    (
-                        side_sign *
-                        (2.10 + older.age * .16 + track_variation * .12)
-                    )
+                    (newer_base - older_base) * (.24 + track_variation * .34) +
+                    older_right * (side_sign * (2.10 + older.age * .16 + track_variation * .12))
                 track_center.y += .036
-                track_alpha :=
-                    u8(
-                        clamp(
-                            (126 + track_variation * 42) *
-                            prop_track_visibility,
-                            0,
-                            158,
-                        ),
-                    )
+                track_alpha := u8(clamp((126 + track_variation * 42) * prop_track_visibility, 0, 158))
                 track_color := rl.Color{220, 248, 243, track_alpha}
-                first_tangent :=
-                    prop_track_forward * .72 +
-                    older_right * (side_sign * .42)
-                first_radial :=
-                    older_right * side_sign -
-                    prop_track_forward * .18
-                second_tangent :=
-                    prop_track_forward * .66 -
-                    older_right * (side_sign * .38)
-                second_radial :=
-                    older_right * side_sign +
-                    prop_track_forward * .16
+                first_tangent := prop_track_forward * .72 + older_right * (side_sign * .42)
+                first_radial := older_right * side_sign - prop_track_forward * .18
+                second_tangent := prop_track_forward * .66 - older_right * (side_sign * .38)
+                second_radial := older_right * side_sign + prop_track_forward * .16
                 world_rondine_surface_chip(
                     track_center,
                     first_tangent,
@@ -16928,12 +16587,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     second_radial,
                     .10 + prop_track_visibility * .060,
                     .019 + prop_track_visibility * .009,
-                    {
-                        track_color.r,
-                        track_color.g,
-                        track_color.b,
-                        u8(f32(track_alpha) * .72),
-                    },
+                    {track_color.r, track_color.g, track_color.b, u8(f32(track_alpha) * .72)},
                     double_sided = true,
                 )
             }
@@ -16952,16 +16606,12 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             carve_entry *
             carve_exit *
             medium_distance_fade
-        carve_step :=
-            older.serial % 3 == 2 &&
-            older.age < 1.12
+        carve_step := older.serial % 3 == 2 && older.age < 1.12
         if carve_step && carve_pulse > .10 {
             loaded_sign := older_turn >= 0 ? f32(1) : f32(-1)
             carve_center := (older_base + newer_base) * .5
             carve_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
-            carve_center +=
-                older_right *
-                (loaded_sign * (.72 + older.age * .34 + carve_pulse * .22))
+            carve_center += older_right * (loaded_sign * (.72 + older.age * .34 + carve_pulse * .22))
             carve_center.y += .036
             carve_visibility := f32(math.sqrt(f64(carve_pulse)))
             carve_alpha := u8(clamp(184 * carve_visibility, 0, 188))
@@ -16974,10 +16624,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     carve_forward * (arc * (.17 + older.age * .04)) +
                     older_right * (loaded_sign * (1 - math.abs(arc)) * .08)
                 tangent :=
-                    carve_forward * (.38 + scallop_f * .12) +
-                    older_right * (loaded_sign * (.78 - scallop_f * .18))
-                radial :=
-                    older_right * loaded_sign - carve_forward * (arc * .16)
+                    carve_forward * (.38 + scallop_f * .12) + older_right * (loaded_sign * (.78 - scallop_f * .18))
+                radial := older_right * loaded_sign - carve_forward * (arc * .16)
                 world_rondine_surface_chip(
                     position,
                     tangent,
@@ -17016,11 +16664,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             slash_position :=
                 center +
                 back * (.34 + slash_f * .24 + sample.age * .24) +
-                right *
-                (loaded_side * slash_sign * (.10 + sample.age * .16))
-            slash_tangent :=
-                back * .72 +
-                right * (loaded_side * slash_sign)
+                right * (loaded_side * slash_sign * (.10 + sample.age * .16))
+            slash_tangent := back * .72 + right * (loaded_side * slash_sign)
             world_rondine_surface_chip(
                 slash_position,
                 slash_tangent,
@@ -17036,11 +16681,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             hook_position :=
                 center +
                 back * (.82 + hook_f * .43 + sample.age * .30) +
-                right *
-                (loaded_side * (.48 + hook_f * .30 + sample.age * .18))
-            hook_tangent :=
-                right * loaded_side +
-                back * (.58 - hook_f * .08)
+                right * (loaded_side * (.48 + hook_f * .30 + sample.age * .18))
+            hook_tangent := right * loaded_side + back * (.58 - hook_f * .08)
             world_rondine_surface_chip(
                 hook_position,
                 hook_tangent,
@@ -17111,11 +16753,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 back * (.58 + sample.age * .62 + gouge_f * .24) +
                 right * (loaded_sign * (.22 + gouge_f * .18))
             gouge_position.y += .012
-            gouge_tangent :=
-                back * (.48 + gouge_f * .10) +
-                right * (loaded_sign * (.82 + gouge_f * .08))
-            gouge_radial :=
-                right * loaded_sign - back * (.12 + gouge_f * .05)
+            gouge_tangent := back * (.48 + gouge_f * .10) + right * (loaded_sign * (.82 + gouge_f * .08))
+            gouge_radial := right * loaded_sign - back * (.12 + gouge_f * .05)
             world_rondine_surface_chip(
                 gouge_position,
                 gouge_tangent,
@@ -17137,51 +16776,23 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 seed := world_rondine_wake_hash(sample.serial, 1, u32(250 + bead))
                 variation := f32(seed % 31) / 30
                 spread := (f32(bead) - 2) * .16 + (variation - .5) * .12
-                launch_direction :=
-                    right * (loaded_sign * (.76 + spread)) +
-                    back * (.34 + variation * .38)
+                launch_direction := right * (loaded_sign * (.76 + spread)) + back * (.34 + variation * .38)
                 launch_speed := 1.15 + variation * 1.25
                 lift_speed := 1.15 + variation * 1.20
-                bead_position :=
-                    center +
-                    right * (loaded_sign * .34) +
-                    launch_direction * (sample.age * launch_speed)
-                bead_position.y +=
-                    .08 +
-                    sample.age * lift_speed -
-                    3.15 * sample.age * sample.age
+                bead_position := center + right * (loaded_sign * .34) + launch_direction * (sample.age * launch_speed)
+                bead_position.y += .08 + sample.age * lift_speed - 3.15 * sample.age * sample.age
                 bead_direction :=
-                    launch_direction * launch_speed +
-                    third_person.Vec3 {
-                        0,
-                        lift_speed - 6.3 * sample.age,
-                        0,
-                    }
+                    launch_direction * launch_speed + third_person.Vec3{0, lift_speed - 6.3 * sample.age, 0}
                 bead_life := clamp(1 - sample.age / .52, 0, 1)
-                bead_alpha :=
-                    u8(
-                        clamp(
-                            (136 + variation * 78) *
-                            scar_visibility *
-                            bead_life *
-                            event_bead_distance_fade,
-                            0,
-                            210,
-                        ),
-                    )
+                bead_alpha := u8(
+                    clamp((136 + variation * 78) * scar_visibility * bead_life * event_bead_distance_fade, 0, 210),
+                )
                 bead_color := rl.Color{232, 253, 247, bead_alpha}
                 bead_streak_size := .070 + variation * .090
-                world_rondine_spray_streak(
-                    camera,
-                    bead_position,
-                    bead_direction,
-                    bead_streak_size,
-                    bead_color,
-                )
+                world_rondine_spray_streak(camera, bead_position, bead_direction, bead_streak_size, bead_color)
                 world_rondine_spray_bead(
                     camera,
-                    bead_position +
-                    linalg.normalize0(bead_direction) * (bead_streak_size * 2.4),
+                    bead_position + linalg.normalize0(bead_direction) * (bead_streak_size * 2.4),
                     .022 + variation * .018,
                     bead_color,
                 )
@@ -17215,8 +16826,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             radial := right * cosine + forward * (sine * .58)
             tangent := right * -sine + forward * (cosine * .58)
             position := center + radial * radius * (.88 + variation * .24)
-            ring_alpha :=
-                u8(clamp((174 + variation * 70) * ring_visibility, 0, 224))
+            ring_alpha := u8(clamp((174 + variation * 70) * ring_visibility, 0, 224))
             ring_color := rl.Color{228, 251, 245, ring_alpha}
             fragment_length := .22 + sample.age * .15 + variation * .13
             fragment_width := .052 + ring_visibility * .042 + variation * .028
@@ -17256,19 +16866,13 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         slap_color := rl.Color{234, 253, 247, slap_alpha}
         for slap in 0 ..< 2 {
             slap_f := f32(slap)
-            slap_position :=
-                center +
-                forward *
-                ((slap_f - .5) * (.20 + sample.age * .42))
+            slap_position := center + forward * ((slap_f - .5) * (.20 + sample.age * .42))
             slap_position.y += .012
             world_rondine_surface_chip(
                 slap_position,
                 right,
                 forward,
-                .46 +
-                sample.age * 1.05 +
-                ring_visibility * .26 -
-                slap_f * .04,
+                .46 + sample.age * 1.05 + ring_visibility * .26 - slap_f * .04,
                 .055 + ring_visibility * .028,
                 {slap_color.r, slap_color.g, slap_color.b, u8(f32(slap_alpha) * (1 - slap_f * .22))},
                 double_sided = true,
@@ -17283,52 +16887,24 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             for bead in 0 ..< 6 {
                 seed := world_rondine_wake_hash(sample.serial, 0, u32(230 + bead))
                 variation := f32(seed % 29) / 28
-                angle :=
-                    f32(bead) / 6 * math.TAU +
-                    (variation - .5) * .28
+                angle := f32(bead) / 6 * math.TAU + (variation - .5) * .28
                 cosine, sine := math.cos(angle), math.sin(angle)
                 radial := right * cosine + forward * (sine * .72)
                 launch_speed := 1.25 + variation * 1.15
                 lift_speed := 1.45 + variation * 1.05
-                bead_position :=
-                    center +
-                    radial * (sample.age * launch_speed)
-                bead_position.y +=
-                    .10 +
-                    sample.age * lift_speed -
-                    3.4 * sample.age * sample.age
-                bead_direction :=
-                    radial * launch_speed +
-                    third_person.Vec3 {
-                        0,
-                        lift_speed - 6.8 * sample.age,
-                        0,
-                    }
+                bead_position := center + radial * (sample.age * launch_speed)
+                bead_position.y += .10 + sample.age * lift_speed - 3.4 * sample.age * sample.age
+                bead_direction := radial * launch_speed + third_person.Vec3{0, lift_speed - 6.8 * sample.age, 0}
                 bead_life := clamp(1 - sample.age / .58, 0, 1)
-                bead_alpha :=
-                    u8(
-                        clamp(
-                            (142 + variation * 74) *
-                            ring_visibility *
-                            bead_life *
-                            event_bead_distance_fade,
-                            0,
-                            214,
-                        ),
-                    )
+                bead_alpha := u8(
+                    clamp((142 + variation * 74) * ring_visibility * bead_life * event_bead_distance_fade, 0, 214),
+                )
                 bead_color := rl.Color{232, 253, 247, bead_alpha}
                 bead_streak_size := .075 + variation * .085
-                world_rondine_spray_streak(
-                    camera,
-                    bead_position,
-                    bead_direction,
-                    bead_streak_size,
-                    bead_color,
-                )
+                world_rondine_spray_streak(camera, bead_position, bead_direction, bead_streak_size, bead_color)
                 world_rondine_spray_bead(
                     camera,
-                    bead_position +
-                    linalg.normalize0(bead_direction) * (bead_streak_size * 2.4),
+                    bead_position + linalg.normalize0(bead_direction) * (bead_streak_size * 2.4),
                     .024 + variation * .018,
                     bead_color,
                 )
@@ -17356,8 +16932,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
 
         // A broad suction knuckle is the large beat; it quickly fades into
         // the narrower paired quill marks behind it.
-        knuckle_alpha :=
-            u8(clamp(188 * release_visibility, 0, 202))
+        knuckle_alpha := u8(clamp(188 * release_visibility, 0, 202))
         knuckle_color := rl.Color{225, 250, 244, knuckle_alpha}
         world_rondine_surface_chip(
             center + back * (.12 + sample.age * .22),
@@ -17374,33 +16949,19 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // instead of another symmetric ring.
         for quill in 0 ..< 4 {
             quill_f := f32(quill)
-            quill_seed :=
-                world_rondine_wake_hash(sample.serial, 0, u32(360 + quill))
+            quill_seed := world_rondine_wake_hash(sample.serial, 0, u32(360 + quill))
             quill_variation := f32(quill_seed % 19) / 18
             for side in 0 ..< 2 {
                 side_sign := side == 0 ? f32(-1) : f32(1)
-                lateral_width :=
-                    .54 - quill_f * .105 + quill_variation * .06
+                lateral_width := .54 - quill_f * .105 + quill_variation * .06
                 quill_position :=
-                    center +
-                    back * (.28 + quill_f * .25 + sample.age * .18) +
-                    right * (side_sign * lateral_width)
+                    center + back * (.28 + quill_f * .25 + sample.age * .18) + right * (side_sign * lateral_width)
                 quill_position.y += .010
-                quill_tangent :=
-                    back * (.74 + quill_f * .08) -
-                    right * (side_sign * (.34 + quill_f * .07))
-                quill_radial :=
-                    right * side_sign + back * .16
-                quill_alpha :=
-                    u8(
-                        clamp(
-                            (174 + quill_variation * 42) *
-                            release_visibility *
-                            (1 - quill_f * .13),
-                            0,
-                            210,
-                        ),
-                    )
+                quill_tangent := back * (.74 + quill_f * .08) - right * (side_sign * (.34 + quill_f * .07))
+                quill_radial := right * side_sign + back * .16
+                quill_alpha := u8(
+                    clamp((174 + quill_variation * 42) * release_visibility * (1 - quill_f * .13), 0, 210),
+                )
                 world_rondine_surface_chip(
                     quill_position,
                     quill_tangent,
@@ -17420,59 +16981,34 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             for bead in 0 ..< 4 {
                 bead_f := f32(bead)
                 side_sign := bead & 1 == 0 ? f32(-1) : f32(1)
-                seed :=
-                    world_rondine_wake_hash(
-                        sample.serial,
-                        u32(bead & 1),
-                        u32(390 + bead),
-                    )
+                seed := world_rondine_wake_hash(sample.serial, u32(bead & 1), u32(390 + bead))
                 variation := f32(seed % 23) / 22
                 launch_direction :=
                     back * (.62 + bead_f * .10 + variation * .18) +
-                    right *
-                    (side_sign * (.34 + bead_f * .08 + variation * .12))
+                    right * (side_sign * (.34 + bead_f * .08 + variation * .12))
                 launch_speed := .78 + variation * .62
                 lift_speed := .62 + variation * .48
                 bead_position :=
                     center +
                     right * (side_sign * (.18 + bead_f * .055)) +
                     launch_direction * (sample.age * launch_speed)
-                bead_position.y +=
-                    .14 +
-                    sample.age * lift_speed -
-                    3.45 * sample.age * sample.age
+                bead_position.y += .14 + sample.age * lift_speed - 3.45 * sample.age * sample.age
                 bead_direction :=
-                    launch_direction * launch_speed +
-                    third_person.Vec3 {
-                        0,
-                        lift_speed - 6.9 * sample.age,
-                        0,
-                    }
+                    launch_direction * launch_speed + third_person.Vec3{0, lift_speed - 6.9 * sample.age, 0}
                 bead_life := clamp(1 - sample.age / .48, 0, 1)
-                bead_alpha :=
-                    u8(
-                        clamp(
-                            (142 + variation * 62) *
-                            release_visibility *
-                            bead_life *
-                            release_bead_distance_fade,
-                            0,
-                            205,
-                        ),
-                    )
+                bead_alpha := u8(
+                    clamp(
+                        (142 + variation * 62) * release_visibility * bead_life * release_bead_distance_fade,
+                        0,
+                        205,
+                    ),
+                )
                 bead_color := rl.Color{232, 253, 247, bead_alpha}
                 bead_streak_size := .060 + variation * .070
-                world_rondine_spray_streak(
-                    camera,
-                    bead_position,
-                    bead_direction,
-                    bead_streak_size,
-                    bead_color,
-                )
+                world_rondine_spray_streak(camera, bead_position, bead_direction, bead_streak_size, bead_color)
                 world_rondine_spray_bead(
                     camera,
-                    bead_position +
-                    linalg.normalize0(bead_direction) * (bead_streak_size * 2.2),
+                    bead_position + linalg.normalize0(bead_direction) * (bead_streak_size * 2.2),
                     .020 + variation * .014,
                     bead_color,
                 )
@@ -17497,21 +17033,13 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         forward := third_person.Vec3{sample.forward.x, 0, sample.forward.z}
         right := third_person.Vec3{sample.right.x, 0, sample.right.z}
         back := -forward
-        serial_variation :=
-            f32(world_rondine_wake_hash(sample.serial, 0, 130) % 17) /
-            16
+        serial_variation := f32(world_rondine_wake_hash(sample.serial, 0, 130) % 17) / 16
         stitch_visibility := f32(math.sqrt(f64(stitch_strength)))
         for side in 0 ..< 2 {
             side_sign := side == 0 ? f32(-1) : f32(1)
-            position :=
-                center +
-                right * (side_sign * (.42 + serial_variation * .18)) +
-                back * (serial_variation * .10)
-            direction :=
-                back * (.22 + serial_variation * .13) -
-                right * (side_sign * (.72 + stitch_strength * .30))
-            stitch_alpha :=
-                u8(clamp((136 + serial_variation * 52) * stitch_strength, 0, 194))
+            position := center + right * (side_sign * (.42 + serial_variation * .18)) + back * (serial_variation * .10)
+            direction := back * (.22 + serial_variation * .13) - right * (side_sign * (.72 + stitch_strength * .30))
+            stitch_alpha := u8(clamp((136 + serial_variation * 52) * stitch_strength, 0, 194))
             stitch_color := rl.Color{228, 252, 246, stitch_alpha}
             world_rondine_spray_streak(
                 camera,
@@ -17533,18 +17061,11 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             lateral_width := .48 - tooth_f * .13
             for side in 0 ..< 2 {
                 side_sign := side == 0 ? f32(-1) : f32(1)
-                tooth_position :=
-                    center +
-                    back * (.16 + tooth_f * .24) +
-                    right * (side_sign * lateral_width)
+                tooth_position := center + back * (.16 + tooth_f * .24) + right * (side_sign * lateral_width)
                 tooth_position.y += .012
-                tooth_tangent :=
-                    back * (.38 + tooth_f * .06) -
-                    right * (side_sign * (.82 - tooth_f * .08))
-                tooth_radial :=
-                    right * side_sign + back * .12
-                tooth_alpha :=
-                    u8(f32(zipper_alpha) * (1 - tooth_f * .16))
+                tooth_tangent := back * (.38 + tooth_f * .06) - right * (side_sign * (.82 - tooth_f * .08))
+                tooth_radial := right * side_sign + back * .12
+                tooth_alpha := u8(f32(zipper_alpha) * (1 - tooth_f * .16))
                 world_rondine_surface_chip(
                     tooth_position,
                     tooth_tangent,
@@ -17566,10 +17087,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         collar_color := rl.Color{211, 247, 241, collar_alpha}
         for side in 0 ..< 2 {
             side_sign := side == 0 ? f32(-1) : f32(1)
-            collar_position :=
-                center +
-                back * (.33 + serial_variation * .08) +
-                right * (side_sign * .34)
+            collar_position := center + back * (.33 + serial_variation * .08) + right * (side_sign * .34)
             collar_tangent := back * .46 - right * (side_sign * .88)
             collar_radial := right * side_sign + back * .52
             world_rondine_surface_chip(
@@ -17613,60 +17131,35 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             for side in 0 ..< 2 {
                 side_sign := side == 0 ? f32(-1) : f32(1)
                 for bead in 0 ..< 2 {
-                    seed :=
-                        world_rondine_wake_hash(
-                            sample.serial,
-                            u32(side),
-                            u32(270 + bead),
-                        )
+                    seed := world_rondine_wake_hash(sample.serial, u32(side), u32(270 + bead))
                     variation := f32(seed % 23) / 22
                     bead_f := f32(bead)
                     launch_direction :=
                         back * (.34 + bead_f * .18 + variation * .18) -
-                        right *
-                        (side_sign * (.78 + bead_f * .22 + variation * .16))
+                        right * (side_sign * (.78 + bead_f * .22 + variation * .16))
                     launch_speed := .88 + variation * .72
                     lift_speed := 1.00 + bead_f * .20 + variation * .72
                     bead_position :=
                         center +
                         right * (side_sign * (.48 + bead_f * .12)) +
                         launch_direction * (sample.age * launch_speed)
-                    bead_position.y +=
-                        .08 +
-                        sample.age * lift_speed -
-                        3.0 * sample.age * sample.age
+                    bead_position.y += .08 + sample.age * lift_speed - 3.0 * sample.age * sample.age
                     bead_direction :=
-                        launch_direction * launch_speed +
-                        third_person.Vec3 {
-                            0,
-                            lift_speed - 6.0 * sample.age,
-                            0,
-                        }
+                        launch_direction * launch_speed + third_person.Vec3{0, lift_speed - 6.0 * sample.age, 0}
                     bead_life := clamp(1 - sample.age / .46, 0, 1)
-                    bead_alpha :=
-                        u8(
-                            clamp(
-                                (136 + variation * 70) *
-                                stitch_visibility *
-                                bead_life *
-                                event_bead_distance_fade,
-                                0,
-                                202,
-                            ),
-                        )
+                    bead_alpha := u8(
+                        clamp(
+                            (136 + variation * 70) * stitch_visibility * bead_life * event_bead_distance_fade,
+                            0,
+                            202,
+                        ),
+                    )
                     bead_color := rl.Color{232, 253, 247, bead_alpha}
                     bead_streak_size := .065 + variation * .075
-                    world_rondine_spray_streak(
-                        camera,
-                        bead_position,
-                        bead_direction,
-                        bead_streak_size,
-                        bead_color,
-                    )
+                    world_rondine_spray_streak(camera, bead_position, bead_direction, bead_streak_size, bead_color)
                     world_rondine_spray_bead(
                         camera,
-                        bead_position +
-                        linalg.normalize0(bead_direction) * (bead_streak_size * 2.4),
+                        bead_position + linalg.normalize0(bead_direction) * (bead_streak_size * 2.4),
                         .020 + variation * .016,
                         bead_color,
                     )
@@ -17711,28 +17204,20 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 water_clearance := f32(.035)
                 gravity_half := f32(1.45)
                 landing_time :=
-                    (
-                        launch_height +
+                    (launch_height +
                         f32(
                             math.sqrt(
                                 f64(
                                     launch_height * launch_height +
-                                    4 * gravity_half *
-                                    (launch_clearance - water_clearance),
+                                    4 * gravity_half * (launch_clearance - water_clearance),
                                 ),
                             ),
-                        )
-                    ) /
+                        )) /
                     (2 * gravity_half)
                 flight_age := min(age, landing_time)
                 position :=
-                    base +
-                    right * (side_sign * (.72 + outward_speed * flight_age)) +
-                    back * (rear_speed * flight_age)
-                position.y +=
-                    launch_clearance +
-                    launch_height * flight_age -
-                    gravity_half * flight_age * flight_age
+                    base + right * (side_sign * (.72 + outward_speed * flight_age)) + back * (rear_speed * flight_age)
+                position.y += launch_clearance + launch_height * flight_age - gravity_half * flight_age * flight_age
                 landed := age >= landing_time
                 if landed do position.y = sea_y + water_clearance
                 max_life := f32(.78)
@@ -17741,16 +17226,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     right * (side_sign * outward_speed) +
                     back * rear_speed +
                     third_person.Vec3{0, launch_height - 2.9 * flight_age, 0}
-                opacity :=
-                    clamp(life / max_life, 0, 1) *
-                    sample_camera_fade *
-                    droplet_distance_fade
-                droplet_color := rl.Color {
-                    224,
-                    250,
-                    245,
-                    u8((165 + variation * 68) * opacity),
-                }
+                opacity := clamp(life / max_life, 0, 1) * sample_camera_fade * droplet_distance_fade
+                droplet_color := rl.Color{224, 250, 245, u8((165 + variation * 68) * opacity)}
                 // One heavier bead per loaded-side burst supplies a readable
                 // medium-small accent; the rest remain fine tapered needles.
                 bead_scale := pressure_role == 1 && droplet == 0 ? f32(1.55) : f32(1)
@@ -17759,8 +17236,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 if pressure_role == 1 && droplet == 0 && !landed {
                     world_rondine_spray_bead(
                         camera,
-                        position +
-                        linalg.normalize0(direction) * (streak_size * 2.4),
+                        position + linalg.normalize0(direction) * (streak_size * 2.4),
                         .032 + variation * .026,
                         droplet_color,
                     )
@@ -18155,9 +17631,169 @@ Mouse_Bone_Pose :: struct {
     roll:          f32,
 }
 
+MOUSE_BODY_RING_COUNT :: 11
+MOUSE_BODY_SEGMENT_COUNT :: 12
+
+Mouse_Body_Softness_State :: struct {
+    displacement:       [MOUSE_BODY_RING_COUNT][MOUSE_BODY_SEGMENT_COUNT]third_person.Vec3,
+    velocity:           [MOUSE_BODY_RING_COUNT][MOUSE_BODY_SEGMENT_COUNT]third_person.Vec3,
+    target:             [MOUSE_BODY_RING_COUNT][MOUSE_BODY_SEGMENT_COUNT]third_person.Vec3,
+    previous_target:    [MOUSE_BODY_RING_COUNT][MOUSE_BODY_SEGMENT_COUNT]third_person.Vec3,
+    placement_revision: u64,
+    initialized:        bool,
+}
+
+Mouse_Body_Profile :: struct {
+    ring_z:         [MOUSE_BODY_RING_COUNT]f32,
+    center_y:       [MOUSE_BODY_RING_COUNT]f32,
+    radius_x:       [MOUSE_BODY_RING_COUNT]f32,
+    radius_y:       [MOUSE_BODY_RING_COUNT]f32,
+    primary:        [MOUSE_BODY_RING_COUNT]Mouse_Bone,
+    secondary:      [MOUSE_BODY_RING_COUNT]Mouse_Bone,
+    primary_weight: [MOUSE_BODY_RING_COUNT]f32,
+}
+
+mouse_body_softness_reset :: proc(state: ^Mouse_Body_Softness_State, placement_revision: u64) {
+    if state == nil do return
+    state^ = {}
+    state.placement_revision = placement_revision
+    state.initialized = true
+}
+
+mouse_body_softness_vec_finite :: #force_inline proc(value: third_person.Vec3) -> bool {
+    return(
+        !math.is_nan(value.x) &&
+        !math.is_inf(value.x) &&
+        !math.is_nan(value.y) &&
+        !math.is_inf(value.y) &&
+        !math.is_nan(value.z) &&
+        !math.is_inf(value.z) \
+    )
+}
+
+mouse_body_softness_update :: proc(editor: ^Editor, delta_seconds: f32) {
+    if editor == nil do return
+    state := &editor.player_body_softness
+    if !state.initialized ||
+       state.placement_revision != editor.player_placement_revision ||
+       delta_seconds <= 0 ||
+       delta_seconds > .25 {
+        mouse_body_softness_reset(state, editor.player_placement_revision)
+        return
+    }
+
+    animation := &editor.tweak.player_animation
+    frame_seconds := min(delta_seconds, f32(1.0 / 30.0))
+    substeps := max(1, int(math.ceil(f64(frame_seconds / f32(1.0 / 120.0)))))
+    step_seconds := frame_seconds / f32(substeps)
+
+    // Compression removes radial area from a ring. Return a restrained share
+    // of it over the rest of that ring so a moving thigh or shoulder reads as
+    // yielding flesh rather than a dent stamped into a rigid shell.
+    resolved_target := state.target
+    for ring in 0 ..< MOUSE_BODY_RING_COUNT {
+        inward_sum: f32
+        for segment in 0 ..< MOUSE_BODY_SEGMENT_COUNT {
+            angle := f32(segment) * math.PI * 2 / f32(MOUSE_BODY_SEGMENT_COUNT)
+            radial := third_person.Vec3{math.cos(angle), math.sin(angle), 0}
+            inward_sum += max(-linalg.dot(resolved_target[ring][segment], radial), f32(0))
+        }
+        returned := inward_sum / f32(MOUSE_BODY_SEGMENT_COUNT) * animation.body_softness_volume_return
+        for segment in 0 ..< MOUSE_BODY_SEGMENT_COUNT {
+            angle := f32(segment) * math.PI * 2 / f32(MOUSE_BODY_SEGMENT_COUNT)
+            radial := third_person.Vec3{math.cos(angle), math.sin(angle), 0}
+            resolved_target[ring][segment] += radial * returned
+        }
+    }
+
+    for ring in 0 ..< MOUSE_BODY_RING_COUNT {
+        for segment in 0 ..< MOUSE_BODY_SEGMENT_COUNT {
+            target_delta := resolved_target[ring][segment] - state.previous_target[ring][segment]
+            state.velocity[ring][segment] +=
+                target_delta * animation.body_softness_inertial_lag / max(frame_seconds, f32(.001))
+        }
+    }
+    for _ in 0 ..< substeps {
+        for ring in 0 ..< MOUSE_BODY_RING_COUNT {
+            for segment in 0 ..< MOUSE_BODY_SEGMENT_COUNT {
+                target := resolved_target[ring][segment]
+                acceleration :=
+                    (target - state.displacement[ring][segment]) * animation.body_softness_stiffness -
+                    state.velocity[ring][segment] * animation.body_softness_damping
+                state.velocity[ring][segment] += acceleration * step_seconds
+                state.displacement[ring][segment] += state.velocity[ring][segment] * step_seconds
+                length := linalg.length(state.displacement[ring][segment])
+                if length > animation.body_softness_max_displacement && length > .0001 {
+                    state.displacement[ring][segment] *= animation.body_softness_max_displacement / length
+                    state.velocity[ring][segment] *= .35
+                }
+                if !mouse_body_softness_vec_finite(state.displacement[ring][segment]) ||
+                   !mouse_body_softness_vec_finite(state.velocity[ring][segment]) {
+                    mouse_body_softness_reset(state, editor.player_placement_revision)
+                    return
+                }
+            }
+        }
+    }
+    state.previous_target = resolved_target
+    state.target = {}
+}
+
+MOUSE_BODY_PROFILE :: Mouse_Body_Profile {
+    ring_z         = {-.86, -.76, -.64, -.48, -.28, -.04, .10, .20, .32, .47, .58},
+    center_y       = {.35, .35, .38, .43, .47, .52, .59, .68, .64, .61, .62},
+    radius_x       = {.008, .15, .25, .30, .30, .255, .205, .20, .17, .095, .025},
+    radius_y       = {.010, .18, .28, .34, .35, .28, .21, .185, .125, .070, .022},
+    primary        = {.Pelvis, .Pelvis, .Pelvis, .Pelvis, .Spine, .Chest, .Neck, .Head, .Head, .Head, .Head},
+    secondary      = {.Spine, .Spine, .Spine, .Spine, .Pelvis, .Spine, .Chest, .Neck, .Neck, .Neck, .Neck},
+    primary_weight = {1, .98, .92, .82, .76, .68, .66, .78, .88, .96, 1},
+}
+
+MOUSE_HARNESS_BRANCH_SAMPLES :: 9
+
+Mouse_Harness_Design :: struct {
+    branch_z:              [MOUSE_HARNESS_BRANCH_SAMPLES]f32,
+    right_branch_angle:    [MOUSE_HARNESS_BRANCH_SAMPLES]f32,
+    rear_loop_z:           f32,
+    fur_clearance:         f32,
+    saddle_clearance:      f32,
+    strap_half_width:      f32,
+    strap_edge_half_width: f32,
+}
+
+MOUSE_POSTAL_HARNESS :: Mouse_Harness_Design {
+    branch_z              = {-.10, -.055, -.010, .030, .065, .095, .115, .130, .140},
+    right_branch_angle    = {.58, .38, .16, -.08, -.34, -.62, -.88, -1.18, -1.50},
+    rear_loop_z           = -.34,
+    fur_clearance         = .042,
+    saddle_clearance      = .042,
+    strap_half_width      = .018,
+    strap_edge_half_width = .024,
+}
+
 Mouse_Vertex_Group :: struct {
     bone:   Mouse_Bone,
     weight: f32,
+}
+
+mouse_body_profile_skin :: proc(
+    bind_position: third_person.Vec3,
+    skeleton: ^[5]Mouse_Bone_Pose,
+    lower, upper: int,
+    amount: f32,
+) -> third_person.Vec3 {
+    profile := MOUSE_BODY_PROFILE
+    lower_groups := [2]Mouse_Vertex_Group {
+        {profile.primary[lower], profile.primary_weight[lower]},
+        {profile.secondary[lower], 1 - profile.primary_weight[lower]},
+    }
+    upper_groups := [2]Mouse_Vertex_Group {
+        {profile.primary[upper], profile.primary_weight[upper]},
+        {profile.secondary[upper], 1 - profile.primary_weight[upper]},
+    }
+    lower_point := mouse_skin_vertex({bind_position = bind_position, groups = lower_groups}, skeleton)
+    upper_point := mouse_skin_vertex({bind_position = bind_position, groups = upper_groups}, skeleton)
+    return lower_point + (upper_point - lower_point) * amount
 }
 
 Mouse_Skin_Vertex :: struct {
@@ -18208,41 +17844,29 @@ mouse_body_surface_height :: proc(
     push_up, hit: bool,
 ) {
     if skeleton == nil do return
-    RINGS :: 11
-    ring_z := [RINGS]f32{-.86, -.76, -.64, -.48, -.28, -.04, .10, .20, .32, .47, .58}
-    ring_y := [RINGS]f32{.35, .35, .38, .43, .47, .52, .59, .68, .64, .61, .62}
-    radius_x := [RINGS]f32{.008, .15, .25, .30, .30, .255, .205, .20, .17, .095, .025}
-    radius_y := [RINGS]f32{.010, .18, .28, .34, .35, .28, .21, .185, .125, .070, .022}
-    primary := [RINGS]Mouse_Bone{.Pelvis, .Pelvis, .Pelvis, .Pelvis, .Spine, .Chest, .Neck, .Head, .Head, .Head, .Head}
-    secondary := [RINGS]Mouse_Bone{.Spine, .Spine, .Spine, .Spine, .Pelvis, .Spine, .Chest, .Neck, .Neck, .Neck, .Neck}
-    primary_weight := [RINGS]f32{1, .98, .92, .82, .76, .68, .66, .78, .88, .96, 1}
-    if local_z < ring_z[0] || local_z > ring_z[RINGS - 1] do return
+    profile := MOUSE_BODY_PROFILE
+    if local_z < profile.ring_z[0] || local_z > profile.ring_z[MOUSE_BODY_RING_COUNT - 1] do return
 
     lower := 0
-    for index in 0 ..< RINGS - 1 {
-        if local_z >= ring_z[index] && local_z <= ring_z[index + 1] {
+    for index in 0 ..< MOUSE_BODY_RING_COUNT - 1 {
+        if local_z >= profile.ring_z[index] && local_z <= profile.ring_z[index + 1] {
             lower = index
             break
         }
     }
-    upper := min(lower + 1, RINGS - 1)
-    span := max(ring_z[upper] - ring_z[lower], f32(.0001))
-    amount := clamp((local_z - ring_z[lower]) / span, 0, 1)
-    center_y := ring_y[lower] + (ring_y[upper] - ring_y[lower]) * amount
-    body_radius_x := radius_x[lower] + (radius_x[upper] - radius_x[lower]) * amount
-    body_radius_y := radius_y[lower] + (radius_y[upper] - radius_y[lower]) * amount
+    upper := min(lower + 1, MOUSE_BODY_RING_COUNT - 1)
+    span := max(profile.ring_z[upper] - profile.ring_z[lower], f32(.0001))
+    amount := clamp((local_z - profile.ring_z[lower]) / span, 0, 1)
+    center_y := profile.center_y[lower] + (profile.center_y[upper] - profile.center_y[lower]) * amount
+    body_radius_x := profile.radius_x[lower] + (profile.radius_x[upper] - profile.radius_x[lower]) * amount
+    body_radius_y := profile.radius_y[lower] + (profile.radius_y[upper] - profile.radius_y[lower]) * amount
     if body_radius_x <= .001 || math.abs(local_x) >= body_radius_x do return
     normalized_x := clamp(local_x / body_radius_x, -1, 1)
     vertical_radius := body_radius_y * f32(math.sqrt(f64(max(1 - normalized_x * normalized_x, f32(0)))))
-    nearest := amount < .5 ? lower : upper
-    groups := [2]Mouse_Vertex_Group {
-        {primary[nearest], primary_weight[nearest]},
-        {secondary[nearest], 1 - primary_weight[nearest]},
-    }
-    posed_center := mouse_skin_vertex({bind_position = {local_x, center_y, local_z}, groups = groups}, skeleton)
+    posed_center := mouse_body_profile_skin({local_x, center_y, local_z}, skeleton, lower, upper, amount)
     push_up = local_y >= posed_center.y
     surface_y := center_y + (push_up ? vertical_radius : -vertical_radius)
-    posed_surface := mouse_skin_vertex({bind_position = {local_x, surface_y, local_z}, groups = groups}, skeleton)
+    posed_surface := mouse_body_profile_skin({local_x, surface_y, local_z}, skeleton, lower, upper, amount)
     return posed_surface.y, push_up, true
 }
 
@@ -18253,10 +17877,11 @@ world_mouse_skinned_hull :: proc(
     fur, fur_dark, fur_light: rl.Color,
     pattern: Mouse_Fur_Pattern,
     breath: f32,
+    softness: ^Mouse_Body_Softness_State = nil,
 ) {
-    RINGS :: 11
-    SEGMENTS :: 12
-    ring_z := [RINGS]f32{-.86, -.76, -.64, -.48, -.28, -.04, .10, .20, .32, .47, .58}
+    RINGS :: MOUSE_BODY_RING_COUNT
+    SEGMENTS :: MOUSE_BODY_SEGMENT_COUNT
+    profile := MOUSE_BODY_PROFILE
     // A mouse's dorsal line is a soft arch over the pelvis and ribs, then
     // descends into the neck.  Keeping the belly locations nearly unchanged
     // while lifting and enlarging these middle rings avoids the flat-backed,
@@ -18264,13 +17889,6 @@ world_mouse_skinned_hull :: proc(
     // Collapse the first ring almost to a pole, then ease through two
     // intermediate pelvis rings. This closes the rump as a rounded volume
     // instead of exposing the flat fan that used to cap a wide rear ellipse.
-    ring_y := [RINGS]f32{.35, .35, .38, .43, .47, .52, .59, .68, .64, .61, .62}
-    radius_x := [RINGS]f32{.008, .15, .25, .30, .30, .255, .205, .20, .17, .095, .025}
-    radius_y := [RINGS]f32{.010, .18, .28, .34, .35, .28, .21, .185, .125, .070, .022}
-    primary := [RINGS]Mouse_Bone{.Pelvis, .Pelvis, .Pelvis, .Pelvis, .Spine, .Chest, .Neck, .Head, .Head, .Head, .Head}
-    secondary := [RINGS]Mouse_Bone{.Spine, .Spine, .Spine, .Spine, .Pelvis, .Spine, .Chest, .Neck, .Neck, .Neck, .Neck}
-    primary_weight := [RINGS]f32{1, .98, .92, .82, .76, .68, .66, .78, .88, .96, 1}
-
     vertices: [RINGS][SEGMENTS]Mouse_Skin_Vertex
     posed: [RINGS][SEGMENTS]third_person.Vec3
     rib_weights := [RINGS]f32{0, 0, .02, .10, .55, 1, .45, 0, 0, 0, 0}
@@ -18317,36 +17935,73 @@ world_mouse_skinned_hull :: proc(
             }
             vertices[ring][segment] = {
                 bind_position = {
-                    cosine * radius_x[ring] * breath_scale,
-                    ring_y[ring] + sine * radius_y[ring] * breath_scale,
-                    ring_z[ring],
+                    cosine * profile.radius_x[ring] * breath_scale,
+                    profile.center_y[ring] + sine * profile.radius_y[ring] * breath_scale,
+                    profile.ring_z[ring],
                 },
-                groups        = {{primary[ring], primary_weight[ring]}, {secondary[ring], 1 - primary_weight[ring]}},
+                groups        = {
+                    {profile.primary[ring], profile.primary_weight[ring]},
+                    {profile.secondary[ring], 1 - profile.primary_weight[ring]},
+                },
                 color         = coat_color,
             }
             local := mouse_skin_vertex(vertices[ring][segment], skeleton)
+            if softness != nil && softness.initialized {
+                local += softness.displacement[ring][segment]
+            }
             world_x, world_z := world_rotate_xz(origin.x, origin.z, local.x, local.z, rotation)
             posed[ring][segment] = {world_x, origin.y + local.y, world_z}
         }
     }
 
+    normals: [RINGS][SEGMENTS]third_person.Vec3
+    for ring in 0 ..< RINGS {
+        before_ring := max(ring - 1, 0)
+        after_ring := min(ring + 1, RINGS - 1)
+        for segment in 0 ..< SEGMENTS {
+            before := (segment + SEGMENTS - 1) % SEGMENTS
+            after := (segment + 1) % SEGMENTS
+            around := posed[ring][after] - posed[ring][before]
+            along := posed[after_ring][segment] - posed[before_ring][segment]
+            normals[ring][segment] = linalg.normalize0(linalg.cross(around, along))
+        }
+    }
+    emit_triangle :: proc(
+        a, b, c: third_person.Vec3,
+        normal_a, normal_b, normal_c: third_person.Vec3,
+        color_a, color_b, color_c: rl.Color,
+    ) {
+        output := [3]World_Vertex{world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c)}
+        input_normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
+        for index in 0 ..< 3 {
+            normal := linalg.normalize0(input_normals[index])
+            output[index].normal = {normal.x, normal.y, normal.z}
+        }
+        append(&world_renderer.vertices, ..output[:])
+    }
     for ring in 0 ..< RINGS - 1 {
         for segment in 0 ..< SEGMENTS {
             next := (segment + 1) % SEGMENTS
             a, b := posed[ring][segment], posed[ring][next]
             c, d := posed[ring + 1][next], posed[ring + 1][segment]
-            world_triangle_colored(
+            emit_triangle(
                 a,
                 b,
                 c,
+                normals[ring][segment],
+                normals[ring][next],
+                normals[ring + 1][next],
                 vertices[ring][segment].color,
                 vertices[ring][next].color,
                 vertices[ring + 1][next].color,
             )
-            world_triangle_colored(
+            emit_triangle(
                 a,
                 c,
                 d,
+                normals[ring][segment],
+                normals[ring + 1][next],
+                normals[ring + 1][segment],
                 vertices[ring][segment].color,
                 vertices[ring + 1][next].color,
                 vertices[ring + 1][segment].color,
@@ -18355,12 +18010,16 @@ world_mouse_skinned_hull :: proc(
     }
 
     rear_center_local := mouse_skin_vertex(
-        {bind_position = {0, ring_y[0], ring_z[0]}, groups = {{.Pelvis, 1}, {.Spine, 0}}, color = fur},
+        {
+            bind_position = {0, profile.center_y[0], profile.ring_z[0]},
+            groups = {{.Pelvis, 1}, {.Spine, 0}},
+            color = fur,
+        },
         skeleton,
     )
     nose_center_local := mouse_skin_vertex(
         {
-            bind_position = {0, ring_y[RINGS - 1], ring_z[RINGS - 1]},
+            bind_position = {0, profile.center_y[RINGS - 1], profile.ring_z[RINGS - 1]},
             groups = {{.Head, 1}, {.Neck, 0}},
             color = fur_light,
         },
@@ -18375,6 +18034,516 @@ world_mouse_skinned_hull :: proc(
         world_triangle(rear_center, posed[0][next], posed[0][segment], fur)
         world_triangle(nose_center, posed[RINGS - 1][segment], posed[RINGS - 1][next], fur_light)
     }
+}
+
+mouse_body_softness_accumulate_capsule :: proc(
+    state: ^Mouse_Body_Softness_State,
+    origin: third_person.Vec3,
+    rotation: f32,
+    world_start, world_end: third_person.Vec3,
+    strength, influence_radius: f32,
+) {
+    if state == nil || !state.initialized || strength <= 0 || influence_radius <= .001 do return
+    cosine, sine := math.cos(rotation), math.sin(rotation)
+    start_delta, finish_delta := world_start - origin, world_end - origin
+    start := third_person.Vec3 {
+        start_delta.x * cosine + start_delta.z * sine,
+        start_delta.y,
+        -start_delta.x * sine + start_delta.z * cosine,
+    }
+    finish := third_person.Vec3 {
+        finish_delta.x * cosine + finish_delta.z * sine,
+        finish_delta.y,
+        -finish_delta.x * sine + finish_delta.z * cosine,
+    }
+    axis := finish - start
+    axis_length_squared := linalg.dot(axis, axis)
+    profile := MOUSE_BODY_PROFILE
+    for ring in 0 ..< MOUSE_BODY_RING_COUNT {
+        for segment in 0 ..< MOUSE_BODY_SEGMENT_COUNT {
+            angle := f32(segment) * math.PI * 2 / f32(MOUSE_BODY_SEGMENT_COUNT)
+            radial := third_person.Vec3{math.cos(angle), math.sin(angle), 0}
+            surface := third_person.Vec3 {
+                radial.x * profile.radius_x[ring],
+                profile.center_y[ring] + radial.y * profile.radius_y[ring],
+                profile.ring_z[ring],
+            }
+            amount: f32
+            if axis_length_squared > .000001 {
+                amount = clamp(linalg.dot(surface - start, axis) / axis_length_squared, 0, 1)
+            }
+            nearest := start + axis * amount
+            distance := linalg.length(surface - nearest)
+            influence := clamp(1 - distance / influence_radius, 0, 1)
+            influence = influence * influence * (3 - 2 * influence)
+            compression := influence * strength * .065
+            candidate := radial * -compression
+            // Multiple render submissions or overlapping limb capsules must
+            // not pump extra energy into the next simulation update.
+            existing_inward := max(-linalg.dot(state.target[ring][segment], radial), f32(0))
+            if compression > existing_inward {
+                state.target[ring][segment] = candidate
+            }
+        }
+    }
+}
+
+mouse_body_softness_sample :: proc(
+    state: ^Mouse_Body_Softness_State,
+    bind_point: third_person.Vec3,
+) -> third_person.Vec3 {
+    if state == nil || !state.initialized do return {}
+    profile := MOUSE_BODY_PROFILE
+    best_ring := 0
+    best_distance := f32(1e9)
+    for ring in 0 ..< MOUSE_BODY_RING_COUNT {
+        distance := math.abs(profile.ring_z[ring] - bind_point.z)
+        if distance < best_distance {
+            best_distance = distance
+            best_ring = ring
+        }
+    }
+    normalized_x := bind_point.x / max(profile.radius_x[best_ring], f32(.001))
+    normalized_y := (bind_point.y - profile.center_y[best_ring]) / max(profile.radius_y[best_ring], f32(.001))
+    angle := math.atan2(normalized_y, normalized_x)
+    if angle < 0 do angle += math.PI * 2
+    segment := int(math.round(angle / (math.PI * 2) * f32(MOUSE_BODY_SEGMENT_COUNT))) % MOUSE_BODY_SEGMENT_COUNT
+    return state.displacement[best_ring][segment]
+}
+
+mouse_mailbag_world_point :: proc(
+    origin: third_person.Vec3,
+    rotation: f32,
+    local: third_person.Vec3,
+) -> third_person.Vec3 {
+    world_x, world_z := world_rotate_xz(origin.x, origin.z, local.x, local.z, rotation)
+    return {world_x, origin.y + local.y, world_z}
+}
+
+mouse_mailbag_body_surface_local :: proc(
+    skeleton: ^[5]Mouse_Bone_Pose,
+    local_z, angle: f32,
+) -> (
+    point: third_person.Vec3,
+    hit: bool,
+) {
+    if skeleton == nil do return
+    profile := MOUSE_BODY_PROFILE
+    if local_z < profile.ring_z[0] || local_z > profile.ring_z[MOUSE_BODY_RING_COUNT - 1] do return
+
+    lower := 0
+    for index in 0 ..< MOUSE_BODY_RING_COUNT - 1 {
+        if local_z >= profile.ring_z[index] && local_z <= profile.ring_z[index + 1] {
+            lower = index
+            break
+        }
+    }
+    upper := min(lower + 1, MOUSE_BODY_RING_COUNT - 1)
+    span := max(profile.ring_z[upper] - profile.ring_z[lower], f32(.0001))
+    amount := clamp((local_z - profile.ring_z[lower]) / span, 0, 1)
+    center_y := profile.center_y[lower] + (profile.center_y[upper] - profile.center_y[lower]) * amount
+    body_radius_x := profile.radius_x[lower] + (profile.radius_x[upper] - profile.radius_x[lower]) * amount
+    body_radius_y := profile.radius_y[lower] + (profile.radius_y[upper] - profile.radius_y[lower]) * amount
+    bind_point := third_person.Vec3 {
+        math.cos(angle) * body_radius_x,
+        center_y + math.sin(angle) * body_radius_y,
+        local_z,
+    }
+    return mouse_body_profile_skin(bind_point, skeleton, lower, upper, amount), true
+}
+
+mouse_mailbag_body_surface_sample :: proc(
+    origin: third_person.Vec3,
+    rotation: f32,
+    skeleton: ^[5]Mouse_Bone_Pose,
+    local_z, angle, clearance: f32,
+) -> (
+    point, normal: third_person.Vec3,
+    hit: bool,
+) {
+    local, local_hit := mouse_mailbag_body_surface_local(skeleton, local_z, angle)
+    if !local_hit do return
+    angle_before, _ := mouse_mailbag_body_surface_local(skeleton, local_z, angle - .025)
+    angle_after, _ := mouse_mailbag_body_surface_local(skeleton, local_z, angle + .025)
+    z_before, _ := mouse_mailbag_body_surface_local(skeleton, max(local_z - .010, f32(-.859)), angle)
+    z_after, _ := mouse_mailbag_body_surface_local(skeleton, min(local_z + .010, f32(.579)), angle)
+    local_normal := linalg.normalize0(linalg.cross(angle_after - angle_before, z_after - z_before))
+    if linalg.length(local_normal) <= .0001 {
+        local_normal = {math.cos(angle), math.sin(angle), 0}
+    }
+    local += local_normal * clearance
+    point = mouse_mailbag_world_point(origin, rotation, local)
+    normal = {
+        local_normal.x * math.cos(rotation) - local_normal.z * math.sin(rotation),
+        local_normal.y,
+        local_normal.x * math.sin(rotation) + local_normal.z * math.cos(rotation),
+    }
+    return point, normal, true
+}
+
+world_mouse_mailbag_surface_ribbon :: proc(
+    points: []third_person.Vec3,
+    normals: []third_person.Vec3,
+    half_width: f32,
+    color: rl.Color,
+) {
+    MAX_SAMPLES :: 32
+    if len(points) < 2 || len(normals) != len(points) || len(points) > MAX_SAMPLES do return
+    left, right: [MAX_SAMPLES]third_person.Vec3
+    previous_width_axis: third_person.Vec3
+    for index in 0 ..< len(points) {
+        previous := max(index - 1, 0)
+        next := min(index + 1, len(points) - 1)
+        tangent := linalg.normalize0(points[next] - points[previous])
+        width_axis: third_person.Vec3
+        if index == 0 {
+            width_axis = linalg.normalize0(linalg.cross(normals[index], tangent))
+        } else {
+            // Parallel-transport the previous width direction onto the new
+            // tangent plane. This preserves frame continuity when the torso
+            // bends far enough for independently computed cross products to
+            // reverse sign.
+            transported := previous_width_axis - tangent * linalg.dot(previous_width_axis, tangent)
+            width_axis = linalg.normalize0(transported)
+            if linalg.length(width_axis) <= .0001 {
+                width_axis = linalg.normalize0(linalg.cross(normals[index], tangent))
+            }
+            reference := linalg.normalize0(linalg.cross(normals[index], tangent))
+            if linalg.dot(width_axis, reference) < 0 do width_axis = -width_axis
+        }
+        if linalg.length(width_axis) <= .0001 do width_axis = {1, 0, 0}
+        previous_width_axis = width_axis
+        left[index] = points[index] - width_axis * half_width
+        right[index] = points[index] + width_axis * half_width
+    }
+    for index in 0 ..< len(points) - 1 {
+        world_quad(left[index], right[index], right[index + 1], left[index + 1], color)
+        world_quad(right[index], left[index], left[index + 1], right[index + 1], color)
+    }
+}
+
+mouse_mailbag_imported_point :: proc(
+    editor: ^Editor,
+    anchor: third_person.Vec3,
+    rotation: f32,
+    vertex: gltf.Vec3,
+) -> third_person.Vec3 {
+    mesh := &editor.mailbag_pouch_asset.mesh
+    MODEL_SCALE :: f32(6.0)
+    // The rebuilt game-ready mesh has a shared physical base; retain only a
+    // tiny inset so its lower bevel settles into the leather saddle.
+    CANVAS_BASE_ABOVE_MIN :: f32(.029)
+    center_x := (mesh.min.x + mesh.max.x) * .5
+    center_z := (mesh.min.z + mesh.max.z) * .5
+    local := third_person.Vec3 {
+        (vertex.x - center_x) * MODEL_SCALE,
+        (vertex.y - (mesh.min.y + CANVAS_BASE_ABOVE_MIN)) * MODEL_SCALE,
+        -(vertex.z - center_z) * MODEL_SCALE,
+    }
+    roll_cosine, roll_sine := math.cos(editor.mouse_mailbag_roll_lag), math.sin(editor.mouse_mailbag_roll_lag)
+    rolled_x := local.x * roll_cosine - local.y * roll_sine
+    rolled_y := local.x * roll_sine + local.y * roll_cosine
+    yaw_cosine, yaw_sine := math.cos(editor.mouse_mailbag_yaw_lag), math.sin(editor.mouse_mailbag_yaw_lag)
+    yawed_x := rolled_x * yaw_cosine - local.z * yaw_sine
+    yawed_z := rolled_x * yaw_sine + local.z * yaw_cosine
+    world_x, world_z := world_rotate_xz(anchor.x, anchor.z, yawed_x, yawed_z, rotation)
+    return {world_x, anchor.y + rolled_y + editor.mouse_mailbag_vertical_lag, world_z}
+}
+
+world_mouse_mailbag_imported_pouch :: proc(
+    editor: ^Editor,
+    origin: third_person.Vec3,
+    rotation: f32,
+    skeleton: ^[5]Mouse_Bone_Pose,
+) {
+    if editor == nil || skeleton == nil || !editor.mailbag_pouch_asset.ready do return
+    asset := &editor.mailbag_pouch_asset
+    anchor, _, hit := mouse_mailbag_body_surface_sample(
+        origin,
+        rotation,
+        skeleton,
+        MOUSE_POSTAL_HARNESS.rear_loop_z,
+        math.PI / 2,
+        MOUSE_POSTAL_HARNESS.saddle_clearance + .018,
+    )
+    if !hit do return
+    mesh := &asset.mesh
+    for primitive, primitive_index in mesh.primitives {
+        color := world_gltf_material_color({255, 255, 255, 255}, primitive.base_color, 255)
+        metallic: f32
+        roughness: f32 = .86
+        if primitive_index < len(mesh.metallic_factors) do metallic = mesh.metallic_factors[primitive_index]
+        if primitive_index < len(mesh.roughness_factors) do roughness = mesh.roughness_factors[primitive_index]
+        end := min(primitive.first + primitive.count, len(mesh.indices))
+        for index := primitive.first; index + 2 < end; index += 3 {
+            ia, ib, ic := mesh.indices[index], mesh.indices[index + 1], mesh.indices[index + 2]
+            if ia >= u32(len(mesh.vertices)) || ib >= u32(len(mesh.vertices)) || ic >= u32(len(mesh.vertices)) do continue
+            a := mouse_mailbag_imported_point(editor, anchor, rotation, mesh.vertices[ia])
+            // The Blender asset's longitudinal axis is mirrored so its flap
+            // opening faces the mouse's head. Swap B/C with that reflection to
+            // preserve outward triangle winding.
+            b := mouse_mailbag_imported_point(editor, anchor, rotation, mesh.vertices[ic])
+            c := mouse_mailbag_imported_point(editor, anchor, rotation, mesh.vertices[ib])
+            normal := linalg.normalize0(linalg.cross(b - a, c - a))
+            append(
+                &world_renderer.vertices,
+                world_greek_asset_vertex(a, color, normal, metallic, roughness),
+                world_greek_asset_vertex(b, color, normal, metallic, roughness),
+                world_greek_asset_vertex(c, color, normal, metallic, roughness),
+            )
+        }
+    }
+}
+
+world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation: f32, skeleton: ^[5]Mouse_Bone_Pose) {
+    if editor == nil || skeleton == nil || !editor.mailbag_pouch_asset.ready do return
+    canvas_dark := rl.Color{91, 57, 31, 255}
+    leather := rl.Color{67, 39, 27, 255}
+    brass := rl.Color{176, 126, 51, 255}
+    harness_edge := rl.Color{126, 79, 42, 255}
+    harness_design := MOUSE_POSTAL_HARNESS
+    harness_clearance := harness_design.fur_clearance
+    saddle_clearance := harness_design.saddle_clearance
+
+    // A longitudinal quad grid follows the same dorsal skin surface as the
+    // mouse. The pouch adds only restrained local lag around its central
+    // anchor; the contact harness below never inherits this offset.
+    ROWS :: 9
+    COLUMNS :: 5
+    row_z := [ROWS]f32{-.62, -.56, -.49, -.42, -.35, -.28, -.21, -.15, -.10}
+    column_x := [COLUMNS]f32{-.25, -.13, 0, .13, .25}
+    posed: [ROWS][COLUMNS]third_person.Vec3
+    for row in 0 ..< ROWS {
+        for column in 0 ..< COLUMNS {
+            x := column_x[column]
+            z := row_z[row]
+            surface_y, _, hit := mouse_body_surface_height(skeleton, x, 1.2, z)
+            if !hit do surface_y = .64
+            // Keep a genuine air-filled pouch volume above the fitted saddle.
+            // Previously the crown began almost on the fur and disappeared
+            // into the torso anywhere the analytic body surface curved faster
+            // than this coarse grid.
+            lateral_fullness := 1 - math.abs(x) / .25
+            longitudinal_fullness := math.sin(f32(row) / f32(ROWS - 1) * math.PI)
+            crown := saddle_clearance + .034 + lateral_fullness * .036 + longitudinal_fullness * .014
+            local := third_person.Vec3{x, surface_y + crown, z}
+            pivot_z := f32(-.28)
+            local.x += editor.mouse_mailbag_yaw_lag * (z - pivot_z)
+            local.y += editor.mouse_mailbag_vertical_lag + editor.mouse_mailbag_roll_lag * x
+            posed[row][column] = mouse_mailbag_world_point(origin, rotation, local)
+        }
+    }
+    world_mouse_mailbag_imported_pouch(editor, origin, rotation, skeleton)
+
+    // Four named, body-fitted anchors form the leather saddle beneath the
+    // canvas pouch. Harness pieces attach here instead of targeting arbitrary
+    // pouch-grid vertices.
+    saddle_front_left, saddle_front_left_normal, _ := mouse_mailbag_body_surface_sample(
+        origin,
+        rotation,
+        skeleton,
+        -.105,
+        math.PI - .60,
+        saddle_clearance,
+    )
+    saddle_front_right, saddle_front_right_normal, _ := mouse_mailbag_body_surface_sample(
+        origin,
+        rotation,
+        skeleton,
+        -.105,
+        .60,
+        saddle_clearance,
+    )
+    saddle_rear_left, saddle_rear_left_normal, _ := mouse_mailbag_body_surface_sample(
+        origin,
+        rotation,
+        skeleton,
+        harness_design.rear_loop_z,
+        math.PI - .72,
+        saddle_clearance,
+    )
+    saddle_rear_right, saddle_rear_right_normal, _ := mouse_mailbag_body_surface_sample(
+        origin,
+        rotation,
+        skeleton,
+        harness_design.rear_loop_z,
+        .72,
+        saddle_clearance,
+    )
+    world_quad(saddle_rear_left, saddle_front_left, saddle_front_right, saddle_rear_right, canvas_dark)
+    world_quad(saddle_front_left, saddle_rear_left, saddle_rear_right, saddle_front_right, canvas_dark)
+
+    // The concept's Y harness is authored in body-surface coordinates:
+    // longitudinal Z plus an angle around the posed torso ellipse. Both
+    // branches terminate at one padded sternum junction, safely behind the
+    // throat and foreleg sockets.
+    BRANCH_SAMPLES :: MOUSE_HARNESS_BRANCH_SAMPLES
+    left_angle := [BRANCH_SAMPLES]f32 {
+        math.PI - harness_design.right_branch_angle[0],
+        math.PI - harness_design.right_branch_angle[1],
+        math.PI - harness_design.right_branch_angle[2],
+        math.PI - harness_design.right_branch_angle[3],
+        math.PI - harness_design.right_branch_angle[4],
+        math.PI - harness_design.right_branch_angle[5],
+        math.PI - harness_design.right_branch_angle[6],
+        math.PI - harness_design.right_branch_angle[7],
+        math.PI - harness_design.right_branch_angle[8],
+    }
+    left_branch, right_branch: [BRANCH_SAMPLES]third_person.Vec3
+    left_normals, right_normals: [BRANCH_SAMPLES]third_person.Vec3
+    for index in 0 ..< BRANCH_SAMPLES {
+        left_branch[index], left_normals[index], _ = mouse_mailbag_body_surface_sample(
+            origin,
+            rotation,
+            skeleton,
+            harness_design.branch_z[index],
+            left_angle[index],
+            harness_clearance,
+        )
+        right_branch[index], right_normals[index], _ = mouse_mailbag_body_surface_sample(
+            origin,
+            rotation,
+            skeleton,
+            harness_design.branch_z[index],
+            harness_design.right_branch_angle[index],
+            harness_clearance,
+        )
+    }
+    // The long branches terminate on stable saddle anchors. Separate short
+    // tabs below absorb the pouch's secondary displacement.
+    left_bag_anchor := posed[ROWS - 1][0]
+    right_bag_anchor := posed[ROWS - 1][COLUMNS - 1]
+    left_branch[0] = saddle_front_left
+    right_branch[0] = saddle_front_right
+    left_normals[0] = saddle_front_left_normal
+    right_normals[0] = saddle_front_right_normal
+    world_mouse_mailbag_surface_ribbon(
+        left_branch[:],
+        left_normals[:],
+        harness_design.strap_edge_half_width,
+        harness_edge,
+    )
+    world_mouse_mailbag_surface_ribbon(left_branch[:], left_normals[:], harness_design.strap_half_width, leather)
+    world_mouse_mailbag_surface_ribbon(
+        right_branch[:],
+        right_normals[:],
+        harness_design.strap_edge_half_width,
+        harness_edge,
+    )
+    world_mouse_mailbag_surface_ribbon(right_branch[:], right_normals[:], harness_design.strap_half_width, leather)
+
+    // Short flexible tabs carry pouch inertia into brass rings on the stable
+    // saddle. The long shoulder branches remain body-fitted and cannot kink.
+    left_tab := [3]third_person.Vec3 {
+        left_bag_anchor,
+        (left_bag_anchor + saddle_front_left) * .5 + saddle_front_left_normal * .012,
+        saddle_front_left,
+    }
+    right_tab := [3]third_person.Vec3 {
+        right_bag_anchor,
+        (right_bag_anchor + saddle_front_right) * .5 + saddle_front_right_normal * .012,
+        saddle_front_right,
+    }
+    left_tab_normals := [3]third_person.Vec3 {
+        saddle_front_left_normal,
+        saddle_front_left_normal,
+        saddle_front_left_normal,
+    }
+    right_tab_normals := [3]third_person.Vec3 {
+        saddle_front_right_normal,
+        saddle_front_right_normal,
+        saddle_front_right_normal,
+    }
+    world_mouse_mailbag_surface_ribbon(left_tab[:], left_tab_normals[:], .020, leather)
+    world_mouse_mailbag_surface_ribbon(right_tab[:], right_tab_normals[:], .020, leather)
+    world_box_rotated(saddle_front_left + saddle_front_left_normal * .010, {.026, .020, .024}, rotation, brass)
+    world_box_rotated(saddle_front_right + saddle_front_right_normal * .010, {.026, .020, .024}, rotation, brass)
+
+    // A shaped surface patch replaces the former yaw-only box, keeping the
+    // sternum pad flush to the lower chest in every pose.
+    sternum_outer: [4]third_person.Vec3
+    sternum_outer[0], _, _ = mouse_mailbag_body_surface_sample(
+        origin,
+        rotation,
+        skeleton,
+        .075,
+        -1.86,
+        harness_clearance + .006,
+    )
+    sternum_outer[1], _, _ = mouse_mailbag_body_surface_sample(
+        origin,
+        rotation,
+        skeleton,
+        .075,
+        -1.28,
+        harness_clearance + .006,
+    )
+    sternum_outer[2], _, _ = mouse_mailbag_body_surface_sample(
+        origin,
+        rotation,
+        skeleton,
+        .145,
+        -1.34,
+        harness_clearance + .006,
+    )
+    sternum_outer[3], _, _ = mouse_mailbag_body_surface_sample(
+        origin,
+        rotation,
+        skeleton,
+        .145,
+        -1.80,
+        harness_clearance + .006,
+    )
+    world_quad(sternum_outer[0], sternum_outer[1], sternum_outer[2], sternum_outer[3], harness_edge)
+    world_quad(sternum_outer[1], sternum_outer[0], sternum_outer[3], sternum_outer[2], harness_edge)
+
+    // The rear stabilizer is a closed circumferential loop sampled from the
+    // same posed ellipse as the hull, rather than an upper/lower height jump.
+    GIRTH_SAMPLES :: 17
+    girth, girth_normals: [GIRTH_SAMPLES]third_person.Vec3
+    for index in 0 ..< GIRTH_SAMPLES {
+        angle := math.PI / 2 + f32(index) / f32(GIRTH_SAMPLES - 1) * math.PI * 2
+        girth[index], girth_normals[index], _ = mouse_mailbag_body_surface_sample(
+            origin,
+            rotation,
+            skeleton,
+            harness_design.rear_loop_z,
+            angle,
+            harness_clearance,
+        )
+    }
+    world_mouse_mailbag_surface_ribbon(girth[:], girth_normals[:], harness_design.strap_edge_half_width, harness_edge)
+    world_mouse_mailbag_surface_ribbon(girth[:], girth_normals[:], harness_design.strap_half_width, leather)
+
+    left_rear_tab := [3]third_person.Vec3 {
+        posed[1][0],
+        (posed[1][0] + saddle_rear_left) * .5 + saddle_rear_left_normal * .010,
+        saddle_rear_left,
+    }
+    right_rear_tab := [3]third_person.Vec3 {
+        posed[1][COLUMNS - 1],
+        (posed[1][COLUMNS - 1] + saddle_rear_right) * .5 + saddle_rear_right_normal * .010,
+        saddle_rear_right,
+    }
+    left_rear_normals := [3]third_person.Vec3 {
+        saddle_rear_left_normal,
+        saddle_rear_left_normal,
+        saddle_rear_left_normal,
+    }
+    right_rear_normals := [3]third_person.Vec3 {
+        saddle_rear_right_normal,
+        saddle_rear_right_normal,
+        saddle_rear_right_normal,
+    }
+    world_mouse_mailbag_surface_ribbon(left_rear_tab[:], left_rear_normals[:], .020, leather)
+    world_mouse_mailbag_surface_ribbon(right_rear_tab[:], right_rear_normals[:], .020, leather)
+
+    // Mouse-scale hardware and the urgent-letter pocket are deliberately
+    // simple, stable accents on top of the deforming panel structure.
+    buckle_center := (left_branch[3] + left_branch[4]) * .5
+    world_box_rotated(buckle_center, {.020, .024, .028}, rotation, brass)
+    buckle_center = (right_branch[3] + right_branch[4]) * .5
+    world_box_rotated(buckle_center, {.020, .024, .028}, rotation, brass)
 }
 
 @(no_instrumentation)
@@ -18436,7 +18605,9 @@ world_mouse_ear :: proc(
 }
 
 player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
-    if editor == nil || delta_seconds <= 0 do return
+    if editor == nil do return
+    mouse_body_softness_update(editor, delta_seconds)
+    if delta_seconds <= 0 do return
     animation := &editor.tweak.player_animation
     horizontal_speed := f32(
         math.sqrt(
@@ -18745,6 +18916,7 @@ Mouse_Model :: struct {
     pattern:            Mouse_Fur_Pattern,
     scarf_enabled:      bool,
     scarf_color:        rl.Color,
+    mailbag_enabled:    bool,
     preview:            bool,
     player_controlled:  bool,
     track_paw_plants:   bool,
@@ -18819,12 +18991,14 @@ town_mouse_ground_cache_matches :: proc(
     scale: f32,
     project_revision, terrain_revision: u64,
 ) -> bool {
-    return entry != nil &&
-           entry.ground_valid &&
-           entry.ground_model == model &&
-           entry.ground_scale == scale &&
-           entry.ground_project_revision == project_revision &&
-           entry.ground_terrain_revision == terrain_revision
+    return(
+        entry != nil &&
+        entry.ground_valid &&
+        entry.ground_model == model &&
+        entry.ground_scale == scale &&
+        entry.ground_project_revision == project_revision &&
+        entry.ground_terrain_revision == terrain_revision \
+    )
 }
 
 when ODIN_TEST {
@@ -18833,13 +19007,13 @@ when ODIN_TEST {
         model := Mouse_Model {
             position = {12, 3, -8},
             rotation = .4,
-            build = 1.1,
+            build    = 1.1,
             grounded = true,
         }
         entry := Town_Mouse_Geometry_Cache_Entry {
-            ground_valid = true,
-            ground_model = model,
-            ground_scale = .9,
+            ground_valid            = true,
+            ground_model            = model,
+            ground_scale            = .9,
             ground_project_revision = 7,
             ground_terrain_revision = 11,
         }
@@ -19163,16 +19337,22 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             roll = body_roll * .58,
         },
         {
-            parent = 3,
+            parent        = 3,
             bind_position = {0, .69, .20},
             // Sniffing belongs to the head pose so the connected snout hull
             // travels with the nose, whiskers, and teeth attached to its tip.
-            position = {head_sway + head_turn_x, head_y, head_z + .20 + sniff},
-            pitch = run_weight * .055 - bound * .060 + slope_pitch * .42 + scurry_lean * .42,
-            roll = body_roll * .22,
+            position      = {head_sway + head_turn_x, head_y, head_z + .20 + sniff},
+            pitch         = run_weight * .055 -
+            bound * .060 +
+            slope_pitch * .42 +
+            scurry_lean * .42,
+            roll          = body_roll *
+            .22,
         },
     }
-    world_mouse_skinned_hull(p, rotation, &skeleton, fur, fur_dark, fur_light, model.pattern, breathing)
+    softness := model.player_controlled ? &editor.player_body_softness : nil
+    world_mouse_skinned_hull(p, rotation, &skeleton, fur, fur_dark, fur_light, model.pattern, breathing, softness)
+    if model.mailbag_enabled do world_mouse_mailbag(editor, p, rotation, &skeleton)
 
     ear_offsets := [2]f32{-.125, .125}
     for ear_x in ear_offsets {
@@ -20113,6 +20293,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             {bind_position = fore_socket_bind, groups = {{.Chest, .68}, {.Spine, .32}}},
             &skeleton,
         )
+        posed_fore_socket += mouse_body_softness_sample(softness, fore_socket_bind)
         fore_shoulder := local_point(p, rotation, posed_fore_socket.x, posed_fore_socket.y, posed_fore_socket.z)
         fore_elbow := local_point(
             p,
@@ -20228,6 +20409,17 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             FORE_UPPER_LENGTH,
             FORE_LOWER_LENGTH,
         )
+        if model.player_controlled {
+            mouse_body_softness_accumulate_capsule(
+                &editor.player_body_softness,
+                p,
+                rotation,
+                fore_shoulder,
+                fore_elbow,
+                animation.body_softness_strength,
+                animation.body_softness_influence_radius,
+            )
+        }
         fore_wrist := third_person.Vec3 {
             fore_elbow.x * .30 + fore_paw.x * .70,
             fore_elbow.y * .30 + fore_paw.y * .70,
@@ -20268,6 +20460,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             {bind_position = hind_socket_bind, groups = {{.Pelvis, .82}, {.Spine, .18}}},
             &skeleton,
         )
+        posed_hind_socket += mouse_body_softness_sample(softness, hind_socket_bind)
         hind_hip := local_point(p, rotation, posed_hind_socket.x, posed_hind_socket.y, posed_hind_socket.z)
         // The hind leg needs both a forward knee and a rear hock. Collapsing
         // those joints into one segment hides the entire chain inside the
@@ -20331,6 +20524,17 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         hind_chain := [4]third_person.Vec3{hind_hip, hind_knee, hind_hock, hind_paw}
         mouse_constrain_hind_chain(&hind_chain, HIND_LENGTHS, model_forward)
         hind_hip, hind_knee, hind_hock, hind_paw = hind_chain[0], hind_chain[1], hind_chain[2], hind_chain[3]
+        if model.player_controlled {
+            mouse_body_softness_accumulate_capsule(
+                &editor.player_body_softness,
+                p,
+                rotation,
+                hind_hip,
+                hind_knee,
+                animation.body_softness_strength,
+                animation.body_softness_influence_radius,
+            )
+        }
         if model.hide_hind_feet {
             // Vehicle seats conceal the folded rear feet. Stop the visible
             // limb at the hock so pads and toes cannot poke through bodywork.
@@ -20508,6 +20712,7 @@ world_character :: proc(editor: ^Editor) {
             pattern = editor.mouse_pattern,
             scarf_enabled = editor.mouse_scarf_enabled,
             scarf_color = editor.mouse_scarf_color,
+            mailbag_enabled = true,
             player_controlled = true,
             track_paw_plants = true,
             grounded = editor.player.grounded,
@@ -21271,6 +21476,71 @@ world_town_mice :: proc(editor: ^Editor) {
     world_story_meeting(editor)
 }
 
+world_lighthouse_keeper_pose :: proc(
+    editor: ^Editor,
+    structure: terrain.Structure,
+) -> (
+    position: third_person.Vec3,
+    rotation: f32,
+    ok: bool,
+) {
+    if editor == nil || structure.kind != .Architecture do return {}, 0, false
+    identity := architecture.architecture_resolve_legacy_identity(structure)
+    if identity.archetype != .Lighthouse do return {}, 0, false
+    x, z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        structure.width * .23,
+        structure.depth * .5 + 1.8,
+        structure.rotation,
+    )
+    ground_y := terrain.sample_height(&editor.project, 0, x, z)
+    if ground_y <= editor.project.sea_level + .35 do return {}, 0, false
+    return {x, ground_y, z}, structure.rotation + math.PI * .5, true
+}
+
+world_lighthouse_keepers :: proc(editor: ^Editor) {
+    if editor == nil do return
+    keeper_index := 0
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        position, rotation, found := world_lighthouse_keeper_pose(editor, structure)
+        if !found do continue
+        if !world_sphere_in_view(editor, position + third_person.Vec3{0, 1.1, 0}, 2.2, 4) {
+            keeper_index += 1
+            continue
+        }
+        world_lighthouse_keeper_model(editor, position, rotation, keeper_index == 0)
+        keeper_index += 1
+    }
+}
+
+world_lighthouse_keeper_model :: proc(
+    editor: ^Editor,
+    position: third_person.Vec3,
+    rotation: f32,
+    west_keeper: bool,
+    grounded: bool = true,
+    scale: f32 = 1,
+) {
+    if editor == nil do return
+    world_mouse_model_scaled(
+        editor,
+        {
+            position = position,
+            rotation = rotation,
+            build = west_keeper ? f32(1.08) : f32(.94),
+            snout_length = west_keeper ? f32(.94) : f32(1.08),
+            accessory = .Bottle_Cap,
+            fur = west_keeper ? Mouse_Fur.Soot : Mouse_Fur.Silver,
+            pattern = .Pale_Belly,
+            scarf_enabled = true,
+            scarf_color = west_keeper ? rl.Color{218, 151, 43, 255} : rl.Color{184, 62, 48, 255},
+            grounded = grounded,
+        },
+        scale,
+    )
+}
+
 world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: rl.Color) {
     if editor == nil do return
     segments := 48
@@ -21532,7 +21802,9 @@ ground_grass_chunk_build :: proc(
         x := f32(world_grid_x) * GROUND_GRASS_SPACING + jitter_x
         z := f32(world_grid_z) * GROUND_GRASS_SPACING + jitter_z
         height_at := terrain.sample_height(&editor.project, 0, x, z)
-        if farmland_excludes_ground_grass(editor, x, z) || !wildflowers_renderable_at(editor, x, z, circulation_plan) {
+        if farmland_excludes_ground_grass(editor, x, z) ||
+           settlement_patios_contain_point(editor, x, z, .12) ||
+           !wildflowers_renderable_at(editor, x, z, circulation_plan) {
             continue
         }
         architecture_height_scale := world_architecture_grass_height_scale(building_footprints, x, z)
@@ -21732,6 +22004,7 @@ world_ground_grass :: proc(editor: ^Editor) {
             if chunk == nil do continue
             for &cached in chunk.entries[:chunk.count] {
                 x, z := cached.grass.center[0], cached.grass.center[2]
+                if settlement_patios_contain_point(editor, x, z, .12) do continue
                 dx, dz := x - field_x, z - field_z
                 distance_squared := dx * dx + dz * dz
                 if distance_squared > radius_squared do continue
@@ -21826,7 +22099,15 @@ world_build :: proc(editor: ^Editor) {
         world_vehicle_showcase(editor)
         return
     }
-    if lab_scene_draw_world(editor) do return
+    if lab_scene_draw_world(editor) {
+        // Replacement labs return before the ordinary world tail, but their
+        // emissive halos, light pools, and beam sheets still need the same
+        // late transparent submission used by gameplay worlds.
+        world_renderer.late_transparent_first = len(world_renderer.vertices)
+        append(&world_renderer.vertices, ..world_renderer.late_transparent_vertices[:])
+        world_renderer.late_transparent_count = len(world_renderer.vertices) - world_renderer.late_transparent_first
+        return
+    }
     // Depth testing makes submission order independent. Put authored gameplay
     // meshes first so dense terrain can consume only the remaining capacity
     // instead of silently dropping vehicles at the end of the frame.
@@ -21857,6 +22138,7 @@ world_build :: proc(editor: ^Editor) {
     // exposing a one-frame ordering gap.
     world_renderer.dynamic_caster_first = len(world_renderer.vertices)
     world_npc_boats(editor)
+    world_bird_flocks(editor)
     world_aircraft(editor)
     world_car(editor)
     world_car_pilot(editor)
@@ -21871,8 +22153,10 @@ world_build :: proc(editor: ^Editor) {
     world_marta(editor)
     world_gerta(editor)
     world_marin(editor)
+    world_lighthouse_keepers(editor)
     world_town_mice(editor)
     world_settlement_inhabitants(editor)
+    world_settlement_patios(editor)
     world_authored_farmland(editor)
     world_authored_wrecks(editor)
     lab_scene_draw_world_overlay(editor)
@@ -21886,6 +22170,7 @@ world_build :: proc(editor: ^Editor) {
     )
     world_brush(editor)
     world_vehicle_particles(editor)
+    world_player_terrain_particles(editor)
     world_petal_particles(editor)
     world_wing_trails(editor)
     world_rondine_wake_fans(editor)
@@ -22002,6 +22287,38 @@ world_vehicle_particles :: proc(editor: ^Editor) {
             color = {177, 111, 62, 190}
         case .Grass:
             color = {119, 126, 78, 132}
+        case .Sand:
+            color = {210, 192, 150, 150}
+        }
+        world_vehicle_particle(camera, particle, color)
+    }
+}
+
+world_player_terrain_particles :: proc(editor: ^Editor) {
+    camera := perspective_camera(
+        editor.camera_pose,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
+    )
+    for particle in editor.player_terrain_effects.dust[:editor.player_terrain_effects.dust_count] {
+        if !world_sphere_in_view(
+            editor,
+            {particle.position.x, particle.position.y, particle.position.z},
+            max(particle.size * 2, f32(.25)),
+        ) {
+            continue
+        }
+        color := rl.Color{151, 148, 87, 184}
+        switch particle.surface {
+        case .Asphalt:
+            color = {116, 123, 124, 62}
+        case .Gravel:
+            color = {203, 181, 133, 178}
+        case .Cobblestone:
+            color = {156, 162, 157, 105}
+        case .Dirt:
+            color = {177, 111, 62, 190}
+        case .Grass:
+            color = {151, 148, 87, 184}
         case .Sand:
             color = {210, 192, 150, 150}
         }

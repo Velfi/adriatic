@@ -41,7 +41,14 @@ dockmaster_dinghy_is_a_small_complete_harbor_tender :: proc(t: ^testing.T) {
     testing.expect(t, spec.beam == 1.35)
     testing.expect(t, spec.length < boats.specifications(.Motor).length * .5)
     testing.expect(t, mesh.vertex_count > 0)
-    testing.expect(t, mesh.triangle_count > 0)
+    testing.expect(t, mesh.triangle_count > 140)
+    saw_recessed_cockpit, saw_painted_trim := false, false
+    for vertex in boats.vertices(&mesh) {
+        saw_recessed_cockpit = saw_recessed_cockpit || vertex.part == .Tire
+        saw_painted_trim = saw_painted_trim || vertex.part == .Accent
+    }
+    testing.expect(t, saw_recessed_cockpit)
+    testing.expect(t, saw_painted_trim)
 }
 
 @(test)

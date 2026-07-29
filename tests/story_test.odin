@@ -73,19 +73,7 @@ speaker_labels_resolve_to_the_active_resident :: proc(t: ^testing.T) {
         "TOMA · POSTMASTER",
         "LENA · POSTMASTER",
     }
-    expected := [?]story.Resident {
-        .Marta,
-        .Gerta,
-        .Niko,
-        .Iva,
-        .Bojan,
-        .Zora,
-        .Vesna,
-        .Petar,
-        .Anica,
-        .Toma,
-        .Lena,
-    }
+    expected := [?]story.Resident{.Marta, .Gerta, .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena}
     for label, index in labels {
         resident, found := story.resident_from_speaker(label)
         testing.expect(t, found && resident == expected[index])
@@ -119,11 +107,59 @@ island_post_is_always_available_and_alternates_between_islands :: proc(t: ^testi
 }
 
 @(test)
+careful_post_crossings_earn_merit_stamps :: proc(t: ^testing.T) {
+    state: story.State
+
+    for crossing in 0 ..< 3 {
+        testing.expect(t, story.begin_post_delivery(&state))
+        testing.expect(t, story.choose_cargo_care(&state, .Orderly))
+        recipient := crossing % 2 == 0 ? story.Resident.Lena : story.Resident.Toma
+        testing.expect(t, story.complete_delivery(&state, recipient))
+    }
+
+    testing.expect(t, state.careful_deliveries == 3)
+    testing.expect(t, state.bonus_stamps == 1)
+    testing.expect(t, state.stamps_earned == 4)
+}
+
+@(test)
+expressive_post_crossings_change_history_without_merit_bonus :: proc(t: ^testing.T) {
+    state: story.State
+
+    testing.expect(t, story.begin_post_delivery(&state))
+    testing.expect(t, story.choose_cargo_care(&state, .Expressive))
+    testing.expect(t, story.complete_delivery(&state, .Lena))
+
+    testing.expect(t, state.expressive_deliveries == 1)
+    testing.expect(t, state.careful_deliveries == 0)
+    testing.expect(t, state.bonus_stamps == 0)
+    testing.expect(t, state.stamps_earned == 1)
+}
+
+@(test)
+quest_ledger_uses_characterful_titles_with_clear_instructions :: proc(t: ^testing.T) {
+    catalog: story.Quest_Catalog
+    story.init_quest_catalog(&catalog)
+
+    magneto := quest.find_node(&catalog.definition, story.quest_node_id(.Magneto_Westbound))
+    wing := quest.find_node(&catalog.definition, story.quest_node_id(.Wing_Diagnosed))
+    letter := quest.find_node(&catalog.definition, story.quest_node_id(.First_Letter))
+    testing.expect(t, magneto != nil && magneto.title == "A Spark Across the Water")
+    testing.expect(t, wing != nil && wing.title == "Canvas and Crosswind")
+    testing.expect(t, letter != nil && letter.title == "A Recipe for a Clear Morning")
+    testing.expect(t, magneto != nil && magneto.objective.key == "broken-magneto")
+    testing.expect(t, wing != nil && wing.objective.key == "bojan-wing")
+    testing.expect(t, letter != nil && letter.objective.key == "first-letter")
+}
+
+@(test)
 island_post_departures_include_cycle_aware_handoffs :: proc(t: ^testing.T) {
     catalog: story.Catalog
     story.init_catalog(&catalog)
     state: story.State
-    ctx := dialogue.Context{data = rawptr(&state)}
+    ctx := dialogue.Context {
+        data = rawptr(&state),
+    }
 
     toma, toma_opened := dialogue.open(&catalog.toma, ctx)
     testing.expect(t, toma_opened)
@@ -154,7 +190,9 @@ island_post_arrivals_have_cycle_aware_player_shaped_payoffs :: proc(t: ^testing.
     catalog: story.Catalog
     story.init_catalog(&catalog)
     state: story.State
-    ctx := dialogue.Context{data = rawptr(&state)}
+    ctx := dialogue.Context {
+        data = rawptr(&state),
+    }
 
     testing.expect(t, story.begin_post_delivery(&state))
     lena, lena_opened := dialogue.open(&catalog.lena, ctx)
@@ -165,7 +203,7 @@ island_post_arrivals_have_cycle_aware_player_shaped_payoffs :: proc(t: ^testing.
     testing.expect(
         t,
         dialogue.current(&lena).text(&lena.ctx) ==
-            "Pane still soft, postcards flat, pressed flower intact. Toma put it inside a customs declaration; apparently tenderness now requires paperwork.",
+        "Pane ancora morbido, postcards piatte, fiore pressato intact. Toma l'ha messo in una customs declaration; apparentemente la tendresse demande paperwork.",
     )
     testing.expect(t, dialogue.choose(&lena, 1))
     testing.expect(t, dialogue.current(&lena).id == "lena-teasing")
@@ -181,7 +219,7 @@ island_post_arrivals_have_cycle_aware_player_shaped_payoffs :: proc(t: ^testing.
     testing.expect(
         t,
         dialogue.current(&toma).text(&toma.ctx) ==
-            "Lamp glass whole, dinner note legible, pane wisely separate. Lena underlined SUPPER twice; this is no longer correspondence, it is navigation.",
+        "Lamp glass intera, dinner note leggibile, pane saggiamente separato. Lena ha sottolineato SUPPER due volte; non è plus correspondance, è navigation.",
     )
     testing.expect(t, dialogue.choose(&toma, 0))
     testing.expect(t, dialogue.current(&toma).id == "toma-orderly")
@@ -193,34 +231,42 @@ island_post_arrivals_have_cycle_aware_player_shaped_payoffs :: proc(t: ^testing.
 postmaster_receipt_attitudes_remember_each_cargo_cycle :: proc(t: ^testing.T) {
     toma_counts := [3]int{2, 4, 6}
     toma_orderly := [3]string {
-        "I observed. Dry corners, straight stack, niente crushed. A postmaster notices care even when the ledger has no column for it.",
-        "I observed. Weather reports flat, lamp glass whole, und no blue-pencil correction added en route. Excellent restraint.",
-        "I observed. Glass below, note above, zero unauthorized basil. Even la watering-can accusation arrived unbent.",
+        "Ho observé. Angoli asciutti, stack dritta, niente crushed. Un postmaster nota la cura anche quand il ledger non ha colonna.",
+        "Ho observé. Weather reports piatti, lamp glass intera, und zero correction in blue pencil en route. Excellent restraint.",
+        "Ho observé. Glass sotto, note sopra, zero basilico non autorizzato. Même l'accusa del watering can è arrivée dritta.",
     }
     toma_teasing := [3]string {
-        "Officially, la lamp glass had priority. Unofficially, I read SUPPER before checking the crack. Do not revise the ledger.",
-        "Lena returned every forecast con evidence. I inspected la blue pencil first—professional curiosity, naturellement.",
-        "The watering can was very clear. La lamp glass merely confirmed the parcel survived while my reputation did not.",
+        "Officiellement, la lamp glass aveva priorità. Non ufficialmente, ho letto SUPPER avant la crack. Non revisionare il ledger.",
+        "Lena ha ritornato ogni forecast con evidence. Ho inspectato la blue pencil prima—curiosità professionale, naturellement.",
+        "Il watering can era très chiaro. La lamp glass ha solo confirmato che il parcel è sopravvissuto; la mia réputation, non.",
     }
     lena_counts := [3]int{1, 3, 5}
     lena_orderly := [3]string {
-        "I observed. Dry paper, soft pane, every corner respected. Care is the one postal mark nobody can counterfeit.",
-        "I observed. Blue pencil dry, pane soft, postcards square. Even Toma's bite marks arrived exactly where recorded.",
-        "I observed. Basil upright, roots damp, customs form absurdly flat. Care can survive bureaucracy, apparently.",
+        "Ho observé. Carta asciutta, pane morbido, ogni angolo rispettato. La cura è il postal mark che nessuno può contraffare.",
+        "Ho observé. Blue pencil asciutta, pane morbido, postcards quadrate. Même i bite marks di Toma sono arrivati dove registrati.",
+        "Ho observé. Basilico verticale, radici umide, customs form assurdamente piatto. La cura può survivre alla burocrazia.",
     }
     lena_teasing := [3]string {
-        "Naturalmente. Toma supervises with both hands, then writes a form saying the parcel arranged itself. I shall file your testimony.",
-        "Personally, yes. He wrapped la pencil like crown jewels, puis denied every tooth mark in triplicate.",
-        "Toma supervised the basil until it acquired paperwork. I shall water la plant and archive his anxiety.",
+        "Naturalmente. Toma supervise con due mani, puis scrive un form dicendo che il parcel si è arrangiato. Archivierò la testimonianza.",
+        "Personalmente, sì. Ha protetto la pencil comme gioielli reali, puis negato ogni bite mark in triplicato.",
+        "Toma ha supervisé il basilico finché ha acquisito paperwork. Io irrigo la plant et archivio la sua ansia.",
     }
     for index in 0 ..< 3 {
-        toma_state := story.State{repeat_deliveries = toma_counts[index]}
-        toma_ctx := dialogue.Context{data = rawptr(&toma_state)}
+        toma_state := story.State {
+            repeat_deliveries = toma_counts[index],
+        }
+        toma_ctx := dialogue.Context {
+            data = rawptr(&toma_state),
+        }
         testing.expect(t, story.toma_post_orderly_close(&toma_ctx) == toma_orderly[index])
         testing.expect(t, story.toma_post_teasing_close(&toma_ctx) == toma_teasing[index])
 
-        lena_state := story.State{repeat_deliveries = lena_counts[index]}
-        lena_ctx := dialogue.Context{data = rawptr(&lena_state)}
+        lena_state := story.State {
+            repeat_deliveries = lena_counts[index],
+        }
+        lena_ctx := dialogue.Context {
+            data = rawptr(&lena_state),
+        }
         testing.expect(t, story.lena_post_orderly_close(&lena_ctx) == lena_orderly[index])
         testing.expect(t, story.lena_post_teasing_close(&lena_ctx) == lena_teasing[index])
     }
@@ -358,41 +404,22 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
     expect_choice_texts(
         t,
         catalog.niko_handoff_choices[:],
-        []string {
-            "I'll keep it dry and in order.",
-            "I'll ignore any personal evidence.",
-        },
+        []string{"I'll keep it dry and in order.", "I'll ignore any personal evidence."},
     )
-    expect_choice_texts(
-        t,
-        catalog.niko_handoff_close_choices[:],
-        []string{"East island, then."},
-    )
+    expect_choice_texts(t, catalog.niko_handoff_close_choices[:], []string{"East island, then."})
     expect_choice_texts(
         t,
         catalog.niko_together_choices[:],
         []string{"You found a good rhythm.", "I'll call the experiment successful."},
     )
-    expect_choice_texts(
-        t,
-        catalog.niko_together_close_choices[:],
-        []string{"I'll leave the scheduling to you."},
-    )
+    expect_choice_texts(t, catalog.niko_together_close_choices[:], []string{"I'll leave the scheduling to you."})
     expect_choice_texts(
         t,
         catalog.meeting_choices[:],
         []string{"The awning suits you both.", "I saw only an ordinary arrival."},
     )
-    expect_choice_texts(
-        t,
-        catalog.meeting_warm_choices[:],
-        []string{"And enough bread for a delayed plane."},
-    )
-    expect_choice_texts(
-        t,
-        catalog.meeting_discreet_choices[:],
-        []string{"I can forget the landing, not the bread."},
-    )
+    expect_choice_texts(t, catalog.meeting_warm_choices[:], []string{"And enough bread for a delayed plane."})
+    expect_choice_texts(t, catalog.meeting_discreet_choices[:], []string{"I can forget the landing, not the bread."})
     expect_choice_texts(t, catalog.meeting_finish_choices[:], []string{"Enjoy the regatta."})
     expect_choice_texts(
         t,
@@ -418,26 +445,15 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
     expect_choice_texts(
         t,
         catalog.iva_handoff_choices[:],
-        []string {
-            "I'll keep everything dry and intact.",
-            "I'll follow your packing instructions.",
-        },
+        []string{"I'll keep everything dry and intact.", "I'll follow your packing instructions."},
     )
-    expect_choice_texts(
-        t,
-        catalog.iva_handoff_close_choices[:],
-        []string{"West island, then."},
-    )
+    expect_choice_texts(t, catalog.iva_handoff_close_choices[:], []string{"West island, then."})
     expect_choice_texts(
         t,
         catalog.iva_together_choices[:],
         []string{"The system seems to suit you both.", "I'll trust your evidence."},
     )
-    expect_choice_texts(
-        t,
-        catalog.iva_together_close_choices[:],
-        []string{"I'll leave you to the next crossing."},
-    )
+    expect_choice_texts(t, catalog.iva_together_close_choices[:], []string{"I'll leave you to the next crossing."})
     expect_choice_texts(
         t,
         catalog.bojan_choices[:],
@@ -454,43 +470,22 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
     expect_choice_texts(
         t,
         catalog.bojan_inspect_choices[:],
-        []string {
-            "The rib is sound; only the canvas tore.",
-            "The ground signed its name here.",
-        },
+        []string{"The rib is sound; only the canvas tore.", "The ground signed its name here."},
     )
-    expect_choice_texts(
-        t,
-        catalog.bojan_inspect_close_choices[:],
-        []string{"Let's fit the canvas patch."},
-    )
+    expect_choice_texts(t, catalog.bojan_inspect_close_choices[:], []string{"Let's fit the canvas patch."})
     expect_choice_texts(t, catalog.bojan_patch_choices[:], []string{"Let's test the controls."})
     expect_choice_texts(
         t,
         catalog.bojan_repair_choices[:],
-        []string {
-            "The controls move cleanly.",
-            "All three wheels survived.",
-        },
+        []string{"The controls move cleanly.", "All three wheels survived."},
     )
-    expect_choice_texts(
-        t,
-        catalog.bojan_repair_close_choices[:],
-        []string{"Then the aeroplano is ready."},
-    )
+    expect_choice_texts(t, catalog.bojan_repair_close_choices[:], []string{"Then the aeroplano is ready."})
     expect_choice_texts(
         t,
         catalog.bojan_check_choices[:],
-        []string {
-            "Show me the inspection marks.",
-            "The patch outperforms its pilot.",
-        },
+        []string{"Show me the inspection marks.", "The patch outperforms its pilot."},
     )
-    expect_choice_texts(
-        t,
-        catalog.bojan_check_close_choices[:],
-        []string{"Keep it out of the ground."},
-    )
+    expect_choice_texts(t, catalog.bojan_check_close_choices[:], []string{"Keep it out of the ground."})
     expect_choice_texts(
         t,
         catalog.zora_choices[:],
@@ -500,6 +495,7 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
             "I have time. Lay out the full cross.",
             "Remind me what I should watch for.",
             "Another time, grazie.",
+            "Get an airfield weather reading.",
         },
     )
     expect_choice_texts(
@@ -507,24 +503,13 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
         catalog.zora_reading_choices[:],
         []string{"What should I watch for?", "Enough cards. I'll watch the real sky."},
     )
-    expect_choice_texts(
-        t,
-        catalog.zora_counsel_choices[:],
-        []string{"Then I'll choose the next crossing."},
-    )
+    expect_choice_texts(t, catalog.zora_counsel_choices[:], []string{"Then I'll choose the next crossing."})
     expect_choice_texts(
         t,
         catalog.zora_recall_choices[:],
-        []string {
-            "I'll act before asking the cards again.",
-            "I'll trust the sky more than the cards.",
-        },
+        []string{"I'll act before asking the cards again.", "I'll trust the sky more than the cards."},
     )
-    expect_choice_texts(
-        t,
-        catalog.zora_recall_close_choices[:],
-        []string{"Then I'll get moving."},
-    )
+    expect_choice_texts(t, catalog.zora_recall_close_choices[:], []string{"Then I'll get moving."})
     expect_choice_texts(
         t,
         catalog.vesna_choices[:],
@@ -533,6 +518,8 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
             "The landing looked softer from above.",
             "I checked the weather. It wasn't enough.",
             "I remembered where my glasses go.",
+            "Carry the clinic medicine east.",
+            "Give Vesna the sealed water.",
         },
     )
     expect_choice_texts(t, catalog.vesna_close_choices[:], []string{"I'll check the weather first."})
@@ -544,6 +531,7 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
             "The window was closer.",
             "The door was not involved this time.",
             "Do the linens recognize me now?",
+            "Carry the dry clinic linens east.",
         },
     )
     expect_choice_texts(t, catalog.petar_close_choices[:], []string{"I'll keep the linens out of it."})
@@ -555,55 +543,34 @@ character_dialogue_catalog_is_valid_and_meeting_finishes_through_dialogue :: pro
             "I thought the sea was keeping count.",
             "Water first. I remembered.",
             "Should I reserve this bed by name?",
+            "Give Anica the clinic medicine.",
+            "Give Anica the dry clinic linens.",
+            "Carry the sealed water west.",
         },
     )
-    expect_choice_texts(
-        t,
-        catalog.anica_close_choices[:],
-        []string{"I'll make the next appointment quieter."},
-    )
+    expect_choice_texts(t, catalog.anica_close_choices[:], []string{"I'll make the next appointment quieter."})
     expect_choice_texts(
         t,
         catalog.toma_handoff_choices[:],
-        []string {
-            "I'll follow the ledger exactly.",
-            "I'll improvise if the sea does.",
-        },
+        []string{"I'll follow the ledger exactly.", "I'll improvise if the sea does."},
     )
-    expect_choice_texts(
-        t,
-        catalog.toma_handoff_close_choices[:],
-        []string{"Eastbound, then."},
-    )
+    expect_choice_texts(t, catalog.toma_handoff_close_choices[:], []string{"Eastbound, then."})
     expect_choice_texts(
         t,
         catalog.toma_receipt_choices[:],
-        []string {
-            "Everything stayed in its proper place.",
-            "The supper note outranked the glass.",
-        },
+        []string{"Everything stayed in its proper place.", "The supper note outranked the glass."},
     )
     expect_choice_texts(t, catalog.toma_close_choices[:], []string{"Your ledger is safe with me."})
     expect_choice_texts(
         t,
         catalog.lena_handoff_choices[:],
-        []string {
-            "I'll keep Toma's post in order.",
-            "I'll make sure he reads SUPPER first.",
-        },
+        []string{"I'll keep Toma's post in order.", "I'll make sure he reads SUPPER first."},
     )
-    expect_choice_texts(
-        t,
-        catalog.lena_handoff_close_choices[:],
-        []string{"Westbound, then."},
-    )
+    expect_choice_texts(t, catalog.lena_handoff_close_choices[:], []string{"Westbound, then."})
     expect_choice_texts(
         t,
         catalog.lena_receipt_choices[:],
-        []string {
-            "Everything stayed dry and flat.",
-            "Toma supervised every item personally.",
-        },
+        []string{"Everything stayed dry and flat.", "Toma supervised every item personally."},
     )
     expect_choice_texts(t, catalog.lena_close_choices[:], []string{"I'll leave the filing to you."})
 
@@ -634,32 +601,35 @@ blue_awning_meeting_keeps_each_voice_distinct_on_both_paths :: proc(t: ^testing.
     testing.expect(
         t,
         story.meeting_iva_text(nil) ==
-            "The blue awning is exactly where Niko described it. Bojan calls il volo routine, mais routine landings use tutte three wheels, sì?",
+        "La tenda blu è exactement dove Niko l'ha descritta. Bojan chiama il volo routine, mais un atterraggio routine usa tutte tre ruote, sì?",
     )
     testing.expect(
         t,
         story.meeting_niko_warm(nil) ==
-            "The third wheel was decorative. Siediti, per favore; io made enough pane pour una regatta and one delayed aeroplano.",
+        "La terza ruota era décorative. Siediti, per favore; ho fatto abbastanza pane pour una regatta und un aeroplano tardivo.",
     )
     testing.expect(
         t,
         story.meeting_iva_warm_close(nil) ==
-            "He counted il pane twice und les minutes three times. I arrived before either ran out.",
+        "Ha contato il pane due volte und les minutes tre. Sono arrivata avant che finisse uno dei due.",
     )
     testing.expect(
         t,
         story.meeting_niko_discreet(nil) ==
-            "Then you saw nothing, grazie. Only un baker, una lighthouse keeper, und lunch beneath an ordinary awning.",
+        "Alors non hai visto niente, grazie. Solo un baker, una custode du phare, und pranzo sotto una tenda ordinaria.",
     )
     testing.expect(
         t,
         story.meeting_iva_discreet_close(nil) ==
-            "A very ordinary awning. Niko polished la frame ieri—due times, mit complete indifference.",
+        "Una tenda très ordinaria. Niko ha lucidato la frame ieri—due volte, mit completa indifferenza.",
     )
 
     catalog: story.Catalog
     story.init_catalog(&catalog)
-    state := story.State{romance = .Meeting, repair = .Repaired}
+    state := story.State {
+        romance = .Meeting,
+        repair  = .Repaired,
+    }
     conversation, opened := dialogue.open(
         &catalog.niko,
         {data = rawptr(&state), location_id = "west_island", resident_index = int(story.Resident.Niko)},
@@ -680,8 +650,13 @@ blue_awning_meeting_keeps_each_voice_distinct_on_both_paths :: proc(t: ^testing.
 niko_and_iva_keep_talking_after_the_meeting :: proc(t: ^testing.T) {
     catalog: story.Catalog
     story.init_catalog(&catalog)
-    state := story.State{romance = .Together, repeat_deliveries = 2}
-    ctx := dialogue.Context{data = rawptr(&state)}
+    state := story.State {
+        romance           = .Together,
+        repeat_deliveries = 2,
+    }
+    ctx := dialogue.Context {
+        data = rawptr(&state),
+    }
 
     niko, niko_opened := dialogue.open(&catalog.niko, ctx)
     testing.expect(t, niko_opened)
@@ -774,14 +749,14 @@ niko_and_iva_expose_truthful_alternating_package_handoffs_after_meeting :: proc(
     testing.expect(
         t,
         dialogue.current(&niko).text(&niko.ctx) ==
-            "For Iva: warm pane, postcards, und one pressed flower. Keep la package above the spray; sentiment has poor waterproofing.",
+        "For Iva: warm pane, postcards, und one pressed flower. Keep la package above the spray; sentiment has poor waterproofing.",
     )
     testing.expect(t, dialogue.choose(&niko, 0))
     testing.expect(t, dialogue.current(&niko).id == "niko-handoff-careful")
     testing.expect(
         t,
         dialogue.current(&niko).text(&niko.ctx) ==
-            "Grazie. Pane on top, postcards flat, flower sheltered. La package can survive il mare without becoming a story.",
+        "Grazie. Pane on top, postcards flat, flower sheltered. La package can survive il mare without becoming a story.",
     )
     testing.expect(t, dialogue.choose(&niko, 0))
     testing.expect(t, niko.ended)
@@ -799,14 +774,14 @@ niko_and_iva_expose_truthful_alternating_package_handoffs_after_meeting :: proc(
     testing.expect(
         t,
         dialogue.current(&iva).text(&iva.ctx) ==
-            "For Niko: lamp glass below, dinner note above. Keep la package dry; only one item survives being read in rain.",
+        "For Niko: lamp glass below, dinner note above. Keep la package dry; only one item survives being read in rain.",
     )
     testing.expect(t, dialogue.choose(&iva, 1))
     testing.expect(t, dialogue.current(&iva).id == "iva-handoff-lights")
     testing.expect(
         t,
         dialogue.current(&iva).text(&iva.ctx) ==
-            "Follow them exactly enough to blame me. La glass is fragile; il dinner note only pretends to be.",
+        "Follow them exactly enough to blame me. La glass is fragile; il dinner note only pretends to be.",
     )
 }
 
@@ -814,8 +789,13 @@ niko_and_iva_expose_truthful_alternating_package_handoffs_after_meeting :: proc(
 clinic_residents_respond_to_the_players_tone :: proc(t: ^testing.T) {
     catalog: story.Catalog
     story.init_catalog(&catalog)
-    state := story.State{clinic_visits = 1}
-    ctx := dialogue.Context{data = rawptr(&state), location_id = "clinic"}
+    state := story.State {
+        clinic_visits = 1,
+    }
+    ctx := dialogue.Context {
+        data        = rawptr(&state),
+        location_id = "clinic",
+    }
 
     vesna, vesna_opened := dialogue.open(&catalog.vesna, ctx)
     testing.expect(t, vesna_opened)
@@ -839,8 +819,13 @@ clinic_residents_respond_to_the_players_tone :: proc(t: ^testing.T) {
 clinic_residents_change_the_conversation_on_repeat_visits :: proc(t: ^testing.T) {
     catalog: story.Catalog
     story.init_catalog(&catalog)
-    state := story.State{clinic_visits = 3}
-    ctx := dialogue.Context{data = rawptr(&state), location_id = "clinic"}
+    state := story.State {
+        clinic_visits = 3,
+    }
+    ctx := dialogue.Context {
+        data        = rawptr(&state),
+        location_id = "clinic",
+    }
 
     vesna, vesna_opened := dialogue.open(&catalog.vesna, ctx)
     testing.expect(t, vesna_opened)
@@ -863,28 +848,27 @@ clinic_residents_change_the_conversation_on_repeat_visits :: proc(t: ^testing.T)
 
 @(test)
 clinic_trio_recognizes_repeat_visits_without_sharing_a_voice :: proc(t: ^testing.T) {
-    states := [3]story.State {
-        {clinic_visits = 2},
-        {clinic_visits = 3},
-        {clinic_visits = 4},
-    }
+    states := [3]story.State{{clinic_visits = 2}, {clinic_visits = 3}, {clinic_visits = 4}}
     vesna_expected := [3]string {
-        "Visit numero 2. Same pilot, new bruise, und familiar glasses. Bene: acqua first; then we compare your story with il meteo.",
-        "Visit numero 3. You know la routine: acqua, repos, then inspect il meteo before the motor.",
-        "Visit numero 4. La tray remembered your glasses; io prefer when patients learn faster than furniture. Acqua, repos, meteo.",
+        "Visita numero 2. Stesso pilota, nuova bruise, und occhiali familiari. Bene: acqua prima; puis compariamo la storia con il meteo.",
+        "Visita numero 3. Conosci la routine: acqua, repos, puis inspecta il meteo avant il motor.",
+        "Visita numero 4. Il tray ha ricordato gli occhiali; preferisco quando i pazienti imparano plus vite dei mobili. Acqua, repos, meteo.",
     }
     petar_expected := [3]string {
-        "Visit numero 2. La scarf is dry, the door remains innocent, und your aeroplano waits outside. In questo order.",
-        "Visit numero 3. Your glasses found la tray without assistance. I wish il pilot showed equal navigation.",
-        "Visit numero 4. Una dry scarf, due clean sheets, und zero applause. Vesna handles medicine; io protect the linens.",
+        "Visita numero 2. La scarf è asciutta, la door resta innocente, und l'aeroplano aspetta fuori. In questo ordine.",
+        "Visita numero 3. Gli occhiali hanno trouvé il tray senza assistenza. Magari il pilota mostrasse uguale navigation.",
+        "Visita numero 4. Una scarf asciutta, due sheets pulite, und zero applausi. Vesna gestisce medicine; io proteggo le linens.",
     }
     anica_expected := [3]string {
-        "Again, numero 2. I moved the acqua closer and la appointment book farther away. One of us is learning.",
-        "Again you, visit numero 3. Il mare pardons beaucoup, but it does not keep my records.",
-        "Visit numero 4. Acqua waits by the bed, meteo waits on the wall, und il mare waits for nobody. Choose the first.",
+        "Encore, numero 2. Ho mosso l'acqua plus vicina et l'appointment book plus lontano. Una di noi sta imparando.",
+        "Encore tu, visita numero 3. Il mare pardonne beaucoup, mais non conserva i miei records.",
+        "Visita numero 4. Acqua aspetta al letto, meteo sul muro, und il mare non aspetta nessuno. Scegli la prima.",
     }
     for index in 0 ..< len(states) {
-        ctx := dialogue.Context{data = rawptr(&states[index]), location_id = "clinic"}
+        ctx := dialogue.Context {
+            data        = rawptr(&states[index]),
+            location_id = "clinic",
+        }
         testing.expect(t, story.vesna_text(&ctx) == vesna_expected[index])
         testing.expect(t, story.petar_text(&ctx) == petar_expected[index])
         testing.expect(t, story.anica_text(&ctx) == anica_expected[index])
@@ -916,8 +900,7 @@ bojan_repair_plays_as_one_collaborative_conversation :: proc(t: ^testing.T) {
     testing.expect(t, dialogue.current(&conversation).id == "bojan-inspect-practical")
     testing.expect(
         t,
-        dialogue.current(&conversation).text(&conversation.ctx) ==
-            story.bojan_inspect_practical_close(nil),
+        dialogue.current(&conversation).text(&conversation.ctx) == story.bojan_inspect_practical_close(nil),
     )
     testing.expect(t, dialogue.choose(&conversation, 0))
 
@@ -969,7 +952,9 @@ bojan_answers_both_inspection_attitudes_without_changing_the_repair :: proc(t: ^
     catalog: story.Catalog
     story.init_catalog(&catalog)
     for choice_index in 0 ..< len(catalog.bojan_inspect_choices) {
-        state := story.State{repair = .Crash_Reported}
+        state := story.State {
+            repair = .Crash_Reported,
+        }
         conversation, opened := dialogue.open(
             &catalog.bojan,
             {data = rawptr(&state), location_id = "west_island", resident_index = int(story.Resident.Bojan)},
@@ -1009,7 +994,7 @@ bojan_remembers_the_repair_and_responds_to_the_players_tone :: proc(t: ^testing.
     testing.expect(
         t,
         dialogue.current(&teasing).text(&teasing.ctx) ==
-            "Iva marks every flight in a little meteo book. Beside my last landing she wrote: 'adequate, eventually.' Très scientific.",
+        "Iva marks every flight in a little meteo book. Beside my last landing she wrote: 'adequate, eventually.' Très scientific.",
     )
     testing.expect(t, dialogue.choose(&teasing, 1))
     testing.expect(t, dialogue.current(&teasing).id == "bojan-check-teasing")
@@ -1091,33 +1076,34 @@ dialogue_text_and_choices_follow_story_and_repair_state :: proc(t: ^testing.T) {
 
     testing.expect(
         t,
-        story.niko_text(&ctx) == "La lamp on the east island blinks twice avant alba. Iva watches while my ovens warm.",
+        story.niko_text(&ctx) ==
+        "La lampe dell'isola est clignote due volte avant alba. Iva veglia mentre les forni scaldano.",
     )
     testing.expect(
         t,
         story.bojan_text(&ctx) ==
-        "La landing was perfekt. The ground arrived troppo early. You saw zero complication.",
+        "L'atterraggio era perfekt. Le sol è arrivato troppo presto. Hai visto zero complication.",
     )
     testing.expect(
         t,
         story.zora_text(&ctx) ==
-        "Close la shutter, piccolo courier. The bura already mixes enough. Le cards do not command il mare; they show only where the vento turns.",
+        "Ferme la persiana, piccolo corriere, que la bura mélange ya abbastanza. Die carte non commandano el mare; solamente indicano dónde der vento quiere girare.",
     )
 
     state.romance = .Invitation
     testing.expect(
         t,
-        story.iva_text(&ctx) == "Io can respond to Niko, but la broken wing cannot carry me. Nema regatta yet.",
+        story.iva_text(&ctx) == "Io posso répondre a Niko, mais l'ala rotta non può portarmi. Nema regatta ancora.",
     )
     repair_aircraft(t, &state)
     testing.expect(
         t,
         story.iva_text(&ctx) ==
-        "Tu repaired Bojan's aeroplano before io needed it. Grazie; now you can carry la regatta acceptance.",
+        "Tu hai réparé l'aeroplano di Bojan avant che servisse. Grazie; ora puoi portare la regatta acceptance.",
     )
     testing.expect(
         t,
-        story.bojan_text(&ctx) == "L'aereo is ready for Iva. Io even cleaned the seat that is not mine.",
+        story.bojan_text(&ctx) == "L'aereo è pronto pour Iva. Ho même pulito il seat che non mi appartiene.",
     )
 
     iva_conversation, opened := dialogue.open(
@@ -1126,10 +1112,7 @@ dialogue_text_and_choices_follow_story_and_repair_state :: proc(t: ^testing.T) {
     )
     testing.expect(t, opened)
     testing.expect(t, dialogue.available_count(&iva_conversation) == 2)
-    testing.expect(
-        t,
-        dialogue.available_at(&iva_conversation, 0).text == "I'll take Niko the regatta acceptance.",
-    )
+    testing.expect(t, dialogue.available_at(&iva_conversation, 0).text == "I'll take Niko the regatta acceptance.")
     testing.expect(t, dialogue.available_at(&iva_conversation, 1).text == "I'll leave you to tend the lamp.")
 }
 
@@ -1247,6 +1230,89 @@ two_island_quest_graph_projects_to_legacy_story_stages :: proc(t: ^testing.T) {
 }
 
 @(test)
+resident_errands_require_real_inspection_and_cross_island_deliveries :: proc(t: ^testing.T) {
+    state: story.State
+    catalog: story.Quest_Catalog
+    story.init_quest_catalog(&catalog)
+
+    testing.expect(t, story.accept_weather_reading(&state))
+    testing.expect(t, !state.weather_reading_done)
+    testing.expect(t, story.complete_weather_reading(&state))
+    testing.expect(t, state.weather_reading_done)
+    testing.expect(t, quest.is_complete(&state.quest, &catalog.definition, story.quest_node_id(.Weather_Reading)))
+
+    testing.expect(t, story.begin_local_delivery(&state, .Clinic_Medicine))
+    testing.expect(t, state.delivery.from == .Vesna && state.delivery.to == .Anica)
+    testing.expect(t, story.complete_delivery(&state, .Anica))
+    testing.expect(t, state.medicine_delivered)
+
+    testing.expect(t, story.begin_local_delivery(&state, .Clinic_Linens))
+    testing.expect(t, state.delivery.from == .Petar && state.delivery.to == .Anica)
+    testing.expect(t, story.complete_delivery(&state, .Anica))
+    testing.expect(t, state.linens_delivered)
+
+    testing.expect(t, story.begin_local_delivery(&state, .Clinic_Water))
+    testing.expect(t, state.delivery.from == .Anica && state.delivery.to == .Vesna)
+    testing.expect(t, story.complete_delivery(&state, .Vesna))
+    testing.expect(t, state.water_delivered)
+    testing.expect(t, state.stamps_earned == 0)
+    testing.expect(t, state.has_weather_briefing)
+    testing.expect(t, state.has_clinic_satchel)
+    testing.expect(t, state.has_dry_wrap)
+    testing.expect(t, state.has_recovery_kit)
+}
+
+@(test)
+resident_errands_do_not_overwrite_active_cargo :: proc(t: ^testing.T) {
+    state: story.State
+    testing.expect(t, story.begin_post_delivery(&state))
+    testing.expect(t, !story.begin_local_delivery(&state, .Clinic_Medicine))
+    testing.expect(t, state.delivery.kind == .Repeat_Eastbound)
+}
+
+@(test)
+resident_errands_are_playable_through_dialogue_choices :: proc(t: ^testing.T) {
+    catalog: story.Catalog
+    story.init_catalog(&catalog)
+
+    weather_state: story.State
+    zora, zora_opened := dialogue.open(&catalog.zora, {data = rawptr(&weather_state)})
+    testing.expect(t, zora_opened)
+    testing.expect(t, dialogue.choose(&zora, 4))
+    testing.expect(t, story.quest_is_active(&weather_state, .Weather_Reading))
+
+    medicine_state: story.State
+    vesna, vesna_opened := dialogue.open(&catalog.vesna, {data = rawptr(&medicine_state)})
+    testing.expect(t, vesna_opened)
+    testing.expect(t, dialogue.choose(&vesna, 2))
+    testing.expect(t, medicine_state.delivery.kind == .Clinic_Medicine)
+    anica, anica_opened := dialogue.open(&catalog.anica, {data = rawptr(&medicine_state)})
+    testing.expect(t, anica_opened)
+    testing.expect(t, dialogue.choose(&anica, 2))
+    testing.expect(t, medicine_state.medicine_delivered)
+
+    linens_state: story.State
+    petar, petar_opened := dialogue.open(&catalog.petar, {data = rawptr(&linens_state)})
+    testing.expect(t, petar_opened)
+    testing.expect(t, dialogue.choose(&petar, 2))
+    testing.expect(t, linens_state.delivery.kind == .Clinic_Linens)
+    anica, anica_opened = dialogue.open(&catalog.anica, {data = rawptr(&linens_state)})
+    testing.expect(t, anica_opened)
+    testing.expect(t, dialogue.choose(&anica, 2))
+    testing.expect(t, linens_state.linens_delivered)
+
+    water_state: story.State
+    anica, anica_opened = dialogue.open(&catalog.anica, {data = rawptr(&water_state)})
+    testing.expect(t, anica_opened)
+    testing.expect(t, dialogue.choose(&anica, 2))
+    testing.expect(t, water_state.delivery.kind == .Clinic_Water)
+    vesna, vesna_opened = dialogue.open(&catalog.vesna, {data = rawptr(&water_state)})
+    testing.expect(t, vesna_opened)
+    testing.expect(t, dialogue.choose(&vesna, 2))
+    testing.expect(t, water_state.water_delivered)
+}
+
+@(test)
 legacy_story_actions_publish_into_authoritative_quest_state :: proc(t: ^testing.T) {
     state: story.State
     catalog: story.Quest_Catalog
@@ -1306,63 +1372,63 @@ marta_and_gerta_remember_the_magneto_errand_without_flattening_their_difference 
     testing.expect(
         t,
         story.magneto_memory_text(.Marta) ==
-            "The replacement magneto starts before my coffee now. Gerta calls this proof she was right; io call it proof the old one deserved retirement with honors.",
+        "Il replacement magneto parte avant il caffè. Gerta chiama questo prova che aveva raison; io, che il vecchio meritava pensione con onore.",
     )
     testing.expect(
         t,
         story.magneto_memory_text(.Gerta) ==
-            "Marta reports the replacement magneto starts first pull. She says this proves her maintenance was correct. Curiously, it also proves my replacement was correct.",
+        "Marta rapporte che il replacement magneto parte al primo tiraggio. Per lei prova la maintenance; curiosamente, prova aussi la mia replacement.",
     )
 
     testing.expect(
         t,
         story.magneto_opinion_text(.Marta, .Marta) ==
-            "Esatto. Two extra summers from one cracked magneto is not stubbornness; it is careful retirement planning. Tell Gerta slowly.",
+        "Esatto. Due estati extra da un cracked magneto non sono ostinazione; sono planification prudente della pensione. Dillo a Gerta lentamente.",
     )
     testing.expect(
         t,
         story.magneto_opinion_text(.Marta, .Gerta) ==
-            "Also true. Gerta found the right replacement before I admitted needing it. Una sister may be correct without receiving a parade.",
+        "Aussi vero. Gerta ha trouvé la replacement corretta avant che ammettessi il bisogno. Una sister può avere raison senza una parade.",
     )
     testing.expect(
         t,
         story.magneto_opinion_text(.Gerta, .Marta) ==
-            "Fair. Marta heard the crack before any instrument did and kept it safe until replacement. I shall concede this in very small handwriting.",
+        "Correct. Marta ha sentito la crack avant ogni instrument e l'ha tenuta sicura fino alla replacement. Lo concederò in scrittura très piccola.",
     )
     testing.expect(
         t,
         story.magneto_opinion_text(.Gerta, .Gerta) ==
-            "Ja. Correct series, correct timing, dry delivery. But if Marta asks, say only that la machine made an independent decision.",
+        "Ja. Serie corretta, timing corretto, delivery asciutta. Mais se Marta domanda, dite solo che la machine ha deciso indépendamment.",
     )
     testing.expect(
         t,
         story.magneto_accept_careful_text() ==
-            "Bene. Oilcloth around il metal, knot away from the terminals, und broken magneto above the spray. Gerta appreciates correct nouns.",
+        "Bene. Oilcloth intorno al metal, knot lontano dai terminals, und broken magneto sopra lo spray. Gerta apprécie i nomi corretti.",
     )
     testing.expect(
         t,
         story.magneto_accept_inspection_text() ==
-            "Only couriers with wet socks. Arrive asciutto, say 'broken magneto' before any story, et she may inspect merely your knot.",
+        "Solo corrieri con calze bagnate. Arriva asciutto, di' broken magneto avant ogni storia, et forse inspecta solo il knot.",
     )
     testing.expect(
         t,
         story.magneto_handoff_crack_text() ==
-            "Ja. Under clean oil, la crack runs farther than it confessed. Same series, correct replacement, und no more borrowed summers.",
+        "Ja. Sotto olio pulito, la crack continua plus lontano di quanto confessava. Stessa serie, replacement corretta, und zero estati prestito.",
     )
     testing.expect(
         t,
         story.magneto_handoff_marta_text() ==
-            "Long enough to prove she heard la machine correctly. Marta calls it maintenance; io call it affection with a torque wrench.",
+        "Abbastanza lunga da provare che sentiva la machine correttamente. Marta dice maintenance; io, affection con una torque wrench.",
     )
     testing.expect(
         t,
         story.magneto_return_dry_text() ==
-            "Perfetto. Dry coils, clean terminals, und zero salt. Gerta may distrust couriers, but she packs for their success.",
+        "Perfetto. Coils asciutte, terminals puliti, und zero sale. Gerta diffida dei corrieri, mais prepara il loro successo.",
     )
     testing.expect(
         t,
         story.magneto_return_knot_text() ==
-            "Of course. Due turns, one square knot, et a tail long enough to criticize. My sister writes instructions even in string.",
+        "Naturalmente. Due giri, un square knot, et una coda abbastanza lunga per criticare. Mia sister scrive instructions anche con lo spago.",
     )
 }
 
@@ -1371,22 +1437,22 @@ marta_and_gerta_answer_local_news_with_distinct_temperaments :: proc(t: ^testing
     testing.expect(
         t,
         story.airfield_news_warm_text(.Marta) ==
-            "Piano is good. Una lighthouse, un forno, und persone all punish haste—only the repair manual admits it.",
+        "Piano va bene. Un faro, un forno, und persone puniscono tutti la fretta—solo il repair manual lo ammette.",
     )
     testing.expect(
         t,
         story.airfield_news_warm_text(.Gerta) ==
-            "Ja. Niko plans con flour, Iva mit meteo; between them, una crossing becomes practical.",
+        "Ja. Niko planifica con farina, Iva mit meteo; tra loro, una traversata diventa pratica.",
     )
     testing.expect(
         t,
         story.airfield_news_discreet_text(.Marta) ==
-            "Every runway, quai, und cucina has witnesses. Fortunately, ciascuno is busy pretending otherwise.",
+        "Ogni runway, quai, und cucina ha testimoni. Fortunatamente, ciascuno è occupato a prétendre il contrario.",
     )
     testing.expect(
         t,
         story.airfield_news_discreet_text(.Gerta) ==
-            "Small islands, lange sightlines, et zero true secrets. Privacy survives because everyone misplaces one fact.",
+        "Isole piccole, sightlines lunghe, et zero veri segreti. La privacy sopravvive perché chacun perde un fatto.",
     )
 }
 

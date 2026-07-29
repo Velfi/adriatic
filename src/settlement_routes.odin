@@ -588,6 +588,7 @@ settlement_route_commit :: proc(
     route: Settlement_Route,
     width, shoulder: f32,
     pavement: roads.Pavement,
+    use_intensity: f32 = 1,
 ) {
     if project == nil || route.count < 2 do return
     graph := &project.road_graph
@@ -639,6 +640,16 @@ settlement_route_commit :: proc(
         c1.y = terrain.sample_height(project, 0, c1.x, c1.z)
         // Settlement presets express paved width, while the road graph stores
         // half-width from centerline to edge.
-        _ = roads.add_edge(graph, nodes[index], nodes[index + 1], c0, c1, width * .5, shoulder, pavement)
+        _ = roads.add_edge(
+            graph,
+            nodes[index],
+            nodes[index + 1],
+            c0,
+            c1,
+            width * .5,
+            shoulder,
+            pavement,
+            use_intensity,
+        )
     }
 }

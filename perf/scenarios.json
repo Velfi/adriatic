@@ -115,6 +115,14 @@
     "shadow_lab": {
       "enabled": false,
       "description": "Playground shadow fixture with thin, broad, angled, overlapping, and elevated casters."
+    },
+    "boids_10k": {
+      "enabled": false,
+      "description": "Ten thousand simulated and rendered seabird boids arranged as 1,112 local flocks."
+    },
+    "boids_0": {
+      "enabled": false,
+      "description": "Matched empty boid-lab water scene for isolating ten-thousand-boid simulation and rendering cost."
     }
   }
 }

@@ -5,6 +5,7 @@ import "core:math"
 Roll_Controls :: struct {
     speed:     f32,
     roughness: f32,
+    bump:      f32,
     wetness:   f32,
     damage:    f32,
     surface:   Footstep_Surface,
@@ -12,7 +13,7 @@ Roll_Controls :: struct {
 }
 
 Roll_Synth :: struct {
-    speed, roughness, wetness, damage, hardness, looseness, level: f32,
+    speed, roughness, bump, wetness, damage, hardness, looseness, level: f32,
     hydroplane_mix:                                                f32,
     noise_state:                                                   u32,
     road_low, road_body:                                           f32,
@@ -45,6 +46,7 @@ render_roll_add :: proc(synth: ^Roll_Synth, controls: Roll_Controls, samples: []
     if synth == nil || len(samples) == 0 do return
     target_speed := controls.active ? clamp(controls.speed, 0, 1) : f32(0)
     target_roughness := controls.active ? clamp(controls.roughness, 0, 1) : f32(0)
+    target_bump := controls.active ? clamp(controls.bump, 0, 1) : f32(0)
     target_wetness := controls.active ? clamp(controls.wetness, 0, 1) : f32(0)
     target_hydroplane := clamp((target_wetness - .52) / .48, 0, 1) * clamp((target_speed - .42) / .58, 0, 1)
     target_damage := controls.active ? clamp(controls.damage, 0, 1) : f32(0)
@@ -71,6 +73,7 @@ render_roll_add :: proc(synth: ^Roll_Synth, controls: Roll_Controls, samples: []
     for &sample in samples {
         synth.speed = approach(synth.speed, target_speed, 10, seconds_per_sample)
         synth.roughness = approach(synth.roughness, target_roughness, 8, seconds_per_sample)
+        synth.bump = approach(synth.bump, target_bump, 22, seconds_per_sample)
         synth.hardness = approach(synth.hardness, target_hardness, 9, seconds_per_sample)
         synth.looseness = approach(synth.looseness, target_looseness, 9, seconds_per_sample)
         wetness_rate := target_wetness > synth.wetness ? f32(2.2) : f32(.11)
@@ -105,7 +108,12 @@ render_roll_add :: proc(synth: ^Roll_Synth, controls: Roll_Controls, samples: []
             synth.knock_phase -= synth.knock_interval
             strength := .12 + (noise(&synth.noise_state) + 1) * .10
             material_knock := .42 + synth.looseness * .48 + synth.hardness * .22
-            synth.knock_level += strength * synth.roughness * synth.roughness * material_knock
+            synth.knock_level +=
+                strength *
+                synth.roughness *
+                synth.roughness *
+                material_knock *
+                (1 + synth.bump * 1.15)
             synth.knock_interval = .55 + (noise(&synth.noise_state) + 1) * .45
             synth.knock_count += 1
         }
@@ -158,12 +166,14 @@ render_roll_add :: proc(synth: ^Roll_Synth, controls: Roll_Controls, samples: []
         speed_gain := synth.speed * (.35 + synth.speed * .65)
         smooth_hum := synth.road_body * .32
         rough_texture := (synth.road_low * .22 + coarse_detail * .12) * synth.roughness
+        profile_texture := (synth.road_low * .55 + coarse_detail * .18) * synth.bump * .16
         loose_aggregate := coarse_detail * synth.looseness * (.05 + synth.roughness * .10)
         hard_tread := (front_tread * .72 + rear_tread * .28) * synth.hardness * (.018 + synth.speed * .032)
         contact_scale := 1 - synth.hydroplane_mix * .38
         water_film := ((road - synth.water_low) * .075 + synth.water_low * .018) * hydroplane_flutter
         rolling :=
             ((smooth_hum + rough_texture * contact_scale) * tread +
+                profile_texture * contact_scale +
                 loose_aggregate * contact_scale +
                 hard_tread * contact_scale +
                 knock * .28 * contact_scale +

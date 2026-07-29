@@ -72,6 +72,13 @@ Player_Animation_Tweak :: struct {
     brake_compression:              f32 `tweak:"range=0..0.3;.005"`,
     tail_counterbalance:            f32 `tweak:"range=0..0.5;.005"`,
     slope_alignment:                f32 `tweak:"range=0..1;.01"`,
+    body_softness_strength:         f32 `tweak:"range=0..1;.01"`,
+    body_softness_influence_radius: f32 `tweak:"range=.02..0.4;.005"`,
+    body_softness_volume_return:    f32 `tweak:"range=0..1;.01"`,
+    body_softness_stiffness:        f32 `tweak:"range=1..300;1"`,
+    body_softness_damping:          f32 `tweak:"range=0..60;.5"`,
+    body_softness_inertial_lag:     f32 `tweak:"range=0..1;.01"`,
+    body_softness_max_displacement: f32 `tweak:"range=.005..0.15;.005"`,
 }
 
 World_Tweak :: struct {
@@ -342,6 +349,13 @@ tweak_default_state :: proc() -> Tweak_State {
             brake_compression = .075,
             tail_counterbalance = .22,
             slope_alignment = .55,
+            body_softness_strength = .42,
+            body_softness_influence_radius = .16,
+            body_softness_volume_return = .34,
+            body_softness_stiffness = 110,
+            body_softness_damping = 20,
+            body_softness_inertial_lag = .035,
+            body_softness_max_displacement = .055,
         },
         camera = {
             editor_camera = {yaw_radians = math.PI * .25, pitch_radians = .58, distance = 900},
@@ -665,6 +679,14 @@ tweak_draw_player :: proc(editor: ^Editor) {
     tweak_drag_f32("Brake compression", &a.brake_compression, 0, .3, .005)
     tweak_drag_f32("Tail counterbalance", &a.tail_counterbalance, 0, .5, .005)
     tweak_drag_f32("Slope alignment", &a.slope_alignment, 0, 1, .01)
+    im.SeparatorText("Body softness")
+    tweak_drag_f32("Compression strength", &a.body_softness_strength, 0, 1, .01)
+    tweak_drag_f32("Influence radius", &a.body_softness_influence_radius, .02, .4, .005)
+    tweak_drag_f32("Volume return", &a.body_softness_volume_return, 0, 1, .01)
+    tweak_drag_f32("Softness stiffness", &a.body_softness_stiffness, 1, 300, 1)
+    tweak_drag_f32("Softness damping", &a.body_softness_damping, 0, 60, .5)
+    tweak_drag_f32("Inertial lag", &a.body_softness_inertial_lag, 0, 1, .01)
+    tweak_drag_f32("Maximum displacement", &a.body_softness_max_displacement, .005, .15, .005)
     tail := &editor.tweak.player_tail
     im.SeparatorText("Tail physics")
     tweak_drag_f32("Tail segment length", &tail.segment_length, .05, .5, .005)

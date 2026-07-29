@@ -48,10 +48,7 @@ settlement_brush_preset_name :: proc(preset: Settlement_Brush_Preset) -> cstring
 settlement_brush_local_point :: proc(piece: Settlement_Brush_Piece, point: [2]f32) -> [2]f32 {
     delta := point - piece.center
     cosine, sine := f32(math.cos(f64(piece.rotation))), f32(math.sin(f64(piece.rotation)))
-    return {
-        delta[0] * cosine + delta[1] * sine,
-        -delta[0] * sine + delta[1] * cosine,
-    }
+    return {delta[0] * cosine + delta[1] * sine, -delta[0] * sine + delta[1] * cosine}
 }
 
 settlement_brush_box_sdf :: proc(point, half_extent: [2]f32) -> f32 {
@@ -114,31 +111,25 @@ settlement_brush_piece_bounds :: proc(piece: Settlement_Brush_Piece) -> architec
     return {piece.center[0] - half, piece.center[1] - half, piece.center[0] + half, piece.center[1] + half, true}
 }
 
-settlement_brush_point_developable :: proc(
-    project: ^terrain.Project,
-    point: [2]f32,
-    maximum_slope: f32,
-) -> bool {
+settlement_brush_point_developable :: proc(project: ^terrain.Project, point: [2]f32, maximum_slope: f32) -> bool {
     if project == nil do return false
     height := terrain.sample_height(project, 0, point[0], point[1])
     if height <= project.sea_level + .6 do return false
     cell := terrain.BASE_CELL_SIZE
-    dx := terrain.sample_height(project, 0, point[0] + cell, point[1]) -
-          terrain.sample_height(project, 0, point[0] - cell, point[1])
-    dz := terrain.sample_height(project, 0, point[0], point[1] + cell) -
-          terrain.sample_height(project, 0, point[0], point[1] - cell)
+    dx :=
+        terrain.sample_height(project, 0, point[0] + cell, point[1]) -
+        terrain.sample_height(project, 0, point[0] - cell, point[1])
+    dz :=
+        terrain.sample_height(project, 0, point[0], point[1] + cell) -
+        terrain.sample_height(project, 0, point[0], point[1] - cell)
     slope := f32(math.sqrt(f64(dx * dx + dz * dz))) / (cell * 2)
     if slope > maximum_slope do return false
     for structure in project.structures[:project.structure_count] {
         if structure.kind != .Architecture do continue
         delta := point - [2]f32{structure.center_x, structure.center_z}
         cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
-        local := [2]f32 {
-            delta[0] * cosine + delta[1] * sine,
-            -delta[0] * sine + delta[1] * cosine,
-        }
-        if math.abs(local[0]) <= structure.width * .5 + 1 &&
-           math.abs(local[1]) <= structure.depth * .5 + 1 {
+        local := [2]f32{delta[0] * cosine + delta[1] * sine, -delta[0] * sine + delta[1] * cosine}
+        if math.abs(local[0]) <= structure.width * .5 + 1 && math.abs(local[1]) <= structure.depth * .5 + 1 {
             return false
         }
     }
@@ -154,10 +145,26 @@ settlement_brush_apply_piece :: proc(
     if field == nil do return {}
     bounds := settlement_brush_piece_bounds(piece)
     half_grid := f32(terrain.RING_RESOLUTION - 1) * .5
-    minimum_x := clamp(int(math.floor(f64(bounds.min_x / terrain.BASE_CELL_SIZE + half_grid))), 0, terrain.RING_RESOLUTION - 1)
-    maximum_x := clamp(int(math.ceil(f64(bounds.max_x / terrain.BASE_CELL_SIZE + half_grid))), 0, terrain.RING_RESOLUTION - 1)
-    minimum_z := clamp(int(math.floor(f64(bounds.min_z / terrain.BASE_CELL_SIZE + half_grid))), 0, terrain.RING_RESOLUTION - 1)
-    maximum_z := clamp(int(math.ceil(f64(bounds.max_z / terrain.BASE_CELL_SIZE + half_grid))), 0, terrain.RING_RESOLUTION - 1)
+    minimum_x := clamp(
+        int(math.floor(f64(bounds.min_x / terrain.BASE_CELL_SIZE + half_grid))),
+        0,
+        terrain.RING_RESOLUTION - 1,
+    )
+    maximum_x := clamp(
+        int(math.ceil(f64(bounds.max_x / terrain.BASE_CELL_SIZE + half_grid))),
+        0,
+        terrain.RING_RESOLUTION - 1,
+    )
+    minimum_z := clamp(
+        int(math.floor(f64(bounds.min_z / terrain.BASE_CELL_SIZE + half_grid))),
+        0,
+        terrain.RING_RESOLUTION - 1,
+    )
+    maximum_z := clamp(
+        int(math.ceil(f64(bounds.max_z / terrain.BASE_CELL_SIZE + half_grid))),
+        0,
+        terrain.RING_RESOLUTION - 1,
+    )
     for z in minimum_z ..= maximum_z {
         for x in minimum_x ..= maximum_x {
             world_x, world_z := architecture.city_density_world_position(x, z)
@@ -201,10 +208,11 @@ settlement_brush_assign_component :: proc(plan: ^Settlement_Plan, piece: ^Settle
         for route in plan.routes[:plan.route_count] {
             for point_index in 0 ..< route.geometry.count - 1 {
                 if settlement_point_segment_distance_squared(
-                    piece.center,
-                    route.geometry.points[point_index],
-                    route.geometry.points[point_index + 1],
-                ) <= connection_distance * connection_distance {
+                       piece.center,
+                       route.geometry.points[point_index],
+                       route.geometry.points[point_index + 1],
+                   ) <=
+                   connection_distance * connection_distance {
                     if plan.next_brush_component_id == 0 do plan.next_brush_component_id = 1
                     selected = plan.next_brush_component_id
                     break
@@ -233,11 +241,7 @@ settlement_brush_assign_component :: proc(plan: ^Settlement_Plan, piece: ^Settle
     piece.component_id = selected
 }
 
-settlement_brush_component_density :: proc(
-    plan: ^Settlement_Plan,
-    component_id: u32,
-    point: [2]f32,
-) -> f32 {
+settlement_brush_component_density :: proc(plan: ^Settlement_Plan, component_id: u32, point: [2]f32) -> f32 {
     if plan == nil || component_id == 0 do return 0
     result: f32
     for piece in plan.brush_pieces[:plan.brush_piece_count] {
@@ -295,39 +299,53 @@ settlement_program_compile :: proc(
     average_density := density_area > 0 ? density_sum / (density_area / cell_area) : f32(0)
     result.target_coverage = .10 + (.34 - .10) * average_density
     result.canonical_footprint = 95 + (55 - 95) * average_density
-    unconstrained_target := int(math.round(f64(
-        result.developable_area * result.target_coverage / max(result.canonical_footprint, f32(1)),
-    )))
+    unconstrained_target := int(
+        math.round(f64(result.developable_area * result.target_coverage / max(result.canonical_footprint, f32(1)))),
+    )
     scale := settlement_program_scale_from_target(unconstrained_target)
     minimum := settlement_program_scale_minimum(scale)
     target := clamp(max(unconstrained_target, minimum), minimum, SETTLEMENT_SITE_CAPACITY - 8)
-    result.ordinary = {target = target, minimum = minimum}
+    result.ordinary = {
+        target  = target,
+        minimum = minimum,
+    }
 
     residential := int(math.round(f64(f32(target) * .82)))
     workshops := int(math.round(f64(f32(target) * .08)))
     commerce := int(math.round(f64(f32(target) * .05)))
     production := max(0, target - residential - workshops - commerce)
     result.purposes[int(Settlement_Building_Purpose.Dwelling)] = {
-        target = residential,
+        target  = residential,
         minimum = scale == .Village ? 7 : max(1, int(math.floor(f64(f32(minimum) * .72)))),
     }
     result.purposes[int(Settlement_Building_Purpose.Workshop)] = {
-        target = workshops,
+        target  = workshops,
         minimum = 1,
     }
     result.purposes[int(Settlement_Building_Purpose.Inn_Shop)] = {
-        target = commerce,
+        target  = commerce,
         minimum = 1,
     }
     result.purposes[int(Settlement_Building_Purpose.Storehouse)] = {
-        target = production,
+        target  = production,
         minimum = scale == .Village ? 1 : 0,
     }
     landmark_target := scale == .City ? 3 : (scale == .Town ? 2 : 1)
-    result.landmarks = {target = landmark_target, minimum = landmark_target}
-    result.plazas = {target = max(1, int(math.ceil(f64(f32(target) / 45)))), minimum = 1}
-    result.parks = {target = max(1, int(math.ceil(f64(f32(target) / 35)))), minimum = 1}
-    result.vegetation = {target = max(1, int(math.round(f64(f32(target) * (1 - average_density) * .65))))}
+    result.landmarks = {
+        target  = landmark_target,
+        minimum = landmark_target,
+    }
+    result.plazas = {
+        target  = max(1, int(math.ceil(f64(f32(target) / 45)))),
+        minimum = 1,
+    }
+    result.parks = {
+        target  = max(1, int(math.ceil(f64(f32(target) / 35)))),
+        minimum = 1,
+    }
+    result.vegetation = {
+        target = max(1, int(math.round(f64(f32(target) * (1 - average_density) * .65)))),
+    }
     result.residents.target = residential * 3
     result.residents.minimum = result.purposes[int(Settlement_Building_Purpose.Dwelling)].minimum * 2
     result.workers.target = workshops * 2 + commerce * 3 + production * 2
@@ -371,10 +389,7 @@ settlement_population_allocate :: proc(plan: ^Settlement_Plan, project: ^terrain
             home_count += 1
         }
     }
-    resident_target := min(
-        plan.program.residents.target,
-        min(SETTLEMENT_INHABITANT_CAPACITY, max(home_count * 3, 0)),
-    )
+    resident_target := min(plan.program.residents.target, min(SETTLEMENT_INHABITANT_CAPACITY, max(home_count * 3, 0)))
     worker_target := min(plan.program.workers.target, resident_target)
     for inhabitant_index in 0 ..< resident_target {
         if home_count == 0 do break
@@ -454,8 +469,8 @@ settlement_brush_ensure_primary_route :: proc(
         geometry.count = 2
         plan.routes[plan.route_count] = {
             geometry = geometry,
-            class = .Street,
-            width = width,
+            class    = .Street,
+            width    = width,
             shoulder = .8,
             pavement = .Cobblestone,
             required = true,
@@ -483,10 +498,11 @@ settlement_program_assign_new_purposes :: proc(
         if owner > 0 && int(owner) <= plan.brush_piece_count {
             owner_component = plan.brush_pieces[int(owner) - 1].component_id
         } else if settlement_brush_component_density(
-            plan,
-            component_id,
-            {site.structure.center_x, site.structure.center_z},
-        ) > .01 {
+               plan,
+               component_id,
+               {site.structure.center_x, site.structure.center_z},
+           ) >
+           .01 {
             owner_component = component_id
         }
         if owner_component != component_id do continue
@@ -508,17 +524,11 @@ settlement_program_assign_new_purposes :: proc(
         remaining -= assigned[int(purpose)]
     }
     dwelling := Settlement_Building_Purpose.Dwelling
-    dwelling_minimum :=
-        max(0, plan.program.purposes[int(dwelling)].minimum - existing[int(dwelling)])
+    dwelling_minimum := max(0, plan.program.purposes[int(dwelling)].minimum - existing[int(dwelling)])
     assigned[int(dwelling)] = min(dwelling_minimum, remaining)
     remaining -= assigned[int(dwelling)]
     for purpose in constrained {
-        desired := max(
-            0,
-            plan.program.purposes[int(purpose)].target -
-            existing[int(purpose)] -
-            assigned[int(purpose)],
-        )
+        desired := max(0, plan.program.purposes[int(purpose)].target - existing[int(purpose)] - assigned[int(purpose)])
         addition := min(desired, remaining)
         assigned[int(purpose)] += addition
         remaining -= addition
@@ -534,13 +544,13 @@ settlement_program_assign_new_purposes :: proc(
             site.purpose = purpose
             identity := architecture.architecture_identity(
                 {
-                    region           = settlement_building_region(plan.request.region),
-                    tissue           = settlement_architecture_tissue(site.tissue),
-                    density          = site.density,
-                    attached         = site.attached,
-                    frontage         = site.structure.width,
-                    depth            = site.structure.depth,
-                    purpose          = settlement_building_purpose(purpose),
+                    region = settlement_building_region(plan.request.region),
+                    tissue = settlement_architecture_tissue(site.tissue),
+                    density = site.density,
+                    attached = site.attached,
+                    frontage = site.structure.width,
+                    depth = site.structure.depth,
+                    purpose = settlement_building_purpose(purpose),
                     purpose_explicit = true,
                 },
                 site.structure.seed,
@@ -584,21 +594,13 @@ settlement_program_report :: proc(plan: ^Settlement_Plan) -> string {
     )
 }
 
-settlement_program_measure_placed :: proc(
-    plan: ^Settlement_Plan,
-    project: ^terrain.Project,
-    component_id: u32,
-) {
+settlement_program_measure_placed :: proc(plan: ^Settlement_Plan, project: ^terrain.Project, component_id: u32) {
     if plan == nil || project == nil do return
     plan.program.ordinary.placed = 0
     for &count in plan.program.purposes do count.placed = 0
     for structure in project.structures[:project.structure_count] {
         if structure.kind != .Architecture ||
-           settlement_brush_component_density(
-               plan,
-               component_id,
-               {structure.center_x, structure.center_z},
-           ) <= .01 {
+           settlement_brush_component_density(plan, component_id, {structure.center_x, structure.center_z}) <= .01 {
             continue
         }
         plan.program.ordinary.placed += 1
@@ -641,10 +643,7 @@ settlement_brush_generate_vegetation :: proc(
                 -span * .5 + (f32(gz) + .5) * span / f32(grid) + jitter_z,
             }
             cosine, sine := math.cos(piece.rotation), math.sin(piece.rotation)
-            point := piece.center + [2]f32 {
-                local[0] * cosine - local[1] * sine,
-                local[0] * sine + local[1] * cosine,
-            }
+            point := piece.center + [2]f32{local[0] * cosine - local[1] * sine, local[0] * sine + local[1] * cosine}
             if settlement_brush_weight(piece, point) < .45 ||
                !settlement_brush_point_developable(project, point, SETTLEMENT_VILLAGE.max_slope) {
                 continue
@@ -672,8 +671,7 @@ settlement_brush_generate_vegetation :: proc(
         if placed >= target do break
     }
     plan.program.vegetation.placed += placed
-    plan.program.vegetation.reduced =
-        max(0, plan.program.vegetation.target - plan.program.vegetation.placed)
+    plan.program.vegetation.reduced = max(0, plan.program.vegetation.target - plan.program.vegetation.placed)
 }
 
 settlement_brush_component_reserved_count :: proc(
@@ -685,11 +683,8 @@ settlement_brush_component_reserved_count :: proc(
     result := 0
     for site in plan.sites[:plan.site_count] {
         if !site.accepted || site.kind != kind do continue
-        if settlement_brush_component_density(
-            plan,
-            component_id,
-            {site.structure.center_x, site.structure.center_z},
-        ) > .01 {
+        if settlement_brush_component_density(plan, component_id, {site.structure.center_x, site.structure.center_z}) >
+           .01 {
             result += 1
         }
     }

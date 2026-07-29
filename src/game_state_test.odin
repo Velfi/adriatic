@@ -1,9 +1,10 @@
 package main
 
+import architecture "../packages/architecture"
+import marina "../packages/marina"
 import story "../packages/story"
 import terrain "../packages/terrain"
 import vehicles "../packages/vehicles"
-import marina "../packages/marina"
 import "core:testing"
 import sdl "vendor:sdl3"
 
@@ -33,11 +34,7 @@ when ODIN_TEST {
 
     @(test)
     clipmap_center_offsets_reject_large_and_unaligned_moves :: proc(t: ^testing.T) {
-        _, large_valid := clipmap_center_offset(
-            {0, 0},
-            {f32(CLIPMAP_GRID_RESOLUTION) * 2, 0},
-            2,
-        )
+        _, large_valid := clipmap_center_offset({0, 0}, {f32(CLIPMAP_GRID_RESOLUTION) * 2, 0}, 2)
         testing.expect(t, !large_valid)
         _, unaligned_valid := clipmap_center_offset({0, 0}, {1, 0}, 2)
         testing.expect(t, !unaligned_valid)
@@ -59,16 +56,8 @@ when ODIN_TEST {
                 hole := clipmap_ring_hole_bounds({offset_x, offset_z})
                 testing.expect_value(t, hole[2] - hole[0], expected_width)
                 testing.expect_value(t, hole[3] - hole[1], expected_width)
-                testing.expect_value(
-                    t,
-                    hole[0],
-                    CLIPMAP_GRID_RESOLUTION / 4 + (offset_x > 0 ? 1 : 0),
-                )
-                testing.expect_value(
-                    t,
-                    hole[1],
-                    CLIPMAP_GRID_RESOLUTION / 4 + (offset_z > 0 ? 1 : 0),
-                )
+                testing.expect_value(t, hole[0], CLIPMAP_GRID_RESOLUTION / 4 + (offset_x > 0 ? 1 : 0))
+                testing.expect_value(t, hole[1], CLIPMAP_GRID_RESOLUTION / 4 + (offset_z > 0 ? 1 : 0))
             }
         }
     }
@@ -177,7 +166,29 @@ when ODIN_TEST {
     }
 
     @(test)
-old_hot_state_aircraft_fleet_gains_rondine_and_rebinds_vehicles :: proc(t: ^testing.T) {
+    default_islands_each_receive_one_lighthouse_and_keeper_pose :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        terrain.init_project(&editor.project)
+
+        for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
+            seed_default_island_lighthouse(editor, sign, island_index)
+            // Re-seeding must remain idempotent.
+            seed_default_island_lighthouse(editor, sign, island_index)
+        }
+
+        testing.expect_value(t, editor.project.structure_count, len(terrain.DEFAULT_ISLAND_SIGNS))
+        for structure in editor.project.structures[:editor.project.structure_count] {
+            identity := architecture.architecture_resolve_legacy_identity(structure)
+            testing.expect_value(t, identity.archetype, .Lighthouse)
+            keeper, _, found := world_lighthouse_keeper_pose(editor, structure)
+            testing.expect(t, found)
+            testing.expect(t, keeper.y > editor.project.sea_level + .35)
+        }
+    }
+
+    @(test)
+    old_hot_state_aircraft_fleet_gains_rondine_and_rebinds_vehicles :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
         terrain.init_project(&editor.project)
@@ -189,15 +200,10 @@ old_hot_state_aircraft_fleet_gains_rondine_and_rebinds_vehicles :: proc(t: ^test
         hot_state_rebind_aircraft_fleet(editor)
 
         testing.expect_value(t, editor.aircraft.count, 4)
+        testing.expect(t, vehicles.aircraft_fleet_slot(&editor.aircraft, .Postale).vehicle == &editor.postale.vehicle)
         testing.expect(
             t,
-            vehicles.aircraft_fleet_slot(&editor.aircraft, .Postale).vehicle ==
-                &editor.postale.vehicle,
-        )
-        testing.expect(
-            t,
-            vehicles.aircraft_fleet_slot(&editor.aircraft, .Libellula).vehicle ==
-                &editor.libellula.vehicle,
+            vehicles.aircraft_fleet_slot(&editor.aircraft, .Libellula).vehicle == &editor.libellula.vehicle,
         )
         rondine := vehicles.aircraft_fleet_slot(&editor.aircraft, .Rondine)
         testing.expect(t, rondine != nil)

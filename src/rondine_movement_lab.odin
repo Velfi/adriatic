@@ -67,11 +67,7 @@ rondine_movement_lab_switchback :: proc(runtime: ^rondine_game.Runtime) {
 
 rondine_movement_lab_rotate_y :: proc(vector: flight.Vec3, radians: f32) -> flight.Vec3 {
     cosine, sine := math.cos(radians), math.sin(radians)
-    return {
-        vector.x * cosine + vector.z * sine,
-        vector.y,
-        -vector.x * sine + vector.z * cosine,
-    }
+    return {vector.x * cosine + vector.z * sine, vector.y, -vector.x * sine + vector.z * cosine}
 }
 
 rondine_movement_lab_orient :: proc(runtime: ^rondine_game.Runtime, desired_forward: flight.Vec3) {
@@ -213,10 +209,7 @@ rondine_movement_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
         }
         rondine_movement_lab_orient(&runtime, {0, 0, -1})
         overview_spacing := f32(14)
-        overview_half_span :=
-            f32(RONDINE_MOVEMENT_LAB_COUNT - 1) *
-            overview_spacing *
-            .5
+        overview_half_span := f32(RONDINE_MOVEMENT_LAB_COUNT - 1) * overview_spacing * .5
         x := -overview_half_span + f32(index) * overview_spacing
         if rondine_movement_lab_focus >= 0 do x = 0
         rondine_movement_lab_place(&runtime, {x, rondine_game.GROUND_CLEARANCE, 0})
@@ -252,11 +245,7 @@ rondine_movement_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
             strongest_impact = sample.impact
             marker = {sample.position.x, .03, sample.position.z}
         }
-        editor.camera_pose =
-            third_person.camera_look_at(
-                marker + third_person.Vec3{0, 8.4, 9.6},
-                marker,
-            )
+        editor.camera_pose = third_person.camera_look_at(marker + third_person.Vec3{0, 8.4, 9.6}, marker)
     }
     if liftoff_focus {
         marker := third_person.Vec3{0, .03, 0}
@@ -267,11 +256,7 @@ rondine_movement_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
             strongest_release = sample.release
             marker = {sample.position.x, .03, sample.position.z}
         }
-        editor.camera_pose =
-            third_person.camera_look_at(
-                marker + third_person.Vec3{4.8, 7.5, 9.2},
-                marker,
-            )
+        editor.camera_pose = third_person.camera_look_at(marker + third_person.Vec3{4.8, 7.5, 9.2}, marker)
     }
     if scar_focus {
         // The breakaway marker is fixed in the water while the Rondine keeps
@@ -286,11 +271,7 @@ rondine_movement_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
             strongest_kick = sample.kick
             marker = {sample.position.x, .03, sample.position.z}
         }
-        editor.camera_pose =
-            third_person.camera_look_at(
-                marker + third_person.Vec3{0, 7.2, 8.2},
-                marker,
-            )
+        editor.camera_pose = third_person.camera_look_at(marker + third_person.Vec3{0, 7.2, 8.2}, marker)
     }
     if hookup_focus {
         // Grip recovery is also stamped into the water and quickly falls
@@ -304,11 +285,7 @@ rondine_movement_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
             strongest_hookup = sample.hookup
             marker = {sample.position.x, .03, sample.position.z}
         }
-        editor.camera_pose =
-            third_person.camera_look_at(
-                marker + third_person.Vec3{5.5, 7.8, 8.8},
-                marker,
-            )
+        editor.camera_pose = third_person.camera_look_at(marker + third_person.Vec3{5.5, 7.8, 8.8}, marker)
     }
     if switchback_scar_focus {
         marker := third_person.Vec3{0, .03, 0}
@@ -319,11 +296,7 @@ rondine_movement_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
             strongest_transition = sample.transition
             marker = {sample.position.x, .03, sample.position.z}
         }
-        editor.camera_pose =
-            third_person.camera_look_at(
-                marker + third_person.Vec3{5.8, 7.8, 9.2},
-                marker,
-            )
+        editor.camera_pose = third_person.camera_look_at(marker + third_person.Vec3{5.8, 7.8, 9.2}, marker)
     }
     if detail_focus ||
        night_detail_focus ||
@@ -350,46 +323,29 @@ rondine_movement_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
     if far_detail_focus {
         // A long chase view exposes the intended LOD ordering: droplets and
         // chips should retire before the broad trough and loaded wake wall.
-        editor.camera_pose =
-            third_person.camera_look_at(
-                {0, 18.5, 48},
-                {0, .25, -2},
-            )
+        editor.camera_pose = third_person.camera_look_at({0, 18.5, 48}, {0, .25, -2})
     }
     if power_slide_focus {
         // Power-over spray rises and moves laterally; the standard centered
         // wake camera collapses that height into the stern. Inspect from the
         // unloaded quarter so the outside sheet, ribs, and droplet crown
         // remain separately readable.
-        editor.camera_pose =
-            third_person.camera_look_at(
-                {10.5, 8.8, 18.5},
-                {0, .55, 2.4},
-            )
+        editor.camera_pose = third_person.camera_look_at({10.5, 8.8, 18.5}, {0, .55, 2.4})
     }
     if wingtip_detail_focus || wingtip_left_detail_focus {
         // View from the unloaded quarter so the low loaded wingtip and its
         // outboard spray sheet remain clear of the fuselage silhouette.
         camera_side := wingtip_left_detail_focus ? f32(-1) : f32(1)
-        editor.camera_pose =
-            third_person.camera_look_at(
-                {camera_side * 11.2, 7.6, 18.2},
-                {camera_side * 1.1, .48, 2.5},
-            )
+        editor.camera_pose = third_person.camera_look_at(
+            {camera_side * 11.2, 7.6, 18.2},
+            {camera_side * 1.1, .48, 2.5},
+        )
     }
     if trough_detail_focus {
-        editor.camera_pose =
-            third_person.camera_look_at(
-                {0, 5.8, 15.5},
-                {0, .08, 6.0},
-            )
+        editor.camera_pose = third_person.camera_look_at({0, 5.8, 15.5}, {0, .08, 6.0})
     }
     if trough_far_detail_focus {
-        editor.camera_pose =
-            third_person.camera_look_at(
-                {0, 18.5, 48},
-                {0, .20, -2},
-            )
+        editor.camera_pose = third_person.camera_look_at({0, 18.5, 48}, {0, .20, -2})
     }
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -466,22 +422,8 @@ rondine_movement_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
             )
             motion_size := rl.MeasureTextEx(rl.Font{}, motion_values, 8, .15)
             event_size := rl.MeasureTextEx(rl.Font{}, event_values, 8, .15)
-            rl.DrawTextEx(
-                rl.Font{},
-                motion_values,
-                {x - motion_size.x * .5, top + 43},
-                8,
-                .15,
-                {213, 194, 142, 255},
-            )
-            rl.DrawTextEx(
-                rl.Font{},
-                event_values,
-                {x - event_size.x * .5, top + 62},
-                8,
-                .15,
-                {183, 219, 211, 255},
-            )
+            rl.DrawTextEx(rl.Font{}, motion_values, {x - motion_size.x * .5, top + 43}, 8, .15, {213, 194, 142, 255})
+            rl.DrawTextEx(rl.Font{}, event_values, {x - event_size.x * .5, top + 62}, 8, .15, {183, 219, 211, 255})
         }
         draw_index += 1
     }

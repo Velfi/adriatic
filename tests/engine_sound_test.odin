@@ -1010,6 +1010,27 @@ tire_roll_speed_and_surface_shape_output :: proc(t: ^testing.T) {
 }
 
 @(test)
+tire_roll_live_road_profile_accents_matched_roughness :: proc(t: ^testing.T) {
+    flat, bumpy := engine_sound.new_roll(29), engine_sound.new_roll(29)
+    flat_samples, bumpy_samples: [engine_sound.SAMPLE_RATE / 4]f32
+    controls := engine_sound.Roll_Controls {
+        speed     = .62,
+        roughness = .72,
+        surface   = .Cobblestone,
+        active    = true,
+    }
+    engine_sound.render_roll_add(&flat, controls, flat_samples[:])
+    controls.bump = 1
+    engine_sound.render_roll_add(&bumpy, controls, bumpy_samples[:])
+    flat_energy, bumpy_energy := f64(0), f64(0)
+    for index in 0 ..< len(flat_samples) {
+        flat_energy += f64(flat_samples[index] * flat_samples[index])
+        bumpy_energy += f64(bumpy_samples[index] * bumpy_samples[index])
+    }
+    testing.expect(t, bumpy_energy > flat_energy)
+}
+
+@(test)
 tire_roll_render_is_deterministic_across_callback_chunks :: proc(t: ^testing.T) {
     whole, chunked := engine_sound.new_roll(43), engine_sound.new_roll(43)
     whole_samples, chunked_samples: [4096]f32

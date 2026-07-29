@@ -81,6 +81,7 @@ static const uint MATERIAL_GLASS = 13;
 static const uint MATERIAL_EMISSIVE_HALO = 14;
 static const uint MATERIAL_SAILOR_HAT = 15;
 static const uint MATERIAL_SIGN = 16;
+static const uint MATERIAL_LIGHTHOUSE_GLITTER = 17;
 
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
 // Decode them before interpolation, lighting, and fog blending; the sRGB
@@ -865,11 +866,221 @@ float3 shade_road(VertexOutput input) {
     float gravel = smoothstep(.77, .94, hash12(world * 2.45 + float2(8.1, .6)));
     color += gravel * gravel_weight * road_mask * float3(.145, .120, .075);
 
-    float cobble_row = floor(uv.y * .58);
-    float cobble_cross = abs(frac(uv.x * 13.0 + frac(cobble_row * .5) * .5) - .5);
-    float cobble_along = abs(frac(uv.y * .58) - .5);
-    float cobble_joint = 1.0 - smoothstep(.035, .085, min(cobble_cross, cobble_along));
-    color *= 1.0 - cobble_joint * cobble_weight * road_mask * .31;
+    // Derivative reads must remain outside material-weight branches: pavement
+    // interpolates through junction triangles, and derivatives are undefined
+    // when neighboring pixels diverge before evaluating them.
+    float2 road_uv_dx = ddx(uv);
+    float2 road_uv_dy = ddy(uv);
+    float3 road_position_dx = ddx(input.world_position);
+    float3 road_position_dy = ddy(input.world_position);
+    // Cobble is the most detailed road material. Keep its hashes, noise fields,
+    // and reconstruction arithmetic out of the other pavement paths except
+    // for the narrow interpolated band at mixed-material junctions.
+    if (cobble_weight > .001) {
+    float cobble_detail = 1.0 - smoothstep(85.0, 230.0, input.depth);
+    float cobble_junction = step(.02, input.material.y);
+    float cobble_neglect = 1.0 - saturate(input.uv.x);
+    // Staggered, softly rounded setts avoid the graph-paper look of a single
+    // rectangular grid. Hashing per cell varies both silhouette and pigment,
+    // while keeping the pattern stable as the camera and road geometry move.
+    float road_half_width = max(input.material.x, .01);
+    float cobble_across_metres = (uv.x - .5) * road_half_width / .165;
+    float2 cobble_road_grid = float2(cobble_across_metres * 2.35, uv.y * 1.85);
+    // A junction fan interpolates unrelated edge-distance UVs toward one
+    // synthetic center value. Use a world-stable coursing field through that
+    // interior, leaving only a narrow transition at each approach boundary.
+    float2 cobble_junction_grid =
+        rotate2(world, .43) * float2(2.35, 1.85);
+    float2 cobble_grid = lerp(
+        cobble_road_grid,
+        cobble_junction_grid,
+        cobble_junction
+    );
+    float cobble_row = floor(cobble_grid.y);
+    float cobble_row_seed = hash12(float2(cobble_row, 11.7));
+    cobble_grid.x += frac(cobble_row * .5) * .5 + (cobble_row_seed - .5) * .18;
+    float2 cobble_cell = floor(cobble_grid);
+    float2 cobble_local = frac(cobble_grid) - .5;
+    float cobble_shape_seed = hash12(cobble_cell + float2(17.3, 4.9));
+    float cobble_tone_seed = hash12(cobble_cell + float2(3.7, 29.1));
+    cobble_local.x += (cobble_shape_seed - .5) * .075;
+    cobble_local.y += (cobble_tone_seed - .5) * .055;
+    float cobble_angle = (cobble_shape_seed - .5) * .15;
+    cobble_local = rotate2(cobble_local, cobble_angle);
+    float2 cobble_half_size = float2(
+        lerp(.405, .455, cobble_shape_seed),
+        lerp(.395, .452, cobble_tone_seed)
+    );
+    float cobble_radius = lerp(.075, .13, hash12(cobble_cell + float2(41.2, 8.6)));
+    float2 cobble_edge = abs(cobble_local) - cobble_half_size + cobble_radius;
+    float cobble_distance =
+        length(max(cobble_edge, 0.0)) +
+        min(max(cobble_edge.x, cobble_edge.y), 0.0) -
+        cobble_radius;
+    // Cell-local erosion gently chips otherwise analytic edges. The field is
+    // deterministic in material space, so the irregularity remains attached
+    // to each stone rather than crawling as the camera moves.
+    float cobble_erosion = value_noise(
+        rotate2(cobble_local, cobble_tone_seed * 1.7) * 3.4 +
+        cobble_cell * .613
+    );
+    cobble_distance += (cobble_erosion - .5) * .030 * cobble_detail;
+    float cobble_across_scale = road_half_width / .165 * 2.35;
+    float2 cobble_grid_dx = float2(
+        road_uv_dx.x * cobble_across_scale,
+        road_uv_dx.y * 1.85
+    );
+    float2 cobble_grid_dy = float2(
+        road_uv_dy.x * cobble_across_scale,
+        road_uv_dy.y * 1.85
+    );
+    float2 cobble_junction_grid_dx =
+        rotate2(road_position_dx.xz, .43) * float2(2.35, 1.85);
+    float2 cobble_junction_grid_dy =
+        rotate2(road_position_dy.xz, .43) * float2(2.35, 1.85);
+    cobble_grid_dx = lerp(
+        cobble_grid_dx,
+        cobble_junction_grid_dx,
+        cobble_junction
+    );
+    cobble_grid_dy = lerp(
+        cobble_grid_dy,
+        cobble_junction_grid_dy,
+        cobble_junction
+    );
+    float cobble_aa = max(
+        max(length(cobble_grid_dx), length(cobble_grid_dy)) * .55,
+        .009
+    );
+    float cobble_stone = 1.0 - smoothstep(-cobble_aa, cobble_aa, cobble_distance);
+    float cobble_joint = 1.0 - cobble_stone;
+    float cobble_pattern = cobble_weight * road_mask;
+    // Mortar is not a uniformly inked outline: broad deposits alternately
+    // expose cool packed joints and catch the road's warm shoulder dust.
+    float cobble_joint_field = value_noise(
+        rotate2(world, .31) * .28 + float2(6.4, 19.7)
+    );
+    float cobble_joint_depth = lerp(.115, .205, cobble_joint_field);
+    color *= 1.0 - cobble_joint * cobble_pattern * cobble_joint_depth;
+    float cobble_joint_dust = smoothstep(.57, .83, cobble_joint_field);
+    color +=
+        cobble_joint * cobble_pattern * cobble_joint_dust *
+        float3(.018, .013, .006);
+    // Neglected stone is reclaimed from the living verge inward. Growth stays
+    // down in the mortar, avoids the two wheel paths, and forms discontinuous
+    // colonies instead of a uniform green outline around every sett.
+    float cobble_from_verge = smoothstep(.035, .155, abs(uv.x - .5));
+    float cobble_center_strip =
+        1.0 - smoothstep(.035, .105, abs(uv.x - .5));
+    float cobble_wheel_clear = smoothstep(.030, .072, wheel_distance);
+    float cobble_growth_field = value_noise(
+        rotate2(world, -.27) * .19 + float2(31.4, 7.2)
+    );
+    float cobble_colonies = smoothstep(
+        lerp(.78, .46, cobble_neglect),
+        .92,
+        cobble_growth_field
+    );
+    float cobble_grass =
+        cobble_joint * cobble_pattern * cobble_neglect *
+        cobble_wheel_clear * cobble_colonies *
+        saturate(cobble_from_verge + cobble_center_strip * .48);
+    float3 cobble_grass_dark = float3(.075, .105, .030);
+    float3 cobble_grass_lit = float3(.18, .245, .060);
+    float3 cobble_grass_color = lerp(
+        cobble_grass_dark,
+        cobble_grass_lit,
+        broad * .55 + cobble_growth_field * .45
+    );
+    color = lerp(color, cobble_grass_color, cobble_grass * .88);
+    float3 cobble_tint = lerp(
+        float3(.91, .955, .95),
+        float3(1.09, 1.045, .95),
+        cobble_tone_seed
+    );
+    color = lerp(color, color * cobble_tint, cobble_stone * cobble_pattern * .52);
+    float cobble_face_mottle = .5;
+    if (cobble_detail > .001) {
+        cobble_face_mottle = value_noise(
+            rotate2(world, cobble_shape_seed * .8) * 3.7 +
+            cobble_cell * .193
+        );
+    }
+    color *= lerp(
+        lerp(1.0, .973, cobble_detail),
+        lerp(1.0, 1.027, cobble_detail),
+        cobble_face_mottle * cobble_stone * cobble_pattern +
+        .5 * (1.0 - cobble_stone * cobble_pattern)
+    );
+    // Reconstruct the road's transverse and longitudinal world axes from
+    // screen-space derivatives. This lets the painted bevel follow the actual
+    // Sun around bends instead of baking a false highlight direction into UVs.
+    if (cobble_detail > .001) {
+    float road_uv_determinant =
+        road_uv_dx.x * road_uv_dy.y - road_uv_dy.x * road_uv_dx.y;
+    float road_uv_safe_determinant =
+        road_uv_determinant >= 0.0
+            ? max(road_uv_determinant, .000001)
+            : min(road_uv_determinant, -.000001);
+    float3 road_across = (
+        road_position_dx * road_uv_dy.y -
+        road_position_dy * road_uv_dx.y
+    ) / road_uv_safe_determinant;
+    float3 road_along = (
+        road_position_dy * road_uv_dx.x -
+        road_position_dx * road_uv_dy.x
+    ) / road_uv_safe_determinant;
+    road_across /= max(length(road_across), .001);
+    road_along /= max(length(road_along), .001);
+    if (cobble_junction > .5) {
+        float junction_c = cos(.43), junction_s = sin(.43);
+        road_across = float3(junction_c, 0, -junction_s);
+        road_along = float3(junction_s, 0, junction_c);
+    }
+    float3 cobble_sun = normalize(push.sun.xyz);
+    float2 cobble_sun_local = float2(
+        dot(cobble_sun, road_across),
+        dot(cobble_sun, road_along)
+    );
+    cobble_sun_local /= max(length(cobble_sun_local), .08);
+    float2 cobble_outward = cobble_local / max(cobble_half_size, float2(.001, .001));
+    cobble_outward /= max(length(cobble_outward), .001);
+    cobble_outward = rotate2(cobble_outward, -cobble_angle);
+    float cobble_bevel =
+        (1.0 - smoothstep(.018, .115, -cobble_distance)) *
+        cobble_stone * cobble_pattern;
+    float cobble_bevel_facing = dot(cobble_outward, cobble_sun_local);
+    color *= 1.0 +
+        cobble_bevel * cobble_bevel_facing *
+        saturate(push.sun.w) * cobble_detail * .065;
+    }
+    float cobble_crown = smoothstep(.015, .13, -cobble_distance);
+    color *= 1.0 +
+        cobble_crown * cobble_stone * cobble_pattern *
+        lerp(.012, .026, cobble_detail);
+    // Weather severity doubles as the renderer's established rain/moisture
+    // signal. Damp limestone darkens in broad patches, cools slightly, and
+    // retains only a restrained broken sheen on the raised crowns.
+    float cobble_wetness = smoothstep(.16, .78, saturate(push.water.y));
+    if (cobble_wetness > .001) {
+        float cobble_wet_patch = lerp(
+            .62,
+            1.0,
+            value_noise(rotate2(world, .19) * .16 + float2(2.7, 13.4))
+        );
+        float cobble_wet = cobble_wetness * cobble_pattern * cobble_wet_patch;
+        color = lerp(
+            color,
+            color * float3(.73, .79, .82),
+            cobble_wet * .46
+        );
+        float cobble_wet_sheen =
+            smoothstep(.63, .88, cobble_face_mottle) *
+            cobble_crown * cobble_stone * cobble_wet *
+            saturate(push.sun.w);
+        color += float3(.018, .024, .026) * cobble_wet_sheen;
+    }
+    }
 
     float rut = 1.0 - smoothstep(.028, .075, wheel_distance);
     color = lerp(color, color * float3(.87, .76, .64), rut * dirt_weight * road_mask * .68);
@@ -1080,6 +1291,104 @@ float3 shade_water(VertexOutput input) {
     return saturate(color);
 }
 
+float4 shade_lighthouse_glitter(VertexOutput input) {
+    float night = 1.0 - smoothstep(.0, .34, saturate(push.sun.w));
+    float strength = saturate(input.material.x) * night;
+    if (strength <= .001) discard;
+
+    float2 ellipse = input.uv * 2.0 - 1.0;
+    float footprint = saturate(1.0 - dot(ellipse, ellipse));
+    footprint *= footprint;
+    if (footprint <= .001) discard;
+
+    float2 p = input.world_position.xz;
+    float time = push.water.x;
+    float sea_state = saturate(.28 + push.water.y * .64);
+    float2 wind = push.water.zw;
+    float wind_length = length(wind);
+    float2 axis = wind_length > .001 ? wind / wind_length : float2(.86, .51);
+    float2 across = float2(-axis.y, axis.x);
+    float phase_a = dot(p, axis) * .043 - time * (.42 + sea_state * .24);
+    float2 diagonal = normalize(axis + across * .55);
+    float phase_b = dot(p, diagonal) * .091 - time * (.73 + sea_state * .31);
+    float2 slope = axis * cos(phase_a) * (.035 + sea_state * .055) +
+                   diagonal * cos(phase_b) * (.018 + sea_state * .032);
+
+    float camera_height = abs(push.camera_position.y - input.world_position.y);
+    float eye_level = 1.0 - smoothstep(18.0, 72.0, camera_height);
+    float camera_distance = length(push.camera_position.xz - p);
+    float near_detail = eye_level * (1.0 - smoothstep(180.0, 900.0, camera_distance));
+    float ripple_phase =
+        dot(p, axis) * .31 +
+        sin(dot(p, across) * .045 + time * .09) * .72 -
+        time * (1.05 + sea_state * .42);
+    slope += axis * cos(ripple_phase) *
+             (.026 + sea_state * .030) * near_detail;
+
+    float3 normal = normalize(float3(-slope.x, 1, -slope.y));
+    float3 view = normalize(push.camera_position.xyz - input.world_position);
+    float3 light_direction = normalize(input.normal);
+    float3 half_vector = normalize(light_direction + view);
+    float n_dot_v = max(dot(normal, view), .0001);
+    float n_dot_h = max(dot(normal, half_vector), .0001);
+
+    // Match the Sun path's anisotropic Cox-Munk approximation so this local
+    // source breaks into the same wind-shaped, capillary-scale glitter.
+    float3 wind_seed = float3(axis.x, 0, axis.y);
+    float3 wind_tangent = normalize(wind_seed - normal * dot(wind_seed, normal));
+    float3 wind_bitangent = normalize(cross(normal, wind_tangent));
+    float h_wind = dot(half_vector, wind_tangent);
+    float h_crosswind = dot(half_vector, wind_bitangent);
+    float wind_roughness = saturate(wind_length / 14.0);
+    // The Fresnel lens has finite aperture and vertical divergence, unlike the
+    // effectively angular-point Sun. Broaden the same measured ocean slope
+    // distribution just enough for grazing lighthouse light to occupy more
+    // than a vanishing sub-pixel tail.
+    float alpha_wind = .34 + wind_roughness * .16 + sea_state * .09;
+    float alpha_crosswind = .25 + wind_roughness * .12 + sea_state * .07;
+    float inverse_h_y_squared = 1.0 / max(n_dot_h * n_dot_h, .000001);
+    float slope_exponent = -(
+        h_wind * h_wind / (alpha_wind * alpha_wind) +
+        h_crosswind * h_crosswind / (alpha_crosswind * alpha_crosswind)
+    ) * inverse_h_y_squared * .070;
+    float beckmann = exp(max(slope_exponent, -80.0)) /
+        max(
+            3.14159265 * alpha_wind * alpha_crosswind *
+            n_dot_h * n_dot_h * n_dot_h * n_dot_h,
+            .00001
+        );
+
+    float v_dot_h = saturate(dot(view, half_vector));
+    float fresnel = .02037 + (1.0 - .02037) * pow(1.0 - v_dot_h, 5.0);
+    float capillary_a = value_noise(p * .71 + time * float2(.29, -.12));
+    float capillary_b = value_noise(
+        rotate2(p, .83) * 1.27 + time * float2(-.18, .34)
+    );
+    float2 capillary_cell = floor(
+        p * 18.5 + floor(time * 12.0) * float2(.37, -.23)
+    );
+    float capillary_flash = smoothstep(.74, .965, hash12(capillary_cell));
+    float capillary_cluster = smoothstep(
+        .46,
+        .84,
+        capillary_a * .62 + capillary_b * .38
+    );
+    float resolved_capillaries =
+        1.0 - smoothstep(480.0, 2400.0, camera_distance);
+    float facet_sampling = lerp(
+        1.0,
+        capillary_flash * capillary_cluster * 5.0,
+        resolved_capillaries
+    );
+    float glitter = min(
+        fresnel * beckmann * facet_sampling * .82,
+        2.8
+    );
+    float visibility = footprint * strength * glitter;
+    if (visibility <= .002) discard;
+    return float4(input.color.rgb * (1.05 + glitter * .32), input.color.a * visibility);
+}
+
 [shader("fragment")]
 float4 fragment_main(VertexOutput input) : SV_Target {
     // Indexed clipmap grids retain sea-level vertices so their topology stays
@@ -1249,12 +1558,28 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             base = srgb_to_linear(sign_sample.rgb);
             output_alpha *= sign_sample.a;
             break;
+        case MATERIAL_LIGHTHOUSE_GLITTER:
+            float4 lighthouse_glitter = shade_lighthouse_glitter(input);
+            base = lighthouse_glitter.rgb;
+            output_alpha = lighthouse_glitter.a;
+            break;
+    }
+    // Road vertices repurpose their compact normal channel for material-space
+    // UV and pavement. Reconstruct the geometric surface normal here before
+    // the shared shadow and environment-lighting tail consumes it.
+    float3 surface_normal = input.normal;
+    if (input.kind == MATERIAL_ROAD) {
+        surface_normal = normalize(cross(
+            ddx(input.world_position),
+            ddy(input.world_position)
+        ));
+        if (surface_normal.y < 0.0) surface_normal = -surface_normal;
     }
     if (input.kind == MATERIAL_PLAIN ||
         input.kind == MATERIAL_TERRAIN ||
         input.kind == MATERIAL_FOLIAGE ||
         input.kind == MATERIAL_ROAD) {
-        float visibility = dynamic_shadow_visibility(input.world_position, input.normal);
+        float visibility = dynamic_shadow_visibility(input.world_position, surface_normal);
         // These palette-authored materials already contain their ambient/key
         // value grouping. Remove only the direct-looking portion so mapped
         // shadows do not crush that authored ambient illumination.
@@ -1269,9 +1594,10 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     }
     if (input.kind != MATERIAL_EMISSIVE &&
         input.kind != MATERIAL_EMISSIVE_POOL &&
-        input.kind != MATERIAL_EMISSIVE_HALO) {
+        input.kind != MATERIAL_EMISSIVE_HALO &&
+        input.kind != MATERIAL_LIGHTHOUSE_GLITTER) {
         float3 environment_lit =
-            apply_environment_light(base, input.normal, input.world_position);
+            apply_environment_light(base, surface_normal, input.world_position);
         if (input.kind == MATERIAL_GLASS) {
             float night =
                 1.0 - smoothstep(.0, .34, saturate(push.sun.w));

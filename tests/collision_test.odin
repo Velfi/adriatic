@@ -25,7 +25,7 @@ boat_collision_uses_the_hull_capsule :: proc(t: ^testing.T) {
 }
 
 @(test)
-marina_collision_covers_segments_office_and_moored_boats :: proc(t: ^testing.T) {
+marina_collision_covers_generated_harbor_objects :: proc(t: ^testing.T) {
     plan: marina.Plan
     plan.valid = true
     plan.segment_count = 1
@@ -37,6 +37,8 @@ marina_collision_covers_segments_office_and_moored_boats :: proc(t: ^testing.T) 
         class    = .Sail,
         occupied = true,
     }
+    plan.prop_count = 1
+    plan.props[0] = {.Crates, {30, 0}, 0}
 
     segment_position, segment_hit := marina.resolve_circle(&plan, {0, 0}, .25)
     testing.expect(t, segment_hit)
@@ -49,6 +51,17 @@ marina_collision_covers_segments_office_and_moored_boats :: proc(t: ^testing.T) 
     boat_position, boat_hit := marina.resolve_circle(&plan, {0, 10}, .25)
     testing.expect(t, boat_hit)
     testing.expect(t, abs(boat_position.x) >= 1.51)
+
+    prop_position, prop_hit := marina.resolve_circle(&plan, {30, 0}, .25)
+    testing.expect(t, prop_hit)
+    testing.expect(t, abs(prop_position.x - 30) >= 1.29)
+
+    plan.slips[0].position = {40, 0}
+    plan.slips[0].kind = .Swing_Mooring
+    plan.slips[0].occupied = false
+    buoy_position, buoy_hit := marina.resolve_circle(&plan, {40, 0}, .25)
+    testing.expect(t, buoy_hit)
+    testing.expect(t, abs(buoy_position.x - 40) >= .59)
 }
 
 @(test)

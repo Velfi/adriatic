@@ -34,9 +34,39 @@ road_bake_outputs_indexed_road_shoulders_and_caps :: proc(t: ^testing.T) {
         saw_shoulder = saw_shoulder || vertex.surface == .Shoulder
         saw_junction = saw_junction || vertex.surface == .Junction
         saw_verge = saw_verge || vertex.surface == .Verge
+        // Procedural pavement uses this metadata to preserve a physical
+        // transverse scale instead of stretching with the road's UV width.
+        testing.expect(t, math.abs(vertex.road_half_width - 3) < .0001)
+        testing.expect(t, math.abs(vertex.use_intensity - 1) < .0001)
     }
     testing.expect(t, saw_road && saw_shoulder && saw_junction && saw_verge)
     for index in mesh.indices do testing.expect(t, int(index) < len(mesh.vertices))
+}
+
+@(test)
+road_bake_carries_authored_use_intensity_into_surface_vertices :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    start := roads.add_node(&graph, {0, 0, 0}, 2)
+    end := roads.add_node(&graph, {24, 0, 0}, 2)
+    roads.add_straight_edge(&graph, start, end, 6, 1.5, .Cobblestone, .2)
+    mesh := roads.bake(&graph)
+    defer roads.mesh_destroy(&mesh)
+
+    for vertex in mesh.vertices {
+        testing.expect(t, math.abs(vertex.use_intensity - .2) < .0001)
+    }
+}
+
+@(test)
+road_use_intensity_is_clamped_at_authoring_boundary :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    start := roads.add_node(&graph, {0, 0, 0})
+    middle := roads.add_node(&graph, {10, 0, 0})
+    end := roads.add_node(&graph, {20, 0, 0})
+    roads.add_straight_edge(&graph, start, middle, 4, 1, .Cobblestone, -.5)
+    roads.add_straight_edge(&graph, middle, end, 4, 1, .Cobblestone, 1.5)
+    testing.expect(t, graph.edges[0].use_intensity == 0)
+    testing.expect(t, graph.edges[1].use_intensity == 1)
 }
 
 @(test)
@@ -130,6 +160,7 @@ road_t_junction_bakes_one_merged_cap_at_shared_node :: proc(t: ^testing.T) {
     // reused from the edge strips, so the graph is welded at every seam.
     testing.expect(t, junction_vertices == 4)
     testing.expect(t, shared_center >= 0)
+    testing.expect(t, math.abs(mesh.vertices[shared_center].road_half_width - 4) < .0001)
     center_index_uses := 0
     for index in mesh.indices {
         if int(index) == shared_center do center_index_uses += 1
@@ -289,4 +320,21 @@ road_material_grip_profiles_have_predictable_ordering :: proc(t: ^testing.T) {
     testing.expect(t, gravel.longitudinal > dirt.longitudinal)
     testing.expect(t, dirt.longitudinal > grass.longitudinal)
     testing.expect(t, asphalt.rolling_resistance < grass.rolling_resistance)
+}
+
+@(test)
+road_material_roughness_is_deterministic_and_cobble_led :: proc(t: ^testing.T) {
+    asphalt := roads.pavement_roughness(.Asphalt)
+    gravel := roads.pavement_roughness(.Gravel)
+    cobble := roads.pavement_roughness(.Cobblestone)
+    dirt := roads.pavement_roughness(.Dirt)
+    testing.expect(t, cobble.acceleration > dirt.acceleration)
+    testing.expect(t, dirt.acceleration > gravel.acceleration)
+    testing.expect(t, gravel.acceleration > asphalt.acceleration)
+
+    first := roads.pavement_bump_acceleration(.Cobblestone, 12.3, -4.7, 10)
+    second := roads.pavement_bump_acceleration(.Cobblestone, 12.3, -4.7, 10)
+    testing.expect(t, first == second)
+    testing.expect(t, roads.pavement_bump_acceleration(.Cobblestone, 12.3, -4.7, 0) == 0)
+    testing.expect(t, math.abs(first) <= cobble.acceleration + .001)
 }

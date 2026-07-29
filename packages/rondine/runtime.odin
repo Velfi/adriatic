@@ -30,24 +30,24 @@ Tuning :: struct {
 }
 
 Telemetry :: struct {
-    speed:           f32,
-    forward_speed:   f32,
-    lateral_speed:   f32,
-    acceleration:    f32,
-    surge_intensity: f32,
-    brake_intensity: f32,
+    speed:            f32,
+    forward_speed:    f32,
+    lateral_speed:    f32,
+    acceleration:     f32,
+    surge_intensity:  f32,
+    brake_intensity:  f32,
     drift_transition: f32,
-    slip:            f32,
-    drift_intensity: f32,
-    countersteer:    f32,
-    drift_kick:      f32,
-    hookup_kick:     f32,
-    surface_impact:  f32,
-    surface_release: f32,
-    turn_rate:       f32,
-    height:          f32,
-    wake_intensity:  f32,
-    spray_intensity: f32,
+    slip:             f32,
+    drift_intensity:  f32,
+    countersteer:     f32,
+    drift_kick:       f32,
+    hookup_kick:      f32,
+    surface_impact:   f32,
+    surface_release:  f32,
+    turn_rate:        f32,
+    height:           f32,
+    wake_intensity:   f32,
+    spray_intensity:  f32,
 }
 
 Wake_Sample :: struct {
@@ -68,33 +68,33 @@ Wake_Sample :: struct {
 }
 
 Runtime :: struct {
-    body:            flight.Body_State,
-    vehicle:         vehicles.Vehicle,
-    tuning:          Tuning,
-    telemetry:       Telemetry,
-    spawn_position:  flight.Vec3,
-    spawn_basis:     flight.Basis,
-    throttle:        f32,
-    propeller_turns: f32,
-    steering:        f32,
-    target_height:   f32,
-    grounded:        bool,
-    crashed:         bool,
-    wake:            [MAX_WAKE_SAMPLES]Wake_Sample,
-    wake_count:      int,
-    wake_distance:   f32,
-    wake_serial:     u32,
-    drift_kick:      f32,
-    hookup_kick:     f32,
-    surface_impact:  f32,
-    surface_release: f32,
-    surge_intensity: f32,
-    brake_intensity: f32,
-    drift_transition: f32,
-    slip_side:        f32,
-    kick_marker_armed: bool,
-    impact_marker_armed: bool,
-    release_marker_armed: bool,
+    body:                    flight.Body_State,
+    vehicle:                 vehicles.Vehicle,
+    tuning:                  Tuning,
+    telemetry:               Telemetry,
+    spawn_position:          flight.Vec3,
+    spawn_basis:             flight.Basis,
+    throttle:                f32,
+    propeller_turns:         f32,
+    steering:                f32,
+    target_height:           f32,
+    grounded:                bool,
+    crashed:                 bool,
+    wake:                    [MAX_WAKE_SAMPLES]Wake_Sample,
+    wake_count:              int,
+    wake_distance:           f32,
+    wake_serial:             u32,
+    drift_kick:              f32,
+    hookup_kick:             f32,
+    surface_impact:          f32,
+    surface_release:         f32,
+    surge_intensity:         f32,
+    brake_intensity:         f32,
+    drift_transition:        f32,
+    slip_side:               f32,
+    kick_marker_armed:       bool,
+    impact_marker_armed:     bool,
+    release_marker_armed:    bool,
     transition_marker_armed: bool,
 }
 
@@ -250,14 +250,13 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
         runtime.grounded = false
         runtime.impact_marker_armed = true
         if was_grounded {
-            liftoff_release =
-                clamp(
-                    .48 +
-                    max(runtime.body.velocity.y, f32(0)) * .24 +
-                    clamp((math.abs(forward_speed) - runtime.tuning.takeoff_speed) / 20, 0, 1) * .30,
-                    0,
-                    1,
-                )
+            liftoff_release = clamp(
+                .48 +
+                max(runtime.body.velocity.y, f32(0)) * .24 +
+                clamp((math.abs(forward_speed) - runtime.tuning.takeoff_speed) / 20, 0, 1) * .30,
+                0,
+                1,
+            )
         }
     }
 
@@ -269,21 +268,13 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
         clamp((longitudinal_acceleration - 1.2) / 6.8, 0, 1) *
         clamp((math.abs(forward_speed) - 7) / 18, 0, 1) *
         surface_fraction
-    runtime.surge_intensity =
-        max(
-            runtime.surge_intensity * max(f32(0), 1 - dt * 4.2),
-            surge_target,
-        )
+    runtime.surge_intensity = max(runtime.surge_intensity * max(f32(0), 1 - dt * 4.2), surge_target)
     brake_target :=
         clamp((-longitudinal_acceleration - 1.0) / 7.5, 0, 1) *
         clamp((math.abs(forward_speed) - 12) / 24, 0, 1) *
         surface_fraction *
         (control.throttle_down ? f32(1) : f32(.45))
-    runtime.brake_intensity =
-        max(
-            runtime.brake_intensity * max(f32(0), 1 - dt * 4.8),
-            brake_target,
-        )
+    runtime.brake_intensity = max(runtime.brake_intensity * max(f32(0), 1 - dt * 4.8), brake_target)
     slip := clamp(lateral_speed / max(math.abs(forward_speed), f32(8)), -1, 1)
     drift_intensity := clamp(math.abs(slip) * 2.8 + drift_input * .45, 0, 1) * surface_fraction
     if math.abs(slip) > .035 do runtime.slip_side = math.sign(slip)
@@ -292,48 +283,22 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
        runtime.slip_side != previous_slip_side &&
        max(previous_drift_intensity, drift_intensity) > .2 &&
        surface_fraction > .4 {
-        transition_target =
-            clamp(
-                .58 +
-                max(previous_drift_intensity, drift_intensity) * .42,
-                0,
-                1,
-            )
+        transition_target = clamp(.58 + max(previous_drift_intensity, drift_intensity) * .42, 0, 1)
         runtime.transition_marker_armed = true
     }
-    runtime.drift_transition =
-        max(
-            runtime.drift_transition * max(f32(0), 1 - dt * 2.8),
-            transition_target,
-        )
-    countersteer :=
-        clamp(runtime.steering * slip * 4.2, 0, 1) *
-        drift_intensity
+    runtime.drift_transition = max(runtime.drift_transition * max(f32(0), 1 - dt * 2.8), transition_target)
+    countersteer := clamp(runtime.steering * slip * 4.2, 0, 1) * drift_intensity
     drift_rise_rate := max(f32(0), drift_intensity - previous_drift_intensity) / dt
     drift_fall_rate := max(f32(0), previous_drift_intensity - drift_intensity) / dt
     drift_kick_target := clamp((drift_rise_rate - .25) / 2.75, 0, 1)
     hookup_kick_target := f32(0)
-    if previous_drift_intensity > .3 &&
-       surface_fraction > .4 &&
-       math.abs(runtime.steering) < .8 {
+    if previous_drift_intensity > .3 && surface_fraction > .4 && math.abs(runtime.steering) < .8 {
         hookup_kick_target = clamp((drift_fall_rate - .18) / 2.35, 0, 1)
     }
-    runtime.drift_kick = max(
-        runtime.drift_kick * max(f32(0), 1 - dt * 2.2),
-        drift_kick_target,
-    )
-    runtime.hookup_kick = max(
-        runtime.hookup_kick * max(f32(0), 1 - dt * 3.0),
-        hookup_kick_target,
-    )
-    runtime.surface_impact = max(
-        runtime.surface_impact * max(f32(0), 1 - dt * 3.6),
-        landing_impact,
-    )
-    runtime.surface_release = max(
-        runtime.surface_release * max(f32(0), 1 - dt * 3.2),
-        liftoff_release,
-    )
+    runtime.drift_kick = max(runtime.drift_kick * max(f32(0), 1 - dt * 2.2), drift_kick_target)
+    runtime.hookup_kick = max(runtime.hookup_kick * max(f32(0), 1 - dt * 3.0), hookup_kick_target)
+    runtime.surface_impact = max(runtime.surface_impact * max(f32(0), 1 - dt * 3.6), landing_impact)
+    runtime.surface_release = max(runtime.surface_release * max(f32(0), 1 - dt * 3.2), liftoff_release)
     if surface_fraction <= .1 {
         runtime.drift_kick = 0
         runtime.hookup_kick = 0
@@ -343,12 +308,12 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
     if drift_intensity < .18 do runtime.kick_marker_armed = true
     runtime.body.angular_velocity_world = {0, yaw_delta / dt, 0}
     runtime.telemetry = {
-        speed           = linalg.length(runtime.body.velocity),
-        forward_speed   = forward_speed,
-        lateral_speed   = lateral_speed,
-        acceleration    = longitudinal_acceleration,
-        surge_intensity = runtime.surge_intensity,
-        brake_intensity = runtime.brake_intensity,
+        speed            = linalg.length(runtime.body.velocity),
+        forward_speed    = forward_speed,
+        lateral_speed    = lateral_speed,
+        acceleration     = longitudinal_acceleration,
+        surge_intensity  = runtime.surge_intensity,
+        brake_intensity  = runtime.brake_intensity,
         drift_transition = runtime.drift_transition,
         slip            = slip,
         drift_intensity = drift_intensity,
@@ -364,7 +329,7 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
             0,
             1,
         ) * clamp(1 - height / 8, 0, 1),
-        spray_intensity = clamp(
+        spray_intensity  = clamp(
             (math.abs(forward_speed) - 4) / 28,
             0,
             1,
@@ -400,11 +365,7 @@ maybe_spawn_wake :: proc(runtime: ^Runtime, dt: f32) {
     basis := flight.basis_from_orientation(runtime.body.orientation)
     travel_direction := basis.forward
     if horizontal_speed > .01 {
-        travel_direction = {
-            runtime.body.velocity.x / horizontal_speed,
-            0,
-            runtime.body.velocity.z / horizontal_speed,
-        }
+        travel_direction = {runtime.body.velocity.x / horizontal_speed, 0, runtime.body.velocity.z / horizontal_speed}
     }
     for runtime.wake_distance >= spacing {
         // Place catch-up samples back along this frame's travelled segment.
@@ -419,46 +380,38 @@ maybe_spawn_wake :: proc(runtime: ^Runtime, dt: f32) {
         }
         runtime.wake_serial += 1
         kick_marker := f32(0)
-        if runtime.kick_marker_armed &&
-           runtime.telemetry.drift_intensity > .3 &&
-           runtime.telemetry.drift_kick > .45 {
+        if runtime.kick_marker_armed && runtime.telemetry.drift_intensity > .3 && runtime.telemetry.drift_kick > .45 {
             kick_marker = runtime.telemetry.drift_kick
             runtime.kick_marker_armed = false
         }
         impact_marker := f32(0)
-        if runtime.impact_marker_armed &&
-           runtime.grounded &&
-           runtime.telemetry.surface_impact > .2 {
+        if runtime.impact_marker_armed && runtime.grounded && runtime.telemetry.surface_impact > .2 {
             impact_marker = runtime.telemetry.surface_impact
             runtime.impact_marker_armed = false
         }
         release_marker := f32(0)
-        if runtime.release_marker_armed &&
-           !runtime.grounded &&
-           runtime.telemetry.surface_release > .2 {
+        if runtime.release_marker_armed && !runtime.grounded && runtime.telemetry.surface_release > .2 {
             release_marker = runtime.telemetry.surface_release
             runtime.release_marker_armed = false
         }
         transition_marker := f32(0)
-        if runtime.transition_marker_armed &&
-           runtime.telemetry.drift_transition > .45 {
+        if runtime.transition_marker_armed && runtime.telemetry.drift_transition > .45 {
             transition_marker = runtime.telemetry.drift_transition
             runtime.transition_marker_armed = false
         }
-        lifetime :=
-            clamp(
-                1.15 +
-                strength * .85 +
-                math.abs(runtime.telemetry.slip) * .9 +
-                runtime.telemetry.countersteer * .22 +
-                kick_marker * .45 +
-                runtime.telemetry.hookup_kick * .28 +
-                impact_marker * .42 +
-                release_marker * .38 +
-                transition_marker * .36,
-                1.2,
-                2.75,
-            )
+        lifetime := clamp(
+            1.15 +
+            strength * .85 +
+            math.abs(runtime.telemetry.slip) * .9 +
+            runtime.telemetry.countersteer * .22 +
+            kick_marker * .45 +
+            runtime.telemetry.hookup_kick * .28 +
+            impact_marker * .42 +
+            release_marker * .38 +
+            transition_marker * .36,
+            1.2,
+            2.75,
+        )
         runtime.wake[runtime.wake_count] = {
             serial   = runtime.wake_serial,
             position = position,
@@ -469,11 +422,11 @@ maybe_spawn_wake :: proc(runtime: ^Runtime, dt: f32) {
             slip     = runtime.telemetry.slip,
             turn     = clamp(runtime.steering, -1, 1),
             countersteer = runtime.telemetry.countersteer,
-            kick     = kick_marker,
-            hookup   = runtime.telemetry.hookup_kick,
-            impact   = impact_marker,
-            release  = release_marker,
-            transition = transition_marker,
+            kick         = kick_marker,
+            hookup       = runtime.telemetry.hookup_kick,
+            impact       = impact_marker,
+            release      = release_marker,
+            transition   = transition_marker,
         }
         runtime.wake_count += 1
     }

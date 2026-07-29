@@ -70,14 +70,24 @@ crunchiness_label :: proc(value: Crunchiness) -> cstring {
     return "480P"
 }
 
+crunchiness_render_width :: proc(render_height, viewport_width, viewport_height: i32) -> u32 {
+    if render_height <= 0 || viewport_width <= 0 || viewport_height <= 0 do return 0
+    // The preset names describe vertical resolution. Derive the horizontal
+    // resolution from the user's viewport so reduced-resolution rendering
+    // preserves the same aspect ratio instead of forcing 16:9.
+    width := (render_height * viewport_width + viewport_height / 2) / viewport_height
+    return u32(max(width, 1))
+}
+
 crunchiness_apply :: proc(value: Crunchiness) {
+    viewport_width, viewport_height := rl.GetScreenWidth(), rl.GetScreenHeight()
     switch value {
     case .P240:
-        rl.SetWorldRenderSize(426, 240)
+        rl.SetWorldRenderSize(crunchiness_render_width(240, viewport_width, viewport_height), 240)
     case .P480:
-        rl.SetWorldRenderSize(854, 480)
+        rl.SetWorldRenderSize(crunchiness_render_width(480, viewport_width, viewport_height), 480)
     case .P720:
-        rl.SetWorldRenderSize(1280, 720)
+        rl.SetWorldRenderSize(crunchiness_render_width(720, viewport_width, viewport_height), 720)
     case .Full:
         rl.SetWorldRenderSize(0, 0)
     }
@@ -932,12 +942,26 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     ui_draw_text(.Label, "SOUND FX LEVEL", {sound_fx.x + 14, sound_fx.y + 8}, .4, ui_theme_text())
     sound_fx_value := fmt.ctprintf("%d%%", int(editor.gameplay_options.sound_fx_level * 100 + .5))
     sound_fx_value_size := ui_measure_text(.Data, sound_fx_value, .3)
-    ui_draw_text(.Data, sound_fx_value, {sound_fx.x + sound_fx.width - sound_fx_value_size.x - 14, sound_fx.y + 8}, .3, ui_theme_accent())
+    ui_draw_text(
+        .Data,
+        sound_fx_value,
+        {sound_fx.x + sound_fx.width - sound_fx_value_size.x - 14, sound_fx.y + 8},
+        .3,
+        ui_theme_accent(),
+    )
     sound_fx_track := options_menu_slider_track(sound_fx)
     rl.DrawRectangleRounded(sound_fx_track, 1, 6, ui_theme_border(180))
     sound_fx_normalized := clamp(editor.gameplay_options.sound_fx_level, 0, 1)
-    rl.DrawRectangleRounded({sound_fx_track.x, sound_fx_track.y, sound_fx_track.width * sound_fx_normalized, sound_fx_track.height}, 1, 6, ui_theme_accent())
-    sound_fx_knob := rl.Vector2{sound_fx_track.x + sound_fx_track.width * sound_fx_normalized, sound_fx_track.y + sound_fx_track.height * .5}
+    rl.DrawRectangleRounded(
+        {sound_fx_track.x, sound_fx_track.y, sound_fx_track.width * sound_fx_normalized, sound_fx_track.height},
+        1,
+        6,
+        ui_theme_accent(),
+    )
+    sound_fx_knob := rl.Vector2 {
+        sound_fx_track.x + sound_fx_track.width * sound_fx_normalized,
+        sound_fx_track.y + sound_fx_track.height * .5,
+    }
     rl.DrawCircleV({sound_fx_knob.x, sound_fx_knob.y + 2}, 9, ui_theme_scrim(80))
     rl.DrawCircleV(sound_fx_knob, 9, ui_theme_surface_elevated())
     rl.DrawCircleV(sound_fx_knob, 3, ui_theme_accent())
@@ -1037,7 +1061,12 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         editor.options_focus == 9,
     )
 
-    pause_menu_button(options_menu_row_bounds(panel, 10, scroll_y), "CUSTOMIZE MOUSE", true, editor.options_focus == 10)
+    pause_menu_button(
+        options_menu_row_bounds(panel, 10, scroll_y),
+        "CUSTOMIZE MOUSE",
+        true,
+        editor.options_focus == 10,
+    )
 
     pause_menu_button(
         options_menu_restore_bounds(panel, scroll_y),

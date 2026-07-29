@@ -2,6 +2,7 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import mouse_gait "../packages/mouse_gait"
+import particle_systems "../packages/particles"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
@@ -30,6 +31,7 @@ mouse_gait_lab_phase: f32
 mouse_gait_lab_focus_lane: int
 mouse_gait_lab_oblique: bool
 mouse_gait_lab_show_paths: bool
+mouse_gait_lab_stop_spray: bool
 
 mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
@@ -38,6 +40,12 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     mouse_gait_lab_focus_lane = -1
     mouse_gait_lab_oblique = false
     mouse_gait_lab_show_paths = false
+    mouse_gait_lab_stop_spray = target == "stop-spray"
+    if mouse_gait_lab_stop_spray {
+        mouse_gait_lab_frozen = true
+        mouse_gait_lab_phase = .625
+        mouse_gait_lab_focus_lane = 4
+    }
     phase_targets := [8]string{"phase-0", "phase-1", "phase-2", "phase-3", "phase-4", "phase-5", "phase-6", "phase-7"}
     for phase_target, index in phase_targets {
         if target == phase_target {
@@ -98,6 +106,20 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     atmosphere.set_weather_override(&editor.atmosphere, .Clear)
     editor.atmosphere.weather = atmosphere.weather_for(.Clear)
     editor.atmosphere.paused = true
+    editor.player_terrain_effects = particle_systems.new_vehicle_effects(0xa21c94d7)
+    if mouse_gait_lab_stop_spray {
+        contact := particle_systems.Vehicle_Contact {
+            position = {-.62, .01, 0},
+            grounded = true,
+            surface  = .Grass,
+        }
+        particle_systems.spawn_stop_spray(&editor.player_terrain_effects, contact, {1, 0, 0}, 1)
+        empty_contacts: [4]particle_systems.Vehicle_Contact
+        for _ in 0 ..< 3 {
+            particle_systems.step_vehicle_effects(&editor.player_terrain_effects, .05, 0, 0, false, 0, empty_contacts)
+        }
+        editor.player_brake_pose = 1
+    }
     editor.camera_pose = third_person.camera_look_at({6.2, 4.1, 9.2}, {0, .30, 0})
     if mouse_gait_lab_focus_lane >= 0 {
         editor.camera_pose = third_person.camera_look_at({-.05, .72, 1.95}, {-.05, .27, 0})
@@ -234,9 +256,11 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
                 gait_preview = true,
                 gait_speed = speed,
                 gait_phase = phase,
+                player_controlled = mouse_gait_lab_stop_spray,
             },
         )
     }
+    if mouse_gait_lab_stop_spray do world_player_terrain_particles(editor)
 }
 
 mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
@@ -253,8 +277,9 @@ mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     }
     rl.DrawRectangleRounded(panel, .08, 8, {12, 24, 30, 232})
     rl.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {116, 174, 183, 255})
-    rl.DrawTextEx(rl.Font{}, "MOUSE GAIT COMPARISON", {38, 38}, 20, 1, {245, 238, 197, 255})
-    if mouse_gait_lab_frozen {
+    title: cstring = mouse_gait_lab_stop_spray ? "SUDDEN STOP / TERRAIN SPRAY" : "MOUSE GAIT COMPARISON"
+    rl.DrawTextEx(rl.Font{}, title, {38, 38}, 20, 1, {245, 238, 197, 255})
+    if mouse_gait_lab_frozen && !mouse_gait_lab_stop_spray {
         phase_label := fmt.ctprintf("FROZEN STRIDE PHASE %.0f%%", mouse_gait_lab_phase * 100)
         rl.DrawTextEx(rl.Font{}, phase_label, {244, 42}, 12, 1, {184, 211, 218, 255})
     }

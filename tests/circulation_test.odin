@@ -24,17 +24,17 @@ circulation_plazas_are_passages_and_overlap_crossing_streets :: proc(t: ^testing
     plaza := circulation.Area {
         center_x = 10,
         center_z = 20,
-        width = 18,
-        length = 12,
-        kind = .Plaza,
+        width    = 18,
+        length   = 12,
+        kind     = .Plaza,
     }
     crossing := circulation.Area {
         center_x = 10,
         center_z = 20,
-        width = 30,
-        length = 5,
+        width    = 30,
+        length   = 5,
         rotation = math.PI * .5,
-        kind = .Street,
+        kind     = .Street,
     }
     clear := crossing
     clear.center_x = 40

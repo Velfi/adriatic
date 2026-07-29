@@ -28,7 +28,9 @@ settlement_brush_store_checksum :: proc(store: ^Settlement_Brush_Store) -> u64 {
 }
 
 settlement_brush_store_save :: proc(plan: ^Settlement_Plan, path: string = SETTLEMENT_BRUSH_STORE_PATH) -> bool {
-    if plan == nil || path == "" || plan.brush_piece_count < 0 ||
+    if plan == nil ||
+       path == "" ||
+       plan.brush_piece_count < 0 ||
        plan.brush_piece_count > SETTLEMENT_BRUSH_PIECE_CAPACITY {
         return false
     }

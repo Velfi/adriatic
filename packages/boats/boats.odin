@@ -223,11 +223,25 @@ dinghy_mesh :: proc() -> Mesh {
     mesh: Mesh
     spec := specifications(.Dinghy)
     hull(&mesh, spec, .34)
-    // Two simple thwarts and a compact outboard make the tender read as a
-    // working harbor dinghy rather than a scaled-down motor yacht.
-    box(&mesh, {0, .48, -.42}, {1.12, .12, .24}, .Deck)
-    box(&mesh, {0, .48, .58}, {1.12, .12, .24}, .Deck)
-    box(&mesh, {0, .30, 1.48}, {.36, .64, .28}, .Metal)
+    // The shared hull is watertight, so a dark recessed cockpit laid just over
+    // its deck gives this tiny boat a readable open interior without requiring
+    // a second hull topology.
+    box(&mesh, {0, .355, .08}, {1.00, .025, 1.92}, .Tire)
+
+    // Raised gunwales, a short foredeck and broad timber thwarts give the
+    // tender a useful small-craft silhouette at gameplay camera distances.
+    box(&mesh, {-.585, .395, .10}, {.075, .10, 2.22}, .Accent)
+    box(&mesh, {.585, .395, .10}, {.075, .10, 2.22}, .Accent)
+    box(&mesh, {0, .395, -1.16}, {.72, .10, .34}, .Accent)
+    box(&mesh, {0, .49, -.46}, {1.12, .13, .25}, .Deck)
+    box(&mesh, {0, .49, .48}, {1.12, .13, .25}, .Deck)
+
+    // A two-piece outboard with a visible tiller reads more clearly than one
+    // metal block, while the bow cleat gives the harbor tender a working detail.
+    box(&mesh, {0, .57, 1.43}, {.28, .46, .22}, .Metal)
+    box(&mesh, {0, .82, 1.40}, {.38, .18, .30}, .Accent)
+    box(&mesh, {-.25, .80, 1.24}, {.34, .055, .055}, .Metal)
+    box(&mesh, {0, .52, -1.30}, {.08, .16, .20}, .Metal)
     return mesh
 }
 

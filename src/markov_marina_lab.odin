@@ -67,10 +67,7 @@ markov_marina_gallery_generate :: proc() -> bool {
         column := form_index % 3
         row := form_index / 3
         plan.world_conditioned = true
-        plan.world_origin = {
-            (f32(column) - 1) * 125,
-            (f32(row) - .5) * 135,
-        }
+        plan.world_origin = {(f32(column) - 1) * 125, (f32(row) - .5) * 135}
         plan.world_yaw = 0
         markov_marina_gallery_plans[form_index] = plan
         found[form_index] = true
@@ -123,34 +120,22 @@ markov_marina_sample_world_site :: proc(project: ^terrain.Project, origin: marin
     return site
 }
 
-markov_marina_snap_shoreline :: proc(
-    project: ^terrain.Project,
-    anchor, outward: marina.Vec2,
-) -> marina.Vec2 {
+markov_marina_snap_shoreline :: proc(project: ^terrain.Project, anchor, outward: marina.Vec2) -> marina.Vec2 {
     if project == nil do return anchor
     threshold := project.sea_level + .15
     best := anchor
     best_distance := f32(1 << 30)
     previous_offset := f32(-80)
-    previous := marina.Vec2{
-        anchor.x + outward.x * previous_offset,
-        anchor.z + outward.z * previous_offset,
-    }
+    previous := marina.Vec2{anchor.x + outward.x * previous_offset, anchor.z + outward.z * previous_offset}
     previous_land := terrain.sample_height(project, 0, previous.x, previous.z) > threshold
     for offset := f32(-76); offset <= 80; offset += 4 {
-        point := marina.Vec2{
-            anchor.x + outward.x * offset,
-            anchor.z + outward.z * offset,
-        }
+        point := marina.Vec2{anchor.x + outward.x * offset, anchor.z + outward.z * offset}
         land := terrain.sample_height(project, 0, point.x, point.z) > threshold
         if land != previous_land {
             transition_offset := (previous_offset + offset) * .5
             distance := abs(transition_offset)
             if distance < best_distance {
-                best = {
-                    anchor.x + outward.x * transition_offset,
-                    anchor.z + outward.z * transition_offset,
-                }
+                best = {anchor.x + outward.x * transition_offset, anchor.z + outward.z * transition_offset}
                 best_distance = distance
             }
         }
@@ -215,7 +200,11 @@ markov_marina_generate_world_plan :: proc(
     project: ^terrain.Project,
     shoreline_anchor: marina.Vec2,
     base_seed: u32,
-) -> (marina.Plan, f32, int) {
+) -> (
+    marina.Plan,
+    f32,
+    int,
+) {
     best: marina.Plan
     best_suitability := f32(-1)
     attempts := 0
@@ -235,10 +224,7 @@ markov_marina_generate_world_plan :: proc(
             site := markov_marina_sample_world_site(project, origin, yaw)
             suitability := marina.site_suitability(&site)
             if suitability < MARINA_BRUSH_MINIMUM_SUITABILITY do continue
-            seed :=
-                base_seed +
-                u32(variation) * u32(0x9e3779b9) +
-                u32(index) * u32(0x85ebca6b)
+            seed := base_seed + u32(variation) * u32(0x9e3779b9) + u32(index) * u32(0x85ebca6b)
             candidate := marina.generate_for_site(seed, &site, context.temp_allocator)
             attempts += 1
             if candidate.valid && suitability > best_suitability {
@@ -638,8 +624,11 @@ marin_position :: proc(editor: ^Editor) -> third_person.Vec3 {
 }
 
 marin_near :: proc(editor: ^Editor) -> bool {
-    if editor == nil || !editor.in_map || lab_scene_is_active(editor, "markov-marina") ||
-       editor.pilot.mode != .On_Foot || east_marina_plan(editor) == nil {
+    if editor == nil ||
+       !editor.in_map ||
+       lab_scene_is_active(editor, "markov-marina") ||
+       editor.pilot.mode != .On_Foot ||
+       east_marina_plan(editor) == nil {
         return false
     }
     delta := editor.player.position - marin_position(editor)
@@ -653,7 +642,9 @@ marin_text :: proc(_: ^dialogue.Context) -> string {
 }
 
 marin_handling_text :: proc(_: ^dialogue.Context) -> string {
-    return "Build speed straight, then turn smooth, da. Hold the bank und let the outside wake carry il drift; release before la coast."
+    return(
+        "Build speed straight, then turn smooth, da. Hold the bank und let the outside wake carry il drift; release before la coast." \
+    )
 }
 
 open_marin_dialogue :: proc(editor: ^Editor) -> bool {
@@ -665,10 +656,7 @@ open_marin_dialogue :: proc(editor: ^Editor) -> bool {
         dialogue.no_next_node,
         effect = marina_stage_rondine_result,
     )
-    choices[1] = dialogue.choice(
-        "Explain the handling.",
-        1,
-    )
+    choices[1] = dialogue.choice("Explain the handling.", 1)
     handling_choices := make([]dialogue.Choice, 2)
     handling_choices[0] = dialogue.choice("Back.", 0)
     handling_choices[1] = dialogue.choice(
@@ -680,7 +668,11 @@ open_marin_dialogue :: proc(editor: ^Editor) -> bool {
     nodes[0] = dialogue.node("rondine-service", marin_text, choices, marin_speaker)
     nodes[1] = dialogue.node("rondine-handling", marin_handling_text, handling_choices, marin_speaker)
     definition := new(dialogue.Definition)
-    definition^ = {id = "marin_rondine_service", start_node = 0, nodes = nodes}
+    definition^ = {
+        id         = "marin_rondine_service",
+        start_node = 0,
+        nodes      = nodes,
+    }
     conversation, opened := dialogue.open(definition, {data = rawptr(editor), location_id = "east_marina"})
     if !opened do return false
     dialogue_session.begin(&editor.dialogue_session, .Marina_Dockmaster)
@@ -1221,14 +1213,7 @@ markov_marina_draw_ui :: proc(_: ^Editor, width, height: i32) {
     }
     rl.DrawTextEx(rl.Font{}, overlap_label, {38, 176}, 13, 1, overlap_color)
     if markov_marina_gallery_active {
-        rl.DrawTextEx(
-            rl.Font{},
-            "NATURAL  /  STRAIGHT  /  WEST APRON",
-            {38, 196},
-            12,
-            1,
-            {208, 239, 240, 255},
-        )
+        rl.DrawTextEx(rl.Font{}, "NATURAL  /  STRAIGHT  /  WEST APRON", {38, 196}, 12, 1, {208, 239, 240, 255})
         rl.DrawTextEx(
             rl.Font{},
             "EAST APRON  /  SPLIT APRONS  /  STEPPED QUAYS",

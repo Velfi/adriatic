@@ -29,6 +29,11 @@ Capture_Kind :: enum {
     Wildflower_Lab,
     Shadow_Lab,
     Boat_Lab,
+    Boid_Lab,
+    Car_Generator_Lab,
+    Patio_Lab,
+    Garden_Lab,
+    Lighthouse_Lab,
     Mouse_Gait_Lab,
     Rondine_Movement_Lab,
     Markov_Wreck,
@@ -49,22 +54,22 @@ Capture_Kind :: enum {
 }
 
 Capture_Request :: struct {
-    kind:          Capture_Kind,
-    output_path:   string,
-    target:        string,
-    window_width:  int,
-    window_height: int,
-    settle_frames: int,
-    camera_eye:          [3]f32,
-    camera_look_at:      [3]f32,
-    camera_eye_set:      bool,
-    camera_look_at_set:  bool,
-    camera_orbit_degrees:[2]f32,
-    camera_orbit_set:    bool,
-    camera_distance:     f32,
-    camera_distance_set: bool,
-    camera_offset:       [3]f32,
-    camera_offset_set:   bool,
+    kind:                 Capture_Kind,
+    output_path:          string,
+    target:               string,
+    window_width:         int,
+    window_height:        int,
+    settle_frames:        int,
+    camera_eye:           [3]f32,
+    camera_look_at:       [3]f32,
+    camera_eye_set:       bool,
+    camera_look_at_set:   bool,
+    camera_orbit_degrees: [2]f32,
+    camera_orbit_set:     bool,
+    camera_distance:      f32,
+    camera_distance_set:  bool,
+    camera_offset:        [3]f32,
+    camera_offset_set:    bool,
 }
 
 CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night}
@@ -105,6 +110,7 @@ CAPTURE_BUILDING_TARGETS := [?]string {
     "plaza-night-new-moon",
     "plaza-night-full-moon",
     "plaza-night-storm",
+    "mouse-wheel-plaza",
     "storefront",
     "storefront-front",
     "storefront-generated",
@@ -129,7 +135,31 @@ CAPTURE_FLIGHT_TARGETS := [?]string {
     "rondine-breakaway",
     "rondine-hookup",
 }
+CAPTURE_CAR_TARGETS := [?]string {
+    "asphalt",
+    "gravel",
+    "cobble",
+    "cobble-clean",
+    "cobble-grassy-clean",
+    "cobble-junction-clean",
+    "cobble-night-clean",
+    "cobble-storm-clean",
+    "dirt",
+}
 CAPTURE_SKY_TARGETS := [?]string{"sun", "sun-air", "sun-away", "moon", "stars"}
+CAPTURE_MOUSE_GAIT_TARGETS := [?]string{"stop-spray"}
+CAPTURE_PATIO_TARGETS := [?]string{"coastal", "courtyard", "evening"}
+CAPTURE_GARDEN_TARGETS := [?]string{"courtyard", "kitchen", "wild", "alternate"}
+CAPTURE_LIGHTHOUSE_TARGETS := [?]string {
+    "adriatic",
+    "aegean",
+    "night",
+    "adriatic-night",
+    "aegean-night",
+    "reflection-night",
+    "short",
+    "tall",
+}
 
 capture_targets :: proc(kind: Capture_Kind) -> []string {
     #partial switch kind {
@@ -137,6 +167,16 @@ capture_targets :: proc(kind: Capture_Kind) -> []string {
         return CAPTURE_BUILDING_TARGETS[:]
     case .Flight:
         return CAPTURE_FLIGHT_TARGETS[:]
+    case .Car:
+        return CAPTURE_CAR_TARGETS[:]
+    case .Mouse_Gait_Lab:
+        return CAPTURE_MOUSE_GAIT_TARGETS[:]
+    case .Patio_Lab:
+        return CAPTURE_PATIO_TARGETS[:]
+    case .Garden_Lab:
+        return CAPTURE_GARDEN_TARGETS[:]
+    case .Lighthouse_Lab:
+        return CAPTURE_LIGHTHOUSE_TARGETS[:]
     case .Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night:
         return CAPTURE_SKY_TARGETS[:]
     }
@@ -199,6 +239,16 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Shadow_Lab, true
     case "boat-lab":
         return .Boat_Lab, true
+    case "boid-lab":
+        return .Boid_Lab, true
+    case "car-generator-lab":
+        return .Car_Generator_Lab, true
+    case "patio-lab":
+        return .Patio_Lab, true
+    case "garden-lab":
+        return .Garden_Lab, true
+    case "lighthouse-lab":
+        return .Lighthouse_Lab, true
     case "mouse-gait-lab":
         return .Mouse_Gait_Lab, true
     case "rondine-movement-lab":

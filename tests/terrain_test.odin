@@ -38,9 +38,12 @@ terrain_sculpting_changes_building_level :: proc(t: ^testing.T) {
 terrain_material_is_bounded :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
-    terrain.apply_stroke(project, .Paint, 0, 0, 8, 10, 1)
+    paint_x, paint_z := terrain.default_island_center(1)
+    // Cover at least two samples on the coarsest 32 m level so the derived
+    // material survives every LOD's staggered grid alignment.
+    terrain.apply_stroke(project, .Paint, paint_x, paint_z, 72, 10, 1)
     for level in 0 ..< terrain.CLIPMAP_LEVELS {
-        material := terrain.sample_material(project, level, 0, 0)
+        material := terrain.sample_material(project, level, paint_x, paint_z)
         testing.expect(t, material > 0)
         testing.expect(t, material <= 1)
     }
@@ -52,8 +55,8 @@ terrain_brush_hardness_controls_edge_falloff :: proc(t: ^testing.T) {
     hard := terrain.new_project()
     defer terrain.free_project(soft)
     defer terrain.free_project(hard)
-    center_x := soft.levels[0].origin_x + f32(terrain.RING_RESOLUTION / 2) * soft.levels[0].cell_size
-    center_z := soft.levels[0].origin_z + f32(terrain.RING_RESOLUTION / 2) * soft.levels[0].cell_size
+    center_x := soft.levels[0].origin_x + f32(terrain.TERRAIN_RESOLUTION / 2) * soft.levels[0].cell_size
+    center_z := soft.levels[0].origin_z + f32(terrain.TERRAIN_RESOLUTION / 2) * soft.levels[0].cell_size
     terrain.apply_stroke_with_hardness(soft, .Raise, center_x, center_z, 100, 1, 1, 0)
     terrain.apply_stroke_with_hardness(hard, .Raise, center_x, center_z, 100, 1, 1, 1)
     testing.expect(
@@ -214,6 +217,31 @@ terrain_v4_project_migration_copies_fixed_structures_into_growable_storage :: pr
 }
 
 @(test)
+terrain_v6_project_migration_upsamples_legacy_clipmap_levels :: proc(t: ^testing.T) {
+    legacy := new(terrain.Project_File_Payload_V6)
+    migrated := terrain.new_project()
+    defer free(legacy)
+    defer terrain.free_project(migrated)
+    for level in 0 ..< terrain.CLIPMAP_LEVELS {
+        data := &legacy.levels[level]
+        data.cell_size = terrain.FINE_CELL_SIZE * f32(u32(1) << u32(level))
+        extent := f32(terrain.LEGACY_TERRAIN_RESOLUTION - 1) * data.cell_size
+        data.origin_x, data.origin_z = -extent * .5, -extent * .5
+    }
+    center := terrain.LEGACY_TERRAIN_RESOLUTION / 2
+    for z in center - 1 ..= center {
+        for x in center - 1 ..= center {
+            legacy.levels[0].heights[z * terrain.LEGACY_TERRAIN_RESOLUTION + x] = 7
+            legacy.levels[0].material[z * terrain.LEGACY_TERRAIN_RESOLUTION + x] = .6
+        }
+    }
+    testing.expect(t, terrain.project_migrate_v6(migrated, legacy, nil))
+    testing.expect_value(t, migrated.levels[0].cell_size, terrain.FINE_CELL_SIZE)
+    testing.expect(t, math.abs(terrain.sample_height(migrated, 0, 0, 0) - 7) < .001)
+    testing.expect(t, math.abs(terrain.sample_material(migrated, 0, 0, 0) - .6) < .001)
+}
+
+@(test)
 default_terrain_has_two_opposite_corner_islands :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -285,13 +313,27 @@ default_towns_have_foundation_test_topography :: proc(t: ^testing.T) {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        town_x := island_center + sign * 25
-        town_z := island_center + sign * terrain.DEFAULT_TOWN_OFFSET
+        town_x, town_z := terrain.default_town_center(sign)
         summit := terrain.sample_height(project, 0, town_x, town_z)
-        shoulder := terrain.sample_height(project, 0, town_x - sign * 80, town_z)
+        shoulder := terrain.sample_height(project, 0, town_x, town_z + sign * 30)
         runway := terrain.sample_height(project, 0, island_center, island_center)
         testing.expect(t, summit > shoulder + 1)
         testing.expect(t, shoulder > runway + .5)
+    }
+}
+
+@(test)
+default_islands_have_bluffs_away_from_arrival_districts :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        center_x, center_z := terrain.default_island_center(sign)
+        west := sign < 0
+        bluff_x := center_x + (west ? f32(-118) : f32(112))
+        bluff_z := center_z + (west ? f32(104) : f32(92))
+        bluff := terrain.sample_height(project, 0, bluff_x, bluff_z)
+        runway := terrain.sample_height(project, 0, center_x, center_z)
+        testing.expect(t, bluff > runway + 5)
     }
 }
 
@@ -302,13 +344,38 @@ default_town_hills_blend_smoothly_into_runway_constraints :: proc(t: ^testing.T)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        sample_x := island_center + sign * 25
-        previous := terrain.sample_height(project, 0, sample_x, island_center + sign * 48)
-        for offset in 49 ..= 118 {
-            current := terrain.sample_height(project, 0, sample_x, island_center + sign * f32(offset))
+        town_x, town_z := terrain.default_town_center(sign)
+        previous := terrain.sample_height(project, 0, town_x, island_center - sign * 48)
+        for offset in 49 ..= int(math.abs(town_z - island_center)) {
+            current := terrain.sample_height(project, 0, town_x, island_center - sign * f32(offset))
             testing.expect(t, math.abs(current - previous) < .35)
             previous = current
         }
+    }
+}
+
+@(test)
+default_islands_have_landforms_at_player_scale :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        minimum, maximum := f32(1e9), f32(-1e9)
+        largest_step: f32
+        // Sample an inland strip beyond the leveled runway shoulder. Twenty
+        // meters is a few seconds of travel and should reveal changing ground.
+        z := center + sign * 125
+        previous := terrain.sample_height(project, 0, center - 120, z)
+        for offset := -100; offset <= 120; offset += 20 {
+            height := terrain.sample_height(project, 0, center + f32(offset), z)
+            minimum = min(minimum, height)
+            maximum = max(maximum, height)
+            largest_step = max(largest_step, math.abs(height - previous))
+            previous = height
+        }
+        testing.expect(t, maximum - minimum > 2)
+        testing.expect(t, largest_step > .35)
     }
 }
 
@@ -351,7 +418,7 @@ terrain_levels_progress_from_one_meter_to_world_scale :: proc(t: ^testing.T) {
     defer terrain.free_project(project)
     testing.expect(t, project.levels[0].cell_size == 1)
     testing.expect(t, project.levels[4].cell_size == 16)
-    span := f32(terrain.RING_RESOLUTION - 1) * project.levels[4].cell_size
+    span := f32(terrain.TERRAIN_RESOLUTION - 1) * project.levels[4].cell_size
     testing.expect(t, span >= terrain.WORLD_SIZE_METERS)
 }
 
@@ -366,9 +433,9 @@ terrain_edits_downsample_into_coarser_overlaps :: proc(t: ^testing.T) {
     for level in 1 ..< terrain.CLIPMAP_LEVELS {
         coarse := &project.levels[level]
         previous := &project.levels[level - 1]
-        for z in 0 ..< terrain.RING_RESOLUTION {
+        for z in 0 ..< terrain.TERRAIN_RESOLUTION {
             world_z := coarse.origin_z + f32(z) * coarse.cell_size
-            for x in 0 ..< terrain.RING_RESOLUTION {
+            for x in 0 ..< terrain.TERRAIN_RESOLUTION {
                 world_x := coarse.origin_x + f32(x) * coarse.cell_size
                 if !terrain.level_contains(previous, world_x, world_z) do continue
                 expected := terrain.sample_level_height(previous, world_x, world_z)

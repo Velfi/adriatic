@@ -84,8 +84,7 @@ area_nearest_point :: proc(area: Area, x, z: f32) -> (nearest_x, nearest_z: f32)
     local_x = clamp(local_x, -area.width * .5, area.width * .5)
     local_z = clamp(local_z, -area.length * .5, area.length * .5)
     cosine, sine := math.cos(area.rotation), math.sin(area.rotation)
-    return area.center_x + local_x * cosine - local_z * sine,
-           area.center_z + local_x * sine + local_z * cosine
+    return area.center_x + local_x * cosine - local_z * sine, area.center_z + local_x * sine + local_z * cosine
 }
 
 area_overlaps :: proc(a, b: Area) -> bool {
@@ -94,12 +93,7 @@ area_overlaps :: proc(a, b: Area) -> bool {
     delta_x, delta_z := b.center_x - a.center_x, b.center_z - a.center_z
     // Separating-axis test for two oriented rectangles. Local +X and +Z from
     // both rectangles are the only axes that can separate them.
-    axes := [4][2]f32 {
-        {a_cosine, a_sine},
-        {-a_sine, a_cosine},
-        {b_cosine, b_sine},
-        {-b_sine, b_cosine},
-    }
+    axes := [4][2]f32{{a_cosine, a_sine}, {-a_sine, a_cosine}, {b_cosine, b_sine}, {-b_sine, b_cosine}}
     a_x := [2]f32{a_cosine, a_sine}
     a_z := [2]f32{-a_sine, a_cosine}
     b_x := [2]f32{b_cosine, b_sine}

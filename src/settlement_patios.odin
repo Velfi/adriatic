@@ -1,0 +1,269 @@
+package main
+
+import third_person "../packages/third_person"
+import terrain "../packages/terrain"
+import "core:math"
+import "core:math/linalg"
+import rl "zelda_engine:canvas2d"
+
+SETTLEMENT_PATIO_CAPACITY :: 48
+
+Settlement_Patio_Style :: enum u8 {
+    Adriatic,
+    Aegean,
+}
+
+Settlement_Patio :: struct {
+    center:   [2]f32,
+    base_y:   f32,
+    width:    f32,
+    depth:    f32,
+    rotation: f32,
+    seed:     u32,
+    host_id:  u64,
+    style:    Settlement_Patio_Style,
+}
+
+settlement_patio_route_clear :: proc(plan: ^Settlement_Plan, patio: Settlement_Patio) -> bool {
+    if plan == nil do return false
+    patio_radius := min(patio.width, patio.depth) * .42
+    for route in plan.routes[:plan.route_count] {
+        geometry := route.geometry
+        for point_index in 0 ..< geometry.count - 1 {
+            a, b := geometry.points[point_index], geometry.points[point_index + 1]
+            segment := b - a
+            length_squared := linalg.dot(segment, segment)
+            if length_squared <= 1e-5 do continue
+            offset := patio.center - a
+            amount := clamp(linalg.dot(offset, segment) / length_squared, 0, 1)
+            nearest := a + segment * amount
+            distance := linalg.length(patio.center - nearest)
+            if distance < route.width * .5 + route.shoulder + patio_radius + .65 do return false
+        }
+    }
+    return true
+}
+
+settlement_patio_terrain_seat :: proc(
+    project: ^terrain.Project,
+    patio: ^Settlement_Patio,
+) -> bool {
+    if project == nil || patio == nil do return false
+    tangent := [2]f32{math.cos(patio.rotation), math.sin(patio.rotation)}
+    normal := [2]f32{-tangent[1], tangent[0]}
+    half_width, half_depth := patio.width * .5, patio.depth * .5
+    heights: [5]f32
+    heights[0] = terrain.sample_height(project, 0, patio.center[0], patio.center[1])
+    corners := [4][2]f32 {
+        patio.center + tangent * half_width + normal * half_depth,
+        patio.center + tangent * half_width - normal * half_depth,
+        patio.center - tangent * half_width + normal * half_depth,
+        patio.center - tangent * half_width - normal * half_depth,
+    }
+    minimum, maximum, total := heights[0], heights[0], heights[0]
+    for corner, index in corners {
+        height := terrain.sample_height(project, 0, corner[0], corner[1])
+        heights[index + 1] = height
+        minimum, maximum = min(minimum, height), max(maximum, height)
+        total += height
+    }
+    if minimum <= project.sea_level + .35 || maximum - minimum > .72 do return false
+    // Seat the finished paving above the highest footprint sample. A deep
+    // rendered skirt drops from this elevation to conceal the lower corners;
+    // using the mean allowed uphill terrain to poke through the thin slab.
+    _ = total
+    patio.base_y = maximum + .02
+    return true
+}
+
+settlement_patio_structures_clear :: proc(editor: ^Editor, patio: Settlement_Patio) -> bool {
+    if editor == nil do return false
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if structure.id == patio.host_id do continue
+        if structure.kind != .Architecture && structure.kind != .Foliage do continue
+        if !settlement_oriented_rectangles_clear(
+            patio.center[0],
+            patio.center[1],
+            patio.width,
+            patio.depth,
+            patio.rotation,
+            structure.center_x,
+            structure.center_z,
+            structure.width,
+            structure.depth,
+            structure.rotation,
+            .75,
+        ) {
+            return false
+        }
+    }
+    for existing in editor.settlement_patios[:editor.settlement_patio_count] {
+        if !settlement_oriented_rectangles_clear(
+            patio.center[0],
+            patio.center[1],
+            patio.width,
+            patio.depth,
+            patio.rotation,
+            existing.center[0],
+            existing.center[1],
+            existing.width,
+            existing.depth,
+            existing.rotation,
+            2,
+        ) {
+            return false
+        }
+    }
+    return true
+}
+
+settlement_patios_contain_point :: proc(editor: ^Editor, x, z: f32, padding: f32 = 0) -> bool {
+    if editor == nil do return false
+    for patio in editor.settlement_patios[:editor.settlement_patio_count] {
+        cosine, sine := math.cos(patio.rotation), math.sin(patio.rotation)
+        dx, dz := x - patio.center[0], z - patio.center[1]
+        local_x := dx * cosine + dz * sine
+        local_z := -dx * sine + dz * cosine
+        if math.abs(local_x) <= patio.width * .5 + padding &&
+           math.abs(local_z) <= patio.depth * .5 + padding {
+            return true
+        }
+    }
+    return false
+}
+
+settlement_patio_candidate :: proc(
+    site: Settlement_Site,
+    direction_index: int,
+    width, depth: f32,
+    seed: u32,
+    style: Settlement_Patio_Style,
+) -> Settlement_Patio {
+    structure := site.structure
+    tangent := [2]f32{math.cos(structure.rotation), math.sin(structure.rotation)}
+    normal := [2]f32{-tangent[1], tangent[0]}
+    direction := [2]f32{}
+    distance := f32(0)
+    patio_width, patio_depth := width, depth
+    if direction_index < 2 {
+        sign := direction_index == 0 ? f32(-1) : f32(1)
+        direction = normal * sign
+        distance = structure.depth * .5 + depth * .5 + 1.15
+    } else {
+        sign := direction_index == 2 ? f32(-1) : f32(1)
+        direction = tangent * sign
+        distance = structure.width * .5 + depth * .5 + 1.15
+        patio_width, patio_depth = depth, width
+    }
+    return {
+        center   = {structure.center_x, structure.center_z} + direction * distance,
+        width    = patio_width,
+        depth    = patio_depth,
+        rotation = structure.rotation,
+        seed     = seed,
+        host_id  = structure.id,
+        style    = style,
+    }
+}
+
+settlement_patios_generate :: proc(editor: ^Editor) {
+    if editor == nil || editor.settlement_patio_count >= SETTLEMENT_PATIO_CAPACITY do return
+    plan := &editor.settlement_plan
+    target := 2
+    switch plan.request.scale {
+    case .City:
+        target = 7
+    case .Town:
+        target = 4
+    case .Village:
+        target = 2
+    }
+    start_count := editor.settlement_patio_count
+    for pass in 0 ..< 3 {
+        for site, site_index in plan.sites[:plan.site_count] {
+            if editor.settlement_patio_count - start_count >= target ||
+               editor.settlement_patio_count >= SETTLEMENT_PATIO_CAPACITY {
+                return
+            }
+            if !site.accepted || site.kind != .Ordinary || site.attached do continue
+            eligible := false
+            if pass == 0 {
+                eligible = site.purpose == .Inn_Shop
+            } else if pass == 1 {
+                eligible = site.purpose == .Workshop
+            } else {
+                hash := patio_hash(plan.request.seed ~ site.structure.seed ~ u32(site_index))
+                eligible = site.purpose == .Dwelling && hash % 5 == 0
+            }
+            if !eligible do continue
+
+            seed := patio_hash(plan.request.seed ~ site.structure.seed ~ 0x70617469)
+            scale := plan.request.scale == .Village ? f32(.84) : f32(1)
+            width := (6.8 + f32(seed & 3) * .55) * scale
+            depth := (5.2 + f32((seed >> 3) & 3) * .45) * scale
+            style := plan.request.region == .Aegean ? Settlement_Patio_Style.Aegean : .Adriatic
+            first_direction := int((seed >> 8) & 3)
+            for direction_attempt in 0 ..< 4 {
+                direction := (first_direction + direction_attempt) % 4
+                patio := settlement_patio_candidate(site, direction, width, depth, seed, style)
+                if !settlement_patio_terrain_seat(&editor.project, &patio) ||
+                   !settlement_patio_route_clear(plan, patio) ||
+                   !settlement_patio_structures_clear(editor, patio) {
+                    continue
+                }
+                editor.settlement_patios[editor.settlement_patio_count] = patio
+                editor.settlement_patio_count += 1
+                break
+            }
+        }
+    }
+}
+
+settlement_patio_point :: proc(patio: Settlement_Patio, x, y, z: f32) -> third_person.Vec3 {
+    cosine, sine := math.cos(patio.rotation), math.sin(patio.rotation)
+    return {
+        patio.center[0] + x * cosine - z * sine,
+        patio.base_y + y,
+        patio.center[1] + x * sine + z * cosine,
+    }
+}
+
+world_settlement_patio :: proc(patio: Settlement_Patio) {
+    foundation := patio.style == .Aegean ? rl.Color{190, 207, 203, 255} : rl.Color{198, 165, 123, 255}
+    accent := patio.style == .Aegean ? PATIO_BLUE : PATIO_RED
+    secondary := patio.style == .Aegean ? PATIO_CREAM : rl.Color{240, 196, 124, 255}
+    center := third_person.Vec3{patio.center[0], patio.base_y, patio.center[1]}
+    world_box_rotated(
+        {center.x, center.y - .16, center.z},
+        {patio.width, .36, patio.depth},
+        patio.rotation,
+        foundation,
+    )
+    furniture_center := settlement_patio_point(patio, 0, .04, 0)
+    patio_round_table(furniture_center, secondary)
+    patio_umbrella(furniture_center, min(patio.width, patio.depth) * .38, accent, PATIO_CREAM)
+    chair_count := 2 + int((patio.seed >> 12) & 1) * 2
+    chair_radius := min(patio.width, patio.depth) * .36
+    rotation_offset := f32((patio.seed >> 16) & 255) / 255 * math.PI * 2
+    for chair_index in 0 ..< chair_count {
+        angle := rotation_offset + f32(chair_index) * math.PI * 2 / f32(chair_count)
+        local_x, local_z := math.cos(angle) * chair_radius, math.sin(angle) * chair_radius
+        chair_center := settlement_patio_point(patio, local_x, .04, local_z)
+        patio_chair(chair_center, patio.rotation + angle - math.PI / 2, accent)
+    }
+    if patio.seed & 2 != 0 {
+        bench_center := settlement_patio_point(patio, 0, .04, patio.depth * .5 - .58)
+        patio_bench(bench_center, patio.rotation + math.PI)
+    }
+    planter_x := patio.width * .5 - .55
+    planter_z := patio.depth * .5 - .55
+    patio_planter(settlement_patio_point(patio, -planter_x, .04, planter_z))
+    patio_planter(settlement_patio_point(patio, planter_x, .04, -planter_z))
+}
+
+world_settlement_patios :: proc(editor: ^Editor) {
+    if editor == nil do return
+    for patio in editor.settlement_patios[:editor.settlement_patio_count] {
+        world_settlement_patio(patio)
+    }
+}
