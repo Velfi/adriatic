@@ -11,6 +11,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  adriatic")
     fmt.println("  adriatic --shadow-lab")
     fmt.println("  adriatic --lab <name> [target]")
+    fmt.println("  adriatic dialogue-preview <output.wav> [preset] [text] [formant-shift] [base-pitch] [expression]")
     fmt.println("  adriatic capture <mode> <output.png> [target]")
     fmt.println("    building targets: <ordinal>, ground-<ordinal>, cypress, mouse-town")
     fmt.println("  adriatic capture bougainvillea [output-directory] [seed ...]")
@@ -105,6 +106,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         adriatic_cli_usage()
         return true, true
     }
+    if args[1] == "dialogue-preview" do return true, dialogue_voice_preview_cli(args)
     if args[1] != "capture" do return false, true
     if len(args) < 3 {
         adriatic_cli_usage()

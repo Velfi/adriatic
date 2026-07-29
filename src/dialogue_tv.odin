@@ -73,44 +73,162 @@ dialogue_next_glyph_end :: proc(text: string, start: int) -> int {
     return min(start + rl.TextNextGrapheme(text[start:]), len(text))
 }
 
-dialogue_reveal_pause :: proc(glyph: u8) -> f32 {
-    switch glyph {
-    case '.', '!', '?':
+dialogue_voice_unit_end :: proc(text: string, start: int) -> int {
+    first_end := dialogue_next_glyph_end(text, start)
+    if first_end >= len(text) do return first_end
+    second_end := dialogue_next_glyph_end(text, first_end)
+    if engine_sound.dialogue_voice_merge_graphemes(text[start:first_end], text[first_end:second_end]) {
+        return second_end
+    }
+    return first_end
+}
+
+dialogue_voice_should_synthesize :: proc(grapheme: string) -> bool {
+    articulation := engine_sound.dialogue_voice_articulation(grapheme)
+    return articulation == .Vowel || articulation == .Consonant
+}
+
+dialogue_voice_should_synthesize_at :: proc(text: string, start, end: int) -> bool {
+    if start < 0 || end <= start || end > len(text) do return false
+    if engine_sound.dialogue_voice_is_silent_terminal_e(text, start, end) do return false
+    return dialogue_voice_should_synthesize(text[start:end])
+}
+
+dialogue_voice_next_synthesized_grapheme :: proc(text: string, cursor: int) -> string {
+    if cursor < 0 || cursor >= len(text) do return ""
+    unit_end := dialogue_voice_unit_end(text, cursor)
+    if !dialogue_voice_should_synthesize_at(text, cursor, unit_end) do return ""
+    return text[cursor:unit_end]
+}
+
+dialogue_voice_is_phrase_boundary :: proc(grapheme: string) -> bool {
+    return(
+        grapheme == "." ||
+        grapheme == "!" ||
+        grapheme == "?" ||
+        grapheme == "…" ||
+        grapheme == "\n" ||
+        grapheme == "—" ||
+        grapheme == "–" \
+    )
+}
+
+dialogue_reveal_pause :: proc(grapheme: string) -> f32 {
+    switch grapheme {
+    case ".", "!", "?":
         return .18
-    case ',', ';', ':':
+    case "…":
+        return .28
+    case "—", "–":
+        return .12
+    case ",", ";", ":":
         return .09
-    case '\n':
+    case " ", "\t":
+        return .012
+    case "\n":
         return .12
     }
     return 0
 }
 
+dialogue_voice_cadence_hint :: proc(text: string, start, end: int) -> f32 {
+    if start < 0 || end <= start || end > len(text) do return 0
+    cursor := end
+    current := text[start:end]
+    if engine_sound.dialogue_voice_articulation(current) == .Consonant && cursor < len(text) {
+        next_end := dialogue_voice_unit_end(text, cursor)
+        if dialogue_voice_should_synthesize_at(text, cursor, next_end) &&
+           engine_sound.dialogue_voice_articulation(text[cursor:next_end]) == .Vowel {
+            cursor = next_end
+        } else if engine_sound.dialogue_voice_is_silent_terminal_e(text, cursor, next_end) {
+            cursor = next_end
+        }
+    }
+    if cursor >= len(text) do return 0
+    punctuation_end := dialogue_next_glyph_end(text, cursor)
+    punctuation := text[cursor:punctuation_end]
+    for punctuation == "\"" ||
+        punctuation == "'" ||
+        punctuation == "”" ||
+        punctuation == "’" ||
+        punctuation == "»" {
+        cursor = punctuation_end
+        if cursor >= len(text) do return 0
+        punctuation_end = dialogue_next_glyph_end(text, cursor)
+        punctuation = text[cursor:punctuation_end]
+    }
+    switch punctuation {
+    case ".":
+        return 1
+    case "?":
+        return -1
+    case "!":
+        return -.35
+    case ",", ";", ":":
+        return .45
+    case "…":
+        return .7
+    case "—", "–":
+        return .3
+    }
+    return 0
+}
+
+dialogue_voice_word_progress :: proc(text: string, start, end: int) -> f32 {
+    if start < 0 || end <= start || end > len(text) do return -1
+    if !dialogue_voice_should_synthesize_at(text, start, end) do return -1
+    word_start := 0
+    cursor := 0
+    for cursor < start {
+        unit_end := dialogue_voice_unit_end(text, cursor)
+        if dialogue_voice_should_synthesize_at(text, cursor, unit_end) {
+            if cursor == 0 || word_start >= cursor || !dialogue_voice_should_synthesize_at(text, word_start, cursor) {
+                word_start = cursor
+            }
+        } else {
+            word_start = unit_end
+        }
+        cursor = unit_end
+    }
+    word_end := end
+    for word_end < len(text) {
+        unit_end := dialogue_voice_unit_end(text, word_end)
+        if !dialogue_voice_should_synthesize_at(text, word_end, unit_end) {
+            break
+        }
+        word_end = unit_end
+    }
+    travel := word_end - word_start - (end - start)
+    if travel <= 0 do return 0
+    return clamp(f32(start - word_start) / f32(travel), 0, 1)
+}
+
 dialogue_voice_profile :: proc(resident: story.Resident) -> engine_sound.Dialogue_Voice_Profile {
     switch resident {
     case .Marta:
-        return {390, 170, .72, .34, .105}
+        return {390, 170, .72, .34, .105, 390}
     case .Gerta:
-        return {310, 120, .48, .72, .11}
+        return {310, 120, .48, .72, .11, 310}
     case .Niko:
-        return {270, 105, .42, .82, .11}
+        return {270, 105, .42, .82, .11, 270}
     case .Iva:
-        return {430, 155, .68, .48, .10}
+        return {430, 155, .68, .48, .10, 430}
     case .Bojan:
-        return {235, 90, .38, .88, .115}
+        return {235, 90, .38, .88, .115, 235}
     case .Zora:
-        return {335, 210, .62, .68, .105}
+        return {335, 210, .62, .68, .105, 335}
     case .Vesna:
-        return {365, 145, .58, .52, .10}
+        return {365, 145, .58, .52, .10, 365}
     case .Petar:
-        return {285, 115, .44, .74, .11}
+        return {285, 115, .44, .74, .11, 285}
     case .Anica:
-        return {405, 165, .64, .46, .10}
+        return {405, 165, .64, .46, .10, 405}
     case .Toma:
-        return {295, 125, .50, .70, .105}
+        return {295, 125, .50, .70, .105, 295}
     case .Lena:
-        return {385, 170, .65, .50, .10}
+        return {385, 170, .65, .50, .10, 385}
     }
-    return {340, 140, .55, .6, .1}
+    return {340, 140, .55, .6, .1, 340}
 }
 
 dialogue_view_reset :: proc(editor: ^Editor) {
@@ -141,15 +259,24 @@ dialogue_view_update :: proc(editor: ^Editor, delta_seconds: f32) {
     view.reveal_timer -= max(delta_seconds, 0)
     for view.revealed_bytes < len(text) && view.reveal_timer <= 0 {
         start := view.revealed_bytes
-        view.revealed_bytes = dialogue_next_glyph_end(text, start)
-        glyph := text[start]
-        view.reveal_timer += DIALOGUE_REVEAL_SECONDS + dialogue_reveal_pause(glyph)
-        if (glyph >= 'A' && glyph <= 'Z') || (glyph >= 'a' && glyph <= 'z') || glyph >= 0x80 {
-            engine_sound.dialogue_voice_trigger(
+        view.revealed_bytes = dialogue_voice_unit_end(text, start)
+        unit := text[start:view.revealed_bytes]
+        view.reveal_timer += DIALOGUE_REVEAL_SECONDS + dialogue_reveal_pause(unit)
+        if dialogue_voice_should_synthesize_at(text, start, view.revealed_bytes) {
+            cadence_hint := dialogue_voice_cadence_hint(text, start, view.revealed_bytes)
+            next_grapheme := dialogue_voice_next_synthesized_grapheme(text, view.revealed_bytes)
+            engine_sound.dialogue_voice_trigger_grapheme(
                 &editor.engine_audio,
-                glyph,
+                text[start:view.revealed_bytes],
                 dialogue_voice_profile(editor.dialogue_resident),
+                cadence_hint,
+                next_grapheme,
+                dialogue_voice_word_progress(text, start, view.revealed_bytes),
             )
+        } else if unit == " " || unit == "\t" {
+            engine_sound.dialogue_voice_mixer_word_boundary(&editor.engine_audio.dialogue_voice)
+        } else if dialogue_voice_is_phrase_boundary(unit) {
+            engine_sound.dialogue_voice_phrase_boundary(&editor.engine_audio)
         }
     }
 }

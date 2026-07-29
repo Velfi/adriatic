@@ -12,6 +12,7 @@ Lab_Configure_Proc :: proc(editor: ^Editor, target: string) -> bool
 Lab_World_Proc :: proc(editor: ^Editor)
 Lab_Input_Proc :: proc(editor: ^Editor)
 Lab_UI_Proc :: proc(editor: ^Editor, width, height: i32)
+Lab_Exit_Proc :: proc(editor: ^Editor)
 
 Lab_Scene_Definition :: struct {
     name:                            string,
@@ -19,6 +20,7 @@ Lab_Scene_Definition :: struct {
     world_overlay:                   Lab_World_Proc,
     process_input:                   Lab_Input_Proc,
     draw_ui:                         Lab_UI_Proc,
+    exit:                            Lab_Exit_Proc,
     isolate_content:                 bool,
     enter_gameplay:                  bool,
     replace_world:                   bool,
@@ -34,6 +36,19 @@ Lab_Scene_Request :: struct {
 }
 
 LAB_SCENES := [?]Lab_Scene_Definition {
+    {
+        name = "dialogue-sound",
+        configure = dialogue_sound_lab_configure,
+        process_input = dialogue_sound_lab_process_input,
+        draw_ui = dialogue_sound_lab_draw_ui,
+        exit = dialogue_sound_lab_exit,
+        isolate_content = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = true,
+    },
     {
         name = "markov-wreck",
         configure = markov_wreck_lab_configure,
@@ -236,6 +251,10 @@ lab_scene_reset_content :: proc(editor: ^Editor) {
 
 lab_scene_load :: proc(editor: ^Editor, request: Lab_Scene_Request) -> bool {
     if editor == nil || request.definition == nil || request.definition.configure == nil do return false
+    if editor.active_lab_scene != "" {
+        previous := lab_scene_find(editor.active_lab_scene)
+        if previous != nil && previous.exit != nil do previous.exit(editor)
+    }
     if request.definition.isolate_content do lab_scene_reset_content(editor)
     editor.shadow_lab_scene = false
     editor.wildflower_lab_scene = false
@@ -251,6 +270,8 @@ lab_scene_load :: proc(editor: ^Editor, request: Lab_Scene_Request) -> bool {
 
 lab_scene_exit_to_main_menu :: proc(editor: ^Editor) {
     if editor == nil do return
+    definition := lab_scene_find(editor.active_lab_scene)
+    if definition != nil && definition.exit != nil do definition.exit(editor)
     markov_marina_buoy_physics_destroy(editor)
     editor.active_lab_scene = ""
     editor.shadow_lab_scene = false
