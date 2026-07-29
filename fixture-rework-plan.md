@@ -9778,10 +9778,14 @@ three steps until schema v5 is activated; use a test-local four-step registry.
    three world angular velocities, Postale defaults, preservation of unrelated
    state, and canonical zero Rondine for pre-v4 sources.
 8. Prove malformed exact payloads, invalid contexts/endpoints/allocators,
-   hostile historical bases/angular values, projection failures, and every
-   allocation failure. All failures must publish no result, preserve caller
-   ownership, report the expected kind/change ID, dispose twice safely where
-   public disposal is involved, and leave zero outstanding allocations.
+   hostile historical bases/angular values, projection-encode failure,
+   projection-decode allocation failure, and every other allocation failure.
+   A non-allocation projection-decode failure is unreachable because the
+   payload is emitted internally from the live fixture and the v4→5 shared
+   named fields are compatible; do not add a production injection seam for
+   it. All failures must publish no result, preserve caller ownership, report
+   the expected kind/change ID, dispose twice safely where public disposal is
+   involved, and leave zero outstanding allocations.
 9. Prove the production registry is still exactly three steps ending at v4 and
    that production codec behavior is unchanged before activation.
 
@@ -9794,6 +9798,134 @@ consecutive times, the existing migration suite, codec tests, scaffold check,
 focused policy/diff/scaffold tests, `make check`, histories v1–v4, all frozen
 hashes unchanged, no v5 artifact or binary, and the full suite with only the
 expected frozen-v4/live-schema mismatch.
+
+M4R6B2B is accepted. The 249-line wrapper has SHA-256
+`3f2c8a5bc4fcb9b0566bff9176409e72b25ac547f57c1a4cb333fcb75a4a7cf2`;
+its 1,006-line proof has SHA-256
+`e1a342f4dc4635f0345604be5bbdf4450f21798fc93b15259209acd42c6f183d`.
+The exact three focused tests pass three post-format runs in 3m27.770s,
+3m34.319s, and 3m41.038s with zero leaks. They cover direct v4 and complete
+v1/v2/v3 chains, a valid lazy arena with distinct block/array allocators,
+distributed frozen-source hostiles, full result ownership, every source
+wrapper/transaction OOM point, and an isolated non-exact projection-decode OOM
+sweep. Independent review found no remaining production, ownership, atomicity,
+arena-ABI, mapping, or coverage issue.
+
+The existing migration target passes 9/9 in 4m27.113s and codec passes 2/2 in
+1m6.584s. `make check`, v4→5 scaffold check, policy/diff/scaffold 3/3, and
+histories v1–v4 pass. The full gate passes Rondine 19/19 and 752/753 main tests
+with only the expected frozen-v4/live-schema mismatch and no leak warnings.
+Production registry remains exactly three steps ending at v4; current-v4 codec
+behavior is unchanged. All frozen hashes remain exact, and no binary,
+temporary/probe, v5 schema, v5 history, registry, codec, or Makefile artifact
+exists.
+
+### M4R6B3A — Activate and freeze schema v5
+
+Activate the already accepted live schema and freeze its tooling inputs without
+changing runtime migration dispatch.
+
+1. Change only `FIXTURE_SCHEMA_VERSION` from four to five in `src/main.odin`.
+   Do not run whole-file formatting there.
+2. Generate `fixtures/schema/v0005.fixture-schema` twice and require
+   byte-identical output. The frozen graph remains 1,637 lines, 169 records,
+   and 153 root fields; record the activated SHA rather than reusing the
+   pre-activation candidate SHA.
+3. Replace the v4→live-v5 diff helper with a v4→frozen-v5 helper and make all
+   diff/scaffold proofs read only the two frozen manifests. Preserve the exact
+   21 ordered changes: 17 state and four supporting.
+4. Generate `packages/fixture_history/v0005/schema.generated.odin` twice from
+   the frozen v5 manifest, require identical output, compile it, and extend the
+   history round-trip proof through v5. Pin the quaternion fields, new Postale
+   durable fields, and all five policy exclusions.
+5. Convert the live candidate sentinel to exact frozen-v5 equality. Convert the
+   v4→live scaffold test to a frozen proof that still pins the unresolved
+   renderer at 88 lines, 2,797 bytes, and SHA-256
+   `1c0cb64086b2408303850f8fe76feef592adbdc8af5155a2c7167a962a92a05e`,
+   then parses and validates the real resolved source at 11 scripted, six
+   automatic, and zero unresolved entries.
+6. Prove frozen-v5 preference: a present malformed/unreadable v5 target fails
+   without live fallback. `migration-scaffold-check 4 5` must use frozen v5,
+   and scaffold installation must refuse to overwrite the resolved source.
+
+Allowed files are the one-line version bump, new v5 manifest/history package,
+the narrow schema/diff/history/scaffold tests, an optional synthetic tool test,
+and this plan. Do not change runtime registry, migrations/wrappers, codec,
+Makefile, or any frozen v1–v4 artifact.
+
+This slice intentionally leaves production registry/codec gates red because
+the registry still ends at v4 while current schema is v5. Record those exact
+failures. Require schema check, frozen diff/scaffold, histories v1–v5,
+`make check`, deterministic generation, old hashes unchanged, and no binaries.
+Do not commit this intermediate state.
+
+### M4R6B3B — Register the exact production 4→5 step
+
+Extend the production chain and adapt migration proofs, without changing codec
+tests or any frozen/schema/migration source.
+
+1. Append one 4→5 entry to `fixture_migration_production_steps`, changing only
+   its array length from three to four. Preserve the first three entries
+   byte-for-byte; use `fixture_migration_step_v0004_to_v0005` and the same
+   fallback change ID as the B2B local registry.
+2. Seed every old production-chain test payload with valid, finite Postale and
+   Libellula legacy body angular velocities/bases and both spawn bases. Old
+   zero bases are invalid under the accepted structural contract.
+3. Move v3-wrapper tests that deliberately target v4 to their existing local
+   three-step registry. Production registry validation accepts only its final
+   target, now v5.
+4. Run B2B direct/chained, runner-failure, and transaction-OOM proofs against
+   the real production registry. Keep local helpers only for direct wrapper
+   setup.
+5. Pin the exact contiguous 1→2→3→4→5 registry, all wrapper/change-ID entries,
+   current v5, future v6 rejection, and exact current-schema provenance.
+6. Update older structural/story migration expectations to target v5 and prove
+   their state survives the new orientation/default step.
+7. Add the three B2A structural and three B2B runtime test names to
+   `fixture-migration-test`; the focused target becomes 15/15.
+
+Allowed files are `fixture_migration_runtime.odin`, the narrow affected
+migration tests, `Makefile`, and this plan. Do not change codec, schema/history,
+scaffold tooling, migration cores/wrappers, or frozen artifacts.
+
+Require B2B 3/3 three times, migration 15/15, schema/history/scaffold/report
+gates, and `make check`. Codec/full tests may remain red only where old codec
+fixtures still contain invalid zero legacy bases; record the exact failures and
+leave their repair to B3C. Do not commit this intermediate state.
+
+### M4R6B3C — Restore and prove direct/chained codec paths
+
+Finish activation by updating only the two existing codec proofs.
+
+1. Current v5 exact path must cover all six occupants and non-default values
+   for all three world angular velocities, three body orientations, both spawn
+   orientations, Postale flight model/tuning/runtime persistent fields, and
+   every retained fixture marker. Excluded telemetry, local-rate/session state,
+   and camera lock must remain default. Require deterministic byte-identical
+   re-encode, result-arena ownership/append, and double disposal.
+2. Build true frozen v1/v2/v3/v4 containers from the accepted B2B payload
+   helpers with valid legacy bases. Decode each through the production codec to
+   v5 and apply the shared result oracle: v4 preserves Rondine pose/rate;
+   v1–v3 canonicalize Rondine identity/zero; all Postale/Libellula derived
+   orientations/rates/defaults and unrelated state survive.
+3. Re-encode each migrated result independently as schema v5 and compare
+   deterministic bytes. Source containers remain immutable.
+4. Pin invalid v4 angular/basis containers to codec `.Migration`,
+   migration `.Step_Failure`, exact change ID, empty result, and zero leaks.
+5. Independently measure and sweep every allocation for current v5 and true
+   v4/v3/v2/v1 containers. Require immutable inputs, empty failure results,
+   migration OOM, double disposal, and zero outstanding allocations.
+
+Only `src/fixture_codec_test.odin`, `src/fixture_codec_oom_test.odin`, and this
+plan may change in this slice. No production edits.
+
+Commit B3A+B3B+B3C together only after all gates are green: codec 2/2 twice,
+migration 15/15, B2B 3/3 three times, `make check`, full 753/753 plus Rondine
+19/19 if counts remain unchanged, schema check, histories v1–v5, explicit
+scaffold checks 1→2/2→3/3→4/4→5 with no-overwrite, and deterministic reports
+for all four transitions. Preserve all old hashes and record new exact v5
+manifest/history/report and production-registry hashes. No binary, probe,
+temporary, or stray v5 artifact may remain.
 
 ## Milestone 4D — Install owned state and rebuild runtime resources
 
