@@ -111,12 +111,26 @@ Structure_Visibility_Order :: struct {
     distance_squared: f32,
 }
 
-Ground_Grass_Candidate :: struct {
-    height:                    f32,
-    ground_color:              rl.Color,
-    architecture_height_scale: f32,
-    flower_density:            f32,
-    renderable:                bool,
+GROUND_GRASS_SPACING :: f32(.46)
+GROUND_GRASS_CHUNK_CELLS :: 16
+GROUND_GRASS_CHUNK_WORLD_SIZE :: GROUND_GRASS_SPACING * f32(GROUND_GRASS_CHUNK_CELLS)
+GROUND_GRASS_CACHE_BUDGET_BYTES :: 8 * 1024 * 1024
+
+Ground_Grass_Cached_Instance :: struct {
+    grass:        Grass_Instance,
+    ground_color: [4]f32,
+    density_roll: f32,
+    flower_y:     f32,
+    flower_size:  [2]f32,
+    flower_tile:  u32,
+    has_flower:   bool,
+}
+
+Ground_Grass_Chunk :: struct {
+    entries:     [GROUND_GRASS_CHUNK_CELLS * GROUND_GRASS_CHUNK_CELLS]Ground_Grass_Cached_Instance,
+    count:       int,
+    built_cells: int,
+    last_used:   u64,
 }
 
 @(no_instrumentation)
@@ -616,11 +630,10 @@ World_Renderer :: struct {
     grass_candidate_hits:              u64,
     grass_candidate_misses:            u64,
     grass_instances_emitted:           u64,
-    grass_candidate_cache:             map[[2]int]Ground_Grass_Candidate,
+    grass_chunk_cache:                 map[[2]int]^Ground_Grass_Chunk,
+    grass_chunk_clock:                 u64,
     grass_cache_terrain_revision:      u64,
     grass_cache_project_revision:      u64,
-    grass_cache_center:                [2]int,
-    grass_cache_center_valid:          bool,
     climbing_leaf_cache_builds:        u64,
     climbing_leaf_cache_reuses:        u64,
     town_mouse_cache_builds:           u64,
@@ -1897,6 +1910,11 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
             dirty = changed
         }
     }
+    ground_grass_cache_invalidate_bounds(changed.min_x, changed.min_z, changed.max_x, changed.max_z)
+    // Terrain strokes also advance Project.revision. Record that revision here
+    // so the next render keeps the unaffected chunks instead of treating the
+    // localized edit as an unrelated project-wide topology change.
+    world_renderer.grass_cache_project_revision = editor.project.revision
     if world_renderer.road_revision != 0 do world_renderer.road_revision = editor.project.revision
     if world_renderer.pavement_query_revision != 0 {
         world_renderer.pavement_query_revision = editor.project.revision
@@ -1928,6 +1946,7 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
 world_terrain_invalidate_all :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.terrain_revision += 1
+    ground_grass_cache_clear()
     for &dirty in world_renderer.clipmap_dirty {
         dirty = {
             valid        = true,
@@ -16601,6 +16620,253 @@ world_brush :: proc(editor: ^Editor) {
     world_brush_disc(editor, x, z, inner_radius, .105, core)
 }
 
+world_ground_grass_has_land :: proc(editor: ^Editor, center_x, center_z, radius: f32) -> bool {
+    // Low-flying aircraft can spend entire frames over shallow water, where
+    // the terrain height alone still passes the altitude gate below. Probe a
+    // coarse disc before walking the dense sub-metre grass grid; if no land is
+    // present, none of those candidates can emit geometry.
+    SAMPLE_RADIUS :: 2
+    spacing := radius / f32(SAMPLE_RADIUS)
+    for sample_z in -SAMPLE_RADIUS ..= SAMPLE_RADIUS {
+        for sample_x in -SAMPLE_RADIUS ..= SAMPLE_RADIUS {
+            if sample_x * sample_x + sample_z * sample_z > SAMPLE_RADIUS * SAMPLE_RADIUS do continue
+            x := center_x + f32(sample_x) * spacing
+            z := center_z + f32(sample_z) * spacing
+            if terrain.sample_height(&editor.project, 0, x, z) > editor.project.sea_level + .35 {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+ground_grass_chunk_release :: proc(key: [2]int) {
+    chunk, found := world_renderer.grass_chunk_cache[key]
+    if !found do return
+    free(chunk)
+    delete_key(&world_renderer.grass_chunk_cache, key)
+}
+
+ground_grass_cache_clear :: proc() {
+    for _, chunk in world_renderer.grass_chunk_cache do free(chunk)
+    clear(&world_renderer.grass_chunk_cache)
+}
+
+ground_grass_cache_invalidate_bounds :: proc(min_x, min_z, max_x, max_z: f32) {
+    if world_renderer.grass_chunk_cache == nil do return
+    jitter_padding := GROUND_GRASS_SPACING * .5 * .76
+    padded_min_x, padded_min_z := min_x - jitter_padding, min_z - jitter_padding
+    padded_max_x, padded_max_z := max_x + jitter_padding, max_z + jitter_padding
+    stale := make([dynamic][2]int, 0, 16, context.temp_allocator)
+    for key, _ in world_renderer.grass_chunk_cache {
+        chunk_min_x := f32(key[0]) * GROUND_GRASS_CHUNK_WORLD_SIZE
+        chunk_min_z := f32(key[1]) * GROUND_GRASS_CHUNK_WORLD_SIZE
+        chunk_max_x := chunk_min_x + GROUND_GRASS_CHUNK_WORLD_SIZE
+        chunk_max_z := chunk_min_z + GROUND_GRASS_CHUNK_WORLD_SIZE
+        if chunk_max_x < padded_min_x ||
+           chunk_min_x > padded_max_x ||
+           chunk_max_z < padded_min_z ||
+           chunk_min_z > padded_max_z {
+            continue
+        }
+        append(&stale, key)
+    }
+    for key in stale do ground_grass_chunk_release(key)
+}
+
+ground_grass_cache_make_room :: proc() {
+    CACHE_OVERHEAD_RESERVE :: 256 * 1024
+    maximum_chunks := max((GROUND_GRASS_CACHE_BUDGET_BYTES - CACHE_OVERHEAD_RESERVE) / size_of(Ground_Grass_Chunk), 1)
+    if len(world_renderer.grass_chunk_cache) < maximum_chunks do return
+    oldest_key: [2]int
+    oldest_tick := ~u64(0)
+    found := false
+    for key, chunk in world_renderer.grass_chunk_cache {
+        if chunk.last_used < oldest_tick {
+            oldest_key = key
+            oldest_tick = chunk.last_used
+            found = true
+        }
+    }
+    if found do ground_grass_chunk_release(oldest_key)
+}
+
+ground_grass_chunk_build :: proc(
+    editor: ^Editor,
+    key: [2]int,
+    building_footprints: []Architecture_Grass_Footprint,
+    circulation_plan: ^circulation.Plan,
+    cell_budget: int = GROUND_GRASS_CHUNK_CELLS * GROUND_GRASS_CHUNK_CELLS,
+) -> ^Ground_Grass_Chunk {
+    chunk, found := world_renderer.grass_chunk_cache[key]
+    if !found {
+        ground_grass_cache_make_room()
+        chunk = new(Ground_Grass_Chunk)
+        world_renderer.grass_chunk_cache[key] = chunk
+        world_renderer.grass_candidate_misses += 1
+    }
+    chunk.last_used = world_renderer.grass_chunk_clock
+    base_grid_x := key[0] * GROUND_GRASS_CHUNK_CELLS
+    base_grid_z := key[1] * GROUND_GRASS_CHUNK_CELLS
+    total_cells := GROUND_GRASS_CHUNK_CELLS * GROUND_GRASS_CHUNK_CELLS
+    end_cell := min(chunk.built_cells + max(cell_budget, 0), total_cells)
+    for linear_cell in chunk.built_cells ..< end_cell {
+        local_x := linear_cell % GROUND_GRASS_CHUNK_CELLS
+        local_z := linear_cell / GROUND_GRASS_CHUNK_CELLS
+        world_grid_x := base_grid_x + local_x
+        world_grid_z := base_grid_z + local_z
+        seed_index := world_grid_x * 73856093 + world_grid_z * 19349663
+        jitter_x := (wind_streak_hash(seed_index, 1) - .5) * GROUND_GRASS_SPACING * .76
+        jitter_z := (wind_streak_hash(seed_index, 2) - .5) * GROUND_GRASS_SPACING * .76
+        x := f32(world_grid_x) * GROUND_GRASS_SPACING + jitter_x
+        z := f32(world_grid_z) * GROUND_GRASS_SPACING + jitter_z
+        height_at := terrain.sample_height(&editor.project, 0, x, z)
+        if farmland_excludes_ground_grass(editor, x, z) || !wildflowers_renderable_at(editor, x, z, circulation_plan) {
+            continue
+        }
+        architecture_height_scale := world_architecture_grass_height_scale(building_footprints, x, z)
+        if architecture_height_scale <= 0 do continue
+        ground_color := clipmap_vertex_color(editor, 0, x, z, height_at, 0)
+        variation := wind_streak_hash(seed_index, 4)
+        elevation := max(height_at - editor.project.sea_level, f32(0))
+        altitude := clamp((elevation - 2.4) / 28, f32(0), f32(1))
+        low := rl.Color{49, 112, 78, 255}
+        middle := rl.Color{75, 137, 68, 255}
+        high := rl.Color{139, 145, 70, 255}
+        color := color_lerp(middle, high, (altitude - .52) / .48)
+        if altitude < .52 do color = color_lerp(low, middle, altitude / .52)
+        temperature_field :=
+            f32(math.sin(f64(x * .018 + z * .007))) + f32(math.sin(f64(x * -.006 + z * .014 + 2.1))) * .55
+        if temperature_field < -.55 {
+            color = color_lerp(color, {49, 105, 84, 255}, .24)
+        } else if temperature_field > .58 {
+            color = color_lerp(color, {161, 153, 74, 255}, .27)
+        } else {
+            color = color_lerp(color, {111, 137, 91, 255}, .16)
+        }
+        color = color_lerp(color, {170, 166, 87, 255}, variation * .08)
+        grass_value := f32(color.r) * .2126 + f32(color.g) * .7152 + f32(color.b) * .0722
+        ground_value := f32(ground_color.r) * .2126 + f32(ground_color.g) * .7152 + f32(ground_color.b) * .0722
+        value_scale := ground_value / max(grass_value, f32(1))
+        color.r = u8(clamp(f32(color.r) * value_scale, 0, 255))
+        color.g = u8(clamp(f32(color.g) * value_scale, 0, 255))
+        color.b = u8(clamp(f32(color.b) * value_scale, 0, 255))
+        height_noise := wind_streak_hash(seed_index, 7)
+        width_noise := wind_streak_hash(seed_index, 8)
+        height := .48 + height_noise * .62
+        if height_noise < .12 {
+            height *= .62
+        } else if height_noise > .90 {
+            height *= 1.28
+        }
+        height *= architecture_height_scale
+        width := height * (.56 + width_noise * .48)
+        flower_density := wildflower_density_at(x, z)
+        has_flower := flower_density > .18 && wind_streak_hash(seed_index, 12) < flower_density * .34
+        flower_height := .32 + wind_streak_hash(seed_index, 13) * .34
+        chunk.entries[chunk.count] = {
+            grass = {
+                center = {x, height_at + height * .5, z},
+                size = {width, height},
+                tile = u32(abs(seed_index) % 16),
+                color = world_color(color),
+            },
+            ground_color = world_color(ground_color),
+            density_roll = wind_streak_hash(seed_index, 3),
+            flower_y = height_at +
+            flower_height * .5 +
+            .12,
+            flower_size = {.22 + wind_streak_hash(seed_index, 14) * .18, flower_height},
+            flower_tile = u32(abs(seed_index / 11) % 16),
+            has_flower = has_flower,
+        }
+        chunk.count += 1
+    }
+    chunk.built_cells = end_cell
+    return chunk
+}
+
+ground_grass_chunk_get :: proc(
+    key: [2]int,
+) -> ^Ground_Grass_Chunk {
+    chunk, found := world_renderer.grass_chunk_cache[key]
+    if !found do return nil
+    chunk.last_used = world_renderer.grass_chunk_clock
+    world_renderer.grass_candidate_hits += 1
+    return chunk
+}
+
+ground_grass_cache_stream_disc :: proc(
+    editor: ^Editor,
+    field_x, field_z, radius: f32,
+    building_footprints: []Architecture_Grass_Footprint,
+    circulation_plan: ^circulation.Plan,
+    remaining_cells: ^int,
+) {
+    STREAMING_CELLS_PER_CHUNK :: 64
+    if remaining_cells == nil || remaining_cells^ <= 0 do return
+    radius_squared := radius * radius
+    center_chunk_x := int(math.floor(f64(field_x / GROUND_GRASS_CHUNK_WORLD_SIZE)))
+    center_chunk_z := int(math.floor(f64(field_z / GROUND_GRASS_CHUNK_WORLD_SIZE)))
+    chunk_radius := int(math.ceil(f64(radius / GROUND_GRASS_CHUNK_WORLD_SIZE))) + 1
+    // Chebyshev rings visit the camera's chunk first, then expand outward.
+    // Visible work therefore wins the fixed budget before speculative prefetch.
+    for ring in 0 ..= chunk_radius {
+        for offset_z in -ring ..= ring {
+            for offset_x in -ring ..= ring {
+                if max(abs(offset_x), abs(offset_z)) != ring do continue
+                chunk_x := center_chunk_x + offset_x
+                chunk_z := center_chunk_z + offset_z
+            chunk_min_x := f32(chunk_x) * GROUND_GRASS_CHUNK_WORLD_SIZE
+            chunk_min_z := f32(chunk_z) * GROUND_GRASS_CHUNK_WORLD_SIZE
+            closest_x := clamp(field_x, chunk_min_x, chunk_min_x + GROUND_GRASS_CHUNK_WORLD_SIZE)
+            closest_z := clamp(field_z, chunk_min_z, chunk_min_z + GROUND_GRASS_CHUNK_WORLD_SIZE)
+            dx, dz := closest_x - field_x, closest_z - field_z
+            if dx * dx + dz * dz > radius_squared do continue
+            key := [2]int{chunk_x, chunk_z}
+            chunk, found := world_renderer.grass_chunk_cache[key]
+            complete := found && chunk.built_cells >= GROUND_GRASS_CHUNK_CELLS * GROUND_GRASS_CHUNK_CELLS
+            if complete do continue
+                cell_budget := min(STREAMING_CELLS_PER_CHUNK, remaining_cells^)
+            _ = ground_grass_chunk_build(editor, key, building_footprints, circulation_plan, cell_budget)
+                remaining_cells^ -= cell_budget
+                if remaining_cells^ <= 0 do return
+            }
+        }
+    }
+}
+
+ground_grass_cache_prefetch :: proc(
+    editor: ^Editor,
+    field_x, field_z, field_radius: f32,
+    building_footprints: []Architecture_Grass_Footprint,
+    circulation_plan: ^circulation.Plan,
+) {
+    PREFETCH_MARGIN :: f32(16)
+    STREAMING_CELLS_PER_FRAME :: 512
+    VISIBLE_CELL_RESERVE :: 384
+    visible_cells := VISIBLE_CELL_RESERVE
+    ground_grass_cache_stream_disc(
+        editor,
+        field_x,
+        field_z,
+        field_radius,
+        building_footprints,
+        circulation_plan,
+        &visible_cells,
+    )
+    prefetch_cells := STREAMING_CELLS_PER_FRAME - VISIBLE_CELL_RESERVE + visible_cells
+    ground_grass_cache_stream_disc(
+        editor,
+        field_x,
+        field_z,
+        field_radius + PREFETCH_MARGIN,
+        building_footprints,
+        circulation_plan,
+        &prefetch_cells,
+    )
+}
+
 world_ground_grass :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map || editor.benchmark_ground_grass_disabled do return
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "ground_grass")
@@ -16618,6 +16884,7 @@ world_ground_grass :: proc(editor: ^Editor) {
     } else if editor.pilot.mode != .On_Foot && !driving_car(editor) {
         return
     }
+    if !world_ground_grass_has_land(editor, field_x, field_z, field_radius) do return
 
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
@@ -16630,159 +16897,68 @@ world_ground_grass :: proc(editor: ^Editor) {
     defer delete(building_footprints)
     circulation_plan := editor_circulation_plan(editor)
 
-    // A snapped, deterministic field follows the camera without shimmer. Its
-    // concentric density falloff keeps the near field lush while bounding CPU
-    // terrain samples and opaque blade geometry for the 4K frame budget.
-    // Half the spacing in both axes yields four times the card density.
-    SPACING :: f32(.46)
-    grid_radius := int(math.ceil(f64(field_radius / SPACING)))
-    // Keep the integer cell coordinates used for hashing. Recovering them
-    // later with int(center / SPACING) is unstable because the f32 multiply
-    // can round just below the original integer and shift every seed by one.
-    center_grid_x := int(math.floor(f64(field_x / SPACING)))
-    center_grid_z := int(math.floor(f64(field_z / SPACING)))
-    center_x := f32(center_grid_x) * SPACING
-    center_z := f32(center_grid_z) * SPACING
-    if world_renderer.grass_candidate_cache == nil {
-        world_renderer.grass_candidate_cache = make(map[[2]int]Ground_Grass_Candidate, 40_000)
+    if world_renderer.grass_chunk_cache == nil {
+        world_renderer.grass_chunk_cache = make(map[[2]int]^Ground_Grass_Chunk, 256)
     }
-    if world_renderer.grass_cache_terrain_revision != editor.terrain_revision ||
-       world_renderer.grass_cache_project_revision != editor.project.revision {
-        clear(&world_renderer.grass_candidate_cache)
-        world_renderer.grass_cache_terrain_revision = editor.terrain_revision
+    if world_renderer.grass_cache_project_revision != editor.project.revision {
+        ground_grass_cache_clear()
         world_renderer.grass_cache_project_revision = editor.project.revision
-        world_renderer.grass_cache_center_valid = false
     }
-    if !world_renderer.grass_cache_center_valid ||
-       world_renderer.grass_cache_center != ([2]int{center_grid_x, center_grid_z}) {
-        stale_keys := make([dynamic][2]int, 0, 512, context.temp_allocator)
-        retain_radius := grid_radius + 2
-        for key, _ in world_renderer.grass_candidate_cache {
-            if abs(key[0] - center_grid_x) > retain_radius || abs(key[1] - center_grid_z) > retain_radius {
-                append(&stale_keys, key)
-            }
-        }
-        for key in stale_keys do delete_key(&world_renderer.grass_candidate_cache, key)
-        world_renderer.grass_cache_center = {center_grid_x, center_grid_z}
-        world_renderer.grass_cache_center_valid = true
-    }
-    for grid_z in -grid_radius ..= grid_radius {
-        for grid_x in -grid_radius ..= grid_radius {
-            world_grid_x := grid_x + center_grid_x
-            world_grid_z := grid_z + center_grid_z
-            seed_index := world_grid_x * 73856093 + world_grid_z * 19349663
-            jitter_x := (wind_streak_hash(seed_index, 1) - .5) * SPACING * .76
-            jitter_z := (wind_streak_hash(seed_index, 2) - .5) * SPACING * .76
-            x := center_x + f32(grid_x) * SPACING + jitter_x
-            z := center_z + f32(grid_z) * SPACING + jitter_z
-            dx, dz := x - field_x, z - field_z
-            distance_squared := dx * dx + dz * dz
-            if distance_squared > field_radius * field_radius do continue
-            distance := f32(math.sqrt(f64(distance_squared)))
-            fade := clamp((distance - field_radius * .35) / (field_radius * .65), f32(0), f32(1))
-            fade = fade * fade * (3 - 2 * fade)
-            density := 1 - fade
-            // Dither the population all the way to zero instead of retaining
-            // half the cards at the render limit and dropping them at once.
-            if wind_streak_hash(seed_index, 3) > density do continue
-            key := [2]int{world_grid_x, world_grid_z}
-            candidate, cached := world_renderer.grass_candidate_cache[key]
-            if cached {
-                world_renderer.grass_candidate_hits += 1
-            } else {
-                world_renderer.grass_candidate_misses += 1
-                candidate.height = terrain.sample_height(&editor.project, 0, x, z)
-                candidate.renderable =
-                    !farmland_excludes_ground_grass(editor, x, z) &&
-                    wildflowers_renderable_at(editor, x, z, circulation_plan)
-                if candidate.renderable {
-                    candidate.ground_color = clipmap_vertex_color(editor, 0, x, z, candidate.height, 0)
-                    candidate.architecture_height_scale = world_architecture_grass_height_scale(
-                        building_footprints[:],
-                        x,
-                        z,
-                    )
-                    candidate.flower_density = wildflower_density_at(x, z)
+    world_renderer.grass_cache_terrain_revision = editor.terrain_revision
+    world_renderer.grass_chunk_clock += 1
+    ground_grass_cache_prefetch(editor, field_x, field_z, field_radius, building_footprints[:], circulation_plan)
+    center_chunk_x := int(math.floor(f64(field_x / GROUND_GRASS_CHUNK_WORLD_SIZE)))
+    center_chunk_z := int(math.floor(f64(field_z / GROUND_GRASS_CHUNK_WORLD_SIZE)))
+    chunk_radius := int(math.ceil(f64(field_radius / GROUND_GRASS_CHUNK_WORLD_SIZE))) + 1
+    radius_squared := field_radius * field_radius
+    for chunk_z in center_chunk_z - chunk_radius ..= center_chunk_z + chunk_radius {
+        for chunk_x in center_chunk_x - chunk_radius ..= center_chunk_x + chunk_radius {
+            chunk_min_x := f32(chunk_x) * GROUND_GRASS_CHUNK_WORLD_SIZE
+            chunk_min_z := f32(chunk_z) * GROUND_GRASS_CHUNK_WORLD_SIZE
+            closest_x := clamp(field_x, chunk_min_x, chunk_min_x + GROUND_GRASS_CHUNK_WORLD_SIZE)
+            closest_z := clamp(field_z, chunk_min_z, chunk_min_z + GROUND_GRASS_CHUNK_WORLD_SIZE)
+            chunk_dx, chunk_dz := closest_x - field_x, closest_z - field_z
+            if chunk_dx * chunk_dx + chunk_dz * chunk_dz > radius_squared do continue
+            chunk := ground_grass_chunk_get({chunk_x, chunk_z})
+            if chunk == nil do continue
+            for &cached in chunk.entries[:chunk.count] {
+                x, z := cached.grass.center[0], cached.grass.center[2]
+                dx, dz := x - field_x, z - field_z
+                distance_squared := dx * dx + dz * dz
+                if distance_squared > radius_squared do continue
+                distance := f32(math.sqrt(f64(distance_squared)))
+                fade := clamp((distance - field_radius * .35) / (field_radius * .65), f32(0), f32(1))
+                fade = fade * fade * (3 - 2 * fade)
+                density := 1 - fade
+                if cached.density_roll > density do continue
+                if !static_sphere_in_frustum(
+                    view_camera,
+                    {x, cached.grass.center[1] + .75, z},
+                    2,
+                    aspect,
+                    near_plane,
+                    WORLD_FAR_CLIP,
+                ) {
+                    continue
                 }
-                world_renderer.grass_candidate_cache[key] = candidate
-            }
-            height_at := candidate.height
-            // The generated field surrounds the camera so walking and turning
-            // never expose an empty edge, but only the forward slice can reach
-            // the framebuffer. A deliberately generous sphere retains every
-            // potentially visible grass or wildflower card while rejecting
-            // the field behind and well outside the view before its expensive
-            // terrain/material classification.
-            if !static_sphere_in_frustum(view_camera, {x, height_at + .75, z}, 2, aspect, near_plane, WORLD_FAR_CLIP) {
-                continue
-            }
-            if !candidate.renderable do continue
-            variation := wind_streak_hash(seed_index, 4)
-            // The atlas is sampled as luminance, so elevation can drive the
-            // complete palette without additional texture variants. Moist,
-            // near-shore grass is cool and blue-green; high exposed slopes
-            // transition through olive into a dry, sun-warmed yellow-green.
-            elevation := max(height_at - editor.project.sea_level, f32(0))
-            altitude := clamp((elevation - 2.4) / 28, f32(0), f32(1))
-            low := rl.Color{49, 112, 78, 255}
-            middle := rl.Color{75, 137, 68, 255}
-            high := rl.Color{139, 145, 70, 255}
-            color := color_lerp(middle, high, (altitude - .52) / .48)
-            if altitude < .52 {
-                color = color_lerp(low, middle, altitude / .52)
-            }
-            // Large, stable patches echo the canopy families: cool sea-facing
-            // hollows, silvery herb grass, and dry gold-green exposed slopes.
-            // The low blend amount preserves terrain matching while producing
-            // visible postcard color regions from an overview camera.
-            temperature_field :=
-                f32(math.sin(f64(x * .018 + z * .007))) + f32(math.sin(f64(x * -.006 + z * .014 + 2.1))) * .55
-            if temperature_field < -.55 {
-                color = color_lerp(color, {49, 105, 84, 255}, .24)
-            } else if temperature_field > .58 {
-                color = color_lerp(color, {161, 153, 74, 255}, .27)
-            } else {
-                color = color_lerp(color, {111, 137, 91, 255}, .16)
-            }
-            color = color_lerp(color, {170, 166, 87, 255}, variation * .08)
-            // Keep the authored grass hue, but match its value to the shaded
-            // terrain beneath it. In the outer falloff, converge on the exact
-            // terrain color so the final cards cannot form a dark cutoff ring.
-            ground_color := candidate.ground_color
-            grass_value := f32(color.r) * .2126 + f32(color.g) * .7152 + f32(color.b) * .0722
-            ground_value := f32(ground_color.r) * .2126 + f32(ground_color.g) * .7152 + f32(ground_color.b) * .0722
-            value_scale := ground_value / max(grass_value, f32(1))
-            color.r = u8(clamp(f32(color.r) * value_scale, 0, 255))
-            color.g = u8(clamp(f32(color.g) * value_scale, 0, 255))
-            color.b = u8(clamp(f32(color.b) * value_scale, 0, 255))
-            color = color_lerp(color, ground_color, fade)
-            color.a = u8(clamp(density * 255, 0, 255))
-            // Size uses independent hashes so the field does not repeat one
-            // uniformly scaled tuft silhouette. Most blades stay near the
-            // median, with occasional cropped and seed-head-tall outliers.
-            height_noise := wind_streak_hash(seed_index, 7)
-            width_noise := wind_streak_hash(seed_index, 8)
-            height := .48 + height_noise * .62
-            if height_noise < .12 {
-                height *= .62
-            } else if height_noise > .90 {
-                height *= 1.28
-            }
-            architecture_height_scale := candidate.architecture_height_scale
-            if architecture_height_scale <= 0 do continue
-            height *= architecture_height_scale
-            width := height * (.56 + width_noise * .48)
-            world_grass_card({x, height_at + height * .5, z}, width, height, abs(seed_index) % 16, color)
-            world_renderer.grass_instances_emitted += 1
-            flower_density := candidate.flower_density
-            if flower_density > .18 && wind_streak_hash(seed_index, 12) < flower_density * .34 {
-                flower_height := .32 + wind_streak_hash(seed_index, 13) * .34
-                world_wildflower_card(
-                    {x, height_at + flower_height * .5 + .12, z},
-                    .22 + wind_streak_hash(seed_index, 14) * .18,
-                    flower_height,
-                    abs(seed_index / 11) % 16,
-                )
+                grass := cached.grass
+                for channel in 0 ..< 3 {
+                    grass.color[channel] += (cached.ground_color[channel] - grass.color[channel]) * fade
+                }
+                grass.color[3] = density
+                append(&world_renderer.grass_instances, grass)
+                world_renderer.grass_instances_emitted += 1
+                if cached.has_flower {
+                    append(
+                        &world_renderer.wildflower_instances,
+                        Grass_Instance {
+                            center = {x, cached.flower_y, z},
+                            size = cached.flower_size,
+                            tile = cached.flower_tile,
+                            color = {1, 1, 1, 2},
+                        },
+                    )
+                }
             }
         }
     }
@@ -18780,7 +18956,8 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.bougainvillea_vertices)
     delete(world_renderer.grass_instances)
     delete(world_renderer.wildflower_instances)
-    delete(world_renderer.grass_candidate_cache)
+    ground_grass_cache_clear()
+    delete(world_renderer.grass_chunk_cache)
     delete(world_renderer.wing_trail_vertices)
     delete(world_renderer.wing_trail_indices)
     delete(world_renderer.wing_trail_optimized_indices)

@@ -1636,6 +1636,19 @@ seed_player_benchmark :: proc(editor: ^Editor) {
     editor.camera_pose = third_person.camera_pose(editor.player.position, editor.camera)
 }
 
+
+seed_land_flight_benchmark :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.aircraft.active = .Postale
+    editor.postale_visible = true
+    editor.libellula_visible = false
+    editor.pilot.position = editor.postale.vehicle.position
+    _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
+    if !entered do return
+    editor.in_map = true
+    editor.map_time = f32(rl.GetTime())
+}
+
 seed_zora_benchmark :: proc(editor: ^Editor) {
     if editor == nil do return
     seed_default_island_towns(editor)
@@ -1772,6 +1785,11 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
     case "grass_disabled":
         seed_player_benchmark(editor)
         editor.benchmark_ground_grass_disabled = true
+    case "land_flight":
+        seed_land_flight_benchmark(editor)
+    case "land_flight_cold":
+        seed_land_flight_benchmark(editor)
+        editor.benchmark_ground_grass_disabled = true
     case "zora":
         seed_zora_benchmark(editor)
     case "marta":
@@ -1795,6 +1813,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "player" &&
        scenario != "grass" &&
        scenario != "grass_disabled" &&
+       scenario != "land_flight" &&
+       scenario != "land_flight_cold" &&
        scenario != "zora" &&
        scenario != "marta" &&
        scenario != "municipal_route_night" &&
@@ -1829,6 +1849,21 @@ benchmark_formation_edit_step :: proc(editor: ^Editor, edit_frame: int) {
     structure := &editor.project.structures[editor.project.structure_count - 1]
     structure.height = 8 + math.sin(f32(edit_frame) * .17) * .5
     editor.project.revision += 1
+}
+
+benchmark_land_flight_step :: proc(editor: ^Editor, benchmark_frame: int) {
+    if editor == nil || benchmark_frame < 0 do return
+    spawn := postale_spawn_position(editor)
+    phase := f32(benchmark_frame) * .012
+    x := spawn.x + math.sin(phase) * 72
+    z := spawn.z + math.sin(phase * .61) * 28
+    ground := terrain.sample_height(&editor.project, 0, x, z)
+    editor.postale.body.position = {x, ground + 9, z}
+    editor.postale.body.velocity = {-24, 0, 0}
+    editor.postale.grounded = false
+    editor.postale.was_grounded = false
+    editor.postale.vehicle.position = {x, ground + 9, z}
+    editor.camera_pose = third_person.camera_look_at({x + 16, ground + 14, z + 9}, {x - 10, ground + 5, z})
 }
 
 benchmark_percentile :: proc(sorted_samples: []f64, fraction: f64) -> f64 {
@@ -9879,6 +9914,12 @@ adriatic_run :: proc(
         }
         if benchmark_scenario == "formation_edit" && frame >= benchmark_warmup {
             benchmark_formation_edit_step(editor, frame - benchmark_warmup)
+        }
+        if benchmark_scenario == "land_flight" || benchmark_scenario == "land_flight_cold" {
+            benchmark_land_flight_step(editor, frame)
+        }
+        if benchmark_scenario == "land_flight_cold" && frame >= benchmark_warmup {
+            editor.benchmark_ground_grass_disabled = false
         }
         if !editor.in_map && editor.tool != .Structure && cursor_hit && !ui_hit {
             if rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT) {
