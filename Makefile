@@ -91,6 +91,7 @@ LOCAL_SLANGC := $(TOOLS_DIR)/slang/$(SLANG_VERSION)/slangc
 PATH_ODIN := $(shell command -v odin 2>/dev/null)
 PATH_SLANGC := $(shell command -v slangc 2>/dev/null)
 ODIN ?= $(if $(wildcard $(LOCAL_ODIN)),$(LOCAL_ODIN),$(PATH_ODIN))
+ODIN_OVERRIDE := $(if $(filter file,$(origin ODIN)),,1)
 ODIN_VET_FLAGS := -vet-shadowing -vet-cast -no-instrumentation-force-inline
 SLANGC ?= $(if $(PATH_SLANGC),$(PATH_SLANGC),$(LOCAL_SLANGC))
 ODINFMT ?= odinfmt
@@ -170,7 +171,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-migration-test fmt check test test-src test-rondine clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt check test test-src test-rondine clean
 
 all: build
 
@@ -187,16 +188,20 @@ check-odin-version:
 		echo "error: Odin is missing; run make bootstrap or set ODIN=/path/to/odin" >&2; exit 1; \
 	fi; \
 	actual="$$($(ODIN) version 2>/dev/null || true)"; \
-	case "$$actual" in \
-		*"$(ODIN_VERSION_OUTPUT)"*) ;; \
-		*) \
-			echo "error: wrong Odin compiler version" >&2; \
-			echo "  expected: $(ODIN_VERSION_OUTPUT)" >&2; \
-			echo "  actual:   $${actual:-<no version output>}" >&2; \
-			echo "run 'make bootstrap-fork' or set ODIN=/path/to/the/locked/odin" >&2; \
-			exit 1 ;; \
-	esac; \
-	echo "Odin: $$actual"
+	if [ -n "$(ODIN_OVERRIDE)" ]; then \
+		echo "Odin override: $${actual:-<no version output>}"; \
+	else \
+		case "$$actual" in \
+			*"$(ODIN_VERSION_OUTPUT)"*) ;; \
+			*) \
+				echo "error: wrong Odin compiler version" >&2; \
+				echo "  expected: $(ODIN_VERSION_OUTPUT)" >&2; \
+				echo "  actual:   $${actual:-<no version output>}" >&2; \
+				echo "run 'make bootstrap-fork' or set ODIN=/path/to/the/locked/odin" >&2; \
+				exit 1 ;; \
+		esac; \
+		echo "Odin: $$actual"; \
+	fi
 
 doctor: check-odin-version
 	@set -eu; \
@@ -856,7 +861,16 @@ fixture-lifecycle-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/liba
 	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=main.fixture_lifecycle_detach_derives_all_identities_without_allocation,main.fixture_lifecycle_prepare_and_bind_use_destination_owned_addresses,main.fixture_lifecycle_hostile_states_fail_atomically,main.fixture_lifecycle_hot_state_round_trips_all_identities -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 
 fixture-migration-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
-	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.fixture_migration_transaction_paths_and_ownership,main.fixture_migration_rejects_invalid_registries_before_decode,main.fixture_migration_caller_allocation_failures_dispose_everything,main.fixture_migration_structural_migration_and_boundaries,main.fixture_migration_story_golden_matrix_and_failures,main.fixture_migration_v0002_to_v0003_direct_chained_and_failures,main.fixture_migration_v0003_to_v0004_runtime_direct_and_chains,main.fixture_migration_v0003_to_v0004_runtime_hostile_and_atomic,main.fixture_migration_v0003_to_v0004_runtime_allocation_failures,main.fixture_migration_v0004_to_v0005_structural_success_and_resolutions,main.fixture_migration_v0004_to_v0005_structural_basis_boundaries_and_hostile_sources,main.fixture_migration_v0004_to_v0005_structural_zero_rondine_and_nil,main.fixture_migration_v0004_to_v0005_runtime_direct_and_complete_chains,main.fixture_migration_v0004_to_v0005_runtime_hostile_contexts_and_payloads,main.fixture_migration_v0004_to_v0005_runtime_allocation_failures,main.fixture_migration_v0005_to_v0006_direct_defaults_and_registry,main.fixture_migration_v0008_to_v0009_initializes_generation_provenance,main.fixture_migration_v0009_to_v0010_initializes_empty_mailbox,main.fixture_migration_v0010_to_v0011_initializes_front_schedules,main.fixture_migration_v0011_to_v0012_initializes_climate_without_losing_front,main.fixture_migration_v0012_to_v0013_preserves_append_only_building_identities,main.fixture_migration_v0013_to_v0014_initializes_cliff_tool_and_removes_meshes -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.fixture_migration_transaction_paths_and_ownership,main.fixture_migration_rejects_invalid_registries_before_decode,main.fixture_migration_caller_allocation_failures_dispose_everything,main.fixture_migration_structural_migration_and_boundaries,main.fixture_migration_story_golden_matrix_and_failures,main.fixture_migration_v0002_to_v0003_direct_chained_and_failures,main.fixture_migration_v0003_to_v0004_runtime_direct_and_chains,main.fixture_migration_v0003_to_v0004_runtime_hostile_and_atomic,main.fixture_migration_v0003_to_v0004_runtime_allocation_failures,main.fixture_migration_v0004_to_v0005_structural_success_and_resolutions,main.fixture_migration_v0004_to_v0005_structural_basis_boundaries_and_hostile_sources,main.fixture_migration_v0004_to_v0005_structural_zero_rondine_and_nil,main.fixture_migration_v0004_to_v0005_runtime_direct_and_complete_chains,main.fixture_migration_v0004_to_v0005_runtime_hostile_contexts_and_payloads,main.fixture_migration_v0004_to_v0005_runtime_allocation_failures,main.fixture_migration_v0005_to_v0006_direct_defaults_and_registry,main.fixture_migration_v0008_to_v0009_initializes_generation_provenance,main.fixture_migration_v0009_to_v0010_initializes_empty_mailbox,main.fixture_migration_v0010_to_v0011_initializes_front_schedules,main.fixture_migration_v0011_to_v0012_initializes_climate_without_losing_front,main.fixture_migration_v0012_to_v0013_preserves_append_only_building_identities,main.fixture_migration_v0013_to_v0014_initializes_cliff_tool_and_removes_meshes,main.fixture_migration_v0015_to_v0016_initializes_authoring_defaults -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
+
+fixture-migration-v0015-to-v0016-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=main.fixture_migration_v0015_to_v0016_initializes_authoring_defaults -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
+
+fixture-dunes-lab-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=main.dunes_lab_fixture_load_rehydrates_without_mutating_terrain,main.dunes_lab_fixture_exit_and_ordinary_load_clear_runtime,main.dunes_lab_hot_state_rehydrates_without_mutating_terrain -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
+
+fixture-dunes-lab-preflight-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=main.dunes_lab_fixture_lab_preflight_paths -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 
 clean:
 	rm -rf "$(BUILD_DIR)"

@@ -91,20 +91,20 @@ when ODIN_TEST {
         testing.expect(t, os.make_directory_all(collection_root) == nil)
 
         v1_source :=
-            "package src\n\n" +
+            "package adriatic\n\n" +
             "FIXTURE_SCHEMA_VERSION :: 1\n\n" +
             "Fixture :: struct {\n" +
             "    value: u8,\n" +
             "}\n"
         v2_source :=
-            "package src\n\n" +
+            "package adriatic\n\n" +
             "FIXTURE_SCHEMA_VERSION :: 2\n\n" +
             "Fixture :: struct {\n" +
             "    value: u8,\n" +
             "    target: u16,\n" +
             "}\n"
         live_v2_source :=
-            "package src\n\n" +
+            "package adriatic\n\n" +
             "FIXTURE_SCHEMA_VERSION :: 2\n\n" +
             "Fixture :: struct {\n" +
             "    value: u8,\n" +
@@ -188,20 +188,20 @@ when ODIN_TEST {
         fixture_schema.schema_diff_error_dispose(&error)
 
         v3_source :=
-            "package src\n\n" +
+            "package adriatic\n\n" +
             "FIXTURE_SCHEMA_VERSION :: 3\n\n" +
             "Fixture :: struct {\n" +
             "    value: u8,\n" +
             "}\n"
         v4_source :=
-            "package src\n\n" +
+            "package adriatic\n\n" +
             "FIXTURE_SCHEMA_VERSION :: 4\n\n" +
             "Fixture :: struct {\n" +
             "    value: u8,\n" +
             "    target_v4: u16,\n" +
             "}\n"
         live_v5_source :=
-            "package src\n\n" +
+            "package adriatic\n\n" +
             "FIXTURE_SCHEMA_VERSION :: 5\n\n" +
             "Fixture :: struct {\n" +
             "    value: u8,\n" +
@@ -269,7 +269,7 @@ when ODIN_TEST {
         v5_path := fixture_schema.manifest_path(repo_root, 5)
         testing.expect(t, migration_candidate_test_write(t, v5_path, live_v5_draft))
         changed_live_v5_source :=
-            "package src\n\n" +
+            "package adriatic\n\n" +
             "FIXTURE_SCHEMA_VERSION :: 5\n\n" +
             "Fixture :: struct {\n" +
             "    value: u8,\n" +

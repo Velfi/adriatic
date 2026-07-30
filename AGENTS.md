@@ -13,6 +13,12 @@
   before diagnosing or changing code. This profile enables Vulkan validation layers and
   ASAN.
 
+## Compiler bugs
+
+- If the compiler crashes, hangs, miscompiles, or produces clearly incorrect diagnostics,
+  stop immediately and report the compiler version, command, evidence, and smallest
+  reproducer. Do not work around the compiler bug or continue until given direction.
+
 ## Screenshot capture
 
 - Build the app, then use its capture tool at `build/dev/adriatic capture`.

@@ -16,7 +16,7 @@ fi
 # shellcheck disable=SC1091
 . "$ROOT/toolchain.mk"
 
-brew install odinfmt "$LLVM_HOMEBREW_FORMULA"
+brew install "$LLVM_HOMEBREW_FORMULA"
 
 case "$(uname -m)" in
 	arm64) SLANG_ARCHIVE=$SLANG_MACOS_ARM64_ARCHIVE; SLANG_SHA256=$SLANG_MACOS_ARM64_SHA256 ;;
