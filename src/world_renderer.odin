@@ -8,6 +8,7 @@ import circulation "../packages/circulation"
 import dio "../packages/dio"
 import flight "../packages/flight"
 import fountains "../packages/fountains"
+import islands "../packages/islands"
 import mouse_gait "../packages/mouse_gait"
 import mouse_kinematics "../packages/mouse_kinematics"
 import mouse_paws "../packages/mouse_paws"
@@ -373,8 +374,10 @@ when ODIN_TEST {
         for width_index in 6 ..= 48 {
             building_width := f32(width_index)
             for low_gable in gable_kinds {
-                opening_width, opening_height, rise, center_fraction, valid :=
-                    world_gable_attic_opening_plan(building_width, low_gable)
+                opening_width, opening_height, rise, center_fraction, valid := world_gable_attic_opening_plan(
+                    building_width,
+                    low_gable,
+                )
                 if !valid do continue
                 frame_margin := f32(.18)
                 top_fraction := center_fraction + (opening_height * .5 + frame_margin) / rise
@@ -503,12 +506,12 @@ Bougainvillea_Card_Descriptor :: struct {
 }
 
 Bougainvillea_Instance :: struct {
-    center:    [3]f32,
-    size:      [2]f32,
-    tile:      u32,
+    center:   [3]f32,
+    size:     [2]f32,
+    tile:     u32,
     // x: mirror, y: roll, z: value, w: young-growth marker.
-    params:    [4]f32,
-    yaw_bias:  f32,
+    params:   [4]f32,
+    yaw_bias: f32,
 }
 
 Grass_Instance :: struct {
@@ -679,169 +682,169 @@ Sky_Push :: struct {
 }
 
 World_Renderer :: struct {
-    editor:                              ^Editor,
-    ctx:                                 ^engine.Vk_Context,
-    pipelines:                           [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    transparent_pipelines:               [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    shadow_pipelines:                    [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    dynamic_shadow:                      Dynamic_Shadow_State,
-    shadow_vertex:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    shadow_vertices:                     [dynamic]World_Vertex,
-    dynamic_caster_first:                int,
-    dynamic_caster_count:                int,
-    road_pipelines:                      [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    sky_pipelines:                       [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    particle_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    foliage_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    bougainvillea_pipelines:             [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    grass_pipelines:                     [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    instance_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
-    layout:                              vk.PipelineLayout,
-    sky_layout:                          vk.PipelineLayout,
-    foliage_layout:                      vk.PipelineLayout,
-    foliage_descriptor_layout:           vk.DescriptorSetLayout,
-    foliage_descriptor_pool:             vk.DescriptorPool,
-    foliage_descriptor:                  vk.DescriptorSet,
-    bougainvillea_descriptor:            vk.DescriptorSet,
-    grass_descriptor:                    vk.DescriptorSet,
-    wildflower_descriptor:               vk.DescriptorSet,
-    foliage_atlas:                       resources.Image,
-    bougainvillea_atlas:                 resources.Image,
-    grass_atlas:                         resources.Image,
-    wildflower_atlas:                    resources.Image,
-    vehicle_paint_atlas:                 resources.Image,
-    soda_cap_logo:                       resources.Image,
-    architecture_material_atlas:         resources.Image,
-    business_sign_atlas:                 resources.Image,
-    vehicle_paint_staging:               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    vehicle_paint_descriptor_layout:     vk.DescriptorSetLayout,
-    vehicle_paint_descriptor_pool:       vk.DescriptorPool,
-    vehicle_paint_descriptor:            vk.DescriptorSet,
-    vertex:                              [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    static_vertex:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    static_index:                        [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    road_vertex:                         [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    foliage_vertex:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    bougainvillea_instance:              [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    grass_instance:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    instance_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    instance_index:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    instance_data:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    wing_trail_vertex:                   [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    wing_trail_index:                    [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    vertices:                            [dynamic]World_Vertex,
-    late_transparent_vertices:           [dynamic]World_Vertex,
-    late_transparent_first:              int,
-    late_transparent_count:              int,
-    scene_daylight:                      f32,
-    static_vertices:                     [dynamic]World_Vertex,
-    static_indices:                      [dynamic]u32,
-    retained_static_draws:               [dynamic]Retained_Static_Draw,
-    retained_static_revision:            u64,
-    retained_static_uploaded_revision:   [engine.MAX_FRAMES_IN_FLIGHT]u64,
-    retained_static_dirty:               bool,
-    road_vertices:                       [dynamic]World_Vertex,
-    foliage_vertices:                    [dynamic]Foliage_Vertex,
-    bougainvillea_vertices:              [dynamic]Foliage_Vertex,
-    bougainvillea_instances:             [dynamic]Bougainvillea_Instance,
-    grass_instances:                     [dynamic]Grass_Instance,
-    wildflower_instances:                [dynamic]Grass_Instance,
-    instance_vertices:                   [dynamic]World_Vertex,
-    instance_indices:                    [dynamic]u32,
-    instance_flattened:                  [dynamic]World_Mesh_Instance,
-    instance_meshes:                     [dynamic]World_Instance_Mesh,
-    wing_trail_vertices:                 [dynamic]World_Vertex,
-    wing_trail_indices:                  [dynamic]u16,
-    wing_trail_optimized_indices:        [dynamic]u16,
-    land_surface_samples:                [dynamic]World_Land_Surface_Sample,
-    player_vertex_first:                 int,
-    player_vertex_count:                 int,
-    player_shadow_receiver:              f32,
-    clipmap_vertex:                      [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
-    clipmap_index:                       engine.Vk_Buffer,
-    clipmap_ring_index:                  [3][3]engine.Vk_Buffer,
-    clipmap_full_indices:                u32,
-    clipmap_ring_indices:                u32,
-    clipmap_revision:                    [engine.MAX_FRAMES_IN_FLIGHT]u64,
-    clipmap_center:                      [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
-    clipmap_valid:                       [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
-    clipmap_dirty:                       [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
-    clipmap_cache_vertex:                [terrain.CLIPMAP_LEVELS][dynamic]World_Vertex,
-    clipmap_scratch_vertex:              [terrain.CLIPMAP_LEVELS][dynamic]World_Vertex,
-    clipmap_cache_center:                [terrain.CLIPMAP_LEVELS][2]f32,
-    clipmap_cache_valid:                 [terrain.CLIPMAP_LEVELS]bool,
-    clipmap_cache_revision:              u64,
-    clipmap_levels_generated:            u64,
-    clipmap_levels_copied:               u64,
-    clipmap_full_rebuilds:               u64,
-    clipmap_incremental_shifts:          u64,
-    clipmap_cells_copied:                u64,
-    clipmap_cells_generated:             u64,
-    grass_candidate_hits:                u64,
-    grass_candidate_misses:              u64,
-    grass_instances_emitted:             u64,
-    grass_chunk_cache:                   map[[2]int]^Ground_Grass_Chunk,
-    grass_chunk_clock:                   u64,
-    grass_cache_terrain_revision:        u64,
-    grass_cache_project_revision:        u64,
-    climbing_leaf_cache_builds:          u64,
-    climbing_leaf_cache_reuses:          u64,
-    town_mouse_cache_builds:             u64,
-    town_mouse_cache_reuses:             u64,
-    town_mouse_ground_cache_hits:        u64,
-    town_mouse_ground_cache_misses:      u64,
-    road_mesh:                           roads.Mesh,
-    road_graph:                          roads.Graph,
-    road_graph_valid:                    bool,
-    road_revision:                       u64,
-    road_geometry_cache:                 [dynamic]World_Vertex,
-    road_geometry_chunks:                [dynamic]Road_Geometry_Cache_Chunk,
-    road_geometry_revision:              u64,
-    road_geometry_terrain_revision:      u64,
-    road_geometry_valid:                 bool,
-    architecture_alley_render_cache:     [dynamic]Architecture_Alley_Render_Cache,
-    architecture_alley_terrain_revision: u64,
-    architecture_alley_project_revision: u64,
-    architecture_alley_geometry_cache:   [dynamic]World_Vertex,
-    architecture_alley_geometry_plan:    [dynamic]architecture.City_Alley,
+    editor:                                       ^Editor,
+    ctx:                                          ^engine.Vk_Context,
+    pipelines:                                    [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    transparent_pipelines:                        [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    shadow_pipelines:                             [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    dynamic_shadow:                               Dynamic_Shadow_State,
+    shadow_vertex:                                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    shadow_vertices:                              [dynamic]World_Vertex,
+    dynamic_caster_first:                         int,
+    dynamic_caster_count:                         int,
+    road_pipelines:                               [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    sky_pipelines:                                [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    particle_pipelines:                           [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    foliage_pipelines:                            [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    bougainvillea_pipelines:                      [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    grass_pipelines:                              [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    instance_pipelines:                           [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    layout:                                       vk.PipelineLayout,
+    sky_layout:                                   vk.PipelineLayout,
+    foliage_layout:                               vk.PipelineLayout,
+    foliage_descriptor_layout:                    vk.DescriptorSetLayout,
+    foliage_descriptor_pool:                      vk.DescriptorPool,
+    foliage_descriptor:                           vk.DescriptorSet,
+    bougainvillea_descriptor:                     vk.DescriptorSet,
+    grass_descriptor:                             vk.DescriptorSet,
+    wildflower_descriptor:                        vk.DescriptorSet,
+    foliage_atlas:                                resources.Image,
+    bougainvillea_atlas:                          resources.Image,
+    grass_atlas:                                  resources.Image,
+    wildflower_atlas:                             resources.Image,
+    vehicle_paint_atlas:                          resources.Image,
+    soda_cap_logo:                                resources.Image,
+    architecture_material_atlas:                  resources.Image,
+    business_sign_atlas:                          resources.Image,
+    vehicle_paint_staging:                        [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    vehicle_paint_descriptor_layout:              vk.DescriptorSetLayout,
+    vehicle_paint_descriptor_pool:                vk.DescriptorPool,
+    vehicle_paint_descriptor:                     vk.DescriptorSet,
+    vertex:                                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    static_vertex:                                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    static_index:                                 [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    road_vertex:                                  [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    foliage_vertex:                               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    bougainvillea_instance:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    grass_instance:                               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    instance_vertex:                              [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    instance_index:                               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    instance_data:                                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    wing_trail_vertex:                            [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    wing_trail_index:                             [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    vertices:                                     [dynamic]World_Vertex,
+    late_transparent_vertices:                    [dynamic]World_Vertex,
+    late_transparent_first:                       int,
+    late_transparent_count:                       int,
+    scene_daylight:                               f32,
+    static_vertices:                              [dynamic]World_Vertex,
+    static_indices:                               [dynamic]u32,
+    retained_static_draws:                        [dynamic]Retained_Static_Draw,
+    retained_static_revision:                     u64,
+    retained_static_uploaded_revision:            [engine.MAX_FRAMES_IN_FLIGHT]u64,
+    retained_static_dirty:                        bool,
+    road_vertices:                                [dynamic]World_Vertex,
+    foliage_vertices:                             [dynamic]Foliage_Vertex,
+    bougainvillea_vertices:                       [dynamic]Foliage_Vertex,
+    bougainvillea_instances:                      [dynamic]Bougainvillea_Instance,
+    grass_instances:                              [dynamic]Grass_Instance,
+    wildflower_instances:                         [dynamic]Grass_Instance,
+    instance_vertices:                            [dynamic]World_Vertex,
+    instance_indices:                             [dynamic]u32,
+    instance_flattened:                           [dynamic]World_Mesh_Instance,
+    instance_meshes:                              [dynamic]World_Instance_Mesh,
+    wing_trail_vertices:                          [dynamic]World_Vertex,
+    wing_trail_indices:                           [dynamic]u16,
+    wing_trail_optimized_indices:                 [dynamic]u16,
+    land_surface_samples:                         [dynamic]World_Land_Surface_Sample,
+    player_vertex_first:                          int,
+    player_vertex_count:                          int,
+    player_shadow_receiver:                       f32,
+    clipmap_vertex:                               [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
+    clipmap_index:                                engine.Vk_Buffer,
+    clipmap_ring_index:                           [3][3]engine.Vk_Buffer,
+    clipmap_full_indices:                         u32,
+    clipmap_ring_indices:                         u32,
+    clipmap_revision:                             [engine.MAX_FRAMES_IN_FLIGHT]u64,
+    clipmap_center:                               [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
+    clipmap_valid:                                [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
+    clipmap_dirty:                                [engine.MAX_FRAMES_IN_FLIGHT]Terrain_Dirty_Bounds,
+    clipmap_cache_vertex:                         [terrain.CLIPMAP_LEVELS][dynamic]World_Vertex,
+    clipmap_scratch_vertex:                       [terrain.CLIPMAP_LEVELS][dynamic]World_Vertex,
+    clipmap_cache_center:                         [terrain.CLIPMAP_LEVELS][2]f32,
+    clipmap_cache_valid:                          [terrain.CLIPMAP_LEVELS]bool,
+    clipmap_cache_revision:                       u64,
+    clipmap_levels_generated:                     u64,
+    clipmap_levels_copied:                        u64,
+    clipmap_full_rebuilds:                        u64,
+    clipmap_incremental_shifts:                   u64,
+    clipmap_cells_copied:                         u64,
+    clipmap_cells_generated:                      u64,
+    grass_candidate_hits:                         u64,
+    grass_candidate_misses:                       u64,
+    grass_instances_emitted:                      u64,
+    grass_chunk_cache:                            map[[2]int]^Ground_Grass_Chunk,
+    grass_chunk_clock:                            u64,
+    grass_cache_terrain_revision:                 u64,
+    grass_cache_project_revision:                 u64,
+    climbing_leaf_cache_builds:                   u64,
+    climbing_leaf_cache_reuses:                   u64,
+    town_mouse_cache_builds:                      u64,
+    town_mouse_cache_reuses:                      u64,
+    town_mouse_ground_cache_hits:                 u64,
+    town_mouse_ground_cache_misses:               u64,
+    road_mesh:                                    roads.Mesh,
+    road_graph:                                   roads.Graph,
+    road_graph_valid:                             bool,
+    road_revision:                                u64,
+    road_geometry_cache:                          [dynamic]World_Vertex,
+    road_geometry_chunks:                         [dynamic]Road_Geometry_Cache_Chunk,
+    road_geometry_revision:                       u64,
+    road_geometry_terrain_revision:               u64,
+    road_geometry_valid:                          bool,
+    architecture_alley_render_cache:              [dynamic]Architecture_Alley_Render_Cache,
+    architecture_alley_terrain_revision:          u64,
+    architecture_alley_project_revision:          u64,
+    architecture_alley_geometry_cache:            [dynamic]World_Vertex,
+    architecture_alley_geometry_plan:             [dynamic]architecture.City_Alley,
     architecture_alley_geometry_terrain_revision: u64,
     architecture_alley_geometry_project_revision: u64,
-    architecture_alley_geometry_valid:   bool,
-    architecture_alley_geometry_building: bool,
-    architecture_alley_overlap_cache:    [dynamic]Architecture_Alley_Overlap_Cache,
-    architecture_alley_overlap_plan:     [dynamic]architecture.City_Alley,
-    architecture_street_area_cache:      [dynamic]Architecture_Street_Area_Cache,
-    settlement_fountain_geometry_cache:  [dynamic]Settlement_Fountain_Geometry_Cache,
-    laundry_geometry_cache:              [dynamic]World_Vertex,
-    laundry_geometry_revision:           u64,
-    laundry_geometry_terrain_revision:   u64,
-    laundry_geometry_valid:              bool,
-    pavement_query:                      roads.Pavement_Query,
-    pavement_query_graph:                roads.Graph,
-    pavement_query_graph_valid:          bool,
-    pavement_query_revision:             u64,
-    foliage_geometry_cache:              [dynamic]Foliage_Geometry_Cache_Entry,
-    static_geometry_cache:               [dynamic]Static_Geometry_Cache_Entry,
-    climbing_leaf_geometry_cache:        [dynamic]Climbing_Leaf_Geometry_Cache_Entry,
-    town_mouse_geometry_cache:           [TOWN_MOUSE_CACHE_COUNT]Town_Mouse_Geometry_Cache_Entry,
-    dialogue_portrait_geometry_cache:    [2]Town_Mouse_Geometry_Cache_Entry,
-    libellula_geometry_cache:            Libellula_Geometry_Cache_Entry,
-    marina_geometry_cache:               [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
-    structure_lod_counts:                [3]int,
-    structure_lod_cache_rebuilds:        u64,
-    structure_lod_world_vertices:        int,
-    structure_lod_foliage_vertices:      int,
-    static_visibility:                   Static_Visibility_Stats,
-    static_visibility_classification:    [dynamic]Static_Visibility_Classification,
-    structure_visibility_order:          [dynamic]Structure_Visibility_Order,
-    structure_visibility_centers:        [dynamic][2]f32,
-    structure_visibility_camera:         [2]f32,
-    structure_visibility_selected:       int,
-    structure_visibility_hovered:        int,
-    structure_visibility_order_valid:    bool,
-    structure_building_spans:            [dynamic]u8,
-    structure_candidates:                [dynamic]int,
-    initialized:                         bool,
+    architecture_alley_geometry_valid:            bool,
+    architecture_alley_geometry_building:         bool,
+    architecture_alley_overlap_cache:             [dynamic]Architecture_Alley_Overlap_Cache,
+    architecture_alley_overlap_plan:              [dynamic]architecture.City_Alley,
+    architecture_street_area_cache:               [dynamic]Architecture_Street_Area_Cache,
+    settlement_fountain_geometry_cache:           [dynamic]Settlement_Fountain_Geometry_Cache,
+    laundry_geometry_cache:                       [dynamic]World_Vertex,
+    laundry_geometry_revision:                    u64,
+    laundry_geometry_terrain_revision:            u64,
+    laundry_geometry_valid:                       bool,
+    pavement_query:                               roads.Pavement_Query,
+    pavement_query_graph:                         roads.Graph,
+    pavement_query_graph_valid:                   bool,
+    pavement_query_revision:                      u64,
+    foliage_geometry_cache:                       [dynamic]Foliage_Geometry_Cache_Entry,
+    static_geometry_cache:                        [dynamic]Static_Geometry_Cache_Entry,
+    climbing_leaf_geometry_cache:                 [dynamic]Climbing_Leaf_Geometry_Cache_Entry,
+    town_mouse_geometry_cache:                    [TOWN_MOUSE_CACHE_COUNT]Town_Mouse_Geometry_Cache_Entry,
+    dialogue_portrait_geometry_cache:             [2]Town_Mouse_Geometry_Cache_Entry,
+    libellula_geometry_cache:                     Libellula_Geometry_Cache_Entry,
+    marina_geometry_cache:                        [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
+    structure_lod_counts:                         [3]int,
+    structure_lod_cache_rebuilds:                 u64,
+    structure_lod_world_vertices:                 int,
+    structure_lod_foliage_vertices:               int,
+    static_visibility:                            Static_Visibility_Stats,
+    static_visibility_classification:             [dynamic]Static_Visibility_Classification,
+    structure_visibility_order:                   [dynamic]Structure_Visibility_Order,
+    structure_visibility_centers:                 [dynamic][2]f32,
+    structure_visibility_camera:                  [2]f32,
+    structure_visibility_selected:                int,
+    structure_visibility_hovered:                 int,
+    structure_visibility_order_valid:             bool,
+    structure_building_spans:                     [dynamic]u8,
+    structure_candidates:                         [dynamic]int,
+    initialized:                                  bool,
 }
 
 world_renderer: World_Renderer
@@ -1159,18 +1162,30 @@ world_water_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Col
 }
 
 @(no_instrumentation)
-world_ocean_vertex :: #force_inline proc(
-    editor: ^Editor,
-    point: third_person.Vec3,
-    color: rl.Color,
-) -> World_Vertex {
+world_ocean_vertex :: #force_inline proc(editor: ^Editor, point: third_person.Vec3, color: rl.Color) -> World_Vertex {
     vertex := world_water_vertex(point, color)
     // Ocean shading receives the actual heightfield elevation above sea level.
     // Interpolation across the local ocean grid turns that signal into a
     // shoreline band without baking the default islands into the shader.
-    vertex.material = {
-        terrain.sample_height(&editor.project, 0, point.x, point.z) - editor.project.sea_level,
-        1,
+    vertex.material = {terrain.sample_height(&editor.project, 0, point.x, point.z) - editor.project.sea_level, 1}
+    if lab_scene_is_active(editor, "markov-island") {
+        // Give the silhouette lab an explicit, art-directed bathymetry signal.
+        // The broad signed-distance shelf is wide enough for the local ocean
+        // grid to interpolate smoothly, unlike the fine dry-land heightfield
+        // whose signal produced a second polygonal coastline.
+        nx := point.x / MARKOV_ISLAND_HALF_X
+        nz := point.z / MARKOV_ISLAND_HALF_Z
+        distance := islands.sample_signed_distance(&markov_island_plan, nx, nz)
+        shelf_noise := markov_island_shelf_noise(nx, nz)
+        shelf_width := MARKOV_ISLAND_SHELF_CELLS * (1 + shelf_noise * .12)
+        shelf_weight := 1 - markov_island_smooth_weight(distance / shelf_width)
+        // Negative Y marks an underwater color field rather than a breaking
+        // shoreline; the water shader uses its magnitude for tinting but does
+        // not generate an outer foam band.
+        // Keep the signal within the shader's useful shallow-to-deep range so
+        // the whole exaggerated shelf reads as a continuous turquoise-to-teal
+        // gradient instead of a broad, uniformly bright patch.
+        vertex.material = {shelf_weight * .82, -1}
     }
     return vertex
 }
@@ -1288,11 +1303,7 @@ world_aircraft_triangle_smooth :: #force_inline proc(
 
 @(no_instrumentation)
 world_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
-    vertices := [3]World_Vertex {
-        world_vertex(a, color_a),
-        world_vertex(b, color_b),
-        world_vertex(c, color_c),
-    }
+    vertices := [3]World_Vertex{world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c)}
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     for &vertex in vertices {
         vertex.kind = .BRDF
@@ -1639,11 +1650,7 @@ world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.
 }
 
 @(no_instrumentation)
-world_ocean_quad :: #force_inline proc(
-    editor: ^Editor,
-    a, b, c, d: third_person.Vec3,
-    color: rl.Color,
-) {
+world_ocean_quad :: #force_inline proc(editor: ^Editor, a, b, c, d: third_person.Vec3, color: rl.Color) {
     append(
         &world_renderer.vertices,
         world_ocean_vertex(editor, a, color),
@@ -1869,6 +1876,8 @@ road_surface_color :: #force_inline proc(surface: roads.Surface, pavement: roads
             return {92, 112, 69, 0}
         case .Dirt:
             return {118, 101, 58, 0}
+        case .Steps:
+            return {126, 118, 91, 0}
         }
     }
     if surface == .Shoulder {
@@ -1881,6 +1890,8 @@ road_surface_color :: #force_inline proc(surface: roads.Surface, pavement: roads
             return {151, 146, 126, 255}
         case .Dirt:
             return {139, 96, 61, 255}
+        case .Steps:
+            return {150, 137, 108, 255}
         }
     }
     switch pavement {
@@ -1892,6 +1903,8 @@ road_surface_color :: #force_inline proc(surface: roads.Surface, pavement: roads
         return {119, 130, 124, 255}
     case .Dirt:
         return {158, 104, 61, 255}
+    case .Steps:
+        return {174, 158, 126, 255}
     }
     return {91, 97, 90, 255}
 }
@@ -1935,6 +1948,9 @@ world_road_triangle_colored :: #force_inline proc(
     a, b, c: roads.Vertex,
     color_a, color_b, color_c: rl.Color,
 ) {
+    // Step splines use discrete terrain-fitted solids below rather than the
+    // road baker's continuous ribbon.
+    if a.pavement == .Steps || b.pavement == .Steps || c.pavement == .Steps do return
     land_threshold := editor.project.sea_level + .04
     if terrain.sample_height(&editor.project, 0, a.position.x, a.position.z) <= land_threshold ||
        terrain.sample_height(&editor.project, 0, b.position.x, b.position.z) <= land_threshold ||
@@ -1947,6 +1963,40 @@ world_road_triangle_colored :: #force_inline proc(
         world_road_vertex(editor, b, color_b),
         world_road_vertex(editor, c, color_c),
     )
+}
+
+world_spline_steps :: proc(editor: ^Editor, graph: ^roads.Graph) {
+    if editor == nil || graph == nil do return
+    for edge in graph.edges[:graph.edge_count] {
+        if edge.pavement != .Steps do continue
+        approximate_length := roads.edge_control_polygon_length(graph, edge)
+        // A domestic exterior stair reads naturally around a 65 cm going.
+        // Bound the tessellation so an accidentally world-scale spline cannot
+        // overwhelm the shared world-geometry buffer.
+        tread_count := clamp(int(math.ceil(f64(approximate_length / .65))), 2, 512)
+        width := edge.half_width * 2
+        for tread in 0 ..< tread_count {
+            t0 := f32(tread) / f32(tread_count)
+            t1 := f32(tread + 1) / f32(tread_count)
+            tm := (t0 + t1) * .5
+            p0 := roads.edge_point(graph, edge, t0)
+            p1 := roads.edge_point(graph, edge, t1)
+            pm := roads.edge_point(graph, edge, tm)
+            ground_0 := terrain.sample_height(&editor.project, 0, p0.x, p0.z)
+            ground_1 := terrain.sample_height(&editor.project, 0, p1.x, p1.z)
+            ground_mid := terrain.sample_height(&editor.project, 0, pm.x, pm.z)
+            top := ground_mid + .12
+            bottom := min(min(ground_0, ground_1), ground_mid) - .04
+            height := max(top - bottom, f32(.12))
+            dx, dz := p1.x - p0.x, p1.z - p0.z
+            length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            if length <= .001 do continue
+            yaw := f32(math.atan2(f64(-dx), f64(dz)))
+            color := rl.Color{174, 158, 126, 255}
+            if tread % 4 == 1 do color = {165, 149, 119, 255}
+            world_box_rotated({pm.x, bottom + height * .5, pm.z}, {width, height, length + .04}, yaw, color)
+        }
+    }
 }
 
 world_road_cache_chunk_finish :: proc(first_vertex: int) {
@@ -2036,6 +2086,7 @@ world_roads :: proc(editor: ^Editor) {
             ..world_renderer.road_geometry_cache[chunk.first_vertex:chunk.first_vertex + chunk.vertex_count],
         )
     }
+    world_spline_steps(editor, graph)
     if editor.in_map || !editor.road_mode || editor.capture_world_only do return
     for node, index in graph.nodes[:graph.node_count] {
         selected := index == editor.road_selected_node
@@ -2073,6 +2124,12 @@ world_ocean :: proc(editor: ^Editor) {
     center_x := f32(math.floor(f64(camera.position.x / cell))) * cell
     center_z := f32(math.floor(f64(camera.position.z / cell))) * cell
     ocean_y := editor.project.sea_level - (editor.in_map ? f32(.08) : f32(2))
+    if lab_scene_is_active(editor, "markov-island") {
+        // Leave a small guaranteed gap above the lab seabed. Mixed shoreline
+        // triangles then remain behind the flat water instead of drawing a
+        // pale, clipmap-shaped shelf outline.
+        ocean_y = editor.project.sea_level - 1.9
+    }
     color := rl.Color{48, 112, 142, 255}
     terrain_half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for z_index in 0 ..< divisions {
@@ -2093,7 +2150,11 @@ world_ocean :: proc(editor: ^Editor) {
     local_cell := f32(terrain.BASE_CELL_SIZE * 4)
     local_divisions := int(math.ceil(f64(terrain.WORLD_SIZE_METERS / local_cell)))
     local_cell = terrain.WORLD_SIZE_METERS / f32(local_divisions)
-    local_ocean_y := ocean_y + .004
+    // The island lab gives this local layer a strongly contrasting shallow
+    // tint. Four millimetres is not enough depth separation at its overview
+    // camera distance and produces alternating far-ocean triangles, so lift
+    // the lab layer while keeping the ordinary world's subtle seam offset.
+    local_ocean_y := ocean_y + (lab_scene_is_active(editor, "markov-island") ? f32(.20) : f32(.004))
     for z_index in 0 ..< local_divisions {
         z0 := -terrain_half_extent + f32(z_index) * local_cell
         z1 := z0 + local_cell
@@ -2137,7 +2198,11 @@ clipmap_vertex_color :: #force_inline proc(
     editor: ^Editor,
     level: int,
     x, z, height, transition_weight: f32,
-) -> rl.Color {
+) -> (
+    rl.Color,
+    f32,
+    third_person.Vec3,
+) {
     cell := editor.project.levels[level].cell_size
     left := terrain.sample_clipmap_transition_height(&editor.project, level, x - cell, z, transition_weight)
     right := terrain.sample_clipmap_transition_height(&editor.project, level, x + cell, z, transition_weight)
@@ -2146,6 +2211,11 @@ clipmap_vertex_color :: #force_inline proc(
     normal := linalg.normalize0(
         linalg.cross(third_person.Vec3{0, front - back, cell * 2}, third_person.Vec3{cell * 2, right - left, 0}),
     )
+    // Expose pale Adriatic limestone only where the grade is genuinely
+    // cliff-like. The broad transition avoids drawing a contour around the
+    // threshold and leaves ordinary hills under their ground cover.
+    cliff_weight := clamp((.91 - normal.y) / .24, 0, 1)
+    cliff_weight = cliff_weight * cliff_weight * (3 - 2 * cliff_weight)
     light := linalg.normalize0(third_person.Vec3{-.45, .85, -.3})
     shade := clamp(.48 + max(linalg.dot(normal, light), 0) * .52, .42, 1.05)
     base := terrain_color(
@@ -2155,12 +2225,24 @@ clipmap_vertex_color :: #force_inline proc(
         x,
         z,
     )
-    return {
+    limestone := terrain_color_variation(rl.Color{222, 216, 188, 255}, x * .73, z * .73)
+    ground_lit := rl.Color {
         u8(clamp(f32(base.r) * shade, 0, 255)),
         u8(clamp(f32(base.g) * shade, 0, 255)),
         u8(clamp(f32(base.b) * shade, 0, 255)),
         255,
     }
+    // Sun-bleached limestone keeps a pale body even on a face turned away
+    // from the key light; crushing it to the soil lighting floor makes the
+    // same warm hue read as mud.
+    limestone_shade := max(shade, f32(.68))
+    limestone_lit := rl.Color {
+        u8(clamp(f32(limestone.r) * limestone_shade, 0, 255)),
+        u8(clamp(f32(limestone.g) * limestone_shade, 0, 255)),
+        u8(clamp(f32(limestone.b) * limestone_shade, 0, 255)),
+        255,
+    }
+    return color_lerp(ground_lit, limestone_lit, cliff_weight), cliff_weight, normal
 }
 
 @(no_instrumentation)
@@ -2208,17 +2290,19 @@ clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: 
     world_z := center[1] + (f32(z) - half_grid) * grid_cell
     transition_weight := clipmap_transition_weight(level, x, z)
     height := terrain.sample_clipmap_transition_height(&editor.project, level, world_x, world_z, transition_weight)
-    vertex := world_vertex(
-        {world_x, height, world_z},
-        clipmap_vertex_color(editor, level, world_x, world_z, height, transition_weight),
-    )
+    color, cliff_weight, normal := clipmap_vertex_color(editor, level, world_x, world_z, height, transition_weight)
+    vertex := world_vertex({world_x, height, world_z}, color)
     vertex.kind = .Terrain
+    vertex.normal = {normal.x, normal.y, normal.z}
     // Terrain vertices otherwise leave material.x unused. Preserve whether
     // this clipmap sample is grass so the world shader can carry the field's
     // traveling wind sheen across the ground beneath the individual cards.
     // Interpolation naturally softens the effect at painted material edges.
-    vertex.material[0] =
-        terrain.ground_surface_at(&editor.project, level, world_x, world_z) == .Grass ? 1 : 0
+    grass_weight: f32 = terrain.ground_surface_at(&editor.project, level, world_x, world_z) == .Grass ? 1 : 0
+    vertex.material[0] = grass_weight * (1 - cliff_weight)
+    // The fragment shader uses the same interpolated slope mask for stable
+    // horizontal bedding and weathering on the exposed rock.
+    vertex.material[1] = cliff_weight
     vertices[z * CLIPMAP_GRID_RESOLUTION + x] = vertex
 }
 
@@ -3082,17 +3166,9 @@ world_architecture_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, col
 }
 
 @(no_instrumentation)
-world_architecture_triangle :: #force_inline proc(
-    a, b, c: third_person.Vec3,
-    color: rl.Color,
-    material: f32 = 0,
-) {
+world_architecture_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color, material: f32 = 0) {
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
-    vertices := [3]World_Vertex {
-        world_vertex(a, color),
-        world_vertex(b, color),
-        world_vertex(c, color),
-    }
+    vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
     for &vertex in vertices {
         vertex.kind = .Architecture
         vertex.normal = {normal.x, normal.y, normal.z}
@@ -3929,7 +4005,10 @@ world_roof_surface_y :: #force_inline proc(eave_y, rise, half_width, local_x: f3
     return eave_y + rise * slope_fraction
 }
 
-world_gable_attic_opening_plan :: proc(building_width: f32, low_gable: bool) -> (
+world_gable_attic_opening_plan :: proc(
+    building_width: f32,
+    low_gable: bool,
+) -> (
     opening_width, opening_height, rise, center_fraction: f32,
     valid: bool,
 ) {
@@ -4034,14 +4113,7 @@ world_architecture_tile_slope :: proc(
         eave_point := linalg.lerp(edge_a, edge_b, across)
         ridge_point := linalg.lerp(ridge_a, ridge_b, across)
         lift := face_normal * roll_relief
-        world_tube_between(
-            eave_point + lift,
-            ridge_point + lift,
-            face_normal,
-            roll_radius,
-            roll_radius,
-            roll_color,
-        )
+        world_tube_between(eave_point + lift, ridge_point + lift, face_normal, roll_radius, roll_radius, roll_color)
     }
 }
 
@@ -8067,13 +8139,14 @@ world_architecture_mass :: proc(
     }
     if !landmark && (roof_style == .Gable || roof_style == .Low_Gable) {
         low_gable := roof_style == .Low_Gable
-        attic_width, attic_height, rise, center_fraction, valid :=
-            world_gable_attic_opening_plan(structure.width, low_gable)
+        attic_width, attic_height, rise, center_fraction, valid := world_gable_attic_opening_plan(
+            structure.width,
+            low_gable,
+        )
         if valid {
             attic_y := structure.base_y + structure.height + rise * center_fraction
             frame_width := clamp(min(attic_width, attic_height) * .10, f32(.09), f32(.15))
-            frame_color :=
-                identity.region == .Aegean ? rl.Color{237, 232, 210, 255} : rl.Color{190, 166, 128, 255}
+            frame_color := identity.region == .Aegean ? rl.Color{237, 232, 210, 255} : rl.Color{190, 166, 128, 255}
             mullion_color := formation_face_color(frame_color, math.PI, 0)
             pane_color := facade_style == 2 ? rl.Color{59, 96, 105, 255} : rl.Color{55, 78, 82, 255}
             for gable_end in -1 ..= 1 {
@@ -8912,15 +8985,9 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
     defer {
         if cacheable {
             clear(&world_renderer.architecture_alley_geometry_cache)
-            append(
-                &world_renderer.architecture_alley_geometry_cache,
-                ..world_renderer.vertices[geometry_first:],
-            )
+            append(&world_renderer.architecture_alley_geometry_cache, ..world_renderer.vertices[geometry_first:])
             resize(&world_renderer.architecture_alley_geometry_plan, plan.alley_count)
-            copy(
-                world_renderer.architecture_alley_geometry_plan[:],
-                plan.alleys[:plan.alley_count],
-            )
+            copy(world_renderer.architecture_alley_geometry_plan[:], plan.alleys[:plan.alley_count])
             world_renderer.architecture_alley_geometry_terrain_revision = editor.terrain_revision
             world_renderer.architecture_alley_geometry_project_revision = editor.project.revision
             world_renderer.architecture_alley_geometry_valid = true
@@ -8972,17 +9039,20 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
             }
         }
         curve_length := curve_distances[curve_segments]
-        surface_color := world_architecture_alley_color(alley, preview, grade >= SETTLEMENT_ACCESS_STAIR_GRADE)
+        stair := !preview && grade >= SETTLEMENT_ACCESS_STAIR_GRADE
+        surface_color := world_architecture_alley_color(alley, preview, stair)
         previous := curve_points[0]
         // Each sampled span is rendered as a capsule rather than an isolated
         // rectangle. Overlapping round pads remove polygonal outside corners
         // and make neighboring curves melt into a single walked surface.
-        world_land_surface_disc(editor, previous[0], previous[1], alley.half_width, .13, surface_color)
+        if !stair {
+            world_land_surface_disc(editor, previous[0], previous[1], alley.half_width, .13, surface_color)
+        }
         for curve_index in 1 ..= curve_segments {
             current := curve_points[curve_index]
             segment_dx, segment_dz := current[0] - previous[0], current[1] - previous[1]
             segment_length := f32(math.sqrt(f64(segment_dx * segment_dx + segment_dz * segment_dz)))
-            if segment_length > .01 {
+            if segment_length > .01 && !stair {
                 world_land_surface_rotated(
                     editor,
                     (previous[0] + current[0]) * .5,
@@ -9044,9 +9114,10 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
                 surface_color,
             )
         }
-        if !preview && grade >= SETTLEMENT_ACCESS_STAIR_GRADE {
-            // Closely spaced transverse stone nosings make steep access read
-            // as a stair rather than a texture stretched implausibly uphill.
+        if !preview && stair {
+            // Terrain-sampled solids turn the generated access spline into an
+            // actual stair rather than a continuous ramp with decorative
+            // nosings. Each tread follows the curved route independently.
             // Door, road, and public-space terminals retain a clear landing
             // instead of carrying a riser directly against the threshold.
             run_start, run_finish, run_valid := settlement_access_stair_nosing_range(alley, curve_length)
@@ -9077,7 +9148,7 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
                 }
                 world_box_rotated(
                     {point[0], endpoint_height + .08, point[1]},
-                    {landing_length * .5, .08, landing_width},
+                    {landing_length, .08, landing_width},
                     yaw,
                     {139, 126, 103, 255},
                 )
@@ -9086,7 +9157,9 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
             run_length := run_finish - run_start
             step_count := max(1, int(math.ceil(f64(run_length / .42))))
             for step_index in 0 ..< step_count {
-                distance := run_start + (f32(step_index) + .5) / f32(step_count) * run_length
+                distance_0 := run_start + f32(step_index) / f32(step_count) * run_length
+                distance_1 := run_start + f32(step_index + 1) / f32(step_count) * run_length
+                distance := (distance_0 + distance_1) * .5
                 sample_index := 1
                 for sample_index < curve_segments && curve_distances[sample_index] < distance {
                     sample_index += 1
@@ -9099,11 +9172,21 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
                 tangent := linalg.normalize0(curve_points[sample_index] - curve_points[sample_index - 1])
                 yaw := f32(math.atan2(f64(tangent[1]), f64(tangent[0])))
                 step_y := terrain.sample_height(&editor.project, 0, point[0], point[1])
+                distance_span := run_length / f32(step_count)
+                before := point - tangent * (distance_span * .5)
+                after := point + tangent * (distance_span * .5)
+                ground_before := terrain.sample_height(&editor.project, 0, before[0], before[1])
+                ground_after := terrain.sample_height(&editor.project, 0, after[0], after[1])
+                top := step_y + .12
+                bottom := min(min(ground_before, ground_after), step_y) - .04
+                tread_height := max(top - bottom, f32(.12))
+                tread_color := rl.Color{139, 126, 103, 255}
+                if step_index % 4 == 1 do tread_color = {132, 119, 97, 255}
                 world_box_rotated(
-                    {point[0], step_y + .17, point[1]},
-                    {.075, .08, alley.half_width * 1.9},
+                    {point[0], bottom + tread_height * .5, point[1]},
+                    {distance_span + .04, tread_height, alley.half_width * 1.9},
                     yaw,
-                    {105, 94, 76, 255},
+                    tread_color,
                 )
             }
         }
@@ -9834,10 +9917,7 @@ world_retained_static_repack :: proc() {
     clear(&world_renderer.static_indices)
     structure_count := 0
     if world_renderer.editor != nil {
-        structure_count = min(
-            world_renderer.editor.project.structure_count,
-            len(world_renderer.static_geometry_cache),
-        )
+        structure_count = min(world_renderer.editor.project.structure_count, len(world_renderer.static_geometry_cache))
     }
     for index in 0 ..< structure_count {
         entry := &world_renderer.static_geometry_cache[index]
@@ -12943,46 +13023,46 @@ settlement_garden_point_in_plot :: proc(site: Settlement_Site, x, z: f32, inset:
 
 world_settlement_gardens :: proc(editor: ^Editor) {
     if editor == nil || !editor.settlement_plan.valid do return
-    site_count := editor.settlement_plan.site_count
-    if len(world_renderer.settlement_fountain_geometry_cache) < site_count {
-        resize(&world_renderer.settlement_fountain_geometry_cache, site_count)
+    garden_count := editor.settlement_plan.garden_count
+    if len(world_renderer.settlement_fountain_geometry_cache) < garden_count {
+        resize(&world_renderer.settlement_fountain_geometry_cache, garden_count)
     }
-    for site, site_index in editor.settlement_plan.sites[:editor.settlement_plan.site_count] {
-        if !site.accepted || (site.kind != .Ordinary && site.kind != .Park) do continue
+    for plot, plot_index in editor.settlement_plan.gardens[:garden_count] {
+        if plot.site_index < 0 || plot.site_index >= editor.settlement_plan.site_count do continue
+        site := editor.settlement_plan.sites[plot.site_index]
         structure := site.structure
-        seed := garden_hash(structure.seed ~ editor.settlement_plan.request.seed ~ u32(site_index * 0x9e37))
-        is_park := site.kind == .Park
+        seed := plot.seed
+        is_park := plot.style == .Park
         has_fountain := is_park && site.fountain_enabled
-        is_farmstead := site.purpose == .Farmstead
-        // Attached and dense homes already receive façade pots and climbing
-        // growth. Ground gardens belong to parks, farmsteads, and detached lots.
-        if !is_park && !is_farmstead && (site.attached || site.density > .38 || seed & 3 == 0) do continue
+        is_kitchen := plot.style == .Kitchen
+        is_wild := plot.style == .Wild
 
-        count := is_park ? (has_fountain ? 12 : 7) : (is_farmstead ? 5 : 3)
-        radius_x := max(structure.width * (is_park ? f32(.42) : f32(.62)), f32(3.5))
-        radius_z := max(structure.depth * (is_park ? f32(.34) : f32(.60)), f32(3.2))
+        count := is_park ? (has_fountain ? 12 : 7) : (is_kitchen ? 7 : (is_wild ? 6 : 4))
+        radius_x := max(plot.width * .40, f32(1.4))
+        radius_z := max(plot.depth * .38, f32(1.2))
         if has_fountain {
             fountain_seed := structure.seed ~ editor.settlement_plan.request.seed ~ 0xF017A17
             fountain_config := fountains.Config {
-                radius = site.fountain_radius,
-                style = site.fountain_style,
-                jet_count = site.fountain_jet_count,
+                radius     = site.fountain_radius,
+                style      = site.fountain_style,
+                jet_count  = site.fountain_jet_count,
                 jet_height = site.fountain_jet_height,
             }
             fountain := fountains.generate(fountain_seed, fountain_config)
             fountain_y := terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
             fountain_origin := third_person.Vec3{structure.center_x, fountain_y, structure.center_z}
-            cache := &world_renderer.settlement_fountain_geometry_cache[site_index]
-            cache_matches := cache.valid &&
-                             cache.structure_id == structure.id &&
-                             cache.seed == fountain_seed &&
-                             cache.radius == fountain_config.radius &&
-                             cache.style == fountain_config.style &&
-                             cache.jet_count == fountain_config.jet_count &&
-                             cache.jet_height == fountain_config.jet_height &&
-                             cache.origin == fountain_origin &&
-                             cache.rotation == structure.rotation &&
-                             cache.terrain_revision == editor.terrain_revision
+            cache := &world_renderer.settlement_fountain_geometry_cache[plot_index]
+            cache_matches :=
+                cache.valid &&
+                cache.structure_id == structure.id &&
+                cache.seed == fountain_seed &&
+                cache.radius == fountain_config.radius &&
+                cache.style == fountain_config.style &&
+                cache.jet_count == fountain_config.jet_count &&
+                cache.jet_height == fountain_config.jet_height &&
+                cache.origin == fountain_origin &&
+                cache.rotation == structure.rotation &&
+                cache.terrain_revision == editor.terrain_revision
             if cache_matches {
                 append(&world_renderer.vertices, ..cache.vertices[:])
             } else {
@@ -13007,14 +13087,22 @@ world_settlement_gardens :: proc(editor: ^Editor) {
         }
         for plant_index in 0 ..< count {
             mixed := garden_hash(seed ~ u32(plant_index + 1) * u32(0x85ebca6b))
-            along := (f32((mixed >> 8) & 255) / 255 - .5) * radius_x * 1.55
-            local_z := -radius_z
+            along := (f32((mixed >> 8) & 255) / 255 - .5) * radius_x * 2
+            local_z := (f32(mixed & 255) / 255 - .5) * radius_z * 2
             if is_park {
                 angle := f32(plant_index) / f32(count) * math.PI * 2
                 along = math.cos(angle) * radius_x
                 local_z = math.sin(angle) * radius_z
+            } else if is_kitchen {
+                // Loose rows retain the legibility of a tended kitchen garden
+                // without turning it into an exact procedural grid.
+                row := plant_index % 2
+                station := plant_index / 2
+                along = (f32(station) - f32((count - 1) / 4)) * min(radius_x * .62, f32(1.35))
+                local_z = (f32(row) - .5) * radius_z * 1.15
+                along += (f32((mixed >> 16) & 31) / 31 - .5) * .28
             }
-            x, z := world_rotate_xz(structure.center_x, structure.center_z, along, local_z, structure.rotation)
+            x, z := world_rotate_xz(plot.center[0], plot.center[1], along, local_z, plot.rotation)
             clearance := is_park ? f32(1.4) : f32(1.8)
             // Collision clearance alone does not establish ownership: a clear
             // sample behind a house can lie beyond its parcel on an access
@@ -13030,7 +13118,7 @@ world_settlement_gardens :: proc(editor: ^Editor) {
             plant_seed := mixed ~ u32(0x504c414e)
             if is_park && plant_index % 3 == 0 {
                 world_architecture_cypress(x, z, base_y, plant_seed)
-            } else if is_farmstead && plant_index == 0 {
+            } else if is_kitchen && plant_index == 0 {
                 world_architecture_olive(x, z, base_y, plant_seed)
             } else {
                 palette := [4]rl.Color {
@@ -23000,7 +23088,8 @@ ground_grass_chunk_build :: proc(
         }
         architecture_height_scale := world_architecture_grass_height_scale(building_footprints, x, z)
         if architecture_height_scale <= 0 do continue
-        ground_color := clipmap_vertex_color(editor, 0, x, z, height_at, 0)
+        ground_color, cliff_weight, _ := clipmap_vertex_color(editor, 0, x, z, height_at, 0)
+        if cliff_weight > .2 do continue
         variation := wind_streak_hash(seed_index, 4)
         elevation := max(height_at - editor.project.sea_level, f32(0))
         altitude := clamp((elevation - 2.4) / 28, f32(0), f32(1))
@@ -24393,11 +24482,36 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         {location = 3, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, normal))},
         {location = 4, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, material))},
         {location = 5, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, uv))},
-        {location = 6, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, basis_x_translation_x))},
-        {location = 7, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, basis_y_translation_y))},
-        {location = 8, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, basis_z_translation_z))},
-        {location = 9, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, color))},
-        {location = 10, binding = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Mesh_Instance, normal_override))},
+        {
+            location = 6,
+            binding = 1,
+            format = .R32G32B32A32_SFLOAT,
+            offset = u32(offset_of(World_Mesh_Instance, basis_x_translation_x)),
+        },
+        {
+            location = 7,
+            binding = 1,
+            format = .R32G32B32A32_SFLOAT,
+            offset = u32(offset_of(World_Mesh_Instance, basis_y_translation_y)),
+        },
+        {
+            location = 8,
+            binding = 1,
+            format = .R32G32B32A32_SFLOAT,
+            offset = u32(offset_of(World_Mesh_Instance, basis_z_translation_z)),
+        },
+        {
+            location = 9,
+            binding = 1,
+            format = .R32G32B32A32_SFLOAT,
+            offset = u32(offset_of(World_Mesh_Instance, color)),
+        },
+        {
+            location = 10,
+            binding = 1,
+            format = .R32G32B32A32_SFLOAT,
+            offset = u32(offset_of(World_Mesh_Instance, normal_override)),
+        },
     }
     instance_vi := vk.PipelineVertexInputStateCreateInfo {
         sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -24409,12 +24523,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     instance_info := info
     instance_info.pStages = raw_data(instance_stages[:])
     instance_info.pVertexInputState = &instance_vi
-    if !render3d.create_color_pipeline_variants(
-        ctx,
-        &instance_info,
-        .D32_SFLOAT,
-        &world_renderer.instance_pipelines,
-    ) {
+    if !render3d.create_color_pipeline_variants(ctx, &instance_info, .D32_SFLOAT, &world_renderer.instance_pipelines) {
         return false
     }
     transparent_depth := depth
@@ -24868,8 +24977,7 @@ world_pre_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
 
 dialogue_portrait_mouse_model :: proc(editor: ^Editor, resident: story.Resident, player: bool) -> Mouse_Model {
     animation_time :=
-        f32(math.floor(f64(editor.map_time * TOWN_MOUSE_PORTRAIT_ANIMATION_HZ))) /
-        TOWN_MOUSE_PORTRAIT_ANIMATION_HZ
+        f32(math.floor(f64(editor.map_time * TOWN_MOUSE_PORTRAIT_ANIMATION_HZ))) / TOWN_MOUSE_PORTRAIT_ANIMATION_HZ
     idle := f32(math.sin(f64(animation_time * 2.1 + (player ? 0 : 1.7)))) * .025
     model := Mouse_Model {
         position = {0, idle, 0},
@@ -25149,8 +25257,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         )
     }
     static_upload_required :=
-        world_renderer.retained_static_uploaded_revision[frame_index] !=
-        world_renderer.retained_static_revision
+        world_renderer.retained_static_uploaded_revision[frame_index] != world_renderer.retained_static_revision
     if static_upload_required && len(world_renderer.static_vertices) > 0 {
         mem.copy_non_overlapping(
             static_vertex_buffer.mapped,
@@ -25166,8 +25273,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         )
     }
     if static_upload_required {
-        world_renderer.retained_static_uploaded_revision[frame_index] =
-            world_renderer.retained_static_revision
+        world_renderer.retained_static_uploaded_revision[frame_index] = world_renderer.retained_static_revision
     }
     if len(world_renderer.road_vertices) > 0 {
         mem.copy_non_overlapping(

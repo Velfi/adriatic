@@ -279,6 +279,7 @@ SETTLEMENT_GROWTH_EVENT_CAPACITY :: 96
 SETTLEMENT_PLANNED_ROUTE_CAPACITY :: 320
 SETTLEMENT_BLOCK_CAPACITY :: 128
 SETTLEMENT_SITE_CAPACITY :: 256
+SETTLEMENT_GARDEN_CAPACITY :: 64
 SETTLEMENT_TERRAIN_EDIT_CAPACITY :: 192
 SETTLEMENT_ROUTE_CLASS_COUNT :: 8
 SETTLEMENT_LANDMARK_SEED_MASK :: u32(0xffff0000)
@@ -341,6 +342,23 @@ Settlement_Site :: struct {
     fountain_jet_count:  int,
     fountain_jet_height: f32,
     fountain_enabled:    bool,
+}
+
+Settlement_Garden_Style :: enum u8 {
+    Courtyard,
+    Kitchen,
+    Wild,
+    Park,
+}
+
+Settlement_Garden_Plot :: struct {
+    center:     [2]f32,
+    width:      f32,
+    depth:      f32,
+    rotation:   f32,
+    seed:       u32,
+    site_index: int,
+    style:      Settlement_Garden_Style,
 }
 
 Settlement_Terrain_Edit :: struct {
@@ -471,6 +489,10 @@ Settlement_Plan :: struct {
     sites:                        [SETTLEMENT_SITE_CAPACITY]Settlement_Site,
     site_piece_ids:               [SETTLEMENT_SITE_CAPACITY]u32,
     site_count:                   int,
+    gardens:                      [SETTLEMENT_GARDEN_CAPACITY]Settlement_Garden_Plot,
+    garden_count:                 int,
+    patios:                       [SETTLEMENT_PATIO_CAPACITY]Settlement_Patio,
+    patio_count:                  int,
     rejected_sites:               [32]Settlement_Site,
     rejected_site_count:          int,
     decorative_foliage:           [32]terrain.Structure,

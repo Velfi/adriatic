@@ -50,6 +50,7 @@ Pavement :: enum u8 {
     Gravel,
     Cobblestone,
     Dirt,
+    Steps,
 }
 
 Pavement_Hit :: struct {
@@ -224,6 +225,8 @@ pavement_name :: proc(pavement: Pavement) -> string {
         return "COBBLESTONE"
     case .Dirt:
         return "DIRT"
+    case .Steps:
+        return "STEPS"
     }
     return "ASPHALT"
 }
@@ -237,6 +240,8 @@ pavement_next :: proc(pavement: Pavement) -> Pavement {
     case .Cobblestone:
         return .Dirt
     case .Dirt:
+        return .Asphalt
+    case .Steps:
         return .Asphalt
     }
     return .Asphalt
@@ -252,6 +257,8 @@ pavement_grip :: proc(pavement: Pavement) -> Grip_Profile {
         return {longitudinal = .86, lateral = .82, rolling_resistance = 1.08}
     case .Dirt:
         return {longitudinal = .62, lateral = .54, rolling_resistance = 1.30}
+    case .Steps:
+        return {longitudinal = .38, lateral = .42, rolling_resistance = 1.65}
     }
     return {longitudinal = 1, lateral = 1, rolling_resistance = 1}
 }
@@ -271,6 +278,8 @@ pavement_roughness :: proc(pavement: Pavement) -> Roughness_Profile {
         return {acceleration = 1.85, wavelength = .64, secondary_wavelength = .29}
     case .Dirt:
         return {acceleration = .88, wavelength = 1.7, secondary_wavelength = .61}
+    case .Steps:
+        return {acceleration = 2.4, wavelength = .65, secondary_wavelength = .325}
     }
     return {}
 }

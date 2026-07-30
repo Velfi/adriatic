@@ -207,7 +207,7 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
     // Patios are generated presentation objects rather than terrain
     // structures, so explicitly give their paving and major furniture a
     // physics representation.
-    for patio, patio_index in editor.settlement_patios[:editor.settlement_patio_count] {
+    for patio, patio_index in editor.settlement_plan.patios[:editor.settlement_plan.patio_count] {
         slab := gameplay_physics_add_static_box(
             state,
             {patio.width * .5, .18, patio.depth * .5},

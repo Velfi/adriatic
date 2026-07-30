@@ -524,7 +524,7 @@ settlement_plan_add_route :: proc(
         class         = class,
         width         = width,
         shoulder      = drivable ? f32(.8) : f32(.15),
-        pavement      = .Cobblestone,
+        pavement      = class == .Stair ? roads.Pavement.Steps : roads.Pavement.Cobblestone,
         required      = required,
         drivable      = drivable,
         average_grade = average_grade,
@@ -2081,7 +2081,7 @@ settlement_access_surface :: proc(alley: architecture.City_Alley) -> Settlement_
 }
 
 settlement_access_route_pavement :: proc(maximum_grade, width: f32) -> roads.Pavement {
-    if maximum_grade >= SETTLEMENT_ACCESS_STAIR_GRADE do return .Cobblestone
+    if maximum_grade >= SETTLEMENT_ACCESS_STAIR_GRADE do return .Steps
     if width >= 1.6 do return .Gravel
     return .Dirt
 }

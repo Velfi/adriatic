@@ -7,6 +7,308 @@ import roads "../roads"
 import terrain "../terrain"
 import "core:math"
 
+TOWN_ROUTE_NODE_CAPACITY :: 24
+TOWN_ROUTE_EDGE_CAPACITY :: 32
+
+Town_Route_Node :: struct {
+    point:      [2]f32,
+    fixed:      bool,
+    y_junction: bool,
+}
+
+Town_Route_Edge :: struct {
+    from, to: int,
+}
+
+Town_Route_Network :: struct {
+    nodes:      [TOWN_ROUTE_NODE_CAPACITY]Town_Route_Node,
+    node_count: int,
+    edges:      [TOWN_ROUTE_EDGE_CAPACITY]Town_Route_Edge,
+    edge_count: int,
+}
+
+town_route_add_node :: proc(network: ^Town_Route_Network, point: [2]f32, fixed := false) -> int {
+    if network == nil || network.node_count >= len(network.nodes) do return -1
+    index := network.node_count
+    network.nodes[index] = {
+        point = point,
+        fixed = fixed,
+    }
+    network.node_count += 1
+    return index
+}
+
+town_route_add_edge :: proc(network: ^Town_Route_Network, from, to: int) {
+    if network == nil || network.edge_count >= len(network.edges) || from < 0 || to < 0 || from == to do return
+    network.edges[network.edge_count] = {from, to}
+    network.edge_count += 1
+}
+
+town_route_nodes_adjacent :: proc(network: ^Town_Route_Network, a, b: int) -> bool {
+    for edge in network.edges[:network.edge_count] {
+        if (edge.from == a && edge.to == b) || (edge.from == b && edge.to == a) do return true
+    }
+    return false
+}
+
+town_route_edges_equal :: proc(a, b: Town_Route_Edge) -> bool {
+    return (a.from == b.from && a.to == b.to) || (a.from == b.to && a.to == b.from)
+}
+
+town_route_remove_duplicate_edges :: proc(network: ^Town_Route_Network) {
+    write := 0
+    for edge in network.edges[:network.edge_count] {
+        if edge.from == edge.to do continue
+        duplicate := false
+        for previous in network.edges[:write] {
+            if town_route_edges_equal(edge, previous) {
+                duplicate = true
+                break
+            }
+        }
+        if duplicate do continue
+        network.edges[write] = edge
+        write += 1
+    }
+    network.edge_count = write
+}
+
+// Collapse nodes that the soft crowding force has brought into junction range.
+// Rewiring rather than merely overlapping the points produces real shared
+// topology, so subsequent rendering and movement see one consolidated route.
+town_route_consolidate_crowding :: proc(network: ^Town_Route_Network, merge_distance: f32 = 8) {
+    if network == nil do return
+    for {
+        merged := false
+        for first in 0 ..< network.node_count {
+            for second in first + 1 ..< network.node_count {
+                if town_route_nodes_adjacent(network, first, second) do continue
+                delta := network.nodes[second].point - network.nodes[first].point
+                if delta[0] * delta[0] + delta[1] * delta[1] > merge_distance * merge_distance do continue
+                if network.nodes[first].fixed && network.nodes[second].fixed do continue
+                keep, remove := first, second
+                if network.nodes[second].fixed {
+                    keep, remove = second, first
+                } else if !network.nodes[first].fixed {
+                    network.nodes[keep].point = (network.nodes[first].point + network.nodes[second].point) * .5
+                }
+                network.nodes[keep].y_junction = network.nodes[first].y_junction || network.nodes[second].y_junction
+                for &edge in network.edges[:network.edge_count] {
+                    if edge.from == remove do edge.from = keep
+                    if edge.to == remove do edge.to = keep
+                }
+                last := network.node_count - 1
+                if remove != last {
+                    network.nodes[remove] = network.nodes[last]
+                    for &edge in network.edges[:network.edge_count] {
+                        if edge.from == last do edge.from = remove
+                        if edge.to == last do edge.to = remove
+                    }
+                }
+                network.node_count -= 1
+                town_route_remove_duplicate_edges(network)
+                merged = true
+                break
+            }
+            if merged do break
+        }
+        if !merged do break
+    }
+}
+
+town_route_edge_other :: proc(edge: Town_Route_Edge, node: int) -> (other: int, incident: bool) {
+    if edge.from == node do return edge.to, true
+    if edge.to == node do return edge.from, true
+    return -1, false
+}
+
+// Replace a tight V at an existing node with a short shared trunk and a new
+// downstream branch node. Besides looking more plausibly evolved, the Y avoids
+// two nearly coincident paved edges fighting for the same visual space.
+town_route_merge_tight_vs :: proc(network: ^Town_Route_Network) {
+    if network == nil do return
+    COS_MAX_BRANCH_ANGLE :: f32(.819152) // 35 degrees.
+    MIN_BRANCH_LENGTH :: f32(8)
+    MAX_TRUNK_LENGTH :: f32(14)
+    for apex in 0 ..< network.node_count {
+        if network.nodes[apex].y_junction do continue
+        merged := false
+        for first_index in 0 ..< network.edge_count {
+            first_other, first_incident := town_route_edge_other(network.edges[first_index], apex)
+            if !first_incident do continue
+            first_delta := network.nodes[first_other].point - network.nodes[apex].point
+            first_length := f32(math.sqrt(f64(first_delta[0] * first_delta[0] + first_delta[1] * first_delta[1])))
+            if first_length < MIN_BRANCH_LENGTH do continue
+            for second_index in first_index + 1 ..< network.edge_count {
+                second_other, second_incident := town_route_edge_other(network.edges[second_index], apex)
+                if !second_incident || second_other == first_other do continue
+                second_delta := network.nodes[second_other].point - network.nodes[apex].point
+                second_length := f32(
+                    math.sqrt(f64(second_delta[0] * second_delta[0] + second_delta[1] * second_delta[1])),
+                )
+                if second_length < MIN_BRANCH_LENGTH do continue
+                first_direction := first_delta / first_length
+                second_direction := second_delta / second_length
+                alignment := first_direction[0] * second_direction[0] + first_direction[1] * second_direction[1]
+                if alignment < COS_MAX_BRANCH_ANGLE do continue
+                if network.node_count >= len(network.nodes) || network.edge_count >= len(network.edges) do return
+                direction := first_direction + second_direction
+                direction_length := f32(math.sqrt(f64(direction[0] * direction[0] + direction[1] * direction[1])))
+                if direction_length <= .001 do continue
+                direction /= direction_length
+                trunk_length := min(min(first_length, second_length) * .32, MAX_TRUNK_LENGTH)
+                junction := town_route_add_node(network, network.nodes[apex].point + direction * trunk_length)
+                if junction < 0 do return
+                network.nodes[junction].y_junction = true
+                network.edges[first_index] = {junction, first_other}
+                network.edges[second_index] = {junction, second_other}
+                town_route_add_edge(network, apex, junction)
+                merged = true
+                break
+            }
+            if merged do break
+        }
+    }
+}
+
+// Return a soft world-space escape vector for a point inside a building's
+// rotated clearance envelope. The influence fades toward the envelope edge,
+// but remains strong inside the actual footprint so relaxation cannot settle
+// a route control point beneath a building.
+town_route_building_avoidance :: proc(point: [2]f32, structure: terrain.Structure) -> [2]f32 {
+    clearance := clamp(min(structure.width, structure.depth) * .22, f32(3.5), f32(7))
+    half_width := structure.width * .5
+    half_depth := structure.depth * .5
+    envelope_x, envelope_z := half_width + clearance, half_depth + clearance
+    dx, dz := point[0] - structure.center_x, point[1] - structure.center_z
+    cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
+    local_x := dx * cosine + dz * sine
+    local_z := -dx * sine + dz * cosine
+    if math.abs(local_x) >= envelope_x || math.abs(local_z) >= envelope_z do return {}
+
+    escape_x := envelope_x - math.abs(local_x)
+    escape_z := envelope_z - math.abs(local_z)
+    local_force := [2]f32{}
+    inside_footprint := math.abs(local_x) < half_width && math.abs(local_z) < half_depth
+    strength := inside_footprint ? f32(3.2) : f32(1.15)
+    if escape_x < escape_z {
+        side := local_x < 0 ? f32(-1) : f32(1)
+        if math.abs(local_x) <= .001 do side = structure.seed & 1 == 0 ? f32(-1) : f32(1)
+        local_force[0] = side * strength * clamp(escape_x / clearance, .18, 1)
+    } else {
+        side := local_z < 0 ? f32(-1) : f32(1)
+        if math.abs(local_z) <= .001 do side = structure.seed & 2 == 0 ? f32(-1) : f32(1)
+        local_force[1] = side * strength * clamp(escape_z / clearance, .18, 1)
+    }
+    return {local_force[0] * cosine - local_force[1] * sine, local_force[0] * sine + local_force[1] * cosine}
+}
+
+// Relax a generated route graph before it becomes pavement. Neighbor springs
+// remove mechanical kinks, while short-range node repulsion keeps nearby
+// branches from collapsing into an accidental double road. Fixed perimeter
+// anchors preserve useful approaches and make the result deterministic.
+town_route_relax :: proc(
+    network: ^Town_Route_Network,
+    project: ^terrain.Project,
+    structure_indices: []int,
+    min_x, max_x, min_z, max_z: f32,
+) {
+    if network == nil do return
+    for _ in 0 ..< 10 {
+        next := network.nodes
+        for &node, node_index in network.nodes[:network.node_count] {
+            if node.fixed do continue
+            neighbor_sum := [2]f32{}
+            neighbor_count := 0
+            for edge in network.edges[:network.edge_count] {
+                neighbor := -1
+                if edge.from == node_index {
+                    neighbor = edge.to
+                } else if edge.to == node_index {
+                    neighbor = edge.from
+                }
+                if neighbor < 0 do continue
+                neighbor_sum += network.nodes[neighbor].point
+                neighbor_count += 1
+            }
+            force := [2]f32{}
+            if neighbor_count > 0 {
+                average := neighbor_sum / f32(neighbor_count)
+                force += (average - node.point) * .22
+            }
+            for other, other_index in network.nodes[:network.node_count] {
+                if other_index == node_index || town_route_nodes_adjacent(network, node_index, other_index) do continue
+                delta := node.point - other.point
+                distance_squared := delta[0] * delta[0] + delta[1] * delta[1]
+                if distance_squared <= .001 || distance_squared >= 30 * 30 do continue
+                distance := f32(math.sqrt(f64(distance_squared)))
+                if distance < 7 {
+                    force += delta / distance * ((7 - distance) * .07)
+                } else {
+                    // Independent routes in the same crowded pocket drift
+                    // toward shared topology instead of running as parallel
+                    // near-misses. The force stays light until they are close
+                    // enough for the consolidation pass below.
+                    attraction := (1 - (distance - 7) / 23) * .18
+                    force -= delta / distance * attraction
+                }
+            }
+            if project != nil {
+                for structure_index in structure_indices {
+                    force += town_route_building_avoidance(node.point, project.structures[structure_index])
+                }
+            }
+            next[node_index].point[0] = clamp(node.point[0] + force[0], min_x, max_x)
+            next[node_index].point[1] = clamp(node.point[1] + force[1], min_z, max_z)
+        }
+        // A long edge can cross a footprint even when both of its control
+        // nodes are clear. Sample its middle and share the escape force across
+        // movable endpoints, bending the whole span gently to one side.
+        if project != nil {
+            for edge in network.edges[:network.edge_count] {
+                midpoint := (network.nodes[edge.from].point + network.nodes[edge.to].point) * .5
+                edge_force := [2]f32{}
+                for structure_index in structure_indices {
+                    edge_force += town_route_building_avoidance(midpoint, project.structures[structure_index])
+                }
+                edge_force *= .55
+                endpoints := [2]int{edge.from, edge.to}
+                for endpoint in endpoints {
+                    if network.nodes[endpoint].fixed do continue
+                    next[endpoint].point[0] = clamp(next[endpoint].point[0] + edge_force[0], min_x, max_x)
+                    next[endpoint].point[1] = clamp(next[endpoint].point[1] + edge_force[1], min_z, max_z)
+                }
+            }
+        }
+        network.nodes = next
+    }
+}
+
+town_route_emit_streets :: proc(plan: ^circulation.Plan, network: ^Town_Route_Network) {
+    if plan == nil || network == nil do return
+    for edge in network.edges[:network.edge_count] {
+        a, b := network.nodes[edge.from].point, network.nodes[edge.to].point
+        dx, dz := b[0] - a[0], b[1] - a[1]
+        length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+        if length <= .1 do continue
+        _ = circulation.plan_add(
+            plan,
+            {
+                center_x = (a[0] + b[0]) * .5,
+                center_z = (a[1] + b[1]) * .5,
+                width = length + .35,
+                length = 6.5,
+                rotation = math.atan2(dz, dx),
+                kind = .Street,
+                source = .Generated,
+                pavement = .Cobblestone,
+                walkable = true,
+                driveable = true,
+            },
+        )
+    }
+}
+
 // A compact geometry-node graph: site -> street blocks -> façades/roofs ->
 // landmark. Presentation is kept in the Adriatic renderer.
 Node_Kind :: enum {
@@ -212,27 +514,44 @@ circulation_plan_add_town :: proc(plan: ^circulation.Plan, project: ^terrain.Pro
 
     center_x := (min_x + max_x) * .5
     center_z := (min_z + max_z) * .5
-    lane_a := min_z + (max_z - min_z) / 3
-    lane_b := min_z + (max_z - min_z) * 2 / 3
     road_span := max(max_x - min_x + 36, f32(160))
     public_area_start := plan.count
-    lanes := [2]f32{lane_a, lane_b}
-    for lane_z in lanes {
-        _ = circulation.plan_add(
-            plan,
-            {
-                center_x = center_x,
-                center_z = lane_z,
-                width = road_span,
-                length = 6.5,
-                kind = .Street,
-                source = .Generated,
-                pavement = .Cobblestone,
-                walkable = true,
-                driveable = true,
-            },
-        )
+    half_span := road_span * .5
+    network: Town_Route_Network
+    rows := [2]f32{min_z + (max_z - min_z) * .31, min_z + (max_z - min_z) * .69}
+    row_nodes: [2][5]int
+    for row_z, row in rows {
+        previous := -1
+        for column in 0 ..< 5 {
+            amount := f32(column) / 4
+            x := center_x - half_span + road_span * amount
+            // Coherent low-frequency bends read as routes responding to a
+            // place; independent per-point noise reads as procedural wobble.
+            bend := math.sin(amount * math.PI) * (row == 0 ? f32(7.5) : f32(-6.0))
+            skew := (amount - .5) * (row == 0 ? f32(5) : f32(-4))
+            node := town_route_add_node(&network, {x, row_z + bend + skew}, column == 0 || column == 4)
+            row_nodes[row][column] = node
+            if previous >= 0 do town_route_add_edge(&network, previous, node)
+            previous = node
+        }
     }
+    // Three cross-links produce loops and choices. Offsetting their attachment
+    // columns avoids the unmistakable ladder topology of a generated grid.
+    town_route_add_edge(&network, row_nodes[0][1], row_nodes[1][2])
+    town_route_add_edge(&network, row_nodes[0][3], row_nodes[1][3])
+    town_route_merge_tight_vs(&network)
+    town_route_relax(
+        &network,
+        project,
+        structure_indices,
+        center_x - half_span,
+        center_x + half_span,
+        min_z - 10,
+        max_z + 10,
+    )
+    town_route_consolidate_crowding(&network)
+    town_route_merge_tight_vs(&network)
+    town_route_emit_streets(plan, &network)
     _ = circulation.plan_add(
         plan,
         {

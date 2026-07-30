@@ -257,6 +257,8 @@ road_bake_preserves_mixed_edge_pavements :: proc(t: ^testing.T) {
     }
     testing.expect(t, saw_gravel && saw_cobble)
     testing.expect(t, roads.pavement_next(.Dirt) == .Asphalt)
+    testing.expect_value(t, roads.pavement_name(.Steps), "STEPS")
+    testing.expect(t, roads.pavement_next(.Steps) == .Asphalt)
 }
 
 @(test)

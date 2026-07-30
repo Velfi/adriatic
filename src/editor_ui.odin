@@ -370,7 +370,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor.road_mode {
         if editor.road_drag_edge >= 0 do return "Drag the control handle to shape the road; release to commit."
         if editor.road_selected_node >= 0 do return "Extend or connect the selected node; right-click to end the chain."
-        return "Click terrain to start a road; click a node to connect or branch."
+        return "Click terrain to start a spline; K cycles roads and procedural steps."
     }
     if editor.architecture_paint_mode do return "Drag to orient one settlement piece; release to stamp. Right-drag erases."
     if editor.curve_drawing do return editor.curve_cliff_mode ? "Draw the cliff path; release to commit." : "Draw the ridge path; release to commit."
@@ -406,7 +406,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .ClimbingLeaves:
         return "Left spreads climbing leaves; right erases. Wheel zooms; Shift spread; Alt hardness."
     case .Roads:
-        return "Click terrain to add nodes and drag handles to curve edges."
+        return "Click terrain to add spline nodes; drag handles to curve roads or steps."
     case .GreekAssets:
         return "Click an asset, then click terrain to place it. Wheel zooms; Alt rotates; Shift scales."
     }
@@ -826,6 +826,13 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         )
         row = 7
     case .Roads:
+        editor_ui_panel_button(
+            editor_ui_slider_bounds(layout, row),
+            fmt.ctprintf("SURFACE   %s", roads.pavement_name(editor.road_pavement)),
+            editor.road_pavement == .Steps,
+            true,
+        )
+        row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "ROAD WIDTH (m)", editor.road_width, 2.5, 24, 1)
         row += 1
         editor_ui_slider_draw(
@@ -1139,6 +1146,11 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         }
         row = 7
     case .Roads:
+        surface_bounds := editor_ui_slider_bounds(layout, row)
+        if pressed && rl.CheckCollisionPointRec(mouse, surface_bounds) {
+            road_cycle_pavement(editor)
+        }
+        row += 1
         road_changed := editor_ui_slider_input(
             editor,
             layout,

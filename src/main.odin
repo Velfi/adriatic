@@ -345,8 +345,6 @@ Fixture :: struct {
     active_lab_scene:                               string,
     settlement_vertical_map:                        bool,
     settlement_plan:                                Settlement_Plan,
-    settlement_patios:                              [SETTLEMENT_PATIO_CAPACITY]Settlement_Patio,
-    settlement_patio_count:                         int,
     settlement_diagnostic_layer:                    int,
     shadow_lab_collection:                          int,
     shadow_lab_lighting:                            int,
@@ -1441,7 +1439,9 @@ road_set_pavement :: proc(editor: ^Editor, pavement: roads.Pavement) {
 
 road_cycle_pavement :: proc(editor: ^Editor) {
     if editor == nil do return
-    road_set_pavement(editor, roads.pavement_next(editor.road_pavement))
+    next := roads.pavement_next(editor.road_pavement)
+    if editor.road_pavement == .Dirt do next = .Steps
+    road_set_pavement(editor, next)
 }
 
 road_delete_selected :: proc(editor: ^Editor) {
@@ -2063,14 +2063,9 @@ benchmark_report :: proc(
     for mesh in world_renderer.instance_meshes {
         instance_index_count += int(mesh.index_count) * len(mesh.instances)
     }
-    world_vertex_count :=
-        len(world_renderer.vertices) +
-        len(world_renderer.static_indices) +
-        instance_index_count
+    world_vertex_count := len(world_renderer.vertices) + len(world_renderer.static_indices) + instance_index_count
     world_unique_vertex_count :=
-        len(world_renderer.vertices) +
-        len(world_renderer.static_vertices) +
-        len(world_renderer.instance_vertices)
+        len(world_renderer.vertices) + len(world_renderer.static_vertices) + len(world_renderer.instance_vertices)
     road_vertex_count := len(world_renderer.road_vertices)
     foliage_vertex_count :=
         len(world_renderer.foliage_vertices) +
@@ -2227,6 +2222,8 @@ seed_road_dust_capture :: proc(editor: ^Editor) {
             surface = .Cobblestone
         case .Dirt:
             surface = .Dirt
+        case .Steps:
+            surface = .Cobblestone
         }
         contact := particle_systems.Vehicle_Contact {
             position = {point.x, point.y + .12, point.z},
@@ -2526,6 +2523,8 @@ road_car_surface :: proc(
                 dust_surface = .Cobblestone
             case .Dirt:
                 dust_surface = .Dirt
+            case .Steps:
+                dust_surface = .Cobblestone
             }
         } else {
             // Off pavement the ground itself drives the effect: classify the
@@ -2574,7 +2573,7 @@ seed_city_capture :: proc(editor: ^Editor) {
 seed_default_island_towns :: proc(editor: ^Editor) {
     if editor == nil do return
     architecture.city_plan_destroy(&editor.architecture_city_plan)
-    editor.settlement_patio_count = 0
+    editor.settlement_plan.patio_count = 0
     town_seeds := [len(terrain.DEFAULT_ISLAND_SIGNS)]u32{0xA71D3, 0xD911C}
     settlement_regions := [len(terrain.DEFAULT_ISLAND_SIGNS)]Settlement_Region{.Adriatic, .Aegean}
     for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
@@ -2813,8 +2812,7 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
         ordinal_arg = target_arg[len(roof_prefix):]
     }
     roof_medium_prefix := "roof-medium-"
-    if len(target_arg) > len(roof_medium_prefix) &&
-       target_arg[:len(roof_medium_prefix)] == roof_medium_prefix {
+    if len(target_arg) > len(roof_medium_prefix) && target_arg[:len(roof_medium_prefix)] == roof_medium_prefix {
         roof_capture = true
         ordinal_arg = target_arg[len(roof_medium_prefix):]
         structure_lod_force(1)
@@ -6510,20 +6508,10 @@ terrain_color_variation :: #force_inline proc(color: rl.Color, x, z: f32) -> rl.
     // irregular patches. World-space sampling keeps the result stable across
     // clipmap levels and camera movement.
     continental := f32(math.sin(f64(x * .0017 + z * .0011 + .8)))
-    regional := f32(math.sin(f64(
-        x * -.0041 + z * .0033 + continental * 1.65 + 2.3,
-    )))
-    field := f32(math.sin(f64(
-        x * .0107 + z * -.0083 + continental * .9 + regional * .7,
-    )))
-    local := f32(math.sin(f64(
-        x * -.031 + z * .027 + regional * 1.1 + 1.4,
-    )))
-    variation :=
-        continental * .38 +
-        regional * .34 +
-        field * .20 +
-        local * .08
+    regional := f32(math.sin(f64(x * -.0041 + z * .0033 + continental * 1.65 + 2.3)))
+    field := f32(math.sin(f64(x * .0107 + z * -.0083 + continental * .9 + regional * .7)))
+    local := f32(math.sin(f64(x * -.031 + z * .027 + regional * 1.1 + 1.4)))
+    variation := continental * .38 + regional * .34 + field * .20 + local * .08
 
     // A warm/cool shift varies hue as well as brightness. Regional fields get
     // enough chroma to read from an overview, while the bounded range
@@ -10770,7 +10758,9 @@ adriatic_run :: proc(
                 if !control_key_down() && rl.IsKeyPressed(.C) do authoring_select_tool(editor, .Cliff)
                 if !control_key_down() && rl.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
                 if !control_key_down() && rl.IsKeyPressed(.J) do authoring_select_tool(editor, .Marina)
-                if !control_key_down() && rl.IsKeyPressed(.K) do authoring_select_tool(editor, .Farm)
+                if !control_key_down() && !editor.road_mode && rl.IsKeyPressed(.K) {
+                    authoring_select_tool(editor, .Farm)
+                }
                 if !control_key_down() && rl.IsKeyPressed(.V) do authoring_select_tool(editor, .Wreck)
                 if !control_key_down() && rl.IsKeyPressed(.L) do authoring_select_tool(editor, .ClimbingLeaves)
                 if rl.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)

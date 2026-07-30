@@ -753,6 +753,122 @@ float2 rotate2(float2 p, float angle) {
     return float2(p.x * c - p.y * s, p.x * s + p.y * c);
 }
 
+float3 shade_terrain_limestone(VertexOutput input, float3 color) {
+    float cliff = smoothstep(.08, .72, input.material.y);
+    if (cliff <= .001) return color;
+
+    float2 world = input.world_position.xz;
+    float3 normal = normalize(input.normal);
+    float face_u = abs(normal.x) > abs(normal.z) ? world.y : world.x;
+    float2 face = float2(face_u, input.world_position.y);
+    float patch = value_noise(rotate2(world, .31) / 38.0 + float2(4.1, -2.7));
+    float detail = value_noise(rotate2(world, -.58) / 11.0 + float2(8.3, 2.7));
+
+    // Estimate the world-space pixel footprint. Large panels remain visible
+    // from the overview while the sparse drawing disappears before it aliases.
+    float footprint = max(length(ddx(input.world_position)), length(ddy(input.world_position)));
+    float fine_visibility = 1.0 - smoothstep(.75, 4.5, footprint);
+
+    // Broad, face-oriented mineral panels replace continuous fine bedding.
+    // Elevation is the vertical axis, so near-vertical walls do not compress
+    // world-XZ paint into dense contour stripes.
+    float2 panel_warp = face + float2((patch - .5) * 5.2, (detail - .5) * 3.4);
+    float2 panel_cell = floor(panel_warp / float2(12.0, 8.0));
+    float panel_id = hash12(panel_cell);
+    float slab_mass = value_noise(face / float2(19.0, 14.0) + float2(2.7, -5.1));
+    float slab_plane =
+        smoothstep(.36, .53, slab_mass) -
+        smoothstep(.68, .82, slab_mass);
+    float slab_lee = smoothstep(
+        .55,
+        .75,
+        value_noise(face / float2(27.0, 18.0) + float2(-4.3, 6.7))
+    );
+
+    float3 limestone = color;
+    limestone *= lerp(.92, 1.08, panel_id);
+    limestone *= lerp(.91, 1.08, slab_plane);
+    limestone = lerp(limestone, color * .82, slab_lee * .24);
+    limestone *= lerp(.95, 1.04, detail);
+
+    // Two broken diagonal fracture families and their occasional pale chipped
+    // shoulders provide drawing without turning the entire face into stripes.
+    float fracture_a =
+        frac(dot(face, normalize(float2(.82, .57))) / 14.0 + (patch - .5) * .16);
+    float fracture_b =
+        frac(dot(face, normalize(float2(-.91, .42))) / 19.0 + (detail - .5) * .12);
+    float fracture_gate_a = smoothstep(
+        .48,
+        .68,
+        value_noise(face / 13.0 + float2(.7, 3.1))
+    );
+    float fracture_gate_b = smoothstep(
+        .60,
+        .77,
+        value_noise(face / 16.0 + float2(-5.3, 1.1))
+    );
+    float seam_a =
+        (1.0 - smoothstep(.012, .040, abs(fracture_a - .5))) *
+        fracture_gate_a * fine_visibility;
+    float seam_b =
+        (1.0 - smoothstep(.010, .035, abs(fracture_b - .5))) *
+        fracture_gate_b * fine_visibility;
+    float chipped_shoulder =
+        (1.0 - smoothstep(.018, .060, abs(fracture_a - .445))) *
+        fracture_gate_a * fine_visibility;
+
+    // Widely spaced ledges are slightly warped and broken into runs. Sparse
+    // vertical joints settle into the same cool mineral shadow.
+    float stratigraphic_height =
+        input.world_position.y + world.x * .012 + (patch - .5) * 1.6;
+    float ledge_phase = frac(stratigraphic_height / 5.5);
+    float ledge_distance = min(ledge_phase, 1.0 - ledge_phase);
+    float ledge_segment = smoothstep(
+        .54,
+        .72,
+        value_noise(world / 15.0 + float2(7.3, -4.1))
+    );
+    float recessed_ledge =
+        (1.0 - smoothstep(.016, .065, ledge_distance)) *
+        ledge_segment * fine_visibility;
+    float joint_phase = abs(frac((face_u + (patch - .5) * 3.0) / 9.0) - .5);
+    float joint_segment = smoothstep(
+        .60,
+        .76,
+        value_noise(world / 12.0 + float2(-1.9, 8.3))
+    );
+    float joint_stain =
+        (1.0 - smoothstep(.445, .490, joint_phase)) *
+        joint_segment * fine_visibility;
+
+    float mineral_shadow =
+        saturate(seam_a * .72 + seam_b * .52 +
+                 recessed_ledge * .76 + joint_stain * .46);
+    limestone = lerp(
+        limestone,
+        limestone * float3(.62, .69, .65),
+        mineral_shadow
+    );
+    limestone = lerp(
+        limestone,
+        limestone * float3(1.16, 1.12, 1.02),
+        chipped_shoulder * .28
+    );
+
+    float3 result = lerp(color, limestone, cliff);
+    // A selective dark-green break makes the turf cap readable without
+    // outlining clipmap triangles or ordinary rolling ground.
+    float rim_profile =
+        1.0 - smoothstep(.035, .10, abs(input.material.y - .52));
+    float rim_break = lerp(
+        .70,
+        1.0,
+        smoothstep(.36, .68, value_noise(world / 7.0 + float2(2.9, 1.7)))
+    );
+    float3 turf_rim = srgb_to_linear(float3(.10, .18, .105));
+    return lerp(result, turf_rim, rim_profile * rim_break * .38);
+}
+
 float3 shade_foliage(VertexOutput input) {
     float3 normal = normalize(input.normal);
     float3 geometric_normal = normal;
@@ -1255,7 +1371,7 @@ float3 shade_water(VertexOutput input) {
     // visible surface, so the shallow tint and foam follow authored terrain
     // edits instead of a pair of hard-coded island circles. Far-ocean vertices
     // have no terrain signal and remain deep water.
-    float terrain_shore = input.material.y *
+    float terrain_shore = abs(input.material.y) *
         smoothstep(.025, 1.35, input.material.x);
     float shallow = terrain_shore;
     float deep = 1.0 - smoothstep(.015, .72, terrain_shore);
@@ -1437,7 +1553,9 @@ float3 shade_water(VertexOutput input) {
                       (1.0 - smoothstep(.48, .92, terrain_shore));
     float foam_breakup = value_noise(float2(dot(p, across) * .075, dot(p, axis) * .031) +
                                       float2(time * .028, 0));
-    float foam = foam_band * lerp(.28, 1.0, smoothstep(.38, .76, foam_breakup));
+    float breaking_shore = step(0.0, input.material.y);
+    float foam = foam_band * breaking_shore *
+                 lerp(.28, 1.0, smoothstep(.38, .76, foam_breakup));
     color = lerp(color, foam_color, foam * lerp(.38, .68, sea_state));
 
     return saturate(color);
@@ -1609,6 +1727,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     switch (input.kind) {
         case MATERIAL_TERRAIN:
             base = shade_grass_wind_sheen(input, base);
+            base = shade_terrain_limestone(input, base);
             break;
         case MATERIAL_WATER:
             base = shade_water(input);

@@ -95,7 +95,7 @@ settlement_patio_structures_clear :: proc(editor: ^Editor, patio: Settlement_Pat
             return false
         }
     }
-    for existing in editor.settlement_patios[:editor.settlement_patio_count] {
+    for existing in editor.settlement_plan.patios[:editor.settlement_plan.patio_count] {
         if !settlement_oriented_rectangles_clear(
             patio.center[0],
             patio.center[1],
@@ -117,7 +117,7 @@ settlement_patio_structures_clear :: proc(editor: ^Editor, patio: Settlement_Pat
 
 settlement_patios_contain_point :: proc(editor: ^Editor, x, z: f32, padding: f32 = 0) -> bool {
     if editor == nil do return false
-    for patio in editor.settlement_patios[:editor.settlement_patio_count] {
+    for patio in editor.settlement_plan.patios[:editor.settlement_plan.patio_count] {
         cosine, sine := math.cos(patio.rotation), math.sin(patio.rotation)
         dx, dz := x - patio.center[0], z - patio.center[1]
         local_x := dx * cosine + dz * sine
@@ -164,7 +164,7 @@ settlement_patio_candidate :: proc(
 }
 
 settlement_patios_generate :: proc(editor: ^Editor) {
-    if editor == nil || editor.settlement_patio_count >= SETTLEMENT_PATIO_CAPACITY do return
+    if editor == nil || editor.settlement_plan.patio_count >= SETTLEMENT_PATIO_CAPACITY do return
     plan := &editor.settlement_plan
     target := 2
     switch plan.request.scale {
@@ -175,11 +175,11 @@ settlement_patios_generate :: proc(editor: ^Editor) {
     case .Village:
         target = 2
     }
-    start_count := editor.settlement_patio_count
+    start_count := editor.settlement_plan.patio_count
     for pass in 0 ..< 3 {
         for site, site_index in plan.sites[:plan.site_count] {
-            if editor.settlement_patio_count - start_count >= target ||
-               editor.settlement_patio_count >= SETTLEMENT_PATIO_CAPACITY {
+            if editor.settlement_plan.patio_count - start_count >= target ||
+               editor.settlement_plan.patio_count >= SETTLEMENT_PATIO_CAPACITY {
                 return
             }
             if !site.accepted || site.kind != .Ordinary || site.attached do continue
@@ -208,11 +208,111 @@ settlement_patios_generate :: proc(editor: ^Editor) {
                    !settlement_patio_structures_clear(editor, patio) {
                     continue
                 }
-                editor.settlement_patios[editor.settlement_patio_count] = patio
-                editor.settlement_patio_count += 1
+                editor.settlement_plan.patios[editor.settlement_plan.patio_count] = patio
+                editor.settlement_plan.patio_count += 1
                 break
             }
         }
+    }
+}
+
+settlement_garden_plot_clear :: proc(editor: ^Editor, plot: Settlement_Garden_Plot) -> bool {
+    if editor == nil || plot.site_index < 0 || plot.site_index >= editor.settlement_plan.site_count do return false
+    site := editor.settlement_plan.sites[plot.site_index]
+    tangent := [2]f32{math.cos(plot.rotation), math.sin(plot.rotation)}
+    normal := [2]f32{-tangent[1], tangent[0]}
+    half_width, half_depth := plot.width * .5, plot.depth * .5
+    corners := [4][2]f32 {
+        plot.center + tangent * half_width + normal * half_depth,
+        plot.center + tangent * half_width - normal * half_depth,
+        plot.center - tangent * half_width + normal * half_depth,
+        plot.center - tangent * half_width - normal * half_depth,
+    }
+    for corner in corners {
+        if !settlement_garden_point_in_plot(site, corner[0], corner[1], .2) do return false
+    }
+    footprint := Settlement_Patio {
+        center   = plot.center,
+        width    = plot.width,
+        depth    = plot.depth,
+        rotation = plot.rotation,
+        host_id  = site.structure.id,
+    }
+    if !settlement_patio_route_clear(&editor.settlement_plan, footprint) ||
+       !settlement_patio_structures_clear(editor, footprint) {
+        return false
+    }
+    for existing in editor.settlement_plan.gardens[:editor.settlement_plan.garden_count] {
+        if !settlement_oriented_rectangles_clear(
+            plot.center[0],
+            plot.center[1],
+            plot.width,
+            plot.depth,
+            plot.rotation,
+            existing.center[0],
+            existing.center[1],
+            existing.width,
+            existing.depth,
+            existing.rotation,
+            1.5,
+        ) {
+            return false
+        }
+    }
+    return true
+}
+
+settlement_gardens_generate :: proc(editor: ^Editor) {
+    if editor == nil do return
+    plan := &editor.settlement_plan
+    plan.garden_count = 0
+    target := plan.request.scale == .City ? 14 : (plan.request.scale == .Town ? 8 : 4)
+    for site, site_index in plan.sites[:plan.site_count] {
+        if plan.garden_count >= target || plan.garden_count >= SETTLEMENT_GARDEN_CAPACITY do break
+        if !site.accepted || (site.kind != .Ordinary && site.kind != .Park) do continue
+        seed := garden_hash(plan.request.seed ~ site.structure.seed ~ u32(site_index * 0x9e37))
+        if site.kind == .Park {
+            plan.gardens[plan.garden_count] = {
+                center     = {site.structure.center_x, site.structure.center_z},
+                width      = site.structure.width,
+                depth      = site.structure.depth,
+                rotation   = site.structure.rotation,
+                seed       = seed,
+                site_index = site_index,
+                style      = .Park,
+            }
+            plan.garden_count += 1
+            continue
+        }
+        if site.attached || (site.purpose != .Farmstead && site.density > .48) do continue
+        if site.purpose != .Farmstead && seed & 3 == 0 do continue
+        width := clamp(site.structure.width * .62, f32(4.5), f32(9))
+        depth := clamp(site.structure.depth * .46, f32(3.8), f32(7))
+        tangent := [2]f32{math.cos(site.structure.rotation), math.sin(site.structure.rotation)}
+        normal := [2]f32{-tangent[1], tangent[0]}
+        // The architecture frontage faces local +Z; household growing space
+        // occupies the quieter rear residue of the parcel.
+        center :=
+            [2]f32{site.structure.center_x, site.structure.center_z} -
+            normal * (site.structure.depth * .5 + depth * .5 + .8)
+        style := Settlement_Garden_Style.Courtyard
+        if site.purpose == .Farmstead {
+            style = .Kitchen
+        } else if site.tissue == .Hillside_Accretion || site.tissue == .Contour_Terrace || site.density < .22 {
+            style = .Wild
+        }
+        plot := Settlement_Garden_Plot {
+            center     = center,
+            width      = width,
+            depth      = depth,
+            rotation   = site.structure.rotation,
+            seed       = seed,
+            site_index = site_index,
+            style      = style,
+        }
+        if !settlement_garden_plot_clear(editor, plot) do continue
+        plan.gardens[plan.garden_count] = plot
+        plan.garden_count += 1
     }
 }
 
@@ -254,8 +354,7 @@ world_settlement_patio :: proc(patio: Settlement_Patio) {
     planter_b := settlement_patio_point(patio, planter_x, .04, -planter_z)
     patio_planter(planter_a, false)
     patio_planter(planter_b, false)
-    patio_species :=
-        patio.style == .Aegean ? plants.Species.Pelargonium : plants.Species.Rosemary
+    patio_species := patio.style == .Aegean ? plants.Species.Pelargonium : plants.Species.Rosemary
     _ = world_generated_plant(
         patio_species,
         u64(patio.seed) ~ 0x706174696f5f706c,
@@ -274,7 +373,7 @@ world_settlement_patio :: proc(patio: Settlement_Patio) {
 
 world_settlement_patios :: proc(editor: ^Editor) {
     if editor == nil do return
-    for patio in editor.settlement_patios[:editor.settlement_patio_count] {
+    for patio in editor.settlement_plan.patios[:editor.settlement_plan.patio_count] {
         world_settlement_patio(patio)
     }
 }

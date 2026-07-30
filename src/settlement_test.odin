@@ -3857,7 +3857,7 @@ settlement_access_surfaces_follow_use_width_and_network_demand :: proc(t: ^testi
     testing.expect_value(
         t,
         settlement_access_route_pavement(SETTLEMENT_ACCESS_STAIR_GRADE, 1.2),
-        roads.Pavement.Cobblestone,
+        roads.Pavement.Steps,
     )
 }
 

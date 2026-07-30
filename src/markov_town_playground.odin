@@ -279,7 +279,7 @@ settlement_lab_configure :: proc(
     append_city_plan: bool = false,
 ) -> bool {
     if editor == nil do return false
-    if !append_city_plan do editor.settlement_patio_count = 0
+    if !append_city_plan do editor.settlement_plan.patio_count = 0
     patio_capture := target == "patio"
     fixture, vertical_map, seed_target := settlement_lab_target_parse(target)
     editor.settlement_vertical_map = vertical_map
@@ -831,6 +831,7 @@ settlement_lab_configure :: proc(
     }
     settlement_plan_import_city(&editor.settlement_plan, &plan, &editor.project)
     settlement_patios_generate(editor)
+    settlement_gardens_generate(editor)
     if append_city_plan {
         append(&editor.architecture_city_plan.structures, ..plan.structures[:plan.count])
         append(&editor.architecture_city_plan.parcels, ..plan.parcels[:plan.parcel_count])
@@ -1039,8 +1040,8 @@ settlement_lab_configure :: proc(
         third_person.camera_set_pose(&editor.cameras, .Inspection, overhead)
         third_person.camera_set_active(&editor.cameras, .Inspection)
     }
-    if configure_presentation && patio_capture && editor.settlement_patio_count > 0 {
-        patio := editor.settlement_patios[0]
+    if configure_presentation && patio_capture && editor.settlement_plan.patio_count > 0 {
+        patio := editor.settlement_plan.patios[0]
         outward := [2]f32{math.cos(patio.rotation), math.sin(patio.rotation)}
         for structure in editor.project.structures[:editor.project.structure_count] {
             if structure.id != patio.host_id do continue

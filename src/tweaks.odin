@@ -547,6 +547,10 @@ tweak_draw_terrain :: proc(editor: ^Editor) {
             if im.RadioButton("Dirt", editor.road_pavement == .Dirt) {
                 road_set_pavement(editor, .Dirt)
             }
+            im.SameLine()
+            if im.RadioButton("Steps", editor.road_pavement == .Steps) {
+                road_set_pavement(editor, .Steps)
+            }
         } else {
             im.TextDisabled("LMB places/selects; RMB makes cliffs; Esc cancels")
             im.TextDisabled("Wheel zoom; Alt+wheel height; Shift+wheel size; R rotates")
