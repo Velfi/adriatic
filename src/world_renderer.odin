@@ -2677,7 +2677,6 @@ world_renderer_fixture_invalidate :: proc(editor: ^Editor) {
     world_renderer.laundry_geometry_terrain_revision = 0
     world_renderer.pavement_query_graph_valid = false
     world_renderer.pavement_query_revision = 0
-    world_renderer.structure_visibility_order_valid = false
     for &entry in world_renderer.dialogue_portrait_geometry_cache do entry.valid = false
     world_renderer.libellula_geometry_cache.valid = false
     for &entry in world_renderer.marina_geometry_cache do entry.valid = false

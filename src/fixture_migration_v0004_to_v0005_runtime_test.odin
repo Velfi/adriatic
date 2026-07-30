@@ -436,7 +436,7 @@ when ODIN_TEST {
             result, error, ok := fixture_migration_run_with_registry(
                 payload,
                 source_version,
-                5,
+                6,
                 fixture_migration_production_registry(),
                 fixture_migration_test_allocator(&state),
             )
@@ -515,8 +515,8 @@ when ODIN_TEST {
         production := fixture_migration_production_registry()
         testing.expect(
             t,
-            FIXTURE_SCHEMA_VERSION == 5 &&
-            len(production.steps) == 4 &&
+            FIXTURE_SCHEMA_VERSION == 6 &&
+            len(production.steps) == 5 &&
             production.steps[0].from_version == 1 &&
             production.steps[0].to_version == 2 &&
             production.steps[0].wrapper == fixture_migration_step_v0001_to_v0002 &&
@@ -532,13 +532,17 @@ when ODIN_TEST {
             production.steps[3].from_version == 4 &&
             production.steps[3].to_version == 5 &&
             production.steps[3].wrapper == fixture_migration_step_v0004_to_v0005 &&
-            production.steps[3].change_id == FIXTURE_MIGRATION_V0004_TO_V0005_BODY_ORIENTATION_ID,
+            production.steps[3].change_id == FIXTURE_MIGRATION_V0004_TO_V0005_BODY_ORIENTATION_ID &&
+            production.steps[4].from_version == 5 &&
+            production.steps[4].to_version == 6 &&
+            production.steps[4].wrapper == fixture_migration_step_v0005_to_v0006 &&
+            production.steps[4].change_id == "field-type:adriatic:packages/terrain.Clipmap_Level.heights",
         )
 
         result, migration_error, migrated := fixture_migration_run_with_registry(
             v4,
             4,
-            5,
+            6,
             production,
             runtime.default_allocator(),
         )
@@ -567,8 +571,8 @@ when ODIN_TEST {
         }
         provenance_result, provenance_error, provenance_ok := fixture_migration_run(
             v4,
-            5,
-            5,
+            6,
+            6,
             fixture_migration_test_allocator(&provenance_state),
         )
         testing.expect(t, !provenance_ok && provenance_error.kind == .Tentative_Decode)
@@ -577,7 +581,7 @@ when ODIN_TEST {
         fixture_migration_result_dispose(&provenance_result)
         testing.expect(t, provenance_state.outstanding == 0)
 
-        future_result, future_error, future_ok := fixture_migration_run(v4, 5, 6, runtime.default_allocator())
+        future_result, future_error, future_ok := fixture_migration_run(v4, 6, 7, runtime.default_allocator())
         testing.expect(t, !future_ok && future_error.kind == .Unsupported_Version)
         testing.expect(t, fixture_migration_result_empty(&future_result))
         fixture_migration_error_dispose(&future_error)
@@ -755,7 +759,7 @@ when ODIN_TEST {
             result, hostile_error, ok := fixture_migration_run_with_registry(
                 hostile_payload,
                 hostile_versions[index],
-                5,
+                6,
                 fixture_migration_production_registry(),
                 fixture_migration_test_allocator(&hostile_state),
             )
@@ -850,7 +854,7 @@ when ODIN_TEST {
         result, error, ok := fixture_migration_run_with_registry(
             payload,
             source_version,
-            5,
+            6,
             fixture_migration_production_registry(),
             fixture_migration_test_allocator(&measurement_state),
         )
@@ -870,7 +874,7 @@ when ODIN_TEST {
             result, error, ok = fixture_migration_run_with_registry(
                 payload,
                 source_version,
-                5,
+                6,
                 fixture_migration_production_registry(),
                 fixture_migration_test_allocator(&state),
             )

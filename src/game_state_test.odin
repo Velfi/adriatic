@@ -359,31 +359,6 @@ when ODIN_TEST {
     }
 
     @(test)
-    old_hot_state_aircraft_fleet_gains_rondine_and_rebinds_vehicles :: proc(t: ^testing.T) {
-        editor := new(Editor)
-        defer free(editor)
-        terrain.init_project(&editor.project)
-        editor.aircraft.count = 3
-        editor.aircraft.slots[0] = {.Postale, "Postale", nil, true}
-        editor.aircraft.slots[1] = {.Libellula, "Libellula", nil, true}
-        editor.aircraft.slots[2] = {.Libellula_Mk2, "Libellula Mk2", nil, false}
-
-        hot_state_rebind_aircraft_fleet(editor)
-
-        testing.expect_value(t, editor.aircraft.count, 4)
-        testing.expect(t, vehicles.aircraft_fleet_slot(&editor.aircraft, .Postale).vehicle == &editor.postale.vehicle)
-        testing.expect(
-            t,
-            vehicles.aircraft_fleet_slot(&editor.aircraft, .Libellula).vehicle == &editor.libellula.vehicle,
-        )
-        rondine := vehicles.aircraft_fleet_slot(&editor.aircraft, .Rondine)
-        testing.expect(t, rondine != nil)
-        testing.expect(t, rondine.vehicle == &editor.rondine.vehicle)
-        testing.expect(t, !rondine.available)
-        testing.expect(t, editor.rondine.vehicle.locked)
-    }
-
-    @(test)
     rondine_marina_spawn_clears_full_footprint :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)

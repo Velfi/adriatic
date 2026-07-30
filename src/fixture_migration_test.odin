@@ -624,8 +624,8 @@ when ODIN_TEST {
         fixture_migration_test_expect_rejected(
             t,
             payload,
-            6,
-            6,
+            7,
+            7,
             fixture_migration_production_registry(),
             .Unsupported_Version,
         )
@@ -633,7 +633,7 @@ when ODIN_TEST {
             t,
             payload,
             1,
-            6,
+            7,
             fixture_migration_production_registry(),
             .Unsupported_Version,
         )

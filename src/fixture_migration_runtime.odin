@@ -139,7 +139,7 @@ fixture_migration_step_v0001_to_v0002 :: proc(
     return step_error
 }
 
-fixture_migration_production_steps: [4]Fixture_Migration_Step = {
+fixture_migration_production_steps: [5]Fixture_Migration_Step = {
     {
         from_version = FIXTURE_MIGRATION_V0001_TO_V0002_FROM_VERSION,
         to_version = FIXTURE_MIGRATION_V0001_TO_V0002_TO_VERSION,
@@ -163,6 +163,12 @@ fixture_migration_production_steps: [4]Fixture_Migration_Step = {
         to_version = FIXTURE_MIGRATION_V0004_TO_V0005_TO_VERSION,
         wrapper = fixture_migration_step_v0004_to_v0005,
         change_id = FIXTURE_MIGRATION_V0004_TO_V0005_BODY_ORIENTATION_ID,
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0005_TO_V0006_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0005_TO_V0006_TO_VERSION,
+        wrapper = fixture_migration_step_v0005_to_v0006,
+        change_id = "field-type:adriatic:packages/terrain.Clipmap_Level.heights",
     },
 }
 

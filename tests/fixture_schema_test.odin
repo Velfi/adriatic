@@ -66,7 +66,7 @@ build_synthetic :: proc(repo: Synthetic_Repo) -> (manifest, diagnostics: string,
 }
 
 @(test)
-fixture_schema_production_graph_matches_frozen_v5 :: proc(t: ^testing.T) {
+fixture_schema_production_graph_matches_frozen_v6 :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     repo_root, repo_err := os.get_working_directory(context.allocator)
@@ -79,8 +79,8 @@ fixture_schema_production_graph_matches_frozen_v5 :: proc(t: ^testing.T) {
     )
     testing.expect(t, generated_ok)
     testing.expect(t, diagnostics == "")
-    testing.expect(t, version == 5)
-    stored_path := fixture_schema.manifest_path(repo_root, 5)
+    testing.expect(t, version == 6)
+    stored_path := fixture_schema.manifest_path(repo_root, 6)
     stored, read_err := os.read_entire_file(stored_path, context.allocator)
     testing.expect(t, read_err == nil)
     if read_err != nil do return
@@ -234,7 +234,7 @@ fixture_schema_production_policy_excludes_only_derived_session_state :: proc(t: 
     )
     testing.expect(t, generated_ok)
     testing.expect(t, diagnostics == "")
-    testing.expect(t, version == 5)
+    testing.expect(t, version == 6)
     if !generated_ok do return
 
     excluded_fields := [?]string {

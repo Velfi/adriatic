@@ -499,7 +499,11 @@ fixture_editor_load :: proc(
     if stage.car_physics_world == nil || stage.car_physics_vehicle == nil {
         return {kind = .Runtime_Stage, path = "car_physics"}, false
     }
+    loaded_project_revision := stage.project.revision
     seed_default_island_marinas(stage)
+    // Default marinas are reconstructed runtime content. Their terrain and
+    // route preparation must not make a freshly loaded fixture appear edited.
+    stage.project.revision = loaded_project_revision
 
     old_owner := editor.fixture_owner
     if editor.active_lab_scene != "" {
