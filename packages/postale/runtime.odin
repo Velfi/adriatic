@@ -365,8 +365,12 @@ step_normalized_command :: proc(
             flight.Vec3{0, vertical_speed, 0}
         runtime.body.angular_velocity_world.x *= max_f32(0, 1 - dt * 8)
         runtime.body.angular_velocity_world.z *= max_f32(0, 1 - dt * 8)
+        // Positive yaw input is pilot-right. Around world-up, however, the
+        // Postale's -Z forward basis turns right with a negative rotation.
+        // Match the airborne rudder convention so the controls do not reverse
+        // as the wheels leave or touch the runway.
         steer :=
-            runtime.yaw *
+            -runtime.yaw *
             dt *
             lerp(runtime.tuning.ground_steer_fast, runtime.tuning.ground_steer_slow, clamp(forward_speed / 20, 0, 1))
         runtime.body.orientation = rotate_ground_heading(runtime.body.orientation, steer)

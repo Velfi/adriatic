@@ -820,6 +820,28 @@ postale_rudder_engages_and_releases_without_snapping :: proc(t: ^testing.T) {
 }
 
 @(test)
+postale_positive_rudder_turns_the_same_way_on_ground_and_in_air :: proc(t: ^testing.T) {
+    ground := postale.new_runtime({})
+    ground.body.velocity = flight.basis_from_orientation(ground.body.orientation).forward * 8
+    for _ in 0 ..< 30 {
+        postale.step(&ground, {yaw = 1}, 0, 1.0 / 60.0)
+    }
+    ground_forward := flight.basis_from_orientation(ground.body.orientation).forward
+
+    airborne := postale.new_runtime({0, 80, 0})
+    airborne.grounded = false
+    airborne.was_grounded = false
+    airborne.body.velocity = flight.basis_from_orientation(airborne.body.orientation).forward * 42
+    for _ in 0 ..< 30 {
+        postale.step(&airborne, {yaw = 1}, 0, 1.0 / 60.0)
+    }
+    airborne_forward := flight.basis_from_orientation(airborne.body.orientation).forward
+    testing.expect(t, math.abs(ground_forward.x) > .01)
+    testing.expect(t, math.abs(airborne_forward.x) > .01)
+    testing.expect(t, ground_forward.x * airborne_forward.x > 0)
+}
+
+@(test)
 postale_reset_restores_the_runway_state :: proc(t: ^testing.T) {
     runtime := postale.new_runtime(flight.Vec3{4, postale.GROUND_CLEARANCE, 2})
     runtime.flight_model = .Ace_Arcade
