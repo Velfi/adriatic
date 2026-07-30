@@ -458,7 +458,7 @@ Fixture :: struct {
     customization_preview_yaw:                      f32 `fixture:"-"`,
 }
 
-FIXTURE_SCHEMA_VERSION :: 6
+FIXTURE_SCHEMA_VERSION :: 8
 
 Editor :: struct {
     using fixture:                      Fixture,
@@ -541,6 +541,10 @@ Editor :: struct {
     vehicle_paint_tool_icons:           rl.Texture,
     tarot_atlas:                        rl.Texture,
     controller_disconnect_notice:       bool,
+    friendship_notice_initialized:      bool,
+    friendship_notice_total:            int,
+    friendship_notice_delta:            int,
+    friendship_notice_age:              f32,
     pause_focus:                        int,
     photo_restore_pose:                 third_person.Camera_Pose,
     photo_restore_inspection:           third_person.Camera_Pose,
@@ -770,6 +774,10 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.quest_log_tab = .Active
     editor.quest_log_focus = 0
     editor.quest_log_scroll = 0
+    editor.friendship_notice_initialized = true
+    editor.friendship_notice_total = editor.story_state.friendship_points
+    editor.friendship_notice_delta = 0
+    editor.friendship_notice_age = FRIENDSHIP_NOTICE_DURATION
     editor.dialogue_resident = {}
     editor.attendant_position = attendant_spawn_position(editor, editor.libellula.vehicle.position)
     editor.gerta_position = gerta_spawn_position(editor)
@@ -5632,6 +5640,8 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
         definition = &editor.story_catalog.toma
     case .Lena:
         definition = &editor.story_catalog.lena
+    case .Mirna:
+        definition = &editor.story_catalog.mirna
     case .Marta, .Gerta:
         return false
     }
@@ -5639,7 +5649,7 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
         definition,
         {
             data = rawptr(&editor.story_state),
-            location_id = resident == .Vesna || resident == .Petar || resident == .Anica ? "clinic" : (resident == .Iva || resident == .Zora ? "east_island" : "west_island"),
+            location_id = resident == .Vesna || resident == .Petar || resident == .Anica ? "clinic" : (resident == .Iva || resident == .Zora || resident == .Mirna ? "east_island" : "west_island"),
             resident_index = int(resident),
         },
     )
@@ -6053,7 +6063,18 @@ nearest_story_resident :: proc(
 ) {
     if editor == nil || editor.pilot.mode != .On_Foot do return {}, 0, false
     best_distance := f32(2.25 * 2.25)
-    candidates := [9]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena}
+    candidates := [10]story.Resident {
+        .Niko,
+        .Iva,
+        .Bojan,
+        .Zora,
+        .Vesna,
+        .Petar,
+        .Anica,
+        .Toma,
+        .Lena,
+        .Mirna,
+    }
     for candidate in candidates {
         if require_action && !story.resident_has_action(&editor.story_state, candidate) do continue
         position, placed := world_story_resident_position(editor, candidate)
@@ -8888,6 +8909,7 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     if !editor.in_map && !editor.capture_world_only {
         editor_ui_draw(editor, width, height)
     }
+    friendship_notice_draw(editor, width)
 }
 
 hot_reload_requested :: proc(library_path: string, loaded_mtime: i64) -> bool {
@@ -9696,6 +9718,7 @@ adriatic_run :: proc(
         capture_lab_name = "aegean-village"
     }
     if capture_kind == .Shadow_Lab do capture_lab_name = "shadow"
+    if capture_kind == .Screen_Pops_Lab do capture_lab_name = "screen-pops"
     if capture_wildflower_lab_mode do capture_lab_name = "wildflower"
     if capture_kind == .Boat_Lab do capture_lab_name = "boat"
     if capture_kind == .Boid_Lab do capture_lab_name = "boid"
@@ -9720,6 +9743,7 @@ adriatic_run :: proc(
         capture_grass_wind_mode ||
         capture_wildflower_lab_mode ||
         capture_markov_town_mode ||
+        capture_kind == .Screen_Pops_Lab ||
         capture_kind == .Shadow_Lab ||
         capture_kind == .Boat_Lab ||
         capture_kind == .Boid_Lab ||
@@ -11686,7 +11710,7 @@ adriatic_run :: proc(
     benchmark_sample_count := 0
     instrument_started_at := rl.GetTime()
     capture_frame :=
-        capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
     if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
     turntable_frame_index := 0
     turntable_capture_stride := 12
@@ -11724,6 +11748,7 @@ adriatic_run :: proc(
         runtime_pointer_sync(editor)
         attendant_dialogue_process_input(editor, width, height, frame_delta)
         simulation_delta := was_paused || pause_menu_is_open(editor) ? f32(0) : frame_delta
+        friendship_notice_step(editor, simulation_delta)
         atmosphere.step(&editor.atmosphere, simulation_delta)
         boats.step(&editor.boat_traffic, simulation_delta, editor.atmosphere.world_minutes)
         boats.ocean_traffic_step(&editor.ocean_traffic, simulation_delta)

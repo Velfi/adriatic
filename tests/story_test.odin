@@ -8,6 +8,7 @@ import "core:strings"
 import "core:testing"
 
 repair_aircraft :: proc(t: ^testing.T, state: ^story.State) {
+    if !story.has_friendometer(state) do receive_friendometer(t, state)
     testing.expect(t, story.report_crash(state))
     testing.expect(t, story.diagnose_crash(state))
     testing.expect(t, state.has_wing_patch)
@@ -21,9 +22,21 @@ complete_current_delivery :: proc(t: ^testing.T, state: ^story.State, recipient:
 }
 
 complete_airfield_intro :: proc(t: ^testing.T, state: ^story.State) {
+    if !story.has_friendometer(state) do receive_friendometer(t, state)
     testing.expect(t, story.accept_airfield_errand(state))
     testing.expect(t, story.handoff_broken_magneto(state))
     testing.expect(t, story.return_replacement_magneto(state))
+}
+
+receive_friendometer :: proc(t: ^testing.T, state: ^story.State) {
+    testing.expect(t, story.ensure_quest_progress(state))
+    if story.has_friendometer(state) do return
+    update, published := story.publish_quest_event(
+        state,
+        {kind = .Talk, key = "friendometer", target = "mirna"},
+    )
+    testing.expect(t, published && update.completed_count == 1)
+    testing.expect(t, story.has_friendometer(state))
 }
 
 expect_choice_texts :: proc(t: ^testing.T, actual: []dialogue.Choice, expected: []string) {
@@ -47,6 +60,7 @@ story_choices_fit_the_dialogue_buttons :: proc(t: ^testing.T) {
         &catalog.anica,
         &catalog.toma,
         &catalog.lena,
+        &catalog.mirna,
     }
     // Visual captures established forty ASCII bytes as the safe single-line
     // ceiling at the reference dialogue layout.
@@ -73,8 +87,10 @@ speaker_labels_resolve_to_the_active_resident :: proc(t: ^testing.T) {
         "ANICA",
         "TOMA · POSTMASTER",
         "LENA · POSTMASTER",
+        "DR MIRNA",
     }
-    expected := [?]story.Resident{.Marta, .Gerta, .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena}
+    expected :=
+        [?]story.Resident{.Marta, .Gerta, .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
     for label, index in labels {
         resident, found := story.resident_from_speaker(label)
         testing.expect(t, found && resident == expected[index])
@@ -84,21 +100,84 @@ speaker_labels_resolve_to_the_active_resident :: proc(t: ^testing.T) {
 }
 
 @(test)
+friendometer_is_the_only_opening_quest_and_unlocks_the_islands :: proc(t: ^testing.T) {
+    state: story.State
+    testing.expect(t, story.ensure_quest_progress(&state))
+    catalog: story.Quest_Catalog
+    story.init_quest_catalog(&catalog)
+
+    testing.expect(
+        t,
+        quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Friendometer)) == .Active,
+    )
+    testing.expect(
+        t,
+        quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Magneto_Westbound)) == .Locked,
+    )
+    testing.expect(
+        t,
+        quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Post_Route)) == .Locked,
+    )
+
+    dialogue_catalog: story.Catalog
+    story.init_catalog(&dialogue_catalog)
+    conversation, opened := dialogue.open(
+        &dialogue_catalog.mirna,
+        {data = rawptr(&state), location_id = "east_island", resident_index = int(story.Resident.Mirna)},
+    )
+    testing.expect(t, opened)
+    testing.expect(t, dialogue.available_at(&conversation, 0).text == "What's a Friendometer?")
+    testing.expect(t, dialogue.choose(&conversation, 0))
+    testing.expect(t, dialogue.choose(&conversation, 0))
+    testing.expect(t, story.has_friendometer(&state))
+    testing.expect(
+        t,
+        quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Magneto_Westbound)) == .Available,
+    )
+    testing.expect(
+        t,
+        quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Post_Route)) == .Active,
+    )
+}
+
+@(test)
+friendship_points_only_accept_positive_rewards :: proc(t: ^testing.T) {
+    state: story.State
+    testing.expect(t, story.award_friendship(&state, 3))
+    testing.expect(t, state.friendship_points == 3)
+    testing.expect(t, !story.award_friendship(&state, 0))
+    testing.expect(t, !story.award_friendship(&state, -1))
+    testing.expect(t, state.friendship_points == 3)
+
+    state.friendship_points = max(int)
+    testing.expect(t, !story.award_friendship(&state, 1))
+    testing.expect(t, state.friendship_points == max(int))
+    testing.expect(t, !story.award_friendship(nil, 1))
+}
+
+@(test)
 island_post_is_always_available_and_alternates_between_islands :: proc(t: ^testing.T) {
     state: story.State
+    receive_friendometer(t, &state)
 
     testing.expect(t, story.begin_post_delivery(&state))
     testing.expect(t, state.romance == .Unintroduced)
     testing.expect(t, state.delivery.kind == .Repeat_Eastbound)
     testing.expect(t, state.delivery.origin == .West && state.delivery.destination == .East)
     complete_current_delivery(t, &state, .Lena)
-    testing.expect(t, state.repeat_deliveries == 1 && state.stamps_earned == 1)
+    testing.expect(
+        t,
+        state.repeat_deliveries == 1 && state.stamps_earned == 1 && state.friendship_points == 1,
+    )
 
     testing.expect(t, story.begin_post_delivery(&state))
     testing.expect(t, state.delivery.kind == .Repeat_Westbound)
     testing.expect(t, state.delivery.origin == .East && state.delivery.destination == .West)
     complete_current_delivery(t, &state, .Toma)
-    testing.expect(t, state.repeat_deliveries == 2 && state.stamps_earned == 2)
+    testing.expect(
+        t,
+        state.repeat_deliveries == 2 && state.stamps_earned == 2 && state.friendship_points == 2,
+    )
 
     // The independent postal route does not consume or advance the authored
     // correspondence storyline.
@@ -110,6 +189,7 @@ island_post_is_always_available_and_alternates_between_islands :: proc(t: ^testi
 @(test)
 careful_post_crossings_earn_merit_stamps :: proc(t: ^testing.T) {
     state: story.State
+    receive_friendometer(t, &state)
 
     for crossing in 0 ..< 3 {
         testing.expect(t, story.begin_post_delivery(&state))
@@ -126,6 +206,7 @@ careful_post_crossings_earn_merit_stamps :: proc(t: ^testing.T) {
 @(test)
 expressive_post_crossings_change_history_without_merit_bonus :: proc(t: ^testing.T) {
     state: story.State
+    receive_friendometer(t, &state)
 
     testing.expect(t, story.begin_post_delivery(&state))
     testing.expect(t, story.choose_cargo_care(&state, .Expressive))
@@ -158,6 +239,7 @@ island_post_departures_include_cycle_aware_handoffs :: proc(t: ^testing.T) {
     catalog: story.Catalog
     story.init_catalog(&catalog)
     state: story.State
+    receive_friendometer(t, &state)
     ctx := dialogue.Context {
         data = rawptr(&state),
     }
@@ -191,6 +273,7 @@ island_post_arrivals_have_cycle_aware_player_shaped_payoffs :: proc(t: ^testing.
     catalog: story.Catalog
     story.init_catalog(&catalog)
     state: story.State
+    receive_friendometer(t, &state)
     ctx := dialogue.Context {
         data = rawptr(&state),
     }
@@ -350,6 +433,7 @@ early_repair_is_preserved_as_preparedness :: proc(t: ^testing.T) {
 story_rejects_wrong_recipient_invalid_kind_and_out_of_order_repair :: proc(t: ^testing.T) {
     state: story.State
     testing.expect(t, !story.begin_delivery(&state))
+    receive_friendometer(t, &state)
     testing.expect(t, story.accept_airfield_errand(&state))
     testing.expect(t, story.handoff_broken_magneto(&state))
     testing.expect(t, story.begin_delivery(&state))
@@ -1137,6 +1221,7 @@ dialogue_text_and_choices_follow_story_and_repair_state :: proc(t: ^testing.T) {
 @(test)
 resident_action_indicators_follow_campaign_progress :: proc(t: ^testing.T) {
     state: story.State
+    receive_friendometer(t, &state)
     testing.expect(t, story.resident_name(.Gerta) == "Gerta")
     testing.expect(t, story.resident_name(.Vesna) == "Dr Vesna")
     testing.expect(t, story.resident_name(.Petar) == "Petar")
@@ -1206,6 +1291,11 @@ two_island_quest_graph_projects_to_legacy_story_stages :: proc(t: ^testing.T) {
     testing.expect(t, legacy.airfield_errand == .Not_Offered)
     testing.expect(t, !quest.is_presented(&graph_state, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
 
+    _ = quest.publish(
+        &graph_state,
+        &catalog.definition,
+        {kind = .Talk, key = "friendometer", target = "mirna"},
+    )
     testing.expect(t, quest.accept(&graph_state, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
     _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "broken-magneto", target = "gerta"})
     testing.expect(t, quest.accept(&graph_state, &catalog.definition, story.quest_node_id(.Crash_Reported)))
@@ -1250,6 +1340,7 @@ two_island_quest_graph_projects_to_legacy_story_stages :: proc(t: ^testing.T) {
 @(test)
 resident_errands_require_real_inspection_and_cross_island_deliveries :: proc(t: ^testing.T) {
     state: story.State
+    receive_friendometer(t, &state)
     catalog: story.Quest_Catalog
     story.init_quest_catalog(&catalog)
 
@@ -1283,6 +1374,7 @@ resident_errands_require_real_inspection_and_cross_island_deliveries :: proc(t: 
 @(test)
 resident_errands_do_not_overwrite_active_cargo :: proc(t: ^testing.T) {
     state: story.State
+    receive_friendometer(t, &state)
     testing.expect(t, story.begin_post_delivery(&state))
     testing.expect(t, !story.begin_local_delivery(&state, .Clinic_Medicine))
     testing.expect(t, state.delivery.kind == .Repeat_Eastbound)
@@ -1294,12 +1386,14 @@ resident_errands_are_playable_through_dialogue_choices :: proc(t: ^testing.T) {
     story.init_catalog(&catalog)
 
     weather_state: story.State
+    receive_friendometer(t, &weather_state)
     zora, zora_opened := dialogue.open(&catalog.zora, {data = rawptr(&weather_state)})
     testing.expect(t, zora_opened)
     testing.expect(t, dialogue.choose(&zora, 4))
     testing.expect(t, story.quest_is_active(&weather_state, .Weather_Reading))
 
     medicine_state: story.State
+    receive_friendometer(t, &medicine_state)
     vesna, vesna_opened := dialogue.open(&catalog.vesna, {data = rawptr(&medicine_state)})
     testing.expect(t, vesna_opened)
     testing.expect(t, dialogue.choose(&vesna, 2))
@@ -1310,6 +1404,7 @@ resident_errands_are_playable_through_dialogue_choices :: proc(t: ^testing.T) {
     testing.expect(t, medicine_state.medicine_delivered)
 
     linens_state: story.State
+    receive_friendometer(t, &linens_state)
     petar, petar_opened := dialogue.open(&catalog.petar, {data = rawptr(&linens_state)})
     testing.expect(t, petar_opened)
     testing.expect(t, dialogue.choose(&petar, 2))
@@ -1320,6 +1415,7 @@ resident_errands_are_playable_through_dialogue_choices :: proc(t: ^testing.T) {
     testing.expect(t, linens_state.linens_delivered)
 
     water_state: story.State
+    receive_friendometer(t, &water_state)
     anica, anica_opened = dialogue.open(&catalog.anica, {data = rawptr(&water_state)})
     testing.expect(t, anica_opened)
     testing.expect(t, dialogue.choose(&anica, 2))
@@ -1333,6 +1429,7 @@ resident_errands_are_playable_through_dialogue_choices :: proc(t: ^testing.T) {
 @(test)
 legacy_story_actions_publish_into_authoritative_quest_state :: proc(t: ^testing.T) {
     state: story.State
+    receive_friendometer(t, &state)
     catalog: story.Quest_Catalog
     story.init_quest_catalog(&catalog)
 
@@ -1361,11 +1458,12 @@ westbound_opening_is_quiet_and_carries_main_and_side_cargo_together :: proc(t: ^
     testing.expect(t, story.ensure_quest_progress(&state))
     testing.expect(t, state.airfield_errand == .Not_Offered)
     testing.expect(t, !state.delivery.active)
-    testing.expect(t, quest.first_active(&state.quest, &catalog.definition) == story.quest_node_id(.Post_Route))
+    testing.expect(t, quest.first_active(&state.quest, &catalog.definition) == story.quest_node_id(.Friendometer))
     testing.expect(t, !quest.is_presented(&state.quest, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
     testing.expect(t, !story.begin_delivery(&state))
     testing.expect(t, !story.report_crash(&state))
 
+    receive_friendometer(t, &state)
     testing.expect(t, story.accept_airfield_errand(&state))
     testing.expect(t, state.airfield_errand == .Westbound)
     testing.expect(t, quest.first_active(&state.quest, &catalog.definition) == story.quest_node_id(.Post_Route))

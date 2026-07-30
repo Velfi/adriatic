@@ -11,6 +11,29 @@ import sdl "vendor:sdl3"
 
 when ODIN_TEST {
     @(test)
+    friendship_notice_tracks_changes_and_expires :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        testing.expect(t, editor != nil)
+        if editor == nil do return
+        defer free(editor)
+
+        editor.story_state.friendship_points = 4
+        friendship_notice_step(editor, .1)
+        testing.expect(t, editor.friendship_notice_initialized)
+        testing.expect(t, editor.friendship_notice_total == 4)
+        testing.expect(t, editor.friendship_notice_delta == 0)
+
+        editor.story_state.friendship_points = 6
+        friendship_notice_step(editor, .1)
+        testing.expect(t, editor.friendship_notice_delta == 2)
+        testing.expect(t, editor.friendship_notice_total == 6)
+        testing.expect(t, editor.friendship_notice_age == 0)
+
+        friendship_notice_step(editor, FRIENDSHIP_NOTICE_DURATION)
+        testing.expect(t, editor.friendship_notice_age == FRIENDSHIP_NOTICE_DURATION)
+    }
+
+    @(test)
     coastal_grass_density_keeps_active_sand_sparse_and_breaks_up_colonies :: proc(t: ^testing.T) {
         active_peak := f32(0)
         stable_min, stable_max := f32(1), f32(0)
@@ -345,7 +368,8 @@ when ODIN_TEST {
         defer terrain.destroy_project(&editor.project)
         seed_default_island_towns(editor)
 
-        residents := [9]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena}
+        residents :=
+            [10]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
         for resident in residents {
             position, found := world_story_resident_position(editor, resident)
             testing.expect(t, found)

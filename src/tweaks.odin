@@ -1224,8 +1224,9 @@ imgui_draw_tweaks :: proc(editor: ^Editor) {
     tweak_sync_from_editor(editor)
     // Set initial placement and size; ImGui persists later user changes.
     im.SetNextWindowPos({570, 150}, im.Cond.FirstUseEver)
-    im.SetNextWindowSize({720, 620}, im.Cond.FirstUseEver)
-    im.SetNextWindowSizeConstraints({560, 400}, {0, 0})
+    // Override any zero-sized geometry left by the old constraints once, then
+    // leave the window freely resizable for the rest of the session.
+    im.SetNextWindowSize({720, 620}, im.Cond.Once)
     if im.Begin("Adriatic Tweaks") {
         if im.Button("Save tweaks") do tweak_save_editor(editor)
         im.SameLine()

@@ -28,7 +28,7 @@ live_control_npc_position :: proc(editor: ^Editor, name: string) -> (third_perso
     if strings.equal_fold(name, "Gerta") {
         return editor.gerta_position + third_person.Vec3{0, MARTA_STOOL_HEIGHT, 0}, "Gerta", true
     }
-    residents := [9]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena}
+    residents := [10]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
     for resident in residents {
         display_name := story.resident_name(resident)
         short_name := resident == .Vesna ? "Vesna" : display_name

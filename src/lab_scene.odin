@@ -64,6 +64,18 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         suppress_shadows = true,
     },
     {
+        name = "screen-pops",
+        configure = screen_pops_lab_configure,
+        process_input = screen_pops_lab_process_input,
+        draw_ui = screen_pops_lab_draw_ui,
+        isolate_content = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = true,
+    },
+    {
         name = "markov-wreck",
         configure = markov_wreck_lab_configure,
         world_overlay = world_markov_wreck,

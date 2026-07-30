@@ -22,6 +22,7 @@ Quest_Node :: enum int {
     Clinic_Medicine,
     Clinic_Linens,
     Clinic_Water,
+    Friendometer,
 }
 
 quest_node_id :: proc(node: Quest_Node) -> quest.Node_ID {
@@ -57,8 +58,10 @@ Quest_Catalog :: struct {
     medicine_reward:           [1]quest.Reward,
     linens_reward:             [1]quest.Reward,
     water_reward:              [1]quest.Reward,
-    starts:                    [6]quest.Node_ID,
-    nodes:                     [17]quest.Node,
+    friendometer_successors:   [6]quest.Node_ID,
+    friendometer_reward:       [1]quest.Reward,
+    starts:                    [1]quest.Node_ID,
+    nodes:                     [18]quest.Node,
     definition:                quest.Definition,
 }
 
@@ -83,6 +86,7 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
     clinic_medicine := quest_node_id(.Clinic_Medicine)
     clinic_linens := quest_node_id(.Clinic_Linens)
     clinic_water := quest_node_id(.Clinic_Water)
+    friendometer := quest_node_id(.Friendometer)
 
     catalog.magneto_out_successors = {magneto_back, first_letter, crash}
     catalog.first_letter_successors = {first_reply}
@@ -96,6 +100,8 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
     catalog.acceptance_successors = {meeting}
     catalog.meeting_successors = {post}
     catalog.post_successors = {post}
+    catalog.friendometer_successors =
+        {magneto_out, post, weather_reading, clinic_medicine, clinic_linens, clinic_water}
 
     catalog.magneto_back_requirements = {{node = magneto_out}}
     catalog.first_letter_requirements = {{node = magneto_out}}
@@ -113,7 +119,8 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
     catalog.medicine_reward = {{key = "clinic-satchel", amount = 1}}
     catalog.linens_reward = {{key = "dry-wrap", amount = 1}}
     catalog.water_reward = {{key = "recovery-kit", amount = 1}}
-    catalog.starts = {magneto_out, post, weather_reading, clinic_medicine, clinic_linens, clinic_water}
+    catalog.friendometer_reward = {{key = "friendometer", amount = 1}}
+    catalog.starts = {friendometer}
 
     catalog.nodes = {
         {
@@ -314,6 +321,17 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
             requires_acceptance = true,
             hide_until_accepted = true,
         },
+        {
+            id = friendometer,
+            key = "friendometer",
+            title = "A Scientifically Significant Hello",
+            instruction = "Find Dr Mirna on the east island and ask about her friendship experiment.",
+            location = "Dr Mirna's laboratory, east island",
+            kind = .Objective,
+            objective = {kind = .Talk, key = "friendometer", target = "mirna"},
+            successors = catalog.friendometer_successors[:],
+            rewards = catalog.friendometer_reward[:],
+        },
     }
     catalog.definition = {
         id    = "two-island-story",
@@ -341,11 +359,26 @@ ensure_quest_progress :: proc(state: ^State) -> bool {
         }
     }
 
+    legacy_definition := state.quest.definition_id == catalog.definition.id
     legacy_romance := state.romance
     legacy_repair := state.repair
     legacy_repeats := state.repeat_deliveries
     _, initialized := quest.init(&state.quest, &catalog.definition)
     if !initialized do return false
+
+    // Version-seven saves predate Dr Mirna's introduction. Let them keep the
+    // campaign starts they already had instead of making the new prologue a
+    // retroactive gate.
+    if legacy_definition ||
+       legacy_romance != .Unintroduced ||
+       legacy_repair != .Not_Seen ||
+       legacy_repeats > 0 {
+        _ = quest.publish(
+            &state.quest,
+            &catalog.definition,
+            {kind = .Talk, key = "friendometer", target = "mirna"},
+        )
+    }
 
     // Saves which had already begun either story branch have necessarily
     // visited the west island. Preserve that progress without making the new

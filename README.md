@@ -134,8 +134,12 @@ _ = cinematic_play(editor, &script)
 ## Two-island story
 
 `packages/story` contains the first narrative campaign and its dialogue
-catalog. The player begins without an assigned errand and can volunteer to
-carry Marta's cracked magneto west, returning with Gerta's replacement. On that
+catalog. The player begins on the east island with one errand: find Dr Mirna,
+the local experimentalist. She gives the player her Friendometer, a pocket
+instrument which claims to quantify friendship as a scalar value, and recruits
+them as its field researcher. That conversation opens the wider island errands.
+The player can then volunteer to carry Marta's cracked magneto west, returning
+with Gerta's replacement. On that
 crossing, Niko, a west-island baker, may entrust the player with an optional
 letter for Iva, the east-island lighthouse keeper. Their correspondence grows
 through later sealed deliveries. Iva plans to fly to the regatta in Bojan's

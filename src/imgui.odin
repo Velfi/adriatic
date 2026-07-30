@@ -3,6 +3,7 @@ package main
 import im "../packages/imgui"
 import imgui_vk "../packages/imgui/impl_vulkan"
 import "core:c"
+import "core:fmt"
 import "core:math"
 import vk "vendor:vulkan"
 import rl "zelda_engine:canvas2d"
@@ -17,6 +18,7 @@ Imgui_State :: struct {
     descriptor_pool: vk.DescriptorPool,
     color_format:    vk.Format,
     last_time:       f64,
+    text_input_active: bool,
     show_demo:       bool,
     initialized:     bool,
 }
@@ -167,6 +169,11 @@ imgui_begin_frame :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
     imgui_add_key(.S, .S)
     imgui_add_key(.W, .W)
 
+    text_input := rl.GetTextInput()
+    if len(text_input) > 0 {
+        im.IO_AddInputCharactersUTF8(imgui.io, fmt.ctprintf("%s", text_input))
+    }
+    imgui_vk.NewFrame()
     im.NewFrame()
     return true
 }
@@ -193,12 +200,21 @@ imgui_render :: proc(pass: ^rl.Ui_Pass_Context, editor: ^Editor) {
 }
 
 imgui_ui_pass :: proc(pass: ^rl.Ui_Pass_Context, _: rawptr) {
+    editor := world_renderer.editor
+    wants_text_input := editor != nil && editor.tweak_panel_visible
+    if wants_text_input && !imgui.text_input_active {
+        imgui.text_input_active = rl.StartTextInput()
+    } else if !wants_text_input && imgui.text_input_active {
+        _ = rl.StopTextInput()
+        imgui.text_input_active = false
+    }
     if !imgui_begin_frame(pass) do return
-    imgui_render(pass, world_renderer.editor)
+    imgui_render(pass, editor)
 }
 
 imgui_destroy :: proc() {
     if !imgui.initialized do return
+    if imgui.text_input_active do _ = rl.StopTextInput()
     imgui_vk.Shutdown()
     if imgui.descriptor_pool != vk.DescriptorPool(0) do vk.DestroyDescriptorPool(imgui.device, imgui.descriptor_pool, nil)
     im.DestroyContext(imgui.ctx)

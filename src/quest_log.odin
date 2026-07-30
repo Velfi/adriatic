@@ -288,12 +288,25 @@ quest_log_draw :: proc(editor: ^Editor, width, height: i32) {
         ui_theme_text_muted(),
     )
     stamps := fmt.ctprintf("%d STAMPS", editor.story_state.stamps_earned)
-    if editor.story_state.bonus_stamps > 0 {
+    if story.has_friendometer(&editor.story_state) {
         stamps = fmt.ctprintf(
-            "%d STAMPS · %d MERIT",
+            "%d FRIENDSHIP · %d STAMPS",
+            editor.story_state.friendship_points,
             editor.story_state.stamps_earned,
-            editor.story_state.bonus_stamps,
         )
+    }
+    if editor.story_state.bonus_stamps > 0 {
+        if story.has_friendometer(&editor.story_state) {
+            stamps = fmt.ctprintf(
+                "%d FRIENDSHIP · %d STAMPS · %d MERIT",
+                editor.story_state.friendship_points,
+                editor.story_state.stamps_earned,
+                editor.story_state.bonus_stamps,
+            )
+        } else {
+            stamps =
+                fmt.ctprintf("%d STAMPS · %d MERIT", editor.story_state.stamps_earned, editor.story_state.bonus_stamps)
+        }
     }
     stamp_size := ui_measure_text(.Data, stamps, .35)
     ui_draw_text(
@@ -437,4 +450,81 @@ quest_tracking_hud_draw :: proc(editor: ^Editor, width: i32) {
     ui_draw_text(.Data, "TRACKED ERRAND", {panel.x + 14, panel.y + 10}, .22, ui_theme_accent())
     ui_draw_text(.Label, fmt.ctprintf("%s", node.title), {panel.x + 14, panel.y + 32}, .22, ui_theme_text())
     ui_draw_text(.Data, fmt.ctprintf("%s", node.location), {panel.x + 14, panel.y + 54}, .16, ui_theme_text_muted())
+}
+
+FRIENDSHIP_NOTICE_DURATION :: f32(2.35)
+FRIENDSHIP_NOTICE_ENTER :: f32(.24)
+FRIENDSHIP_NOTICE_EXIT :: f32(.42)
+
+friendship_notice_step :: proc(editor: ^Editor, delta_seconds: f32) {
+    if editor == nil do return
+    total := editor.story_state.friendship_points
+    if !editor.friendship_notice_initialized {
+        editor.friendship_notice_initialized = true
+        editor.friendship_notice_total = total
+        editor.friendship_notice_age = FRIENDSHIP_NOTICE_DURATION
+        return
+    }
+    if total != editor.friendship_notice_total {
+        editor.friendship_notice_delta = total - editor.friendship_notice_total
+        editor.friendship_notice_total = total
+        editor.friendship_notice_age = 0
+    } else {
+        editor.friendship_notice_age =
+            min(editor.friendship_notice_age + max(delta_seconds, f32(0)), FRIENDSHIP_NOTICE_DURATION)
+    }
+}
+
+friendship_notice_ease :: proc(value: f32) -> f32 {
+    t := clamp(value, f32(0), f32(1))
+    return 1 - (1 - t) * (1 - t) * (1 - t)
+}
+
+friendship_notice_draw :: proc(editor: ^Editor, width: i32) {
+    if editor == nil ||
+       !editor.in_map ||
+       !editor.gameplay_options.show_hud ||
+       pause_menu_is_open(editor) ||
+       !story.has_friendometer(&editor.story_state) ||
+       editor.friendship_notice_delta == 0 ||
+       editor.friendship_notice_age >= FRIENDSHIP_NOTICE_DURATION {
+        return
+    }
+
+    age := editor.friendship_notice_age
+    visibility := f32(1)
+    if age < FRIENDSHIP_NOTICE_ENTER {
+        visibility = friendship_notice_ease(age / FRIENDSHIP_NOTICE_ENTER)
+    } else if age > FRIENDSHIP_NOTICE_DURATION - FRIENDSHIP_NOTICE_EXIT {
+        visibility =
+            clamp((FRIENDSHIP_NOTICE_DURATION - age) / FRIENDSHIP_NOTICE_EXIT, f32(0), f32(1))
+    }
+    alpha := u8(clamp(visibility * 255, f32(0), f32(255)))
+    panel_width := min(f32(310), f32(width) - 28)
+    panel_height := f32(68)
+    resting_y := f32(24)
+    y := resting_y - (1 - visibility) * 22
+    panel := rl.Rectangle{(f32(width) - panel_width) * .5, y, panel_width, panel_height}
+
+    rl.DrawRectangleRounded(panel, .22, 10, ui_theme_surface(u8(f32(alpha) * .94)))
+    rl.DrawRectangleRoundedLinesEx(panel, .22, 10, 2, ui_theme_accent(alpha))
+
+    reward := fmt.ctprintf("+%d FRIENDSHIP", editor.friendship_notice_delta)
+    reward_size := ui_measure_text(.Label, reward, .3)
+    ui_draw_text(
+        .Label,
+        reward,
+        {panel.x + (panel.width - reward_size.x) * .5, panel.y + 13},
+        .3,
+        ui_theme_accent(alpha),
+    )
+    total := fmt.ctprintf("%d TOTAL", editor.friendship_notice_total)
+    total_size := ui_measure_text(.Data, total, .18)
+    ui_draw_text(
+        .Data,
+        total,
+        {panel.x + (panel.width - total_size.x) * .5, panel.y + 43},
+        .18,
+        ui_theme_text_muted(alpha),
+    )
 }

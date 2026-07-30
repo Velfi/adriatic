@@ -624,18 +624,18 @@ when ODIN_TEST {
         fixture_migration_test_expect_rejected(
             t,
             payload,
-            7,
-            7,
+            8,
+            8,
             fixture_migration_production_registry(),
-            .Unsupported_Version,
+            .Tentative_Decode,
         )
         fixture_migration_test_expect_rejected(
             t,
             payload,
             1,
-            7,
+            8,
             fixture_migration_production_registry(),
-            .Unsupported_Version,
+            .Tentative_Decode,
         )
         fixture_migration_test_expect_rejected(
             t,

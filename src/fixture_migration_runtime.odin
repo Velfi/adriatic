@@ -139,7 +139,7 @@ fixture_migration_step_v0001_to_v0002 :: proc(
     return step_error
 }
 
-fixture_migration_production_steps: [5]Fixture_Migration_Step = {
+fixture_migration_production_steps: [7]Fixture_Migration_Step = {
     {
         from_version = FIXTURE_MIGRATION_V0001_TO_V0002_FROM_VERSION,
         to_version = FIXTURE_MIGRATION_V0001_TO_V0002_TO_VERSION,
@@ -169,6 +169,18 @@ fixture_migration_production_steps: [5]Fixture_Migration_Step = {
         to_version = FIXTURE_MIGRATION_V0005_TO_V0006_TO_VERSION,
         wrapper = fixture_migration_step_v0005_to_v0006,
         change_id = "field-type:adriatic:packages/terrain.Clipmap_Level.heights",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0006_TO_V0007_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0006_TO_V0007_TO_VERSION,
+        wrapper = fixture_migration_step_v0006_to_v0007,
+        change_id = "field-add:adriatic:packages/story.State.friendship_points",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0007_TO_V0008_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0007_TO_V0008_TO_VERSION,
+        wrapper = fixture_migration_step_v0007_to_v0008,
+        change_id = "field-type:adriatic:packages/story.State.resident_action_seen",
     },
 }
 

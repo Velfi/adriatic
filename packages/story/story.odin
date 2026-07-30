@@ -25,6 +25,7 @@ Resident :: enum {
     Anica,
     Toma,
     Lena,
+    Mirna,
 }
 
 Romance_Stage :: enum {
@@ -92,6 +93,7 @@ State :: struct {
     bonus_stamps:                 int,
     careful_deliveries:           int,
     expressive_deliveries:        int,
+    friendship_points:            int,
     magneto_wrapped:              bool,
     weather_reading_done:         bool,
     medicine_delivered:           bool,
@@ -112,6 +114,12 @@ State :: struct {
     // the action state last seen in conversation so it stays gone until that
     // resident has something new to say or do.
     resident_action_seen:         [Resident]u64,
+}
+
+award_friendship :: proc(state: ^State, points: int) -> bool {
+    if state == nil || points <= 0 || state.friendship_points > max(int) - points do return false
+    state.friendship_points += points
+    return true
 }
 
 resident_name :: proc(resident: Resident) -> string {
@@ -138,6 +146,8 @@ resident_name :: proc(resident: Resident) -> string {
         return "Toma"
     case .Lena:
         return "Lena"
+    case .Mirna:
+        return "Dr Mirna"
     }
     return ""
 }
@@ -166,13 +176,15 @@ resident_from_speaker :: proc(speaker: string) -> (Resident, bool) {
         return .Toma, true
     case "LENA · POSTMASTER":
         return .Lena, true
+    case "DR MIRNA":
+        return .Mirna, true
     }
     return {}, false
 }
 
 resident_island :: proc(resident: Resident) -> Island {
     switch resident {
-    case .Marta, .Iva, .Lena:
+    case .Marta, .Iva, .Lena, .Mirna:
         return .East
     case .Gerta, .Niko, .Bojan, .Toma:
         return .West
@@ -396,6 +408,7 @@ complete_delivery :: proc(state: ^State, recipient: Resident) -> bool {
     }
     update, published := publish_quest_event(state, event)
     if !published || update.completed_count == 0 do return false
+    _ = award_friendship(state, 1)
 
     if state.delivery.care == .Orderly {
         state.careful_deliveries += 1
@@ -469,7 +482,7 @@ magneto_memory_text :: proc(resident: Resident) -> string {
         return(
             "Marta rapporte che il replacement magneto parte al primo tiraggio. Per lei prova la maintenance; curiosamente, prova aussi la mia replacement." \
         )
-    case .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena:
+    case .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna:
         return ""
     }
     return ""
@@ -495,7 +508,7 @@ magneto_opinion_text :: proc(resident, favored_sister: Resident) -> string {
         return(
             "Ja. Serie corretta, timing corretto, delivery asciutta. Mais se Marta domanda, dite solo che la machine ha deciso indépendamment." \
         )
-    case .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena:
+    case .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna:
         return ""
     }
     return ""
@@ -545,7 +558,7 @@ airfield_news_warm_text :: proc(resident: Resident) -> string {
         )
     case .Gerta:
         return "Ja. Niko planifica con farina, Iva mit meteo; tra loro, una traversata diventa pratica."
-    case .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena:
+    case .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna:
         return ""
     }
     return ""
@@ -561,7 +574,7 @@ airfield_news_discreet_text :: proc(resident: Resident) -> string {
         return(
             "Isole piccole, sightlines lunghe, et zero veri segreti. La privacy sopravvive perché chacun perde un fatto." \
         )
-    case .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena:
+    case .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna:
         return ""
     }
     return ""
@@ -598,6 +611,7 @@ niko_speaker :: proc(_: ^dialogue.Context) -> string { return "NIKO" }
 iva_speaker :: proc(_: ^dialogue.Context) -> string { return "IVA" }
 bojan_speaker :: proc(_: ^dialogue.Context) -> string { return "BOJAN" }
 zora_speaker :: proc(_: ^dialogue.Context) -> string { return "ZORA" }
+mirna_speaker :: proc(_: ^dialogue.Context) -> string { return "DR MIRNA" }
 vesna_speaker :: proc(_: ^dialogue.Context) -> string { return "DR VESNA" }
 petar_speaker :: proc(_: ^dialogue.Context) -> string { return "PETAR" }
 anica_speaker :: proc(_: ^dialogue.Context) -> string { return "ANICA" }
@@ -1258,6 +1272,71 @@ zora_recall_act_close :: proc(_: ^dialogue.Context) -> string {
 zora_recall_sky_close :: proc(_: ^dialogue.Context) -> string {
     return(
         "Comme il faut. Der cielo cambia abiertamente; die carte parlano dopo. Prendi las due sul serio, aber adora nessuno." \
+    )
+}
+
+has_friendometer :: proc(state: ^State) -> bool {
+    if state == nil do return false
+    catalog: Quest_Catalog
+    init_quest_catalog(&catalog)
+    return(
+        state.quest.definition_id == catalog.definition.id &&
+        quest.is_complete(&state.quest, &catalog.definition, quest_node_id(.Friendometer)) \
+    )
+}
+
+needs_friendometer :: proc(ctx: ^dialogue.Context) -> bool {
+    return !has_friendometer(state_from_context(ctx))
+}
+
+has_friendometer_context :: proc(ctx: ^dialogue.Context) -> bool {
+    return has_friendometer(state_from_context(ctx))
+}
+
+mirna_text :: proc(ctx: ^dialogue.Context) -> string {
+    if has_friendometer(state_from_context(ctx)) {
+        return(
+            "Ah, il mio field researcher! La Friendometer registra ancora? Bene. Ricorda: scalar non significa simple—solo misurabile, con abbastanza wires." \
+        )
+    }
+    return(
+        "Finalmente! Un soggetto ambulante, socialmente mobile, und quasi certamente non magnetico. Vieni dentro—la scienza locale ha bisogno di tasche." \
+    )
+}
+
+mirna_friendometer_text :: proc(_: ^dialogue.Context) -> string {
+    return(
+        "Ho quantificato friendship in un valore scalar: una unità per ogni atto positivo osservabile. Questa è la Friendometer—rame, vetro, tre springs, et zero superstizione certificata." \
+    )
+}
+
+mirna_friendometer_accept :: proc(ctx: ^dialogue.Context) {
+    state := state_from_context(ctx)
+    if state == nil do return
+    _, _ = publish_quest_event(
+        state,
+        {kind = .Talk, key = "friendometer", target = "mirna"},
+    )
+}
+
+mirna_friendometer_practical_close :: proc(_: ^dialogue.Context) -> string {
+    return(
+        "Perfetto. Fai qualcosa di kind, l'ago sale; fai niente, abbiamo un control group. Vai—parla, aiuta, porta cose asciutte." \
+    )
+}
+
+mirna_friendometer_skeptical_close :: proc(_: ^dialogue.Context) -> string {
+    return(
+        "Excellent skepticism! È già peer review. Porta la Friendometer comunque; se friendship rifiuta il scalar, pubblicheremo un grafico più grande." \
+    )
+}
+
+mirna_results_text :: proc(ctx: ^dialogue.Context) -> string {
+    state := state_from_context(ctx)
+    total := state == nil ? 0 : state.friendship_points
+    return fmt.tprintf(
+        "Current result: %d. Non è un giudizio morale—è una misura di positive acts che il mio apparatus ha visto. Continua il field work.",
+        total,
     )
 }
 
@@ -2014,6 +2093,8 @@ resident_has_action :: proc(state: ^State, resident: Resident) -> bool {
         return has_post_for_toma(&ctx) || can_begin_repeat_eastbound(&ctx)
     case .Lena:
         return has_post_for_lena(&ctx) || can_begin_repeat_westbound(&ctx)
+    case .Mirna:
+        return !has_friendometer(state)
     }
     return false
 }
@@ -2106,6 +2187,9 @@ Catalog :: struct {
     lena_handoff_close_choices:  [1]dialogue.Choice,
     lena_receipt_choices:        [2]dialogue.Choice,
     lena_close_choices:          [1]dialogue.Choice,
+    mirna_choices:               [3]dialogue.Choice,
+    mirna_friendometer_choices:  [2]dialogue.Choice,
+    mirna_close_choices:         [1]dialogue.Choice,
     niko_nodes:                  [15]dialogue.Node,
     iva_nodes:                   [10]dialogue.Node,
     bojan_nodes:                 [12]dialogue.Node,
@@ -2115,6 +2199,7 @@ Catalog :: struct {
     anica_nodes:                 [5]dialogue.Node,
     toma_nodes:                  [7]dialogue.Node,
     lena_nodes:                  [7]dialogue.Node,
+    mirna_nodes:                 [4]dialogue.Node,
     niko:                        dialogue.Definition,
     iva:                         dialogue.Definition,
     bojan:                       dialogue.Definition,
@@ -2124,6 +2209,7 @@ Catalog :: struct {
     anica:                       dialogue.Definition,
     toma:                        dialogue.Definition,
     lena:                        dialogue.Definition,
+    mirna:                       dialogue.Definition,
 }
 
 init_catalog :: proc(catalog: ^Catalog) {
@@ -2411,6 +2497,37 @@ init_catalog :: proc(catalog: ^Catalog) {
     catalog.zora = {
         id    = "zora",
         nodes = catalog.zora_nodes[:],
+    }
+
+    catalog.mirna_choices = {
+        dialogue.choice("What's a Friendometer?", 1, needs_friendometer),
+        dialogue.choice("How are the results looking?", 3, has_friendometer_context),
+        dialogue.choice("I'll leave you to your research."),
+    }
+    catalog.mirna_friendometer_choices = {
+        dialogue.choice("Give it here. I'll test it.", 2, effect = mirna_friendometer_accept),
+        dialogue.choice("That sounds deeply unscientific.", 2, effect = mirna_friendometer_accept),
+    }
+    catalog.mirna_close_choices[0] = dialogue.choice("Time for field work.")
+    catalog.mirna_nodes = {
+        dialogue.node("mirna", mirna_text, catalog.mirna_choices[:], mirna_speaker),
+        dialogue.node(
+            "mirna-friendometer",
+            mirna_friendometer_text,
+            catalog.mirna_friendometer_choices[:],
+            mirna_speaker,
+        ),
+        dialogue.node(
+            "mirna-friendometer-close",
+            mirna_friendometer_practical_close,
+            catalog.mirna_close_choices[:],
+            mirna_speaker,
+        ),
+        dialogue.node("mirna-results", mirna_results_text, catalog.mirna_close_choices[:], mirna_speaker),
+    }
+    catalog.mirna = {
+        id    = "mirna",
+        nodes = catalog.mirna_nodes[:],
     }
 
     catalog.vesna_choices = {

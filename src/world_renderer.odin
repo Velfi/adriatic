@@ -23027,7 +23027,7 @@ world_business_sign_for_resident :: proc(editor: ^Editor, resident: story.Reside
         frontage_clearance = 2.2
     case .Anica, .Toma, .Lena:
         frontage_clearance = 2.3
-    case .Marta, .Gerta, .Iva, .Bojan, .Petar:
+    case .Marta, .Gerta, .Iva, .Bojan, .Petar, .Mirna:
         frontage_clearance = 2.4
     }
     plaque_half_depth := f32(.075 * .5)
@@ -23228,6 +23228,8 @@ story_resident_town_slot :: proc(resident: story.Resident) -> (island_index, res
         return 0, 6, true
     case .Anica:
         return 1, 6, true
+    case .Mirna:
+        return 1, 3, true
     case .Marta, .Toma, .Lena:
         return 0, 0, false
     case .Gerta:
@@ -23536,7 +23538,7 @@ world_town_mice :: proc(editor: ^Editor) {
     screen_height := max(rl.GetScreenHeight(), 1)
     aspect := f32(screen_width) / f32(screen_height)
     near_plane := world_camera_near_clip(editor)
-    residents := [7]Town_Mouse {
+    residents := [8]Town_Mouse {
         {-1.0, 2.5, .18, 1.08, 1.12, .94, .Acorn_Cap, .Chestnut, .Pale_Belly, false, {}},
         {.8, 2.2, -.22, .91, .86, 1.16, .Flower, .Cream, .Piebald, true, {177, 65, 73, 255}},
         {-1.3, 2.7, .12, 1.14, 1.22, .88, .Bottle_Cap, .Soot, .Solid, true, {61, 112, 139, 255}},
@@ -23544,6 +23546,7 @@ world_town_mice :: proc(editor: ^Editor) {
         {-.7, 2.2, .24, .86, 1.08, 1.02, .Chef_Hat, .White, .Pale_Belly, false, {}},
         {1.4, 2.6, -.10, 1.05, 1.18, 1.10, .None, .Russet, .Piebald, true, {205, 151, 52, 255}},
         {-.9, 2.3, .20, .96, .82, .90, .Goggles, .Chestnut, .Hooded, false, {}},
+        {1.2, 2.4, -.12, .98, .90, 1.04, .Goggles, .Soot, .Piebald, true, {77, 168, 151, 255}},
     }
     structures := editor.project.structures[:editor.project.structure_count]
     world_structure_storage_ensure(len(structures))
@@ -23595,6 +23598,8 @@ world_town_mice :: proc(editor: ^Editor) {
                     named_resident, named = .Petar, true
                 } else if island_index == 1 && resident_index == 6 {
                     named_resident, named = .Anica, true
+                } else if island_index == 1 && resident_index == 3 {
+                    named_resident, named = .Mirna, true
                 }
                 if named &&
                    editor.story_state.romance == .Meeting &&
@@ -26181,6 +26186,10 @@ dialogue_portrait_mouse_model :: proc(editor: ^Editor, resident: story.Resident,
         model.build, model.snout_length = .92, 1.10
         model.accessory, model.fur, model.pattern = .Paper_Boat, .Cream, .Piebald
         model.scarf_enabled, model.scarf_color = true, {154, 54, 52, 255}
+    case .Mirna:
+        model.build, model.snout_length = .90, 1.04
+        model.accessory, model.fur, model.pattern = .Goggles, .Soot, .Piebald
+        model.scarf_enabled, model.scarf_color = true, {77, 168, 151, 255}
     }
     return model
 }
