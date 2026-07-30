@@ -3941,4 +3941,30 @@ generated_plants_select_detail_from_camera_distance :: proc(t: ^testing.T) {
     testing.expect_value(t, generated_plant_catalog_detail(.Medium), plants.Detail_Level.Medium)
     testing.expect_value(t, generated_plant_catalog_detail(.Far), plants.Detail_Level.Far)
     testing.expect_value(t, generated_plant_catalog_detail(.Distant), plants.Detail_Level.Far)
+    testing.expect_value(
+        t,
+        generated_plant_apply_detail_floor(.Near, .Medium),
+        plants.Detail_Level.Medium,
+    )
+    testing.expect_value(
+        t,
+        generated_plant_apply_detail_floor(.Far, .Medium),
+        plants.Detail_Level.Far,
+    )
+    graded := generated_plant_point({4, 10, 7}, {2, 1, 0}, 0, 1, .25)
+    testing.expect(t, abs(graded.x - 6) < .001)
+    testing.expect(t, abs(graded.y - 11.5) < .001)
+    testing.expect(t, abs(graded.z - 7) < .001)
+    testing.expect_value(t, generated_plant_maturity_step(.59), u8(3))
+    testing.expect_value(t, generated_plant_maturity_step(.81), u8(4))
+    testing.expect_value(t, generated_plant_maturity_step(1.2), u8(5))
+    testing.expect(t, abs(generated_plant_maturity_value(4) - .8) < .001)
+    testing.expect(t, farmland_vineyard_heights_are_safe(10, {9.4, 10.6, 9.2, 10.8}))
+    testing.expect(t, !farmland_vineyard_heights_are_safe(10, {7.9, 10.2, 10, 10}))
+    testing.expect(t, !farmland_vineyard_heights_are_safe(10, {8.7, 11.3, 10, 10}))
+    testing.expect(t, abs(farmland_vineyard_support_width(1) - 4.6) < .001)
+    testing.expect(t, abs(farmland_vineyard_support_width(2) - 9.2) < .001)
+    testing.expect_value(t, farmland_vineyard_render_mode(33.99), Farmland_Vineyard_Render_Mode.Generated_Medium)
+    testing.expect_value(t, farmland_vineyard_render_mode(34), Farmland_Vineyard_Render_Mode.Generated_Far)
+    testing.expect_value(t, farmland_vineyard_render_mode(58), Farmland_Vineyard_Render_Mode.Foliage)
 }

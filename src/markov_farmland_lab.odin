@@ -2,6 +2,7 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import farmland "../packages/farmland"
+import plants "../packages/plants"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
@@ -117,6 +118,36 @@ farmland_surface_is_safe :: proc(editor: ^Editor, grid_x, grid_z: f32) -> bool {
     return true
 }
 
+farmland_vineyard_heights_are_safe :: proc(center: f32, neighbors: [4]f32) -> bool {
+    for height in neighbors {
+        if abs(height - center) > 1.55 do return false
+    }
+    return abs(neighbors[1] - neighbors[0]) <= 2.45 &&
+           abs(neighbors[3] - neighbors[2]) <= 2.45
+}
+
+farmland_vineyard_surface_is_safe :: proc(editor: ^Editor, grid_x, grid_z: f32) -> bool {
+    if editor == nil do return false
+    if lab_scene_is_active(editor, "markov-farmland") {
+        return farmland_surface_is_safe(editor, grid_x, grid_z)
+    }
+
+    // Authored farms do not carry the lab's named terrain policy. Detect hard
+    // holding boundaries directly from the height field instead, while still
+    // accepting ordinary cultivated grades. A 2 m cross samples local slope
+    // and curvature closely enough to reject cliff faces without erasing hills.
+    x, z := farmland_world_xz(grid_x, grid_z)
+    center := terrain.sample_height(&editor.project, 0, x, z)
+    SAMPLE_OFFSET :: f32(2)
+    neighbors := [4]f32 {
+        terrain.sample_height(&editor.project, 0, x - SAMPLE_OFFSET, z),
+        terrain.sample_height(&editor.project, 0, x + SAMPLE_OFFSET, z),
+        terrain.sample_height(&editor.project, 0, x, z - SAMPLE_OFFSET),
+        terrain.sample_height(&editor.project, 0, x, z + SAMPLE_OFFSET),
+    }
+    return farmland_vineyard_heights_are_safe(center, neighbors)
+}
+
 farmland_raw_patch :: proc(editor: ^Editor, x0, z0, x1, z1: f32, color: rl.Color, lift: f32 = .16) {
     a := farmland_world_point(editor, x0, z0, lift)
     b := farmland_world_point(editor, x0, z1, lift)
@@ -207,6 +238,209 @@ farmland_hedgerow :: proc(editor: ^Editor, x0, z0, x1, z1: f32, seed: u32, detai
     }
 }
 
+Farmland_Vineyard_Render_Mode :: enum u8 {
+    Generated_Medium,
+    Generated_Far,
+    Foliage,
+}
+
+farmland_vineyard_render_mode :: #force_inline proc(distance: f32) -> Farmland_Vineyard_Render_Mode {
+    if distance < 34 do return .Generated_Medium
+    if distance < 58 do return .Generated_Far
+    return .Foliage
+}
+
+farmland_vineyard_support_width :: #force_inline proc(span_cells: int) -> f32 {
+    return f32(max(span_cells, 1)) * 4.6
+}
+
+farmland_render_vineyard :: proc(
+    editor: ^Editor,
+    parcel: farmland.Parcel,
+    parcel_index: int,
+    plan_seed: u32,
+    detail_fade: f32,
+) {
+    // The catalog's trellised habit is generated against one canonical bay.
+    // Reusing a handful of botanical variants keeps a whole field deterministic
+    // without allowing hundreds of one-off plants to consume the world cache.
+    SUPPORT_HEIGHT :: f32(1.85)
+    boundary_fixture :=
+        lab_scene_is_active(editor, "markov-farmland") &&
+        (markov_farmland_lab_terrain == .Terrace || markov_farmland_lab_terrain == .Cliff)
+    bay_cells := boundary_fixture ? 1 : 2
+    support_width := farmland_vineyard_support_width(bay_cells)
+    support := plants.Support_Surface {
+        width     = support_width,
+        height    = SUPPORT_HEIGHT,
+        plane_z   = 0,
+        root_x    = -support_width * .42,
+        signature = 0x76696e6579617264 ~ u64(bay_cells),
+    }
+    post_color := rl.Color{91, 68, 45, 255}
+    wire_color := rl.Color{76, 76, 68, 255}
+    along_min := parcel.row_axis_x ? parcel.min_x : parcel.min_z
+    along_max := parcel.row_axis_x ? parcel.max_x : parcel.max_z
+    across_min := parcel.row_axis_x ? parcel.min_z : parcel.min_x
+    across_max := parcel.row_axis_x ? parcel.max_z : parcel.max_x
+
+    for across_row in across_min * 2 ..< across_max * 2 {
+        // Traditional Mediterranean rows are much closer than the five-metre
+        // terrain grid. Two rows per cell produce useful 2.5 m working alleys.
+        across_coordinate := f32(across_row) * .5 + .25
+        for along := along_min; along < along_max; along += bay_cells {
+            along0 := f32(along) + .08
+            along1 := f32(min(along + bay_cells, along_max)) - .08
+            gx0, gz0 := along0, across_coordinate
+            gx1, gz1 := along1, across_coordinate
+            if !parcel.row_axis_x {
+                gx0, gz0 = across_coordinate, along0
+                gx1, gz1 = across_coordinate, along1
+            }
+            if !farmland_vineyard_surface_is_safe(editor, gx0, gz0) ||
+               !farmland_vineyard_surface_is_safe(editor, (gx0 + gx1) * .5, (gz0 + gz1) * .5) ||
+               !farmland_vineyard_surface_is_safe(editor, gx1, gz1) {
+                continue
+            }
+            start := farmland_world_point(editor, gx0, gz0, .03)
+            finish := farmland_world_point(editor, gx1, gz1, .03)
+            dx, dz := finish.x - start.x, finish.z - start.z
+            bay_length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            if bay_length < .25 do continue
+            along_grade := (finish.y - start.y) / bay_length
+            yaw := f32(math.atan2(f64(dz), f64(dx)))
+            bay_span_cells := min(bay_cells, along_max - along)
+            bay_support_width := farmland_vineyard_support_width(bay_span_cells)
+            bay_support := support
+            bay_support.width = bay_support_width
+            bay_support.root_x = -bay_support_width * .42
+            bay_support.signature =
+                0x76696e6579617264 ~
+                u64(bay_span_cells) ~
+                u64(bay_cells) << 8
+            scale := bay_length / bay_support_width
+            base := third_person.Vec3{(start.x + finish.x) * .5, (start.y + finish.y) * .5, (start.z + finish.z) * .5}
+
+            // Timber end posts and four taut training wires make the generated
+            // tier routing readable even where foliage is sparse or distant.
+            post_height := SUPPORT_HEIGHT * scale
+            world_tube_between(
+                start,
+                {start.x, start.y + post_height, start.z},
+                {1, 0, 0},
+                .055,
+                .055,
+                post_color,
+            )
+            if along + bay_cells >= along_max {
+                world_tube_between(
+                    finish,
+                    {finish.x, finish.y + post_height, finish.z},
+                    {1, 0, 0},
+                    .055,
+                    .055,
+                    post_color,
+                )
+            }
+            if detail_fade > .24 {
+                for tier in 0 ..< 4 {
+                    wire_height := (.55 + f32(tier) * (SUPPORT_HEIGHT * .96 - .55) / 3) * scale
+                    a := third_person.Vec3{start.x, start.y + wire_height, start.z}
+                    b := third_person.Vec3{finish.x, finish.y + wire_height, finish.z}
+                    world_tube_between(a, b, {0, 1, 0}, .014, .014, wire_color)
+                }
+            }
+
+            section_index := (parcel_index + 1) * 4099 + across_row * 131 + along
+            mixed := farmland.mix(plan_seed ~ u32(section_index) * u32(0x9e3779b9))
+            template_seed := u64(0x56494e45 + mixed % 6)
+            missing := mixed % 47 == 0
+            vigor_zone :=
+                (parcel_index + 1) * 8191 +
+                (across_row / 3) * 257 +
+                (along / 4) * 17
+            vigor_mixed := farmland.mix(plan_seed ~ u32(vigor_zone) * u32(0x85ebca6b))
+            maturity_step := u8(3 + (vigor_mixed >> 24) % 3)
+            maturity := generated_plant_maturity_value(maturity_step)
+            camera := editor.camera_pose.position
+            camera_dx, camera_dz := camera.x - base.x, camera.z - base.z
+            camera_distance := f32(math.sqrt(f64(camera_dx * camera_dx + camera_dz * camera_dz)))
+            render_mode := farmland_vineyard_render_mode(camera_distance)
+            if !missing && render_mode == .Generated_Medium {
+                _ = world_generated_plant(
+                    .Grapevine,
+                    template_seed,
+                    base,
+                    scale,
+                    yaw,
+                    .Trellised,
+                    &bay_support,
+                    .Medium,
+                    along_grade,
+                    maturity,
+                )
+            } else if !missing && render_mode == .Generated_Far {
+                // Preserve the botanical skeleton beyond the near vineyard
+                // range. Reducing catalog topology is much less conspicuous
+                // than replacing a whole branched vine with five leaf fans.
+                _ = world_generated_plant(
+                    .Grapevine,
+                    template_seed,
+                    base,
+                    scale,
+                    yaw,
+                    .Trellised,
+                    &bay_support,
+                    .Far,
+                    along_grade,
+                    maturity,
+                )
+            } else if !missing && detail_fade > .18 {
+                // Beyond generated-plant range, retain the row rhythm with a
+                // few inexpensive leafy masses instead of emitting thousands
+                // of tiny branches and leaves that collapse below a pixel.
+                for cluster in 0 ..< 5 {
+                    t := (f32(cluster) + .5) / 5
+                    point := third_person.Vec3 {
+                        start.x + (finish.x - start.x) * t,
+                        start.y + (finish.y - start.y) * t + SUPPORT_HEIGHT * .58,
+                        start.z + (finish.z - start.z) * t,
+                    }
+                    shade := f32((mixed >> u32((cluster & 3) * 8)) & 255) / 255
+                    vigor := .76 + maturity * .24
+                    color := color_lerp(rl.Color{57, 101, 46, 255}, {91, 126, 55, 255}, shade * .44)
+                    color = color_lerp({73, 91, 43, 255}, color, vigor)
+                    color.a = u8(clamp(detail_fade * 255, 0, 255))
+                    row_forward := third_person.Vec3{dx / bay_length, 0, dz / bay_length}
+                    side := cluster & 1 == 0 ? f32(1) : f32(-1)
+                    leaf_forward := third_person.Vec3 {
+                        row_forward.x * .28 - row_forward.z * .84 * side,
+                        .18,
+                        row_forward.z * .28 + row_forward.x * .84 * side,
+                    }
+                    leaf_length := f32(math.sqrt(f64(
+                        leaf_forward.x * leaf_forward.x +
+                            leaf_forward.y * leaf_forward.y +
+                            leaf_forward.z * leaf_forward.z,
+                    )))
+                    leaf_forward /= leaf_length
+                    leaf_up := third_person.Vec3{0, 1, 0}
+                    leaf_right := third_person.Vec3{-leaf_forward.z, 0, leaf_forward.x}
+                    world_generated_grape_leaf_3d(
+                        point,
+                        leaf_forward,
+                        leaf_up,
+                        leaf_right,
+                        .48 * vigor,
+                        .72 * vigor,
+                        color,
+                    )
+                }
+            }
+        }
+    }
+}
+
 farmland_render_crops :: proc(
     editor: ^Editor,
     parcel: farmland.Parcel,
@@ -215,6 +449,10 @@ farmland_render_crops :: proc(
     detail_fade: f32,
 ) {
     if editor == nil || farmland_render_preview || detail_fade <= .12 || parcel.crop == .Fallow do return
+    if parcel.crop == .Vineyard {
+        farmland_render_vineyard(editor, parcel, parcel_index, plan_seed, detail_fade)
+        return
+    }
     subdivisions := 2
     if parcel.crop == .Wheat do subdivisions = 3
     for z in parcel.min_z ..< parcel.max_z {
@@ -246,12 +484,7 @@ farmland_render_crops :: proc(
                         width = .30 + f32((mixed >> 24) & 255) / 255 * .20
                         color = color_lerp(color, {75, 151, 67, 255}, .34)
                     case .Vineyard:
-                        // Skip alternating sub-rows to leave visible cultivated
-                        // alleys between the vines.
-                        if sub_z & 1 != 0 do continue
-                        height = .82 + f32((mixed >> 16) & 255) / 255 * .40
-                        width = .52 + f32((mixed >> 24) & 255) / 255 * .24
-                        color = color_lerp(color, {62, 104, 48, 255}, .28)
+                        continue
                     case .Olive:
                         // Olive groves are open-spaced rather than carpeted.
                         if x % 3 != 1 || z % 3 != 1 || sub_x != 0 || sub_z != 0 do continue
@@ -610,6 +843,24 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     switch target {
     case "small":
         grid_width, grid_height = 8, 8
+    case "vineyard", "vineyard-close":
+        // A compact single-crop fixture keeps trellis and plant-system visual
+        // QA fast and makes regressions obvious without searching random seeds.
+        grid_width, grid_height = 10, 8
+    case "vineyard-odd":
+        // Odd spans force a one-cell terminal bay after two-cell runs.
+        grid_width, grid_height = 9, 7
+    case "vineyard-incline":
+        grid_width, grid_height = 10, 8
+        markov_farmland_lab_terrain = .Incline
+    case "vineyard-terrace":
+        // Span both ±34 m terrace cuts so this fixture exercises bay
+        // rejection and generated-plant grounding on all three benches.
+        grid_width, grid_height = 10, 18
+        markov_farmland_lab_terrain = .Terrace
+    case "vineyard-cliff":
+        grid_width, grid_height = 10, 8
+        markov_farmland_lab_terrain = .Cliff
     case "medium":
         grid_width, grid_height = farmland.GRID_WIDTH, farmland.GRID_HEIGHT
     case "large":
@@ -625,6 +876,16 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     }
     markov_farmland_plan = farmland.generate_sized(seed, grid_width, grid_height, context.temp_allocator)
     if !farmland.validate(&markov_farmland_plan) do return false
+    if target == "vineyard" ||
+       target == "vineyard-close" ||
+       target == "vineyard-odd" ||
+       target == "vineyard-incline" ||
+       target == "vineyard-terrace" ||
+       target == "vineyard-cliff" {
+        for &parcel in markov_farmland_plan.parcels[:markov_farmland_plan.parcel_count] {
+            parcel.crop = .Vineyard
+        }
+    }
     markov_farmland_lab_apply_terrain(editor, markov_farmland_lab_terrain)
 
     editor.in_map = true
@@ -646,6 +907,34 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     } else {
         markov_farmland_lab_configure_camera(editor)
     }
+    if target == "vineyard-close" {
+        extent := f32(max(markov_farmland_plan.width, markov_farmland_plan.height)) * farmland.CELL_METERS
+        editor.camera_pose = third_person.camera_look_at(
+            {
+                MARKOV_FARMLAND_ORIGIN_X + extent * .34,
+                center_height + 4.8,
+                MARKOV_FARMLAND_ORIGIN_Z + extent * .56,
+            },
+            {
+                MARKOV_FARMLAND_ORIGIN_X,
+                center_height + 1.0,
+                MARKOV_FARMLAND_ORIGIN_Z + extent * .08,
+            },
+        )
+        third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+    }
+    // Terrain clipmaps follow the gameplay focus rather than the inspection
+    // camera. Keep that focus inside the farm so captures and interactive lab
+    // views render the cultivated ground instead of the prior player site.
+    player_place(
+        editor,
+        {
+            MARKOV_FARMLAND_ORIGIN_X,
+            center_height + .7,
+            MARKOV_FARMLAND_ORIGIN_Z,
+        },
+        .Scene_Setup,
+    )
     return true
 }
 

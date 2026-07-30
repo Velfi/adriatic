@@ -11585,7 +11585,7 @@ adriatic_run :: proc(
             // Settlement plan views intentionally start their collision ray on
             // authored ground and look almost straight down. Resolving that ray
             // collapses the overhead camera onto its target.
-            if !editor.settlement_vertical_map {
+            if !editor.settlement_vertical_map && editor.cameras.active != .Inspection {
                 editor.camera_pose = gameplay_physics_resolve_camera(editor, editor.camera_pose)
             }
         }
