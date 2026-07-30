@@ -291,6 +291,7 @@ settlement_lab_configure :: proc(
     if !loaded do return false
     defer markov.interpreter_destroy(ip)
     frames := markov.run(ip, seed, 0, false, context.temp_allocator)
+    defer markov.frames_destroy(&frames, context.temp_allocator)
     if len(frames) == 0 do return false
     frame := frames[len(frames) - 1]
 
@@ -299,6 +300,7 @@ settlement_lab_configure :: proc(
     if !density_loaded do return false
     defer markov.interpreter_destroy(density_ip)
     density_frames := markov.run(density_ip, seed ~ 0x6d2b79f5, 0, false, context.temp_allocator)
+    defer markov.frames_destroy(&density_frames, context.temp_allocator)
     if len(density_frames) == 0 do return false
     density_frame := density_frames[len(density_frames) - 1]
 

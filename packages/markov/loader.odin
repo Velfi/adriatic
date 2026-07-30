@@ -503,6 +503,12 @@ load_rule :: proc(
     out_data: []u8
     input: []int
     output: []u8
+    input_owned := false
+    output_owned := false
+    defer {
+        if input_owned do delete(input, allocator)
+        if output_owned do delete(output, allocator)
+    }
     im, om: [3]int
     input_direct := false
     output_direct := false
@@ -559,6 +565,7 @@ load_rule :: proc(
             input_direct = true
             im = in_match_pattern.m
             input = make([]int, len(in_match_pattern.data), allocator)
+            input_owned = true
             all_wave := (1 << uint(grid.c)) - 1
             for wave, i in in_match_pattern.data {
                 if wave == PROC_MATCH_ANY {
@@ -597,6 +604,7 @@ load_rule :: proc(
             output_direct = true
             om = out_write_pattern.m
             output = make([]u8, len(out_write_pattern.data), allocator)
+            output_owned = true
             for cell, i in out_write_pattern.data {
                 if cell == PROC_WRITE_KEEP {
                     output[i] = 0xff
@@ -634,6 +642,7 @@ load_rule :: proc(
     if !input_direct {
         // Convert input chars to wave bitmasks
         input = make([]int, len(in_data), allocator)
+        input_owned = true
         for i in 0 ..< len(in_data) {
             c := in_data[i]
             wave := grid.waves[c]
@@ -648,6 +657,7 @@ load_rule :: proc(
     if !output_direct {
         // Convert output chars to value indices
         output = make([]u8, len(out_data), allocator)
+        output_owned = true
         for i in 0 ..< len(out_data) {
             c := out_data[i]
             if c == '*' {
@@ -668,7 +678,11 @@ load_rule :: proc(
     // Create base rule
     base_rule: Rule
     rule_init(&base_rule, input, im, output, om, int(grid.c), p, allocator)
+    input_owned = false
+    output_owned = false
     base_rule.original = true
+    base_rule_owned := true
+    defer if base_rule_owned do rule_destroy(&base_rule, allocator)
 
     // Apply symmetry transformations
     rule_symmetry, sym_ok := get_attr_symmetry_mask(doc, rule_id, grid.m.z == 1, symmetry)
@@ -681,6 +695,7 @@ load_rule :: proc(
     if grid.m.z == 1 {
         // 2D symmetries
         sym_rules := rule_square_symmetries(&base_rule, int(grid.c), rule_symmetry, allocator)
+        base_rule_owned = false
         for r in sym_rules {
             append(&rules, r)
         }
@@ -688,6 +703,7 @@ load_rule :: proc(
     } else {
         // 3D symmetries
         sym_rules := rule_cube_symmetries(&base_rule, int(grid.c), rule_symmetry, allocator)
+        base_rule_owned = false
         for r in sym_rules {
             append(&rules, r)
         }
@@ -724,6 +740,12 @@ load_map_rule :: proc(
     out_data: []u8
     input: []int
     output: []u8
+    input_owned := false
+    output_owned := false
+    defer {
+        if input_owned do delete(input, allocator)
+        if output_owned do delete(output, allocator)
+    }
     im, om: [3]int
     input_direct := false
     output_direct := false
@@ -779,6 +801,7 @@ load_map_rule :: proc(
             input_direct = true
             im = in_match_pattern.m
             input = make([]int, len(in_match_pattern.data), allocator)
+            input_owned = true
             all_wave := (1 << uint(gin.c)) - 1
             for wave, i in in_match_pattern.data {
                 if wave == PROC_MATCH_ANY {
@@ -817,6 +840,7 @@ load_map_rule :: proc(
             output_direct = true
             om = out_write_pattern.m
             output = make([]u8, len(out_write_pattern.data), allocator)
+            output_owned = true
             for cell, i in out_write_pattern.data {
                 if cell == PROC_WRITE_KEEP {
                     output[i] = 0xff
@@ -851,6 +875,7 @@ load_map_rule :: proc(
     if !input_direct {
         // Convert input chars to wave bitmasks using gin
         input = make([]int, len(in_data), allocator)
+        input_owned = true
         for i in 0 ..< len(in_data) {
             c := in_data[i]
             wave := gin.waves[c]
@@ -865,6 +890,7 @@ load_map_rule :: proc(
     if !output_direct {
         // Convert output chars to value indices using gout
         output = make([]u8, len(out_data), allocator)
+        output_owned = true
         for i in 0 ..< len(out_data) {
             c := out_data[i]
             if c == '*' {
@@ -885,7 +911,11 @@ load_map_rule :: proc(
     // Create base rule
     base_rule: Rule
     rule_init(&base_rule, input, im, output, om, int(gin.c), p, allocator)
+    input_owned = false
+    output_owned = false
     base_rule.original = true
+    base_rule_owned := true
+    defer if base_rule_owned do rule_destroy(&base_rule, allocator)
 
     // Apply symmetry transformations
     rule_symmetry, sym_ok := get_attr_symmetry_mask(doc, rule_id, gin.m.z == 1, symmetry)
@@ -897,12 +927,14 @@ load_map_rule :: proc(
 
     if gin.m.z == 1 {
         sym_rules := rule_square_symmetries(&base_rule, int(gin.c), rule_symmetry, allocator)
+        base_rule_owned = false
         for r in sym_rules {
             append(&rules, r)
         }
         delete(sym_rules)
     } else {
         sym_rules := rule_cube_symmetries(&base_rule, int(gin.c), rule_symmetry, allocator)
+        base_rule_owned = false
         for r in sym_rules {
             append(&rules, r)
         }
@@ -924,6 +956,11 @@ load_rules :: proc(
     bool,
 ) {
     all_rules := make([dynamic]Rule, allocator)
+    load_succeeded := false
+    defer if !load_succeeded {
+        for &rule in all_rules do rule_destroy(&rule, allocator)
+        delete(all_rules)
+    }
 
     // Check for nested <rule> elements
     rule_children := get_children_by_name(doc, elem_id, "rule")
@@ -952,6 +989,7 @@ load_rules :: proc(
         delete(rules, allocator)
     }
 
+    load_succeeded = true
     return all_rules[:], true
 }
 

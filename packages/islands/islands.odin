@@ -230,6 +230,7 @@ run_markov :: proc(seed: u32, destination: []Cell) -> bool {
     if !ok do return false
     defer markov.interpreter_destroy(ip)
     frames := markov.run(ip, int(seed), 0, false, context.temp_allocator)
+    defer markov.frames_destroy(&frames, context.temp_allocator)
     if len(frames) == 0 do return false
     final := &frames[len(frames) - 1]
     if len(final.state) != CELL_COUNT do return false

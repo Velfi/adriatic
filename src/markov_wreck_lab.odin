@@ -394,6 +394,7 @@ markov_wreck_generate_instance :: proc(
                 if accepted do markov_wreck_route_quality = route_quality
             }
         }
+        markov.frames_destroy(&frames, context.temp_allocator)
         markov.interpreter_destroy(ip)
         if accepted {
             return markov_wreck_instance_capture(origin_x, origin_z, yaw, scale), true
@@ -511,6 +512,7 @@ markov_wreck_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
                 }
             }
         }
+        markov.frames_destroy(&frames, context.temp_allocator)
         markov.interpreter_destroy(ip)
         if generated do break
     }

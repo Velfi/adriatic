@@ -119,3 +119,45 @@ markov_convenience_nodes_release_temporary_containers :: proc(t: ^testing.T) {
 
     testing.expect_value(t, len(tracker.allocation_map), 0)
 }
+
+@(test)
+markov_search_releases_early_exit_working_set :: proc(t: ^testing.T) {
+    tracker: back.Tracking_Allocator
+    back.tracking_allocator_init(&tracker, context.allocator)
+    defer back.tracking_allocator_destroy(&tracker)
+    allocator := back.tracking_allocator(&tracker)
+
+    present := []u8{0}
+    future := []int{1}
+    trajectory := markov.search_run(present, future, nil, {1, 1, 1}, 1, false, 16, 0, 1, allocator)
+    testing.expect_value(t, len(trajectory), 0)
+    delete(trajectory, allocator)
+
+    testing.expect_value(t, len(tracker.allocation_map), 0)
+}
+
+@(test)
+markov_search_applies_rules_to_the_requested_3d_layer :: proc(t: ^testing.T) {
+    state := []u8{0, 0}
+    input := make([]int, 1)
+    input[0] = 1
+    output := make([]u8, 1)
+    output[0] = 1
+    rule: markov.Rule
+    markov.rule_init(&rule, input, {1, 1, 1}, output, {1, 1, 1}, 2, 1)
+    defer markov.rule_destroy(&rule)
+
+    testing.expect(t, markov.search_matches(&rule, 0, 0, 1, state, {1, 1, 2}))
+    applied := markov.search_applied(&rule, 0, 0, 1, state, {1, 1, 2})
+    defer delete(applied, context.temp_allocator)
+    testing.expect_value(t, applied[0], u8(0))
+    testing.expect_value(t, applied[1], u8(1))
+}
+
+@(test)
+markov_state_hash_collisions_are_not_state_equality :: proc(t: ^testing.T) {
+    a := []u8{1, 0}
+    b := []u8{0, 29}
+    testing.expect_value(t, markov.state_hash(a), markov.state_hash(b))
+    testing.expect(t, !markov.state_equals(a, b))
+}
