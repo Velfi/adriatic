@@ -942,8 +942,8 @@ add_postale_hull :: proc(mesh: ^Aircraft_Mesh) {
     add_strut(mesh, {-.49, screen_low_y, screen_low_z}, {.49, screen_low_y, screen_low_z}, .04, .Frame)
 }
 
-postale_mesh :: proc() -> Aircraft_Mesh {
-    mesh: Aircraft_Mesh
+postale_mesh :: proc() -> ^Aircraft_Mesh {
+    mesh := new(Aircraft_Mesh)
     left_wing := [5]Mesh_Section {
         {-4.96, -.48, -.39, .025},
         {-4.86, -.82, -.10, .045},
@@ -976,23 +976,23 @@ postale_mesh :: proc() -> Aircraft_Mesh {
         {3.12, 1.50},
         {3.18, .4},
     }
-    add_postale_hull(&mesh)
+    add_postale_hull(mesh)
 
     POSTALE_WING_Y :: f32(.08)
     wing_first := mesh.vertex_count
     // The roots terminate at the fuselage skin; there is no center slab
     // running through the cockpit.
-    add_section_mesh(&mesh, left_wing[:], POSTALE_WING_Y, .Wing)
-    add_section_mesh(&mesh, right_wing[:], POSTALE_WING_Y, .Wing)
+    add_section_mesh(mesh, left_wing[:], POSTALE_WING_Y, .Wing)
+    add_section_mesh(mesh, right_wing[:], POSTALE_WING_Y, .Wing)
     for index in wing_first ..< mesh.vertex_count {
         mesh.vertices[index].position[1] += abs(mesh.vertices[index].position[0]) * .045
     }
     left_root_fillet := [3]Mesh_Section{{-1.10, -1.05, .20, .04}, {-.76, -1.25, .28, .12}, {-.52, -.90, .10, .20}}
     right_root_fillet := [3]Mesh_Section{{.52, -.90, .10, .20}, {.76, -1.25, .28, .12}, {1.10, -1.05, .20, .04}}
-    add_section_mesh(&mesh, left_root_fillet[:], .17, .Body)
-    add_section_mesh(&mesh, right_root_fillet[:], .17, .Body)
-    add_section_mesh(&mesh, tail[:], .55, .Tail)
-    add_profile_prism(&mesh, fin[:], .065, .Tail)
+    add_section_mesh(mesh, left_root_fillet[:], .17, .Body)
+    add_section_mesh(mesh, right_root_fillet[:], .17, .Body)
+    add_section_mesh(mesh, tail[:], .55, .Tail)
+    add_profile_prism(mesh, fin[:], .065, .Tail)
     left_flap := [3]Mesh_Section{{-3.25, .08, .30, .045}, {-1.90, .10, .40, .05}, {-.72, .10, .42, .055}}
     right_flap := [3]Mesh_Section{{.72, .10, .42, .055}, {1.90, .10, .40, .05}, {3.25, .08, .30, .045}}
     left_aileron := [4]Mesh_Section {
@@ -1008,32 +1008,32 @@ postale_mesh :: proc() -> Aircraft_Mesh {
         {4.76, -.22, -.08, .028},
     }
     control_first := mesh.vertex_count
-    add_section_mesh(&mesh, left_flap[:], POSTALE_WING_Y, .Left_Flap)
-    add_section_mesh(&mesh, right_flap[:], POSTALE_WING_Y, .Right_Flap)
-    add_section_mesh(&mesh, left_aileron[:], POSTALE_WING_Y, .Left_Aileron)
-    add_section_mesh(&mesh, right_aileron[:], POSTALE_WING_Y, .Right_Aileron)
+    add_section_mesh(mesh, left_flap[:], POSTALE_WING_Y, .Left_Flap)
+    add_section_mesh(mesh, right_flap[:], POSTALE_WING_Y, .Right_Flap)
+    add_section_mesh(mesh, left_aileron[:], POSTALE_WING_Y, .Left_Aileron)
+    add_section_mesh(mesh, right_aileron[:], POSTALE_WING_Y, .Right_Aileron)
     for index in control_first ..< mesh.vertex_count {
         mesh.vertices[index].position[1] += abs(mesh.vertices[index].position[0]) * .045
     }
     left_elevator := [3]Mesh_Section{{-2.05, 2.76, 2.94, .028}, {-1.55, 2.76, 3.10, .04}, {-.08, 2.78, 3.18, .055}}
     right_elevator := [3]Mesh_Section{{.08, 2.78, 3.18, .055}, {1.55, 2.76, 3.10, .04}, {2.05, 2.76, 2.94, .028}}
-    add_section_mesh(&mesh, left_elevator[:], .56, .Elevator)
-    add_section_mesh(&mesh, right_elevator[:], .56, .Elevator)
+    add_section_mesh(mesh, left_elevator[:], .56, .Elevator)
+    add_section_mesh(mesh, right_elevator[:], .56, .Elevator)
     rudder := [6]Mesh_Profile_Point{{2.78, .48}, {2.76, 1.12}, {2.84, 1.54}, {2.96, 1.64}, {3.12, 1.47}, {3.18, .50}}
-    add_profile_prism(&mesh, rudder[:], .074, .Rudder)
+    add_profile_prism(mesh, rudder[:], .074, .Rudder)
     // Compact, wide-track taildragger gear. Each axle is triangulated back to
     // two lower-fuselage hardpoints, so the undercarriage reads as a sprung
     // V-frame rather than a pair of posts hanging from the wing.
     left_axle := [3]f32{-1.34, -1.13, -.48}
     right_axle := [3]f32{1.34, -1.13, -.48}
-    add_wheel(&mesh, left_axle, .45, .22)
-    add_wheel(&mesh, right_axle, .45, .22)
+    add_wheel(mesh, left_axle, .45, .22)
+    add_wheel(mesh, right_axle, .45, .22)
     // A small castering tailwheel trails a sprung pivot beneath the stern.
     // Keep its contact patch at the former height, but use a realistic tire
     // proportion and a fork rather than hanging the axle from one long rod.
     tailwheel_axle := [3]f32{0, -.97, 3.00}
     tailwheel_pivot := [3]f32{0, -.58, 2.76}
-    add_wheel(&mesh, tailwheel_axle, .18, .13)
+    add_wheel(mesh, tailwheel_axle, .18, .13)
     // Simple oval covers sit just outside each tire face. Keeping them thin
     // avoids the intersecting teardrop shell that left a black center notch.
     wheel_cover := [2]Mesh_Ring{{-.018, .34, 0, .42}, {.018, .34, 0, .42}}
@@ -1043,20 +1043,20 @@ postale_mesh :: proc() -> Aircraft_Mesh {
     }
     for center in wheel_cover_centers {
         first := mesh.vertex_count
-        add_ring_mesh(&mesh, wheel_cover[:], 12, .Marking)
-        rotate_new_vertices_y(&mesh, first, {0, 0, 0}, math.PI * .5)
-        translate_new_vertices(&mesh, first, center)
+        add_ring_mesh(mesh, wheel_cover[:], 12, .Marking)
+        rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
+        translate_new_vertices(mesh, first, center)
     }
-    add_strut(&mesh, left_axle, {-.42, -.39, -.82}, .13, .Frame)
-    add_strut(&mesh, left_axle, {-.46, -.36, .02}, .13, .Frame)
-    add_strut(&mesh, right_axle, {.42, -.39, -.82}, .13, .Frame)
-    add_strut(&mesh, right_axle, {.46, -.36, .02}, .13, .Frame)
-    add_strut(&mesh, left_axle, right_axle, .09, .Frame)
-    add_strut(&mesh, {0, -.05, 2.52}, tailwheel_pivot, .075, .Frame)
+    add_strut(mesh, left_axle, {-.42, -.39, -.82}, .13, .Frame)
+    add_strut(mesh, left_axle, {-.46, -.36, .02}, .13, .Frame)
+    add_strut(mesh, right_axle, {.42, -.39, -.82}, .13, .Frame)
+    add_strut(mesh, right_axle, {.46, -.36, .02}, .13, .Frame)
+    add_strut(mesh, left_axle, right_axle, .09, .Frame)
+    add_strut(mesh, {0, -.05, 2.52}, tailwheel_pivot, .075, .Frame)
     tailwheel_fork_sides := [2]f32{-.075, .075}
     for fork_side in tailwheel_fork_sides {
         add_strut(
-            &mesh,
+            mesh,
             {fork_side, tailwheel_pivot[1], tailwheel_pivot[2]},
             {fork_side, tailwheel_axle[1], tailwheel_axle[2]},
             .052,
@@ -1064,16 +1064,16 @@ postale_mesh :: proc() -> Aircraft_Mesh {
         )
     }
     add_strut(
-        &mesh,
+        mesh,
         {-.075, tailwheel_axle[1], tailwheel_axle[2]},
         {.075, tailwheel_axle[1], tailwheel_axle[2]},
         .040,
         .Frame,
     )
-    add_postale_propeller(&mesh, {0, .12, -3.42})
-    add_propeller_spin_volume(&mesh, {0, .12, -3.42}, 1.46, .018)
+    add_postale_propeller(mesh, {0, .12, -3.42})
+    add_propeller_spin_volume(mesh, {0, .12, -3.42}, 1.46, .018)
     mesh_finalize(
-        &mesh,
+        mesh,
         &postale_mesh_cache,
         postale_uvs[:],
         postale_sources[:],
@@ -1099,8 +1099,8 @@ add_pelican_hull :: proc(mesh: ^Aircraft_Mesh, rings: []Mesh_Ring, sides: int, p
         1 { for s in 0 ..< sides { n := (s + 1) % sides; mesh_quad(mesh, pelican_hull_point(rings[r], s, sides), pelican_hull_point(rings[r], n, sides), pelican_hull_point(rings[r + 1], n, sides), pelican_hull_point(rings[r + 1], s, sides), part) } }
 }
 
-pelican_mesh :: proc() -> Aircraft_Mesh {
-    mesh: Aircraft_Mesh
+pelican_mesh :: proc() -> ^Aircraft_Mesh {
+    mesh := new(Aircraft_Mesh)
     hull := [16]Mesh_Ring {
         {-5.62, .18, .55, .4},
         {-5.43, .38, .4, .62},
@@ -1145,13 +1145,13 @@ pelican_mesh :: proc() -> Aircraft_Mesh {
         {3.7, 4.92, 5.66, .045},
     }
     fin := [5]Mesh_Profile_Point{{4.6, 1.15}, {4.9, 3.7}, {5.45, 4.4}, {5.92, 4.2}, {6.08, 1.12}}
-    add_pelican_hull(&mesh, hull[:], 12, .Body); add_ring_mesh(&mesh, cabin[:], 8, .Body)
+    add_pelican_hull(mesh, hull[:], 12, .Body); add_ring_mesh(mesh, cabin[:], 8, .Body)
     add_section_mesh(
-        &mesh,
+        mesh,
         wing[:],
         2.3,
         .Wing,
-    ); add_section_mesh(&mesh, tail[:], 1.28, .Tail); add_profile_prism(&mesh, fin[:], .12, .Tail)
+    ); add_section_mesh(mesh, tail[:], 1.28, .Tail); add_profile_prism(mesh, fin[:], .12, .Tail)
     engine_xs := [2]f32{-3.45, 3.45}
     for x in engine_xs {
         nacelle := [6]Mesh_Ring {
@@ -1162,28 +1162,28 @@ pelican_mesh :: proc() -> Aircraft_Mesh {
             {-1.83, .77, 2.13, .77},
             {-2.17, .74, 2.13, .74},
         }
-        add_ring_mesh_at_x(&mesh, nacelle[:], 14, x, .Engine)
+        add_ring_mesh_at_x(mesh, nacelle[:], 14, x, .Engine)
         propeller_part := Aircraft_Mesh_Part.Left_Propeller; if x > 0 do propeller_part = .Right_Propeller
-        add_propeller(&mesh, {x, 2.13, -2.75}, 1.69, .17, .11, propeller_part)
+        add_propeller(mesh, {x, 2.13, -2.75}, 1.69, .17, .11, propeller_part)
     }
     add_box(
-        &mesh,
+        mesh,
         {-2.475, 2.3, .36},
         {1.55, .12, .72},
         .Left_Flap,
-    ); add_box(&mesh, {2.475, 2.3, .36}, {1.55, .12, .72}, .Right_Flap)
+    ); add_box(mesh, {2.475, 2.3, .36}, {1.55, .12, .72}, .Right_Flap)
     add_box(
-        &mesh,
+        mesh,
         {-5.55, 2.3, .33},
         {2.25, .055, .42},
         .Left_Aileron,
-    ); add_box(&mesh, {5.55, 2.3, .33}, {2.25, .055, .42}, .Right_Aileron)
+    ); add_box(mesh, {5.55, 2.3, .33}, {2.25, .055, .42}, .Right_Aileron)
     add_box(
-        &mesh,
+        mesh,
         {0, 1.28, 5.96},
         {6.25, .055, .48},
         .Elevator,
-    ); add_box(&mesh, {0, 2.28, 5.95}, {.055, 2.05, .5}, .Rudder)
+    ); add_box(mesh, {0, 2.28, 5.95}, {.055, 2.05, .5}, .Rudder)
     float_xs := [2]f32{-5.55, 5.55}
     for x in float_xs {
         floats := [4]Mesh_Ring {
@@ -1192,10 +1192,10 @@ pelican_mesh :: proc() -> Aircraft_Mesh {
             {.3, .38, -.62, .28},
             {.72, .18, -.58, .16},
         }
-        add_ring_mesh_at_x(&mesh, floats[:], 8, x, .Float)
+        add_ring_mesh_at_x(mesh, floats[:], 8, x, .Float)
     }
     mesh_finalize(
-        &mesh,
+        mesh,
         &pelican_mesh_cache,
         pelican_uvs[:],
         pelican_sources[:],

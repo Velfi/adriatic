@@ -70,10 +70,11 @@ triangle_normal :: proc(a, b, c: [3]f32) -> [3]f32 {
 
 @(test)
 ring_mesh_winds_sides_and_caps_outward :: proc(t: ^testing.T) {
-    mesh: vehicles.Aircraft_Mesh
+    mesh := new(vehicles.Aircraft_Mesh)
+    defer free(mesh)
     rings := [2]vehicles.Mesh_Ring{{-1, 1, 0, 1}, {1, 1, 0, 1}}
     sides := 12
-    vehicles.add_ring_mesh(&mesh, rings[:], sides, .Engine)
+    vehicles.add_ring_mesh(mesh, rings[:], sides, .Engine)
 
     // Side normals must point away from the ring axis. This is the shared
     // construction used by the Postale cowling, tires, and wheel hubs.
@@ -108,9 +109,10 @@ ring_mesh_winds_sides_and_caps_outward :: proc(t: ^testing.T) {
 
 @(test)
 section_mesh_winds_sides_and_caps_outward :: proc(t: ^testing.T) {
-    mesh: vehicles.Aircraft_Mesh
+    mesh := new(vehicles.Aircraft_Mesh)
+    defer free(mesh)
     sections := [2]vehicles.Mesh_Section{{-1, -1, 1, .1}, {1, -1, 1, .1}}
-    vehicles.add_section_mesh(&mesh, sections[:], 0, .Wing)
+    vehicles.add_section_mesh(mesh, sections[:], 0, .Wing)
 
     expected_axes := [12][2]int {
         {1, -1},
@@ -142,7 +144,8 @@ section_mesh_winds_sides_and_caps_outward :: proc(t: ^testing.T) {
 @(test)
 procedural_player_aircraft_build_closed_triangle_surfaces :: proc(t: ^testing.T) {
     postale := vehicles.postale_mesh()
-    valid_triangle_mesh(t, &postale)
+    defer free(postale)
+    valid_triangle_mesh(t, postale)
     testing.expect(t, postale.triangle_count > 300)
 
     cockpit_floor_triangles := 0
@@ -175,7 +178,8 @@ procedural_player_aircraft_build_closed_triangle_surfaces :: proc(t: ^testing.T)
     testing.expect(t, cockpit_tub_wall_triangles == 20)
 
     pelican := vehicles.pelican_mesh()
-    valid_triangle_mesh(t, &pelican)
+    defer free(pelican)
+    valid_triangle_mesh(t, pelican)
     testing.expect(t, pelican.triangle_count > 300)
 
     libellula := vehicles.libellula_mesh()
@@ -210,26 +214,28 @@ furthest_mesh_part_position :: proc(mesh: ^$Mesh, part: vehicles.Aircraft_Mesh_P
 @(test)
 procedural_player_aircraft_meshes_pose_props_and_control_surfaces :: proc(t: ^testing.T) {
     postale := vehicles.postale_mesh()
-    postale_flap := first_mesh_part_position(&postale, .Left_Flap)
-    postale_aileron := first_mesh_part_position(&postale, .Left_Aileron)
-    postale_elevator := first_mesh_part_position(&postale, .Elevator)
-    postale_rudder := first_mesh_part_position(&postale, .Rudder)
-    postale_prop := first_mesh_part_position(&postale, .Propeller)
-    vehicles.animate_postale_mesh(&postale, 1, 1, 1, 1, .25)
-    testing.expect(t, first_mesh_part_position(&postale, .Left_Flap) != postale_flap)
-    testing.expect(t, first_mesh_part_position(&postale, .Left_Aileron) != postale_aileron)
-    testing.expect(t, first_mesh_part_position(&postale, .Elevator) != postale_elevator)
-    testing.expect(t, first_mesh_part_position(&postale, .Rudder) != postale_rudder)
-    testing.expect(t, first_mesh_part_position(&postale, .Propeller) != postale_prop)
+    defer free(postale)
+    postale_flap := first_mesh_part_position(postale, .Left_Flap)
+    postale_aileron := first_mesh_part_position(postale, .Left_Aileron)
+    postale_elevator := first_mesh_part_position(postale, .Elevator)
+    postale_rudder := first_mesh_part_position(postale, .Rudder)
+    postale_prop := first_mesh_part_position(postale, .Propeller)
+    vehicles.animate_postale_mesh(postale, 1, 1, 1, 1, .25)
+    testing.expect(t, first_mesh_part_position(postale, .Left_Flap) != postale_flap)
+    testing.expect(t, first_mesh_part_position(postale, .Left_Aileron) != postale_aileron)
+    testing.expect(t, first_mesh_part_position(postale, .Elevator) != postale_elevator)
+    testing.expect(t, first_mesh_part_position(postale, .Rudder) != postale_rudder)
+    testing.expect(t, first_mesh_part_position(postale, .Propeller) != postale_prop)
 
     pelican := vehicles.pelican_mesh()
-    left_prop := first_mesh_part_position(&pelican, .Left_Propeller)
-    right_prop := first_mesh_part_position(&pelican, .Right_Propeller)
-    elevator := first_mesh_part_position(&pelican, .Elevator)
-    vehicles.animate_pelican_mesh(&pelican, .5, 1, 1, 1, .125, .125)
-    testing.expect(t, first_mesh_part_position(&pelican, .Left_Propeller) != left_prop)
-    testing.expect(t, first_mesh_part_position(&pelican, .Right_Propeller) != right_prop)
-    testing.expect(t, first_mesh_part_position(&pelican, .Elevator) != elevator)
+    defer free(pelican)
+    left_prop := first_mesh_part_position(pelican, .Left_Propeller)
+    right_prop := first_mesh_part_position(pelican, .Right_Propeller)
+    elevator := first_mesh_part_position(pelican, .Elevator)
+    vehicles.animate_pelican_mesh(pelican, .5, 1, 1, 1, .125, .125)
+    testing.expect(t, first_mesh_part_position(pelican, .Left_Propeller) != left_prop)
+    testing.expect(t, first_mesh_part_position(pelican, .Right_Propeller) != right_prop)
+    testing.expect(t, first_mesh_part_position(pelican, .Elevator) != elevator)
 
     libellula := vehicles.libellula_mesh()
     defer vehicles.libellula_mesh_destroy(&libellula)

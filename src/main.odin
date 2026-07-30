@@ -363,7 +363,7 @@ Fixture :: struct {
     vehicle_paint_sound_until:                      f32 `fixture:"-"`,
     vehicle_paint_saved_postale_position:           flight.Vec3,
     vehicle_paint_saved_libellula_position:         flight.Vec3,
-    vehicle_paint_postale_mesh:                     vehicles.Aircraft_Mesh `fixture:"-"`,
+    vehicle_paint_postale_mesh:                     ^vehicles.Aircraft_Mesh `hs:"-" fixture:"-"`,
     vehicle_paint_cursor_x:                         f32 `fixture:"-"`,
     vehicle_paint_cursor_y:                         f32 `fixture:"-"`,
     vehicle_paint_orbit_drag_active:                bool `fixture:"-"`,
@@ -519,8 +519,8 @@ Editor :: struct {
     libellula_mk2_visual_mesh:          vehicles.Libellula_Mesh,
     libellula_base_mesh:                vehicles.Libellula_Mesh,
     libellula_mk2_base_mesh:            vehicles.Libellula_Mesh,
-    postale_base_mesh:                  vehicles.Aircraft_Mesh,
-    car_base_mesh:                      vehicles.Aircraft_Mesh,
+    postale_base_mesh:                  ^vehicles.Aircraft_Mesh `hs:"-"`,
+    car_base_mesh:                      ^vehicles.Aircraft_Mesh `hs:"-"`,
     libellula_projected_faces:          [dynamic]Projected_Aircraft_Face,
     gameplay_options:                   Gameplay_Options,
     runtime_input:                      game_input.State,
@@ -5836,8 +5836,9 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
 
 draw_postale_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
     mesh := vehicles.postale_mesh()
+    defer free(mesh)
     vehicles.animate_postale_mesh(
-        &mesh,
+        mesh,
         editor.postale.flap_fraction,
         editor.flight_control.pitch,
         editor.flight_control.roll,
@@ -5849,7 +5850,7 @@ draw_postale_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, heig
     // faces back-to-front just like the terrain cells.
     faces: [vehicles.AIRCRAFT_MESH_TRIANGLE_CAPACITY]Projected_Aircraft_Face
     face_count := 0
-    for triangle in vehicles.mesh_triangles(&mesh) {
+    for triangle in vehicles.mesh_triangles(mesh) {
         a := mesh.vertices[triangle.a]
         b := mesh.vertices[triangle.b]
         c := mesh.vertices[triangle.c]
@@ -9415,9 +9416,11 @@ adriatic_run :: proc(
     vehicles.libellula_mesh_copy(&editor.libellula_visual_mesh, &editor.libellula_base_mesh)
     vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
     editor.postale_base_mesh = vehicles.postale_mesh()
-    vehicles.mesh_generate_smooth_normals(&editor.postale_base_mesh)
+    defer free(editor.postale_base_mesh)
+    vehicles.mesh_generate_smooth_normals(editor.postale_base_mesh)
     editor.car_base_mesh = vehicles.simple_car_mesh()
-    vehicles.mesh_generate_smooth_normals(&editor.car_base_mesh)
+    defer free(editor.car_base_mesh)
+    vehicles.mesh_generate_smooth_normals(editor.car_base_mesh)
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .42, "Preparing aircraft and boats...", postcard)
     }

@@ -99,9 +99,11 @@ vehicle_paint_propeller_color :: proc(editor: ^Editor) -> rl.Color {
     base := rl.Color{54, 43, 35, 255}
     if editor == nil do return base
     if !editor.vehicle_paint_propeller_color_valid || editor.vehicle_paint_propeller_color_dirty {
-        if editor.aircraft.active == .Postale && editor.vehicle_paint_postale_mesh.vertex_count == 0 {
+        if editor.aircraft.active == .Postale &&
+           (editor.vehicle_paint_postale_mesh == nil || editor.vehicle_paint_postale_mesh.vertex_count == 0) {
+            if editor.vehicle_paint_postale_mesh != nil do free(editor.vehicle_paint_postale_mesh)
             editor.vehicle_paint_postale_mesh = vehicles.postale_mesh()
-            vehicle_paint_build_texel_parts(editor, &editor.vehicle_paint_postale_mesh)
+            vehicle_paint_build_texel_parts(editor, editor.vehicle_paint_postale_mesh)
         }
         pixels := vehicle_paint_pixels(editor)
         owner := int(u8(vehicles.Aircraft_Mesh_Part.Propeller) + 1)
@@ -190,10 +192,11 @@ vehicle_paint_open :: proc(editor: ^Editor) {
     editor.vehicle_paint_hover_hit = false
     editor.vehicle_paint_clear_confirm_until = 0
     editor.vehicle_paint_sound_until = 0
+    if editor.vehicle_paint_postale_mesh != nil do free(editor.vehicle_paint_postale_mesh)
     editor.vehicle_paint_postale_mesh = vehicles.postale_mesh()
     if editor.aircraft.active == .Postale {
-        vehicles.animate_postale_mesh(&editor.vehicle_paint_postale_mesh, editor.postale.flap_fraction, 0, 0, 0, 0)
-        vehicle_paint_build_texel_parts(editor, &editor.vehicle_paint_postale_mesh)
+        vehicles.animate_postale_mesh(editor.vehicle_paint_postale_mesh, editor.postale.flap_fraction, 0, 0, 0, 0)
+        vehicle_paint_build_texel_parts(editor, editor.vehicle_paint_postale_mesh)
     } else if editor.aircraft.active == .Libellula_Mk2 {
         vehicles.libellula_mk2_mesh_build(&editor.libellula_mk2_visual_mesh)
         vehicle_paint_build_texel_parts(editor, &editor.libellula_mk2_visual_mesh)
@@ -377,6 +380,7 @@ vehicle_paint_history_init :: proc(editor: ^Editor) {
 
 vehicle_paint_history_destroy :: proc(editor: ^Editor, slice_allocator := context.allocator) {
     if editor == nil do return
+    if editor.vehicle_paint_postale_mesh != nil do free(editor.vehicle_paint_postale_mesh)
     delete(editor.vehicle_paint_open_pixels, slice_allocator)
     delete(editor.vehicle_paint_tool_drag_texels)
     delete(editor.vehicle_paint_tool_drag_mirror_texels)
@@ -391,6 +395,7 @@ vehicle_paint_history_destroy :: proc(editor: ^Editor, slice_allocator := contex
     editor.vehicle_paint_tool_drag_mirror_texels = nil
     editor.vehicle_paint_undo = {}
     editor.vehicle_paint_redo = {}
+    editor.vehicle_paint_postale_mesh = nil
 }
 
 vehicle_paint_history_push :: proc(
@@ -1555,7 +1560,7 @@ vehicle_paint_projected_hit :: proc(
         flight.basis_from_orientation(editor.postale.body.orientation),
         POSTALE_PRESENTATION_SCALE,
     )
-    mesh := &editor.vehicle_paint_postale_mesh
+    mesh := editor.vehicle_paint_postale_mesh
     best_distance := f32(1.0e30)
     best: [3]f32
     best_normal: [3]f32
@@ -1680,7 +1685,7 @@ vehicle_paint_mirror_uv :: proc(
 ) {
     if editor == nil || !editor.vehicle_paint_symmetry do return false, part, {}
     if editor.aircraft.active == .Postale {
-        return vehicle_paint_mirror_uv_mesh(&editor.vehicle_paint_postale_mesh, position, part)
+        return vehicle_paint_mirror_uv_mesh(editor.vehicle_paint_postale_mesh, position, part)
     }
     if editor.aircraft.active == .Libellula_Mk2 {
         return vehicle_paint_mirror_uv_mesh(&editor.libellula_mk2_visual_mesh, position, part)

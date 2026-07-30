@@ -16337,9 +16337,11 @@ world_aircraft :: proc(editor: ^Editor) {
         postale_paint_layer := f32(vehicle_paint_layer_index(.Postale))
         postale_propeller_blur := aircraft_propeller_blur_amount(editor.postale.throttle)
         postale_transform := world_aircraft_transform(editor.postale.body, POSTALE_PRESENTATION_SCALE)
-        mesh := editor.postale_base_mesh
+        mesh := new(vehicles.Aircraft_Mesh)
+        defer free(mesh)
+        mesh^ = editor.postale_base_mesh^
         vehicles.animate_postale_mesh(
-            &mesh,
+            mesh,
             editor.postale.flap_fraction,
             editor.flight_control.pitch,
             editor.flight_control.roll,
@@ -16347,7 +16349,7 @@ world_aircraft :: proc(editor: ^Editor) {
             editor.postale.propeller_turns,
             editor.postale.gear_compression / POSTALE_PRESENTATION_SCALE,
         )
-        for triangle in vehicles.mesh_triangles(&mesh) {
+        for triangle in vehicles.mesh_triangles(mesh) {
             a := mesh.vertices[triangle.a]
             b := mesh.vertices[triangle.b]
             c := mesh.vertices[triangle.c]
@@ -19577,7 +19579,7 @@ world_car :: proc(editor: ^Editor) {
     // Retain near-frustum vehicles so their projected shadows cannot disappear
     // while the body itself is just outside the camera.
     if !world_sphere_in_view(editor, center, radius, 6) do return
-    mesh := &editor.car_base_mesh
+    mesh := editor.car_base_mesh
     trailer_speed_squared :=
         editor.car_trailer.velocity.x * editor.car_trailer.velocity.x +
         editor.car_trailer.velocity.z * editor.car_trailer.velocity.z
@@ -19586,7 +19588,8 @@ world_car :: proc(editor: ^Editor) {
         editor.car_trailer_attached,
         !editor.car_trailer_attached && trailer_speed_squared < .25,
     )
-    vehicles.animate_trailer_wheels(&trailer, editor.car_trailer.wheel_rotation)
+    defer free(trailer)
+    vehicles.animate_trailer_wheels(trailer, editor.car_trailer.wheel_rotation)
     car_transform := world_car_transform(editor)
     trailer_transform := world_trailer_transform(editor)
     world_car_cockpit(editor, car_transform)
@@ -19639,7 +19642,7 @@ world_car :: proc(editor: ^Editor) {
             )
         }
     }
-    for triangle in vehicles.mesh_triangles(&trailer) {
+    for triangle in vehicles.mesh_triangles(trailer) {
         a := trailer.vertices[triangle.a]
         b := trailer.vertices[triangle.b]
         c := trailer.vertices[triangle.c]

@@ -169,8 +169,8 @@ animate_trailer_wheels :: proc(mesh: ^Aircraft_Mesh, rotation: f32) {
 // simple_car_mesh is a tiny, open-top roadster: its proportions are sized for
 // the mouse rather than a human, and the low beltline keeps the driver visible
 // in the showcase and during play.
-simple_car_mesh :: proc() -> Aircraft_Mesh {
-    mesh: Aircraft_Mesh
+simple_car_mesh :: proc() -> ^Aircraft_Mesh {
+    mesh := new(Aircraft_Mesh)
 
     // Three nested, tapered shells give the tiny roadster one continuous
     // shoulder line. Broad middle rings wrap the wheels while narrower end
@@ -185,13 +185,13 @@ simple_car_mesh :: proc() -> Aircraft_Mesh {
         {1.24, .64, .28, .23},
         {1.40, .46, .26, .17},
     }
-    add_car_open_body(&mesh, lower_body[:], 10, .Body)
+    add_car_open_body(mesh, lower_body[:], 10, .Body)
 
     hood := [4]Mesh_Ring{{-1.34, .44, .47, .08}, {-1.17, .60, .49, .12}, {-.78, .66, .50, .14}, {-.45, .58, .47, .10}}
-    add_ring_mesh(&mesh, hood[:], 10, .Body)
+    add_ring_mesh(mesh, hood[:], 10, .Body)
 
     rear_deck := [4]Mesh_Ring{{.46, .57, .45, .08}, {.78, .65, .48, .12}, {1.16, .59, .47, .11}, {1.34, .43, .43, .07}}
-    add_ring_mesh(&mesh, rear_deck[:], 10, .Body)
+    add_ring_mesh(mesh, rear_deck[:], 10, .Body)
 
     // Soft wheel shoulders interrupt the long slab side and make each tire
     // feel nested into the coachwork. The wheel mesh is submitted later, so
@@ -199,51 +199,51 @@ simple_car_mesh :: proc() -> Aircraft_Mesh {
     wheel_z := [2]f32{-CAR_WHEELBASE_HALF, CAR_WHEELBASE_HALF}
     for z in wheel_z {
         shoulder := [3]Mesh_Ring{{z - .31, .60, .40, .08}, {z, .76, .40, .28}, {z + .31, .60, .40, .08}}
-        add_ring_mesh(&mesh, shoulder[:], 12, .Body)
+        add_ring_mesh(mesh, shoulder[:], 12, .Body)
     }
 
     // Low cockpit rails preserve a crisp opening against the rounded shells.
-    add_box(&mesh, {-.62, .53, .08}, {.16, .18, 1.25}, .Body)
-    add_box(&mesh, {.62, .53, .08}, {.16, .18, 1.25}, .Body)
+    add_box(mesh, {-.62, .53, .08}, {.16, .18, 1.25}, .Body)
+    add_box(mesh, {.62, .53, .08}, {.16, .18, 1.25}, .Body)
 
     // Recess the mouse into a complete cockpit tub rather than perching it on
     // a rectangular cushion. The dark floor and inner door cards remain below
     // the body rails, while a low bucket supports the rump without cutting
     // through the driver's torso.
-    add_box(&mesh, {0, .305, .02}, {1.16, .07, 1.06}, .Frame)
-    add_box(&mesh, {-.57, .405, .04}, {.055, .22, 1.02}, .Strap)
-    add_box(&mesh, {.57, .405, .04}, {.055, .22, 1.02}, .Strap)
-    add_box(&mesh, {0, .335, .25}, {.60, .09, .58}, .Strap)
-    add_box(&mesh, {0, .49, .55}, {.62, .34, .09}, .Strap)
+    add_box(mesh, {0, .305, .02}, {1.16, .07, 1.06}, .Frame)
+    add_box(mesh, {-.57, .405, .04}, {.055, .22, 1.02}, .Strap)
+    add_box(mesh, {.57, .405, .04}, {.055, .22, 1.02}, .Strap)
+    add_box(mesh, {0, .335, .25}, {.60, .09, .58}, .Strap)
+    add_box(mesh, {0, .49, .55}, {.62, .34, .09}, .Strap)
     // Raised side bolsters keep the seat readable around the mouse instead of
     // turning it back into one broad slab beneath the character.
-    add_box(&mesh, {-.30, .39, .29}, {.07, .16, .48}, .Strap)
-    add_box(&mesh, {.30, .39, .29}, {.07, .16, .48}, .Strap)
+    add_box(mesh, {-.30, .39, .29}, {.07, .16, .48}, .Strap)
+    add_box(mesh, {.30, .39, .29}, {.07, .16, .48}, .Strap)
 
     // Push the dashboard beneath the windscreen and give it a hood, inset
     // fascia, gauges, and lower knee panel. The steering column emerges from
     // its driver-facing surface, leaving open air between the mouse and dash.
-    add_box(&mesh, {0, .525, -.535}, {1.00, .13, .13}, .Strap)
-    add_box(&mesh, {0, .605, -.545}, {1.08, .045, .16}, .Frame)
-    add_box(&mesh, {0, .445, -.54}, {.74, .05, .12}, .Frame)
+    add_box(mesh, {0, .525, -.535}, {1.00, .13, .13}, .Strap)
+    add_box(mesh, {0, .605, -.545}, {1.08, .045, .16}, .Frame)
+    add_box(mesh, {0, .445, -.54}, {.74, .05, .12}, .Frame)
     gauge_x := [2]f32{-.19, .19}
     for x in gauge_x {
-        car_ellipsoid(&mesh, {x, .55, -.466}, .09, .09, .018, .Rounded_Chrome)
-        car_ellipsoid(&mesh, {x, .55, -.445}, .058, .058, .012, .Rounded_Ivory)
-        add_box(&mesh, {x, .55, -.429}, {.012, .050, .009}, .Strap)
+        car_ellipsoid(mesh, {x, .55, -.466}, .09, .09, .018, .Rounded_Chrome)
+        car_ellipsoid(mesh, {x, .55, -.445}, .058, .058, .012, .Rounded_Ivory)
+        add_box(mesh, {x, .55, -.429}, {.012, .050, .009}, .Strap)
     }
     // A small brass-toned center switch breaks up the fascia at mouse scale.
-    car_ellipsoid(&mesh, {0, .505, -.444}, .027, .027, .012, .Headlight)
+    car_ellipsoid(mesh, {0, .505, -.444}, .027, .027, .012, .Headlight)
 
     // Fine inset door lines give the broad side panel a human-readable scale.
     // Duplicate them on both sides so the detail survives either chase-camera
     // shoulder; shallow boxes avoid z-fighting with the curved body shell.
     door_side_x := [2]f32{-.706, .706}
     for x in door_side_x {
-        add_box(&mesh, {x, .43, -.38}, {.018, .30, .018}, .Frame)
-        add_box(&mesh, {x, .43, .55}, {.018, .30, .018}, .Frame)
-        add_box(&mesh, {x, .29, .085}, {.018, .018, .95}, .Frame)
-        add_box(&mesh, {x, .54, .34}, {.026, .035, .14}, .Bumper)
+        add_box(mesh, {x, .43, -.38}, {.018, .30, .018}, .Frame)
+        add_box(mesh, {x, .43, .55}, {.018, .30, .018}, .Frame)
+        add_box(mesh, {x, .29, .085}, {.018, .018, .95}, .Frame)
+        add_box(mesh, {x, .54, .34}, {.026, .035, .14}, .Bumper)
     }
 
     // Move the short split windscreen toward the nose and rake its top back
@@ -251,17 +251,17 @@ simple_car_mesh :: proc() -> Aircraft_Mesh {
     windscreen_pivot := [3]f32{0, .54, -.58}
     windscreen_rake := f32(.30)
     first := mesh.vertex_count
-    add_box(&mesh, {-.39, .735, -.58}, {.07, .40, .07}, .Bumper)
-    rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
+    add_box(mesh, {-.39, .735, -.58}, {.07, .40, .07}, .Bumper)
+    rotate_new_vertices_x(mesh, first, windscreen_pivot, windscreen_rake)
     first = mesh.vertex_count
-    add_box(&mesh, {.39, .735, -.58}, {.07, .40, .07}, .Bumper)
-    rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
+    add_box(mesh, {.39, .735, -.58}, {.07, .40, .07}, .Bumper)
+    rotate_new_vertices_x(mesh, first, windscreen_pivot, windscreen_rake)
     first = mesh.vertex_count
-    add_box(&mesh, {0, .925, -.58}, {.84, .07, .07}, .Bumper)
-    rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
+    add_box(mesh, {0, .925, -.58}, {.84, .07, .07}, .Bumper)
+    rotate_new_vertices_x(mesh, first, windscreen_pivot, windscreen_rake)
     first = mesh.vertex_count
-    add_box(&mesh, {0, .75, -.58}, {.66, .20, .030}, .Glass)
-    rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
+    add_box(mesh, {0, .75, -.58}, {.66, .20, .030}, .Glass)
+    rotate_new_vertices_x(mesh, first, windscreen_pivot, windscreen_rake)
 
     // Keep the narrower tire faces flush with the shoulder. Realistic kei-car
     // tread is much slimmer relative to diameter than the former toy-like
@@ -271,32 +271,32 @@ simple_car_mesh :: proc() -> Aircraft_Mesh {
     // cue and a believable place to climb into the open cockpit.
     running_board_x := [2]f32{-.755, .755}
     for x in running_board_x {
-        add_box(&mesh, {x, .245, 0}, {.13, .055, 1.18}, .Bumper)
+        add_box(mesh, {x, .245, 0}, {.13, .055, 1.18}, .Bumper)
     }
 
     wheel_x := [2]f32{-CAR_WHEEL_TRACK_HALF, CAR_WHEEL_TRACK_HALF}
     for x in wheel_x {
         for z in wheel_z {
-            car_wheel(&mesh, {x, CAR_WHEEL_CENTER_Y, z})
+            car_wheel(mesh, {x, CAR_WHEEL_CENTER_Y, z})
         }
     }
 
     // Slim overriders punctuate the ends without turning into large grey
     // blocks in profile.
-    car_ellipsoid(&mesh, {0, .25, -1.43}, .58, .07, .06, .Rounded_Chrome)
-    car_ellipsoid(&mesh, {0, .25, 1.43}, .56, .07, .06, .Rounded_Chrome)
+    car_ellipsoid(mesh, {0, .25, -1.43}, .58, .07, .06, .Rounded_Chrome)
+    car_ellipsoid(mesh, {0, .25, 1.43}, .56, .07, .06, .Rounded_Chrome)
     light_x := [2]f32{-.58, .58}
     for x in light_x {
-        car_ellipsoid(&mesh, {x, .57, -1.17}, .14, .12, .09, .Rounded_Chrome)
-        car_ellipsoid(&mesh, {x, .57, -1.245}, .11, .09, .065, .Headlight)
-        car_ellipsoid(&mesh, {x, .54, 1.16}, .115, .10, .075, .Rounded_Chrome)
-        car_ellipsoid(&mesh, {x, .54, 1.215}, .09, .075, .06, .Tail_Light)
+        car_ellipsoid(mesh, {x, .57, -1.17}, .14, .12, .09, .Rounded_Chrome)
+        car_ellipsoid(mesh, {x, .57, -1.245}, .11, .09, .065, .Headlight)
+        car_ellipsoid(mesh, {x, .54, 1.16}, .115, .10, .075, .Rounded_Chrome)
+        car_ellipsoid(mesh, {x, .54, 1.215}, .09, .075, .06, .Tail_Light)
     }
-    add_box(&mesh, {0, .37, 1.445}, {.34, .13, .035}, .Ivory)
+    add_box(mesh, {0, .37, 1.445}, {.34, .13, .035}, .Ivory)
     for mark in -1 ..= 1 {
-        add_box(&mesh, {f32(mark) * .075, .37, 1.468}, {.038, .040, .012}, .Strap)
+        add_box(mesh, {f32(mark) * .075, .37, 1.468}, {.038, .040, .012}, .Strap)
     }
-    mesh_finalize(&mesh, &car_mesh_cache, car_uvs[:], car_sources[:], car_indices[:], car_scratch[:])
+    mesh_finalize(mesh, &car_mesh_cache, car_uvs[:], car_sources[:], car_indices[:], car_scratch[:])
     return mesh
 }
 
@@ -308,46 +308,46 @@ simple_car_trailer_mesh :: proc(
     detached: bool = false,
     attached: bool = false,
     jockey_deployed: bool = false,
-) -> Aircraft_Mesh {
-    mesh: Aircraft_Mesh
+) -> ^Aircraft_Mesh {
+    mesh := new(Aircraft_Mesh)
 
     // Low floor, open bed, and four raised rails give the trailer a readable
     // utility silhouette instead of making it look like a second car body.
-    add_box(&mesh, {0, .18, 2.48}, {1.18, .22, 1.42}, .Body)
-    add_box(&mesh, {-.60, .28, 2.48}, {.035, .08, 1.04}, .Red_Paint)
-    add_box(&mesh, {.60, .28, 2.48}, {.035, .08, 1.04}, .Red_Paint)
-    add_box(&mesh, {0, .32, 2.48}, {1.04, .12, 1.20}, .Frame)
-    add_box(&mesh, {-.53, .58, 2.48}, {.10, .48, 1.20}, .Frame)
-    add_box(&mesh, {.53, .58, 2.48}, {.10, .48, 1.20}, .Frame)
-    add_box(&mesh, {0, .58, 1.91}, {1.04, .48, .10}, .Frame)
-    add_box(&mesh, {0, .52, 3.05}, {1.04, .34, .10}, .Frame)
+    add_box(mesh, {0, .18, 2.48}, {1.18, .22, 1.42}, .Body)
+    add_box(mesh, {-.60, .28, 2.48}, {.035, .08, 1.04}, .Red_Paint)
+    add_box(mesh, {.60, .28, 2.48}, {.035, .08, 1.04}, .Red_Paint)
+    add_box(mesh, {0, .32, 2.48}, {1.04, .12, 1.20}, .Frame)
+    add_box(mesh, {-.53, .58, 2.48}, {.10, .48, 1.20}, .Frame)
+    add_box(mesh, {.53, .58, 2.48}, {.10, .48, 1.20}, .Frame)
+    add_box(mesh, {0, .58, 1.91}, {1.04, .48, .10}, .Frame)
+    add_box(mesh, {0, .52, 3.05}, {1.04, .34, .10}, .Frame)
     // A compact cargo box makes the open bed legible at gameplay distance.
-    add_box(&mesh, {0, .49, 2.48}, {.70, .28, .72}, .Bumper)
-    add_box(&mesh, {0, .66, 2.48}, {.72, .05, .72}, .Ivory)
-    add_box(&mesh, {-.25, .69, 2.48}, {.06, .06, .76}, .Strap)
-    add_box(&mesh, {.25, .69, 2.48}, {.06, .06, .76}, .Strap)
-    add_box(&mesh, {0, .25, 1.62}, {.14, .14, .48}, .Frame)
+    add_box(mesh, {0, .49, 2.48}, {.70, .28, .72}, .Bumper)
+    add_box(mesh, {0, .66, 2.48}, {.72, .05, .72}, .Ivory)
+    add_box(mesh, {-.25, .69, 2.48}, {.06, .06, .76}, .Strap)
+    add_box(mesh, {.25, .69, 2.48}, {.06, .06, .76}, .Strap)
+    add_box(mesh, {0, .25, 1.62}, {.14, .14, .48}, .Frame)
     if attached {
-        add_horizontal_beam(&mesh, {-.30, .28, 1.50}, {-.14, .25, 1.36}, .045, .Strap)
-        add_horizontal_beam(&mesh, {.30, .28, 1.50}, {.14, .25, 1.36}, .045, .Strap)
+        add_horizontal_beam(mesh, {-.30, .28, 1.50}, {-.14, .25, 1.36}, .045, .Strap)
+        add_horizontal_beam(mesh, {.30, .28, 1.50}, {.14, .25, 1.36}, .045, .Strap)
     }
     if detached && jockey_deployed {
-        add_box(&mesh, {0, .13, 1.42}, {.08, .24, .08}, .Dark_Metal)
-        add_box(&mesh, {0, .025, 1.42}, {.26, .05, .18}, .Bumper)
+        add_box(mesh, {0, .13, 1.42}, {.08, .24, .08}, .Dark_Metal)
+        add_box(mesh, {0, .025, 1.42}, {.26, .05, .18}, .Bumper)
     }
-    add_box(&mesh, {-.64, .50, 2.48}, {.18, .16, .86}, .Body)
-    add_box(&mesh, {.64, .50, 2.48}, {.18, .16, .86}, .Body)
-    add_box(&mesh, {-.75, .55, 2.82}, {.04, .08, .14}, .Headlight)
-    add_box(&mesh, {.75, .55, 2.82}, {.04, .08, .14}, .Headlight)
-    add_box(&mesh, {0, .28, 1.36}, {.28, .18, .18}, .Dark_Metal)
-    add_box(&mesh, {-.48, .18, 3.16}, {.16, .16, .16}, .Tail_Light)
-    add_box(&mesh, {.48, .18, 3.16}, {.16, .16, .16}, .Tail_Light)
-    trailer_spare_wheel(&mesh, {0, .52, 3.14})
-    add_box(&mesh, {.32, .34, 3.12}, {.22, .12, .04}, .Ivory)
+    add_box(mesh, {-.64, .50, 2.48}, {.18, .16, .86}, .Body)
+    add_box(mesh, {.64, .50, 2.48}, {.18, .16, .86}, .Body)
+    add_box(mesh, {-.75, .55, 2.82}, {.04, .08, .14}, .Headlight)
+    add_box(mesh, {.75, .55, 2.82}, {.04, .08, .14}, .Headlight)
+    add_box(mesh, {0, .28, 1.36}, {.28, .18, .18}, .Dark_Metal)
+    add_box(mesh, {-.48, .18, 3.16}, {.16, .16, .16}, .Tail_Light)
+    add_box(mesh, {.48, .18, 3.16}, {.16, .16, .16}, .Tail_Light)
+    trailer_spare_wheel(mesh, {0, .52, 3.14})
+    add_box(mesh, {.32, .34, 3.12}, {.22, .12, .04}, .Ivory)
 
     wheel_x := [2]f32{-.64, .64}
     for x in wheel_x {
-        trailer_wheel(&mesh, {x, .26, 2.48})
+        trailer_wheel(mesh, {x, .26, 2.48})
     }
     variant := 0
     if attached {
@@ -356,7 +356,7 @@ simple_car_trailer_mesh :: proc(
         variant = 2
     }
     mesh_finalize(
-        &mesh,
+        mesh,
         &trailer_mesh_caches[variant],
         trailer_uvs[variant][:],
         trailer_sources[variant][:],

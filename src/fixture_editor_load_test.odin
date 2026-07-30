@@ -212,6 +212,8 @@ when ODIN_TEST {
         editor.control_hint_atlases.keyboard_mouse.id = 0x111
         editor.vehicle_paint_tool_icons.id = 0x222
         editor.tarot_atlas.id = 0x333
+        editor.postale_base_mesh = new(vehicles.Aircraft_Mesh)
+        editor.car_base_mesh = new(vehicles.Aircraft_Mesh)
         editor.postale_base_mesh.vertex_count = 41
         editor.libellula_base_mesh.vertex_count = 43
         editor.engine_audio.stream = cast(^sdl.AudioStream)uintptr(0x1234)
@@ -236,6 +238,8 @@ when ODIN_TEST {
         fixture_storage_destroy(&editor.fixture)
         structure_history_storage_destroy(editor)
         fixture_migration_result_dispose(&editor.fixture_owner)
+        free(editor.postale_base_mesh)
+        free(editor.car_base_mesh)
         free(editor)
     }
 

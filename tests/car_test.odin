@@ -9,10 +9,11 @@ import "core:testing"
 @(test)
 simple_car_solid_mesh_is_closed_and_grouped :: proc(t: ^testing.T) {
     mesh := vehicles.simple_car_mesh()
+    defer free(mesh)
     testing.expect(t, mesh.vertex_count > 0)
     testing.expect(t, mesh.triangle_count >= 100)
     testing.expect(t, mesh.vertex_count < mesh.triangle_count * 3)
-    for triangle in vehicles.mesh_triangles(&mesh) {
+    for triangle in vehicles.mesh_triangles(mesh) {
         testing.expect(t, int(triangle.a) < mesh.vertex_count)
         testing.expect(t, int(triangle.b) < mesh.vertex_count)
         testing.expect(t, int(triangle.c) < mesh.vertex_count)
@@ -22,7 +23,8 @@ simple_car_solid_mesh_is_closed_and_grouped :: proc(t: ^testing.T) {
 @(test)
 simple_car_mesh_has_a_real_cockpit_opening :: proc(t: ^testing.T) {
     mesh := vehicles.simple_car_mesh()
-    for vertex in vehicles.mesh_vertices(&mesh) {
+    defer free(mesh)
+    for vertex in vehicles.mesh_vertices(mesh) {
         // The central crown used to seal the cockpit beneath its dark tub.
         // Side rails remain outside this envelope, so any body-paint vertex
         // here means the opening has accidentally been closed again.
@@ -38,10 +40,11 @@ simple_car_mesh_has_a_real_cockpit_opening :: proc(t: ^testing.T) {
 @(test)
 simple_car_solid_mesh_retains_period_detail_parts :: proc(t: ^testing.T) {
     mesh := vehicles.simple_car_mesh()
+    defer free(mesh)
     headlight_count, tail_light_count, ivory_count := 0, 0, 0
     rounded_chrome_count, rounded_ivory_count := 0, 0
     left_tail_light_count, right_tail_light_count := 0, 0
-    for vertex in vehicles.mesh_vertices(&mesh) {
+    for vertex in vehicles.mesh_vertices(mesh) {
         #partial switch vertex.part {
         case .Headlight:
             headlight_count += 1
@@ -80,13 +83,14 @@ simple_car_trailer_variants_are_optimized_and_indexed :: proc(t: ^testing.T) {
         {true, false, true},
     }
     triangle_counts: [3]int
-    mesh: vehicles.Aircraft_Mesh
+    mesh: ^vehicles.Aircraft_Mesh
     for variant, index in variants {
         mesh = vehicles.simple_car_trailer_mesh(variant[0], variant[1], variant[2])
+        defer free(mesh)
         triangle_counts[index] = mesh.triangle_count
         testing.expect(t, mesh.vertex_count > 0)
         testing.expect(t, mesh.vertex_count < mesh.triangle_count * 3)
-        for triangle in vehicles.mesh_triangles(&mesh) {
+        for triangle in vehicles.mesh_triangles(mesh) {
             testing.expect(t, int(triangle.a) < mesh.vertex_count)
             testing.expect(t, int(triangle.b) < mesh.vertex_count)
             testing.expect(t, int(triangle.c) < mesh.vertex_count)
@@ -99,7 +103,8 @@ simple_car_trailer_variants_are_optimized_and_indexed :: proc(t: ^testing.T) {
 @(test)
 simple_car_solid_mesh_is_nondegenerate_with_kei_proportions :: proc(t: ^testing.T) {
     mesh := vehicles.simple_car_mesh()
-    for triangle in vehicles.mesh_triangles(&mesh) {
+    defer free(mesh)
+    for triangle in vehicles.mesh_triangles(mesh) {
         a := mesh.vertices[triangle.a].position
         b := mesh.vertices[triangle.b].position
         c := mesh.vertices[triangle.c].position

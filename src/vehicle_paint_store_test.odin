@@ -142,7 +142,8 @@ when ODIN_TEST {
     vehicle_paint_uv_mask_includes_triangle_edge_texels :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
-        mesh: vehicles.Aircraft_Mesh
+        mesh := new(vehicles.Aircraft_Mesh)
+        defer free(mesh)
         part := vehicles.Aircraft_Mesh_Part.Body
         mesh.vertex_count = 3
         mesh.triangle_count = 1
@@ -160,7 +161,7 @@ when ODIN_TEST {
         }
         mesh.triangles[0] = {0, 1, 2}
 
-        vehicle_paint_build_texel_parts(editor, &mesh)
+        vehicle_paint_build_texel_parts(editor, mesh)
 
         owner := u8(part) + 1
         testing.expect(t, editor.vehicle_paint_texel_part[10 * VEHICLE_PAINT_TEXTURE_WIDTH + 9] == owner)
@@ -171,7 +172,8 @@ when ODIN_TEST {
     vehicle_paint_uv_mask_excludes_protected_materials :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
-        mesh: vehicles.Aircraft_Mesh
+        mesh := new(vehicles.Aircraft_Mesh)
+        defer free(mesh)
         mesh.vertex_count = 6
         mesh.triangle_count = 2
         for index in 0 ..< 3 do mesh.vertices[index].part = .Wheel
@@ -185,7 +187,7 @@ when ODIN_TEST {
         mesh.triangles[0] = {0, 1, 2}
         mesh.triangles[1] = {3, 4, 5}
 
-        vehicle_paint_build_texel_parts(editor, &mesh)
+        vehicle_paint_build_texel_parts(editor, mesh)
 
         testing.expect(t, !vehicle_paint_part_is_paintable(.Wheel))
         testing.expect(t, !vehicle_paint_part_is_paintable(.Glass))
@@ -195,7 +197,8 @@ when ODIN_TEST {
 
     @(test)
     vehicle_paint_symmetry_resolves_the_opposite_surface_not_flipped_uv :: proc(t: ^testing.T) {
-        mesh: vehicles.Aircraft_Mesh
+        mesh := new(vehicles.Aircraft_Mesh)
+        defer free(mesh)
         mesh.vertex_count = 6
         mesh.triangle_count = 2
         mesh.vertices[0] = {
@@ -233,7 +236,7 @@ when ODIN_TEST {
         mesh.triangles[0] = {0, 1, 2}
         mesh.triangles[1] = {3, 4, 5}
 
-        found, mirrored_part, mirrored_uv := vehicle_paint_mirror_uv_mesh(&mesh, {-1, .25, .25}, .Wing)
+        found, mirrored_part, mirrored_uv := vehicle_paint_mirror_uv_mesh(mesh, {-1, .25, .25}, .Wing)
         testing.expect(t, found)
         testing.expect(t, mirrored_part == .Wing)
         testing.expect(t, math.abs(mirrored_uv[0] - .725) < .001)
