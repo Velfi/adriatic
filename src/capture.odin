@@ -241,6 +241,8 @@ CAPTURE_FLOWER_GENERATOR_TARGETS := [?]string {
     "ripe",
 }
 CAPTURE_FOUNTAIN_GENERATOR_TARGETS := [?]string{"tiered", "bowl", "courtyard"}
+CAPTURE_EDITOR_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout"}
+CAPTURE_MAP_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout"}
 CAPTURE_LIGHTHOUSE_TARGETS := [?]string {
     "adriatic",
     "aegean",
@@ -254,6 +256,10 @@ CAPTURE_LIGHTHOUSE_TARGETS := [?]string {
 
 capture_targets :: proc(kind: Capture_Kind) -> []string {
     #partial switch kind {
+    case .Editor:
+        return CAPTURE_EDITOR_TARGETS[:]
+    case .Map:
+        return CAPTURE_MAP_TARGETS[:]
     case .Building:
         return CAPTURE_BUILDING_TARGETS[:]
     case .Flight:

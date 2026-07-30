@@ -35,6 +35,25 @@ simple_car_solid_mesh_is_closed_and_grouped :: proc(t: ^testing.T) {
 }
 
 @(test)
+simple_car_solid_mesh_retains_period_detail_parts :: proc(t: ^testing.T) {
+    mesh := vehicles.simple_car_mesh()
+    headlight_count, tail_light_count, ivory_count := 0, 0, 0
+    for vertex in vehicles.mesh_vertices(&mesh) {
+        #partial switch vertex.part {
+        case .Headlight:
+            headlight_count += 1
+        case .Tail_Light:
+            tail_light_count += 1
+        case .Ivory:
+            ivory_count += 1
+        }
+    }
+    testing.expect(t, headlight_count > 0)
+    testing.expect(t, tail_light_count > 0)
+    testing.expect(t, ivory_count > 0)
+}
+
+@(test)
 simple_car_solid_mesh_is_nondegenerate_with_kei_proportions :: proc(t: ^testing.T) {
     mesh := vehicles.simple_car_mesh()
     for triangle in vehicles.mesh_triangles(&mesh) {

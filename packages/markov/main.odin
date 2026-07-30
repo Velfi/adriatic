@@ -67,6 +67,7 @@ main :: proc() {
             fmt.printf("  Seed %d: %d frames in %.3fs\n", seed, len(frames), elapsed)
 
             if len(frames) == 0 {
+                frames_destroy(&frames)
                 continue
             }
 
@@ -113,7 +114,9 @@ main :: proc() {
                     fmt.eprintln("  Failed to save:", output_path)
                 }
             }
+            frames_destroy(&frames)
         }
+        interpreter_destroy(ip)
     }
 
     fmt.println("\nDone!")

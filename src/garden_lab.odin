@@ -139,9 +139,9 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
         // Unequal overlapping groups gather against the perimeter while gaps
         // keep the cross paths and fountain court visually open.
         oleander_centers := [4]third_person.Vec3 {
-            {5.9, 0, 5.9},   // dominant flowering mass
-            {-6.3, 0, 5.7},  // secondary north-west group
-            {8.1, 0, 1.8},   // east-wall punctuation
+            {5.9, 0, 5.9}, // dominant flowering mass
+            {-6.3, 0, 5.7}, // secondary north-west group
+            {8.1, 0, 1.8}, // east-wall punctuation
             {-8.0, 0, -2.1}, // west-wall punctuation
         }
         oleander_counts := [4]int{6, 4, 3, 3}
@@ -149,25 +149,12 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
         for center, cluster_index in oleander_centers {
             count := oleander_counts[cluster_index]
             for member in 0 ..< count {
-                angle :=
-                    f32(member) * 2.399963 +
-                    garden_random01(seed, oleander_index, 11) * .7
+                angle := f32(member) * 2.399963 + garden_random01(seed, oleander_index, 11) * .7
                 radius := member == 0 ? f32(0) : .62 + garden_random01(seed, oleander_index, 13) * .82
-                position :=
-                    center +
-                    third_person.Vec3 {
-                        math.cos(angle) * radius,
-                        0,
-                        math.sin(angle) * radius * .72,
-                    }
+                position := center + third_person.Vec3{math.cos(angle) * radius, 0, math.sin(angle) * radius * .72}
                 garden_add_plant(
                     &plan,
-                    {
-                        position,
-                        .Shrub,
-                        .84 + garden_random01(seed, oleander_index, 17) * .28,
-                        GARDEN_LEAF,
-                    },
+                    {position, .Shrub, .84 + garden_random01(seed, oleander_index, 17) * .28, GARDEN_LEAF},
                 )
                 oleander_index += 1
             }
@@ -175,12 +162,7 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
         // Low aromatic drifts occupy the formal beds without competing with
         // the oleander backdrop. Their loose stagger keeps them botanical
         // while retaining the courtyard's geometric four-bed organization.
-        aromatic_centers := [4]third_person.Vec3 {
-            {-4.4, 0, -3.8},
-            {4.4, 0, -3.8},
-            {-4.4, 0, 3.8},
-            {4.4, 0, 3.8},
-        }
+        aromatic_centers := [4]third_person.Vec3{{-4.4, 0, -3.8}, {4.4, 0, -3.8}, {-4.4, 0, 3.8}, {4.4, 0, 3.8}}
         for center, bed_index in aromatic_centers {
             for member in 0 ..< 5 {
                 column := member % 3
@@ -191,11 +173,7 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
                     &plan,
                     {
                         center +
-                        third_person.Vec3 {
-                            (f32(column) - 1) * 1.05 + jitter_x,
-                            0,
-                            (f32(row) - .5) * .92 + jitter_z,
-                        },
+                        third_person.Vec3{(f32(column) - 1) * 1.05 + jitter_x, 0, (f32(row) - .5) * .92 + jitter_z},
                         .Groundcover,
                         .42 + garden_random01(seed, bed_index * 5 + member, 41) * .14,
                         {77, 111, 66, 255},
@@ -433,11 +411,7 @@ garden_clip_segment_to_crown :: proc(source: lsystem.Segment, kind: int) -> (res
         result = source
         crown_top := center[1] + radii[1]
         if source.end[1] > crown_top {
-            t := clamp(
-                (crown_top - source.start[1]) / max(source.end[1] - source.start[1], f32(.001)),
-                f32(0),
-                f32(1),
-            )
+            t := clamp((crown_top - source.start[1]) / max(source.end[1] - source.start[1], f32(.001)), f32(0), f32(1))
             result.end = source.start + (source.end - source.start) * t
             result.radius_end = source.radius_start + (source.radius_end - source.radius_start) * t
         }
@@ -944,12 +918,7 @@ garden_mesh_instance :: proc(
         basis_y_translation_y = {y_axis.x, y_axis.y, y_axis.z, translation.y},
         basis_z_translation_z = {z_axis.x, z_axis.y, z_axis.z, translation.z},
         color = world_color(color),
-        normal_override = {
-            normal_override.x,
-            normal_override.y,
-            normal_override.z,
-            override_normal ? f32(1) : f32(0),
-        },
+        normal_override = {normal_override.x, normal_override.y, normal_override.z, override_normal ? f32(1) : f32(0)},
     }
 }
 
@@ -962,9 +931,9 @@ garden_instance_leaf_mesh_ensure :: proc(cache_kind, variant: int, mesh: ^leaf_m
     for vertex, index in mesh.vertices {
         vertices[index] = {
             position = vertex.position,
-            color = {1, 1, 1, 1},
-            kind = .Leaf,
-            normal = vertex.normal,
+            color    = {1, 1, 1, 1},
+            kind     = .Leaf,
+            normal   = vertex.normal,
             material = {0, .82},
         }
     }
@@ -990,9 +959,9 @@ garden_instance_flower_mesh_ensure :: proc(stage_index: int) -> int {
     for vertex, index in mesh.vertices {
         vertices[index] = {
             position = {vertex.position[0], vertex.position[2], vertex.position[1]},
-            color = {1, 1, 1, 1},
-            kind = .Petal,
-            normal = {vertex.normal[0], vertex.normal[2], vertex.normal[1]},
+            color    = {1, 1, 1, 1},
+            kind     = .Petal,
+            normal   = {vertex.normal[0], vertex.normal[2], vertex.normal[1]},
             material = {0, .88},
         }
     }
@@ -1012,9 +981,9 @@ garden_instance_branch_mesh_ensure :: proc(cache_kind, variant: int, mesh: ^bran
     for vertex, index in mesh.vertices {
         vertices[index] = {
             position = vertex.position,
-            color = {1, 1, 1, 1},
-            kind = .BRDF,
-            normal = vertex.normal,
+            color    = {1, 1, 1, 1},
+            kind     = .BRDF,
+            normal   = vertex.normal,
             material = {0, .78},
         }
     }
@@ -1063,15 +1032,7 @@ garden_draw_generated_leaf :: proc(
         mesh_index := garden_instance_leaf_mesh_ensure(cache_kind, variant, mesh)
         world_instance_mesh_emit(
             mesh_index,
-            garden_mesh_instance(
-                right * scale,
-                forward * scale,
-                up * scale,
-                position,
-                color,
-                outward,
-                true,
-            ),
+            garden_mesh_instance(right * scale, forward * scale, up * scale, position, color, outward, true),
         )
         return
     }
@@ -1082,18 +1043,7 @@ garden_draw_generated_leaf :: proc(
             points[point_index] =
                 position + right * source[0] * scale + forward * source[1] * scale + up * source[2] * scale
         }
-        world_triangle_foliage(
-            points[0],
-            points[1],
-            points[2],
-            color,
-            color,
-            color,
-            outward,
-            outward,
-            outward,
-            .Leaf,
-        )
+        world_triangle_foliage(points[0], points[1], points[2], color, color, color, outward, outward, outward, .Leaf)
         world_triangle_foliage(
             points[2],
             points[1],
@@ -1133,13 +1083,7 @@ garden_draw_attachment_flower :: proc(
     axis_scale := third_person.Vec3{scale, 0, 0}
     world_instance_mesh_emit(
         mesh_index,
-        garden_mesh_instance(
-            axis_scale,
-            {0, scale, 0},
-            {0, 0, scale},
-            position,
-            color,
-        ),
+        garden_mesh_instance(axis_scale, {0, scale, 0}, {0, 0, scale}, position, color),
     )
 }
 
@@ -1251,10 +1195,10 @@ garden_draw_lsystem_plant :: proc(plant: Garden_Plant, cache_kind: int) {
                     floret_position :=
                         position +
                         third_person.Vec3 {
-                            math.cos(angle) * radius,
-                            (floret == 0 ? f32(.13) : f32(.105)) * plant.scale,
-                            math.sin(angle) * radius,
-                        }
+                                math.cos(angle) * radius,
+                                (floret == 0 ? f32(.13) : f32(.105)) * plant.scale,
+                                math.sin(angle) * radius,
+                            }
                     garden_draw_attachment_flower(
                         floret_position,
                         .78 * plant.scale,
@@ -1351,11 +1295,7 @@ garden_draw_plant :: proc(plant: Garden_Plant) {
             meadow := plant
             location_hash := u32(abs(plant.position.x * 59 + plant.position.z * 83))
             cache_kind := 4 + int(garden_hash(garden_lab_seed + location_hash) % 3)
-            meadow_colors := [3]rl.Color {
-                {76, 105, 82, 255},
-                {68, 108, 62, 255},
-                {101, 124, 91, 255},
-            }
+            meadow_colors := [3]rl.Color{{76, 105, 82, 255}, {68, 108, 62, 255}, {101, 124, 91, 255}}
             meadow_scales := [3]f32{.74, .66, .68}
             meadow.color = meadow_colors[cache_kind - 4]
             meadow.scale *= meadow_scales[cache_kind - 4]
@@ -1453,11 +1393,7 @@ garden_draw_arch_climber :: proc(center: third_person.Vec3) {
             // the bracts share its support frame instead of substituting a
             // synthetic foliage block.
             normal := linalg.normalize0(third_person.Vec3{attachment.up[0], attachment.up[1], attachment.up[2]})
-            bract_palette := [3]rl.Color {
-                {220, 53, 133, 255},
-                {237, 72, 145, 255},
-                {196, 46, 122, 255},
-            }
+            bract_palette := [3]rl.Color{{220, 53, 133, 255}, {237, 72, 145, 255}, {196, 46, 122, 255}}
             for bract in 0 ..< 3 {
                 garden_draw_generated_leaf(
                     position,
@@ -1688,9 +1624,7 @@ world_garden_lab :: proc(_: ^Editor) {
                 // revealing the candidate grid. Keep the path edge shorter,
                 // then let tufts rise into the open meadow.
                 patch_density := clamp(
-                    .52 +
-                    math.sin(x * .71 + z * .29) * .20 +
-                    math.sin(z * .91 - x * .24) * .15,
+                    .52 + math.sin(x * .71 + z * .29) * .20 + math.sin(z * .91 - x * .24) * .15,
                     f32(.20),
                     f32(.86),
                 )

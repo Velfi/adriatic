@@ -61,9 +61,24 @@ make_frame :: proc(g: ^Grid, allocator := context.allocator) -> Frame {
     return frame
 }
 
+frame_destroy :: proc(frame: ^Frame, allocator := context.allocator) {
+    if frame == nil do return
+    delete(frame.state, allocator)
+    delete(frame.chars, allocator)
+    frame^ = {}
+}
+
+frames_destroy :: proc(frames: ^[dynamic]Frame, allocator := context.allocator) {
+    if frames == nil do return
+    for &frame in frames^ do frame_destroy(&frame, allocator)
+    delete(frames^)
+    frames^ = nil
+}
+
 // Create an interpreter from a loaded model
 interpreter_create :: proc(root: ^Node, grid: ^Grid, origin: bool, allocator := context.allocator) -> ^Interpreter {
     ip := new(Interpreter, allocator)
+    ip.allocator = allocator
     ip.root = root
     ip.current = root
     ip.grid = grid

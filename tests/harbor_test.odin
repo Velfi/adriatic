@@ -253,16 +253,16 @@ minimum_intervention_strategy_matrix :: proc(t: ^testing.T) {
     working_medium := harbor.derive_harbor_program(.Working_Port, 1500, 3)
     working := harbor.derive_harbor_program(.Working_Port, 3000, 3)
 
-    sheltered := harbor.Harbor_Site{
-        valid = true,
-        preferred_scale = 260,
-        open_water_score = .85,
-        backland_score = .75,
-        exposure_score = .18,
-        slope_score = .25,
+    sheltered := harbor.Harbor_Site {
+        valid             = true,
+        preferred_scale   = 260,
+        open_water_score  = .85,
+        backland_score    = .75,
+        exposure_score    = .18,
+        slope_score       = .25,
         construction_cost = .12,
-        opportunity = .Cove,
-        curvature_score = .28,
+        opportunity       = .Cove,
+        curvature_score   = .28,
     }
     strategy, downgraded, _ := harbor.choose_strategy(&sheltered, &village)
     testing.expect_value(t, strategy, harbor.Harbor_Strategy.Natural_Anchorage)
@@ -335,10 +335,7 @@ navigable_envelope_follows_shore_and_stops_at_land :: proc(t: ^testing.T) {
         shore := harbor.shoreline_sample(&site, fraction)
         outward := harbor.shoreline_outward(&site, fraction)
         endpoint := harbor.add(shore, harbor.scale(outward, extent))
-        testing.expect(
-            t,
-            terrain.sample_height(project, 0, endpoint.x, endpoint.z) <= project.sea_level + .08,
-        )
+        testing.expect(t, terrain.sample_height(project, 0, endpoint.x, endpoint.z) <= project.sea_level + .08)
         if extent < 149 {
             obstruction := harbor.add(shore, harbor.scale(outward, extent + 5))
             testing.expect(

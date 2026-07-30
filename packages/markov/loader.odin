@@ -1074,6 +1074,15 @@ load_node :: proc(
     }
 
     node := new(Node, allocator)
+    load_succeeded := false
+    unowned_grid: ^Grid
+    defer if !load_succeeded {
+        node_destroy(node, allocator)
+        if unowned_grid != nil {
+            grid_destroy(unowned_grid, allocator)
+            free(unowned_grid, allocator)
+        }
+    }
     node.ip = ip
     node.grid = grid
 
@@ -1239,6 +1248,7 @@ load_node :: proc(
             grid.m.z * mn.nm[2] / mn.dm[2],
         }
         newgrid := new(Grid, allocator)
+        unowned_grid = newgrid
         if has_values_count {
             if !grid_init_count(newgrid, new_m, values_count, allocator) {
                 log.error("Failed to initialize map newgrid from values_count")
@@ -1260,6 +1270,7 @@ load_node :: proc(
         load_unions(doc, elem_id, newgrid)
 
         mn.newgrid = newgrid
+        unowned_grid = nil
 
         // Load rules (from grid to newgrid)
         map_rules := make([dynamic]Rule, allocator)
@@ -1373,6 +1384,7 @@ load_node :: proc(
         child_grid := grid
         if values_count, count_ok := typed_attr_symbol_count(doc, elem_id, "values"); count_ok {
             child_grid = new(Grid, allocator)
+            unowned_grid = child_grid
             if !grid_init_count(child_grid, grid.m, values_count, allocator) {
                 log.error("Failed to initialize WFC grid with values_count")
                 return nil, false
@@ -1382,6 +1394,7 @@ load_node :: proc(
             clean_values := strings.trim_space(wfc_values)
             values_no_space, _ := strings.replace_all(clean_values, " ", "", context.temp_allocator)
             child_grid = new(Grid, allocator)
+            unowned_grid = child_grid
             if !grid_init(child_grid, grid.m, values_no_space, allocator) {
                 log.error("Failed to initialize WFC grid with values")
                 return nil, false
@@ -1408,6 +1421,7 @@ load_node :: proc(
             overlap_values := child_grid
             if overlap_values == grid {
                 overlap_values = new(Grid, allocator)
+                unowned_grid = overlap_values
                 values_str := ""
                 for i in 0 ..< int(grid.c) {
                     values_str = strings.concatenate({values_str, string([]u8{grid.chars[i]})}, context.temp_allocator)
@@ -1420,6 +1434,7 @@ load_node :: proc(
                 load_unions(doc, elem_id, overlap_values)
             }
             wfc.newgrid = overlap_values
+            unowned_grid = nil
 
             sample_path := strings.concatenate({"resources/samples/", sample_name, ".png"}, context.temp_allocator)
             sample_bitmap, sample_m, sample_loaded := load_bitmap(sample_path, context.temp_allocator)
@@ -1665,6 +1680,7 @@ load_node :: proc(
                 log.errorf("Failed to load tileset: %s", tileset_name)
                 return nil, false
             }
+            defer tileset_destroy(ts, allocator)
 
             tn.s = ts.tile_size
             tn.sz = ts.tile_sizez
@@ -1690,10 +1706,17 @@ load_node :: proc(
                 return nil, false
             }
             load_unions(doc, elem_id, wfc.newgrid)
+            if child_grid != grid {
+                grid_destroy(child_grid, allocator)
+                free(child_grid, allocator)
+                child_grid = grid
+                unowned_grid = nil
+            }
 
             tn.tiledata = make([dynamic][]u8, allocator)
-            for tile in ts.tiles {
+            for &tile in ts.tiles {
                 append(&tn.tiledata, tile.data)
+                tile.data = nil
             }
 
             p := len(ts.tiles)
@@ -1791,6 +1814,7 @@ load_node :: proc(
         return nil, false
     }
 
+    load_succeeded = true
     return node, true
 }
 
@@ -1832,6 +1856,13 @@ load_model_document :: proc(doc: ^xml.Document, m: [3]int, allocator := context.
     }
 
     grid := new(Grid, allocator)
+    ip := new(Interpreter, allocator)
+    ip.allocator = allocator
+    ip.grid = grid
+    ip.startgrid = grid
+    load_succeeded := false
+    defer if !load_succeeded do interpreter_destroy(ip)
+
     if has_values_count {
         if !grid_init_count(grid, m, values_count, allocator) {
             log.error("Failed to initialize grid from values_count")
@@ -1848,10 +1879,7 @@ load_model_document :: proc(doc: ^xml.Document, m: [3]int, allocator := context.
     // Load all unions from the model tree
     load_unions(doc, 0, grid)
 
-    // Create interpreter first (needed for node loading)
-    ip := new(Interpreter, allocator)
-    ip.grid = grid
-    ip.startgrid = grid
+    // Finish interpreter initialization before loading nodes.
     ip.origin = origin
     ip.changes = make([dynamic][3]int, allocator)
     ip.first = make([dynamic]int, allocator)
@@ -1913,6 +1941,7 @@ load_model_document :: proc(doc: ^xml.Document, m: [3]int, allocator := context.
                     root.grid = grid
                     b := &root.data.markov.branch_base
                     b.children = make([dynamic]^Node, allocator)
+                    ip.root = root
 
                     for child_id in node_children {
                         child, ok := load_node(doc, child_id, ip, grid, default_symmetry, allocator)
@@ -1921,7 +1950,6 @@ load_model_document :: proc(doc: ^xml.Document, m: [3]int, allocator := context.
                         }
                         append(&b.children, child)
                     }
-                    ip.root = root
                 }
             } else {
                 log.error("No node children found in model")
@@ -1931,6 +1959,7 @@ load_model_document :: proc(doc: ^xml.Document, m: [3]int, allocator := context.
     }
 
     ip.current = ip.root
+    load_succeeded = true
     return ip, true
 }
 
@@ -1960,6 +1989,20 @@ Tile_Info :: struct {
     weight: f64,
 }
 
+tileset_destroy :: proc(ts: ^Tileset, allocator := context.allocator) {
+    if ts == nil do return
+    for &tile in ts.tiles {
+        delete(tile.name, allocator)
+        delete(tile.data, allocator)
+    }
+    delete(ts.tiles)
+    for direction in ts.propagator {
+        for compatible in direction do delete(compatible, allocator)
+        delete(direction, allocator)
+    }
+    free(ts, allocator)
+}
+
 // Load a tileset XML file
 // name: tileset name (for loading the XML file)
 // tiles_dir: directory where tile VOX files are located (relative to resources/tilesets/)
@@ -1982,6 +2025,8 @@ load_tileset :: proc(
 
     ts := new(Tileset, allocator)
     ts.tiles = make([dynamic]Tile_Info, allocator)
+    load_succeeded := false
+    defer if !load_succeeded do tileset_destroy(ts, allocator)
 
     // Find tiles element
     tiles_elems := get_children_by_name(doc, 0, "tiles")
@@ -2049,10 +2094,12 @@ load_tileset :: proc(
 
         // Generate rotations (z-axis rotations for 2D-style tiles)
         rotations := tile_rotations(tile_data, ts.tile_size, ts.tile_sizez, allocator)
+        delete(tile_data, allocator)
         first_idx := len(ts.tiles)
         for rot in rotations {
             append(&ts.tiles, Tile_Info{name = strings.clone(tile_name, allocator), data = rot, weight = weight})
         }
+        delete(rotations)
         tile_indices[tile_name] = first_idx // First rotation is the "base"
     }
 
@@ -2164,6 +2211,7 @@ load_tileset :: proc(
         }
     }
 
+    load_succeeded = true
     return ts, true
 }
 
@@ -2222,9 +2270,11 @@ tile_rotations :: proc(data: []u8, s, sz: int, allocator := context.allocator) -
         }
         if !already_have {
             append(&result, things[i])
+            things[i] = nil
         }
     }
 
+    for thing in things do delete(thing, allocator)
     return result[:]
 }
 

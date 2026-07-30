@@ -612,46 +612,14 @@ circulation_plan_add_town :: proc(plan: ^circulation.Plan, project: ^terrain.Pro
     }
 }
 
-// Produces the complete circulation intent for every architecture settlement.
-// Rendering, vegetation, and gameplay queries consume this same plan.
+// Legacy architecture generation used to synthesize a second street network
+// from building bounds here. Authored roads and settlement access alleys are
+// now the canonical circulation systems; deriving another network from the
+// same buildings produced overlapping visible roads and phantom gameplay
+// surfaces. Keep the empty plan adapter until callers are migrated to query
+// the road graph and City_Plan directly.
 circulation_plan :: proc(project: ^terrain.Project) -> circulation.Plan {
     plan: circulation.Plan
-    if project == nil do return plan
-
-    candidates := make([dynamic]int, 0, project.structure_count)
-    defer delete(candidates)
-    for structure, structure_index in project.structures[:project.structure_count] {
-        if structure.kind != .Architecture || structure.height > 60 do continue
-        append(&candidates, structure_index)
-    }
-
-    // Buildings connected through a 320 m neighborhood belong to one town.
-    // The threshold comfortably spans a painted settlement while keeping the
-    // two default islands, and other distant settlements, independent.
-    CLUSTER_DISTANCE :: f32(320)
-    assigned := make([]bool, len(candidates))
-    cluster := make([]int, len(candidates))
-    defer delete(assigned)
-    defer delete(cluster)
-    for candidate_index in 0 ..< len(candidates) {
-        if assigned[candidate_index] do continue
-        assigned[candidate_index] = true
-        cluster[0] = candidates[candidate_index]
-        cluster_count := 1
-        for cursor := 0; cursor < cluster_count; cursor += 1 {
-            anchor := project.structures[cluster[cursor]]
-            for other_index in 0 ..< len(candidates) {
-                if assigned[other_index] do continue
-                other := project.structures[candidates[other_index]]
-                dx, dz := other.center_x - anchor.center_x, other.center_z - anchor.center_z
-                if dx * dx + dz * dz > CLUSTER_DISTANCE * CLUSTER_DISTANCE do continue
-                assigned[other_index] = true
-                cluster[cluster_count] = candidates[other_index]
-                cluster_count += 1
-            }
-        }
-        circulation_plan_add_town(&plan, project, cluster[:cluster_count])
-    }
     return plan
 }
 

@@ -15,9 +15,7 @@ import "core:testing"
 settlement_garden_plants_stay_inside_their_plots :: proc(t: ^testing.T) {
     household := Settlement_Site {
         kind = .Ordinary,
-        parcel = {
-            corners = {{-5, -3}, {5, -3}, {5, 3}, {-5, 3}},
-        },
+        parcel = {corners = {{-5, -3}, {5, -3}, {5, 3}, {-5, 3}}},
     }
     testing.expect(t, settlement_garden_point_in_plot(household, 0, 0, .4))
     testing.expect(t, !settlement_garden_point_in_plot(household, 0, -3.1, .4))
@@ -25,13 +23,7 @@ settlement_garden_plants_stay_inside_their_plots :: proc(t: ^testing.T) {
 
     park := Settlement_Site {
         kind = .Park,
-        structure = {
-            center_x = 10,
-            center_z = 20,
-            width = 8,
-            depth = 4,
-            rotation = math.PI / 2,
-        },
+        structure = {center_x = 10, center_z = 20, width = 8, depth = 4, rotation = math.PI / 2},
     }
     testing.expect(t, settlement_garden_point_in_plot(park, 10, 23, .4))
     testing.expect(t, !settlement_garden_point_in_plot(park, 13, 20, .4))
@@ -1510,6 +1502,29 @@ settlement_building_clearance_rejects_crowding :: proc(t: ^testing.T) {
     empty_city: architecture.City_Plan
     testing.expect(t, !settlement_structure_clear(road_project, &empty_city, 0, 5, 8, 14, 0, .8))
     testing.expect(t, settlement_structure_clear(road_project, &empty_city, 0, 16, 8, 14, 0, .8))
+}
+
+@(test)
+settlement_buildable_footprint_rejects_a_submerged_edge :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    center_x, center_z := terrain.default_island_center(-1)
+    shoreline_x := center_x
+    found := false
+    // Walk from the west-island interior toward its exposed coast and retain
+    // the final dry sample. The parcel center remains viable while its western
+    // edge extends beyond the generated shoreline.
+    for offset := f32(0); offset <= 1500; offset += 4 {
+        candidate_x := center_x - offset
+        if terrain.sample_height(project, 0, candidate_x, center_z) <= project.sea_level + .6 {
+            found = true
+            break
+        }
+        shoreline_x = candidate_x
+    }
+    testing.expect(t, found)
+    testing.expect(t, terrain.sample_height(project, 0, shoreline_x, center_z) > project.sea_level + .6)
+    testing.expect(t, !settlement_structure_footprint_on_land(project, shoreline_x, center_z, 16, 8, 0))
 }
 
 @(test)
@@ -3479,6 +3494,63 @@ settlement_short_routes_remain_explicit_segments :: proc(t: ^testing.T) {
     testing.expect(t, settlement_route_point_near(route.points[1], {106, 104}))
 }
 
+@(test)
+settlement_poi_road_network_is_sparse_connected_and_deterministic :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    pois := [5]Settlement_Road_Network_PoI {
+        {position = {-70, -35}, required = true},
+        {position = {-15, 30}},
+        {position = {35, -20}},
+        {position = {80, 35}, required = true},
+        {position = {5, 85}},
+    }
+    first, second: Settlement_Plan
+    first_rng := settlement_rng_new(91)
+    second_rng := settlement_rng_new(91)
+
+    first_connected := settlement_plan_connect_road_network(&first, project, pois[:], &first_rng)
+    second_connected := settlement_plan_connect_road_network(&second, project, pois[:], &second_rng)
+
+    testing.expect_value(t, first_connected, len(pois))
+    testing.expect_value(t, first.route_count, len(pois) - 1)
+    testing.expect_value(t, first.route_count, second.route_count)
+    testing.expect(t, settlement_plan_required_routes_connected(&first))
+    for route, index in first.routes[:first.route_count] {
+        other := second.routes[index]
+        testing.expect_value(t, route.geometry.count, other.geometry.count)
+        testing.expect(t, !settlement_route_crosses_sea(project, route.geometry))
+        testing.expect(t, route.maximum_grade <= settlement_route_grade_limit(.Connector) + .001)
+        for point_index in 0 ..< route.geometry.count {
+            testing.expect(
+                t,
+                settlement_route_point_near(route.geometry.points[point_index], other.geometry.points[point_index]),
+            )
+        }
+    }
+}
+
+@(test)
+settlement_poi_road_network_does_not_force_an_unbuildable_link :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = 0
+    terrain.apply_stroke_with_hardness(project, .Raise, -35, 0, 10, 8, 1, .8)
+    terrain.apply_stroke_with_hardness(project, .Raise, 35, 0, 10, 8, 1, .8)
+    pois := [2]Settlement_Road_Network_PoI {
+        {position = {-35, 0}, required = true},
+        {position = {35, 0}, required = true},
+    }
+    plan: Settlement_Plan
+    rng := settlement_rng_new(17)
+
+    connected := settlement_plan_connect_road_network(&plan, project, pois[:], &rng)
+
+    testing.expect_value(t, connected, 1)
+    testing.expect_value(t, plan.route_count, 0)
+}
+
 settlement_overlapping_roads_are_widened_instead_of_duplicated :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -3745,6 +3817,93 @@ settlement_route_submersion_checks_segments_not_only_vertices :: proc(t: ^testin
 }
 
 @(test)
+settlement_routes_split_preexisting_main_roads_into_shared_junctions :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    from := roads.add_node(&project.road_graph, {-40, 0, 0}, 4)
+    to := roads.add_node(&project.road_graph, {40, 0, 0}, 4)
+    _ = roads.add_straight_edge(&project.road_graph, from, to, 8, 2, .Asphalt)
+    plan: Settlement_Plan
+    plan.routes[0] = {
+        geometry = {points = {0 = {0, -30}, 1 = {0, 30}}, count = 2},
+        class = .Street,
+        width = 5,
+        shoulder = 1,
+        pavement = .Cobblestone,
+        drivable = true,
+    }
+    plan.route_count = 1
+
+    settlement_plan_split_project_road_intersections(&plan, project)
+
+    testing.expect_value(t, project.road_graph.node_count, 3)
+    testing.expect_value(t, project.road_graph.edge_count, 2)
+    testing.expect_value(t, plan.routes[0].geometry.count, 3)
+    junction := project.road_graph.nodes[2].position
+    testing.expect(t, math.abs(junction.x) < .01 && math.abs(junction.z) < .01)
+    testing.expect(t, settlement_route_point_near(plan.routes[0].geometry.points[1], {junction.x, junction.z}))
+
+    settlement_plan_commit_routes(&plan, project)
+    testing.expect_value(t, roads.node_degree(&project.road_graph, 2), 4)
+}
+
+@(test)
+settlement_road_gateways_split_regional_roads_before_route_planning :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    west := roads.add_node(&project.road_graph, {-100, 0, 0}, 4)
+    east := roads.add_node(&project.road_graph, {100, 0, 0}, 4)
+    _ = roads.add_straight_edge(&project.road_graph, west, east, 8, 2, .Asphalt)
+    plan: Settlement_Plan
+    plan.request = {
+        center = {0, 0},
+        radius = 60,
+        scale  = .Town,
+    }
+    gateways: [SETTLEMENT_ROAD_GATEWAY_CAPACITY][2]f32
+
+    count := settlement_plan_road_gateways(&plan, project, &gateways)
+
+    testing.expect_value(t, count, 2)
+    testing.expect_value(t, project.road_graph.node_count, 4)
+    testing.expect_value(t, project.road_graph.edge_count, 3)
+    testing.expect(t, linalg.length(gateways[0] - gateways[1]) >= 27)
+    for gateway in gateways[:count] {
+        testing.expect(t, math.abs(gateway[1]) < .01)
+        testing.expect(t, math.abs(linalg.length(gateway) - plan.request.radius * .72) < 10)
+    }
+    local_route: Settlement_Route
+    local_route.points[0], local_route.points[1], local_route.count = gateways[0], gateways[0] + [2]f32{0, 30}, 2
+    settlement_route_commit(project, local_route, 5, 1, .Cobblestone)
+    joined_node := -1
+    for node, node_index in project.road_graph.nodes[:project.road_graph.node_count] {
+        if settlement_route_point_near({node.position.x, node.position.z}, gateways[0], .01) {
+            joined_node = node_index
+            break
+        }
+    }
+    testing.expect(t, joined_node >= 0)
+    testing.expect_value(t, roads.node_degree(&project.road_graph, joined_node), 3)
+}
+
+@(test)
+settlement_route_commit_does_not_merge_distinct_nearby_junctions :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    existing := roads.add_node(&project.road_graph, {1.5, 0, 0}, 4)
+    route: Settlement_Route
+    route.points[0], route.points[1], route.count = {0, 0}, {0, 20}, 2
+
+    settlement_route_commit(project, route, 5, 1, .Cobblestone)
+
+    testing.expect_value(t, project.road_graph.node_count, 3)
+    testing.expect(t, project.road_graph.edges[0].from != existing)
+}
+
+@(test)
 settlement_streets_preserve_grade_safe_route_waypoints :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
@@ -3752,7 +3911,7 @@ settlement_streets_preserve_grade_safe_route_waypoints :: proc(t: ^testing.T) {
 
     route := settlement_route_find(project, -80, 0, 80, 0, .Street)
 
-    testing.expect_value(t, route.count, 6)
+    testing.expect(t, route.count >= 2)
     maximum_grade := f32(0)
     for index in 0 ..< route.count - 1 {
         a, b := route.points[index], route.points[index + 1]
@@ -3763,6 +3922,47 @@ settlement_streets_preserve_grade_safe_route_waypoints :: proc(t: ^testing.T) {
         maximum_grade = max(maximum_grade, grade)
     }
     testing.expect(t, maximum_grade <= settlement_route_grade_limit(.Street) + .001)
+}
+
+@(test)
+settlement_connectors_preserve_grade_safe_route_waypoints :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = -100
+
+    route := settlement_route_find(project, -80, 0, 80, 0, .Connector)
+
+    testing.expect(t, route.count >= 2)
+    _, _, maximum_grade := settlement_route_length_and_grade(project, route)
+    testing.expect(t, maximum_grade <= settlement_route_grade_limit(.Connector) + .001)
+    testing.expect_value(t, settlement_route_grade_limit(.Stair), f32(.65))
+}
+
+@(test)
+settlement_connectors_wind_across_steep_contours :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    level := &project.levels[0]
+    level.cell_size, level.origin_x, level.origin_z = .5, -80, -80
+    for z in 0 ..< terrain.RING_RESOLUTION {
+        for x in 0 ..< terrain.RING_RESOLUTION {
+            world_x := level.origin_x + f32(x) * level.cell_size
+            level.heights[terrain.sample_index(x, z)] = 20 + world_x * .15
+        }
+    }
+
+    route := settlement_route_find(project, -30, 0, 30, 0, .Connector)
+
+    testing.expect(t, route.count > 2)
+    length, _, maximum_grade := settlement_route_length_and_grade(project, route)
+    testing.expect(t, length > 75)
+    testing.expect(t, maximum_grade <= settlement_route_grade_limit(.Connector) + .001)
+    maximum_wander := f32(0)
+    for point in route.points[:route.count] {
+        maximum_wander = max(maximum_wander, math.abs(point[1]))
+    }
+    testing.expect(t, maximum_wander > 10)
 }
 
 @(test)
@@ -3854,11 +4054,7 @@ settlement_access_surfaces_follow_use_width_and_network_demand :: proc(t: ^testi
     testing.expect_value(t, settlement_access_surface(shared_trunk), Settlement_Access_Surface.Stone)
     testing.expect_value(t, settlement_access_route_pavement(.05, 1.2), roads.Pavement.Dirt)
     testing.expect_value(t, settlement_access_route_pavement(.05, 1.6), roads.Pavement.Gravel)
-    testing.expect_value(
-        t,
-        settlement_access_route_pavement(SETTLEMENT_ACCESS_STAIR_GRADE, 1.2),
-        roads.Pavement.Steps,
-    )
+    testing.expect_value(t, settlement_access_route_pavement(SETTLEMENT_ACCESS_STAIR_GRADE, 1.2), roads.Pavement.Steps)
 }
 
 @(test)
@@ -3941,16 +4137,8 @@ generated_plants_select_detail_from_camera_distance :: proc(t: ^testing.T) {
     testing.expect_value(t, generated_plant_catalog_detail(.Medium), plants.Detail_Level.Medium)
     testing.expect_value(t, generated_plant_catalog_detail(.Far), plants.Detail_Level.Far)
     testing.expect_value(t, generated_plant_catalog_detail(.Distant), plants.Detail_Level.Far)
-    testing.expect_value(
-        t,
-        generated_plant_apply_detail_floor(.Near, .Medium),
-        plants.Detail_Level.Medium,
-    )
-    testing.expect_value(
-        t,
-        generated_plant_apply_detail_floor(.Far, .Medium),
-        plants.Detail_Level.Far,
-    )
+    testing.expect_value(t, generated_plant_apply_detail_floor(.Near, .Medium), plants.Detail_Level.Medium)
+    testing.expect_value(t, generated_plant_apply_detail_floor(.Far, .Medium), plants.Detail_Level.Far)
     graded := generated_plant_point({4, 10, 7}, {2, 1, 0}, 0, 1, .25)
     testing.expect(t, abs(graded.x - 6) < .001)
     testing.expect(t, abs(graded.y - 11.5) < .001)

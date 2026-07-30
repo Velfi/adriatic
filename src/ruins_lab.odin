@@ -44,27 +44,70 @@ ruins_lab_shaded_box_rotated :: proc(
     }
     points: [8]third_person.Vec3
     for index in 0 ..< len(points) {
-        world_x, world_z :=
-            world_rotate_xz(center.x, center.z, local[index][0], local[index][2], rotation)
+        world_x, world_z := world_rotate_xz(center.x, center.z, local[index][0], local[index][2], rotation)
         points[index] = {world_x, center.y + local[index][1], world_z}
     }
-    world_quad_lit(points[0], points[3], points[2], points[1], color, RUINS_LAB_MATERIAL_METALLIC, RUINS_LAB_MATERIAL_ROUGHNESS)
-    world_quad_lit(points[4], points[5], points[6], points[7], color, RUINS_LAB_MATERIAL_METALLIC, RUINS_LAB_MATERIAL_ROUGHNESS)
-    world_quad_lit(points[0], points[4], points[7], points[3], color, RUINS_LAB_MATERIAL_METALLIC, RUINS_LAB_MATERIAL_ROUGHNESS)
-    world_quad_lit(points[1], points[2], points[6], points[5], color, RUINS_LAB_MATERIAL_METALLIC, RUINS_LAB_MATERIAL_ROUGHNESS)
-    world_quad_lit(points[3], points[7], points[6], points[2], color, RUINS_LAB_MATERIAL_METALLIC, RUINS_LAB_MATERIAL_ROUGHNESS)
-    world_quad_lit(points[0], points[1], points[5], points[4], color, RUINS_LAB_MATERIAL_METALLIC, RUINS_LAB_MATERIAL_ROUGHNESS)
+    world_quad_lit(
+        points[0],
+        points[3],
+        points[2],
+        points[1],
+        color,
+        RUINS_LAB_MATERIAL_METALLIC,
+        RUINS_LAB_MATERIAL_ROUGHNESS,
+    )
+    world_quad_lit(
+        points[4],
+        points[5],
+        points[6],
+        points[7],
+        color,
+        RUINS_LAB_MATERIAL_METALLIC,
+        RUINS_LAB_MATERIAL_ROUGHNESS,
+    )
+    world_quad_lit(
+        points[0],
+        points[4],
+        points[7],
+        points[3],
+        color,
+        RUINS_LAB_MATERIAL_METALLIC,
+        RUINS_LAB_MATERIAL_ROUGHNESS,
+    )
+    world_quad_lit(
+        points[1],
+        points[2],
+        points[6],
+        points[5],
+        color,
+        RUINS_LAB_MATERIAL_METALLIC,
+        RUINS_LAB_MATERIAL_ROUGHNESS,
+    )
+    world_quad_lit(
+        points[3],
+        points[7],
+        points[6],
+        points[2],
+        color,
+        RUINS_LAB_MATERIAL_METALLIC,
+        RUINS_LAB_MATERIAL_ROUGHNESS,
+    )
+    world_quad_lit(
+        points[0],
+        points[1],
+        points[5],
+        points[4],
+        color,
+        RUINS_LAB_MATERIAL_METALLIC,
+        RUINS_LAB_MATERIAL_ROUGHNESS,
+    )
 }
 
 ruins_lab_shaded_box :: proc(center, size: third_person.Vec3, color: rl.Color) {
     ruins_lab_shaded_box_rotated(center, size, 0, color)
 }
 
-ruins_lab_shaded_box_between :: proc(
-    a, b, forward: third_person.Vec3,
-    width, depth: f32,
-    color: rl.Color,
-) {
+ruins_lab_shaded_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, color: rl.Color) {
     delta := b - a
     length := linalg.length(delta)
     if length <= .0001 do return
@@ -186,8 +229,7 @@ ruins_lab_camera :: proc(editor: ^Editor) {
     } else if ruins_lab_view == .Gateway && ruins_lab_plan.has_gateway {
         gateway := ruins_lab_plan.gateway
         focus := third_person.Vec3{gateway.position.x, gateway.base_y + .55, gateway.position.z}
-        editor.camera_pose =
-            third_person.camera_look_at({focus.x + 10, focus.y + 6.5, focus.z + 9}, focus)
+        editor.camera_pose = third_person.camera_look_at({focus.x + 10, focus.y + 6.5, focus.z + 9}, focus)
     } else if ruins_lab_view == .Anchor && ruins_lab_plan.building_count > 0 {
         building := ruins_lab_plan.buildings[0]
         focus := third_person.Vec3{building.center.x, building.base_y + 1.2, building.center.z}
@@ -288,9 +330,7 @@ ruins_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         ruins_lab_complex_scale = .Extensive
     }
     ruins_lab_pottery_density = .Typical
-    if target == "rich-storage" ||
-       target == "roman-rich-storage" ||
-       target == "minoan-rich-storage" {
+    if target == "rich-storage" || target == "roman-rich-storage" || target == "minoan-rich-storage" {
         ruins_lab_pottery_density = .Abundant
     }
     ruins_lab_preservation = .Weathered
@@ -358,13 +398,13 @@ ruins_lab_process_input :: proc(editor: ^Editor) {
         changed = true
     }
     if rl.IsKeyPressed(.G) {
-        ruins_lab_pottery_density =
-            ruins.Pottery_Density((int(ruins_lab_pottery_density) + 1) % len(ruins.Pottery_Density))
+        ruins_lab_pottery_density = ruins.Pottery_Density(
+            (int(ruins_lab_pottery_density) + 1) % len(ruins.Pottery_Density),
+        )
         changed = true
     }
     if rl.IsKeyPressed(.B) {
-        ruins_lab_complex_scale =
-            ruins.Complex_Scale((int(ruins_lab_complex_scale) + 1) % len(ruins.Complex_Scale))
+        ruins_lab_complex_scale = ruins.Complex_Scale((int(ruins_lab_complex_scale) + 1) % len(ruins.Complex_Scale))
         changed = true
     }
     if rl.IsKeyPressed(.P) do ruins_lab_show_props = !ruins_lab_show_props
@@ -431,12 +471,12 @@ ruins_lab_masonry_segment :: proc(
             } else if jitter < -.012 {
                 color = building.culture == .Minoan ? rl.Color{164, 146, 113, 255} : rl.Color{169, 157, 128, 255}
             }
-            if building.occupation_phase == .Expansion &&
-               ruins.hash(building.seed ~ block_salt ~ 0x5ea1) % 11 < 3 {
+            if building.occupation_phase == .Expansion && ruins.hash(building.seed ~ block_salt ~ 0x5ea1) % 11 < 3 {
                 color = {201, 188, 158, 255}
                 if building.culture == .Minoan do color = {151, 132, 101, 255}
-            } else if building.occupation_phase == .Reoccupation && course < 2 &&
-                      ruins.hash(building.seed ~ block_salt ~ 0x7e05e) % 7 < 3 {
+            } else if building.occupation_phase == .Reoccupation &&
+               course < 2 &&
+               ruins.hash(building.seed ~ block_salt ~ 0x7e05e) % 7 < 3 {
                 // Later occupants commonly repair the foot of a failing wall
                 // with whatever local stone and tile remain close at hand.
                 color = {128, 119, 91, 255}
@@ -461,8 +501,7 @@ ruins_lab_wall_finish :: proc(
     patch_length := segment_length * ruins.random_range(building.seed ~ salt ~ 1, .56, .88)
     patch_height := min(
         available_height,
-        ruins.random_range(building.seed ~ salt ~ 2, .48, 1.34) *
-            (.70 + ruins.wall_finish_coverage(building) * .42),
+        ruins.random_range(building.seed ~ salt ~ 2, .48, 1.34) * (.70 + ruins.wall_finish_coverage(building) * .42),
     )
     along_offset := ruins.random_range(
         building.seed ~ salt ~ 3,
@@ -542,16 +581,7 @@ ruins_lab_wall_run :: proc(building: ruins.Building, horizontal: bool, fixed, le
         // front and back faces compete in the depth buffer. The block inset in
         // ruins_lab_masonry_segment already supplies the visible mortar seam.
         ruins_lab_masonry_segment(building, horizontal, local_x, local_z, segment_length, height, salt)
-        ruins_lab_wall_finish(
-            building,
-            horizontal,
-            local_x,
-            local_z,
-            segment_length,
-            height,
-            side_index,
-            segment,
-        )
+        ruins_lab_wall_finish(building, horizontal, local_x, local_z, segment_length, height, side_index, segment)
         if damage_roll > .42 {
             cap := center
             cap.y = building.base_y + height + .20
@@ -588,8 +618,7 @@ ruins_lab_column :: proc(building: ruins.Building, x, z: f32, index: int, painte
         if state == .Stump do return
 
         fall_angle :=
-            building.collapse_yaw - building.yaw +
-            ruins.random_range(building.seed ~ u32(index) * 83, -.18, .18)
+            building.collapse_yaw - building.yaw + ruins.random_range(building.seed ~ u32(index) * 83, -.18, .18)
         drum_count := painted ? 2 : 3
         drum_length := min(height * .62 / f32(drum_count), f32(1.15))
         for drum in 0 ..< drum_count {
@@ -609,7 +638,14 @@ ruins_lab_column :: proc(building: ruins.Building, x, z: f32, index: int, painte
     }
     if painted {
         height = building.wall_height * .74
-        ruins_lab_shaded_vertical_prism({p.x, p.y + height * .5 + .18, p.z}, .32, .48, height, building.yaw, {139, 48, 39, 255})
+        ruins_lab_shaded_vertical_prism(
+            {p.x, p.y + height * .5 + .18, p.z},
+            .32,
+            .48,
+            height,
+            building.yaw,
+            {139, 48, 39, 255},
+        )
         ruins_lab_shaded_box_rotated({p.x, p.y + height + .22, p.z}, {.95, .20, .95}, building.yaw, capital_color)
         return
     }
@@ -973,22 +1009,28 @@ ruins_lab_signature_remain :: proc(building: ruins.Building) {
         platform_width := min(across_extent * .54, f32(6.5))
         platform_depth := min(along_extent * .18, f32(3.0))
         for tier in 0 ..< 2 {
-            local := ruins.Vec2 {
-                center.x + forward.x * f32(tier) * .22,
-                center.z + forward.z * f32(tier) * .22,
-            }
+            local := ruins.Vec2{center.x + forward.x * f32(tier) * .22, center.z + forward.z * f32(tier) * .22}
             p := ruins_lab_local(building, local.x, local.z)
             p.y = building.base_y + .22 + f32(tier) * .12
             size := third_person.Vec3{platform_width - f32(tier) * .55, .20, platform_depth - f32(tier) * .30}
             if math.abs(forward.x) > .5 do size = {size.z, size.y, size.x}
-            ruins_lab_shaded_box_rotated(p, size, building.yaw, tier == 0 ? rl.Color{166, 153, 132, 255} : rl.Color{195, 181, 154, 255})
+            ruins_lab_shaded_box_rotated(
+                p,
+                size,
+                building.yaw,
+                tier == 0 ? rl.Color{166, 153, 132, 255} : rl.Color{195, 181, 154, 255},
+            )
         }
         for seat in 0 ..< 7 {
             if ruins.random01(building.seed ~ u32(seat) * 0x771b) < building.damage * .25 do continue
             angle := -math.PI * .5 + math.PI * f32(seat) / 6
             local := ruins.Vec2 {
-                center.x - forward.x * math.cos(angle) * platform_depth * .46 + tangent.x * math.sin(angle) * platform_width * .42,
-                center.z - forward.z * math.cos(angle) * platform_depth * .46 + tangent.z * math.sin(angle) * platform_width * .42,
+                center.x -
+                forward.x * math.cos(angle) * platform_depth * .46 +
+                tangent.x * math.sin(angle) * platform_width * .42,
+                center.z -
+                forward.z * math.cos(angle) * platform_depth * .46 +
+                tangent.z * math.sin(angle) * platform_width * .42,
             }
             p := ruins_lab_local(building, local.x, local.z)
             p.y = building.base_y + .52
@@ -1036,14 +1078,7 @@ ruins_lab_signature_remain :: proc(building: ruins.Building) {
                 z := -building.depth * .30 + building.depth * .20 * f32(bay)
                 p := ruins_lab_local(building, x, z)
                 p.y = building.base_y + .245
-                ruins_lab_shaded_vertical_prism(
-                    p,
-                    .48,
-                    .56,
-                    .16,
-                    building.yaw,
-                    {119, 105, 82, 255},
-                )
+                ruins_lab_shaded_vertical_prism(p, .48, .56, .16, building.yaw, {119, 105, 82, 255})
             }
         }
     }
@@ -1361,11 +1396,7 @@ ruins_lab_scrub :: proc(prop: ruins.Prop, base_y: f32) {
         y := base_y + .17 + height * ruins.random_range(prop.detail_seed ~ salt ~ 3, .48, .88)
         color := index % 2 == 0 ? rl.Color{86, 103, 57, 255} : rl.Color{105, 116, 63, 255}
         ruins_lab_shaded_vertical_prism(
-            {
-                prop.position.x + math.cos(angle) * radius,
-                y,
-                prop.position.z + math.sin(angle) * radius,
-            },
+            {prop.position.x + math.cos(angle) * radius, y, prop.position.z + math.sin(angle) * radius},
             .22 * prop.scale,
             .17 * prop.scale,
             .24 * prop.scale,
@@ -1425,8 +1456,22 @@ ruins_lab_site_feature :: proc(feature: ruins.Site_Feature) {
     case .Cistern:
         // Layered native prisms suggest a broken circular curb and surviving
         // water without requiring a mesh or texture asset.
-        ruins_lab_shaded_vertical_prism({p.x, y + .18, p.z}, 1.85 * s, 1.85 * s, .36, feature.yaw, {151, 139, 119, 255})
-        ruins_lab_shaded_vertical_prism({p.x, y + .39, p.z}, 1.43 * s, 1.43 * s, .09, feature.yaw, {199, 186, 157, 255})
+        ruins_lab_shaded_vertical_prism(
+            {p.x, y + .18, p.z},
+            1.85 * s,
+            1.85 * s,
+            .36,
+            feature.yaw,
+            {151, 139, 119, 255},
+        )
+        ruins_lab_shaded_vertical_prism(
+            {p.x, y + .39, p.z},
+            1.43 * s,
+            1.43 * s,
+            .09,
+            feature.yaw,
+            {199, 186, 157, 255},
+        )
         ruins_lab_shaded_vertical_prism({p.x, y + .45, p.z}, 1.12 * s, 1.12 * s, .07, feature.yaw, {69, 112, 119, 255})
         // A displaced curb stone keeps the remain from looking pristine.
         offset := ruins_lab_prop_local({position = p, yaw = feature.yaw}, y, 1.55 * s, .31, .25 * s)
@@ -1457,7 +1502,12 @@ ruins_lab_court :: proc(plan: ruins.Plan, court: ruins.Central_Court) {
     )
     switch plan.culture {
     case .Aegean:
-        ruins_lab_shaded_box_rotated({p.x, y + .10, p.z}, {court.width, .16, court.depth}, court.yaw, {176, 159, 113, 255})
+        ruins_lab_shaded_box_rotated(
+            {p.x, y + .10, p.z},
+            {court.width, .16, court.depth},
+            court.yaw,
+            {176, 159, 113, 255},
+        )
         // Sparse perimeter flags read as an old packed-earth temenos.
         for index in 0 ..< 12 {
             side := index % 4
@@ -1468,7 +1518,12 @@ ruins_lab_court :: proc(plan: ruins.Plan, court: ruins.Central_Court) {
             if side == 2 do x, z = along, court.depth * .5
             if side == 3 do x, z = -court.width * .5, along
             stone := ruins_lab_prop_local({position = p, yaw = court.yaw}, y, x, .22, z)
-            ruins_lab_shaded_box_rotated(stone, {1.25, .25, .62}, court.yaw + f32(side % 2) * math.PI * .5, {191, 177, 140, 255})
+            ruins_lab_shaded_box_rotated(
+                stone,
+                {1.25, .25, .62},
+                court.yaw + f32(side % 2) * math.PI * .5,
+                {191, 177, 140, 255},
+            )
         }
     case .Roman:
         // A coarse grid of surviving paving flags distinguishes a forum-like
@@ -1494,7 +1549,12 @@ ruins_lab_court :: proc(plan: ruins.Plan, court: ruins.Central_Court) {
             }
         }
     case .Minoan:
-        ruins_lab_shaded_box_rotated({p.x, y + .11, p.z}, {court.width, .18, court.depth}, court.yaw, {177, 145, 102, 255})
+        ruins_lab_shaded_box_rotated(
+            {p.x, y + .11, p.z},
+            {court.width, .18, court.depth},
+            court.yaw,
+            {177, 145, 102, 255},
+        )
         // Long contrasting border bands emphasize the north–south ceremonial
         // court proportions found in Minoan palace complexes.
         court_sides := [2]f32{-1, 1}
@@ -1511,7 +1571,10 @@ ruins_lab_gateway :: proc(plan: ^ruins.Plan) {
     p := gateway.position
     y := gateway.base_y
     half_opening := gateway.clear_width * .5
-    local := ruins.Prop{position = p, yaw = gateway.yaw}
+    local := ruins.Prop {
+        position = p,
+        yaw      = gateway.yaw,
+    }
     // A thin buried threshold marks the passage while keeping the entire
     // reserved route visually and physically unobstructed.
     threshold := ruins_lab_prop_local(local, y, 0, .045, 0)
@@ -1534,13 +1597,7 @@ ruins_lab_gateway :: proc(plan: ^ruins.Plan) {
         tower_height := plan^.preservation == .Preserved ? f32(2.35) : f32(1.72)
         if plan^.preservation == .Collapsed do tower_height = 1.05
         for side in gateway_sides {
-            tower := ruins_lab_prop_local(
-                local,
-                y,
-                side * (half_opening + 1.2),
-                tower_height * .5,
-                0,
-            )
+            tower := ruins_lab_prop_local(local, y, side * (half_opening + 1.2), tower_height * .5, 0)
             ruins_lab_shaded_box_rotated(tower, {2.25, tower_height, gateway.depth}, gateway.yaw, {174, 166, 148, 255})
             inner_pier := ruins_lab_prop_local(local, y, side * (half_opening + .32), .82, -.18)
             ruins_lab_shaded_box_rotated(inner_pier, {.58, 1.64, 1.32}, gateway.yaw, {199, 190, 169, 255})
@@ -1608,11 +1665,7 @@ ruins_lab_enclosure :: proc(plan: ^ruins.Plan) {
     }
 }
 
-ruins_lab_route_graph_node :: proc(
-    graph: ^roads.Graph,
-    point: ruins.Vec2,
-    y, width: f32,
-) -> int {
+ruins_lab_route_graph_node :: proc(graph: ^roads.Graph, point: ruins.Vec2, y, width: f32) -> int {
     if graph == nil do return -1
     for &node, index in graph.nodes[:graph.node_count] {
         dx, dy, dz := node.position.x - point.x, node.position.y - y, node.position.z - point.z
@@ -1692,15 +1745,7 @@ ruins_lab_route_network :: proc(plan: ^ruins.Plan) {
         from := ruins_lab_route_graph_node(&graph, route.a, route.a_y, route.width)
         to := ruins_lab_route_graph_node(&graph, route.b, route.b_y, route.width)
         if from < 0 || to < 0 || from == to do continue
-        _ = roads.add_straight_edge(
-            &graph,
-            from,
-            to,
-            route.width,
-            .16,
-            pavement,
-            use_intensity,
-        )
+        _ = roads.add_straight_edge(&graph, from, to, route.width, .16, pavement, use_intensity)
     }
     if graph.edge_count == 0 do return
     settings := roads.default_bake_settings()

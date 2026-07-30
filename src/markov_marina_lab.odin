@@ -205,6 +205,52 @@ markov_marina_sample_world_site :: proc(project: ^terrain.Project, origin: marin
     return site
 }
 
+markov_marina_coarse_world_site_suitability :: proc(project: ^terrain.Project, origin: marina.Vec2, yaw: f32) -> f32 {
+    if project == nil do return 0
+    probe := marina.Site {
+        enabled   = true,
+        origin    = origin,
+        yaw       = yaw,
+        sea_level = project.sea_level,
+    }
+    threshold := project.sea_level + .15
+    backland_good, backland_total := 0, 0
+    shore_good, shore_total := 0, 0
+    basin_good, basin_total := 0, 0
+    entrance_good, entrance_total := 0, 0
+
+    for z := 0; z <= 3; z += 3 {
+        for x := 1; x < marina.GRID_WIDTH; x += 4 {
+            world := marina.site_world_position(&probe, marina.grid_position(x, z))
+            backland_total += 1
+            if terrain.sample_height(project, 0, world.x, world.z) > threshold do backland_good += 1
+        }
+    }
+    for x := 1; x < marina.GRID_WIDTH; x += 3 {
+        world := marina.site_world_position(&probe, marina.grid_position(x, 4))
+        shore_total += 1
+        if terrain.sample_height(project, 0, world.x, world.z) <= threshold do shore_good += 1
+    }
+    for z := 7; z < marina.GRID_HEIGHT; z += 5 {
+        for x := 1; x < marina.GRID_WIDTH; x += 4 {
+            world := marina.site_world_position(&probe, marina.grid_position(x, z))
+            basin_total += 1
+            if terrain.sample_height(project, 0, world.x, world.z) <= threshold do basin_good += 1
+        }
+    }
+    for z := 6; z < marina.GRID_HEIGHT; z += 4 {
+        world := marina.site_world_position(&probe, marina.grid_position(13, z))
+        entrance_total += 1
+        if terrain.sample_height(project, 0, world.x, world.z) <= threshold do entrance_good += 1
+    }
+
+    backland := f32(backland_good) / f32(max(backland_total, 1))
+    shoreline := f32(shore_good) / f32(max(shore_total, 1))
+    basin := f32(basin_good) / f32(max(basin_total, 1))
+    entrance := f32(entrance_good) / f32(max(entrance_total, 1))
+    return clamp(backland * .22 + shoreline * .23 + basin * .35 + entrance * .20, 0, 1)
+}
+
 markov_marina_snap_shoreline :: proc(project: ^terrain.Project, anchor, outward: marina.Vec2) -> marina.Vec2 {
     if project == nil do return anchor
     threshold := project.sea_level + .15
@@ -319,6 +365,63 @@ markov_marina_generate_world_plan :: proc(
         }
     }
     return best, max(best_suitability, f32(0)), attempts
+}
+
+markov_marina_generate_world_preview :: proc(
+    project: ^terrain.Project,
+    shoreline_anchor: marina.Vec2,
+    base_seed: u32,
+) -> (
+    marina.Plan,
+    f32,
+    int,
+) {
+    ORIENTATION_BUDGET :: 2
+    CANDIDATE_BUDGET :: 2
+
+    origins: [16]marina.Vec2
+    yaws: [16]f32
+    coarse_suitabilities: [16]f32
+    selected: [16]bool
+    shore_to_center := -marina.grid_position(0, 4).z
+    for index in 0 ..< len(origins) {
+        yaw := f32(index) * math.TAU / f32(len(origins))
+        outward := marina.Vec2{math.sin(yaw), math.cos(yaw)}
+        snapped_anchor := markov_marina_snap_shoreline(project, shoreline_anchor, outward)
+        origin := marina.Vec2 {
+            snapped_anchor.x + outward.x * shore_to_center,
+            snapped_anchor.z + outward.z * shore_to_center,
+        }
+        origins[index] = origin
+        yaws[index] = yaw
+        coarse_suitabilities[index] = markov_marina_coarse_world_site_suitability(project, origin, yaw)
+    }
+
+    attempts := 0
+    for _ in 0 ..< ORIENTATION_BUDGET {
+        best_index := -1
+        for index in 0 ..< len(origins) {
+            if selected[index] do continue
+            if best_index < 0 || coarse_suitabilities[index] > coarse_suitabilities[best_index] {
+                best_index = index
+            }
+        }
+        if best_index < 0 || coarse_suitabilities[best_index] < MARINA_BRUSH_MINIMUM_SUITABILITY do break
+        selected[best_index] = true
+        site := markov_marina_sample_world_site(project, origins[best_index], yaws[best_index])
+        suitability := marina.site_suitability(&site)
+        if suitability < MARINA_BRUSH_MINIMUM_SUITABILITY do continue
+        seed := base_seed + u32(best_index) * u32(0x85ebca6b)
+        candidate := marina.generate_for_site_budget(seed, &site, CANDIDATE_BUDGET, context.temp_allocator)
+        attempts += 1
+        if candidate.valid {
+            // Orientations are visited in descending coarse suitability. The
+            // first valid result is sufficient for an interactive preview;
+            // continuing would add another full site scan to the same frame.
+            return candidate, suitability, attempts
+        }
+    }
+    return {}, 0, attempts
 }
 
 MARINA_BUOY_RADIUS :: f32(.34)
@@ -1119,8 +1222,7 @@ world_markov_marina_static_geometry :: proc(plan: ^marina.Plan) {
             plan.world_yaw + math.PI / 8,
             {151, 91, 58, 255},
         )
-        species :=
-            plant_index == 1 ? plants.Species.Myrtle : plants.Species.Oleander
+        species := plant_index == 1 ? plants.Species.Myrtle : plants.Species.Oleander
         _ = world_generated_plant(
             species,
             u64(plan.layout_seed) + u64(plant_index + 1) * 0x9e3779b97f4a7c15,
@@ -1220,6 +1322,18 @@ world_markov_marina_facility :: proc(
 
 world_shoreline_harbor_facility :: proc(editor: ^Editor, plan: ^harbor.Harbor_Plan, preview: bool = false) {
     if editor == nil || plan == nil || !plan.valid do return
+    center_x := (plan.bounds.minimum.x + plan.bounds.maximum.x) * .5
+    center_z := (plan.bounds.minimum.z + plan.bounds.maximum.z) * .5
+    half_x := (plan.bounds.maximum.x - plan.bounds.minimum.x) * .5
+    half_z := (plan.bounds.maximum.z - plan.bounds.minimum.z) * .5
+    radius := f32(math.sqrt(f64(half_x * half_x + half_z * half_z))) + 12
+    if radius <= 12.01 {
+        // Deliberately untouched-coast lab plans carry an origin and diagnostic
+        // footprint but no generated bounds.
+        center_x, center_z = plan.origin.x, plan.origin.z
+        radius = max(plan.diagnostics.footprint_diameter * .5, f32(24))
+    }
+    if !world_sphere_in_view(editor, {center_x, plan.sea_level + 2, center_z}, radius, 8) do return
     first := len(world_renderer.vertices)
     for path in plan.structures[:plan.structure_count] {
         for point_index in 0 ..< path.count - 1 {

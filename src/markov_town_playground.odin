@@ -303,7 +303,7 @@ settlement_lab_configure :: proc(
     density_frame := density_frames[len(density_frames) - 1]
 
     sign := island_sign < 0 ? f32(-1) : f32(1)
-    center, town_z := terrain.default_town_center(sign)
+    center, town_z := terrain.default_town_center_for_project(&editor.project, sign)
     if fixture == .Waterfront {
         marina_x, marina_z := terrain.default_marina_direction(sign)
         center += marina_x * 75
@@ -592,6 +592,8 @@ settlement_lab_configure :: proc(
     }
     settlement_plan_build_macro_routes(&editor.settlement_plan, &editor.project, &settlement_rng)
     settlement_plan_split_route_intersections(&editor.settlement_plan)
+    settlement_plan_split_project_road_intersections(&editor.settlement_plan, &editor.project)
+    _ = settlement_plan_reserve_junction_plaza(&editor.settlement_plan, &editor.project)
     _ = settlement_plan_simplify_route_capacity(
         &editor.settlement_plan,
         roads.MAX_NODES - editor.project.road_graph.node_count,

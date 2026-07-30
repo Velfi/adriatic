@@ -168,17 +168,11 @@ lemon_lifecycle_adds_radial_ramification_without_a_topology_cliff :: proc(t: ^te
         plants.destroy(&result)
     }
 
-    near := plants.generate(
-        {species = .Lemon, seed = 73, maturity = 1, detail = .Near, habit = .Free_Standing},
-    )
+    near := plants.generate({species = .Lemon, seed = 73, maturity = 1, detail = .Near, habit = .Free_Standing})
     defer plants.destroy(&near)
-    medium := plants.generate(
-        {species = .Lemon, seed = 73, maturity = 1, detail = .Medium, habit = .Free_Standing},
-    )
+    medium := plants.generate({species = .Lemon, seed = 73, maturity = 1, detail = .Medium, habit = .Free_Standing})
     defer plants.destroy(&medium)
-    far := plants.generate(
-        {species = .Lemon, seed = 73, maturity = 1, detail = .Far, habit = .Free_Standing},
-    )
+    far := plants.generate({species = .Lemon, seed = 73, maturity = 1, detail = .Far, habit = .Free_Standing})
     defer plants.destroy(&far)
     testing.expect_value(t, near.error, plants.Generate_Error.None)
     testing.expect_value(t, medium.error, plants.Generate_Error.None)

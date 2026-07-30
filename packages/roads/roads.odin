@@ -215,6 +215,57 @@ add_straight_edge :: proc(
     )
 }
 
+// Split a cubic road edge without changing its rendered curve. The returned
+// node becomes shared topology for any route subsequently committed through
+// the split point.
+split_edge :: proc(graph: ^Graph, edge_index: int, amount: f32, junction_radius: f32 = 4) -> int {
+    if graph == nil ||
+       edge_index < 0 ||
+       edge_index >= graph.edge_count ||
+       graph.node_count >= MAX_NODES ||
+       graph.edge_count >= MAX_EDGES ||
+       amount <= .0001 ||
+       amount >= .9999 {
+        return -1
+    }
+    edge := graph.edges[edge_index]
+    p0 := graph.nodes[edge.from].position
+    p1 := edge.control_from
+    p2 := edge.control_to
+    p3 := graph.nodes[edge.to].position
+    q0 := linalg.lerp(p0, p1, amount)
+    q1 := linalg.lerp(p1, p2, amount)
+    q2 := linalg.lerp(p2, p3, amount)
+    r0 := linalg.lerp(q0, q1, amount)
+    r1 := linalg.lerp(q1, q2, amount)
+    point := linalg.lerp(r0, r1, amount)
+    up := linalg.normalize0(linalg.lerp(graph.nodes[edge.from].up, graph.nodes[edge.to].up, amount))
+    node := add_node(graph, point, junction_radius, up)
+    if node < 0 do return -1
+    graph.edges[edge_index] = {
+        from           = edge.from,
+        to             = node,
+        control_from   = q0,
+        control_to     = r0,
+        half_width     = edge.half_width,
+        shoulder_width = edge.shoulder_width,
+        pavement       = edge.pavement,
+        use_intensity  = edge.use_intensity,
+    }
+    graph.edges[graph.edge_count] = {
+        from           = node,
+        to             = edge.to,
+        control_from   = r1,
+        control_to     = q2,
+        half_width     = edge.half_width,
+        shoulder_width = edge.shoulder_width,
+        pavement       = edge.pavement,
+        use_intensity  = edge.use_intensity,
+    }
+    graph.edge_count += 1
+    return node
+}
+
 pavement_name :: proc(pavement: Pavement) -> string {
     switch pavement {
     case .Asphalt:

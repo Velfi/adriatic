@@ -1,16 +1,19 @@
 package terrain
 
 import buildings "../buildings"
+import dunes "../dunes"
+import islands "../islands"
 import roads "../roads"
 import "base:runtime"
 import "core:math"
+import "core:math/linalg"
 import "core:os"
 
 // The sixth, 32 m level keeps the full authored archipelago resident when the
 // camera is near either island. Five levels only covered about 2 km from the
 // camera, so the opposite island disappeared well before the 12 km far plane.
 CLIPMAP_LEVELS :: 6
-WORLD_SIZE_METERS :: 4000.0
+WORLD_SIZE_METERS :: 8000.0
 TERRAIN_RESOLUTION :: 512
 RING_RESOLUTION :: 256
 SAMPLES_PER_LEVEL :: TERRAIN_RESOLUTION * TERRAIN_RESOLUTION
@@ -20,26 +23,129 @@ FINE_CELL_SIZE :: f32(1.0)
 // These are expressed as a fraction of the authored world's half extent. Every
 // clipmap level samples the same world-space features at a different density.
 DEFAULT_ISLAND_OFFSET :: 0.65
-DEFAULT_ISLAND_RADIUS :: 0.14
+// Generated islands need enough hinterland for the compact STOL runway to read
+// as one piece of infrastructure rather than the island's defining shape.
+DEFAULT_ISLAND_RADIUS :: 0.26
 DEFAULT_ISLAND_HEIGHT :: 4.5
 DEFAULT_ISLAND_SIGNS :: [2]f32{-1, 1}
-// 450 m gives the Postale enough field for a representative utility-STOL
-// takeoff or landing while still demanding disciplined threshold use.
-DEFAULT_RUNWAY_HALF_LENGTH :: 0.1125
-DEFAULT_RUNWAY_HALF_WIDTH :: 0.012
-DEFAULT_RUNWAY_SPAWN_OFFSET :: 0.06
+// 400 m gives the Postale enough field for its validated utility-STOL takeoff
+// and landing envelope without cutting an oversized stripe across an island.
+// Fractions are halved with the doubled world extent so aviation
+// infrastructure retains its authored real-world dimensions.
+DEFAULT_RUNWAY_HALF_LENGTH :: 0.05
+DEFAULT_RUNWAY_HALF_WIDTH :: 0.006
+DEFAULT_RUNWAY_SPAWN_OFFSET :: 0.03
 DEFAULT_RUNWAY_SHOULDER :: f32(48)
 DEFAULT_RUNWAY_TERRAIN_FEATHER :: f32(32)
-DEFAULT_TOWN_OFFSET :: 118.0
-DEFAULT_TOWN_HILL_HEIGHT :: 5.5
+// On the doubled islands the town is a distinct destination between the
+// airfield and coast, not apron-side dressing.
+DEFAULT_TOWN_OFFSET :: 420.0
+DEFAULT_TOWN_HILL_HEIGHT :: 7.5
 DEFAULT_TOWN_HILL_RADIUS_X :: 145.0
 DEFAULT_TOWN_HILL_RADIUS_Z :: 65.0
+DEFAULT_TOWN_SITE_RADIUS :: f32(245)
+DEFAULT_TOWN_RUNWAY_CLEARANCE :: f32(80)
 DEFAULT_CHANNEL_DIAGONAL :: f32(.70710678)
 DEFAULT_PLAYER_LANDFORM_HEIGHT :: f32(1.35)
+DEFAULT_GENERATED_ISLAND_HALF_X :: f32(1300)
+DEFAULT_GENERATED_ISLAND_HALF_Z :: f32(920)
+DEFAULT_ISLAND_SEEDS :: [2]u32{0x6ab219f4, 0xc85d037e}
+// Island dunes remain gentler and narrower than the lab's showcase belt, but
+// need enough relief to read through stabilized ecology at gameplay scale.
+// The half-metre inner clipmap now supports this bounded height without the
+// terrain tears produced by the former coarse rendering path.
+DEFAULT_DUNE_HEIGHT :: f32(5.4)
+DEFAULT_DUNE_SPACING :: f32(38)
+DEFAULT_DUNE_WIDTH :: f32(68)
+DEFAULT_DUNE_MAX_WIDTH :: f32(82)
+
+Generated_Dune_Character :: struct {
+    height:              f32,
+    spacing:             f32,
+    width:               f32,
+    wind_strength:       f32,
+    vegetation_strength: f32,
+}
+
+Generated_Coast_Context :: struct {
+    outward_normal: dunes.Vec2,
+    distance_scale: f32,
+    bayness:        f32,
+    wind_exposure:  f32,
+}
+
+Generated_Coastal_Morphology :: struct {
+    beach_width:       f32,
+    dune_height_scale: f32,
+    dune_width_scale:  f32,
+    vegetation_scale:  f32,
+}
+
+default_generated_dune_character :: proc(seed: u32) -> Generated_Dune_Character {
+    unit := proc(value: u32) -> f32 {
+        return f32(islands.hash(value) & 0xffff) / 65535
+    }
+    // Keep island-to-island character readable and bounded. The raised floor
+    // prevents suitable coasts from collapsing into a flat ecology tint, while
+    // the narrow range still excludes towering or terrain-tear-like ridges.
+    return {
+        height = 4.6 + unit(seed ~ 0x48454947) * 1.6,
+        spacing = 34 + unit(seed ~ 0x53504143) * 11,
+        width = 60 + unit(seed ~ 0x57494454) * 22,
+        wind_strength = .58 + unit(seed ~ 0x57494e44) * .20,
+        vegetation_strength = .58 + unit(seed ~ 0x56454745) * .24,
+    }
+}
+
+default_generated_coastal_morphology :: proc(
+    seed: u32,
+    world_x, world_z: f32,
+    bayness, wind_exposure: f32,
+) -> Generated_Coastal_Morphology {
+    bay := clamp(bayness, f32(-1), f32(1))
+    exposure := clamp(wind_exposure, f32(0), f32(1))
+    // Sheltered concave coasts retain a broader depositional beach and wider,
+    // greener low dunes. Exposed convex coasts concentrate the same sand into
+    // a narrower, more pronounced foredune. Seeded alongshore variation
+    // remains, but no local context can leave the validated operating range.
+    return {
+        beach_width = clamp(
+            default_generated_beach_width(seed, world_x, world_z) + bay * 4.5 + (1 - exposure) * 1.5,
+            f32(18),
+            f32(39),
+        ),
+        dune_height_scale = clamp(.78 + exposure * .24 + max(-bay, f32(0)) * .06, f32(.76), f32(1.08)),
+        dune_width_scale = clamp(.92 + max(bay, f32(0)) * .13 - max(-bay, f32(0)) * .10, f32(.82), f32(1.05)),
+        vegetation_scale = clamp(1.03 + max(bay, f32(0)) * .10 - exposure * .08, f32(.92), f32(1.13)),
+    }
+}
 
 default_island_center :: #force_inline proc(sign: f32) -> (x, z: f32) {
     center := sign * f32(WORLD_SIZE_METERS * .5 * DEFAULT_ISLAND_OFFSET)
     return center, center
+}
+
+default_island_feature_seed :: #force_inline proc(island_index: int, salt: u32) -> u32 {
+    if island_index < 0 || island_index >= len(DEFAULT_ISLAND_SEEDS) do return islands.hash(salt)
+    seeds := DEFAULT_ISLAND_SEEDS
+    return islands.hash(seeds[island_index] ~ salt)
+}
+
+// Give each generated island an airport site of its own instead of laying both
+// strips across the mathematical island center. Offsets are deterministically
+// derived from the island seed, kept well inside the generated core, and
+// remain axis-aligned because the Postale's initial ground heading is -X.
+default_runway_center :: proc(sign: f32) -> (x, z: f32) {
+    center_x, center_z := default_island_center(sign)
+    island_index := sign < 0 ? 0 : 1
+    seed := island_index == 0 ? DEFAULT_ISLAND_SEEDS[0] : DEFAULT_ISLAND_SEEDS[1]
+    unit := proc(value: u32) -> f32 {
+        return f32(islands.hash(value) & 0xffff) / 65535 * 2 - 1
+    }
+    // Bias the airfield toward the channel-facing arrival district, then add
+    // enough seeded cross-island variation to follow each silhouette.
+    inward := -sign
+    return center_x + inward * 54 + unit(seed ~ 0x52554e58) * 46, center_z + inward * 28 + unit(seed ~ 0x52554e5a) * 62
 }
 
 // Keep the island's three arrival anchors in one compact, walkable district.
@@ -51,6 +157,86 @@ default_town_center :: #force_inline proc(sign: f32) -> (x, z: f32) {
     // The smaller cross-runway offset keeps the town close to the apron; the
     // full offset clears the runway shoulder and its terrain feather.
     return center_x + inward * DEFAULT_TOWN_OFFSET * .6, center_z + inward * DEFAULT_TOWN_OFFSET
+}
+
+default_town_center_for_project :: proc(
+    project: ^Project,
+    sign: f32,
+    town_radius: f32 = DEFAULT_TOWN_SITE_RADIUS,
+) -> (
+    x, z: f32,
+) {
+    nominal_x, nominal_z := default_town_center(sign)
+    if project == nil do return nominal_x, nominal_z
+    island_x, island_z := default_island_center(sign)
+    runway_x, runway_z := default_runway_center(sign)
+    runway_half_length := f32(WORLD_SIZE_METERS * .5) * DEFAULT_RUNWAY_HALF_LENGTH
+    best_x, best_z, best_score := nominal_x, nominal_z, f32(-1e30)
+    step := f32(36)
+    search_radius := f32(800)
+    for offset_z := -search_radius; offset_z <= search_radius; offset_z += step {
+        for offset_x := -search_radius; offset_x <= search_radius; offset_x += step {
+            candidate_x, candidate_z := nominal_x + offset_x, nominal_z + offset_z
+            if math.abs(candidate_x - island_x) > DEFAULT_GENERATED_ISLAND_HALF_X * .82 ||
+               math.abs(candidate_z - island_z) > DEFAULT_GENERATED_ISLAND_HALF_Z * .82 {
+                continue
+            }
+            runway_dx := max(math.abs(candidate_x - runway_x) - runway_half_length, f32(0))
+            runway_dz := math.abs(candidate_z - runway_z)
+            runway_distance := f32(math.sqrt(f64(runway_dx * runway_dx + runway_dz * runway_dz)))
+            if runway_distance < town_radius + DEFAULT_TOWN_RUNWAY_CLEARANCE do continue
+            minimum_height := sample_height(project, 0, candidate_x, candidate_z)
+            maximum_height := minimum_height
+            average_height := minimum_height
+            sample_count := 1
+            valid := minimum_height > project.sea_level + .8
+            radii := [2]f32{town_radius * .55, town_radius}
+            for radius in radii {
+                for sample_index in 0 ..< 32 {
+                    angle := f32(sample_index) * math.TAU / 32
+                    sample_x := candidate_x + math.cos(angle) * radius
+                    sample_z := candidate_z + math.sin(angle) * radius
+                    height := sample_height(project, 0, sample_x, sample_z)
+                    minimum_height = min(minimum_height, height)
+                    maximum_height = max(maximum_height, height)
+                    average_height += height
+                    sample_count += 1
+                    if height <= project.sea_level + .8 {
+                        valid = false
+                        break
+                    }
+                }
+                if !valid do break
+            }
+            if !valid do continue
+            average_height /= f32(sample_count)
+            nominal_distance := linalg.length([2]f32{candidate_x - nominal_x, candidate_z - nominal_z})
+            island_distance := linalg.length([2]f32{candidate_x - island_x, candidate_z - island_z})
+            score :=
+                -nominal_distance -
+                (maximum_height - minimum_height) * 85 -
+                math.abs(average_height - DEFAULT_ISLAND_HEIGHT) * 8 -
+                island_distance * .01 +
+                min(runway_distance, town_radius * 2) * .04
+            if score > best_score {
+                best_x, best_z, best_score = candidate_x, candidate_z, score
+            }
+        }
+    }
+    return best_x, best_z
+}
+
+// The airport forecourt sits just inland of the active threshold, directly on
+// the town approach. Keeping this shared with road generation and gameplay
+// placement prevents the terminal from drifting away from its access road.
+default_airport_center :: #force_inline proc(sign: f32) -> (x, z: f32) {
+    center_x, center_z := default_runway_center(sign)
+    half_extent := f32(WORLD_SIZE_METERS * .5)
+    runway_threshold_x := center_x - sign * half_extent * DEFAULT_RUNWAY_HALF_LENGTH
+    town_x, town_z := default_town_center(sign)
+    approach_amount := f32(.18)
+    return runway_threshold_x + (town_x - runway_threshold_x) * approach_amount,
+        center_z + (town_z - center_z) * approach_amount
 }
 
 default_marina_direction :: #force_inline proc(sign: f32) -> (x, z: f32) {
@@ -554,21 +740,34 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
 
 add_default_runways :: proc(project: ^Project) -> bool {
     if project == nil ||
-       project.road_graph.node_count + len(DEFAULT_ISLAND_SIGNS) * 2 > roads.MAX_NODES ||
-       project.road_graph.edge_count + len(DEFAULT_ISLAND_SIGNS) > roads.MAX_EDGES {
+       project.road_graph.node_count + len(DEFAULT_ISLAND_SIGNS) * 4 > roads.MAX_NODES ||
+       project.road_graph.edge_count + len(DEFAULT_ISLAND_SIGNS) * 3 > roads.MAX_EDGES {
         return false
     }
     half_extent := f32(WORLD_SIZE_METERS * .5)
     runway_half_length := half_extent * DEFAULT_RUNWAY_HALF_LENGTH
     runway_width := half_extent * DEFAULT_RUNWAY_HALF_WIDTH * 2
     for sign in DEFAULT_ISLAND_SIGNS {
-        center := sign * half_extent * DEFAULT_ISLAND_OFFSET
-        runway_height := sample_height(project, 0, center, center)
-        from := roads.add_node(&project.road_graph, {center - runway_half_length, runway_height, center}, 0)
-        to := roads.add_node(&project.road_graph, {center + runway_half_length, runway_height, center}, 0)
+        center_x, center_z := default_runway_center(sign)
+        runway_height := sample_height(project, 0, center_x, center_z)
+        from := roads.add_node(&project.road_graph, {center_x - runway_half_length, runway_height, center_z}, 0)
+        to := roads.add_node(&project.road_graph, {center_x + runway_half_length, runway_height, center_z}, 0)
         if from < 0 ||
            to < 0 ||
            roads.add_straight_edge(&project.road_graph, from, to, runway_width, 2, .Asphalt) < 0 {
+            return false
+        }
+        town_x, town_z := default_town_center_for_project(project, sign)
+        town_y := sample_height(project, 0, town_x, town_z)
+        town := roads.add_node(&project.road_graph, {town_x, town_y, town_z}, 7)
+        airport_x, airport_z := default_airport_center(sign)
+        airport_y := sample_height(project, 0, airport_x, airport_z)
+        airport := roads.add_node(&project.road_graph, {airport_x, airport_y, airport_z}, 8)
+        inward_threshold := sign < 0 ? to : from
+        if town < 0 ||
+           airport < 0 ||
+           roads.add_straight_edge(&project.road_graph, inward_threshold, airport, 8, 2, .Asphalt, .85) < 0 ||
+           roads.add_straight_edge(&project.road_graph, airport, town, 7, 1.5, .Asphalt, .85) < 0 {
             return false
         }
     }
@@ -586,6 +785,7 @@ terrain_erode_default_level :: proc(data: ^Clipmap_Level, scratch: []f32, half_e
             for x in 1 ..< TERRAIN_RESOLUTION - 1 {
                 index := sample_index(x, z)
                 height := scratch[index]
+                if height <= 0 do continue
                 neighbor_average :=
                     (scratch[sample_index(x - 1, z)] +
                         scratch[sample_index(x + 1, z)] +
@@ -624,6 +824,11 @@ init_project :: proc(result: ^Project) {
     result.next_structure_id = 1
     authored_half_extent := f32(WORLD_SIZE_METERS * .5)
     gameplay_center := authored_half_extent * DEFAULT_ISLAND_OFFSET
+    generated_islands: [len(DEFAULT_ISLAND_SIGNS)]islands.Plan
+    for seed, island_index in DEFAULT_ISLAND_SEEDS {
+        generated_islands[island_index] = islands.generate(seed)
+    }
+    defer for &plan in generated_islands do islands.destroy(&plan)
     erosion_scratch := make([]f32, SAMPLES_PER_LEVEL)
     defer delete(erosion_scratch)
     for level in 0 ..< CLIPMAP_LEVELS {
@@ -641,12 +846,15 @@ init_project :: proc(result: ^Project) {
             for x in 0 ..< TERRAIN_RESOLUTION {
                 world_x := data.origin_x + f32(x) * data.cell_size
                 world_z := data.origin_z + f32(z) * data.cell_size
-                data.heights[sample_index(x, z)] = default_height_filtered(
+                height, material := default_generated_height_filtered(
+                    &generated_islands,
                     world_x,
                     world_z,
                     authored_half_extent,
                     data.cell_size,
                 )
+                data.heights[sample_index(x, z)] = height
+                data.material[sample_index(x, z)] = material
             }
         }
         terrain_erode_default_level(data, erosion_scratch, authored_half_extent)
@@ -1069,6 +1277,7 @@ default_terrain_constraints :: proc(half_extent: f32) -> [12]Terrain_Constraint 
     runway_half_width := half_extent * DEFAULT_RUNWAY_HALF_WIDTH
     for sign, island_index in DEFAULT_ISLAND_SIGNS {
         center := sign * half_extent * DEFAULT_ISLAND_OFFSET
+        runway_x, runway_z := default_runway_center(sign)
         // Build each coast from three rotated, overlapping masses. A smaller
         // core leaves genuine bays between the lobes instead of hiding them
         // inside the old circular 560 m footprint.
@@ -1142,8 +1351,8 @@ default_terrain_constraints :: proc(half_extent: f32) -> [12]Terrain_Constraint 
             shape    = .Rectangle,
             curve    = .Smooth,
             priority = 20,
-            center_x = center,
-            center_z = center,
+            center_x = runway_x,
+            center_z = runway_z,
             half_x   = runway_half_length + DEFAULT_RUNWAY_SHOULDER,
             half_z   = runway_half_width + DEFAULT_RUNWAY_SHOULDER,
             feather  = DEFAULT_RUNWAY_TERRAIN_FEATHER,
@@ -1211,6 +1420,284 @@ default_height_filtered :: proc(world_x, world_z, half_extent, cell_size: f32) -
     return center * .4 + (a + b + c + d) * .15
 }
 
+default_generated_coast_context :: proc(
+    plan: ^islands.Plan,
+    local_x, local_z, island_sign: f32,
+) -> Generated_Coast_Context {
+    cell_x := DEFAULT_GENERATED_ISLAND_HALF_X * 2 / f32(islands.GRID_WIDTH - 1)
+    cell_z := DEFAULT_GENERATED_ISLAND_HALF_Z * 2 / f32(islands.GRID_HEIGHT - 1)
+    // Keep the scalar SDF metric stable across source-grid cells. Deriving
+    // this scale from the local bilinear gradient shifts dune phase whenever
+    // that gradient changes, producing narrow trench-like discontinuities.
+    distance_scale := f32(math.sqrt(f64(cell_x * cell_z)))
+    if plan == nil do return {outward_normal = {0, -1}, distance_scale = distance_scale}
+    // Derive across one source-grid cell rather than one world metre. The
+    // latter samples a bilinear field inside a single cell and yields a
+    // piecewise-constant normal that jumps at cell boundaries.
+    step_x := f32(2) / f32(islands.GRID_WIDTH - 1)
+    step_z := f32(2) / f32(islands.GRID_HEIGHT - 1)
+    left := islands.sample_signed_distance(plan, local_x - step_x, local_z)
+    right := islands.sample_signed_distance(plan, local_x + step_x, local_z)
+    back := islands.sample_signed_distance(plan, local_x, local_z - step_z)
+    front := islands.sample_signed_distance(plan, local_x, local_z + step_z)
+    grid_gradient_x := (right - left) * island_sign
+    grid_gradient_z := front - back
+    // The generated silhouette is stretched into a 2600-by-1840 metre island.
+    // Transform its grid-space SDF gradient by the inverse world scale before
+    // normalizing, otherwise diagonal and north/south shores inherit the
+    // metric of an X-axis grid cell.
+    gradient_x := grid_gradient_x / cell_x
+    gradient_z := grid_gradient_z / cell_z
+    length := f32(math.sqrt(f64(gradient_x * gradient_x + gradient_z * gradient_z)))
+    normal := dunes.Vec2{0, -1}
+    if length > .00001 do normal = {gradient_x / length, gradient_z / length}
+    center := islands.sample_signed_distance(plan, local_x, local_z)
+    laplacian_x := left + right - center * 2
+    laplacian_z := back + front - center * 2
+    // Preserve the established X-cell tuning while correcting the Z
+    // contribution for the non-square world metric.
+    laplacian := laplacian_x + laplacian_z * (cell_x * cell_x / (cell_z * cell_z))
+    // Positive signed-distance curvature is a convex headland; negative
+    // curvature is a concave bay. A broad clamp keeps coarse mask details from
+    // overdriving beach morphology.
+    bayness := clamp(-laplacian * .72, f32(-1), f32(1))
+    inward := -normal
+    prevailing_wind := dunes.Vec2{.18, .98}
+    wind_length := f32(
+        math.sqrt(f64(prevailing_wind[0] * prevailing_wind[0] + prevailing_wind[1] * prevailing_wind[1])),
+    )
+    prevailing_wind /= wind_length
+    wind_inland := prevailing_wind[0] * inward[0] + prevailing_wind[1] * inward[1]
+    wind_exposure := clamp((wind_inland + .12) / .82, f32(0), f32(1))
+    return {outward_normal = normal, distance_scale = distance_scale, bayness = bayness, wind_exposure = wind_exposure}
+}
+
+default_generated_coast_normal :: proc(plan: ^islands.Plan, local_x, local_z, island_sign: f32) -> dunes.Vec2 {
+    return default_generated_coast_context(plan, local_x, local_z, island_sign).outward_normal
+}
+
+default_generated_beach_width :: proc(seed: u32, world_x, world_z: f32) -> f32 {
+    phase := f32(seed & 0xffff) * .0000958738
+    broad := f32(math.sin(f64(world_x * .0037 + world_z * .0021 + phase)))
+    detail := f32(math.sin(f64(world_x * -.0091 + world_z * .0063 + phase * 1.73)))
+    return clamp(f32(27) + broad * 5 + detail * 2, f32(20), f32(35))
+}
+
+default_generated_shore_config :: proc(dry_beach_width: f32 = 24) -> dunes.Shore_Config {
+    return {
+        sea_level = 0,
+        berm_height = .9,
+        dry_beach_width = dry_beach_width,
+        nearshore_width = 72,
+        nearshore_depth = 3.2,
+        shelf_width = 150,
+        shelf_depth = 13,
+        bar_strength = .74,
+    }
+}
+
+default_generated_height :: proc(
+    plans: ^[len(DEFAULT_ISLAND_SIGNS)]islands.Plan,
+    world_x, world_z, half_extent: f32,
+) -> (
+    height, signed_distance, material: f32,
+) {
+    signed_distance = 1e6
+    if plans == nil do return
+    for sign, island_index in DEFAULT_ISLAND_SIGNS {
+        center := sign * half_extent * DEFAULT_ISLAND_OFFSET
+        // Mirror the west island so both generated long axes point toward the
+        // shared channel while retaining distinct seeded coastlines.
+        local_x := (world_x - center) / DEFAULT_GENERATED_ISLAND_HALF_X
+        local_z := (world_z - center) / DEFAULT_GENERATED_ISLAND_HALF_Z
+        if sign < 0 do local_x = -local_x
+        plan := &plans[island_index]
+        grid_distance := islands.sample_signed_distance(plan, local_x, local_z)
+        coast_context := default_generated_coast_context(plan, local_x, local_z, sign)
+        distance_meters := grid_distance * coast_context.distance_scale
+        signed_distance = min(signed_distance, distance_meters)
+        if grid_distance >= 0 do continue
+        generated := islands.sample_elevation(plan, local_x, local_z)
+        // Preserve the generator's natural coastal rise. The beach berm and
+        // dunes add local relief below; a fixed 4.5 m minimum here filled bays
+        // and low ridges into a broad table-flat shelf.
+        shoreline := terrain_smooth_weight(-distance_meters / 38)
+        // Retain small-scale traversable relief on broad generated shelves;
+        // this operates inside the generated silhouette and does not prescribe
+        // the coastline.
+        generated += default_player_landform_offset(world_x, world_z, center, sign) * shoreline
+        generated += default_bluff_offset(world_x, world_z, center, sign) * shoreline
+        dune: dunes.Sample
+        beach_material := f32(0)
+        if distance_meters > -DEFAULT_DUNE_MAX_WIDTH {
+            bluff := islands.sample_bluff(plan, local_x, local_z)
+            low_coast := terrain_smooth_weight((7 - generated) / 4)
+            cliff_exclusion := terrain_smooth_weight((bluff - .46) / .32)
+            coastal_suitability := low_coast * (1 - cliff_exclusion)
+            morphology := default_generated_coastal_morphology(
+                plan.selected_seed,
+                world_x,
+                world_z,
+                coast_context.bayness,
+                coast_context.wind_exposure,
+            )
+            inland_distance := -distance_meters
+            // Resolve a continuous low-coast substrate before the dune ridges:
+            // dark wet sand at the waterline, pale dry beach above it, then a
+            // feather into the foredune matrix. Cliffs remain rock/soil.
+            if coastal_suitability > .001 {
+                beach_width := morphology.beach_width
+                wet_width := clamp(beach_width * .27, f32(5.5), f32(9))
+                shore_profile := dunes.shore_sample(default_generated_shore_config(beach_width), inland_distance)
+                // Add only a low berm floor. Existing island relief and dune
+                // ridges remain authoritative, and cliffs are unaffected.
+                generated = max(generated, shore_profile.height * coastal_suitability)
+                wetness := 1 - terrain_smooth_weight(inland_distance / wet_width)
+                if wetness > .001 {
+                    beach_material = (-1 - wetness) * coastal_suitability
+                } else {
+                    dry_beach := terrain_smooth_weight(
+                        (beach_width - inland_distance) / max(f32(12), beach_width - wet_width),
+                    )
+                    beach_material = -dry_beach * coastal_suitability
+                }
+            }
+            dune_character := default_generated_dune_character(plan.selected_seed)
+            dune = dunes.sample_curved_coast(
+                {
+                    seed = plan.selected_seed ~ 0x44554e45,
+                    wind_direction = {.18, .98},
+                    wind_strength = dune_character.wind_strength,
+                    dune_height = dune_character.height * morphology.dune_height_scale,
+                    dune_spacing = dune_character.spacing,
+                    dune_width = clamp(
+                        dune_character.width * morphology.dune_width_scale,
+                        f32(55),
+                        DEFAULT_DUNE_MAX_WIDTH,
+                    ),
+                    vegetation_strength = clamp(
+                        dune_character.vegetation_strength * morphology.vegetation_scale,
+                        f32(0),
+                        f32(1),
+                    ),
+                },
+                {world_x, world_z},
+                distance_meters,
+                coast_context.outward_normal,
+                coastal_suitability,
+            )
+            generated += dune.height_delta
+        }
+        if generated > height {
+            height = generated
+            material = min(material, beach_material)
+            if dune.coverage > .01 {
+                // Paint the ecological belt, not only the ridge height. A
+                // height-gated mask produces isolated pale seams at distance;
+                // the footprint gives the ridges a continuous sandy matrix
+                // whose stable patches blend back into natural cover. Exposed
+                // slip faces and blowouts retain enough pale sand contrast to
+                // make the asymmetric ridge structure readable.
+                active_sand := .56 + dune.exposure * .40
+                dune_material := -active_sand * dune.sand_weight * dune.coverage
+                material = min(material, dune_material)
+            }
+        }
+    }
+    if height <= 0 && signed_distance < 1e5 {
+        coast := dunes.shore_sample(default_generated_shore_config(), -signed_distance)
+        height = coast.height
+        material = -1
+    }
+    // Settlement parcels need a predictable construction datum before their
+    // generated hill and the still-higher-priority runway are composed.
+    infrastructure_weight := f32(0)
+    for sign in DEFAULT_ISLAND_SIGNS {
+        town_x, town_z := default_town_center(sign)
+        foundation := Terrain_Constraint {
+            mode     = .Set,
+            shape    = .Ellipse,
+            curve    = .Smooth,
+            priority = 5,
+            center_x = town_x,
+            center_z = town_z,
+            // A compact terrace, not a replacement landscape: the generated
+            // island remains visible between parcels and immediately beyond
+            // the civic core.
+            half_x   = DEFAULT_TOWN_HILL_RADIUS_X + 5,
+            half_z   = DEFAULT_TOWN_HILL_RADIUS_Z + 11,
+            feather  = 50,
+            target   = DEFAULT_ISLAND_HEIGHT,
+        }
+        foundation_weight := min(terrain_constraint_weight(foundation, world_x, world_z), f32(.72))
+        infrastructure_weight = max(infrastructure_weight, foundation_weight)
+        height = height * (1 - foundation_weight) + foundation.target * foundation_weight
+        _, center_z := default_island_center(sign)
+        access := Terrain_Constraint {
+            mode     = .Set,
+            shape    = .Rectangle,
+            curve    = .Smooth,
+            priority = 6,
+            center_x = town_x,
+            center_z = (center_z + town_z) * .5,
+            half_x   = 25,
+            half_z   = math.abs(town_z - center_z) * .5,
+            feather  = 42,
+            target   = DEFAULT_ISLAND_HEIGHT,
+        }
+        infrastructure_weight = max(infrastructure_weight, terrain_constraint_weight(access, world_x, world_z))
+        height = terrain_apply_constraint(height, access, world_x, world_z)
+    }
+    constraints := default_terrain_constraints(half_extent)
+    infrastructure_weight = max(
+        infrastructure_weight,
+        max(
+            terrain_constraint_weight(constraints[10], world_x, world_z),
+            terrain_constraint_weight(constraints[11], world_x, world_z),
+        ),
+    )
+    height = terrain_compose_constraints(height, constraints[6:], world_x, world_z)
+    material *= 1 - infrastructure_weight
+    return
+}
+
+default_generated_height_filtered :: proc(
+    plans: ^[len(DEFAULT_ISLAND_SIGNS)]islands.Plan,
+    world_x, world_z, half_extent, cell_size: f32,
+) -> (
+    height, material: f32,
+) {
+    center, distance, center_material := default_generated_height(plans, world_x, world_z, half_extent)
+    shoreline_filter := math.abs(distance) <= cell_size * 1.75 + 4
+    dune_filter := distance < 0 && distance > -(DEFAULT_DUNE_MAX_WIDTH + cell_size * 1.75)
+    if !shoreline_filter && !dune_filter do return center, center_material
+    if cell_size <= 1 {
+        if !dune_filter do return center, center_material
+        // Keep one-metre ridge geometry intact, but prefilter its stabilization
+        // color. At a player-height grazing angle a single nearby terrain
+        // triangle can span much of the screen; abrupt per-vertex material
+        // differences then reveal the triangulation as giant wedges.
+        // The nearest grid is one metre, but at a low grazing angle each
+        // triangle can still span dozens of pixels. Average stabilization
+        // across a three-metre footprint while leaving ridge height untouched;
+        // this removes checkerboard palette changes without blurring the dune
+        // silhouette or connected blowout geometry.
+        offset := f32(1.5)
+        _, _, material_a := default_generated_height(plans, world_x - offset, world_z - offset, half_extent)
+        _, _, material_b := default_generated_height(plans, world_x + offset, world_z - offset, half_extent)
+        _, _, material_c := default_generated_height(plans, world_x - offset, world_z + offset, half_extent)
+        _, _, material_d := default_generated_height(plans, world_x + offset, world_z + offset, half_extent)
+        return center, center_material * .5 + (material_a + material_b + material_c + material_d) * .125
+    }
+    offset := cell_size * .35
+    a, _, material_a := default_generated_height(plans, world_x - offset, world_z - offset, half_extent)
+    b, _, material_b := default_generated_height(plans, world_x + offset, world_z - offset, half_extent)
+    c, _, material_c := default_generated_height(plans, world_x - offset, world_z + offset, half_extent)
+    d, _, material_d := default_generated_height(plans, world_x + offset, world_z + offset, half_extent)
+    return center * .4 + (a + b + c + d) * .15,
+        center_material * .4 + (material_a + material_b + material_c + material_d) * .15
+}
+
 @(no_instrumentation)
 level_contains :: #force_inline proc(data: ^Clipmap_Level, x, z: f32) -> bool {
     if data == nil do return false
@@ -1270,6 +1757,28 @@ sample_level_material :: #force_inline proc(data: ^Clipmap_Level, x, z: f32) -> 
     return data.material[sample_index(grid_x, grid_z)]
 }
 
+// Rendering needs the continuous ecological field rather than the nearest
+// discrete gameplay cell. Bilinear material sampling prevents half-metre
+// clipmap vertices from repeating one-metre values in square blocks whose
+// triangle interpolation reads as large diamonds at grazing camera angles.
+// Keep sample_level_material nearest-neighbor for surface classification and
+// editor behavior, where stable cell ownership is intentional.
+@(no_instrumentation)
+sample_level_render_material :: #force_inline proc(data: ^Clipmap_Level, x, z: f32) -> f32 {
+    if data == nil || !level_contains(data, x, z) do return 0
+    grid_x := (x - data.origin_x) / data.cell_size
+    grid_z := (z - data.origin_z) / data.cell_size
+    x0 := clamp(int(math.floor(f64(grid_x))), 0, TERRAIN_RESOLUTION - 1)
+    z0 := clamp(int(math.floor(f64(grid_z))), 0, TERRAIN_RESOLUTION - 1)
+    x1 := min(x0 + 1, TERRAIN_RESOLUTION - 1)
+    z1 := min(z0 + 1, TERRAIN_RESOLUTION - 1)
+    tx := clamp(grid_x - f32(x0), 0, 1)
+    tz := clamp(grid_z - f32(z0), 0, 1)
+    a := data.material[sample_index(x0, z0)] * (1 - tx) + data.material[sample_index(x1, z0)] * tx
+    b := data.material[sample_index(x0, z1)] * (1 - tx) + data.material[sample_index(x1, z1)] * tx
+    return a * (1 - tz) + b * tz
+}
+
 // Sampling starts at the requested level and falls back outward through the
 // coarser nested grids when a coordinate is outside a fine level.
 @(no_instrumentation)
@@ -1307,6 +1816,17 @@ sample_material :: #force_inline proc(project: ^Project, level: int, x, z: f32) 
     return 0
 }
 
+@(no_instrumentation)
+sample_render_material :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> f32 {
+    if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return 0
+    for candidate in level ..< CLIPMAP_LEVELS {
+        data := &project.levels[candidate]
+        if !level_contains(data, x, z) do continue
+        return sample_level_render_material(data, x, z)
+    }
+    return 0
+}
+
 // Ground_Surface is the discrete, drivable ground classification derived from
 // the painted material channel and elevation. The heightfield stores only a
 // continuous painted scalar, so this enum names the visible bands that
@@ -1331,6 +1851,12 @@ Ground_Surface :: enum u8 {
 @(no_instrumentation)
 classify_ground :: #force_inline proc(material, height, sea_level: f32) -> Ground_Surface {
     if height <= sea_level do return .Sand
+    if material < 0 {
+        stabilization := clamp(material + 1, f32(0), f32(1))
+        if stabilization < .74 do return .Sand
+        elevation := height - sea_level
+        return elevation >= 2.45 ? .Grass : .Dirt
+    }
     if material > .5 do return .Dirt
     elevation := height - sea_level
     if elevation < .9 {
@@ -1349,6 +1875,18 @@ ground_surface_at :: #force_inline proc(project: ^Project, level: int, x, z: f32
         sample_height(project, level, x, z),
         project.sea_level,
     )
+}
+
+// Coastal pioneer grasses establish before stabilized sand has blended far
+// enough toward inland soil to classify as ordinary Grass. This predicate is
+// deliberately narrower than general vegetation eligibility: it excludes wet
+// beach and low active sand while exposing the transitional band to the
+// renderer's deterministic density mask.
+supports_coastal_grass :: #force_inline proc(material, height, sea_level: f32) -> bool {
+    if classify_ground(material, height, sea_level) == .Grass do return true
+    if material >= 0 || height < sea_level + .95 do return false
+    stabilization := clamp(material + 1, f32(0), f32(1))
+    return stabilization >= .42
 }
 
 // ground_grip keeps terrain-material handling policy beside the same bands the

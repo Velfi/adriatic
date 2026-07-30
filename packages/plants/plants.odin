@@ -106,28 +106,17 @@ Attachment :: struct {
     leaf:     Leaf_Traits,
 }
 
-attachment_stage :: proc(
-    kind: Attachment_Kind,
-    seed: u64,
-    index: int,
-    maturity: f32,
-) -> Attachment_Stage {
+attachment_stage :: proc(kind: Attachment_Kind, seed: u64, index: int, maturity: f32) -> Attachment_Stage {
     hash := (seed + 1) * 0x9e3779b97f4a7c15 ~ u64(index + 17) * 0xbf58476d1ce4e5b9
     hash = (hash ~ (hash >> 30)) * 0x94d049bb133111eb
     cohort := int(hash % 4)
     switch kind {
     case .Flower:
-        latest :=
-            maturity < .30 ? 0 :
-            maturity < .42 ? 1 :
-            maturity < .56 ? 2 : 3
+        latest := maturity < .30 ? 0 : maturity < .42 ? 1 : maturity < .56 ? 2 : 3
         stages := [4]Attachment_Stage{.Bud, .Opening, .Half_Open, .Bloom}
         return stages[min(cohort, latest)]
     case .Fruit:
-        latest :=
-            maturity < .70 ? 0 :
-            maturity < .80 ? 1 :
-            maturity < .90 ? 2 : 3
+        latest := maturity < .70 ? 0 : maturity < .80 ? 1 : maturity < .90 ? 2 : 3
         stages := [4]Attachment_Stage{.Fruit_Set, .Immature_Fruit, .Ripening_Fruit, .Ripe_Fruit}
         return stages[min(cohort, latest)]
     case .Leaf, .Thorn, .Tendril:
@@ -855,9 +844,7 @@ generated_attachment_kind :: proc(
         // stable seed/index pair avoids the regular modulo bands produced by
         // catalog attachment_kind while keeping captures deterministic.
         if depth >= 2 {
-            hash :=
-                (seed + 1) * 0x9e3779b97f4a7c15 ~
-                u64(index + 11) * 0xbf58476d1ce4e5b9
+            hash := (seed + 1) * 0x9e3779b97f4a7c15 ~ u64(index + 11) * 0xbf58476d1ce4e5b9
             hash = (hash ~ (hash >> 29)) * 0x94d049bb133111eb
             if maturity > .58 && hash % 11 == 0 do return .Fruit
             if maturity > .22 && hash % 13 == 1 do return .Flower
@@ -1153,9 +1140,7 @@ pelargonium_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Resu
         position := radial * (.018 + f32(stem_index % 3) * .008) * size
         stem_lean := .42 + f32(stem_index % 4) * .040
         direction := linalg.normalize0(
-            radial * stem_lean +
-            tangent * olive_random_signed(&random) * .08 +
-            lsystem.Vec3{0, .86, 0},
+            radial * stem_lean + tangent * olive_random_signed(&random) * .08 + lsystem.Vec3{0, .86, 0},
         )
         // Pelargonium carries fleshy but comparatively slender green-brown
         // stems; tree-scale radii make a patio plant read as a bonsai.
@@ -1164,14 +1149,9 @@ pelargonium_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Resu
         for node_index in 0 ..< node_count {
             node_progress := f32(node_index) / f32(max(node_count - 1, 1))
             length :=
-                (.105 + eased * .095) *
-                (1 - node_progress * .10) *
-                (1 + olive_random_signed(&random) * .08) *
-                size
+                (.105 + eased * .095) * (1 - node_progress * .10) * (1 + olive_random_signed(&random) * .08) * size
             direction = linalg.normalize0(
-                direction +
-                radial * (.035 + node_progress * .025) +
-                tangent * olive_random_signed(&random) * .025,
+                direction + radial * (.035 + node_progress * .025) + tangent * olive_random_signed(&random) * .025,
             )
             next := position + direction * length
             append(
@@ -1189,14 +1169,13 @@ pelargonium_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Resu
                 &result.plant.leaves,
                 lsystem.Leaf {
                     position = next,
-                    forward = linalg.normalize0(
+                    forward  = linalg.normalize0(
                         // Lift the blade toward the viewer instead of laying
                         // every broad leaf into a nearly edge-on horizontal
-                        // shelf at ordinary patio camera height.
-                        lsystem.Vec3{math.cos(leaf_azimuth), .52, math.sin(leaf_azimuth)},
+                        lsystem.Vec3{math.cos(leaf_azimuth), .52, math.sin(leaf_azimuth)},// shelf at ordinary patio camera height.
                     ),
-                    up = {0, 1, 0},
-                    depth = 0,
+                    up       = {0, 1, 0},
+                    depth    = 0,
                 },
             )
             position = next
@@ -1205,9 +1184,7 @@ pelargonium_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Resu
 
         if growth >= .30 && stem_index % 2 == 0 {
             flowering := clamp((growth - .30) / .70, f32(0), f32(1))
-            peduncle_direction := linalg.normalize0(
-                direction * .34 + radial * .08 + lsystem.Vec3{0, .94, 0},
-            )
+            peduncle_direction := linalg.normalize0(direction * .34 + radial * .08 + lsystem.Vec3{0, .94, 0})
             flower_tip := position + peduncle_direction * (.12 + flowering * .13) * size
             append(
                 &result.plant.segments,
@@ -1227,10 +1204,9 @@ pelargonium_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Resu
                 append(
                     &result.plant.leaves,
                     lsystem.Leaf {
-                        position =
-                            flower_tip +
-                            bloom_radial * (.018 + flowering * .018) * size +
-                            lsystem.Vec3{0, bloom_height * size, 0},
+                        position = flower_tip +
+                        bloom_radial * (.018 + flowering * .018) * size +
+                        lsystem.Vec3{0, bloom_height * size, 0},
                         forward = bloom_radial,
                         up = {0, 1, 0},
                         depth = -4,
@@ -1252,6 +1228,71 @@ olive_growth_iterations :: proc(maturity: f32) -> int {
     if maturity < .68 do return 2
     if maturity < .88 do return 3
     return 4
+}
+
+// A grammar iteration describes the topology of the next flush of growth,
+// but it must not make that entire flush appear in one frame.  Extend the
+// newest branch generation out of its joints while the interval matures.
+// Segments at one depth form connected shoots, so carrying each transformed
+// endpoint into the following segment keeps the shoot continuous.
+sprout_newest_generation :: proc(plant: ^lsystem.Plant, progress: f32) {
+    if plant == nil || len(plant.segments) == 0 || progress >= 1 do return
+    newest_depth := 0
+    for segment in plant.segments {
+        if segment.depth > newest_depth do newest_depth = segment.depth
+    }
+    if newest_depth <= 0 do return
+
+    amount := clamp(progress, f32(0), f32(1))
+    amount = amount * amount * (3 - 2 * amount)
+    old_segments := make([]lsystem.Segment, len(plant.segments))
+    copy(old_segments, plant.segments[:])
+    defer delete(old_segments)
+
+    for &segment, index in plant.segments {
+        if segment.depth != newest_depth do continue
+        old := old_segments[index]
+        // Find an earlier segment in this shoot. L-system interpretation is
+        // parent-before-child, so its already-grown endpoint is authoritative.
+        for previous_index := index - 1; previous_index >= 0; previous_index -= 1 {
+            previous_old := old_segments[previous_index]
+            if previous_old.depth != newest_depth do continue
+            delta := previous_old.end - old.start
+            if linalg.dot(delta, delta) < .0000001 {
+                segment.start = plant.segments[previous_index].end
+                break
+            }
+        }
+        segment.end = segment.start + (old.end - old.start) * amount
+        thickness := math.sqrt(amount)
+        segment.radius_start *= thickness
+        segment.radius_end *= thickness
+    }
+
+    // Keep foliage on the extending shoot instead of leaving mature leaves
+    // floating at its eventual endpoints.
+    for &leaf in plant.leaves {
+        if leaf.depth != newest_depth do continue
+        best_distance := f32(3.402823e38)
+        best_position := leaf.position
+        for old, index in old_segments {
+            if old.depth != newest_depth do continue
+            direction := old.end - old.start
+            length_squared := linalg.dot(direction, direction)
+            t := f32(0)
+            if length_squared > .0000001 {
+                t = clamp(linalg.dot(leaf.position - old.start, direction) / length_squared, f32(0), f32(1))
+            }
+            source_position := old.start + direction * t
+            distance := linalg.dot(leaf.position - source_position, leaf.position - source_position)
+            if distance < best_distance {
+                best_distance = distance
+                grown := plant.segments[index]
+                best_position = grown.start + (grown.end - grown.start) * t
+            }
+        }
+        leaf.position = best_position
+    }
 }
 
 olive_leaf_frame :: proc(direction: lsystem.Vec3) -> (forward, up: lsystem.Vec3) {
@@ -2000,8 +2041,13 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     maturity := clamp(config.maturity, 0, 1)
     profile := profile_for(config.species)
     detail_reduction := config.detail == .Near ? 0 : config.detail == .Medium ? 1 : 2
-    growth_iterations := int(maturity * f32(profile.base_iterations) + .001)
+    raw_iterations := maturity * f32(profile.base_iterations)
+    // Generate the topology of the incoming flush, then let
+    // sprout_newest_generation extend it continuously below.
+    growth_iterations := int(math.ceil(raw_iterations))
     iterations := clamp(growth_iterations - detail_reduction, 0, profile.base_iterations)
+    generation_progress := raw_iterations - math.floor(raw_iterations)
+    if raw_iterations > 0 && generation_progress < .0001 do generation_progress = 1
     segment_limit, attachment_limit := limits(config.detail)
     interpreted: lsystem.Interpret_Result
     if config.species == .Olive {
@@ -2080,6 +2126,9 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         lsystem.destroy_plant(&interpreted.plant)
         result.error = .Interpretation_Failed
         return result
+    }
+    if iterations > 0 {
+        sprout_newest_generation(&interpreted.plant, generation_progress)
     }
     if config.species == .Rosemary do rosemary_clothe_scaffold(&interpreted.plant)
     if config.species == .Stone_Pine do stone_pine_clothe_scaffold(&interpreted.plant)
@@ -2310,20 +2359,15 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
                     // frame, rotate the second blade in its transverse plane,
                     // and stagger it slightly toward the branch base.
                     shoot := -right
-                    alternate_random :=
-                        config.seed ~ (u64(index + 1) * 0xbf58476d1ce4e5b9)
+                    alternate_random := config.seed ~ (u64(index + 1) * 0xbf58476d1ce4e5b9)
                     if alternate_random == 0 do alternate_random = 1
-                    alternate_angle :=
-                        f32(cluster_index) * 2.39996323 +
-                        olive_random_signed(&alternate_random) * .08
+                    alternate_angle := f32(cluster_index) * 2.39996323 + olive_random_signed(&alternate_random) * .08
                     clustered_forward = linalg.normalize0(
-                        forward * math.cos(alternate_angle) +
-                        up * math.sin(alternate_angle),
+                        forward * math.cos(alternate_angle) + up * math.sin(alternate_angle),
                     )
                     clustered_up = linalg.normalize0(linalg.cross(clustered_forward, shoot))
                     clustered_position =
-                        position -
-                        shoot * clustered_traits.length * (.24 + f32(cluster_index - 1) * .22)
+                        position - shoot * clustered_traits.length * (.24 + f32(cluster_index - 1) * .22)
                     clustered_position[1] = max(clustered_position[1], 0)
                 } else {
                     clustered_forward = linalg.normalize0(

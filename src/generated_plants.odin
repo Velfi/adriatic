@@ -32,7 +32,13 @@ Generated_Plant_Render_LOD :: enum u8 {
 }
 
 generated_plant_maturity_step :: #force_inline proc(maturity: f32) -> u8 {
-    return u8(clamp(int(math.round(f64(clamp(maturity, f32(0), f32(1)) * GENERATED_PLANT_MATURITY_STEPS))), 0, GENERATED_PLANT_MATURITY_STEPS))
+    return u8(
+        clamp(
+            int(math.round(f64(clamp(maturity, f32(0), f32(1)) * GENERATED_PLANT_MATURITY_STEPS))),
+            0,
+            GENERATED_PLANT_MATURITY_STEPS,
+        ),
+    )
 }
 
 generated_plant_maturity_value :: #force_inline proc(step: u8) -> f32 {
@@ -145,9 +151,7 @@ generated_plant_catalog_detail :: #force_inline proc(lod: Generated_Plant_Render
     return .Far
 }
 
-generated_plant_apply_detail_floor :: #force_inline proc(
-    detail, floor: plants.Detail_Level,
-) -> plants.Detail_Level {
+generated_plant_apply_detail_floor :: #force_inline proc(detail, floor: plants.Detail_Level) -> plants.Detail_Level {
     return int(detail) < int(floor) ? floor : detail
 }
 
@@ -184,11 +188,7 @@ world_generated_grape_leaf_3d :: proc(
     world_triangle(right_point, ridge, stem_right, shade)
 }
 
-world_generated_plant_flower_hero :: proc(
-    center: third_person.Vec3,
-    radius, scale: f32,
-    color: rl.Color,
-) {
+world_generated_plant_flower_hero :: proc(center: third_person.Vec3, radius, scale: f32, color: rl.Color) {
     // A close flower needs a radial silhouette. The ordinary LOD's single
     // upright prism is deliberately retained outside arm's reach.
     petal_radius := radius * scale * .62
@@ -196,14 +196,7 @@ world_generated_plant_flower_hero :: proc(
     for petal in 0 ..< 5 {
         angle := f32(petal) * math.PI * 2 / 5
         petal_center := center + third_person.Vec3{math.cos(angle) * spread, 0, math.sin(angle) * spread}
-        world_vertical_prism(
-            petal_center,
-            petal_radius,
-            petal_radius * .72,
-            petal_radius * .72,
-            angle,
-            color,
-        )
+        world_vertical_prism(petal_center, petal_radius, petal_radius * .72, petal_radius * .72, angle, color)
     }
     world_vertical_prism(center, petal_radius * .68, petal_radius * .68, petal_radius, 0, color)
 }
@@ -292,14 +285,7 @@ world_generated_plant :: proc(
                 continue
             }
             if render_lod == .Distant do continue
-            world_vertical_prism(
-                center,
-                radius * scale,
-                radius * scale,
-                radius * scale * 1.6,
-                0,
-                reproductive_color,
-            )
+            world_vertical_prism(center, radius * scale, radius * scale, radius * scale * 1.6, 0, reproductive_color)
             continue
         }
         if attachment.kind != .Leaf do continue

@@ -243,6 +243,9 @@ Fixture :: struct {
     curve_height:                                   f32,
     road_mode:                                      bool,
     road_selected_node:                             int,
+    road_drag_node:                                 int `fixture:"-"`,
+    road_drag_node_previous_selection:              int `fixture:"-"`,
+    road_drag_node_moved:                           bool `fixture:"-"`,
     road_drag_edge:                                 int `fixture:"-"`,
     road_drag_handle:                               int `fixture:"-"`,
     road_width:                                     f32,
@@ -548,7 +551,27 @@ editor_circulation_plan :: #force_inline proc(editor: ^Editor) -> ^circulation.P
         resize(&editor.circulation_structures, count)
         if count != editor.circulation_structure_count do changed = true
         editor.circulation_structure_count = count
-        if changed do editor.circulation_plan = architecture.circulation_plan(&editor.project)
+        if changed {
+            editor.circulation_plan = architecture.circulation_plan(&editor.project)
+            if editor.settlement_plan.valid {
+                for edit in editor.settlement_plan.terrain_edits[:editor.settlement_plan.terrain_edit_count] {
+                    if edit.kind != .Plaza do continue
+                    _ = circulation.plan_add(
+                        &editor.circulation_plan,
+                        {
+                            center_x = edit.center[0],
+                            center_z = edit.center[1],
+                            width = edit.half_extent[0] * 2,
+                            length = edit.half_extent[1] * 2,
+                            kind = .Plaza,
+                            source = .Generated,
+                            pavement = .Cobblestone,
+                            walkable = true,
+                        },
+                    )
+                }
+            }
+        }
         editor.circulation_revision = editor.project.revision
         editor.circulation_plan_valid = true
     }
@@ -843,11 +866,13 @@ structure_history_push :: proc(
         count^ += 1
         return
     }
-    oldest := history[0]
+    oldest := new(Structure_History_State)
+    defer free(oldest)
+    oldest^ = history[0]
     for index in 1 ..< STRUCTURE_HISTORY_CAPACITY {
         history[index - 1] = history[index]
     }
-    history[STRUCTURE_HISTORY_CAPACITY - 1] = oldest
+    history[STRUCTURE_HISTORY_CAPACITY - 1] = oldest^
     structure_history_capture(editor, &history[STRUCTURE_HISTORY_CAPACITY - 1])
 }
 
@@ -1427,6 +1452,9 @@ road_delete_selected :: proc(editor: ^Editor) {
         editor.project.revision += 1
     }
     editor.road_selected_node = -1
+    editor.road_drag_node = -1
+    editor.road_drag_node_previous_selection = -1
+    editor.road_drag_node_moved = false
     editor.road_drag_edge = -1
     editor.road_drag_handle = -1
 }
@@ -1434,6 +1462,55 @@ road_delete_selected :: proc(editor: ^Editor) {
 road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || !editor.road_mode do return
     graph := &editor.project.road_graph
+    if editor.road_drag_node >= 0 {
+        if rl.IsMouseButtonDown(.LEFT) && cursor_hit {
+            node := &graph.nodes[editor.road_drag_node]
+            snapped_x := structure_editor_snap(world_x, editor)
+            snapped_z := structure_editor_snap(world_z, editor)
+            dx, dz := snapped_x - node.position.x, snapped_z - node.position.z
+            if dx != 0 || dz != 0 {
+                if !editor.road_drag_node_moved {
+                    structure_history_push_undo(editor)
+                    editor.road_drag_node_moved = true
+                }
+                node.position.x = snapped_x
+                node.position.z = snapped_z
+                node.position.y = terrain.sample_height(&editor.project, 0, snapped_x, snapped_z)
+                for &edge in graph.edges[:graph.edge_count] {
+                    if edge.from == editor.road_drag_node {
+                        edge.control_from.x += dx
+                        edge.control_from.z += dz
+                        edge.control_from.y =
+                            terrain.sample_height(&editor.project, 0, edge.control_from.x, edge.control_from.z) + .08
+                    }
+                    if edge.to == editor.road_drag_node {
+                        edge.control_to.x += dx
+                        edge.control_to.z += dz
+                        edge.control_to.y =
+                            terrain.sample_height(&editor.project, 0, edge.control_to.x, edge.control_to.z) + .08
+                    }
+                }
+                editor.project.revision += 1
+            }
+        }
+        if rl.IsMouseButtonReleased(.LEFT) {
+            dragged_node := editor.road_drag_node
+            if !editor.road_drag_node_moved &&
+               editor.road_drag_node_previous_selection >= 0 &&
+               editor.road_drag_node_previous_selection != dragged_node {
+                if roads.edge_between(graph, editor.road_drag_node_previous_selection, dragged_node) < 0 {
+                    structure_history_push_undo(editor)
+                    _ = road_connect(editor, editor.road_drag_node_previous_selection, dragged_node)
+                    editor.project.revision += 1
+                }
+            }
+            editor.road_selected_node = dragged_node
+            editor.road_drag_node = -1
+            editor.road_drag_node_previous_selection = -1
+            editor.road_drag_node_moved = false
+        }
+        return
+    }
     if editor.road_drag_edge >= 0 {
         if rl.IsMouseButtonDown(.LEFT) && cursor_hit {
             edge := &graph.edges[editor.road_drag_edge]
@@ -1471,13 +1548,9 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
     }
     clicked_node := road_node_at(editor, world_x, world_z)
     if clicked_node >= 0 {
-        if editor.road_selected_node >= 0 && editor.road_selected_node != clicked_node {
-            if roads.edge_between(graph, editor.road_selected_node, clicked_node) < 0 {
-                structure_history_push_undo(editor)
-                _ = road_connect(editor, editor.road_selected_node, clicked_node)
-                editor.project.revision += 1
-            }
-        }
+        editor.road_drag_node = clicked_node
+        editor.road_drag_node_previous_selection = editor.road_selected_node
+        editor.road_drag_node_moved = false
         editor.road_selected_node = clicked_node
         return
     }
@@ -1498,6 +1571,9 @@ editor_cancel_interaction :: proc(editor: ^Editor) {
     architecture.city_plan_destroy(&editor.architecture_preview_plan)
     editor.architecture_dirty_bounds = {}
     editor.road_selected_node = -1
+    editor.road_drag_node = -1
+    editor.road_drag_node_previous_selection = -1
+    editor.road_drag_node_moved = false
     editor.road_drag_edge = -1
     editor.road_drag_handle = -1
     curve_reset(editor)
@@ -1861,6 +1937,107 @@ seed_municipal_route_night_benchmark :: proc(editor: ^Editor) {
     seed_municipal_route_lamps(editor)
     editor.editor_camera.distance = 92
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+}
+
+capture_target_is_generated_dunes :: #force_inline proc(target: string) -> bool {
+    return target == "dunes" || target == "dunes-west" || target == "dunes-blowout"
+}
+
+configure_generated_dune_capture_camera :: proc(
+    editor: ^Editor,
+    island_sign: f32 = 1,
+    prefer_blowout: bool = false,
+) -> [2]f32 {
+    if editor == nil do return {0, 1}
+    center_x, center_z := terrain.default_island_center(island_sign)
+    // Resolve a dune-rich portion of the generated island's south-facing low
+    // coast from the actual terrain mask. This keeps the QA target useful as
+    // island seeds and silhouettes evolve instead of accidentally framing a
+    // nearby bluff where dune generation is intentionally suppressed.
+    best_x, best_shore_z := center_x, center_z
+    best_inland := f32(34)
+    best_score := f32(-1e6)
+    town_x, town_z := terrain.default_town_center_for_project(&editor.project, island_sign)
+    step := f32(8)
+    for candidate_x := center_x - 820; candidate_x <= center_x + 820; candidate_x += 24 {
+        shore_z := center_z
+        found_shore := false
+        for offset := f32(0); offset <= terrain.DEFAULT_GENERATED_ISLAND_HALF_Z * 1.25; offset += step {
+            sample_z := center_z - offset
+            if terrain.sample_height(&editor.project, 0, candidate_x, sample_z) <= editor.project.sea_level {
+                shore_z = sample_z + step
+                found_shore = true
+                break
+            }
+        }
+        if !found_shore do continue
+        town_dx, town_dz := candidate_x - town_x, shore_z + 42 - town_z
+        if town_dx * town_dx + town_dz * town_dz < 360 * 360 do continue
+        for inland := f32(22); inland <= 62; inland += step {
+            material := terrain.sample_material(&editor.project, 0, candidate_x, shore_z + inland)
+            if material >= -.02 do continue
+            height := terrain.sample_height(&editor.project, 0, candidate_x, shore_z + inland)
+            score: f32
+            if prefer_blowout {
+                left_height := terrain.sample_height(&editor.project, 0, candidate_x - 12, shore_z + inland)
+                right_height := terrain.sample_height(&editor.project, 0, candidate_x + 12, shore_z + inland)
+                depression := (left_height + right_height) * .5 - height
+                seaward_material := terrain.sample_material(
+                    &editor.project,
+                    0,
+                    candidate_x,
+                    shore_z + max(inland - 16, f32(8)),
+                )
+                landward_material := terrain.sample_material(
+                    &editor.project,
+                    0,
+                    candidate_x,
+                    shore_z + min(inland + 16, f32(76)),
+                )
+                // Connected exposed sand on both sides of a local depression
+                // is a better blowout signal than any one pale terrain cell.
+                score = depression * 3.2 - material - seaward_material * .55 - landward_material * .55
+            } else {
+                seaward_height := terrain.sample_height(&editor.project, 0, candidate_x, shore_z + inland - step)
+                landward_height := terrain.sample_height(&editor.project, 0, candidate_x, shore_z + inland + step)
+                prominence := height - (seaward_height + landward_height) * .5
+                // Prefer a locally raised sandy crest over a generally high
+                // hinterland slope. The previous absolute-height score could
+                // pick a hillside, then ignored this inland coordinate.
+                score = prominence * 3 - material * 1.2
+            }
+            if score > best_score {
+                best_score = score
+                best_x = candidate_x
+                best_shore_z = shore_z
+                best_inland = inland
+            }
+        }
+    }
+    focus := third_person.Vec3 {
+        best_x,
+        terrain.sample_height(&editor.project, 0, best_x, best_shore_z + best_inland) + 1.2,
+        best_shore_z + best_inland,
+    }
+    editor.editor_focus = focus
+    // The generated silhouette curves substantially. Resolve the local inward
+    // direction from terrain height so diagnostic cameras do not view narrow
+    // cross-shore features edge-on.
+    normal_step := f32(10)
+    gradient_x :=
+        terrain.sample_height(&editor.project, 0, best_x + normal_step, best_shore_z) -
+        terrain.sample_height(&editor.project, 0, best_x - normal_step, best_shore_z)
+    gradient_z :=
+        terrain.sample_height(&editor.project, 0, best_x, best_shore_z + normal_step) -
+        terrain.sample_height(&editor.project, 0, best_x, best_shore_z - normal_step)
+    gradient_length := f32(math.sqrt(f64(gradient_x * gradient_x + gradient_z * gradient_z)))
+    inward := [2]f32{0, 1}
+    if gradient_length > .0001 do inward = {gradient_x / gradient_length, gradient_z / gradient_length}
+    // Look seaward from inside the belt. Besides matching the player's likely
+    // approach, this keeps the finite ocean mesh behind the subject instead
+    // of exposing its edge beneath a camera placed offshore.
+    editor.camera_pose = third_person.camera_look_at({focus.x + 18, focus.y + 40, focus.z + 112}, focus)
+    return inward
 }
 
 benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
@@ -2550,10 +2727,9 @@ seed_default_island_towns :: proc(editor: ^Editor) {
     if editor == nil do return
     architecture.city_plan_destroy(&editor.architecture_city_plan)
     editor.settlement_plan.patio_count = 0
-    town_seeds := [len(terrain.DEFAULT_ISLAND_SIGNS)]u32{0xA71D3, 0xD911C}
     settlement_regions := [len(terrain.DEFAULT_ISLAND_SIGNS)]Settlement_Region{.Adriatic, .Aegean}
     for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
-        seed := town_seeds[island_index]
+        seed := terrain.default_island_feature_seed(island_index, 0x544f574e)
         first_structure := editor.project.structure_count
         target := fmt.tprintf("%d", seed)
         if !settlement_lab_configure(
@@ -2650,16 +2826,51 @@ seed_default_island_towns :: proc(editor: ^Editor) {
     editor.architecture_node_mode = true
 }
 
+DEFAULT_LIGHTHOUSE_TOWN_SEPARATION :: f32(320)
+
+default_lighthouse_has_access :: proc(project: ^terrain.Project, x, z: f32) -> bool {
+    if project == nil do return false
+    graph := &project.road_graph
+    for edge in graph.edges[:graph.edge_count] {
+        node_indices := [2]int{edge.from, edge.to}
+        for node_index in node_indices {
+            if node_index < 0 || node_index >= graph.node_count do continue
+            position := graph.nodes[node_index].position
+            dx, dz := position.x - x, position.z - z
+            if dx * dx + dz * dz <= 9 do return true
+        }
+    }
+    return false
+}
+
+seed_default_lighthouse_access :: proc(editor: ^Editor, sign: f32, structure: terrain.Structure) -> bool {
+    if editor == nil do return false
+    keeper, _, found := world_lighthouse_keeper_pose(editor, structure)
+    if !found do return false
+    if default_lighthouse_has_access(&editor.project, keeper.x, keeper.z) do return true
+    town_x, town_z := terrain.default_town_center_for_project(&editor.project, sign)
+    route := settlement_route_find(&editor.project, town_x, town_z, keeper.x, keeper.z, .Street)
+    if route.count < 2 || settlement_route_crosses_sea(&editor.project, route) do return false
+    _, _, maximum_grade := settlement_route_length_and_grade(&editor.project, route)
+    if maximum_grade > settlement_route_grade_limit(.Street) + .001 do return false
+    settlement_route_commit(&editor.project, route, 4, 1, .Cobblestone, .55)
+    return default_lighthouse_has_access(&editor.project, keeper.x, keeper.z)
+}
+
 seed_default_island_lighthouse :: proc(editor: ^Editor, sign: f32, island_index: int) {
     if editor == nil do return
     center_x, center_z := terrain.default_island_center(sign)
+    town_x, town_z := terrain.default_town_center_for_project(&editor.project, sign)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
     for structure in editor.project.structures[:editor.project.structure_count] {
         identity := architecture.architecture_resolve_legacy_identity(structure)
         if structure.kind != .Architecture || identity.archetype != .Lighthouse do continue
         dx, dz := structure.center_x - center_x, structure.center_z - center_z
-        if dx * dx + dz * dz <= island_radius * island_radius do return
+        if dx * dx + dz * dz <= island_radius * island_radius {
+            _ = seed_default_lighthouse_access(editor, sign, structure)
+            return
+        }
     }
 
     // Put the light on the exposed, seaward shoulder opposite the channel,
@@ -2668,9 +2879,41 @@ seed_default_island_lighthouse :: proc(editor: ^Editor, sign: f32, island_index:
     coast_offset := island_radius * .68
     x := center_x + sign * diagonal * coast_offset
     z := center_z + sign * diagonal * coast_offset
-    base_y := terrain.sample_height(&editor.project, 0, x, z)
     rotation := -sign * f32(math.PI / 4)
     if sign < 0 do rotation += math.PI
+    // Generated coves can put the old radial landmark point in water. Search
+    // its exposed shoulder for a footprint whose tower and keeper doorway are
+    // both on land.
+    best_score := -f32(1e30)
+    for dz in -4 ..= 4 {
+        for dx in -4 ..= 4 {
+            candidate_x := x + f32(dx) * 18
+            candidate_z := z + f32(dz) * 18
+            town_dx, town_dz := candidate_x - town_x, candidate_z - town_z
+            if town_dx * town_dx + town_dz * town_dz <
+               DEFAULT_LIGHTHOUSE_TOWN_SEPARATION * DEFAULT_LIGHTHOUSE_TOWN_SEPARATION {
+                continue
+            }
+            keeper_x, keeper_z := world_rotate_xz(candidate_x, candidate_z, 10 * .23, 10 * .5 + 1.8, rotation)
+            base := terrain.sample_height(&editor.project, 0, candidate_x, candidate_z)
+            keeper_ground := terrain.sample_height(&editor.project, 0, keeper_x, keeper_z)
+            if min(base, keeper_ground) <= editor.project.sea_level + .35 do continue
+            distance_penalty := f32(dx * dx + dz * dz) * .04
+            score := min(base, keeper_ground) - distance_penalty
+            if score > best_score {
+                best_score = score
+                x, z = candidate_x, candidate_z
+            }
+        }
+    }
+    // The exposed shoulder may be a skerry too small for the full landmark.
+    // Fall back toward the known-safe settlement datum, but remain far enough
+    // outward that the lighthouse does not become part of the town fabric.
+    if best_score <= -1e20 {
+        x = town_x + sign * diagonal * DEFAULT_LIGHTHOUSE_TOWN_SEPARATION
+        z = town_z + sign * diagonal * DEFAULT_LIGHTHOUSE_TOWN_SEPARATION
+    }
+    base_y := terrain.sample_height(&editor.project, 0, x, z)
     region := island_index == 0 ? buildings.Region.Adriatic : buildings.Region.Aegean
     structure := terrain.Structure {
         center_x      = x,
@@ -2689,6 +2932,98 @@ seed_default_island_lighthouse :: proc(editor: ^Editor, sign: f32, island_index:
         ),
     }
     _ = terrain.add_structure(&editor.project, structure)
+    _ = seed_default_lighthouse_access(editor, sign, structure)
+}
+
+DEFAULT_MARINA_TOWN_SEPARATION :: f32(420)
+// Harbor surveys use large, morphology-dependent site diameters, so their
+// analyzed shoreline anchor can sit a few hundred metres along the same cove
+// from the compact marina office without representing a separate harbor.
+DEFAULT_MARINA_HARBOR_ALIGNMENT :: f32(500)
+
+default_marina_plan_clears_town :: proc(plan: ^marina.Plan, town: harbor.Vec2) -> bool {
+    if plan == nil || !plan.valid do return false
+    office := marina.plan_world_position(plan, plan.office)
+    dx, dz := office.x - town.x, office.z - town.z
+    return dx * dx + dz * dz >= DEFAULT_MARINA_TOWN_SEPARATION * DEFAULT_MARINA_TOWN_SEPARATION
+}
+
+default_marina_filter_candidate_coast :: proc(survey: ^harbor.Coastal_Survey, plan: ^marina.Plan) {
+    if survey == nil || plan == nil || !plan.valid {
+        if survey != nil do survey.site_count = 0
+        return
+    }
+    kept := 0
+    minimum_distance_squared := DEFAULT_MARINA_TOWN_SEPARATION * DEFAULT_MARINA_TOWN_SEPARATION
+    maximum_alignment_squared := DEFAULT_MARINA_HARBOR_ALIGNMENT * DEFAULT_MARINA_HARBOR_ALIGNMENT
+    office := marina.plan_world_position(plan, plan.office)
+    for site in survey.sites[:survey.site_count] {
+        town_dx := site.anchor.x - survey.settlement_anchor.x
+        town_dz := site.anchor.z - survey.settlement_anchor.z
+        if town_dx * town_dx + town_dz * town_dz < minimum_distance_squared do continue
+        marina_dx := site.anchor.x - office.x
+        marina_dz := site.anchor.z - office.z
+        if marina_dx * marina_dx + marina_dz * marina_dz > maximum_alignment_squared do continue
+        survey.sites[kept] = site
+        kept += 1
+    }
+    survey.site_count = kept
+}
+
+default_marina_access_route :: proc(
+    project: ^terrain.Project,
+    town_x, town_z, marina_x, marina_z: f32,
+) -> (
+    Settlement_Route,
+    bool,
+) {
+    route := settlement_route_find(project, town_x, town_z, marina_x, marina_z, .Street)
+    if route.count < 2 || settlement_route_crosses_sea(project, route) do return route, false
+    _, _, maximum_grade := settlement_route_length_and_grade(project, route)
+    return route, maximum_grade <= settlement_route_grade_limit(.Street) + .001
+}
+
+default_marina_find_access_route :: proc(
+    project: ^terrain.Project,
+    town_x, town_z: f32,
+    plan: ^marina.Plan,
+    harbor_plan: ^harbor.Harbor_Plan,
+) -> (
+    Settlement_Route,
+    bool,
+) {
+    if project == nil || plan == nil || !plan.valid do return Settlement_Route{}, false
+    office := marina.plan_world_position(plan, plan.office)
+    candidates: [14]harbor.Vec2
+    candidates[0] = {office.x, office.z}
+    if harbor_plan != nil && harbor_plan.valid {
+        candidates[0] = harbor_plan.settlement_connection
+        candidates[1] = {office.x, office.z}
+    }
+    // Generated harbor fills can move the nominal connection onto a steep or
+    // wet cell. Walk a bounded distance inland toward town while remaining in
+    // the same waterfront district, and choose the first terrain-safe route.
+    start_index := harbor_plan != nil && harbor_plan.valid ? 2 : 1
+    toward_town := harbor.Vec2{town_x - office.x, town_z - office.z}
+    toward_town_length := f32(math.sqrt(f64(toward_town.x * toward_town.x + toward_town.z * toward_town.z)))
+    if toward_town_length > .001 {
+        toward_town.x /= toward_town_length
+        toward_town.z /= toward_town_length
+    }
+    for index in start_index ..< len(candidates) {
+        inland_distance := min(f32(index - start_index + 1) * 20, f32(240))
+        candidates[index] = {office.x + toward_town.x * inland_distance, office.z + toward_town.z * inland_distance}
+    }
+    sign := town_x < 0 ? f32(-1) : f32(1)
+    island_x, island_z := terrain.default_island_center(sign)
+    origins := [2]harbor.Vec2{{town_x, town_z}, {island_x, island_z}}
+    for origin in origins {
+        for candidate in candidates {
+            route, valid := default_marina_access_route(project, origin.x, origin.z, candidate.x, candidate.z)
+            if valid do return route, true
+        }
+    }
+    return Settlement_Route{}, false
 }
 
 seed_default_island_marinas :: proc(editor: ^Editor) {
@@ -2702,22 +3037,50 @@ seed_default_island_marinas :: proc(editor: ^Editor) {
         // Move from the island center toward the channel between the islands.
         // The site search then rotates the full marina footprint to match the
         // locally sampled shoreline rather than assuming a circular coast.
-        shoreline_anchor := markov_marina_find_shoreline_along_ray(
-            &editor.project,
-            {center, center},
-            {marina_x, marina_z},
-            island_radius * 1.8,
-        )
-        seed := u32(0x4d415249 + island_index * 0x9e3779b9)
-        plan, _, _ := markov_marina_generate_world_plan(&editor.project, shoreline_anchor, seed)
+        town_x, town_z := terrain.default_town_center_for_project(&editor.project, sign)
+        plan: marina.Plan
+        intervention: harbor.Harbor_Intervention
+        seed := terrain.default_island_feature_seed(island_index, 0x4d415249)
+        // Irregular generated coasts do not guarantee that the channel-facing
+        // ray is the best harbor frontage. Sweep nearby aspects and seeds
+        // until both the marina layout and coastal intervention agree.
+        for attempt in 0 ..< 16 {
+            // Try the channel aspect first, then survey the complete generated
+            // coastline; a dramatic cove is allowed to move the marina.
+            angle := attempt == 0 ? f32(0) : f32(attempt - 1) * math.TAU / 15
+            cosine, sine := math.cos(angle), math.sin(angle)
+            direction_x := marina_x * cosine - marina_z * sine
+            direction_z := marina_x * sine + marina_z * cosine
+            shoreline_anchor := markov_marina_find_shoreline_along_ray(
+                &editor.project,
+                {center, center},
+                {direction_x, direction_z},
+                island_radius * 2.2,
+            )
+            candidate_seed := seed + u32(attempt) * 0x9e3779b9
+            candidate, _, _ := markov_marina_generate_world_plan(&editor.project, shoreline_anchor, candidate_seed)
+            town := harbor.Vec2{town_x, town_z}
+            if !default_marina_plan_clears_town(&candidate, town) do continue
+            survey := harbor.survey_coast(&editor.project, {town_x, town_z}, 720)
+            default_marina_filter_candidate_coast(&survey, &candidate)
+            program := harbor.derive_harbor_program(.Town, 960 + island_index * 420, candidate_seed)
+            candidate_intervention := harbor.generate_for_survey(&editor.project, &survey, &program, candidate_seed)
+            if !candidate_intervention.valid do continue
+            plan = candidate
+            intervention = candidate_intervention
+            break
+        }
         if !plan.valid do continue
-        town_x, town_z := terrain.default_town_center(sign)
-        survey := harbor.survey_coast(&editor.project, {town_x, town_z}, 720)
-        program := harbor.derive_harbor_program(.Town, 960 + island_index * 420, seed)
-        intervention := harbor.generate_for_survey(&editor.project, &survey, &program, seed)
-        if !intervention.valid do continue
-        harbor.apply_harbor_terrain(&editor.project, &intervention)
-        harbor_plan := harbor.finalize_intervention(&intervention)
+        harbor_plan: harbor.Harbor_Plan
+        if intervention.valid {
+            harbor.apply_harbor_terrain(&editor.project, &intervention)
+            harbor_plan = harbor.finalize_intervention(&intervention)
+        }
+        // Reserve the town-to-waterfront route before settlement generation
+        // consumes the remaining road graph capacity.
+        access, access_valid := default_marina_find_access_route(&editor.project, town_x, town_z, &plan, &harbor_plan)
+        if !access_valid do continue
+        settlement_route_commit(&editor.project, access, 6, 1.25, .Cobblestone, .9)
         editor.default_marinas[editor.default_marina_count] = plan
         editor.default_harbors[editor.default_marina_count] = harbor_plan
         editor.default_harbor_interventions[editor.default_marina_count] = intervention
@@ -2740,7 +3103,7 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     if editor == nil do return false
     if target_arg == "west-town-review" || target_arg == "east-town-review" {
         island_sign := target_arg == "west-town-review" ? f32(-1) : f32(1)
-        town_x, town_z := terrain.default_town_center(island_sign)
+        town_x, town_z := terrain.default_town_center_for_project(&editor.project, island_sign)
         focus_y := terrain.sample_height(&editor.project, 0, town_x, town_z) + 4
         editor.capture_world_only = true
         editor.architecture_node_mode = true
@@ -3429,14 +3792,15 @@ architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32,
 
 marina_brush_refresh_preview :: proc(editor: ^Editor, world_x, world_z: f32, reroll: bool) {
     if editor == nil do return
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "marina_brush_refresh_preview")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if reroll {
         editor.marina_preview_variation += 1
     } else {
         editor.marina_preview_variation = 0
     }
     shoreline := marina.Vec2{world_x, world_z}
-    _, site_suitability := markov_marina_find_world_site(&editor.project, shoreline)
-    editor.marina_brush_suitability = site_suitability
+    editor.marina_brush_suitability = 0
     editor.marina_brush_attempts = 0
     editor.marina_preview_x, editor.marina_preview_z = world_x, world_z
     editor.marina_preview_valid = false
@@ -3444,21 +3808,30 @@ marina_brush_refresh_preview :: proc(editor: ^Editor, world_x, world_z: f32, rer
     editor.harbor_preview_plan = {}
     editor.harbor_preview_intervention = {}
     seed := u32(abs(int(world_x * 17))) ~ u32(abs(int(world_z * 31))) ~ editor.marina_preview_variation * 0x85ebca6b
+    survey_profile := dio.flame_graph_begin(dio.flame_graph_current(), "marina_harbor_survey")
     survey := harbor.survey_coast(&editor.project, {world_x, world_z}, max(editor.marina_brush_radius * 5, f32(420)))
+    dio.flame_graph_end(dio.flame_graph_current(), survey_profile)
     program := harbor.derive_harbor_program(.Town, int(editor.marina_brush_radius * 12), seed)
     if survey.site_count == 0 {
         editor.marina_brush_status = .Unsuitable
         return
     }
+    harbor_profile := dio.flame_graph_begin(dio.flame_graph_current(), "marina_harbor_generate")
     intervention := harbor.generate_for_survey(&editor.project, &survey, &program, seed)
     harbor_candidate := harbor.finalize_intervention(&intervention)
-    candidate, suitability, attempts := markov_marina_generate_world_plan(&editor.project, shoreline, seed)
+    dio.flame_graph_end(dio.flame_graph_current(), harbor_profile)
+    // The interactive preview ranks every orientation cheaply, then generates
+    // only a small set of the best candidates. Full world seeding retains the
+    // exhaustive generator.
+    plan_profile := dio.flame_graph_begin(dio.flame_graph_current(), "marina_plan_generate")
+    candidate, suitability, attempts := markov_marina_generate_world_preview(&editor.project, shoreline, seed)
+    dio.flame_graph_end(dio.flame_graph_current(), plan_profile)
     editor.marina_brush_attempts = attempts
+    editor.marina_brush_suitability = suitability
     if !candidate.valid || !harbor_candidate.valid {
         editor.marina_brush_status = .No_Valid_Layout
         return
     }
-    editor.marina_brush_suitability = suitability
     editor.marina_preview_plan = candidate
     editor.harbor_preview_plan = harbor_candidate
     editor.harbor_preview_intervention = intervention
@@ -4200,8 +4573,9 @@ tweak_panel_console_key_pressed :: proc(editor: ^Editor) -> bool {
 
 postale_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
-    z := half_extent * terrain.DEFAULT_ISLAND_OFFSET
+    runway_x, runway_z := terrain.default_runway_center(1)
+    x := runway_x + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
+    z := runway_z
     ground := postale_game.drivable_surface_height(
         terrain.sample_height(&editor.project, 0, x, z),
         editor.project.sea_level,
@@ -4375,8 +4749,9 @@ active_aircraft_ground_clearance :: proc(editor: ^Editor) -> f32 {
 
 libellula_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET + 12
-    z := half_extent * terrain.DEFAULT_ISLAND_OFFSET + 8
+    runway_x, runway_z := terrain.default_runway_center(1)
+    x := runway_x + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET + 12
+    z := runway_z + 8
     return {x, terrain.sample_height(&editor.project, 0, x, z) + 2.1, z}
 }
 
@@ -4389,11 +4764,9 @@ rondine_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {
 }
 
 attendant_spawn_position :: proc(editor: ^Editor, _: third_person.Vec3) -> third_person.Vec3 {
-    runway := runway_spawn_position(editor)
-    // Keep the kiosk off the active strip, but close enough to be visible from
-    // the arrival point. The attendant stands at its open service counter.
-    x := runway.x + 5.5
-    z := runway.z + 10.5
+    // Marta works the reception counter in the east airport terminal, whose
+    // forecourt is a node on the runway-to-town access road.
+    x, z := terrain.default_airport_center(1)
     return {x, terrain.sample_height(&editor.project, 0, x, z), z}
 }
 
@@ -4422,11 +4795,7 @@ libellula_vertex_world :: #force_inline proc(
 }
 
 gerta_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
-    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    island_center := -half_extent * terrain.DEFAULT_ISLAND_OFFSET
-    // Mirror Marta's relationship to the runway on the opposite island.
-    x := island_center - half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET - 5.5
-    z := island_center - 10.5
+    x, z := terrain.default_airport_center(-1)
     return {x, terrain.sample_height(&editor.project, 0, x, z), z}
 }
 
@@ -6503,6 +6872,29 @@ terrain_color_variation :: #force_inline proc(color: rl.Color, x, z: f32) -> rl.
 }
 
 @(no_instrumentation)
+dune_color_field :: #force_inline proc(x, z: f32) -> f32 {
+    // Crossed, incommensurate waves produce soft sand mottling without the
+    // long parallel color bands used by the broader inland landscape.
+    broad := f32(math.sin(f64(x * .018 + z * .029 + .7))) * f32(math.sin(f64(x * -.027 + z * .014 + 2.1)))
+    local := f32(math.sin(f64(x * .071 + z * -.043 + 1.3))) * f32(math.sin(f64(x * .039 + z * .083 + 2.8)))
+    ripple := f32(math.sin(f64(x * .19 + z * .081 + broad * .8))) * f32(math.sin(f64(x * -.047 + z * .16 + .4)))
+    return broad * .58 + local * .29 + ripple * .13
+}
+
+@(no_instrumentation)
+dune_color_variation :: #force_inline proc(color: rl.Color, x, z: f32) -> rl.Color {
+    variation := dune_color_field(x, z)
+    warm := max(variation, f32(0))
+    cool := max(-variation, f32(0))
+    return {
+        u8(clamp(f32(color.r) * (1 + variation * .035) + warm * 2.5, 0, 255)),
+        u8(clamp(f32(color.g) * (1 + variation * .025) + warm * 1.2, 0, 255)),
+        u8(clamp(f32(color.b) * (1 + variation * .018) + cool * 1.8, 0, 255)),
+        color.a,
+    }
+}
+
+@(no_instrumentation)
 terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> rl.Color {
     water := rl.Color {
         r = 26,
@@ -6529,6 +6921,27 @@ terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> rl
         a = 255,
     }
     if height <= sea_level do return water
+    if painted < 0 {
+        // Negative paint is a backward-compatible stabilized-sand mask used by
+        // generated coastal dunes. -1 is active pale sand at any elevation;
+        // values approaching zero reveal the ordinary elevation-driven cover.
+        natural: rl.Color
+        elevation := height - sea_level
+        if elevation < .9 {
+            natural = color_lerp(sand, soil, clamp((elevation - .18) / .72, 0, 1))
+        } else {
+            natural = color_lerp(soil, grass, clamp((elevation - .9) / 3.1, 0, 1))
+        }
+        wetness := clamp(-painted - 1, 0, 1)
+        stabilization := clamp(painted + 1, 0, 1)
+        natural_recovery := stabilization * (.55 + stabilization * .45)
+        base := color_lerp(sand, natural, natural_recovery)
+        wet_sand := rl.Color{151, 139, 103, 255}
+        // Fine mottling is evaluated per fragment, but broad ecological
+        // recovery stays in vertex colors so it meets ordinary terrain
+        // continuously where the signed dune mask ends.
+        return color_lerp(base, wet_sand, wetness * .72)
+    }
     if painted > .5 do return terrain_color_variation(soil, x, z)
 
     elevation := height - sea_level
@@ -7225,11 +7638,13 @@ draw_editor_context :: proc(editor: ^Editor) {
     if editor == nil || editor.in_map do return
     message: string = ""
     if editor.road_mode {
-        if editor.road_drag_edge >= 0 {
+        if editor.road_drag_node >= 0 && editor.road_drag_node_moved {
+            message = "MOVING ROAD NODE  |  LMB release commit  Ctrl+Z undo"
+        } else if editor.road_drag_edge >= 0 {
             message = "CURVING ROAD  |  drag handle  LMB release commit  Esc cancel"
         } else if editor.road_selected_node >= 0 {
             message = fmt.tprintf(
-                "NODE %d  |  LMB add/connect  drag handles  K surface  Wheel zoom  Alt width  Shift radius",
+                "NODE %d  |  drag node or handles  LMB add/connect  K surface  Alt width  Shift radius",
                 editor.road_selected_node + 1,
             )
         } else {
@@ -7282,10 +7697,11 @@ draw_editor_context :: proc(editor: ^Editor) {
 
 runway_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    x := half_extent * terrain.DEFAULT_ISLAND_OFFSET + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
+    runway_x, runway_z := terrain.default_runway_center(1)
+    x := runway_x + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
     // Start beside the parked aircraft so the default camera presents it and
     // the runway immediately instead of placing the character inside its mesh.
-    z := half_extent * terrain.DEFAULT_ISLAND_OFFSET + 2.2
+    z := runway_z + 2.2
     return {x, terrain.sample_height(&editor.project, 0, x, z), z}
 }
 
@@ -7295,7 +7711,7 @@ nearest_town_spawn_position :: proc(editor: ^Editor, from: third_person.Vec3) ->
     best := third_person.Vec3{}
     best_distance_squared := f32(3.402823e38)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
-        town_x, town_z := terrain.default_town_center(sign)
+        town_x, town_z := terrain.default_town_center_for_project(&editor.project, sign)
         town := third_person.Vec3{town_x, 0, town_z}
         delta_x := town.x - from.x
         delta_z := town.z - from.z
@@ -8931,8 +9347,8 @@ adriatic_run :: proc(
                benchmark_scenario == "editor" ||
                benchmark_scenario == "terrain_edit" ||
                benchmark_scenario == "formation_edit") {
-        seed_default_island_towns(editor)
         seed_default_island_marinas(editor)
+        seed_default_island_towns(editor)
     }
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .62, "Raising the islands...", postcard)
@@ -8952,6 +9368,8 @@ adriatic_run :: proc(
     editor.curve_width = terrain.BASE_CELL_SIZE * 2.5
     editor.curve_height = terrain.BASE_CELL_SIZE * 2.0
     editor.road_selected_node = -1
+    editor.road_drag_node = -1
+    editor.road_drag_node_previous_selection = -1
     editor.road_drag_edge = -1
     editor.road_drag_handle = -1
     editor.road_width = 7
@@ -9137,7 +9555,13 @@ adriatic_run :: proc(
                 seed_city_capture(editor)
             }
         } else {
-            seed_default_island_towns(editor)
+            // The dune QA target inspects untouched generated coastline.
+            // Procedural settlement seeding is both visually distracting and
+            // substantially more expensive under ASAN, and infrastructure
+            // integration remains covered by the normal editor capture.
+            if !(capture_editor_mode && capture_target_is_generated_dunes(capture_target)) {
+                seed_default_island_towns(editor)
+            }
             // Keep the flight capture exercising distant road depth precision
             // as the chase camera climbs away from the authored island.
             if capture_flight_mode do seed_road_capture(editor)
@@ -9145,6 +9569,13 @@ adriatic_run :: proc(
         if !capture_foliage_stress_mode && !capture_foliage_forest_mode && !capture_story_meeting_mode {
             editor.editor_camera.distance = 260
             editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+        }
+        if capture_editor_mode && capture_target_is_generated_dunes(capture_target) {
+            _ = configure_generated_dune_capture_camera(
+                editor,
+                capture_target == "dunes-west" ? f32(-1) : f32(1),
+                capture_target == "dunes-blowout",
+            )
         }
         if capture_building_mode {
             _ = configure_building_capture_camera(editor, capture_target)
@@ -9382,6 +9813,44 @@ adriatic_run :: proc(
             )
             third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
+            editor.capture_world_only = true
+        }
+        if capture_kind == .Map && capture_target_is_generated_dunes(capture_target) {
+            inward := configure_generated_dune_capture_camera(
+                editor,
+                capture_target == "dunes-west" ? f32(-1) : f32(1),
+                capture_target == "dunes-blowout",
+            )
+            focus := editor.editor_focus
+            blowout_view := capture_target == "dunes-blowout"
+            // Standard dune targets stand on the upper beach and look inland
+            // across the selected crest, so ridge asymmetry and grass-top
+            // stabilization are actually visible. The former fixed X/Z
+            // offset could look seaward on curved or mirrored coasts, leaving
+            // the audited dune behind the camera. Keep the elevated blowout
+            // target reversed to retain its shoreline/bathymetry overview.
+            eye_x := focus.x + inward[0] * (blowout_view ? f32(38) : f32(-46))
+            eye_z := focus.z + inward[1] * (blowout_view ? f32(38) : f32(-46))
+            target_x := focus.x + inward[0] * (blowout_view ? f32(-22) : f32(24))
+            target_z := focus.z + inward[1] * (blowout_view ? f32(-22) : f32(24))
+            eye_ground := terrain.sample_height(&editor.project, 0, eye_x, eye_z)
+            eye_clearance := blowout_view ? f32(18) : f32(2.35)
+            target_clearance := blowout_view ? f32(.45) : f32(1.05)
+            inspection_pose := third_person.camera_look_at(
+                {eye_x, eye_ground + eye_clearance, eye_z},
+                {target_x, terrain.sample_height(&editor.project, 0, target_x, target_z) + target_clearance, target_z},
+            )
+            // Keep the mouse behind the inspection camera while vegetation
+            // streaming follows the visible field around its target.
+            editor.player.position = {eye_x, terrain.sample_height(&editor.project, 0, eye_x, eye_z + 18), eye_z + 18}
+            editor.player.grounded = true
+            editor.pilot.position = editor.player.position
+            editor.postale_visible = false
+            editor.libellula_visible = false
+            editor.rondine_visible = false
+            third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
+            third_person.camera_set_active(&editor.cameras, .Inspection)
+            editor.camera_pose = inspection_pose
             editor.capture_world_only = true
         }
         editor.pilot.position = editor.player.position
@@ -10372,17 +10841,37 @@ adriatic_run :: proc(
         target := showcase_target
         if target == "" do target = "postale"
         showcase_view := target
+        car_orbit_degrees := 0
+        car_orbit_view := false
+        car_orbit_prefix := "car-orbit-"
+        if len(target) > len(car_orbit_prefix) &&
+           target[:len(car_orbit_prefix)] == car_orbit_prefix {
+            parsed, ok := strconv.parse_int(target[len(car_orbit_prefix):])
+            if ok && parsed >= 0 && parsed < 360 {
+                car_orbit_degrees = parsed
+                car_orbit_view = true
+                target = "car"
+            }
+        }
         if target == "postale-overhead" || target == "postale-overhead-front" || target == "postale-overhead-rear" {
             target = "postale"
         }
         if target == "rondine-drift" || target == "rondine-overhead" do target = "rondine"
+        if target == "car-steer-left" ||
+           target == "car-steer-right" ||
+           target == "car-brake" ||
+           target == "car-front" ||
+           target == "car-rear" ||
+           target == "car-brake-rear" {
+            target = "car"
+        }
         if target != "postale" &&
            target != "libellula" &&
            target != "libellula-mk2" &&
            target != "rondine" &&
            target != "car" {
             fmt.eprintf(
-                "vehicle showcase target must be postale, postale-overhead[-front|-rear], libellula, libellula-mk2, rondine[-drift|-overhead], or car\n",
+                "vehicle showcase target must be postale, postale-overhead[-front|-rear], libellula, libellula-mk2, rondine[-drift|-overhead], car, car-steer-left, car-steer-right, car-brake, car-front, car-rear, car-brake-rear, or car-orbit-<0..359>\n",
             )
             return .Quit
         }
@@ -10479,9 +10968,30 @@ adriatic_run :: proc(
         } else {
             _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
             if !entered do return .Quit
+            switch showcase_view {
+            case "car-steer-left":
+                editor.car_drive.steering = -1
+            case "car-steer-right":
+                editor.car_drive.steering = 1
+            case "car-brake", "car-brake-rear":
+                editor.car_drive.acceleration_feedback = -1
+                editor.car_drive.handbrake_amount = 1
+            }
             // A true side elevation makes the wheelbase, overhangs, beltline,
             // and mouse-to-car scale directly comparable in capture reviews.
-            editor.camera_pose = third_person.camera_look_at({5.4, 2.0, 0}, {0, .56, 0})
+            if car_orbit_view {
+                angle := f32(car_orbit_degrees) * math.PI / 180
+                editor.camera_pose = third_person.camera_look_at(
+                    {math.sin(angle) * 4.8, 1.85, -math.cos(angle) * 4.8},
+                    {0, .54, 0},
+                )
+            } else if showcase_view == "car-front" {
+                editor.camera_pose = third_person.camera_look_at({0, 1.65, -4.6}, {0, .52, 0})
+            } else if showcase_view == "car-rear" || showcase_view == "car-brake-rear" {
+                editor.camera_pose = third_person.camera_look_at({0, 1.65, 4.6}, {0, .52, 0})
+            } else {
+                editor.camera_pose = third_person.camera_look_at({5.4, 2.0, 0}, {0, .56, 0})
+            }
         }
         third_person.camera_set_pose(&editor.cameras, .Player, editor.camera_pose)
         third_person.camera_set_active(&editor.cameras, .Player)
@@ -10753,11 +11263,17 @@ adriatic_run :: proc(
             }
             if !imgui_captures_keyboard() && editor.road_mode && control_key_down() && rl.IsKeyPressed(.Z) {
                 structure_undo(editor)
+                editor.road_drag_node = -1
+                editor.road_drag_node_previous_selection = -1
+                editor.road_drag_node_moved = false
                 editor.road_drag_edge = -1
                 editor.road_drag_handle = -1
             }
             if !imgui_captures_keyboard() && editor.road_mode && control_key_down() && rl.IsKeyPressed(.Y) {
                 structure_redo(editor)
+                editor.road_drag_node = -1
+                editor.road_drag_node_previous_selection = -1
+                editor.road_drag_node_moved = false
                 editor.road_drag_edge = -1
                 editor.road_drag_handle = -1
             }

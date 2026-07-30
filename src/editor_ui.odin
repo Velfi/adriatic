@@ -368,8 +368,9 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         }
     }
     if editor.road_mode {
+        if editor.road_drag_node >= 0 && editor.road_drag_node_moved do return "Drag the road node into place; connected curves follow it."
         if editor.road_drag_edge >= 0 do return "Drag the control handle to shape the road; release to commit."
-        if editor.road_selected_node >= 0 do return "Extend or connect the selected node; right-click to end the chain."
+        if editor.road_selected_node >= 0 do return "Drag nodes or handles to reshape; click terrain or another node to extend."
         return "Click terrain to start a spline; K cycles roads and procedural steps."
     }
     if editor.architecture_paint_mode do return "Drag to orient one settlement piece; release to stamp. Right-drag erases."
@@ -406,7 +407,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .ClimbingLeaves:
         return "Left spreads climbing leaves; right erases. Wheel zooms; Shift spread; Alt hardness."
     case .Roads:
-        return "Click terrain to add spline nodes; drag handles to curve roads or steps."
+        return "Click terrain to add spline nodes; drag nodes or handles to reshape roads and steps."
     case .GreekAssets:
         return "Click an asset, then click terrain to place it. Wheel zooms; Alt rotates; Shift scales."
     }

@@ -146,6 +146,16 @@ car_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32) {
     rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
     translate_new_vertices(mesh, first, center)
 
+    // Cream face discs sit between the black tire and metal hub. The hub is
+    // submitted after them and covers each center, leaving a crisp whitewall
+    // annulus without requiring a separate ring topology.
+    whitewall_face := half_width + .004
+    whitewall := [2]Mesh_Ring{{-whitewall_face, .165, 0, .165}, {whitewall_face, .165, 0, .165}}
+    first = mesh.vertex_count
+    add_ring_mesh(mesh, whitewall[:], 12, .Ivory)
+    rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
+    translate_new_vertices(mesh, first, center)
+
     hub_face := half_width + .005
     hub := [2]Mesh_Ring {
         {-hub_face, CAR_WHEEL_HUB_RADIUS, 0, CAR_WHEEL_HUB_RADIUS},
@@ -157,10 +167,41 @@ car_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32) {
     translate_new_vertices(mesh, first, center)
 }
 
+car_ellipsoid :: proc(
+    mesh: ^Aircraft_Mesh,
+    center: [3]f32,
+    radius_x, radius_y, radius_z: f32,
+    part: Aircraft_Mesh_Part,
+) {
+    if mesh == nil do return
+    profile_z := [5]f32{-1, -.50, 0, .50, 1}
+    // Keep the terminal rings broad enough that the generated cap triangles
+    // remain numerically healthy at tail-lamp scale.
+    profile_radius := [5]f32{.40, .87, 1, .87, .40}
+    rings: [5]Mesh_Ring
+    for index in 0 ..< len(rings) {
+        rings[index] = {
+            z        = center[2] + profile_z[index] * radius_z,
+            width    = radius_x * profile_radius[index],
+            center_y = center[1],
+            height   = radius_y * profile_radius[index],
+        }
+    }
+    first := mesh.vertex_count
+    add_ring_mesh(mesh, rings[:], 8, part)
+    translate_new_vertices(mesh, first, {center[0], 0, 0})
+}
+
 trailer_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32) {
     tire := [2]Mesh_Ring{{-.11, .25, 0, .25}, {.11, .25, 0, .25}}
     first := mesh.vertex_count
     add_ring_mesh(mesh, tire[:], 12, .Wheel)
+    rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
+    translate_new_vertices(mesh, first, center)
+
+    whitewall := [2]Mesh_Ring{{-.113, .175, 0, .175}, {.113, .175, 0, .175}}
+    first = mesh.vertex_count
+    add_ring_mesh(mesh, whitewall[:], 12, .Ivory)
     rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
     translate_new_vertices(mesh, first, center)
 
@@ -175,6 +216,11 @@ trailer_spare_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32) {
     tire := [2]Mesh_Ring{{-.10, .23, 0, .23}, {.10, .23, 0, .23}}
     first := mesh.vertex_count
     add_ring_mesh(mesh, tire[:], 12, .Wheel)
+    translate_new_vertices(mesh, first, center)
+
+    whitewall := [2]Mesh_Ring{{-.103, .16, 0, .16}, {.103, .16, 0, .16}}
+    first = mesh.vertex_count
+    add_ring_mesh(mesh, whitewall[:], 12, .Ivory)
     translate_new_vertices(mesh, first, center)
 
     hub := [2]Mesh_Ring{{-.105, .09, 0, .09}, {.105, .09, 0, .09}}
@@ -226,6 +272,15 @@ simple_car_mesh :: proc() -> Aircraft_Mesh {
     rear_deck := [4]Mesh_Ring{{.46, .57, .45, .08}, {.78, .65, .48, .12}, {1.16, .59, .47, .11}, {1.34, .43, .43, .07}}
     add_ring_mesh(&mesh, rear_deck[:], 10, .Body)
 
+    // Soft wheel shoulders interrupt the long slab side and make each tire
+    // feel nested into the coachwork. The wheel mesh is submitted later, so
+    // its dark face remains cleanly readable inside these shallow body pods.
+    wheel_z := [2]f32{-CAR_WHEELBASE_HALF, CAR_WHEELBASE_HALF}
+    for z in wheel_z {
+        shoulder := [3]Mesh_Ring{{z - .31, .60, .40, .08}, {z, .76, .40, .28}, {z + .31, .60, .40, .08}}
+        add_ring_mesh(&mesh, shoulder[:], 12, .Body)
+    }
+
     // Low cockpit rails preserve a crisp opening against the rounded shells.
     add_box(&mesh, {-.62, .53, .08}, {.16, .18, 1.25}, .Body)
     add_box(&mesh, {.62, .53, .08}, {.16, .18, 1.25}, .Body)
@@ -236,40 +291,70 @@ simple_car_mesh :: proc() -> Aircraft_Mesh {
     add_box(&mesh, {0, .50, .27}, {.62, .12, .64}, .Strap)
     add_box(&mesh, {0, .61, .64}, {.62, .20, .10}, .Strap)
 
+    // A shallow dark dashboard anchors the steering column and keeps the
+    // driver's paws from appearing to float over an empty teal cockpit.
+    add_box(&mesh, {0, .53, -.43}, {.90, .12, .12}, .Strap)
+
+    // Fine inset door lines give the broad side panel a human-readable scale.
+    // Duplicate them on both sides so the detail survives either chase-camera
+    // shoulder; shallow boxes avoid z-fighting with the curved body shell.
+    door_side_x := [2]f32{-.706, .706}
+    for x in door_side_x {
+        add_box(&mesh, {x, .43, -.38}, {.018, .30, .018}, .Frame)
+        add_box(&mesh, {x, .43, .55}, {.018, .30, .018}, .Frame)
+        add_box(&mesh, {x, .29, .085}, {.018, .018, .95}, .Frame)
+        add_box(&mesh, {x, .54, .34}, {.026, .035, .14}, .Bumper)
+    }
+
     // Move the short split windscreen toward the nose and rake its top back
     // over the cockpit. The lower pivot keeps the glass rooted in the scuttle.
     windscreen_pivot := [3]f32{0, .54, -.58}
     windscreen_rake := f32(.30)
     first := mesh.vertex_count
-    add_box(&mesh, {-.43, .76, -.58}, {.08, .48, .08}, .Frame)
+    add_box(&mesh, {-.39, .735, -.58}, {.07, .40, .07}, .Bumper)
     rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
     first = mesh.vertex_count
-    add_box(&mesh, {.43, .76, -.58}, {.08, .48, .08}, .Frame)
+    add_box(&mesh, {.39, .735, -.58}, {.07, .40, .07}, .Bumper)
     rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
     first = mesh.vertex_count
-    add_box(&mesh, {0, .98, -.58}, {.92, .08, .08}, .Glass)
+    add_box(&mesh, {0, .925, -.58}, {.84, .07, .07}, .Bumper)
     rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
     first = mesh.vertex_count
-    add_box(&mesh, {0, .78, -.58}, {.72, .24, .035}, .Glass)
+    add_box(&mesh, {0, .75, -.58}, {.66, .20, .030}, .Glass)
     rotate_new_vertices_x(&mesh, first, windscreen_pivot, windscreen_rake)
 
     // Keep the narrower tire faces flush with the shoulder. Realistic kei-car
     // tread is much slimmer relative to diameter than the former toy-like
     // wheels, while the compact wheelbase supplies the short overhangs.
+    // A dark, narrow step visually joins the two arches without making the
+    // lower body heavy. It also gives the mouse-sized roadster a useful scale
+    // cue and a believable place to climb into the open cockpit.
+    running_board_x := [2]f32{-.755, .755}
+    for x in running_board_x {
+        add_box(&mesh, {x, .245, 0}, {.13, .055, 1.18}, .Bumper)
+    }
+
     wheel_x := [2]f32{-CAR_WHEEL_TRACK_HALF, CAR_WHEEL_TRACK_HALF}
-    wheel_z := [2]f32{-CAR_WHEELBASE_HALF, CAR_WHEELBASE_HALF}
     for x in wheel_x {
         for z in wheel_z {
             car_wheel(&mesh, {x, CAR_WHEEL_CENTER_Y, z})
         }
     }
 
-    add_box(&mesh, {0, .25, -1.42}, {1.34, .14, .14}, .Bumper)
-    add_box(&mesh, {0, .25, 1.42}, {1.30, .14, .14}, .Bumper)
+    // Slim overriders punctuate the ends without turning into large grey
+    // blocks in profile.
+    car_ellipsoid(&mesh, {0, .25, -1.43}, .58, .07, .06, .Bumper)
+    car_ellipsoid(&mesh, {0, .25, 1.43}, .56, .07, .06, .Bumper)
     light_x := [2]f32{-.58, .58}
     for x in light_x {
-        add_box(&mesh, {x, .56, -1.18}, {.22, .14, .06}, .Headlight)
-        add_box(&mesh, {x, .54, 1.14}, {.22, .12, .06}, .Tail_Light)
+        car_ellipsoid(&mesh, {x, .57, -1.17}, .14, .12, .09, .Bumper)
+        car_ellipsoid(&mesh, {x, .57, -1.245}, .11, .09, .065, .Headlight)
+        car_ellipsoid(&mesh, {x, .54, 1.16}, .115, .10, .075, .Bumper)
+        car_ellipsoid(&mesh, {x, .54, 1.215}, .09, .075, .06, .Tail_Light)
+    }
+    add_box(&mesh, {0, .37, 1.445}, {.34, .13, .035}, .Ivory)
+    for mark in -1 ..= 1 {
+        add_box(&mesh, {f32(mark) * .075, .37, 1.468}, {.038, .040, .012}, .Strap)
     }
     return mesh
 }

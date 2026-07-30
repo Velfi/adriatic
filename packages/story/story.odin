@@ -1277,15 +1277,15 @@ deal_cross :: proc(ctx: ^dialogue.Context) { deal_tarot(ctx, .Celtic_Cross) }
 
 niko_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
-    if state == nil do return "Buongiorno. Les forni saranno chauds avant che il porto si svegli."
+    if state == nil do return "Buongiorno. Les forni werden caldi avant que il porto se svegli."
     if state.delivery.active && state.delivery.to == .Niko {
         switch state.delivery.kind {
         case .First_Reply:
             return "Ah, sei de retour preko il mare. Tu as la reply di Iva con te?"
         case .Regatta_Acceptance:
-            return "Il motor di Bojan ha traversé la baia all'alba. È questa la regatta acceptance di Iva?"
+            return "Der motor di Bojan ha traversé la baia al alba. È questa la regatta acceptance de Iva?"
         case .Repeat_Westbound:
-            return "Le verre de lampe viaggia malissimo. Spero Iva l'abbia preparato meglio di moi."
+            return "Le verre de lampe voyage malissimo preko il mare. Espero che Iva l'abbia preparato bolje di moi."
         case .None,
              .First_Letter,
              .Regatta_Invitation,
@@ -1298,19 +1298,19 @@ niko_text :: proc(ctx: ^dialogue.Context) -> string {
     switch state.romance {
     case .Unintroduced:
         if state.airfield_errand == .Eastbound || state.airfield_errand == .Completed {
-            return "Quando retournes a est… io ho una sealed letter per Iva. L'enveloppe è piccola fuori, almeno."
+            return "Quando retournes a est… tengo una sealed letter para Iva. L'enveloppe est piccola fuori, almeno."
         }
-        return "La lampe dell'isola est clignote due volte avant alba. Iva veglia mentre les forni scaldano."
+        return "La lampe dell'isola est clignote due volte avant alba. Iva garde il faro mentre die forni scaldano."
     case .First_Letter:
-        return "La boîte di cardamomo sembra molto sospetta quand qualcuno aspetta risposta."
+        return "La boîte di cardamomo sieht très sospetta quand qualcuno espera una risposta."
     case .Corresponding:
-        return "La regatta demande un baker, certo. Questa regatta invitation è per Iva, custode du phare."
+        return "La regatta demande un baker, claro. Questa regatta invitation va para Iva, gardienne du phare."
     case .Invitation:
-        return "C'è una tenda blu sul quai. Personne sait pourquoi io la inspecto sempre."
+        return "C'è una tenda blu am quai. Personne ne sait perché la inspecto cada giorno."
     case .Meeting:
-        return "Iva ha trouvé la blue awning. Sembra più petite con due persone sotto."
+        return "Iva ha trouvé la blue awning. Sie sembra plus petite con due persone dessous."
     case .Together:
-        return "La posta dell'isola continua: Iva dit che le verre può aspettare. Das pane nicht."
+        return "La posta dell'isola continue: Iva dit che le verre puede aspettare. Das pane nicht."
     }
     return ""
 }
@@ -1320,54 +1320,56 @@ niko_delivery_reaction :: proc(ctx: ^dialogue.Context) -> string {
     if state == nil do return ""
     if state.delivery.care == .Orderly {
         return(
-            "Asciutta, piatta, und ogni fold ancora preciso. Tu portes una lettera comme Gerta porta un instrument: zero drama, tutta cura." \
+            "Asciutta, piatta, und cada fold encore preciso. Tu portes una lettera wie Gerta porta un instrument: zero drama, tutta cura." \
         )
     }
     if state.delivery.care == .Expressive {
         return(
-            "La lettera est intacta, mais arriva con l'aria di sapere qualcosa. Très bien; alcune consegne devono conservare anche il silenzio." \
+            "La lettera est intacta, aber arriva con l'aria de saber qualcosa. Très bien; certaines consegne devono conservare anche il silenzio." \
         )
     }
     switch state.delivery.kind {
     case .First_Reply:
-        return "Elle ricordava la farina della mia première nota. Non la parte che aspettavo."
+        return "Elle ricordava la farina de mi première nota. Nicht la parte che aspettavo."
     case .Regatta_Acceptance:
-        return "Elle viene. Devo lasciare la tenda comme si non l'avessi lucidée."
+        return "Elle viene. Debo lasciare la tenda comme si non l'avessi poliert."
     case .Repeat_Westbound:
-        return "Le verre ha survécu, und elle ha incluso instructions per cena. Uno dei due è plus fragile."
+        return "Le verre ha survécu, und sie ha incluso instructions para cena. Uno dei due est plus fragile."
     case .None, .First_Letter, .Regatta_Invitation, .Repeat_Eastbound, .Clinic_Medicine, .Clinic_Linens, .Clinic_Water:
-        return "Grazie. Certaines cose arrivano meglio quand nessuno le apre en route."
+        return "Grazie. Certaines cose arrivent bolje quand nadie le apre en route."
     }
     return ""
 }
 
 niko_handoff_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
-    if state == nil do return "Keep la letter sealed and above the spray. Iva will understand the rest."
+    if state == nil do return "Garde la letter sealed sopra il spray. Iva wird comprendre el resto."
     switch state.delivery.kind {
     case .First_Letter:
         return(
-            "Here: una sealed letter for Iva, wrapped beside the cardamom recipe. Keep it above il spray; the ink has less courage than you." \
+            "Voilà: una sealed letter para Iva, verpackt accanto alla recette di cardamomo. Garde-la sopra il spray; l'encre hat menos courage que tu." \
         )
     case .Regatta_Invitation:
         return(
-            "This regatta invitation is for Iva. La blue awning is written only once, so perhaps she will think io mention it casually." \
+            "Questa regatta invitation est para Iva. La blue awning steht solo una volta, donc možda lei penserà che io la mentiono casualmente." \
         )
     case .Repeat_Eastbound:
         switch state.repeat_deliveries / 2 % 3 {
         case 0:
             return(
-                "For Iva: warm pane, postcards, und one pressed flower. Keep la package above the spray; sentiment has poor waterproofing." \
+                "Para Iva: pane caldo, postcards, und un fiore pressé. Garde la package sopra il spray; sentiment hat pessima waterproofing." \
             )
         case 1:
-            return "For Iva: pane, her blue measuring spoon, et cardamom. The spoon is wrapped; my explanation is not."
+            return(
+                "Para Iva: pane, su blue measuring spoon, et cardamomo. Der spoon est emballé; mia spiegazione, nicht." \
+            )
         case 2:
             return(
-                "For Iva: pane and una basil cutting. Keep la roots upright; encouragement may be added in moderation." \
+                "Para Iva: pane und una basil cutting. Garde les roots verticales; encouragement puede aggiungersi avec moderation." \
             )
         }
     case .None, .First_Reply, .Regatta_Acceptance, .Repeat_Westbound, .Clinic_Medicine, .Clinic_Linens, .Clinic_Water:
-        return "Keep la letter sealed and above the spray. Iva will understand the rest."
+        return "Garde la letter sealed sopra il spray. Iva wird comprendre el resto."
     }
     return ""
 }
@@ -1376,58 +1378,60 @@ niko_handoff_careful_close :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
     if state != nil && state.delivery.kind == .Repeat_Eastbound {
         return(
-            "Grazie. Pane on top, postcards flat, flower sheltered. La package can survive il mare without becoming a story." \
+            "Grazie. Pane sopra, postcards plates, fiore protégé. La package peut survivre il mare ohne diventare una storia." \
         )
     }
     return(
-        "Grazie. Il mare may read every shoreline, mais not this letter. Keep Iva's name dry; the rest can arrive wrinkled." \
+        "Grazie. Il mare puede leggere chaque riva, mais nicht questa letter. Garde il nome di Iva asciutto; el resto può arriver froissé." \
     )
 }
 
 niko_handoff_playful_close :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
     if state != nil && state.delivery.kind == .Repeat_Eastbound {
-        return "Naturally. Una flower, warm pane, und zero personal evidence. Iva may classify them differently."
+        return "Naturellement. Un fiore, pane caldo, und zero evidence personale. Iva peut classificarli anders."
     }
     return(
-        "There is no evidence. Solo cardamom, una sealed letter, und a baker who cleaned flour from one sleeve. Completely routine." \
+        "Il n'y a zero evidence. Solo cardamomo, una sealed letter, und ein baker che ha pulito la farina da una manche. Completamente routine." \
     )
 }
 
 niko_together_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
-    if state == nil do return "Iva says la lighthouse clock gains one minute. My oven clock disagrees, loudly."
+    if state == nil do return "Iva zegt que l'horloge du phare gagne un minuto. Mein oven clock disagree, très forte."
     switch state.repeat_deliveries / 2 % 3 {
     case 0:
         return(
-            "Iva says la lighthouse clock gains one minute. My oven clock loses two. Between us, dinner arrives exactly on time." \
+            "Iva zegt que l'horloge du phare gagne un minuto. Mein oven clock perde due. Entre nous, cena arrive exactement a tempo." \
         )
     case 1:
         return(
-            "She returned my blue measuring spoon inside three layers of lamp paper. Très safe, completely unnecessary, unmistakably Iva." \
+            "Sie ha retourné mi blue measuring spoon dentro trois couches di lamp paper. Très sicuro, totalmente inutile, unmistakably Iva." \
         )
     case 2:
         return(
-            "Iva says basil needs acqua, non encouragement. Io provide both; the plant has not declared a preference." \
+            "Iva dice que basilico braucht acqua, non encouragement. Io fournisse entrambi; die plant n'a déclaré aucune préférence." \
         )
     }
     return ""
 }
 
 niko_together_rhythm_close :: proc(_: ^dialogue.Context) -> string {
-    return "Una rhythm, sì: lamp, oven, postbag, supper. Nothing romantic—solo excellent scheduling with cardamom."
+    return "Un rhythm, sì: lampe, forno, postbag, supper. Rien romantique—solo excellente Planung mit cardamomo."
 }
 
 niko_together_experiment_close :: proc(_: ^dialogue.Context) -> string {
-    return "Write successful in large letters, per favore. Iva files small print beside maintenance complaints."
+    return(
+        "Écris successful in letras grandes, per favore. Iva archiviert la petite print accanto ai maintenance complaints." \
+    )
 }
 
 niko_warm_close :: proc(_: ^dialogue.Context) -> string {
-    return "Va bene. Io metto un altro plateau dentro; attendre va meglio con lavoro utile."
+    return "Va bene. Io metto ein altro plateau dentro; attendre funciona meglio con lavoro utile."
 }
 
 niko_discreet_close :: proc(_: ^dialogue.Context) -> string {
-    return "Bene. Una lettre sigillata mérite almeno una persona capace di tacere."
+    return "Bene. Una lettre sigillata mérite wenigstens una persona capaz de tacere."
 }
 
 meeting_iva_text :: proc(ctx: ^dialogue.Context) -> string {
@@ -1449,13 +1453,13 @@ meeting_iva_text :: proc(ctx: ^dialogue.Context) -> string {
 
 meeting_niko_warm :: proc(_: ^dialogue.Context) -> string {
     return(
-        "La terza ruota era décorative. Siediti, per favore; ho fatto abbastanza pane pour una regatta und un aeroplano tardivo." \
+        "La terza ruota était dekorativ. Siediti, por favor; ho fatto genug pane pour una regatta und un aeroplano tardivo." \
     )
 }
 
 meeting_niko_discreet :: proc(_: ^dialogue.Context) -> string {
     return(
-        "Alors non hai visto niente, grazie. Solo un baker, una custode du phare, und pranzo sotto una tenda ordinaria." \
+        "Alors non has visto niente, grazie. Solo ein baker, una gardienne du phare, und pranzo sotto una tenda ordinaria." \
     )
 }
 

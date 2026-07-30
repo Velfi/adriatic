@@ -1,10 +1,36 @@
 package tests
 
+import islands "../packages/islands"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
 import "core:os"
 import "core:testing"
+
+@(test)
+default_town_sites_keep_the_full_settlement_envelope_on_land :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        town_x, town_z := terrain.default_town_center_for_project(project, sign)
+        runway_x, runway_z := terrain.default_runway_center(sign)
+        runway_half_length := f32(terrain.WORLD_SIZE_METERS * .5) * terrain.DEFAULT_RUNWAY_HALF_LENGTH
+        runway_dx := max(math.abs(town_x - runway_x) - runway_half_length, f32(0))
+        runway_dz := math.abs(town_z - runway_z)
+        runway_distance := f32(math.sqrt(f64(runway_dx * runway_dx + runway_dz * runway_dz)))
+        testing.expect(t, runway_distance >= terrain.DEFAULT_TOWN_SITE_RADIUS + terrain.DEFAULT_TOWN_RUNWAY_CLEARANCE)
+        radii := [3]f32{0, terrain.DEFAULT_TOWN_SITE_RADIUS * .55, terrain.DEFAULT_TOWN_SITE_RADIUS}
+        for radius in radii {
+            sample_total := radius == 0 ? 1 : 32
+            for sample_index in 0 ..< sample_total {
+                angle := f32(sample_index) * math.TAU / f32(sample_total)
+                x := town_x + math.cos(angle) * radius
+                z := town_z + math.sin(angle) * radius
+                testing.expect(t, terrain.sample_height(project, 0, x, z) > project.sea_level + .8)
+            }
+        }
+    }
+}
 
 @(test)
 terrain_strokes_propagate_through_every_clipmap_level :: proc(t: ^testing.T) {
@@ -50,6 +76,25 @@ terrain_material_is_bounded :: proc(t: ^testing.T) {
 }
 
 @(test)
+terrain_render_material_interpolates_without_changing_cell_classification :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    level := &project.levels[0]
+    sample_x, sample_z := 240, 240
+    left_index := sample_z * terrain.TERRAIN_RESOLUTION + sample_x
+    right_index := left_index + 1
+    level.material[left_index] = -1
+    level.material[right_index] = 0
+    left_x := level.origin_x + f32(sample_x) * level.cell_size
+    z := level.origin_z + f32(sample_z) * level.cell_size
+    midpoint_x := left_x + level.cell_size * .5
+
+    testing.expect(t, math.abs(terrain.sample_render_material(project, 0, midpoint_x, z) + .5) < .001)
+    testing.expect(t, terrain.sample_material(project, 0, left_x, z) == -1)
+    testing.expect(t, terrain.sample_material(project, 0, left_x + level.cell_size, z) == 0)
+}
+
+@(test)
 terrain_brush_hardness_controls_edge_falloff :: proc(t: ^testing.T) {
     soft := terrain.new_project()
     hard := terrain.new_project()
@@ -88,6 +133,8 @@ terrain_ground_classifier_mirrors_renderer_bands :: proc(t: ^testing.T) {
     // Sea level offsets shift the bands with the water plane.
     testing.expect(t, terrain.classify_ground(0, 10.3, 10) == .Sand)
     testing.expect(t, terrain.classify_ground(0, 14, 10) == .Grass)
+    testing.expect(t, terrain.classify_ground(-1, 14, 10) == .Sand)
+    testing.expect(t, terrain.classify_ground(-.1, 14, 10) == .Grass)
 }
 
 @(test)
@@ -249,8 +296,172 @@ default_terrain_has_two_opposite_corner_islands :: proc(t: ^testing.T) {
     offset := half_extent * terrain.DEFAULT_ISLAND_OFFSET
     testing.expect(t, terrain.sample_height(project, 0, -offset, -offset) > project.sea_level)
     testing.expect(t, terrain.sample_height(project, 0, offset, offset) > project.sea_level)
-    testing.expect(t, terrain.sample_height(project, 0, -offset, offset) == project.sea_level)
-    testing.expect(t, terrain.sample_height(project, 0, offset, -offset) == project.sea_level)
+    testing.expect(t, terrain.sample_height(project, 0, -offset, offset) <= project.sea_level)
+    testing.expect(t, terrain.sample_height(project, 0, offset, -offset) <= project.sea_level)
+}
+
+@(test)
+default_generated_islands_have_dune_material_and_coastal_bathymetry :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    level := &project.levels[4]
+    dry_dune_samples, submerged_samples := 0, 0
+    for z in 0 ..< terrain.TERRAIN_RESOLUTION {
+        for x in 0 ..< terrain.TERRAIN_RESOLUTION {
+            index := z * terrain.TERRAIN_RESOLUTION + x
+            height := level.heights[index]
+            material := level.material[index]
+            if height > project.sea_level && material < -.05 do dry_dune_samples += 1
+            if height < project.sea_level - .1 do submerged_samples += 1
+        }
+    }
+    testing.expect(t, dry_dune_samples > 12)
+    testing.expect(t, submerged_samples > 100)
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        center_x, center_z := terrain.default_island_center(sign)
+        testing.expect(t, terrain.sample_material(project, 0, center_x, center_z) >= 0)
+    }
+}
+
+@(test)
+generated_low_coast_transitions_from_wet_to_dry_beach_before_dunes :: proc(t: ^testing.T) {
+    plans: [len(terrain.DEFAULT_ISLAND_SIGNS)]islands.Plan
+    for seed, index in terrain.DEFAULT_ISLAND_SEEDS {
+        plans[index] = islands.generate(seed)
+    }
+    defer for &plan in plans do islands.destroy(&plan)
+
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    center_x, center_z := terrain.default_island_center(1)
+    found := false
+    for x := center_x - 800; x <= center_x + 800 && !found; x += 16 {
+        shore_z := center_z
+        found_shore := false
+        for offset := f32(0); offset <= terrain.DEFAULT_GENERATED_ISLAND_HALF_Z * 1.2; offset += 4 {
+            _, signed_distance, _ := terrain.default_generated_height(&plans, x, center_z - offset, half_extent)
+            if signed_distance >= 0 {
+                shore_z = center_z - offset + 4
+                found_shore = true
+                break
+            }
+        }
+        if !found_shore do continue
+        wet_height, _, wet := terrain.default_generated_height(&plans, x, shore_z + 2, half_extent)
+        dry_height, _, dry := terrain.default_generated_height(&plans, x, shore_z + 14, half_extent)
+        shoulder_height, _, shoulder := terrain.default_generated_height(&plans, x, shore_z + 34, half_extent)
+        if wet < -1.02 &&
+           dry < -.35 &&
+           shoulder > wet &&
+           dry_height > wet_height + .08 &&
+           shoulder_height >= dry_height {
+            found = true
+        }
+    }
+    testing.expect(t, found)
+}
+
+@(test)
+generated_beach_width_is_deterministic_bounded_and_changes_smoothly_alongshore :: proc(t: ^testing.T) {
+    seed := terrain.DEFAULT_ISLAND_SEEDS[1]
+    minimum, maximum := f32(100), f32(0)
+    previous := terrain.default_generated_beach_width(seed, 1800, 2200)
+    for x := f32(1801); x <= 3400; x += 1 {
+        width := terrain.default_generated_beach_width(seed, x, 2200)
+        testing.expect(t, width >= 20 && width <= 35)
+        testing.expect(t, math.abs(width - previous) < .12)
+        testing.expect_value(t, width, terrain.default_generated_beach_width(seed, x, 2200))
+        minimum = min(minimum, width)
+        maximum = max(maximum, width)
+        previous = width
+    }
+    testing.expect(t, maximum - minimum > 5)
+}
+
+@(test)
+generated_dune_character_is_deterministic_bounded_and_varies_by_island :: proc(t: ^testing.T) {
+    west := terrain.default_generated_dune_character(terrain.DEFAULT_ISLAND_SEEDS[0])
+    west_again := terrain.default_generated_dune_character(terrain.DEFAULT_ISLAND_SEEDS[0])
+    east := terrain.default_generated_dune_character(terrain.DEFAULT_ISLAND_SEEDS[1])
+    testing.expect_value(t, west, west_again)
+    characters := [2]terrain.Generated_Dune_Character{west, east}
+    for character in characters {
+        testing.expect(t, character.height >= 4.6 && character.height <= 6.2)
+        testing.expect(t, character.spacing >= 34 && character.spacing <= 45)
+        testing.expect(t, character.width >= 60 && character.width <= terrain.DEFAULT_DUNE_MAX_WIDTH)
+        testing.expect(t, character.wind_strength >= .58 && character.wind_strength <= .78)
+        testing.expect(t, character.vegetation_strength >= .58 && character.vegetation_strength <= .82)
+    }
+    testing.expect(
+        t,
+        west.height != east.height ||
+        west.spacing != east.spacing ||
+        west.width != east.width ||
+        west.vegetation_strength != east.vegetation_strength,
+    )
+}
+
+@(test)
+generated_coastal_morphology_distinguishes_sheltered_bays_and_exposed_headlands :: proc(t: ^testing.T) {
+    seed := terrain.DEFAULT_ISLAND_SEEDS[0]
+    sheltered := terrain.default_generated_coastal_morphology(seed, 120, -80, 1, 0)
+    sheltered_again := terrain.default_generated_coastal_morphology(seed, 120, -80, 1, 0)
+    exposed := terrain.default_generated_coastal_morphology(seed, 120, -80, -1, 1)
+    testing.expect_value(t, sheltered, sheltered_again)
+    testing.expect(t, sheltered.beach_width > exposed.beach_width)
+    testing.expect(t, sheltered.dune_width_scale > exposed.dune_width_scale)
+    testing.expect(t, sheltered.dune_height_scale < exposed.dune_height_scale)
+    testing.expect(t, sheltered.vegetation_scale > exposed.vegetation_scale)
+    contexts := [2]terrain.Generated_Coastal_Morphology{sheltered, exposed}
+    for morphology in contexts {
+        testing.expect(t, morphology.beach_width >= 18 && morphology.beach_width <= 39)
+        testing.expect(t, morphology.dune_height_scale >= .76 && morphology.dune_height_scale <= 1.08)
+        testing.expect(t, morphology.dune_width_scale >= .82 && morphology.dune_width_scale <= 1.05)
+        testing.expect(t, morphology.vegetation_scale >= .92 && morphology.vegetation_scale <= 1.13)
+    }
+}
+
+@(test)
+generated_coast_context_uses_the_anisotropic_world_metric :: proc(t: ^testing.T) {
+    plan := islands.generate(terrain.DEFAULT_ISLAND_SEEDS[0])
+    defer islands.destroy(&plan)
+    step_x := f32(2) / f32(islands.GRID_WIDTH - 1)
+    step_z := f32(2) / f32(islands.GRID_HEIGHT - 1)
+    cell_x := terrain.DEFAULT_GENERATED_ISLAND_HALF_X * step_x
+    cell_z := terrain.DEFAULT_GENERATED_ISLAND_HALF_Z * step_z
+    found := false
+    for z := 2; z < islands.GRID_HEIGHT - 2 && !found; z += 1 {
+        local_z := f32(z) / f32(islands.GRID_HEIGHT - 1) * 2 - 1
+        for x in 2 ..< islands.GRID_WIDTH - 2 {
+            local_x := f32(x) / f32(islands.GRID_WIDTH - 1) * 2 - 1
+            left := islands.sample_signed_distance(&plan, local_x - step_x, local_z)
+            right := islands.sample_signed_distance(&plan, local_x + step_x, local_z)
+            back := islands.sample_signed_distance(&plan, local_x, local_z - step_z)
+            front := islands.sample_signed_distance(&plan, local_x, local_z + step_z)
+            grid_x, grid_z := right - left, front - back
+            grid_length := f32(math.sqrt(f64(grid_x * grid_x + grid_z * grid_z)))
+            if grid_length < .1 || abs(grid_x) < .1 || abs(grid_z) < .1 do continue
+            world_x, world_z := grid_x / cell_x, grid_z / cell_z
+            world_length := f32(math.sqrt(f64(world_x * world_x + world_z * world_z)))
+            coast := terrain.default_generated_coast_context(&plan, local_x, local_z, 1)
+            testing.expect(t, math.abs(coast.outward_normal[0] - world_x / world_length) < .0001)
+            testing.expect(t, math.abs(coast.outward_normal[1] - world_z / world_length) < .0001)
+            testing.expect(t, math.abs(coast.distance_scale - f32(math.sqrt(f64(cell_x * cell_z)))) < .001)
+            found = true
+            break
+        }
+    }
+    testing.expect(t, found)
+}
+
+@(test)
+coastal_grass_cards_open_only_on_elevated_stabilized_sand :: proc(t: ^testing.T) {
+    sea := f32(0)
+    testing.expect(t, !terrain.supports_coastal_grass(-1.8, 1.8, sea))
+    testing.expect(t, !terrain.supports_coastal_grass(-.70, 2.8, sea))
+    testing.expect(t, !terrain.supports_coastal_grass(-.45, .7, sea))
+    testing.expect(t, terrain.supports_coastal_grass(-.58, 2.8, sea))
+    testing.expect(t, terrain.supports_coastal_grass(-.20, 3.2, sea))
+    testing.expect(t, terrain.supports_coastal_grass(0, 4.2, sea))
 }
 
 @(test)
@@ -279,30 +490,67 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
     defer terrain.free_project(project)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
-        center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        center_x, center_z := terrain.default_runway_center(sign)
         runway_half_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH
         runway_half_width := half_extent * terrain.DEFAULT_RUNWAY_HALF_WIDTH
-        runway_ends := [2]f32{center - runway_half_length, center + runway_half_length}
-        runway_sides := [2]f32{center - runway_half_width, center + runway_half_width}
+        runway_ends := [2]f32{center_x - runway_half_length, center_x + runway_half_length}
+        runway_sides := [2]f32{center_z - runway_half_width, center_z + runway_half_width}
         for x in runway_ends {
             for z in runway_sides {
                 testing.expect(t, terrain.sample_height(project, 0, x, z) > project.sea_level)
             }
         }
     }
-    testing.expect(t, project.road_graph.node_count == 4)
-    testing.expect(t, project.road_graph.edge_count == 2)
+    testing.expect(t, project.road_graph.node_count == 8)
+    testing.expect(t, project.road_graph.edge_count == 6)
+    runway_edges := 0
+    arrival_edges := 0
     for edge in project.road_graph.edges[:project.road_graph.edge_count] {
         testing.expect(t, edge.pavement == .Asphalt)
-        testing.expect(t, edge.half_width == half_extent * terrain.DEFAULT_RUNWAY_HALF_WIDTH)
         from := project.road_graph.nodes[edge.from].position
         to := project.road_graph.nodes[edge.to].position
-        testing.expect(t, from.z == to.z)
-        testing.expect(t, to.x - from.x == half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH * 2)
-        for sample_index in 0 ..= 8 {
-            sample_x := from.x + (to.x - from.x) * f32(sample_index) / 8
-            testing.expect(t, math.abs(terrain.sample_height(project, 0, sample_x, from.z) - from.y) < .001)
+        if edge.half_width == half_extent * terrain.DEFAULT_RUNWAY_HALF_WIDTH {
+            runway_edges += 1
+            testing.expect(t, from.z == to.z)
+            testing.expect(t, math.abs(to.x - from.x - half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH * 2) < .001)
+            for sample_index in 0 ..= 8 {
+                sample_x := from.x + (to.x - from.x) * f32(sample_index) / 8
+                testing.expect(t, math.abs(terrain.sample_height(project, 0, sample_x, from.z) - from.y) < .001)
+            }
+        } else {
+            arrival_edges += 1
+            testing.expect(t, edge.half_width == 3.5 || edge.half_width == 4)
+            testing.expect(t, from.z != to.z)
         }
+    }
+    testing.expect_value(t, runway_edges, len(terrain.DEFAULT_ISLAND_SIGNS))
+    testing.expect_value(t, arrival_edges, len(terrain.DEFAULT_ISLAND_SIGNS) * 2)
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        airport_x, airport_z := terrain.default_airport_center(sign)
+        connected_edges := 0
+        for edge in project.road_graph.edges[:project.road_graph.edge_count] {
+            from := project.road_graph.nodes[edge.from].position
+            to := project.road_graph.nodes[edge.to].position
+            if (math.abs(from.x - airport_x) < .001 && math.abs(from.z - airport_z) < .001) ||
+               (math.abs(to.x - airport_x) < .001 && math.abs(to.z - airport_z) < .001) {
+                connected_edges += 1
+            }
+        }
+        testing.expect_value(t, connected_edges, 2)
+    }
+}
+
+@(test)
+default_runway_sites_are_seeded_and_bounded_inside_islands :: proc(t: ^testing.T) {
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        island_x, island_z := terrain.default_island_center(sign)
+        runway_x, runway_z := terrain.default_runway_center(sign)
+        offset_x := runway_x - island_x
+        offset_z := runway_z - island_z
+        testing.expect(t, math.abs(offset_x) + math.abs(offset_z) > 1)
+        testing.expect(t, math.abs(offset_x) < half_extent * terrain.DEFAULT_ISLAND_RADIUS * .2)
+        testing.expect(t, math.abs(offset_z) < half_extent * terrain.DEFAULT_ISLAND_RADIUS * .2)
     }
 }
 
@@ -409,7 +657,8 @@ default_islands_are_aircraft_scale :: proc(t: ^testing.T) {
     diameter := half_extent * terrain.DEFAULT_ISLAND_RADIUS * 2
     runway_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH * 2
     testing.expect(t, diameter >= 550)
-    testing.expect(t, runway_length >= 399)
+    testing.expect(t, runway_length >= 390)
+    testing.expect(t, runway_length <= 410)
 }
 
 @(test)

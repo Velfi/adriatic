@@ -96,8 +96,7 @@ render_graph_geometry :: proc(user_data: rawptr) {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.static_vertex_buffer.handle, &ctx.offset)
         vk.CmdBindIndexBuffer(cmd, ctx.static_index_buffer.handle, 0, .UINT32)
         for draw in world_renderer.retained_static_draws {
-            if draw.cache_index < 0 ||
-               draw.cache_index >= len(world_renderer.static_geometry_cache) {
+            if draw.cache_index < 0 || draw.cache_index >= len(world_renderer.static_geometry_cache) {
                 continue
             }
             entry := &world_renderer.static_geometry_cache[draw.cache_index]
@@ -114,10 +113,7 @@ render_graph_geometry :: proc(user_data: rawptr) {
     }
     if len(world_renderer.instance_flattened) > 0 {
         vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.instance_pipelines[ctx.pipeline_index])
-        buffers := [2]vk.Buffer {
-            ctx.instance_vertex_buffer.handle,
-            ctx.instance_data_buffer.handle,
-        }
+        buffers := [2]vk.Buffer{ctx.instance_vertex_buffer.handle, ctx.instance_data_buffer.handle}
         offsets := [2]vk.DeviceSize{0, 0}
         vk.CmdBindVertexBuffers(cmd, 0, 2, raw_data(buffers[:]), raw_data(offsets[:]))
         vk.CmdBindIndexBuffer(cmd, ctx.instance_index_buffer.handle, 0, .UINT32)
@@ -302,8 +298,17 @@ render_graph_terrain :: proc(user_data: rawptr) {
         } else {
             variant := clipmap_ring_variant(int(ctx.pass.frame.frame_index), level)
             ring := &world_renderer.clipmap_ring_index[variant[1]][variant[0]]
+            index_count := world_renderer.clipmap_ring_indices
+            // Level 1 now uses its native two-metre grid and therefore the
+            // ordinary 2× hole beneath the half-metre inner patch. The 4×
+            // coverage jump occurs between levels 1 and 2, safely farther
+            // from the camera, and uses the narrower sparse-ring hole.
+            if level == 2 {
+                ring = &world_renderer.clipmap_inner_ring_index[variant[1]][variant[0]]
+                index_count = world_renderer.clipmap_inner_ring_indices
+            }
             vk.CmdBindIndexBuffer(cmd, ring.handle, 0, .UINT32)
-            vk.CmdDrawIndexed(cmd, world_renderer.clipmap_ring_indices, 1, 0, 0, 0)
+            vk.CmdDrawIndexed(cmd, index_count, 1, 0, 0, 0)
         }
     }
     render_graph_stage_end(ctx)

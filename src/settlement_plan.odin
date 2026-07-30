@@ -982,8 +982,15 @@ settlement_plan_acceptance_failure :: proc(
     minimum_height, maximum_height := settlement_height_band(plan.request.region, plan.request.scale)
     for site in plan.sites[:plan.site_count] {
         if !site.accepted do continue
-        if terrain.sample_height(project, 0, site.structure.center_x, site.structure.center_z) <=
-           project.sea_level + .6 {
+        if site.kind == .Ordinary &&
+           !settlement_structure_footprint_on_land(
+                   project,
+                   site.structure.center_x,
+                   site.structure.center_z,
+                   site.structure.width,
+                   site.structure.depth,
+                   site.structure.rotation,
+               ) {
             return .Submerged_Site
         }
         if site.kind != .Ordinary do continue

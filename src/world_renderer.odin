@@ -51,7 +51,9 @@ WING_TRAIL_INDEX_CAPACITY :: (particles.MAX_WING_TRAIL_PARTICLES - 2) * 8 * 6 + 
 SHADOW_VERTEX_INITIAL_CAPACITY :: 180_000
 CLIPMAP_GRID_RESOLUTION :: (terrain.TERRAIN_RESOLUTION - 1) / 2 + 2
 CLIPMAP_VERTEX_COUNT :: CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
-CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_GRID_RESOLUTION - 1) * (CLIPMAP_GRID_RESOLUTION - 1) * 6
+CLIPMAP_INNER_GRID_RESOLUTION :: terrain.TERRAIN_RESOLUTION + 1
+CLIPMAP_INNER_VERTEX_COUNT :: CLIPMAP_INNER_GRID_RESOLUTION * CLIPMAP_INNER_GRID_RESOLUTION
+CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_INNER_GRID_RESOLUTION - 1) * (CLIPMAP_INNER_GRID_RESOLUTION - 1) * 6
 CLIPMAP_TRANSITION_WIDTH :: 4
 
 // Keep the world pass useful beyond the immediate flight envelope. The
@@ -115,6 +117,14 @@ Structure_Visibility_Order :: struct {
     distance_squared: f32,
 }
 
+OVERLAY_CHUNK_CELLS :: 16
+OVERLAY_CHUNKS_PER_AXIS :: (terrain.RING_RESOLUTION - 2) / OVERLAY_CHUNK_CELLS + 1
+
+Overlay_Chunk_Bounds :: struct {
+    center: third_person.Vec3,
+    radius: f32,
+}
+
 GROUND_GRASS_SPACING :: f32(.46)
 GROUND_GRASS_CHUNK_CELLS :: 16
 GROUND_GRASS_CHUNK_WORLD_SIZE :: GROUND_GRASS_SPACING * f32(GROUND_GRASS_CHUNK_CELLS)
@@ -141,27 +151,6 @@ Ground_Grass_Chunk :: struct {
 structure_visibility_order_less :: #force_inline proc(a, b: Structure_Visibility_Order) -> bool {
     if a.distance_squared != b.distance_squared do return a.distance_squared < b.distance_squared
     return a.index < b.index
-}
-
-@(no_instrumentation)
-structure_visibility_order_repair :: proc(order: []Structure_Visibility_Order) -> bool {
-    move_limit := len(order) * 8
-    moves := 0
-    for index in 1 ..< len(order) {
-        entry := order[index]
-        insertion := index
-        for insertion > 0 && structure_visibility_order_less(entry, order[insertion - 1]) {
-            order[insertion] = order[insertion - 1]
-            insertion -= 1
-            moves += 1
-            if moves >= move_limit {
-                order[insertion] = entry
-                return false
-            }
-        }
-        order[insertion] = entry
-    }
-    return true
 }
 
 structure_lod_forced: i32 = -1
@@ -302,6 +291,25 @@ structure_lod_for :: proc(
     return structure_lod_select(diameter, previous, force_near)
 }
 
+foliage_aerial_view_select :: #force_inline proc(
+    camera_clearance, structure_height: f32,
+    previous, flying: bool,
+) -> bool {
+    // Aircraft reach the aerial treatment earlier, but a parked or
+    // canopy-height aircraft still needs the full ground silhouette,
+    // understory, and outline cards. Clearance—not control mode—remains the
+    // authority in both cases.
+    threshold := max(f32(110), structure_height * 1.35)
+    if flying do threshold = max(f32(55), structure_height * .75)
+    // Enter above the authored threshold and remain aerial until the camera
+    // descends well below it. This keeps cached young groves from alternating
+    // between shrub and woodland topology when a flight camera, editor orbit,
+    // or terrain sample hovers near one exact height.
+    enter_threshold := threshold * 1.10
+    exit_threshold := threshold * .90
+    return previous ? camera_clearance > exit_threshold : camera_clearance > enter_threshold
+}
+
 when ODIN_TEST {
     @(test)
     window_flower_boxes_are_deterministic_varied_and_near_target_density :: proc(t: ^testing.T) {
@@ -354,6 +362,27 @@ when ODIN_TEST {
         camera.focal_length = 2
         testing.expect(t, math.abs(structure_lod_projected_diameter(camera, {0, 0, -10}, 1, 1000, .2) - 200) < .001)
         testing.expect(t, structure_lod_projected_diameter(camera, {0, 0, -.5}, 1, 1000, .2) >= 1e8)
+    }
+
+    @(test)
+    foliage_aerial_view_uses_hysteresis_and_flight_override :: proc(t: ^testing.T) {
+        // A 60 m formation uses the fixed 110 m minimum: enter at 121 m and
+        // leave below 99 m, with the band preserving the previous state.
+        testing.expect(t, !foliage_aerial_view_select(115, 60, false, false))
+        testing.expect(t, foliage_aerial_view_select(122, 60, false, false))
+        testing.expect(t, foliage_aerial_view_select(105, 60, true, false))
+        testing.expect(t, !foliage_aerial_view_select(98, 60, true, false))
+        testing.expect(t, !foliage_aerial_view_select(0, 60, false, true))
+        testing.expect(t, !foliage_aerial_view_select(60, 60, false, true))
+        testing.expect(t, foliage_aerial_view_select(61, 60, false, true))
+        testing.expect(t, foliage_aerial_view_select(52, 60, true, true))
+        testing.expect(t, !foliage_aerial_view_select(49, 60, true, true))
+
+        // Taller formations scale the band from their own height.
+        testing.expect(t, !foliage_aerial_view_select(148, 100, false, false))
+        testing.expect(t, foliage_aerial_view_select(149, 100, false, false))
+        testing.expect(t, foliage_aerial_view_select(122, 100, true, false))
+        testing.expect(t, !foliage_aerial_view_select(121, 100, true, false))
     }
 
     @(test)
@@ -549,6 +578,7 @@ Architecture_Grass_Footprint :: struct {
 Foliage_Geometry_Cache_Entry :: struct {
     valid:            bool,
     structure:        terrain.Structure,
+    aerial_view:      bool,
     distance_bucket:  i32,
     direction_bucket: i32,
     lod:              Structure_LOD,
@@ -764,8 +794,10 @@ World_Renderer :: struct {
     clipmap_vertex:                               [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
     clipmap_index:                                engine.Vk_Buffer,
     clipmap_ring_index:                           [3][3]engine.Vk_Buffer,
+    clipmap_inner_ring_index:                     [3][3]engine.Vk_Buffer,
     clipmap_full_indices:                         u32,
     clipmap_ring_indices:                         u32,
+    clipmap_inner_ring_indices:                   u32,
     clipmap_revision:                             [engine.MAX_FRAMES_IN_FLIGHT]u64,
     clipmap_center:                               [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS][2]f32,
     clipmap_valid:                                [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]bool,
@@ -838,11 +870,8 @@ World_Renderer :: struct {
     static_visibility:                            Static_Visibility_Stats,
     static_visibility_classification:             [dynamic]Static_Visibility_Classification,
     structure_visibility_order:                   [dynamic]Structure_Visibility_Order,
-    structure_visibility_centers:                 [dynamic][2]f32,
-    structure_visibility_camera:                  [2]f32,
-    structure_visibility_selected:                int,
-    structure_visibility_hovered:                 int,
-    structure_visibility_order_valid:             bool,
+    overlay_chunk_bounds:                         [dynamic]Overlay_Chunk_Bounds,
+    overlay_chunk_terrain_revision:               u64,
     structure_building_spans:                     [dynamic]u8,
     structure_candidates:                         [dynamic]int,
     initialized:                                  bool,
@@ -1168,7 +1197,34 @@ world_ocean_vertex :: #force_inline proc(editor: ^Editor, point: third_person.Ve
     // Ocean shading receives the actual heightfield elevation above sea level.
     // Interpolation across the local ocean grid turns that signal into a
     // shoreline band without baking the default islands into the shader.
-    vertex.material = {terrain.sample_height(&editor.project, 0, point.x, point.z) - editor.project.sea_level, 1}
+    elevation := terrain.sample_height(&editor.project, 0, point.x, point.z) - editor.project.sea_level
+    vertex.material = {elevation, 1}
+    if elevation < 0 {
+        // Generated coastal bathymetry stores depth below sea level. Convert
+        // the upper shelf into the positive shallowness signal expected by the
+        // water shader and suppress broad breaking foam across that shelf.
+        vertex.material.x = clamp(1 - (-elevation / 13), 0, 1) * 1.35
+        vertex.material.y = -1
+    } else {
+        // The ocean mesh extends beneath hidden dry land. Carry maximum
+        // shallowness inland so mixed shoreline triangles interpolate
+        // continuously from the submerged shelf. Passing the small positive
+        // terrain elevation directly inverted the signal at the waterline and
+        // produced conspicuous dark triangular teeth.
+        vertex.material.x = 1.35
+        // Match the submerged shelf marker. Interpolating this component from
+        // +1 to -1 made abs(material.y) pass through zero inside every mixed
+        // shoreline triangle, drawing a false deep-water diagonal.
+        vertex.material.y = -1
+    }
+    if lab_scene_is_active(editor, "dunes") {
+        // Carry shallowness under the hidden landward part of the ocean grid
+        // so interpolation reaches the exact waterline.
+        shallowness := dunes_lab_water_shallowness(point.x, point.z)
+        // Negative Y preserves the shallow tint while suppressing the generic
+        // breaking-shore foam mask across the full submerged shelf.
+        vertex.material = {shallowness * 1.35, -1}
+    }
     if lab_scene_is_active(editor, "markov-island") {
         // Give the silhouette lab an explicit, art-directed bathymetry signal.
         // The broad signed-distance shelf is wide enough for the local ocean
@@ -1860,7 +1916,11 @@ road_world_point :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex) ->
         clearance = .018
     }
     terrain_y := terrain.sample_height(&editor.project, 0, vertex.position.x, vertex.position.z)
-    return {vertex.position.x, max(vertex.position.y, terrain_y + clearance), vertex.position.z}
+    // The baked edge height only describes its control spline. Long generated
+    // airport and marina links otherwise bridge every downhill section when
+    // authored Y is used as a lower bound. Roads are terrain overlays, so fit
+    // every rendered vertex to the current heightfield.
+    return {vertex.position.x, terrain_y + clearance, vertex.position.z}
 }
 
 @(no_instrumentation)
@@ -2093,6 +2153,9 @@ world_roads :: proc(editor: ^Editor) {
         selected := index == editor.road_selected_node
         color: rl.Color = selected ? {244, 216, 103, 255} : {101, 226, 203, 255}
         size := selected ? f32(4.5) : f32(3.2)
+        if !world_sphere_in_view(editor, {node.position.x, node.position.y + 1.3, node.position.z}, size, 1) {
+            continue
+        }
         world_box({node.position.x, node.position.y + 1.3, node.position.z}, {size, 2.6, size}, color)
     }
     if editor.road_selected_node < 0 || editor.road_selected_node >= graph.node_count do return
@@ -2100,6 +2163,14 @@ world_roads :: proc(editor: ^Editor) {
         if edge.from != editor.road_selected_node && edge.to != editor.road_selected_node do continue
         start := graph.nodes[edge.from].position
         end := graph.nodes[edge.to].position
+        link_center := (start + edge.control_from + edge.control_to + end) * .25
+        link_radius :=
+            max(
+                max(linalg.length(start - link_center), linalg.length(edge.control_from - link_center)),
+                max(linalg.length(edge.control_to - link_center), linalg.length(end - link_center)),
+            ) +
+            3
+        if !world_sphere_in_view(editor, link_center, link_radius, 2) do continue
         world_road_editor_link(start, edge.control_from, .75, {76, 196, 191, 230})
         world_road_editor_link(end, edge.control_to, .75, {76, 196, 191, 230})
         world_box(
@@ -2116,6 +2187,20 @@ world_ocean :: proc(editor: ^Editor) {
         editor.camera_pose,
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
+    // Bathymetry owns this exact camera-local rectangle. The far ocean is
+    // clipped around it below, so the two water meshes never overlap and
+    // therefore cannot z-fight regardless of camera distance or depth-buffer
+    // precision.
+    local_cell := f32(24)
+    local_extent := f32(1800)
+    local_divisions := int(math.ceil(f64(local_extent * 2 / local_cell)))
+    local_center_x := f32(math.floor(f64(camera.position.x / local_cell))) * local_cell
+    local_center_z := f32(math.floor(f64(camera.position.z / local_cell))) * local_cell
+    local_min_x := local_center_x - local_extent
+    local_max_x := local_center_x + local_extent
+    local_min_z := local_center_z - local_extent
+    local_max_z := local_center_z + local_extent
+
     extent := editor.in_map ? f32(12000) : f32(15000)
     divisions := editor.in_map ? 48 : 32
     cell := extent * 2 / f32(divisions)
@@ -2124,7 +2209,10 @@ world_ocean :: proc(editor: ^Editor) {
     // camera to expose at the bottom of the viewport.
     center_x := f32(math.floor(f64(camera.position.x / cell))) * cell
     center_z := f32(math.floor(f64(camera.position.z / cell))) * cell
-    ocean_y := editor.project.sea_level - (editor.in_map ? f32(.08) : f32(2))
+    // Gameplay water sits just above the mathematical sea datum. Placing it
+    // eight centimetres below allowed the gently descending generated beach
+    // to protrude through the plane as dark triangulated wedges.
+    ocean_y := editor.project.sea_level + (editor.in_map ? f32(.02) : f32(-2))
     if lab_scene_is_active(editor, "markov-island") {
         // Leave a small guaranteed gap above the lab seabed. Mixed shoreline
         // triangles then remain behind the flat water instead of drawing a
@@ -2132,7 +2220,6 @@ world_ocean :: proc(editor: ^Editor) {
         ocean_y = editor.project.sea_level - 1.9
     }
     color := rl.Color{48, 112, 142, 255}
-    terrain_half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for z_index in 0 ..< divisions {
         z0 := center_z - extent + f32(z_index) * cell
         z1 := z0 + cell
@@ -2141,26 +2228,72 @@ world_ocean :: proc(editor: ^Editor) {
             x1 := x0 + cell
             // Reverse winding so the ocean's upward face is the front (CCW) face
             // and survives back-face culling from a downward-looking camera.
-            world_water_quad({x0, ocean_y, z0}, {x0, ocean_y, z1}, {x1, ocean_y, z1}, {x1, ocean_y, z0}, color)
+            if x1 <= local_min_x || x0 >= local_max_x || z1 <= local_min_z || z0 >= local_max_z {
+                world_water_quad({x0, ocean_y, z0}, {x0, ocean_y, z1}, {x1, ocean_y, z1}, {x1, ocean_y, z0}, color)
+                continue
+            }
+
+            // Clip a coarse far-ocean cell into four non-overlapping strips
+            // around the local rectangle. Their shared boundary is harmless:
+            // no fragment has two water surfaces competing for its depth.
+            overlap_min_x := max(x0, local_min_x)
+            overlap_max_x := min(x1, local_max_x)
+            overlap_min_z := max(z0, local_min_z)
+            overlap_max_z := min(z1, local_max_z)
+            if x0 < overlap_min_x {
+                world_water_quad(
+                    {x0, ocean_y, z0},
+                    {x0, ocean_y, z1},
+                    {overlap_min_x, ocean_y, z1},
+                    {overlap_min_x, ocean_y, z0},
+                    color,
+                )
+            }
+            if overlap_max_x < x1 {
+                world_water_quad(
+                    {overlap_max_x, ocean_y, z0},
+                    {overlap_max_x, ocean_y, z1},
+                    {x1, ocean_y, z1},
+                    {x1, ocean_y, z0},
+                    color,
+                )
+            }
+            if z0 < overlap_min_z {
+                world_water_quad(
+                    {overlap_min_x, ocean_y, z0},
+                    {overlap_min_x, ocean_y, overlap_min_z},
+                    {overlap_max_x, ocean_y, overlap_min_z},
+                    {overlap_max_x, ocean_y, z0},
+                    color,
+                )
+            }
+            if overlap_max_z < z1 {
+                world_water_quad(
+                    {overlap_min_x, ocean_y, overlap_max_z},
+                    {overlap_min_x, ocean_y, z1},
+                    {overlap_max_x, ocean_y, z1},
+                    {overlap_max_x, ocean_y, overlap_max_z},
+                    color,
+                )
+            }
         }
     }
 
-    // Match the authored terrain at a useful shoreline resolution. The far
-    // ocean remains camera-snapped and coarse; only the finite terrain domain
-    // pays for this denser, terrain-dependent shading signal.
-    local_cell := f32(terrain.BASE_CELL_SIZE * 4)
-    local_divisions := int(math.ceil(f64(terrain.WORLD_SIZE_METERS / local_cell)))
-    local_cell = terrain.WORLD_SIZE_METERS / f32(local_divisions)
-    // The island lab gives this local layer a strongly contrasting shallow
-    // tint. Four millimetres is not enough depth separation at its overview
-    // camera distance and produces alternating far-ocean triangles, so lift
-    // the lab layer while keeping the ordinary world's subtle seam offset.
-    local_ocean_y := ocean_y + (lab_scene_is_active(editor, "markov-island") ? f32(.20) : f32(.004))
+    // Sample terrain-dependent shallowness on a camera-local grid. The former
+    // full-world layer used 125 m cells, making its interpolated depth signal
+    // expose enormous square triangles around every generated shoreline.
+    // A 24 m local field is inexpensive enough for immediate geometry, follows
+    // the active coast, and fades naturally into the uniform far ocean once
+    // its boundary reaches deep water.
+    // A small height difference remains useful for hiding the shared boundary,
+    // but correctness no longer depends on it: the two meshes have no area
+    // overlap.
+    local_ocean_y := ocean_y + f32(.004)
     for z_index in 0 ..< local_divisions {
-        z0 := -terrain_half_extent + f32(z_index) * local_cell
+        z0 := local_center_z - local_extent + f32(z_index) * local_cell
         z1 := z0 + local_cell
         for x_index in 0 ..< local_divisions {
-            x0 := -terrain_half_extent + f32(x_index) * local_cell
+            x0 := local_center_x - local_extent + f32(x_index) * local_cell
             x1 := x0 + local_cell
             world_ocean_quad(
                 editor,
@@ -2212,25 +2345,24 @@ clipmap_vertex_color :: #force_inline proc(
     normal := linalg.normalize0(
         linalg.cross(third_person.Vec3{0, front - back, cell * 2}, third_person.Vec3{cell * 2, right - left, 0}),
     )
+    painted := terrain.sample_render_material(&editor.project, level, x, z)
     // Expose pale Adriatic limestone only where the grade is genuinely
     // cliff-like. The broad transition avoids drawing a contour around the
-    // threshold and leaves ordinary hills under their ground cover.
+    // threshold and leaves ordinary hills under their ground cover. Generated
+    // coastal sand owns its faces at every grade: dune slip faces and blowouts
+    // must remain sand rather than exposing the island's limestone treatment.
     cliff_weight := clamp((.91 - normal.y) / .24, 0, 1)
     cliff_weight = cliff_weight * cliff_weight * (3 - 2 * cliff_weight)
+    if painted < 0 do cliff_weight = 0
     light := linalg.normalize0(third_person.Vec3{-.45, .85, -.3})
     shade := clamp(.48 + max(linalg.dot(normal, light), 0) * .52, .42, 1.05)
-    base := terrain_color(
-        max(height, editor.project.sea_level + .12),
-        terrain.sample_material(&editor.project, level, x, z),
-        editor.project.sea_level,
-        x,
-        z,
-    )
+    fragment_dune_lighting := painted < 0
+    base := terrain_color(max(height, editor.project.sea_level + .12), painted, editor.project.sea_level, x, z)
     limestone := terrain_color_variation(rl.Color{222, 216, 188, 255}, x * .73, z * .73)
     ground_lit := rl.Color {
-        u8(clamp(f32(base.r) * shade, 0, 255)),
-        u8(clamp(f32(base.g) * shade, 0, 255)),
-        u8(clamp(f32(base.b) * shade, 0, 255)),
+        u8(clamp(f32(base.r) * (fragment_dune_lighting ? f32(1) : shade), 0, 255)),
+        u8(clamp(f32(base.g) * (fragment_dune_lighting ? f32(1) : shade), 0, 255)),
+        u8(clamp(f32(base.b) * (fragment_dune_lighting ? f32(1) : shade), 0, 255)),
         255,
     }
     // Sun-bleached limestone keeps a pale body even on a face turned away
@@ -2255,38 +2387,73 @@ clipmap_level_center :: proc(target: [2]f32, grid_cell: f32) -> [2]f32 {
 }
 
 @(no_instrumentation)
-clipmap_center_offset :: proc(old_center, new_center: [2]f32, grid_cell: f32) -> ([2]int, bool) {
+clipmap_grid_cell :: #force_inline proc(editor: ^Editor, level: int) -> f32 {
+    if editor == nil || level < 0 || level >= terrain.CLIPMAP_LEVELS do return 1
+    cell := editor.project.levels[level].cell_size
+    // The dedicated 513×513 innermost mesh samples at half a metre while
+    // retaining the former 256 m footprint. The first outer ring samples its
+    // native two-metre terrain level, avoiding an abrupt 8× jump across the
+    // player-visible dune belt. Successive rings retain their established
+    // doubled spacing and broad world coverage.
+    if level == 0 do return cell * .5
+    if level == 1 do return cell
+    return cell * 2
+}
+
+@(no_instrumentation)
+clipmap_grid_resolution :: #force_inline proc(level: int) -> int {
+    return level == 0 ? CLIPMAP_INNER_GRID_RESOLUTION : CLIPMAP_GRID_RESOLUTION
+}
+
+@(no_instrumentation)
+clipmap_center_offset :: proc(
+    old_center, new_center: [2]f32,
+    grid_cell: f32,
+    resolution: int = CLIPMAP_GRID_RESOLUTION,
+) -> (
+    [2]int,
+    bool,
+) {
     raw_x := (new_center[0] - old_center[0]) / grid_cell
     raw_z := (new_center[1] - old_center[1]) / grid_cell
     offset := [2]int{int(math.round(f64(raw_x))), int(math.round(f64(raw_z)))}
     aligned := abs(raw_x - f32(offset[0])) <= .001 && abs(raw_z - f32(offset[1])) <= .001
-    within_grid := abs(offset[0]) < CLIPMAP_GRID_RESOLUTION && abs(offset[1]) < CLIPMAP_GRID_RESOLUTION
+    within_grid := abs(offset[0]) < resolution && abs(offset[1]) < resolution
     return offset, aligned && within_grid
 }
 
 @(no_instrumentation)
-clipmap_shift_source :: #force_inline proc(x, z: int, offset: [2]int) -> (int, bool) {
+clipmap_shift_source_for_resolution :: #force_inline proc(x, z: int, offset: [2]int, resolution: int) -> (int, bool) {
     source_x, source_z := x + offset[0], z + offset[1]
-    retained :=
-        source_x >= 0 && source_x < CLIPMAP_GRID_RESOLUTION && source_z >= 0 && source_z < CLIPMAP_GRID_RESOLUTION
+    retained := source_x >= 0 && source_x < resolution && source_z >= 0 && source_z < resolution
     if !retained do return 0, false
-    return source_z * CLIPMAP_GRID_RESOLUTION + source_x, true
+    return source_z * resolution + source_x, true
+}
+
+@(no_instrumentation)
+clipmap_shift_source :: #force_inline proc(x, z: int, offset: [2]int) -> (int, bool) {
+    return clipmap_shift_source_for_resolution(x, z, offset, CLIPMAP_GRID_RESOLUTION)
 }
 
 @(no_instrumentation)
 clipmap_transition_weight :: #force_inline proc(level, x, z: int) -> f32 {
-    edge_distance := min(min(x, z), min(CLIPMAP_GRID_RESOLUTION - 1 - x, CLIPMAP_GRID_RESOLUTION - 1 - z))
-    if level >= terrain.CLIPMAP_LEVELS - 1 || edge_distance >= CLIPMAP_TRANSITION_WIDTH {
+    resolution := clipmap_grid_resolution(level)
+    // Doubling the vertex band on the two densest levels preserves their
+    // previous four- and sixteen-metre world-space transition widths.
+    transition_width := level <= 1 ? CLIPMAP_TRANSITION_WIDTH * 2 : CLIPMAP_TRANSITION_WIDTH
+    edge_distance := min(min(x, z), min(resolution - 1 - x, resolution - 1 - z))
+    if level >= terrain.CLIPMAP_LEVELS - 1 || edge_distance >= transition_width {
         return 0
     }
-    weight := 1 - f32(edge_distance) / f32(CLIPMAP_TRANSITION_WIDTH)
+    weight := 1 - f32(edge_distance) / f32(transition_width)
     return weight * weight * (3 - 2 * weight)
 }
 
 clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: int, center: [2]f32, x, z: int) {
     data := &editor.project.levels[level]
-    grid_cell := data.cell_size * 2
-    half_grid := f32(CLIPMAP_GRID_RESOLUTION - 1) * .5
+    grid_cell := clipmap_grid_cell(editor, level)
+    resolution := clipmap_grid_resolution(level)
+    half_grid := f32(resolution - 1) * .5
     world_x := center[0] + (f32(x) - half_grid) * grid_cell
     world_z := center[1] + (f32(z) - half_grid) * grid_cell
     transition_weight := clipmap_transition_weight(level, x, z)
@@ -2299,12 +2466,17 @@ clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: 
     // this clipmap sample is grass so the world shader can carry the field's
     // traveling wind sheen across the ground beneath the individual cards.
     // Interpolation naturally softens the effect at painted material edges.
+    terrain_material := terrain.sample_render_material(&editor.project, level, world_x, world_z)
     grass_weight: f32 = terrain.ground_surface_at(&editor.project, level, world_x, world_z) == .Grass ? 1 : 0
     vertex.material[0] = grass_weight * (1 - cliff_weight)
+    // Negative material values identify the generated coastal sand continuum.
+    // Carry that broad mask to fragments so fine dune mottling no longer has
+    // to be quantized into vertex colors.
+    if terrain_material < 0 && cliff_weight < .08 do vertex.material[0] = terrain_material
     // The fragment shader uses the same interpolated slope mask for stable
     // horizontal bedding and weathering on the exposed rock.
     vertex.material[1] = cliff_weight
-    vertices[z * CLIPMAP_GRID_RESOLUTION + x] = vertex
+    vertices[z * resolution + x] = vertex
 }
 
 clipmap_update_level :: proc(
@@ -2315,10 +2487,11 @@ clipmap_update_level :: proc(
     dirty: ^Terrain_Dirty_Bounds = nil,
 ) -> int {
     data := &editor.project.levels[level]
-    grid_cell := data.cell_size * 2
-    half_grid := f32(CLIPMAP_GRID_RESOLUTION - 1) * .5
+    grid_cell := clipmap_grid_cell(editor, level)
+    resolution := clipmap_grid_resolution(level)
+    half_grid := f32(resolution - 1) * .5
     min_x, min_z := 0, 0
-    max_x, max_z := CLIPMAP_GRID_RESOLUTION - 1, CLIPMAP_GRID_RESOLUTION - 1
+    max_x, max_z := resolution - 1, resolution - 1
     if dirty != nil {
         padding := data.cell_size * 2
         grid_min_x := center[0] - half_grid * grid_cell
@@ -2331,26 +2504,10 @@ clipmap_update_level :: proc(
            dirty.min_z - padding > grid_max_z {
             return 0
         }
-        min_x = clamp(
-            int(math.floor(f64((dirty.min_x - padding - grid_min_x) / grid_cell))),
-            0,
-            CLIPMAP_GRID_RESOLUTION - 1,
-        )
-        min_z = clamp(
-            int(math.floor(f64((dirty.min_z - padding - grid_min_z) / grid_cell))),
-            0,
-            CLIPMAP_GRID_RESOLUTION - 1,
-        )
-        max_x = clamp(
-            int(math.ceil(f64((dirty.max_x + padding - grid_min_x) / grid_cell))),
-            0,
-            CLIPMAP_GRID_RESOLUTION - 1,
-        )
-        max_z = clamp(
-            int(math.ceil(f64((dirty.max_z + padding - grid_min_z) / grid_cell))),
-            0,
-            CLIPMAP_GRID_RESOLUTION - 1,
-        )
+        min_x = clamp(int(math.floor(f64((dirty.min_x - padding - grid_min_x) / grid_cell))), 0, resolution - 1)
+        min_z = clamp(int(math.floor(f64((dirty.min_z - padding - grid_min_z) / grid_cell))), 0, resolution - 1)
+        max_x = clamp(int(math.ceil(f64((dirty.max_x + padding - grid_min_x) / grid_cell))), 0, resolution - 1)
+        max_z = clamp(int(math.ceil(f64((dirty.max_z + padding - grid_min_z) / grid_cell))), 0, resolution - 1)
     }
     generated := 0
     for z in min_z ..= max_z {
@@ -2363,21 +2520,22 @@ clipmap_update_level :: proc(
 }
 
 clipmap_shift_level :: proc(editor: ^Editor, level: int, old_center, new_center: [2]f32) -> (bool, int, int) {
-    grid_cell := editor.project.levels[level].cell_size * 2
-    offset, valid := clipmap_center_offset(old_center, new_center, grid_cell)
+    grid_cell := clipmap_grid_cell(editor, level)
+    resolution := clipmap_grid_resolution(level)
+    offset, valid := clipmap_center_offset(old_center, new_center, grid_cell, resolution)
     if !valid do return false, 0, 0
 
-    vertex_count := CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
+    vertex_count := resolution * resolution
     if len(world_renderer.clipmap_scratch_vertex[level]) != vertex_count {
         resize(&world_renderer.clipmap_scratch_vertex[level], vertex_count)
     }
     cache := world_renderer.clipmap_cache_vertex[level][:]
     scratch := world_renderer.clipmap_scratch_vertex[level][:]
     copied, generated := 0, 0
-    for z in 0 ..< CLIPMAP_GRID_RESOLUTION {
-        for x in 0 ..< CLIPMAP_GRID_RESOLUTION {
-            destination := z * CLIPMAP_GRID_RESOLUTION + x
-            source, retained := clipmap_shift_source(x, z, offset)
+    for z in 0 ..< resolution {
+        for x in 0 ..< resolution {
+            destination := z * resolution + x
+            source, retained := clipmap_shift_source_for_resolution(x, z, offset, resolution)
             source_x, source_z := x + offset[0], z + offset[1]
             morph_unchanged :=
                 retained &&
@@ -2518,7 +2676,6 @@ world_structure_storage_ensure :: proc(count: int) {
     resize(&world_renderer.static_geometry_cache, capacity)
     resize(&world_renderer.climbing_leaf_geometry_cache, capacity)
     resize(&world_renderer.static_visibility_classification, capacity)
-    resize(&world_renderer.structure_visibility_centers, capacity)
     reserve(&world_renderer.structure_visibility_order, capacity)
     resize(&world_renderer.structure_building_spans, capacity)
     reserve(&world_renderer.structure_candidates, capacity)
@@ -2533,12 +2690,13 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int) {
         cache_revision_changed && dirty.valid && !dirty.full_rebuild && dirty.revision == editor.terrain_revision
     target := [2]f32{editor.camera_pose.target.x, editor.camera_pose.target.z}
     for level in 0 ..< terrain.CLIPMAP_LEVELS {
-        grid_cell := editor.project.levels[level].cell_size * 2
+        grid_cell := clipmap_grid_cell(editor, level)
         center := clipmap_level_center(target, grid_cell)
         cache_center_changed :=
             !world_renderer.clipmap_cache_valid[level] || world_renderer.clipmap_cache_center[level] != center
         if cache_revision_changed || cache_center_changed {
-            vertex_count := CLIPMAP_GRID_RESOLUTION * CLIPMAP_GRID_RESOLUTION
+            resolution := clipmap_grid_resolution(level)
+            vertex_count := resolution * resolution
             if len(world_renderer.clipmap_cache_vertex[level]) != vertex_count {
                 resize(&world_renderer.clipmap_cache_vertex[level], vertex_count)
             }
@@ -2619,23 +2777,25 @@ clipmap_ring_variant :: proc(frame_index, level: int) -> [2]int {
     if level <= 0 || level >= terrain.CLIPMAP_LEVELS do return {1, 1}
     fine_center := world_renderer.clipmap_center[frame_index][level - 1]
     coarse_center := world_renderer.clipmap_center[frame_index][level]
-    fine_grid_cell := world_renderer.editor.project.levels[level - 1].cell_size * 2
+    fine_grid_cell := clipmap_grid_cell(world_renderer.editor, level - 1)
     offset_x := clamp(int(math.round(f64((fine_center[0] - coarse_center[0]) / fine_grid_cell))), -1, 1)
     offset_z := clamp(int(math.round(f64((fine_center[1] - coarse_center[1]) / fine_grid_cell))), -1, 1)
     return {offset_x + 1, offset_z + 1}
 }
 
 @(no_instrumentation)
-clipmap_ring_hole_bounds :: proc(offset: [2]int) -> [4]int {
-    hole_min_x := CLIPMAP_GRID_RESOLUTION / 4 + (offset[0] > 0 ? 1 : 0)
-    hole_min_z := CLIPMAP_GRID_RESOLUTION / 4 + (offset[1] > 0 ? 1 : 0)
-    hole_width := CLIPMAP_GRID_RESOLUTION / 2 - 1
+clipmap_ring_hole_bounds :: proc(offset: [2]int, fine_to_coarse_ratio: int = 2) -> [4]int {
+    ratio := max(fine_to_coarse_ratio, 2)
+    hole_min := CLIPMAP_GRID_RESOLUTION * (ratio - 1) / (ratio * 2)
+    hole_min_x := hole_min + (offset[0] > 0 ? 1 : 0)
+    hole_min_z := hole_min + (offset[1] > 0 ? 1 : 0)
+    hole_width := CLIPMAP_GRID_RESOLUTION / ratio - 1
     return {hole_min_x, hole_min_z, hole_min_x + hole_width, hole_min_z + hole_width}
 }
 
 @(no_instrumentation)
-clipmap_append_cell :: #force_inline proc(indices: ^[dynamic]u32, x, z: int) {
-    row := CLIPMAP_GRID_RESOLUTION
+clipmap_append_cell :: #force_inline proc(indices: ^[dynamic]u32, x, z, resolution: int) {
+    row := resolution
     a := u32(z * row + x)
     b := u32(z * row + x + 1)
     c := u32((z + 1) * row + x + 1)
@@ -2648,9 +2808,9 @@ clipmap_append_cell :: #force_inline proc(indices: ^[dynamic]u32, x, z: int) {
 clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
     indices := make([dynamic]u32, 0, CLIPMAP_FULL_INDEX_COUNT)
     defer delete(indices)
-    for z in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
-        for x in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
-            clipmap_append_cell(&indices, x, z)
+    for z in 0 ..< CLIPMAP_INNER_GRID_RESOLUTION - 1 {
+        for x in 0 ..< CLIPMAP_INNER_GRID_RESOLUTION - 1 {
+            clipmap_append_cell(&indices, x, z, CLIPMAP_INNER_GRID_RESOLUTION)
         }
     }
     world_renderer.clipmap_full_indices = u32(len(indices))
@@ -2679,7 +2839,7 @@ clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
                     if x >= hole[0] && x < hole[2] && z >= hole[1] && z < hole[3] {
                         continue
                     }
-                    clipmap_append_cell(&indices, x, z)
+                    clipmap_append_cell(&indices, x, z, CLIPMAP_GRID_RESOLUTION)
                 }
             }
             if world_renderer.clipmap_ring_indices == 0 {
@@ -2696,6 +2856,34 @@ clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
             }
             mem.copy_non_overlapping(
                 world_renderer.clipmap_ring_index[variant_z][variant_x].mapped,
+                raw_data(indices[:]),
+                len(indices) * size_of(u32),
+            )
+
+            clear(&indices)
+            sparse_hole := clipmap_ring_hole_bounds({offset_x, offset_z}, 4)
+            for z in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
+                for x in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
+                    if x >= sparse_hole[0] && x < sparse_hole[2] && z >= sparse_hole[1] && z < sparse_hole[3] {
+                        continue
+                    }
+                    clipmap_append_cell(&indices, x, z, CLIPMAP_GRID_RESOLUTION)
+                }
+            }
+            if world_renderer.clipmap_inner_ring_indices == 0 {
+                world_renderer.clipmap_inner_ring_indices = u32(len(indices))
+            }
+            if !world_host_buffer_create(
+                ctx,
+                vk.DeviceSize(len(indices) * size_of(u32)),
+                {.INDEX_BUFFER},
+                &world_renderer.clipmap_inner_ring_index[variant_z][variant_x],
+                "world clipmap sparse transition ring index buffer",
+            ) {
+                return false
+            }
+            mem.copy_non_overlapping(
+                world_renderer.clipmap_inner_ring_index[variant_z][variant_x].mapped,
                 raw_data(indices[:]),
                 len(indices) * size_of(u32),
             )
@@ -9889,6 +10077,12 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     entry := &world_renderer.foliage_geometry_cache[structure_index]
     lod_result := structure_lod_for(structure, entry.lod, force_near)
     camera := world_renderer.editor.camera_pose.position
+    aerial_view := foliage_aerial_view_select(
+        camera.y - structure.base_y,
+        structure.height,
+        entry.valid && entry.structure == structure && entry.aerial_view,
+        driving_aircraft(world_renderer.editor),
+    )
     dx := camera.x - structure.center_x
     dz := camera.z - structure.center_z
     distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
@@ -9903,6 +10097,7 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     direction_bucket := lod_result.tier == .Far ? i32(0) : i32(math.floor((direction + math.PI) * 16 / (math.PI * 2)))
     if entry.valid &&
        entry.structure == structure &&
+       entry.aerial_view == aerial_view &&
        entry.lod == lod_result.tier &&
        entry.distance_bucket == distance_bucket &&
        entry.direction_bucket == direction_bucket {
@@ -9913,7 +10108,7 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
 
     world_first := len(world_renderer.vertices)
     foliage_first := len(world_renderer.foliage_vertices)
-    world_foliage_formation(structure, terrain.BASE_CELL_SIZE, lod_result.tier)
+    world_foliage_formation(structure, terrain.BASE_CELL_SIZE, lod_result.tier, aerial_view)
     world_renderer.structure_lod_cache_rebuilds += 1
     clear(&entry.world_vertices)
     clear(&entry.foliage_vertices)
@@ -9925,6 +10120,7 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     }
     entry.valid = true
     entry.structure = structure
+    entry.aerial_view = aerial_view
     entry.lod = lod_result.tier
     entry.lod_transition = lod_result.transition
     entry.distance_bucket = distance_bucket
@@ -10540,51 +10736,51 @@ world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Col
         // ribbons when a tree is viewed near eye level.
         colors := [6]rl.Color {
             {61, 111, 88, 255},
-            {94, 130, 61, 255},
+            {90, 129, 62, 255},
             {129, 145, 65, 255},
             {75, 119, 88, 255},
             {116, 128, 91, 255},
-            {111, 132, 64, 255},
+            {103, 130, 65, 255},
         }
         return colors[palette]
     case 3:
         colors := [6]rl.Color {
             {66, 119, 94, 255},
-            {103, 140, 67, 255},
+            {96, 139, 67, 255},
             {143, 158, 71, 255},
             {82, 128, 96, 255},
             {126, 138, 99, 255},
-            {121, 143, 69, 255},
+            {112, 141, 70, 255},
         }
         return colors[palette]
     case 4:
         colors := [6]rl.Color {
-            {70, 124, 98, 255},
-            {108, 145, 70, 255},
-            {149, 164, 75, 255},
-            {87, 133, 101, 255},
-            {132, 143, 104, 255},
-            {127, 148, 73, 255},
+            {75, 130, 99, 255},
+            {103, 150, 70, 255},
+            {158, 171, 74, 255},
+            {92, 139, 102, 255},
+            {139, 150, 105, 255},
+            {121, 153, 73, 255},
         }
         return colors[palette]
     case 5:
         colors := [6]rl.Color {
-            {73, 128, 101, 255},
-            {112, 149, 72, 255},
-            {154, 169, 79, 255},
-            {91, 137, 105, 255},
-            {137, 148, 109, 255},
-            {132, 153, 76, 255},
+            {83, 140, 104, 255},
+            {110, 160, 72, 255},
+            {172, 182, 75, 255},
+            {101, 149, 108, 255},
+            {151, 160, 111, 255},
+            {131, 163, 76, 255},
         }
         return colors[palette]
     case 6:
         colors := [6]rl.Color {
-            {76, 132, 104, 255},
-            {116, 152, 75, 255},
-            {159, 173, 83, 255},
-            {95, 141, 109, 255},
-            {142, 153, 114, 255},
-            {137, 158, 80, 255},
+            {92, 151, 107, 255},
+            {119, 171, 75, 255},
+            {187, 195, 78, 255},
+            {111, 161, 111, 255},
+            {165, 174, 116, 255},
+            {143, 176, 78, 255},
         }
         return colors[palette]
     }
@@ -11085,6 +11281,7 @@ world_foliage_lobe :: proc(
     outline_angle: f32,
     emit_outline: bool,
     lod: Structure_LOD = .Near,
+    orientation_offset: f32 = 0,
 ) {
     // Smooth normals cannot repair a faceted outer contour. Eighteen sides
     // keep the long crown ridge and hanging skirt from resolving into obvious
@@ -11113,7 +11310,18 @@ world_foliage_lobe :: proc(
         segment_count = lod == .Near ? 14 : lod == .Medium ? 10 : 8
         ring_count = lod == .Near ? 6 : lod == .Medium ? 5 : 4
     }
-    is_forest_lobe := !is_hedge && max(structure.width, structure.depth) >= 105 && structure.height >= 58
+    // Elevated lobes are the crowns emitted by both mature forests and the
+    // aerial-only young-woodland treatment. Use that semantic signal instead
+    // of the parent footprint threshold so both share the same cheap tiers.
+    is_forest_lobe := !is_hedge && base_lift > 0
+    if is_forest_lobe && lod == .Medium {
+        // At Medium range the crown occupies enough pixels to need a soft
+        // scallop, but not the full near profile. Sixteen sides and six rings
+        // retain the broad painted planes while cutting roughly one quarter
+        // of per-crown topology from the tier that dominates stress scenes.
+        segment_count = 16
+        ring_count = 6
+    }
     if is_forest_lobe && lod == .Far {
         // Dense stands contain dozens of tree-scale crowns. Eight sides and
         // four sampled profile rings are enough once those crowns merge into
@@ -11236,15 +11444,21 @@ world_foliage_lobe :: proc(
     }
     if base_lift > 0 {
         // Mature woods need broad color regions, not a checkerboard of random
-        // lime and teal crowns. A slow world-space field lets neighboring
-        // authored patches share a palette family while still drifting from
-        // cool recesses through green into warm olive crowns. The hottest
-        // yellow-green family remains available to standalone flowering
-        // bushes; across a mature canopy it overexposes broad eye-level faces
-        // and makes the underlying mesh transitions unnecessarily visible.
+        // lime and teal crowns. Sample the slow world-space field at this
+        // crown, not at the center of its authored parent formation: otherwise
+        // every tree in one patch receives the same palette and the patch
+        // boundary becomes a conspicuous rectangular color seam from the air.
+        // Crown-space sampling lets neighboring formations share continuous
+        // painted regions while still drifting from cool recesses through
+        // green into warm olive crowns. The hottest yellow-green family
+        // remains available to standalone flowering bushes; across a mature
+        // canopy it overexposes broad aerial faces and makes separate crowns
+        // read as luminous shrubs instead of one deep woodland mass. Route
+        // the warmest forest region to the quieter Mediterranean scrub family
+        // so the upper rings stay sun-warmed without losing green shoulders.
         palette_field :=
-            f32(math.sin(f64(structure.center_x * .0092 + structure.center_z * .0049))) +
-            f32(math.sin(f64(structure.center_x * -.0037 + structure.center_z * .0081 + 1.7))) * .62
+            f32(math.sin(f64(lobe_world_x * .0092 + lobe_world_z * .0049))) +
+            f32(math.sin(f64(lobe_world_x * -.0037 + lobe_world_z * .0081 + 1.7))) * .62
         if palette_field < -.76 {
             color_variation = 0
         } else if palette_field < -.24 {
@@ -11254,7 +11468,7 @@ world_foliage_lobe :: proc(
         } else if palette_field < .78 {
             color_variation = 1
         } else {
-            color_variation = 2
+            color_variation = 5
         }
     }
 
@@ -11268,7 +11482,8 @@ world_foliage_lobe :: proc(
             angle :=
                 contour_angle +
                 profile_ring * .075 +
-                f32(math.sin(f64(f32(variation) * 1.37 + profile_ring * 2.11))) * .045
+                f32(math.sin(f64(f32(variation) * 1.37 + profile_ring * 2.11))) * .045 +
+                orientation_offset
             // Three correlated octaves compose the crown as bold, rounded
             // cumulus clumps with a clear big/medium/small nesting -- the
             // Ghibli canopy read -- rather than one uniform scallop frequency.
@@ -11499,8 +11714,28 @@ world_foliage_lobe :: proc(
     // large sprays; clipped hedges also receive a few much smaller translucent
     // face clusters below so their long front plane does not stay textureless.
     if emit_outline && lod != .Far {
-        local_x := local_center_x + math.cos(outline_angle) * profile_width * .64
-        local_z := local_center_z + math.sin(outline_angle) * profile_depth * .64
+        // Intersect the requested outward ray with the independently rotated
+        // crown ellipse. Using the old unrotated width/depth parameterization
+        // left sprays inside or outside anisotropic crowns after per-tree
+        // orientation was introduced.
+        relative_angle := outline_angle - orientation_offset
+        relative_x, relative_z := math.cos(relative_angle), math.sin(relative_angle)
+        safe_width, safe_depth := max(profile_width, f32(.01)), max(profile_depth, f32(.01))
+        ray_scale :=
+            .64 /
+            max(
+                f32(
+                    math.sqrt(
+                        f64(
+                            relative_x * relative_x / (safe_width * safe_width) +
+                            relative_z * relative_z / (safe_depth * safe_depth),
+                        ),
+                    ),
+                ),
+                f32(.001),
+            )
+        local_x := local_center_x + math.cos(outline_angle) * ray_scale
+        local_z := local_center_z + math.sin(outline_angle) * ray_scale
         card_x, card_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
         focal_length := f32(1.35)
         if world_renderer.editor.in_map && driving_aircraft(world_renderer.editor) {
@@ -11510,7 +11745,15 @@ world_foliage_lobe :: proc(
         to_camera_x := camera.position.x - card_x
         to_camera_z := camera.position.z - card_z
         to_camera_length := max(f32(.001), f32(math.sqrt(f64(to_camera_x * to_camera_x + to_camera_z * to_camera_z))))
-        outward_angle := outline_angle + structure.rotation
+        // Ellipse surface normals are not generally radial. Transform the
+        // local gradient back through the crown rotation so side-on admission
+        // and echo offsets follow the actual oriented crown shoulder.
+        normal_local_x := relative_x / (safe_width * safe_width)
+        normal_local_z := relative_z / (safe_depth * safe_depth)
+        orientation_cos, orientation_sin := math.cos(orientation_offset), math.sin(orientation_offset)
+        normal_x := normal_local_x * orientation_cos - normal_local_z * orientation_sin
+        normal_z := normal_local_x * orientation_sin + normal_local_z * orientation_cos
+        outward_angle := math.atan2(normal_z, normal_x) + structure.rotation
         view_alignment := math.abs(
             math.cos(outward_angle) * to_camera_x / to_camera_length +
             math.sin(outward_angle) * to_camera_z / to_camera_length,
@@ -11645,10 +11888,54 @@ world_foliage_lobe :: proc(
     }
 }
 
+world_foliage_tree_hash :: #force_inline proc(value: u32) -> u32 {
+    hash := value
+    hash ~= hash >> 16
+    hash *= 0x7feb352d
+    hash ~= hash >> 15
+    hash *= 0x846ca68b
+    hash ~= hash >> 16
+    return hash
+}
+
+world_foliage_forest_tree_local :: #force_inline proc(
+    structure: terrain.Structure,
+    tree_index: int,
+) -> (
+    local_x, local_z: f32,
+) {
+    // Each index owns one stable position, independent of the number of trees
+    // emitted by the active LOD. Earlier radial placement divided by the
+    // current tree count, so every crown slid across the grove whenever the
+    // count changed. A two-dimensional low-discrepancy sequence spreads every
+    // prefix across the full ellipse, while seed hashes only rotate/shift that
+    // sequence per grove. Correlated offsets then gather neighboring indices
+    // into loose copses without making their positions LOD-dependent.
+    index := f32(tree_index)
+    seed := f32(structure.seed)
+    angle_phase_hash := world_foliage_tree_hash(structure.seed ~ u32(0x9e3779b9))
+    radius_phase_hash := world_foliage_tree_hash(structure.seed ~ u32(0x68bc21eb))
+    angle_phase := f64(angle_phase_hash & 0x00ffffff) / f64(0x01000000)
+    radius_phase := f64(radius_phase_hash & 0x00ffffff) / f64(0x01000000)
+    angle_value := f64(tree_index) * .7548776662466927 + angle_phase
+    radius_value := f64(tree_index) * .5698402909980532 + radius_phase
+    angle_unit := f32(angle_value - math.floor(angle_value))
+    radius_unit := f32(radius_value - math.floor(radius_value))
+    angle := angle_unit * math.TAU
+    radial := .055 + .40 * f32(math.sqrt(f64(radius_unit))) + f32(math.sin(f64(seed * .011 + index * 1.91))) * .024
+    radial = clamp(radial, .04, .47)
+    group_x := f32(math.sin(f64(seed * .006 + index * .47))) * structure.width * .032
+    group_z := f32(math.sin(f64(seed * .008 + index * .43 + 1.9))) * structure.depth * .032
+    local_x = math.cos(angle) * structure.width * radial + group_x
+    local_z = math.sin(angle) * structure.depth * radial + group_z
+    return
+}
+
 world_foliage_formation :: proc(
     structure: terrain.Structure,
     minimum_footprint := terrain.BASE_CELL_SIZE,
     lod: Structure_LOD = .Near,
+    aerial_view := false,
 ) {
     // Authored foliage retains the tool's one-cell minimum. Derived foliage,
     // such as scrub placed on a ridge or cliff, can opt into its exact
@@ -11657,21 +11944,47 @@ world_foliage_formation :: proc(
     depth := max(structure.depth, minimum_footprint)
     wide, narrow := max(width, depth), min(width, depth)
     aspect := wide / max(narrow, f32(.01))
-    is_forest := aspect < 1.8 && wide >= 105 && structure.height >= 58
+    mature_forest := aspect < 1.8 && wide >= 105 && structure.height >= 58
+    // Young groves and broad shrub patches should join the surrounding wood
+    // when viewed from the air, even though their close treatment remains a
+    // lower bush mass. A tiny aerial-only crown budget prevents these patches
+    // from dissolving the forest edge into isolated dots.
+    aerial_woodland := (lod != .Near || aerial_view) && aspect < 1.8 && wide >= 82 && structure.height >= 40
+    young_aerial_woodland := aerial_view && aerial_woodland && !mature_forest
+    is_forest := mature_forest || aerial_woodland
     // Keep forest patches dense by filling their area with tree-scale trees,
     // rather than stretching a handful of crowns across the footprint.
-    forest_tree_count := is_forest ? clamp(int(width * depth / 460), 24, 36) : 0
-    if is_forest && lod == .Medium do forest_tree_count = min(forest_tree_count, 24)
-    if is_forest && lod == .Far do forest_tree_count = min(forest_tree_count, 12)
+    forest_tree_count := mature_forest ? clamp(int(width * depth / 460), 24, 36) : 0
+    if mature_forest && lod == .Medium do forest_tree_count = min(forest_tree_count, 18)
+    if mature_forest && lod == .Far do forest_tree_count = min(forest_tree_count, 7)
+    if aerial_woodland && !mature_forest {
+        forest_tree_count = lod == .Far ? 4 : lod == .Medium ? 6 : 12
+    }
+    // A nearby grove can fill much of the aerial frame, but its individual
+    // contour facets remain too small to justify the 30x10 walking mesh.
+    // Preserve the full mature tree count (or all twelve young crowns) and
+    // only select the approved 16x6 crown topology. This avoids the sparse
+    // canopy failure of reducing count and topology together. Ground views
+    // never enter this path.
+    crown_lod := lod
+    if aerial_view && is_forest && lod == .Near {
+        crown_lod = .Medium
+    }
+    crown_shape_lod := crown_lod
+    if aerial_view && mature_forest && lod == .Near {
+        // Mature aerial woods decimate topology only. Their Near coverage,
+        // perimeter, and three-emergent composition remain identical.
+        crown_shape_lod = lod
+    }
     // A forest formation is a grove footprint, not one gigantic tree. Keep
     // the leaf ceiling around four character heights while individual crown
     // clusters supply the remaining tree height.
     canopy_lift := is_forest ? structure.height * .11 : f32(0)
 
     if is_forest {
-        walking_distance := lod == .Near
+        walking_distance := lod == .Near && !aerial_view
         dapple_count := 7
-        if lod != .Near do dapple_count = 0
+        if !walking_distance do dapple_count = 0
         for dapple in 0 ..< dapple_count {
             angle := f32(dapple) * 2.399963 + f32(structure.seed % 149) * .026
             radial := .12 + f32((dapple * 5 + 2) % 9) / 8 * .30
@@ -11714,10 +12027,7 @@ world_foliage_formation :: proc(
             )
         }
 
-        understory_count := lod == .Near ? clamp(forest_tree_count * 2 / 3, 16, 24) : 0
-        if walking_distance {
-            understory_count = clamp(forest_tree_count, 24, 32)
-        }
+        understory_count := walking_distance ? clamp(forest_tree_count, 24, 32) : 0
         for tuft in 0 ..< understory_count {
             angle := f32(tuft) * 2.399963 + f32(structure.seed % 127) * .029
             radial := .28 + f32((tuft * 7) % 9) / 8 * .25
@@ -11763,10 +12073,7 @@ world_foliage_formation :: proc(
         // A quieter layer of low broadleaf rosettes bridges the empty ground
         // between fern fans. Their separate spiral and smaller radial range
         // produce loose colonies rather than a uniformly stamped carpet.
-        ground_cover_count := lod == .Near ? clamp(forest_tree_count * 3 / 4, 18, 27) : 0
-        if walking_distance {
-            ground_cover_count = clamp(forest_tree_count + 8, 30, 44)
-        }
+        ground_cover_count := walking_distance ? clamp(forest_tree_count + 8, 30, 44) : 0
         for cover in 0 ..< ground_cover_count {
             angle := f32(cover) * 2.399963 + f32(structure.seed % 163) * .021 + .83
             radial := .09 + f32((cover * 5 + 3) % 11) / 10 * .41
@@ -11792,12 +12099,12 @@ world_foliage_formation :: proc(
         }
 
         // A low-discrepancy spiral makes a dense natural stand without rows.
-        trunk_count := lod == .Far ? max(4, forest_tree_count / 2) : forest_tree_count
+        // Far woodland is viewed as a painted canopy mass. Its trunks occupy
+        // less than a pixel and only add draw bandwidth and dark pinstripes.
+        trunk_count := lod == .Far ? 0 : forest_tree_count
+        if !mature_forest do trunk_count = 0
         for trunk in 0 ..< trunk_count {
-            angle := f32(trunk) * 2.399963 + f32(structure.seed % 91) * .041
-            radial := .06 + .43 * f32(math.sqrt(f64((f32(trunk) + .5) / f32(max(trunk_count, 1)))))
-            local_x := math.cos(angle) * width * radial
-            local_z := math.sin(angle) * depth * radial
+            local_x, local_z := world_foliage_forest_tree_local(structure, trunk)
             trunk_x, trunk_z := world_rotate_xz(
                 structure.center_x,
                 structure.center_z,
@@ -11805,6 +12112,7 @@ world_foliage_formation :: proc(
                 local_z,
                 structure.rotation,
             )
+            trunk_ground_y := terrain.sample_height(&world_renderer.editor.project, 0, trunk_x, trunk_z)
             height_noise := .5 + .5 * f32(math.sin(f64(f32(structure.seed) * .013 + f32(trunk) * 1.73)))
             tree_canopy_lift := structure.height * (.075 + height_noise * .055)
             trunk_height := tree_canopy_lift + structure.height * (.040 + height_noise * .012)
@@ -11816,7 +12124,7 @@ world_foliage_formation :: proc(
             world_foliage_trunk(
                 trunk_x,
                 trunk_z,
-                structure.base_y,
+                trunk_ground_y,
                 trunk_height,
                 trunk_radius,
                 structure.seed + u32(trunk * 977),
@@ -11949,20 +12257,14 @@ world_foliage_formation :: proc(
                 // One irregular crown per trunk preserves density without
                 // tripling the tessellation cost of every tree.
                 tree_index := lobe
-                tree_angle := f32(tree_index) * 2.399963 + f32(structure.seed % 91) * .041
-                tree_radial := .06 + .43 * f32(math.sqrt(f64((f32(tree_index) + .5) / f32(max(forest_tree_count, 1)))))
-                local_x = math.cos(tree_angle) * width * tree_radial
-                local_z = math.sin(tree_angle) * depth * tree_radial
+                local_x, local_z = world_foliage_forest_tree_local(structure, tree_index)
                 angle = math.atan2(local_z / depth, local_x / width)
             } else {
                 local_x = math.cos(angle) * width * radial
                 local_z = math.sin(angle) * depth * radial
             }
         } else if is_forest {
-            tree_angle := f32(structure.seed % 91) * .041
-            tree_radial := .06 + .43 * f32(math.sqrt(f64(.5 / f32(max(forest_tree_count, 1)))))
-            local_x = math.cos(tree_angle) * width * tree_radial
-            local_z = math.sin(tree_angle) * depth * tree_radial
+            local_x, local_z = world_foliage_forest_tree_local(structure, 0)
             angle = math.atan2(local_z / depth, local_x / width)
             scale = .075 + (.5 + .5 * f32(math.sin(f64(f32(structure.seed) * .019)))) * .035
             height_fraction = .15 + f32(math.sin(f64(f32(structure.seed) * .013))) * .028
@@ -11978,20 +12280,104 @@ world_foliage_formation :: proc(
             height_noise := .5 + .5 * f32(math.sin(f64(f32(structure.seed) * .013 + f32(lobe) * 1.73)))
             lobe_base_lift = structure.height * (.075 + height_noise * .055)
             lobe_height *= .82 + height_noise * .30
+            if young_aerial_woodland {
+                // Young aerial groves need a layered ceiling as well as area
+                // coverage. A small lift and stronger deterministic height
+                // range separate saplings, middle crowns, and emergents
+                // without emitting another crown or increasing topology.
+                lobe_base_lift += structure.height * (.012 + height_noise * .014)
+                lobe_height *= 1.10 + height_noise * .18
+            }
         }
         lobe_width, lobe_depth := width * scale, depth * scale
         lobe_structure := structure
         if is_forest {
+            crown_x, crown_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                local_x,
+                local_z,
+                structure.rotation,
+            )
+            lobe_structure.base_y = terrain.sample_height(&world_renderer.editor.project, 0, crown_x, crown_z)
             // A tree crown has its own dimensions; it must not inherit the
             // aspect ratio of the authored forest footprint. Per-tree seed
             // variation also mixes crown profiles and green families across
             // the stand instead of tinting the whole patch as one species.
             crown_noise := .5 + .5 * f32(math.sin(f64(f32(structure.seed) * .029 + f32(lobe) * 2.17)))
             crown_span := structure.height * (.17 + crown_noise * .075)
+            if crown_shape_lod != .Near {
+                // Once individual trees occupy only a few pixels, preserve
+                // the authored forest's covered area rather than preserving
+                // the near crown diameter. The LOD deliberately emits fewer
+                // crowns; scaling those crowns from area-per-sample lets them
+                // overlap into coherent copses instead of dissolving the
+                // forest into isolated dots.
+                coverage_scale := crown_shape_lod == .Far ? f32(1.05) : f32(.72)
+                if !mature_forest {
+                    coverage_scale = crown_shape_lod == .Far ? f32(1.10) : f32(.95)
+                }
+                coverage_span := f32(math.sqrt(f64(width * depth / f32(max(forest_tree_count, 1))))) * coverage_scale
+                crown_span = max(crown_span, coverage_span)
+            }
             crown_aspect := .84 + (.5 + .5 * f32(math.sin(f64(f32(structure.seed) * .041 + f32(lobe) * 1.31)))) * .34
             lobe_width = crown_span * crown_aspect
             lobe_depth = crown_span / crown_aspect
             lobe_structure.seed += u32(lobe * 977)
+            if crown_shape_lod != .Near {
+                // Feather the authored ellipse into an irregular woodland
+                // silhouette. Interior crowns retain full coverage; only the
+                // outer third steps down into smaller, lower scallops. This
+                // removes the clipped row of equal circles at aerial range
+                // without adding cards, lobes, or a separate edge pass.
+                normalized_x := local_x / max(width * .5, f32(.01))
+                normalized_z := local_z / max(depth * .5, f32(.01))
+                edge_radius := f32(math.sqrt(f64(normalized_x * normalized_x + normalized_z * normalized_z)))
+                edge_taper := clamp((edge_radius - .62) / .40, 0, 1)
+                edge_taper = edge_taper * edge_taper * (3 - 2 * edge_taper)
+                perimeter_scale := 1 - edge_taper * .16
+                lobe_width *= perimeter_scale
+                lobe_depth *= perimeter_scale
+                lobe_height *= 1 - edge_taper * .12
+
+            }
+
+            // Every forest tier needs one composed hierarchy, not a random
+            // third of its crowns using the loud upright laurel profile.
+            // Preserve three Near, two Medium, or one Far emergent accents;
+            // all remaining trees become broad oak/broadleaf shelves. Near
+            // keeps its full geometry and density, so walking detail survives.
+            tree_count := max(forest_tree_count, 1)
+            primary_emergent := int(structure.seed % u32(tree_count))
+            secondary_emergent := (primary_emergent + max(tree_count / 2, 1)) % tree_count
+            tertiary_emergent := (primary_emergent + max(tree_count / 3, 1)) % tree_count
+            emergent :=
+                lobe == primary_emergent ||
+                (crown_shape_lod != .Far && lobe == secondary_emergent) ||
+                ((crown_shape_lod == .Near || young_aerial_woodland) && lobe == tertiary_emergent)
+            if emergent {
+                height_scale :=
+                    crown_shape_lod == .Far ? f32(1.28) : crown_shape_lod == .Medium ? f32(1.16) : f32(1.10)
+                lift_scale := crown_shape_lod == .Far ? f32(.025) : crown_shape_lod == .Medium ? f32(.012) : f32(.006)
+                width_scale := crown_shape_lod == .Far ? f32(.78) : crown_shape_lod == .Medium ? f32(.87) : f32(.92)
+                lobe_height *= height_scale
+                lobe_base_lift += structure.height * lift_scale
+                lobe_width *= width_scale
+                lobe_depth *= width_scale
+                species_remainder := lobe_structure.seed % 3
+                lobe_structure.seed += (2 + 3 - species_remainder) % 3
+            } else if lobe_structure.seed % 3 == 2 {
+                lobe_structure.seed += 1
+            }
+        }
+        crown_orientation := f32(0)
+        if is_forest {
+            // Each tree owns an independent grain direction. Rotating only
+            // the crown profile (not its formation-local center) breaks the
+            // stamped rows of parallel oval shelves while preserving stable
+            // placement, terrain attachment, and the matching trunk.
+            orientation_hash := world_foliage_tree_hash(structure.seed ~ u32(lobe + 1) * 0x9e3779b9)
+            crown_orientation = f32(f64(orientation_hash) / f64(0x1_0000_0000)) * math.TAU
         }
         world_foliage_lobe(
             lobe_structure,
@@ -12004,8 +12390,14 @@ world_foliage_formation :: proc(
             false,
             lobe,
             outward,
-            lobe > 0,
-            lod,
+            // The solid crowns already occupy several pixels in aerial woods.
+            // Their translucent outline sprays become subpixel speckle and
+            // spend an animated card budget without improving the woodland
+            // silhouette. Retain those cards for walking views where
+            // leaf-scale edge breakup is actually visible.
+            lobe > 0 && !(aerial_view && is_forest),
+            crown_lod,
+            crown_orientation,
         )
     }
 }
@@ -12566,24 +12958,14 @@ world_architecture_grass_footprints :: proc(
             )
         }
     }
-    // The kiosks are procedural landmarks rather than authored Architecture
-    // structures, so register their pads and approaches explicitly.
-    kiosk_positions := [2]third_person.Vec3{editor.attendant_position, editor.gerta_position}
-    for kiosk in kiosk_positions {
+    // The airport terminals are procedural landmarks rather than authored
+    // Architecture structures, so register their halls and forecourts.
+    airport_positions := [2]third_person.Vec3{editor.attendant_position, editor.gerta_position}
+    for airport in airport_positions {
         append(
             &footprints,
-            Architecture_Grass_Footprint {
-                center_x = kiosk.x,
-                center_z = kiosk.z + .35,
-                half_width = 2.1,
-                half_depth = 1.9,
-            },
-            Architecture_Grass_Footprint {
-                center_x = kiosk.x,
-                center_z = kiosk.z - 2.65,
-                half_width = .825,
-                half_depth = 1.5,
-            },
+            Architecture_Grass_Footprint{center_x = airport.x, center_z = airport.z, half_width = 20, half_depth = 15},
+            Architecture_Grass_Footprint{center_x = airport.x, center_z = airport.z, half_width = 8, half_depth = 22},
         )
     }
     return footprints
@@ -13176,8 +13558,9 @@ world_structures :: proc(editor: ^Editor) {
        !editor.structure_moving {
         hovered_index = terrain.structure_index_at(&editor.project, editor.cursor_world_x, editor.cursor_world_z)
     }
-    // Traverse structures from the camera outward so LOD and cache work stay
-    // stable while each structure contributes its mass and climbing growth.
+    // Cull before ordering. The ordering only prioritizes visible geometry
+    // when the bounded vertex streams fill; sorting every project structure
+    // made any camera translation trigger unnecessary global work.
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
     screen_width := max(rl.GetScreenWidth(), 1)
@@ -13187,52 +13570,8 @@ world_structures :: proc(editor: ^Editor) {
     stats := &world_renderer.static_visibility
     stats^ = {}
     selected_index := !editor.in_map ? editor.structure_selected : -1
-    camera_position := [2]f32{view_camera.position.x, view_camera.position.z}
-    order_rebuild :=
-        !world_renderer.structure_visibility_order_valid ||
-        len(world_renderer.structure_visibility_order) != editor.project.structure_count
-    order_dirty :=
-        order_rebuild ||
-        world_renderer.structure_visibility_camera != camera_position ||
-        world_renderer.structure_visibility_selected != selected_index ||
-        world_renderer.structure_visibility_hovered != hovered_index
-    if !order_dirty {
-        for structure, index in editor.project.structures[:editor.project.structure_count] {
-            center := [2]f32{structure.center_x, structure.center_z}
-            if world_renderer.structure_visibility_centers[index] != center {
-                order_dirty = true
-                break
-            }
-        }
-    }
-    if order_dirty {
-        if order_rebuild {
-            clear(&world_renderer.structure_visibility_order)
-            for index in 0 ..< editor.project.structure_count {
-                append(&world_renderer.structure_visibility_order, Structure_Visibility_Order{index = index})
-            }
-        }
-        for &ordered in world_renderer.structure_visibility_order {
-            structure := editor.project.structures[ordered.index]
-            world_renderer.structure_visibility_centers[ordered.index] = {structure.center_x, structure.center_z}
-            dx, dz := structure.center_x - view_camera.position.x, structure.center_z - view_camera.position.z
-            ordered.distance_squared = dx * dx + dz * dz
-            if ordered.index == selected_index || ordered.index == hovered_index {
-                ordered.distance_squared = -1
-            }
-        }
-        if !structure_visibility_order_repair(world_renderer.structure_visibility_order[:]) {
-            slice.sort_by(world_renderer.structure_visibility_order[:], structure_visibility_order_less)
-        }
-        world_renderer.structure_visibility_camera = camera_position
-        world_renderer.structure_visibility_selected = selected_index
-        world_renderer.structure_visibility_hovered = hovered_index
-        world_renderer.structure_visibility_order_valid = true
-    }
-    world_architecture_alley_overlap_plan_sync(&editor.architecture_city_plan)
-    for ordered in world_renderer.structure_visibility_order {
-        index := ordered.index
-        structure := editor.project.structures[index]
+    clear(&world_renderer.structure_visibility_order)
+    for structure, index in editor.project.structures[:editor.project.structure_count] {
         stats.candidates += 1
         force_visible := index == selected_index || index == hovered_index
         center, radius := structure_visibility_sphere(structure)
@@ -13248,6 +13587,20 @@ world_structures :: proc(editor: ^Editor) {
         } else {
             world_renderer.static_visibility_classification[index] = .Visible
         }
+        dx, dz := structure.center_x - view_camera.position.x, structure.center_z - view_camera.position.z
+        distance_squared := dx * dx + dz * dz
+        if force_visible do distance_squared = -1
+        append(
+            &world_renderer.structure_visibility_order,
+            Structure_Visibility_Order{index = index, distance_squared = distance_squared},
+        )
+    }
+    slice.sort_by(world_renderer.structure_visibility_order[:], structure_visibility_order_less)
+    world_architecture_alley_overlap_plan_sync(&editor.architecture_city_plan)
+    for ordered in world_renderer.structure_visibility_order {
+        index := ordered.index
+        structure := editor.project.structures[index]
+        force_visible := index == selected_index || index == hovered_index
         if editor.architecture_painting &&
            structure.kind == .Architecture &&
            architecture.city_bounds_contains(
@@ -13323,25 +13676,79 @@ world_structures :: proc(editor: ^Editor) {
     world_greek_assets(editor)
 }
 
+world_overlay_chunk_bounds_sync :: proc(editor: ^Editor) {
+    if editor == nil do return
+    expected_count := OVERLAY_CHUNKS_PER_AXIS * OVERLAY_CHUNKS_PER_AXIS
+    if world_renderer.overlay_chunk_terrain_revision == editor.terrain_revision &&
+       len(world_renderer.overlay_chunk_bounds) == expected_count {
+        return
+    }
+    clear(&world_renderer.overlay_chunk_bounds)
+    reserve(&world_renderer.overlay_chunk_bounds, expected_count)
+    cell := terrain.BASE_CELL_SIZE
+    half := f32(terrain.RING_RESOLUTION - 1) * .5
+    cell_count := terrain.RING_RESOLUTION - 1
+    for chunk_z in 0 ..< OVERLAY_CHUNKS_PER_AXIS {
+        min_cell_z := chunk_z * OVERLAY_CHUNK_CELLS
+        max_cell_z := min(min_cell_z + OVERLAY_CHUNK_CELLS, cell_count)
+        z0, z1 := (f32(min_cell_z) - half) * cell, (f32(max_cell_z) - half) * cell
+        for chunk_x in 0 ..< OVERLAY_CHUNKS_PER_AXIS {
+            min_cell_x := chunk_x * OVERLAY_CHUNK_CELLS
+            max_cell_x := min(min_cell_x + OVERLAY_CHUNK_CELLS, cell_count)
+            x0, x1 := (f32(min_cell_x) - half) * cell, (f32(max_cell_x) - half) * cell
+            minimum_y, maximum_y := f32(1e30), f32(-1e30)
+            for sample_z in min_cell_z ..= max_cell_z {
+                world_z := (f32(sample_z) - half) * cell
+                for sample_x in min_cell_x ..= max_cell_x {
+                    world_x := (f32(sample_x) - half) * cell
+                    sample_y := terrain.sample_height(&editor.project, 0, world_x, world_z)
+                    minimum_y, maximum_y = min(minimum_y, sample_y), max(maximum_y, sample_y)
+                }
+            }
+            center := third_person.Vec3{(x0 + x1) * .5, (minimum_y + maximum_y) * .5, (z0 + z1) * .5}
+            half_x, half_y, half_z := (x1 - x0) * .5, (maximum_y - minimum_y) * .5, (z1 - z0) * .5
+            radius := f32(math.sqrt(f64(half_x * half_x + half_y * half_y + half_z * half_z))) + .25
+            append(&world_renderer.overlay_chunk_bounds, Overlay_Chunk_Bounds{center, radius})
+        }
+    }
+    world_renderer.overlay_chunk_terrain_revision = editor.terrain_revision
+}
+
 world_city_density_overlay :: proc(editor: ^Editor) {
     if editor == nil || editor.in_map || !editor.architecture_paint_mode do return
     field := &editor.project.city_density
     if editor.architecture_painting do field = &editor.architecture_density_preview
     cell := terrain.BASE_CELL_SIZE
     half := f32(terrain.RING_RESOLUTION - 1) * .5
-    for z in 0 ..< terrain.RING_RESOLUTION - 1 {
-        for x in 0 ..< terrain.RING_RESOLUTION - 1 {
-            density := f32(field[z * terrain.RING_RESOLUTION + x]) / 255
-            if density <= .01 do continue
-            x0, z0 := (f32(x) - half) * cell, (f32(z) - half) * cell
-            x1, z1 := x0 + cell, z0 + cell
-            lift := f32(.115)
-            a := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z0) + lift, z0}
-            b := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z0) + lift, z0}
-            c := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z1) + lift, z1}
-            d := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z1) + lift, z1}
-            alpha := u8(28 + density * 112)
-            world_quad(a, b, c, d, {22, 27, 31, alpha})
+    camera := perspective_camera(editor.camera_pose)
+    width, height := max(rl.GetScreenWidth(), 1), max(rl.GetScreenHeight(), 1)
+    aspect := f32(width) / f32(height)
+    near_plane := world_camera_near_clip(editor)
+    world_overlay_chunk_bounds_sync(editor)
+    cell_count := terrain.RING_RESOLUTION - 1
+    for chunk_z in 0 ..< OVERLAY_CHUNKS_PER_AXIS {
+        for chunk_x in 0 ..< OVERLAY_CHUNKS_PER_AXIS {
+            bounds := world_renderer.overlay_chunk_bounds[chunk_z * OVERLAY_CHUNKS_PER_AXIS + chunk_x]
+            if !static_sphere_in_frustum(camera, bounds.center, bounds.radius, aspect, near_plane, WORLD_FAR_CLIP) {
+                continue
+            }
+            min_z, max_z := chunk_z * OVERLAY_CHUNK_CELLS, min((chunk_z + 1) * OVERLAY_CHUNK_CELLS, cell_count)
+            min_x, max_x := chunk_x * OVERLAY_CHUNK_CELLS, min((chunk_x + 1) * OVERLAY_CHUNK_CELLS, cell_count)
+            for z in min_z ..< max_z {
+                for x in min_x ..< max_x {
+                    density := f32(field[z * terrain.RING_RESOLUTION + x]) / 255
+                    if density <= .01 do continue
+                    x0, z0 := (f32(x) - half) * cell, (f32(z) - half) * cell
+                    x1, z1 := x0 + cell, z0 + cell
+                    lift := f32(.115)
+                    a := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z0) + lift, z0}
+                    b := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z0) + lift, z0}
+                    c := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z1) + lift, z1}
+                    d := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z1) + lift, z1}
+                    alpha := u8(28 + density * 112)
+                    world_quad(a, b, c, d, {22, 27, 31, alpha})
+                }
+            }
         }
     }
 }
@@ -15193,18 +15600,34 @@ world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
     field := &editor.project.climbing_leaf_density
     cell := terrain.BASE_CELL_SIZE
     half := f32(terrain.RING_RESOLUTION - 1) * .5
-    for z in 0 ..< terrain.RING_RESOLUTION - 1 {
-        for x in 0 ..< terrain.RING_RESOLUTION - 1 {
-            density := f32(field[z * terrain.RING_RESOLUTION + x]) / 255
-            if density <= .01 do continue
-            x0, z0 := (f32(x) - half) * cell, (f32(z) - half) * cell
-            x1, z1 := x0 + cell, z0 + cell
-            lift := f32(.13)
-            a := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z0) + lift, z0}
-            b := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z0) + lift, z0}
-            c := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z1) + lift, z1}
-            d := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z1) + lift, z1}
-            world_quad(a, b, c, d, {57, 141, 78, u8(24 + density * 92)})
+    camera := perspective_camera(editor.camera_pose)
+    width, height := max(rl.GetScreenWidth(), 1), max(rl.GetScreenHeight(), 1)
+    aspect := f32(width) / f32(height)
+    near_plane := world_camera_near_clip(editor)
+    world_overlay_chunk_bounds_sync(editor)
+    cell_count := terrain.RING_RESOLUTION - 1
+    for chunk_z in 0 ..< OVERLAY_CHUNKS_PER_AXIS {
+        for chunk_x in 0 ..< OVERLAY_CHUNKS_PER_AXIS {
+            bounds := world_renderer.overlay_chunk_bounds[chunk_z * OVERLAY_CHUNKS_PER_AXIS + chunk_x]
+            if !static_sphere_in_frustum(camera, bounds.center, bounds.radius, aspect, near_plane, WORLD_FAR_CLIP) {
+                continue
+            }
+            min_z, max_z := chunk_z * OVERLAY_CHUNK_CELLS, min((chunk_z + 1) * OVERLAY_CHUNK_CELLS, cell_count)
+            min_x, max_x := chunk_x * OVERLAY_CHUNK_CELLS, min((chunk_x + 1) * OVERLAY_CHUNK_CELLS, cell_count)
+            for z in min_z ..< max_z {
+                for x in min_x ..< max_x {
+                    density := f32(field[z * terrain.RING_RESOLUTION + x]) / 255
+                    if density <= .01 do continue
+                    x0, z0 := (f32(x) - half) * cell, (f32(z) - half) * cell
+                    x1, z1 := x0 + cell, z0 + cell
+                    lift := f32(.13)
+                    a := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z0) + lift, z0}
+                    b := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z0) + lift, z0}
+                    c := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z1) + lift, z1}
+                    d := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z1) + lift, z1}
+                    world_quad(a, b, c, d, {57, 141, 78, u8(24 + density * 92)})
+                }
+            }
         }
     }
 }
@@ -18667,10 +19090,12 @@ world_rondine_pilot :: proc(editor: ^Editor) {
 }
 
 world_showcase_car_pilot :: proc(editor: ^Editor) {
-    world_car_pilot_model(editor, 0, 0)
+    world_car_pilot_model(editor, editor.car_drive.steering, editor.car_drive.acceleration_feedback)
 }
 
-CAR_PILOT_SCALE :: f32(.78)
+// Slightly smaller than the on-foot mouse so the upright seated silhouette
+// fits inside the roadster instead of spanning the rear deck and windscreen.
+CAR_PILOT_SCALE :: f32(.70)
 CAR_PILOT_SEAT_Y :: f32(.31)
 CAR_PILOT_SEAT_Z :: f32(.05)
 CAR_STEERING_WHEEL_Y :: f32(.59)
@@ -18779,8 +19204,29 @@ world_car_pilot :: proc(editor: ^Editor) {
 }
 
 @(no_instrumentation)
+car_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
+    if part == .Body {
+        // A restrained petrol teal keeps the tiny roadster colorful against
+        // Mediterranean roads without competing with the mouse's face and
+        // paws for the focal contrast.
+        return {29, 124, 145, 255}
+    }
+    if part == .Strap {
+        // Warm oxblood leather separates the seat and dashboard from both the
+        // chestnut driver and the cool body paint.
+        return {82, 43, 40, 255}
+    }
+    if part == .Tail_Light {
+        braking :=
+            editor != nil && (editor.car_drive.handbrake_amount > .15 || editor.car_drive.acceleration_feedback < -.12)
+        return braking ? rl.Color{255, 68, 55, 255} : rl.Color{145, 35, 34, 255}
+    }
+    return aircraft_part_color(part)
+}
+
+@(no_instrumentation)
 trailer_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
-    color := aircraft_part_color(part)
+    color := car_part_color(editor, part)
     if part == .Tail_Light {
         braking := editor.car_drive.handbrake_amount > .15 || editor.car_drive.acceleration_feedback < -.12
         if braking do color = {255, 76, 62, 255}
@@ -18818,7 +19264,7 @@ world_car :: proc(editor: ^Editor) {
             world_vehicle_vertex_world(car_transform, a.position),
             world_vehicle_vertex_world(car_transform, b.position),
             world_vehicle_vertex_world(car_transform, c.position),
-            aircraft_part_color(a.part),
+            car_part_color(editor, a.part),
         )
     }
     for triangle in vehicles.mesh_triangles(&trailer) {
@@ -20464,6 +20910,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     posted_weight :=
         model.player_controlled ? clamp(editor.player_posted_weight, 0, 1) : (model.gait_preview ? f32(0) : f32(1))
     if model.player_controlled && editor.capture_player_posted_pose do posted_weight = 1
+    if model.driving_pose {
+        // Driving is a supported crouch, not the mouse's ordinary horizontal
+        // locomotion pose.  Lift the chest and head while leaving enough
+        // forward reach for both paws to stay on the small steering wheel.
+        posted_weight = 1
+    }
 
     airborne_weight := model.player_controlled ? editor.player_airborne_weight : f32(0)
     run_weight :=
@@ -20569,11 +21021,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         posted_weight * .035 +
         scurry_lean * .18
     if model.driving_pose {
-        // The driver reaches into the controls instead of holding the tall,
-        // alert posted pose used by idle NPCs.
-        head_y -= .055
+        // Keep the head over the supported chest instead of stretching the
+        // entire mouse horizontally toward the windscreen. The forelimbs
+        // supply the reach to the controls while the driver remains seated.
+        head_y += .005
         head_y -= math.abs(drive_reaction) * .018
-        head_z += .055 + drive_reaction * .065
+        head_z -= .025
+        head_z += drive_reaction * .065
     }
     head_turn_x := spine_side * .24
     skeleton := [5]Mouse_Bone_Pose {
@@ -20648,6 +21102,17 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             roll          = body_roll *
             .22,
         },
+    }
+    if model.driving_pose {
+        // Ease the pelvis-to-neck chain into the same upright arc as the head.
+        // These small graded offsets avoid a hinge at the neck while retaining
+        // the low haunches that visibly settle into the bucket seat.
+        skeleton[1].position.y += .010
+        skeleton[1].position.z -= .020
+        skeleton[2].position.y += .020
+        skeleton[2].position.z -= .045
+        skeleton[3].position.y += .030
+        skeleton[3].position.z -= .065
     }
     softness := model.player_controlled ? &editor.player_body_softness : nil
     world_mouse_skinned_hull(p, rotation, &skeleton, fur, fur_dark, fur_light, model.pattern, breathing, softness)
@@ -22152,46 +22617,69 @@ world_business_sign_for_resident :: proc(editor: ^Editor, resident: story.Reside
 }
 
 world_attendant_kiosk :: proc(editor: ^Editor) {
-    if !editor.in_map || !editor.libellula_visible do return
-    if world_sphere_in_view(editor, editor.attendant_position + third_person.Vec3{0, 1.5, 0}, 3.5, 4) {
+    if !editor.in_map do return
+    if world_sphere_in_view(editor, editor.attendant_position + third_person.Vec3{0, 4, 0}, 24, 8) {
         world_attendant_kiosk_at(editor, editor.attendant_position)
     }
-    if world_sphere_in_view(editor, editor.gerta_position + third_person.Vec3{0, 1.5, 0}, 3.5, 4) {
+    if world_sphere_in_view(editor, editor.gerta_position + third_person.Vec3{0, 4, 0}, 24, 8) {
         world_attendant_kiosk_at(editor, editor.gerta_position)
     }
 }
 
 world_attendant_kiosk_at :: proc(editor: ^Editor, p: third_person.Vec3) {
     ground := terrain.sample_height(&editor.project, 0, p.x, p.z)
-    timber := rl.Color{92, 61, 38, 255}
-    painted := rl.Color{188, 58, 48, 255}
-    cream := rl.Color{232, 218, 181, 255}
+    sign := p.x >= 0 ? f32(1) : f32(-1)
+    rotation := sign > 0 ? -f32(math.PI) * .5 : f32(math.PI) * .5
+    stone := rl.Color{211, 202, 178, 255}
+    cream := rl.Color{239, 229, 201, 255}
+    red := rl.Color{174, 55, 45, 255}
     roof := rl.Color{55, 72, 76, 255}
+    glass := rl.Color{83, 137, 154, 255}
+    timber := rl.Color{92, 61, 38, 255}
 
-    // A maintained limestone apron keeps the service counter accessible.
-    world_land_surface_rotated(editor, p.x, p.z + .35, 4.2, 3.8, 0, .09, {181, 169, 137, 255})
-    world_land_surface_rotated(editor, p.x, p.z - 2.65, 1.65, 3.0, 0, .10, {194, 183, 153, 255})
+    // A broad forecourt meets the asphalt access-road node at reception.
+    world_land_surface_rotated(editor, p.x, p.z, 42, 30, rotation, .10, {181, 169, 137, 255})
+    forecourt_x, forecourt_z := world_rotate_xz(p.x, p.z, 0, -17, rotation)
+    world_land_surface_rotated(editor, forecourt_x, forecourt_z, 15, 20, rotation, .11, {194, 183, 153, 255})
 
-    // Open-front runway kiosk: a raised deck, sheltered counter, rear wall,
-    // and striped sign. The opening faces the runway along -Z.
-    world_box_rotated({p.x, ground + .08, p.z + .42}, {3.2, .16, 2.6}, 0, timber)
-    world_box_rotated({p.x, ground + 1.35, p.z + 1.58}, {3.2, 2.7, .16}, 0, painted)
-    world_box_rotated({p.x - 1.52, ground + 1.30, p.z + .42}, {.16, 2.6, 2.35}, 0, painted)
-    world_box_rotated({p.x + 1.52, ground + 1.30, p.z + .42}, {.16, 2.6, 2.35}, 0, painted)
-    world_box_rotated({p.x, ground + 2.78, p.z + .38}, {3.65, .18, 3.0}, 0, roof)
-    world_box_rotated({p.x, ground + 1.02, p.z - .54}, {3.0, .16, .48}, 0, cream)
-    world_box_rotated({p.x, ground + .62, p.z - .36}, {2.85, .72, .14}, 0, timber)
-    world_box_rotated({p.x, ground + 2.28, p.z + 1.47}, {2.25, .48, .08}, 0, cream)
-    world_box_rotated({p.x, ground + 2.28, p.z + 1.40}, {1.55, .14, .06}, 0, painted)
-    world_business_sign({p.x, ground + 3.58, p.z + 1.44}, 0, .Aerodromo, 1.58)
+    // Full island airport: central passenger hall, two service wings, glazed
+    // frontage, deep canopy, and a compact operations tower.
+    hall_x, hall_z := world_rotate_xz(p.x, p.z, 0, 5.5, rotation)
+    world_box_rotated({hall_x, ground + 2.5, hall_z}, {18, 5, 12}, rotation, cream)
+    left_x, left_z := world_rotate_xz(p.x, p.z, -13, 7, rotation)
+    right_x, right_z := world_rotate_xz(p.x, p.z, 13, 7, rotation)
+    world_box_rotated({left_x, ground + 1.9, left_z}, {8, 3.8, 15}, rotation, stone)
+    world_box_rotated({right_x, ground + 1.9, right_z}, {8, 3.8, 15}, rotation, stone)
+    world_box_rotated({hall_x, ground + 5.12, hall_z}, {19, .24, 13}, rotation, roof)
+    world_box_rotated({left_x, ground + 3.92, left_z}, {8.6, .20, 15.6}, rotation, roof)
+    world_box_rotated({right_x, ground + 3.92, right_z}, {8.6, .20, 15.6}, rotation, roof)
 
-    // Marta is much shorter than the service counter. Give her a sturdy
-    // standing stool on the raised deck so she can comfortably see customers.
+    for bay in -3 ..= 3 {
+        window_x, window_z := world_rotate_xz(p.x, p.z, f32(bay) * 2.15, -.56, rotation)
+        world_box_rotated({window_x, ground + 2.62, window_z}, {1.55, 2.35, .12}, rotation, glass)
+    }
+    door_x, door_z := world_rotate_xz(p.x, p.z, 0, -.64, rotation)
+    world_box_rotated({door_x, ground + 1.35, door_z}, {2.15, 2.7, .15}, rotation, timber)
+    canopy_x, canopy_z := world_rotate_xz(p.x, p.z, 0, -2.8, rotation)
+    world_box_rotated({canopy_x, ground + 3.55, canopy_z}, {15.5, .22, 4.8}, rotation, red)
+    world_business_sign({hall_x, ground + 5.85, hall_z}, rotation, .Aerodromo, 2.3)
+
+    tower_x, tower_z := world_rotate_xz(p.x, p.z, 11.5, 9, rotation)
+    world_box_rotated({tower_x, ground + 6.2, tower_z}, {4.2, 8.4, 4.2}, rotation, cream)
+    world_box_rotated({tower_x, ground + 10.65, tower_z}, {5.6, 1.35, 5.6}, rotation, glass)
+    world_box_rotated({tower_x, ground + 11.45, tower_z}, {6.2, .22, 6.2}, rotation, roof)
+
+    // Reception counter and stool remain at the interaction point inside the
+    // entrance hall so existing dialogue and interaction behavior is retained.
+    counter_x, counter_z := world_rotate_xz(p.x, p.z, 0, .45, rotation)
+    world_box_rotated({counter_x, ground + .92, counter_z}, {3.4, 1.05, .52}, rotation, timber)
+
     stool := rl.Color{126, 82, 47, 255}
-    world_box_rotated({p.x, ground + MARTA_STOOL_HEIGHT - .06, p.z}, {.62, .12, .54}, 0, stool)
+    world_box_rotated({p.x, ground + MARTA_STOOL_HEIGHT - .06, p.z}, {.62, .12, .54}, rotation, stool)
     stool_leg_offsets := [4][2]f32{{-.23, -.19}, {-.23, .19}, {.23, -.19}, {.23, .19}}
     for offset in stool_leg_offsets {
-        world_box_rotated({p.x + offset.x, ground + .295, p.z + offset.y}, {.10, .27, .10}, 0, timber)
+        leg_x, leg_z := world_rotate_xz(p.x, p.z, offset.x, offset.y, rotation)
+        world_box_rotated({leg_x, ground + .295, leg_z}, {.10, .27, .10}, rotation, timber)
     }
 }
 
@@ -22504,6 +22992,7 @@ world_settlement_inhabitants :: proc(editor: ^Editor) {
             if f32(math.sin(f64(phase * 2 * math.PI))) < 0 do tangent = -tangent
             ground := terrain.sample_height(&editor.project, 0, point[0], point[1])
             if ground <= editor.project.sea_level + .35 do continue
+            if !world_sphere_in_view(editor, {point[0], ground + .8, point[1]}, 1.4, 2) do continue
             world_mouse_model_scaled(
                 editor,
                 {
@@ -22526,6 +23015,7 @@ world_settlement_inhabitants :: proc(editor: ^Editor) {
         // stream with other static settlement dressing.
         ground := terrain.sample_height(&editor.project, 0, point[0], point[1])
         if ground <= editor.project.sea_level + .35 do continue
+        if !world_sphere_in_view(editor, {point[0], ground + .6, point[1]}, 1, 2) do continue
         tint := inhabitant.worker ? rl.Color{83, 103, 111, 210} : rl.Color{104, 86, 70, 205}
         world_box_rotated({point[0], ground + .43, point[1]}, {.28, .66, .23}, 0, tint)
         world_box_rotated({point[0], ground + .85, point[1]}, {.32, .30, .30}, 0, tint)
@@ -23078,6 +23568,19 @@ ground_grass_cache_make_room :: proc() {
     if found do ground_grass_chunk_release(oldest_key)
 }
 
+coastal_grass_card_density :: #force_inline proc(material, x, z: f32) -> f32 {
+    stabilization := clamp(material + 1, f32(0), f32(1))
+    // Marram establishes in colonies rather than filling every eligible
+    // square. Two crossed low-frequency fields leave readable sand windows
+    // between tufts and avoid the uniform green carpet that hid dune relief.
+    crossed := f32(math.sin(f64(x * .067 + z * .021 + 1.7))) * f32(math.sin(f64(x * -.019 + z * .083 - .6)))
+    broad := f32(math.sin(f64(x * .026 - z * .014 + 2.4)))
+    patch := clamp(.42 + crossed * .34 + broad * .16, f32(.10), f32(.88))
+    // A fourth-power response keeps partly active sand genuinely sparse while
+    // allowing mature shoulders to retain recognizable colonies.
+    return stabilization * stabilization * stabilization * stabilization * patch * .72
+}
+
 ground_grass_chunk_build :: proc(
     editor: ^Editor,
     key: [2]int,
@@ -23110,11 +23613,22 @@ ground_grass_chunk_build :: proc(
         height_at := terrain.sample_height(&editor.project, 0, x, z)
         if farmland_excludes_ground_grass(editor, x, z) ||
            settlement_patios_contain_point(editor, x, z, .12) ||
-           !wildflowers_renderable_at(editor, x, z, circulation_plan) {
+           !coastal_grass_renderable_at(editor, x, z, circulation_plan) {
             continue
         }
         architecture_height_scale := world_architecture_grass_height_scale(building_footprints, x, z)
         if architecture_height_scale <= 0 do continue
+        terrain_material := terrain.sample_material(&editor.project, 0, x, z)
+        dune_stabilization := f32(1)
+        if terrain_material < 0 {
+            // Negative terrain material is the coastal sand/stabilization
+            // mask. Keep active sand and wet shore bare while allowing the
+            // deterministic card field to fill back in across stabilized
+            // dune shoulders.
+            dune_stabilization = clamp(terrain_material + 1, f32(0), f32(1))
+            density := coastal_grass_card_density(terrain_material, x, z)
+            if wind_streak_hash(seed_index, 11) > density do continue
+        }
         ground_color, cliff_weight, _ := clipmap_vertex_color(editor, 0, x, z, height_at, 0)
         if cliff_weight > .2 do continue
         variation := wind_streak_hash(seed_index, 4)
@@ -23134,6 +23648,14 @@ ground_grass_chunk_build :: proc(
         } else {
             color = color_lerp(color, {111, 137, 91, 255}, .16)
         }
+        if terrain_material < 0 {
+            // Sparse marram and dry coastal grasses are shorter, less
+            // saturated, and warmer than the lush inland card field. A muted
+            // straw-olive target avoids neon green cards against pale sand
+            // while stabilized crests retain some living green.
+            dune_dryness := 1 - dune_stabilization
+            color = color_lerp(color, {132, 127, 73, 255}, .52 + dune_dryness * .34)
+        }
         color = color_lerp(color, {170, 166, 87, 255}, variation * .08)
         grass_value := f32(color.r) * .2126 + f32(color.g) * .7152 + f32(color.b) * .0722
         ground_value := f32(ground_color.r) * .2126 + f32(ground_color.g) * .7152 + f32(ground_color.b) * .0722
@@ -23149,10 +23671,12 @@ ground_grass_chunk_build :: proc(
         } else if height_noise > .90 {
             height *= 1.28
         }
+        if terrain_material < 0 do height *= .52 + dune_stabilization * .22
         height *= architecture_height_scale
         width := height * (.56 + width_noise * .48)
         flower_density := wildflower_density_at(x, z)
-        has_flower := flower_density > .18 && wind_streak_hash(seed_index, 12) < flower_density * .34
+        has_flower :=
+            terrain_material >= 0 && flower_density > .18 && wind_streak_hash(seed_index, 12) < flower_density * .34
         flower_height := .32 + wind_streak_hash(seed_index, 13) * .34
         chunk.entries[chunk.count] = {
             grass = {
@@ -24963,9 +25487,10 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     }
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
         for level in 0 ..< terrain.CLIPMAP_LEVELS {
+            vertex_count := clipmap_grid_resolution(level) * clipmap_grid_resolution(level)
             if !world_host_buffer_create(
                 ctx,
-                vk.DeviceSize(CLIPMAP_VERTEX_COUNT * size_of(World_Vertex)),
+                vk.DeviceSize(vertex_count * size_of(World_Vertex)),
                 {.VERTEX_BUFFER},
                 &world_renderer.clipmap_vertex[frame][level],
                 "world clipmap vertex buffer",
@@ -25530,6 +26055,9 @@ world_renderer_destroy :: proc() {
     for &row in world_renderer.clipmap_ring_index {
         for &buffer in row do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     }
+    for &row in world_renderer.clipmap_inner_ring_index {
+        for &buffer in row do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    }
     roads.mesh_destroy(&world_renderer.road_mesh)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.transparent_pipelines)
@@ -25623,7 +26151,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.climbing_leaf_geometry_cache)
     delete(world_renderer.static_visibility_classification)
     delete(world_renderer.structure_visibility_order)
-    delete(world_renderer.structure_visibility_centers)
+    delete(world_renderer.overlay_chunk_bounds)
     delete(world_renderer.structure_building_spans)
     delete(world_renderer.structure_candidates)
     for &entry in world_renderer.town_mouse_geometry_cache {

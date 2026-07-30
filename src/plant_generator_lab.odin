@@ -320,12 +320,7 @@ plant_generator_rebuild :: proc() {
             }
             fruit_config.segments = plant_generator_detail == .Near ? 12 : 8
             fruit_config.rings = plant_generator_detail == .Near ? 8 : 5
-            fruit_stages := [4]flower_mesh.Lifecycle_Stage{
-                .Fruit_Set,
-                .Immature_Fruit,
-                .Ripening_Fruit,
-                .Ripe_Fruit,
-            }
+            fruit_stages := [4]flower_mesh.Lifecycle_Stage{.Fruit_Set, .Immature_Fruit, .Ripening_Fruit, .Ripe_Fruit}
             for fruit_stage, stage_index in fruit_stages {
                 plant_generator_fruit_meshes[index][stage_index] = flower_mesh.generate_lifecycle(
                     {stage = fruit_stage, flower = flower_mesh.defaults(), fruit = fruit_config},
@@ -503,10 +498,13 @@ plant_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         plant_generator_isolated = int(plants.Species.Lemon)
         plant_generator_detail = .Far
     }
-    for stage_index in 0 ..< 16 {
-        if target == fmt.tprintf("pelargonium-lifecycle-%d", stage_index) {
-            plant_generator_isolated = int(plants.Species.Pelargonium)
-            plant_generator_maturity = .04 + .96 * f32(stage_index) / 15
+    for species_index in 0 ..< plants.SPECIES_COUNT {
+        species := plants.Species(species_index)
+        for stage_index in 0 ..< 16 {
+            if target == fmt.tprintf("%s-lifecycle-%d", plant_generator_species_slug(species), stage_index) {
+                plant_generator_isolated = species_index
+                plant_generator_maturity = .04 + .96 * f32(stage_index) / 15
+            }
         }
     }
     pelargonium_lifecycle100_prefix := "pelargonium-lifecycle100-"
@@ -636,11 +634,7 @@ plant_generator_point :: proc(base: third_person.Vec3, point: lsystem.Vec3, yaw,
     direction := third_person.Vec3{wind[0] / wind_speed, 0, wind[1] / wind_speed}
     across := third_person.Vec3{-direction.z, 0, direction.x}
     height_weight := clamp((result.y - plant_generator_wind_base.y) / plant_generator_wind_height, 0, 1)
-    root_offset := third_person.Vec3 {
-        result.x - plant_generator_wind_base.x,
-        0,
-        result.z - plant_generator_wind_base.z,
-    }
+    root_offset := third_person.Vec3{result.x - plant_generator_wind_base.x, 0, result.z - plant_generator_wind_base.z}
     reach_weight := clamp(linalg.length(root_offset) / plant_generator_wind_height, 0, 1)
     // Height alone makes a near-horizontal branch move as one rigid piece:
     // its joint and tip have almost identical weights, even though the leaves

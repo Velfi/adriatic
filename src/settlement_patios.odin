@@ -374,6 +374,10 @@ world_settlement_patio :: proc(patio: Settlement_Patio) {
 world_settlement_patios :: proc(editor: ^Editor) {
     if editor == nil do return
     for patio in editor.settlement_plan.patios[:editor.settlement_plan.patio_count] {
+        radius := f32(math.sqrt(f64(patio.width * patio.width + patio.depth * patio.depth + 36))) * .5
+        if !world_sphere_in_view(editor, {patio.center[0], patio.base_y + 1.5, patio.center[1]}, radius, 2) {
+            continue
+        }
         world_settlement_patio(patio)
     }
 }

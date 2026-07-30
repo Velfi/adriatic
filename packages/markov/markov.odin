@@ -121,6 +121,8 @@ grid_destroy :: proc(g: ^Grid, allocator := context.allocator) {
     delete(g.state, allocator)
     delete(g.state_buf, allocator)
     delete(g.mask, allocator)
+    delete(g.folder, allocator)
+    g^ = {}
 }
 
 grid_clear :: proc(g: ^Grid) {
@@ -500,6 +502,7 @@ Interpreter :: struct {
     first:     [dynamic]int,
     counter:   int,
     gif:       bool,
+    allocator: mem.Allocator,
 }
 
 interpreter_init :: proc(ip: ^Interpreter, grid: ^Grid, origin: bool) {
@@ -510,9 +513,132 @@ interpreter_init :: proc(ip: ^Interpreter, grid: ^Grid, origin: bool) {
     ip.first = make([dynamic]int)
 }
 
+rule_node_destroy :: proc(rn: ^Rule_Node, allocator: mem.Allocator) {
+    for &rule in rn.rules {
+        rule_destroy(&rule, allocator)
+    }
+    delete(rn.rules, allocator)
+    delete(rn.matches)
+    delete(rn.last, allocator)
+    for mask in rn.match_mask do delete(mask, allocator)
+    delete(rn.match_mask, allocator)
+    for potential in rn.potentials do delete(potential, allocator)
+    delete(rn.potentials, allocator)
+    for field in rn.fields {
+        if field != nil do free(field, allocator)
+    }
+    delete(rn.fields, allocator)
+    for observation in rn.observations {
+        if observation != nil do free(observation, allocator)
+    }
+    delete(rn.observations, allocator)
+    delete(rn.future, allocator)
+    for state in rn.trajectory do delete(state, allocator)
+    delete(rn.trajectory, allocator)
+    rn^ = {}
+}
+
+branch_destroy :: proc(branch: ^Branch, allocator: mem.Allocator) {
+    for child in branch.children do node_destroy(child, allocator)
+    delete(branch.children)
+    branch^ = {}
+}
+
+wave_destroy :: proc(wave: ^Wave, allocator: mem.Allocator) {
+    if wave == nil do return
+    for i in 0 ..< len(wave.data) {
+        delete(wave.data[i], allocator)
+        for compatible in wave.compatible[i] do delete(compatible, allocator)
+        delete(wave.compatible[i], allocator)
+    }
+    delete(wave.data, allocator)
+    delete(wave.compatible, allocator)
+    delete(wave.sums_of_ones, allocator)
+    delete(wave.sums_of_weights, allocator)
+    delete(wave.sums_of_weight_log_weights, allocator)
+    delete(wave.entropies, allocator)
+    free(wave, allocator)
+}
+
+wfc_base_destroy :: proc(wfc: ^WFC_Base, allocator: mem.Allocator) {
+    branch_destroy(&wfc.branch_base, allocator)
+    wave_destroy(wfc.wave, allocator)
+    wave_destroy(wfc.startwave, allocator)
+    for direction in wfc.propagator {
+        for patterns in direction do delete(patterns, allocator)
+        delete(direction, allocator)
+    }
+    delete(wfc.propagator, allocator)
+    delete(wfc.stack, allocator)
+    delete(wfc.weights, allocator)
+    delete(wfc.weight_log_weights, allocator)
+    delete(wfc.distribution, allocator)
+    for _, patterns in wfc.map_ do delete(patterns, allocator)
+    delete(wfc.map_)
+    if wfc.newgrid != nil {
+        grid_destroy(wfc.newgrid, allocator)
+        free(wfc.newgrid, allocator)
+    }
+}
+
+node_destroy :: proc(node: ^Node, allocator: mem.Allocator) {
+    if node == nil do return
+    switch node.kind {
+    case .One:
+        rule_node_destroy(&node.data.one.rule_base, allocator)
+    case .All:
+        rule_node_destroy(&node.data.all.rule_base, allocator)
+    case .Parallel:
+        rule_node_destroy(&node.data.parallel.rule_base, allocator)
+        delete(node.data.parallel.newstate, allocator)
+    case .Sequence:
+        branch_destroy(&node.data.sequence.branch_base, allocator)
+    case .Markov:
+        branch_destroy(&node.data.markov.branch_base, allocator)
+    case .Map:
+        mn := &node.data.map_
+        branch_destroy(&mn.branch_base, allocator)
+        for &rule in mn.rules do rule_destroy(&rule, allocator)
+        delete(mn.rules, allocator)
+        if mn.newgrid != nil {
+            grid_destroy(mn.newgrid, allocator)
+            free(mn.newgrid, allocator)
+        }
+    case .Convolution:
+        cn := &node.data.convolution
+        delete(cn.rules, allocator)
+        delete(cn.kernel, allocator)
+        for sums in cn.sumfield do delete(sums, allocator)
+        delete(cn.sumfield, allocator)
+    case .ConvChain:
+        ccn := &node.data.convchain
+        delete(ccn.weights, allocator)
+        delete(ccn.substrate, allocator)
+        delete(ccn.sample, allocator)
+    case .Overlap_WFC:
+        on := &node.data.overlap
+        wfc_base_destroy(&on.wfc_base, allocator)
+        for pattern in on.patterns do delete(pattern, allocator)
+        delete(on.patterns, allocator)
+    case .Tile_WFC:
+        tn := &node.data.tile
+        wfc_base_destroy(&tn.wfc_base, allocator)
+        for tile in tn.tiledata do delete(tile, allocator)
+        delete(tn.tiledata)
+    case .Path:
+    }
+    free(node, allocator)
+}
+
 interpreter_destroy :: proc(ip: ^Interpreter) {
+    if ip == nil do return
+    allocator := ip.allocator
+    node_destroy(ip.root, allocator)
+    grid_destroy(ip.startgrid, allocator)
+    free(ip.startgrid, allocator)
     delete(ip.changes)
     delete(ip.first)
+    free(ip, allocator)
 }
 
 // Frame represents a snapshot of the grid state

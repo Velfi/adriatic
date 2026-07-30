@@ -1437,7 +1437,8 @@ generate_candidate_for_site :: proc(
     // The Markov interpreter owns shared runtime state. Marina plans may be
     // generated concurrently by tests and streaming jobs, so serialize the
     // small variation pass while leaving geometry scoring parallel.
-    state: []u8
+    state_storage: [49]u8
+    state_count := 0
     {
         sync.mutex_lock(&markov_generation_lock)
         defer sync.mutex_unlock(&markov_generation_lock)
@@ -1445,10 +1446,16 @@ generate_candidate_for_site :: proc(
         ip, loaded := markov.load_model_proc(model, {7, 7, 1})
         if loaded {
             frames := markov.run(ip, int(layout_seed), 0, false, allocator)
-            if len(frames) > 0 do state = frames[len(frames) - 1].state
+            if len(frames) > 0 {
+                generated := frames[len(frames) - 1].state
+                state_count = min(len(generated), len(state_storage))
+                copy(state_storage[:state_count], generated[:state_count])
+            }
+            markov.frames_destroy(&frames, allocator)
             defer markov.interpreter_destroy(ip)
         }
     }
+    state := state_storage[:state_count]
 
     for z in 0 ..= 3 {
         for x in 0 ..< GRID_WIDTH do set_cell(&plan, x, z, .Land)
@@ -1590,10 +1597,16 @@ generate_candidate :: proc(seed, layout_seed: u32, candidate_index: int, allocat
     return generate_candidate_for_site(seed, layout_seed, candidate_index, nil, allocator)
 }
 
-generate_for_site :: proc(seed: u32, site: ^Site, allocator := context.temp_allocator) -> Plan {
+generate_for_site_budget :: proc(
+    seed: u32,
+    site: ^Site,
+    candidate_budget: int,
+    allocator := context.temp_allocator,
+) -> Plan {
     best: Plan
     best_score := f32(2)
-    for candidate_index in 0 ..< GENERATION_CANDIDATES {
+    candidates := clamp(candidate_budget, 1, GENERATION_CANDIDATES)
+    for candidate_index in 0 ..< candidates {
         layout_seed := seed ~ (u32(candidate_index) * u32(0x9e3779b9))
         candidate := generate_candidate_for_site(seed, layout_seed, candidate_index, site, allocator)
         score := candidate.generation_quality
@@ -1605,8 +1618,12 @@ generate_for_site :: proc(seed: u32, site: ^Site, allocator := context.temp_allo
             best_score = score
         }
     }
-    best.candidates_evaluated = GENERATION_CANDIDATES
+    best.candidates_evaluated = candidates
     return best
+}
+
+generate_for_site :: proc(seed: u32, site: ^Site, allocator := context.temp_allocator) -> Plan {
+    return generate_for_site_budget(seed, site, GENERATION_CANDIDATES, allocator)
 }
 
 generate :: proc(seed: u32, allocator := context.temp_allocator) -> Plan {

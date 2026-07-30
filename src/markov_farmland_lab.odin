@@ -122,8 +122,7 @@ farmland_vineyard_heights_are_safe :: proc(center: f32, neighbors: [4]f32) -> bo
     for height in neighbors {
         if abs(height - center) > 1.55 do return false
     }
-    return abs(neighbors[1] - neighbors[0]) <= 2.45 &&
-           abs(neighbors[3] - neighbors[2]) <= 2.45
+    return abs(neighbors[1] - neighbors[0]) <= 2.45 && abs(neighbors[3] - neighbors[2]) <= 2.45
 }
 
 farmland_vineyard_surface_is_safe :: proc(editor: ^Editor, grid_x, grid_z: f32) -> bool {
@@ -314,24 +313,14 @@ farmland_render_vineyard :: proc(
             bay_support := support
             bay_support.width = bay_support_width
             bay_support.root_x = -bay_support_width * .42
-            bay_support.signature =
-                0x76696e6579617264 ~
-                u64(bay_span_cells) ~
-                u64(bay_cells) << 8
+            bay_support.signature = 0x76696e6579617264 ~ u64(bay_span_cells) ~ u64(bay_cells) << 8
             scale := bay_length / bay_support_width
             base := third_person.Vec3{(start.x + finish.x) * .5, (start.y + finish.y) * .5, (start.z + finish.z) * .5}
 
             // Timber end posts and four taut training wires make the generated
             // tier routing readable even where foliage is sparse or distant.
             post_height := SUPPORT_HEIGHT * scale
-            world_tube_between(
-                start,
-                {start.x, start.y + post_height, start.z},
-                {1, 0, 0},
-                .055,
-                .055,
-                post_color,
-            )
+            world_tube_between(start, {start.x, start.y + post_height, start.z}, {1, 0, 0}, .055, .055, post_color)
             if along + bay_cells >= along_max {
                 world_tube_between(
                     finish,
@@ -355,10 +344,7 @@ farmland_render_vineyard :: proc(
             mixed := farmland.mix(plan_seed ~ u32(section_index) * u32(0x9e3779b9))
             template_seed := u64(0x56494e45 + mixed % 6)
             missing := mixed % 47 == 0
-            vigor_zone :=
-                (parcel_index + 1) * 8191 +
-                (across_row / 3) * 257 +
-                (along / 4) * 17
+            vigor_zone := (parcel_index + 1) * 8191 + (across_row / 3) * 257 + (along / 4) * 17
             vigor_mixed := farmland.mix(plan_seed ~ u32(vigor_zone) * u32(0x85ebca6b))
             maturity_step := u8(3 + (vigor_mixed >> 24) % 3)
             maturity := generated_plant_maturity_value(maturity_step)
@@ -418,11 +404,15 @@ farmland_render_vineyard :: proc(
                         .18,
                         row_forward.z * .28 + row_forward.x * .84 * side,
                     }
-                    leaf_length := f32(math.sqrt(f64(
-                        leaf_forward.x * leaf_forward.x +
-                            leaf_forward.y * leaf_forward.y +
-                            leaf_forward.z * leaf_forward.z,
-                    )))
+                    leaf_length := f32(
+                        math.sqrt(
+                            f64(
+                                leaf_forward.x * leaf_forward.x +
+                                leaf_forward.y * leaf_forward.y +
+                                leaf_forward.z * leaf_forward.z,
+                            ),
+                        ),
+                    )
                     leaf_forward /= leaf_length
                     leaf_up := third_person.Vec3{0, 1, 0}
                     leaf_right := third_person.Vec3{-leaf_forward.z, 0, leaf_forward.x}
@@ -760,6 +750,15 @@ world_markov_farmland :: proc(editor: ^Editor) {
 world_authored_farmland :: proc(editor: ^Editor) {
     if editor == nil do return
     for &instance in editor.farms[:editor.farm_count] {
+        scale_x := instance.scale_x > 0 ? instance.scale_x : f32(1)
+        scale_z := instance.scale_z > 0 ? instance.scale_z : f32(1)
+        half_width := f32(instance.plan.width) * farmland.CELL_METERS * scale_x * .5
+        half_depth := f32(instance.plan.height) * farmland.CELL_METERS * scale_z * .5
+        radius := f32(math.sqrt(f64(half_width * half_width + half_depth * half_depth))) + 12
+        ground := terrain.sample_height(&editor.project, 0, instance.origin_x, instance.origin_z)
+        if !world_sphere_in_view(editor, {instance.origin_x, ground + 4, instance.origin_z}, radius, 4) {
+            continue
+        }
         farmland_render_origin_x = instance.origin_x
         farmland_render_origin_z = instance.origin_z
         farmland_render_yaw = instance.yaw
@@ -769,6 +768,14 @@ world_authored_farmland :: proc(editor: ^Editor) {
         farmland_render_plan(editor, &instance.plan)
     }
     if editor.farm_paint_mode && editor.farm_preview_valid {
+        preview := &editor.farm_preview
+        scale_x := preview.scale_x > 0 ? preview.scale_x : f32(1)
+        scale_z := preview.scale_z > 0 ? preview.scale_z : f32(1)
+        half_width := f32(preview.plan.width) * farmland.CELL_METERS * scale_x * .5
+        half_depth := f32(preview.plan.height) * farmland.CELL_METERS * scale_z * .5
+        radius := f32(math.sqrt(f64(half_width * half_width + half_depth * half_depth))) + 12
+        ground := terrain.sample_height(&editor.project, 0, preview.origin_x, preview.origin_z)
+        if !world_sphere_in_view(editor, {preview.origin_x, ground + 4, preview.origin_z}, radius, 4) do return
         farmland_render_origin_x = editor.farm_preview.origin_x
         farmland_render_origin_z = editor.farm_preview.origin_z
         farmland_render_yaw = editor.farm_preview.yaw
@@ -910,31 +917,15 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if target == "vineyard-close" {
         extent := f32(max(markov_farmland_plan.width, markov_farmland_plan.height)) * farmland.CELL_METERS
         editor.camera_pose = third_person.camera_look_at(
-            {
-                MARKOV_FARMLAND_ORIGIN_X + extent * .34,
-                center_height + 4.8,
-                MARKOV_FARMLAND_ORIGIN_Z + extent * .56,
-            },
-            {
-                MARKOV_FARMLAND_ORIGIN_X,
-                center_height + 1.0,
-                MARKOV_FARMLAND_ORIGIN_Z + extent * .08,
-            },
+            {MARKOV_FARMLAND_ORIGIN_X + extent * .34, center_height + 4.8, MARKOV_FARMLAND_ORIGIN_Z + extent * .56},
+            {MARKOV_FARMLAND_ORIGIN_X, center_height + 1.0, MARKOV_FARMLAND_ORIGIN_Z + extent * .08},
         )
         third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     }
     // Terrain clipmaps follow the gameplay focus rather than the inspection
     // camera. Keep that focus inside the farm so captures and interactive lab
     // views render the cultivated ground instead of the prior player site.
-    player_place(
-        editor,
-        {
-            MARKOV_FARMLAND_ORIGIN_X,
-            center_height + .7,
-            MARKOV_FARMLAND_ORIGIN_Z,
-        },
-        .Scene_Setup,
-    )
+    player_place(editor, {MARKOV_FARMLAND_ORIGIN_X, center_height + .7, MARKOV_FARMLAND_ORIGIN_Z}, .Scene_Setup)
     return true
 }
 

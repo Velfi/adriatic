@@ -174,16 +174,8 @@ world_flocks_step :: proc(editor: ^Editor, dt: f32) {
             ),
         ),
     )
-    threat_position := third_person.Vec3{
-        editor.player.position.x,
-        editor.player.position.y,
-        editor.player.position.z,
-    }
-    threat_active :=
-        editor.in_map &&
-        editor.pilot.mode == .On_Foot &&
-        editor.player.grounded &&
-        player_speed >= 1.5
+    threat_position := third_person.Vec3{editor.player.position.x, editor.player.position.y, editor.player.position.z}
+    threat_active := editor.in_map && editor.pilot.mode == .On_Foot && editor.player.grounded && player_speed >= 1.5
     if editor.in_map && editor.pilot.mode == .Driving && editor.pilot.vehicle != nil {
         threat_position = editor.pilot.vehicle.position
         threat_active = true

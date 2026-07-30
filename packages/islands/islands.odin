@@ -8,8 +8,10 @@ GRID_WIDTH :: 96
 GRID_HEIGHT :: 64
 CELL_COUNT :: GRID_WIDTH * GRID_HEIGHT
 MAX_CANDIDATE_ATTEMPTS :: 8
+VALID_CANDIDATES_REQUIRED :: 3
 MIN_SKERRY_CELLS :: 5
 MAX_CONTOURS :: 64
+FOLIAGE_LATTICE_STEP :: 4
 
 Cell :: enum u8 {
     Water,
@@ -48,6 +50,17 @@ shape_archetype_name :: proc(shape: Shape_Archetype) -> string {
 
 Point :: struct {
     x, z: f32,
+}
+
+// Foliage patches are expressed in the generator's normalized island space.
+// Keeping them product-neutral lets callers realize the plan with their own
+// vegetation system while preserving the island seed's composition.
+Foliage_Patch :: struct {
+    x, z:         f32,
+    width, depth: f32,
+    height:       f32,
+    rotation:     f32,
+    seed:         u32,
 }
 
 Contour :: struct {
@@ -98,6 +111,7 @@ Plan :: struct {
     elevation:       []f32,
     bluff:           []f32,
     contours:        [dynamic]Contour,
+    foliage:         [dynamic]Foliage_Patch,
     bounds:          Bounds,
     diagnostics:     Diagnostics,
     allocator:       runtime.Allocator,
@@ -109,12 +123,54 @@ destroy :: proc(plan: ^Plan) {
         delete(contour.points)
     }
     delete(plan.contours)
+    delete(plan.foliage)
     delete(plan.source, plan.allocator)
     delete(plan.cleaned, plan.allocator)
     delete(plan.signed_distance, plan.allocator)
     delete(plan.elevation, plan.allocator)
     delete(plan.bluff, plan.allocator)
     plan^ = {}
+}
+
+build_foliage :: proc(plan: ^Plan, seed: u32) {
+    if plan == nil do return
+    plan.foliage = make([dynamic]Foliage_Patch, plan.allocator)
+    // A jittered coarse lattice produces separated groves instead of a
+    // uniform carpet. Inland distance keeps beaches and lake margins open;
+    // bluff rejection preserves exposed rock faces.
+    for z := FOLIAGE_LATTICE_STEP; z < GRID_HEIGHT - FOLIAGE_LATTICE_STEP; z += FOLIAGE_LATTICE_STEP {
+        for x := FOLIAGE_LATTICE_STEP; x < GRID_WIDTH - FOLIAGE_LATTICE_STEP; x += FOLIAGE_LATTICE_STEP {
+            salt := hash(seed ~ u32(index_of(x, z)) ~ 0x464f4c49)
+            jitter_x := int(salt & 3) - 1
+            jitter_z := int((salt >> 2) & 3) - 1
+            sample_x := clamp(x + jitter_x, 0, GRID_WIDTH - 1)
+            sample_z := clamp(z + jitter_z, 0, GRID_HEIGHT - 1)
+            index := index_of(sample_x, sample_z)
+            inland := -plan.signed_distance[index]
+            if plan.cleaned[index] != .Land || inland < 3.8 || plan.bluff[index] > .38 || plan.elevation[index] < 2.5 {
+                continue
+            }
+            moisture := hash(salt ~ 0x47524f57) & 255
+            // Valleys and sheltered low slopes carry denser vegetation, while
+            // high ground retains occasional wind-shaped copses.
+            threshold := plan.elevation[index] < 15 ? u32(104) : u32(58)
+            if moisture >= threshold do continue
+            width := .055 + f32((salt >> 8) & 255) / 255 * .055
+            depth := .050 + f32((salt >> 16) & 255) / 255 * .050
+            append(
+                &plan.foliage,
+                Foliage_Patch {
+                    x = f32(sample_x) / f32(GRID_WIDTH - 1) * 2 - 1,
+                    z = f32(sample_z) / f32(GRID_HEIGHT - 1) * 2 - 1,
+                    width = width,
+                    depth = depth,
+                    height = .035 + f32((salt >> 24) & 255) / 255 * .045,
+                    rotation = f32(salt & 0xffff) / 65535 * f32(math.PI),
+                    seed = hash(salt ~ 0x53454544),
+                },
+            )
+        }
+    }
 }
 
 hash :: proc(value: u32) -> u32 {
@@ -152,8 +208,7 @@ model :: proc(allocator := context.allocator) -> markov.Proc_Node {
         },
         allocator = allocator,
     )
-    // The sequence clones its children; release the temporary nodes after the
-    // owned root has been assembled.
+    // The sequence takes ownership of its children.
     result := markov.node(
         markov.Proc_Tag.sequence,
         []markov.Proc_Attr {
@@ -166,9 +221,6 @@ model :: proc(allocator := context.allocator) -> markov.Proc_Node {
         []markov.Proc_Node{spine, branch, shoulder},
         allocator = allocator,
     )
-    markov.proc_node_destroy(&spine, allocator)
-    markov.proc_node_destroy(&branch, allocator)
-    markov.proc_node_destroy(&shoulder, allocator)
     return result
 }
 
@@ -458,6 +510,17 @@ smooth_weight :: #force_inline proc(value: f32) -> f32 {
     return t * t * (3 - 2 * t)
 }
 
+macro_highland_direction :: #force_inline proc(seed: u32) -> (x, z: f32) {
+    angle := f32(hash(seed ~ 0x4d414352) & 0xffff) / 65535 * f32(math.PI * 2)
+    return f32(math.cos(f64(angle))), f32(math.sin(f64(angle)))
+}
+
+macro_highland_weight :: #force_inline proc(seed: u32, normalized_x, normalized_z: f32) -> f32 {
+    direction_x, direction_z := macro_highland_direction(seed)
+    projection := normalized_x * direction_x + normalized_z * direction_z
+    return smooth_weight((projection + .22) / .58)
+}
+
 build_vertical_form :: proc(plan: ^Plan, seed: u32) {
     hill_count := 3 + int(hash(seed ~ 0x48494c4c) % 4)
     bluff_count := 1 + int(hash(seed ~ 0x424c5546) % 3)
@@ -470,7 +533,13 @@ build_vertical_form :: proc(plan: ^Plan, seed: u32) {
             nx := f32(x) / f32(GRID_WIDTH - 1) * 2 - 1
             nz := f32(z) / f32(GRID_HEIGHT - 1) * 2 - 1
             shore_rise := smooth_weight(inland / 4.5)
-            elevation := shore_rise * (3.5 + f32(math.sin(f64(nx * 7.1 + nz * 3.4 + f32(seed & 255) * .013))) * 1.2)
+            highland := macro_highland_weight(seed, nx, nz)
+            relief_noise := f32(math.sin(f64(nx * 7.1 + nz * 3.4 + f32(seed & 255) * .013)))
+            // One broad half trends lower for settlement, agriculture, and
+            // airfield circulation. Relief remains possible everywhere; the
+            // opposing half is only biased toward a stronger mountain spine.
+            elevation :=
+                shore_rise * (2.2 + relief_noise * (.35 + highland * .65) + highland * (5.2 + relief_noise * 1.1))
 
             // Overlapping anisotropic uplifts form ridge chains and distinct
             // high points without prescribing a single central summit.
@@ -487,7 +556,7 @@ build_vertical_form :: proc(plan: ^Plan, seed: u32) {
                 local_z := (-dx * sine + dz * cosine) / half_z
                 weight := smooth_weight(1 - local_x * local_x - local_z * local_z)
                 height := 7 + f32(hash(salt ~ 0x5555) & 255) / 255 * 17
-                elevation += weight * height * shore_rise
+                elevation += weight * height * shore_rise * (.45 + highland * .75)
             }
 
             // The distance gradient supplies the local outward coast normal.
@@ -761,6 +830,7 @@ generate_candidate :: proc(seed: u32, allocator: runtime.Allocator) -> Plan {
     cleanup(plan.source, plan.cleaned)
     build_signed_distance(plan.cleaned, plan.signed_distance)
     build_vertical_form(&plan, seed)
+    build_foliage(&plan, seed)
     evaluate(&plan)
     return plan
 }
@@ -768,11 +838,15 @@ generate_candidate :: proc(seed: u32, allocator: runtime.Allocator) -> Plan {
 generate :: proc(requested_seed: u32, allocator := context.allocator) -> Plan {
     best: Plan
     best.score = -1e30
+    valid_candidates := 0
+    attempts := 0
     for attempt in 0 ..< MAX_CANDIDATE_ATTEMPTS {
+        attempts = attempt + 1
         seed := requested_seed + u32(attempt) * 0x9e3779b9
         candidate := generate_candidate(seed, allocator)
         candidate.requested_seed = requested_seed
         candidate.attempts = attempt + 1
+        if candidate.valid do valid_candidates += 1
         candidate_is_better :=
             (candidate.valid && !best.valid) || (candidate.valid == best.valid && candidate.score > best.score)
         if candidate_is_better {
@@ -781,8 +855,9 @@ generate :: proc(requested_seed: u32, allocator := context.allocator) -> Plan {
         } else {
             destroy(&candidate)
         }
+        if valid_candidates >= VALID_CANDIDATES_REQUIRED do break
     }
-    best.attempts = MAX_CANDIDATE_ATTEMPTS
+    best.attempts = attempts
     return best
 }
 

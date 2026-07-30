@@ -711,18 +711,21 @@ write_pattern_destroy :: proc(p: ^Write_Pattern, allocator := context.allocator)
     }
 }
 
-// match_row builds one direct input row of wave cells.
-match_row :: proc(cells: ..int, allocator := context.allocator) -> []int {
-    return clone_ints(cells[:], allocator)
+Match_Row :: distinct []int
+Write_Row :: distinct []int
+
+// match_row builds an owned input row consumed by match_layer.
+match_row :: proc(cells: ..int, allocator := context.allocator) -> Match_Row {
+    return Match_Row(clone_ints(cells[:], allocator))
 }
 
-// write_row builds one direct output row of write cells.
-write_row :: proc(cells: ..int, allocator := context.allocator) -> []int {
-    return clone_ints(cells[:], allocator)
+// write_row builds an owned output row consumed by write_layer.
+write_row :: proc(cells: ..int, allocator := context.allocator) -> Write_Row {
+    return Write_Row(clone_ints(cells[:], allocator))
 }
 
 @(private = "file")
-match_layer_waves :: proc(rows: ..[]int, allocator := context.allocator) -> Match_Pattern {
+match_layer_waves :: proc(rows: ..Match_Row, allocator := context.allocator) -> Match_Pattern {
     assert(len(rows) > 0, "match_layer requires at least one row")
     mx := len(rows[0])
     assert(mx > 0, "match_layer rows must be non-empty")
@@ -731,7 +734,9 @@ match_layer_waves :: proc(rows: ..[]int, allocator := context.allocator) -> Matc
     data := make([]int, mx * my, allocator)
     for r, y in rows {
         assert(len(r) == mx, "match_layer rows must have equal width")
-        copy(data[y * mx:(y + 1) * mx], r)
+        row := cast([]int)r
+        copy(data[y * mx:(y + 1) * mx], row)
+        delete(row, allocator)
     }
 
     return Match_Pattern{m = {mx, my, 1}, data = data}
@@ -772,7 +777,7 @@ match_layer :: proc {
 }
 
 @(private = "file")
-write_layer_cells :: proc(rows: ..[]int, allocator := context.allocator) -> Write_Pattern {
+write_layer_cells :: proc(rows: ..Write_Row, allocator := context.allocator) -> Write_Pattern {
     assert(len(rows) > 0, "write_layer requires at least one row")
     mx := len(rows[0])
     assert(mx > 0, "write_layer rows must be non-empty")
@@ -781,7 +786,9 @@ write_layer_cells :: proc(rows: ..[]int, allocator := context.allocator) -> Writ
     data := make([]int, mx * my, allocator)
     for r, y in rows {
         assert(len(r) == mx, "write_layer rows must have equal width")
-        copy(data[y * mx:(y + 1) * mx], r)
+        row := cast([]int)r
+        copy(data[y * mx:(y + 1) * mx], row)
+        delete(row, allocator)
     }
 
     return Write_Pattern{m = {mx, my, 1}, data = data}
@@ -983,15 +990,17 @@ Proc_Attr_Key :: union {
 
 // Proc_Attr is a typed procedural equivalent of an XML attribute.
 Proc_Attr :: struct {
-    key:   Proc_Attr_Key,
-    value: Proc_Value,
+    key:       Proc_Attr_Key,
+    value:     Proc_Value,
+    allocator: runtime.Allocator,
 }
 
 // Proc_Node is a procedural equivalent of an XML model node.
 Proc_Node :: struct {
-    ident:    string,
-    attrs:    []Proc_Attr,
-    children: []Proc_Node,
+    ident:     string,
+    attrs:     []Proc_Attr,
+    children:  []Proc_Node,
+    allocator: runtime.Allocator,
 }
 
 Node_Item :: union {
@@ -1086,52 +1095,52 @@ typed_attr_write_pattern :: proc(doc: ^xml.Document, elem_id: xml.Element_ID, ke
 
 @(private = "file")
 _attr_string :: proc(key, val: string) -> Proc_Attr {
-    return Proc_Attr{key, val}
+    return Proc_Attr{key, val, {}}
 }
 
 @(private = "file")
 _attr_int :: proc(key: string, val: int) -> Proc_Attr {
-    return Proc_Attr{key, val}
+    return Proc_Attr{key, val, {}}
 }
 
 @(private = "file")
 _attr_float :: proc(key: string, val: f64) -> Proc_Attr {
-    return Proc_Attr{key, val}
+    return Proc_Attr{key, val, {}}
 }
 
 @(private = "file")
 _attr_bool :: proc(key: string, val: bool) -> Proc_Attr {
-    return Proc_Attr{key, val}
+    return Proc_Attr{key, val, {}}
 }
 
 @(private = "file")
 _attr_pattern :: proc(key: string, val: Pattern, allocator := context.allocator) -> Proc_Attr {
-    return Proc_Attr{key, pattern_clone(val, allocator)}
+    return Proc_Attr{key, val, allocator}
 }
 
 @(private = "file")
 _attr_symbols :: proc(key: string, val: Symbol_Set, allocator := context.allocator) -> Proc_Attr {
-    return Proc_Attr{key, symbol_set_clone(val, allocator)}
+    return Proc_Attr{key, val, allocator}
 }
 
 @(private = "file")
 _attr_symmetry :: proc(key: string, val: Symmetry_Set) -> Proc_Attr {
-    return Proc_Attr{key, symmetry_set_clone(val)}
+    return Proc_Attr{key, symmetry_set_clone(val), {}}
 }
 
 @(private = "file")
 _attr_symbol_count :: proc(key: string, val: Symbol_Count) -> Proc_Attr {
-    return Proc_Attr{key, val}
+    return Proc_Attr{key, val, {}}
 }
 
 @(private = "file")
 _attr_match_pattern :: proc(key: string, val: Match_Pattern, allocator := context.allocator) -> Proc_Attr {
-    return Proc_Attr{key, match_pattern_clone(val, allocator)}
+    return Proc_Attr{key, val, allocator}
 }
 
 @(private = "file")
 _attr_write_pattern :: proc(key: string, val: Write_Pattern, allocator := context.allocator) -> Proc_Attr {
-    return Proc_Attr{key, write_pattern_clone(val, allocator)}
+    return Proc_Attr{key, val, allocator}
 }
 
 // attr creates a typed attribute from a raw string key.
@@ -1164,52 +1173,52 @@ proc_attr :: proc {
 
 @(private = "file")
 _kattr_string :: proc(key: Proc_Key, val: string) -> Proc_Attr {
-    return Proc_Attr{key, val}
+    return Proc_Attr{key, val, {}}
 }
 
 @(private = "file")
 _kattr_int :: proc(key: Proc_Key, val: int) -> Proc_Attr {
-    return {key, val}
+    return {key, val, {}}
 }
 
 @(private = "file")
 _kattr_float :: proc(key: Proc_Key, val: f64) -> Proc_Attr {
-    return {key, val}
+    return {key, val, {}}
 }
 
 @(private = "file")
 _kattr_bool :: proc(key: Proc_Key, val: bool) -> Proc_Attr {
-    return {key, val}
+    return {key, val, {}}
 }
 
 @(private = "file")
 _kattr_pattern :: proc(key: Proc_Key, val: Pattern, allocator := context.allocator) -> Proc_Attr {
-    return {key, pattern_clone(val, allocator)}
+    return {key, val, allocator}
 }
 
 @(private = "file")
 _kattr_symbols :: proc(key: Proc_Key, val: Symbol_Set, allocator := context.allocator) -> Proc_Attr {
-    return {key, symbol_set_clone(val, allocator)}
+    return {key, val, allocator}
 }
 
 @(private = "file")
 _kattr_symmetry :: proc(key: Proc_Key, val: Symmetry_Set) -> Proc_Attr {
-    return {key, symmetry_set_clone(val)}
+    return {key, symmetry_set_clone(val), {}}
 }
 
 @(private = "file")
 _kattr_symbol_count :: proc(key: Proc_Key, val: Symbol_Count) -> Proc_Attr {
-    return {key, val}
+    return {key, val, {}}
 }
 
 @(private = "file")
 _kattr_match_pattern :: proc(key: Proc_Key, val: Match_Pattern, allocator := context.allocator) -> Proc_Attr {
-    return {key, match_pattern_clone(val, allocator)}
+    return {key, val, allocator}
 }
 
 @(private = "file")
 _kattr_write_pattern :: proc(key: Proc_Key, val: Write_Pattern, allocator := context.allocator) -> Proc_Attr {
-    return {key, write_pattern_clone(val, allocator)}
+    return {key, val, allocator}
 }
 
 // kattr creates a typed attribute from a strongly-typed Proc_Key.
@@ -1298,7 +1307,10 @@ _tag_node_items :: proc(tag: Proc_Tag, items: ..Node_Item, allocator := context.
             ci += 1
         }
     }
-    return proc_node_tag(tag, attrs, children, allocator)
+    result := proc_node_tag(tag, attrs, children, allocator)
+    delete(attrs, allocator)
+    delete(children, allocator)
+    return result
 }
 
 @(private = "file")
@@ -1323,7 +1335,9 @@ _tag_node_attrs :: proc(
     for value, i in rest {
         values[i + 1] = value
     }
-    return proc_node_tag(tag, values, nil, allocator)
+    result := proc_node_tag(tag, values, nil, allocator)
+    delete(values, allocator)
+    return result
 }
 
 @(private = "file")
@@ -1482,12 +1496,14 @@ rule_attrs :: proc(
     allocator := context.allocator,
 ) -> Proc_Node {
     values := make([]Proc_Attr, len(attrs) + 2, allocator)
-    values[0] = Proc_Attr{.in_, in_attr}
-    values[1] = Proc_Attr{.out, out_attr}
+    values[0] = Proc_Attr{.in_, in_attr, allocator}
+    values[1] = Proc_Attr{.out, out_attr, allocator}
     for attr, i in attrs {
         values[i + 2] = attr
     }
-    return proc_node_tag(.rule, values, nil, allocator)
+    result := proc_node_tag(.rule, values, nil, allocator)
+    delete(values, allocator)
+    return result
 }
 
 rule_extra :: proc(
@@ -1502,7 +1518,9 @@ rule_extra :: proc(
     for attr, i in rest {
         values[i + 1] = attr
     }
-    return rule_attrs(in_attr, out_attr, values, allocator = allocator)
+    result := rule_attrs(in_attr, out_attr, values, allocator = allocator)
+    delete(values, allocator)
+    return result
 }
 
 // rule builds a rule node from in/out typed values plus optional extra attrs.
@@ -1525,27 +1543,31 @@ clone_attr :: proc(attr: Proc_Attr, allocator := context.allocator) -> Proc_Attr
     case Write_Pattern:
         result.value = write_pattern_clone(v, allocator)
     }
+    result.allocator = allocator
     return result
 }
 
 destroy_attr :: proc(attr: ^Proc_Attr, allocator := context.allocator) {
+    owned_allocator := allocator
+    if attr.allocator.procedure != nil do owned_allocator = attr.allocator
     #partial switch v in attr.value {
     case Pattern:
         p := v
-        pattern_destroy(&p, allocator)
+        pattern_destroy(&p, owned_allocator)
     case Symbol_Set:
         s := v
-        symbol_set_destroy(&s, allocator)
+        symbol_set_destroy(&s, owned_allocator)
     case Symmetry_Set:
         s := v
         symmetry_set_destroy(&s)
     case Match_Pattern:
         p := v
-        match_pattern_destroy(&p, allocator)
+        match_pattern_destroy(&p, owned_allocator)
     case Write_Pattern:
         p := v
-        write_pattern_destroy(&p, allocator)
+        write_pattern_destroy(&p, owned_allocator)
     }
+    attr^ = {}
 }
 
 proc_node :: proc(
@@ -1555,18 +1577,23 @@ proc_node :: proc(
     allocator := context.allocator,
 ) -> Proc_Node {
     node: Proc_Node = {
-        ident = ident,
+        ident     = ident,
+        allocator = allocator,
     }
     if len(attrs) > 0 {
         node.attrs = make([]Proc_Attr, len(attrs), allocator)
         for attr, i in attrs {
-            node.attrs[i] = clone_attr(attr, allocator)
+            // The slice backing is borrowed, but typed payload allocations move
+            // into the returned node and are released by proc_node_destroy.
+            node.attrs[i] = attr
         }
     }
     if len(children) > 0 {
         node.children = make([]Proc_Node, len(children), allocator)
         for child, i in children {
-            node.children[i] = proc_node(child.ident, child.attrs, child.children, allocator)
+            // Child-owned payloads likewise move while the borrowed slice
+            // backing is copied.
+            node.children[i] = child
         }
     }
     return node
@@ -1610,7 +1637,9 @@ node_ident_attrs :: proc(
     for value, i in rest {
         values[i + 1] = value
     }
-    return proc_node(ident, values, nil, allocator)
+    result := proc_node(ident, values, nil, allocator)
+    delete(values, allocator)
+    return result
 }
 
 node_tag_attrs :: proc(
@@ -1624,7 +1653,9 @@ node_tag_attrs :: proc(
     for value, i in rest {
         values[i + 1] = value
     }
-    return proc_node_tag(tag, values, nil, allocator)
+    result := proc_node_tag(tag, values, nil, allocator)
+    delete(values, allocator)
+    return result
 }
 
 // node is the preferred constructor for procedural nodes.
@@ -1636,20 +1667,23 @@ node :: proc {
 }
 
 proc_node_destroy :: proc(node: ^Proc_Node, allocator := context.allocator) {
+    owned_allocator := allocator
+    if node.allocator.procedure != nil do owned_allocator = node.allocator
     for i in 0 ..< len(node.children) {
-        proc_node_destroy(&node.children[i], allocator)
+        proc_node_destroy(&node.children[i], owned_allocator)
     }
     if len(node.attrs) > 0 {
         for i in 0 ..< len(node.attrs) {
-            destroy_attr(&node.attrs[i], allocator)
+            destroy_attr(&node.attrs[i], owned_allocator)
         }
-        delete(node.attrs, allocator)
+        delete(node.attrs, owned_allocator)
         node.attrs = nil
     }
     if len(node.children) > 0 {
-        delete(node.children, allocator)
+        delete(node.children, owned_allocator)
         node.children = nil
     }
+    node^ = {}
 }
 
 @(private = "file")

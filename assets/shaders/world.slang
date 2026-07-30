@@ -163,10 +163,21 @@ VertexOutput vertex_main(VertexInput input) {
         float2 wind = push.water.zw;
         float wind_speed = length(wind);
         float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
+        float2 wind_across = float2(-wind_direction.y, wind_direction.x);
         float crown_weight = smoothstep(-.08, .76, input.normal.y);
-        float phase = dot(input.position.xz, float2(.021, -.016)) +
-                      push.water.x * (.34 + wind_speed * .012);
-        float broad_sway = sin(phase) + sin(phase * .47 + 1.9) * .34;
+        float downwind_coordinate = dot(input.position.xz, wind_direction);
+        float crosswind_coordinate = dot(input.position.xz, wind_across);
+        float wind_time = push.water.x * (.34 + wind_speed * .012);
+        float phase =
+            downwind_coordinate * .018 +
+            crosswind_coordinate * .006 -
+            wind_time;
+        float crossing_phase =
+            downwind_coordinate * .008 -
+            crosswind_coordinate * .011 -
+            wind_time * .47 +
+            1.9;
+        float broad_sway = sin(phase) + sin(crossing_phase) * .34;
         float amplitude = lerp(.20, 1.18, saturate(wind_speed / 14.0 + push.water.y * .24));
         world_position.xz += wind_direction * broad_sway * amplitude * crown_weight;
         world_position.y += sin(phase * .73 - .8) * amplitude * .075 * crown_weight;
@@ -216,10 +227,21 @@ VertexOutput instance_vertex_main(InstanceVertexInput input) {
         float2 wind = push.water.zw;
         float wind_speed = length(wind);
         float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
+        float2 wind_across = float2(-wind_direction.y, wind_direction.x);
         float crown_weight = smoothstep(-.08, .76, world_normal.y);
-        float phase = dot(world_position.xz, float2(.021, -.016)) +
-                      push.water.x * (.34 + wind_speed * .012);
-        float broad_sway = sin(phase) + sin(phase * .47 + 1.9) * .34;
+        float downwind_coordinate = dot(world_position.xz, wind_direction);
+        float crosswind_coordinate = dot(world_position.xz, wind_across);
+        float wind_time = push.water.x * (.34 + wind_speed * .012);
+        float phase =
+            downwind_coordinate * .018 +
+            crosswind_coordinate * .006 -
+            wind_time;
+        float crossing_phase =
+            downwind_coordinate * .008 -
+            crosswind_coordinate * .011 -
+            wind_time * .47 +
+            1.9;
+        float broad_sway = sin(phase) + sin(crossing_phase) * .34;
         float amplitude = lerp(.20, 1.18, saturate(wind_speed / 14.0 + push.water.y * .24));
         world_position.xz += wind_direction * broad_sway * amplitude * crown_weight;
         world_position.y += sin(phase * .73 - .8) * amplitude * .075 * crown_weight;
@@ -753,6 +775,79 @@ float2 rotate2(float2 p, float angle) {
     return float2(p.x * c - p.y * s, p.x * s + p.y * c);
 }
 
+float3 shade_terrain_dunes(VertexOutput input, float3 color) {
+    if (input.material.x >= -.001) return color;
+
+    float2 p = input.world_position.xz;
+    float broad =
+        sin(p.x * .018 + p.y * .029 + .7) *
+        sin(p.x * -.027 + p.y * .014 + 2.1);
+    float local =
+        sin(p.x * .071 + p.y * -.043 + 1.3) *
+        sin(p.x * .039 + p.y * .083 + 2.8);
+    float ripple =
+        sin(p.x * .19 + p.y * .081 + broad * .8) *
+        sin(p.x * -.047 + p.y * .16 + .4);
+    float field = broad * .58 + local * .29 + ripple * .13;
+
+    // World-position evaluation keeps this drawing independent of clipmap
+    // topology. Fade the highest-frequency contrast as the pixel footprint
+    // grows so distant rings converge without shimmer.
+    float footprint = max(
+        length(ddx(input.world_position)),
+        length(ddy(input.world_position))
+    );
+    float visibility = 1.0 - smoothstep(1.2, 6.0, footprint);
+    float variation = field * lerp(.42, 1.0, visibility);
+    float warm = max(variation, 0.0);
+    float cool = max(-variation, 0.0);
+    color *= 1.0 + variation * float3(.035, .025, .018);
+    color += float3(warm * .010, warm * .0045, cool * .007);
+
+    // The generated material extends below -1 only through the swash zone.
+    // Saturated sand is cooler and darker than the dry beach, creating a
+    // readable intermediate band before the water shader's aerated edge.
+    // This uses ecology/bathymetry data rather than a world-height threshold,
+    // so raised sea levels and edited shore profiles retain the same response.
+    float wetness = saturate(-input.material.x - 1.0);
+    float wet_patch = value_noise(rotate2(p, -.27) / 4.8 + float2(-2.4, 6.1));
+    float3 wet_sand = color * float3(.72, .76, .70);
+    wet_sand += float3(.012, .018, .015) * wet_patch;
+    color = lerp(color, wet_sand, wetness * .78);
+
+    // Dry exposed sand carries shallow transverse wind ripples. Keep them
+    // sub-material rather than geometry, and fade them before their wavelength
+    // approaches the pixel footprint so map views never shimmer.
+    float2 wind = normalize(float2(.18, .98));
+    float2 across = float2(-wind.y, wind.x);
+    float ripple_phase =
+        dot(p, across) * 7.4 +
+        sin(dot(p, wind) * .31 + field * .7) * .58;
+    float ripple_wave = sin(ripple_phase);
+    float ripple_crest = smoothstep(.72, .96, ripple_wave);
+    float ripple_trough = 1.0 - smoothstep(-.96, -.70, ripple_wave);
+    float ripple_visibility = 1.0 - smoothstep(.18, 1.05, footprint);
+    float active_sand = smoothstep(.22, .88, -input.material.x);
+    float ripple_patch = smoothstep(
+        .30,
+        .76,
+        value_noise(rotate2(p, .41) / 5.5 + float2(3.7, -1.2))
+    );
+    float ripple_weight =
+        active_sand *
+        (1.0 - wetness) *
+        ripple_visibility *
+        lerp(.18, 1.0, ripple_patch);
+    color *= lerp(.990, 1.012, ripple_crest * ripple_weight);
+    color *= lerp(1.0, .986, ripple_trough * ripple_weight);
+
+    float3 normal = normalize(input.normal);
+    float3 light = normalize(float3(-.45, .85, -.3));
+    float shade = clamp(.48 + max(dot(normal, light), 0.0) * .52, .42, 1.05);
+    color *= shade;
+    return saturate(color);
+}
+
 float3 shade_terrain_limestone(VertexOutput input, float3 color) {
     float cliff = smoothstep(.08, .72, input.material.y);
     if (cliff <= .001) return color;
@@ -925,6 +1020,7 @@ float3 shade_foliage(VertexOutput input) {
         .74 + pocket_group * .18 + mid_group * .12 + crown_group * .16;
     float grouped_value = lerp(close_grouped_value, distant_grouped_value, broad_group_weight);
     float value = (.40 + directional * .66 + top_light * .07) * grouped_value;
+
 
     // Separate light by color as well as value. Cool blue-green pockets make
     // overlapping bunches recede while a restrained yellow warmth joins the
@@ -1558,6 +1654,34 @@ float3 shade_water(VertexOutput input) {
                  lerp(.28, 1.0, smoothstep(.38, .76, foam_breakup));
     color = lerp(color, foam_color, foam * lerp(.38, .68, sea_state));
 
+    // Generated coasts deliberately keep the shelf marker negative so mixed
+    // ocean-grid triangles cannot cross through a false zero/deep-water
+    // diagonal. Recover a much narrower swash edge from the top of the
+    // continuous shallowness signal instead. Derivative widening keeps this
+    // sub-pixel band stable at overview distances, while broken coverage and a
+    // restrained blend soften the hard terrain/water staircase without
+    // painting the whole nearshore shelf white.
+    float swash_footprint = max(fwidth(input.material.x) * 1.35, .012);
+    float swash_proximity = smoothstep(
+        1.235 - swash_footprint,
+        1.315 + swash_footprint,
+        input.material.x
+    );
+    float swash_breakup = value_noise(
+        float2(dot(p, across) * .115, dot(p, axis) * .041) +
+        float2(time * .034, 7.3)
+    );
+    float swash_threads =
+        .5 + .5 * sin(dot(p, across) * .34 +
+                      sin(dot(p, axis) * .052 - time * .16) * .82);
+    float swash_continuity = lerp(
+        .30,
+        .88,
+        smoothstep(.30, .76, swash_breakup * .72 + swash_threads * .28)
+    );
+    float swash = swash_proximity * swash_continuity;
+    color = lerp(color, foam_color, swash * lerp(.34, .52, sea_state));
+
     return saturate(color);
 }
 
@@ -1726,6 +1850,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     float output_alpha = input.color.a;
     switch (input.kind) {
         case MATERIAL_TERRAIN:
+            base = shade_terrain_dunes(input, base);
             base = shade_grass_wind_sheen(input, base);
             base = shade_terrain_limestone(input, base);
             break;

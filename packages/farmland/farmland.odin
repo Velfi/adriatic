@@ -123,6 +123,7 @@ generate_sized_for_tradition :: proc(
                 state_count = min(len(generated), len(state_storage))
                 copy(state_storage[:state_count], generated[:state_count])
             }
+            markov.frames_destroy(&frames, allocator)
             defer markov.interpreter_destroy(ip)
         }
     }

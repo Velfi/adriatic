@@ -2,7 +2,6 @@ package tests
 
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
-import circulation "../packages/circulation"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
@@ -97,11 +96,7 @@ architecture_roof_tile_weathering_is_stable_and_mid_tone_weighted :: proc(t: ^te
             if tone != architecture.architecture_roof_tile_tone(0x8129, course, segment) {
                 changed_with_seed = true
             }
-            testing.expect_value(
-                t,
-                architecture.architecture_roof_tile_tone(0x8128, course, segment),
-                tone,
-            )
+            testing.expect_value(t, architecture.architecture_roof_tile_tone(0x8128, course, segment), tone)
         }
     }
     for count in counts do testing.expect(t, count > 0)
@@ -142,42 +137,18 @@ architecture_append_generation_keeps_both_island_towns :: proc(t: ^testing.T) {
 }
 
 @(test)
-default_town_plazas_clear_the_runways :: proc(t: ^testing.T) {
+legacy_architecture_generation_does_not_add_phantom_circulation :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
-    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    runway_half_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH
-    runway_half_width := half_extent * terrain.DEFAULT_RUNWAY_HALF_WIDTH
 
-    for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
-        town_x, town_z := terrain.default_town_center(sign)
-        created := architecture.generate_append(
-            project,
-            town_x,
-            town_z,
-            u32(0xA71D3 + island_index),
-        )
-        testing.expect(t, created >= 12)
+    for index in 0 ..< 6 {
+        structure := terrain.structure_make(f32(index % 3) * 20, f32(index / 3) * 20, 12, 10, 0, 18)
+        structure.kind = .Architecture
+        _ = terrain.add_structure(project, structure)
     }
 
     plan := architecture.circulation_plan(project)
-    plaza_count := 0
-    for area in plan.areas[:plan.count] {
-        if area.kind != .Plaza do continue
-        plaza_count += 1
-        for sign in terrain.DEFAULT_ISLAND_SIGNS {
-            runway_x, runway_z := terrain.default_island_center(sign)
-            runway := circulation.Area {
-                center_x = runway_x,
-                center_z = runway_z,
-                width    = runway_half_length * 2,
-                length   = runway_half_width * 2,
-                kind     = .Street,
-            }
-            testing.expect(t, !circulation.area_overlaps(area, runway))
-        }
-    }
-    testing.expect(t, plaza_count == 2)
+    testing.expect_value(t, plan.count, 0)
 }
 
 @(test)

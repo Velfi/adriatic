@@ -274,8 +274,8 @@ Plan :: struct {
     precinct_count:       int,
     enclosure:            [ENCLOSURE_CAPACITY]Enclosure_Segment,
     enclosure_count:      int,
-    gateway:               Gateway_Remain,
-    has_gateway:           bool,
+    gateway:              Gateway_Remain,
+    has_gateway:          bool,
     drainage:             [DRAINAGE_CAPACITY]Drainage_Channel,
     drainage_count:       int,
     extent:               f32,
@@ -536,10 +536,7 @@ wall_outward_world :: proc(building: Building, wall: int) -> Vec2 {
         local = {-1, 0}
     }
     cosine, sine := math.cos(building.yaw), math.sin(building.yaw)
-    return {
-        local.x * cosine - local.z * sine,
-        local.x * sine + local.z * cosine,
-    }
+    return {local.x * cosine - local.z * sine, local.x * sine + local.z * cosine}
 }
 
 preferred_collapse_wall :: proc(building: Building) -> int {
@@ -891,8 +888,7 @@ court_contains :: proc(court: Central_Court, position: Vec2, padding: f32 = 0) -
     c, s := math.cos(-court.yaw), math.sin(-court.yaw)
     x := local.x * c - local.z * s
     z := local.x * s + local.z * c
-    return math.abs(x) < court.width * .5 + padding &&
-        math.abs(z) < court.depth * .5 + padding
+    return math.abs(x) < court.width * .5 + padding && math.abs(z) < court.depth * .5 + padding
 }
 
 vegetation_position_is_clear :: proc(
@@ -1044,9 +1040,7 @@ furnish :: proc(plan: ^Plan, building_index: int) {
            (building.kind == .Magazine || building.kind == .Palace) &&
            index < max(pot_count / 2, 2) {
             kind = .Pithos
-        } else if building.culture == .Roman &&
-                  building.kind == .Villa &&
-                  index == 0 {
+        } else if building.culture == .Roman && building.kind == .Villa && index == 0 {
             kind = .Dolium
         }
         shatter_chance := clamp(building.damage * .55 - .05, f32(0), f32(.48))
@@ -1186,8 +1180,7 @@ furnish :: proc(plan: ^Plan, building_index: int) {
             } else {
                 kind = hash(base ~ salt ~ 0x92) & 1 == 0 ? .Mudbrick_Fall : .Fallen_Timber
             }
-        } else if index == 0 &&
-                  (building.kind == .Temple || building.kind == .Stoa) {
+        } else if index == 0 && (building.kind == .Temple || building.kind == .Stoa) {
             kind = .Roof_Tile_Pile
         }
         pile_scale := random_range(base ~ salt ~ 0x94, .72, 1.28)
@@ -1201,15 +1194,7 @@ furnish :: proc(plan: ^Plan, building_index: int) {
         if kind == .Fallen_Timber {
             pile_yaw = building.collapse_yaw + random_range(base ~ salt ~ 0x93, -.18, .18)
         }
-        add_prop(
-            plan,
-            kind,
-            pile_world,
-            pile_yaw,
-            pile_scale,
-            building_index,
-            base ~ salt ~ 0x95,
-        )
+        add_prop(plan, kind, pile_world, pile_yaw, pile_scale, building_index, base ~ salt ~ 0x95)
     }
 }
 
@@ -1383,8 +1368,16 @@ generate_for_site :: proc(
         switch plan.precinct_layout {
         case .Formal_Axis:
             // Roman subsidiary fora remain locked to a legible civic axis.
-            plan.precincts[0] = {center = {hub.x - 21, hub.z}, width = 9, depth = 8}
-            plan.precincts[1] = {center = {hub.x + 21, hub.z}, width = 9, depth = 8}
+            plan.precincts[0] = {
+                center = {hub.x - 21, hub.z},
+                width  = 9,
+                depth  = 8,
+            }
+            plan.precincts[1] = {
+                center = {hub.x + 21, hub.z},
+                width  = 9,
+                depth  = 8,
+            }
         case .Offset_Terraces:
             // Minoan courts step around the palace rather than mirroring it.
             plan.precincts[0] = {
@@ -1458,8 +1451,7 @@ generate_for_site :: proc(
         }
         route_hub := 0
         target_hub := hub
-        best_hub_distance := (center.x - hub.x) * (center.x - hub.x) +
-            (center.z - hub.z) * (center.z - hub.z)
+        best_hub_distance := (center.x - hub.x) * (center.x - hub.x) + (center.z - hub.z) * (center.z - hub.z)
         for precinct, precinct_index in plan.precincts[:plan.precinct_count] {
             dx, dz := center.x - precinct.center.x, center.z - precinct.center.z
             distance_squared := dx * dx + dz * dz
@@ -1473,15 +1465,8 @@ generate_for_site :: proc(
         // the assigned court so the circulation route reaches the threshold
         // without visually cutting through the building it serves.
         toward_hub := math.atan2(target_hub.z - center.z, target_hub.x - center.x)
-        candidate := make_building_for_culture(
-            culture,
-            kind,
-            center,
-            toward_hub + math.PI * .5,
-            seed ~ salt,
-        )
-        candidate.collapse_yaw =
-            plan.collapse_yaw + random_range(candidate.seed ~ 0xc011a95e, -.18, .18)
+        candidate := make_building_for_culture(culture, kind, center, toward_hub + math.PI * .5, seed ~ salt)
+        candidate.collapse_yaw = plan.collapse_yaw + random_range(candidate.seed ~ 0xc011a95e, -.18, .18)
         candidate.damage = damage_for_preservation(candidate.seed, preservation)
         candidate.entrance_side = 0
         candidate.route_hub = route_hub
@@ -1539,8 +1524,7 @@ generate_for_site :: proc(
                     }
                 } else {
                     other_hub := hub
-                    if other.route_hub > 0 &&
-                       other.route_hub <= plan.precinct_count {
+                    if other.route_hub > 0 && other.route_hub <= plan.precinct_count {
                         other_hub = plan.precincts[other.route_hub - 1].center
                     }
                     if !route_intersects_building(other_entrance, other_hub, 1.65, candidate) do continue
@@ -1586,8 +1570,8 @@ generate_for_site :: proc(
         northwest = {-enclosure_half_x * 1.05, enclosure_half_z}
         gate_z = enclosure_half_z * 1.02
     case .Rectilinear_Pomerium:
-        // Deliberately orthogonal: Roman boundary legibility comes from the
-        // contrast with the looser Aegean and Minoan perimeter systems.
+    // Deliberately orthogonal: Roman boundary legibility comes from the
+    // contrast with the looser Aegean and Minoan perimeter systems.
     case .Terraced_Peribolos:
         southwest = {-enclosure_half_x * 1.04, -enclosure_half_z}
         southeast = {enclosure_half_x, -enclosure_half_z * 1.06}
@@ -1640,8 +1624,7 @@ generate_for_site :: proc(
     plan.court.base_y = site_height(site, plan.court.center) - minimum_y
     plan.gateway.base_y = site_height(site, plan.gateway.position) - minimum_y
     for index in 0 ..< plan.precinct_count {
-        plan.precincts[index].base_y =
-            site_height(site, plan.precincts[index].center) - minimum_y
+        plan.precincts[index].base_y = site_height(site, plan.precincts[index].center) - minimum_y
     }
     for endpoints, index in enclosure_points {
         a, b := endpoints[0], endpoints[1]
@@ -1728,14 +1711,7 @@ generate_for_site :: proc(
     for precinct in plan.precincts[:plan.precinct_count] {
         precinct_y := site_height(site, precinct.center) - minimum_y
         _ = relocate_props_clear_of_route(&plan, precinct.center, hub, 2.0)
-        add_route(
-            &plan,
-            precinct.center,
-            hub,
-            precinct_y,
-            site_height(site, hub) - minimum_y,
-            2.0,
-        )
+        add_route(&plan, precinct.center, hub, precinct_y, site_height(site, hub) - minimum_y, 2.0)
     }
     for building, building_index in plan.buildings[:plan.building_count] {
         entrance := entrance_position(building)

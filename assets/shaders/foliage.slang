@@ -84,13 +84,23 @@ VertexOutput foliage_vertex_transform(VertexInput input) {
     float wind_speed = length(wind);
     float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
     float2 wind_across = float2(-wind_direction.y, wind_direction.x);
-    // Match the solid foliage shader's broad phase exactly so a card's branch
+    // Match the solid foliage shader's broad phases exactly so a card's branch
     // base travels with its parent crown instead of sliding across the mesh.
     // Cards sit on upper shoulders, represented by a stable .88 crown weight;
     // only the fine crosswind flutter below remains independently animated.
-    float phase = dot(input.position.xz, float2(.021, -.016)) +
-                  push.water.x * (.34 + wind_speed * .012);
-    float broad_sway = sin(phase) + sin(phase * .47 + 1.9) * .34;
+    float downwind_coordinate = dot(input.position.xz, wind_direction);
+    float crosswind_coordinate = dot(input.position.xz, wind_across);
+    float wind_time = push.water.x * (.34 + wind_speed * .012);
+    float phase =
+        downwind_coordinate * .018 +
+        crosswind_coordinate * .006 -
+        wind_time;
+    float crossing_phase =
+        downwind_coordinate * .008 -
+        crosswind_coordinate * .011 -
+        wind_time * .47 +
+        1.9;
+    float broad_sway = sin(phase) + sin(crossing_phase) * .34;
     float amplitude = lerp(.20, 1.18, saturate(wind_speed / 14.0 + push.water.y * .24));
 
     // Atlas cells are four-by-four. Their top vertices have a local v near

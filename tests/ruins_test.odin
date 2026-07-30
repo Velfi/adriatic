@@ -334,18 +334,10 @@ complex_building_thresholds_face_the_shared_court :: proc(t: ^testing.T) {
     for culture in ruins.Culture {
         for scale in ruins.Complex_Scale {
             for seed in 0 ..< 64 {
-                plan := ruins.generate_for_culture(
-                    culture,
-                    .Complex,
-                    u32(seed),
-                    .Weathered,
-                    .Typical,
-                    scale,
-                )
+                plan := ruins.generate_for_culture(culture, .Complex, u32(seed), .Weathered, .Typical, scale)
                 for building, building_index in plan.buildings[:plan.building_count] {
                     assigned_court := plan.court
-                    if building.route_hub > 0 &&
-                       building.route_hub <= plan.precinct_count {
+                    if building.route_hub > 0 && building.route_hub <= plan.precinct_count {
                         assigned_court = plan.precincts[building.route_hub - 1]
                     }
                     entrance := ruins.entrance_position(building)
@@ -356,7 +348,7 @@ complex_building_thresholds_face_the_shared_court :: proc(t: ^testing.T) {
                     testing.expectf(
                         t,
                         entrance_dx * entrance_dx + entrance_dz * entrance_dz <
-                            center_dx * center_dx + center_dz * center_dz,
+                        center_dx * center_dx + center_dz * center_dz,
                         "%s %s seed %d has a threshold facing away from its court",
                         ruins.culture_name(culture),
                         ruins.complex_scale_name(scale),
@@ -366,8 +358,7 @@ complex_building_thresholds_face_the_shared_court :: proc(t: ^testing.T) {
                     for route in plan.routes[:plan.route_count] {
                         start_dx := route.a.x - entrance.x
                         start_dz := route.a.z - entrance.z
-                        if route.building != building_index ||
-                           start_dx * start_dx + start_dz * start_dz >= .001 {
+                        if route.building != building_index || start_dx * start_dx + start_dz * start_dz >= .001 {
                             continue
                         }
                         outward_x := entrance.x - building.center.x
@@ -396,14 +387,7 @@ complex_building_thresholds_face_the_shared_court :: proc(t: ^testing.T) {
 extensive_complexes_form_connected_secondary_precincts :: proc(t: ^testing.T) {
     for culture in ruins.Culture {
         for seed in 0 ..< 64 {
-            plan := ruins.generate_for_culture(
-                culture,
-                .Complex,
-                u32(seed),
-                .Weathered,
-                .Typical,
-                .Extensive,
-            )
+            plan := ruins.generate_for_culture(culture, .Complex, u32(seed), .Weathered, .Typical, .Extensive)
             testing.expect(t, plan.precinct_count == ruins.PRECINCT_CAPACITY)
             assigned := 0
             for building in plan.buildings[:plan.building_count] {
@@ -424,8 +408,7 @@ extensive_complexes_form_connected_secondary_precincts :: proc(t: ^testing.T) {
                     from_dz := route.a.z - precinct.center.z
                     to_dx := route.b.x - plan.court.center.x
                     to_dz := route.b.z - plan.court.center.z
-                    if from_dx * from_dx + from_dz * from_dz < .001 &&
-                       to_dx * to_dx + to_dz * to_dz < .001 {
+                    if from_dx * from_dx + from_dz * from_dz < .001 && to_dx * to_dx + to_dz * to_dz < .001 {
                         connected = true
                         break
                     }
@@ -447,10 +430,14 @@ extensive_precinct_morphology_is_culture_specific :: proc(t: ^testing.T) {
     testing.expect(t, aegean_a.precinct_layout == .Irregular_Temenos)
     testing.expect(t, math.abs(roman.precincts[0].center.z - roman.court.center.z) < .001)
     testing.expect(t, math.abs(roman.precincts[1].center.z - roman.court.center.z) < .001)
-    testing.expect(t, math.abs(
-        (roman.precincts[0].center.x - roman.court.center.x) +
-        (roman.precincts[1].center.x - roman.court.center.x),
-    ) < .001)
+    testing.expect(
+        t,
+        math.abs(
+            (roman.precincts[0].center.x - roman.court.center.x) +
+            (roman.precincts[1].center.x - roman.court.center.x),
+        ) <
+        .001,
+    )
     testing.expect(t, minoan.precincts[0].center.z != minoan.precincts[1].center.z)
     testing.expect(t, minoan.precincts[0].yaw != minoan.precincts[1].yaw)
     testing.expect(t, aegean_a.precincts != aegean_b.precincts)
@@ -487,12 +474,7 @@ complex_gateways_are_cultural_and_preserve_the_approach_opening :: proc(t: ^test
     for culture in ruins.Culture {
         for profile in ruins.Terrain_Profile {
             for seed in 0 ..< 64 {
-                plan := ruins.generate_for_site(
-                    culture,
-                    .Complex,
-                    u32(seed),
-                    ruins.default_site(profile),
-                )
+                plan := ruins.generate_for_site(culture, .Complex, u32(seed), ruins.default_site(profile))
                 expected := ruins.Gateway_Kind.Aegean_Propylon
                 if culture == .Roman do expected = .Roman_Gatehouse
                 if culture == .Minoan do expected = .Minoan_Guardrooms
@@ -504,9 +486,7 @@ complex_gateways_are_cultural_and_preserve_the_approach_opening :: proc(t: ^test
                 left_gate := plan.enclosure[3].a
                 testing.expect(t, math.abs(plan.gateway.position.x) < .001)
                 testing.expect(t, math.abs(plan.gateway.position.z - right_gate.z) < .001)
-                testing.expect(t, math.abs(
-                    plan.gateway.clear_width - (right_gate.x - left_gate.x),
-                ) < .001)
+                testing.expect(t, math.abs(plan.gateway.clear_width - (right_gate.x - left_gate.x)) < .001)
                 testing.expect(t, plan.gateway.base_y >= 0)
             }
         }
@@ -761,10 +741,7 @@ complex_drainage_is_cultural_downhill_and_clear_of_buildings :: proc(t: ^testing
                 testing.expect(t, channel.kind == expected)
                 testing.expect(t, channel.a_y + .001 >= channel.b_y)
                 testing.expect(t, channel.width > 0)
-                testing.expect(
-                    t,
-                    ruins.route_is_clear_of_buildings(&plan, channel.a, channel.b, channel.width),
-                )
+                testing.expect(t, ruins.route_is_clear_of_buildings(&plan, channel.a, channel.b, channel.width))
             }
         }
     }
@@ -811,8 +788,14 @@ storage_buildings_receive_culture_specific_large_vessels :: proc(t: ^testing.T) 
     magazine := ruins.make_building_for_culture(.Minoan, .Magazine, {}, 0, 0x5170)
     villa := ruins.make_building_for_culture(.Roman, .Villa, {}, 0, 0x5171)
     magazine.damage, villa.damage = 0, 0
-    minoan := ruins.Plan{culture = .Minoan, building_count = 1}
-    roman := ruins.Plan{culture = .Roman, building_count = 1}
+    minoan := ruins.Plan {
+        culture        = .Minoan,
+        building_count = 1,
+    }
+    roman := ruins.Plan {
+        culture        = .Roman,
+        building_count = 1,
+    }
     minoan.buildings[0] = magazine
     roman.buildings[0] = villa
     ruins.furnish(&minoan, 0)
@@ -863,15 +846,9 @@ pottery_density_scales_finds_without_changing_architecture :: proc(t: ^testing.T
 complex_scale_orders_structure_counts_and_preserves_valid_access :: proc(t: ^testing.T) {
     for culture in ruins.Culture {
         for seed in 0 ..< 32 {
-            compact := ruins.generate_for_culture(
-                culture, .Complex, u32(seed), .Weathered, .Typical, .Compact,
-            )
-            standard := ruins.generate_for_culture(
-                culture, .Complex, u32(seed), .Weathered, .Typical, .Standard,
-            )
-            extensive := ruins.generate_for_culture(
-                culture, .Complex, u32(seed), .Weathered, .Typical, .Extensive,
-            )
+            compact := ruins.generate_for_culture(culture, .Complex, u32(seed), .Weathered, .Typical, .Compact)
+            standard := ruins.generate_for_culture(culture, .Complex, u32(seed), .Weathered, .Typical, .Standard)
+            extensive := ruins.generate_for_culture(culture, .Complex, u32(seed), .Weathered, .Typical, .Extensive)
             testing.expect(t, compact.valid)
             testing.expect(t, standard.valid)
             testing.expectf(

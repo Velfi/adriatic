@@ -104,11 +104,36 @@ markov_island_apply_terrain :: proc(editor: ^Editor) {
     world_terrain_invalidate_all(editor)
 }
 
+markov_island_apply_foliage :: proc(editor: ^Editor) {
+    if editor == nil do return
+    // This is an isolated, replacement-world lab. Rebuild the realized
+    // structures with the terrain so rerolls cannot retain stale groves.
+    editor.project.structure_count = 0
+    editor.project.next_structure_id = 1
+    for patch in markov_island_plan.foliage {
+        world_x := patch.x * MARKOV_ISLAND_HALF_X
+        world_z := patch.z * MARKOV_ISLAND_HALF_Z
+        structure := terrain.structure_make(
+            world_x,
+            world_z,
+            patch.width * MARKOV_ISLAND_HALF_X * 2,
+            patch.depth * MARKOV_ISLAND_HALF_Z * 2,
+            patch.rotation,
+            patch.height * min(MARKOV_ISLAND_HALF_X, MARKOV_ISLAND_HALF_Z) * 2,
+        )
+        structure.kind = .Foliage
+        structure.base_y = markov_island_height(world_x, world_z)
+        index := terrain.add_structure(&editor.project, structure)
+        if index >= 0 do editor.project.structures[index].seed = patch.seed
+    }
+}
+
 markov_island_regenerate :: proc(editor: ^Editor) -> bool {
     islands.destroy(&markov_island_plan)
     markov_island_plan = islands.generate(markov_island_seed)
     if len(markov_island_plan.cleaned) != islands.CELL_COUNT do return false
     markov_island_apply_terrain(editor)
+    markov_island_apply_foliage(editor)
     return true
 }
 
@@ -134,7 +159,9 @@ markov_island_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     editor.in_map = false
     editor.capture_world_only = false
     set_pointer_locked(false)
-    editor.camera_pose = third_person.camera_look_at({440, 420, 540}, {0, 8, 0})
+    // Frame the generated land mass closely enough to inspect the vegetation
+    // composition, rather than reducing the island to a strip on the horizon.
+    editor.camera_pose = third_person.camera_look_at({180, 185, 235}, {0, 10, 0})
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
     return true
@@ -254,12 +281,13 @@ markov_island_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
     rl.DrawTextEx(rl.Font{}, status, {40, 70}, 12, 1, {188, 219, 217, 255})
     diagnostics := &markov_island_plan.diagnostics
     metrics := fmt.ctprintf(
-        "LAND %d  COAST %.3f  LAKES %d  SKERRIES %d  BLUFF %d  PEAK %.1fm",
+        "LAND %d  COAST %.3f  LAKES %d  SKERRIES %d  BLUFF %d  GROVES %d  PEAK %.1fm",
         diagnostics.land_cells,
         diagnostics.coastline_complexity,
         diagnostics.lake_count,
         diagnostics.skerry_count,
         diagnostics.bluff_cells,
+        len(markov_island_plan.foliage),
         diagnostics.maximum_elevation,
     )
     rl.DrawTextEx(rl.Font{}, metrics, {40, 94}, 12, 1, {188, 219, 217, 255})

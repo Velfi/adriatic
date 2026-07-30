@@ -265,11 +265,7 @@ flower_generator_draw_mesh :: proc(
     for first := 0; first + 2 < mesh.index_count; first += 3 {
         points: [3]third_person.Vec3
         normals: [3]third_person.Vec3
-        center_triangle :=
-            stage == .Bud ||
-            stage == .Opening ||
-            stage == .Half_Open ||
-            stage == .Bloom
+        center_triangle := stage == .Bud || stage == .Opening || stage == .Half_Open || stage == .Bloom
         for corner in 0 ..< 3 {
             index := mesh.indices[first + corner]
             source := mesh.vertices[index]
@@ -335,7 +331,7 @@ world_flower_generator_lab :: proc(_: ^Editor) {
         return
     }
     if flower_generator_lifecycle_gallery {
-        stages := [8]flowers.Lifecycle_Stage{
+        stages := [8]flowers.Lifecycle_Stage {
             .Bud,
             .Opening,
             .Half_Open,
@@ -345,7 +341,7 @@ world_flower_generator_lab :: proc(_: ^Editor) {
             .Ripening_Fruit,
             .Ripe_Fruit,
         }
-        colors := [8]rl.Color{
+        colors := [8]rl.Color {
             {174, 91, 119, 255},
             {202, 119, 145, 255},
             {224, 160, 178, 255},
@@ -370,7 +366,7 @@ world_flower_generator_lab :: proc(_: ^Editor) {
         return
     }
     shapes := [7]flowers.Petal_Shape{.Rounded, .Pointed, .Notched, .Strap, .Ovate, .Spatulate, .Lanceolate}
-    colors := [7]rl.Color{
+    colors := [7]rl.Color {
         {238, 206, 207, 255},
         {237, 188, 79, 255},
         {220, 111, 149, 255},
@@ -418,16 +414,7 @@ flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
         {184, 191, 174, 255},
     )
     if flower_generator_lifecycle_gallery {
-        labels := [8]cstring{
-            "BUD",
-            "OPENING",
-            "HALF OPEN",
-            "BLOOM",
-            "FRUIT SET",
-            "IMMATURE",
-            "RIPENING",
-            "RIPE",
-        }
+        labels := [8]cstring{"BUD", "OPENING", "HALF OPEN", "BLOOM", "FRUIT SET", "IMMATURE", "RIPENING", "RIPE"}
         label_x_fractions := [8]f32{.385, .455, .525, .595, .355, .445, .535, .625}
         for label, index in labels {
             row := index / 4
@@ -438,15 +425,7 @@ flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
             rl.DrawTextEx(rl.Font{}, label, {label_x, label_y}, 9, 1, {232, 224, 189, 255})
         }
     } else if !flower_generator_isolated {
-        labels := [7]cstring{
-            "ROUNDED",
-            "POINTED",
-            "NOTCHED",
-            "STRAP",
-            "OVATE",
-            "SPATULATE",
-            "LANCEOLATE",
-        }
+        labels := [7]cstring{"ROUNDED", "POINTED", "NOTCHED", "STRAP", "OVATE", "SPATULATE", "LANCEOLATE"}
         label_x_fractions := [7]f32{.366, .434, .503, .573, .336, .420, .512}
         for label, index in labels {
             row := index / 4

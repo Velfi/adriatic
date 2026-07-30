@@ -56,6 +56,26 @@ wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32, prepared_plan: ^ci
     return !surface.on_surface
 }
 
+@(no_instrumentation)
+coastal_grass_renderable_at :: proc(editor: ^Editor, x, z: f32, prepared_plan: ^circulation.Plan = nil) -> bool {
+    if editor == nil do return false
+    if settlement_access_point_on_alley_surface(&editor.architecture_city_plan, {x, z}) do return false
+    ground_height := terrain.sample_height(&editor.project, 0, x, z)
+    material := terrain.sample_material(&editor.project, 0, x, z)
+    // Marram colonizes partly stabilized sand before the substrate reads as
+    // ordinary inland grass. The later deterministic density gate remains
+    // responsible for keeping these transitional areas sparse.
+    if !terrain.supports_coastal_grass(material, ground_height, editor.project.sea_level) do return false
+    local_plan: circulation.Plan
+    plan := prepared_plan
+    if plan == nil {
+        local_plan = architecture.circulation_plan(&editor.project)
+        plan = &local_plan
+    }
+    surface := circulation.surface_at(&editor.project.road_graph, plan, {x, ground_height, z})
+    return !surface.on_surface
+}
+
 // Standalone foliage masses use the sixth palette family for their flowering
 // crown. Keep the same deterministic choice here so blossom shedding always
 // agrees with the tree the renderer presents, without adding mutable per-tree

@@ -28,6 +28,21 @@ island_generation_is_seeded_and_deterministic :: proc(t: ^testing.T) {
     testing.expect_value(t, a.score, b.score)
     testing.expect_value(t, fingerprint(&a), fingerprint(&b))
     testing.expect(t, fingerprint(&a) != fingerprint(&c))
+    testing.expect_value(t, len(a.foliage), len(b.foliage))
+    for patch, index in a.foliage do testing.expect_value(t, patch, b.foliage[index])
+}
+
+@(test)
+island_foliage_is_inland_and_avoids_bluffs :: proc(t: ^testing.T) {
+    plan := generate(0x49534c45)
+    defer destroy(&plan)
+    testing.expect(t, len(plan.foliage) >= 8)
+    for patch in plan.foliage {
+        testing.expect(t, sample_signed_distance(&plan, patch.x, patch.z) < -3)
+        testing.expect(t, sample_bluff(&plan, patch.x, patch.z) < .5)
+        testing.expect(t, sample_elevation(&plan, patch.x, patch.z) > 2)
+        testing.expect(t, patch.width > 0 && patch.depth > 0 && patch.height > 0)
+    }
 }
 
 @(test)
@@ -149,6 +164,33 @@ island_vertical_form_has_seeded_relief_and_coastal_bluffs :: proc(t: ^testing.T)
     }
     testing.expect(t, different)
     testing.expect(t, sample_elevation(&a, -.99, -.99) == 0)
+}
+
+@(test)
+island_vertical_form_separates_lowland_and_mountain_halves :: proc(t: ^testing.T) {
+    seed := u32(0x4b7d19e3)
+    plan := generate(seed)
+    defer destroy(&plan)
+    lowland_sum, highland_sum := f32(0), f32(0)
+    lowland_count, highland_count := 0, 0
+    for z in 0 ..< GRID_HEIGHT {
+        for x in 0 ..< GRID_WIDTH {
+            index := index_of(x, z)
+            if plan.cleaned[index] == .Water || plan.signed_distance[index] > -5 do continue
+            nx := f32(x) / f32(GRID_WIDTH - 1) * 2 - 1
+            nz := f32(z) / f32(GRID_HEIGHT - 1) * 2 - 1
+            highland := macro_highland_weight(seed, nx, nz)
+            if highland < .2 {
+                lowland_sum += plan.elevation[index]
+                lowland_count += 1
+            } else if highland > .8 {
+                highland_sum += plan.elevation[index]
+                highland_count += 1
+            }
+        }
+    }
+    testing.expect(t, lowland_count > 0 && highland_count > 0)
+    testing.expect(t, highland_sum / f32(highland_count) > lowland_sum / f32(lowland_count) + 3)
 }
 
 @(test)

@@ -740,10 +740,7 @@ build_water_envelope :: proc(
     for index in 0 ..< count {
         t := f32(count - 1 - index) / f32(count - 1)
         source_index := count - 1 - index
-        point := add(
-            shoreline_sample(site, t),
-            scale(shoreline_outward(site, t), smoothed[source_index]),
-        )
+        point := add(shoreline_sample(site, t), scale(shoreline_outward(site, t), smoothed[source_index]))
         _ = append_contour_point(&plan.navigable_water, point)
         minimum.x, minimum.z = min(minimum.x, point.x), min(minimum.z, point.z)
         maximum.x, maximum.z = max(maximum.x, point.x), max(maximum.z, point.z)
@@ -1360,16 +1357,11 @@ choose_strategy :: proc(site: ^Harbor_Site, program: ^Harbor_Program) -> (Harbor
         demand := max(program.minimum_capacity, program.target_capacity >> uint(downgrade_step))
         if demand == previous_demand do break
         previous_demand = demand
-        shelter_requirement := max(
-            program.shelter_requirement - f32(downgrade_step) * .08,
-            f32(.34),
-        )
+        shelter_requirement := max(program.shelter_requirement - f32(downgrade_step) * .08, f32(.34))
         for strategy_index in 0 ..= int(Harbor_Strategy.Reclaimed_Port) {
             strategy := Harbor_Strategy(strategy_index)
             estimate := estimate_strategy(site, program, strategy)
-            if estimate.feasible &&
-               estimate.capacity >= demand &&
-               estimate.shelter >= shelter_requirement {
+            if estimate.feasible && estimate.capacity >= demand && estimate.shelter >= shelter_requirement {
                 return strategy, downgrade_step > 0, downgrade_step
             }
         }
