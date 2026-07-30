@@ -642,6 +642,20 @@ Architecture_Street_Area_Cache :: struct {
     vertices:                           [dynamic]World_Vertex,
 }
 
+Settlement_Fountain_Geometry_Cache :: struct {
+    valid:            bool,
+    structure_id:     u64,
+    seed:             u32,
+    radius:           f32,
+    style:            fountains.Style,
+    jet_count:        int,
+    jet_height:       f32,
+    origin:           third_person.Vec3,
+    rotation:         f32,
+    terrain_revision: u64,
+    vertices:         [dynamic]World_Vertex,
+}
+
 World_Push :: struct {
     camera_position: [4]f32,
     camera_right:    [4]f32,
@@ -797,6 +811,7 @@ World_Renderer :: struct {
     architecture_alley_overlap_cache:    [dynamic]Architecture_Alley_Overlap_Cache,
     architecture_alley_overlap_plan:     [dynamic]architecture.City_Alley,
     architecture_street_area_cache:      [dynamic]Architecture_Street_Area_Cache,
+    settlement_fountain_geometry_cache:  [dynamic]Settlement_Fountain_Geometry_Cache,
     laundry_geometry_cache:              [dynamic]World_Vertex,
     laundry_geometry_revision:           u64,
     laundry_geometry_terrain_revision:   u64,
@@ -12928,6 +12943,10 @@ settlement_garden_point_in_plot :: proc(site: Settlement_Site, x, z: f32, inset:
 
 world_settlement_gardens :: proc(editor: ^Editor) {
     if editor == nil || !editor.settlement_plan.valid do return
+    site_count := editor.settlement_plan.site_count
+    if len(world_renderer.settlement_fountain_geometry_cache) < site_count {
+        resize(&world_renderer.settlement_fountain_geometry_cache, site_count)
+    }
     for site, site_index in editor.settlement_plan.sites[:editor.settlement_plan.site_count] {
         if !site.accepted || (site.kind != .Ordinary && site.kind != .Park) do continue
         structure := site.structure
@@ -12943,17 +12962,46 @@ world_settlement_gardens :: proc(editor: ^Editor) {
         radius_x := max(structure.width * (is_park ? f32(.42) : f32(.62)), f32(3.5))
         radius_z := max(structure.depth * (is_park ? f32(.34) : f32(.60)), f32(3.2))
         if has_fountain {
-            fountain := fountains.generate(
-                structure.seed ~ editor.settlement_plan.request.seed ~ 0xF017A17,
-                {
-                    radius = site.fountain_radius,
-                    style = site.fountain_style,
-                    jet_count = site.fountain_jet_count,
-                    jet_height = site.fountain_jet_height,
-                },
-            )
+            fountain_seed := structure.seed ~ editor.settlement_plan.request.seed ~ 0xF017A17
+            fountain_config := fountains.Config {
+                radius = site.fountain_radius,
+                style = site.fountain_style,
+                jet_count = site.fountain_jet_count,
+                jet_height = site.fountain_jet_height,
+            }
+            fountain := fountains.generate(fountain_seed, fountain_config)
             fountain_y := terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
-            world_fountain(&fountain, {structure.center_x, fountain_y, structure.center_z}, structure.rotation)
+            fountain_origin := third_person.Vec3{structure.center_x, fountain_y, structure.center_z}
+            cache := &world_renderer.settlement_fountain_geometry_cache[site_index]
+            cache_matches := cache.valid &&
+                             cache.structure_id == structure.id &&
+                             cache.seed == fountain_seed &&
+                             cache.radius == fountain_config.radius &&
+                             cache.style == fountain_config.style &&
+                             cache.jet_count == fountain_config.jet_count &&
+                             cache.jet_height == fountain_config.jet_height &&
+                             cache.origin == fountain_origin &&
+                             cache.rotation == structure.rotation &&
+                             cache.terrain_revision == editor.terrain_revision
+            if cache_matches {
+                append(&world_renderer.vertices, ..cache.vertices[:])
+            } else {
+                first_vertex := len(world_renderer.vertices)
+                world_fountain_structure(&fountain, fountain_origin, structure.rotation)
+                clear(&cache.vertices)
+                append(&cache.vertices, ..world_renderer.vertices[first_vertex:])
+                cache.valid = true
+                cache.structure_id = structure.id
+                cache.seed = fountain_seed
+                cache.radius = fountain_config.radius
+                cache.style = fountain_config.style
+                cache.jet_count = fountain_config.jet_count
+                cache.jet_height = fountain_config.jet_height
+                cache.origin = fountain_origin
+                cache.rotation = structure.rotation
+                cache.terrain_revision = editor.terrain_revision
+            }
+            world_fountain_effects(&fountain, fountain_origin, structure.rotation)
             radius_x = max(radius_x, site.fountain_radius + 2.3)
             radius_z = max(radius_z, site.fountain_radius + 2.3)
         }
@@ -25370,6 +25418,8 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.architecture_alley_overlap_plan)
     for &entry in world_renderer.architecture_street_area_cache do delete(entry.vertices)
     delete(world_renderer.architecture_street_area_cache)
+    for &entry in world_renderer.settlement_fountain_geometry_cache do delete(entry.vertices)
+    delete(world_renderer.settlement_fountain_geometry_cache)
     delete(world_renderer.laundry_geometry_cache)
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)

@@ -24,6 +24,18 @@ fountain_lab_style_name :: proc() -> cstring {
     return "TIERED"
 }
 
+fountain_lab_pattern_name :: proc(pattern: u8) -> cstring {
+    switch pattern {
+    case 0:
+        return "CEREMONIAL"
+    case 1:
+        return "ALTERNATING"
+    case 2:
+        return "CROWN"
+    }
+    return "UNKNOWN"
+}
+
 fountain_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
     fountain_lab_seed = 0xF017A17
@@ -113,14 +125,20 @@ fountain_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     rl.DrawTextEx(rl.Font{}, status, {38, 72}, 14, 1, {208, 239, 240, 255})
     rl.DrawTextEx(rl.Font{}, "A / D seed     S style     LEFT / RIGHT radius", {38, 104}, 13, 1, {171, 201, 207, 255})
     rl.DrawTextEx(rl.Font{}, "UP / DOWN jets     1 / 2 jet height", {38, 128}, 13, 1, {171, 201, 207, 255})
-    rl.DrawTextEx(
-        rl.Font{},
-        "Deterministic plan · bounded geometry · validated output",
-        {38, 152},
-        12,
-        1,
-        {145, 180, 188, 255},
+    plan := fountains.generate(
+        fountain_lab_seed,
+        {
+            radius = fountain_lab_radius,
+            style = fountain_lab_style,
+            jet_count = fountain_lab_jets,
+            jet_height = fountain_lab_height,
+        },
     )
+    pattern_status := fmt.ctprintf(
+        "Pattern %s · mirrored choreography · validated output",
+        fountain_lab_pattern_name(plan.jet_pattern),
+    )
+    rl.DrawTextEx(rl.Font{}, pattern_status, {38, 152}, 12, 1, {145, 180, 188, 255})
     _ = width
     _ = height
 }
