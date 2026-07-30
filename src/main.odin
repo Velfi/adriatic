@@ -497,6 +497,19 @@ Editor :: struct {
     aircraft_fixed_accumulator:         f64,
     aircraft_previous_body:             flight.Body_State,
     aircraft_previous_body_valid:       bool,
+    bomber_mode:                        bool,
+    bomber_payload_kind:                Bomber_Payload_Kind,
+    bomber_drops:                       [BOMBER_DROP_CAPACITY]Bomber_Drop,
+    bomber_drop_count:                  int,
+    bomber_drop_serial:                 u32,
+    bomber_drop_cooldown:               f32,
+    bomber_release_flash:               f32,
+    bomber_touchdown_flash:             f32,
+    bomber_touchdown_kind:              Bomber_Payload_Kind,
+    bomber_pip_pose:                    third_person.Camera_Pose,
+    bomber_pip_seed:                    u32,
+    bomber_pip_valid:                   bool,
+    bomber_pip_handoff_seconds:         f32,
     gameplay_physics:                   Gameplay_Physics,
     player_placement_reason:            Player_Placement_Reason,
     player_placement_revision:          u64,
@@ -4759,6 +4772,300 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
     }
 }
 
+BOMBER_DROP_CAPACITY :: 24
+BOMBER_CHUTE_DELAY :: f32(.55)
+BOMBER_DROP_COOLDOWN :: f32(.28)
+BOMBER_SIMULATION_STEP :: f32(.04)
+
+Bomber_Pip_Layout :: struct {
+    x, y:          f32,
+    width, height: f32,
+}
+
+bomber_pip_layout :: proc(width, height: f32) -> Bomber_Pip_Layout {
+    margin := clamp(width * .07, f32(12), f32(92))
+    top := clamp(height * .122, f32(12), f32(88))
+    pip_width := min(clamp(width * .29, f32(180), f32(430)), max(width - margin - 12, f32(1)))
+    pip_height := pip_width * 9 / 16
+    if top + pip_height > height - 12 {
+        pip_height = max(height - top - 12, f32(1))
+        pip_width = pip_height * 16 / 9
+    }
+    return {
+        x = max(width - pip_width - margin, f32(0)),
+        y = top,
+        width = pip_width,
+        height = pip_height,
+    }
+}
+
+Bomber_Payload_Kind :: enum {
+    Mail,
+    Parcel,
+    Supplies,
+}
+
+Bomber_Drop :: struct {
+    position:       third_person.Vec3,
+    velocity:       third_person.Vec3,
+    kind:           Bomber_Payload_Kind,
+    age:            f32,
+    landed_seconds: f32,
+    parachute_open: bool,
+    landed:         bool,
+    seed:           u32,
+}
+
+bomber_payload_label :: proc(kind: Bomber_Payload_Kind) -> cstring {
+    switch kind {
+    case .Mail:
+        return "MAIL"
+    case .Parcel:
+        return "PARCEL"
+    case .Supplies:
+        return "SUPPLIES"
+    }
+    return "PAYLOAD"
+}
+
+bomber_payload_cycle :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.bomber_payload_kind =
+        cast(Bomber_Payload_Kind)((int(editor.bomber_payload_kind) + 1) % len(Bomber_Payload_Kind))
+}
+
+bomber_drop_initial_state :: proc(
+    body: flight.Body_State,
+    kind: Bomber_Payload_Kind,
+    seed: u32,
+) -> Bomber_Drop {
+    basis := flight.basis_from_orientation(body.orientation)
+    return {
+        position = {
+            body.position.x - basis.up.x * .55,
+            body.position.y - basis.up.y * .55,
+            body.position.z - basis.up.z * .55,
+        },
+        velocity = {body.velocity.x, body.velocity.y - .7, body.velocity.z},
+        kind = kind,
+        seed = seed,
+    }
+}
+
+bomber_drop_integrate :: proc(
+    editor: ^Editor,
+    drop: ^Bomber_Drop,
+    delta_seconds: f32,
+    compensate_wind := true,
+) -> bool {
+    drop.age += delta_seconds
+    if drop.age >= BOMBER_CHUTE_DELAY do drop.parachute_open = true
+    wind := third_person.Vec3{}
+    if compensate_wind {
+        wind = {
+            editor.atmosphere.weather.wind[0],
+            0,
+            editor.atmosphere.weather.wind[1],
+        }
+    }
+    if drop.parachute_open {
+        horizontal_response := min(delta_seconds * 1.35, f32(1))
+        drop.velocity.x += (wind.x - drop.velocity.x) * horizontal_response
+        drop.velocity.z += (wind.z - drop.velocity.z) * horizontal_response
+        drop.velocity.y += (-5.4 - drop.velocity.y) * min(delta_seconds * 2.8, f32(1))
+    } else {
+        drop.velocity.y -= 9.81 * delta_seconds
+    }
+    drop.position += drop.velocity * delta_seconds
+    surface := max(
+        terrain.sample_height(&editor.project, 0, drop.position.x, drop.position.z),
+        editor.project.sea_level,
+    )
+    surface = terrain.structure_collision_surface_height(
+        &editor.project,
+        drop.position.x,
+        drop.position.z,
+        surface,
+    )
+    if drop.position.y > surface + .18 do return false
+    drop.position.y = surface + .18
+    drop.velocity = {}
+    drop.landed = true
+    return true
+}
+
+bomber_drop_release :: proc(editor: ^Editor) {
+    if editor == nil || editor.bomber_drop_cooldown > 0 do return
+    body := active_aircraft_body(editor)
+    if body == nil do return
+    drop := bomber_drop_initial_state(body^, editor.bomber_payload_kind, editor.bomber_drop_serial)
+    editor.bomber_drop_serial += 1
+    if editor.bomber_drop_count < BOMBER_DROP_CAPACITY {
+        editor.bomber_drops[editor.bomber_drop_count] = drop
+        editor.bomber_drop_count += 1
+    } else {
+        // Replace the oldest payload so repeated drops remain bounded.
+        oldest := 0
+        oldest_age := editor.bomber_drops[0].age + editor.bomber_drops[0].landed_seconds
+        for index in 1 ..< BOMBER_DROP_CAPACITY {
+            age := editor.bomber_drops[index].age + editor.bomber_drops[index].landed_seconds
+            if age > oldest_age {
+                oldest, oldest_age = index, age
+            }
+        }
+        editor.bomber_drops[oldest] = drop
+    }
+    editor.bomber_drop_cooldown = BOMBER_DROP_COOLDOWN
+    editor.bomber_release_flash = 1
+}
+
+bomber_drop_step :: proc(editor: ^Editor, delta_seconds: f32) {
+    if editor == nil do return
+    editor.bomber_drop_cooldown = max(editor.bomber_drop_cooldown - delta_seconds, f32(0))
+    editor.bomber_release_flash = max(editor.bomber_release_flash - delta_seconds * 4.5, f32(0))
+    editor.bomber_touchdown_flash = max(editor.bomber_touchdown_flash - delta_seconds * 1.4, f32(0))
+    index := 0
+    for index < editor.bomber_drop_count {
+        drop := &editor.bomber_drops[index]
+        if drop.landed {
+            drop.landed_seconds += delta_seconds
+            if drop.landed_seconds > 20 {
+                editor.bomber_drop_count -= 1
+                editor.bomber_drops[index] = editor.bomber_drops[editor.bomber_drop_count]
+                continue
+            }
+            index += 1
+            continue
+        }
+        remaining := delta_seconds
+        landed := false
+        for remaining > 0 {
+            step := min(remaining, BOMBER_SIMULATION_STEP)
+            if bomber_drop_integrate(editor, drop, step) {
+                landed = true
+                break
+            }
+            remaining -= step
+        }
+        if landed {
+            editor.bomber_touchdown_flash = 1
+            editor.bomber_touchdown_kind = drop.kind
+        }
+        index += 1
+    }
+}
+
+bomber_pip_drop_from :: proc(drops: []Bomber_Drop) -> ^Bomber_Drop {
+    newest_index := -1
+    newest_seed := u32(0)
+    for &drop, index in drops {
+        if drop.landed do continue
+        if newest_index < 0 || drop.seed > newest_seed {
+            newest_index = index
+            newest_seed = drop.seed
+        }
+    }
+    if newest_index < 0 do return nil
+    return &drops[newest_index]
+}
+
+bomber_pip_drop :: proc(editor: ^Editor) -> ^Bomber_Drop {
+    if editor == nil do return nil
+    return bomber_pip_drop_from(editor.bomber_drops[:editor.bomber_drop_count])
+}
+
+bomber_pip_camera_pose :: proc(editor: ^Editor, drop: ^Bomber_Drop) -> third_person.Camera_Pose {
+    if editor == nil || drop == nil do return {}
+    horizontal_velocity := third_person.Vec3{drop.velocity.x, 0, drop.velocity.z}
+    travel := linalg.normalize0(horizontal_velocity)
+    if linalg.length(horizontal_velocity) < .2 {
+        basis := flight.basis_from_orientation(active_aircraft_body(editor).orientation)
+        travel = {basis.forward.x, 0, basis.forward.z}
+    }
+    side := third_person.Vec3{-travel.z, 0, travel.x}
+    camera_position := third_person.Vec3 {
+        drop.position.x - travel.x * 6.8 + side.x * 2.5,
+        drop.position.y + 3.4,
+        drop.position.z - travel.z * 6.8 + side.z * 2.5,
+    }
+    surface := max(
+        terrain.sample_height(&editor.project, 0, camera_position.x, camera_position.z),
+        editor.project.sea_level,
+    )
+    camera_position.y = max(camera_position.y, surface + 1.4)
+    target := drop.position
+    target.y += drop.parachute_open ? f32(.75) : f32(.15)
+    return third_person.camera_look_at(camera_position, target)
+}
+
+bomber_pip_update :: proc(editor: ^Editor, delta_seconds: f32) {
+    if editor == nil do return
+    tracked := bomber_pip_drop(editor)
+    if tracked == nil {
+        editor.bomber_pip_valid = false
+        editor.bomber_pip_handoff_seconds = 0
+        return
+    }
+    desired := bomber_pip_camera_pose(editor, tracked)
+    if !editor.bomber_pip_valid {
+        editor.bomber_pip_pose = desired
+        editor.bomber_pip_seed = tracked.seed
+        editor.bomber_pip_valid = true
+        return
+    }
+    if editor.bomber_pip_seed != tracked.seed {
+        editor.bomber_pip_seed = tracked.seed
+        editor.bomber_pip_handoff_seconds = .45
+    }
+    sharpness := editor.bomber_pip_handoff_seconds > 0 ? f32(4.5) : f32(10)
+    editor.bomber_pip_pose = third_person.follow_camera(
+        editor.bomber_pip_pose,
+        desired,
+        sharpness,
+        delta_seconds,
+    )
+    editor.bomber_pip_handoff_seconds = max(editor.bomber_pip_handoff_seconds - delta_seconds, f32(0))
+}
+
+bomber_drop_eta :: proc(editor: ^Editor, source: ^Bomber_Drop) -> f32 {
+    if editor == nil || source == nil || source.landed do return 0
+    drop := source^
+    elapsed := f32(0)
+    for _ in 0 ..< 1500 {
+        elapsed += BOMBER_SIMULATION_STEP
+        if bomber_drop_integrate(editor, &drop, BOMBER_SIMULATION_STEP) do return elapsed
+    }
+    return elapsed
+}
+
+bomber_predicted_impact_for_wind :: proc(editor: ^Editor, compensate_wind: bool) -> third_person.Vec3 {
+    body := active_aircraft_body(editor)
+    if body == nil do return {}
+    drop := bomber_drop_initial_state(body^, editor.bomber_payload_kind, 0)
+    for _ in 0 ..< 1500 {
+        if bomber_drop_integrate(editor, &drop, BOMBER_SIMULATION_STEP, compensate_wind) {
+            return drop.position
+        }
+    }
+    return drop.position
+}
+
+bomber_predicted_impact :: proc(editor: ^Editor) -> third_person.Vec3 {
+    return bomber_predicted_impact_for_wind(editor, true)
+}
+
+bomber_camera_pose :: proc(editor: ^Editor) -> third_person.Camera_Pose {
+    body := aircraft_render_body(editor)
+    basis := flight.basis_from_orientation(body.orientation)
+    impact := bomber_predicted_impact(editor)
+    eye := third_person.Vec3 {
+        body.position.x + basis.forward.x * 1.8 - basis.up.x * 2.15,
+        body.position.y + basis.forward.y * 1.8 - basis.up.y * 2.15,
+        body.position.z + basis.forward.z * 1.8 - basis.up.z * 2.15,
+    }
+    return third_person.camera_look_at(eye, impact)
+}
+
 aircraft_render_body :: proc(editor: ^Editor) -> flight.Body_State {
     body := active_aircraft_body(editor)^
     if !editor.aircraft_previous_body_valid do return body
@@ -6767,6 +7074,186 @@ draw_rondine_instruments :: proc(editor: ^Editor, width, height: i32) {
     }
 }
 
+bomber_hud_ring :: proc(center: rl.Vector2, radius, line_width: f32, color: rl.Color) {
+    segments :: 64
+    previous := rl.Vector2{center.x + radius, center.y}
+    for segment in 1 ..= segments {
+        angle := f32(segment) / f32(segments) * f32(math.PI * 2)
+        next := rl.Vector2 {
+            center.x + f32(math.cos(f64(angle))) * radius,
+            center.y + f32(math.sin(f64(angle))) * radius,
+        }
+        rl.DrawLineEx(previous, next, line_width, color)
+        previous = next
+    }
+}
+
+bomber_hud_draw :: proc(editor: ^Editor, width, height: i32) {
+    if editor == nil ||
+       !editor.in_map ||
+       !driving_aircraft(editor) ||
+       !editor.bomber_mode ||
+       !editor.gameplay_options.show_hud {
+        return
+    }
+    center := rl.Vector2{f32(width) * .5, f32(height) * .5}
+    radius := clamp(min(f32(width), f32(height)) * .17, f32(92), f32(155))
+    sight := rl.Color{232, 224, 170, 225}
+    shadow := rl.Color{9, 24, 25, 180}
+    bomber_hud_ring(center, radius + 1, 3, shadow)
+    bomber_hud_ring(center, radius, 1.5, sight)
+    bomber_hud_ring(center, radius * .42, 1.5, sight)
+    rl.DrawLineEx({center.x - radius, center.y}, {center.x - 16, center.y}, 3, shadow)
+    rl.DrawLineEx({center.x + 16, center.y}, {center.x + radius, center.y}, 3, shadow)
+    rl.DrawLineEx({center.x, center.y - radius}, {center.x, center.y - 16}, 3, shadow)
+    rl.DrawLineEx({center.x, center.y + 16}, {center.x, center.y + radius}, 3, shadow)
+    rl.DrawLineEx({center.x - radius, center.y}, {center.x - 16, center.y}, 1.5, sight)
+    rl.DrawLineEx({center.x + 16, center.y}, {center.x + radius, center.y}, 1.5, sight)
+    rl.DrawLineEx({center.x, center.y - radius}, {center.x, center.y - 16}, 1.5, sight)
+    rl.DrawLineEx({center.x, center.y + 16}, {center.x, center.y + radius}, 1.5, sight)
+    ready := editor.bomber_drop_cooldown <= 0
+    ready_color := ready ? rl.Color{111, 225, 174, 245} : rl.Color{236, 190, 102, 230}
+    rl.DrawCircleV(center, ready ? f32(4.5) : f32(3.5), ready_color)
+    if editor.bomber_release_flash > 0 {
+        release_radius := 12 + (1 - editor.bomber_release_flash) * 34
+        release_alpha := u8(clamp(editor.bomber_release_flash * 235, 0, 235))
+        bomber_hud_ring(center, release_radius, 2.5, {111, 225, 174, release_alpha})
+    }
+    impact := bomber_predicted_impact(editor)
+    still_air_impact := bomber_predicted_impact_for_wind(editor, false)
+    body := active_aircraft_body(editor)
+    dx, dz := impact.x - body.position.x, impact.z - body.position.z
+    distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    drift_x, drift_z := impact.x - still_air_impact.x, impact.z - still_air_impact.z
+    drift_distance := f32(math.sqrt(f64(drift_x * drift_x + drift_z * drift_z)))
+    wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
+    wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
+    if drift_distance > .1 {
+        camera := perspective_camera(bomber_camera_pose(editor), editor.flight_camera.focal_length)
+        still_projection := project_3d(camera, still_air_impact, width, height)
+        correction := rl.Vector2 {
+            center.x - still_projection.position.x,
+            center.y - still_projection.position.y,
+        }
+        correction_length := f32(
+            math.sqrt_f64(f64(correction.x * correction.x + correction.y * correction.y)),
+        )
+        if correction_length > .01 {
+            direction := rl.Vector2{correction.x / correction_length, correction.y / correction_length}
+            arrow_length := min(max(drift_distance * 1.15, f32(18)), radius * .72)
+            arrow_start := rl.Vector2 {
+                center.x - direction.x * arrow_length,
+                center.y - direction.y * arrow_length,
+            }
+            arrow_end := rl.Vector2{center.x - direction.x * 9, center.y - direction.y * 9}
+            arrow_side := rl.Vector2{-direction.y, direction.x}
+            rl.DrawLineEx(arrow_start, arrow_end, 4, shadow)
+            rl.DrawLineEx(arrow_start, arrow_end, 2, {104, 210, 205, 235})
+            rl.DrawLineEx(
+                arrow_end,
+                {
+                    arrow_end.x - direction.x * 12 + arrow_side.x * 7,
+                    arrow_end.y - direction.y * 12 + arrow_side.y * 7,
+                },
+                2,
+                {104, 210, 205, 235},
+            )
+            rl.DrawLineEx(
+                arrow_end,
+                {
+                    arrow_end.x - direction.x * 12 - arrow_side.x * 7,
+                    arrow_end.y - direction.y * 12 - arrow_side.y * 7,
+                },
+                2,
+                {104, 210, 205, 235},
+            )
+        }
+    }
+    readiness: cstring = ready ? "READY" : "RELOAD"
+    label := fmt.ctprintf(
+        "BOMBER  •  %s  •  %s  •  WIND %.0f m/s  AUTO %.0f m  •  X DROP  •  IMPACT %.0f m",
+        bomber_payload_label(editor.bomber_payload_kind),
+        readiness,
+        wind_speed,
+        drift_distance,
+        distance,
+    )
+    size := rl.MeasureTextEx(rl.Font{}, label, 14, .7)
+    panel := rl.Rectangle{26, center.y - radius - 52, size.x + 28, 34}
+    rl.DrawRectangleRounded(panel, .25, 8, {9, 25, 28, 220})
+    rl.DrawRectangleRoundedLinesEx(panel, .25, 8, 1, {126, 152, 136, 220})
+    rl.DrawTextEx(rl.Font{}, label, {panel.x + 14, panel.y + 9}, 14, .7, sight)
+
+    if tracked := bomber_pip_drop(editor); tracked != nil {
+        pip := bomber_pip_layout(f32(width), f32(height))
+        pip_width, pip_height := pip.width, pip.height
+        pip_x, pip_y := pip.x, pip.y
+        border := rl.Rectangle{pip_x - 3, pip_y - 3, pip_width + 6, pip_height + 6}
+        rl.DrawRectangleRoundedLinesEx(border, .035, 8, 3, {8, 20, 22, 235})
+        rl.DrawRectangleRoundedLinesEx(
+            {pip_x - 1, pip_y - 1, pip_width + 2, pip_height + 2},
+            .035,
+            8,
+            1,
+            sight,
+        )
+        airborne_count := 0
+        for drop in editor.bomber_drops[:editor.bomber_drop_count] {
+            if !drop.landed do airborne_count += 1
+        }
+        pip_label := fmt.ctprintf(
+            "DROP CAM  %s  •  %.0f m AGL  •  ETA %.1fs  •  %d AIRBORNE",
+            bomber_payload_label(tracked.kind),
+            max(
+                tracked.position.y -
+                    max(
+                        terrain.sample_height(&editor.project, 0, tracked.position.x, tracked.position.z),
+                        editor.project.sea_level,
+                    ),
+                f32(0),
+            ),
+            bomber_drop_eta(editor, tracked),
+            airborne_count,
+        )
+        rl.DrawRectangle(
+            i32(pip_x),
+            i32(pip_y),
+            i32(pip_width),
+            26,
+            {8, 23, 25, 205},
+        )
+        rl.DrawTextEx(rl.Font{}, pip_label, {pip_x + 10, pip_y + 7}, 12, .6, sight)
+    }
+    if editor.bomber_touchdown_flash > 0 {
+        touchdown_alpha := u8(clamp(editor.bomber_touchdown_flash * 255, 0, 255))
+        touchdown_label := fmt.ctprintf(
+            "%s TOUCHDOWN",
+            bomber_payload_label(editor.bomber_touchdown_kind),
+        )
+        touchdown_size := rl.MeasureTextEx(rl.Font{}, touchdown_label, 15, .7)
+        touchdown_panel := rl.Rectangle {
+            f32(width) - touchdown_size.x - 128,
+            312,
+            touchdown_size.x + 24,
+            32,
+        }
+        rl.DrawRectangleRounded(
+            touchdown_panel,
+            .22,
+            8,
+            {22, 72, 61, u8(clamp(f32(touchdown_alpha) * .9, 0, 230))},
+        )
+        rl.DrawTextEx(
+            rl.Font{},
+            touchdown_label,
+            {touchdown_panel.x + 12, touchdown_panel.y + 8},
+            15,
+            .7,
+            {153, 242, 196, touchdown_alpha},
+        )
+    }
+}
+
 draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f32) {
     if editor.aircraft.active == .Rondine {
         draw_rondine_instruments(editor, width, height)
@@ -8377,6 +8864,7 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     if lab_scene_draw_ui(editor, width, height) do return
     draw_postale_speed_effects(editor, width, height, time)
     control_hint_draw_gameplay_hud(editor, width)
+    bomber_hud_draw(editor, width, height)
     quest_tracking_hud_draw(editor, width)
     if editor.in_map {
         flying := driving_aircraft(editor)
@@ -10084,6 +10572,13 @@ adriatic_run :: proc(
                 editor.atmosphere.paused = true
                 chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
                 editor.camera_pose = editor.flight_camera.pose
+                if capture_target == "bomber" {
+                    editor.bomber_mode = true
+                    editor.bomber_payload_kind = .Mail
+                    bomber_drop_release(editor)
+                    for _ in 0 ..< 10 do bomber_drop_step(editor, .05)
+                    editor.camera_pose = bomber_camera_pose(editor)
+                }
             }
         }
         if capture_car_mode && !capture_lab_mode {
@@ -11574,15 +12069,26 @@ adriatic_run :: proc(
                 flying := driving_aircraft(editor)
                 in_car := driving_car(editor)
                 if flying {
-                    flight_stick_x := gamepad_axis(.Right_X) * 700 * delta_seconds
-                    if editor.gameplay_options.invert_look_x do flight_stick_x = -flight_stick_x
-                    flight_stick_y := gamepad_axis(.Right_Y) * 700 * delta_seconds
-                    if editor.gameplay_options.invert_look_y do flight_stick_y = -flight_stick_y
-                    flight_look_x := look_x * look_scale + flight_stick_x
-                    flight_look_y := look_y * look_scale + flight_stick_y
-                    chase_camera.look(&editor.flight_camera, flight_look_x, flight_look_y)
-                    if input_action_pressed(.Camera_Reset) {
-                        chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
+                    if rl.IsKeyPressed(.B) || gamepad_pressed(.Dpad_Down) {
+                        editor.bomber_mode = !editor.bomber_mode
+                    }
+                    if editor.bomber_mode && (rl.IsKeyPressed(.X) || gamepad_pressed(.Dpad_Left)) {
+                        bomber_drop_release(editor)
+                    }
+                    if editor.bomber_mode && (rl.IsKeyPressed(.V) || gamepad_pressed(.Dpad_Right)) {
+                        bomber_payload_cycle(editor)
+                    }
+                    if !editor.bomber_mode {
+                        flight_stick_x := gamepad_axis(.Right_X) * 700 * delta_seconds
+                        if editor.gameplay_options.invert_look_x do flight_stick_x = -flight_stick_x
+                        flight_stick_y := gamepad_axis(.Right_Y) * 700 * delta_seconds
+                        if editor.gameplay_options.invert_look_y do flight_stick_y = -flight_stick_y
+                        flight_look_x := look_x * look_scale + flight_stick_x
+                        flight_look_y := look_y * look_scale + flight_stick_y
+                        chase_camera.look(&editor.flight_camera, flight_look_x, flight_look_y)
+                        if input_action_pressed(.Camera_Reset) {
+                            chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
+                        }
                     }
                     control := postale_game.Control {
                         throttle_up   = rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT),
@@ -11750,6 +12256,7 @@ adriatic_run :: proc(
                     }
                     if input_action_pressed(.Interact) && can_exit {
                         if vehicles.try_exit(&editor.pilot, true) {
+                            editor.bomber_mode = false
                             editor.flight_control = {}
                             player_place(editor, editor.pilot.position, .Vehicle_Exit, editor.pilot.facing_yaw_radians)
                             editor.camera = third_person.default_camera()
@@ -11762,7 +12269,11 @@ adriatic_run :: proc(
                         max(postale_flyby_shake(editor), rondine_drift_shake(editor)),
                     )
                     editor.camera_pose = editor.flight_camera.pose
+                    if editor.bomber_mode {
+                        editor.camera_pose = bomber_camera_pose(editor)
+                    }
                 } else {
+                    editor.bomber_mode = false
                     editor.aircraft_fixed_accumulator = 0
                     editor.aircraft_previous_body_valid = false
                 }
@@ -12218,6 +12729,8 @@ adriatic_run :: proc(
         }
         saved_aircraft_body: flight.Body_State
         cinematic_update(editor, simulation_delta)
+        bomber_drop_step(editor, min(simulation_delta, f32(.05)))
+        bomber_pip_update(editor, min(simulation_delta, f32(.05)))
         render_aircraft_body := active_aircraft_body(editor)
         interpolate_aircraft := driving_aircraft(editor) && editor.aircraft_previous_body_valid
         if interpolate_aircraft {

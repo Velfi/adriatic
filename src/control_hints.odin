@@ -27,6 +27,8 @@ Control_Hint_Binding :: enum {
     Steer,
     Brake,
     Altitude,
+    Bomber,
+    Drop,
 }
 
 Control_Hint_Entry :: struct {
@@ -79,6 +81,10 @@ control_hint_keyboard_source :: proc(binding: Control_Hint_Binding) -> rl.Rectan
         return control_hint_tile(832, 320) // Esc
     case .Recenter:
         return control_hint_tile(128, 256) // C
+    case .Bomber:
+        return control_hint_tile(320, 64) // B
+    case .Drop:
+        return control_hint_tile(512, 256) // X
     }
     return {}
 }
@@ -122,6 +128,8 @@ control_hint_controller_source :: proc(
             return control_hint_tile(448, 384) // LB
         case .Brake:
             return control_hint_tile(192, 448) // RB
+        case .Bomber, .Drop:
+            return control_hint_tile(64, 128) // D-pad
         }
     case .PlayStation:
         switch binding {
@@ -143,6 +151,8 @@ control_hint_controller_source :: proc(
             return control_hint_tile(128, 320) // L1
         case .Brake:
             return control_hint_tile(640, 320) // R1
+        case .Bomber, .Drop:
+            return control_hint_tile(576, 512) // D-pad
         }
     case .Nintendo:
         switch binding {
@@ -164,6 +174,8 @@ control_hint_controller_source :: proc(
             return control_hint_tile(640, 0) // L
         case .Brake:
             return control_hint_tile(320, 64) // R
+        case .Bomber, .Drop:
+            return control_hint_tile(256, 448) // D-pad
         }
     case .Generic:
         switch binding {
@@ -175,7 +187,7 @@ control_hint_controller_source :: proc(
             return control_hint_tile(256, 64) // trigger
         case .Yaw, .Brake:
             return control_hint_tile(64, 128) // trigger
-        case .Jump, .Run, .Interact, .Pause, .Recenter, .Exit:
+        case .Jump, .Run, .Interact, .Pause, .Recenter, .Exit, .Bomber, .Drop:
             return control_hint_tile(64, 0) // button
         }
     }
@@ -249,6 +261,11 @@ control_hint_draw_gameplay_hud :: proc(editor: ^Editor, width: i32) {
         entries[4] = {.Power, "POWER"}
         entries[5] = {.Recenter, "CENTER"}
         entries[6] = {.Exit, "EXIT"}
+        if editor.bomber_mode {
+            panel_width = 920
+            entries[3] = {.Bomber, "SIGHT"}
+            entries[5] = {.Drop, "DROP"}
+        }
         if editor.aircraft.active != .Postale {
             entries[4] = {.Altitude, "ALTITUDE"}
         }

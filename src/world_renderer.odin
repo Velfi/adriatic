@@ -1152,7 +1152,7 @@ world_sphere_in_view :: proc(editor: ^Editor, center: third_person.Vec3, radius:
     camera := perspective_camera(editor.camera_pose, focal_length)
     width := max(rl.GetScreenWidth(), 1)
     height := max(rl.GetScreenHeight(), 1)
-    return static_sphere_in_frustum(
+    visible := static_sphere_in_frustum(
         camera,
         center,
         max(radius + margin, f32(0)),
@@ -1160,6 +1160,21 @@ world_sphere_in_view :: proc(editor: ^Editor, center: third_person.Vec3, radius:
         world_camera_near_clip(editor),
         WORLD_FAR_CLIP,
     )
+    if visible do return true
+    // The PiP replays the world graph with a second camera, so retain scene
+    // objects visible to that camera as well as those visible to the main view.
+    if editor.in_map && driving_aircraft(editor) && editor.bomber_mode && editor.bomber_pip_valid {
+        pip_camera := perspective_camera(editor.bomber_pip_pose, 1.55)
+        return static_sphere_in_frustum(
+            pip_camera,
+            center,
+            max(radius + margin, f32(0)),
+            f32(16) / 9,
+            WORLD_FLIGHT_NEAR_CLIP,
+            WORLD_FAR_CLIP,
+        )
+    }
+    return false
 }
 
 world_scene_sun :: proc(editor: ^Editor, sky: atmosphere.Sky_State) -> [4]f32 {
@@ -24350,6 +24365,7 @@ world_build :: proc(editor: ^Editor) {
     world_ocean_ship(editor)
     world_bird_flocks(editor)
     world_aircraft(editor)
+    world_bomber_drops(editor)
     world_car(editor)
     world_car_pilot(editor)
     world_renderer.player_vertex_first = len(world_renderer.vertices)
@@ -24391,6 +24407,53 @@ world_build :: proc(editor: ^Editor) {
     world_renderer.late_transparent_first = len(world_renderer.vertices)
     append(&world_renderer.vertices, ..world_renderer.late_transparent_vertices[:])
     world_renderer.late_transparent_count = len(world_renderer.vertices) - world_renderer.late_transparent_first
+}
+
+world_bomber_drops :: proc(editor: ^Editor) {
+    if editor == nil do return
+    for drop in editor.bomber_drops[:editor.bomber_drop_count] {
+        // Airborne drops may be behind the downward-facing bomber camera while
+        // simultaneously centered in the PiP chase camera. With only a few
+        // bounded payloads, retaining them is cheaper and more reliable than
+        // culling solely against the primary view.
+        if drop.landed && !world_sphere_in_view(editor, drop.position, f32(2.5)) do continue
+        payload_color := rl.Color{218, 187, 124, 255}
+        payload_size := third_person.Vec3{.55, .34, .44}
+        switch drop.kind {
+        case .Mail:
+            payload_color = {194, 104, 82, 255}
+            payload_size = {.48, .18, .34}
+        case .Parcel:
+            payload_color = {205, 166, 101, 255}
+        case .Supplies:
+            payload_color = {80, 130, 112, 255}
+            payload_size = {.72, .48, .58}
+        }
+        world_box(drop.position, payload_size, payload_color)
+        if drop.kind == .Mail {
+            world_box(
+                {drop.position.x, drop.position.y + .105, drop.position.z},
+                {.36, .025, .25},
+                {238, 224, 184, 255},
+            )
+        }
+        if !drop.parachute_open || drop.landed do continue
+        canopy_center := third_person.Vec3{drop.position.x, drop.position.y + 1.75, drop.position.z}
+        canopy_color := rl.Color{235, 218, 166, 255}
+        if drop.kind == .Mail do canopy_color = {224, 108, 90, 255}
+        if drop.kind == .Supplies do canopy_color = {102, 151, 125, 255}
+        world_ellipsoid_rotated(canopy_center, 1.18, .28, 1.18, 0, canopy_color)
+        cord_color := rl.Color{222, 213, 183, 255}
+        anchors := [4]third_person.Vec3 {
+            {canopy_center.x - .82, canopy_center.y - .05, canopy_center.z},
+            {canopy_center.x + .82, canopy_center.y - .05, canopy_center.z},
+            {canopy_center.x, canopy_center.y - .05, canopy_center.z - .82},
+            {canopy_center.x, canopy_center.y - .05, canopy_center.z + .82},
+        }
+        for anchor in anchors {
+            world_box_between(anchor, drop.position, {0, 0, 1}, .018, .018, cord_color)
+        }
+    }
 }
 
 world_petal_particles :: proc(editor: ^Editor) {
@@ -26519,7 +26582,10 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     if !world_render_graph_ready {
         world_render_graph_ready = adriatic_render_graph(&world_render_graph)
     }
-    if world_render_graph_ready do _ = render_graph.execute(&world_render_graph, &graph_context)
+    if world_render_graph_ready {
+        _ = render_graph.execute(&world_render_graph, &graph_context)
+        world_bomber_pip_render(&graph_context)
+    }
     dialogue_portrait_render(pass, buffer, pipeline_index, editor)
 }
 

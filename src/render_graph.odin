@@ -1,6 +1,7 @@
 package main
 
 import render_graph "../packages/render_graph"
+import atmosphere "../packages/atmosphere"
 import terrain "../packages/terrain"
 import vk "vendor:vulkan"
 import rl "zelda_engine:canvas2d"
@@ -408,4 +409,102 @@ adriatic_render_graph :: proc(graph: ^render_graph.Graph) -> bool {
         render_graph.depends_on(graph, roads, foliage) &&
         render_graph.depends_on(graph, transparent, roads) \
     )
+}
+
+world_bomber_pip_render :: proc(ctx: ^Render_Graph_Context) {
+    if ctx == nil || world_renderer.editor == nil do return
+    editor := world_renderer.editor
+    if !editor.in_map || !driving_aircraft(editor) || !editor.bomber_mode do return
+    tracked := bomber_pip_drop(editor)
+    if tracked == nil do return
+
+    framebuffer_width := f32(ctx.pass.framebuffer_extent.width)
+    framebuffer_height := f32(ctx.pass.framebuffer_extent.height)
+    logical_width := max(f32(rl.GetScreenWidth()), f32(1))
+    logical_height := max(f32(rl.GetScreenHeight()), f32(1))
+    scale_x := framebuffer_width / logical_width
+    scale_y := framebuffer_height / logical_height
+    logical_rect := bomber_pip_layout(logical_width, logical_height)
+    pip_width := logical_rect.width * scale_x
+    pip_height := logical_rect.height * scale_y
+    rect := vk.Rect2D {
+        offset = {
+            i32(max(logical_rect.x * scale_x, f32(0))),
+            i32(max(logical_rect.y * scale_y, f32(0))),
+        },
+        extent = {
+            u32(max(pip_width, f32(1))),
+            u32(max(pip_height, f32(1))),
+        },
+    }
+    if u32(rect.offset.x) + rect.extent.width > ctx.pass.framebuffer_extent.width {
+        rect.extent.width = ctx.pass.framebuffer_extent.width - u32(rect.offset.x)
+    }
+    if u32(rect.offset.y) + rect.extent.height > ctx.pass.framebuffer_extent.height {
+        rect.extent.height = ctx.pass.framebuffer_extent.height - u32(rect.offset.y)
+    }
+    clear_attachment := vk.ClearAttachment {
+        aspectMask = {.DEPTH},
+        clearValue = {depthStencil = {depth = 1}},
+    }
+    clear_rect := vk.ClearRect {
+        rect = rect,
+        baseArrayLayer = 0,
+        layerCount = 1,
+    }
+    vk.CmdClearAttachments(ctx.pass.frame.command_buffer, 1, &clear_attachment, 1, &clear_rect)
+    viewport := vk.Viewport {
+        x = f32(rect.offset.x),
+        y = f32(rect.offset.y),
+        width = f32(rect.extent.width),
+        height = f32(rect.extent.height),
+        minDepth = 0,
+        maxDepth = 1,
+    }
+    vk.CmdSetViewport(ctx.pass.frame.command_buffer, 0, 1, &viewport)
+    vk.CmdSetScissor(ctx.pass.frame.command_buffer, 0, 1, &rect)
+
+    pose := editor.bomber_pip_valid ? editor.bomber_pip_pose : bomber_pip_camera_pose(editor, tracked)
+    camera := perspective_camera(pose, 1.55)
+    sky := atmosphere.sample(&editor.atmosphere)
+    ctx.world_push.camera_position = {
+        camera.position.x,
+        camera.position.y,
+        camera.position.z,
+        world_camera_near_clip(editor),
+    }
+    ctx.world_push.camera_right = {camera.right.x, camera.right.y, camera.right.z, WORLD_FAR_CLIP}
+    ctx.world_push.camera_up = {camera.up.x, camera.up.y, camera.up.z, 0}
+    ctx.world_push.camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, 0}
+    ctx.world_push.projection = {
+        camera.focal_length,
+        f32(rect.extent.width) / f32(max(rect.extent.height, 1)),
+        WORLD_FOG_START,
+        WORLD_FOG_END,
+    }
+    ctx.sky_push.camera_right = {
+        camera.right.x,
+        camera.right.y,
+        camera.right.z,
+        f32(rect.extent.width) / f32(max(rect.extent.height, 1)),
+    }
+    ctx.sky_push.camera_up = {camera.up.x, camera.up.y, camera.up.z, camera.focal_length}
+    ctx.sky_push.camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, 0}
+    ctx.sky_push.sun_direction = {
+        sky.sun_direction[0],
+        sky.sun_direction[1],
+        sky.sun_direction[2],
+        f32(sky.cloud_seed),
+    }
+    _ = render_graph.execute(&world_render_graph, ctx)
+
+    full_viewport := vk.Viewport {
+        width = framebuffer_width,
+        height = framebuffer_height,
+        minDepth = 0,
+        maxDepth = 1,
+    }
+    full_scissor := vk.Rect2D{extent = ctx.pass.framebuffer_extent}
+    vk.CmdSetViewport(ctx.pass.frame.command_buffer, 0, 1, &full_viewport)
+    vk.CmdSetScissor(ctx.pass.frame.command_buffer, 0, 1, &full_scissor)
 }
