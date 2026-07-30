@@ -363,6 +363,27 @@ architecture_roof_tile_color :: #force_inline proc(seed: u32, tone: int) -> [4]u
 }
 
 @(no_instrumentation)
+architecture_roof_tile_tone :: #force_inline proc(seed: u32, course, segment: int) -> int {
+    selector := city_hash(course, segment, seed ~ 0x6d2b79f5) % 16
+    switch selector {
+    case 0:
+        // Rare sun-bleached cap or replacement tile.
+        return 4
+    case 1:
+        // Rare deep-weathered tile.
+        return 1
+    case 2 ..= 4:
+        return 0
+    case 5 ..= 8:
+        return 3
+    case:
+        // Keep the roof field anchored in its middle tone instead of cycling
+        // evenly through every palette extreme.
+        return 2
+    }
+}
+
+@(no_instrumentation)
 roof_style_for_seed :: #force_inline proc(seed: u32) -> Roof_Style {
     switch int(seed % 4) {
     case 0:
@@ -2506,10 +2527,4 @@ generate_append :: proc(
         }
     }
     return created
-}
-
-generate :: proc(project: ^terrain.Project, center_x, center_z: f32, seed: u32 = 0xA71D3) -> int {
-    if project == nil do return 0
-    clear_architecture(project)
-    return generate_append(project, center_x, center_z, seed)
 }

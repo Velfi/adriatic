@@ -537,7 +537,11 @@ ruins_lab_wall_run :: proc(building: ruins.Building, horizontal: bool, fixed, le
         local_x, local_z := horizontal ? t : fixed, horizontal ? fixed : t
         center := ruins_lab_local(building, local_x, local_z)
         center.y = building.base_y + height * .5 + .16
-        ruins_lab_masonry_segment(building, horizontal, local_x, local_z, segment_length + .08, height, salt)
+        // Keep neighboring runs disjoint. Extending each run past its allotted
+        // span makes the end blocks overlap on the same wall plane, so their
+        // front and back faces compete in the depth buffer. The block inset in
+        // ruins_lab_masonry_segment already supplies the visible mortar seam.
+        ruins_lab_masonry_segment(building, horizontal, local_x, local_z, segment_length, height, salt)
         ruins_lab_wall_finish(
             building,
             horizontal,

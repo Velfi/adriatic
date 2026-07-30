@@ -223,7 +223,7 @@ step :: proc(system: ^System, dt: f32, wind: [2]f32) {
     }
 }
 
-step_grounded :: proc(system: ^System, dt: f32, wind: [2]f32, threat_position: Vec3, threat_running: bool) {
+step_grounded :: proc(system: ^System, dt: f32, wind: [2]f32, threat_position: Vec3, threat_active: bool) {
     if system == nil || dt <= 0 do return
     step_seconds := min(dt, f32(.05))
     for flock in 0 ..< system.anchor_count {
@@ -232,7 +232,7 @@ step_grounded :: proc(system: ^System, dt: f32, wind: [2]f32, threat_position: V
         if first >= last do break
         anchor := system.anchors[flock]
         threat_delta := threat_position - anchor.position
-        scare := threat_running && threat_delta.x * threat_delta.x + threat_delta.z * threat_delta.z <= 12 * 12
+        scare := threat_active && threat_delta.x * threat_delta.x + threat_delta.z * threat_delta.z <= 16 * 16
         if scare {
             for local in 0 ..< last - first {
                 boid := &system.boids[first + local]

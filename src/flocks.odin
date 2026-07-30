@@ -174,18 +174,26 @@ world_flocks_step :: proc(editor: ^Editor, dt: f32) {
             ),
         ),
     )
-    player_running :=
+    threat_position := third_person.Vec3{
+        editor.player.position.x,
+        editor.player.position.y,
+        editor.player.position.z,
+    }
+    threat_active :=
         editor.in_map &&
         editor.pilot.mode == .On_Foot &&
         editor.player.grounded &&
-        editor.player.running &&
-        player_speed >= 4
+        player_speed >= 1.5
+    if editor.in_map && editor.pilot.mode == .Driving && editor.pilot.vehicle != nil {
+        threat_position = editor.pilot.vehicle.position
+        threat_active = true
+    }
     flocks.step_grounded(
         &editor.ground_bird_flocks,
         dt,
         {editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]},
-        {editor.player.position.x, editor.player.position.y, editor.player.position.z},
-        player_running,
+        {threat_position.x, threat_position.y, threat_position.z},
+        threat_active,
     )
     world_flocks_avoid_buildings(editor, &editor.ground_bird_flocks, dt)
 }

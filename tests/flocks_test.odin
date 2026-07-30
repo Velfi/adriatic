@@ -35,7 +35,7 @@ flocks_reseed_when_an_anchor_moves_to_a_different_site :: proc(t: ^testing.T) {
 }
 
 @(test)
-ground_flocks_ignore_walkers_but_launch_for_a_running_threat :: proc(t: ^testing.T) {
+ground_flocks_launch_for_an_active_nearby_threat :: proc(t: ^testing.T) {
     system := new(flocks.System)
     defer free(system)
     anchors := [1]flocks.Anchor{{position = {0, 2, 0}, kind = .Harbor, seed = 23}}
@@ -57,6 +57,22 @@ ground_flocks_ignore_walkers_but_launch_for_a_running_threat :: proc(t: ^testing
         }
     }
     testing.expect_value(t, flying, flocks.BOIDS_PER_FLOCK)
+}
+
+@(test)
+ground_flocks_notice_threats_at_the_more_generous_scare_radius :: proc(t: ^testing.T) {
+    system := new(flocks.System)
+    defer free(system)
+    anchors := [1]flocks.Anchor{{position = {0, 2, 0}, kind = .Harbor, seed = 29}}
+    flocks.sync_ground_anchors(system, anchors[:])
+
+    flocks.step_grounded(system, 1.0 / 60.0, {}, {15, 2, 0}, true)
+
+    launching := 0
+    for boid in system.boids[:system.boid_count] {
+        if boid.mode == .Launching do launching += 1
+    }
+    testing.expect_value(t, launching, flocks.BOIDS_PER_FLOCK)
 }
 
 @(test)

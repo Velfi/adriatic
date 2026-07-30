@@ -3930,8 +3930,15 @@ settlement_terrain_strokes_refresh_finer_lod_overlaps :: proc(t: ^testing.T) {
 @(test)
 generated_plants_select_detail_from_camera_distance :: proc(t: ^testing.T) {
     plant := third_person.Vec3{10, 40, -8}
-    testing.expect_value(t, generated_plant_detail({10, -100, -8}, plant), plants.Detail_Level.Near)
-    testing.expect_value(t, generated_plant_detail({57.99, 400, -8}, plant), plants.Detail_Level.Near)
-    testing.expect_value(t, generated_plant_detail({58, 40, -8}, plant), plants.Detail_Level.Medium)
-    testing.expect_value(t, generated_plant_detail({122, 40, -8}, plant), plants.Detail_Level.Far)
+    testing.expect_value(t, generated_plant_render_lod({10, -100, -8}, plant), Generated_Plant_Render_LOD.Hero)
+    testing.expect_value(t, generated_plant_render_lod({17.99, 400, -8}, plant), Generated_Plant_Render_LOD.Hero)
+    testing.expect_value(t, generated_plant_render_lod({18, 40, -8}, plant), Generated_Plant_Render_LOD.Near)
+    testing.expect_value(t, generated_plant_render_lod({42, 40, -8}, plant), Generated_Plant_Render_LOD.Medium)
+    testing.expect_value(t, generated_plant_render_lod({82, 40, -8}, plant), Generated_Plant_Render_LOD.Far)
+    testing.expect_value(t, generated_plant_render_lod({154, 40, -8}, plant), Generated_Plant_Render_LOD.Distant)
+    testing.expect_value(t, generated_plant_catalog_detail(.Hero), plants.Detail_Level.Near)
+    testing.expect_value(t, generated_plant_catalog_detail(.Near), plants.Detail_Level.Near)
+    testing.expect_value(t, generated_plant_catalog_detail(.Medium), plants.Detail_Level.Medium)
+    testing.expect_value(t, generated_plant_catalog_detail(.Far), plants.Detail_Level.Far)
+    testing.expect_value(t, generated_plant_catalog_detail(.Distant), plants.Detail_Level.Far)
 }

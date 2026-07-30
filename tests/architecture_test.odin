@@ -2,6 +2,7 @@ package tests
 
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
+import circulation "../packages/circulation"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
@@ -25,7 +26,7 @@ adriatic_graph_is_seed_stable_and_has_a_landmark :: proc(t: ^testing.T) {
 architecture_palette_keeps_landmark_distinct :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
-    architecture.generate(project, 1300, 1300, 0xA71D3)
+    architecture.generate_append(project, 1300, 1300, 0xA71D3)
     found_landmark := false
     found_variant := false
     for structure in project.structures[:project.structure_count] {
@@ -85,24 +86,37 @@ architecture_roof_tiles_vary_by_seed_and_tone :: proc(t: ^testing.T) {
 }
 
 @(test)
-architecture_generation_rejects_sea_level_sites :: proc(t: ^testing.T) {
-    project := terrain.new_project()
-    defer terrain.free_project(project)
-    created := architecture.generate(project, 0, 0, 0xA71D3)
-    testing.expect(t, created == 0)
-    testing.expect(t, project.structure_count == 0)
+architecture_roof_tile_weathering_is_stable_and_mid_tone_weighted :: proc(t: ^testing.T) {
+    counts: [5]int
+    changed_with_seed := false
+    for course in 0 ..< 16 {
+        for segment in 0 ..< 16 {
+            tone := architecture.architecture_roof_tile_tone(0x8128, course, segment)
+            testing.expect(t, tone >= 0 && tone < len(counts))
+            counts[tone] += 1
+            if tone != architecture.architecture_roof_tile_tone(0x8129, course, segment) {
+                changed_with_seed = true
+            }
+            testing.expect_value(
+                t,
+                architecture.architecture_roof_tile_tone(0x8128, course, segment),
+                tone,
+            )
+        }
+    }
+    for count in counts do testing.expect(t, count > 0)
+    testing.expect(t, counts[2] > counts[1])
+    testing.expect(t, counts[2] > counts[4])
+    testing.expect(t, changed_with_seed)
 }
 
 @(test)
-architecture_regeneration_preserves_seeded_styles :: proc(t: ^testing.T) {
+architecture_generation_rejects_sea_level_sites :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
-    architecture.generate(project, 1300, 1300, 0xA71D3)
-    first_seed := project.structures[0].seed
-    first_color := project.structures[0].color
-    architecture.generate(project, 1300, 1300, 0xA71D3)
-    testing.expect(t, project.structures[0].seed == first_seed)
-    testing.expect(t, project.structures[0].color == first_color)
+    created := architecture.generate_append(project, 0, 0, 0xA71D3)
+    testing.expect(t, created == 0)
+    testing.expect(t, project.structure_count == 0)
 }
 
 @(test)
@@ -125,6 +139,45 @@ architecture_append_generation_keeps_both_island_towns :: proc(t: ^testing.T) {
     }
     testing.expect(t, negative_town == first_created)
     testing.expect(t, positive_town == second_created)
+}
+
+@(test)
+default_town_plazas_clear_the_runways :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    runway_half_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH
+    runway_half_width := half_extent * terrain.DEFAULT_RUNWAY_HALF_WIDTH
+
+    for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
+        town_x, town_z := terrain.default_town_center(sign)
+        created := architecture.generate_append(
+            project,
+            town_x,
+            town_z,
+            u32(0xA71D3 + island_index),
+        )
+        testing.expect(t, created >= 12)
+    }
+
+    plan := architecture.circulation_plan(project)
+    plaza_count := 0
+    for area in plan.areas[:plan.count] {
+        if area.kind != .Plaza do continue
+        plaza_count += 1
+        for sign in terrain.DEFAULT_ISLAND_SIGNS {
+            runway_x, runway_z := terrain.default_island_center(sign)
+            runway := circulation.Area {
+                center_x = runway_x,
+                center_z = runway_z,
+                width    = runway_half_length * 2,
+                length   = runway_half_width * 2,
+                kind     = .Street,
+            }
+            testing.expect(t, !circulation.area_overlaps(area, runway))
+        }
+    }
+    testing.expect(t, plaza_count == 2)
 }
 
 @(test)

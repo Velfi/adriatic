@@ -209,6 +209,15 @@ Tweak_State :: struct {
     presentation:     Presentation_Tweak,
 }
 
+tweak_default_player :: proc() -> third_person.Config {
+    player := third_person.default_config()
+    // Start from dynamically similar scaled-mouse locomotion, then use a
+    // modest gameplay multiplier to keep traversal responsive.
+    player.move_speed = 3.2
+    player.run_speed = 6.4
+    return player
+}
+
 tweak_default_presentation :: proc() -> Presentation_Tweak {
     return {
         terrain_water = {26 / 255.0, 80 / 255.0, 104 / 255.0, 1},
@@ -321,16 +330,16 @@ tweak_default_state :: proc() -> Tweak_State {
     return {
         terrain = {tool = .Raise, radius = 48, strength = .10, hardness = .5, sea_level = 0},
         atmosphere = atmosphere.new(0x41c10),
-        player = third_person.default_config(),
+        player = tweak_default_player(),
         player_tail = mouse_tail.default_config(),
         player_animation = {
             stride_radians_per_meter = 6.0,
             trot_stride_radians_per_meter = 5.1,
             bound_stride_radians_per_meter = 5.7,
-            walk_full_speed = 4.2,
-            trot_full_speed = 6.4,
-            bound_start_speed = 8.4,
-            bound_full_speed = 10.5,
+            walk_full_speed = 3.2,
+            trot_full_speed = 4.8,
+            bound_start_speed = 5.7,
+            bound_full_speed = 6.4,
             vertical_full_speed = 5,
             locomotion_blend_rate = 8,
             airborne_blend_rate = 12,

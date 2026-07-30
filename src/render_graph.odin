@@ -13,6 +13,7 @@ Render_Graph_Context :: struct {
     static_index_buffer:      ^engine.Vk_Buffer,
     road_buffer:              ^engine.Vk_Buffer,
     foliage_buffer:           ^engine.Vk_Buffer,
+    bougainvillea_buffer:     ^engine.Vk_Buffer,
     grass_instance_buffer:    ^engine.Vk_Buffer,
     instance_vertex_buffer:   ^engine.Vk_Buffer,
     instance_index_buffer:    ^engine.Vk_Buffer,
@@ -91,10 +92,25 @@ render_graph_geometry :: proc(user_data: rawptr) {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.buffer.handle, &ctx.offset)
         vk.CmdDraw(cmd, u32(world_vertex_count), 1, 0, 0)
     }
-    if len(world_renderer.static_indices) > 0 {
+    if len(world_renderer.retained_static_draws) > 0 {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.static_vertex_buffer.handle, &ctx.offset)
         vk.CmdBindIndexBuffer(cmd, ctx.static_index_buffer.handle, 0, .UINT32)
-        vk.CmdDrawIndexed(cmd, u32(len(world_renderer.static_indices)), 1, 0, 0, 0)
+        for draw in world_renderer.retained_static_draws {
+            if draw.cache_index < 0 ||
+               draw.cache_index >= len(world_renderer.static_geometry_cache) {
+                continue
+            }
+            entry := &world_renderer.static_geometry_cache[draw.cache_index]
+            if !entry.valid || len(entry.world_indices) == 0 do continue
+            vk.CmdDrawIndexed(
+                cmd,
+                u32(len(entry.world_indices)),
+                1,
+                entry.retained_first_index,
+                i32(entry.retained_first_vertex),
+                0,
+            )
+        }
     }
     if len(world_renderer.instance_flattened) > 0 {
         vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.instance_pipelines[ctx.pipeline_index])
@@ -130,6 +146,7 @@ render_graph_foliage :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
     if len(world_renderer.foliage_vertices) <= 0 &&
        len(world_renderer.bougainvillea_vertices) <= 0 &&
+       len(world_renderer.bougainvillea_instances) <= 0 &&
        len(world_renderer.grass_instances) <= 0 &&
        len(world_renderer.wildflower_instances) <= 0 {
         return
@@ -187,6 +204,21 @@ render_graph_foliage :: proc(user_data: rawptr) {
             u32(len(world_renderer.foliage_vertices)),
             0,
         )
+    }
+    if len(world_renderer.bougainvillea_instances) > 0 {
+        vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.bougainvillea_pipelines[ctx.pipeline_index])
+        vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.bougainvillea_buffer.handle, &ctx.offset)
+        vk.CmdBindDescriptorSets(
+            cmd,
+            .GRAPHICS,
+            world_renderer.foliage_layout,
+            0,
+            1,
+            &world_renderer.bougainvillea_descriptor,
+            0,
+            nil,
+        )
+        vk.CmdDraw(cmd, 24, u32(len(world_renderer.bougainvillea_instances)), 0, 0)
     }
     if len(world_renderer.grass_instances) > 0 {
         vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.grass_pipelines[ctx.pipeline_index])

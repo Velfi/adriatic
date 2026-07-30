@@ -1563,21 +1563,6 @@ curve_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: 
     }
 }
 
-seed_formation_capture :: proc(editor: ^Editor) {
-    if editor == nil do return
-    center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-    architecture.generate(&editor.project, center, center, 0xA71D3)
-    editor.authoring_tool = .Formations
-    editor.tool = .Structure
-    editor.structure_selected = -1
-    editor.structure_placing = false
-    editor.structure_scatter_mode = false
-    editor.structure_auto_kind = false
-    editor.architecture_node_mode = true
-    editor.architecture_paint_mode = false
-    editor.road_mode = false
-}
-
 seed_foliage_capture :: proc(editor: ^Editor) {
     if editor == nil do return
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
@@ -1937,7 +1922,7 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
     case "foliage_stress":
         seed_foliage_stress(editor)
     case "formations":
-        seed_formation_capture(editor)
+        seed_default_island_towns(editor)
     case "structure_lod":
         seed_structure_lod_benchmark(editor)
     case "structure_lod_near":
@@ -2798,11 +2783,41 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     storefront_angle_seed_override := -1
     storefront_plan_seed_override := -1
     ground_level_capture := false
+    roof_capture := false
+    roof_landmark_capture := target_arg == "roof-landmark"
+    roof_ceremonial_capture := target_arg == "roof-ceremonial"
+    roof_aegean_parapet_capture := target_arg == "roof-style-parapet-aegean"
+    roof_style_capture := false
+    roof_style_target := architecture.Roof_Style.Gable
+    switch target_arg {
+    case "roof-style-gable":
+        roof_style_capture, roof_style_target = true, .Gable
+    case "roof-style-low-gable":
+        roof_style_capture, roof_style_target = true, .Low_Gable
+    case "roof-style-hip":
+        roof_style_capture, roof_style_target = true, .Hip
+    case "roof-style-parapet":
+        roof_style_capture, roof_style_target = true, .Parapet
+    }
+    if roof_style_capture do structure_lod_force(0)
+    if roof_aegean_parapet_capture do structure_lod_force(0)
     ordinal_arg := target_arg
     ground_prefix := "ground-"
     if len(target_arg) > len(ground_prefix) && target_arg[:len(ground_prefix)] == ground_prefix {
         ground_level_capture = true
         ordinal_arg = target_arg[len(ground_prefix):]
+    }
+    roof_prefix := "roof-"
+    if len(target_arg) > len(roof_prefix) && target_arg[:len(roof_prefix)] == roof_prefix {
+        roof_capture = true
+        ordinal_arg = target_arg[len(roof_prefix):]
+    }
+    roof_medium_prefix := "roof-medium-"
+    if len(target_arg) > len(roof_medium_prefix) &&
+       target_arg[:len(roof_medium_prefix)] == roof_medium_prefix {
+        roof_capture = true
+        ordinal_arg = target_arg[len(roof_medium_prefix):]
+        structure_lod_force(1)
     }
     bougainvillea_prefix := "bougainvillea-"
     if len(target_arg) > len(bougainvillea_prefix) && target_arg[:len(bougainvillea_prefix)] == bougainvillea_prefix {
@@ -3022,6 +3037,96 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
             ordinal += 1
         }
     }
+    if roof_style_capture {
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind != .Architecture || settlement_structure_is_landmark(structure) {
+                continue
+            }
+            if world_architecture_roof_style(structure) == roof_style_target {
+                target_index = index
+                break
+            }
+        }
+        // Keep every style fixture available even if a deterministic town
+        // happens not to contain that seed modulo. Mutations stay inside the
+        // transient capture project.
+        if target_index < 0 {
+            for structure, index in editor.project.structures[:editor.project.structure_count] {
+                if structure.kind != .Architecture || settlement_structure_is_landmark(structure) {
+                    continue
+                }
+                target_index = index
+                target := &editor.project.structures[index]
+                target.building.archetype = .Dwelling
+                target.building.landmark_kind = .None
+                target.building.region = .Adriatic
+                target.seed = target.seed / 4 * 4 + u32(roof_style_target)
+                world_terrain_invalidate_all(editor)
+                break
+            }
+        }
+    }
+    if roof_aegean_parapet_capture {
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind != .Architecture || settlement_structure_is_landmark(structure) {
+                continue
+            }
+            identity := architecture.architecture_resolve_legacy_identity(structure)
+            if identity.region == .Aegean {
+                target_index = index
+                break
+            }
+        }
+        if target_index < 0 {
+            for structure, index in editor.project.structures[:editor.project.structure_count] {
+                if structure.kind != .Architecture || settlement_structure_is_landmark(structure) {
+                    continue
+                }
+                target_index = index
+                target := &editor.project.structures[index]
+                target.building.archetype = .Dwelling
+                target.building.landmark_kind = .None
+                target.building.region = .Aegean
+                world_terrain_invalidate_all(editor)
+                break
+            }
+        }
+    }
+    if roof_landmark_capture {
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind == .Architecture && settlement_structure_is_landmark(structure) {
+                target_index = index
+                break
+            }
+        }
+    }
+    if roof_ceremonial_capture {
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind != .Architecture do continue
+            identity := architecture.architecture_resolve_legacy_identity(structure)
+            if identity.archetype == .Church ||
+               identity.archetype == .Campanile ||
+               identity.archetype == .Cycladic_Bell {
+                target_index = index
+                break
+            }
+        }
+        // Some deterministic settlement seeds contain only civic landmarks.
+        // This is a transient capture world, so promote a suitably sized
+        // ordinary structure when necessary to keep the ceremonial roof
+        // regression fixture available for every seed.
+        if target_index < 0 {
+            for structure, index in editor.project.structures[:editor.project.structure_count] {
+                if structure.kind != .Architecture || structure.width < 9 || structure.depth < 12 {
+                    continue
+                }
+                target_index = index
+                editor.project.structures[index].building.archetype = .Church
+                editor.project.structures[index].building.landmark_kind = .Church
+                break
+            }
+        }
+    }
 
     generated_storefront_capture := target_arg == "storefront-generated" || target_arg == "storefront-generated-night"
     storefront_capture :=
@@ -3141,6 +3246,9 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     if ground_level_capture {
         camera_distance = building.depth * .5 + max(f32(10), building.width * .48)
     }
+    if roof_capture {
+        camera_distance = building.depth * .5 + max(f32(14), building.width * .80)
+    }
     if storefront_plan_seed_override >= 0 {
         camera_distance = building.depth * .5 + max(f32(28), building.width * 1.25)
     }
@@ -3171,9 +3279,9 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     eye_z -= facade_x * side_offset
     eye_y :=
         terrain.sample_height(&editor.project, 0, eye_x, eye_z) +
-        (storefront_plan_seed_override >= 0 ? f32(6.2) : f32(3.2))
+        (roof_capture ? building.height + max(f32(10), building.width * .55) : storefront_plan_seed_override >= 0 ? f32(6.2) : f32(3.2))
     target_y :=
-        storefront_plan_seed_override >= 0 ? building.base_y + building.height * .34 : ground_level_capture ? building.base_y + 2.4 : building.base_y + clamp(building.height * .50, f32(7), f32(18))
+        roof_capture ? building.base_y + building.height + building.width * .14 : storefront_plan_seed_override >= 0 ? building.base_y + building.height * .34 : ground_level_capture ? building.base_y + 2.4 : building.base_y + clamp(building.height * .50, f32(7), f32(18))
     editor.capture_world_only = true
     // Keep the procedural street dressing in the architectural capture so
     // façades read as a walkable Mediterranean neighborhood, not isolated
@@ -6396,22 +6504,36 @@ world_under_cursor :: proc(mouse, center: rl.Vector2, scale: f32) -> (f32, f32) 
 
 @(no_instrumentation)
 terrain_color_variation :: #force_inline proc(color: rl.Color, x, z: f32) -> rl.Color {
-    // Broad, overlapping waves read as irregular patches instead of a repeated
-    // per-cell pattern. World-space sampling keeps the color stable as clipmap
-    // levels and the camera move.
-    broad := f32(math.sin(f64(x * .021 + z * .013)))
-    cross := f32(math.sin(f64(x * -.047 + z * .039 + 1.7)))
-    detail := f32(math.sin(f64(x * .113 + z * -.097 + broad * 1.4)))
-    variation := broad * .52 + cross * .31 + detail * .17
+    // Layer kilometre- and field-scale waves so whole slopes and headlands
+    // develop distinct color regions. Feeding the continental field back into
+    // the other phases bends their otherwise straight bands into broad,
+    // irregular patches. World-space sampling keeps the result stable across
+    // clipmap levels and camera movement.
+    continental := f32(math.sin(f64(x * .0017 + z * .0011 + .8)))
+    regional := f32(math.sin(f64(
+        x * -.0041 + z * .0033 + continental * 1.65 + 2.3,
+    )))
+    field := f32(math.sin(f64(
+        x * .0107 + z * -.0083 + continental * .9 + regional * .7,
+    )))
+    local := f32(math.sin(f64(
+        x * -.031 + z * .027 + regional * 1.1 + 1.4,
+    )))
+    variation :=
+        continental * .38 +
+        regional * .34 +
+        field * .20 +
+        local * .08
 
-    // A slight warm/cool shift varies hue as well as brightness. Keeping the
-    // range restrained preserves the authored material identity.
+    // A warm/cool shift varies hue as well as brightness. Regional fields get
+    // enough chroma to read from an overview, while the bounded range
+    // preserves the authored material identity.
     warm := max(variation, 0)
     cool := max(-variation, 0)
     return {
-        u8(clamp(f32(color.r) * (1 + variation * .075) + warm * 3, 0, 255)),
-        u8(clamp(f32(color.g) * (1 + variation * .055) + cool * 2, 0, 255)),
-        u8(clamp(f32(color.b) * (1 + variation * .035) + cool * 4, 0, 255)),
+        u8(clamp(f32(color.r) * (1 + variation * .10) + warm * 5, 0, 255)),
+        u8(clamp(f32(color.g) * (1 + variation * .065) + cool * 3, 0, 255)),
+        u8(clamp(f32(color.b) * (1 + variation * .035) + cool * 6, 0, 255)),
         color.a,
     }
 }
@@ -9050,7 +9172,7 @@ adriatic_run :: proc(
                 seed_city_capture(editor)
             }
         } else {
-            seed_formation_capture(editor)
+            seed_default_island_towns(editor)
             // Keep the flight capture exercising distant road depth precision
             // as the chase camera climbs away from the authored island.
             if capture_flight_mode do seed_road_capture(editor)
@@ -10653,18 +10775,6 @@ adriatic_run :: proc(
                 if !control_key_down() && rl.IsKeyPressed(.L) do authoring_select_tool(editor, .ClimbingLeaves)
                 if rl.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)
                 if !control_key_down() && rl.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
-            }
-            if !imgui_captures_keyboard() && control_key_down() && rl.IsKeyPressed(.G) {
-                center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-                architecture.generate(&editor.project, center, center, 0xA71D3)
-                editor.authoring_tool = .Formations
-                editor.tool = .Structure
-                editor.road_mode = false
-                editor.curve_mode = false
-                curve_reset(editor)
-                editor.structure_selected = -1
-                editor.architecture_node_mode = true
-                editor.architecture_paint_mode = false
             }
             if !imgui_captures_keyboard() && rl.IsKeyPressed(.F) do editor_focus_terrain(editor)
             if control_key_down() && rl.IsKeyPressed(.S) do terrain_project_save(editor)

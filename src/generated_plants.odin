@@ -19,6 +19,14 @@ Generated_Plant_Cache_Entry :: struct {
 generated_plant_cache: [GENERATED_PLANT_CACHE_CAPACITY]Generated_Plant_Cache_Entry
 generated_plant_cache_count: int
 
+Generated_Plant_Render_LOD :: enum u8 {
+    Hero,
+    Near,
+    Medium,
+    Far,
+    Distant,
+}
+
 generated_plant_cached :: proc(
     species: plants.Species,
     seed: u64,
@@ -78,12 +86,53 @@ generated_plant_vector :: #force_inline proc(vector: lsystem.Vec3, yaw: f32) -> 
     }
 }
 
-generated_plant_detail :: #force_inline proc(
+generated_plant_render_lod :: #force_inline proc(
     camera_position, plant_position: third_person.Vec3,
-) -> plants.Detail_Level {
+) -> Generated_Plant_Render_LOD {
     dx := camera_position.x - plant_position.x
     dz := camera_position.z - plant_position.z
-    return plants.detail_for_distance(f32(math.sqrt(f64(dx * dx + dz * dz))))
+    distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    if distance < 8 do return .Hero
+    if distance < 32 do return .Near
+    if distance < 72 do return .Medium
+    if distance < 144 do return .Far
+    return .Distant
+}
+
+generated_plant_catalog_detail :: #force_inline proc(lod: Generated_Plant_Render_LOD) -> plants.Detail_Level {
+    switch lod {
+    case .Hero, .Near:
+        return .Near
+    case .Medium:
+        return .Medium
+    case .Far, .Distant:
+        return .Far
+    }
+    return .Far
+}
+
+world_generated_plant_flower_hero :: proc(
+    center: third_person.Vec3,
+    radius, scale: f32,
+    color: rl.Color,
+) {
+    // A close flower needs a radial silhouette. The ordinary LOD's single
+    // upright prism is deliberately retained outside arm's reach.
+    petal_radius := radius * scale * .62
+    spread := radius * scale * .72
+    for petal in 0 ..< 5 {
+        angle := f32(petal) * math.PI * 2 / 5
+        petal_center := center + third_person.Vec3{math.cos(angle) * spread, 0, math.sin(angle) * spread}
+        world_vertical_prism(
+            petal_center,
+            petal_radius,
+            petal_radius * .72,
+            petal_radius * .72,
+            angle,
+            color,
+        )
+    }
+    world_vertical_prism(center, petal_radius * .68, petal_radius * .68, petal_radius, 0, color)
 }
 
 // world_generated_plant is the lightweight world-facing consumer of the plant
@@ -97,10 +146,11 @@ world_generated_plant :: proc(
     scale: f32 = 1,
     yaw: f32 = 0,
 ) -> bool {
-    detail := plants.Detail_Level.Near
+    render_lod := Generated_Plant_Render_LOD.Hero
     if world_renderer.editor != nil {
-        detail = generated_plant_detail(world_renderer.editor.camera_pose.position, base)
+        render_lod = generated_plant_render_lod(world_renderer.editor.camera_pose.position, base)
     }
+    detail := generated_plant_catalog_detail(render_lod)
     generated := generated_plant_cached(species, seed, detail)
     if generated == nil do return false
 
@@ -137,6 +187,11 @@ world_generated_plant :: proc(
             }
             reproductive_color := plant_generator_stage_color(accent, attachment.stage)
             radius *= stage_scale
+            if attachment.kind == .Flower && render_lod == .Hero {
+                world_generated_plant_flower_hero(center, radius, scale, reproductive_color)
+                continue
+            }
+            if render_lod == .Distant do continue
             world_vertical_prism(
                 center,
                 radius * scale,

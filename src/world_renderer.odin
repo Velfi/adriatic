@@ -356,6 +356,38 @@ when ODIN_TEST {
     }
 
     @(test)
+    roof_surface_height_is_symmetric_and_reaches_eaves :: proc(t: ^testing.T) {
+        eave_y, rise, half_width := f32(12), f32(6), f32(10)
+        testing.expect(t, math.abs(world_roof_surface_y(eave_y, rise, half_width, 0) - 18) < .0001)
+        testing.expect(t, math.abs(world_roof_surface_y(eave_y, rise, half_width, -4) - 15.6) < .0001)
+        testing.expect(t, math.abs(world_roof_surface_y(eave_y, rise, half_width, 4) - 15.6) < .0001)
+        testing.expect(t, math.abs(world_roof_surface_y(eave_y, rise, half_width, -10) - 12) < .0001)
+        testing.expect(t, math.abs(world_roof_surface_y(eave_y, rise, half_width, 10) - 12) < .0001)
+        testing.expect(t, math.abs(world_roof_surface_y(eave_y, rise, half_width, 40) - 12) < .0001)
+        testing.expect_value(t, world_roof_surface_y(eave_y, rise, 0, 3), eave_y)
+    }
+
+    @(test)
+    gable_attic_opening_plan_preserves_rake_clearance :: proc(t: ^testing.T) {
+        gable_kinds := [2]bool{false, true}
+        for width_index in 6 ..= 48 {
+            building_width := f32(width_index)
+            for low_gable in gable_kinds {
+                opening_width, opening_height, rise, center_fraction, valid :=
+                    world_gable_attic_opening_plan(building_width, low_gable)
+                if !valid do continue
+                frame_margin := f32(.18)
+                top_fraction := center_fraction + (opening_height * .5 + frame_margin) / rise
+                available_width := building_width * (1 - top_fraction) * .72
+                testing.expect(t, opening_width + frame_margin * 2 <= available_width + .0001)
+                testing.expect(t, top_fraction < 1)
+                testing.expect(t, opening_width >= .80)
+                testing.expect(t, opening_height >= .65)
+            }
+        }
+    }
+
+    @(test)
     static_frustum_is_conservative_at_planes_and_rejects_clear_misses :: proc(t: ^testing.T) {
         camera := Perspective_Camera {
             position     = {},
@@ -470,11 +502,23 @@ Bougainvillea_Card_Descriptor :: struct {
     yaw_bias:     f32,
 }
 
+Bougainvillea_Instance :: struct {
+    center:    [3]f32,
+    size:      [2]f32,
+    tile:      u32,
+    // x: mirror, y: roll, z: value, w: young-growth marker.
+    params:    [4]f32,
+    yaw_bias:  f32,
+}
+
 Grass_Instance :: struct {
-    center: [3]f32,
-    size:   [2]f32,
-    tile:   u32,
-    color:  [4]f32,
+    center:       [3]f32,
+    size:         [2]f32,
+    tile:         u32,
+    color:        [4]f32,
+    ground_color: [4]f32,
+    // x: deterministic density roll, y: field radius, z: GPU culling enabled.
+    cull_params:  [4]f32,
 }
 
 World_Mesh_Instance :: struct {
@@ -521,6 +565,13 @@ Static_Geometry_Cache_Entry :: struct {
     world_indices:          [dynamic]u32,
     foliage_vertices:       [dynamic]Foliage_Vertex,
     bougainvillea_vertices: [dynamic]Foliage_Vertex,
+    bougainvillea_cards:    [dynamic]Bougainvillea_Card_Descriptor,
+    retained_first_vertex:  u32,
+    retained_first_index:   u32,
+}
+
+Retained_Static_Draw :: struct {
+    cache_index: int,
 }
 
 Climbing_Leaf_Geometry_Cache_Entry :: struct {
@@ -538,7 +589,8 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
 }
 
 TOWN_MOUSE_CACHE_COUNT :: len(terrain.DEFAULT_ISLAND_SIGNS) * 7 + 4
-TOWN_MOUSE_ANIMATION_HZ :: f32(30)
+TOWN_MOUSE_GEOMETRY_ANIMATION_HZ :: f32(12)
+TOWN_MOUSE_PORTRAIT_ANIMATION_HZ :: f32(30)
 TOWN_MOUSE_TERRAIN_RADIUS :: f32(2.5)
 TOWN_MOUSE_GROUND_SAMPLE_COUNT :: 32
 
@@ -627,6 +679,7 @@ World_Renderer :: struct {
     sky_pipelines:                       [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     particle_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     foliage_pipelines:                   [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    bougainvillea_pipelines:             [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     grass_pipelines:                     [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     instance_pipelines:                  [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     layout:                              vk.PipelineLayout,
@@ -655,6 +708,7 @@ World_Renderer :: struct {
     static_index:                        [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     road_vertex:                         [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     foliage_vertex:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    bougainvillea_instance:              [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     grass_instance:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     instance_vertex:                     [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     instance_index:                      [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
@@ -668,9 +722,14 @@ World_Renderer :: struct {
     scene_daylight:                      f32,
     static_vertices:                     [dynamic]World_Vertex,
     static_indices:                      [dynamic]u32,
+    retained_static_draws:               [dynamic]Retained_Static_Draw,
+    retained_static_revision:            u64,
+    retained_static_uploaded_revision:   [engine.MAX_FRAMES_IN_FLIGHT]u64,
+    retained_static_dirty:               bool,
     road_vertices:                       [dynamic]World_Vertex,
     foliage_vertices:                    [dynamic]Foliage_Vertex,
     bougainvillea_vertices:              [dynamic]Foliage_Vertex,
+    bougainvillea_instances:             [dynamic]Bougainvillea_Instance,
     grass_instances:                     [dynamic]Grass_Instance,
     wildflower_instances:                [dynamic]Grass_Instance,
     instance_vertices:                   [dynamic]World_Vertex,
@@ -729,6 +788,12 @@ World_Renderer :: struct {
     architecture_alley_render_cache:     [dynamic]Architecture_Alley_Render_Cache,
     architecture_alley_terrain_revision: u64,
     architecture_alley_project_revision: u64,
+    architecture_alley_geometry_cache:   [dynamic]World_Vertex,
+    architecture_alley_geometry_plan:    [dynamic]architecture.City_Alley,
+    architecture_alley_geometry_terrain_revision: u64,
+    architecture_alley_geometry_project_revision: u64,
+    architecture_alley_geometry_valid:   bool,
+    architecture_alley_geometry_building: bool,
     architecture_alley_overlap_cache:    [dynamic]Architecture_Alley_Overlap_Cache,
     architecture_alley_overlap_plan:     [dynamic]architecture.City_Alley,
     architecture_street_area_cache:      [dynamic]Architecture_Street_Area_Cache,
@@ -869,6 +934,15 @@ world_frame_geometry_buffers_ensure :: proc(frame: int) -> bool {
         vk.DeviceSize(foliage_count * size_of(Foliage_Vertex)),
         {.VERTEX_BUFFER},
         "world foliage vertex buffer",
+    ) {
+        return false
+    }
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.bougainvillea_instance[frame],
+        vk.DeviceSize(len(world_renderer.bougainvillea_instances) * size_of(Bougainvillea_Instance)),
+        {.VERTEX_BUFFER},
+        "world bougainvillea instance buffer",
     ) {
         return false
     }
@@ -1067,6 +1141,23 @@ world_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color) ->
 @(no_instrumentation)
 world_water_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Water, {0, 1, 0}, {}, {}}
+}
+
+@(no_instrumentation)
+world_ocean_vertex :: #force_inline proc(
+    editor: ^Editor,
+    point: third_person.Vec3,
+    color: rl.Color,
+) -> World_Vertex {
+    vertex := world_water_vertex(point, color)
+    // Ocean shading receives the actual heightfield elevation above sea level.
+    // Interpolation across the local ocean grid turns that signal into a
+    // shoreline band without baking the default islands into the shader.
+    vertex.material = {
+        terrain.sample_height(&editor.project, 0, point.x, point.z) - editor.project.sea_level,
+        1,
+    }
+    return vertex
 }
 
 @(no_instrumentation)
@@ -1289,6 +1380,8 @@ world_greek_asset_in_view :: proc(editor: ^Editor, asset: Greek_Asset, placement
 }
 
 world_greek_assets :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_greek_assets")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil do return
     for placement in editor.greek_placements[:editor.greek_placement_count] {
         if placement.asset_index < 0 || placement.asset_index >= GREEK_ASSET_CAPACITY do continue
@@ -1527,6 +1620,23 @@ world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.
         world_water_vertex(a, color),
         world_water_vertex(c, color),
         world_water_vertex(d, color),
+    )
+}
+
+@(no_instrumentation)
+world_ocean_quad :: #force_inline proc(
+    editor: ^Editor,
+    a, b, c, d: third_person.Vec3,
+    color: rl.Color,
+) {
+    append(
+        &world_renderer.vertices,
+        world_ocean_vertex(editor, a, color),
+        world_ocean_vertex(editor, b, color),
+        world_ocean_vertex(editor, c, color),
+        world_ocean_vertex(editor, a, color),
+        world_ocean_vertex(editor, c, color),
+        world_ocean_vertex(editor, d, color),
     )
 }
 
@@ -1859,6 +1969,8 @@ world_road_cache_chunk_finish :: proc(first_vertex: int) {
 }
 
 world_roads :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_roads")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil do return
     graph := &editor.project.road_graph
     if !world_renderer.road_graph_valid || world_renderer.road_revision != editor.project.revision {
@@ -1947,6 +2059,7 @@ world_ocean :: proc(editor: ^Editor) {
     center_z := f32(math.floor(f64(camera.position.z / cell))) * cell
     ocean_y := editor.project.sea_level - (editor.in_map ? f32(.08) : f32(2))
     color := rl.Color{48, 112, 142, 255}
+    terrain_half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for z_index in 0 ..< divisions {
         z0 := center_z - extent + f32(z_index) * cell
         z1 := z0 + cell
@@ -1956,6 +2069,30 @@ world_ocean :: proc(editor: ^Editor) {
             // Reverse winding so the ocean's upward face is the front (CCW) face
             // and survives back-face culling from a downward-looking camera.
             world_water_quad({x0, ocean_y, z0}, {x0, ocean_y, z1}, {x1, ocean_y, z1}, {x1, ocean_y, z0}, color)
+        }
+    }
+
+    // Match the authored terrain at a useful shoreline resolution. The far
+    // ocean remains camera-snapped and coarse; only the finite terrain domain
+    // pays for this denser, terrain-dependent shading signal.
+    local_cell := f32(terrain.BASE_CELL_SIZE * 4)
+    local_divisions := int(math.ceil(f64(terrain.WORLD_SIZE_METERS / local_cell)))
+    local_cell = terrain.WORLD_SIZE_METERS / f32(local_divisions)
+    local_ocean_y := ocean_y + .004
+    for z_index in 0 ..< local_divisions {
+        z0 := -terrain_half_extent + f32(z_index) * local_cell
+        z1 := z0 + local_cell
+        for x_index in 0 ..< local_divisions {
+            x0 := -terrain_half_extent + f32(x_index) * local_cell
+            x1 := x0 + local_cell
+            world_ocean_quad(
+                editor,
+                {x0, local_ocean_y, z0},
+                {x0, local_ocean_y, z1},
+                {x1, local_ocean_y, z1},
+                {x1, local_ocean_y, z0},
+                color,
+            )
         }
     }
 }
@@ -2061,6 +2198,12 @@ clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: 
         clipmap_vertex_color(editor, level, world_x, world_z, height, transition_weight),
     )
     vertex.kind = .Terrain
+    // Terrain vertices otherwise leave material.x unused. Preserve whether
+    // this clipmap sample is grass so the world shader can carry the field's
+    // traveling wind sheen across the ground beneath the individual cards.
+    // Interpolation naturally softens the effect at painted material edges.
+    vertex.material[0] =
+        terrain.ground_surface_at(&editor.project, level, world_x, world_z) == .Grass ? 1 : 0
     vertices[z * CLIPMAP_GRID_RESOLUTION + x] = vertex
 }
 
@@ -2202,6 +2345,7 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
         if !entry.valid do continue
         if world_terrain_structure_intersects(entry.structure, changed) {
             entry.valid = false
+            world_renderer.retained_static_dirty = true
         }
     }
     for &entry in world_renderer.foliage_geometry_cache {
@@ -2234,6 +2378,7 @@ world_terrain_invalidate_all :: proc(editor: ^Editor) {
         }
     }
     for &entry in world_renderer.static_geometry_cache do entry.valid = false
+    world_renderer.retained_static_dirty = true
     for &entry in world_renderer.foliage_geometry_cache do entry.valid = false
     for &entry in world_renderer.climbing_leaf_geometry_cache do entry.valid = false
     for &entry in world_renderer.town_mouse_geometry_cache do entry.valid = false
@@ -2508,6 +2653,8 @@ world_runway_papi :: proc(
 }
 
 world_infrastructure :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_infrastructure")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     half := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         x, z := sign * half * terrain.DEFAULT_ISLAND_OFFSET, sign * half * terrain.DEFAULT_ISLAND_OFFSET
@@ -2910,6 +3057,26 @@ world_architecture_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, col
         world_vertex(a, color),
         world_vertex(c, color),
         world_vertex(d, color),
+    }
+    for &vertex in vertices {
+        vertex.kind = .Architecture
+        vertex.normal = {normal.x, normal.y, normal.z}
+        vertex.material = {material, 0}
+    }
+    append(&world_renderer.vertices, ..vertices[:])
+}
+
+@(no_instrumentation)
+world_architecture_triangle :: #force_inline proc(
+    a, b, c: third_person.Vec3,
+    color: rl.Color,
+    material: f32 = 0,
+) {
+    normal := linalg.normalize0(linalg.cross(b - a, c - a))
+    vertices := [3]World_Vertex {
+        world_vertex(a, color),
+        world_vertex(b, color),
+        world_vertex(c, color),
     }
     for &vertex in vertices {
         vertex.kind = .Architecture
@@ -3741,17 +3908,61 @@ world_roof_offset :: proc(point, normal: third_person.Vec3, amount: f32) -> thir
     return point + normal * amount
 }
 
+world_roof_surface_y :: #force_inline proc(eave_y, rise, half_width, local_x: f32) -> f32 {
+    if half_width <= .0001 do return eave_y
+    slope_fraction := 1 - clamp(math.abs(local_x) / half_width, f32(0), f32(1))
+    return eave_y + rise * slope_fraction
+}
+
+world_gable_attic_opening_plan :: proc(building_width: f32, low_gable: bool) -> (
+    opening_width, opening_height, rise, center_fraction: f32,
+    valid: bool,
+) {
+    rise = building_width * (low_gable ? f32(.24) : f32(.34))
+    if rise <= .0001 do return
+    center_fraction = low_gable ? f32(.36) : f32(.40)
+    opening_height = min(clamp(rise * .25, f32(.75), f32(2.4)), rise * .38)
+    frame_margin := f32(.18)
+    top_fraction := center_fraction + (opening_height * .5 + frame_margin) / rise
+    available_width := building_width * max(f32(0), 1 - top_fraction) * .72
+    opening_width = min(clamp(building_width * .12, f32(1.0), f32(2.2)), available_width - frame_margin * 2)
+    valid = opening_height >= .65 && opening_width >= .80
+    return
+}
+
+world_architecture_chimney_flashing :: proc(
+    structure: terrain.Structure,
+    eave_y, rise, half_roof_width, chimney_local_x, chimney_local_z, chimney_width: f32,
+) {
+    apron_half := chimney_width * .5 + .24
+    local_min_x, local_max_x := chimney_local_x - apron_half, chimney_local_x + apron_half
+    local_min_z, local_max_z := chimney_local_z - apron_half, chimney_local_z + apron_half
+    a_x, a_z := world_rotate_xz(structure.center_x, structure.center_z, local_min_x, local_min_z, structure.rotation)
+    b_x, b_z := world_rotate_xz(structure.center_x, structure.center_z, local_min_x, local_max_z, structure.rotation)
+    c_x, c_z := world_rotate_xz(structure.center_x, structure.center_z, local_max_x, local_max_z, structure.rotation)
+    d_x, d_z := world_rotate_xz(structure.center_x, structure.center_z, local_max_x, local_min_z, structure.rotation)
+    lift := f32(.16)
+    a := third_person.Vec3{a_x, world_roof_surface_y(eave_y, rise, half_roof_width, local_min_x) + lift, a_z}
+    b := third_person.Vec3{b_x, world_roof_surface_y(eave_y, rise, half_roof_width, local_min_x) + lift, b_z}
+    c := third_person.Vec3{c_x, world_roof_surface_y(eave_y, rise, half_roof_width, local_max_x) + lift, c_z}
+    d := third_person.Vec3{d_x, world_roof_surface_y(eave_y, rise, half_roof_width, local_max_x) + lift, d_z}
+    world_quad(a, b, c, d, {104, 94, 81, 255})
+}
+
 // A Greek tile roof reads through its repeated courses: each course runs from
 // the lower edge toward the ridge, with small gaps that catch the light.
 world_architecture_tile_slope :: proc(
     edge_a, edge_b, ridge_a, ridge_b: third_person.Vec3,
     courses, segments: int,
-    seed: u32,
+    palette_seed, pattern_seed: u32,
+    reverse_winding := false,
 ) {
     face_normal := world_roof_face_normal(edge_a, edge_b, ridge_a)
     for course in 0 ..< courses {
         course_start := f32(course) / f32(courses)
-        course_end := min(course_start + .78 / f32(courses), 1)
+        // Leave only a narrow shadow joint between overlapping courses. The
+        // former 22% gap made each tile read as a large floating roof panel.
+        course_end := min(course_start + .90 / f32(courses), 1)
         // Keep the decorative courses a constant distance in front of the
         // weatherproof plane. Offsetting in world Y makes the actual gap vary
         // with roof pitch and lets hip-face overlays intersect at their seams.
@@ -3766,25 +3977,110 @@ world_architecture_tile_slope :: proc(
 
             outer_a := linalg.lerp(edge_a, edge_b, segment_start)
             outer_b := linalg.lerp(edge_a, edge_b, segment_end)
-            inner_a := linalg.lerp(outer_a, ridge_a, course_start)
-            inner_b := linalg.lerp(outer_b, ridge_b, course_start)
-            next_a := linalg.lerp(outer_a, ridge_a, course_end)
-            next_b := linalg.lerp(outer_b, ridge_b, course_end)
+            // Preserve the segment interval as it climbs the slope. Mapping
+            // every segment to both full ridge endpoints makes neighboring
+            // tiles fan across one another, producing coplanar overlap and
+            // severe z-fighting near the ridge.
+            ridge_segment_a := linalg.lerp(ridge_a, ridge_b, segment_start)
+            ridge_segment_b := linalg.lerp(ridge_a, ridge_b, segment_end)
+            inner_a := linalg.lerp(outer_a, ridge_segment_a, course_start)
+            inner_b := linalg.lerp(outer_b, ridge_segment_b, course_start)
+            next_a := linalg.lerp(outer_a, ridge_segment_a, course_end)
+            next_b := linalg.lerp(outer_b, ridge_segment_b, course_end)
             inner_a = world_roof_offset(inner_a, face_normal, relief)
             inner_b = world_roof_offset(inner_b, face_normal, relief)
             next_a = world_roof_offset(next_a, face_normal, relief)
             next_b = world_roof_offset(next_b, face_normal, relief)
 
-            tone := int((seed + u32(course * 11 + segment * 3)) % 5)
-            tile_bytes := architecture.architecture_roof_tile_color(seed, tone)
+            tone := architecture.architecture_roof_tile_tone(pattern_seed, course, segment)
+            tile_bytes := architecture.architecture_roof_tile_color(palette_seed, tone)
             tile := rl.Color{tile_bytes[0], tile_bytes[1], tile_bytes[2], tile_bytes[3]}
-            world_quad(inner_a, inner_b, next_b, next_a, tile)
+            if reverse_winding {
+                world_quad(inner_a, next_a, next_b, inner_b, tile)
+            } else {
+                world_quad(inner_a, inner_b, next_b, next_a, tile)
+            }
         }
+    }
+
+    // Raised cover rolls run continuously down the fall line and turn the
+    // colored course grid into a recognizable barrel-tile roof. A small
+    // number of stylized rolls is much cheaper and calmer at game scale than
+    // modeling every pan and cap tile individually.
+    slope_length := linalg.length(ridge_a - edge_a)
+    roll_radius := clamp(slope_length * .008, f32(.055), f32(.095))
+    roll_relief := .12 + roll_radius * .55
+    roll_bytes := architecture.architecture_roof_tile_color(palette_seed, 2)
+    roll_color := rl.Color{roll_bytes[0], roll_bytes[1], roll_bytes[2], roll_bytes[3]}
+    // Face-edge seams already receive fascia or hip caps; adding a roll there
+    // doubles the geometry and produces a bright outline around the roof.
+    for boundary in 1 ..< segments {
+        across := f32(boundary) / f32(segments)
+        eave_point := linalg.lerp(edge_a, edge_b, across)
+        ridge_point := linalg.lerp(ridge_a, ridge_b, across)
+        lift := face_normal * roll_relief
+        world_tube_between(
+            eave_point + lift,
+            ridge_point + lift,
+            face_normal,
+            roll_radius,
+            roll_radius,
+            roll_color,
+        )
     }
 }
 
+world_architecture_roof_cap_run :: proc(
+    a, b: third_person.Vec3,
+    radius: f32,
+    palette_seed, pattern_seed: u32,
+    detailed := true,
+) {
+    run_length := linalg.length(b - a)
+    if run_length <= .001 do return
+    // At medium LOD the run is below the size where individual overlaps are
+    // visible. Keep one tube for the silhouette and reserve the segmented
+    // cap-tile construction for near roofs.
+    cap_count := 1
+    if detailed {
+        cap_count = clamp(int(math.round(f64(run_length / 1.35))), 3, 14)
+    }
+    for cap_index in 0 ..< cap_count {
+        start_t := f32(cap_index) / f32(cap_count)
+        // Traditional cap tiles overlap the next unit rather than meeting at
+        // a perfectly machined seam. The overlap also keeps the weatherproof
+        // roof plane hidden between the short cylindrical pieces.
+        end_t := min(f32(cap_index + 1) / f32(cap_count) + .08 / f32(cap_count), f32(1))
+        cap_a := linalg.lerp(a, b, start_t)
+        cap_b := linalg.lerp(a, b, end_t)
+        tone := architecture.architecture_roof_tile_tone(pattern_seed, 0, cap_index)
+        cap_bytes := architecture.architecture_roof_tile_color(palette_seed, tone)
+        cap_color := rl.Color{cap_bytes[0], cap_bytes[1], cap_bytes[2], cap_bytes[3]}
+        world_tube_between(cap_a, cap_b, {0, 1, 0}, radius, radius, cap_color)
+    }
+}
+
+world_architecture_pyramid_cap :: proc(
+    center_x, center_z, base_y, width, depth, rotation, tip_height: f32,
+    color: rl.Color,
+) {
+    front_left_x, front_left_z := world_rotate_xz(center_x, center_z, -width * .5, -depth * .5, rotation)
+    front_right_x, front_right_z := world_rotate_xz(center_x, center_z, width * .5, -depth * .5, rotation)
+    back_right_x, back_right_z := world_rotate_xz(center_x, center_z, width * .5, depth * .5, rotation)
+    back_left_x, back_left_z := world_rotate_xz(center_x, center_z, -width * .5, depth * .5, rotation)
+    front_left := third_person.Vec3{front_left_x, base_y, front_left_z}
+    front_right := third_person.Vec3{front_right_x, base_y, front_right_z}
+    back_right := third_person.Vec3{back_right_x, base_y, back_right_z}
+    back_left := third_person.Vec3{back_left_x, base_y, back_left_z}
+    tip := third_person.Vec3{center_x, base_y + tip_height, center_z}
+    world_triangle(front_left, tip, front_right, color)
+    world_triangle(front_right, tip, back_right, formation_face_color(color, math.PI * .5, 0))
+    world_triangle(back_right, tip, back_left, formation_face_color(color, math.PI, 0))
+    world_triangle(back_left, tip, front_left, formation_face_color(color, math.PI * 1.5, 0))
+}
+
 world_architecture_tile_face :: proc(edge_a, edge_b, ridge: third_person.Vec3, courses, segments: int, seed: u32) {
-    world_architecture_tile_slope(edge_a, edge_b, ridge, ridge, courses, segments, seed)
+    world_architecture_tile_slope(edge_a, edge_b, ridge, ridge, courses, segments, seed, seed)
 }
 
 world_architecture_roof_style :: proc(structure: terrain.Structure) -> architecture.Roof_Style {
@@ -3801,15 +4097,26 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
     identity := architecture.architecture_resolve_legacy_identity(structure)
     tower_landmark := identity.archetype == .Campanile || identity.archetype == .Cycladic_Bell
     ceremonial_roof := tower_landmark || identity.archetype == .Church
+    gable_roof := !ceremonial_roof && (roof_style == .Gable || roof_style == .Low_Gable)
+    hip_roof := ceremonial_roof || roof_style == .Hip
     if !ceremonial_roof && roof_style == .Parapet {
+        is_aegean := identity.region == .Aegean
         roof_color := rl.Color{229, 226, 211, 255}
+        deck_color := rl.Color{207, 210, 199, 255}
+        coping_color := rl.Color{242, 240, 226, 255}
         chimney_color := rl.Color{221, 218, 203, 255}
-        chimney_width, chimney_height := f32(1.1), f32(1.3)
-        if identity.region != .Aegean {
+        chimney_width := clamp(structure.width * .06, f32(.82), f32(1.15))
+        chimney_height := f32(1.25)
+        if !is_aegean {
             roof_bytes := architecture.architecture_roof_color(structure.seed)
             roof_color = {roof_bytes[0], roof_bytes[1], roof_bytes[2], roof_bytes[3]}
+            deck_bytes := architecture.architecture_roof_tile_color(structure.seed, 1)
+            coping_bytes := architecture.architecture_roof_tile_color(structure.seed, 4)
+            deck_color = {deck_bytes[0], deck_bytes[1], deck_bytes[2], deck_bytes[3]}
+            coping_color = {coping_bytes[0], coping_bytes[1], coping_bytes[2], coping_bytes[3]}
             chimney_color = {157, 112, 86, 255}
-            chimney_width, chimney_height = 2.4, 2.0
+            chimney_width = clamp(structure.width * .08, f32(1.10), f32(1.65))
+            chimney_height = 1.65
         }
         world_box_rotated(
             {structure.center_x, eave_y + .25, structure.center_z},
@@ -3817,19 +4124,142 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
             structure.rotation,
             roof_color,
         )
-        chimney_x, chimney_z := world_rotate_xz(
-            structure.center_x,
-            structure.center_z,
-            structure.width * .22,
-            -structure.depth * .16,
-            structure.rotation,
-        )
-        world_box_rotated(
-            {chimney_x, eave_y + .50 + chimney_height * .5, chimney_z},
-            {chimney_width, chimney_height, chimney_width},
-            structure.rotation,
-            chimney_color,
-        )
+        // A parapet roof needs a raised perimeter, not just a thick flat
+        // slab. Four narrow bands preserve the usable roof terrace while
+        // producing the stepped white skyline characteristic of Aegean
+        // buildings (and a masonry coping on rarer Adriatic flat roofs).
+        parapet_height := is_aegean ? f32(.72) : f32(.58)
+        parapet_thickness := is_aegean ? f32(.28) : f32(.34)
+        parapet_center_y := eave_y + .50 + parapet_height * .5
+        parapet_offset_x := structure.width * .5 + .40 - parapet_thickness * .5
+        parapet_offset_z := structure.depth * .5 + .40 - parapet_thickness * .5
+        for side in -1 ..= 1 {
+            if side == 0 do continue
+            side_x, side_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                f32(side) * parapet_offset_x,
+                0,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {side_x, parapet_center_y, side_z},
+                {parapet_thickness, parapet_height, structure.depth + .8},
+                structure.rotation,
+                roof_color,
+            )
+            end_x, end_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                0,
+                f32(side) * parapet_offset_z,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {end_x, parapet_center_y, end_z},
+                {structure.width + .8, parapet_height, parapet_thickness},
+                structure.rotation,
+                roof_color,
+            )
+        }
+        if lod != .Far {
+            // Expose a distinct terrace floor inside the perimeter instead of
+            // letting the structural slab and parapet merge into one tray.
+            deck_width := max(f32(.5), structure.width + .8 - parapet_thickness * 2)
+            deck_depth := max(f32(.5), structure.depth + .8 - parapet_thickness * 2)
+            world_box_rotated(
+                {structure.center_x, eave_y + .525, structure.center_z},
+                {deck_width, .05, deck_depth},
+                structure.rotation,
+                deck_color,
+            )
+
+            // A narrow coping course protects the wall tops and catches a
+            // highlight that keeps pale Aegean parapets readable at distance.
+            coping_thickness := parapet_thickness + .12
+            coping_y := eave_y + .50 + parapet_height + .055
+            for side in -1 ..= 1 {
+                if side == 0 do continue
+                side_x, side_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    f32(side) * parapet_offset_x,
+                    0,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {side_x, coping_y, side_z},
+                    {coping_thickness, .11, structure.depth + .92},
+                    structure.rotation,
+                    coping_color,
+                )
+                end_x, end_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    0,
+                    f32(side) * parapet_offset_z,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {end_x, coping_y, end_z},
+                    {structure.width + .92, .11, coping_thickness},
+                    structure.rotation,
+                    coping_color,
+                )
+            }
+        }
+        if lod != .Far && architecture.architecture_has_chimney(structure.seed) {
+            chimney_side := structure.seed % 2 == 0 ? f32(1) : f32(-1)
+            chimney_end := (structure.seed / 2) % 2 == 0 ? f32(-1) : f32(1)
+            chimney_x, chimney_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                chimney_side * structure.width * .22,
+                chimney_end * structure.depth * .16,
+                structure.rotation,
+            )
+            world_box_rotated(
+                {chimney_x, eave_y + .50 + chimney_height * .5, chimney_z},
+                {chimney_width, chimney_height, chimney_width},
+                structure.rotation,
+                chimney_color,
+            )
+            world_box_rotated(
+                {chimney_x, eave_y + .50 + chimney_height + .07, chimney_z},
+                {chimney_width + .22, .14, chimney_width + .22},
+                structure.rotation,
+                coping_color,
+            )
+        }
+        if lod == .Near {
+            // A single seeded scupper gives the enclosed terrace a believable
+            // drainage outlet without ringing every wall with hardware.
+            scupper_side := structure.seed % 2 == 0 ? f32(-1) : f32(1)
+            scupper_z_local := ((structure.seed / 2) % 2 == 0 ? f32(-1) : f32(1)) * structure.depth * .20
+            scupper_inner_x, scupper_inner_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                scupper_side * (structure.width * .5 + .16),
+                scupper_z_local,
+                structure.rotation,
+            )
+            scupper_outer_x, scupper_outer_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                scupper_side * (structure.width * .5 + .72),
+                scupper_z_local,
+                structure.rotation,
+            )
+            scupper_y := eave_y + .50 + parapet_height * .34
+            world_tube_between(
+                {scupper_inner_x, scupper_y, scupper_inner_z},
+                {scupper_outer_x, scupper_y - .06, scupper_outer_z},
+                {0, 1, 0},
+                .055,
+                .055,
+                {79, 78, 69, 255},
+            )
+        }
         return
     }
     rise := ceremonial_roof ? structure.width * .72 : structure.width * .34
@@ -3868,7 +4298,7 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
     left_back := third_person.Vec3{left_back_x, eave_y, left_back_z}
     right_back := third_person.Vec3{right_back_x, eave_y, right_back_z}
     ridge_half_depth := depth
-    if roof_style == .Hip do ridge_half_depth = depth * .50
+    if hip_roof do ridge_half_depth = depth * .50
     ridge_front_x, ridge_front_z := world_rotate_xz(
         structure.center_x,
         structure.center_z,
@@ -3953,13 +4383,17 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
     // right walls to their ridge apexes; hip roofs close the front and rear
     // ends against the shortened ridge.
     wall := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
-    if roof_style == .Gable || roof_style == .Low_Gable {
+    if gable_roof {
         // Wind each end cap toward the outside of the building. The previous
         // inward-facing order let back-face culling erase the gable viewed
-        // from its corresponding end.
-        world_triangle(wall_front_left, wall_front_apex, wall_front_right, wall)
-        world_triangle(wall_back_right, wall_back_apex, wall_back_left, wall)
-    } else if roof_style == .Hip || ceremonial_roof {
+        // from its corresponding end. Keep the caps on the same stucco atlas
+        // material and directional face tint as the upper wall below them.
+        cosine, sine := f32(math.cos(f64(structure.rotation))), f32(math.sin(f64(structure.rotation)))
+        front_wall := world_architecture_face_color(wall, sine, -cosine)
+        back_wall := world_architecture_face_color(wall, -sine, cosine)
+        world_architecture_triangle(wall_front_left, wall_front_apex, wall_front_right, front_wall)
+        world_architecture_triangle(wall_back_right, wall_back_apex, wall_back_left, back_wall)
+    } else if hip_roof {
         world_triangle(left_front, ridge_front, right_front, terracotta)
         world_triangle(right_back, ridge_back, left_back, formation_face_color(terracotta, 1.4, 0))
     }
@@ -3988,7 +4422,7 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
         depth,
         structure.rotation,
     )
-    if roof_style == .Gable || roof_style == .Low_Gable {
+    if gable_roof {
         // A gable's end fascia follows both rakes up to the ridge. A single
         // horizontal strip across the eave floated in front of the triangular
         // wall at street level and made the roof read as a detached plank.
@@ -4028,6 +4462,77 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
     eave_length := depth * 2
     world_box_rotated({left_eave_x, eave_y + .03, left_eave_z}, {.20, .24, eave_length}, structure.rotation, fascia)
     world_box_rotated({right_eave_x, eave_y + .03, right_eave_z}, {.20, .24, eave_length}, structure.rotation, fascia)
+    if lod == .Near && !ceremonial_roof {
+        // Shallow metal gutters ground the long eaves and give rain a
+        // plausible route off the roof. They stay near-only because their
+        // narrow silhouette aliases before the rest of the roof reaches
+        // medium LOD.
+        gutter_color := rl.Color{91, 88, 76, 255}
+        gutter_radius := f32(.075)
+        for side in -1 ..= 1 {
+            if side == 0 do continue
+            gutter_front_x, gutter_front_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                f32(side) * structure.width * .545,
+                -depth,
+                structure.rotation,
+            )
+            gutter_back_x, gutter_back_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                f32(side) * structure.width * .545,
+                depth,
+                structure.rotation,
+            )
+            world_tube_between(
+                {gutter_front_x, eave_y - .055, gutter_front_z},
+                {gutter_back_x, eave_y - .055, gutter_back_z},
+                {0, 1, 0},
+                gutter_radius,
+                gutter_radius,
+                gutter_color,
+            )
+        }
+
+        // One seeded downspout is enough to explain the drainage without
+        // tracing every corner with dark vertical lines. A short kick brings
+        // it from the overhanging gutter back to the masonry face.
+        drain_side := structure.seed % 2 == 0 ? f32(-1) : f32(1)
+        drain_end := (structure.seed / 2) % 2 == 0 ? f32(-1) : f32(1)
+        drain_z := drain_end * (depth - .28)
+        drain_top_x, drain_top_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            drain_side * structure.width * .545,
+            drain_z,
+            structure.rotation,
+        )
+        drain_wall_x, drain_wall_z := world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            drain_side * (structure.width * .5 + .08),
+            drain_z,
+            structure.rotation,
+        )
+        drain_elbow_y := eave_y - .48
+        world_tube_between(
+            {drain_top_x, eave_y - .055, drain_top_z},
+            {drain_wall_x, drain_elbow_y, drain_wall_z},
+            {0, 0, 1},
+            gutter_radius * .82,
+            gutter_radius * .82,
+            gutter_color,
+        )
+        world_tube_between(
+            {drain_wall_x, drain_elbow_y, drain_wall_z},
+            {drain_wall_x, structure.base_y + .32, drain_wall_z},
+            {0, 0, 1},
+            gutter_radius * .82,
+            gutter_radius * .82,
+            gutter_color,
+        )
+    }
     // Close only the narrow long-eave overhangs. A full-width flat plate under
     // the entire roof intersects the triangular gable and reads as a ceiling.
     soffit_width := structure.width * .04
@@ -4047,7 +4552,7 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
             soffit,
         )
     }
-    if roof_style == .Hip {
+    if hip_roof {
         end_soffit_depth := structure.depth * .08
         for end in -1 ..= 1 {
             if end == 0 do continue
@@ -4068,8 +4573,11 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
     }
 
     if lod == .Near {
-        courses := clamp(int(structure.width / 5.5), 4, 7)
-        segments := clamp(int(structure.depth / 7), 3, 6)
+        // These are stylized groups of barrel tiles rather than literal
+        // one-tile meshes, but their module must remain small enough that a
+        // residential roof reads as courses instead of four giant panels.
+        courses := clamp(int(structure.width / 2.6), 6, 11)
+        segments := clamp(int(structure.depth / 3.2), 5, 10)
         world_architecture_tile_slope(
             left_front,
             left_back,
@@ -4077,6 +4585,7 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
             ridge_back,
             courses,
             segments,
+            structure.seed,
             structure.seed + 3,
         )
         world_architecture_tile_slope(
@@ -4086,33 +4595,92 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
             ridge_front,
             courses,
             segments,
+            structure.seed,
             structure.seed + 17,
         )
-        if roof_style == .Hip {
-            side_courses := clamp(int(structure.depth / 5), 3, 5)
+        if hip_roof {
+            end_courses := clamp(int(structure.width / 2.8), 5, 9)
+            end_segments := clamp(int(structure.width / 3.2), 4, 8)
             world_architecture_tile_slope(
                 left_front,
                 right_front,
                 ridge_front,
                 ridge_front,
-                side_courses,
-                2,
+                end_courses,
+                end_segments,
+                structure.seed,
                 structure.seed + 29,
+                true,
             )
             world_architecture_tile_slope(
                 right_back,
                 left_back,
                 ridge_back,
                 ridge_back,
-                side_courses,
-                2,
+                end_courses,
+                end_segments,
+                structure.seed,
                 structure.seed + 41,
+                true,
+            )
+        }
+    }
+    if lod != .Far {
+        // Mediterranean roofs finish their exposed seams with convex cap
+        // tiles. Besides giving the ridge a readable silhouette, these cover
+        // the tiny gaps where independently tessellated roof faces meet.
+        cap_radius := clamp(structure.width * .016, f32(.16), f32(.28))
+        ridge_lift := third_person.Vec3{0, cap_radius * .42, 0}
+        world_architecture_roof_cap_run(
+            ridge_front + ridge_lift,
+            ridge_back + ridge_lift,
+            cap_radius,
+            structure.seed,
+            structure.seed + 53,
+            lod == .Near,
+        )
+        if hip_roof {
+            hip_radius := cap_radius * .82
+            hip_lift := third_person.Vec3{0, hip_radius * .30, 0}
+            world_architecture_roof_cap_run(
+                left_front + hip_lift,
+                ridge_front + hip_lift,
+                hip_radius,
+                structure.seed,
+                structure.seed + 59,
+                lod == .Near,
+            )
+            world_architecture_roof_cap_run(
+                right_front + hip_lift,
+                ridge_front + hip_lift,
+                hip_radius,
+                structure.seed,
+                structure.seed + 61,
+                lod == .Near,
+            )
+            world_architecture_roof_cap_run(
+                left_back + hip_lift,
+                ridge_back + hip_lift,
+                hip_radius,
+                structure.seed,
+                structure.seed + 67,
+                lod == .Near,
+            )
+            world_architecture_roof_cap_run(
+                right_back + hip_lift,
+                ridge_back + hip_lift,
+                hip_radius,
+                structure.seed,
+                structure.seed + 71,
+                lod == .Near,
             )
         }
     }
     if lod != .Far && !landmark && roof_style != .Parapet && architecture.architecture_has_chimney(structure.seed) {
-        chimney_local_x := roof_style == .Hip ? structure.width * .12 : structure.width * .22
-        chimney_local_z := -structure.depth * .12
+        chimney_side := structure.seed % 2 == 0 ? f32(1) : f32(-1)
+        chimney_end := (structure.seed / 2) % 2 == 0 ? f32(-1) : f32(1)
+        chimney_local_x := chimney_side * (hip_roof ? structure.width * .12 : structure.width * .18)
+        chimney_local_z := chimney_end * structure.depth * .12
         chimney_x, chimney_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -4120,16 +4688,36 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
             chimney_local_z,
             structure.rotation,
         )
-        chimney_base := eave_y + rise * .74
+        half_roof_width := structure.width * .54
+        chimney_roof_y := world_roof_surface_y(eave_y, rise, half_roof_width, chimney_local_x)
+        chimney_base := chimney_roof_y - .20
+        // The stack must clear the ridge even on broad, steep roofs. Sizing
+        // from both the local slope and ridge elevation prevents short stacks
+        // from disappearing behind the roof while avoiding a fixed giant
+        // chimney on compact houses.
+        chimney_height := max(f32(2.5), eave_y + rise + .75 - chimney_base)
+        chimney_width := clamp(structure.width * .075, f32(1.15), f32(1.75))
+        if lod == .Near {
+            world_architecture_chimney_flashing(
+                structure,
+                eave_y,
+                rise,
+                half_roof_width,
+                chimney_local_x,
+                chimney_local_z,
+                chimney_width,
+            )
+        }
         world_box_rotated(
-            {chimney_x, chimney_base + 1.45, chimney_z},
-            {1.8, 2.9, 1.8},
+            {chimney_x, chimney_base + chimney_height * .5, chimney_z},
+            {chimney_width, chimney_height, chimney_width},
             structure.rotation,
             {157, 112, 86, 255},
         )
+        chimney_top := chimney_base + chimney_height
         world_box_rotated(
-            {chimney_x, chimney_base + 3.0, chimney_z},
-            {2.1, .22, 2.1},
+            {chimney_x, chimney_top + .11, chimney_z},
+            {chimney_width + .30, .22, chimney_width + .30},
             structure.rotation,
             {184, 93, 61, 255},
         )
@@ -4137,31 +4725,53 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
         // single solid cube at eye level, while preserving the hand-built
         // terracotta character of the roofline.
         world_box_rotated(
-            {chimney_x, chimney_base + 3.16, chimney_z},
-            {2.30, .10, 2.30},
+            {chimney_x, chimney_top + .27, chimney_z},
+            {chimney_width + .50, .10, chimney_width + .50},
             structure.rotation,
             {214, 178, 139, 255},
         )
         world_box_rotated(
-            {chimney_x, chimney_base + 3.23, chimney_z},
-            {1.42, .035, 1.42},
+            {chimney_x, chimney_top + .34, chimney_z},
+            {chimney_width * .72, .035, chimney_width * .72},
             structure.rotation,
             {65, 55, 49, 255},
         )
     }
     if tower_landmark {
+        crown_height := f32(7)
         world_box_rotated(
-            {structure.center_x, eave_y + rise + 3.5, structure.center_z},
-            {3.5, 7, 3.5},
+            {structure.center_x, eave_y + rise + crown_height * .5, structure.center_z},
+            {3.5, crown_height, 3.5},
             structure.rotation,
             {224, 219, 196, 255},
         )
+        world_architecture_pyramid_cap(
+            structure.center_x,
+            structure.center_z,
+            eave_y + rise + crown_height,
+            4.1,
+            4.1,
+            structure.rotation,
+            2.4,
+            terracotta,
+        )
     } else if identity.archetype == .Church {
+        crown_height := f32(3.8)
         world_box_rotated(
-            {structure.center_x, eave_y + rise + 1.9, structure.center_z},
-            {2.6, 3.8, 2.2},
+            {structure.center_x, eave_y + rise + crown_height * .5, structure.center_z},
+            {2.6, crown_height, 2.2},
             structure.rotation,
             {224, 219, 196, 255},
+        )
+        world_architecture_pyramid_cap(
+            structure.center_x,
+            structure.center_z,
+            eave_y + rise + crown_height,
+            3.15,
+            2.75,
+            structure.rotation,
+            1.65,
+            terracotta,
         )
     }
 }
@@ -4483,20 +5093,28 @@ world_architecture_mass :: proc(
     facade_style := architecture.facade_style_for_seed(structure.seed)
     roof_style := world_architecture_roof_style(structure)
     stone := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
-    world_architecture_box_rotated(
-        {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
-        {structure.width, structure.height, structure.depth},
-        structure.rotation,
-        stone,
-    )
     ground_stone := formation_face_color(stone, f32((structure.seed >> 10) & 3) * .10 - .15, 0)
+    // The masonry base and stucco upper storeys are separate, disjoint hulls.
+    // Previously a slightly enlarged masonry box covered the lower portion of
+    // one full-height stucco box, leaving two competing wall surfaces. Give
+    // each material exclusive ownership of its vertical range instead.
+    masonry_height := min(structure.height, f32(2.90))
     world_architecture_box_rotated(
-        {structure.center_x, structure.base_y + 1.45, structure.center_z},
-        {structure.width + .025, 2.90, structure.depth + .025},
+        {structure.center_x, structure.base_y + masonry_height * .5, structure.center_z},
+        {structure.width, masonry_height, structure.depth},
         structure.rotation,
         ground_stone,
         1,
     )
+    upper_height := structure.height - masonry_height
+    if upper_height > .001 {
+        world_architecture_box_rotated(
+            {structure.center_x, structure.base_y + masonry_height + upper_height * .5, structure.center_z},
+            {structure.width, upper_height, structure.depth},
+            structure.rotation,
+            stone,
+        )
+    }
     // A shallow overhanging limestone plinth separates each façade from the
     // terrain and gives the compact blocks a believable masonry foundation.
     plinth := formation_face_color(stone, math.PI, 0)
@@ -7433,21 +8051,16 @@ world_architecture_mass :: proc(
         }
     }
     if !landmark && (roof_style == .Gable || roof_style == .Low_Gable) {
-        // Put each opening on one consistent plane just beyond the barge
-        // overhang. Size it from the roof rise and leave off shutters: the
-        // triangular end has room for one clear opening, not three competing
-        // vertical marks beneath its slopes.
-        rise := roof_style == .Low_Gable ? structure.width * .24 : structure.width * .34
-        center_fraction := roof_style == .Low_Gable ? f32(.36) : f32(.40)
-        attic_height := min(clamp(rise * .25, f32(.75), f32(2.4)), rise * .38)
-        attic_top_fraction := center_fraction + attic_height * .5 / rise
-        // The gable narrows linearly toward the ridge. Cap the opening from
-        // the width available at its upper corners so low roofs cannot clip
-        // or completely surround a minimum-sized window.
-        available_width := structure.width * (1 - attic_top_fraction) * .72
-        attic_width := min(clamp(structure.width * .12, f32(1.0), f32(2.2)), available_width)
-        if attic_height >= .65 && attic_width >= .80 {
+        low_gable := roof_style == .Low_Gable
+        attic_width, attic_height, rise, center_fraction, valid :=
+            world_gable_attic_opening_plan(structure.width, low_gable)
+        if valid {
             attic_y := structure.base_y + structure.height + rise * center_fraction
+            frame_width := clamp(min(attic_width, attic_height) * .10, f32(.09), f32(.15))
+            frame_color :=
+                identity.region == .Aegean ? rl.Color{237, 232, 210, 255} : rl.Color{190, 166, 128, 255}
+            mullion_color := formation_face_color(frame_color, math.PI, 0)
+            pane_color := facade_style == 2 ? rl.Color{59, 96, 105, 255} : rl.Color{55, 78, 82, 255}
             for gable_end in -1 ..= 1 {
                 if gable_end == 0 do continue
                 local_z := f32(gable_end) * (structure.depth * .58 + .12)
@@ -7464,6 +8077,72 @@ world_architecture_mass :: proc(
                     structure.rotation,
                     window,
                 )
+                pane_z_local := local_z + f32(gable_end) * .115
+                pane_x, pane_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    0,
+                    pane_z_local,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {pane_x, attic_y, pane_z},
+                    {attic_width - frame_width * 1.35, attic_height - frame_width * 1.35, .045},
+                    structure.rotation,
+                    pane_color,
+                )
+
+                frame_z_local := local_z + f32(gable_end) * .145
+                for side in -1 ..= 1 {
+                    if side == 0 do continue
+                    jamb_x, jamb_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        f32(side) * (attic_width * .5 + frame_width * .5),
+                        frame_z_local,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {jamb_x, attic_y, jamb_z},
+                        {frame_width, attic_height + frame_width * 2, .11},
+                        structure.rotation,
+                        frame_color,
+                    )
+                    rail_x, rail_z := world_rotate_xz(
+                        structure.center_x,
+                        structure.center_z,
+                        0,
+                        frame_z_local,
+                        structure.rotation,
+                    )
+                    world_box_rotated(
+                        {rail_x, attic_y + f32(side) * (attic_height * .5 + frame_width * .5), rail_z},
+                        {attic_width + frame_width * 2, frame_width, side < 0 ? f32(.18) : f32(.11)},
+                        structure.rotation,
+                        side < 0 ? formation_face_color(frame_color, math.PI, 0) : frame_color,
+                    )
+                }
+                mullion_x, mullion_z := world_rotate_xz(
+                    structure.center_x,
+                    structure.center_z,
+                    0,
+                    frame_z_local + f32(gable_end) * .012,
+                    structure.rotation,
+                )
+                world_box_rotated(
+                    {mullion_x, attic_y, mullion_z},
+                    {frame_width * .46, attic_height - frame_width * 1.2, .055},
+                    structure.rotation,
+                    mullion_color,
+                )
+                if attic_height >= 1.05 {
+                    world_box_rotated(
+                        {mullion_x, attic_y, mullion_z},
+                        {attic_width - frame_width * 1.2, frame_width * .42, .055},
+                        structure.rotation,
+                        mullion_color,
+                    )
+                }
             }
         }
     }
@@ -8189,14 +8868,58 @@ world_architecture_structure_overlaps_alley_cached :: proc(
 }
 
 world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan, preview: bool = false) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_architecture_alleys")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || plan == nil do return
+    cacheable := !preview && !world_renderer.architecture_alley_geometry_building
+    if cacheable {
+        plan_matches := len(world_renderer.architecture_alley_geometry_plan) == plan.alley_count
+        if plan_matches {
+            for alley, index in plan.alleys[:plan.alley_count] {
+                if world_renderer.architecture_alley_geometry_plan[index] != alley {
+                    plan_matches = false
+                    break
+                }
+            }
+        }
+        cache_valid :=
+            world_renderer.architecture_alley_geometry_valid &&
+            world_renderer.architecture_alley_geometry_terrain_revision == editor.terrain_revision &&
+            world_renderer.architecture_alley_geometry_project_revision == editor.project.revision &&
+            plan_matches
+        if cache_valid {
+            append(&world_renderer.vertices, ..world_renderer.architecture_alley_geometry_cache[:])
+            return
+        }
+    }
+    geometry_first := len(world_renderer.vertices)
+    if cacheable do world_renderer.architecture_alley_geometry_building = true
+    defer {
+        if cacheable {
+            clear(&world_renderer.architecture_alley_geometry_cache)
+            append(
+                &world_renderer.architecture_alley_geometry_cache,
+                ..world_renderer.vertices[geometry_first:],
+            )
+            resize(&world_renderer.architecture_alley_geometry_plan, plan.alley_count)
+            copy(
+                world_renderer.architecture_alley_geometry_plan[:],
+                plan.alleys[:plan.alley_count],
+            )
+            world_renderer.architecture_alley_geometry_terrain_revision = editor.terrain_revision
+            world_renderer.architecture_alley_geometry_project_revision = editor.project.revision
+            world_renderer.architecture_alley_geometry_valid = true
+            world_renderer.architecture_alley_geometry_building = false
+        }
+    }
     for alley, alley_index in plan.alleys[:plan.alley_count] {
         dx, dz := alley.end_x - alley.start_x, alley.end_z - alley.start_z
         length := f32(math.sqrt(f64(dx * dx + dz * dz)))
         if length <= .01 do continue
         center_x, center_z := (alley.start_x + alley.end_x) * .5, (alley.start_z + alley.end_z) * .5
         center_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
-        if !world_sphere_in_view(editor, {center_x, center_y, center_z}, length * .5 + alley.half_width + 1) {
+        if !cacheable &&
+           !world_sphere_in_view(editor, {center_x, center_y, center_z}, length * .5 + alley.half_width + 1) {
             continue
         }
         start_height := f32(0)
@@ -8386,7 +9109,7 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
             radius := settlement_access_node_paving_radius(plan, point)
             if radius <= .01 do continue
             height := terrain.sample_height(&editor.project, 0, point[0], point[1])
-            if !world_sphere_in_view(editor, {point[0], height, point[1]}, radius + 1) do continue
+            if !cacheable && !world_sphere_in_view(editor, {point[0], height, point[1]}, radius + 1) do continue
             pad_alley := alley
             for candidate in plan.alleys[:plan.alley_count] {
                 if candidate.household_demand <= pad_alley.household_demand do continue
@@ -8402,6 +9125,8 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
 }
 
 world_architecture_lamps :: proc(editor: ^Editor, plan: ^architecture.City_Plan) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_architecture_lamps")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || plan == nil do return
     for lamp in plan.lamps[:plan.lamp_count] {
         base_y := terrain.sample_height(&editor.project, 0, lamp.x, lamp.z)
@@ -9030,6 +9755,8 @@ world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project 
 }
 
 world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_index: int, force_near := false) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_foliage_cache")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if structure_index < 0 || structure_index >= len(world_renderer.foliage_geometry_cache) {
         world_foliage_formation(structure)
         return
@@ -9079,14 +9806,38 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     entry.direction_bucket = direction_bucket
 }
 
-world_static_mesh_append :: proc(entry: ^Static_Geometry_Cache_Entry) {
-    if entry == nil || len(entry.world_vertices) == 0 || len(entry.world_indices) == 0 do return
-    vertex_base := u32(len(world_renderer.static_vertices))
-    append(&world_renderer.static_vertices, ..entry.world_vertices[:])
-    reserve(&world_renderer.static_indices, len(world_renderer.static_indices) + len(entry.world_indices))
-    for index in entry.world_indices {
-        append(&world_renderer.static_indices, vertex_base + index)
+world_retained_static_draw_emit :: proc(cache_index: int) {
+    if cache_index < 0 || cache_index >= len(world_renderer.static_geometry_cache) do return
+    entry := &world_renderer.static_geometry_cache[cache_index]
+    if !entry.valid || len(entry.world_vertices) == 0 || len(entry.world_indices) == 0 do return
+    append(&world_renderer.retained_static_draws, Retained_Static_Draw{cache_index = cache_index})
+}
+
+world_retained_static_repack :: proc() {
+    if !world_renderer.retained_static_dirty do return
+    clear(&world_renderer.static_vertices)
+    clear(&world_renderer.static_indices)
+    structure_count := 0
+    if world_renderer.editor != nil {
+        structure_count = min(
+            world_renderer.editor.project.structure_count,
+            len(world_renderer.static_geometry_cache),
+        )
     }
+    for index in 0 ..< structure_count {
+        entry := &world_renderer.static_geometry_cache[index]
+        if !entry.valid || len(entry.world_vertices) == 0 || len(entry.world_indices) == 0 do continue
+        entry.retained_first_vertex = u32(len(world_renderer.static_vertices))
+        entry.retained_first_index = u32(len(world_renderer.static_indices))
+        append(&world_renderer.static_vertices, ..entry.world_vertices[:])
+        append(&world_renderer.static_indices, ..entry.world_indices[:])
+    }
+    world_renderer.retained_static_revision += 1
+    if world_renderer.retained_static_revision == 0 {
+        world_renderer.retained_static_revision = 1
+        world_renderer.retained_static_uploaded_revision = {}
+    }
+    world_renderer.retained_static_dirty = false
 }
 
 world_static_formation_cached :: proc(
@@ -9095,6 +9846,8 @@ world_static_formation_cached :: proc(
     project: ^terrain.Project,
     force_near := false,
 ) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_static_cache")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if project == nil || structure_index < 0 || structure_index >= len(world_renderer.static_geometry_cache) {
         world_formation(structure, project)
         return
@@ -9108,20 +9861,32 @@ world_static_formation_cached :: proc(
     camera := perspective_camera(world_renderer.editor.camera_pose, focal_length)
     billboard_right := [3]f32{camera.right.x, camera.right.y, camera.right.z}
     billboard_up := [3]f32{camera.up.x, camera.up.y, camera.up.z}
-    billboard_basis_matches :=
-        len(entry.bougainvillea_vertices) == 0 ||
-        (entry.billboard_right == billboard_right && entry.billboard_up == billboard_up)
-    if entry.valid && entry.structure == structure && entry.lod == lod_result.tier && billboard_basis_matches {
-        world_static_mesh_append(entry)
+    if entry.valid && entry.structure == structure && entry.lod == lod_result.tier {
+        world_retained_static_draw_emit(structure_index)
         append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
-        append(&world_renderer.bougainvillea_vertices, ..entry.bougainvillea_vertices[:])
+        for card in entry.bougainvillea_cards {
+            world_bougainvillea_card(
+                card.center,
+                card.width,
+                card.height,
+                card.tile,
+                card.mirror,
+                card.roll,
+                card.value,
+                card.young_growth,
+                card.yaw_bias,
+            )
+        }
         return
     }
 
     world_first := len(world_renderer.vertices)
     foliage_first := len(world_renderer.foliage_vertices)
     bougainvillea_first := len(world_renderer.bougainvillea_vertices)
+    clear(&entry.bougainvillea_cards)
+    climbing_leaf_card_capture = &entry.bougainvillea_cards
     world_formation(structure, project, lod_result.tier)
+    climbing_leaf_card_capture = nil
     world_renderer.structure_lod_cache_rebuilds += 1
     clear(&entry.world_vertices)
     clear(&entry.world_indices)
@@ -9141,7 +9906,6 @@ world_static_formation_cached :: proc(
         if optimized_count > 0 {
             resize(&entry.world_vertices, int(optimized_count))
             resize(&world_renderer.vertices, world_first)
-            world_static_mesh_append(entry)
         } else {
             clear(&entry.world_vertices)
             clear(&entry.world_indices)
@@ -9159,6 +9923,8 @@ world_static_formation_cached :: proc(
     entry.lod_transition = lod_result.transition
     entry.billboard_right = billboard_right
     entry.billboard_up = billboard_up
+    world_renderer.retained_static_dirty = true
+    world_retained_static_draw_emit(structure_index)
 }
 
 world_structure_preview_cluster :: proc(editor: ^Editor) {
@@ -9356,6 +10122,33 @@ world_bougainvillea_card :: proc(
             },
         )
     }
+    append(
+        &world_renderer.bougainvillea_instances,
+        Bougainvillea_Instance {
+            center = {center.x, center.y, center.z},
+            size = {width, height},
+            tile = u32(((tile % 16) + 16) % 16),
+            params = {mirror ? f32(1) : f32(0), roll, value, young_growth ? f32(1) : f32(0)},
+            yaw_bias = yaw_bias,
+        },
+    )
+    return
+}
+
+// Retained temporarily as a parity reference while the GPU descriptor path is
+// validated against captures. It is no longer called by the renderer.
+world_bougainvillea_card_legacy_cpu :: proc(
+    center: third_person.Vec3,
+    width, height: f32,
+    tile: int,
+    mirror: bool,
+    roll: f32 = 0,
+    value: f32 = 1,
+    young_growth: bool = false,
+    yaw_bias: f32 = 0,
+) {
+    editor := world_renderer.editor
+    if editor == nil do return
     atlas_tile := ((tile % 16) + 16) % 16
     // Normalized painted branch origins within each atlas cell. Upright
     // clumps root near bottom-center; lateral sprays root at the appropriate
@@ -12207,6 +13000,8 @@ world_settlement_gardens :: proc(editor: ^Editor) {
 }
 
 world_structures :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_structures")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil do return
     sky := atmosphere.sample(&editor.atmosphere)
     world_architecture_streets(editor, sky.sun_direction, sky.weather.cloud_cover)
@@ -12307,25 +13102,27 @@ world_structures :: proc(editor: ^Editor) {
             continue
         }
         force_near := index == editor.structure_selected && !editor.in_map
-        world_before := len(world_renderer.vertices) + len(world_renderer.static_indices)
+        world_before := len(world_renderer.vertices)
         foliage_vertices_before := len(world_renderer.foliage_vertices)
         bougainvillea_vertices_before := len(world_renderer.bougainvillea_vertices)
+        retained_static_indices := 0
         if structure.kind == .Foliage && !settlement_park_has_fountain(editor, structure.id) {
             world_foliage_formation_cached(structure, index, force_near)
             world_renderer.structure_lod_counts[int(world_renderer.foliage_geometry_cache[index].lod)] += 1
         } else if structure.kind != .Foliage {
             world_static_formation_cached(structure, index, &editor.project, force_near)
             world_renderer.structure_lod_counts[int(world_renderer.static_geometry_cache[index].lod)] += 1
+            retained_static_indices = len(world_renderer.static_geometry_cache[index].world_indices)
         }
         world_climbing_leaves_for_structure(editor, structure, index)
         world_renderer.structure_lod_world_vertices +=
-            len(world_renderer.vertices) + len(world_renderer.static_indices) - world_before
+            len(world_renderer.vertices) - world_before + retained_static_indices
         world_renderer.structure_lod_foliage_vertices +=
             len(world_renderer.foliage_vertices) -
             foliage_vertices_before +
             len(world_renderer.bougainvillea_vertices) -
             bougainvillea_vertices_before
-        world_added := len(world_renderer.vertices) + len(world_renderer.static_indices) - world_before
+        world_added := len(world_renderer.vertices) - world_before + retained_static_indices
         foliage_added := len(world_renderer.foliage_vertices) - foliage_vertices_before
         bougainvillea_added := len(world_renderer.bougainvillea_vertices) - bougainvillea_vertices_before
         if world_added > 0 || foliage_added > 0 || bougainvillea_added > 0 {
@@ -13878,6 +14675,8 @@ world_climbing_leaf_vine :: proc(
 }
 
 world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.Structure, structure_index: int) {
+    function_profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_climbing_leaves")
+    defer dio.flame_graph_end(dio.flame_graph_current(), function_profile)
     if editor == nil do return
     eligible :=
         structure.kind == .Architecture ||
@@ -14225,6 +15024,8 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
 }
 
 world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "climbing_leaf_overlay")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || editor.in_map || !editor.climbing_leaf_paint_mode do return
     field := &editor.project.climbing_leaf_density
     cell := terrain.BASE_CELL_SIZE
@@ -19373,7 +20174,11 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
     // these background residents for the conversation so fourteen procedural
     // idle meshes do not keep regenerating beneath the dialogue presentation.
     animation_time := editor.attendant_dialogue_open ? f32(0) : editor.map_time
-    animation_bucket := i64(math.floor(f64(animation_time * TOWN_MOUSE_ANIMATION_HZ + phase)))
+    // Background residents are rebuilt procedural meshes, not skinned models.
+    // Updating all visible meshes at display rate consumed several milliseconds
+    // per frame. Stagger lower-rate rebuilds across cache entries; foreground
+    // dialogue portraits retain their separate 30 Hz animation cadence.
+    animation_bucket := i64(math.floor(f64(animation_time * TOWN_MOUSE_GEOMETRY_ANIMATION_HZ + phase)))
     wind := model.scarf_enabled ? editor.atmosphere.weather.wind : [2]f32{}
     if entry.valid &&
        entry.model == model &&
@@ -21510,6 +22315,8 @@ world_story_resident_position :: proc(
 }
 
 world_settlement_inhabitants :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "settlement_inhabitants")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || editor.settlement_plan.inhabitant_count <= 0 do return
     animated := 0
     elapsed := f32(rl.GetTime())
@@ -21641,6 +22448,8 @@ world_story_meeting :: proc(editor: ^Editor) {
 }
 
 world_town_mice :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "town_mice")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil do return
     world_business_sign_for_resident(editor, .Niko, .Pane)
     world_business_sign_for_resident(editor, .Zora, .Fortuna)
@@ -21967,6 +22776,8 @@ world_settlement_brush_outline :: proc(editor: ^Editor) {
 }
 
 world_brush :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_brush")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     formation_brush := editor.authoring_tool == .Formations || editor.authoring_tool == .Foliage
     if editor.in_map ||
        (editor.tool == .Structure &&
@@ -22299,13 +23110,6 @@ world_ground_grass :: proc(editor: ^Editor) {
     }
     if !world_ground_grass_has_land(editor, field_x, field_z, field_radius) do return
 
-    focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
-    view_camera := perspective_camera(editor.camera_pose, focal_length)
-    screen_width := max(rl.GetScreenWidth(), 1)
-    screen_height := max(rl.GetScreenHeight(), 1)
-    aspect := f32(screen_width) / f32(screen_height)
-    near_plane := world_camera_near_clip(editor)
-
     building_footprints := world_architecture_grass_footprints(editor)
     defer delete(building_footprints)
     circulation_plan := editor_circulation_plan(editor)
@@ -22336,30 +23140,14 @@ world_ground_grass :: proc(editor: ^Editor) {
             if chunk == nil do continue
             for &cached in chunk.entries[:chunk.count] {
                 x, z := cached.grass.center[0], cached.grass.center[2]
-                if settlement_patios_contain_point(editor, x, z, .12) do continue
-                dx, dz := x - field_x, z - field_z
-                distance_squared := dx * dx + dz * dz
-                if distance_squared > radius_squared do continue
-                distance := f32(math.sqrt(f64(distance_squared)))
-                fade := clamp((distance - field_radius * .35) / (field_radius * .65), f32(0), f32(1))
-                fade = fade * fade * (3 - 2 * fade)
-                density := 1 - fade
-                if cached.density_roll > density do continue
-                if !static_sphere_in_frustum(
-                    view_camera,
-                    {x, cached.grass.center[1] + .75, z},
-                    2,
-                    aspect,
-                    near_plane,
-                    WORLD_FAR_CLIP,
-                ) {
-                    continue
-                }
+                // Patio exclusion is part of ground_grass_chunk_build and any
+                // project edit invalidates the chunk cache. Re-querying the
+                // settlement spatial data for every cached blade every frame
+                // made this retained cache substantially more expensive than
+                // generating its visible instance stream.
                 grass := cached.grass
-                for channel in 0 ..< 3 {
-                    grass.color[channel] += (cached.ground_color[channel] - grass.color[channel]) * fade
-                }
-                grass.color[3] = density
+                grass.ground_color = cached.ground_color
+                grass.cull_params = {cached.density_roll, field_radius, 1, 0}
                 append(&world_renderer.grass_instances, grass)
                 world_renderer.grass_instances_emitted += 1
                 if cached.has_flower {
@@ -22370,6 +23158,7 @@ world_ground_grass :: proc(editor: ^Editor) {
                             size = cached.flower_size,
                             tile = cached.flower_tile,
                             color = {1, 1, 1, 2},
+                            cull_params = {cached.density_roll, field_radius, 1, 0},
                         },
                     )
                 }
@@ -22384,14 +23173,14 @@ world_build :: proc(editor: ^Editor) {
     world_structure_storage_ensure(editor.project.structure_count)
     clear(&world_renderer.vertices)
     clear(&world_renderer.late_transparent_vertices)
-    clear(&world_renderer.static_vertices)
-    clear(&world_renderer.static_indices)
+    clear(&world_renderer.retained_static_draws)
     clear(&world_renderer.wing_trail_vertices)
     clear(&world_renderer.wing_trail_indices)
     clear(&world_renderer.wing_trail_optimized_indices)
     clear(&world_renderer.road_vertices)
     clear(&world_renderer.foliage_vertices)
     clear(&world_renderer.bougainvillea_vertices)
+    clear(&world_renderer.bougainvillea_instances)
     clear(&world_renderer.grass_instances)
     clear(&world_renderer.wildflower_instances)
     world_renderer.structure_lod_counts = {}
@@ -23708,6 +24497,49 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     if !render3d.create_color_pipeline_variants(ctx, &foliage_info, .D32_SFLOAT, &world_renderer.foliage_pipelines) {
         return false
     }
+    bougainvillea_vert: engine.Vk_Shader_Module
+    if !engine.vk_load_shader_module_with_fallback(
+        ctx,
+        "assets/shaders/foliage.slang",
+        "shaders/bougainvillea.vert",
+        .Vertex,
+        "bougainvillea_vertex_main",
+        &bougainvillea_vert,
+    ) {
+        return false
+    }
+    defer engine.vk_destroy_shader_module(ctx, &bougainvillea_vert)
+    bougainvillea_stages := foliage_stages
+    bougainvillea_stages[0].module = bougainvillea_vert.handle
+    bougainvillea_binding := vk.VertexInputBindingDescription {
+        stride    = u32(size_of(Bougainvillea_Instance)),
+        inputRate = .INSTANCE,
+    }
+    bougainvillea_attributes := [5]vk.VertexInputAttributeDescription {
+        {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Bougainvillea_Instance, center))},
+        {location = 1, format = .R32G32_SFLOAT, offset = u32(offset_of(Bougainvillea_Instance, size))},
+        {location = 2, format = .R32_UINT, offset = u32(offset_of(Bougainvillea_Instance, tile))},
+        {location = 3, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Bougainvillea_Instance, params))},
+        {location = 4, format = .R32_SFLOAT, offset = u32(offset_of(Bougainvillea_Instance, yaw_bias))},
+    }
+    bougainvillea_vi := vk.PipelineVertexInputStateCreateInfo {
+        sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        vertexBindingDescriptionCount   = 1,
+        pVertexBindingDescriptions      = &bougainvillea_binding,
+        vertexAttributeDescriptionCount = 5,
+        pVertexAttributeDescriptions    = raw_data(bougainvillea_attributes[:]),
+    }
+    bougainvillea_info := foliage_info
+    bougainvillea_info.pStages = raw_data(bougainvillea_stages[:])
+    bougainvillea_info.pVertexInputState = &bougainvillea_vi
+    if !render3d.create_color_pipeline_variants(
+        ctx,
+        &bougainvillea_info,
+        .D32_SFLOAT,
+        &world_renderer.bougainvillea_pipelines,
+    ) {
+        return false
+    }
     grass_vert: engine.Vk_Shader_Module
     if !engine.vk_load_shader_module_with_fallback(
         ctx,
@@ -23726,17 +24558,19 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         stride    = u32(size_of(Grass_Instance)),
         inputRate = .INSTANCE,
     }
-    grass_attributes := [4]vk.VertexInputAttributeDescription {
+    grass_attributes := [6]vk.VertexInputAttributeDescription {
         {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Grass_Instance, center))},
         {location = 1, format = .R32G32_SFLOAT, offset = u32(offset_of(Grass_Instance, size))},
         {location = 2, format = .R32_UINT, offset = u32(offset_of(Grass_Instance, tile))},
         {location = 3, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Grass_Instance, color))},
+        {location = 4, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Grass_Instance, ground_color))},
+        {location = 5, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Grass_Instance, cull_params))},
     }
     grass_vi := vk.PipelineVertexInputStateCreateInfo {
         sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         vertexBindingDescriptionCount   = 1,
         pVertexBindingDescriptions      = &grass_binding,
-        vertexAttributeDescriptionCount = 4,
+        vertexAttributeDescriptionCount = 6,
         pVertexAttributeDescriptions    = raw_data(grass_attributes[:]),
     }
     grass_info := foliage_info
@@ -23850,6 +24684,17 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             return false
         }
     }
+    for &buffer in world_renderer.bougainvillea_instance {
+        if !world_host_buffer_create(
+            ctx,
+            vk.DeviceSize(2_000 * size_of(Bougainvillea_Instance)),
+            {.VERTEX_BUFFER},
+            &buffer,
+            "world bougainvillea instance buffer",
+        ) {
+            return false
+        }
+    }
     for &buffer in world_renderer.grass_instance {
         if !world_host_buffer_create(
             ctx,
@@ -23921,9 +24766,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_INITIAL_CAPACITY)
     world_renderer.static_vertices = make([dynamic]World_Vertex, 0, WORLD_VERTEX_INITIAL_CAPACITY)
     world_renderer.static_indices = make([dynamic]u32, 0, WORLD_VERTEX_INITIAL_CAPACITY)
+    world_renderer.retained_static_draws = make([dynamic]Retained_Static_Draw, 0, 256)
+    world_renderer.retained_static_dirty = true
     world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_INITIAL_CAPACITY)
     world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_INITIAL_CAPACITY)
     world_renderer.bougainvillea_vertices = make([dynamic]Foliage_Vertex, 0, BOUGAINVILLEA_VERTEX_INITIAL_CAPACITY)
+    world_renderer.bougainvillea_instances = make([dynamic]Bougainvillea_Instance, 0, 2_000)
     world_renderer.grass_instances = make([dynamic]Grass_Instance, 0, GRASS_INSTANCE_INITIAL_CAPACITY)
     world_renderer.wildflower_instances = make([dynamic]Grass_Instance, 0, WILDFLOWER_INSTANCE_INITIAL_CAPACITY)
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
@@ -23971,7 +24819,9 @@ world_pre_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
 }
 
 dialogue_portrait_mouse_model :: proc(editor: ^Editor, resident: story.Resident, player: bool) -> Mouse_Model {
-    animation_time := f32(math.floor(f64(editor.map_time * TOWN_MOUSE_ANIMATION_HZ))) / TOWN_MOUSE_ANIMATION_HZ
+    animation_time :=
+        f32(math.floor(f64(editor.map_time * TOWN_MOUSE_PORTRAIT_ANIMATION_HZ))) /
+        TOWN_MOUSE_PORTRAIT_ANIMATION_HZ
     idle := f32(math.sin(f64(animation_time * 2.1 + (player ? 0 : 1.7)))) * .025
     model := Mouse_Model {
         position = {0, idle, 0},
@@ -24229,12 +25079,14 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     }
     frame_index := int(pass.frame.frame_index)
     world_instances_flatten()
+    world_retained_static_repack()
     if !world_frame_geometry_buffers_ensure(frame_index) do return
     buffer := &world_renderer.vertex[frame_index]
     static_vertex_buffer := &world_renderer.static_vertex[frame_index]
     static_index_buffer := &world_renderer.static_index[frame_index]
     road_buffer := &world_renderer.road_vertex[frame_index]
     foliage_buffer := &world_renderer.foliage_vertex[frame_index]
+    bougainvillea_buffer := &world_renderer.bougainvillea_instance[frame_index]
     grass_instance_buffer := &world_renderer.grass_instance[frame_index]
     instance_vertex_buffer := &world_renderer.instance_vertex[frame_index]
     instance_index_buffer := &world_renderer.instance_index[frame_index]
@@ -24248,19 +25100,26 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             len(world_renderer.vertices) * size_of(World_Vertex),
         )
     }
-    if len(world_renderer.static_vertices) > 0 {
+    static_upload_required :=
+        world_renderer.retained_static_uploaded_revision[frame_index] !=
+        world_renderer.retained_static_revision
+    if static_upload_required && len(world_renderer.static_vertices) > 0 {
         mem.copy_non_overlapping(
             static_vertex_buffer.mapped,
             raw_data(world_renderer.static_vertices[:]),
             len(world_renderer.static_vertices) * size_of(World_Vertex),
         )
     }
-    if len(world_renderer.static_indices) > 0 {
+    if static_upload_required && len(world_renderer.static_indices) > 0 {
         mem.copy_non_overlapping(
             static_index_buffer.mapped,
             raw_data(world_renderer.static_indices[:]),
             len(world_renderer.static_indices) * size_of(u32),
         )
+    }
+    if static_upload_required {
+        world_renderer.retained_static_uploaded_revision[frame_index] =
+            world_renderer.retained_static_revision
     }
     if len(world_renderer.road_vertices) > 0 {
         mem.copy_non_overlapping(
@@ -24283,6 +25142,13 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             destination,
             raw_data(world_renderer.bougainvillea_vertices[:]),
             len(world_renderer.bougainvillea_vertices) * size_of(Foliage_Vertex),
+        )
+    }
+    if len(world_renderer.bougainvillea_instances) > 0 {
+        mem.copy_non_overlapping(
+            bougainvillea_buffer.mapped,
+            raw_data(world_renderer.bougainvillea_instances[:]),
+            len(world_renderer.bougainvillea_instances) * size_of(Bougainvillea_Instance),
         )
     }
     if len(world_renderer.grass_instances) > 0 {
@@ -24400,6 +25266,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         static_index_buffer      = static_index_buffer,
         road_buffer              = road_buffer,
         foliage_buffer           = foliage_buffer,
+        bougainvillea_buffer     = bougainvillea_buffer,
         grass_instance_buffer    = grass_instance_buffer,
         instance_vertex_buffer   = instance_vertex_buffer,
         instance_index_buffer    = instance_index_buffer,
@@ -24435,6 +25302,7 @@ world_renderer_destroy :: proc() {
     for &buffer in world_renderer.static_index do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.road_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.foliage_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.bougainvillea_instance do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.grass_instance do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.instance_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.instance_index do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
@@ -24461,6 +25329,7 @@ world_renderer_destroy :: proc() {
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.sky_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.particle_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.foliage_pipelines)
+    render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.bougainvillea_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.grass_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.instance_pipelines)
     resources.image_destroy(&world_renderer.foliage_atlas, world_renderer.ctx)
@@ -24490,10 +25359,13 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.late_transparent_vertices)
     delete(world_renderer.static_vertices)
     delete(world_renderer.static_indices)
+    delete(world_renderer.retained_static_draws)
     delete(world_renderer.road_vertices)
     delete(world_renderer.road_geometry_cache)
     delete(world_renderer.road_geometry_chunks)
     delete(world_renderer.architecture_alley_render_cache)
+    delete(world_renderer.architecture_alley_geometry_cache)
+    delete(world_renderer.architecture_alley_geometry_plan)
     delete(world_renderer.architecture_alley_overlap_cache)
     delete(world_renderer.architecture_alley_overlap_plan)
     for &entry in world_renderer.architecture_street_area_cache do delete(entry.vertices)
@@ -24501,6 +25373,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.laundry_geometry_cache)
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)
+    delete(world_renderer.bougainvillea_instances)
     delete(world_renderer.grass_instances)
     delete(world_renderer.wildflower_instances)
     world_instance_meshes_clear()
@@ -24527,6 +25400,7 @@ world_renderer_destroy :: proc() {
         delete(entry.world_indices)
         delete(entry.foliage_vertices)
         delete(entry.bougainvillea_vertices)
+        delete(entry.bougainvillea_cards)
     }
     delete(world_renderer.static_geometry_cache)
     for &entry in world_renderer.climbing_leaf_geometry_cache {

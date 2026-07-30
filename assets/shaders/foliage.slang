@@ -44,6 +44,7 @@ struct VertexOutput {
     float depth : TEXCOORD1;
     nointerpolation uint kind : TEXCOORD2;
     float3 world_position : TEXCOORD3;
+    float field_sheen : TEXCOORD4;
 };
 
 // The atlas uses an sRGB image and is decoded by the sampler. Vertex tints and
@@ -78,6 +79,7 @@ float3 apply_environment_light(float3 color) {
 
 VertexOutput foliage_vertex_transform(VertexInput input) {
     float3 world_position = input.position;
+    float field_sheen = 0.0;
     float2 wind = push.water.zw;
     float wind_speed = length(wind);
     float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
@@ -130,6 +132,7 @@ VertexOutput foliage_vertex_transform(VertexInput input) {
             primary_wave * .52 +
             crossing_wave * .31 +
             detail_wave * .17;
+        field_sheen = field_wave;
 
         // Keep the response continuous. Thresholding this signal into a gust
         // front made the cards appear to tick between poses even though the
@@ -183,6 +186,7 @@ VertexOutput foliage_vertex_transform(VertexInput input) {
     output.depth = depth;
     output.kind = input.kind;
     output.world_position = world_position;
+    output.field_sheen = field_sheen;
     return output;
 }
 
@@ -191,11 +195,118 @@ VertexOutput vertex_main(VertexInput input) {
     return foliage_vertex_transform(input);
 }
 
+struct BougainvilleaInstance {
+    float3 center : POSITION;
+    float2 size : TEXCOORD0;
+    uint tile : TEXCOORD1;
+    float4 params : TEXCOORD2;
+    float yaw_bias : TEXCOORD3;
+};
+
+[shader("vertex")]
+VertexOutput bougainvillea_vertex_main(
+    BougainvilleaInstance instance,
+    uint vertex_id : SV_VertexID
+) {
+    static const float2 quad_corners[6] = {
+        float2(0, 1), float2(1, 1), float2(1, 0),
+        float2(0, 1), float2(1, 0), float2(0, 0)
+    };
+    static const float2 anchors[16] = {
+        float2(.50, .90), float2(.12, .88), float2(.50, .91), float2(.08, .88),
+        float2(.50, .90), float2(.12, .88), float2(.50, .91), float2(.08, .88),
+        float2(.50, .90), float2(.10, .87), float2(.50, .91), float2(.08, .88),
+        float2(.50, .90), float2(.10, .88), float2(.50, .92), float2(.08, .88)
+    };
+
+    uint tile = instance.tile & 15;
+    float2 anchor = anchors[tile];
+    float texture_anchor_x = anchor.x;
+    bool mirror = instance.params.x > .5;
+    if (mirror) anchor.x = 1.0 - anchor.x;
+
+    float horizontal_length = max(length(push.camera_right.xz), .001);
+    float3 right = float3(
+        push.camera_right.x / horizontal_length * instance.size.x * .5,
+        0,
+        push.camera_right.z / horizontal_length * instance.size.x * .5
+    );
+    float yaw_cosine = cos(instance.yaw_bias);
+    float yaw_sine = sin(instance.yaw_bias);
+    right = float3(
+        right.x * yaw_cosine + right.z * yaw_sine,
+        0,
+        -right.x * yaw_sine + right.z * yaw_cosine
+    );
+    float3 constrained_up = normalize(float3(
+        push.camera_up.x * .28,
+        .72 + push.camera_up.y * .28,
+        push.camera_up.z * .28
+    ));
+    float3 up = constrained_up * instance.size.y * .5;
+    float roll_cosine = cos(instance.params.y);
+    float roll_sine = sin(instance.params.y);
+    float3 unit_right = right / max(instance.size.x * .5, .0001);
+    float3 unit_up = up / max(instance.size.y * .5, .0001);
+    right = (unit_right * roll_cosine + unit_up * roll_sine) * instance.size.x * .5;
+    up = (-unit_right * roll_sine + unit_up * roll_cosine) * instance.size.y * .5;
+
+    float3 anchored_center =
+        instance.center +
+        right * (1.0 - anchor.x * 2.0) +
+        up * (anchor.y * 2.0 - 1.0);
+
+    uint subquad = vertex_id / 6;
+    uint sub_column = subquad & 1;
+    uint sub_row = subquad >> 1;
+    float2 corner = quad_corners[vertex_id % 6];
+    uint grid_column = sub_column + uint(corner.x);
+    uint grid_row = sub_row + uint(corner.y);
+    float x_coordinate =
+        grid_column == 0 ? -1.0 :
+        grid_column == 1 ? anchor.x * 2.0 - 1.0 : 1.0;
+    float y_coordinate =
+        grid_row == 0 ? 1.0 :
+        grid_row == 1 ? 1.0 - anchor.y * 2.0 : -1.0;
+    float3 position = anchored_center + right * x_coordinate + up * y_coordinate;
+
+    uint column = tile & 3;
+    uint row = tile >> 2;
+    float inset = 2.0 / 1254.0;
+    float u0 = float(column) * .25 + inset;
+    float u1 = float(column + 1) * .25 - inset;
+    if (mirror) {
+        float swap_u = u0;
+        u0 = u1;
+        u1 = swap_u;
+    }
+    float v0 = float(row) * .25 + inset;
+    float v1 = float(row + 1) * .25 - inset;
+    float anchor_u = lerp(u0, u1, anchor.x);
+    float anchor_v = lerp(v0, v1, anchor.y);
+    float u = grid_column == 0 ? u0 : grid_column == 1 ? anchor_u : u1;
+    float v = grid_row == 0 ? v0 : grid_row == 1 ? anchor_v : v1;
+
+    VertexInput input;
+    input.position = position;
+    input.uv = float2(u, v);
+    input.color = float4(
+        instance.params.z,
+        texture_anchor_x,
+        anchor.y,
+        instance.params.w > .5 ? 3.0 : 2.0
+    );
+    input.kind = 0;
+    return foliage_vertex_transform(input);
+}
+
 struct GrassInstance {
     float3 center : POSITION;
     float2 size : TEXCOORD0;
     uint tile : TEXCOORD1;
     float4 color : COLOR0;
+    float4 ground_color : COLOR1;
+    float4 cull_params : TEXCOORD3;
 };
 
 [shader("vertex")]
@@ -204,8 +315,28 @@ VertexOutput grass_vertex_main(GrassInstance instance, uint vertex_id : SV_Verte
         float2(-.5, -.5), float2(.5, -.5), float2(.5, .5),
         float2(-.5, -.5), float2(.5, .5), float2(-.5, .5)
     };
+    // Fraction of transparent space below the first painted blade pixel in
+    // each atlas tile. The instance center describes the full card, so without
+    // compensating for this padding most visible tufts hover above their
+    // terrain sample even though the quad itself is correctly bottom-anchored.
+    static const float grass_bottom_padding[16] = {
+        .060510, .063694, .066879, .066879,
+        .153355, .156550, .156550, .162939,
+        .220447, .214058, .220447, .000000,
+        .242038, .242038, .245223, .245223
+    };
     float2 corner = corners[vertex_id];
     float3 root = instance.center - float3(0.0, instance.size.y * .5, 0.0);
+    bool gpu_culling = instance.cull_params.z > .5;
+    float radial_distance = length(root.xz - push.camera_position.xz);
+    float field_radius = instance.cull_params.y;
+    float fade = gpu_culling
+        ? saturate((radial_distance - field_radius * .35) / (field_radius * .65))
+        : 0.0;
+    fade = fade * fade * (3.0 - 2.0 * fade);
+    float density = 1.0 - fade;
+    bool visible = !gpu_culling ||
+        (radial_distance <= field_radius && instance.cull_params.x <= density);
     float distance_to_camera = length(root - push.camera_position.xyz);
     float overhead = smoothstep(.58, .90, abs(push.camera_forward.y));
     float nearby = 1.0 - smoothstep(8.0, 20.0, distance_to_camera);
@@ -222,7 +353,10 @@ VertexOutput grass_vertex_main(GrassInstance instance, uint vertex_id : SV_Verte
     ));
     float3 position = root;
     position += push.camera_right.xyz * (corner.x * instance.size.x);
-    position += blade_axis * ((corner.y + .5) * instance.size.y);
+    position += blade_axis * (
+        (corner.y + .5 - grass_bottom_padding[instance.tile]) *
+        instance.size.y
+    );
 
     uint column = instance.tile & 3;
     uint row = instance.tile >> 2;
@@ -242,9 +376,21 @@ VertexOutput grass_vertex_main(GrassInstance instance, uint vertex_id : SV_Verte
     VertexInput input;
     input.position = position;
     input.uv = uv;
+    bool native_color = instance.color.a > 1.5;
     input.color = instance.color;
+    if (gpu_culling && !native_color) {
+        input.color.rgb = lerp(instance.color.rgb, instance.ground_color.rgb, fade);
+        input.color.a *= density;
+    }
     input.kind = instance.color.a > 1.5 ? 2 : 1;
-    return foliage_vertex_transform(input);
+    VertexOutput output = foliage_vertex_transform(input);
+    if (!visible) {
+        // Collapse rejected candidates outside the clip volume. This keeps the
+        // cached candidate stream persistent while avoiding fragment work.
+        output.position = float4(2.0, 2.0, 2.0, 1.0);
+        output.color.a = 0.0;
+    }
+    return output;
 }
 
 float foliage_shadow_compare(uint cascade, float2 uv, float depth) {
@@ -453,6 +599,29 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         float grass_detail = lerp(.82, 1.30, smoothstep(.06, .94, luminance)) *
                              lerp(.94, 1.08, tip);
         color = input.color.rgb * lerp(1.0, grass_detail, input.color.a);
+
+        // Treat a windy field like a hand-painted postcard rather than a
+        // glossy material. Broad crests turn toward the sun as warm yellow-
+        // green sweeps, while the following trough settles into a restrained
+        // blue-green. The same continuous signal that bends the blades drives
+        // the color, so the traveling light remains attached to the grass.
+        float wind_speed = length(push.water.zw);
+        float wind_presence = smoothstep(1.4, 8.5, wind_speed);
+        float field_distance =
+            smoothstep(2.0, 11.0, input.depth) *
+            (1.0 - smoothstep(150.0, 235.0, input.depth));
+        float crest = smoothstep(-.14, .68, input.field_sheen);
+        float trough = smoothstep(-.04, .66, -input.field_sheen);
+        float sun_height = smoothstep(-.08, .48, push.sun.y);
+        float postcard_sheen =
+            wind_presence * field_distance * daylight * shadow_visibility * sun_height;
+
+        float3 warm_grass =
+            color * float3(1.25, 1.18, .72) +
+            float3(.038, .032, .005);
+        float3 cool_grass = color * float3(.84, .92, 1.06);
+        color = lerp(color, cool_grass, trough * postcard_sheen * .48);
+        color = lerp(color, warm_grass, crest * postcard_sheen * .62);
     }
 
     color = apply_environment_light(color);

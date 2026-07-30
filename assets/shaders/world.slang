@@ -100,6 +100,44 @@ static const uint MATERIAL_LEAF = 18;
 static const uint MATERIAL_PETAL = 19;
 static const uint MATERIAL_FOUNTAIN_WATER = 20;
 
+float3 shade_grass_wind_sheen(VertexOutput input, float3 color) {
+    float grass = smoothstep(.18, .82, input.material.x);
+    float2 wind = push.water.zw;
+    float wind_speed = length(wind);
+    float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
+    float2 wind_across = float2(-wind_direction.y, wind_direction.x);
+    float grass_time = push.water.x * (.62 + wind_speed * .018);
+    float downwind_coordinate = dot(input.world_position.xz, wind_direction);
+    float crosswind_coordinate = dot(input.world_position.xz, wind_across);
+    float field_wave =
+        sin(downwind_coordinate * .071 - grass_time) * .52 +
+        sin((downwind_coordinate * .039 + crosswind_coordinate * .052) -
+            grass_time * .73 + 1.7) * .31 +
+        sin((downwind_coordinate * .113 - crosswind_coordinate * .027) -
+            grass_time * 1.07 + 4.1) * .17;
+
+    float wind_presence = smoothstep(1.4, 8.5, wind_speed);
+    float field_distance =
+        smoothstep(2.0, 11.0, input.depth) *
+        (1.0 - smoothstep(150.0, 235.0, input.depth));
+    float crest = smoothstep(-.14, .68, field_wave);
+    float trough = smoothstep(-.04, .66, -field_wave);
+    float daylight = saturate(push.sun.w);
+    float sun_height = smoothstep(-.08, .48, push.sun.y);
+    float shadow_visibility =
+        dynamic_shadow_visibility(input.world_position, input.normal);
+    float postcard_sheen =
+        grass * wind_presence * field_distance * daylight *
+        shadow_visibility * sun_height;
+
+    float3 warm_grass =
+        color * float3(1.18, 1.14, .80) +
+        float3(.026, .022, .004);
+    float3 cool_grass = color * float3(.88, .94, 1.04);
+    color = lerp(color, cool_grass, trough * postcard_sheen * .34);
+    return lerp(color, warm_grass, crest * postcard_sheen * .46);
+}
+
 // CPU-authored vertex and fog colors are ordinary 8-bit sRGB palette values.
 // Decode them before interpolation, lighting, and fog blending; the sRGB
 // attachment performs the single linear-to-sRGB conversion on write.
@@ -1212,13 +1250,15 @@ float3 shade_water(VertexOutput input) {
     float2 axis = wind / wind_length;
     float2 across = float2(-axis.y, axis.x);
 
-    // Adriatic's authored islands replace ArchipelagoGame's packed depth map.
-    float island_radius = 280.0;
-    float coast_a = length(p - float2(1300, 1300)) - island_radius;
-    float coast_b = length(p + float2(1300, 1300)) - island_radius;
-    float coast_distance = max(min(coast_a, coast_b), 0.0);
-    float shallow = 1.0 - smoothstep(12.0, 92.0, coast_distance);
-    float deep = smoothstep(30.0, 280.0, coast_distance);
+    // The local ocean grid carries the interpolated terrain elevation above
+    // sea level. Positive terrain approaches the water from beneath the
+    // visible surface, so the shallow tint and foam follow authored terrain
+    // edits instead of a pair of hard-coded island circles. Far-ocean vertices
+    // have no terrain signal and remain deep water.
+    float terrain_shore = input.material.y *
+        smoothstep(.025, 1.35, input.material.x);
+    float shallow = terrain_shore;
+    float deep = 1.0 - smoothstep(.015, .72, terrain_shore);
 
     float3 shallow_color = float3(.10, .60, .60);
     float3 middle_color = float3(.025, .43, .52);
@@ -1393,7 +1433,8 @@ float3 shade_water(VertexOutput input) {
     color += sun_reflection_color * min(sun_specular, 2.4);
 
     // A narrow, broken aerated edge keeps foam attached to the coastline.
-    float foam_band = 1.0 - smoothstep(5.0, 31.0, coast_distance);
+    float foam_band = smoothstep(.035, .30, terrain_shore) *
+                      (1.0 - smoothstep(.48, .92, terrain_shore));
     float foam_breakup = value_noise(float2(dot(p, across) * .075, dot(p, axis) * .031) +
                                       float2(time * .028, 0));
     float foam = foam_band * lerp(.28, 1.0, smoothstep(.38, .76, foam_breakup));
@@ -1566,6 +1607,9 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     float3 base = input.color.rgb;
     float output_alpha = input.color.a;
     switch (input.kind) {
+        case MATERIAL_TERRAIN:
+            base = shade_grass_wind_sheen(input, base);
+            break;
         case MATERIAL_WATER:
             base = shade_water(input);
             break;
