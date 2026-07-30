@@ -1197,6 +1197,28 @@ architecture_facade_profiles_match_archetype_targets :: proc(t: ^testing.T) {
 }
 
 @(test)
+architecture_very_wide_facades_extend_window_rhythm_to_wall_edges :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(1300, 1300, 60, 18, 4, 19.2)
+    structure.kind = .Architecture
+    structure.seed = 512
+    structure.building.archetype = .Townhouse
+
+    profile := architecture.facade_profile(structure.building.archetype)
+    columns := architecture.facade_profile_bay_count(profile, structure, .Front, true, structure.width)
+    testing.expect(t, columns >= 13)
+
+    window_width, _ := architecture.facade_profile_window_size(profile, structure, .Front)
+    left := architecture.facade_bay_center(structure.width, window_width, columns, 0)
+    right := architecture.facade_bay_center(structure.width, window_width, columns, columns - 1)
+    testing.expect(t, left < -structure.width * .40)
+    testing.expect(t, right > structure.width * .40)
+
+    service := architecture.facade_profile(.Storehouse)
+    service_columns := architecture.facade_profile_bay_count(service, structure, .Front, true, structure.width)
+    testing.expect(t, service_columns <= service.front_bays_max)
+}
+
+@(test)
 architecture_openings_stack_and_restore_central_upper_bay :: proc(t: ^testing.T) {
     structure := terrain.structure_make(1300, 1300, 24, 18, 4, 19.2)
     structure.kind = .Architecture

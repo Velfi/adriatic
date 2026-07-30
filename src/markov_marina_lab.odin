@@ -1125,11 +1125,12 @@ markov_marina_buoy_model :: proc(center: third_person.Vec3, style: int, occupied
     world_box({center.x + .10, center.y + .52, center.z}, {.07, .16, .09}, metal)
 }
 
-markov_marina_office_structure :: proc(plan: ^marina.Plan) -> terrain.Structure {
+markov_marina_office_structure :: proc(plan: ^marina.Plan, project: ^terrain.Project = nil) -> terrain.Structure {
     if plan == nil do return {}
     office := marina.plan_world_position(plan, plan.office)
     seed := plan.layout_seed ~ 0x48415242
-    structure := terrain.structure_make(office.x, office.z, 8.2, 6.4, 0, 4.8)
+    base_y := project == nil ? f32(0) : terrain.sample_height(project, 0, office.x, office.z)
+    structure := terrain.structure_make(office.x, office.z, 8.2, 6.4, base_y, 4.8)
     // Marina footprints are intentionally more compact than settlement lots.
     // Preserve that footprint after structure_make applies the terrain grid's
     // minimum editing dimensions.
@@ -1156,7 +1157,38 @@ markov_marina_office_structure :: proc(plan: ^marina.Plan) -> terrain.Structure 
     return structure
 }
 
-world_markov_marina_static_geometry :: proc(plan: ^marina.Plan) {
+shoreline_harbor_office_structure :: proc(
+    plan: ^harbor.Harbor_Plan,
+    project: ^terrain.Project = nil,
+) -> terrain.Structure {
+    if plan == nil do return {}
+    seed := plan.seed ~ 0x48415242
+    base_y := project == nil ? f32(0) : terrain.sample_height(project, 0, plan.office.x, plan.office.z)
+    structure := terrain.structure_make(plan.office.x, plan.office.z, 10, 8, base_y, 5.2)
+    structure.width = 10
+    structure.depth = 8
+    structure.height = 5.2
+    structure.rotation = math.atan2(-plan.tangent.x, plan.tangent.z)
+    structure.kind = .Architecture
+    structure.seed = seed
+    structure.building = architecture.architecture_identity(
+        {
+            region = .Adriatic,
+            tissue = .Harbor,
+            density = .42,
+            frontage = structure.width,
+            depth = structure.depth,
+            route = .Waterfront,
+            waterfront = true,
+            landmark_kind = .Harbor_Office,
+        },
+        seed,
+    )
+    structure.color = architecture.architecture_color(seed, true)
+    return structure
+}
+
+world_markov_marina_static_geometry :: proc(plan: ^marina.Plan, project: ^terrain.Project = nil) {
     if plan == nil || !plan.valid do return
     if !plan.world_conditioned {
         extent_x := f32(marina.GRID_WIDTH) * marina.CELL_METERS * .5 + 24
@@ -1204,8 +1236,8 @@ world_markov_marina_static_geometry :: proc(plan: ^marina.Plan) {
         markov_marina_segment(segment, plan)
     }
 
-    office := markov_marina_office_structure(plan)
-    world_architecture(office, nil)
+    office := markov_marina_office_structure(plan, project)
+    world_architecture(office, project)
 
     // Salt-tolerant, generated planting softens the landward office edge
     // without occupying navigable quay cells. Keeping this in presentation
@@ -1237,9 +1269,13 @@ world_markov_marina_static_geometry :: proc(plan: ^marina.Plan) {
     }
 }
 
-world_markov_marina_static_geometry_cached :: proc(plan: ^marina.Plan, cache_slot: int) {
+world_markov_marina_static_geometry_cached :: proc(
+    plan: ^marina.Plan,
+    project: ^terrain.Project,
+    cache_slot: int,
+) {
     if cache_slot < 0 || cache_slot >= MARINA_GEOMETRY_CACHE_CAPACITY {
-        world_markov_marina_static_geometry(plan)
+        world_markov_marina_static_geometry(plan, project)
         return
     }
 
@@ -1250,7 +1286,7 @@ world_markov_marina_static_geometry_cached :: proc(plan: ^marina.Plan, cache_slo
     }
 
     first := len(world_renderer.vertices)
-    world_markov_marina_static_geometry(plan)
+    world_markov_marina_static_geometry(plan, project)
     clear(&entry.world_vertices)
     if first < len(world_renderer.vertices) {
         append(&entry.world_vertices, ..world_renderer.vertices[first:])
@@ -1278,7 +1314,7 @@ world_markov_marina_facility :: proc(
 ) {
     if editor == nil || plan == nil || !plan.valid do return
     first := len(world_renderer.vertices)
-    world_markov_marina_static_geometry_cached(plan, cache_slot)
+    world_markov_marina_static_geometry_cached(plan, &editor.project, cache_slot)
     if !include_actors {
         for slip, slip_index in plan.slips[:plan.slip_count] {
             position := marina.plan_world_position(plan, slip.position)
@@ -1357,6 +1393,8 @@ world_shoreline_harbor_facility :: proc(editor: ^Editor, plan: ^harbor.Harbor_Pl
             world_box_rotated(center, {path.width, height, segment_length}, yaw, color)
         }
     }
+    office := shoreline_harbor_office_structure(plan, &editor.project)
+    world_architecture(office, &editor.project)
     for berth, berth_index in plan.berths[:plan.berth_count] {
         if berth.kind == .Swing_Mooring {
             markov_marina_buoy_model(

@@ -18,6 +18,14 @@ struct Push {
 [[vk::binding(5, 0)]] SamplerState architecture_material_sampler;
 [[vk::binding(6, 0)]] Texture2D<float4> business_sign_atlas;
 [[vk::binding(7, 0)]] SamplerState business_sign_sampler;
+[[vk::binding(8, 0)]] Texture2D<float4> material_lab_albedo;
+[[vk::binding(9, 0)]] SamplerState material_lab_albedo_sampler;
+[[vk::binding(10, 0)]] Texture2D<float4> material_lab_specular;
+[[vk::binding(11, 0)]] SamplerState material_lab_specular_sampler;
+[[vk::binding(12, 0)]] Texture2D<float4> material_lab_roughness;
+[[vk::binding(13, 0)]] SamplerState material_lab_roughness_sampler;
+[[vk::binding(14, 0)]] Texture2D<float4> material_lab_normal;
+[[vk::binding(15, 0)]] SamplerState material_lab_normal_sampler;
 
 struct DynamicShadowCascade {
     // Light-space basis vectors. The fourth components contain the snapped
@@ -100,6 +108,7 @@ static const uint MATERIAL_LEAF = 18;
 static const uint MATERIAL_PETAL = 19;
 static const uint MATERIAL_FOUNTAIN_WATER = 20;
 static const uint MATERIAL_CAR_PAINT = 21;
+static const uint MATERIAL_MATERIAL_LAB = 22;
 
 float3 shade_grass_wind_sheen(VertexOutput input, float3 color) {
     float grass = smoothstep(.18, .82, input.material.x);
@@ -548,6 +557,27 @@ float3 shade_imported_material(VertexOutput input) {
     material.metallic = vehicle ? 0 : input.material.x;
     material.roughness = vehicle ? .04 : input.material.y;
     return shade_brdf(material, input.normal, input.world_position);
+}
+
+float3 shade_material_lab(VertexOutput input) {
+    float4 albedo = material_lab_albedo.Sample(material_lab_albedo_sampler, input.uv);
+    float specular = material_lab_specular.Sample(material_lab_specular_sampler, input.uv).r;
+    float roughness = material_lab_roughness.Sample(material_lab_roughness_sampler, input.uv).r;
+    float3 map_normal = material_lab_normal.Sample(material_lab_normal_sampler, input.uv).xyz * 2.0 - 1.0;
+    float3 geometric_normal = normalize(input.normal);
+    float3 tangent = float3(-geometric_normal.z, 0.0, geometric_normal.x);
+    tangent = dot(tangent, tangent) < .01 ? float3(1.0, 0.0, 0.0) : normalize(tangent);
+    float3 bitangent = normalize(cross(geometric_normal, tangent));
+    float3 normal = normalize(
+        tangent * map_normal.x +
+        bitangent * map_normal.y +
+        geometric_normal * map_normal.z
+    );
+    BrdfMaterial material;
+    material.base_color = albedo.rgb * input.color.rgb;
+    material.metallic = saturate(specular);
+    material.roughness = clamp(roughness, .02, 1.0);
+    return shade_brdf(material, normal, input.world_position);
 }
 
 float3 shade_car_paint_coat(
@@ -1976,6 +2006,9 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             break;
         case MATERIAL_CAR_PAINT:
             base = shade_car_paint(input);
+            break;
+        case MATERIAL_MATERIAL_LAB:
+            base = shade_material_lab(input);
             break;
         case MATERIAL_EYE:
             base = shade_eye(input);

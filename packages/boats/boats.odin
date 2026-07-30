@@ -82,8 +82,8 @@ Triangle :: struct {
     a, b, c: u16,
 }
 
-MESH_VERTEX_CAPACITY :: 768
-MESH_TRIANGLE_CAPACITY :: 256
+MESH_VERTEX_CAPACITY :: 1536
+MESH_TRIANGLE_CAPACITY :: 512
 
 Mesh :: struct {
     vertices:       [MESH_VERTEX_CAPACITY]Vertex,

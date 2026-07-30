@@ -1041,6 +1041,15 @@ facade_profile_bay_count :: proc(
         count += variant % (high - low + 1)
     }
     count = int(math.floor(f64(f32(count) * ARCHITECTURE_WINDOW_DENSITY + .5)))
+    if !profile.service && span >= 36 {
+        // Archetype ranges describe ordinary façades, but using their fixed
+        // maxima on very broad masses leaves the openings clustered around
+        // the center because facade_bay_center caps pitch at 4.6 m. Add enough
+        // bays to carry that rhythm across the usable wall instead.
+        usable_span := max(f32(0), span - 2 * 1.15 - profile.window_width_min)
+        broad_face_count := int(math.ceil(f64(usable_span / 4.6))) + 1
+        count = max(count, broad_face_count)
+    }
     if primary_face && !profile.service do count = max(count, 1)
     maximum_fit := max(1, int(math.floor(f64((span - 2 * 1.15 + 1.15) / (profile.window_width_min + 1.15)))))
     return clamp(count, 0, maximum_fit)

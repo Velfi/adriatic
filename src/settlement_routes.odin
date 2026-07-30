@@ -15,6 +15,56 @@ Settlement_Route :: struct {
     count:  int,
 }
 
+Settlement_Route_Construction_Cost :: struct {
+    cut:        f32,
+    fill:       f32,
+    cross_slope:f32,
+}
+
+// Estimate the graded footprint rather than looking only at centerline slope.
+// The proposed roadbed is the straight vertical profile between the endpoints;
+// five transverse samples cover pavement, shoulders, and the beginnings of the
+// cut/fill slopes. This stays deliberately cheap because it runs in A*'s inner
+// loop, while still making a contour-following bench materially cheaper than a
+// road driven across a steep side slope.
+settlement_route_construction_cost :: proc(
+    project: ^terrain.Project,
+    a, b: [2]f32,
+    half_width: f32,
+) -> Settlement_Route_Construction_Cost {
+    result: Settlement_Route_Construction_Cost
+    delta := b - a
+    length := linalg.length(delta)
+    if project == nil || length <= .01 do return result
+    tangent := delta / length
+    normal := [2]f32{-tangent[1], tangent[0]}
+    a_height := terrain.sample_height(project, 0, a[0], a[1])
+    b_height := terrain.sample_height(project, 0, b[0], b[1])
+    sample_spacing := half_width * .5
+    // One representative section keeps the A* inner loop cheap. Its area is
+    // extruded over the primitive length; the endpoint samples above define
+    // the road's vertical profile.
+    center := (a + b) * .5
+    road_height := (a_height + b_height) * .5
+    left_height, right_height := f32(0), f32(0)
+    for across_index in -2 ..= 2 {
+        offset := f32(across_index) * sample_spacing
+        point := center + normal * offset
+        ground := terrain.sample_height(project, 0, point[0], point[1])
+        difference := road_height - ground
+        area := sample_spacing * length
+        if difference > 0 {
+            result.fill += difference * area
+        } else {
+            result.cut += -difference * area
+        }
+        if across_index == -2 do left_height = ground
+        if across_index == 2 do right_height = ground
+    }
+    result.cross_slope = math.abs(right_height - left_height) / max(half_width * 2, f32(.01))
+    return result
+}
+
 Settlement_Road_Network_PoI :: struct {
     position: [2]f32,
     required: bool,
@@ -660,32 +710,63 @@ settlement_route_find :: proc(
             if settlement_route_crosses_sea(project, step_route) do continue
             distance_cost := step_length / cell
             grade := math.abs(next_height - current_height) / step_length
-            cross_slope := settlement_terrain_slope(project, world_x, world_z)
             preferred_grade := f32(.06)
-            grade_weight, contour_weight := f32(18), f32(7)
+            grade_weight, earthwork_weight := f32(18), f32(.018)
+            roadbed_half_width := f32(4)
             switch route_class {
             case .Civic_Spine, .Connector:
                 preferred_grade = .06
+                roadbed_half_width = 6
             case .Street:
                 preferred_grade = .08
+                roadbed_half_width = 4.5
             case .Lane, .Alley:
                 preferred_grade = .12
-                grade_weight, contour_weight = 10, 4
+                grade_weight, earthwork_weight = 10, .012
+                roadbed_half_width = 2.5
             case .Stair:
                 preferred_grade = .12
-                grade_weight, contour_weight = 2, 1
+                grade_weight, earthwork_weight = 2, .004
+                roadbed_half_width = 1.5
             case .Waterfront:
                 preferred_grade = .04
-                grade_weight, contour_weight = 24, 12
+                grade_weight, earthwork_weight = 24, .025
+                roadbed_half_width = 5
             case .Ridge:
                 preferred_grade = .07
-                grade_weight, contour_weight = 16, 4
+                grade_weight, earthwork_weight = 16, .014
+                roadbed_half_width = 3.5
             }
             if grade > grade_limit do continue
+            curvature_cost := f32(0)
+            previous := parents[current]
+            if previous >= 0 {
+                px, pz := previous % width, previous / width
+                previous_x, previous_z := min_x + f32(px) * cell, min_z + f32(pz) * cell
+                if previous == start do previous_x, previous_z = start_x, start_z
+                incoming := [2]f32{current_x - previous_x, current_z - previous_z}
+                outgoing := [2]f32{world_x - current_x, world_z - current_z}
+                incoming_length, outgoing_length := linalg.length(incoming), linalg.length(outgoing)
+                if incoming_length > .01 && outgoing_length > .01 {
+                    cosine := clamp(linalg.dot(incoming, outgoing) / (incoming_length * outgoing_length), f32(-1), f32(1))
+                    if cosine < -.15 do continue
+                    curvature_cost = (1 - cosine) * (1 - cosine) * 12
+                }
+            }
+            construction := settlement_route_construction_cost(
+                project,
+                {current_x, current_z},
+                {world_x, world_z},
+                roadbed_half_width,
+            )
             excess_grade := max(grade - preferred_grade, f32(0))
             terrain_cost :=
                 distance_cost *
-                (1 + grade * grade_weight + excess_grade * grade_weight * 4 + cross_slope * contour_weight)
+                (1 + grade * grade_weight + excess_grade * grade_weight * 4 + curvature_cost) +
+                (construction.cut * 1.35 +
+                    construction.fill +
+                    construction.cross_slope * step_length * roadbed_half_width) *
+                earthwork_weight
             candidate := costs[current] + terrain_cost
             if candidate >= costs[neighbor] do continue
             costs[neighbor] = candidate

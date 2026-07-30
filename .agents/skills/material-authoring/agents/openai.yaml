@@ -1,0 +1,4 @@
+interface:
+  display_name: "Material Authoring"
+  short_description: "Generate and attach BRDF texture maps"
+  default_prompt: "Use $material-authoring to create or refine a texture-backed Adriatic material."

@@ -37,6 +37,20 @@ Lab_Scene_Request :: struct {
 
 LAB_SCENES := [?]Lab_Scene_Definition {
     {
+        name = "material",
+        configure = material_lab_configure,
+        world_overlay = world_material_lab,
+        process_input = material_lab_process_input,
+        draw_ui = material_lab_draw_ui,
+        exit = material_lab_exit,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
+    {
         name = "dialogue-sound",
         configure = dialogue_sound_lab_configure,
         process_input = dialogue_sound_lab_process_input,

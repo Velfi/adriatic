@@ -42,6 +42,43 @@ garden_courtyard_keeps_woody_trunks_off_the_cross_path :: proc(t: ^testing.T) {
 }
 
 @(test)
+settlement_gardens_mix_regional_trees_shrubs_and_groundcover :: proc(t: ^testing.T) {
+    species, _, woody := settlement_garden_woody_species(.Adriatic, .Park, 0, 1)
+    testing.expect_value(t, species, plants.Species.Stone_Pine)
+    testing.expect(t, woody)
+
+    species, _, woody = settlement_garden_woody_species(.Aegean, .Park, 0, 1)
+    testing.expect_value(t, species, plants.Species.Olive)
+    testing.expect(t, woody)
+
+    species, _, woody = settlement_garden_woody_species(.Adriatic, .Kitchen, 0, 1)
+    testing.expect_value(t, species, plants.Species.Olive)
+    testing.expect(t, woody)
+
+    species, _, woody = settlement_garden_woody_species(.Aegean, .Wild, 2, 0)
+    testing.expect_value(t, species, plants.Species.Mastic)
+    testing.expect(t, woody)
+
+    _, _, woody = settlement_garden_woody_species(.Adriatic, .Courtyard, 3, 1)
+    testing.expect(t, !woody)
+}
+
+@(test)
+settlement_landscape_has_a_village_budget_without_gardens :: proc(t: ^testing.T) {
+    plan: Settlement_Plan
+    plan.request.scale = .Village
+    plan.garden_count = 0
+    testing.expect_value(t, settlement_landscape_target(plan.request.scale), 8)
+
+    species, _ := settlement_landscape_species(.Adriatic, 0, 0)
+    testing.expect_value(t, species, plants.Species.Stone_Pine)
+    species, _ = settlement_landscape_species(.Aegean, 0, 0)
+    testing.expect_value(t, species, plants.Species.Olive)
+    species, _ = settlement_landscape_species(.Aegean, 1, 0)
+    testing.expect_value(t, species, plants.Species.Mastic)
+}
+
+@(test)
 settlement_brush_fixed_presets_and_shape_masks :: proc(t: ^testing.T) {
     testing.expect_value(t, settlement_brush_preset_span(.Small), f32(60))
     testing.expect_value(t, settlement_brush_preset_span(.Medium), f32(120))
@@ -1231,6 +1268,12 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
                         frontage_low, frontage_high = 6, 18
                         depth_low, depth_high = 4.5, 13
                     }
+                    if scale == .Town {
+                        frontage_low *= f32(1.41421356237)
+                        frontage_high *= f32(1.41421356237)
+                        depth_low *= f32(1.41421356237)
+                        depth_high *= f32(1.41421356237)
+                    }
                     minimum_height, maximum_height := settlement_height_band(region, scale)
                     testing.expect(t, structure.width >= frontage_low && structure.width <= frontage_high)
                     testing.expect(t, structure.depth >= depth_low && structure.depth <= depth_high)
@@ -1251,6 +1294,10 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
                 frontage_target, depth_target = 9, 6.5
             } else if scale == .Village {
                 frontage_target, depth_target = 10.5, 7.5
+            }
+            if scale == .Town {
+                frontage_target *= f32(1.41421356237)
+                depth_target *= f32(1.41421356237)
             }
             // Ordinary façades are quantized to exact 4.8 m window-row
             // modules. Aegean fabric in this density matrix is predominantly
@@ -2445,6 +2492,48 @@ settlement_access_shared_house_trunks_widen_by_demand :: proc(t: ^testing.T) {
     testing.expect(t, math.abs(city.alleys[0].half_width - .5) < .001)
     testing.expect(t, math.abs(city.alleys[1].half_width - .5) < .001)
     testing.expect(t, city.alleys[2].half_width > .5)
+}
+
+@(test)
+settlement_access_building_journeys_promote_cross_town_passages :: proc(t: ^testing.T) {
+    city: architecture.City_Plan
+    defer architecture.city_plan_destroy(&city)
+    segments := [4][2][2]f32 {
+        {{-12, 8}, {-6, 8}},
+        {{-6, 8}, {6, 8}},
+        {{6, 8}, {12, 8}},
+        {{0, 8}, {0, 0}},
+    }
+    for segment in segments {
+        append(
+            &city.alleys,
+            architecture.City_Alley {
+                start_x = segment[0][0],
+                start_z = segment[0][1],
+                end_x = segment[1][0],
+                end_z = segment[1][1],
+                half_width = .5,
+            },
+        )
+    }
+    city.alley_count = len(segments)
+    travel_length := [4]f32{6, 12, 6, 8}
+    demand: [4]int
+
+    found := settlement_access_accumulate_building_journey(
+        &city,
+        travel_length[:],
+        len(segments),
+        {-12, 8},
+        {12, 8},
+        demand[:],
+    )
+
+    testing.expect(t, found)
+    testing.expect_value(t, demand[0], 0)
+    testing.expect_value(t, demand[1], 1)
+    testing.expect_value(t, demand[2], 0)
+    testing.expect_value(t, demand[3], 0)
 }
 
 @(test)
@@ -3991,6 +4080,32 @@ settlement_connectors_wind_across_steep_contours :: proc(t: ^testing.T) {
 }
 
 @(test)
+settlement_route_cost_samples_the_graded_cross_section :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    level := &project.levels[0]
+    level.cell_size, level.origin_x, level.origin_z = .5, -80, -80
+    for z in 0 ..< terrain.RING_RESOLUTION {
+        for x in 0 ..< terrain.RING_RESOLUTION {
+            world_x := level.origin_x + f32(x) * level.cell_size
+            level.heights[terrain.sample_index(x, z)] = world_x * .2
+        }
+    }
+
+    // Both centerlines have a perfectly smooth profile. The contour-aligned
+    // segment nevertheless crosses the hillside transversely and therefore
+    // needs substantially more cut/fill across its full roadbed.
+    across_slope := settlement_route_construction_cost(project, {-20, 0}, {20, 0}, 5)
+    along_contour := settlement_route_construction_cost(project, {0, -20}, {0, 20}, 5)
+
+    testing.expect(t, across_slope.cut + across_slope.fill < .01)
+    testing.expect(t, along_contour.cut > 20)
+    testing.expect(t, along_contour.fill > 20)
+    testing.expect(t, along_contour.cross_slope > .15)
+}
+
+@(test)
 settlement_short_street_detours_instead_of_accepting_an_over_grade_chord :: proc(t: ^testing.T) {
     project := new(terrain.Project)
     defer terrain.free_project(project)
@@ -4162,6 +4277,11 @@ generated_plants_select_detail_from_camera_distance :: proc(t: ^testing.T) {
     testing.expect_value(t, generated_plant_catalog_detail(.Medium), plants.Detail_Level.Medium)
     testing.expect_value(t, generated_plant_catalog_detail(.Far), plants.Detail_Level.Far)
     testing.expect_value(t, generated_plant_catalog_detail(.Distant), plants.Detail_Level.Far)
+    testing.expect(t, generated_plant_uses_hero_geometry(.Hero))
+    testing.expect(t, !generated_plant_uses_hero_geometry(.Near))
+    testing.expect(t, !generated_plant_uses_hero_geometry(.Medium))
+    testing.expect(t, !generated_plant_uses_hero_geometry(.Far))
+    testing.expect(t, !generated_plant_uses_hero_geometry(.Distant))
     testing.expect_value(t, generated_plant_apply_detail_floor(.Near, .Medium), plants.Detail_Level.Medium)
     testing.expect_value(t, generated_plant_apply_detail_floor(.Far, .Medium), plants.Detail_Level.Far)
     graded := generated_plant_point({4, 10, 7}, {2, 1, 0}, 0, 1, .25)

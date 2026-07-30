@@ -820,7 +820,21 @@ terrain_erode_default_level :: proc(data: ^Clipmap_Level, scratch: []f32, half_e
     }
 }
 
-init_project :: proc(result: ^Project) {
+next_default_island_seeds :: proc(current: [len(DEFAULT_ISLAND_SEEDS)]u32) -> [len(DEFAULT_ISLAND_SEEDS)]u32 {
+    result := current
+    defaults := DEFAULT_ISLAND_SEEDS
+    for &seed, island_index in result {
+        if seed == 0 do seed = defaults[island_index]
+        seed = islands.hash(seed + 0x9e3779b9 + u32(island_index) * 0x85ebca6b)
+    }
+    return result
+}
+
+default_island_feature_seed_for :: #force_inline proc(island_seed, salt: u32) -> u32 {
+    return islands.hash(island_seed ~ salt)
+}
+
+init_project_seeded :: proc(result: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]u32) {
     if result == nil do return
     delete(result.structures)
     result^ = {}
@@ -830,7 +844,7 @@ init_project :: proc(result: ^Project) {
     authored_half_extent := f32(WORLD_SIZE_METERS * .5)
     gameplay_center := authored_half_extent * DEFAULT_ISLAND_OFFSET
     generated_islands: [len(DEFAULT_ISLAND_SIGNS)]islands.Plan
-    for seed, island_index in DEFAULT_ISLAND_SEEDS {
+    for seed, island_index in seeds {
         generated_islands[island_index] = islands.generate(seed)
     }
     defer for &plan in generated_islands do islands.destroy(&plan)
@@ -866,6 +880,10 @@ init_project :: proc(result: ^Project) {
     }
     _ = add_default_runways(result)
     refresh_derived_overlaps(result)
+}
+
+init_project :: proc(result: ^Project) {
+    init_project_seeded(result, DEFAULT_ISLAND_SEEDS)
 }
 
 snap_to_grid :: proc(value, grid: f32) -> f32 {

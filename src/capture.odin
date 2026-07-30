@@ -79,6 +79,7 @@ Capture_Request :: struct {
 }
 
 CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night}
+CAPTURE_BOAT_LAB_TARGETS := [?]string{"dinghy", "tanker", "cruise"}
 CAPTURE_FOLIAGE_FOREST_KINDS :: bit_set[Capture_Kind] {
     .Foliage_Forest,
     .Foliage_Forest_Low,
@@ -281,6 +282,8 @@ capture_targets :: proc(kind: Capture_Kind) -> []string {
         return CAPTURE_FOUNTAIN_GENERATOR_TARGETS[:]
     case .Lighthouse_Lab:
         return CAPTURE_LIGHTHOUSE_TARGETS[:]
+    case .Boat_Lab:
+        return CAPTURE_BOAT_LAB_TARGETS[:]
     case .Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night:
         return CAPTURE_SKY_TARGETS[:]
     }

@@ -151,6 +151,10 @@ generated_plant_catalog_detail :: #force_inline proc(lod: Generated_Plant_Render
     return .Far
 }
 
+generated_plant_uses_hero_geometry :: #force_inline proc(lod: Generated_Plant_Render_LOD) -> bool {
+    return lod == .Hero
+}
+
 generated_plant_apply_detail_floor :: #force_inline proc(detail, floor: plants.Detail_Level) -> plants.Detail_Level {
     return int(detail) < int(floor) ? floor : detail
 }
@@ -159,6 +163,7 @@ world_generated_grape_leaf_3d :: proc(
     center, forward, up, right: third_person.Vec3,
     width, length: f32,
     color: rl.Color,
+    hero: bool = false,
 ) {
     // A grape leaf is broad enough that one diamond reads as a paper cutout.
     // Fold five lobed facets around a raised midrib to give the bunch visible
@@ -181,6 +186,48 @@ world_generated_grape_leaf_3d :: proc(
 
     // Explicit reverse faces keep the folded bunch full from either side of a
     // trellis row while preserving the facet normals used by world lighting.
+    world_triangle(ridge, left, stem_left, shade)
+    world_triangle(stem_right, ridge, stem_left, color)
+    world_triangle(ridge, tip, left, lit)
+    world_triangle(right_point, tip, ridge, color)
+    world_triangle(right_point, ridge, stem_right, shade)
+
+    if hero {
+        // The catalog's Near skeleton is shared by Hero and Near, so the
+        // closest tier adds the raised vein that is large enough to read at
+        // arm's length. This makes Hero visually distinct without adding a
+        // serialized plant-detail tier or duplicating cached skeletons.
+        world_tube_between(
+            center,
+            tip,
+            forward,
+            max(width * .032, f32(.003)),
+            max(width * .014, f32(.0015)),
+            shade,
+        )
+    }
+}
+
+world_generated_leaf_hero :: proc(
+    center, forward, up, right: third_person.Vec3,
+    width, length: f32,
+    color: rl.Color,
+) {
+    tip := center + forward * length
+    shoulder := center + forward * length * .42
+    left := shoulder - right * width
+    right_point := shoulder + right * width
+    ridge := shoulder + up * width * .18
+    stem_left := center - right * width * .35
+    stem_right := center + right * width * .35
+    lit := color_lerp(color, {181, 207, 126, 255}, .08)
+    shade := color_lerp(color, {24, 65, 33, 255}, .12)
+
+    world_triangle(stem_left, left, ridge, shade)
+    world_triangle(stem_left, ridge, stem_right, color)
+    world_triangle(left, tip, ridge, lit)
+    world_triangle(ridge, tip, right_point, color)
+    world_triangle(stem_right, ridge, right_point, shade)
     world_triangle(ridge, left, stem_left, shade)
     world_triangle(stem_right, ridge, stem_left, color)
     world_triangle(ridge, tip, left, lit)
@@ -221,6 +268,7 @@ world_generated_plant :: proc(
     if world_renderer.editor != nil {
         render_lod = generated_plant_render_lod(world_renderer.editor.camera_pose.position, base)
     }
+    hero_geometry := generated_plant_uses_hero_geometry(render_lod)
     detail := generated_plant_catalog_detail(render_lod)
     detail = generated_plant_apply_detail_floor(detail, detail_floor)
     generated := generated_plant_cached(species, seed, detail, habit, support, maturity)
@@ -298,7 +346,11 @@ world_generated_plant :: proc(
         length := max(attachment.leaf.length * scale * 1.8, f32(.035))
         color := plant_generator_leaf_color(species, attachment.variant, leaf_color)
         if species == .Grapevine {
-            world_generated_grape_leaf_3d(center, forward, up, right, width, length, color)
+            world_generated_grape_leaf_3d(center, forward, up, right, width, length, color, hero_geometry)
+            continue
+        }
+        if hero_geometry {
+            world_generated_leaf_hero(center, forward, up, right, width, length, color)
             continue
         }
         tip := center + forward * length

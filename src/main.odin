@@ -82,6 +82,13 @@ Crash_Recovery_Phase :: enum u8 {
     Fade_In,
 }
 
+Default_Map_Regeneration_Stage :: enum u8 {
+    Terrain,
+    Marinas,
+    Towns,
+    Finalize,
+}
+
 Structure_History_State :: struct {
     structures:                   [dynamic]terrain.Structure,
     count:                        int,
@@ -425,6 +432,10 @@ Fixture :: struct {
     tweak_status:                                   Tweak_Status `fixture:"-"`,
     tweak_panel_visible:                            bool `fixture:"-"`,
     tweak_panel_toggle_down:                        bool `fixture:"-"`,
+    default_map_regeneration_active:                bool `hs:"-" fixture:"-"`,
+    default_map_regeneration_loading_ready:         bool `hs:"-" fixture:"-"`,
+    default_map_regeneration_stage:                 Default_Map_Regeneration_Stage `hs:"-" fixture:"-"`,
+    default_map_regeneration_seeds:                 [len(terrain.DEFAULT_ISLAND_SEEDS)]u32 `hs:"-" fixture:"-"`,
     pause_screen:                                   Pause_Screen `fixture:"-"`,
     dither_state:                                   Dither_State `fixture:"-"`,
     mouse_fur:                                      Mouse_Fur,
@@ -452,6 +463,7 @@ FIXTURE_SCHEMA_VERSION :: 6
 Editor :: struct {
     using fixture:                      Fixture,
     fixture_owner:                      Fixture_Migration_Result `hs:"-"`,
+    ocean_traffic:                      boats.Ocean_Traffic,
     main_menu_active:                   bool,
     main_menu_focus:                    int,
     console:                            Game_Console,
@@ -763,6 +775,7 @@ game_state_reset :: proc(editor: ^Editor) {
 
     markov_marina_buoy_physics_destroy(editor)
     editor.boat_traffic = new_world_boat_traffic(&editor.project)
+    editor.ocean_traffic = boats.new_ocean_traffic()
     editor.atmosphere = atmosphere.new(0x41c10)
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
     editor.player_terrain_effects = particle_systems.new_vehicle_effects(0xa21c94d7)
@@ -1032,6 +1045,59 @@ architecture_regenerate_all :: proc(editor: ^Editor) {
     plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, bounds)
     _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
     architecture.city_plan_replace(&editor.architecture_city_plan, plan)
+}
+
+regenerate_default_map :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.default_map_regeneration_seeds =
+        terrain.next_default_island_seeds(editor.default_map_regeneration_seeds)
+    editor.default_map_regeneration_stage = .Terrain
+    editor.default_map_regeneration_loading_ready = false
+    editor.default_map_regeneration_active = true
+    editor.tweak_panel_visible = false
+}
+
+default_map_regeneration_progress :: proc(editor: ^Editor) -> (f32, cstring) {
+    if editor == nil do return 0, "Preparing a new archipelago"
+    switch editor.default_map_regeneration_stage {
+    case .Terrain:
+        return .08, "Generating new islands"
+    case .Marinas:
+        return .42, "Surveying coasts and building marinas"
+    case .Towns:
+        return .67, "Laying out towns and roads"
+    case .Finalize:
+        return .92, "Rebuilding the world"
+    }
+    return 0, "Preparing a new archipelago"
+}
+
+default_map_regeneration_step :: proc(editor: ^Editor) {
+    if editor == nil || !editor.default_map_regeneration_active do return
+    // Present at least one loading frame before beginning the first expensive
+    // phase so regeneration never appears to freeze on the Tweaks button.
+    if !editor.default_map_regeneration_loading_ready {
+        editor.default_map_regeneration_loading_ready = true
+        return
+    }
+    switch editor.default_map_regeneration_stage {
+    case .Terrain:
+        terrain.init_project_seeded(&editor.project, editor.default_map_regeneration_seeds)
+        editor.terrain_undo_count = 0
+        editor.terrain_redo_count = 0
+        editor.default_map_regeneration_stage = .Marinas
+    case .Marinas:
+        seed_default_island_marinas_seeded(editor, editor.default_map_regeneration_seeds)
+        editor.default_map_regeneration_stage = .Towns
+    case .Towns:
+        seed_default_island_towns_seeded(editor, editor.default_map_regeneration_seeds)
+        editor.default_map_regeneration_stage = .Finalize
+    case .Finalize:
+        world_renderer_fixture_invalidate(editor)
+        gameplay_physics_rebuild_structures(editor)
+        editor.default_map_regeneration_active = false
+        terrain_file_feedback(editor, "DEFAULT MAP REGENERATED")
+    }
 }
 
 terrain_project_load :: proc(editor: ^Editor) {
@@ -2724,13 +2790,16 @@ seed_city_capture :: proc(editor: ^Editor) {
     editor.structure_selected = -1
 }
 
-seed_default_island_towns :: proc(editor: ^Editor) {
+seed_default_island_towns_seeded :: proc(
+    editor: ^Editor,
+    island_seeds: [len(terrain.DEFAULT_ISLAND_SEEDS)]u32,
+) {
     if editor == nil do return
     architecture.city_plan_destroy(&editor.architecture_city_plan)
     editor.settlement_plan.patio_count = 0
     settlement_regions := [len(terrain.DEFAULT_ISLAND_SIGNS)]Settlement_Region{.Adriatic, .Aegean}
     for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
-        seed := terrain.default_island_feature_seed(island_index, 0x544f574e)
+        seed := terrain.default_island_feature_seed_for(island_seeds[island_index], 0x544f574e)
         first_structure := editor.project.structure_count
         target := fmt.tprintf("%d", seed)
         if !settlement_lab_configure(
@@ -2825,6 +2894,10 @@ seed_default_island_towns :: proc(editor: ^Editor) {
         seed_default_island_lighthouse(editor, sign, island_index)
     }
     editor.architecture_node_mode = true
+}
+
+seed_default_island_towns :: proc(editor: ^Editor) {
+    seed_default_island_towns_seeded(editor, terrain.DEFAULT_ISLAND_SEEDS)
 }
 
 DEFAULT_LIGHTHOUSE_TOWN_SEPARATION :: f32(320)
@@ -3027,7 +3100,10 @@ default_marina_find_access_route :: proc(
     return Settlement_Route{}, false
 }
 
-seed_default_island_marinas :: proc(editor: ^Editor) {
+seed_default_island_marinas_seeded :: proc(
+    editor: ^Editor,
+    island_seeds: [len(terrain.DEFAULT_ISLAND_SEEDS)]u32,
+) {
     if editor == nil do return
     editor.default_marina_count = 0
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
@@ -3041,7 +3117,7 @@ seed_default_island_marinas :: proc(editor: ^Editor) {
         town_x, town_z := terrain.default_town_center_for_project(&editor.project, sign)
         plan: marina.Plan
         intervention: harbor.Harbor_Intervention
-        seed := terrain.default_island_feature_seed(island_index, 0x4d415249)
+        seed := terrain.default_island_feature_seed_for(island_seeds[island_index], 0x4d415249)
         // Irregular generated coasts do not guarantee that the channel-facing
         // ray is the best harbor frontage. Sweep nearby aspects and seeds
         // until both the marina layout and coastal intervention agree.
@@ -3088,6 +3164,10 @@ seed_default_island_marinas :: proc(editor: ^Editor) {
         editor.default_marina_islands[editor.default_marina_count] = sign > 0 ? story.Island.East : story.Island.West
         editor.default_marina_count += 1
     }
+}
+
+seed_default_island_marinas :: proc(editor: ^Editor) {
+    seed_default_island_marinas_seeded(editor, terrain.DEFAULT_ISLAND_SEEDS)
 }
 
 capture_target_is_storefront_night :: proc(target: string) -> bool {
@@ -4510,8 +4590,13 @@ runtime_input_update :: proc(editor: ^Editor) -> game_input.Update_Result {
 }
 
 runtime_pointer_sync :: proc(editor: ^Editor) {
-    if editor == nil || !editor.in_map do return
-    if editor.vehicle_paint_scene {
+    if editor == nil do return
+    if editor.active_lab_scene != "" {
+        set_pointer_locked(false)
+        _ = sdl.ShowCursor()
+    } else if !editor.in_map {
+        return
+    } else if editor.vehicle_paint_scene {
         set_pointer_locked(false)
         _ = sdl.ShowCursor()
     } else if editor.tweak_panel_visible || pause_menu_is_open(editor) {
@@ -9393,6 +9478,7 @@ adriatic_run :: proc(
     editor.greek_placement_mode = false
     editor.atmosphere = atmosphere.new(0x41c10)
     editor.boat_traffic = new_world_boat_traffic(&editor.project)
+    editor.ocean_traffic = boats.new_ocean_traffic()
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
     editor.player_terrain_effects = particle_systems.new_vehicle_effects(0xa21c94d7)
     editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
@@ -11142,6 +11228,7 @@ adriatic_run :: proc(
         simulation_delta := was_paused || pause_menu_is_open(editor) ? f32(0) : frame_delta
         atmosphere.step(&editor.atmosphere, simulation_delta)
         boats.step(&editor.boat_traffic, simulation_delta, editor.atmosphere.world_minutes)
+        boats.ocean_traffic_step(&editor.ocean_traffic, simulation_delta)
         world_flocks_step(editor, simulation_delta)
         gameplay_physics_sync_boats(editor, simulation_delta)
         markov_marina_buoy_physics_step(editor, simulation_delta)
@@ -12188,14 +12275,20 @@ adriatic_run :: proc(
             capture_camera_overridden = true
         }
         rl.BeginDrawing()
-        draw_terrain(editor, width, height, f32(rl.GetTime()))
-        pause_menu_draw(editor, width, height, postcard)
-        cinematic_draw_wipe(editor, width, height)
-        crash_recovery_draw(editor, width, height)
-        photo_mode_capture_pending(editor)
+        if editor.default_map_regeneration_active {
+            progress, message := default_map_regeneration_progress(editor)
+            draw_startup_loading_screen(width, height, progress, message, postcard)
+        } else {
+            draw_terrain(editor, width, height, f32(rl.GetTime()))
+            pause_menu_draw(editor, width, height, postcard)
+            cinematic_draw_wipe(editor, width, height)
+            crash_recovery_draw(editor, width, height)
+            photo_mode_capture_pending(editor)
+        }
         live_capture_poll()
         live_control_poll(editor)
         rl.EndDrawing()
+        default_map_regeneration_step(editor)
         // World rendering is submitted during EndDrawing, so keep the capture
         // pose installed until after that submission has consumed it.
         if capture_camera_overridden {

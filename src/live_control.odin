@@ -224,6 +224,9 @@ live_control_poll :: proc(editor: ^Editor) {
     command, arguments := "npc", payload
     if payload == "terrain_brush_get" ||
        payload == "audio_status" ||
+       payload == "material_list" ||
+       payload == "material_save" ||
+       payload == "regenerate_islands" ||
        payload == "rondine_stage" ||
        payload == "gameplay" {
         command, arguments = payload, ""
@@ -265,10 +268,100 @@ live_control_poll :: proc(editor: ^Editor) {
                 request_id,
             )
         }
+    } else if command == "regenerate_islands" {
+        regenerate_default_map(editor)
+        response = fmt.aprintf(
+            `{{"ok":true,"id":"%s","islands":%d,"message":"Started regenerating both default islands"}}`,
+            request_id,
+            len(terrain.DEFAULT_ISLAND_SIGNS),
+        )
     } else if command == "terrain_brush_get" {
         response = live_control_terrain_brush_response(editor, request_id)
     } else if command == "audio_status" {
         response = live_control_audio_status_response(editor, request_id)
+    } else if command == "material_list" {
+        names := strings.builder_make(context.temp_allocator)
+        for index in 0 ..< int(material_lab.library.count) {
+            if index > 0 do strings.write_string(&names, ",")
+            fmt.sbprintf(&names, `"%s"`, material_lab_name(&material_lab.library.materials[index]))
+        }
+        response = fmt.aprintf(
+            `{{"ok":true,"id":"%s","active":%d,"materials":[%s]}}`,
+            request_id,
+            material_lab.selected,
+            strings.to_string(names),
+        )
+    } else if command == "material_attach_map" {
+        fields := strings.split(arguments, "\t", context.temp_allocator)
+        if len(fields) != 3 {
+            response = fmt.aprintf(
+                `{{"ok":false,"id":"%s","error":"expected material, map kind, and path"}}`,
+                request_id,
+            )
+        } else if index, attached := material_lab_attach_map(fields[0], fields[1], fields[2]); attached {
+            response = fmt.aprintf(
+                `{{"ok":true,"id":"%s","material":"%s","index":%d,"map":"%s","path":"%s"}}`,
+                request_id,
+                material_lab_name(&material_lab.library.materials[index]),
+                index,
+                fields[1],
+                fields[2],
+            )
+        } else {
+            response = fmt.aprintf(
+                `{{"ok":false,"id":"%s","error":"material, map kind, or file not found"}}`,
+                request_id,
+            )
+        }
+    } else if command == "material_create" {
+        fields := strings.split(arguments, "\t", context.temp_allocator)
+        red, green, blue: int
+        metallic, roughness: f32
+        red_ok, green_ok, blue_ok, metallic_ok, roughness_ok: bool
+        if len(fields) == 6 {
+            red, red_ok = strconv.parse_int(fields[1])
+            green, green_ok = strconv.parse_int(fields[2])
+            blue, blue_ok = strconv.parse_int(fields[3])
+            metallic, metallic_ok = strconv.parse_f32(fields[4])
+            roughness, roughness_ok = strconv.parse_f32(fields[5])
+        }
+        if len(fields) != 6 ||
+           !red_ok ||
+           !green_ok ||
+           !blue_ok ||
+           !metallic_ok ||
+           !roughness_ok ||
+           red < 0 ||
+           red > 255 ||
+           green < 0 ||
+           green > 255 ||
+           blue < 0 ||
+           blue > 255 ||
+           metallic < 0 ||
+           metallic > 1 ||
+           roughness < .04 ||
+           roughness > 1 {
+            response = fmt.aprintf(`{{"ok":false,"id":"%s","error":"invalid material settings"}}`, request_id)
+        } else if index, created := material_lab_create(
+            fields[0],
+            {u8(red), u8(green), u8(blue)},
+            metallic,
+            roughness,
+        ); created {
+            response = fmt.aprintf(`{{"ok":true,"id":"%s","material":"%s","index":%d}}`, request_id, fields[0], index)
+        } else {
+            response = fmt.aprintf(
+                `{{"ok":false,"id":"%s","error":"material exists, name is empty, or library is full"}}`,
+                request_id,
+            )
+        }
+    } else if command == "material_save" {
+        if material_lab_save() {
+            material_lab.dirty = false
+            response = fmt.aprintf(`{{"ok":true,"id":"%s","message":"Material library saved"}}`, request_id)
+        } else {
+            response = fmt.aprintf(`{{"ok":false,"id":"%s","error":"Material library save failed"}}`, request_id)
+        }
     } else if command == "terrain_brush_set" {
         fields := strings.split(arguments, "\t", context.temp_allocator)
         if len(fields) != 8 {

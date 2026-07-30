@@ -475,6 +475,7 @@ World_Material_Kind :: enum u32 {
     Petal,
     Fountain_Water,
     Car_Paint,
+    Material_Lab,
 }
 
 Car_Paint_Finish :: enum u8 {
@@ -753,6 +754,8 @@ World_Renderer :: struct {
     soda_cap_logo:                                resources.Image,
     architecture_material_atlas:                  resources.Image,
     business_sign_atlas:                          resources.Image,
+    material_lab_maps:                            [MATERIAL_LAB_MAP_COUNT]resources.Image,
+    material_lab_map_revision:                    u64,
     vehicle_paint_staging:                        [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     vehicle_paint_descriptor_layout:              vk.DescriptorSetLayout,
     vehicle_paint_descriptor_pool:                vk.DescriptorPool,
@@ -1709,6 +1712,17 @@ world_quad_colored :: proc(a, b, c, d: third_person.Vec3, color_a, color_b, colo
 }
 
 @(no_instrumentation)
+world_quad_colored_smooth_lit :: #force_inline proc(
+    a, b, c, d: third_person.Vec3,
+    normal_a, normal_b, normal_c, normal_d: third_person.Vec3,
+    color_a, color_b, color_c, color_d: rl.Color,
+    roughness: f32 = .9,
+) {
+    world_triangle_smooth_lit(a, b, c, normal_a, normal_b, normal_c, color_a, color_b, color_c, roughness)
+    world_triangle_smooth_lit(a, c, d, normal_a, normal_c, normal_d, color_a, color_c, color_d, roughness)
+}
+
+@(no_instrumentation)
 world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
     append(
         &world_renderer.vertices,
@@ -1863,6 +1877,97 @@ world_npc_boats :: proc(editor: ^Editor) {
             continue
         }
         world_npc_boat(agent.class, position, agent.yaw, agent.behavior != .Moored)
+    }
+}
+
+world_ocean_ship_part_color :: proc(class: boats.Ocean_Class, part: boats.Part) -> rl.Color {
+    if class == .Product_Tanker {
+        #partial switch part {
+        case .Hull:
+            return {54, 63, 66, 255}
+        case .Deck:
+            return {152, 48, 38, 255}
+        case .Cabin:
+            return {224, 220, 202, 255}
+        case .Accent:
+            return {192, 151, 54, 255}
+        case .Glass:
+            return {55, 91, 106, 255}
+        case .Metal:
+            return {76, 79, 76, 255}
+        case:
+        }
+    } else {
+        #partial switch part {
+        case .Hull:
+            return {218, 222, 216, 255}
+        case .Deck:
+            return {184, 180, 164, 255}
+        case .Cabin:
+            return {232, 231, 218, 255}
+        case .Accent:
+            return {53, 79, 112, 255}
+        case .Glass:
+            return {45, 80, 102, 255}
+        case .Metal:
+            return {75, 78, 78, 255}
+        case:
+        }
+    }
+    return {210, 210, 200, 255}
+}
+
+world_ocean_ship :: proc(editor: ^Editor) {
+    if editor == nil || !editor.ocean_traffic.agent.active do return
+    agent := &editor.ocean_traffic.agent
+    spec := boats.ocean_specifications(agent.class)
+    position := third_person.Vec3{agent.position.x, editor.project.sea_level + .03, agent.position.y}
+    radius := f32(math.sqrt(f64(spec.length * spec.length + spec.beam * spec.beam + spec.height * spec.height))) * .5
+    if !world_sphere_in_view(editor, {position.x, position.y + spec.height * .5, position.z}, radius) do return
+
+    mesh := boats.ocean_mesh(agent.class)
+    if mesh == nil do return
+    yaw_cos, yaw_sin := math.cos(agent.yaw), math.sin(agent.yaw)
+    for face in boats.triangles(mesh) {
+        a, b, c := mesh.vertices[face.a], mesh.vertices[face.b], mesh.vertices[face.c]
+        world_boat_triangle(
+            world_boat_point(a.position, position, yaw_cos, yaw_sin),
+            world_boat_point(b.position, position, yaw_cos, yaw_sin),
+            world_boat_point(c.position, position, yaw_cos, yaw_sin),
+            world_ocean_ship_part_color(agent.class, a.part),
+            a.part,
+        )
+    }
+}
+
+world_ocean_ship_wake :: proc(editor: ^Editor) {
+    if editor == nil || !editor.ocean_traffic.agent.active do return
+    agent := &editor.ocean_traffic.agent
+    spec := boats.ocean_specifications(agent.class)
+    y := editor.project.sea_level + .06
+    for sample in agent.wake[:agent.wake_count] {
+        fade := clamp(1 - sample.age / sample.lifetime, 0, 1)
+        if fade <= .01 do continue
+        // The shoulders diverge slowly inside the Kelvin envelope while the
+        // propeller/rudder churn holds a bright center ribbon astern.
+        right := boats.Vec2{-sample.direction.y, sample.direction.x}
+        spread := sample.width * .28 + sample.age * spec.cruise_speed_mps * .055
+        shoulder_width := sample.width * (.035 + fade * .028)
+        segment_length := sample.width * .20
+        alpha := u8(clamp(178 * sample.strength * fade * fade, 0, 178))
+        foam := rl.Color{218, 241, 236, alpha}
+        world_boat_wake_quad(sample.position + right * spread, sample.direction, shoulder_width, segment_length, foam, y)
+        world_boat_wake_quad(sample.position - right * spread, sample.direction, shoulder_width, segment_length, foam, y)
+        center_width := sample.width * (.11 + fade * .10)
+        center_alpha := u8(f32(alpha) * (agent.class == .Product_Tanker ? f32(.56) : f32(.42)))
+        world_boat_wake_quad(
+            sample.position,
+            sample.direction,
+            center_width,
+            segment_length * 1.18,
+            {224, 243, 238, center_alpha},
+            y + .002,
+        )
     }
 }
 
@@ -4087,6 +4192,7 @@ world_mouse_limb_hull :: proc(
     }
 
     rings: [MAX_RINGS][SEGMENTS]third_person.Vec3
+    normals: [MAX_RINGS][SEGMENTS]third_person.Vec3
     reference := linalg.normalize0(forward)
     previous_axis_x, previous_axis_z: third_person.Vec3
     for ring_index in 0 ..< len(points) {
@@ -4139,22 +4245,79 @@ world_mouse_limb_hull :: proc(
         }
     }
 
+    // Derive normals from the posed tube rather than from the construction
+    // frames. Averaging both neighboring rings and radial segments keeps the
+    // coat continuous through elbows, wrists, knees, and hocks.
+    for ring_index in 0 ..< len(points) {
+        previous_ring := max(ring_index - 1, 0)
+        next_ring := min(ring_index + 1, len(points) - 1)
+        for segment in 0 ..< SEGMENTS {
+            previous_segment := (segment + SEGMENTS - 1) % SEGMENTS
+            next_segment := (segment + 1) % SEGMENTS
+            along := rings[next_ring][segment] - rings[previous_ring][segment]
+            around := rings[ring_index][next_segment] - rings[ring_index][previous_segment]
+            normals[ring_index][segment] = linalg.normalize0(linalg.cross(along, around))
+        }
+    }
+
     for ring_index in 0 ..< len(points) - 1 {
         for segment in 0 ..< SEGMENTS {
             next_segment := (segment + 1) % SEGMENTS
             a, b := rings[ring_index][segment], rings[ring_index][next_segment]
             c, d := rings[ring_index + 1][next_segment], rings[ring_index + 1][segment]
-            world_triangle_colored(a, d, c, colors[ring_index], colors[ring_index + 1], colors[ring_index + 1])
-            world_triangle_colored(a, c, b, colors[ring_index], colors[ring_index + 1], colors[ring_index])
+            world_triangle_smooth_lit(
+                a,
+                d,
+                c,
+                normals[ring_index][segment],
+                normals[ring_index + 1][segment],
+                normals[ring_index + 1][next_segment],
+                colors[ring_index],
+                colors[ring_index + 1],
+                colors[ring_index + 1],
+            )
+            world_triangle_smooth_lit(
+                a,
+                c,
+                b,
+                normals[ring_index][segment],
+                normals[ring_index + 1][next_segment],
+                normals[ring_index][next_segment],
+                colors[ring_index],
+                colors[ring_index + 1],
+                colors[ring_index],
+            )
         }
     }
     last := len(points) - 1
+    root_normal := linalg.normalize0(points[0] - points[1])
+    tip_normal := linalg.normalize0(points[last] - points[last - 1])
     for segment in 0 ..< SEGMENTS {
         next_segment := (segment + 1) % SEGMENTS
         if cap_root {
-            world_triangle(points[0], rings[0][segment], rings[0][next_segment], colors[0])
+            world_triangle_smooth_lit(
+                points[0],
+                rings[0][segment],
+                rings[0][next_segment],
+                root_normal,
+                normals[0][segment],
+                normals[0][next_segment],
+                colors[0],
+                colors[0],
+                colors[0],
+            )
         }
-        world_triangle(points[last], rings[last][next_segment], rings[last][segment], colors[last])
+        world_triangle_smooth_lit(
+            points[last],
+            rings[last][next_segment],
+            rings[last][segment],
+            tip_normal,
+            normals[last][next_segment],
+            normals[last][segment],
+            colors[last],
+            colors[last],
+            colors[last],
+        )
     }
 }
 
@@ -13365,9 +13528,10 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
         }
     }
     world_architecture_laundry_webbing(editor)
+    world_settlement_landscape(editor)
     world_settlement_gardens(editor)
-    // Cypress accents mark the two lane intersections and give the graph town
-    // a readable Mediterranean scale cue without changing terrain data.
+    // Olive accents soften two lane intersections without changing terrain
+    // data.
     for x_side in -1 ..= 1 {
         if x_side == 0 do continue
         for z_side in -1 ..= 1 {
@@ -13377,8 +13541,6 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
             tree_base := terrain.sample_height(&editor.project, 0, tree_x, tree_z)
             if !world_sphere_in_view(editor, {tree_x, tree_base + 7, tree_z}, 8, 2) do continue
             if !architecture.city_accent_site_clear(&editor.project, tree_x, tree_z, 5) do continue
-            tree_seed := u32((x_side + 2) * 37 + (z_side + 2) * 11 + buildings * 5)
-            world_architecture_cypress(tree_x, tree_z, tree_base, tree_seed)
             if (x_side == -1 && z_side == 1) || (x_side == 1 && z_side == -1) {
                 olive_x := tree_x - f32(x_side) * 8
                 olive_z := tree_z - f32(z_side) * 5
@@ -13437,6 +13599,120 @@ settlement_garden_point_in_plot :: proc(site: Settlement_Site, x, z: f32, inset:
         }
     }
     return true
+}
+
+settlement_garden_woody_species :: proc(
+    region: Settlement_Region,
+    style: Settlement_Garden_Style,
+    plant_index: int,
+    seed: u32,
+) -> (
+    species: plants.Species,
+    scale: f32,
+    woody: bool,
+) {
+    if style == .Park && plant_index % 3 == 0 {
+        if region == .Aegean {
+            return plant_index % 2 == 0 ? .Olive : .Italian_Cypress, .92, true
+        }
+        return plant_index % 2 == 0 ? .Stone_Pine : .Italian_Cypress, .94, true
+    }
+    if style == .Kitchen && plant_index == 0 {
+        return .Olive, .86, true
+    }
+    if style == .Wild || style == .Park || plant_index < 2 {
+        shrubs := [3]plants.Species{.Myrtle, .Oleander, .Rosemary}
+        if region == .Aegean {
+            shrubs = {.Mastic, .Myrtle, .Oleander}
+        }
+        species = shrubs[int((seed >> 16) % u32(len(shrubs)))]
+        scale = style == .Park ? .82 : .68
+        return species, scale, true
+    }
+    return .Rosemary, .62, false
+}
+
+settlement_landscape_target :: proc(scale: Settlement_Scale) -> int {
+    switch scale {
+    case .City:
+        return 14
+    case .Town:
+        return 10
+    case .Village:
+        return 8
+    }
+    return 0
+}
+
+settlement_landscape_species :: proc(
+    region: Settlement_Region,
+    plant_index: int,
+    seed: u32,
+) -> (
+    species: plants.Species,
+    scale: f32,
+) {
+    if plant_index % 4 == 0 {
+        if region == .Aegean {
+            return seed & 1 == 0 ? .Olive : .Italian_Cypress, .84
+        }
+        return seed & 1 == 0 ? .Stone_Pine : .Olive, .88
+    }
+    if region == .Aegean {
+        shrubs := [3]plants.Species{.Mastic, .Myrtle, .Oleander}
+        return shrubs[int((seed >> 8) % u32(len(shrubs)))], .64
+    }
+    shrubs := [3]plants.Species{.Myrtle, .Oleander, .Rosemary}
+    return shrubs[int((seed >> 8) % u32(len(shrubs)))], .68
+}
+
+// Settlement landscape planting belongs to the public and residual fabric,
+// not to garden ownership. Derive stable verge and fringe anchors from macro
+// cells, then reject roads, buildings, groves, and steep or submerged ground.
+// This intentionally works when garden_count is zero.
+world_settlement_landscape :: proc(editor: ^Editor) {
+    if editor == nil || !editor.settlement_plan.valid do return
+    plan := &editor.settlement_plan
+    target := settlement_landscape_target(plan.request.scale)
+    planted := 0
+    for cell, cell_index in plan.macro_cells[:plan.macro_cell_count] {
+        if planted >= target do break
+        // Keep the dense historic core legible; planting belongs primarily to
+        // younger edges and low-density residual cells.
+        if cell.age < .34 && cell.density > .46 do continue
+        mixed := garden_hash(plan.request.seed ~ u32(cell_index + 1) * u32(0x9e3779b9) ~ 0x56455247)
+        angle := f32(mixed & 1023) / 1023 * math.PI * 2
+        distance := 3.5 + f32((mixed >> 10) & 255) / 255 * 7.5
+        x := cell.center[0] + math.cos(angle) * distance
+        z := cell.center[1] + math.sin(angle) * distance
+        landscape_index := planted
+        species, plant_scale := settlement_landscape_species(plan.request.region, landscape_index, mixed)
+        tree := landscape_index % 4 == 0
+        footprint := tree ? f32(3.2) : f32(1.8)
+        if !settlement_park_site_clear(&editor.project, x, z, footprint, footprint) do continue
+        center_y := terrain.sample_height(&editor.project, 0, x, z)
+        if center_y <= editor.project.sea_level + .35 do continue
+        relief := f32(0)
+        for offset in ([4][2]f32{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}) {
+            height := terrain.sample_height(&editor.project, 0, x + offset[0] * footprint, z + offset[1] * footprint)
+            relief = max(relief, math.abs(height - center_y))
+        }
+        if relief > (tree ? f32(1.15) : f32(.75)) do continue
+        planted += 1
+        if !world_sphere_in_view(editor, {x, center_y + 3, z}, tree ? f32(7) : f32(3), 2) do continue
+        _ = world_generated_plant(
+            species,
+            u64(mixed) ~ u64(plan.request.seed) << 32,
+            {x, center_y, z},
+            plant_scale * (.9 + f32((mixed >> 24) & 31) / 155),
+            angle + math.PI,
+            .Free_Standing,
+            nil,
+            .Medium,
+            0,
+            tree ? .86 : .74,
+        )
+    }
 }
 
 world_settlement_gardens :: proc(editor: ^Editor) {
@@ -13534,10 +13810,25 @@ world_settlement_gardens :: proc(editor: ^Editor) {
             base_y := terrain.sample_height(&editor.project, 0, x, z)
             if !world_sphere_in_view(editor, {x, base_y + 3, z}, 5, 2) do continue
             plant_seed := mixed ~ u32(0x504c414e)
-            if is_park && plant_index % 3 == 0 {
-                world_architecture_cypress(x, z, base_y, plant_seed)
-            } else if is_kitchen && plant_index == 0 {
-                world_architecture_olive(x, z, base_y, plant_seed)
+            species, plant_scale, woody := settlement_garden_woody_species(
+                editor.settlement_plan.request.region,
+                plot.style,
+                plant_index,
+                mixed,
+            )
+            if woody {
+                _ = world_generated_plant(
+                    species,
+                    u64(plant_seed) ~ u64(seed) << 32,
+                    {x, base_y, z},
+                    plant_scale * (.9 + f32((mixed >> 24) & 31) / 155),
+                    plot.rotation + f32(mixed & 255) / 255 * math.PI * 2,
+                    .Free_Standing,
+                    nil,
+                    .Medium,
+                    0,
+                    .72 + f32((mixed >> 8) & 31) / 100,
+                )
             } else {
                 palette := [4]rl.Color {
                     {72, 119, 57, 255},
@@ -21944,6 +22235,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         SCARF_HALF_WIDTH :: f32(.055)
         collar_rear_local, collar_front_local: [SCARF_COLLAR_SEGMENTS]third_person.Vec3
         collar_rear, collar_front: [SCARF_COLLAR_SEGMENTS]third_person.Vec3
+        collar_rear_normal, collar_front_normal: [SCARF_COLLAR_SEGMENTS]third_person.Vec3
         collar_color: [SCARF_COLLAR_SEGMENTS]rl.Color
         for segment in 0 ..< SCARF_COLLAR_SEGMENTS {
             angle := f32(segment) * math.PI * 2 / f32(SCARF_COLLAR_SEGMENTS) + scarf_rotation
@@ -21965,12 +22257,25 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             collar_color[segment] = color_lerp(scarf_dark, scarf_light, light_amount)
         }
         for segment in 0 ..< SCARF_COLLAR_SEGMENTS {
+            previous := (segment + SCARF_COLLAR_SEGMENTS - 1) % SCARF_COLLAR_SEGMENTS
             next := (segment + 1) % SCARF_COLLAR_SEGMENTS
-            world_quad_colored(
+            around_rear := collar_rear[next] - collar_rear[previous]
+            around_front := collar_front[next] - collar_front[previous]
+            across := collar_front[segment] - collar_rear[segment]
+            collar_rear_normal[segment] = linalg.normalize0(linalg.cross(around_rear, across))
+            collar_front_normal[segment] = linalg.normalize0(linalg.cross(around_front, across))
+        }
+        for segment in 0 ..< SCARF_COLLAR_SEGMENTS {
+            next := (segment + 1) % SCARF_COLLAR_SEGMENTS
+            world_quad_colored_smooth_lit(
                 collar_rear[segment],
                 collar_rear[next],
                 collar_front[next],
                 collar_front[segment],
+                collar_rear_normal[segment],
+                collar_rear_normal[next],
+                collar_front_normal[next],
+                collar_front_normal[segment],
                 collar_color[segment],
                 collar_color[next],
                 collar_color[next],
@@ -21992,6 +22297,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             SCARF_TAIL_POINTS :: 7
             SCARF_BODY_CLEARANCE :: f32(.030)
             tail_center, tail_left, tail_right: [SCARF_TAIL_POINTS]third_person.Vec3
+            tail_normal: [SCARF_TAIL_POINTS]third_person.Vec3
             tail_color: [SCARF_TAIL_POINTS]rl.Color
             for point_index in 0 ..< SCARF_TAIL_POINTS {
                 amount := f32(point_index) / f32(SCARF_TAIL_POINTS - 1)
@@ -22018,12 +22324,23 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 tail_right[point_index] = local_point(p, rotation, local_x + width, local_y, local_z)
                 tail_color[point_index] = color_lerp(scarf, scarf_light, amount * .72)
             }
+            for point_index in 0 ..< SCARF_TAIL_POINTS {
+                previous := max(point_index - 1, 0)
+                next := min(point_index + 1, SCARF_TAIL_POINTS - 1)
+                across := tail_right[point_index] - tail_left[point_index]
+                along := tail_center[next] - tail_center[previous]
+                tail_normal[point_index] = linalg.normalize0(linalg.cross(across, along))
+            }
             for segment in 0 ..< SCARF_TAIL_POINTS - 1 {
-                world_quad_colored(
+                world_quad_colored_smooth_lit(
                     tail_left[segment],
                     tail_right[segment],
                     tail_right[segment + 1],
                     tail_left[segment + 1],
+                    tail_normal[segment],
+                    tail_normal[segment],
+                    tail_normal[segment + 1],
+                    tail_normal[segment + 1],
                     tail_color[segment],
                     tail_color[segment],
                     tail_color[segment + 1],
@@ -24017,6 +24334,7 @@ world_build :: proc(editor: ^Editor) {
     if !lab_scene_suppresses_infrastructure(editor) do world_infrastructure(editor)
     world_roads(editor)
     world_boat_wakes(editor)
+    world_ocean_ship_wake(editor)
     world_city_density_overlay(editor)
     world_climbing_leaf_density_overlay(editor)
     // The player and vehicles are gameplay-critical. Submit them before any
@@ -24026,6 +24344,7 @@ world_build :: proc(editor: ^Editor) {
     // exposing a one-frame ordering gap.
     world_renderer.dynamic_caster_first = len(world_renderer.vertices)
     world_npc_boats(editor)
+    world_ocean_ship(editor)
     world_bird_flocks(editor)
     world_aircraft(editor)
     world_car(editor)
@@ -24485,9 +24804,7 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
         }
     }
     if editor == nil ||
-       (!editor.vehicle_paint_texture_dirty &&
-               !editor.vehicle_paint_preview_texture_dirty &&
-               pending_layer < 0) ||
+       (!editor.vehicle_paint_texture_dirty && !editor.vehicle_paint_preview_texture_dirty && pending_layer < 0) ||
        cmd == nil ||
        frame_index < 0 ||
        frame_index >= engine.MAX_FRAMES_IN_FLIGHT {
@@ -24497,9 +24814,7 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
     if staging.handle == vk.Buffer(0) || staging.mapped == nil do return
     active_layer := vehicle_paint_layer_index(editor.aircraft.active)
     layer_index := active_layer
-    if !editor.vehicle_paint_texture_dirty &&
-       !editor.vehicle_paint_preview_texture_dirty &&
-       pending_layer >= 0 {
+    if !editor.vehicle_paint_texture_dirty && !editor.vehicle_paint_preview_texture_dirty && pending_layer >= 0 {
         layer_index = pending_layer
     }
     mem.copy_non_overlapping(
@@ -24517,10 +24832,12 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
                 f32(editor.vehicle_paint_preview_pixels[pixel]) * blend + f32(staging_pixels[pixel]) * (1 - blend),
             )
             staging_pixels[pixel + 1] = u8(
-                f32(editor.vehicle_paint_preview_pixels[pixel + 1]) * blend + f32(staging_pixels[pixel + 1]) * (1 - blend),
+                f32(editor.vehicle_paint_preview_pixels[pixel + 1]) * blend +
+                f32(staging_pixels[pixel + 1]) * (1 - blend),
             )
             staging_pixels[pixel + 2] = u8(
-                f32(editor.vehicle_paint_preview_pixels[pixel + 2]) * blend + f32(staging_pixels[pixel + 2]) * (1 - blend),
+                f32(editor.vehicle_paint_preview_pixels[pixel + 2]) * blend +
+                f32(staging_pixels[pixel + 2]) * (1 - blend),
             )
             staging_pixels[pixel + 3] = max(staging_pixels[pixel + 3], preview_alpha)
         }
@@ -24577,6 +24894,84 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
     }
 }
 
+material_lab_gpu_map_load :: proc(
+    ctx: ^engine.Vk_Context,
+    kind: Material_Lab_Map_Kind,
+    out: ^resources.Image,
+) -> bool {
+    material := material_lab_current()
+    path := material_lab_map_path(material, kind)
+    linear := kind != .Albedo
+    if path != "" && resources.texture_load_file(ctx, path, out, {address_mode = .REPEAT, linear_color = linear}) {
+        return true
+    }
+    pixels := [4]u8{255, 255, 255, 255}
+    if material != nil {
+        switch kind {
+        case .Specular:
+            value := u8(clamp(material.metallic, 0, 1) * 255)
+            pixels = {value, value, value, 255}
+        case .Roughness:
+            value := u8(clamp(material.roughness, 0, 1) * 255)
+            pixels = {value, value, value, 255}
+        case .Normal:
+            pixels = {128, 128, 255, 255}
+        case .Albedo:
+        }
+    }
+    return resources.texture_upload_rgba8(ctx, pixels[:], 1, 1, out, {address_mode = .REPEAT, linear_color = linear})
+}
+
+material_lab_gpu_descriptors_update :: proc(ctx: ^engine.Vk_Context) {
+    image_infos: [MATERIAL_LAB_MAP_COUNT]vk.DescriptorImageInfo
+    sampler_infos: [MATERIAL_LAB_MAP_COUNT]vk.DescriptorImageInfo
+    writes: [MATERIAL_LAB_MAP_COUNT * 2]vk.WriteDescriptorSet
+    for index in 0 ..< MATERIAL_LAB_MAP_COUNT {
+        image_infos[index] = {
+            imageView   = world_renderer.material_lab_maps[index].view,
+            imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+        }
+        sampler_infos[index] = {
+            sampler = world_renderer.material_lab_maps[index].sampler,
+        }
+        writes[index * 2] = {
+            sType           = .WRITE_DESCRIPTOR_SET,
+            dstSet          = world_renderer.vehicle_paint_descriptor,
+            dstBinding      = u32(8 + index * 2),
+            descriptorCount = 1,
+            descriptorType  = .SAMPLED_IMAGE,
+            pImageInfo      = &image_infos[index],
+        }
+        writes[index * 2 + 1] = {
+            sType           = .WRITE_DESCRIPTOR_SET,
+            dstSet          = world_renderer.vehicle_paint_descriptor,
+            dstBinding      = u32(9 + index * 2),
+            descriptorCount = 1,
+            descriptorType  = .SAMPLER,
+            pImageInfo      = &sampler_infos[index],
+        }
+    }
+    vk.UpdateDescriptorSets(ctx.device, MATERIAL_LAB_MAP_COUNT * 2, raw_data(writes[:]), 0, nil)
+}
+
+material_lab_gpu_maps_reload :: proc(ctx: ^engine.Vk_Context) -> bool {
+    replacement: [MATERIAL_LAB_MAP_COUNT]resources.Image
+    for index in 0 ..< MATERIAL_LAB_MAP_COUNT {
+        if !material_lab_gpu_map_load(ctx, Material_Lab_Map_Kind(index), &replacement[index]) {
+            for &loaded in replacement do resources.image_destroy(&loaded, ctx)
+            return false
+        }
+    }
+    _ = vk.DeviceWaitIdle(ctx.device)
+    for index in 0 ..< MATERIAL_LAB_MAP_COUNT {
+        resources.image_destroy(&world_renderer.material_lab_maps[index], ctx)
+        world_renderer.material_lab_maps[index] = replacement[index]
+    }
+    material_lab_gpu_descriptors_update(ctx)
+    world_renderer.material_lab_map_revision = material_lab.map_revision
+    return true
+}
+
 world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     failure_stage := "dynamic shadow"
     defer if !world_renderer.initialized {
@@ -24584,7 +24979,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     }
     if !dynamic_shadow_create(&world_renderer.dynamic_shadow, ctx) do return false
     failure_stage = "vehicle paint descriptors"
-    paint_bindings := [8]vk.DescriptorSetLayoutBinding {
+    paint_bindings := [16]vk.DescriptorSetLayoutBinding {
         {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
@@ -24593,10 +24988,18 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         {binding = 5, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 6, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 7, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 8, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 9, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 10, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 11, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 12, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 13, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 14, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 15, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
     }
     paint_layout_info := vk.DescriptorSetLayoutCreateInfo {
         sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        bindingCount = 8,
+        bindingCount = 16,
         pBindings    = raw_data(paint_bindings[:]),
     }
     if vk.CreateDescriptorSetLayout(ctx.device, &paint_layout_info, nil, &world_renderer.vehicle_paint_descriptor_layout) != .SUCCESS do return false
@@ -24607,8 +25010,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         "vehicle paint descriptor set layout",
     )
     paint_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = 4},
-        {type = .SAMPLER, descriptorCount = 4},
+        {type = .SAMPLED_IMAGE, descriptorCount = 8},
+        {type = .SAMPLER, descriptorCount = 8},
     }
     paint_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
@@ -24774,6 +25177,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         },
     }
     vk.UpdateDescriptorSets(ctx.device, 8, raw_data(paint_writes[:]), 0, nil)
+    failure_stage = "material lab textures"
+    for index in 0 ..< MATERIAL_LAB_MAP_COUNT {
+        if !material_lab_gpu_map_load(ctx, Material_Lab_Map_Kind(index), &world_renderer.material_lab_maps[index]) {
+            return false
+        }
+    }
+    material_lab_gpu_descriptors_update(ctx)
+    world_renderer.material_lab_map_revision = material_lab.map_revision
     pr := vk.PushConstantRange {
         stageFlags = {.VERTEX, .FRAGMENT},
         size       = u32(size_of(World_Push)),
@@ -25610,6 +26021,11 @@ world_pre_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
     editor := world_renderer.editor
     if editor == nil do return
+    if world_renderer.material_lab_map_revision != material_lab.map_revision {
+        if !material_lab_gpu_maps_reload(pass.ctx) {
+            fmt.eprintln("material lab GPU maps failed to reload")
+        }
+    }
     vehicle_paint_atlas_flush(editor, pass.frame.command_buffer, int(pass.frame.frame_index))
     if !world_renderer.dynamic_shadow.enabled do return
     frame_index := int(pass.frame.frame_index)
@@ -26162,6 +26578,9 @@ world_renderer_destroy :: proc() {
     resources.image_destroy(&world_renderer.soda_cap_logo, world_renderer.ctx)
     resources.image_destroy(&world_renderer.architecture_material_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.business_sign_atlas, world_renderer.ctx)
+    for &material_map in world_renderer.material_lab_maps {
+        resources.image_destroy(&material_map, world_renderer.ctx)
+    }
     if world_renderer.layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.layout, nil)
     if world_renderer.sky_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.sky_layout, nil)
     if world_renderer.foliage_layout != vk.PipelineLayout(0) do vk.DestroyPipelineLayout(world_renderer.ctx.device, world_renderer.foliage_layout, nil)

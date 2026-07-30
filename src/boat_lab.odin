@@ -17,6 +17,7 @@ boat_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     editor.libellula_visible = false
     editor.project.sea_level = 0
     editor.boat_traffic = boats.new_traffic()
+    editor.ocean_traffic = {}
     centers := [4]boats.Vec2{{-13, -12}, {0, -12}, {13, -12}, {0, 10}}
     radii := [4]f32{7, 6, 7, 10}
     for &agent, index in editor.boat_traffic.agents[:editor.boat_traffic.count] {
@@ -51,6 +52,28 @@ boat_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         return true
     }
 
+    if target == "tanker" || target == "cruise" {
+        editor.boat_traffic = {}
+        class := target == "tanker" ? boats.Ocean_Class.Product_Tanker : boats.Ocean_Class.Cruise_Ship
+        spec := boats.ocean_specifications(class)
+        editor.ocean_traffic.agent = {
+            class    = class,
+            position = {-spec.cruise_speed_mps * 46, 0},
+            yaw      = math.PI * .5,
+            active   = true,
+        }
+        // Arrive at the inspection mark with a mature, continuously generated
+        // wake instead of fabricating presentation-only foam.
+        for _ in 0 ..< 920 do boats.ocean_traffic_step(&editor.ocean_traffic, .05)
+        distance := spec.length * 1.12
+        eye := third_person.Vec3{distance * .58, spec.height * 1.24, distance * .66}
+        look := third_person.Vec3{0, spec.height * .16, 0}
+        editor.camera_pose = third_person.camera_look_at(eye, look)
+        third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+        third_person.camera_set_active(&editor.cameras, .Inspection)
+        return true
+    }
+
     editor.camera_pose = third_person.camera_look_at({45, 28, 52}, {0, 2.8, 0})
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -58,7 +81,7 @@ boat_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 }
 
 world_boat_lab_water :: proc() {
-    extent := f32(120)
+    extent := f32(700)
     divisions := 20
     cell := extent * 2 / f32(divisions)
     color := rl.Color{42, 105, 135, 255}
@@ -77,17 +100,19 @@ world_boat_lab :: proc(editor: ^Editor) {
     if editor == nil do return
     world_boat_lab_water()
     world_boat_wakes(editor)
+    world_ocean_ship_wake(editor)
     world_renderer.dynamic_caster_first = len(world_renderer.vertices)
     world_npc_boats(editor)
+    world_ocean_ship(editor)
     world_renderer.dynamic_caster_count = len(world_renderer.vertices) - world_renderer.dynamic_caster_first
 }
 
-boat_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
+boat_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     panel := rl.Rectangle {
         x      = 22,
         y      = 22,
         width  = 410,
-        height = 179,
+        height = 224,
     }
     rl.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
     rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
@@ -104,6 +129,14 @@ boat_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
             index >= 3 ? rl.Color{247, 189, 115, 255} : rl.Color{208, 239, 240, 255},
         )
     }
+    ocean_classes := [2]boats.Ocean_Class{.Product_Tanker, .Cruise_Ship}
+    for class, index in ocean_classes {
+        spec := boats.ocean_specifications(class)
+        name := class == .Product_Tanker ? "PRODUCT TANKER" : "CRUISE SHIP"
+        label := fmt.ctprintf("%s   %.2f m x %.2f m", name, spec.length, spec.beam)
+        rl.DrawTextEx(rl.Font{}, label, {38, 175 + f32(index) * 21}, 13, 1, {247, 189, 115, 255})
+    }
+    _ = editor
     _ = width
     _ = height
 }
