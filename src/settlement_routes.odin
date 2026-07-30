@@ -811,6 +811,59 @@ settlement_route_length_and_grade :: proc(
     return
 }
 
+// Grow a new branch from its unserved PoI toward the connected network, but
+// stop as soon as it reaches any road already in the plan.  Without this,
+// point-to-point tree edges sail through a civic spine or older street on the
+// way to an abstract parent PoI, producing overlapping spokes and dense
+// multi-way knots instead of ordinary T-junctions.
+settlement_route_truncate_at_plan_contact :: proc(
+    plan: ^Settlement_Plan,
+    route: Settlement_Route,
+) -> Settlement_Route {
+    if plan == nil || route.count < 2 do return route
+    best_segment := -1
+    best_point: [2]f32
+    best_distance := f32(1e30)
+    distance_before := f32(0)
+    for segment_index in 0 ..< route.count - 1 {
+        a, b := route.points[segment_index], route.points[segment_index + 1]
+        segment_length := linalg.length(b - a)
+        for existing_route in plan.routes[:plan.route_count] {
+            existing := existing_route.geometry
+            for existing_index in 0 ..< existing.count - 1 {
+                point, along, _, intersects := settlement_route_segment_intersection(
+                    a,
+                    b,
+                    existing.points[existing_index],
+                    existing.points[existing_index + 1],
+                )
+                if !intersects do continue
+                distance := distance_before + segment_length * clamp(along, f32(0), f32(1))
+                // Ignore contact at the new branch's origin.  It may already
+                // be a district node shared by another route.
+                if distance <= .5 || distance >= best_distance do continue
+                best_segment, best_point, best_distance = segment_index, point, distance
+            }
+        }
+        distance_before += segment_length
+    }
+    if best_segment < 0 do return route
+
+    result: Settlement_Route
+    for index in 0 ..= best_segment {
+        result.points[result.count] = route.points[index]
+        result.count += 1
+    }
+    if result.count < len(result.points) &&
+       !settlement_route_point_near(result.points[result.count - 1], best_point, .05) {
+        result.points[result.count] = best_point
+        result.count += 1
+    } else if result.count > 0 {
+        result.points[result.count - 1] = best_point
+    }
+    return result
+}
+
 // Connect PoIs with a sparse Prim tree. Candidate edges use the same
 // terrain-aware pathfinder as authored settlement routes, so network topology
 // is chosen from routes that are actually buildable rather than from straight
@@ -837,14 +890,18 @@ settlement_plan_connect_road_network :: proc(
             if !connected[from] do continue
             for to in 0 ..< poi_count {
                 if connected[to] do continue
+                // Search from the unserved district toward the tree. This
+                // makes first contact with an existing street the natural
+                // terminus of the branch.
                 route := settlement_route_find(
                     project,
-                    pois[from].position[0],
-                    pois[from].position[1],
                     pois[to].position[0],
                     pois[to].position[1],
+                    pois[from].position[0],
+                    pois[from].position[1],
                     route_class,
                 )
+                route = settlement_route_truncate_at_plan_contact(plan, route)
                 if route.count < 2 || settlement_route_crosses_sea(project, route) do continue
                 length, average_grade, maximum_grade := settlement_route_length_and_grade(project, route)
                 if length <= .01 || maximum_grade > settlement_route_grade_limit(route_class) + .001 do continue

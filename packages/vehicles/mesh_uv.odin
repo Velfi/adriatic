@@ -21,6 +21,8 @@ Mesh_Optimization_Cache :: struct {
 mesh_optimization_lock: sync.Mutex
 postale_mesh_cache: Mesh_Optimization_Cache
 pelican_mesh_cache: Mesh_Optimization_Cache
+car_mesh_cache: Mesh_Optimization_Cache
+trailer_mesh_caches: [3]Mesh_Optimization_Cache
 libellula_mesh_cache: Mesh_Optimization_Cache
 libellula_mk2_mesh_cache: Mesh_Optimization_Cache
 
@@ -32,6 +34,14 @@ pelican_uvs: [AIRCRAFT_MESH_VERTEX_CAPACITY * 2]f32
 pelican_sources: [AIRCRAFT_MESH_VERTEX_CAPACITY]u16
 pelican_indices: [AIRCRAFT_MESH_TRIANGLE_CAPACITY * 3]u16
 pelican_scratch: [AIRCRAFT_MESH_VERTEX_CAPACITY]Mesh_Vertex
+car_uvs: [AIRCRAFT_MESH_VERTEX_CAPACITY * 2]f32
+car_sources: [AIRCRAFT_MESH_VERTEX_CAPACITY]u16
+car_indices: [AIRCRAFT_MESH_TRIANGLE_CAPACITY * 3]u16
+car_scratch: [AIRCRAFT_MESH_VERTEX_CAPACITY]Mesh_Vertex
+trailer_uvs: [3][AIRCRAFT_MESH_VERTEX_CAPACITY * 2]f32
+trailer_sources: [3][AIRCRAFT_MESH_VERTEX_CAPACITY]u16
+trailer_indices: [3][AIRCRAFT_MESH_TRIANGLE_CAPACITY * 3]u16
+trailer_scratch: [3][AIRCRAFT_MESH_VERTEX_CAPACITY]Mesh_Vertex
 
 libellula_uvs: [LIBELLULA_MESH_VERTEX_CAPACITY * 2]f32
 libellula_sources: [LIBELLULA_MESH_VERTEX_CAPACITY]u16

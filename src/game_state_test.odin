@@ -263,7 +263,7 @@ when ODIN_TEST {
         for &plan, index in editor.default_marinas[:editor.default_marina_count] {
             testing.expect(t, plan.valid)
             sign := editor.default_marina_islands[index] == .West ? f32(-1) : f32(1)
-            town_x, town_z := terrain.default_town_center(sign)
+            town_x, town_z := terrain.default_town_center_for_project(&editor.project, sign)
             testing.expect(t, default_marina_plan_clears_town(&plan, {town_x, town_z}))
             intervention := &editor.default_harbor_interventions[index]
             testing.expect(t, intervention.valid)

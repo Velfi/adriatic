@@ -2,31 +2,16 @@ package tests
 
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
+import "core:math"
 import "core:math/linalg"
 import "core:testing"
-
-@(test)
-simple_car_has_valid_wireframe_indices :: proc(t: ^testing.T) {
-    car := vehicles.simple_car()
-    for edge in car.edges {
-        testing.expect(t, edge.a >= 0 && edge.a < len(car.vertices))
-        testing.expect(t, edge.b >= 0 && edge.b < len(car.vertices))
-    }
-}
-
-@(test)
-simple_car_has_a_raised_cabin_and_wheels :: proc(t: ^testing.T) {
-    car := vehicles.simple_car()
-    testing.expect(t, car.vertices[12].position[1] > car.vertices[4].position[1])
-    testing.expect(t, car.vertices[16].position[1] < car.vertices[0].position[1])
-    testing.expect(t, car.vertices[24].position[2] > car.vertices[16].position[2])
-}
 
 @(test)
 simple_car_solid_mesh_is_closed_and_grouped :: proc(t: ^testing.T) {
     mesh := vehicles.simple_car_mesh()
     testing.expect(t, mesh.vertex_count > 0)
     testing.expect(t, mesh.triangle_count >= 100)
+    testing.expect(t, mesh.vertex_count < mesh.triangle_count * 3)
     for triangle in vehicles.mesh_triangles(&mesh) {
         testing.expect(t, int(triangle.a) < mesh.vertex_count)
         testing.expect(t, int(triangle.b) < mesh.vertex_count)
@@ -35,22 +20,80 @@ simple_car_solid_mesh_is_closed_and_grouped :: proc(t: ^testing.T) {
 }
 
 @(test)
+simple_car_mesh_has_a_real_cockpit_opening :: proc(t: ^testing.T) {
+    mesh := vehicles.simple_car_mesh()
+    for vertex in vehicles.mesh_vertices(&mesh) {
+        // The central crown used to seal the cockpit beneath its dark tub.
+        // Side rails remain outside this envelope, so any body-paint vertex
+        // here means the opening has accidentally been closed again.
+        in_opening :=
+            vertex.part == .Body &&
+            math.abs(vertex.position[0]) < .5 &&
+            math.abs(vertex.position[2]) < .3 &&
+            vertex.position[1] > .48
+        testing.expect(t, !in_opening)
+    }
+}
+
+@(test)
 simple_car_solid_mesh_retains_period_detail_parts :: proc(t: ^testing.T) {
     mesh := vehicles.simple_car_mesh()
     headlight_count, tail_light_count, ivory_count := 0, 0, 0
+    rounded_chrome_count, rounded_ivory_count := 0, 0
+    left_tail_light_count, right_tail_light_count := 0, 0
     for vertex in vehicles.mesh_vertices(&mesh) {
         #partial switch vertex.part {
         case .Headlight:
             headlight_count += 1
         case .Tail_Light:
             tail_light_count += 1
+            if vertex.position[0] < 0 {
+                left_tail_light_count += 1
+            } else if vertex.position[0] > 0 {
+                right_tail_light_count += 1
+            }
         case .Ivory:
             ivory_count += 1
+        case .Rounded_Chrome:
+            rounded_chrome_count += 1
+        case .Rounded_Ivory:
+            rounded_ivory_count += 1
         }
     }
     testing.expect(t, headlight_count > 0)
     testing.expect(t, tail_light_count > 0)
+    testing.expect(t, left_tail_light_count > 0)
+    testing.expect(t, right_tail_light_count > 0)
+    testing.expect(t, left_tail_light_count == right_tail_light_count)
     testing.expect(t, ivory_count > 0)
+    testing.expect(t, rounded_chrome_count > 0)
+    testing.expect(t, rounded_ivory_count > 0)
+    testing.expect(t, mesh.vertex_count < len(mesh.vertices))
+    testing.expect(t, mesh.triangle_count < len(mesh.triangles))
+}
+
+@(test)
+simple_car_trailer_variants_are_optimized_and_indexed :: proc(t: ^testing.T) {
+    variants := [3][3]bool {
+        {false, false, false},
+        {false, true, false},
+        {true, false, true},
+    }
+    triangle_counts: [3]int
+    mesh: vehicles.Aircraft_Mesh
+    for variant, index in variants {
+        mesh = vehicles.simple_car_trailer_mesh(variant[0], variant[1], variant[2])
+        triangle_counts[index] = mesh.triangle_count
+        testing.expect(t, mesh.vertex_count > 0)
+        testing.expect(t, mesh.vertex_count < mesh.triangle_count * 3)
+        for triangle in vehicles.mesh_triangles(&mesh) {
+            testing.expect(t, int(triangle.a) < mesh.vertex_count)
+            testing.expect(t, int(triangle.b) < mesh.vertex_count)
+            testing.expect(t, int(triangle.c) < mesh.vertex_count)
+        }
+    }
+    testing.expect(t, triangle_counts[1] > triangle_counts[0])
+    testing.expect(t, triangle_counts[2] > triangle_counts[0])
 }
 
 @(test)
@@ -64,7 +107,10 @@ simple_car_solid_mesh_is_nondegenerate_with_kei_proportions :: proc(t: ^testing.
         ac := c - a
         normal := linalg.cross(ab, ac)
         area_squared := linalg.dot(normal, normal)
-        testing.expect(t, area_squared > .0000001)
+        // Dashboard gauges and switches intentionally use millimetric faces;
+        // keep the guard below their valid area while still rejecting
+        // collapsed triangles.
+        testing.expect(t, area_squared > 1e-12)
     }
     testing.expect(t, vehicles.CAR_WHEEL_TRACK_HALF >= .67)
     testing.expect(t, vehicles.CAR_WHEEL_TRACK_HALF <= .68)

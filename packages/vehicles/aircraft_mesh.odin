@@ -33,9 +33,11 @@ Aircraft_Mesh_Part :: enum u8 {
     Carriage,
     Wheel,
     Bumper,
+    Rounded_Chrome,
     Headlight,
     Tail_Light,
     Ivory,
+    Rounded_Ivory,
     Red_Paint,
     Dark_Metal,
     Steel,
@@ -78,7 +80,9 @@ Mesh_Triangle :: struct {
     a, b, c: u16,
 }
 
-AIRCRAFT_MESH_VERTEX_CAPACITY :: 6400
+// Preserve the car's complete lamp and plate detail. Its triangle builder
+// stores split vertices, so the finished mesh slightly exceeds 6400 entries.
+AIRCRAFT_MESH_VERTEX_CAPACITY :: 8192
 AIRCRAFT_MESH_TRIANGLE_CAPACITY :: 4096
 LIBELLULA_MESH_VERTEX_CAPACITY :: 57344
 LIBELLULA_MESH_TRIANGLE_CAPACITY :: 19114

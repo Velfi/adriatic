@@ -19,6 +19,11 @@ RING_RESOLUTION :: 256
 SAMPLES_PER_LEVEL :: TERRAIN_RESOLUTION * TERRAIN_RESOLUTION
 BASE_CELL_SIZE :: WORLD_SIZE_METERS / f32(RING_RESOLUTION - 1)
 FINE_CELL_SIZE :: f32(1.0)
+// Authored structures are world-space objects, so their minimum footprint
+// must not grow when the clipmap's world coverage changes. Sixteen metres
+// preserves the former 4 km world's practical minimum while the 8 km terrain
+// uses larger coarse cells.
+MIN_STRUCTURE_SIZE :: f32(4000.0 / f32(RING_RESOLUTION - 1))
 
 // These are expressed as a fraction of the authored world's half extent. Every
 // clipmap level samples the same world-space features at a different density.
@@ -876,10 +881,10 @@ structure_make :: proc(center_x, center_z, width, depth, base_y, height: f32) ->
     return {
         center_x = center_x,
         center_z = center_z,
-        width = max(width, BASE_CELL_SIZE),
-        depth = max(depth, BASE_CELL_SIZE),
+        width = max(width, MIN_STRUCTURE_SIZE),
+        depth = max(depth, MIN_STRUCTURE_SIZE),
         base_y = base_y,
-        height = max(height, BASE_CELL_SIZE),
+        height = max(height, MIN_STRUCTURE_SIZE),
         color = structure_default_color(),
         kind = .Box,
     }

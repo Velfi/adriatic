@@ -26,6 +26,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("    --camera-orbit <yaw,pitch> adjust authored camera in degrees")
     fmt.println("    --camera-distance <n> set distance from camera target")
     fmt.println("    --camera-offset <x,y,z> translate authored camera and target")
+    fmt.println("    --turntable-frames <n> capture a 360° sequence into the output directory (1–360)")
     fmt.println("    --list-targets        list registered targets for this mode")
     fmt.println("    building targets: <ordinal>, ground-<ordinal>, cypress, mouse-town")
     fmt.println("  adriatic capture bougainvillea [output-directory] [seed ...]")
@@ -166,6 +167,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     target := ""
     window_width, window_height := 0, 0
     settle_frames := -1
+    turntable_frames := 0
     camera_eye, camera_look_at, camera_offset: [3]f32
     camera_orbit: [2]f32
     camera_eye_set, camera_look_at_set := false, false
@@ -194,7 +196,8 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
            argument == "--camera-look-at" ||
            argument == "--camera-orbit" ||
            argument == "--camera-distance" ||
-           argument == "--camera-offset" {
+           argument == "--camera-offset" ||
+           argument == "--turntable-frames" {
             if index + 1 >= len(args) {
                 fmt.eprintf("adriatic: %s requires a value\n", argument)
                 return true, false
@@ -249,6 +252,10 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 parsed, ok := adriatic_cli_parse_f32_components(argument, value, 3)
                 if !ok do return true, false
                 camera_offset, camera_offset_set = parsed, true
+            case "--turntable-frames":
+                parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 1, 360)
+                if !ok do return true, false
+                turntable_frames = parsed
             }
             index += 2
             continue
@@ -290,13 +297,19 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         fmt.eprintf("adriatic: capture %s requires an output path\n", mode)
         return true, false
     }
+    if turntable_frames > 0 && kind != .Vehicle_Showcase {
+        fmt.eprintln("adriatic: --turntable-frames currently requires capture mode vehicle-showcase")
+        return true, false
+    }
+    if turntable_frames > 0 && target == "" do target = "car"
     if camera_eye_set != camera_look_at_set {
         fmt.eprintln("adriatic: --camera-eye and --camera-look-at must be provided together")
         return true, false
     }
-    if camera_eye_set && (camera_orbit_set || camera_distance_set || camera_offset_set) {
+    if camera_eye_set &&
+       (camera_orbit_set || camera_distance_set || camera_offset_set || turntable_frames > 0) {
         fmt.eprintln(
-            "adriatic: explicit --camera-eye/--camera-look-at cannot be combined with relative camera options",
+            "adriatic: explicit --camera-eye/--camera-look-at cannot be combined with relative camera or turntable options",
         )
         return true, false
     }
@@ -311,14 +324,25 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     }
     output, resolved := adriatic_cli_absolute_path(requested_output)
     if !resolved do return true, false
-    if err := os.make_directory_all(os.dir(output)); err != nil && err != .Exist {
+    output_directory := turntable_frames > 0 ? output : os.dir(output)
+    if err := os.make_directory_all(output_directory); err != nil && err != .Exist {
         fmt.eprintf("adriatic: cannot create output directory: %v\n", err)
         return true, false
     }
     if target == "" && len(mode) >= 6 && mode[:6] == "player" do target = mode
-    if err := os.remove(output); err != nil && err != .Not_Exist {
-        fmt.eprintf("adriatic: cannot replace %s: %v\n", output, err)
-        return true, false
+    if turntable_frames == 0 {
+        if err := os.remove(output); err != nil && err != .Not_Exist {
+            fmt.eprintf("adriatic: cannot replace %s: %v\n", output, err)
+            return true, false
+        }
+    } else {
+        for frame_index in 0 ..< turntable_frames {
+            frame_path := fmt.tprintf("%s/frame-%03d.png", output, frame_index)
+            if err := os.remove(frame_path); err != nil && err != .Not_Exist {
+                fmt.eprintf("adriatic: cannot replace %s: %v\n", frame_path, err)
+                return true, false
+            }
+        }
     }
     request := Capture_Request {
         kind                 = kind,
@@ -337,12 +361,25 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         camera_distance_set  = camera_distance_set,
         camera_offset        = camera_offset,
         camera_offset_set    = camera_offset_set,
+        turntable_frames     = turntable_frames,
     }
     _ = adriatic_run(nil, request = &request)
-    info, screenshot_error := os.stat(output, context.temp_allocator)
-    if screenshot_error != nil || info.size == 0 {
-        fmt.eprintf("adriatic: capture did not write a non-empty image to %s\n", output)
-        return true, false
+    if turntable_frames > 0 {
+        for frame_index in 0 ..< turntable_frames {
+            frame_path := fmt.tprintf("%s/frame-%03d.png", output, frame_index)
+            info, screenshot_error := os.stat(frame_path, context.temp_allocator)
+            if screenshot_error != nil || info.size == 0 {
+                fmt.eprintf("adriatic: turntable did not write a non-empty image to %s\n", frame_path)
+                return true, false
+            }
+        }
+        fmt.printf("turntable: wrote %d frames to %s\n", turntable_frames, output)
+    } else {
+        info, screenshot_error := os.stat(output, context.temp_allocator)
+        if screenshot_error != nil || info.size == 0 {
+            fmt.eprintf("adriatic: capture did not write a non-empty image to %s\n", output)
+            return true, false
+        }
     }
     return true, true
 }

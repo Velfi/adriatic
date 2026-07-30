@@ -190,7 +190,23 @@ car_generator_lab_generated_mesh :: proc(
             world_triangle(a, b, c, color)
             world_triangle(c, b, a, color)
         } else {
-            world_triangle_smooth_lit(a, b, c, normal, normal, normal, color, color, color, .82)
+            material_kind := source_a.part == .Body ? World_Material_Kind.Car_Paint : World_Material_Kind.BRDF
+            finish := source_a.part == .Body ? Car_Paint_Finish.Metal_Flake : Car_Paint_Finish.Opaque
+            roughness := source_a.part == .Body ? f32(.62) : f32(.82)
+            world_triangle_smooth_lit(
+                a,
+                b,
+                c,
+                normal,
+                normal,
+                normal,
+                color,
+                color,
+                color,
+                roughness,
+                material_kind,
+                finish,
+            )
         }
     }
 }
@@ -215,7 +231,7 @@ car_generator_lab_car :: proc(plan: cars.Plan, origin: third_person.Vec3, yaw: f
                 plan.fender_radius * 1.14,
                 yaw,
                 body,
-                .BRDF,
+                .Car_Paint,
             )
         }
         // A slim running board visually joins the arches without returning to

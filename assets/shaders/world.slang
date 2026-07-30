@@ -99,6 +99,7 @@ static const uint MATERIAL_LIGHTHOUSE_GLITTER = 17;
 static const uint MATERIAL_LEAF = 18;
 static const uint MATERIAL_PETAL = 19;
 static const uint MATERIAL_FOUNTAIN_WATER = 20;
+static const uint MATERIAL_CAR_PAINT = 21;
 
 float3 shade_grass_wind_sheen(VertexOutput input, float3 color) {
     float grass = smoothstep(.18, .82, input.material.x);
@@ -538,12 +539,107 @@ float3 shade_imported_material(VertexOutput input) {
             vehicle_paint_sampler,
             float3(input.uv, input.material.y)
         );
-        base_color = lerp(base_color, srgb_to_linear(paint.rgb), paint.a);
+        // The atlas uses VK_FORMAT_R8G8B8A8_SRGB, so texture sampling has
+        // already decoded the stored palette color into linear space.
+        base_color = lerp(base_color, paint.rgb, paint.a);
     }
     BrdfMaterial material;
     material.base_color = base_color;
     material.metallic = vehicle ? 0 : input.material.x;
     material.roughness = vehicle ? .04 : input.material.y;
+    return shade_brdf(material, input.normal, input.world_position);
+}
+
+float3 shade_car_paint_coat(
+    VertexOutput input,
+    float3 base_color,
+    float finish,
+    float roughness
+) {
+    float metal_flake = step(.5, finish);
+    BrdfMaterial color_coat;
+    color_coat.base_color = base_color;
+    // Opaque paint remains a dielectric pigment layer. Metallic paint mixes
+    // in a restrained conductor response instead of reading as bare metal.
+    color_coat.metallic = metal_flake * .18;
+    color_coat.roughness = roughness;
+    float3 base = shade_brdf(color_coat, input.normal, input.world_position);
+
+    // Automotive paint has a color-bearing coat below a smooth, colorless
+    // dielectric layer. Keep this as an independent lobe so the broad body
+    // shading remains readable beneath a tighter, view-dependent highlight.
+    float3 normal = normalize(input.normal);
+    float3 view_direction =
+        normalize(push.camera_position.xyz - input.world_position);
+    float3 sun_direction = normalize(push.sun.xyz);
+    float3 half_direction = normalize(sun_direction + view_direction);
+    float direct = saturate(dot(normal, sun_direction));
+    float facing = saturate(dot(normal, view_direction));
+    float fresnel = .04 + .96 * pow(1.0 - facing, 5.0);
+    float shadow_visibility =
+        dynamic_shadow_visibility(input.world_position, normal);
+    float daylight = saturate(push.sun.w);
+    float daylight_intensity = max(push.sun.w, 1.0);
+    float clearcoat_specular =
+        pow(saturate(dot(normal, half_direction)), 112.0) *
+        direct * shadow_visibility *
+        lerp(.16, 1.0, daylight) * daylight_intensity;
+    float sky_glance = pow(1.0 - facing, 3.0) * (.035 + daylight * .075);
+    float3 clearcoat =
+        float3(1.0, .97, .90) * (clearcoat_specular * .42 + sky_glance);
+
+    // Stable object-scale noise represents flakes distributed through the
+    // color coat. Broad frequencies avoid sub-pixel glitter shimmer, while
+    // the half-vector term reveals flecks as the body turns through the light.
+    float flake_field =
+        value_noise(input.world_position.xz * 21.0 +
+                    input.world_position.y * float2(9.0, -13.0)) * .64 +
+        value_noise(input.world_position.zy * 37.0 +
+                    input.world_position.x * float2(-7.0, 11.0)) * .36;
+    float flake_mask = smoothstep(.67, .90, flake_field) * metal_flake;
+    float flake_alignment =
+        pow(saturate(dot(normal, half_direction)), 34.0);
+    float3 flake_specular =
+        lerp(float3(.78, .86, .88), base_color, .28) *
+        flake_mask * flake_alignment * direct * shadow_visibility *
+        daylight_intensity * .38;
+
+    // The top interface reflects a little energy before it reaches the color
+    // coat; applying that attenuation keeps the added pass from washing out
+    // the petrol-teal body at grazing angles.
+    return saturate(
+        base * (1.0 - fresnel * .34) + flake_specular + clearcoat
+    );
+}
+
+float3 shade_car_paint(VertexOutput input) {
+    return shade_car_paint_coat(
+        input,
+        input.color.rgb,
+        input.material.x,
+        input.material.y
+    );
+}
+
+float3 shade_vehicle(VertexOutput input) {
+    bool paintable = input.material.x > .5;
+    float3 base_color = input.color.rgb;
+    if (paintable) {
+        float4 paint = vehicle_paint_atlas.Sample(
+            vehicle_paint_sampler,
+            float3(input.uv, input.material.y)
+        );
+        // The sRGB atlas is decoded by the sampler. Decoding it again here
+        // darkens and shifts the selected palette color.
+        base_color = lerp(base_color, paint.rgb, paint.a);
+        // Keep the editable atlas as the pigment beneath the shared clear coat.
+        return shade_car_paint_coat(input, base_color, 0.0, .54);
+    }
+
+    BrdfMaterial material;
+    material.base_color = base_color;
+    material.metallic = 0;
+    material.roughness = .58;
     return shade_brdf(material, input.normal, input.world_position);
 }
 
@@ -1873,8 +1969,13 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             base = shade_road(input);
             break;
         case MATERIAL_BRDF:
-        case MATERIAL_VEHICLE:
             base = shade_imported_material(input);
+            break;
+        case MATERIAL_VEHICLE:
+            base = shade_vehicle(input);
+            break;
+        case MATERIAL_CAR_PAINT:
+            base = shade_car_paint(input);
             break;
         case MATERIAL_EYE:
             base = shade_eye(input);

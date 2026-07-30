@@ -854,7 +854,12 @@ World::Vehicle *zelda_physics_vehicle_create(
                       float longitudinal_friction, float lateral_friction,
                       float, float, float) {
                 uint index = std::min(wheel, 3u);
-                longitudinal = vehicle->longitudinal_grip[index] * longitudinal_friction * suspension;
+                // Jolt's vehicle sample compensates for the corrected longitudinal
+                // impulse solver with this scale. Without it, engine torque reaches
+                // the wheels but ordinary grades consume nearly all available
+                // traction and the vehicle creeps or slides downhill.
+                longitudinal = 10.0f * vehicle->longitudinal_grip[index] *
+                               longitudinal_friction * suspension;
                 lateral = vehicle->lateral_grip[index] * lateral_friction * suspension;
             });
     vehicle->constraint->SetVehicleCollisionTester(

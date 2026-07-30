@@ -474,6 +474,12 @@ World_Material_Kind :: enum u32 {
     Leaf,
     Petal,
     Fountain_Water,
+    Car_Paint,
+}
+
+Car_Paint_Finish :: enum u8 {
+    Opaque,
+    Metal_Flake,
 }
 
 World_Vertex :: struct {
@@ -481,7 +487,8 @@ World_Vertex :: struct {
     color:    [4]f32,
     kind:     World_Material_Kind,
     normal:   [3]f32,
-    // Lit: metallic, roughness. Vehicle: paintable, atlas layer.
+    // Lit: metallic, roughness. Car paint: finish, roughness.
+    // Vehicle: paintable, atlas layer.
     material: [2]f32,
     uv:       [2]f32,
 }
@@ -1287,6 +1294,8 @@ world_triangle_material :: #force_inline proc(a, b, c: third_person.Vec3, color:
             // callers on the shared material/lighting path without requiring
             // every primitive builder to repeat the default material values.
             vertex.material = {0, .9}
+        } else if kind == .Car_Paint {
+            vertex.material = {f32(Car_Paint_Finish.Opaque), .54}
         }
     }
     append(&world_renderer.vertices, ..vertices[:])
@@ -1298,6 +1307,8 @@ world_triangle_smooth_lit :: #force_inline proc(
     normal_a, normal_b, normal_c: third_person.Vec3,
     color_a, color_b, color_c: rl.Color,
     roughness: f32 = .9,
+    material_kind: World_Material_Kind = .BRDF,
+    car_paint_finish: Car_Paint_Finish = .Opaque,
 ) {
     points := [3]third_person.Vec3{a, b, c}
     normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
@@ -1305,10 +1316,10 @@ world_triangle_smooth_lit :: #force_inline proc(
     vertices: [3]World_Vertex
     for index in 0 ..< 3 {
         vertices[index] = world_vertex(points[index], colors[index])
-        vertices[index].kind = .BRDF
+        vertices[index].kind = material_kind
         normal := linalg.normalize0(normals[index])
         vertices[index].normal = {normal.x, normal.y, normal.z}
-        vertices[index].material = {0, clamp(roughness, .04, 1)}
+        vertices[index].material = {material_kind == .Car_Paint ? f32(car_paint_finish) : 0, clamp(roughness, .04, 1)}
     }
     append(&world_renderer.vertices, ..vertices[:])
 }
@@ -1521,7 +1532,11 @@ world_quad_material :: #force_inline proc(a, b, c, d: third_person.Vec3, color: 
     for &vertex in vertices {
         vertex.kind = kind
         vertex.normal = {normal.x, normal.y, normal.z}
-        if kind == .BRDF do vertex.material = {0, .9}
+        if kind == .BRDF {
+            vertex.material = {0, .9}
+        } else if kind == .Car_Paint {
+            vertex.material = {f32(Car_Paint_Finish.Opaque), .54}
+        }
     }
     append(&world_renderer.vertices, ..vertices[:])
 }
@@ -2971,14 +2986,9 @@ world_infrastructure :: proc(editor: ^Editor) {
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     half := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
-        x, z := sign * half * terrain.DEFAULT_ISLAND_OFFSET, sign * half * terrain.DEFAULT_ISLAND_OFFSET
+        x, z := terrain.default_runway_center(sign)
         run_l, run_w := half * terrain.DEFAULT_RUNWAY_HALF_LENGTH, half * terrain.DEFAULT_RUNWAY_HALF_WIDTH
         y := terrain.sample_height(&editor.project, 0, x, z) + .05
-        world_box({x, y, z}, {run_l * 2, .08, run_w * 2}, {60, 66, 67, 255})
-        for marker in -3 ..= 3 {
-            mx := x + f32(marker) * run_l * .22
-            world_box({mx, y + .06, z}, {run_l * .11, .025, .12}, {238, 232, 186, 255})
-        }
         world_runway_papi(editor, x, z, y, run_l, run_w, -1)
         world_runway_papi(editor, x, z, y, run_l, run_w, 1)
     }
@@ -15726,7 +15736,12 @@ world_rondine_local :: #force_inline proc(editor: ^Editor, p: [3]f32) -> third_p
     return world_aircraft_vertex_world(transform, p)
 }
 
-world_rondine_box :: proc(editor: ^Editor, center, size: [3]f32, color: rl.Color) {
+world_rondine_box :: proc(
+    editor: ^Editor,
+    center, size: [3]f32,
+    color: rl.Color,
+    material_kind: World_Material_Kind = .BRDF,
+) {
     x, y, z := size[0] * .5, size[1] * .5, size[2] * .5
     p := [8][3]f32 {
         {center[0] - x, center[1] - y, center[2] - z},
@@ -15740,12 +15755,12 @@ world_rondine_box :: proc(editor: ^Editor, center, size: [3]f32, color: rl.Color
     }
     w: [8]third_person.Vec3
     for point, index in p do w[index] = world_rondine_local(editor, point)
-    world_quad(w[0], w[3], w[2], w[1], color)
-    world_quad(w[4], w[5], w[6], w[7], color)
-    world_quad(w[0], w[4], w[7], w[3], color)
-    world_quad(w[1], w[2], w[6], w[5], color)
-    world_quad(w[3], w[7], w[6], w[2], color)
-    world_quad(w[0], w[1], w[5], w[4], color)
+    world_quad_material(w[0], w[3], w[2], w[1], color, material_kind)
+    world_quad_material(w[4], w[5], w[6], w[7], color, material_kind)
+    world_quad_material(w[0], w[4], w[7], w[3], color, material_kind)
+    world_quad_material(w[1], w[2], w[6], w[5], color, material_kind)
+    world_quad_material(w[3], w[7], w[6], w[2], color, material_kind)
+    world_quad_material(w[0], w[1], w[5], w[4], color, material_kind)
 }
 
 world_rondine_hull :: proc(editor: ^Editor, deck, side, keel: rl.Color) {
@@ -15770,25 +15785,25 @@ world_rondine_hull :: proc(editor: ^Editor, deck, side, keel: rl.Color) {
 
     // One continuous flying-boat hull: broad deck, hard chines, and a single
     // center keel. The tapered stern keeps it distinct from twin floats.
-    world_triangle(bow, fore_l, fore_r, deck)
-    world_quad(fore_l, beam_l, beam_r, fore_r, deck)
-    world_quad(beam_l, stern_l, stern_r, beam_r, deck)
-    world_triangle(bow, chine_fore_l, fore_l, side)
-    world_triangle(bow, fore_r, chine_fore_r, side)
-    world_triangle(bow, bow_keel, chine_fore_l, side)
-    world_triangle(bow, chine_fore_r, bow_keel, side)
-    world_triangle(bow_keel, chine_fore_r, chine_fore_l, keel)
-    world_quad(fore_l, chine_fore_l, chine_aft_l, beam_l, side)
-    world_quad(fore_r, beam_r, chine_aft_r, chine_fore_r, side)
-    world_quad(beam_l, chine_aft_l, stern_keel_l, stern_l, side)
-    world_quad(beam_r, stern_r, stern_keel_r, chine_aft_r, side)
-    world_triangle(bow_keel, keel_fore, chine_fore_l, keel)
-    world_triangle(bow_keel, chine_fore_r, keel_fore, keel)
-    world_quad(chine_fore_l, keel_fore, keel_aft, chine_aft_l, keel)
-    world_quad(chine_fore_r, chine_aft_r, keel_aft, keel_fore, keel)
-    world_triangle(chine_aft_l, keel_aft, stern_keel_l, side)
-    world_triangle(chine_aft_r, stern_keel_r, keel_aft, side)
-    world_quad(stern_l, stern_keel_l, stern_keel_r, stern_r, side)
+    world_triangle_material(bow, fore_l, fore_r, deck, .Car_Paint)
+    world_quad_material(fore_l, beam_l, beam_r, fore_r, deck, .Car_Paint)
+    world_quad_material(beam_l, stern_l, stern_r, beam_r, deck, .Car_Paint)
+    world_triangle_material(bow, chine_fore_l, fore_l, side, .Car_Paint)
+    world_triangle_material(bow, fore_r, chine_fore_r, side, .Car_Paint)
+    world_triangle_material(bow, bow_keel, chine_fore_l, side, .Car_Paint)
+    world_triangle_material(bow, chine_fore_r, bow_keel, side, .Car_Paint)
+    world_triangle_material(bow_keel, chine_fore_r, chine_fore_l, keel, .Car_Paint)
+    world_quad_material(fore_l, chine_fore_l, chine_aft_l, beam_l, side, .Car_Paint)
+    world_quad_material(fore_r, beam_r, chine_aft_r, chine_fore_r, side, .Car_Paint)
+    world_quad_material(beam_l, chine_aft_l, stern_keel_l, stern_l, side, .Car_Paint)
+    world_quad_material(beam_r, stern_r, stern_keel_r, chine_aft_r, side, .Car_Paint)
+    world_triangle_material(bow_keel, keel_fore, chine_fore_l, keel, .Car_Paint)
+    world_triangle_material(bow_keel, chine_fore_r, keel_fore, keel, .Car_Paint)
+    world_quad_material(chine_fore_l, keel_fore, keel_aft, chine_aft_l, keel, .Car_Paint)
+    world_quad_material(chine_fore_r, chine_aft_r, keel_aft, keel_fore, keel, .Car_Paint)
+    world_triangle_material(chine_aft_l, keel_aft, stern_keel_l, side, .Car_Paint)
+    world_triangle_material(chine_aft_r, stern_keel_r, keel_aft, side, .Car_Paint)
+    world_quad_material(stern_l, stern_keel_l, stern_keel_r, stern_r, side, .Car_Paint)
 }
 
 world_rondine_propeller_blade :: proc(editor: ^Editor, center_x, angle, z: f32, color: rl.Color) {
@@ -19097,10 +19112,28 @@ world_showcase_car_pilot :: proc(editor: ^Editor) {
 // fits inside the roadster instead of spanning the rear deck and windscreen.
 CAR_PILOT_SCALE :: f32(.70)
 CAR_PILOT_SEAT_Y :: f32(.31)
-CAR_PILOT_SEAT_Z :: f32(.05)
+CAR_PILOT_SEAT_Z :: f32(-.03)
 CAR_STEERING_WHEEL_Y :: f32(.59)
 CAR_STEERING_WHEEL_Z :: f32(-.25)
 CAR_STEERING_WHEEL_RADIUS :: f32(.17)
+CAR_STEERING_COLUMN_Y :: f32(.53)
+CAR_STEERING_COLUMN_Z :: f32(-.43)
+
+// The steering wheel lies perpendicular to the column instead of floating in
+// a vertical plane. Returning an authored car-local point from normalized rim
+// coordinates keeps the rendered wheel and the driver's paw targets aligned.
+car_steering_wheel_point :: proc(rim_x, rim_up: f32) -> [3]f32 {
+    column_y := CAR_STEERING_WHEEL_Y - CAR_STEERING_COLUMN_Y
+    column_z := CAR_STEERING_WHEEL_Z - CAR_STEERING_COLUMN_Z
+    column_length := f32(math.sqrt(f64(column_y * column_y + column_z * column_z)))
+    wheel_up_y := column_z / column_length
+    wheel_up_z := -column_y / column_length
+    return {
+        rim_x * CAR_STEERING_WHEEL_RADIUS,
+        CAR_STEERING_WHEEL_Y + rim_up * CAR_STEERING_WHEEL_RADIUS * wheel_up_y,
+        CAR_STEERING_WHEEL_Z + rim_up * CAR_STEERING_WHEEL_RADIUS * wheel_up_z,
+    }
+}
 
 World_Vehicle_Transform :: struct {
     origin:        third_person.Vec3,
@@ -19167,6 +19200,17 @@ world_vehicle_vertex_world :: #force_inline proc(
         position[0] * transform.right_basis.z +
         position[1] * transform.up_basis.z -
         position[2] * transform.forward_basis.z,
+    }
+}
+
+world_vehicle_normal_world :: #force_inline proc(
+    transform: World_Vehicle_Transform,
+    normal: [3]f32,
+) -> third_person.Vec3 {
+    return {
+        transform.right_basis.x * normal[0] + transform.up_basis.x * normal[1] - transform.forward_basis.x * normal[2],
+        transform.right_basis.y * normal[0] + transform.up_basis.y * normal[1] - transform.forward_basis.y * normal[2],
+        transform.right_basis.z * normal[0] + transform.up_basis.z * normal[1] - transform.forward_basis.z * normal[2],
     }
 }
 
@@ -19243,7 +19287,7 @@ world_car :: proc(editor: ^Editor) {
     // Retain near-frustum vehicles so their projected shadows cannot disappear
     // while the body itself is just outside the camera.
     if !world_sphere_in_view(editor, center, radius, 6) do return
-    mesh := vehicles.simple_car_mesh()
+    mesh := &editor.car_base_mesh
     trailer_speed_squared :=
         editor.car_trailer.velocity.x * editor.car_trailer.velocity.x +
         editor.car_trailer.velocity.z * editor.car_trailer.velocity.z
@@ -19256,73 +19300,115 @@ world_car :: proc(editor: ^Editor) {
     car_transform := world_car_transform(editor)
     trailer_transform := world_trailer_transform(editor)
     world_car_cockpit(editor, car_transform)
-    for triangle in vehicles.mesh_triangles(&mesh) {
+    for triangle in vehicles.mesh_triangles(mesh) {
         a := mesh.vertices[triangle.a]
         b := mesh.vertices[triangle.b]
         c := mesh.vertices[triangle.c]
-        world_triangle(
-            world_vehicle_vertex_world(car_transform, a.position),
-            world_vehicle_vertex_world(car_transform, b.position),
-            world_vehicle_vertex_world(car_transform, c.position),
-            car_part_color(editor, a.part),
-        )
+        smooth_part :=
+            a.part == .Body ||
+            a.part == .Wheel ||
+            a.part == .Rounded_Chrome ||
+            a.part == .Rounded_Ivory ||
+            a.part == .Headlight ||
+            a.part == .Tail_Light
+        if smooth_part {
+            color := car_part_color(editor, a.part)
+            roughness := f32(.48)
+            #partial switch a.part {
+            case .Body:
+                roughness = .62
+            case .Wheel:
+                roughness = .82
+            case .Rounded_Chrome:
+                roughness = .22
+            case .Rounded_Ivory:
+                roughness = .68
+            case .Headlight, .Tail_Light:
+                roughness = .30
+            }
+            world_triangle_smooth_lit(
+                world_vehicle_vertex_world(car_transform, a.position),
+                world_vehicle_vertex_world(car_transform, b.position),
+                world_vehicle_vertex_world(car_transform, c.position),
+                world_vehicle_normal_world(car_transform, a.normal),
+                world_vehicle_normal_world(car_transform, b.normal),
+                world_vehicle_normal_world(car_transform, c.normal),
+                color,
+                color,
+                color,
+                roughness,
+                a.part == .Body ? World_Material_Kind.Car_Paint : World_Material_Kind.BRDF,
+                a.part == .Body ? Car_Paint_Finish.Metal_Flake : Car_Paint_Finish.Opaque,
+            )
+        } else {
+            world_triangle(
+                world_vehicle_vertex_world(car_transform, a.position),
+                world_vehicle_vertex_world(car_transform, b.position),
+                world_vehicle_vertex_world(car_transform, c.position),
+                car_part_color(editor, a.part),
+            )
+        }
     }
     for triangle in vehicles.mesh_triangles(&trailer) {
         a := trailer.vertices[triangle.a]
         b := trailer.vertices[triangle.b]
         c := trailer.vertices[triangle.c]
-        world_triangle(
-            world_vehicle_vertex_world(trailer_transform, a.position),
-            world_vehicle_vertex_world(trailer_transform, b.position),
-            world_vehicle_vertex_world(trailer_transform, c.position),
-            trailer_part_color(editor, a.part),
-        )
+        color := trailer_part_color(editor, a.part)
+        if a.part == .Body {
+            world_triangle_smooth_lit(
+                world_vehicle_vertex_world(trailer_transform, a.position),
+                world_vehicle_vertex_world(trailer_transform, b.position),
+                world_vehicle_vertex_world(trailer_transform, c.position),
+                world_vehicle_normal_world(trailer_transform, a.normal),
+                world_vehicle_normal_world(trailer_transform, b.normal),
+                world_vehicle_normal_world(trailer_transform, c.normal),
+                color,
+                color,
+                color,
+                .62,
+                .Car_Paint,
+                .Metal_Flake,
+            )
+        } else {
+            world_triangle(
+                world_vehicle_vertex_world(trailer_transform, a.position),
+                world_vehicle_vertex_world(trailer_transform, b.position),
+                world_vehicle_vertex_world(trailer_transform, c.position),
+                color,
+            )
+        }
     }
 }
 
 world_car_cockpit :: proc(editor: ^Editor, car_transform: World_Vehicle_Transform) {
     // Keep the wheel low enough for the mouse's forepaws to meet the rim
-    // without lifting its elbows into the windscreen.
+    // without lifting its elbows into the windscreen. Its plane follows the
+    // raked column, tipping the upper rim naturally toward the windscreen.
     wheel_center := [3]f32{0, CAR_STEERING_WHEEL_Y, CAR_STEERING_WHEEL_Z}
-    wheel_radius := CAR_STEERING_WHEEL_RADIUS
     wheel_rotation := clamp(editor.car_drive.steering, -1, 1) * .55
-    forward := linalg.normalize0(
-        (world_vehicle_vertex_world(car_transform, {wheel_center.x, wheel_center.y, wheel_center.z - .1}) -
-            world_vehicle_vertex_world(car_transform, wheel_center)),
-    )
+    column_local := [3]f32{0, CAR_STEERING_COLUMN_Y, CAR_STEERING_COLUMN_Z}
+    column := world_vehicle_vertex_world(car_transform, column_local)
+    center := world_vehicle_vertex_world(car_transform, wheel_center)
+    forward := linalg.normalize0(center - column)
     leather := rl.Color{48, 39, 34, 255}
     spoke := rl.Color{104, 83, 65, 255}
+    world_tube_between(column, center, forward, .035, .035, spoke)
     SEGMENTS :: 12
     ring: [SEGMENTS]third_person.Vec3
     for segment in 0 ..< SEGMENTS {
         angle := f32(segment) * math.PI * 2 / f32(SEGMENTS) + wheel_rotation
-        ring[segment] = world_vehicle_vertex_world(
-            car_transform,
-            {
-                wheel_center.x + math.cos(angle) * wheel_radius,
-                wheel_center.y + math.sin(angle) * wheel_radius,
-                wheel_center.z,
-            },
-        )
+        point := car_steering_wheel_point(math.cos(angle), math.sin(angle))
+        ring[segment] = world_vehicle_vertex_world(car_transform, point)
     }
     for segment in 0 ..< SEGMENTS {
         world_tube_between(ring[segment], ring[(segment + 1) % SEGMENTS], forward, .026, .026, leather)
     }
-    center := world_vehicle_vertex_world(car_transform, wheel_center)
     for segment in 0 ..< 3 {
         angle := f32(segment) * math.PI * 2 / 3 + wheel_rotation
-        rim := world_vehicle_vertex_world(
-            car_transform,
-            {
-                wheel_center.x + math.cos(angle) * wheel_radius * .88,
-                wheel_center.y + math.sin(angle) * wheel_radius * .88,
-                wheel_center.z,
-            },
-        )
+        point := car_steering_wheel_point(math.cos(angle) * .88, math.sin(angle) * .88)
+        rim := world_vehicle_vertex_world(car_transform, point)
         world_tube_between(center, rim, forward, .018, .018, spoke)
     }
-    column := world_vehicle_vertex_world(car_transform, {0, .47, .08})
-    world_tube_between(column, center, forward, .035, .035, spoke)
 }
 
 player_animation_approach :: proc(current, target, rate, delta_seconds: f32) -> f32 {
@@ -22106,15 +22192,14 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             // so the grip cannot drift when either side is adjusted.
             steering := clamp(model.drive_steering, -1, 1)
             wheel_rotation := steering * .55
-            grip_radius := CAR_STEERING_WHEEL_RADIUS / CAR_PILOT_SCALE
-            neutral_grip_x := side_f * grip_radius * f32(.8660254)
-            neutral_grip_y := grip_radius * .5
-            grip_x := neutral_grip_x * math.cos(wheel_rotation) - neutral_grip_y * math.sin(wheel_rotation)
-            grip_y :=
-                (CAR_STEERING_WHEEL_Y - CAR_PILOT_SEAT_Y) / CAR_PILOT_SCALE +
-                neutral_grip_y * math.cos(wheel_rotation) +
-                neutral_grip_x * math.sin(wheel_rotation)
-            grip_z := (CAR_PILOT_SEAT_Z - CAR_STEERING_WHEEL_Z) / CAR_PILOT_SCALE
+            neutral_grip_x := side_f * f32(.8660254)
+            neutral_grip_up := f32(.5)
+            grip_rim_x := neutral_grip_x * math.cos(wheel_rotation) - neutral_grip_up * math.sin(wheel_rotation)
+            grip_rim_up := neutral_grip_up * math.cos(wheel_rotation) + neutral_grip_x * math.sin(wheel_rotation)
+            grip_point := car_steering_wheel_point(grip_rim_x, grip_rim_up)
+            grip_x := grip_point.x / CAR_PILOT_SCALE
+            grip_y := (grip_point.y - CAR_PILOT_SEAT_Y) / CAR_PILOT_SCALE
+            grip_z := (CAR_PILOT_SEAT_Z - grip_point.z) / CAR_PILOT_SCALE
             fore_paw = local_point(p, rotation, grip_x, grip_y, grip_z)
             // A mouse forelimb reaches from a low shoulder as a soft, shallow
             // chain. Place the elbow along that reach with only a slight sag;

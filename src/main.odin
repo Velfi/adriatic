@@ -508,6 +508,7 @@ Editor :: struct {
     libellula_base_mesh:                vehicles.Libellula_Mesh,
     libellula_mk2_base_mesh:            vehicles.Libellula_Mesh,
     postale_base_mesh:                  vehicles.Aircraft_Mesh,
+    car_base_mesh:                      vehicles.Aircraft_Mesh,
     libellula_projected_faces:          [dynamic]Projected_Aircraft_Face,
     gameplay_options:                   Gameplay_Options,
     runtime_input:                      game_input.State,
@@ -5827,13 +5828,13 @@ aircraft_part_color :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part) -> 
         return {r = 190, g = 78, b = 48, a = 255}
     case .Wheel:
         return {r = 25, g = 31, b = 36, a = 255}
-    case .Bumper:
+    case .Bumper, .Rounded_Chrome:
         return {r = 174, g = 184, b = 188, a = 255}
     case .Headlight:
         return {r = 255, g = 239, b = 164, a = 255}
     case .Tail_Light:
         return {r = 211, g = 43, b = 42, a = 255}
-    case .Ivory:
+    case .Ivory, .Rounded_Ivory:
         return {r = 216, g = 203, b = 180, a = 255}
     case .Red_Paint:
         return {r = 166, g = 65, b = 54, a = 255}
@@ -9330,6 +9331,8 @@ adriatic_run :: proc(
     vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
     editor.postale_base_mesh = vehicles.postale_mesh()
     vehicles.mesh_generate_smooth_normals(&editor.postale_base_mesh)
+    editor.car_base_mesh = vehicles.simple_car_mesh()
+    vehicles.mesh_generate_smooth_normals(&editor.car_base_mesh)
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .42, "Preparing aircraft and boats...", postcard)
     }
@@ -11098,6 +11101,12 @@ adriatic_run :: proc(
     benchmark_samples: [4096]f64
     benchmark_sample_count := 0
     instrument_started_at := rl.GetTime()
+    capture_frame :=
+        capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+    if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
+    turntable_frame_index := 0
+    turntable_capture_stride := 12
+    turntable_last_capture_frame := capture_frame
     frame := 0
     for !rl.WindowShouldClose() && !editor.quit_requested {
         gameplay_physics_begin_frame(editor)
@@ -12127,12 +12136,14 @@ adriatic_run :: proc(
         }
         capture_camera_overridden := false
         capture_camera_original := editor.camera_pose
+        capture_camera_slot := editor.cameras.active
         if capture_mode &&
            request != nil &&
            (request.camera_eye_set ||
                    request.camera_orbit_set ||
                    request.camera_distance_set ||
-                   request.camera_offset_set) {
+                   request.camera_offset_set ||
+                   request.turntable_frames > 0) {
             pose := capture_camera_original
             if request.camera_eye_set {
                 pose = third_person.camera_look_at(request.camera_eye, request.camera_look_at)
@@ -12146,6 +12157,12 @@ adriatic_run :: proc(
                 yaw := math.atan2(delta.x, delta.z)
                 horizontal := f32(math.sqrt(f64(delta.x * delta.x + delta.z * delta.z)))
                 pitch := math.atan2(delta.y, horizontal)
+                if request.turntable_frames > 0 {
+                    yaw +=
+                        f32(turntable_frame_index) /
+                            f32(request.turntable_frames) *
+                            f32(math.PI * 2)
+                }
                 if request.camera_orbit_set {
                     degrees_to_radians := f32(math.PI / 180)
                     yaw += request.camera_orbit_degrees[0] * degrees_to_radians
@@ -12167,11 +12184,11 @@ adriatic_run :: proc(
                 }
             }
             editor.camera_pose = pose
+            third_person.camera_set_pose(&editor.cameras, capture_camera_slot, pose)
             capture_camera_overridden = true
         }
         rl.BeginDrawing()
         draw_terrain(editor, width, height, f32(rl.GetTime()))
-        if capture_camera_overridden do editor.camera_pose = capture_camera_original
         pause_menu_draw(editor, width, height, postcard)
         cinematic_draw_wipe(editor, width, height)
         crash_recovery_draw(editor, width, height)
@@ -12179,6 +12196,16 @@ adriatic_run :: proc(
         live_capture_poll()
         live_control_poll(editor)
         rl.EndDrawing()
+        // World rendering is submitted during EndDrawing, so keep the capture
+        // pose installed until after that submission has consumed it.
+        if capture_camera_overridden {
+            editor.camera_pose = capture_camera_original
+            third_person.camera_set_pose(
+                &editor.cameras,
+                capture_camera_slot,
+                capture_camera_original,
+            )
+        }
         gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()
         dio.flame_graph_set_frame_metrics(&editor.flame_graph, 0, 0, f32(gpu_frame_ms), gpu_frame_available)
         dio.flame_graph_end_frame(&editor.flame_graph)
@@ -12393,13 +12420,34 @@ adriatic_run :: proc(
         }
         // Player captures wait long enough for the Verlet tail and pose blends
         // to settle; frame two only showed the first few links as a short nub.
-        capture_frame :=
-            capture_flight_mode || capture_player_mode || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
-        if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
-        if capture_mode && frame == capture_frame do rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
+        if capture_mode && request != nil && request.turntable_frames > 0 {
+            next_capture_frame :=
+                capture_frame + turntable_frame_index * turntable_capture_stride
+            if turntable_frame_index < request.turntable_frames &&
+               frame == next_capture_frame {
+                rl.TakeScreenshot(
+                    fmt.ctprintf("%s/frame-%03d.png", capture_output, turntable_frame_index),
+                )
+                turntable_last_capture_frame = frame
+                turntable_frame_index += 1
+            }
+        } else if capture_mode && frame == capture_frame {
+            rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
+        }
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.
-        if capture_mode && frame >= max(32, capture_frame + 12) do break
+        if capture_mode &&
+           request != nil &&
+           request.turntable_frames > 0 &&
+           turntable_frame_index >= request.turntable_frames &&
+           frame >= turntable_last_capture_frame + 12 {
+            break
+        }
+        if capture_mode &&
+           (request == nil || request.turntable_frames == 0) &&
+           frame >= max(32, capture_frame + 12) {
+            break
+        }
         if instrument_duration_seconds > 0 && rl.GetTime() - instrument_started_at >= instrument_duration_seconds {
             editor.quit_requested = true
         }

@@ -75,6 +75,7 @@ Capture_Request :: struct {
     camera_distance_set:  bool,
     camera_offset:        [3]f32,
     camera_offset_set:    bool,
+    turntable_frames:     int,
 }
 
 CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night}

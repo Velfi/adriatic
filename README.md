@@ -240,11 +240,19 @@ The executable owns capture commands:
 build/dev/adriatic capture building build/captures/building.png 4
 build/dev/adriatic capture foliage-forest build/captures/forest.png
 build/dev/adriatic capture bougainvillea build/captures/bougainvillea-seeds
+build/dev/adriatic capture vehicle-showcase \
+  --output build/captures/mouse-car-turntable \
+  --target car \
+  --turntable-frames 16
 ```
 
 The generic form is `adriatic capture <mode> <output.png> [target]`.
 `capture bougainvillea` writes the six-seed palette/habit validation matrix to
 an output directory; append seed values to override the default matrix.
+`--turntable-frames <n>` is available for `vehicle-showcase` captures and keeps
+one process alive while it writes an evenly spaced 360-degree sequence named
+`frame-000.png`, `frame-001.png`, and so on into the output directory. The
+turntable defaults to the car when `--target` is omitted.
 
 ## Releases
 
