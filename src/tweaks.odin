@@ -652,12 +652,12 @@ tweak_draw_atmosphere :: proc(editor: ^Editor) {
     im.SameLine()
     if im.RadioButton("Storm", a.override == .Storm) do a.override = .Storm
     im.SeparatorText("Adriatic climate")
-    im.Text(
+    im.TextUnformatted(fmt.ctprintf(
         "Current %s  next %s  season %.1f%%",
         atmosphere.regime_name(a.climate.current),
         atmosphere.regime_name(a.climate.next),
         atmosphere.season_phase(a) * 100,
-    )
+    ))
     if im.RadioButton("Maestral", a.climate.current == .Maestral) do atmosphere.set_climate_regime(a, .Maestral)
     im.SameLine()
     if im.RadioButton("Bura clear", a.climate.current == .Bura_Clear) do atmosphere.set_climate_regime(a, .Bura_Clear)
