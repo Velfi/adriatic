@@ -69,6 +69,35 @@ def focus(subject: str, name: str, timeout: float = 5.0) -> dict[str, object]:
     return live_control(subject, name.strip(), timeout=timeout)
 
 
+def selector_arguments(arguments: dict[str, object]) -> tuple[object, ...]:
+    selector = arguments.get("selector")
+    if not isinstance(selector, str) or not selector.strip():
+        raise ValueError("selector must be a non-empty string")
+    presentation = arguments.get("presentation", "fit")
+    if presentation not in {"fit", "portrait", "profile", "overhead", "authored"}:
+        raise ValueError("unknown selector presentation")
+    pick = arguments.get("pick", "-")
+    if pick != "-" and pick != "first" and (not isinstance(pick, int) or isinstance(pick, bool) or pick < 1):
+        raise ValueError("pick must be first or a one-based positive integer")
+    where = arguments.get("where", {})
+    if not isinstance(where, dict) or len(where) > 8:
+        raise ValueError("where must be an object with at most eight filters")
+    filters: list[str] = []
+    for key, value in where.items():
+        if not isinstance(key, str) or not key or any(character in key for character in "=\t\n"):
+            raise ValueError("filter keys must be non-empty single-line names")
+        if isinstance(value, bool):
+            encoded = "true" if value else "false"
+        elif isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            encoded = str(value)
+        else:
+            raise ValueError(f"filter {key} must be a string, number, or boolean")
+        if not encoded or any(character in encoded for character in "=\t\n"):
+            raise ValueError(f"filter {key} has an invalid value")
+        filters.append(f"{key}={encoded}")
+    return selector.strip(), presentation, pick, *filters
+
+
 TOOLS = [
     {
         "name": "regenerate_islands",
@@ -124,6 +153,36 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "selector_query",
+        "title": "Query Runtime Subjects",
+        "description": "Dynamically query targetable subjects instantiated in the running game.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "selector": {"type": "string", "description": "Typed selector such as character:zora, vehicle, structure:42, or selection."},
+                "where": {"type": "object", "description": "Optional equality filters such as name, type, resident, archetype, id, or available."},
+            },
+            "required": ["selector"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "selector_focus",
+        "title": "Focus Runtime Subject",
+        "description": "Resolve a typed selector and focus the running game's inspection camera on the matching subject.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "selector": {"type": "string", "description": "Typed selector such as character:zora, vehicle:postale, structure:42, or selection."},
+                "where": {"type": "object", "description": "Optional equality filters."},
+                "pick": {"oneOf": [{"type": "string", "const": "first"}, {"type": "integer", "minimum": 1}]},
+                "presentation": {"type": "string", "enum": ["fit", "portrait", "profile", "overhead", "authored"], "default": "fit"},
+            },
+            "required": ["selector"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "npc_focus",
         "title": "Focus NPC",
         "description": "Focus the running game's inspection camera on an NPC by name (case-insensitive).",
@@ -170,7 +229,7 @@ TOOLS = [
                     "type": "string",
                     "enum": [
                         "sculpt", "smooth", "paint", "formations", "foliage", "ridge", "cliff",
-                        "building", "marina", "farm", "wreck", "climbing_leaves", "roads", "greek_assets",
+                        "building", "marina", "farm", "wreck", "climbing_leaves", "roads", "ruins",
                     ],
                 },
                 "radius": {"type": "number", "description": "Brush radius in metres."},
@@ -178,7 +237,7 @@ TOOLS = [
                 "hardness": {"type": "number", "description": "Brush edge hardness from 0 to 1."},
                 "width": {"type": "number", "description": "Ridge, cliff, or road width in metres."},
                 "height": {"type": "number", "description": "Ridge or cliff height in metres."},
-                "size": {"type": "number", "description": "Farm or wreck footprint size in metres, or Greek-asset scale."},
+                "size": {"type": "number", "description": "Farm or wreck footprint size in metres."},
                 "mode": {"type": "string", "enum": ["mass", "hedge"], "description": "Foliage brush mode."},
             },
             "minProperties": 1,
@@ -224,6 +283,7 @@ def handle(message: dict[str, object]) -> None:
         if tool_name not in {
             "audio_status", "npc_focus", "business_focus", "terrain_brush_get", "terrain_brush_set",
             "material_list", "material_create", "material_attach_map", "regenerate_islands",
+            "selector_query", "selector_focus",
         }:
             reply(request_id, error={"code": -32602, "message": "unknown tool"})
             return
@@ -280,6 +340,12 @@ def handle(message: dict[str, object]) -> None:
                     raise ValueError(f"{tool_name} requires only a string name")
                 focus_tool = focus_npc if tool_name == "npc_focus" else focus_business
                 result = focus_tool(arguments["name"])
+            elif tool_name in {"selector_query", "selector_focus"}:
+                allowed = {"selector", "where", "pick", "presentation"}
+                if set(arguments) - allowed:
+                    raise ValueError(f"{tool_name} received unknown arguments")
+                fields = selector_arguments(arguments)
+                result = live_control(tool_name, *fields)
             elif tool_name == "terrain_brush_get":
                 if arguments:
                     raise ValueError("terrain_brush_get takes no arguments")
@@ -291,7 +357,7 @@ def handle(message: dict[str, object]) -> None:
                 tool = arguments.get("tool", "-")
                 tools = {
                     "sculpt", "smooth", "paint", "formations", "foliage", "ridge", "cliff",
-                    "building", "marina", "farm", "wreck", "climbing_leaves", "roads", "greek_assets",
+                    "building", "marina", "farm", "wreck", "climbing_leaves", "roads", "ruins",
                 }
                 if tool != "-" and tool not in tools:
                     raise ValueError("unknown terrain editor tool")

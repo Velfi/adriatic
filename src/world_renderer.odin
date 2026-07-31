@@ -923,10 +923,12 @@ World_Renderer :: struct {
     bougainvillea_descriptor:                     vk.DescriptorSet,
     grass_descriptor:                             vk.DescriptorSet,
     wildflower_descriptor:                        vk.DescriptorSet,
+    terrain_particle_descriptor:                  vk.DescriptorSet,
     foliage_atlas:                                resources.Image,
     bougainvillea_atlas:                          resources.Image,
     grass_atlas:                                  resources.Image,
     wildflower_atlas:                             resources.Image,
+    terrain_particle_atlas:                       resources.Image,
     vehicle_paint_atlas:                          resources.Image,
     soda_cap_logo:                                resources.Image,
     architecture_material_atlas:                  resources.Image,
@@ -967,6 +969,7 @@ World_Renderer :: struct {
     bougainvillea_instances:                      [dynamic]Bougainvillea_Instance,
     grass_instances:                              [dynamic]Grass_Instance,
     wildflower_instances:                         [dynamic]Grass_Instance,
+    terrain_particle_vertices:                    [dynamic]Foliage_Vertex,
     instance_vertices:                            [dynamic]World_Vertex,
     instance_indices:                             [dynamic]u32,
     instance_flattened:                           [dynamic]World_Mesh_Instance,
@@ -1162,7 +1165,10 @@ world_frame_geometry_buffers_ensure :: proc(frame: int) -> bool {
     ) {
         return false
     }
-    foliage_count := len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)
+    foliage_count :=
+        len(world_renderer.foliage_vertices) +
+        len(world_renderer.bougainvillea_vertices) +
+        len(world_renderer.terrain_particle_vertices)
     if !world_host_buffer_ensure(
         ctx,
         &world_renderer.foliage_vertex[frame],
@@ -1589,105 +1595,6 @@ world_greek_asset_vertex :: proc(
         {normal.x, normal.y, normal.z},
         {clamp(metallic, 0, 1), clamp(roughness, .04, 1)},
         {},
-    }
-}
-
-world_greek_asset_primitive :: proc(
-    asset: Greek_Asset,
-    placement: Greek_Placement,
-    first, count: int,
-    color: [4]f32,
-    metallic, roughness: f32,
-) {
-    end := min(first + count, len(asset.mesh.indices))
-    for index := max(first, 0); index + 2 < end; index += 3 {
-        ia, ib, ic := asset.mesh.indices[index], asset.mesh.indices[index + 1], asset.mesh.indices[index + 2]
-        if ia >= u32(len(asset.mesh.vertices)) || ib >= u32(len(asset.mesh.vertices)) || ic >= u32(len(asset.mesh.vertices)) do continue
-        a := greek_asset_local_to_world(asset, placement, asset.mesh.vertices[ia])
-        b := greek_asset_local_to_world(asset, placement, asset.mesh.vertices[ib])
-        c := greek_asset_local_to_world(asset, placement, asset.mesh.vertices[ic])
-        normal := linalg.normalize0(
-            linalg.cross(
-                third_person.Vec3{b.x - a.x, b.y - a.y, b.z - a.z},
-                third_person.Vec3{c.x - a.x, c.y - a.y, c.z - a.z},
-            ),
-        )
-        append(
-            &world_renderer.vertices,
-            world_greek_asset_vertex(a, color, normal, metallic, roughness),
-            world_greek_asset_vertex(b, color, normal, metallic, roughness),
-            world_greek_asset_vertex(c, color, normal, metallic, roughness),
-        )
-    }
-}
-
-world_greek_asset_mesh :: proc(asset: Greek_Asset, placement: Greek_Placement, alpha: u8) {
-    if !asset.ready do return
-    if len(asset.mesh.primitives) == 0 {
-        world_greek_asset_primitive(
-            asset,
-            placement,
-            0,
-            len(asset.mesh.indices),
-            world_gltf_material_color(asset.color, {1, 1, 1, 1}, alpha),
-            0,
-            1,
-        )
-        return
-    }
-    for primitive, primitive_index in asset.mesh.primitives {
-        metallic: f32 = 1
-        roughness: f32 = 1
-        if primitive_index < len(asset.mesh.metallic_factors) do metallic = asset.mesh.metallic_factors[primitive_index]
-        if primitive_index < len(asset.mesh.roughness_factors) do roughness = asset.mesh.roughness_factors[primitive_index]
-        world_greek_asset_primitive(
-            asset,
-            placement,
-            primitive.first,
-            primitive.count,
-            world_gltf_material_color(asset.color, primitive.base_color, alpha),
-            metallic,
-            roughness,
-        )
-    }
-}
-
-world_greek_asset_in_view :: proc(editor: ^Editor, asset: Greek_Asset, placement: Greek_Placement) -> bool {
-    if !asset.ready do return false
-    local_center := asset.mesh.min
-    local_center.x = (asset.mesh.min.x + asset.mesh.max.x) * .5
-    local_center.y = (asset.mesh.min.y + asset.mesh.max.y) * .5
-    local_center.z = (asset.mesh.min.z + asset.mesh.max.z) * .5
-    extent_x := asset.mesh.max.x - asset.mesh.min.x
-    extent_y := asset.mesh.max.y - asset.mesh.min.y
-    extent_z := asset.mesh.max.z - asset.mesh.min.z
-    radius :=
-        f32(math.sqrt(f64(extent_x * extent_x + extent_y * extent_y + extent_z * extent_z))) *
-        math.abs(placement.scale) *
-        .5
-    return world_sphere_in_view(editor, greek_asset_local_to_world(asset, placement, local_center), radius)
-}
-
-world_greek_assets :: proc(editor: ^Editor) {
-    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_greek_assets")
-    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
-    if editor == nil do return
-    for placement in editor.greek_placements[:editor.greek_placement_count] {
-        if placement.asset_index < 0 || placement.asset_index >= GREEK_ASSET_CAPACITY do continue
-        asset := editor.greek_assets[placement.asset_index]
-        if !world_greek_asset_in_view(editor, asset, placement) do continue
-        world_greek_asset_mesh(asset, placement, 255)
-    }
-    if editor.greek_placement_mode && editor.cursor_hit && greek_asset_selected_ready(editor) {
-        preview := Greek_Placement {
-            asset_index = editor.greek_asset_selected,
-            x           = editor.cursor_world_x,
-            z           = editor.cursor_world_z,
-            base_y      = terrain.sample_height(&editor.project, 0, editor.cursor_world_x, editor.cursor_world_z),
-            rotation    = editor.greek_asset_rotation,
-            scale       = editor.greek_asset_scale,
-        }
-        world_greek_asset_mesh(editor.greek_assets[editor.greek_asset_selected], preview, 128)
     }
 }
 
@@ -14295,7 +14202,14 @@ world_structures :: proc(editor: ^Editor) {
             world_structure_frame(preview, preview.base_y + .05, {190, 255, 229, 210})
         }
     }
-    world_greek_assets(editor)
+    if editor.greek_placement_mode && editor.ruin_stamp_preview_valid {
+        world_settlement_ruin(editor.ruin_stamp_preview, .Near)
+        world_structure_frame(
+            editor.ruin_stamp_preview,
+            editor.ruin_stamp_preview.base_y + editor.ruin_stamp_preview.height,
+            {168, 239, 220, 210},
+        )
+    }
 }
 
 world_overlay_chunk_bounds_sync :: proc(editor: ^Editor) {
@@ -21683,6 +21597,15 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     ascent_weight := max(jump_rise, f32(0))
     descent_weight := max(-jump_rise, f32(0))
 
+    // A fast mouse does not carry its mass rigidly down the centerline. Each
+    // catch briefly loads one side of the shoulder girdle while the haunches
+    // counter-shift for the following push. Keep this phase-derived so scurry
+    // remains an animation overlay rather than new persistent simulation state.
+    scurry_support_phase := math.sin(stride_phase * 2)
+    scurry_support_shift := scurry_support_phase * scurry_weight * .030 * (1 - airborne_weight)
+    scurry_support_roll := scurry_support_phase * scurry_weight * .055 * (1 - airborne_weight)
+    body_roll += scurry_support_roll
+
     idle_phase := editor.map_time * 2.2
     // Sagittal spinal flexion is pronounced in a bound, but deliberately
     // restrained in alternating walk and trot gaits.
@@ -21740,18 +21663,18 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             parent = -1,
             bind_position = {0, .40, -.48},
             position = {
-                spine_side * .18,
+                spine_side * .18 - scurry_support_shift,
                 .36 - run_weight * .010 + body_bob - bound * .018 - brake_compression * .48 - posted_weight * .015,
                 -.48 - spine_extension * .070 * run_weight + brake_pose * .035,
             },
             pitch = bound * .075 + slope_pitch * .65 - posted_weight * .05 + scurry_lean * .45,
-            roll = body_roll * .82,
+            roll = body_roll * .82 - scurry_support_roll * .22,
         },
         {
             parent = 0,
             bind_position = {0, .43, -.25},
             position = {
-                spine_side * .48,
+                spine_side * .48 - scurry_support_shift * .48,
                 .39 - run_weight * .035 + body_bob + bound * .025 - brake_compression * .64 + posted_weight * .15,
                 -.25 +
                 spine_extension * .035 * run_weight +
@@ -21766,7 +21689,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             parent = 1,
             bind_position = {0, .50, -.04},
             position = {
-                spine_side,
+                spine_side + scurry_support_shift * .30,
                 .44 - run_weight * .085 + body_bob + bound * .055 - brake_compression + posted_weight * .25,
                 -.04 +
                 run_weight * .06 +
@@ -21782,7 +21705,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             parent = 2,
             bind_position = {0, .58, .10},
             position = {
-                head_sway * .25 + spine_side * .62,
+                head_sway * .25 + spine_side * .62 + scurry_support_shift * .68,
                 .50 - run_weight * .135 + body_bob + bound * .025 - brake_compression * .82 + posted_weight * .27,
                 .10 +
                 run_weight * .10 +
@@ -21792,7 +21715,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 drive_reaction * .050,
             },
             pitch = run_weight * .085 + bound * .070 + slope_pitch * .72 - posted_weight * .08 + scurry_lean * .82,
-            roll = body_roll * .58,
+            roll = body_roll * .58 + scurry_support_roll * .16,
         },
         {
             parent        = 3,
@@ -22775,9 +22698,15 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
         front_cycle := front_motion.reach * run_weight
         rear_cycle := rear_motion.reach * run_weight
+        // Scurry exaggerates the mouse-like catch-and-push shape: the forefeet
+        // reach farther to catch the low chest and the long hind feet sweep
+        // farther beneath the belly before driving rearward. The asymmetric
+        // multipliers keep this from reading as four identical pistons.
+        front_cycle *= 1 + scurry_weight * .16
+        rear_cycle *= 1 + scurry_weight * .24
         front_lift_scale := .075 * walk_weight + .088 * trot_weight + .145 * bound_weight
         hind_lift_scale := .090 * walk_weight + .105 * trot_weight + .165 * bound_weight
-        front_lift := front_motion.lift * front_lift_scale * run_weight
+        front_lift := front_motion.lift * front_lift_scale * run_weight * (1 - scurry_weight * .10)
         inside_turn := max(side_f * turn_pose, f32(0))
         outside_turn := max(-side_f * turn_pose, f32(0))
         paw_turn_reach := animation.turn_paw_offset * (outside_turn - inside_turn * .45)
@@ -22949,7 +22878,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         }
 
         hind_cycle := rear_cycle
-        hind_lift := rear_motion.lift * hind_lift_scale * run_weight
+        hind_lift := rear_motion.lift * hind_lift_scale * run_weight * (1 + scurry_weight * .12)
         hind_socket_bind := third_person.Vec3{side_f * .16, .30, -.47}
         posed_hind_socket := mouse_skin_vertex(
             {bind_position = hind_socket_bind, groups = {{.Pelvis, .82}, {.Spine, .18}}},
@@ -24821,6 +24750,7 @@ world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.bougainvillea_instances)
     clear(&world_renderer.grass_instances)
     clear(&world_renderer.wildflower_instances)
+    clear(&world_renderer.terrain_particle_vertices)
     world_renderer.structure_lod_counts = {}
     world_renderer.structure_lod_world_vertices = 0
     world_renderer.structure_lod_foliage_vertices = 0
@@ -25066,6 +24996,49 @@ world_vehicle_particle :: proc(
     )
 }
 
+world_terrain_particle :: proc(camera: Perspective_Camera, particle: particles.Vehicle_Particle) {
+    fade := clamp(particle.life / max(particle.max_life, f32(.001)), 0, 1)
+    age := 1 - fade
+    angle := f32(particle.seed & 7) * math.PI / 16
+    cosine, sine := math.cos(angle), math.sin(angle)
+    half_size := particle.size * (1.05 + age * .30)
+    right := third_person.Vec3 {
+        (camera.right.x * cosine + camera.up.x * sine) * half_size,
+        (camera.right.y * cosine + camera.up.y * sine) * half_size,
+        (camera.right.z * cosine + camera.up.z * sine) * half_size,
+    }
+    up := third_person.Vec3 {
+        (-camera.right.x * sine + camera.up.x * cosine) * half_size,
+        (-camera.right.y * sine + camera.up.y * cosine) * half_size,
+        (-camera.right.z * sine + camera.up.z * cosine) * half_size,
+    }
+    p := third_person.Vec3{particle.position.x, particle.position.y, particle.position.z}
+    p0 := third_person.Vec3{p.x - right.x - up.x, p.y - right.y - up.y, p.z - right.z - up.z}
+    p1 := third_person.Vec3{p.x + right.x - up.x, p.y + right.y - up.y, p.z + right.z - up.z}
+    p2 := third_person.Vec3{p.x + right.x + up.x, p.y + right.y + up.y, p.z + right.z + up.z}
+    p3 := third_person.Vec3{p.x - right.x + up.x, p.y - right.y + up.y, p.z - right.z + up.z}
+
+    column := int(particle.seed % 8)
+    row := clamp(int(particle.surface), 0, 5)
+    // The generated atlas is 1448 x 1086: exactly 8 x 6 cells of 181 px.
+    // A two-pixel inset keeps bilinear sampling away from adjacent variants.
+    inset_u, inset_v := f32(2.0 / 1448.0), f32(2.0 / 1086.0)
+    u0 := f32(column) / 8 + inset_u
+    u1 := f32(column + 1) / 8 - inset_u
+    v0 := f32(row) / 6 + inset_v
+    v1 := f32(row + 1) / 6 - inset_v
+    tint := [4]f32{1, 1, 1, fade * fade}
+    append(
+        &world_renderer.terrain_particle_vertices,
+        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint, 3},
+        Foliage_Vertex{{p1.x, p1.y, p1.z}, {u1, v1}, tint, 3},
+        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint, 3},
+        Foliage_Vertex{{p0.x, p0.y, p0.z}, {u0, v1}, tint, 3},
+        Foliage_Vertex{{p2.x, p2.y, p2.z}, {u1, v0}, tint, 3},
+        Foliage_Vertex{{p3.x, p3.y, p3.z}, {u0, v0}, tint, 3},
+    )
+}
+
 world_vehicle_particles :: proc(editor: ^Editor) {
     camera := perspective_camera(
         editor.camera_pose,
@@ -25079,22 +25052,7 @@ world_vehicle_particles :: proc(editor: ^Editor) {
         ) {
             continue
         }
-        color := rl.Color{112, 119, 116, 100}
-        switch particle.surface {
-        case .Asphalt:
-            color = {116, 123, 124, 62}
-        case .Gravel:
-            color = {203, 181, 133, 178}
-        case .Cobblestone:
-            color = {156, 162, 157, 105}
-        case .Dirt:
-            color = {177, 111, 62, 190}
-        case .Grass:
-            color = {119, 126, 78, 132}
-        case .Sand:
-            color = {210, 192, 150, 150}
-        }
-        world_vehicle_particle(camera, particle, color)
+        world_terrain_particle(camera, particle)
     }
 }
 
@@ -25111,22 +25069,7 @@ world_player_terrain_particles :: proc(editor: ^Editor) {
         ) {
             continue
         }
-        color := rl.Color{151, 148, 87, 184}
-        switch particle.surface {
-        case .Asphalt:
-            color = {116, 123, 124, 62}
-        case .Gravel:
-            color = {203, 181, 133, 178}
-        case .Cobblestone:
-            color = {156, 162, 157, 105}
-        case .Dirt:
-            color = {177, 111, 62, 190}
-        case .Grass:
-            color = {151, 148, 87, 184}
-        case .Sand:
-            color = {210, 192, 150, 150}
-        }
-        world_vehicle_particle(camera, particle, color)
+        world_terrain_particle(camera, particle)
     }
 }
 
@@ -25153,9 +25096,13 @@ world_wing_trails :: proc(editor: ^Editor) {
                 continue
             }
             fade := clamp(particle.life / particle.max_life, 0, 1)
-            radius := particle.size * (.8 + fade * .35)
-            opacity := fade * fade
-            color := rl.Color{205, 239, 236, u8(clamp(opacity * 120, 0, 120))}
+            age := 1 - fade
+            // Tip vapor begins as a tight bright filament, then diffuses into
+            // a wider translucent wake. Broadening downstream is essential to
+            // keep the trail from reading as a rigid glowing cable.
+            radius := particle.size * (.68 + age * 1.05)
+            opacity := fade * f32(math.sqrt(f64(fade)))
+            color := rl.Color{205, 239, 236, u8(clamp(opacity * 132, 0, 132))}
             for ring_side in 0 ..< 8 {
                 angle := f32(ring_side) * math.PI * 2 / 8
                 radial := third_person.Vec3 {
@@ -25222,9 +25169,15 @@ world_wind_streaks :: proc(editor: ^Editor) {
     direction_x, direction_z := wind_x / wind_speed, wind_z / wind_speed
     side_x, side_z := -direction_z, direction_x
     time := editor.map_time
-    for index in 0 ..< 32 {
+    for index in 0 ..< 44 {
         speed_variation := .72 + wind_streak_hash(index, 1) * .56
-        cycle := time * wind_speed * .035 * speed_variation + wind_streak_hash(index, 2)
+        gust_phase := time * .72 + wind_streak_hash(index, 6) * math.PI * 2
+        gust := .75 + (.5 + .5 * f32(math.sin(f64(gust_phase)))) * .25
+        // Offset each stream with a slow gust wave while keeping the base
+        // phase monotonic; directly multiplying absolute time by a changing
+        // gust can briefly make streaks appear to reverse.
+        gust_offset := f32(math.sin(f64(gust_phase * .61))) * .07
+        cycle := time * wind_speed * .035 * speed_variation + wind_streak_hash(index, 2) + gust_offset
         phase := cycle - f32(math.floor(f64(cycle)))
         along := (phase - .5) * 82
         lateral := (wind_streak_hash(index, 3) - .5) * 62
@@ -25234,7 +25187,10 @@ world_wind_streaks :: proc(editor: ^Editor) {
             body.position.y + vertical,
             body.position.z + direction_z * along + side_z * lateral,
         }
-        streak_length := (1.4 + wind_speed * .58) * (.62 + wind_streak_hash(index, 5) * .58)
+        streak_length :=
+            (1.4 + wind_speed * .58) *
+            (.62 + wind_streak_hash(index, 5) * .58) *
+            (.84 + gust * .18)
         tail := particles.Vec3 {
             center.x - direction_x * streak_length,
             center.y,
@@ -25249,39 +25205,44 @@ world_wind_streaks :: proc(editor: ^Editor) {
         // frustum culling makes these sparse, fast-moving streaks visibly
         // blink out at the screen edge before their fade reads as complete.
         if !world_sphere_in_view(editor, streak_center, streak_length * .5 + .15, 3) do continue
+        camera_offset := editor.camera_pose.position - streak_center
+        camera_distance := linalg.length(camera_offset)
+        near_fade := clamp((camera_distance - 4) / 6, 0, 1)
+        near_fade = near_fade * near_fade * (3 - 2 * near_fade)
         fade := math.sin(phase * math.PI)
-        alpha := u8(clamp((22 + strength * 82) * fade, 0, 104))
-        width := .018 + strength * .035
+        alpha := u8(clamp((28 + strength * 104) * fade * (.70 + gust * .30) * near_fade, 0, 132))
+        tail_alpha := u8(clamp(f32(alpha) * .16, 0, 24))
+        width := (.020 + strength * .042) * clamp(camera_distance / 24, .20, 1)
         line_direction := third_person.Vec3{direction_x, 0, direction_z}
-        to_camera := linalg.normalize0(editor.camera_pose.position - streak_center)
+        to_camera := linalg.normalize0(camera_offset)
         // Build a true camera-facing ribbon. Offsetting along camera.up makes a
         // horizontal wind direction collapse edge-on at common flight-camera
         // angles, and its winding can face away from the back-face culled pass.
         ribbon_right := linalg.normalize0(linalg.cross(to_camera, line_direction)) * width
         vertices := [6]World_Vertex {
             world_vertex(
-                {tail.x - ribbon_right.x, tail.y - ribbon_right.y, tail.z - ribbon_right.z},
-                {137, 218, 235, alpha},
+                {tail.x, tail.y, tail.z},
+                {137, 218, 235, tail_alpha},
             ),
             world_vertex(
                 {center.x - ribbon_right.x, center.y - ribbon_right.y, center.z - ribbon_right.z},
-                {137, 218, 235, alpha},
+                {178, 235, 246, alpha},
             ),
             world_vertex(
                 {center.x + ribbon_right.x, center.y + ribbon_right.y, center.z + ribbon_right.z},
-                {137, 218, 235, alpha},
+                {178, 235, 246, alpha},
             ),
             world_vertex(
-                {tail.x - ribbon_right.x, tail.y - ribbon_right.y, tail.z - ribbon_right.z},
-                {137, 218, 235, alpha},
+                {tail.x, tail.y, tail.z},
+                {137, 218, 235, tail_alpha},
             ),
             world_vertex(
                 {center.x + ribbon_right.x, center.y + ribbon_right.y, center.z + ribbon_right.z},
-                {137, 218, 235, alpha},
+                {178, 235, 246, alpha},
             ),
             world_vertex(
-                {tail.x + ribbon_right.x, tail.y + ribbon_right.y, tail.z + ribbon_right.z},
-                {137, 218, 235, alpha},
+                {tail.x, tail.y, tail.z},
+                {137, 218, 235, tail_alpha},
             ),
         }
         append(
@@ -25825,12 +25786,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         "foliage descriptor set layout",
     )
     foliage_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = 4},
-        {type = .SAMPLER, descriptorCount = 4},
+        {type = .SAMPLED_IMAGE, descriptorCount = 5},
+        {type = .SAMPLER, descriptorCount = 5},
     }
     foliage_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-        maxSets       = 4,
+        maxSets       = 5,
         poolSizeCount = 2,
         pPoolSizes    = raw_data(foliage_pool_sizes[:]),
     }
@@ -25844,17 +25805,18 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         auto_cast world_renderer.foliage_descriptor_pool,
         "foliage descriptor pool",
     )
-    foliage_layouts := [4]vk.DescriptorSetLayout {
+    foliage_layouts := [5]vk.DescriptorSetLayout {
+        world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
     }
-    foliage_descriptors: [4]vk.DescriptorSet
+    foliage_descriptors: [5]vk.DescriptorSet
     foliage_allocate := vk.DescriptorSetAllocateInfo {
         sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
         descriptorPool     = world_renderer.foliage_descriptor_pool,
-        descriptorSetCount = 4,
+        descriptorSetCount = 5,
         pSetLayouts        = raw_data(foliage_layouts[:]),
     }
     if vk.AllocateDescriptorSets(ctx.device, &foliage_allocate, raw_data(foliage_descriptors[:])) != .SUCCESS {
@@ -25864,6 +25826,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.bougainvillea_descriptor = foliage_descriptors[1]
     world_renderer.grass_descriptor = foliage_descriptors[2]
     world_renderer.wildflower_descriptor = foliage_descriptors[3]
+    world_renderer.terrain_particle_descriptor = foliage_descriptors[4]
     engine.vk_set_debug_name(
         ctx,
         .DESCRIPTOR_SET,
@@ -25883,11 +25846,25 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         auto_cast world_renderer.wildflower_descriptor,
         "wildflower descriptor set",
     )
+    engine.vk_set_debug_name(
+        ctx,
+        .DESCRIPTOR_SET,
+        auto_cast world_renderer.terrain_particle_descriptor,
+        "terrain particle descriptor set",
+    )
     failure_stage = "foliage textures and descriptors"
     if !resources.texture_load_file(
         ctx,
         "assets/textures/foliage/leaf-branches-atlas.png",
         &world_renderer.foliage_atlas,
+        {address_mode = .CLAMP_TO_EDGE},
+    ) {
+        return false
+    }
+    if !resources.texture_load_file(
+        ctx,
+        "assets/textures/particles/terrain-particle-atlas.png",
+        &world_renderer.terrain_particle_atlas,
         {address_mode = .CLAMP_TO_EDGE},
     ) {
         return false
@@ -25944,7 +25921,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     wildflower_sampler_info := vk.DescriptorImageInfo {
         sampler = world_renderer.wildflower_atlas.sampler,
     }
-    foliage_writes := [8]vk.WriteDescriptorSet {
+    terrain_particle_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.terrain_particle_atlas.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    terrain_particle_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.terrain_particle_atlas.sampler,
+    }
+    foliage_writes := [10]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
             dstSet = world_renderer.foliage_descriptor,
@@ -26009,8 +25993,24 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             descriptorType = .SAMPLER,
             pImageInfo = &wildflower_sampler_info,
         },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.terrain_particle_descriptor,
+            dstBinding = 0,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &terrain_particle_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.terrain_particle_descriptor,
+            dstBinding = 1,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &terrain_particle_sampler_info,
+        },
     }
-    vk.UpdateDescriptorSets(ctx.device, 8, raw_data(foliage_writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(ctx.device, 10, raw_data(foliage_writes[:]), 0, nil)
     foliage_layout_info := li
     foliage_layout_info.setLayoutCount = 1
     foliage_set_layouts := [2]vk.DescriptorSetLayout {
@@ -26604,6 +26604,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.bougainvillea_instances = make([dynamic]Bougainvillea_Instance, 0, 2_000)
     world_renderer.grass_instances = make([dynamic]Grass_Instance, 0, GRASS_INSTANCE_INITIAL_CAPACITY)
     world_renderer.wildflower_instances = make([dynamic]Grass_Instance, 0, WILDFLOWER_INSTANCE_INITIAL_CAPACITY)
+    world_renderer.terrain_particle_vertices = make([dynamic]Foliage_Vertex, 0, 1_536)
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
     world_renderer.wing_trail_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
     world_renderer.wing_trail_optimized_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
@@ -26787,12 +26788,8 @@ dialogue_portrait_render :: proc(
     cards := [2]rl.Rectangle{layout.player_card, layout.npc_card}
     players := [2]bool{true, false}
     main_count := len(world_renderer.vertices)
-    backdrop_firsts, backdrop_counts: [2]int
     model_firsts, model_counts: [2]int
     for player, portrait_index in players {
-        backdrop_firsts[portrait_index] = len(world_renderer.vertices)
-        dialogue_portrait_backdrop(layout.player_card.width / max(layout.player_card.height, f32(1)))
-        backdrop_counts[portrait_index] = len(world_renderer.vertices) - backdrop_firsts[portrait_index]
         model_firsts[portrait_index] = len(world_renderer.vertices)
         world_dialogue_portrait_model_cached(
             editor,
@@ -26877,16 +26874,6 @@ dialogue_portrait_render :: proc(
         }
         vk.CmdSetViewport(cmd, 0, 1, &card_viewport)
         vk.CmdSetScissor(cmd, 0, 1, &card_rect)
-        backdrop_push := dialogue_portrait_world_push(editor, f32(card_w) / f32(card_h), players[portrait_index])
-        vk.CmdPushConstants(
-            cmd,
-            world_renderer.layout,
-            {.VERTEX, .FRAGMENT},
-            0,
-            u32(size_of(backdrop_push)),
-            &backdrop_push,
-        )
-        vk.CmdDraw(cmd, u32(backdrop_counts[portrait_index]), 1, u32(backdrop_firsts[portrait_index]), 0)
         viewport := vk.Viewport {
             x        = f32(x),
             y        = f32(y),
@@ -26978,6 +26965,16 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             destination,
             raw_data(world_renderer.bougainvillea_vertices[:]),
             len(world_renderer.bougainvillea_vertices) * size_of(Foliage_Vertex),
+        )
+    }
+    if len(world_renderer.terrain_particle_vertices) > 0 {
+        destination := cast(rawptr)(cast(uintptr)foliage_buffer.mapped +
+            uintptr((len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)) *
+                size_of(Foliage_Vertex)))
+        mem.copy_non_overlapping(
+            destination,
+            raw_data(world_renderer.terrain_particle_vertices[:]),
+            len(world_renderer.terrain_particle_vertices) * size_of(Foliage_Vertex),
         )
     }
     if len(world_renderer.bougainvillea_instances) > 0 {
@@ -27246,6 +27243,7 @@ world_renderer_destroy :: proc() {
     resources.image_destroy(&world_renderer.bougainvillea_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.grass_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.wildflower_atlas, world_renderer.ctx)
+    resources.image_destroy(&world_renderer.terrain_particle_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.vehicle_paint_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.soda_cap_logo, world_renderer.ctx)
     resources.image_destroy(&world_renderer.architecture_material_atlas, world_renderer.ctx)
@@ -27291,6 +27289,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.bougainvillea_instances)
     delete(world_renderer.grass_instances)
     delete(world_renderer.wildflower_instances)
+    delete(world_renderer.terrain_particle_vertices)
     world_instance_meshes_clear()
     delete(world_renderer.instance_vertices)
     delete(world_renderer.instance_indices)

@@ -467,6 +467,11 @@ FIXTURE_SCHEMA_VERSION :: 9
 Editor :: struct {
     using fixture:                      Fixture,
     fixture_owner:                      Fixture_Migration_Result `hs:"-"`,
+    ruin_stamp_preview:                 terrain.Structure,
+    ruin_stamp_preview_valid:           bool,
+    ruin_stamp_seed_offset:             u32,
+    ruin_stamp_aegean:                  bool,
+    ruin_stamp_complex:                 bool,
     ocean_traffic:                      boats.Ocean_Traffic,
     main_menu_active:                   bool,
     main_menu_focus:                    int,
@@ -517,8 +522,6 @@ Editor :: struct {
     gameplay_physics:                   Gameplay_Physics,
     player_placement_reason:            Player_Placement_Reason,
     player_placement_revision:          u64,
-    greek_assets:                       [GREEK_ASSET_CAPACITY]Greek_Asset,
-    greek_asset_count:                  int,
     mailbag_pouch_asset:                Mailbag_Pouch_Asset,
     car_physics_world:                  physics.World,
     car_physics_vehicle:                physics.Vehicle,
@@ -5733,8 +5736,8 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
 }
 
 attendant_dialogue_panel :: proc(editor: ^Editor, width, height: i32) -> rl.Rectangle {
-    _ = editor
-    return dialogue_tv_layout(width, height).conversation
+    choice_count := editor == nil ? 0 : dialogue.available_count(&editor.attendant_dialogue)
+    return dialogue_tv_layout(width, height, choice_count).conversation
 }
 
 tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
@@ -6025,7 +6028,7 @@ attendant_dialogue_activate :: proc(editor: ^Editor, choice_index: int) {
 attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     if editor == nil || !editor.attendant_dialogue_open || pause_menu_is_open(editor) do return
     dialogue_view_update(editor, delta_seconds)
-    layout := dialogue_tv_layout(width, height)
+    layout := dialogue_tv_layout(width, height, dialogue.available_count(&editor.attendant_dialogue))
     visible_rows := dialogue_choice_visible_rows(layout)
     dialogue_choice_scroll_focus(editor, visible_rows)
     mouse := rl.GetMousePosition()
@@ -7365,7 +7368,7 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
     }
     short_side := min(f32(width), f32(height))
     long_side := max(f32(width), f32(height))
-    for index in 0 ..< 42 {
+    for index in 0 ..< 58 {
         seed := f32(index) * 2.399963
         speed_variation := .72 + f32(math.sin(f64(seed * 2.17))) * .18
         // Keep screen-space travel below the point where repeated radial lanes
@@ -7377,14 +7380,14 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
         // Keep the radial overlay outside the aircraft silhouette. Since this
         // pass is composited after the 3D scene it cannot use world depth; a
         // generous, varied inner radius preserves the cockpit and wings.
-        inner := short_side * (.25 + .10 * (.5 + .5 * f32(math.sin(f64(seed * 1.31)))))
-        distance := inner + (long_side * .72 - inner) * eased
+        inner := short_side * (.21 + .10 * (.5 + .5 * f32(math.sin(f64(seed * 1.31)))))
+        distance := inner + (long_side * .70 - inner) * eased
         ray_x := f32(math.cos(f64(seed)))
         ray_y := f32(math.sin(f64(seed))) * .64
         variation := math.abs(f32(math.sin(f64(seed * 3.07))))
-        streak_length := (12 + intensity * 76) * (.65 + .35 * variation)
+        streak_length := (10 + intensity * 64) * (.72 + .28 * variation)
         fade := 1 - math.abs(progress * 2 - 1)
-        alpha := u8(clamp((18 + intensity * 108) * fade, 0, 126))
+        alpha := u8(clamp((24 + intensity * 126) * fade, 0, 144))
         // The leading edge is always the point farthest from the vanishing
         // point. Fade and taper the trail toward its inner end so a streak can
         // never read as moving back toward the aircraft.
@@ -7397,14 +7400,15 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
             start := rl.Vector2{center.x + ray_x * start_distance, center.y + ray_y * start_distance}
             finish := rl.Vector2{center.x + ray_x * finish_distance, center.y + ray_y * finish_distance}
             segment_alpha := u8(clamp(f32(alpha) * (.28 + outer_amount * .72), 0, 126))
-            segment_width := (.8 + intensity * 1.35) * (.72 + outer_amount * .28)
+            segment_width := (.85 + intensity * 1.55) * (.70 + outer_amount * .30)
             // Speed is a warm, screen-space effect radiating from the flight
             // vanishing point. Wind remains cool and world-aligned.
             rl.DrawLineEx(start, finish, segment_width, {244, 213, 142, segment_alpha})
         }
         head_distance := distance + streak_length
         head := rl.Vector2{center.x + ray_x * head_distance, center.y + ray_y * head_distance}
-        rl.DrawCircleV(head, .65 + intensity * .65, {255, 235, 174, alpha})
+        head_alpha := u8(clamp(f32(alpha) * .82, 0, 138))
+        rl.DrawCircleV(head, .7 + intensity * .72, {255, 235, 174, head_alpha})
     }
 
     // A quiet edge wash sells peripheral blur without obscuring the aircraft or
@@ -9748,6 +9752,7 @@ adriatic_run :: proc(
     if capture_kind == .Leaf_Generator_Lab do capture_lab_name = "leaf-generator"
     if capture_kind == .Flower_Generator_Lab do capture_lab_name = "flower-generator"
     if capture_kind == .Fountain_Generator_Lab do capture_lab_name = "fountain-generator"
+    if capture_kind == .Windmill_Generator_Lab do capture_lab_name = "windmill-generator"
     if capture_kind == .Lighthouse_Lab do capture_lab_name = "lighthouse"
     if capture_kind == .Mouse_Gait_Lab do capture_lab_name = "mouse-gait"
     if capture_kind == .Mouse_Theater do capture_lab_name = "mouse-theater"
@@ -9773,6 +9778,7 @@ adriatic_run :: proc(
         capture_kind == .Leaf_Generator_Lab ||
         capture_kind == .Flower_Generator_Lab ||
         capture_kind == .Fountain_Generator_Lab ||
+        capture_kind == .Windmill_Generator_Lab ||
         capture_kind == .Lighthouse_Lab ||
         capture_kind == .Mouse_Gait_Lab ||
         capture_kind == .Mouse_Theater ||
@@ -9908,7 +9914,6 @@ adriatic_run :: proc(
     defer dio.flame_graph_destroy(&editor.flame_graph)
     defer garden_lab_destroy_lsystem()
     defer plant_generator_destroy()
-    defer greek_asset_destroy(editor)
     defer mailbag_pouch_asset_destroy(editor)
     story.init_catalog(&editor.story_catalog)
     story.init_quest_catalog(&editor.story_quest_catalog)
@@ -10008,7 +10013,7 @@ adriatic_run :: proc(
     editor.climbing_leaf_brush_radius = terrain.BASE_CELL_SIZE * 3.0
     editor.climbing_leaf_brush_strength = .55
     editor.climbing_leaf_brush_hardness = .50
-    greek_asset_init(editor)
+    editor.ruin_stamp_aegean = true
     mailbag_pouch_asset_init(editor)
     editor.greek_placement_mode = false
     editor.atmosphere = atmosphere.new(0x41c10)
@@ -11749,8 +11754,33 @@ adriatic_run :: proc(
     benchmark_sample_count := 0
     instrument_started_at := rl.GetTime()
     capture_frame :=
-        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
     if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
+    selector_capture_pose: third_person.Camera_Pose
+    selector_capture_pose_set := false
+    if capture_mode && request != nil && request.selector != "" {
+        selector_pose, selector_subject, selector_error, selector_ok := capture_selector_pose(
+            editor,
+            request.selector,
+            request.selector_filters,
+            request.selector_filter_count,
+            request.selector_pick,
+            request.presentation,
+        )
+        if !selector_ok {
+            request.selector_failed = true
+            fmt.eprintf("capture selector %s: %s\n", request.selector, selector_error)
+            return .Quit
+        }
+        selector_capture_pose = selector_pose
+        selector_capture_pose_set = true
+        fmt.printf(
+            "capture selector %s matched %s (id %d)\n",
+            request.selector,
+            selector_subject.name,
+            selector_subject.id,
+        )
+    }
     turntable_frame_index := 0
     turntable_capture_stride := 12
     turntable_last_capture_frame := capture_frame
@@ -11771,8 +11801,7 @@ adriatic_run :: proc(
         frame_delta := frame == 0 ? f32(0) : min(f32(frame_now - editor.last_frame_time), f32(.1))
         if cinematic_export_active {
             frame_delta = 1 / f32(max(request.sequence_fps, 1))
-			cinematic_export_time =
-				f32(max(frame - capture_frame, 0)) / f32(max(request.sequence_fps, 1))
+            cinematic_export_time = f32(max(frame - capture_frame, 0)) / f32(max(request.sequence_fps, 1))
         }
         editor.last_frame_time = frame_now
         // map_time drives low-frequency presentation animation. Keep it
@@ -11975,14 +12004,7 @@ adriatic_run :: proc(
             viewport_ui_hit := editor_ui_hit(editor, rl.GetMousePosition(), width, height)
             update_editor_camera(editor, min(frame_delta, f32(.05)))
             viewport_wheel := viewport_ui_hit ? f32(0) : rl.GetMouseWheelMove()
-            if editor.greek_placement_mode {
-                wheel := viewport_wheel
-                if shift_key_down() {
-                    editor.greek_asset_scale = clamp(editor.greek_asset_scale + wheel * .05, .25, 3.0)
-                } else if alt_key_down() && wheel != 0 {
-                    editor.greek_asset_rotation += wheel * .18
-                }
-            } else if editor.road_mode {
+            if editor.road_mode {
                 wheel := viewport_wheel
                 if shift_key_down() && editor.road_selected_node >= 0 {
                     node := &editor.project.road_graph.nodes[editor.road_selected_node]
@@ -12095,7 +12117,8 @@ adriatic_run :: proc(
         wreck_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         climbing_leaf_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         formation_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        greek_placement_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        ruin_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
+        ruin_stamp_process_input(editor, cursor_hit && !ui_hit)
         curve_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         if !editor.architecture_paint_mode &&
@@ -12105,7 +12128,6 @@ adriatic_run :: proc(
            !editor.climbing_leaf_paint_mode &&
            editor.authoring_tool != .Formations &&
            (editor.authoring_tool != .Foliage || editor.foliage_hedgerow_mode) &&
-           !editor.greek_placement_mode &&
            !editor.road_mode &&
            !editor.curve_mode &&
            !editor.curve_drawing &&
@@ -12558,6 +12580,42 @@ adriatic_run :: proc(
                             0,
                             empty_player_contacts,
                         )
+                        movement_intent := clamp(f32(math.sqrt(f64(move_x * move_x + move_y * move_y))), 0, 1)
+                        scrabble_strength :=
+                            clamp((movement_intent - .70) / .30, 0, 1) *
+                            clamp((2.2 - player_horizontal_speed) / 1.7, 0, 1)
+                        if editor.player.grounded && scrabble_strength > 0 {
+                            intent_direction := particle_systems.Vec3 {
+                                -math.sin(editor.player.facing_yaw_radians),
+                                0,
+                                -math.cos(editor.player.facing_yaw_radians),
+                            }
+                            dust_surface, _ := road_car_surface(
+                                editor,
+                                {editor.player.position.x, editor.player.position.y, editor.player.position.z},
+                            )
+                            ground_y := terrain.sample_height(
+                                &editor.project,
+                                0,
+                                editor.player.position.x,
+                                editor.player.position.z,
+                            )
+                            particle_systems.spawn_scrabble(
+                                &editor.player_terrain_effects,
+                                frame_seconds,
+                                {
+                                    position = {
+                                        editor.player.position.x - intent_direction.x * .34,
+                                        ground_y,
+                                        editor.player.position.z - intent_direction.z * .34,
+                                    },
+                                    grounded = true,
+                                    surface = dust_surface,
+                                },
+                                intent_direction,
+                                scrabble_strength,
+                            )
+                        }
                         editor.player_stop_spray_cooldown = max(
                             editor.player_stop_spray_cooldown - frame_seconds,
                             f32(0),
@@ -12827,15 +12885,33 @@ adriatic_run :: proc(
         }
         capture_camera_overridden := false
         capture_camera_original := editor.camera_pose
-        capture_camera_slot := editor.cameras.active
+        capture_camera_active_original := editor.cameras.active
+        capture_camera_slot :=
+            selector_capture_pose_set ? third_person.Camera_Slot.Inspection : capture_camera_active_original
+        capture_camera_slot_original := editor.cameras.poses[capture_camera_slot]
         if capture_mode &&
            request != nil &&
-           (request.camera_eye_set ||
+           (selector_capture_pose_set ||
+                   request.camera_eye_set ||
                    request.camera_orbit_set ||
                    request.camera_distance_set ||
                    request.camera_offset_set ||
                    request.turntable_frames > 0) {
-            pose := capture_camera_original
+            pose := selector_capture_pose_set ? selector_capture_pose : capture_camera_original
+            if selector_capture_pose_set {
+                // Re-resolve dynamic subjects at submission time. Flight
+                // bodies continue moving while a sequence settles, and a pose
+                // captured only during setup quickly points at empty air.
+                live_pose, _, _, live_pose_ok := capture_selector_pose(
+                    editor,
+                    request.selector,
+                    request.selector_filters,
+                    request.selector_filter_count,
+                    request.selector_pick,
+                    request.presentation,
+                )
+                if live_pose_ok do pose = live_pose
+            }
             if request.camera_eye_set {
                 pose = third_person.camera_look_at(request.camera_eye, request.camera_look_at)
             } else {
@@ -12873,6 +12949,7 @@ adriatic_run :: proc(
             }
             editor.camera_pose = pose
             third_person.camera_set_pose(&editor.cameras, capture_camera_slot, pose)
+            if selector_capture_pose_set do third_person.camera_set_active(&editor.cameras, capture_camera_slot)
             capture_camera_overridden = true
         }
         rl.BeginDrawing()
@@ -12894,7 +12971,8 @@ adriatic_run :: proc(
         // pose installed until after that submission has consumed it.
         if capture_camera_overridden {
             editor.camera_pose = capture_camera_original
-            third_person.camera_set_pose(&editor.cameras, capture_camera_slot, capture_camera_original)
+            third_person.camera_set_pose(&editor.cameras, capture_camera_slot, capture_camera_slot_original)
+            if selector_capture_pose_set do third_person.camera_set_active(&editor.cameras, capture_camera_active_original)
         }
         gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()
         dio.flame_graph_set_frame_metrics(&editor.flame_graph, 0, 0, f32(gpu_frame_ms), gpu_frame_available)
@@ -13112,9 +13190,7 @@ adriatic_run :: proc(
         // to settle; frame two only showed the first few links as a short nub.
         if capture_mode && request != nil && request.sequence_frames > 0 {
             if sequence_frame_index < request.sequence_frames && frame >= capture_frame {
-				rl.TakeScreenshot(
-					fmt.ctprintf("%s/frame-%06d.png", capture_output, sequence_frame_index),
-				)
+                rl.TakeScreenshot(fmt.ctprintf("%s/frame-%06d.png", capture_output, sequence_frame_index))
                 sequence_last_capture_frame = frame
                 sequence_frame_index += 1
             }

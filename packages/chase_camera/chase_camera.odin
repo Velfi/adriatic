@@ -170,7 +170,11 @@ vertical_framing :: proc(forward_up: f32) -> (f32, f32) {
 }
 
 desired_fov :: proc(airspeed: f32) -> f32 {
-    return scalar_lerp(70, 80, clamp((airspeed - 8) / 62, 0, 1))
+    // Preserve a composed, relatively long-lens view at ordinary cruise, then
+    // open the periphery decisively once the aircraft is genuinely fast. The
+    // eased ramp avoids making every small throttle change feel like a zoom.
+    speed := smooth_step(clamp((airspeed - 10) / 58, 0, 1))
+    return scalar_lerp(68, 84, speed)
 }
 
 focal_length_for_fov :: proc(fov_degrees: f32) -> f32 {

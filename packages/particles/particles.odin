@@ -269,6 +269,39 @@ spawn_stop_spray :: proc(effects: ^Vehicle_Effects, contact: Vehicle_Contact, tr
     }
 }
 
+// spawn_scrabble emits the small, rapid rearward spray made by paws working
+// hard without gaining much ground. Unlike stop spray this is rate-based and
+// deliberately stays close to the surface so it reads as traction, not impact.
+spawn_scrabble :: proc(
+    effects: ^Vehicle_Effects,
+    delta_seconds: f32,
+    contact: Vehicle_Contact,
+    intent_direction: Vec3,
+    intensity: f32,
+) {
+    if effects == nil || !contact.grounded do return
+    strength := clamp(intensity, f32(0), f32(1))
+    if strength <= 0 do return
+    effects.dust_spawn += clamp(delta_seconds, f32(0), f32(.05)) * (10 + strength * 18)
+    for effects.dust_spawn >= 1 {
+        if effects.dust_count >= MAX_DUST_PARTICLES {
+            effects.dust_spawn = .95
+            break
+        }
+        spawn_dust(effects, contact, .18 + strength * .38)
+        particle := &effects.dust[effects.dust_count - 1]
+        rearward := .24 + next_random(&effects.seed) * (.32 + strength * .30)
+        sideways := (next_random(&effects.seed) - .5) * (.34 + strength * .26)
+        particle.velocity.x += -intent_direction.x * rearward - intent_direction.z * sideways
+        particle.velocity.z += -intent_direction.z * rearward + intent_direction.x * sideways
+        particle.velocity.y *= .58
+        particle.life *= .72
+        particle.max_life = particle.life
+        particle.size *= .72
+        effects.dust_spawn -= 1
+    }
+}
+
 step_vehicle_effects :: proc(
     effects: ^Vehicle_Effects,
     delta_seconds: f32,

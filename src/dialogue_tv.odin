@@ -10,7 +10,7 @@ import rl "zelda_engine:canvas2d"
 
 DIALOGUE_REFERENCE_HEIGHT :: f32(720)
 DIALOGUE_REVEAL_SECONDS :: f32(.032)
-DIALOGUE_CHOICE_VISIBLE_MAX :: 5
+DIALOGUE_CHOICE_VISIBLE_MAX :: 4
 
 @(no_instrumentation)
 dialogue_font :: #force_inline proc() -> rl.Font {
@@ -37,34 +37,47 @@ Dialogue_Tv_Layout :: struct {
     choice_gap:   f32,
 }
 
-dialogue_tv_layout :: proc(width, height: i32) -> Dialogue_Tv_Layout {
+dialogue_tv_layout :: proc(width, height: i32, choice_count: int = DIALOGUE_CHOICE_VISIBLE_MAX) -> Dialogue_Tv_Layout {
     scale := max(f32(height) / DIALOGUE_REFERENCE_HEIGHT, f32(1))
     safe_x := max(f32(width) * .05, 24 * scale)
     safe_y := max(f32(height) * .05, 24 * scale)
     available := max(f32(width) - safe_x * 2, 720 * scale)
-    gap := 24 * scale
-    card_w := min(240 * scale, max((available - 624 * scale - gap * 2) * .5, 112 * scale))
-    center_w := available - card_w * 2 - gap * 2
-    center_w = max(center_w, 480 * scale)
+    gap := 20 * scale
+    // Keep the speakers at the edges of the world composition while the
+    // conversation becomes a compact, cinematic lower-third.
+    center_target := min(760 * scale, available - 320 * scale - gap * 2)
+    card_w := min(220 * scale, max((available - center_target - gap * 2) * .5, 112 * scale))
+    center_w := min(center_target, available - card_w * 2 - gap * 2)
+    center_w = max(center_w, 560 * scale)
     total_w := card_w * 2 + center_w + gap * 2
     start_x := (f32(width) - total_w) * .5
     height_safe := max(f32(height) - safe_y * 2, 620 * scale)
-    center := rl.Rectangle{start_x + card_w + gap, safe_y, center_w, height_safe}
-    speech_h := min(230 * scale, center.height * .38)
+    visible_choices := clamp(choice_count, 1, DIALOGUE_CHOICE_VISIBLE_MAX)
+    choice_row_h := 62 * scale
+    choice_gap := 8 * scale
+    speech_h := 154 * scale
+    choice_area_h := f32(visible_choices) * choice_row_h + f32(max(visible_choices - 1, 0)) * choice_gap
+    center_h := min(58 * scale + speech_h + 12 * scale + choice_area_h + 26 * scale, height_safe)
+    center := rl.Rectangle {
+        start_x + card_w + gap,
+        f32(height) - safe_y - center_h,
+        center_w,
+        center_h,
+    }
     return {
         scale = scale,
         player_card = {start_x, safe_y, card_w, height_safe},
         conversation = center,
         npc_card = {center.x + center.width + gap, safe_y, card_w, height_safe},
-        speech = {center.x + 28 * scale, center.y + 76 * scale, center.width - 56 * scale, speech_h},
+        speech = {center.x + 30 * scale, center.y + 58 * scale, center.width - 60 * scale, speech_h},
         choices = {
-            center.x + 24 * scale,
-            center.y + 76 * scale + speech_h + 12 * scale,
-            center.width - 48 * scale,
-            center.height - 76 * scale - speech_h - 36 * scale,
+            center.x + 26 * scale,
+            center.y + 58 * scale + speech_h + 12 * scale,
+            center.width - 52 * scale,
+            center.height - 58 * scale - speech_h - 26 * scale,
         },
-        choice_row_h = 64 * scale,
-        choice_gap = 10 * scale,
+        choice_row_h = choice_row_h,
+        choice_gap = choice_gap,
     }
 }
 
@@ -546,63 +559,35 @@ dialogue_draw_live_portrait :: proc(
 
 dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     if editor == nil do return
-    layout := dialogue_tv_layout(width, height)
-    scale := layout.scale
-    // Portrait meshes are part of the world target, so dim around their cards
-    // rather than painting over them. The opaque center panel covers its gap.
-    dim := ui_theme_scrim(202)
-    cards_top := layout.player_card.y
-    cards_bottom := layout.player_card.y + layout.player_card.height
-    rl.DrawRectangle(0, 0, width, i32(cards_top), dim)
-    rl.DrawRectangle(0, i32(cards_bottom), width, max(height - i32(cards_bottom), 0), dim)
-    rl.DrawRectangle(0, i32(cards_top), i32(layout.player_card.x), i32(layout.player_card.height), dim)
-    between_x := layout.player_card.x + layout.player_card.width
-    rl.DrawRectangle(
-        i32(between_x),
-        i32(cards_top),
-        max(i32(layout.npc_card.x - between_x), 0),
-        i32(layout.player_card.height),
-        dim,
-    )
-    npc_right := layout.npc_card.x + layout.npc_card.width
-    rl.DrawRectangle(
-        i32(npc_right),
-        i32(cards_top),
-        max(width - i32(npc_right), 0),
-        i32(layout.player_card.height),
-        dim,
-    )
     conversation := &editor.attendant_dialogue
     current := dialogue.current(conversation)
     if current == nil do return
-    revealing := dialogue_view_revealing(editor)
-    player_active := !revealing
-    dialogue_draw_live_portrait(
-        editor,
-        layout.player_card,
-        editor.dialogue_resident,
-        true,
-        player_active,
-        editor.attendant_dialogue_view.reaction_seconds,
-    )
-    dialogue_draw_live_portrait(
-        editor,
-        layout.npc_card,
-        dialogue_current_resident(editor),
-        false,
-        !player_active,
-        revealing ? f32(.12) : 0,
-    )
-    rl.DrawRectangleRounded(layout.conversation, .035, 10, ui_theme_surface())
-    rl.DrawRectangleRoundedLinesEx(layout.conversation, .035, 10, 2 * scale, ui_theme_border_strong())
+    count := dialogue.available_count(conversation)
+    layout := dialogue_tv_layout(width, height, count)
+    scale := layout.scale
+    // A light full-frame scrim calms the scene without turning the speakers
+    // into boxed portrait specimens.
+    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(82))
+    rl.DrawRectangleRounded(layout.conversation, .025, 10, ui_theme_scrim(226))
+    rl.DrawRectangleRoundedLinesEx(layout.conversation, .025, 10, 1 * scale, ui_theme_border())
     speaker := current.speaker(&conversation.ctx)
+    speaker_size := 24 * scale
+    speaker_measure := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", speaker), speaker_size, 1.2 * scale)
+    speaker_tab := rl.Rectangle {
+        layout.conversation.x + 28 * scale,
+        layout.conversation.y - 14 * scale,
+        speaker_measure.x + 64 * scale,
+        46 * scale,
+    }
+    rl.DrawRectangleRounded(speaker_tab, .12, 8, ui_theme_accent())
+    rl.DrawRectangleRoundedLinesEx(speaker_tab, .12, 8, 1 * scale, ui_theme_accent_hover())
     rl.DrawTextEx(
         dialogue_font(),
         fmt.ctprintf("%s", speaker),
-        {layout.conversation.x + 28 * scale, layout.conversation.y + 24 * scale},
-        24 * scale,
+        {speaker_tab.x + 32 * scale, speaker_tab.y + 10 * scale},
+        speaker_size,
         1.2 * scale,
-        ui_theme_accent(),
+        ui_theme_text_inverse(),
     )
     text := current.text(&conversation.ctx)
     visible_end := clamp(editor.attendant_dialogue_view.revealed_bytes, 0, len(text))
@@ -613,14 +598,13 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     hovered_english := dialogue_draw_glossed_wrapped(
         text[:visible_end],
         speech_bounds,
-        28 * scale,
+        29 * scale,
         1 * scale,
-        37 * scale,
-        ui_theme_text(),
+        39 * scale,
+        ui_theme_text_inverse(),
         mouse,
     )
     dialogue_draw_tarot_strip(editor, layout.speech, scale)
-    count := dialogue.available_count(conversation)
     visible_rows := dialogue_choice_visible_rows(layout)
     dialogue_choice_scroll_focus(editor, visible_rows)
     first := editor.attendant_dialogue_view.first_choice
@@ -632,35 +616,68 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         hovered := rl.CheckCollisionPointRec(mouse, bounds)
         state := UI_Control_State.Resting
         if hovered do state = .Hovered
-        if focused do state = .Focused
+        if focused do state = .Selected
         style := ui_theme_control_style(state)
         rl.DrawRectangleRounded(bounds, .12, 8, style.fill)
-        rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, (focused ? 3 : style.border_width) * scale, style.border)
+        rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, style.border_width * scale, style.border)
+        if focused {
+            accent := rl.Rectangle{bounds.x, bounds.y + 8 * scale, 6 * scale, bounds.height - 16 * scale}
+            rl.DrawRectangleRounded(accent, .8, 6, ui_theme_text_inverse())
+            rl.DrawTextEx(
+                dialogue_font(),
+                "›",
+                {bounds.x + 18 * scale, bounds.y + 14 * scale},
+                30 * scale,
+                .8 * scale,
+                style.text,
+            )
+        }
         if response := dialogue.available_at(conversation, choice_index); response != nil {
             text_bounds := rl.Rectangle {
-                bounds.x + 18 * scale,
-                bounds.y + 8 * scale,
-                bounds.width - 36 * scale,
-                bounds.height - 12 * scale,
+                bounds.x + (focused ? 50 : 22) * scale,
+                bounds.y + 14 * scale,
+                bounds.width - (focused ? 122 : 44) * scale,
+                bounds.height - 20 * scale,
             }
             choice_english := dialogue_draw_glossed_wrapped(
                 response.text,
                 text_bounds,
                 26 * scale,
-                .8 * scale,
-                31 * scale,
+                .9 * scale,
+                33 * scale,
                 style.text,
                 mouse,
             )
             if len(choice_english) > 0 do hovered_english = choice_english
+        }
+        if focused {
+            confirm: cstring = controller_prompt_active(editor) ? controller_face_label(editor, .South) : "ENTER"
+            confirm_size := 16 * scale
+            confirm_measure := rl.MeasureTextEx(dialogue_font(), confirm, confirm_size, .6 * scale)
+            hint := rl.Rectangle {
+                bounds.x + bounds.width - confirm_measure.x - 24 * scale,
+                bounds.y + (bounds.height - 28 * scale) * .5,
+                confirm_measure.x + 14 * scale,
+                28 * scale,
+            }
+            rl.DrawRectangleRounded(hint, .3, 6, ui_theme_scrim(78))
+            rl.DrawRectangleRoundedLinesEx(hint, .3, 6, 1 * scale, ui_theme_text_inverse(190))
+            rl.DrawTextEx(
+                dialogue_font(),
+                confirm,
+                {hint.x + 7 * scale, hint.y + 6 * scale},
+                confirm_size,
+                .6 * scale,
+                ui_theme_text_inverse(),
+            )
         }
     }
     if first > 0 {
         rl.DrawTextEx(
             dialogue_font(),
             "MORE ABOVE",
-            {layout.choices.x + layout.choices.width - 150 * scale, layout.choices.y - 25 * scale},
-            18 * scale,
+            {layout.choices.x + layout.choices.width - 158 * scale, layout.choices.y - 28 * scale},
+            20 * scale,
             .6 * scale,
             ui_theme_text_muted(),
         )
@@ -670,10 +687,10 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
             dialogue_font(),
             "MORE BELOW",
             {
-                layout.choices.x + layout.choices.width - 150 * scale,
+                layout.choices.x + layout.choices.width - 158 * scale,
                 layout.choices.y + f32(visible_rows) * (layout.choice_row_h + layout.choice_gap) - 2 * scale,
             },
-            18 * scale,
+            20 * scale,
             .6 * scale,
             ui_theme_text_muted(),
         )

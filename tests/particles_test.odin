@@ -53,3 +53,52 @@ vehicle_dust_spawn_density_tracks_road_surface :: proc(t: ^testing.T) {
     testing.expect(t, asphalt.dust_count == 0)
     testing.expect(t, gravel.dust_count > asphalt.dust_count)
 }
+
+@(test)
+scrabble_sprays_backwards_at_a_bounded_rate :: proc(t: ^testing.T) {
+    effects := particle_systems.new_vehicle_effects(0x9abc)
+    contact := particle_systems.Vehicle_Contact {
+        position = {2, 0, 4},
+        grounded = true,
+        surface  = .Dirt,
+    }
+    particle_systems.spawn_scrabble(&effects, .05, contact, {0, 0, 1}, 1)
+
+    testing.expect(t, effects.dust_count == 1)
+    testing.expect(t, effects.dust[0].velocity.z < 0)
+    testing.expect(t, effects.dust[0].life == effects.dust[0].max_life)
+    testing.expect(t, effects.dust_spawn >= 0 && effects.dust_spawn < 1)
+}
+
+@(test)
+wing_trails_wait_for_flying_speed_and_expire :: proc(t: ^testing.T) {
+    trails := particle_systems.new_wing_trails(0x57494e47)
+    left, right := particle_systems.Vec3{-5, 2, 0}, particle_systems.Vec3{5, 2, 0}
+    forward, up := particle_systems.Vec3{0, 0, 1}, particle_systems.Vec3{0, 1, 0}
+
+    particle_systems.step_wing_trails(&trails, .05, left, right, forward, up, {}, 11)
+    testing.expect(t, trails.count == 0)
+
+    particle_systems.step_wing_trails(&trails, .05, left, right, forward, up, {}, 46)
+    testing.expect(t, trails.count > 0)
+    for _ in 0 ..< 30 {
+        particle_systems.step_wing_trails(&trails, .05, left, right, forward, up, {}, 0)
+    }
+    testing.expect(t, trails.count == 0)
+}
+
+@(test)
+wing_trails_curve_with_crosswind :: proc(t: ^testing.T) {
+    trails := particle_systems.new_wing_trails(0x43524f53)
+    left, right := particle_systems.Vec3{-5, 2, 0}, particle_systems.Vec3{5, 2, 0}
+    forward, up := particle_systems.Vec3{0, 0, 1}, particle_systems.Vec3{0, 1, 0}
+    crosswind := particle_systems.Vec3{8, 0, 0}
+
+    particle_systems.step_wing_trails(&trails, .05, left, right, forward, up, crosswind, 46)
+    testing.expect(t, trails.count > 0)
+    initial_x := trails.particles[0].position.x
+    for _ in 0 ..< 4 {
+        particle_systems.step_wing_trails(&trails, .05, left, right, forward, up, crosswind, 0)
+    }
+    testing.expect(t, trails.particles[0].position.x > initial_x)
+}

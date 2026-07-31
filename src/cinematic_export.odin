@@ -17,7 +17,7 @@ cinematic_export_audio :: proc(kind: Capture_Kind, path: string) -> (duration: f
 cinematic_export_cli :: proc(args: []string) -> bool {
     if len(args) < 4 {
         fmt.eprintln(
-            "usage: adriatic cinematic-export <mode> <output.mp4> [--audio track.wav] [--duration seconds] [--fps 1–60] [--target name] [--frames-dir directory]",
+            "usage: adriatic cinematic-export <mode> <output.mp4> [--audio track.wav] [--duration seconds] [--fps 1–60] [--target name] [--select kind[:id]] [--frames-dir directory]",
         )
         return false
     }
@@ -32,6 +32,9 @@ cinematic_export_cli :: proc(args: []string) -> bool {
     audio_path := ""
     target := ""
     requested_frames := ""
+    selector, selector_pick, presentation := "", "", "fit"
+    selector_filters: [CAPTURE_SELECTOR_FILTER_CAPACITY]string
+    selector_filter_count := 0
     index := 4
     for index < len(args) {
         option := args[index]
@@ -61,11 +64,45 @@ cinematic_export_cli :: proc(args: []string) -> bool {
             target = value
         case "--frames-dir":
             requested_frames = value
+        case "--select":
+            selector = value
+        case "--where":
+            if selector_filter_count >= len(selector_filters) {
+                fmt.eprintln("cinematic export: too many --where filters")
+                return false
+            }
+            selector_filters[selector_filter_count] = value
+            selector_filter_count += 1
+        case "--pick":
+            selector_pick = value
+        case "--presentation":
+            presentation = value
         case:
             fmt.eprintf("cinematic export: unknown option %s\n", option)
             return false
         }
         index += 2
+    }
+
+    if selector == "" && (selector_filter_count > 0 || selector_pick != "" || presentation != "fit") {
+        fmt.eprintln("cinematic export: --where, --pick, and --presentation require --select")
+        return false
+    }
+    if selector != "" {
+        _, selector_error, selector_ok := capture_selector_parse(
+            selector,
+            selector_filters,
+            selector_filter_count,
+            selector_pick,
+        )
+        if !selector_ok {
+            fmt.eprintf("cinematic export: invalid selector: %s\n", selector_error)
+            return false
+        }
+        if !capture_presentation_valid(presentation) {
+            fmt.eprintf("cinematic export: unknown presentation: %s\n", presentation)
+            return false
+        }
     }
 
     output, output_ok := adriatic_cli_absolute_path(requested_output)
@@ -98,24 +135,28 @@ cinematic_export_cli :: proc(args: []string) -> bool {
         audio = resolved
     }
     if duration <= 0 {
-        fmt.eprintln(
-            "cinematic export: this scene has no authored duration; provide --duration seconds",
-        )
+        fmt.eprintln("cinematic export: this scene has no authored duration; provide --duration seconds")
         return false
     }
 
     frame_count := max(int(math.ceil(f64(duration * f32(fps)))), 1)
     request := Capture_Request {
-        kind            = kind,
-        output_path     = frames,
-        target          = target,
-        window_width    = 1280,
-        window_height   = 720,
-        settle_frames   = 20,
-        sequence_frames = frame_count,
-        sequence_fps    = fps,
+        kind                  = kind,
+        output_path           = frames,
+        target                = target,
+        window_width          = 1280,
+        window_height         = 720,
+        settle_frames         = 20,
+        sequence_frames       = frame_count,
+        sequence_fps          = fps,
+        selector              = selector,
+        selector_filters      = selector_filters,
+        selector_filter_count = selector_filter_count,
+        selector_pick         = selector_pick,
+        presentation          = presentation,
     }
     _ = adriatic_run(nil, request = &request)
+    if request.selector_failed do return false
     last_frame := fmt.tprintf("%s/frame-%06d.png", frames, frame_count - 1)
     if info, err := os.stat(last_frame, context.temp_allocator); err != nil || info.size == 0 {
         fmt.eprintf("cinematic export: image sequence ended before %s\n", last_frame)

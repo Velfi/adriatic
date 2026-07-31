@@ -66,6 +66,15 @@ aircraft_chase_camera_tracks_translation_exactly_and_smooths_speed_fov :: proc(t
 }
 
 @(test)
+aircraft_chase_camera_speed_fov_has_quiet_cruise_and_strong_top_end :: proc(t: ^testing.T) {
+    testing.expect(t, chase_camera.desired_fov(0) == 68)
+    testing.expect(t, chase_camera.desired_fov(10) == 68)
+    testing.expect(t, chase_camera.desired_fov(30) < 74)
+    testing.expect(t, chase_camera.desired_fov(58) > 82)
+    testing.expect(t, chase_camera.desired_fov(100) == 84)
+}
+
+@(test)
 aircraft_chase_camera_does_not_steer_view_from_bank_input :: proc(t: ^testing.T) {
     target := chase_camera.Target {
         basis    = flight.identity_basis(),

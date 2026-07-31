@@ -124,7 +124,10 @@ VertexOutput foliage_vertex_transform(VertexInput input) {
     float bract_rustle = sin(push.water.x * (2.34 + wind_speed * .041) +
                              dot(input.position.xz, float2(.133, -.097)) +
                              tile_uv.x * 6.1 + tile_uv.y * 4.7);
-    if (input.kind == 1 || input.kind == 2) {
+    if (input.kind == 3) {
+        // Terrain particles are already simulated in world space. Keep their
+        // camera-facing cards out of the vegetation wind deformation path.
+    } else if (input.kind == 1 || input.kind == 2) {
         // Advect several broad waves through world space. Their different
         // headings and wavelengths form irregular gust fronts that travel
         // across a field instead of making every tuft sway in unison.
@@ -493,13 +496,14 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     float4 texel = foliage_atlas.Sample(foliage_sampler, input.uv);
     bool native_atlas_color = input.kind == 0 && input.color.a > 1.5;
     bool wildflower_atlas_color = input.kind == 2;
+    bool terrain_particle_atlas_color = input.kind == 3;
     bool young_native_growth = native_atlas_color && input.color.a > 2.5;
     // Cutout leaves remain crisp and depth-stable around overlapping blobs.
     // Generated bougainvillea contains much finer twigs and bract tips than
     // the painted foliage mask. Give those native-color cards a derivative-
     // aware coverage edge so distant mip levels do not shimmer or collapse
     // into dark, one-pixel outlines.
-    bool painted_atlas_color = native_atlas_color || wildflower_atlas_color;
+    bool painted_atlas_color = native_atlas_color || wildflower_atlas_color || terrain_particle_atlas_color;
     float alpha_threshold = painted_atlas_color ? .24 : .16;
     float alpha_width = painted_atlas_color ? max(fwidth(texel.a) * .72, .025) : .001;
     float coverage = smoothstep(
@@ -523,6 +527,8 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         color = texel.rgb * input.color.rrr;
     } else if (wildflower_atlas_color) {
         color = texel.rgb;
+    } else if (terrain_particle_atlas_color) {
+        color = texel.rgb * input.color.rgb;
     }
 
     // Leaf-sprig tips catch the same warm sunlight as the crown crests. A
@@ -635,6 +641,8 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     }
 
     color = apply_environment_light(color);
-    float alpha = painted_atlas_color ? coverage : texel.a * input.color.a;
+    float alpha = terrain_particle_atlas_color
+        ? coverage * input.color.a
+        : (painted_atlas_color ? coverage : texel.a * input.color.a);
     return float4(lerp(color, srgb_to_linear(push.fog_color.rgb), fog), alpha);
 }

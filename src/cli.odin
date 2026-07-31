@@ -15,7 +15,9 @@ adriatic_cli_usage :: proc() {
     fmt.println("  adriatic --lab <name> [target]")
     fmt.println("  adriatic fixture-upgrade [--dry-run] <file-or-directory>")
     fmt.println("  adriatic dialogue-preview <output.wav> [preset] [text] [formant-shift] [base-pitch] [expression]")
-    fmt.println("  adriatic cinematic-export <mode> <output.mp4> [--audio track.wav] [--duration seconds] [--fps 1–60]")
+    fmt.println(
+        "  adriatic cinematic-export <mode> <output.mp4> [--audio track.wav] [--duration seconds] [--fps 1–60]",
+    )
     fmt.println("  adriatic capture <mode> <output.png> [target]")
     fmt.println("  adriatic capture <mode> --output <output.png> [options]")
     fmt.println("    --target <name>       capture-specific target")
@@ -28,6 +30,12 @@ adriatic_cli_usage :: proc() {
     fmt.println("    --camera-distance <n> set distance from camera target")
     fmt.println("    --camera-offset <x,y,z> translate authored camera and target")
     fmt.println("    --turntable-frames <n> capture a 360° sequence into the output directory (1–360)")
+    fmt.println(
+        "    --select <kind[:id]>  dynamically select character, vehicle, structure, prop, plant, or selection",
+    )
+    fmt.println("    --where <key=value>   filter selected subjects; repeat up to 8 times")
+    fmt.println("    --pick <first|n>      choose a deterministic match when the selector is ambiguous")
+    fmt.println("    --presentation <name> fit, portrait, profile, overhead, or authored")
     fmt.println("    --list-targets        list registered targets for this mode")
     fmt.println("    building targets: <ordinal>, ground-<ordinal>, cypress, mouse-town")
     fmt.println("  adriatic capture bougainvillea [output-directory] [seed ...]")
@@ -39,7 +47,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  foliage-forest-golden, foliage-forest-wind-a, foliage-forest-wind-b")
     fmt.println("  foliage-forest-low-wind-a, foliage-forest-low-wind-b, foliage-stress")
     fmt.println(
-        "  grass-wind, screen-pops, wildflower-lab, shadow-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
+        "  grass-wind, screen-pops, wildflower-lab, shadow-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, fountain-generator, windmill-generator, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
     )
     fmt.println("  markov-city, markov-town, markov-village, aegean-city, aegean-town, aegean-village")
     fmt.println("  narrow, compact, sky-noon, sky-sunset, sky-storm, sky-night, player-*")
@@ -176,6 +184,9 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     camera_orbit_set, camera_distance_set, camera_offset_set := false, false, false
     camera_distance: f32
     list_targets := false
+    selector, selector_pick, presentation := "", "", "fit"
+    selector_filters: [CAPTURE_SELECTOR_FILTER_CAPACITY]string
+    selector_filter_count := 0
     positional_count := 0
     index := 3
     for index < len(args) {
@@ -199,7 +210,11 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
            argument == "--camera-orbit" ||
            argument == "--camera-distance" ||
            argument == "--camera-offset" ||
-           argument == "--turntable-frames" {
+           argument == "--turntable-frames" ||
+           argument == "--select" ||
+           argument == "--where" ||
+           argument == "--pick" ||
+           argument == "--presentation" {
             if index + 1 >= len(args) {
                 fmt.eprintf("adriatic: %s requires a value\n", argument)
                 return true, false
@@ -258,6 +273,27 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 1, 360)
                 if !ok do return true, false
                 turntable_frames = parsed
+            case "--select":
+                if selector != "" {
+                    fmt.eprintln("adriatic: --select was specified more than once")
+                    return true, false
+                }
+                selector = value
+            case "--where":
+                if selector_filter_count >= len(selector_filters) {
+                    fmt.eprintf("adriatic: at most %d --where filters are supported\n", len(selector_filters))
+                    return true, false
+                }
+                selector_filters[selector_filter_count] = value
+                selector_filter_count += 1
+            case "--pick":
+                if selector_pick != "" {
+                    fmt.eprintln("adriatic: --pick was specified more than once")
+                    return true, false
+                }
+                selector_pick = value
+            case "--presentation":
+                presentation = value
             }
             index += 2
             continue
@@ -298,6 +334,26 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     if requested_output == "" {
         fmt.eprintf("adriatic: capture %s requires an output path\n", mode)
         return true, false
+    }
+    if selector == "" && (selector_filter_count > 0 || selector_pick != "" || presentation != "fit") {
+        fmt.eprintln("adriatic: --where, --pick, and --presentation require --select")
+        return true, false
+    }
+    if selector != "" {
+        _, selector_error, selector_ok := capture_selector_parse(
+            selector,
+            selector_filters,
+            selector_filter_count,
+            selector_pick,
+        )
+        if !selector_ok {
+            fmt.eprintf("adriatic: invalid selector: %s\n", selector_error)
+            return true, false
+        }
+        if !capture_presentation_valid(presentation) {
+            fmt.eprintf("adriatic: unknown presentation: %s\n", presentation)
+            return true, false
+        }
     }
     if turntable_frames > 0 && kind != .Vehicle_Showcase {
         fmt.eprintln("adriatic: --turntable-frames currently requires capture mode vehicle-showcase")
@@ -346,25 +402,31 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         }
     }
     request := Capture_Request {
-        kind                 = kind,
-        output_path          = output,
-        target               = target,
-        window_width         = window_width,
-        window_height        = window_height,
-        settle_frames        = settle_frames,
-        camera_eye           = camera_eye,
-        camera_look_at       = camera_look_at,
-        camera_eye_set       = camera_eye_set,
-        camera_look_at_set   = camera_look_at_set,
-        camera_orbit_degrees = camera_orbit,
-        camera_orbit_set     = camera_orbit_set,
-        camera_distance      = camera_distance,
-        camera_distance_set  = camera_distance_set,
-        camera_offset        = camera_offset,
-        camera_offset_set    = camera_offset_set,
-        turntable_frames     = turntable_frames,
+        kind                  = kind,
+        output_path           = output,
+        target                = target,
+        window_width          = window_width,
+        window_height         = window_height,
+        settle_frames         = settle_frames,
+        camera_eye            = camera_eye,
+        camera_look_at        = camera_look_at,
+        camera_eye_set        = camera_eye_set,
+        camera_look_at_set    = camera_look_at_set,
+        camera_orbit_degrees  = camera_orbit,
+        camera_orbit_set      = camera_orbit_set,
+        camera_distance       = camera_distance,
+        camera_distance_set   = camera_distance_set,
+        camera_offset         = camera_offset,
+        camera_offset_set     = camera_offset_set,
+        turntable_frames      = turntable_frames,
+        selector              = selector,
+        selector_filters      = selector_filters,
+        selector_filter_count = selector_filter_count,
+        selector_pick         = selector_pick,
+        presentation          = presentation,
     }
     _ = adriatic_run(nil, request = &request)
+    if request.selector_failed do return true, false
     if turntable_frames > 0 {
         for frame_index in 0 ..< turntable_frames {
             frame_path := fmt.tprintf("%s/frame-%03d.png", output, frame_index)

@@ -26,6 +26,8 @@ Authoring_Tool :: enum {
     GreekAssets,
 }
 
+// GreekAssets remains as a frozen enum value for historical Fixture decoding,
+// but is no longer part of the live editor tool palette.
 AUTHORING_TOOL_COUNT :: 14
 EDITOR_UI_TOP_HEIGHT :: f32(54)
 EDITOR_UI_RAIL_WIDTH :: f32(184)
@@ -81,7 +83,7 @@ authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
     case .Roads:
         return "ROADS"
     case .GreekAssets:
-        return "GREEK ASSETS"
+        return "RUIN STAMP"
     }
     return "TOOL"
 }
@@ -414,7 +416,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Roads:
         return "Click terrain to add spline nodes; drag nodes or handles to reshape roads and steps."
     case .GreekAssets:
-        return "Click an asset, then click terrain to place it. Wheel zooms; Alt rotates; Shift scales."
+        return "Left places the procedural ruin; right generates a new seed."
     }
     return ""
 }
@@ -813,39 +815,6 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             2,
         )
         row += 1
-    case .GreekAssets:
-        bounds := editor_ui_slider_bounds(layout, row)
-        ui_draw_text(
-            .Data,
-            editor.greek_assets[editor.greek_asset_selected].name,
-            {bounds.x, bounds.y},
-            .45,
-            {134, 224, 216, 255},
-        )
-        row += 1
-        asset_list_y := panel.y + 132
-        for index in 0 ..< GREEK_ASSET_CAPACITY {
-            asset_bounds := rl.Rectangle{panel.x + 14, asset_list_y + f32(index) * 34, panel.width - 28, 28}
-            editor_ui_panel_button(
-                asset_bounds,
-                editor.greek_assets[index].name,
-                editor.greek_asset_selected == index,
-                editor.greek_assets[index].ready,
-            )
-        }
-        ui_draw_text(
-            .Data,
-            fmt.ctprintf(
-                "ROTATION %3.0f°   SCALE %.2f   PLACED %d",
-                editor.greek_asset_rotation * 180 / math.PI,
-                editor.greek_asset_scale,
-                editor.greek_placement_count,
-            ),
-            {panel.x + 14, asset_list_y + f32(GREEK_ASSET_CAPACITY) * 34 + 10},
-            .4,
-            {209, 215, 222, 255},
-        )
-        row = 7
     case .Roads:
         editor_ui_panel_button(
             editor_ui_slider_bounds(layout, row),
@@ -870,6 +839,29 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "JUNCTION RADIUS", radius, 1, 40, 1)
             row += 1
         }
+    case .GreekAssets:
+        editor_ui_panel_button(
+            editor_ui_slider_bounds(layout, row),
+            editor.ruin_stamp_aegean ? "REGION   AEGEAN" : "REGION   ADRIATIC",
+            editor.ruin_stamp_aegean,
+            true,
+        )
+        row += 1
+        editor_ui_panel_button(
+            editor_ui_slider_bounds(layout, row),
+            editor.ruin_stamp_complex ? "SITE     COMPLEX" : "SITE     SINGLE RUIN",
+            editor.ruin_stamp_complex,
+            true,
+        )
+        row += 1
+        ui_draw_text(
+            .Data,
+            fmt.ctprintf("VARIATION %d", editor.ruin_stamp_seed_offset),
+            {panel.x + 14, editor_ui_slider_bounds(layout, row).y + 8},
+            .4,
+            {209, 215, 222, 255},
+        )
+        row += 1
     }
 
     world_y := min(panel.y + 82 + f32(max(row, 3)) * 48 + 12, panel.y + panel.height - 276)
@@ -1162,25 +1154,6 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         row += 1
         _ = editor_ui_slider_input(editor, layout, 13, row, &editor.climbing_leaf_brush_hardness, 0, 1, .01)
         row += 1
-    case .GreekAssets:
-        if pressed {
-            asset_list_y := layout.inspector.y + 132
-            for index in 0 ..< GREEK_ASSET_CAPACITY {
-                asset_bounds := rl.Rectangle {
-                    layout.inspector.x + 14,
-                    asset_list_y + f32(index) * 34,
-                    layout.inspector.width - 28,
-                    28,
-                }
-                if rl.CheckCollisionPointRec(mouse, asset_bounds) && editor.greek_assets[index].ready {
-                    editor.greek_asset_selected = index
-                    editor.greek_asset_rotation = 0
-                    editor.greek_asset_scale = 1
-                    return
-                }
-            }
-        }
-        row = 7
     case .Roads:
         surface_bounds := editor_ui_slider_bounds(layout, row)
         if pressed && rl.CheckCollisionPointRec(mouse, surface_bounds) {
@@ -1234,6 +1207,19 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             }
             row += 1
         }
+    case .GreekAssets:
+        region_bounds := editor_ui_slider_bounds(layout, row)
+        if pressed && rl.CheckCollisionPointRec(mouse, region_bounds) {
+            editor.ruin_stamp_aegean = !editor.ruin_stamp_aegean
+            editor.ruin_stamp_preview_valid = false
+        }
+        row += 1
+        mode_bounds := editor_ui_slider_bounds(layout, row)
+        if pressed && rl.CheckCollisionPointRec(mouse, mode_bounds) {
+            editor.ruin_stamp_complex = !editor.ruin_stamp_complex
+            editor.ruin_stamp_preview_valid = false
+        }
+        row += 2
     }
 
     world_y := min(

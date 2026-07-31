@@ -143,6 +143,7 @@ render_graph_foliage :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
     if len(world_renderer.foliage_vertices) <= 0 &&
        len(world_renderer.bougainvillea_vertices) <= 0 &&
+       len(world_renderer.terrain_particle_vertices) <= 0 &&
        len(world_renderer.bougainvillea_instances) <= 0 &&
        len(world_renderer.grass_instances) <= 0 &&
        len(world_renderer.wildflower_instances) <= 0 {
@@ -199,6 +200,25 @@ render_graph_foliage :: proc(user_data: rawptr) {
             u32(len(world_renderer.bougainvillea_vertices)),
             1,
             u32(len(world_renderer.foliage_vertices)),
+            0,
+        )
+    }
+    if len(world_renderer.terrain_particle_vertices) > 0 {
+        vk.CmdBindDescriptorSets(
+            cmd,
+            .GRAPHICS,
+            world_renderer.foliage_layout,
+            0,
+            1,
+            &world_renderer.terrain_particle_descriptor,
+            0,
+            nil,
+        )
+        vk.CmdDraw(
+            cmd,
+            u32(len(world_renderer.terrain_particle_vertices)),
+            1,
+            u32(len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)),
             0,
         )
     }

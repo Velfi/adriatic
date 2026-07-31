@@ -253,6 +253,25 @@ build/dev/adriatic capture vehicle-showcase \
 ```
 
 The generic form is `adriatic capture <mode> <output.png> [target]`.
+Subjects instantiated by a mode can also be selected dynamically without a
+maintained target list:
+
+```sh
+build/dev/adriatic capture map \
+  --output build/captures/zora.png \
+  --select character:zora \
+  --presentation portrait
+build/dev/adriatic capture editor \
+  --output build/captures/selected.png \
+  --select selection
+```
+
+Selector kinds are `character`, `vehicle`, `structure`, `prop`, `plant`, and
+`selection`. Refine a selector with repeatable `--where key=value`, resolve
+multiple matches with `--pick first` or one-based `--pick N`, and frame it with
+`fit`, `portrait`, `profile`, `overhead`, or `authored` presentation. The MCP
+server exposes the same runtime resolver through `selector_query` and
+`selector_focus` for a running editor.
 `capture bougainvillea` writes the six-seed palette/habit validation matrix to
 an output directory; append seed values to override the default matrix.
 `--turntable-frames <n>` is available for `vehicle-showcase` captures and keeps

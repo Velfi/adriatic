@@ -1,23 +1,14 @@
 package main
 
+import architecture "../packages/architecture"
+import ruins "../packages/ruins"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
 import "core:math"
-import "core:os"
-import "core:strings"
 import rl "zelda_engine:canvas2d"
-import gltf "zelda_engine:gltf"
 
+// Frozen bounds for validating legacy Fixture data. No live GLB catalog exists.
 GREEK_ASSET_CAPACITY :: 8
 GREEK_PLACEMENT_CAPACITY :: 64
-
-Greek_Asset :: struct {
-    name:  cstring,
-    path:  string,
-    mesh:  gltf.Glb_Mesh,
-    color: rl.Color,
-    ready: bool,
-}
 
 Greek_Placement :: struct {
     asset_index: int,
@@ -27,135 +18,65 @@ Greek_Placement :: struct {
     scale:       f32,
 }
 
-greek_asset_init :: proc(editor: ^Editor) {
-    if editor == nil do return
-    paths := [GREEK_ASSET_CAPACITY]string {
-        "assets/greek/GreekDoric_preview.glb",
-        "assets/greek/MycenaeanPalace_preview.glb",
-        "assets/greek/GreekTheater_preview.glb",
-        "assets/greek/GreekAcropolis_preview.glb",
-        "assets/greek/GreekAgoraStoa_preview.glb",
-        "assets/greek/GreekTemple_Ionic_preview.glb",
-        "assets/greek/GreekTombTholos_preview.glb",
-        "assets/greek/AncientGreek_Settlement_preview.glb",
-    }
-    names := [GREEK_ASSET_CAPACITY]cstring {
-        "DORIC TEMPLE",
-        "MYCENAEAN PALACE",
-        "GREEK THEATER",
-        "ACROPOLIS FORT",
-        "AGORA STOA",
-        "IONIC TEMPLE",
-        "TOMB / THOLOS",
-        "GREEK SETTLEMENT",
-    }
-    colors := [GREEK_ASSET_CAPACITY]rl.Color {
-        {224, 219, 196, 255},
-        {192, 181, 153, 255},
-        {211, 196, 169, 255},
-        {170, 169, 155, 255},
-        {205, 190, 164, 255},
-        {226, 216, 190, 255},
-        {182, 171, 151, 255},
-        {200, 193, 175, 255},
-    }
-    editor.greek_asset_count = 0
-    for index in 0 ..< GREEK_ASSET_CAPACITY {
-        mesh, ready := gltf.glb_load(paths[index])
-        if !ready {
-            if working_dir, err := os.get_working_directory(context.temp_allocator); err == nil {
-                absolute_path := strings.concatenate({working_dir, "/", paths[index]}, context.temp_allocator)
-                mesh, ready = gltf.glb_load(absolute_path)
-            }
-        }
-        if !ready {
-            // The desktop build can be launched from Finder, where the
-            // process working directory is not the repository root.
-            project_path := strings.concatenate(
-                {"/Users/zelda/Documents/adriatic/", paths[index]},
-                context.temp_allocator,
-            )
-            mesh, ready = gltf.glb_load(project_path)
-        }
-        editor.greek_assets[index] = {
-            name  = names[index],
-            path  = paths[index],
-            mesh  = mesh,
-            color = colors[index],
-            ready = ready,
-        }
-        if ready do editor.greek_asset_count += 1
-    }
-    editor.greek_asset_selected = 0
-    editor.greek_asset_rotation = 0
-    editor.greek_asset_scale = 1
-    editor.greek_placement_count = 0
-    editor.greek_placement_selected = -1
-}
+RUIN_STAMP_DEFAULT_SEED :: u32(0x5255494e)
 
-greek_asset_destroy :: proc(editor: ^Editor) {
-    if editor == nil do return
-    for &asset in editor.greek_assets {
-        gltf.glb_mesh_destroy(&asset.mesh)
-        asset.ready = false
+ruin_stamp_candidate :: proc(editor: ^Editor, world_x, world_z: f32) -> (terrain.Structure, bool) {
+    if editor == nil do return {}, false
+    snap := terrain.BASE_CELL_SIZE
+    x := f32(math.round(f64(world_x / snap))) * snap
+    z := f32(math.round(f64(world_z / snap))) * snap
+    site := settlement_ruin_profile(&editor.project, {x, z})
+    seed := RUIN_STAMP_DEFAULT_SEED ~ editor.ruin_stamp_seed_offset * u32(0x27d4eb2d)
+    region := editor.ruin_stamp_aegean ? Settlement_Region.Aegean : .Adriatic
+    culture := settlement_ruin_culture(region, seed)
+    mode := editor.ruin_stamp_complex ? ruins.Mode.Complex : .Ruin
+    generated := ruins.generate_for_site(culture, mode, seed, site)
+    width, depth := settlement_ruin_bounds(&generated)
+    empty_city: architecture.City_Plan
+    if !settlement_brush_point_developable(&editor.project, {x, z}, SETTLEMENT_VILLAGE.max_slope) ||
+       !settlement_structure_clear(&editor.project, &empty_city, x, z, width, depth, 0, 3) {
+        return {}, false
     }
-    editor.greek_asset_count = 0
-}
-
-greek_asset_selected_ready :: proc(editor: ^Editor) -> bool {
-    return(
-        editor != nil &&
-        editor.greek_asset_selected >= 0 &&
-        editor.greek_asset_selected < GREEK_ASSET_CAPACITY &&
-        editor.greek_assets[editor.greek_asset_selected].ready \
+    structure := terrain.structure_make(
+        x,
+        z,
+        width,
+        depth,
+        terrain.sample_height(&editor.project, 0, x, z),
+        max(generated.elevation_range + f32(8), f32(12)),
     )
-}
-
-greek_placement_remove_selected :: proc(editor: ^Editor) {
-    if editor == nil || editor.greek_placement_selected < 0 || editor.greek_placement_selected >= editor.greek_placement_count do return
-    index := editor.greek_placement_selected
-    for move in index + 1 ..< editor.greek_placement_count {
-        editor.greek_placements[move - 1] = editor.greek_placements[move]
+    structure.kind = .Ruins
+    structure.seed = seed
+    structure.color = {
+        editor.ruin_stamp_aegean ? u8(1) : u8(0),
+        editor.ruin_stamp_complex ? u8(1) : u8(0),
+        u8(site.profile),
+        255,
     }
-    editor.greek_placement_count -= 1
-    editor.greek_placement_selected = -1
-    editor.project.revision += 1
+    return structure, true
 }
 
-greek_placement_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
-    if editor == nil || editor.in_map || !editor.greek_placement_mode do return
-    if rl.IsKeyPressed(.BACKSPACE) {
-        greek_placement_remove_selected(editor)
+ruin_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
+    if editor == nil || !editor.greek_placement_mode || editor.in_map || !cursor_hit {
+        if editor != nil do editor.ruin_stamp_preview_valid = false
         return
     }
-    if !cursor_hit || !greek_asset_selected_ready(editor) do return
-    if rl.IsMouseButtonPressed(.LEFT) && editor.greek_placement_count < GREEK_PLACEMENT_CAPACITY {
-        base_y := terrain.sample_height(&editor.project, 0, world_x, world_z)
-        editor.greek_placements[editor.greek_placement_count] = {
-            asset_index = editor.greek_asset_selected,
-            x           = world_x,
-            z           = world_z,
-            base_y      = base_y,
-            rotation    = editor.greek_asset_rotation,
-            scale       = editor.greek_asset_scale,
-        }
-        editor.greek_placement_selected = editor.greek_placement_count
-        editor.greek_placement_count += 1
-        editor.project.revision += 1
-    }
+    editor.ruin_stamp_preview, editor.ruin_stamp_preview_valid = ruin_stamp_candidate(editor, world_x, world_z)
 }
 
-greek_asset_local_to_world :: proc(
-    asset: Greek_Asset,
-    placement: Greek_Placement,
-    vertex: gltf.Vec3,
-) -> third_person.Vec3 {
-    c := f32(math.cos(f64(placement.rotation)))
-    s := f32(math.sin(f64(placement.rotation)))
-    scaled_x, scaled_y, scaled_z := vertex.x * placement.scale, vertex.y * placement.scale, vertex.z * placement.scale
-    return third_person.Vec3 {
-        placement.x + scaled_x * c - scaled_z * s,
-        placement.base_y + (scaled_y - asset.mesh.min.y * placement.scale),
-        placement.z + scaled_x * s + scaled_z * c,
+ruin_stamp_process_input :: proc(editor: ^Editor, cursor_hit: bool) {
+    if editor == nil || !editor.greek_placement_mode || editor.in_map || !cursor_hit do return
+    if rl.IsMouseButtonPressed(.RIGHT) {
+        editor.ruin_stamp_seed_offset += 1
+        editor.ruin_stamp_preview_valid = false
+        return
     }
+    if !rl.IsMouseButtonPressed(.LEFT) || !editor.ruin_stamp_preview_valid do return
+    structure_history_push_undo(editor)
+    if index := terrain.add_structure(&editor.project, editor.ruin_stamp_preview); index >= 0 {
+        // add_structure assigns an identity-derived default seed. Restore the
+        // authored variation so the placed ruin exactly matches its preview.
+        editor.project.structures[index].seed = editor.ruin_stamp_preview.seed
+    }
+    editor.ruin_stamp_preview_valid = false
 }

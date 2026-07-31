@@ -38,6 +38,7 @@ Capture_Kind :: enum {
     Leaf_Generator_Lab,
     Flower_Generator_Lab,
     Fountain_Generator_Lab,
+    Windmill_Generator_Lab,
     Lighthouse_Lab,
     Mouse_Gait_Lab,
     Mouse_Theater,
@@ -61,25 +62,31 @@ Capture_Kind :: enum {
 }
 
 Capture_Request :: struct {
-    kind:                 Capture_Kind,
-    output_path:          string,
-    target:               string,
-    window_width:         int,
-    window_height:        int,
-    settle_frames:        int,
-    camera_eye:           [3]f32,
-    camera_look_at:       [3]f32,
-    camera_eye_set:       bool,
-    camera_look_at_set:   bool,
-    camera_orbit_degrees: [2]f32,
-    camera_orbit_set:     bool,
-    camera_distance:      f32,
-    camera_distance_set:  bool,
-    camera_offset:        [3]f32,
-    camera_offset_set:    bool,
-    turntable_frames:     int,
-    sequence_frames:      int,
-    sequence_fps:         int,
+    kind:                  Capture_Kind,
+    output_path:           string,
+    target:                string,
+    window_width:          int,
+    window_height:         int,
+    settle_frames:         int,
+    camera_eye:            [3]f32,
+    camera_look_at:        [3]f32,
+    camera_eye_set:        bool,
+    camera_look_at_set:    bool,
+    camera_orbit_degrees:  [2]f32,
+    camera_orbit_set:      bool,
+    camera_distance:       f32,
+    camera_distance_set:   bool,
+    camera_offset:         [3]f32,
+    camera_offset_set:     bool,
+    turntable_frames:      int,
+    sequence_frames:       int,
+    sequence_fps:          int,
+    selector:              string,
+    selector_filters:      [CAPTURE_SELECTOR_FILTER_CAPACITY]string,
+    selector_filter_count: int,
+    selector_pick:         string,
+    presentation:          string,
+    selector_failed:       bool,
 }
 
 cinematic_export_active: bool
@@ -170,7 +177,7 @@ CAPTURE_STORY_MEETING_TARGETS := [?]string {
     "wipe-clockwise",
     "wipe-checker",
 }
-CAPTURE_MOUSE_GAIT_TARGETS := [?]string{"stop-spray"}
+CAPTURE_MOUSE_GAIT_TARGETS := [?]string{"stop-spray", "scurry"}
 CAPTURE_PATIO_TARGETS := [?]string{"coastal", "courtyard", "evening"}
 CAPTURE_GARDEN_TARGETS := [?]string{"courtyard", "kitchen", "wild", "alternate"}
 CAPTURE_PLANT_GENERATOR_TARGETS := [?]string {
@@ -259,6 +266,7 @@ CAPTURE_FLOWER_GENERATOR_TARGETS := [?]string {
     "ripe",
 }
 CAPTURE_FOUNTAIN_GENERATOR_TARGETS := [?]string{"tiered", "bowl", "courtyard"}
+CAPTURE_WINDMILL_GENERATOR_TARGETS := [?]string{"whitewashed", "stone", "ochre", "six-sail", "eight-sail"}
 CAPTURE_EDITOR_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout"}
 CAPTURE_MAP_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout"}
 CAPTURE_LIGHTHOUSE_TARGETS := [?]string {
@@ -298,6 +306,8 @@ capture_targets :: proc(kind: Capture_Kind) -> []string {
         return CAPTURE_FLOWER_GENERATOR_TARGETS[:]
     case .Fountain_Generator_Lab:
         return CAPTURE_FOUNTAIN_GENERATOR_TARGETS[:]
+    case .Windmill_Generator_Lab:
+        return CAPTURE_WINDMILL_GENERATOR_TARGETS[:]
     case .Lighthouse_Lab:
         return CAPTURE_LIGHTHOUSE_TARGETS[:]
     case .Boat_Lab:
@@ -388,6 +398,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Flower_Generator_Lab, true
     case "fountain-generator", "fountain-generator-lab":
         return .Fountain_Generator_Lab, true
+    case "windmill-generator", "windmill-generator-lab":
+        return .Windmill_Generator_Lab, true
     case "lighthouse-lab":
         return .Lighthouse_Lab, true
     case "mouse-gait-lab":

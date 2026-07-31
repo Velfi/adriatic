@@ -1,6 +1,7 @@
 package main
 
 import mouse_tail "../packages/mouse_tail"
+import mouse_gait "../packages/mouse_gait"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
@@ -38,23 +39,63 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
     if editor.capture_player_turn_right_pose do turn_pose = 1
     if editor.capture_player_brake_pose do brake_pose = 1
 
-    bound := math.sin(stride_phase) * run_weight * (.16 + .84 * bound_weight)
+    bound_phase := mouse_gait.bound_animation_phase(stride_phase, bound_weight)
+    bound := math.sin(bound_phase) * run_weight * mouse_gait.axial_flex_scale(gait)
     spine_extension := -bound
+    airborne_weight := editor.player_airborne_weight
+    scurry_weight := clamp(editor.player_scurry_weight, 0, 1)
+    scurry_lean := clamp(editor.player_scurry_lean, -.12, .32)
+    scurry_compression := clamp(
+        editor.player_scurry_compression,
+        -.025,
+        editor.tweak.player_animation.scurry_compression * 1.35,
+    )
+    scurry_support_phase := math.sin(stride_phase * 2)
+    scurry_support_shift := scurry_support_phase * scurry_weight * .030 * (1 - airborne_weight)
+    scurry_support_roll := scurry_support_phase * scurry_weight * .055 * (1 - airborne_weight)
+    bound_aerial_lift := mouse_gait.bound_aerial_weight(bound_phase) * bound_weight * run_weight * .085
     body_bob :=
-        (-bound * .018 + math.abs(math.sin(stride_phase * 2)) * .014) * run_weight +
+        (-bound * .018 +
+                math.abs(math.sin(stride_phase * 2)) * mouse_gait.vertical_bob_scale(gait) +
+                bound_aerial_lift) *
+            run_weight +
         math.sin(editor.map_time * 2.2) * .006 * (1 - run_weight) +
         editor.tweak.player_animation.run_body_lift * run_weight * (1 - editor.player_airborne_weight)
-    local_x := turn_pose * editor.tweak.player_animation.turn_spine_offset * .18
+    body_bob -= scurry_compression
     posted_weight := clamp(editor.player_posted_weight, 0, 1)
     if editor.capture_player_posted_pose do posted_weight = 1
-    local_y :=
-        .31 -
-        run_weight * .045 +
-        body_bob -
-        brake_pose * editor.tweak.player_animation.brake_compression * .48 +
-        posted_weight * .010
-    local_z := -.78 - spine_extension * .035 * run_weight + brake_pose * .035
+    animation := &editor.tweak.player_animation
+    spine_side := turn_pose * animation.turn_spine_offset
+    brake_compression := brake_pose * animation.brake_compression
+    ground_normal := editor.player.ground_normal
+    if ground_normal.y <= .1 do ground_normal = {0, 1, 0}
     cosine, sine := math.cos(rotation), math.sin(rotation)
+    model_forward := third_person.Vec3{-sine, 0, cosine}
+    model_right := third_person.Vec3{cosine, 0, sine}
+    normal_forward := ground_normal.x * model_forward.x + ground_normal.z * model_forward.z
+    normal_right := ground_normal.x * model_right.x + ground_normal.z * model_right.z
+    slope_pitch := math.atan2(normal_forward, ground_normal.y) * animation.slope_alignment
+    slope_roll := math.atan2(-normal_right, ground_normal.y) * animation.slope_alignment
+    body_roll := slope_roll - turn_pose * animation.turn_lean_radians + scurry_support_roll
+
+    // Skin the authored socket through the same pelvis pose used by the body
+    // renderer. Keeping this transform here makes the simulated first point
+    // coincide with the rump instead of drifting sideways or vertically as
+    // gait pitch, slope alignment, and body roll move the torso around it.
+    pelvis_x := spine_side * .18 - scurry_support_shift
+    pelvis_y :=
+        .36 - run_weight * .010 + body_bob - bound * .018 - brake_compression * .48 - posted_weight * .015
+    pelvis_z := -.48 - spine_extension * .070 * run_weight + brake_pose * .035
+    pelvis_pitch := bound * .075 + slope_pitch * .65 - posted_weight * .05 + scurry_lean * .45
+    pelvis_roll := body_roll * .82 - scurry_support_roll * .22
+    socket_relative := third_person.Vec3{0, -.12, -.30}
+    pitch_cosine, pitch_sine := math.cos(pelvis_pitch), math.sin(pelvis_pitch)
+    pitched_y := socket_relative.y * pitch_cosine - socket_relative.z * pitch_sine
+    pitched_z := socket_relative.y * pitch_sine + socket_relative.z * pitch_cosine
+    roll_cosine, roll_sine := math.cos(pelvis_roll), math.sin(pelvis_roll)
+    local_x := pelvis_x + socket_relative.x * roll_cosine - pitched_y * roll_sine
+    local_y := pelvis_y + socket_relative.x * roll_sine + pitched_y * roll_cosine
+    local_z := pelvis_z + pitched_z
     root = {
         editor.player.position.x + local_x * cosine - local_z * sine,
         editor.player.position.y +
@@ -66,7 +107,6 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
     // Turning shifts the tail's preferred first segment to the outside of the
     // curve. The remaining Verlet chain still lags and collides freely, so this
     // is a weight-shift bias rather than a canned tail pose.
-    model_right := third_person.Vec3{cosine, 0, sine}
     counterbalance := turn_pose * editor.tweak.player_animation.tail_counterbalance
     backward = {sine - model_right.x * counterbalance, 0, -cosine - model_right.z * counterbalance}
     return

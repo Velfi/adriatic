@@ -32,8 +32,8 @@ live_control_npc_position :: proc(editor: ^Editor, name: string) -> (third_perso
             "Gerta",
             true
     }
-    residents := [10]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
-    for resident in residents {
+    for resident in story.Resident {
+        if resident == .Marta || resident == .Gerta do continue
         display_name := story.resident_name(resident)
         short_name := resident == .Vesna ? "Vesna" : display_name
         if !strings.equal_fold(name, display_name) && !strings.equal_fold(name, short_name) do continue
@@ -56,6 +56,95 @@ live_control_focus_position :: proc(editor: ^Editor, position: third_person.Vec3
     third_person.camera_set_pose(&editor.cameras, .Inspection, pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
     editor.camera_pose = pose
+}
+
+live_control_selector_fields :: proc(
+    arguments: string,
+) -> (
+    string,
+    string,
+    string,
+    [CAPTURE_SELECTOR_FILTER_CAPACITY]string,
+    int,
+    bool,
+) {
+    fields := strings.split(arguments, "\t", context.temp_allocator)
+    filters: [CAPTURE_SELECTOR_FILTER_CAPACITY]string
+    if len(fields) < 3 || len(fields) - 3 > len(filters) do return "", "", "", filters, 0, false
+    filter_count := len(fields) - 3
+    for index in 0 ..< filter_count do filters[index] = fields[index + 3]
+    pick := fields[2] == "-" ? "" : fields[2]
+    return fields[0], fields[1], pick, filters, filter_count, true
+}
+
+live_control_selector_focus_response :: proc(editor: ^Editor, request_id, arguments: string) -> string {
+    selector_text, presentation, pick, filters, filter_count, fields_ok := live_control_selector_fields(arguments)
+    if !fields_ok {
+        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"malformed selector request"}}`, request_id)
+    }
+    pose, subject, selector_error, selector_ok := capture_selector_pose(
+        editor,
+        selector_text,
+        filters,
+        filter_count,
+        pick,
+        presentation,
+    )
+    if !selector_ok {
+        return fmt.aprintf(
+            `{{"ok":false,"id":"%s","error":"%s","selector":"%s"}}`,
+            request_id,
+            selector_error,
+            selector_text,
+        )
+    }
+    editor.camera_target_lock = false
+    editor.camera_pose = pose
+    third_person.camera_set_pose(&editor.cameras, .Inspection, pose)
+    third_person.camera_set_active(&editor.cameras, .Inspection)
+    return fmt.aprintf(
+        `{{"ok":true,"id":"%s","selector":"%s","subject":"%s","subject_id":%d,"kind":"%v","message":"Focused %s"}}`,
+        request_id,
+        selector_text,
+        subject.name,
+        subject.id,
+        subject.kind,
+        subject.name,
+    )
+}
+
+live_control_selector_query_response :: proc(editor: ^Editor, request_id, arguments: string) -> string {
+    selector_text, _, pick, filters, filter_count, fields_ok := live_control_selector_fields(arguments)
+    if !fields_ok {
+        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"malformed selector request"}}`, request_id)
+    }
+    selector, selector_error, selector_ok := capture_selector_parse(selector_text, filters, filter_count, pick)
+    if !selector_ok {
+        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"%s"}}`, request_id, selector_error)
+    }
+    matches: [CAPTURE_SELECTOR_MATCH_CAPACITY]Capture_Subject
+    count := capture_selector_collect(editor, selector, &matches)
+    listing := strings.builder_make(context.temp_allocator)
+    for index in 0 ..< count {
+        if index > 0 do strings.write_byte(&listing, ',')
+        subject := &matches[index]
+        fmt.sbprintf(
+            &listing,
+            `{{"kind":"%v","id":%d,"name":"%s","type":"%s","available":%v}}`,
+            subject.kind,
+            subject.id,
+            subject.name,
+            subject.subtype,
+            subject.available,
+        )
+    }
+    return fmt.aprintf(
+        `{{"ok":true,"id":"%s","selector":"%s","count":%d,"matches":[%s]}}`,
+        request_id,
+        selector_text,
+        count,
+        strings.to_string(listing),
+    )
 }
 
 live_control_business_position :: proc(editor: ^Editor, name: string) -> (third_person.Vec3, string, bool) {
@@ -129,7 +218,7 @@ live_control_terrain_brush_name :: proc(editor: ^Editor) -> string {
     case .Roads:
         return "roads"
     case .GreekAssets:
-        return "greek_assets"
+        return "ruins"
     }
     return "unknown"
 }
@@ -167,7 +256,6 @@ live_control_terrain_brush_response :: proc(editor: ^Editor, request_id: string)
     case .Roads:
         width = editor.road_width
     case .GreekAssets:
-        size = editor.greek_asset_scale
     }
     return fmt.aprintf(
         `{{"ok":true,"id":"%s","tool":"%s","radius":%.3f,"strength":%.3f,"hardness":%.3f,"width":%.3f,"height":%.3f,"size":%.3f,"mode":"%s"}}`,
@@ -283,6 +371,10 @@ live_control_poll :: proc(editor: ^Editor) {
         response = live_control_terrain_brush_response(editor, request_id)
     } else if command == "audio_status" {
         response = live_control_audio_status_response(editor, request_id)
+    } else if command == "selector_focus" {
+        response = live_control_selector_focus_response(editor, request_id, arguments)
+    } else if command == "selector_query" {
+        response = live_control_selector_query_response(editor, request_id, arguments)
     } else if command == "material_list" {
         _ = material_lab_ensure_library()
         names := strings.builder_make(context.temp_allocator)
@@ -395,7 +487,7 @@ live_control_poll :: proc(editor: ^Editor) {
                 fields[0] == "wreck" ||
                 fields[0] == "climbing_leaves" ||
                 fields[0] == "roads" ||
-                fields[0] == "greek_assets"
+                fields[0] == "ruins"
             mode_ok := fields[7] == "-" || fields[7] == "mass" || fields[7] == "hedge"
             if !tool_ok ||
                !radius_ok ||
@@ -434,7 +526,7 @@ live_control_poll :: proc(editor: ^Editor) {
                     authoring_select_tool(editor, .ClimbingLeaves)
                 case "roads":
                     authoring_select_tool(editor, .Roads)
-                case "greek_assets":
+                case "ruins":
                     authoring_select_tool(editor, .GreekAssets)
                 case "-":
                 }
@@ -490,7 +582,6 @@ live_control_poll :: proc(editor: ^Editor) {
                 case .Roads:
                     if fields[4] != "-" do editor.road_width = clamp(width, 2.5, 24)
                 case .GreekAssets:
-                    if fields[6] != "-" do editor.greek_asset_scale = clamp(size, .25, 3)
                 }
                 tweak_sync_from_editor(editor)
                 response = live_control_terrain_brush_response(editor, request_id)

@@ -32,6 +32,7 @@ mouse_gait_lab_focus_lane: int
 mouse_gait_lab_oblique: bool
 mouse_gait_lab_show_paths: bool
 mouse_gait_lab_stop_spray: bool
+mouse_gait_lab_scurry: bool
 
 mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
@@ -41,9 +42,14 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     mouse_gait_lab_oblique = false
     mouse_gait_lab_show_paths = false
     mouse_gait_lab_stop_spray = target == "stop-spray"
+    mouse_gait_lab_scurry = target == "scurry"
     if mouse_gait_lab_stop_spray {
         mouse_gait_lab_frozen = true
         mouse_gait_lab_phase = .625
+        mouse_gait_lab_focus_lane = 4
+    }
+    if mouse_gait_lab_scurry {
+        mouse_gait_lab_frozen = false
         mouse_gait_lab_focus_lane = 4
     }
     phase_targets := [8]string{"phase-0", "phase-1", "phase-2", "phase-3", "phase-4", "phase-5", "phase-6", "phase-7"}
@@ -119,6 +125,24 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
             particle_systems.step_vehicle_effects(&editor.player_terrain_effects, .05, 0, 0, false, 0, empty_contacts)
         }
         editor.player_brake_pose = 1
+    }
+    if mouse_gait_lab_scurry {
+        contact := particle_systems.Vehicle_Contact {
+            position = {-.34, .01, 0},
+            grounded = true,
+            surface  = .Dirt,
+        }
+        empty_contacts: [4]particle_systems.Vehicle_Contact
+        for _ in 0 ..< 5 {
+            particle_systems.step_vehicle_effects(&editor.player_terrain_effects, .035, 0, 0, false, 0, empty_contacts)
+            particle_systems.spawn_scrabble(&editor.player_terrain_effects, .05, contact, {1, 0, 0}, 1)
+        }
+        editor.player.running = true
+        editor.player.grounded = true
+        editor.player.velocity = {.65, 0, 0}
+        editor.player_scurry_weight = 1
+        editor.player_scurry_lean = editor.tweak.player_animation.scurry_lean_radians
+        editor.player_scurry_compression = editor.tweak.player_animation.scurry_compression * .72
     }
     editor.camera_pose = third_person.camera_look_at({6.2, 4.1, 9.2}, {0, .30, 0})
     if mouse_gait_lab_focus_lane >= 0 {
@@ -215,6 +239,7 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
         if mouse_gait_lab_focus_lane >= 0 && lane != mouse_gait_lab_focus_lane do continue
         z := mouse_gait_lab_focus_lane >= 0 ? f32(0) : -4 + f32(lane) * 2
         lane_color := lane % 2 == 0 ? rl.Color{171, 174, 161, 255} : rl.Color{151, 158, 151, 255}
+        if mouse_gait_lab_scurry do lane_color = {143, 111, 83, 255}
         world_box_rotated({0, -.08, z}, {track_length + 1, .16, 1.62}, 0, lane_color)
 
         speed := MOUSE_GAIT_LAB_SPEEDS[lane]
@@ -256,11 +281,11 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
                 gait_preview = true,
                 gait_speed = speed,
                 gait_phase = phase,
-                player_controlled = mouse_gait_lab_stop_spray,
+                player_controlled = mouse_gait_lab_stop_spray || mouse_gait_lab_scurry,
             },
         )
     }
-    if mouse_gait_lab_stop_spray do world_player_terrain_particles(editor)
+    if mouse_gait_lab_stop_spray || mouse_gait_lab_scurry do world_player_terrain_particles(editor)
 }
 
 mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
@@ -277,9 +302,11 @@ mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     }
     rl.DrawRectangleRounded(panel, .08, 8, {12, 24, 30, 232})
     rl.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {116, 174, 183, 255})
-    title: cstring = mouse_gait_lab_stop_spray ? "SUDDEN STOP / TERRAIN SPRAY" : "MOUSE GAIT COMPARISON"
+    title: cstring = "MOUSE GAIT COMPARISON"
+    if mouse_gait_lab_stop_spray do title = "SUDDEN STOP / TERRAIN SPRAY"
+    if mouse_gait_lab_scurry do title = "SCURRY / PAW SCRABBLE"
     rl.DrawTextEx(rl.Font{}, title, {38, 38}, 20, 1, {245, 238, 197, 255})
-    if mouse_gait_lab_frozen && !mouse_gait_lab_stop_spray {
+    if mouse_gait_lab_frozen && !mouse_gait_lab_stop_spray && !mouse_gait_lab_scurry {
         phase_label := fmt.ctprintf("FROZEN STRIDE PHASE %.0f%%", mouse_gait_lab_phase * 100)
         rl.DrawTextEx(rl.Font{}, phase_label, {244, 42}, 12, 1, {184, 211, 218, 255})
     }
