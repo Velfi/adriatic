@@ -162,6 +162,16 @@ upload_font :: proc() -> bool {ui.gui_init(&state.gui)
     font_pixel_height := FONT_RASTER_H
     font_kinds := [2]ui.Gui_Font_Kind{ui.Gui_Font_Kind.Body, ui.Gui_Font_Kind.Display}
     for font_kind, index in font_kinds {
+        metrics: ui.Gui_Font_Metrics
+        if ui.gui_font_metrics(font_kind, font_pixel_height, &metrics) {
+            state.font_metrics_em[index] = {
+                ascent = metrics.ascent / f32(font_pixel_height),
+                descent = metrics.descent / f32(font_pixel_height),
+                line_gap = metrics.line_gap / f32(font_pixel_height),
+            }
+        } else {
+            state.font_metrics_em[index] = {.82, .18, 0}
+        }
         for ch in FONT_FIRST ..= FONT_LAST {
             probe := [1]u8{u8(ch)}
             shaped_count := ui.gui_font_shape_text(

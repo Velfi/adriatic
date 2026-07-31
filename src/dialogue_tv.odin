@@ -365,15 +365,20 @@ dialogue_draw_glossed_wrapped :: proc(
     size, spacing, line_height: f32,
     color: rl.Color,
     mouse: rl.Vector2,
+    centered: bool = false,
 ) -> string {
     if len(text) == 0 do return ""
     lines := make([dynamic]rl.Text_Wrapped_Line, 0, 8, context.temp_allocator)
     rl.LayoutTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), size, spacing, bounds.width, .Auto, &lines)
     hovered_english := ""
     visible := min(len(lines), max(int(bounds.height / line_height), 0))
+    first_line_y := bounds.y
+    if centered && visible > 0 {
+        first_line_y = rl.TextBlockCenteredY(dialogue_font(), bounds, size, line_height, visible)
+    }
     for line, line_index in lines[:visible] {
         x := bounds.x
-        y := bounds.y + f32(line_index) * line_height
+        y := first_line_y + f32(line_index) * line_height
         cursor := line.start
         for cursor < line.end {
             start := cursor
@@ -635,9 +640,9 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         if response := dialogue.available_at(conversation, choice_index); response != nil {
             text_bounds := rl.Rectangle {
                 bounds.x + (focused ? 50 : 22) * scale,
-                bounds.y + 14 * scale,
+                bounds.y,
                 bounds.width - (focused ? 122 : 44) * scale,
-                bounds.height - 20 * scale,
+                bounds.height,
             }
             choice_english := dialogue_draw_glossed_wrapped(
                 response.text,
@@ -647,6 +652,7 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
                 33 * scale,
                 style.text,
                 mouse,
+                true,
             )
             if len(choice_english) > 0 do hovered_english = choice_english
         }

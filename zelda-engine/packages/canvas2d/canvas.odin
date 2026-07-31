@@ -25,6 +25,11 @@ Font :: struct {
     ready:   bool,
     display: bool,
 }
+Font_Metrics :: struct {
+    ascent:   f32,
+    descent:  f32,
+    line_gap: f32,
+}
 Texture :: render2d.Texture
 Button_Interaction :: struct {
     activated, hovered, focused: bool,
@@ -334,6 +339,7 @@ State :: struct {
     icon_y, icon_width, icon_height:           int,
     font_cell_width, font_cell_height:         int,
     font_origin_x, font_baseline:              int,
+    font_metrics_em:                           [2]Font_Metrics,
     font_atlas_width, font_atlas_height:       int,
     font_advance_em:                           [2][FONT_COUNT]f32,
     descriptor_layout:                         vk.DescriptorSetLayout,

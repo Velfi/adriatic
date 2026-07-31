@@ -268,6 +268,31 @@ font_glyph_slot :: #force_inline proc(ch: rune) -> int {
 MeasureTextEx :: #force_inline proc(font: Font, text: cstring, size, spacing: f32) -> Vector2 {
     return MeasureTextExDirection(font, text, size, spacing, .Auto)
 }
+
+MeasureFontMetrics :: proc(font: Font, size: f32) -> Font_Metrics {
+    index := font.display ? 1 : 0
+    metrics := state.font_metrics_em[index]
+    if metrics.ascent <= 0 || metrics.descent < 0 {
+        metrics = {.82, .18, 0}
+    }
+    return {
+        ascent = metrics.ascent * size,
+        descent = metrics.descent * size,
+        line_gap = metrics.line_gap * size,
+    }
+}
+
+TextBlockCenteredY :: proc(font: Font, bounds: Rectangle, size, line_height: f32, line_count: int) -> f32 {
+    if line_count <= 0 do return bounds.y
+    block_height := f32(line_count) * line_height
+    metrics := MeasureFontMetrics(font, size)
+    metric_height := metrics.ascent + metrics.descent
+    baseline_in_line := max((line_height - metric_height) * .5, 0) + metrics.ascent
+    // DrawTextEx currently accepts a line-box top and derives its baseline at
+    // 0.82 em internally. Keep that implementation detail inside canvas2d.
+    draw_baseline_offset := size * .82
+    return bounds.y + (bounds.height - block_height) * .5 + baseline_in_line - draw_baseline_offset
+}
 MeasureTextExDirection :: proc(
     font: Font,
     text: cstring,
@@ -531,6 +556,27 @@ DrawTextWrappedEx :: proc(
         )
     }
     return {{min(width, bounds.width), f32(visible) * line_height}, visible}
+}
+
+// Centers the typographic line box, not the particular string's ink bounds.
+// This keeps labels with ascenders, descenders, and different scripts aligned
+// to the same baseline while still centering a wrapped block as a whole.
+DrawTextWrappedCenteredEx :: proc(
+    font: Font,
+    text: cstring,
+    bounds: Rectangle,
+    size, spacing, line_height: f32,
+    color: Color,
+    direction: Text_Direction = .Auto,
+) -> Text_Wrap_Result {
+    measured := MeasureTextWrappedEx(font, text, size, spacing, bounds.width, line_height, direction)
+    if measured.line_count <= 0 || line_height <= 0 do return {}
+    visible := min(measured.line_count, max(int(bounds.height / line_height), 1))
+    block_height := f32(visible) * line_height
+    centered := bounds
+    centered.y = TextBlockCenteredY(font, bounds, size, line_height, visible)
+    centered.height = block_height
+    return DrawTextWrappedEx(font, text, centered, size, spacing, line_height, color, direction)
 }
 
 DrawIcon :: proc(index: int, destination: Rectangle, color := Color{255, 255, 255, 255}) {
