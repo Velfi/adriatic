@@ -2,8 +2,10 @@ package terrain
 
 import buildings "../buildings"
 import dunes "../dunes"
+import estuaries "../estuaries"
 import islands "../islands"
 import roads "../roads"
+import spring_river "../spring_river"
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
@@ -63,6 +65,150 @@ DEFAULT_DUNE_HEIGHT :: f32(5.4)
 DEFAULT_DUNE_SPACING :: f32(38)
 DEFAULT_DUNE_WIDTH :: f32(68)
 DEFAULT_DUNE_MAX_WIDTH :: f32(82)
+DEFAULT_ESTUARY_HALF_EXTENT :: f32(330)
+DEFAULT_RIVER_LENGTH :: f32(380)
+
+Default_Island_Hydrology :: struct {
+    river:               spring_river.Plan,
+    estuary:             estuaries.Plan,
+    archetype:           estuaries.Archetype,
+    estuary_center:      spring_river.Vec2,
+    estuary_half_extent: f32,
+    coast_position:      spring_river.Vec2,
+}
+
+default_island_hydrology_destroy :: proc(hydrology: ^Default_Island_Hydrology) {
+    if hydrology == nil do return
+    estuaries.destroy(&hydrology.estuary)
+    hydrology^ = {}
+}
+
+default_main_land_south_shore :: proc(island: ^islands.Plan, local_x: f32) -> (south, north: f32, ok: bool) {
+    if island == nil || islands.sample_signed_distance(island, local_x, 0) >= 0 do return
+    south, north = 0, 0
+    step := f32(.01)
+    for z := f32(0); z >= -1; z -= step {
+        if islands.sample_signed_distance(island, local_x, z) >= 0 {
+            south = min(z + step, f32(0))
+            break
+        }
+        south = z
+    }
+    for z := f32(0); z <= 1; z += step {
+        if islands.sample_signed_distance(island, local_x, z) >= 0 {
+            north = max(z - step, f32(0))
+            break
+        }
+        north = z
+    }
+    ok = true
+    return
+}
+
+default_island_hydrology_generate :: proc(
+    island: ^islands.Plan,
+    island_seed: u32,
+    island_index: int,
+    sign: f32,
+) -> Default_Island_Hydrology {
+    if island == nil do return {}
+    unit := proc(value: u32) -> f32 { return f32(islands.hash(value) & 0xffff) / 65535 }
+    // Drain the center-connected land mass on the island's outward flank.
+    // This avoids detached coastal islets as well as the central runway and
+    // inward-facing settlement district.
+    preferred_x := .24 + unit(island_seed ~ 0x4d4f5558) * .06
+    candidates := [9]f32{
+        preferred_x,
+        preferred_x - .04,
+        preferred_x + .04,
+        preferred_x - .08,
+        preferred_x + .08,
+        .22,
+        .16,
+        -.22,
+        0,
+    }
+    local_mouth_x, local_coast_z := f32(0), f32(-.72)
+    found_main_shore := false
+    for candidate_x in candidates {
+        south, north, ok := default_main_land_south_shore(island, clamp(candidate_x, f32(-.62), f32(.62)))
+        if !ok do continue
+        // Keep the source inside the same center-connected interval. The
+        // estuary inlet is .76 domain radii inland of the shoreline.
+        source_offset := (DEFAULT_ESTUARY_HALF_EXTENT * .76 + DEFAULT_RIVER_LENGTH) / DEFAULT_GENERATED_ISLAND_HALF_Z
+        if south + source_offset >= north - .04 do continue
+        local_mouth_x, local_coast_z = candidate_x, south
+        found_main_shore = true
+        break
+    }
+    if !found_main_shore {
+        south, _, ok := default_main_land_south_shore(island, 0)
+        if ok do local_coast_z = south
+    }
+    center_x, center_z := default_island_center(sign)
+    world_mouth_x := center_x + local_mouth_x * DEFAULT_GENERATED_ISLAND_HALF_X * (sign < 0 ? f32(-1) : f32(1))
+    world_coast_z := center_z + local_coast_z * DEFAULT_GENERATED_ISLAND_HALF_Z
+    estuary_half := DEFAULT_ESTUARY_HALF_EXTENT
+    // Canonical estuaries put the basin head near normalized +0.24. Align
+    // that point with the generated shoreline; +1 remains the guaranteed
+    // inland river connection and -1 opens onto the sea.
+    estuary_center := spring_river.Vec2{world_mouth_x, world_coast_z - estuary_half * .24}
+    river_mouth_z := estuary_center[1] + estuary_half
+    archetype: estuaries.Archetype = island_index & 1 == 0 ? .Tidal_Estuary : .Distributary_Delta
+    discharge := archetype == .Distributary_Delta ? f32(1.18) : f32(.72)
+    source_height := 15 + unit(island_seed ~ 0x53524348) * 7
+    river := spring_river.generate(
+        {
+            seed = islands.hash(island_seed ~ 0x52495652),
+            source = {world_mouth_x, river_mouth_z + DEFAULT_RIVER_LENGTH},
+            direction = {0, -1},
+            source_height = source_height,
+            length = DEFAULT_RIVER_LENGTH,
+            segment_length = 8,
+            gradient = source_height / DEFAULT_RIVER_LENGTH,
+            discharge = discharge,
+            meander = .48 + unit(island_seed ~ 0x4d45414e) * .34,
+            spring_radius = 5 + discharge * 2.4,
+        },
+    )
+    // Preserve seeded meanders, but contract individual bends toward the
+    // proven center-connected drainage line whenever they leave the island.
+    for point_index in 0 ..< river.point_count {
+        point := &river.points[point_index]
+        local_x := (point.position[0] - center_x) / DEFAULT_GENERATED_ISLAND_HALF_X
+        if sign < 0 do local_x = -local_x
+        local_z := (point.position[1] - center_z) / DEFAULT_GENERATED_ISLAND_HALF_Z
+        if islands.sample_signed_distance(island, local_x, local_z) < 0 do continue
+        proposed_x := point.position[0]
+        inside_amount, outside_amount := f32(0), f32(1)
+        for _ in 0 ..< 10 {
+            amount := (inside_amount + outside_amount) * .5
+            test_x := world_mouth_x + (proposed_x - world_mouth_x) * amount
+            test_local_x := (test_x - center_x) / DEFAULT_GENERATED_ISLAND_HALF_X
+            if sign < 0 do test_local_x = -test_local_x
+            if islands.sample_signed_distance(island, test_local_x, local_z) < 0 {
+                inside_amount = amount
+            } else {
+                outside_amount = amount
+            }
+        }
+        point.position[0] = world_mouth_x + (proposed_x - world_mouth_x) * inside_amount * .96
+    }
+    mouth := spring_river.mouth(&river)
+    config := estuaries.config_from_river_mouth(mouth, archetype, estuary_half)
+    config.seed = islands.hash(island_seed ~ 0x45535455)
+    config.orientation = .North
+    config.mean_sea_level = 0
+    estuary := estuaries.generate(config)
+    return {
+        river = river,
+        estuary = estuary,
+        archetype = archetype,
+        estuary_center = estuary_center,
+        estuary_half_extent = estuary_half,
+        coast_position = {world_mouth_x, world_coast_z},
+    }
+}
 
 Generated_Dune_Character :: struct {
     height:              f32,
@@ -884,10 +1030,19 @@ init_project_seeded :: proc(result: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]
     authored_half_extent := f32(WORLD_SIZE_METERS * .5)
     gameplay_center := authored_half_extent * DEFAULT_ISLAND_OFFSET
     generated_islands: [len(DEFAULT_ISLAND_SIGNS)]islands.Plan
+    generated_hydrology: [len(DEFAULT_ISLAND_SIGNS)]Default_Island_Hydrology
+    island_signs := DEFAULT_ISLAND_SIGNS
     for seed, island_index in seeds {
         generated_islands[island_index] = islands.generate(seed)
+        generated_hydrology[island_index] = default_island_hydrology_generate(
+            &generated_islands[island_index],
+            seed,
+            island_index,
+            island_signs[island_index],
+        )
     }
     defer for &plan in generated_islands do islands.destroy(&plan)
+    defer for &hydrology in generated_hydrology do default_island_hydrology_destroy(&hydrology)
     erosion_scratch := make([]f32, SAMPLES_PER_LEVEL)
     defer delete(erosion_scratch)
     for level in 0 ..< CLIPMAP_LEVELS {
@@ -911,6 +1066,7 @@ init_project_seeded :: proc(result: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]
                     world_z,
                     authored_half_extent,
                     data.cell_size,
+                    &generated_hydrology,
                 )
                 data.heights[sample_index(x, z)] = height
                 data.material[sample_index(x, z)] = material
@@ -1565,9 +1721,94 @@ default_generated_shore_config :: proc(dry_beach_width: f32 = 24) -> dunes.Shore
     }
 }
 
+default_apply_island_hydrology :: proc(
+    hydrology: ^Default_Island_Hydrology,
+    world_x, world_z, input_height, input_material: f32,
+) -> (
+    height, material: f32,
+) {
+    height, material = input_height, input_material
+    if hydrology == nil do return
+
+    river := spring_river.sample(&hydrology.river, {world_x, world_z})
+    if river.bank_influence > .001 {
+        bank_target := river.water_level + .18 + (1 - river.bank_influence) * 1.45
+        height = min(height, height + (bank_target - height) * river.bank_influence)
+        if river.inside_water do height = min(height, river.bed_height)
+        material = -1 - river.wetness * .62
+    }
+
+    // A rejected coastal candidate must never be baked into normal terrain.
+    // The independently constructive river remains useful and deterministic.
+    if !hydrology.estuary.valid || len(hydrology.estuary.elevation) != estuaries.CELL_COUNT do return
+
+    half := max(hydrology.estuary_half_extent, f32(1))
+    nx := (world_x - hydrology.estuary_center[0]) / half
+    nz := (world_z - hydrology.estuary_center[1]) / half
+    if math.abs(nx) > 1 || math.abs(nz) > 1 do return
+    class := estuaries.sample_wetland(&hydrology.estuary, nx, nz)
+    if class == .Dry || class == .Open_Sea do return
+    // The laboratory owns a finite square, but the island seabed does not.
+    // Feather most of the outer domain and prevent deep-water cells from
+    // being lifted into a square shelf. Channels may still carve through the
+    // feather; deposition is restricted to naturally shallow coast water.
+    edge := 1 - terrain_smooth_weight((max(math.abs(nx), math.abs(nz)) - .58) / .42)
+    seaward := terrain_smooth_weight((nz + .42) / .20)
+    edge *= seaward
+    if edge <= .001 do return
+    target := estuaries.sample_elevation(&hydrology.estuary, nx, nz)
+    influence: f32
+    #partial switch class {
+    case .Channel:
+        influence = 1
+    case .Mudflat:
+        influence = .88
+    case .Marsh:
+        influence = .82
+    case .Shoal:
+        influence = .76
+    case:
+        influence = 0
+    }
+    influence *= edge
+    if class != .Marsh && target > height {
+        depositional_core := terrain_smooth_weight((nz + .62) / .22)
+        influence *= depositional_core
+        target = min(target, f32(-.18))
+    }
+    if target > height {
+        shallow_substrate := terrain_smooth_weight((height + 4.5) / 3.5)
+        if class == .Marsh {
+            // Marsh polygons are the generator's discrete depositional
+            // islands. Let those build a little farther into the lobe while
+            // keeping continuous shoal and channel fields tied to the
+            // existing shallow seabed.
+            lobe_deposition := terrain_smooth_weight((nz + .74) / .46) * edge
+            lobe_core := terrain_smooth_weight((nz + .62) / .22)
+            depth_support := terrain_smooth_weight((height + 9) / 6)
+            target = max(target, .35 + lobe_deposition * .45)
+            island_weight := lobe_deposition * lobe_core * (.72 + depth_support * .28)
+            height = max(height, target * island_weight)
+            influence = 0
+        } else {
+            influence *= shallow_substrate
+        }
+    }
+    height += (target - height) * influence
+    #partial switch class {
+    case .Marsh:
+        material = .35
+    case .Channel, .Mudflat, .Shoal:
+        material = -1.35
+    case:
+    }
+    return
+}
+
 default_generated_height :: proc(
     plans: ^[len(DEFAULT_ISLAND_SIGNS)]islands.Plan,
     world_x, world_z, half_extent: f32,
+    hydrologies: ^[len(DEFAULT_ISLAND_SIGNS)]Default_Island_Hydrology = nil,
 ) -> (
     height, signed_distance, material: f32,
 ) {
@@ -1587,6 +1828,7 @@ default_generated_height :: proc(
         signed_distance = min(signed_distance, distance_meters)
         if grid_distance >= 0 do continue
         generated := islands.sample_elevation(plan, local_x, local_z)
+        bluff := islands.sample_bluff(plan, local_x, local_z)
         // Preserve the generator's natural coastal rise. The beach berm and
         // dunes add local relief below; a fixed 4.5 m minimum here filled bays
         // and low ridges into a broad table-flat shelf.
@@ -1599,7 +1841,6 @@ default_generated_height :: proc(
         dune: dunes.Sample
         beach_material := f32(0)
         if distance_meters > -DEFAULT_DUNE_MAX_WIDTH {
-            bluff := islands.sample_bluff(plan, local_x, local_z)
             low_coast := terrain_smooth_weight((7 - generated) / 4)
             cliff_exclusion := terrain_smooth_weight((bluff - .46) / .32)
             coastal_suitability := low_coast * (1 - cliff_exclusion)
@@ -1678,6 +1919,11 @@ default_generated_height :: proc(
         height = coast.height
         material = -1
     }
+    if hydrologies != nil {
+        for &hydrology in hydrologies {
+            height, material = default_apply_island_hydrology(&hydrology, world_x, world_z, height, material)
+        }
+    }
     // Settlement parcels need a predictable construction datum before their
     // generated hill and the still-higher-priority runway are composed.
     infrastructure_weight := f32(0)
@@ -1733,10 +1979,11 @@ default_generated_height :: proc(
 default_generated_height_filtered :: proc(
     plans: ^[len(DEFAULT_ISLAND_SIGNS)]islands.Plan,
     world_x, world_z, half_extent, cell_size: f32,
+    hydrologies: ^[len(DEFAULT_ISLAND_SIGNS)]Default_Island_Hydrology = nil,
 ) -> (
     height, material: f32,
 ) {
-    center, distance, center_material := default_generated_height(plans, world_x, world_z, half_extent)
+    center, distance, center_material := default_generated_height(plans, world_x, world_z, half_extent, hydrologies)
     shoreline_filter := math.abs(distance) <= cell_size * 1.75 + 4
     dune_filter := distance < 0 && distance > -(DEFAULT_DUNE_MAX_WIDTH + cell_size * 1.75)
     if !shoreline_filter && !dune_filter do return center, center_material
@@ -1752,17 +1999,41 @@ default_generated_height_filtered :: proc(
         // this removes checkerboard palette changes without blurring the dune
         // silhouette or connected blowout geometry.
         offset := f32(1.5)
-        _, _, material_a := default_generated_height(plans, world_x - offset, world_z - offset, half_extent)
-        _, _, material_b := default_generated_height(plans, world_x + offset, world_z - offset, half_extent)
-        _, _, material_c := default_generated_height(plans, world_x - offset, world_z + offset, half_extent)
-        _, _, material_d := default_generated_height(plans, world_x + offset, world_z + offset, half_extent)
+        _, _, material_a := default_generated_height(
+            plans,
+            world_x - offset,
+            world_z - offset,
+            half_extent,
+            hydrologies,
+        )
+        _, _, material_b := default_generated_height(
+            plans,
+            world_x + offset,
+            world_z - offset,
+            half_extent,
+            hydrologies,
+        )
+        _, _, material_c := default_generated_height(
+            plans,
+            world_x - offset,
+            world_z + offset,
+            half_extent,
+            hydrologies,
+        )
+        _, _, material_d := default_generated_height(
+            plans,
+            world_x + offset,
+            world_z + offset,
+            half_extent,
+            hydrologies,
+        )
         return center, center_material * .5 + (material_a + material_b + material_c + material_d) * .125
     }
     offset := cell_size * .35
-    a, _, material_a := default_generated_height(plans, world_x - offset, world_z - offset, half_extent)
-    b, _, material_b := default_generated_height(plans, world_x + offset, world_z - offset, half_extent)
-    c, _, material_c := default_generated_height(plans, world_x - offset, world_z + offset, half_extent)
-    d, _, material_d := default_generated_height(plans, world_x + offset, world_z + offset, half_extent)
+    a, _, material_a := default_generated_height(plans, world_x - offset, world_z - offset, half_extent, hydrologies)
+    b, _, material_b := default_generated_height(plans, world_x + offset, world_z - offset, half_extent, hydrologies)
+    c, _, material_c := default_generated_height(plans, world_x - offset, world_z + offset, half_extent, hydrologies)
+    d, _, material_d := default_generated_height(plans, world_x + offset, world_z + offset, half_extent, hydrologies)
     return center * .4 + (a + b + c + d) * .15,
         center_material * .4 + (material_a + material_b + material_c + material_d) * .15
 }

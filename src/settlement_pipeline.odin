@@ -1,7 +1,9 @@
 package main
 
 import architecture "../packages/architecture"
+import buildings "../packages/buildings"
 import fountains "../packages/fountains"
+import hero "../packages/hero_buildings"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
@@ -4549,7 +4551,11 @@ settlement_access_widen_shared_trunks :: proc(plan: ^Settlement_Plan, city_plan:
         }
     }
     for index in 0 ..< segment_count {
-        city_plan.alleys[index].half_width = min(city_plan.alleys[index].half_width, relaxed_widths[index])
+        relaxed := min(city_plan.alleys[index].half_width, relaxed_widths[index])
+        // A trunk serving three or more households is a shared side lane,
+        // even when it meets a narrower private doorstep segment.
+        if demand[index] >= 3 do relaxed = max(relaxed, f32(.9))
+        city_plan.alleys[index].half_width = relaxed
     }
     plan.access_max_shared_width_step = settlement_access_max_shared_width_step(
         city_plan,
@@ -6495,6 +6501,8 @@ settlement_plan_generate_buildings :: proc(
     if settlement.request.scale == .Village {
         return settlement_plan_generate_village_buildings(settlement, project, rng)
     }
+    hero_post_office_placed := false
+    hero_clinic_placed := false
     minimum_height, maximum_height := settlement_height_band(settlement.request.region, settlement.request.scale)
     fabric := settlement.macro_cells[:settlement.macro_cell_count]
     if settlement.request.scale == .Village && settlement.neighborhood_count > 0 {
@@ -6565,6 +6573,8 @@ settlement_plan_generate_buildings :: proc(
             if depth > frontage {
                 frontage, depth = depth, frontage
             }
+            hero_candidate := false
+            hero_kind := hero.Kind.Post_Office
             if town_consolidated {
                 // A town core used to place two small buildings in each
                 // occupied fabric cell. Consolidate that coverage into one
@@ -6572,6 +6582,16 @@ settlement_plan_generate_buildings :: proc(
                 // target footprint area without thinning the density field.
                 frontage *= f32(1.41421356237)
                 depth *= f32(1.41421356237)
+            }
+            // Promote a parcel that already fits the hero-building domain so
+            // civic identity does not perturb the established street/access
+            // topology merely by demanding a larger footprint.
+            hero_domain := frontage >= 16 && frontage <= 34 && depth >= 11 && depth <= 23
+            if hero_domain && !hero_post_office_placed {
+                hero_candidate = true
+            } else if hero_domain && !hero_clinic_placed {
+                hero_candidate = true
+                hero_kind = .Clinic
             }
             x, z, rotation: f32
             attached := settlement_rng_unit(rng) < settlement_attachment_probability(district.age)
@@ -6730,11 +6750,19 @@ settlement_plan_generate_buildings :: proc(
                 continue
             }
             seed := settlement_rng_u32(rng)
+            hero_plan: hero.Plan
+            if hero_candidate {
+                hero_config := hero.defaults(hero_kind)
+                hero_config.frontage = frontage
+                hero_config.depth = depth
+                hero_plan = hero.generate(seed, hero_config)
+            }
             density := clamp(district.density, 0, 1)
             height :=
                 minimum_height +
                 (maximum_height - minimum_height) * clamp(density * .78 + settlement_rng_unit(rng) * .22, 0, 1)
             height = architecture.facade_fitted_height_in_range(height, minimum_height, maximum_height)
+            if hero_candidate do height = hero_plan.arcade_height + hero_plan.roof_height + hero_plan.monitor_height
             structure := terrain.structure_make(x, z, frontage, depth, 0, height)
             structure.kind = .Architecture
             structure.seed = seed
@@ -6756,6 +6784,24 @@ settlement_plan_generate_buildings :: proc(
                 },
                 seed,
             )
+            if hero_candidate {
+                landmark_kind := buildings.Landmark_Kind.Post_Office
+                if hero_kind == .Clinic do landmark_kind = .Clinic
+                identity = architecture.architecture_identity(
+                    {
+                        region = settlement_building_region(settlement.request.region),
+                        landmark_kind = landmark_kind,
+                        frontage = frontage,
+                        depth = depth,
+                    },
+                    seed,
+                )
+                if hero_kind == .Clinic {
+                    hero_clinic_placed = true
+                } else {
+                    hero_post_office_placed = true
+                }
+            }
             structure.building = identity
             structure.color = architecture.architecture_color(seed, false)
             if settlement.request.region == .Aegean do structure.color = {236, 232, 216, 255}

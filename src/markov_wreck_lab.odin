@@ -12,7 +12,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:strconv"
 import sdl "vendor:sdl3"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 MARKOV_WRECK_LENGTH :: 31
 MARKOV_WRECK_CELL :: f32(11)
@@ -586,7 +586,7 @@ markov_wreck_spawn_postale :: proc(editor: ^Editor) -> bool {
     editor.libellula_visible = false
 
     editor.in_map = true
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     editor.aircraft_fixed_accumulator = 0
     editor.aircraft_previous_body_valid = false
     editor.capture_world_only = false
@@ -656,11 +656,11 @@ markov_wreck_reset_postale :: proc(editor: ^Editor) -> bool {
     return true
 }
 
-markov_wreck_spawn_button_bounds :: proc(height: i32) -> rl.Rectangle {
+markov_wreck_spawn_button_bounds :: proc(height: i32) -> canvas2d.Rectangle {
     return {32, f32(height) - 78, 238, 46}
 }
 
-markov_wreck_randomize_button_bounds :: proc(height: i32) -> rl.Rectangle {
+markov_wreck_randomize_button_bounds :: proc(height: i32) -> canvas2d.Rectangle {
     return {282, f32(height) - 78, 238, 46}
 }
 
@@ -686,14 +686,14 @@ markov_wreck_return_from_flight :: proc(editor: ^Editor) -> bool {
     editor.editor_focus = {0, 24, 0}
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     markov_wreck_postale_spawned = false
     set_pointer_locked(false)
     _ = sdl.ShowCursor()
     return true
 }
 
-markov_wreck_panel_color :: proc(seed: u32, fracture: bool) -> rl.Color {
+markov_wreck_panel_color :: proc(seed: u32, fracture: bool) -> canvas2d.Color {
     variation := u8(markov_wreck_hash(seed) % 24)
     if fracture && markov_wreck_random(seed ~ 0x7257) < .28 {
         return {u8(91 + variation), u8(72 + variation / 2), u8(57 + variation / 3), 255}
@@ -781,7 +781,7 @@ markov_wreck_attached_point :: proc(point: third_person.Vec3) -> third_person.Ve
     return result
 }
 
-markov_wreck_attached_box :: proc(center, size: third_person.Vec3, color: rl.Color) {
+markov_wreck_attached_box :: proc(center, size: third_person.Vec3, color: canvas2d.Color) {
     world_box_rotated(
         markov_wreck_attached_point(center),
         size * markov_wreck_render_scale,
@@ -790,7 +790,7 @@ markov_wreck_attached_box :: proc(center, size: third_person.Vec3, color: rl.Col
     )
 }
 
-markov_wreck_attached_box_between :: proc(a, b, up_hint: third_person.Vec3, width, height: f32, color: rl.Color) {
+markov_wreck_attached_box_between :: proc(a, b, up_hint: third_person.Vec3, width, height: f32, color: canvas2d.Color) {
     world_box_between(
         markov_wreck_attached_point(a),
         markov_wreck_attached_point(b),
@@ -801,7 +801,7 @@ markov_wreck_attached_box_between :: proc(a, b, up_hint: third_person.Vec3, widt
     )
 }
 
-markov_wreck_attached_run :: proc(x_min, x_max, y, z, depth, height: f32, color: rl.Color) {
+markov_wreck_attached_run :: proc(x_min, x_max, y, z, depth, height: f32, color: canvas2d.Color) {
     hull_center := f32(MARKOV_WRECK_LENGTH - 1) * .5
     for x_index in markov_wreck_first_bay ..< markov_wreck_last_bay {
         if markov_wreck_cells[x_index] == .Empty ||
@@ -1275,7 +1275,7 @@ world_markov_wreck :: proc(editor: ^Editor) {
 
     // The lab is an open-water wreck site. A low, broad water grid provides
     // the maritime horizon and makes the ship's immense length legible.
-    water := rl.Color{54, 112, 129, 238}
+    water := canvas2d.Color{54, 112, 129, 238}
     WATER_EXTENT :: f32(500)
     WATER_CELL :: f32(100)
     if !markov_wreck_authored_render {
@@ -1299,8 +1299,8 @@ world_markov_wreck :: proc(editor: ^Editor) {
     // Broken, semi-transparent foam lines pin the hull to the water surface.
     // They are deliberately discontinuous so they read as wash around a
     // stranded wreck rather than a graphic outline.
-    foam := rl.Color{190, 229, 220, 145}
-    lee_foam := rl.Color{204, 236, 226, 182}
+    foam := canvas2d.Color{190, 229, 220, 145}
+    lee_foam := canvas2d.Color{204, 236, 226, 182}
     foam_sides := [2]f32{f32(-1), 1}
     for side in foam_sides {
         contact_color := side * markov_wreck_hull_list() > 0 ? lee_foam : foam
@@ -1372,7 +1372,7 @@ world_markov_wreck :: proc(editor: ^Editor) {
             p10 := markov_wreck_ring_point(x_index + 1, a0)
             seed := markov_wreck_seed ~ u32(x_index * 0x9e37) ~ u32(segment)
             exterior := markov_wreck_panel_color(seed, fractured)
-            interior := rl.Color{u8(f32(exterior.r) * .52), u8(f32(exterior.g) * .55), u8(f32(exterior.b) * .56), 255}
+            interior := canvas2d.Color{u8(f32(exterior.r) * .52), u8(f32(exterior.g) * .55), u8(f32(exterior.b) * .56), 255}
             world_quad(p00, p10, p11, p01, exterior)
             q00 := markov_wreck_ring_point(x_index, a0, 1.4)
             q01 := markov_wreck_ring_point(x_index, a1, 1.4)
@@ -1494,7 +1494,7 @@ world_markov_wreck :: proc(editor: ^Editor) {
     }
 
     // Broken gunwales and keel members run longitudinally through the damage.
-    bone := rl.Color{53, 63, 65, 255}
+    bone := canvas2d.Color{53, 63, 65, 255}
     deck_y := base_y + 12
     gunwale_sides := [2]f32{f32(-1), 1}
     for x_index in markov_wreck_first_bay ..< markov_wreck_last_bay {
@@ -1543,7 +1543,7 @@ world_markov_wreck :: proc(editor: ^Editor) {
     // Each seed belongs to a broad landmark family with a distinct skyline.
     switch markov_wreck_form {
     case .Liner:
-        ivory := rl.Color{190, 190, 169, 255}
+        ivory := canvas2d.Color{190, 190, 169, 255}
         markov_wreck_attached_run(-102, 66, deck_y + 8, 0, 18, 14, ivory)
         markov_wreck_attached_run(-91, 5, deck_y + 16, 0, 15, 5, {159, 164, 153, 255})
         // A stepped bridge and three immense funnels establish an ocean-liner
@@ -1585,7 +1585,7 @@ world_markov_wreck :: proc(editor: ^Editor) {
             markov_wreck_attached_box({x, deck_y + 15, 11}, {15, 3.4, 3.2}, {202, 160, 86, 255})
         }
     case .Dreadnought:
-        naval := rl.Color{105, 112, 109, 255}
+        naval := canvas2d.Color{105, 112, 109, 255}
         markov_wreck_attached_run(-78, 68, deck_y + 5, 0, 17, 10, naval)
         markov_wreck_attached_box({-12, deck_y + 15, 0}, {34, 20, 22}, {92, 101, 99, 255})
         markov_wreck_attached_box({-12, deck_y + 34, 0}, {5, 38, 5}, {55, 62, 62, 255})
@@ -1706,11 +1706,11 @@ markov_wreck_process_input :: proc(editor: ^Editor) {
         _ = markov_wreck_ensure_flight_control(editor)
         return
     }
-    if rl.IsMouseButtonPressed(.LEFT) {
-        mouse := rl.GetMousePosition()
-        if rl.CheckCollisionPointRec(mouse, markov_wreck_spawn_button_bounds(rl.GetScreenHeight())) {
+    if canvas2d.IsMouseButtonPressed(.LEFT) {
+        mouse := canvas2d.GetMousePosition()
+        if canvas2d.CheckCollisionPointRec(mouse, markov_wreck_spawn_button_bounds(canvas2d.GetScreenHeight())) {
             _ = markov_wreck_spawn_postale(editor)
-        } else if rl.CheckCollisionPointRec(mouse, markov_wreck_randomize_button_bounds(rl.GetScreenHeight())) {
+        } else if canvas2d.CheckCollisionPointRec(mouse, markov_wreck_randomize_button_bounds(canvas2d.GetScreenHeight())) {
             _ = markov_wreck_randomize(editor)
         }
     }
@@ -1718,16 +1718,16 @@ markov_wreck_process_input :: proc(editor: ^Editor) {
 
 markov_wreck_draw_ui :: proc(_: ^Editor, _: i32, height: i32) {
     if markov_wreck_postale_spawned do return
-    mouse := rl.GetMousePosition()
+    mouse := canvas2d.GetMousePosition()
     spawn := markov_wreck_spawn_button_bounds(height)
     randomize := markov_wreck_randomize_button_bounds(height)
-    spawn_fill := rl.CheckCollisionPointRec(mouse, spawn) ? rl.Color{52, 125, 131, 248} : rl.Color{34, 79, 85, 244}
+    spawn_fill := canvas2d.CheckCollisionPointRec(mouse, spawn) ? canvas2d.Color{52, 125, 131, 248} : canvas2d.Color{34, 79, 85, 244}
     randomize_fill :=
-        rl.CheckCollisionPointRec(mouse, randomize) ? rl.Color{111, 91, 52, 248} : rl.Color{72, 61, 40, 244}
-    rl.DrawRectangleRounded(spawn, .18, 8, spawn_fill)
-    rl.DrawRectangleRoundedLinesEx(spawn, .18, 8, 1.5, {151, 225, 216, 255})
-    rl.DrawTextEx(rl.Font{}, "SPAWN POSTALE", {spawn.x + 22, spawn.y + 13}, 19, 1, {242, 252, 245, 255})
-    rl.DrawRectangleRounded(randomize, .18, 8, randomize_fill)
-    rl.DrawRectangleRoundedLinesEx(randomize, .18, 8, 1.5, {224, 195, 132, 255})
-    rl.DrawTextEx(rl.Font{}, "RANDOMIZE WRECK", {randomize.x + 17, randomize.y + 13}, 18, .8, {255, 243, 211, 255})
+        canvas2d.CheckCollisionPointRec(mouse, randomize) ? canvas2d.Color{111, 91, 52, 248} : canvas2d.Color{72, 61, 40, 244}
+    canvas2d.DrawRectangleRounded(spawn, .18, 8, spawn_fill)
+    canvas2d.DrawRectangleRoundedLinesEx(spawn, .18, 8, 1.5, {151, 225, 216, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "SPAWN POSTALE", {spawn.x + 22, spawn.y + 13}, 19, 1, {242, 252, 245, 255})
+    canvas2d.DrawRectangleRounded(randomize, .18, 8, randomize_fill)
+    canvas2d.DrawRectangleRoundedLinesEx(randomize, .18, 8, 1.5, {224, 195, 132, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "RANDOMIZE WRECK", {randomize.x + 17, randomize.y + 13}, 18, .8, {255, 243, 211, 255})
 }

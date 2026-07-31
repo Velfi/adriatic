@@ -8,7 +8,7 @@ import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
 import "core:math/linalg"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 TOWN_GROUND_FLOCK_LIMIT :: 4
 
@@ -114,7 +114,8 @@ world_flocks_step :: proc(editor: ^Editor, dt: f32) {
     }
     flocks.sync_anchors(&editor.bird_flocks, anchors[:count])
     flocks.step_markers(&editor.bird_flocks, dt)
-    flocks.step(&editor.bird_flocks, dt, {editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]})
+    flock_weather := atmosphere_local_weather(editor, editor.player.position)
+    flocks.step(&editor.bird_flocks, dt, {flock_weather.wind[0], flock_weather.wind[2]})
     world_flocks_avoid_buildings(editor, &editor.bird_flocks, dt)
 
     ground_anchors: [flocks.MAX_FLOCKS]flocks.Anchor
@@ -183,14 +184,14 @@ world_flocks_step :: proc(editor: ^Editor, dt: f32) {
     flocks.step_grounded(
         &editor.ground_bird_flocks,
         dt,
-        {editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]},
+        {flock_weather.wind[0], flock_weather.wind[2]},
         {threat_position.x, threat_position.y, threat_position.z},
         threat_active,
     )
     world_flocks_avoid_buildings(editor, &editor.ground_bird_flocks, dt)
 }
 
-world_bird_double_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color) {
+world_bird_double_triangle :: proc(a, b, c: third_person.Vec3, color: canvas2d.Color) {
     world_triangle(a, b, c, color)
     world_triangle(c, b, a, color)
 }
@@ -203,11 +204,11 @@ world_bird :: proc(position, velocity: flocks.Vec3, phase: f32) {
     right := linalg.normalize0(linalg.cross(third_person.Vec3{0, 1, 0}, forward))
     up := linalg.normalize0(linalg.cross(forward, right))
     center := third_person.Vec3{position.x, position.y, position.z}
-    white := rl.Color{230, 232, 222, 255}
-    shadow := rl.Color{184, 192, 190, 255}
-    mantle := rl.Color{166, 177, 179, 255}
-    charcoal := rl.Color{54, 64, 68, 255}
-    beak := rl.Color{218, 157, 62, 255}
+    white := canvas2d.Color{230, 232, 222, 255}
+    shadow := canvas2d.Color{184, 192, 190, 255}
+    mantle := canvas2d.Color{166, 177, 179, 255}
+    charcoal := canvas2d.Color{54, 64, 68, 255}
+    beak := canvas2d.Color{218, 157, 62, 255}
 
     tail_root := center - forward * .26
     chest := center + forward * .25 + up * .015
@@ -277,10 +278,10 @@ world_ground_bird :: proc(position, velocity: flocks.Vec3, phase: f32) {
     foot := third_person.Vec3{position.x, position.y, position.z}
     body := foot + up * .19
     head_bob := f32(math.sin(phase * 2.1) * .018)
-    white := rl.Color{230, 232, 222, 255}
-    mantle := rl.Color{166, 177, 179, 255}
-    charcoal := rl.Color{54, 64, 68, 255}
-    ochre := rl.Color{218, 157, 62, 255}
+    white := canvas2d.Color{230, 232, 222, 255}
+    mantle := canvas2d.Color{166, 177, 179, 255}
+    charcoal := canvas2d.Color{54, 64, 68, 255}
+    ochre := canvas2d.Color{218, 157, 62, 255}
 
     tail := body - forward * .25
     chest := body + forward * .20 + up * .025

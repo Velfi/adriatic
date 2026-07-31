@@ -6,7 +6,7 @@ import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
 import "core:strings"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 // Mouse Theater is a deterministic, transient cinematic stage. Its geometry is
 // generated each frame from a compact auditorium plan, leaving future shots
@@ -180,7 +180,7 @@ mouse_theater_configure :: proc(editor: ^Editor, target: string) -> bool {
     editor.atmosphere.paused = true
     mouse_theater_dialogue = {
         reveal_timer = MOUSE_THEATER_MONOLOGUE[0].opening_pause,
-        last_time = rl.GetTime(),
+        last_time = canvas2d.GetTime(),
     }
     engine_sound.dialogue_voice_stop(&editor.engine_audio)
     editor.engine_audio.dialogue_voice.unit_blend = .82
@@ -253,7 +253,7 @@ mouse_theater_process_input :: proc(editor: ^Editor) {
         mouse_theater_camera_update(editor)
         return
     }
-    now := rl.GetTime()
+    now := canvas2d.GetTime()
     delta := f32(clamp(now - mouse_theater_dialogue.last_time, f64(0), f64(.05)))
     mouse_theater_dialogue.last_time = now
     mouse_theater_dialogue_tick(editor, delta)
@@ -261,8 +261,8 @@ mouse_theater_process_input :: proc(editor: ^Editor) {
 
     advance :=
         input_action_pressed(.Menu_Accept) ||
-        rl.IsKeyPressed(.SPACE) ||
-        rl.IsMouseButtonPressed(.LEFT)
+        canvas2d.IsKeyPressed(.SPACE) ||
+        canvas2d.IsMouseButtonPressed(.LEFT)
     if !advance || mouse_theater_dialogue.complete do return
     text := mouse_theater_current_text()
     if mouse_theater_dialogue.cursor < len(text) {
@@ -293,18 +293,18 @@ mouse_theater_draw_ui :: proc(_: ^Editor, width, height: i32) {
     scale := max(f32(height) / 720, f32(1))
     margin := max(f32(width) * .075, 54 * scale)
     panel_h := 154 * scale
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x = margin,
         y = f32(height) - panel_h - 26 * scale,
         width = f32(width) - margin * 2,
         height = panel_h,
     }
-    gold: rl.Color = {232, 191, 91, 255}
-    pale_gold: rl.Color = {255, 224, 142, 255}
-    shadow: rl.Color = {20, 10, 4, 245}
-    rl.DrawRectangleRounded(panel, .08, 10, {8, 5, 5, 218})
-    rl.DrawRectangleRoundedLinesEx(panel, .08, 10, 2 * scale, {151, 104, 36, 255})
-    rl.DrawRectangleRoundedLinesEx(
+    gold: canvas2d.Color = {232, 191, 91, 255}
+    pale_gold: canvas2d.Color = {255, 224, 142, 255}
+    shadow: canvas2d.Color = {20, 10, 4, 245}
+    canvas2d.DrawRectangleRounded(panel, .08, 10, {8, 5, 5, 218})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .08, 10, 2 * scale, {151, 104, 36, 255})
+    canvas2d.DrawRectangleRoundedLinesEx(
         {panel.x + 5 * scale, panel.y + 5 * scale, panel.width - 10 * scale, panel.height - 10 * scale},
         .07,
         10,
@@ -313,16 +313,16 @@ mouse_theater_draw_ui :: proc(_: ^Editor, width, height: i32) {
     )
 
     quote_size := 48 * scale
-    rl.DrawTextEx(rl.DisplayFont(), "“", {panel.x + 20 * scale, panel.y + 14 * scale}, quote_size, 1, gold)
-    rl.DrawTextEx(
-        rl.DisplayFont(),
+    canvas2d.DrawTextEx(canvas2d.DisplayFont(), "“", {panel.x + 20 * scale, panel.y + 14 * scale}, quote_size, 1, gold)
+    canvas2d.DrawTextEx(
+        canvas2d.DisplayFont(),
         "”",
         {panel.x + panel.width - 48 * scale, panel.y + panel.height - 66 * scale},
         quote_size,
         1,
         gold,
     )
-    bounds := rl.Rectangle {
+    bounds := canvas2d.Rectangle {
         panel.x + 70 * scale,
         panel.y + 25 * scale,
         panel.width - 140 * scale,
@@ -330,8 +330,8 @@ mouse_theater_draw_ui :: proc(_: ^Editor, width, height: i32) {
     }
     font_size := 25 * scale
     line_height := 34 * scale
-    rl.DrawTextWrappedEx(
-        rl.DisplayFont(),
+    canvas2d.DrawTextWrappedEx(
+        canvas2d.DisplayFont(),
         fmt.ctprintf("%s", visible),
         {bounds.x + 2 * scale, bounds.y + 2 * scale, bounds.width, bounds.height},
         font_size,
@@ -339,8 +339,8 @@ mouse_theater_draw_ui :: proc(_: ^Editor, width, height: i32) {
         line_height,
         shadow,
     )
-    rl.DrawTextWrappedEx(
-        rl.DisplayFont(),
+    canvas2d.DrawTextWrappedEx(
+        canvas2d.DisplayFont(),
         fmt.ctprintf("%s", visible),
         bounds,
         font_size,
@@ -349,9 +349,9 @@ mouse_theater_draw_ui :: proc(_: ^Editor, width, height: i32) {
         pale_gold,
     )
     prompt: cstring = mouse_theater_dialogue.cursor < len(text) ? "ADVANCE TO REVEAL" : "ADVANCE"
-    prompt_size := rl.MeasureTextEx(rl.DisplayFont(), prompt, 10 * scale, 1)
-    rl.DrawTextEx(
-        rl.DisplayFont(),
+    prompt_size := canvas2d.MeasureTextEx(canvas2d.DisplayFont(), prompt, 10 * scale, 1)
+    canvas2d.DrawTextEx(
+        canvas2d.DisplayFont(),
         prompt,
         {panel.x + panel.width - prompt_size.x - 24 * scale, panel.y + panel.height - 20 * scale},
         10 * scale,
@@ -361,9 +361,9 @@ mouse_theater_draw_ui :: proc(_: ^Editor, width, height: i32) {
 }
 
 mouse_theater_seat :: proc(center: third_person.Vec3) {
-    upholstery: rl.Color = {43, 12, 18, 255}
-    upholstery_edge: rl.Color = {68, 20, 27, 255}
-    wood: rl.Color = {43, 29, 24, 255}
+    upholstery: canvas2d.Color = {43, 12, 18, 255}
+    upholstery_edge: canvas2d.Color = {68, 20, 27, 255}
+    wood: canvas2d.Color = {43, 29, 24, 255}
     world_box(center, {.72, .16, .68}, upholstery)
     world_box({center.x, center.y + .48, center.z + .28}, {.76, .86, .14}, upholstery_edge)
     world_box({center.x - .34, center.y - .28, center.z}, {.08, .58, .08}, wood)
@@ -371,10 +371,10 @@ mouse_theater_seat :: proc(center: third_person.Vec3) {
 }
 
 world_mouse_theater_auditorium :: proc() {
-    near_black: rl.Color = {8, 7, 10, 255}
-    wall: rl.Color = {18, 13, 18, 255}
-    aisle: rl.Color = {31, 20, 22, 255}
-    brass: rl.Color = {115, 79, 35, 255}
+    near_black: canvas2d.Color = {8, 7, 10, 255}
+    wall: canvas2d.Color = {18, 13, 18, 255}
+    aisle: canvas2d.Color = {31, 20, 22, 255}
+    brass: canvas2d.Color = {115, 79, 35, 255}
 
     // A shallow proscenium and closed black-box shell keep the first shot
     // intimate while still reading immediately as a theater.
@@ -392,7 +392,7 @@ world_mouse_theater_auditorium :: proc() {
     // single flat maroon wall in the lowered light.
     for fold in 0 ..< 18 {
         x := -6.38 + f32(fold) * .75
-        fold_color := fold % 2 == 0 ? rl.Color{91, 10, 22, 255} : rl.Color{61, 7, 17, 255}
+        fold_color := fold % 2 == 0 ? canvas2d.Color{91, 10, 22, 255} : canvas2d.Color{61, 7, 17, 255}
         depth := fold % 2 == 0 ? f32(.28) : f32(.18)
         fold_first := len(world_renderer.vertices)
         world_box_rotated_material(
@@ -427,8 +427,8 @@ world_mouse_theater_auditorium :: proc() {
 }
 
 world_mouse_theater_limelights :: proc(editor: ^Editor) {
-    housing: rl.Color = {29, 31, 27, 255}
-    lime_glass: rl.Color = {205, 255, 174, 255}
+    housing: canvas2d.Color = {29, 31, 27, 255}
+    lime_glass: canvas2d.Color = {205, 255, 174, 255}
     for lamp in 0 ..< 9 {
         x := -5.2 + f32(lamp) * 1.30
         // Traditional footlight placement along the apron, with compact
@@ -455,8 +455,8 @@ world_mouse_theater_limelights :: proc(editor: ^Editor) {
 }
 
 world_mouse_theater_spotlight :: proc(editor: ^Editor) {
-    warm: rl.Color = {255, 220, 157, 255}
-    rig: rl.Color = {35, 35, 39, 255}
+    warm: canvas2d.Color = {255, 220, 157, 255}
+    rig: canvas2d.Color = {35, 35, 39, 255}
     // Visible source and yoke establish where the pool comes from. The
     // emissive material provides a soft-edged spotlight footprint at night.
     world_tube_between({0, 12.55, -2.47}, {0, 11.75, -2.18}, {1, 0, 0}, .34, .42, rig)

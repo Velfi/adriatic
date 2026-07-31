@@ -5,7 +5,7 @@ import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
 import "core:math/linalg"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 SETTLEMENT_PATIO_CAPACITY :: 48
 
@@ -322,9 +322,9 @@ settlement_patio_point :: proc(patio: Settlement_Patio, x, y, z: f32) -> third_p
 }
 
 world_settlement_patio :: proc(patio: Settlement_Patio) {
-    foundation := patio.style == .Aegean ? rl.Color{190, 207, 203, 255} : rl.Color{198, 165, 123, 255}
+    foundation := patio.style == .Aegean ? canvas2d.Color{190, 207, 203, 255} : canvas2d.Color{198, 165, 123, 255}
     accent := patio.style == .Aegean ? PATIO_BLUE : PATIO_RED
-    secondary := patio.style == .Aegean ? PATIO_CREAM : rl.Color{240, 196, 124, 255}
+    secondary := patio.style == .Aegean ? PATIO_CREAM : canvas2d.Color{240, 196, 124, 255}
     center := third_person.Vec3{patio.center[0], patio.base_y, patio.center[1]}
     world_box_rotated(
         {center.x, center.y - .16, center.z},

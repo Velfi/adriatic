@@ -10,13 +10,14 @@ Region :: enum u8 {
 }
 
 Config :: struct {
-    region:       Region,
-    tower_height: f32,
-    tower_radius: f32,
-    sail_count:   int,
-    sail_length:  f32,
-    rpm:          f32,
-    heading:      f32,
+    region:           Region,
+    tower_height:     f32,
+    tower_radius:     f32,
+    sail_count:       int,
+    sail_length:      f32,
+    rpm:              f32,
+    heading:          f32,
+    entrance_heading: f32,
 }
 
 Plan :: struct {
@@ -45,6 +46,7 @@ Plan :: struct {
     phase:             f32,
     rpm:               f32,
     heading:           f32,
+    entrance_heading:  f32,
     valid:             bool,
 }
 
@@ -83,6 +85,7 @@ generate :: proc(seed: u32, requested: Config) -> Plan {
     }
     config.rpm = clamp(config.rpm, f32(0), f32(12))
     config.heading = clamp(config.heading, f32(-3.141592654), f32(3.141592654))
+    config.entrance_heading = clamp(config.entrance_heading, f32(-3.141592654), f32(3.141592654))
 
     shape := mix(seed ~ 0x57494e44)
     detail := mix(seed ~ 0x4d494c4c)
@@ -135,6 +138,7 @@ generate :: proc(seed: u32, requested: Config) -> Plan {
         phase             = f32((detail >> 8) & 1023) / 1023 * 6.283185307,
         rpm               = config.rpm,
         heading           = config.heading,
+        entrance_heading  = config.entrance_heading,
     }
     plan.valid = validate(&plan)
     return plan
@@ -162,6 +166,7 @@ validate :: proc(plan: ^Plan) -> bool {
     if plan.site_irregularity < 0 || plan.site_irregularity > .2 do return false
     if plan.rpm < 0 || plan.rpm > 12 do return false
     if plan.heading < -3.141592654 || plan.heading > 3.141592654 do return false
+    if plan.entrance_heading < -3.141592654 || plan.entrance_heading > 3.141592654 do return false
     return true
 }
 
@@ -177,4 +182,27 @@ rotor_rpm_for_wind :: proc(plan: ^Plan, wind: [2]f32) -> f32 {
     response := clamp(abs(through_rotor) / 8, f32(0), f32(1))
     direction := through_rotor < 0 ? f32(-1) : f32(1)
     return plan.rpm * response * direction
+}
+
+wrap_heading :: proc(heading: f32) -> f32 {
+    return f32(math.atan2(math.sin(heading), math.cos(heading)))
+}
+
+// A towermill's cap can face either normal of the same rotor plane. Choose
+// the wind-aligned equivalent requiring the least rotation of the heavy cap.
+rotor_heading_for_wind :: proc(current: f32, wind: [2]f32) -> f32 {
+    if wind[0] * wind[0] + wind[1] * wind[1] < .35 * .35 do return wrap_heading(current)
+    target := math.atan2(wind[0], wind[1])
+    delta := wrap_heading(target - current)
+    if delta > math.PI * .5 {
+        delta -= math.PI
+    } else if delta < -math.PI * .5 {
+        delta += math.PI
+    }
+    return wrap_heading(current + delta)
+}
+
+approach_heading :: proc(current, target, max_delta: f32) -> f32 {
+    delta := wrap_heading(target - current)
+    return wrap_heading(current + clamp(delta, -max_delta, max_delta))
 }

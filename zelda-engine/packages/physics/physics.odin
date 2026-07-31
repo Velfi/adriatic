@@ -73,6 +73,7 @@ Ray_Hit :: struct {
     body:     Body_ID,
     fraction: f32,
     position: Vec3,
+    normal:   Vec3,
 }
 
 Vehicle_Settings :: struct {
@@ -133,8 +134,9 @@ foreign bridge {
     zelda_physics_soft_strand_set_attachment :: proc(world: World, body: Body_ID, root, tangent: ^Vec3, delta_time: f32, teleport: bool) -> bool ---
     zelda_physics_soft_strand_get_points :: proc(world: World, body: Body_ID, points: ^f32, count: u32) -> bool ---
     zelda_physics_soft_strand_set_points :: proc(world: World, body: Body_ID, points: ^f32, count: u32, reset_velocity: bool) -> bool ---
-    zelda_physics_world_cast_ray :: proc(world: World, origin, direction: ^Vec3, max_distance: f32, out_body: ^Body_ID, out_fraction: ^f32, out_position: ^Vec3) -> bool ---
-    zelda_physics_world_cast_ray_layer :: proc(world: World, origin, direction: ^Vec3, max_distance: f32, layer: Object_Layer, out_body: ^Body_ID, out_fraction: ^f32, out_position: ^Vec3) -> bool ---
+    zelda_physics_world_cast_ray :: proc(world: World, origin, direction: ^Vec3, max_distance: f32, out_body: ^Body_ID, out_fraction: ^f32, out_position, out_normal: ^Vec3) -> bool ---
+    zelda_physics_world_cast_ray_layer :: proc(world: World, origin, direction: ^Vec3, max_distance: f32, layer: Object_Layer, out_body: ^Body_ID, out_fraction: ^f32, out_position, out_normal: ^Vec3) -> bool ---
+    zelda_physics_world_cast_ray_filtered :: proc(world: World, origin, direction: ^Vec3, max_distance: f32, layer_mask: u16, ignored_body: Body_ID, out_body: ^Body_ID, out_fraction: ^f32, out_position, out_normal: ^Vec3) -> bool ---
     zelda_physics_vehicle_create :: proc(world: World, settings: ^Vehicle_Settings, position: ^Vec3, rotation: ^Quat, user_data: u64) -> Vehicle ---
     zelda_physics_vehicle_destroy :: proc(world: World, vehicle: Vehicle) ---
     zelda_physics_vehicle_set_input :: proc(world: World, vehicle: Vehicle, forward, steering, brake, handbrake: f32) ---
@@ -469,6 +471,7 @@ cast_ray :: proc(world: World, origin, direction: Vec3, max_distance: f32) -> (h
         &hit.body,
         &hit.fraction,
         &hit.position,
+        &hit.normal,
     )
     return
 }
@@ -482,7 +485,22 @@ cast_ray_layer :: proc(
     origin_value, direction_value := origin, direction
     ok = zelda_physics_world_cast_ray_layer(
         world, &origin_value, &direction_value, max_distance, layer,
-        &hit.body, &hit.fraction, &hit.position,
+        &hit.body, &hit.fraction, &hit.position, &hit.normal,
+    )
+    return
+}
+
+cast_ray_filtered :: proc(
+    world: World,
+    origin, direction: Vec3,
+    max_distance: f32,
+    layer_mask: u16,
+    ignored_body: Body_ID = INVALID_BODY,
+) -> (hit: Ray_Hit, ok: bool) {
+    origin_value, direction_value := origin, direction
+    ok = zelda_physics_world_cast_ray_filtered(
+        world, &origin_value, &direction_value, max_distance, layer_mask, ignored_body,
+        &hit.body, &hit.fraction, &hit.position, &hit.normal,
     )
     return
 }

@@ -4,7 +4,7 @@ import atmosphere "../packages/atmosphere"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 PAPI_LAB_RUNWAY_HALF_LENGTH :: f32(120)
 PAPI_LAB_RUNWAY_HALF_WIDTH :: f32(10)
@@ -14,11 +14,11 @@ papi_lab_glide_angle: f32
 papi_lab_time_minutes: f32
 papi_lab_active_slider: int
 
-papi_lab_angle_slider_bounds :: proc() -> rl.Rectangle {
+papi_lab_angle_slider_bounds :: proc() -> canvas2d.Rectangle {
     return {x = 38, y = 118, width = 380, height = 8}
 }
 
-papi_lab_time_slider_bounds :: proc() -> rl.Rectangle {
+papi_lab_time_slider_bounds :: proc() -> canvas2d.Rectangle {
     return {x = 38, y = 183, width = 380, height = 8}
 }
 
@@ -92,27 +92,27 @@ papi_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 papi_lab_process_input :: proc(editor: ^Editor) {
     angle_track := papi_lab_angle_slider_bounds()
     time_track := papi_lab_time_slider_bounds()
-    mouse := rl.GetMousePosition()
-    if rl.IsMouseButtonPressed(.LEFT) {
-        angle_hit := rl.Rectangle {
+    mouse := canvas2d.GetMousePosition()
+    if canvas2d.IsMouseButtonPressed(.LEFT) {
+        angle_hit := canvas2d.Rectangle {
             x      = angle_track.x - 8,
             y      = angle_track.y - 14,
             width  = angle_track.width + 16,
             height = 36,
         }
-        time_hit := rl.Rectangle {
+        time_hit := canvas2d.Rectangle {
             x      = time_track.x - 8,
             y      = time_track.y - 14,
             width  = time_track.width + 16,
             height = 36,
         }
-        if rl.CheckCollisionPointRec(mouse, angle_hit) {
+        if canvas2d.CheckCollisionPointRec(mouse, angle_hit) {
             papi_lab_active_slider = 1
-        } else if rl.CheckCollisionPointRec(mouse, time_hit) {
+        } else if canvas2d.CheckCollisionPointRec(mouse, time_hit) {
             papi_lab_active_slider = 2
         }
     }
-    if !rl.IsMouseButtonDown(.LEFT) do papi_lab_active_slider = 0
+    if !canvas2d.IsMouseButtonDown(.LEFT) do papi_lab_active_slider = 0
     switch papi_lab_active_slider {
     case 1:
         normalized := clamp((mouse.x - angle_track.x) / angle_track.width, 0, 1)
@@ -149,17 +149,17 @@ world_papi_lab :: proc(editor: ^Editor) {
 papi_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     whites := papi_lab_white_count(papi_lab_glide_angle)
     reds := 4 - whites
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 430,
         height = 204,
     }
-    rl.DrawRectangleRounded(panel, .10, 8, {10, 24, 31, 230})
-    rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {118, 169, 169, 255})
-    rl.DrawTextEx(rl.Font{}, "PAPI APPROACH LIGHT LAB", {38, 38}, 19, 1, {245, 239, 192, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawRectangleRounded(panel, .10, 8, {10, 24, 31, 230})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {118, 169, 169, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "PAPI APPROACH LIGHT LAB", {38, 38}, 19, 1, {245, 239, 192, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf(
             "%.2f DEG   %d WHITE / %d RED   %s",
             papi_lab_glide_angle,
@@ -170,31 +170,31 @@ papi_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         {38, 72},
         14,
         1,
-        whites == 2 ? rl.Color{158, 244, 190, 255} : rl.Color{246, 197, 134, 255},
+        whites == 2 ? canvas2d.Color{158, 244, 190, 255} : canvas2d.Color{246, 197, 134, 255},
     )
     angle_track := papi_lab_angle_slider_bounds()
     angle_normalized := (papi_lab_glide_angle - 2) / 2.25
-    rl.DrawRectangleRounded(angle_track, 1, 4, {61, 83, 88, 255})
-    rl.DrawRectangleRounded(
+    canvas2d.DrawRectangleRounded(angle_track, 1, 4, {61, 83, 88, 255})
+    canvas2d.DrawRectangleRounded(
         {angle_track.x, angle_track.y, angle_track.width * angle_normalized, angle_track.height},
         1,
         4,
         {102, 206, 205, 255},
     )
-    rl.DrawCircleV(
+    canvas2d.DrawCircleV(
         {angle_track.x + angle_track.width * angle_normalized, angle_track.y + angle_track.height * .5},
         8,
         {235, 239, 217, 255},
     )
-    rl.DrawTextEx(rl.Font{}, "2.00 DEG", {38, 132}, 10, 1, {169, 201, 201, 255})
-    rl.DrawTextEx(rl.Font{}, "DRAG TO TEST GLIDE ANGLE", {152, 132}, 10, 1, {205, 235, 235, 255})
-    rl.DrawTextEx(rl.Font{}, "4.25 DEG", {365, 132}, 10, 1, {169, 201, 201, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "2.00 DEG", {38, 132}, 10, 1, {169, 201, 201, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "DRAG TO TEST GLIDE ANGLE", {152, 132}, 10, 1, {205, 235, 235, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "4.25 DEG", {365, 132}, 10, 1, {169, 201, 201, 255})
 
     total_minutes := int(papi_lab_time_minutes)
     hour := total_minutes / 60
     minute := total_minutes % 60
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf("TIME OF DAY   %02d:%02d", hour, minute),
         {38, 157},
         12,
@@ -203,21 +203,21 @@ papi_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     )
     time_track := papi_lab_time_slider_bounds()
     time_normalized := papi_lab_time_minutes / (24 * 60 - 1)
-    rl.DrawRectangleRounded(time_track, 1, 4, {61, 83, 88, 255})
-    rl.DrawRectangleRounded(
+    canvas2d.DrawRectangleRounded(time_track, 1, 4, {61, 83, 88, 255})
+    canvas2d.DrawRectangleRounded(
         {time_track.x, time_track.y, time_track.width * time_normalized, time_track.height},
         1,
         4,
         {231, 174, 91, 255},
     )
-    rl.DrawCircleV(
+    canvas2d.DrawCircleV(
         {time_track.x + time_track.width * time_normalized, time_track.y + time_track.height * .5},
         8,
         {235, 239, 217, 255},
     )
-    rl.DrawTextEx(rl.Font{}, "00:00", {38, 197}, 10, 1, {169, 201, 201, 255})
-    rl.DrawTextEx(rl.Font{}, "DRAG TO TEST LIGHTING", {161, 197}, 10, 1, {205, 235, 235, 255})
-    rl.DrawTextEx(rl.Font{}, "23:59", {382, 197}, 10, 1, {169, 201, 201, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "00:00", {38, 197}, 10, 1, {169, 201, 201, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "DRAG TO TEST LIGHTING", {161, 197}, 10, 1, {205, 235, 235, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "23:59", {382, 197}, 10, 1, {169, 201, 201, 255})
     _ = width
     _ = height
 }

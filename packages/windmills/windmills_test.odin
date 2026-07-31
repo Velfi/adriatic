@@ -124,3 +124,20 @@ rotor_wind_projection_follows_generated_heading :: proc(t: ^testing.T) {
     testing.expect_value(t, rotor_rpm_for_wind(&plan, {4, 0}), plan.rpm * .5)
     testing.expect(t, abs(rotor_rpm_for_wind(&plan, {0, 4})) < .0001)
 }
+
+@(test)
+rotor_cap_uses_nearest_wind_aligned_heading :: proc(t: ^testing.T) {
+    testing.expect(t, abs(rotor_heading_for_wind(0, {0, 8})) < .0001)
+    testing.expect(t, abs(rotor_heading_for_wind(0, {8, 0}) - math.PI * .5) < .0001)
+    near_half_turn := rotor_heading_for_wind(3.1, {0, 8})
+    testing.expect(t, abs(wrap_heading(near_half_turn - math.PI)) < .05)
+    testing.expect_value(t, rotor_heading_for_wind(.7, {0, 0}), f32(.7))
+}
+
+@(test)
+cap_heading_approach_wraps_without_snapping :: proc(t: ^testing.T) {
+    start := f32(3.1)
+    next := approach_heading(start, -3.1, .02)
+    testing.expect(t, abs(wrap_heading(next - start) - .02) < .0001)
+    testing.expect(t, abs(wrap_heading(approach_heading(0, 1, .1)) - .1) < .0001)
+}

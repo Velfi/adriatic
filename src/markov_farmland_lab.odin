@@ -7,7 +7,7 @@ import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
 import "core:strconv"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 MARKOV_FARMLAND_DEFAULT_SEED :: u32(0x4641524d)
 MARKOV_FARMLAND_ORIGIN_X :: f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
@@ -59,8 +59,8 @@ farmland_warp_grid :: proc(grid_x, grid_z: f32) -> (f32, f32) {
     return grid_x + warp_x, grid_z + warp_z
 }
 
-farmland_color :: proc(crop: farmland.Crop, tint: f32) -> rl.Color {
-    base: rl.Color
+farmland_color :: proc(crop: farmland.Crop, tint: f32) -> canvas2d.Color {
+    base: canvas2d.Color
     switch crop {
     case .Wheat:
         base = {190, 157, 72, 255}
@@ -73,7 +73,7 @@ farmland_color :: proc(crop: farmland.Crop, tint: f32) -> rl.Color {
     case .Clover:
         base = {75, 132, 72, 255}
     }
-    warm := rl.Color{202, 177, 103, 255}
+    warm := canvas2d.Color{202, 177, 103, 255}
     return color_lerp(base, warm, tint * .12)
 }
 
@@ -147,7 +147,7 @@ farmland_vineyard_surface_is_safe :: proc(editor: ^Editor, grid_x, grid_z: f32) 
     return farmland_vineyard_heights_are_safe(center, neighbors)
 }
 
-farmland_raw_patch :: proc(editor: ^Editor, x0, z0, x1, z1: f32, color: rl.Color, lift: f32 = .16) {
+farmland_raw_patch :: proc(editor: ^Editor, x0, z0, x1, z1: f32, color: canvas2d.Color, lift: f32 = .16) {
     a := farmland_world_point(editor, x0, z0, lift)
     b := farmland_world_point(editor, x0, z1, lift)
     c := farmland_world_point(editor, x1, z1, lift)
@@ -155,7 +155,7 @@ farmland_raw_patch :: proc(editor: ^Editor, x0, z0, x1, z1: f32, color: rl.Color
     world_quad(a, b, c, d, color)
 }
 
-farmland_patch :: proc(editor: ^Editor, x0, z0, x1, z1: f32, color: rl.Color, lift: f32 = .16) {
+farmland_patch :: proc(editor: ^Editor, x0, z0, x1, z1: f32, color: canvas2d.Color, lift: f32 = .16) {
     if !farmland_surface_is_safe(editor, x0, z0) ||
        !farmland_surface_is_safe(editor, x0, z1) ||
        !farmland_surface_is_safe(editor, x1, z0) ||
@@ -276,8 +276,8 @@ farmland_render_vineyard :: proc(
         root_x    = -support_width * .42,
         signature = 0x76696e6579617264 ~ u64(bay_cells),
     }
-    post_color := rl.Color{91, 68, 45, 255}
-    wire_color := rl.Color{76, 76, 68, 255}
+    post_color := canvas2d.Color{91, 68, 45, 255}
+    wire_color := canvas2d.Color{76, 76, 68, 255}
     along_min := parcel.row_axis_x ? parcel.min_x : parcel.min_z
     along_max := parcel.row_axis_x ? parcel.max_x : parcel.max_z
     across_min := parcel.row_axis_x ? parcel.min_z : parcel.min_x
@@ -394,7 +394,7 @@ farmland_render_vineyard :: proc(
                     }
                     shade := f32((mixed >> u32((cluster & 3) * 8)) & 255) / 255
                     vigor := .76 + maturity * .24
-                    color := color_lerp(rl.Color{57, 101, 46, 255}, {91, 126, 55, 255}, shade * .44)
+                    color := color_lerp(canvas2d.Color{57, 101, 46, 255}, {91, 126, 55, 255}, shade * .44)
                     color = color_lerp({73, 91, 43, 255}, color, vigor)
                     color.a = u8(clamp(detail_fade * 255, 0, 255))
                     row_forward := third_person.Vec3{dx / bay_length, 0, dz / bay_length}
@@ -536,7 +536,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
     for parcel, parcel_index in plan.parcels[:plan.parcel_count] {
         solid := farmland_color(parcel.crop, parcel.tint)
         if farmland_render_preview {
-            solid = color_lerp(solid, rl.Color{128, 211, 166, 255}, .42)
+            solid = color_lerp(solid, canvas2d.Color{128, 211, 166, 255}, .42)
         }
         for z := parcel.min_z; z < parcel.max_z; z += step {
             for x := parcel.min_x; x < parcel.max_x; x += step {
@@ -575,7 +575,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
         // One narrow, terrain-sampled seam per parcel side gives the patchwork
         // depth at walking height. From the air these collapse into simple dark
         // boundaries without requiring foliage cards or a separate material.
-        hedge := color_lerp(rl.Color{48, 78, 43, 255}, solid, 1 - detail_fade * .72)
+        hedge := color_lerp(canvas2d.Color{48, 78, 43, 255}, solid, 1 - detail_fade * .72)
         edge := f32(.055)
         farmland_patch(
             editor,
@@ -675,7 +675,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
         farmland_patch(editor, gx0, gz0, gx1, gz1, {91, 69, 45, 255}, .21)
         if !farmland_render_preview && detail_fade > .18 {
             samples := plan.garden_span * 4
-            garden_palette := [4]rl.Color {
+            garden_palette := [4]canvas2d.Color {
                 {72, 124, 55, 255},
                 {108, 139, 62, 255},
                 {151, 92, 72, 255},
@@ -707,7 +707,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
     // Only larger field systems need an internal access spine. On compact
     // one- and two-field holdings it read as another arbitrary subdivision.
     if plan.parcel_count >= 3 {
-        track := color_lerp(rl.Color{151, 119, 75, 255}, rl.Color{176, 151, 101, 255}, 1 - detail_fade)
+        track := color_lerp(canvas2d.Color{151, 119, 75, 255}, canvas2d.Color{176, 151, 101, 255}, 1 - detail_fade)
         track_half_width := f32(.16)
         track_x := f32(plan.width / 2)
         track_z := f32(plan.height / 2)
@@ -1006,7 +1006,7 @@ markov_farmland_lab_terrace_walls :: proc(editor: ^Editor) {
             lower_y := terrain.sample_height(&editor.project, 0, lower_x, lower_z)
             upper_y := terrain.sample_height(&editor.project, 0, upper_x, upper_z)
             wall_height := max(upper_y - lower_y, f32(.8))
-            base_stone := edge_index == 0 ? rl.Color{119, 116, 103, 255} : rl.Color{131, 126, 108, 255}
+            base_stone := edge_index == 0 ? canvas2d.Color{119, 116, 103, 255} : canvas2d.Color{131, 126, 108, 255}
             COURSE_COUNT :: 4
             course_height := wall_height / COURSE_COUNT
             for course in 0 ..< COURSE_COUNT {
@@ -1109,10 +1109,10 @@ markov_farmland_process_input :: proc(editor: ^Editor) {
         return
     }
     selected := markov_farmland_lab_terrain
-    if rl.IsKeyPressed(.ONE) do selected = .Flat
-    if rl.IsKeyPressed(.TWO) do selected = .Terrace
-    if rl.IsKeyPressed(.THREE) do selected = .Cliff
-    if rl.IsKeyPressed(.FOUR) do selected = .Incline
+    if canvas2d.IsKeyPressed(.ONE) do selected = .Flat
+    if canvas2d.IsKeyPressed(.TWO) do selected = .Terrace
+    if canvas2d.IsKeyPressed(.THREE) do selected = .Cliff
+    if canvas2d.IsKeyPressed(.FOUR) do selected = .Incline
     if selected != markov_farmland_lab_terrain {
         markov_farmland_lab_apply_terrain(editor, selected)
         markov_farmland_lab_configure_camera(editor)
@@ -1120,22 +1120,22 @@ markov_farmland_process_input :: proc(editor: ^Editor) {
 }
 
 markov_farmland_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 430,
         height = 112,
     }
-    rl.DrawRectangleRounded(panel, .12, 8, {10, 27, 37, 226})
-    rl.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, {104, 168, 184, 255})
-    rl.DrawTextEx(rl.Font{}, "MARKOV FARMLAND", {38, 38}, 20, 1, {245, 238, 197, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawRectangleRounded(panel, .12, 8, {10, 27, 37, 226})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, {104, 168, 184, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "MARKOV FARMLAND", {38, 38}, 20, 1, {245, 238, 197, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         markov_farmland_lab_terrain_name(markov_farmland_lab_terrain),
         {38, 68},
         17,
         1,
         {105, 215, 198, 255},
     )
-    rl.DrawTextEx(rl.Font{}, "1 FLAT   2 TERRACE   3 CLIFF   4 INCLINE", {38, 98}, 14, 1, {190, 207, 211, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "1 FLAT   2 TERRACE   3 CLIFF   4 INCLINE", {38, 98}, 14, 1, {190, 207, 211, 255})
 }

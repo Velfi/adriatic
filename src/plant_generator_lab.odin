@@ -11,7 +11,7 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:strconv"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 plant_generator_seed := u64(73)
 plant_generator_maturity := f32(1)
@@ -540,42 +540,42 @@ plant_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 
 plant_generator_lab_process_input :: proc(editor: ^Editor) {
     changed := false
-    if rl.IsKeyPressed(.R) {
+    if canvas2d.IsKeyPressed(.R) {
         plant_generator_seed += 1
         changed = true
     }
     // canvas2d currently exposes arrows but not bracket key codes; arrows are
     // the interactive aliases for the documented [ and ] maturity controls.
-    if rl.IsKeyPressed(.LEFT) {
+    if canvas2d.IsKeyPressed(.LEFT) {
         plant_generator_maturity = max(0, plant_generator_maturity - .1)
         changed = true
     }
-    if rl.IsKeyPressed(.RIGHT) {
+    if canvas2d.IsKeyPressed(.RIGHT) {
         plant_generator_maturity = min(1, plant_generator_maturity + .1)
         changed = true
     }
-    if rl.IsKeyPressed(.ONE) {
+    if canvas2d.IsKeyPressed(.ONE) {
         plant_generator_detail = .Near
         changed = true
     }
-    if rl.IsKeyPressed(.TWO) {
+    if canvas2d.IsKeyPressed(.TWO) {
         plant_generator_detail = .Medium
         changed = true
     }
-    if rl.IsKeyPressed(.THREE) {
+    if canvas2d.IsKeyPressed(.THREE) {
         plant_generator_detail = .Far
         changed = true
     }
-    if rl.IsKeyPressed(.FOUR) {
+    if canvas2d.IsKeyPressed(.FOUR) {
         plant_generator_isolated = -1
         changed = true
     }
-    if rl.IsKeyPressed(.UP) {
+    if canvas2d.IsKeyPressed(.UP) {
         plant_generator_isolated =
             plant_generator_isolated < 0 ? 0 : (plant_generator_isolated + 1) % plants.SPECIES_COUNT
         changed = true
     }
-    if rl.IsKeyPressed(.DOWN) {
+    if canvas2d.IsKeyPressed(.DOWN) {
         if plant_generator_isolated < 0 {
             plant_generator_isolated = plants.SPECIES_COUNT - 1
         } else {
@@ -658,7 +658,7 @@ plant_generator_point :: proc(base: third_person.Vec3, point: lsystem.Vec3, yaw,
     return result
 }
 
-plant_generator_colors :: proc(species: plants.Species) -> (wood, leaf, accent: rl.Color) {
+plant_generator_colors :: proc(species: plants.Species) -> (wood, leaf, accent: canvas2d.Color) {
     #partial switch species {
     case .Olive:
         return {122, 110, 88, 255}, {105, 123, 83, 255}, {62, 72, 40, 255}
@@ -706,7 +706,7 @@ plant_generator_colors :: proc(species: plants.Species) -> (wood, leaf, accent: 
     return {100, 75, 50, 255}, {65, 110, 60, 255}, {220, 160, 90, 255}
 }
 
-plant_generator_leaf_color :: proc(species: plants.Species, variant: u8, fallback: rl.Color) -> rl.Color {
+plant_generator_leaf_color :: proc(species: plants.Species, variant: u8, fallback: canvas2d.Color) -> canvas2d.Color {
     if species == .Pelargonium {
         switch variant % 4 {
         case 0:
@@ -748,7 +748,7 @@ plant_generator_draw_leaf :: proc(
     species: plants.Species,
     attachment: plants.Attachment,
     yaw, display_scale: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     variant := int(attachment.variant)
     if !plant_generator_leaf_mesh_ready[int(species)][variant] do return
@@ -828,7 +828,7 @@ plant_generator_draw_flower :: proc(
     species: plants.Species,
     attachment: plants.Attachment,
     display_scale: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     stage_index := 3
     #partial switch attachment.stage {
@@ -942,7 +942,7 @@ plant_generator_draw_fruit :: proc(
     species: plants.Species,
     attachment: plants.Attachment,
     display_scale: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     stage_index := 3
     #partial switch attachment.stage {
@@ -1003,7 +1003,7 @@ plant_generator_draw_branch_hull :: proc(
     index: int,
     base: third_person.Vec3,
     yaw, display_scale: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     if !plant_generator_branch_mesh_ready[index] do return
     mesh := &plant_generator_branch_meshes[index]
@@ -1011,7 +1011,7 @@ plant_generator_draw_branch_hull :: proc(
     for first := 0; first + 2 < len(mesh.indices); first += 3 {
         points: [3]third_person.Vec3
         normals: [3]third_person.Vec3
-        colors := [3]rl.Color{color, color, color}
+        colors := [3]canvas2d.Color{color, color, color}
         for point_index in 0 ..< 3 {
             vertex := mesh.vertices[mesh.indices[first + point_index]]
             points[point_index] = plant_generator_point(base, vertex.position, yaw, display_scale)
@@ -1050,8 +1050,8 @@ plant_generator_draw_branch_hull :: proc(
     }
 }
 
-plant_generator_stage_color :: proc(color: rl.Color, stage: plants.Attachment_Stage) -> rl.Color {
-    green := rl.Color{91, 132, 67, color.a}
+plant_generator_stage_color :: proc(color: canvas2d.Color, stage: plants.Attachment_Stage) -> canvas2d.Color {
+    green := canvas2d.Color{91, 132, 67, color.a}
     green_weight: f32
     #partial switch stage {
     case .Bud:
@@ -1114,7 +1114,7 @@ plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
         if species == .Italian_Cypress && attachment.kind == .Fruit {
             // Young cones stay olive green; older variants dry toward warm
             // woody brown. Both remain distinct against the blue-green crown.
-            color = attachment.variant < 2 ? rl.Color{119, 128, 68, 255} : rl.Color{164, 117, 66, 255}
+            color = attachment.variant < 2 ? canvas2d.Color{119, 128, 68, 255} : canvas2d.Color{164, 117, 66, 255}
         }
         if attachment.kind == .Flower || attachment.kind == .Fruit {
             color = plant_generator_stage_color(color, attachment.stage)
@@ -1175,10 +1175,10 @@ world_plant_generator_lab :: proc(_: ^Editor) {
 }
 
 plant_generator_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
-    panel := rl.Rectangle{24, 24, 560, 126}
-    rl.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
-    rl.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
-    rl.DrawTextEx(rl.Font{}, "ADRIATIC PLANT GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
+    panel := canvas2d.Rectangle{24, 24, 560, 126}
+    canvas2d.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "ADRIATIC PLANT GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
     detail_name := plant_generator_detail == .Near ? "NEAR" : plant_generator_detail == .Medium ? "MEDIUM" : "FAR"
     summary := fmt.ctprintf(
         "SEED %d  /  MATURITY %.0f%%  /  %s",
@@ -1186,9 +1186,9 @@ plant_generator_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
         plant_generator_maturity * 100,
         detail_name,
     )
-    rl.DrawTextEx(rl.Font{}, summary, {38, 66}, 13, 1, {174, 207, 160, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 66}, 13, 1, {174, 207, 160, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         "R SEED   LEFT/RIGHT MATURITY   UP/DOWN SPECIES   1/2/3 DETAIL   4 GALLERY",
         {38, 91},
         11,
@@ -1197,10 +1197,10 @@ plant_generator_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
     )
     if plant_generator_isolated >= 0 {
         isolated_label := fmt.ctprintf("%s", plants.species_name(plants.Species(plant_generator_isolated)))
-        rl.DrawTextEx(rl.Font{}, isolated_label, {38, 116}, 10, 1, {216, 194, 151, 255})
+        canvas2d.DrawTextEx(canvas2d.Font{}, isolated_label, {38, 116}, 10, 1, {216, 194, 151, 255})
     } else {
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             "OLIVE  CYPRESS  FIG  LEMON  /  POMEGRANATE  ALMOND  OLEANDER  ROSEMARY  /  BOUGAINVILLEA  GRAPEVINE",
             {38, 116},
             10,

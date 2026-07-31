@@ -5,7 +5,7 @@ import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 MOUSE_WHEEL_RADIUS :: f32(4.2)
 MOUSE_WHEEL_MOUSE_RADIUS :: f32(2.8)
@@ -102,11 +102,11 @@ mouse_wheel_lab_press :: proc(editor: ^Editor, pressed_step: int) {
 }
 
 mouse_wheel_lab_process_input :: proc(editor: ^Editor) {
-    if rl.IsKeyPressed(.ONE) do mouse_wheel_lab_press(editor, 0)
-    if rl.IsKeyPressed(.TWO) do mouse_wheel_lab_press(editor, 1)
-    if rl.IsKeyPressed(.THREE) do mouse_wheel_lab_press(editor, 2)
-    if rl.IsKeyPressed(.FOUR) do mouse_wheel_lab_press(editor, 3)
-    if rl.IsKeyPressed(.R) do mouse_wheel_lab_reset(editor)
+    if canvas2d.IsKeyPressed(.ONE) do mouse_wheel_lab_press(editor, 0)
+    if canvas2d.IsKeyPressed(.TWO) do mouse_wheel_lab_press(editor, 1)
+    if canvas2d.IsKeyPressed(.THREE) do mouse_wheel_lab_press(editor, 2)
+    if canvas2d.IsKeyPressed(.FOUR) do mouse_wheel_lab_press(editor, 3)
+    if canvas2d.IsKeyPressed(.R) do mouse_wheel_lab_reset(editor)
 }
 
 town_mouse_wheel_center :: proc(editor: ^Editor) -> (position: third_person.Vec3, rotation: f32, found: bool) {
@@ -155,10 +155,10 @@ town_mouse_wheel_apply_player :: proc(editor: ^Editor, center: third_person.Vec3
 }
 
 town_mouse_wheel_run_input :: proc(editor: ^Editor) {
-    if rl.IsKeyPressed(.ONE) || gamepad_pressed(.South) do mouse_wheel_lab_press(editor, 0)
-    if rl.IsKeyPressed(.TWO) || gamepad_pressed(.East) do mouse_wheel_lab_press(editor, 1)
-    if rl.IsKeyPressed(.THREE) || gamepad_pressed(.North) do mouse_wheel_lab_press(editor, 2)
-    if rl.IsKeyPressed(.FOUR) || gamepad_pressed(.West) do mouse_wheel_lab_press(editor, 3)
+    if canvas2d.IsKeyPressed(.ONE) || gamepad_pressed(.South) do mouse_wheel_lab_press(editor, 0)
+    if canvas2d.IsKeyPressed(.TWO) || gamepad_pressed(.East) do mouse_wheel_lab_press(editor, 1)
+    if canvas2d.IsKeyPressed(.THREE) || gamepad_pressed(.North) do mouse_wheel_lab_press(editor, 2)
+    if canvas2d.IsKeyPressed(.FOUR) || gamepad_pressed(.West) do mouse_wheel_lab_press(editor, 3)
 }
 
 town_mouse_wheel_dismount :: proc(editor: ^Editor, center: third_person.Vec3) {
@@ -182,7 +182,7 @@ town_mouse_wheel_gameplay_process :: proc(editor: ^Editor, delta_seconds: f32) -
     }
 
     if town_mouse_wheel_mounted {
-        if rl.IsKeyPressed(.F) {
+        if canvas2d.IsKeyPressed(.F) {
             town_mouse_wheel_dismount(editor, center)
             return true
         }
@@ -279,7 +279,7 @@ world_mouse_wheel_lab :: proc(editor: ^Editor) {
         radius := MOUSE_WHEEL_RADIUS * .72
         x := math.cos(angle) * radius
         z := math.sin(angle) * radius
-        marker_color := marker % 4 == 0 ? rl.Color{236, 189, 91, 255} : rl.Color{84, 105, 109, 255}
+        marker_color := marker % 4 == 0 ? canvas2d.Color{236, 189, 91, 255} : canvas2d.Color{84, 105, 109, 255}
         world_box_rotated({x, deck_height + .075, z}, {.10, .025, 1.12}, angle + math.PI * .5, marker_color)
     }
 
@@ -308,39 +308,39 @@ world_mouse_wheel_lab :: proc(editor: ^Editor) {
 
 mouse_wheel_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     if editor == nil do return
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 455,
         height = 184,
     }
-    rl.DrawRectangleRounded(panel, .08, 8, {13, 25, 30, 235})
+    canvas2d.DrawRectangleRounded(panel, .08, 8, {13, 25, 30, 235})
     border :=
-        editor.map_time < mouse_wheel_mistake_flash_until ? rl.Color{225, 91, 76, 255} : rl.Color{111, 181, 184, 255}
-    rl.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, border)
-    rl.DrawTextEx(rl.Font{}, "MOUSE WHEEL LAB", {38, 37}, 21, 1, {246, 236, 191, 255})
-    rl.DrawTextEx(rl.Font{}, "PRESS IN ORDER TO RUN   /   R RESET", {38, 68}, 13, 1, {193, 217, 218, 255})
+        editor.map_time < mouse_wheel_mistake_flash_until ? canvas2d.Color{225, 91, 76, 255} : canvas2d.Color{111, 181, 184, 255}
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, border)
+    canvas2d.DrawTextEx(canvas2d.Font{}, "MOUSE WHEEL LAB", {38, 37}, 21, 1, {246, 236, 191, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "PRESS IN ORDER TO RUN   /   R RESET", {38, 68}, 13, 1, {193, 217, 218, 255})
 
     for index in 0 ..< 4 {
         x := 38 + f32(index) * 48
         active := index == mouse_wheel_step
-        color := active ? rl.Color{237, 187, 79, 255} : rl.Color{63, 84, 89, 255}
-        rl.DrawRectangleRounded({x, 91, 36, 30}, .2, 5, color)
+        color := active ? canvas2d.Color{237, 187, 79, 255} : canvas2d.Color{63, 84, 89, 255}
+        canvas2d.DrawRectangleRounded({x, 91, 36, 30}, .2, 5, color)
         label := fmt.ctprintf("%d", index + 1)
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             label,
             {x + 13, 97},
             16,
             1,
-            active ? rl.Color{27, 31, 30, 255} : rl.Color{205, 219, 218, 255},
+            active ? canvas2d.Color{27, 31, 30, 255} : canvas2d.Color{205, 219, 218, 255},
         )
     }
 
     wheel_speed_at_mouse := mouse_wheel_angular_velocity * MOUSE_WHEEL_MOUSE_RADIUS
-    speed_color := abs(mouse_wheel_mouse_speed) > .05 ? rl.Color{143, 224, 164, 255} : rl.Color{171, 185, 184, 255}
-    rl.DrawTextEx(
-        rl.Font{},
+    speed_color := abs(mouse_wheel_mouse_speed) > .05 ? canvas2d.Color{143, 224, 164, 255} : canvas2d.Color{171, 185, 184, 255}
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf(
             "MOUSE %+.2f m/s   DECK %+.2f m/s   PEAK %.2f",
             mouse_wheel_mouse_speed,
@@ -352,9 +352,9 @@ mouse_wheel_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         1,
         speed_color,
     )
-    slip_color := abs(mouse_wheel_slip) > 1 ? rl.Color{235, 151, 86, 255} : rl.Color{169, 207, 193, 255}
-    rl.DrawTextEx(
-        rl.Font{},
+    slip_color := abs(mouse_wheel_slip) > 1 ? canvas2d.Color{235, 151, 86, 255} : canvas2d.Color{169, 207, 193, 255}
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf(
             "SLIP %+.2f m/s   RESIST %.2f   JOLT %.2f",
             mouse_wheel_slip,
@@ -384,7 +384,7 @@ world_town_mouse_wheel :: proc(center_x, base_y, center_z, rotation, wheel_angle
         angle := rotation + wheel_angle + f32(notch) * math.PI * 2 / 12
         x := center_x + math.cos(angle) * radius * .70
         z := center_z + math.sin(angle) * radius * .70
-        color := notch % 3 == 0 ? rl.Color{231, 185, 91, 255} : rl.Color{79, 100, 103, 255}
+        color := notch % 3 == 0 ? canvas2d.Color{231, 185, 91, 255} : canvas2d.Color{79, 100, 103, 255}
         world_box_rotated({x, deck_y + .06, z}, {.055, .022, .48}, angle + math.PI * .5, color)
     }
 

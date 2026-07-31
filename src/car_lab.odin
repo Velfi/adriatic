@@ -7,7 +7,7 @@ import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 car_lab_pavement := roads.Pavement.Asphalt
 car_lab_show_ui := true
@@ -135,11 +135,11 @@ car_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 
 car_lab_process_input :: proc(editor: ^Editor) {
     if editor == nil do return
-    if rl.IsKeyPressed(.ONE) do _ = car_lab_place_on_pavement(editor, .Asphalt)
-    if rl.IsKeyPressed(.TWO) do _ = car_lab_place_on_pavement(editor, .Gravel)
-    if rl.IsKeyPressed(.THREE) do _ = car_lab_place_on_pavement(editor, .Cobblestone)
-    if rl.IsKeyPressed(.FOUR) do _ = car_lab_place_on_pavement(editor, .Dirt)
-    if rl.IsKeyPressed(.R) do _ = car_lab_place_on_pavement(editor, car_lab_pavement)
+    if canvas2d.IsKeyPressed(.ONE) do _ = car_lab_place_on_pavement(editor, .Asphalt)
+    if canvas2d.IsKeyPressed(.TWO) do _ = car_lab_place_on_pavement(editor, .Gravel)
+    if canvas2d.IsKeyPressed(.THREE) do _ = car_lab_place_on_pavement(editor, .Cobblestone)
+    if canvas2d.IsKeyPressed(.FOUR) do _ = car_lab_place_on_pavement(editor, .Dirt)
+    if canvas2d.IsKeyPressed(.R) do _ = car_lab_place_on_pavement(editor, car_lab_pavement)
 }
 
 car_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
@@ -147,19 +147,19 @@ car_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     center_surface, center_grip := road_car_surface(editor, editor.car.position)
     speed := vehicles.car_drive_speed(editor.car_drive)
     bump := car_surface_bump_acceleration(center_surface, editor.car.position, speed)
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 20,
         y      = 20,
         width  = 410,
         height = 258,
     }
-    rl.DrawRectangleRounded(panel, .08, 8, {12, 22, 29, 230})
-    rl.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {191, 157, 94, 255})
-    rl.DrawTextEx(rl.Font{}, "CAR PHYSICS LAB", {36, 35}, 21, 1, {247, 225, 168, 255})
-    rl.DrawTextEx(rl.Font{}, "WASD drive   SPACE handbrake   R reset", {36, 67}, 14, 1, {207, 221, 218, 255})
-    rl.DrawTextEx(rl.Font{}, "1 asphalt   2 gravel   3 cobble   4 dirt", {36, 89}, 14, 1, {207, 221, 218, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawRectangleRounded(panel, .08, 8, {12, 22, 29, 230})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {191, 157, 94, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "CAR PHYSICS LAB", {36, 35}, 21, 1, {247, 225, 168, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "WASD drive   SPACE handbrake   R reset", {36, 67}, 14, 1, {207, 221, 218, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "1 asphalt   2 gravel   3 cobble   4 dirt", {36, 89}, 14, 1, {207, 221, 218, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf(
             "SPEED %5.1f m/s    STEER %+.2f    YAW %+.2f rad/s",
             speed,
@@ -171,8 +171,8 @@ car_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         1,
         {238, 239, 222, 255},
     )
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf(
             "SLIP %3.0f%%   BUMP %+.2f m/s2   %s %.2f / %.2f",
             editor.car_drive.slip_amount * 100,
@@ -192,9 +192,9 @@ car_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         wheel_surface, _ := road_car_surface(editor, {wheel.position[0], wheel.position[1], wheel.position[2]})
         column := index % 2
         row := index / 2
-        color := wheel.contact ? rl.Color{139, 219, 161, 255} : rl.Color{224, 121, 102, 255}
-        rl.DrawTextEx(
-            rl.Font{},
+        color := wheel.contact ? canvas2d.Color{139, 219, 161, 255} : canvas2d.Color{224, 121, 102, 255}
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             fmt.ctprintf(
                 "%s  %-8s  %s",
                 wheel_labels[index],
@@ -207,8 +207,8 @@ car_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
             color,
         )
     }
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf("TEST PAD: %s", roads.pavement_name(car_lab_pavement)),
         {36, 238},
         13,

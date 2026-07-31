@@ -7,7 +7,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:time"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 when ODIN_TEST {
     vehicle_paint_test_uv :: proc(x, y: int) -> [2]f32 {
@@ -79,8 +79,8 @@ when ODIN_TEST {
                 editor.vehicle_paint_texel_part[y * VEHICLE_PAINT_TEXTURE_WIDTH + x] = owner
             }
         }
-        red := rl.Color{220, 20, 30, 255}
-        blue := rl.Color{20, 60, 220, 255}
+        red := canvas2d.Color{220, 20, 30, 255}
+        blue := canvas2d.Color{20, 60, 220, 255}
         masked_part := vehicles.Aircraft_Mesh_Part.Wing
         masked_texel := 14 * VEHICLE_PAINT_TEXTURE_WIDTH + 32
         editor.vehicle_paint_texel_part[masked_texel] = u8(masked_part) + 1
@@ -307,8 +307,8 @@ when ODIN_TEST {
                 value := int(ramp[index].r) + int(ramp[index].g) + int(ramp[index].b)
                 testing.expect(t, value > previous_value)
             }
-            cool := rl.Color{12, 22, 39, 255}
-            warm := rl.Color{255, 248, 224, 255}
+            cool := canvas2d.Color{12, 22, 39, 255}
+            warm := canvas2d.Color{255, 248, 224, 255}
             bcr, bcg, bcb := int(base.r) - int(cool.r), int(base.g) - int(cool.g), int(base.b) - int(cool.b)
             scr, scg, scb := int(ramp[0].r) - int(cool.r), int(ramp[0].g) - int(cool.g), int(ramp[0].b) - int(cool.b)
             bwr, bwg, bwb := int(base.r) - int(warm.r), int(base.g) - int(warm.g), int(base.b) - int(warm.b)

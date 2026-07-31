@@ -22,7 +22,7 @@ PROFILE_VULKAN_VALIDATION_debug := false
 PROFILE_ASAN_debug := false
 
 PROFILE_ODIN_FLAGS_release := -dynamic-map-calls -o:speed -debug
-PROFILE_DEFINE_FLAGS_release := -define:SHOW_STARTUP_MENU=true
+PROFILE_DEFINE_FLAGS_release := -define:SHOW_STARTUP_MENU=true -define:MAP_DEVELOPMENT_FALLBACK=false
 PROFILE_CONFIG_release := release
 PROFILE_ENTRY_release := cold
 PROFILE_LINK_MODE_release := system
@@ -473,6 +473,7 @@ $(RELEASE_DIR)/shaders/foliage.frag.spv: build/generated/shaders/foliage.frag.sp
 	cp $< $@
 
 release: doctor assets-release $(RELEASE_APP)
+	$(RELEASE_APP) map validate "$(RELEASE_DIR)/assets/maps/default.adriatic-map"
 
 $(PHYSICS_STAMP): $(PHYSICS_SOURCES)
 	@mkdir -p $(@D)
@@ -821,6 +822,8 @@ check: fixture-schema-check
 	$(ODIN) check packages/quest $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/terrain $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) test packages/dunes $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS)
+	$(ODIN) test packages/spring_river $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS)
+	$(ODIN) test packages/estuaries $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS)
 	$(ODIN) check packages/postale $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/libellula $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/air_compare $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
@@ -853,7 +856,7 @@ fixture-lifecycle-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/liba
 	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=main.fixture_lifecycle_detach_derives_all_identities_without_allocation,main.fixture_lifecycle_prepare_and_bind_use_destination_owned_addresses,main.fixture_lifecycle_hostile_states_fail_atomically,main.fixture_lifecycle_hot_state_round_trips_all_identities -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 
 fixture-migration-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
-	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.fixture_migration_transaction_paths_and_ownership,main.fixture_migration_rejects_invalid_registries_before_decode,main.fixture_migration_caller_allocation_failures_dispose_everything,main.fixture_migration_structural_migration_and_boundaries,main.fixture_migration_story_golden_matrix_and_failures,main.fixture_migration_v0002_to_v0003_direct_chained_and_failures,main.fixture_migration_v0003_to_v0004_runtime_direct_and_chains,main.fixture_migration_v0003_to_v0004_runtime_hostile_and_atomic,main.fixture_migration_v0003_to_v0004_runtime_allocation_failures,main.fixture_migration_v0004_to_v0005_structural_success_and_resolutions,main.fixture_migration_v0004_to_v0005_structural_basis_boundaries_and_hostile_sources,main.fixture_migration_v0004_to_v0005_structural_zero_rondine_and_nil,main.fixture_migration_v0004_to_v0005_runtime_direct_and_complete_chains,main.fixture_migration_v0004_to_v0005_runtime_hostile_contexts_and_payloads,main.fixture_migration_v0004_to_v0005_runtime_allocation_failures,main.fixture_migration_v0005_to_v0006_direct_defaults_and_registry,main.fixture_migration_v0008_to_v0009_initializes_generation_provenance,main.fixture_migration_v0009_to_v0010_initializes_empty_mailbox -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.fixture_migration_transaction_paths_and_ownership,main.fixture_migration_rejects_invalid_registries_before_decode,main.fixture_migration_caller_allocation_failures_dispose_everything,main.fixture_migration_structural_migration_and_boundaries,main.fixture_migration_story_golden_matrix_and_failures,main.fixture_migration_v0002_to_v0003_direct_chained_and_failures,main.fixture_migration_v0003_to_v0004_runtime_direct_and_chains,main.fixture_migration_v0003_to_v0004_runtime_hostile_and_atomic,main.fixture_migration_v0003_to_v0004_runtime_allocation_failures,main.fixture_migration_v0004_to_v0005_structural_success_and_resolutions,main.fixture_migration_v0004_to_v0005_structural_basis_boundaries_and_hostile_sources,main.fixture_migration_v0004_to_v0005_structural_zero_rondine_and_nil,main.fixture_migration_v0004_to_v0005_runtime_direct_and_complete_chains,main.fixture_migration_v0004_to_v0005_runtime_hostile_contexts_and_payloads,main.fixture_migration_v0004_to_v0005_runtime_allocation_failures,main.fixture_migration_v0005_to_v0006_direct_defaults_and_registry,main.fixture_migration_v0008_to_v0009_initializes_generation_provenance,main.fixture_migration_v0009_to_v0010_initializes_empty_mailbox,main.fixture_migration_v0010_to_v0011_initializes_front_schedules,main.fixture_migration_v0011_to_v0012_initializes_climate_without_losing_front,main.fixture_migration_v0012_to_v0013_preserves_append_only_building_identities -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 
 clean:
 	rm -rf "$(BUILD_DIR)"

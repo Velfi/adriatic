@@ -139,7 +139,7 @@ fixture_migration_step_v0001_to_v0002 :: proc(
     return step_error
 }
 
-fixture_migration_production_steps: [9]Fixture_Migration_Step = {
+fixture_migration_production_steps: [12]Fixture_Migration_Step = {
     {
         from_version = FIXTURE_MIGRATION_V0001_TO_V0002_FROM_VERSION,
         to_version = FIXTURE_MIGRATION_V0001_TO_V0002_TO_VERSION,
@@ -193,6 +193,24 @@ fixture_migration_production_steps: [9]Fixture_Migration_Step = {
         to_version = FIXTURE_MIGRATION_V0009_TO_V0010_TO_VERSION,
         wrapper = fixture_migration_step_v0009_to_v0010,
         change_id = "field-add:adriatic:src.Fixture.player_mail",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0010_TO_V0011_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0010_TO_V0011_TO_VERSION,
+        wrapper = fixture_migration_step_v0010_to_v0011,
+        change_id = "field-add:adriatic:packages/atmosphere.Atmosphere.schedule",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0011_TO_V0012_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0011_TO_V0012_TO_VERSION,
+        wrapper = fixture_migration_step_v0011_to_v0012,
+        change_id = "field-add:adriatic:packages/atmosphere.Atmosphere.climate",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0012_TO_V0013_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0012_TO_V0013_TO_VERSION,
+        wrapper = fixture_migration_step_v0012_to_v0013,
+        change_id = "enum-add:adriatic:packages/buildings.Archetype.Clinic",
     },
 }
 

@@ -1,12 +1,13 @@
 package main
 
 import atmosphere "../packages/atmosphere"
+import fog_field "../packages/fog_field"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
 import "core:mem"
 import vk "vendor:vulkan"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
 import resources "zelda_engine:render_resources"
 
@@ -28,6 +29,15 @@ Dynamic_Shadow_Uniform :: struct {
     settings: [4]f32,
     // Authoritative world-space origin shared by caster culling and receivers.
     origin:   [4]f32,
+    // Shared scene-atmosphere data. Keeping this in the existing per-frame
+    // scene uniform avoids growing the already-full 128-byte push block.
+    fog_bank_a:          [fog_field.MAX_BANKS][4]f32,
+    fog_bank_b:          [fog_field.MAX_BANKS][4]f32,
+    fog_bank_c:          [fog_field.MAX_BANKS][4]f32,
+    fog_previous_a:      [fog_field.MAX_BANKS][4]f32,
+    fog_previous_b:      [fog_field.MAX_BANKS][4]f32,
+    fog_previous_c:      [fog_field.MAX_BANKS][4]f32,
+    fog_settings:        [4]f32,
 }
 
 Dynamic_Shadow_Push :: struct {
@@ -37,7 +47,7 @@ Dynamic_Shadow_Push :: struct {
 #assert(size_of(Dynamic_Shadow_Cascade_Uniform) == 64)
 #assert(offset_of(Dynamic_Shadow_Uniform, settings) == 192)
 #assert(offset_of(Dynamic_Shadow_Uniform, origin) == 208)
-#assert(size_of(Dynamic_Shadow_Uniform) == 224)
+#assert(offset_of(Dynamic_Shadow_Uniform, fog_bank_a) == 224)
 #assert(size_of(Dynamic_Shadow_Push) == 4)
 
 Dynamic_Shadow_State :: struct {
@@ -356,7 +366,7 @@ dynamic_shadow_destroy :: proc(state: ^Dynamic_Shadow_State, ctx: ^engine.Vk_Con
 }
 
 shadow_append_triangle :: proc(a, b, c: third_person.Vec3) {
-    color := world_color(rl.Color{255, 255, 255, 255})
+    color := world_color(canvas2d.Color{255, 255, 255, 255})
     append(
         &world_renderer.shadow_vertices,
         World_Vertex{{a.x, a.y, a.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
@@ -422,7 +432,7 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
     if first >= 0 && count > 0 && first + count <= len(world_renderer.vertices) {
         append(&world_renderer.shadow_vertices, ..world_renderer.vertices[first:first + count])
     }
-    sky := atmosphere.sample(&editor.atmosphere)
+    sky := atmosphere_sky(editor)
     inverse_sun_y := 1 / max(sky.sun_direction[1], f32(.08))
     for structure in editor.project.structures[:editor.project.structure_count] {
         if structure.kind != .Architecture &&
@@ -458,7 +468,7 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
 
 dynamic_shadow_update_transform :: proc(editor: ^Editor, frame_index: int) {
     state := &world_renderer.dynamic_shadow
-    sky := atmosphere.sample(&editor.atmosphere)
+    sky := atmosphere_sky(editor)
     anchor := state.anchor
     sun := third_person.Vec3{sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2]}
     forward := third_person.Vec3{-sun.x, -sun.y, -sun.z}
@@ -513,10 +523,43 @@ dynamic_shadow_update_transform :: proc(editor: ^Editor, frame_index: int) {
         strength,
     }
     state.transform.origin = {anchor.x, anchor.y, anchor.z, 0}
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    field := fog_field.generate(
+        editor.atmosphere.seed,
+        editor.atmosphere.front_seconds,
+        editor.atmosphere.weather,
+        {{-half_extent, -half_extent}, {half_extent, half_extent}},
+        editor.atmosphere.climate.current,
+    )
+    for bank, index in field.banks {
+        state.transform.fog_bank_a[index] = {bank.center.x, bank.center.y, bank.radii.x, bank.radii.y}
+        state.transform.fog_bank_b[index] = {bank.axis.x, bank.axis.y, bank.base_altitude, bank.top_altitude}
+        state.transform.fog_bank_c[index] = {bank.edge_softness, bank.peak_density, 0, 0}
+        previous := field.previous_banks[index]
+        state.transform.fog_previous_a[index] = {
+            previous.center.x,
+            previous.center.y,
+            previous.radii.x,
+            previous.radii.y,
+        }
+        state.transform.fog_previous_b[index] = {
+            previous.axis.x,
+            previous.axis.y,
+            previous.base_altitude,
+            previous.top_altitude,
+        }
+        state.transform.fog_previous_c[index] = {previous.edge_softness, previous.peak_density, 0, 0}
+    }
+    state.transform.fog_settings = {
+        field.global_density * (fog_debug_enabled ? fog_debug_density_multiplier : 0),
+        field.blend,
+        field.time_seconds,
+        clamp(editor.atmosphere.weather.severity, 0, 1),
+    }
     mem.copy_non_overlapping(state.uniform[frame_index].mapped, &state.transform, size_of(Dynamic_Shadow_Uniform))
 }
 
-dynamic_shadow_render :: proc(pass: ^rl.World_Pass_Context, frame_index: int) {
+dynamic_shadow_render :: proc(pass: ^canvas2d.World_Pass_Context, frame_index: int) {
     state := &world_renderer.dynamic_shadow
     if !state.enabled || state.transform.settings[3] <= 0 || len(world_renderer.shadow_vertices) == 0 do return
     cmd := pass.frame.command_buffer

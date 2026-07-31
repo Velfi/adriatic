@@ -4,17 +4,17 @@ import atmosphere "../packages/atmosphere"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
-PATIO_STONE := rl.Color{205, 190, 159, 255}
-PATIO_STONE_DARK := rl.Color{139, 128, 108, 255}
-PATIO_WOOD := rl.Color{126, 76, 43, 255}
-PATIO_WOOD_LIGHT := rl.Color{174, 112, 61, 255}
-PATIO_METAL := rl.Color{54, 70, 68, 255}
-PATIO_CREAM := rl.Color{238, 220, 174, 255}
-PATIO_RED := rl.Color{184, 62, 48, 255}
-PATIO_BLUE := rl.Color{52, 121, 139, 255}
-PATIO_GREEN := rl.Color{75, 122, 73, 255}
+PATIO_STONE := canvas2d.Color{205, 190, 159, 255}
+PATIO_STONE_DARK := canvas2d.Color{139, 128, 108, 255}
+PATIO_WOOD := canvas2d.Color{126, 76, 43, 255}
+PATIO_WOOD_LIGHT := canvas2d.Color{174, 112, 61, 255}
+PATIO_METAL := canvas2d.Color{54, 70, 68, 255}
+PATIO_CREAM := canvas2d.Color{238, 220, 174, 255}
+PATIO_RED := canvas2d.Color{184, 62, 48, 255}
+PATIO_BLUE := canvas2d.Color{52, 121, 139, 255}
+PATIO_GREEN := canvas2d.Color{75, 122, 73, 255}
 
 Patio_Lab_Style :: enum u8 {
     Mixed,
@@ -56,23 +56,23 @@ patio_style_name :: proc() -> cstring {
     return "MIXED"
 }
 
-patio_style_accent :: proc(index: int) -> rl.Color {
+patio_style_accent :: proc(index: int) -> canvas2d.Color {
     switch patio_lab_style {
     case .Coastal:
-        palette := [3]rl.Color{PATIO_BLUE, rl.Color{83, 153, 164, 255}, rl.Color{38, 82, 105, 255}}
+        palette := [3]canvas2d.Color{PATIO_BLUE, canvas2d.Color{83, 153, 164, 255}, canvas2d.Color{38, 82, 105, 255}}
         return palette[index % len(palette)]
     case .Courtyard:
-        palette := [3]rl.Color{PATIO_RED, rl.Color{211, 126, 65, 255}, PATIO_GREEN}
+        palette := [3]canvas2d.Color{PATIO_RED, canvas2d.Color{211, 126, 65, 255}, PATIO_GREEN}
         return palette[index % len(palette)]
     case .Mixed:
-        palette := [3]rl.Color{PATIO_BLUE, PATIO_RED, PATIO_GREEN}
+        palette := [3]canvas2d.Color{PATIO_BLUE, PATIO_RED, PATIO_GREEN}
         return palette[index % len(palette)]
     }
     return PATIO_BLUE
 }
 
-patio_style_canopy_secondary :: proc() -> rl.Color {
-    return patio_lab_style == .Courtyard ? rl.Color{246, 205, 132, 255} : PATIO_CREAM
+patio_style_canopy_secondary :: proc() -> canvas2d.Color {
+    return patio_lab_style == .Courtyard ? canvas2d.Color{246, 205, 132, 255} : PATIO_CREAM
 }
 
 patio_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
@@ -114,7 +114,7 @@ patio_local_point :: proc(center: third_person.Vec3, x, y, z, yaw: f32) -> third
     return {center.x + x * c - z * s, center.y + y, center.z + x * s + z * c}
 }
 
-patio_chair :: proc(center: third_person.Vec3, yaw: f32, color: rl.Color = PATIO_BLUE) {
+patio_chair :: proc(center: third_person.Vec3, yaw: f32, color: canvas2d.Color = PATIO_BLUE) {
     // Slatted café chair with a slightly reclined-looking high back.
     world_box_rotated(patio_local_point(center, 0, .54, 0, yaw), {1.15, .12, 1.05}, yaw, color)
     for x in ([2]f32{-.46, .46}) {
@@ -128,7 +128,7 @@ patio_chair :: proc(center: third_person.Vec3, yaw: f32, color: rl.Color = PATIO
     world_box_rotated(patio_local_point(center, 0, .66, .48, yaw), {1.18, .11, .13}, yaw, PATIO_METAL)
 }
 
-patio_round_table :: proc(center: third_person.Vec3, color: rl.Color = PATIO_CREAM) {
+patio_round_table :: proc(center: third_person.Vec3, color: canvas2d.Color = PATIO_CREAM) {
     world_vertical_prism({center.x, center.y + .72, center.z}, 1.65, 1.65, .16, math.PI / 8, color)
     world_vertical_prism({center.x, center.y + .37, center.z}, .14, .14, .74, 0, PATIO_METAL)
     world_vertical_prism({center.x, center.y + .05, center.z}, .72, .72, .10, math.PI / 8, PATIO_METAL)
@@ -149,7 +149,7 @@ patio_side_table :: proc(center: third_person.Vec3) {
     world_vertical_prism({center.x, center.y + .04, center.z}, .35, .35, .08, math.PI / 8, PATIO_METAL)
 }
 
-patio_lounge_chair :: proc(center: third_person.Vec3, yaw: f32, color: rl.Color) {
+patio_lounge_chair :: proc(center: third_person.Vec3, yaw: f32, color: canvas2d.Color) {
     // A deep low seat and inclined back make this silhouette distinct from
     // upright café seating even at the lab's overview distance.
     world_box_rotated(patio_local_point(center, 0, .34, -.22, yaw), {1.18, .16, 1.72}, yaw, color)
@@ -211,7 +211,7 @@ patio_bench :: proc(center: third_person.Vec3, yaw: f32) {
     }
 }
 
-patio_umbrella :: proc(center: third_person.Vec3, radius: f32, color_a, color_b: rl.Color) {
+patio_umbrella :: proc(center: third_person.Vec3, radius: f32, color_a, color_b: canvas2d.Color) {
     world_vertical_prism({center.x, center.y + 1.72, center.z}, .10, .10, 3.44, 0, PATIO_METAL)
     hub := third_person.Vec3{center.x, center.y + 3.72, center.z}
     SEGMENTS :: 12
@@ -253,7 +253,7 @@ patio_planter :: proc(center: third_person.Vec3, simple_foliage: bool = true) {
     }
 }
 
-patio_table_centerpiece :: proc(center: third_person.Vec3, color: rl.Color) {
+patio_table_centerpiece :: proc(center: third_person.Vec3, color: canvas2d.Color) {
     if patio_lab_evening {
         world_vertical_prism({center.x, center.y + .93, center.z}, .16, .16, .20, 0, PATIO_METAL)
         world_emissive_fixture_box({center.x, center.y + 1.11, center.z}, {.30, .34, .30}, 0, {255, 205, 118, 255}, 2)
@@ -427,8 +427,8 @@ patio_service_console :: proc(center: third_person.Vec3, yaw: f32) {
 }
 
 patio_boundary :: proc() {
-    wall := rl.Color{177, 163, 136, 255}
-    cap := rl.Color{220, 205, 173, 255}
+    wall := canvas2d.Color{177, 163, 136, 255}
+    cap := canvas2d.Color{220, 205, 173, 255}
     if patio_lab_style == .Coastal {
         wall = {173, 194, 194, 255}
         cap = {235, 235, 215, 255}
@@ -444,8 +444,8 @@ patio_boundary :: proc() {
 
 patio_coastal_edge :: proc() {
     if patio_lab_style != .Coastal do return
-    white := rl.Color{229, 231, 215, 255}
-    blue := rl.Color{44, 104, 126, 255}
+    white := canvas2d.Color{229, 231, 215, 255}
+    blue := canvas2d.Color{44, 104, 126, 255}
     // An open slatted windbreak preserves the sea-facing character while
     // differentiating this profile from the enclosed masonry courtyard.
     for x in ([5]f32{-10, -5, 0, 5, 10}) {
@@ -483,11 +483,11 @@ world_patio_lab :: proc(_: ^Editor) {
     world_box({0, -.28, 0}, {27, .52, 21}, foundation)
     for z in 0 ..< 5 {
         for x in 0 ..< 7 {
-            shade := (x + z) % 2 == 0 ? PATIO_STONE : rl.Color{195, 180, 149, 255}
+            shade := (x + z) % 2 == 0 ? PATIO_STONE : canvas2d.Color{195, 180, 149, 255}
             if patio_lab_style == .Coastal {
-                shade = (x + z) % 2 == 0 ? rl.Color{208, 213, 198, 255} : rl.Color{184, 205, 203, 255}
+                shade = (x + z) % 2 == 0 ? canvas2d.Color{208, 213, 198, 255} : canvas2d.Color{184, 205, 203, 255}
             } else if patio_lab_style == .Courtyard {
-                shade = (x + z) % 2 == 0 ? rl.Color{213, 168, 119, 255} : rl.Color{194, 139, 94, 255}
+                shade = (x + z) % 2 == 0 ? canvas2d.Color{213, 168, 119, 255} : canvas2d.Color{194, 139, 94, 255}
             }
             world_box({-10.5 + f32(x) * 3.5, .01, -7 + f32(z) * 3.5}, {3.42, .08, 3.42}, shade)
         }
@@ -525,15 +525,15 @@ world_patio_lab :: proc(_: ^Editor) {
 }
 
 patio_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 500,
         height = 92,
     }
-    rl.DrawRectangleRounded(panel, .12, 8, {27, 35, 30, 224})
-    rl.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, {172, 141, 89, 255})
-    rl.DrawTextEx(rl.Font{}, "PROCEDURAL PATIO LAB", {38, 38}, 20, 1, {248, 232, 188, 255})
+    canvas2d.DrawRectangleRounded(panel, .12, 8, {27, 35, 30, 224})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, {172, 141, 89, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "PROCEDURAL PATIO LAB", {38, 38}, 20, 1, {248, 232, 188, 255})
     summary := fmt.ctprintf(
         "%s  /  SEED %08X  /  %d CHAIRS  /  %d TABLES  /  %d UMBRELLAS",
         patio_lab_evening ? cstring("EVENING") : patio_style_name(),
@@ -542,7 +542,7 @@ patio_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         patio_lab_table_count,
         patio_lab_umbrella_count,
     )
-    rl.DrawTextEx(rl.Font{}, summary, {38, 72}, 13, 1, {205, 221, 204, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 72}, 13, 1, {205, 221, 204, 255})
     _ = width
     _ = height
 }

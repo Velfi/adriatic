@@ -5,7 +5,7 @@ import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import sdl "vendor:sdl3"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
 
 CONSOLE_INPUT_CAPACITY :: 512
@@ -252,7 +252,7 @@ console_help :: proc(editor: ^Editor, command: string = "") {
     if command == "" {
         console_push_line(editor, "help [command] | commands | status | clear")
         console_push_line(editor, "get/set/watch <live.value> | unwatch")
-        console_push_line(editor, "time <hour> | weather <auto|clear|windy|storm>")
+        console_push_line(editor, "time <hour> | weather <auto|clear|windy|storm> | weather-front")
         console_push_line(editor, "teleport <x> <y> <z> | lab <name> [target] | quit")
         console_push_line(editor, "Tab completes; Up/Down recalls history; ~ closes")
         return
@@ -262,6 +262,7 @@ console_help :: proc(editor: ^Editor, command: string = "") {
     if command == "watch" do console_push_line(editor, "watch <live.value> — pin a live value above the prompt")
     if command == "time" do console_push_line(editor, "time <hour> — set time using a 24-hour clock")
     if command == "weather" do console_push_line(editor, "weather <auto|clear|windy|storm>")
+    if command == "weather-front" do console_push_line(editor, "weather-front — print active spatial front and local conditions")
     if command == "teleport" do console_push_line(editor, "teleport <x> <y> <z> — move the player")
     if command == "physics" do console_push_line(editor, "physics — print shared-world bodies and active soft bodies")
     if command == "lab" {
@@ -373,6 +374,37 @@ console_execute :: proc(editor: ^Editor, source: string) {
             }
             console_print_value(editor, "world.weather")
         }
+    case "weather-front":
+        local := atmosphere_local_weather(editor, editor.camera_pose.position)
+        if editor.atmosphere.schedule.front.active {
+            front := &editor.atmosphere.schedule.front
+            console_push_line(
+                editor,
+                fmt.tprintf(
+                    "Front %u: %.0f%%, %.0f s remaining, width %.0f m, speed %.2f m/s",
+                    front.event_id,
+                    atmosphere.front_progress(&editor.atmosphere) * 100,
+                    atmosphere.front_seconds_until_next(&editor.atmosphere),
+                    front.width,
+                    front.speed,
+                ),
+            )
+        } else {
+            console_push_line(
+                editor,
+                fmt.tprintf("No active front; next event in %.0f s", atmosphere.front_seconds_until_next(&editor.atmosphere)),
+            )
+        }
+        console_push_line(
+            editor,
+            fmt.tprintf(
+                "Local: severity %.2f rain %.2f gust %.2f wind %.1f %.1f %.1f",
+                local.severity,
+                local.precipitation,
+                local.gust_strength,
+                local.wind[0], local.wind[1], local.wind[2],
+            ),
+        )
     case "teleport":
         if count != 4 {
             console_push_line(editor, "Usage: teleport <x> <y> <z>", .Error)
@@ -455,7 +487,7 @@ console_set_open :: proc(editor: ^Editor, open: bool) {
     editor.console.open = open
     editor.console.history_cursor = editor.console.history_count
     if open {
-        _ = rl.StartTextInput()
+        _ = canvas2d.StartTextInput()
         if editor.console.line_count == 0 {
             console_push_line(editor, "ADRIATIC DEVELOPER CONSOLE")
             console_push_line(editor, "Type help for commands. Tab autocompletes.")
@@ -463,7 +495,7 @@ console_set_open :: proc(editor: ^Editor, open: bool) {
         set_pointer_locked(false)
         _ = sdl.ShowCursor()
     } else {
-        _ = rl.StopTextInput()
+        _ = canvas2d.StopTextInput()
         set_pointer_locked(editor.in_map && !pause_menu_is_open(editor))
     }
 }
@@ -478,21 +510,21 @@ console_process_input :: proc(editor: ^Editor, width, height: i32) {
     if !state.open do return
 
     prompt_y := min(f32(height) * .56, f32(470)) - 43
-    _ = rl.SetTextInputArea(
+    _ = canvas2d.SetTextInputArea(
         {14, prompt_y - 5, f32(width - 28), 34},
         int(ui_measure_text(.Data, fmt.ctprintf("> %s", console_input_text(state)), .3).x),
     )
-    console_append_input(state, rl.GetTextInput())
+    console_append_input(state, canvas2d.GetTextInput())
 
-    if rl.IsKeyPressed(.BACKSPACE) do console_remove_last_rune(state)
-    if rl.IsKeyPressed(.UP) do console_history_move(state, -1)
-    if rl.IsKeyPressed(.DOWN) do console_history_move(state, 1)
-    if rl.IsKeyPressed(.TAB) do console_completion(state, true)
-    if rl.IsKeyPressed(.ESCAPE) {
+    if canvas2d.IsKeyPressed(.BACKSPACE) do console_remove_last_rune(state)
+    if canvas2d.IsKeyPressed(.UP) do console_history_move(state, -1)
+    if canvas2d.IsKeyPressed(.DOWN) do console_history_move(state, 1)
+    if canvas2d.IsKeyPressed(.TAB) do console_completion(state, true)
+    if canvas2d.IsKeyPressed(.ESCAPE) {
         console_set_open(editor, false)
         return
     }
-    if rl.IsKeyPressed(.ENTER) {
+    if canvas2d.IsKeyPressed(.ENTER) {
         console_execute(editor, console_input_text(state))
         console_set_input(state, "")
         state.history_cursor = state.history_count
@@ -504,8 +536,8 @@ console_draw :: proc(editor: ^Editor, width, height: i32) {
     if editor == nil || !editor.console.open do return
     state := &editor.console
     panel_height := min(f32(height) * .56, f32(470))
-    rl.DrawRectangle(0, 0, width, i32(panel_height), {7, 13, 18, 242})
-    rl.DrawRectangle(0, i32(panel_height) - 2, width, 2, {74, 211, 200, 255})
+    canvas2d.DrawRectangle(0, 0, width, i32(panel_height), {7, 13, 18, 242})
+    canvas2d.DrawRectangle(0, i32(panel_height) - 2, width, 2, {74, 211, 200, 255})
     ui_draw_text(.Label, "DEVELOPER CONSOLE", {20, 14}, .4, {105, 231, 220, 255})
     ui_draw_text(.Data, "~ CLOSES  |  TAB COMPLETES  |  UP/DOWN HISTORY", {210, 17}, .2, {128, 145, 157, 255})
 
@@ -515,13 +547,13 @@ console_draw :: proc(editor: ^Editor, width, height: i32) {
         watch := fmt.ctprintf("WATCH  %s = %s", console_values[index], console_value(editor, index))
         ui_draw_text(.Data, watch, {20, prompt_y - 27}, .2, {241, 188, 93, 255})
     }
-    rl.DrawRectangle(14, i32(prompt_y) - 5, width - 28, 34, {18, 29, 36, 255})
-    rl.DrawRectangleRoundedLinesEx({14, prompt_y - 5, f32(width - 28), 34}, .04, 4, 1, {60, 81, 92, 255})
+    canvas2d.DrawRectangle(14, i32(prompt_y) - 5, width - 28, 34, {18, 29, 36, 255})
+    canvas2d.DrawRectangleRoundedLinesEx({14, prompt_y - 5, f32(width - 28), 34}, .04, 4, 1, {60, 81, 92, 255})
     input := console_input_text(state)
     prompt := fmt.ctprintf("> %s", input)
     ui_draw_text(.Data, prompt, {22, prompt_y + 3}, .3, {235, 241, 243, 255})
 
-    composition := rl.GetTextInputComposition()
+    composition := canvas2d.GetTextInputComposition()
     if composition.text != "" {
         prompt_size := ui_measure_text(.Data, prompt, .3)
         ui_draw_text(
@@ -537,9 +569,9 @@ console_draw :: proc(editor: ^Editor, width, height: i32) {
         suffix := hint[min(len(input), len(hint)):]
         ui_draw_text(.Data, fmt.ctprintf("%s", suffix), {22 + typed_size.x, prompt_y + 3}, .3, {91, 112, 123, 255})
     }
-    if int(rl.GetTime() * 2) % 2 == 0 {
+    if int(canvas2d.GetTime() * 2) % 2 == 0 {
         cursor_size := ui_measure_text(.Data, prompt, .3)
-        rl.DrawRectangle(i32(24 + cursor_size.x), i32(prompt_y + 3), 2, 17, {105, 231, 220, 255})
+        canvas2d.DrawRectangle(i32(24 + cursor_size.x), i32(prompt_y + 3), 2, 17, {105, 231, 220, 255})
     }
 
     line_height := f32(21)
@@ -551,7 +583,7 @@ console_draw :: proc(editor: ^Editor, width, height: i32) {
         logical := first + offset
         index := (state.line_start + logical) % CONSOLE_LINE_CAPACITY
         line := &state.lines[index]
-        color := rl.Color{189, 203, 210, 255}
+        color := canvas2d.Color{189, 203, 210, 255}
         if line.kind == .Command do color = {105, 231, 220, 255}
         if line.kind == .Error do color = {242, 125, 112, 255}
         ui_draw_text(.Data, fmt.ctprintf("%s", console_line_text(line)), {22, y}, .2, color)

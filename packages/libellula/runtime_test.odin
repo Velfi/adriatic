@@ -38,6 +38,25 @@ assisted_hover_damps_horizontal_drift :: proc(t: ^testing.T) {
 }
 
 @(test)
+assisted_hover_is_advected_by_crosswind :: proc(t: ^testing.T) {
+    calm := new_runtime(flight.Vec3{0, GROUND_CLEARANCE, 0})
+    windy := calm
+    runtimes := [2]^Runtime{&calm, &windy}
+    for runtime in runtimes {
+        runtime.body.position.y = 20
+        runtime.grounded = false
+        runtime.was_grounded = false
+        runtime.lift_active = true
+    }
+    for _ in 0 ..< 240 {
+        step(&calm, {}, 0, 1.0 / 60.0)
+        step(&windy, {}, 0, 1.0 / 60.0, {0, 0, 12})
+    }
+    testing.expect(t, windy.body.position.z > calm.body.position.z + 4)
+    testing.expect(t, windy.body.velocity.z > calm.body.velocity.z + 1)
+}
+
+@(test)
 assisted_cyclic_is_gentle_near_center :: proc(t: ^testing.T) {
     half_input := assisted_axis(.5, .64, .55)
     testing.expect(t, half_input > 0)

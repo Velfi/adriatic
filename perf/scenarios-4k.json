@@ -30,6 +30,10 @@
     "foliage_stress": {
       "enabled": true,
       "description": "Dense forest canopy rendered directly at native 4K."
+    },
+    "fog_banks": {
+      "enabled": false,
+      "description": "Deterministic native-4K storm flight through analytic fog banks and boundary shells."
     }
   }
 }

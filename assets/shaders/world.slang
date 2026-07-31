@@ -41,6 +41,13 @@ struct DynamicShadow {
     // Origin-distance limits for cascades 0..2, final shadow strength.
     float4 settings;
     float4 origin;
+    float4 fog_bank_a[4];
+    float4 fog_bank_b[4];
+    float4 fog_bank_c[4];
+    float4 fog_previous_a[4];
+    float4 fog_previous_b[4];
+    float4 fog_previous_c[4];
+    float4 fog_settings;
 };
 struct DynamicShadowPush {
     uint cascade;
@@ -110,6 +117,48 @@ static const uint MATERIAL_FOUNTAIN_WATER = 20;
 static const uint MATERIAL_CAR_PAINT = 21;
 static const uint MATERIAL_MATERIAL_LAB = 22;
 static const uint MATERIAL_SETTLEMENT = 23;
+static const uint MATERIAL_FOG_SHELL = 24;
+
+float fog_bank_density(float3 p, float4 a, float4 b, float4 c) {
+    float2 offset = p.xz - a.xy;
+    float2 axis = normalize(b.xy + float2(.00001, 0));
+    float2 local = float2(dot(offset, axis), dot(offset, float2(-axis.y, axis.x)));
+    float radial = length(local / max(a.zw, float2(1, 1)));
+    float horizontal = 1.0 - smoothstep(1.0 - clamp(c.x, .01, .95), 1.0, radial);
+    float vertical = smoothstep(b.z, b.z + 28.0, p.y) *
+        (1.0 - smoothstep(lerp(b.z, b.w, .62), b.w, p.y));
+    return horizontal * vertical * c.y;
+}
+
+float local_fog_density(float3 p) {
+    float density = 0.0;
+    [unroll] for (uint i = 0; i < 4; ++i) {
+        float old_density = fog_bank_density(p, dynamic_shadow.fog_previous_a[i], dynamic_shadow.fog_previous_b[i], dynamic_shadow.fog_previous_c[i]);
+        float new_density = fog_bank_density(p, dynamic_shadow.fog_bank_a[i], dynamic_shadow.fog_bank_b[i], dynamic_shadow.fog_bank_c[i]);
+        density = max(density, lerp(old_density, new_density, dynamic_shadow.fog_settings.y));
+    }
+    float2 wind = push.water.zw;
+    float wind_length = max(length(wind), .001);
+    float2 direction = wind / wind_length;
+    float grain = sin(dot(p.xz, direction) * .011 - dynamic_shadow.fog_settings.z * .12) * .5 + .5;
+    return density * dynamic_shadow.fog_settings.x * lerp(.82, 1.0, grain);
+}
+
+float combined_fog(VertexOutput input) {
+    float distance_fog = saturate((input.depth - push.projection.z) /
+                                  max(push.projection.w - push.projection.z, .001));
+    // Legacy horizon haze is a near-surface layer. Without altitude thinning
+    // it saturates every sea ray from above and hides the local bank shape.
+    float altitude_clear = smoothstep(180.0, 500.0, push.camera_position.y);
+    distance_fog *= lerp(1.0, .20, altitude_clear);
+    float3 midpoint = (push.camera_position.xyz + input.world_position) * .5;
+    float density = (local_fog_density(push.camera_position.xyz) +
+                     4.0 * local_fog_density(midpoint) +
+                     local_fog_density(input.world_position)) / 6.0;
+    float optical_depth = density * min(max(input.depth, 0.0), 4500.0) * .0032;
+    float bank_fog = 1.0 - exp(-optical_depth);
+    return 1.0 - (1.0 - distance_fog) * (1.0 - bank_fog);
+}
 
 float3 shade_grass_wind_sheen(VertexOutput input, float3 color) {
     float grass = smoothstep(.18, .82, input.material.x);
@@ -672,6 +721,8 @@ float3 shade_settlement_material(VertexOutput input) {
     else if (id == 23) { color = float3(.055, .36, .35); roughness = .25; }
     else if (id == 24) { color = float3(.71, .70, .64); roughness = .91; }
     else if (id == 25) { color = float3(.28, .32, .30); roughness = .34; }
+    else if (id == 26) { color = float3(.38, .030, .022); metallic = .18; roughness = .34; }
+    else if (id == 27) { color = float3(.59, .32, .11); roughness = .42; }
 
     float2 uv = input.uv;
     float grain = value_noise(floor(uv * 24.0) + id * 11.7) - .5;
@@ -679,9 +730,24 @@ float3 shade_settlement_material(VertexOutput input) {
     if (id == 0 || id == 17) {
         float joints = min(frac(uv.x * .42), frac(uv.y * .42));
         color *= lerp(.70, 1.0, smoothstep(.025, .065, joints));
-    } else if (id == 2 || id == 18 || id == 19) {
-        float chips = value_noise(floor(uv * 13.0));
-        color = lerp(color * .68, color * 1.16, smoothstep(.35, .72, chips));
+    } else if (id == 2 || id == 18) {
+        // Broad, continuous aggregate survives distance filtering. The old
+        // 13-samples-per-metre binary chips collapsed into salt-and-pepper
+        // noise across the large airport floor.
+        float frequency = id == 18 ? 2.4 : 3.2;
+        float aggregate = value_noise(uv * frequency);
+        float contrast = smoothstep(.24, .82, aggregate);
+        color *= lerp(.90, 1.07, contrast);
+    } else if (id == 19) {
+        // Forecourt paving reads from slab joints and restrained stone value,
+        // rather than sharing the terrazzo chip field.
+        float2 slab_uv = uv / float2(2.4, 1.6);
+        float row = floor(slab_uv.y);
+        slab_uv.x += fmod(abs(row), 2.0) * .5;
+        float2 edge = min(frac(slab_uv), 1.0 - frac(slab_uv));
+        float joint = smoothstep(.018, .050, min(edge.x, edge.y));
+        float stone = value_noise(uv * .72);
+        color *= lerp(.72, lerp(.96, 1.04, stone), joint);
     } else if (id == 6) {
         color *= .82 + .18 * smoothstep(.08, .20, abs(frac(uv.y * 5.0) - .5));
     } else if (id == 11) {
@@ -691,6 +757,17 @@ float3 shade_settlement_material(VertexOutput input) {
     } else if (id == 23) {
         float2 grout = min(frac(uv * 3.2), 1.0 - frac(uv * 3.2));
         color = lerp(float3(.55, .55, .50), color, smoothstep(.025, .055, min(grout.x, grout.y)));
+    } else if (id == 26) {
+        float orange_peel = value_noise(uv * 38.0);
+        float chips = smoothstep(.955, .99, value_noise(uv * 11.0 + 7.3));
+        color *= lerp(.96, 1.035, orange_peel);
+        color = lerp(color, float3(.035, .040, .038), chips * .72);
+        roughness = lerp(roughness, .70, chips);
+    } else if (id == 27) {
+        float fine_grain = value_noise(float2(uv.x * 5.0, uv.y * 34.0));
+        float broad_grain = value_noise(float2(uv.x * 1.4, uv.y * 8.0) + 4.7);
+        color *= lerp(.88, 1.10, fine_grain) * lerp(.94, 1.05, broad_grain);
+        roughness *= lerp(.90, 1.08, fine_grain);
     }
 
     BrdfMaterial material;
@@ -1718,9 +1795,17 @@ float3 shade_water(VertexOutput input) {
     float shallow = terrain_shore;
     float deep = 1.0 - smoothstep(.015, .72, terrain_shore);
 
-    float3 shallow_color = float3(.10, .60, .60);
-    float3 middle_color = float3(.025, .43, .52);
-    float3 deep_color = float3(.016, .20, .31);
+    // The horizon color is the sky radiance available for broad water
+    // reflection. Shape it through depth-dependent absorption rather than
+    // starting from a fixed turquoise palette, so overcast, storms, twilight,
+    // and night all carry coherently into the ocean.
+    float3 sky_color = srgb_to_linear(push.fog_color.rgb);
+    float3 shallow_color =
+        sky_color * float3(.42, .78, .72) + float3(.012, .070, .055);
+    float3 middle_color =
+        sky_color * float3(.30, .62, .72) + float3(.006, .032, .065);
+    float3 deep_color =
+        sky_color * float3(.20, .42, .58) + float3(.002, .018, .052);
     float3 foam_color = float3(.78, .84, .80);
     float3 glint_color = float3(1.0, .88, .63);
     float3 color = lerp(shallow_color, middle_color, smoothstep(.08, .72, deep));
@@ -1767,7 +1852,9 @@ float3 shade_water(VertexOutput input) {
     float3 view = normalize(push.camera_position.xyz - input.world_position);
     float facing = saturate(dot(normal, view));
     float fresnel = .03 + .38 * pow(1.0 - facing, 4.0);
-    float3 sky_tint = lerp(float3(.055, .16, .24), float3(.20, .52, .62), push.sun.w);
+    // Fresnel is the least-filtered sky contribution. Its source remains the
+    // same active sky color while daylight controls only reflection strength.
+    float3 sky_tint = sky_color * lerp(.68, 1.12, saturate(push.sun.w));
     color = lerp(color, sky_tint, fresnel * .31);
 
     float3 sun_dir = normalize(push.sun.xyz);
@@ -2090,11 +2177,25 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     if (input.kind == MATERIAL_TERRAIN && input.world_position.y <= .001) {
         discard;
     }
-    float fog = saturate((input.depth - push.projection.z) /
-                         max(push.projection.w - push.projection.z, .001));
+    float fog = combined_fog(input);
     float3 base = input.color.rgb;
     float output_alpha = input.color.a;
     switch (input.kind) {
+        case MATERIAL_FOG_SHELL: {
+            float2 wind = push.water.zw;
+            float wind_length = max(length(wind), .001);
+            float2 direction = wind / wind_length;
+            float phase = dot(input.world_position.xz, direction) * .018 - push.water.x * .19;
+            float broad = sin(phase + input.world_position.y * .027) * .50 + .50;
+            float crossing = sin(dot(input.world_position.xz, float2(-direction.y, direction.x)) * .013 +
+                                 input.world_position.y * .041 + push.water.x * .07) * .50 + .50;
+            float billow = smoothstep(.22, .78, broad * .68 + crossing * .32);
+            float vertical = smoothstep(.02, .19, input.uv.y) *
+                             (1.0 - smoothstep(.62, 1.0, input.uv.y));
+            output_alpha *= billow * vertical;
+            base = input.color.rgb * lerp(.82, 1.06, billow);
+            break;
+        }
         case MATERIAL_TERRAIN:
             base = shade_terrain_dunes(input, base);
             base = shade_grass_wind_sheen(input, base);
@@ -2348,5 +2449,6 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             shade_cinematic_limelights(input)
         );
     }
+    if (input.kind == MATERIAL_FOG_SHELL && output_alpha <= .005) discard;
     return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), output_alpha);
 }

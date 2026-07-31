@@ -5,7 +5,7 @@ import leaves "../packages/leaf_mesh"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math/linalg"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 leaf_generator_shape := leaves.Shape.Elliptic
 leaf_generator_serration := f32(0)
@@ -65,19 +65,19 @@ leaf_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 }
 
 leaf_generator_lab_process_input :: proc(_: ^Editor) {
-    if rl.IsKeyPressed(.LEFT) {
+    if canvas2d.IsKeyPressed(.LEFT) {
         leaf_generator_focus_triptych = false
         leaf_generator_shape = leaves.Shape((int(leaf_generator_shape) + leaves.SHAPE_COUNT - 1) % leaves.SHAPE_COUNT)
         leaf_generator_isolated = true
     }
-    if rl.IsKeyPressed(.RIGHT) {
+    if canvas2d.IsKeyPressed(.RIGHT) {
         leaf_generator_focus_triptych = false
         leaf_generator_shape = leaves.Shape((int(leaf_generator_shape) + 1) % leaves.SHAPE_COUNT)
         leaf_generator_isolated = true
     }
-    if rl.IsKeyPressed(.S) do leaf_generator_serration = leaf_generator_serration > 0 ? 0 : .16
-    if rl.IsKeyPressed(.C) do leaf_generator_curl = leaf_generator_curl > .2 ? 0 : leaf_generator_curl + .12
-    if rl.IsKeyPressed(.G) {
+    if canvas2d.IsKeyPressed(.S) do leaf_generator_serration = leaf_generator_serration > 0 ? 0 : .16
+    if canvas2d.IsKeyPressed(.C) do leaf_generator_curl = leaf_generator_curl > .2 ? 0 : leaf_generator_curl + .12
+    if canvas2d.IsKeyPressed(.G) {
         leaf_generator_focus_triptych = false
         leaf_generator_isolated = !leaf_generator_isolated
     }
@@ -88,7 +88,7 @@ leaf_generator_draw_mesh :: proc(shape: leaves.Shape, origin: third_person.Vec3,
     config.serration = leaf_generator_serration
     config.curl = leaf_generator_curl
     mesh := leaves.generate(config)
-    color := rl.Color{73 + u8(int(shape) * 5), 130 + u8(int(shape) * 7), 73, 255}
+    color := canvas2d.Color{73 + u8(int(shape) * 5), 130 + u8(int(shape) * 7), 73, 255}
     for first := 0; first + 2 < mesh.index_count; first += 3 {
         va := mesh.vertices[mesh.indices[first]]
         vb := mesh.vertices[mesh.indices[first + 1]]
@@ -143,10 +143,10 @@ world_leaf_generator_lab :: proc(_: ^Editor) {
 }
 
 leaf_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
-    panel := rl.Rectangle{24, 24, 590, 118}
-    rl.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
-    rl.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
-    rl.DrawTextEx(rl.Font{}, "LEAF MESH GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
+    panel := canvas2d.Rectangle{24, 24, 590, 118}
+    canvas2d.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "LEAF MESH GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
     summary: cstring = "NINE BOTANICAL PROFILES  /  PROCEDURAL INDEXED MESHES"
     if leaf_generator_focus_triptych {
         summary = "FIG / GRAPE / IVY  —  DEDICATED BOTANICAL PROFILES"
@@ -159,9 +159,9 @@ leaf_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
             leaf_generator_curl,
         )
     }
-    rl.DrawTextEx(rl.Font{}, summary, {38, 68}, 13, 1, {174, 207, 160, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 68}, 13, 1, {174, 207, 160, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         "LEFT/RIGHT SHAPE   S SERRATION   C CURL   G GALLERY",
         {38, 96},
         11,
@@ -173,9 +173,9 @@ leaf_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
         for name, column in names {
             label_x := f32(width) * (.30 + f32(column) * .20) - 52
             label_y := f32(height) * .69
-            bounds := rl.Rectangle{label_x - 8, label_y - 5, 120, 25}
-            rl.DrawRectangleRounded(bounds, .3, 6, {19, 31, 27, 210})
-            rl.DrawTextEx(rl.Font{}, name, {label_x, label_y}, 11, 1, {232, 224, 189, 255})
+            bounds := canvas2d.Rectangle{label_x - 8, label_y - 5, 120, 25}
+            canvas2d.DrawRectangleRounded(bounds, .3, 6, {19, 31, 27, 210})
+            canvas2d.DrawTextEx(canvas2d.Font{}, name, {label_x, label_y}, 11, 1, {232, 224, 189, 255})
         }
     } else if !leaf_generator_isolated {
         for index in 0 ..< leaves.SHAPE_COUNT {
@@ -184,10 +184,10 @@ leaf_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
             label_x := f32(width) * (.38 + f32(column) * .12) - 52
             display_row := 2 - row
             label_y := f32(height) * (.49 + f32(display_row) * .17)
-            bounds := rl.Rectangle{label_x - 8, label_y - 5, 120, 25}
-            rl.DrawRectangleRounded(bounds, .3, 6, {19, 31, 27, 210})
-            rl.DrawTextEx(
-                rl.Font{},
+            bounds := canvas2d.Rectangle{label_x - 8, label_y - 5, 120, 25}
+            canvas2d.DrawRectangleRounded(bounds, .3, 6, {19, 31, 27, 210})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
                 fmt.ctprintf("%s", leaves.shape_name(leaves.Shape(index))),
                 {label_x, label_y},
                 11,

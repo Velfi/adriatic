@@ -17,8 +17,24 @@ physics_world_recreates_layered_bodies_and_queries :: proc(t: ^testing.T) {
         hit, ok := physics.cast_ray(world, {0, 2, 0}, {0, -1, 0}, 4)
         testing.expect(t, ok)
         testing.expect(t, hit.body == ground)
+        testing.expect(t, hit.normal.y > .999)
         physics.destroy_world(world)
     }
+}
+
+@(test)
+physics_filtered_ray_returns_normals_and_excludes_layers :: proc(t: ^testing.T) {
+    world := physics.create_world(128, 1)
+    defer physics.destroy_world(world)
+    ground := physics.add_box_layered(world, {4, .5, 4}, {0, -.5, 0}, layer = .Static_World)
+    blocker := physics.add_box_layered(world, {.5, .25, .5}, {0, .25, 0}, layer = .Character)
+    testing.expect(t, ground != physics.INVALID_BODY && blocker != physics.INVALID_BODY)
+    static_mask := u16(1 << u16(physics.Object_Layer.Static_World))
+    hit, ok := physics.cast_ray_filtered(world, {0, 2, 0}, {0, -1, 0}, 4, static_mask)
+    testing.expect(t, ok && hit.body == ground)
+    testing.expect(t, hit.normal.y > .999)
+    _, miss := physics.cast_ray_filtered(world, {8, 2, 0}, {0, -1, 0}, 1, static_mask)
+    testing.expect(t, !miss)
 }
 
 @(test)

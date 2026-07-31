@@ -139,21 +139,22 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     float precipitation = sky.wind_cloud.w;
     float haze = sky.haze_severity.x;
     float severity = sky.haze_severity.y;
+    // Preserve observer-local inputs before reconstructing weather along the
+    // current view ray. Solar visibility must be evaluated behind the viewer,
+    // independently from rain toward the antisolar bow.
+    float observer_cloud_cover = cloud_cover;
+    float observer_severity = severity;
     float world_days = sky.haze_severity.z;
     float elevation = max(ray.y, 0.0);
-    // "Red sky at night" is the dry, western afterglow around sunset rather
-    // than a uniform orange ring. Keep the window tied to solar elevation,
-    // then use clock time only to reject the matching dawn configuration.
+    // Red dawn and dusk are directional low-sun scattering, not a uniform
+    // orange ring. Clock gates distinguish the eastern morning glow from the
+    // western evening afterglow while solar elevation shapes both transitions.
+    float morning = smoothstep(4.0 * 60.0, 5.5 * 60.0, world_minutes) *
+                    (1.0 - smoothstep(7.0 * 60.0, 8.5 * 60.0, world_minutes));
     float evening = smoothstep(15.5 * 60.0, 17.0 * 60.0, world_minutes) *
                     (1.0 - smoothstep(20.5 * 60.0, 22.0 * 60.0, world_minutes));
     float sunset_altitude = smoothstep(-.20, .055, sun_dir.y) *
                             (1.0 - smoothstep(.055, .24, sun_dir.y));
-    float dry_air = (1.0 - smoothstep(.10, .62, precipitation)) *
-                    (1.0 - smoothstep(.42, .88, severity));
-    float aerosol = lerp(.48, 1.0, smoothstep(.025, .38, haze));
-    float broken_clouds = 1.0 +
-        smoothstep(.08, .34, cloud_cover) * (1.0 - smoothstep(.62, .90, cloud_cover)) * .55;
-    float red_sky = evening * sunset_altitude * dry_air * aerosol;
     float sunward_horizon = pow(saturate(
         dot(normalize(ray.xz + float2(.0001, 0)), normalize(sun_dir.xz + float2(.0001, 0))) * .5 + .5
     ), 3.2) * (1.0 - smoothstep(.015, .48, elevation));
@@ -196,6 +197,12 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
         severity = lerp(background_severity, max(severity, .92),
                         directional_front * directional_front);
     }
+    float dry_air = (1.0 - smoothstep(.10, .62, precipitation)) *
+                    (1.0 - smoothstep(.42, .88, severity));
+    float aerosol = lerp(.48, 1.0, smoothstep(.025, .38, haze));
+    float broken_clouds = 1.0 +
+        smoothstep(.08, .34, cloud_cover) * (1.0 - smoothstep(.62, .90, cloud_cover)) * .55;
+    float red_sky = max(morning, evening) * sunset_altitude * dry_air * aerosol;
 
     const float3 zenith_color = float3(.115, .35, .56);
     const float3 upper_color = float3(.27, .54, .70);
@@ -247,43 +254,68 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     // bow moves with the light and vanishes when either sunlight or rain is
     // absent.  A broad rain-cell mask keeps clear portions of the sky from
     // receiving a perfectly uniform, diagram-like ring.
-    float3 antisolar = -sun_dir;
-    float bow_angle = acos(clamp(dot(ray, antisolar), -1.0, 1.0));
-    float rain_cell = fbm3(float3(
-        ray.x * 2.15 + wind_direction.x * cloud_seconds * .00016,
-        ray.z * 2.15 + wind_direction.y * cloud_seconds * .00016,
-        storm_seed * 41.0 + 9.0
-    ));
-    float rain_available = smoothstep(.08, .62, precipitation) *
-                           smoothstep(.24, .72, rain_cell + precipitation * .34);
-    float direct_sun = smoothstep(.015, .16, sun_dir.y) * daylight *
-                       (1.0 - saturate(cloud_cover * .68 + severity * .18));
-    float bow_visibility = rain_available * direct_sun *
-                           smoothstep(-.015, .035, ray.y);
-
-    // The angular ordering follows water-droplet dispersion: violet is on the
-    // inner edge and red on the outer edge.  Overlapping soft bands avoid the
-    // hard neon stripes of a purely illustrative rainbow.
     const float DEG = 0.01745329252;
-    float3 rainbow = float3(0, 0, 0);
-    rainbow += float3(.50, .16, .72) * exp(-pow((bow_angle - 40.55 * DEG) / (.34 * DEG), 2.0));
-    rainbow += float3(.16, .31, .92) * exp(-pow((bow_angle - 40.92 * DEG) / (.35 * DEG), 2.0));
-    rainbow += float3(.10, .70, .78) * exp(-pow((bow_angle - 41.28 * DEG) / (.36 * DEG), 2.0));
-    rainbow += float3(.18, .82, .32) * exp(-pow((bow_angle - 41.64 * DEG) / (.38 * DEG), 2.0));
-    rainbow += float3(.96, .75, .12) * exp(-pow((bow_angle - 42.00 * DEG) / (.39 * DEG), 2.0));
-    rainbow += float3(1.00, .37, .08) * exp(-pow((bow_angle - 42.36 * DEG) / (.40 * DEG), 2.0));
-    rainbow += float3(.92, .08, .055) * exp(-pow((bow_angle - 42.74 * DEG) / (.41 * DEG), 2.0));
-    color += rainbow * bow_visibility * .34;
+    float sun_cloud_cover = observer_cloud_cover;
+    float sun_severity = observer_severity;
+    if (sky.haze_severity.w > 0.0) {
+        float sun_front_coordinate = sky.camera_forward.w +
+            dot(sun_dir.xz, wind_direction) * sky.haze_severity.w;
+        sun_front_coordinate += sin(
+            dot(sun_dir.xz, float2(-wind_direction.y, wind_direction.x)) * 9.0 +
+            cloud_seconds * .0017 + storm_seed * 21.0
+        ) * .12;
+        float sun_front = smoothstep(-1.05, -.15, sun_front_coordinate) *
+                          (1.0 - smoothstep(.15, 1.05, sun_front_coordinate));
+        sun_cloud_cover = lerp(min(observer_cloud_cover, .42), max(observer_cloud_cover, .94), sun_front);
+        sun_severity = lerp(min(observer_severity, .18), max(observer_severity, .92), sun_front * sun_front);
+    }
+    float direct_sun = smoothstep(.015, .16, sun_dir.y) * daylight *
+                       (1.0 - saturate(sun_cloud_cover * .68 + sun_severity * .18));
+    float bow_dot = dot(ray, -sun_dir);
+    bool primary_candidate = bow_dot > cos(43.8 * DEG) && bow_dot < cos(39.5 * DEG);
+    bool secondary_candidate = precipitation > .52 &&
+        bow_dot > cos(54.2 * DEG) && bow_dot < cos(49.7 * DEG);
 
-    // A restrained secondary bow sits farther from the antisolar point with
-    // reversed color order, as expected after a second internal reflection.
-    float3 secondary = float3(0, 0, 0);
-    secondary += float3(.90, .09, .06) * exp(-pow((bow_angle - 50.7 * DEG) / (.48 * DEG), 2.0));
-    secondary += float3(.94, .72, .13) * exp(-pow((bow_angle - 51.3 * DEG) / (.48 * DEG), 2.0));
-    secondary += float3(.16, .75, .34) * exp(-pow((bow_angle - 51.9 * DEG) / (.48 * DEG), 2.0));
-    secondary += float3(.14, .32, .88) * exp(-pow((bow_angle - 52.5 * DEG) / (.48 * DEG), 2.0));
-    secondary += float3(.48, .15, .68) * exp(-pow((bow_angle - 53.1 * DEG) / (.48 * DEG), 2.0));
-    color += secondary * bow_visibility * smoothstep(.52, .92, precipitation) * .16;
+    // Avoid the costly inverse trig and spectral exponentials for clear
+    // weather, darkness, and almost every pixel outside the two narrow cones.
+    if (precipitation > .08 && direct_sun > .001 && ray.y > -.015 &&
+        (primary_candidate || secondary_candidate)) {
+        float rain_cell = fbm3(float3(
+            ray.x * 2.15 + wind_direction.x * cloud_seconds * .00016,
+            ray.z * 2.15 + wind_direction.y * cloud_seconds * .00016,
+            storm_seed * 41.0 + 9.0
+        ));
+        float rain_available = smoothstep(.08, .62, precipitation) *
+                               smoothstep(.24, .72, rain_cell + precipitation * .34);
+        float bow_visibility = rain_available * direct_sun *
+                               smoothstep(-.015, .035, ray.y);
+        float bow_angle = acos(clamp(bow_dot, -1.0, 1.0));
+
+        // The angular ordering follows water-droplet dispersion: violet is on
+        // the inner edge and red on the outer edge.
+        if (primary_candidate) {
+            float3 rainbow = float3(0, 0, 0);
+            rainbow += float3(.50, .16, .72) * exp(-pow((bow_angle - 40.55 * DEG) / (.34 * DEG), 2.0));
+            rainbow += float3(.16, .31, .92) * exp(-pow((bow_angle - 40.92 * DEG) / (.35 * DEG), 2.0));
+            rainbow += float3(.10, .70, .78) * exp(-pow((bow_angle - 41.28 * DEG) / (.36 * DEG), 2.0));
+            rainbow += float3(.18, .82, .32) * exp(-pow((bow_angle - 41.64 * DEG) / (.38 * DEG), 2.0));
+            rainbow += float3(.96, .75, .12) * exp(-pow((bow_angle - 42.00 * DEG) / (.39 * DEG), 2.0));
+            rainbow += float3(1.00, .37, .08) * exp(-pow((bow_angle - 42.36 * DEG) / (.40 * DEG), 2.0));
+            rainbow += float3(.92, .08, .055) * exp(-pow((bow_angle - 42.74 * DEG) / (.41 * DEG), 2.0));
+            color += rainbow * bow_visibility * .34;
+        }
+
+        // A second internal reflection reverses the secondary bow's colors.
+        if (secondary_candidate) {
+            float3 secondary = float3(0, 0, 0);
+            secondary += float3(.90, .09, .06) * exp(-pow((bow_angle - 50.7 * DEG) / (.48 * DEG), 2.0));
+            secondary += float3(.94, .72, .13) * exp(-pow((bow_angle - 51.3 * DEG) / (.48 * DEG), 2.0));
+            secondary += float3(.16, .75, .34) * exp(-pow((bow_angle - 51.9 * DEG) / (.48 * DEG), 2.0));
+            secondary += float3(.14, .32, .88) * exp(-pow((bow_angle - 52.5 * DEG) / (.48 * DEG), 2.0));
+            secondary += float3(.48, .15, .68) * exp(-pow((bow_angle - 53.1 * DEG) / (.48 * DEG), 2.0));
+            color += secondary * bow_visibility * smoothstep(.52, .92, precipitation) * .16;
+        }
+    }
 
     // At Adriatic latitude, the celestial pole sits about 43 degrees above
     // the northern horizon. Stars advance by one extra rotation per tropical

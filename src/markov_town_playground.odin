@@ -10,7 +10,7 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:strconv"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 MARKOV_TOWN_GRID :: 23
 MARKOV_TOWN_CELL :: f32(20)
@@ -281,6 +281,7 @@ settlement_lab_configure :: proc(
     if editor == nil do return false
     if !append_city_plan do editor.settlement_plan.patio_count = 0
     patio_capture := target == "patio"
+    cemetery_capture := target == "cemetery"
     fixture, vertical_map, seed_target := settlement_lab_target_parse(target)
     editor.settlement_vertical_map = vertical_map
     seed := 0x4d4a54
@@ -836,6 +837,7 @@ settlement_lab_configure :: proc(
     settlement_plan_import_city(&editor.settlement_plan, &plan, &editor.project)
     settlement_patios_generate(editor)
     settlement_gardens_generate(editor)
+    _ = settlement_cemetery_reserve(editor)
     if append_city_plan {
         append(&editor.architecture_city_plan.structures, ..plan.structures[:plan.count])
         append(&editor.architecture_city_plan.parcels, ..plan.parcels[:plan.parcel_count])
@@ -1070,10 +1072,31 @@ settlement_lab_configure :: proc(
         third_person.camera_set_pose(&editor.cameras, .Inspection, patio_pose)
         third_person.camera_set_active(&editor.cameras, .Inspection)
     }
+    if configure_presentation && cemetery_capture {
+        cemetery := settlement_cemetery_derive(editor)
+        if cemetery.valid {
+            forward := [2]f32{math.sin(cemetery.rotation), math.cos(cemetery.rotation)}
+            right := [2]f32{forward[1], -forward[0]}
+            cemetery_pose := third_person.camera_look_at(
+                {
+                    cemetery.origin[0] - forward[0] * 22 + right[0] * 7,
+                    cemetery.ground_y + 10,
+                    cemetery.origin[1] - forward[1] * 22 + right[1] * 7,
+                },
+                {cemetery.origin[0], cemetery.ground_y + .8, cemetery.origin[1]},
+            )
+            editor.settlement_diagnostic_layer = -1
+            editor.capture_world_only = true
+            editor.editor_focus = cemetery_pose.target
+            editor.camera_pose = cemetery_pose
+            third_person.camera_set_pose(&editor.cameras, .Inspection, cemetery_pose)
+            third_person.camera_set_active(&editor.cameras, .Inspection)
+        }
+    }
     return true
 }
 
-settlement_tissue_overlay_color :: proc(tissue: Settlement_Tissue) -> rl.Color {
+settlement_tissue_overlay_color :: proc(tissue: Settlement_Tissue) -> canvas2d.Color {
     switch tissue {
     case .Venetian_Mercantile:
         return {214, 113, 74, 118}
@@ -1097,7 +1120,7 @@ settlement_tissue_overlay_color :: proc(tissue: Settlement_Tissue) -> rl.Color {
     return {200, 200, 200, 110}
 }
 
-settlement_route_overlay_color :: proc(class: Settlement_Route_Class) -> rl.Color {
+settlement_route_overlay_color :: proc(class: Settlement_Route_Class) -> canvas2d.Color {
     switch class {
     case .Civic_Spine:
         return {247, 211, 91, 225}
@@ -1119,7 +1142,7 @@ settlement_route_overlay_color :: proc(class: Settlement_Route_Class) -> rl.Colo
     return {220, 220, 220, 210}
 }
 
-world_settlement_route_overlay :: proc(editor: ^Editor, route: Settlement_Planned_Route, color: rl.Color) {
+world_settlement_route_overlay :: proc(editor: ^Editor, route: Settlement_Planned_Route, color: canvas2d.Color) {
     for index in 0 ..< route.geometry.count - 1 {
         a, b := route.geometry.points[index], route.geometry.points[index + 1]
         dx, dz := b[0] - a[0], b[1] - a[1]
@@ -1158,13 +1181,13 @@ world_settlement_diagnostics :: proc(editor: ^Editor) {
     case 1, 2:
         for cell in plan.macro_cells[:plan.macro_cell_count] {
             value := editor.settlement_diagnostic_layer == 1 ? cell.density : cell.suitability
-            low := rl.Color{48, 76, 123, 92}
-            high := rl.Color{244, 213, 91, 176}
+            low := canvas2d.Color{48, 76, 123, 92}
+            high := canvas2d.Color{244, 213, 91, 176}
             if editor.settlement_diagnostic_layer == 2 {
-                low, high = rl.Color{176, 67, 74, 112}, rl.Color{88, 210, 142, 176}
+                low, high = canvas2d.Color{176, 67, 74, 112}, canvas2d.Color{88, 210, 142, 176}
             }
             amount := clamp(value, 0, 1)
-            color := rl.Color {
+            color := canvas2d.Color {
                 u8(f32(low.r) + (f32(high.r) - f32(low.r)) * amount),
                 u8(f32(low.g) + (f32(high.g) - f32(low.g)) * amount),
                 u8(f32(low.b) + (f32(high.b) - f32(low.b)) * amount),
@@ -1223,7 +1246,7 @@ world_settlement_diagnostics :: proc(editor: ^Editor) {
         }
     case 7, 8, 9:
         wanted := Settlement_Site_Kind.Ordinary
-        color := rl.Color{89, 211, 183, 230}
+        color := canvas2d.Color{89, 211, 183, 230}
         if editor.settlement_diagnostic_layer == 8 {
             wanted = .Landmark
             color = {247, 205, 84, 240}
@@ -1249,7 +1272,7 @@ world_markov_town_wanderers :: proc(editor: ^Editor) {
     world_settlement_diagnostics(editor)
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
     town_z := center + 95
-    time := f32(rl.GetTime())
+    time := f32(canvas2d.GetTime())
     for index in 0 ..< 6 {
         walking := index < 4
         angular_speed := .028 + f32(index) * .002
@@ -1297,7 +1320,7 @@ SETTLEMENT_DIAGNOSTIC_LAYERS := [?]string {
 
 settlement_lab_process_input :: proc(editor: ^Editor) {
     if editor == nil do return
-    if rl.IsKeyPressed(.TAB) {
+    if canvas2d.IsKeyPressed(.TAB) {
         editor.settlement_diagnostic_layer =
             (editor.settlement_diagnostic_layer + 1) % len(SETTLEMENT_DIAGNOSTIC_LAYERS)
     }
@@ -1307,16 +1330,16 @@ settlement_lab_draw_ui :: proc(editor: ^Editor, _: i32, _: i32) {
     if editor == nil || editor.settlement_diagnostic_layer < 0 do return
     plan := &editor.settlement_plan
     region := plan.request.region == .Adriatic ? "ADRIATIC" : "AEGEAN"
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf("%s %v SETTLEMENT LAB", region, plan.request.scale),
         {38, 38},
         19,
         1,
         {245, 239, 192, 255},
     )
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf(
             "TAB  OVERLAY  %d/%d  %s",
             editor.settlement_diagnostic_layer + 1,
@@ -1329,9 +1352,9 @@ settlement_lab_draw_ui :: proc(editor: ^Editor, _: i32, _: i32) {
         {211, 250, 242, 255},
     )
     report := settlement_plan_report(plan)
-    rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", report), {38, 94}, 11, 1, {164, 190, 190, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", report), {38, 94}, 11, 1, {164, 190, 190, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf(
             "seed %u  neighborhoods %d  terrain edits %d  graph %d/%d nodes %d/%d edges",
             plan.request.seed,
@@ -1345,10 +1368,10 @@ settlement_lab_draw_ui :: proc(editor: ^Editor, _: i32, _: i32) {
         {38, 114},
         11,
         1,
-        plan.valid ? rl.Color{164, 220, 180, 255} : rl.Color{244, 130, 120, 255},
+        plan.valid ? canvas2d.Color{164, 220, 180, 255} : canvas2d.Color{244, 130, 120, 255},
     )
     if plan.request.scale == .Village {
         village_report := settlement_village_program_report(plan)
-        rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", village_report), {38, 134}, 11, 1, {211, 220, 175, 255})
+        canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", village_report), {38, 134}, 11, 1, {211, 220, 175, 255})
     }
 }

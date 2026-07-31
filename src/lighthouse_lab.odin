@@ -7,7 +7,7 @@ import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 LIGHTHOUSE_LAB_HEIGHTS := [3]f32{14, 22, 30}
 
@@ -69,18 +69,18 @@ lighthouse_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 }
 
 lighthouse_lab_process_input :: proc(editor: ^Editor) {
-    if rl.IsKeyPressed(.A) do lighthouse_lab_seed -= 1
-    if rl.IsKeyPressed(.D) do lighthouse_lab_seed += 1
-    if rl.IsKeyPressed(.R) {
+    if canvas2d.IsKeyPressed(.A) do lighthouse_lab_seed -= 1
+    if canvas2d.IsKeyPressed(.D) do lighthouse_lab_seed += 1
+    if canvas2d.IsKeyPressed(.R) {
         lighthouse_lab_region = lighthouse_lab_region == .Adriatic ? .Aegean : .Adriatic
     }
-    if rl.IsKeyPressed(.L) {
+    if canvas2d.IsKeyPressed(.L) {
         lighthouse_lab_night = !lighthouse_lab_night
         lighthouse_lab_apply_lighting(editor)
     }
-    if rl.IsKeyPressed(.ONE) do lighthouse_lab_height_index = 0
-    if rl.IsKeyPressed(.TWO) do lighthouse_lab_height_index = 1
-    if rl.IsKeyPressed(.THREE) do lighthouse_lab_height_index = 2
+    if canvas2d.IsKeyPressed(.ONE) do lighthouse_lab_height_index = 0
+    if canvas2d.IsKeyPressed(.TWO) do lighthouse_lab_height_index = 1
+    if canvas2d.IsKeyPressed(.THREE) do lighthouse_lab_height_index = 2
 }
 
 lighthouse_lab_structure :: proc() -> terrain.Structure {
@@ -101,7 +101,7 @@ world_lighthouse_lab :: proc(editor: ^Editor) {
 
     // A low faceted skerry gives the foundation and silhouette coastal context
     // without hiding any portion of the generated tower.
-    rock := rl.Color{111, 105, 91, 255}
+    rock := canvas2d.Color{111, 105, 91, 255}
     world_tube_between({0, -.45, 0}, {0, .72, 0}, {0, 0, 1}, 8.2, 6.8, rock)
     world_tube_between({0, .68, 0}, {0, 1.08, 0}, {0, 0, 1}, 5.8, 5.0, {143, 132, 108, 255})
     lighthouse := lighthouse_lab_structure()
@@ -125,21 +125,21 @@ world_lighthouse_lab :: proc(editor: ^Editor) {
     // The skerry rises through a continuous water sheet. Cutting a square hole
     // around the octagonal rock exposed the clear color at its corners and
     // looked like a missing chunk beneath the lighthouse.
-    water := rl.Color{39, 100, 128, 255}
+    water := canvas2d.Color{39, 100, 128, 255}
     extent := f32(90)
     world_water_quad({-extent, 0, -extent}, {-extent, 0, extent}, {extent, 0, extent}, {extent, 0, -extent}, water)
 }
 
 lighthouse_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 430,
         height = 142,
     }
-    rl.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
-    rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
-    rl.DrawTextEx(rl.Font{}, "LIGHTHOUSE GENERATOR LAB", {38, 38}, 20, 1, {245, 238, 197, 255})
+    canvas2d.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "LIGHTHOUSE GENERATOR LAB", {38, 38}, 20, 1, {245, 238, 197, 255})
     region := lighthouse_lab_region == .Aegean ? "AEGEAN" : "ADRIATIC"
     lighting := lighthouse_lab_night ? "NIGHT" : "MORNING"
     status := fmt.ctprintf(
@@ -149,9 +149,9 @@ lighthouse_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         LIGHTHOUSE_LAB_HEIGHTS[lighthouse_lab_height_index],
         lighting,
     )
-    rl.DrawTextEx(rl.Font{}, status, {38, 72}, 14, 1, {208, 239, 240, 255})
-    rl.DrawTextEx(rl.Font{}, "A / D seed     R region     L light", {38, 102}, 13, 1, {171, 201, 207, 255})
-    rl.DrawTextEx(rl.Font{}, "1 / 2 / 3 tower height", {38, 124}, 13, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, status, {38, 72}, 14, 1, {208, 239, 240, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "A / D seed     R region     L light", {38, 102}, 13, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "1 / 2 / 3 tower height", {38, 124}, 13, 1, {171, 201, 207, 255})
     _ = width
     _ = height
 }

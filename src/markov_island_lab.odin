@@ -6,7 +6,7 @@ import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 MARKOV_ISLAND_DEFAULT_SEED :: u32(0x49534c45)
 MARKOV_ISLAND_HALF_X :: f32(620)
@@ -137,7 +137,7 @@ markov_island_regenerate :: proc(editor: ^Editor) -> bool {
     return true
 }
 
-markov_island_reroll_button_bounds :: proc() -> rl.Rectangle {
+markov_island_reroll_button_bounds :: proc() -> canvas2d.Rectangle {
     return {40, 142, 156, 36}
 }
 
@@ -169,17 +169,17 @@ markov_island_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 
 markov_island_lab_process_input :: proc(editor: ^Editor) {
     changed := false
-    if rl.IsKeyPressed(.LEFT) {
+    if canvas2d.IsKeyPressed(.LEFT) {
         markov_island_seed -= 1
         changed = true
     }
-    if rl.IsKeyPressed(.RIGHT) {
+    if canvas2d.IsKeyPressed(.RIGHT) {
         markov_island_seed += 1
         changed = true
     }
-    reroll := rl.IsKeyPressed(.R)
-    if rl.IsMouseButtonPressed(.LEFT) &&
-       rl.CheckCollisionPointRec(rl.GetMousePosition(), markov_island_reroll_button_bounds()) {
+    reroll := canvas2d.IsKeyPressed(.R)
+    if canvas2d.IsMouseButtonPressed(.LEFT) &&
+       canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), markov_island_reroll_button_bounds()) {
         reroll = true
     }
     if reroll {
@@ -193,7 +193,7 @@ markov_island_lab_exit :: proc(_: ^Editor) {
     islands.destroy(&markov_island_plan)
 }
 
-markov_island_contour_color :: proc(kind: islands.Contour_Kind) -> rl.Color {
+markov_island_contour_color :: proc(kind: islands.Contour_Kind) -> canvas2d.Color {
     switch kind {
     case .Main_Coast:
         return {246, 220, 148, 255}
@@ -208,10 +208,10 @@ markov_island_contour_color :: proc(kind: islands.Contour_Kind) -> rl.Color {
 markov_island_draw_diagnostic :: proc(width: i32) {
     preview_width := f32(384)
     preview_height := preview_width * f32(islands.GRID_HEIGHT) / f32(islands.GRID_WIDTH)
-    origin := rl.Vector2{f32(width) - preview_width - 24, 24}
-    panel := rl.Rectangle{origin.x - 10, origin.y - 10, preview_width + 20, preview_height + 45}
-    rl.DrawRectangleRounded(panel, .06, 8, {8, 26, 37, 232})
-    rl.DrawRectangleRoundedLinesEx(panel, .06, 8, 1, {94, 156, 169, 255})
+    origin := canvas2d.Vector2{f32(width) - preview_width - 24, 24}
+    panel := canvas2d.Rectangle{origin.x - 10, origin.y - 10, preview_width + 20, preview_height + 45}
+    canvas2d.DrawRectangleRounded(panel, .06, 8, {8, 26, 37, 232})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .06, 8, 1, {94, 156, 169, 255})
     cell_w := preview_width / f32(islands.GRID_WIDTH)
     cell_h := preview_height / f32(islands.GRID_HEIGHT)
     for z in 0 ..< islands.GRID_HEIGHT {
@@ -220,7 +220,7 @@ markov_island_draw_diagnostic :: proc(width: i32) {
             land := x < islands.GRID_WIDTH && markov_island_plan.cleaned[z * islands.GRID_WIDTH + x] == .Land
             if land && run_start < 0 do run_start = x
             if !land && run_start >= 0 {
-                rl.DrawRectangleRec(
+                canvas2d.DrawRectangleRec(
                     {
                         origin.x + f32(run_start) * cell_w,
                         origin.y + f32(z) * cell_h,
@@ -238,7 +238,7 @@ markov_island_draw_diagnostic :: proc(width: i32) {
         for index in 0 ..< len(contour.points) {
             a := contour.points[index]
             b := contour.points[(index + 1) % len(contour.points)]
-            rl.DrawLineEx(
+            canvas2d.DrawLineEx(
                 {origin.x + a.x * cell_w, origin.y + a.z * cell_h},
                 {origin.x + b.x * cell_w, origin.y + b.z * cell_h},
                 1.5,
@@ -246,8 +246,8 @@ markov_island_draw_diagnostic :: proc(width: i32) {
             )
         }
     }
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         "COAST   LAKES   SKERRIES",
         {origin.x, origin.y + preview_height + 10},
         11,
@@ -266,10 +266,10 @@ markov_island_rejection_text :: proc(mask: u32) -> cstring {
 }
 
 markov_island_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
-    panel := rl.Rectangle{24, 24, 570, 204}
-    rl.DrawRectangleRounded(panel, .10, 8, {8, 26, 37, 232})
-    rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {94, 156, 169, 255})
-    rl.DrawTextEx(rl.Font{}, "MARKOV ISLAND SILHOUETTE LAB", {40, 40}, 19, 1, {242, 231, 188, 255})
+    panel := canvas2d.Rectangle{24, 24, 570, 204}
+    canvas2d.DrawRectangleRounded(panel, .10, 8, {8, 26, 37, 232})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {94, 156, 169, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "MARKOV ISLAND SILHOUETTE LAB", {40, 40}, 19, 1, {242, 231, 188, 255})
     status := fmt.ctprintf(
         "REQUEST %08X  SELECTED %08X  TRY %d/%d  SCORE %.3f",
         markov_island_plan.requested_seed,
@@ -278,7 +278,7 @@ markov_island_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
         islands.MAX_CANDIDATE_ATTEMPTS,
         markov_island_plan.score,
     )
-    rl.DrawTextEx(rl.Font{}, status, {40, 70}, 12, 1, {188, 219, 217, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, status, {40, 70}, 12, 1, {188, 219, 217, 255})
     diagnostics := &markov_island_plan.diagnostics
     metrics := fmt.ctprintf(
         "LAND %d  COAST %.3f  LAKES %d  SKERRIES %d  BLUFF %d  GROVES %d  PEAK %.1fm",
@@ -290,8 +290,8 @@ markov_island_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
         len(markov_island_plan.foliage),
         diagnostics.maximum_elevation,
     )
-    rl.DrawTextEx(rl.Font{}, metrics, {40, 94}, 12, 1, {188, 219, 217, 255})
-    validity_color := markov_island_plan.valid ? rl.Color{154, 220, 148, 255} : rl.Color{245, 154, 116, 255}
+    canvas2d.DrawTextEx(canvas2d.Font{}, metrics, {40, 94}, 12, 1, {188, 219, 217, 255})
+    validity_color := markov_island_plan.valid ? canvas2d.Color{154, 220, 148, 255} : canvas2d.Color{245, 154, 116, 255}
     shape_status := fmt.ctprintf(
         "%s     %s  ASPECT %.2f  RECT %.2f",
         markov_island_rejection_text(diagnostics.rejection_mask),
@@ -299,13 +299,13 @@ markov_island_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
         diagnostics.aspect_ratio,
         diagnostics.rectangularity,
     )
-    rl.DrawTextEx(rl.Font{}, shape_status, {40, 118}, 12, 1, validity_color)
+    canvas2d.DrawTextEx(canvas2d.Font{}, shape_status, {40, 118}, 12, 1, validity_color)
     button := markov_island_reroll_button_bounds()
-    hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), button)
-    button_fill: rl.Color = hovered ? {52, 125, 131, 248} : {34, 79, 85, 244}
-    rl.DrawRectangleRounded(button, .22, 8, button_fill)
-    rl.DrawRectangleRoundedLinesEx(button, .22, 8, 1, {112, 198, 194, 255})
-    rl.DrawTextEx(rl.Font{}, "ROLL NEW ISLAND  [R]", {button.x + 13, button.y + 12}, 11, 1, {242, 231, 188, 255})
-    rl.DrawTextEx(rl.Font{}, "LEFT / RIGHT: STEP SEED", {40, 194}, 11, 1, {175, 190, 190, 255})
+    hovered := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), button)
+    button_fill: canvas2d.Color = hovered ? {52, 125, 131, 248} : {34, 79, 85, 244}
+    canvas2d.DrawRectangleRounded(button, .22, 8, button_fill)
+    canvas2d.DrawRectangleRoundedLinesEx(button, .22, 8, 1, {112, 198, 194, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "ROLL NEW ISLAND  [R]", {button.x + 13, button.y + 12}, 11, 1, {242, 231, 188, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "LEFT / RIGHT: STEP SEED", {40, 194}, 11, 1, {175, 190, 190, 255})
     markov_island_draw_diagnostic(width)
 }

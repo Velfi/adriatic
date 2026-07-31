@@ -6,7 +6,7 @@ import "core:c"
 import "core:fmt"
 import "core:math"
 import vk "vendor:vulkan"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
 
 IMGUI_DESCRIPTOR_COUNT :: 1000
@@ -61,7 +61,7 @@ imgui_create_descriptor_pool :: proc(ctx: ^engine.Vk_Context) -> vk.DescriptorPo
     return pool
 }
 
-imgui_init :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
+imgui_init :: proc(pass: ^canvas2d.Ui_Pass_Context) -> bool {
     if imgui.initialized do return true
     imgui.ctx = im.CreateContext()
     if imgui.ctx == nil do return false
@@ -119,20 +119,20 @@ imgui_init :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
         return false
     }
     imgui.show_demo = false
-    imgui.last_time = rl.GetTime()
+    imgui.last_time = canvas2d.GetTime()
     imgui.initialized = true
     return true
 }
 
 @(no_instrumentation)
-imgui_add_key :: #force_inline proc(key: im.Key, canvas_key: rl.KeyboardKey) {
-    im.IO_AddKeyEvent(imgui.io, key, rl.IsKeyDown(canvas_key))
+imgui_add_key :: #force_inline proc(key: im.Key, canvas_key: canvas2d.KeyboardKey) {
+    im.IO_AddKeyEvent(imgui.io, key, canvas2d.IsKeyDown(canvas_key))
 }
 
-imgui_begin_frame :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
+imgui_begin_frame :: proc(pass: ^canvas2d.Ui_Pass_Context) -> bool {
     if !imgui_init(pass) do return false
 
-    now := rl.GetTime()
+    now := canvas2d.GetTime()
     delta := now - imgui.last_time
     imgui.last_time = now
     imgui.io.DeltaTime = clamp(f32(delta), f32(1.0 / 240.0), f32(1.0 / 15.0))
@@ -142,12 +142,12 @@ imgui_begin_frame :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
         f32(pass.framebuffer_extent.height) / f32(max(pass.logical_extent[1], 1)),
     }
 
-    mouse := rl.GetMousePosition()
+    mouse := canvas2d.GetMousePosition()
     im.IO_AddMousePosEvent(imgui.io, mouse.x, mouse.y)
-    im.IO_AddMouseButtonEvent(imgui.io, c.int(0), rl.IsMouseButtonDown(.LEFT))
-    im.IO_AddMouseButtonEvent(imgui.io, c.int(1), rl.IsMouseButtonDown(.RIGHT))
-    im.IO_AddMouseButtonEvent(imgui.io, c.int(2), rl.IsMouseButtonDown(.MIDDLE))
-    im.IO_AddMouseWheelEvent(imgui.io, 0, rl.GetMouseWheelMove())
+    im.IO_AddMouseButtonEvent(imgui.io, c.int(0), canvas2d.IsMouseButtonDown(.LEFT))
+    im.IO_AddMouseButtonEvent(imgui.io, c.int(1), canvas2d.IsMouseButtonDown(.RIGHT))
+    im.IO_AddMouseButtonEvent(imgui.io, c.int(2), canvas2d.IsMouseButtonDown(.MIDDLE))
+    im.IO_AddMouseWheelEvent(imgui.io, 0, canvas2d.GetMouseWheelMove())
 
     imgui_add_key(.Tab, .TAB)
     imgui_add_key(.LeftArrow, .LEFT)
@@ -169,7 +169,7 @@ imgui_begin_frame :: proc(pass: ^rl.Ui_Pass_Context) -> bool {
     imgui_add_key(.S, .S)
     imgui_add_key(.W, .W)
 
-    text_input := rl.GetTextInput()
+    text_input := canvas2d.GetTextInput()
     if len(text_input) > 0 {
         im.IO_AddInputCharactersUTF8(imgui.io, fmt.ctprintf("%s", text_input))
     }
@@ -193,19 +193,19 @@ imgui_draw :: proc(editor: ^Editor) {
     if imgui.show_demo do im.ShowDemoWindow(&imgui.show_demo)
 }
 
-imgui_render :: proc(pass: ^rl.Ui_Pass_Context, editor: ^Editor) {
+imgui_render :: proc(pass: ^canvas2d.Ui_Pass_Context, editor: ^Editor) {
     imgui_draw(editor)
     im.Render()
     imgui_vk.RenderDrawData(im.GetDrawData(), pass.frame.command_buffer)
 }
 
-imgui_ui_pass :: proc(pass: ^rl.Ui_Pass_Context, _: rawptr) {
+imgui_ui_pass :: proc(pass: ^canvas2d.Ui_Pass_Context, _: rawptr) {
     editor := world_renderer.editor
     wants_text_input := editor != nil && editor.tweak_panel_visible
     if wants_text_input && !imgui.text_input_active {
-        imgui.text_input_active = rl.StartTextInput()
+        imgui.text_input_active = canvas2d.StartTextInput()
     } else if !wants_text_input && imgui.text_input_active {
-        _ = rl.StopTextInput()
+        _ = canvas2d.StopTextInput()
         imgui.text_input_active = false
     }
     if !imgui_begin_frame(pass) do return
@@ -214,7 +214,7 @@ imgui_ui_pass :: proc(pass: ^rl.Ui_Pass_Context, _: rawptr) {
 
 imgui_destroy :: proc() {
     if !imgui.initialized do return
-    if imgui.text_input_active do _ = rl.StopTextInput()
+    if imgui.text_input_active do _ = canvas2d.StopTextInput()
     imgui_vk.Shutdown()
     if imgui.descriptor_pool != vk.DescriptorPool(0) do vk.DestroyDescriptorPool(imgui.device, imgui.descriptor_pool, nil)
     im.DestroyContext(imgui.ctx)

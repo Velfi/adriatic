@@ -7,7 +7,7 @@ import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 RUINS_LAB_DEFAULT_SEED :: u32(0x5255494e)
 
@@ -29,7 +29,7 @@ ruins_lab_shaded_box_rotated :: proc(
     center: third_person.Vec3,
     size: third_person.Vec3,
     rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
     local := [8][3]f32 {
@@ -103,11 +103,11 @@ ruins_lab_shaded_box_rotated :: proc(
     )
 }
 
-ruins_lab_shaded_box :: proc(center, size: third_person.Vec3, color: rl.Color) {
+ruins_lab_shaded_box :: proc(center, size: third_person.Vec3, color: canvas2d.Color) {
     ruins_lab_shaded_box_rotated(center, size, 0, color)
 }
 
-ruins_lab_shaded_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, color: rl.Color) {
+ruins_lab_shaded_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, color: canvas2d.Color) {
     delta := b - a
     length := linalg.length(delta)
     if length <= .0001 do return
@@ -149,7 +149,7 @@ ruins_lab_shaded_box_between :: proc(a, b, forward: third_person.Vec3, width, de
 ruins_lab_shaded_vertical_prism :: proc(
     center: third_person.Vec3,
     radius_x, radius_z, height, rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     SEGMENTS :: 8
     bottom, top: [SEGMENTS]third_person.Vec3
@@ -373,43 +373,43 @@ ruins_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 ruins_lab_process_input :: proc(editor: ^Editor) {
     if editor == nil do return
     changed := false
-    if rl.IsKeyPressed(.R) {
+    if canvas2d.IsKeyPressed(.R) {
         ruins_lab_seed += 1
         changed = true
     }
-    if rl.IsKeyPressed(.ONE) {
+    if canvas2d.IsKeyPressed(.ONE) {
         ruins_lab_mode = .Ruin
         changed = true
     }
-    if rl.IsKeyPressed(.TWO) {
+    if canvas2d.IsKeyPressed(.TWO) {
         ruins_lab_mode = .Complex
         changed = true
     }
-    if rl.IsKeyPressed(.C) {
+    if canvas2d.IsKeyPressed(.C) {
         ruins_lab_culture = ruins.Culture((int(ruins_lab_culture) + 1) % len(ruins.Culture))
         changed = true
     }
-    if rl.IsKeyPressed(.T) {
+    if canvas2d.IsKeyPressed(.T) {
         ruins_lab_terrain = ruins.Terrain_Profile((int(ruins_lab_terrain) + 1) % len(ruins.Terrain_Profile))
         changed = true
     }
-    if rl.IsKeyPressed(.D) {
+    if canvas2d.IsKeyPressed(.D) {
         ruins_lab_preservation = ruins.Preservation((int(ruins_lab_preservation) + 1) % len(ruins.Preservation))
         changed = true
     }
-    if rl.IsKeyPressed(.G) {
+    if canvas2d.IsKeyPressed(.G) {
         ruins_lab_pottery_density = ruins.Pottery_Density(
             (int(ruins_lab_pottery_density) + 1) % len(ruins.Pottery_Density),
         )
         changed = true
     }
-    if rl.IsKeyPressed(.B) {
+    if canvas2d.IsKeyPressed(.B) {
         ruins_lab_complex_scale = ruins.Complex_Scale((int(ruins_lab_complex_scale) + 1) % len(ruins.Complex_Scale))
         changed = true
     }
-    if rl.IsKeyPressed(.P) do ruins_lab_show_props = !ruins_lab_show_props
-    if rl.IsKeyPressed(.V) do ruins_lab_show_paths = !ruins_lab_show_paths
-    if rl.IsKeyPressed(.F) {
+    if canvas2d.IsKeyPressed(.P) do ruins_lab_show_props = !ruins_lab_show_props
+    if canvas2d.IsKeyPressed(.V) do ruins_lab_show_paths = !ruins_lab_show_paths
+    if canvas2d.IsKeyPressed(.F) {
         ruins_lab_view = Ruins_Lab_View((int(ruins_lab_view) + 1) % len(Ruins_Lab_View))
         ruins_lab_camera(editor)
     }
@@ -457,7 +457,7 @@ ruins_lab_masonry_segment :: proc(
             if horizontal {
                 size = {max(block_length - .035, f32(.18)), course_height - .018, .46}
             }
-            color := rl.Color{190, 177, 143, 255}
+            color := canvas2d.Color{190, 177, 143, 255}
             if building.culture == .Roman {
                 color = {181, 164, 137, 255}
                 if course % 4 == 1 do color = {167, 105, 76, 255}
@@ -467,9 +467,9 @@ ruins_lab_masonry_segment :: proc(
                 color = {190, 177, 143, 255}
             }
             if jitter > .012 {
-                color = building.culture == .Roman ? rl.Color{194, 178, 150, 255} : rl.Color{205, 191, 157, 255}
+                color = building.culture == .Roman ? canvas2d.Color{194, 178, 150, 255} : canvas2d.Color{205, 191, 157, 255}
             } else if jitter < -.012 {
-                color = building.culture == .Minoan ? rl.Color{164, 146, 113, 255} : rl.Color{169, 157, 128, 255}
+                color = building.culture == .Minoan ? canvas2d.Color{164, 146, 113, 255} : canvas2d.Color{169, 157, 128, 255}
             }
             if building.occupation_phase == .Expansion && ruins.hash(building.seed ~ block_salt ~ 0x5ea1) % 11 < 3 {
                 color = {201, 188, 158, 255}
@@ -521,11 +521,11 @@ ruins_lab_wall_finish :: proc(
     size := third_person.Vec3{.026, patch_height, patch_length}
     if horizontal do size = {patch_length, patch_height, .026}
 
-    base_color := rl.Color{218, 202, 169, 255}
-    accent_color := rl.Color{139, 63, 45, 255}
+    base_color := canvas2d.Color{218, 202, 169, 255}
+    accent_color := canvas2d.Color{139, 63, 45, 255}
     if building.wall_finish == .Minoan_Painted_Plaster {
         base_color = {198, 174, 132, 255}
-        palette := [3]rl.Color{{150, 50, 39, 255}, {43, 92, 111, 255}, {199, 145, 70, 255}}
+        palette := [3]canvas2d.Color{{150, 50, 39, 255}, {43, 92, 111, 255}, {199, 145, 70, 255}}
         accent_color = palette[int(ruins.hash(building.seed ~ salt ~ 4) % 3)]
     }
     ruins_lab_shaded_box_rotated(center, size, building.yaw, base_color)
@@ -546,7 +546,7 @@ ruins_lab_wall_finish :: proc(
 }
 
 ruins_lab_wall_run :: proc(building: ruins.Building, horizontal: bool, fixed, length: f32, side_index: int) {
-    cap_color := rl.Color{218, 204, 168, 255}
+    cap_color := canvas2d.Color{218, 204, 168, 255}
     if building.culture == .Roman {
         cap_color = {205, 190, 164, 255}
     } else if building.culture == .Minoan {
@@ -596,9 +596,9 @@ ruins_lab_column :: proc(building: ruins.Building, x, z: f32, index: int, painte
     state := ruins.column_state(building, index, painted)
     height := building.wall_height * (.72 + ruins.random01(building.seed ~ u32(index) * 73) * .20)
     p := ruins_lab_local(building, x, z)
-    shaft_color := painted ? rl.Color{139, 48, 39, 255} : rl.Color{207, 195, 163, 255}
-    base_color := painted ? rl.Color{76, 67, 55, 255} : rl.Color{218, 205, 170, 255}
-    capital_color := painted ? rl.Color{58, 54, 45, 255} : rl.Color{221, 207, 173, 255}
+    shaft_color := painted ? canvas2d.Color{139, 48, 39, 255} : canvas2d.Color{207, 195, 163, 255}
+    base_color := painted ? canvas2d.Color{76, 67, 55, 255} : canvas2d.Color{218, 205, 170, 255}
+    capital_color := painted ? canvas2d.Color{58, 54, 45, 255} : canvas2d.Color{221, 207, 173, 255}
     ruins_lab_shaded_box_rotated(
         {p.x, p.y + .22, p.z},
         painted ? third_person.Vec3{.78, .20, .78} : third_person.Vec3{.92, .20, .92},
@@ -718,7 +718,7 @@ ruins_lab_portal_local :: proc(building: ruins.Building, tangent, y: f32) -> thi
 ruins_lab_portal_block :: proc(
     building: ruins.Building,
     tangent, y, tangent_width, height, depth: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     size := third_person.Vec3{depth, height, tangent_width}
     if building.entrance_side == 0 || building.entrance_side == 2 {
@@ -728,13 +728,13 @@ ruins_lab_portal_block :: proc(
 }
 
 ruins_lab_portal :: proc(building: ruins.Building) {
-    stone := rl.Color{218, 204, 168, 255}
+    stone := canvas2d.Color{218, 204, 168, 255}
     if building.culture == .Roman {
         stone = {201, 185, 157, 255}
     } else if building.culture == .Minoan {
         stone = {205, 183, 145, 255}
     }
-    dark_stone := building.culture == .Minoan ? rl.Color{76, 67, 55, 255} : rl.Color{174, 160, 132, 255}
+    dark_stone := building.culture == .Minoan ? canvas2d.Color{76, 67, 55, 255} : canvas2d.Color{174, 160, 132, 255}
     jamb_height := building.culture == .Roman ? f32(1.65) : f32(1.95)
     jamb_width := building.culture == .Minoan ? f32(.48) : f32(.40)
     half_opening := building.culture == .Minoan ? f32(1.15) : f32(1.02)
@@ -752,7 +752,7 @@ ruins_lab_portal :: proc(building: ruins.Building) {
             jamb_width,
             height,
             .62,
-            building.culture == .Minoan && side > 0 ? rl.Color{137, 55, 43, 255} : stone,
+            building.culture == .Minoan && side > 0 ? canvas2d.Color{137, 55, 43, 255} : stone,
         )
     }
 
@@ -902,19 +902,19 @@ ruins_lab_floor_finish :: proc(building: ruins.Building) {
             depth_scale := ruins.random_range(building.seed ~ salt ~ 4, .78, .97)
             p := ruins_lab_local(building, x, z)
             p.y = building.base_y + .185
-            color := rl.Color{174, 145, 91, 255}
-            accent := rl.Color{}
+            color := canvas2d.Color{174, 145, 91, 255}
+            accent := canvas2d.Color{}
             has_accent := false
             if building.floor_finish == .Roman_Mosaic {
-                palette := [2]rl.Color{{220, 211, 188, 255}, {197, 182, 151, 255}}
+                palette := [2]canvas2d.Color{{220, 211, 188, 255}, {197, 182, 151, 255}}
                 pattern := (row + column * 2 + int(ruins.hash(building.seed ~ 0x605a1c) % 3)) % 7
                 color = palette[(row + column) % 2]
                 if pattern == 0 || pattern == 3 {
                     has_accent = true
-                    accent = pattern == 0 ? rl.Color{73, 70, 62, 255} : rl.Color{173, 96, 67, 255}
+                    accent = pattern == 0 ? canvas2d.Color{73, 70, 62, 255} : canvas2d.Color{173, 96, 67, 255}
                 }
             } else if building.floor_finish == .Minoan_Gypsum_Plaster {
-                palette := [3]rl.Color{{210, 195, 158, 255}, {188, 167, 128, 255}, {151, 76, 56, 255}}
+                palette := [3]canvas2d.Color{{210, 195, 158, 255}, {188, 167, 128, 255}, {151, 76, 56, 255}}
                 pattern := (row * 3 + column + int(ruins.hash(building.seed ~ 0x6a95) % 4)) % 9
                 color = pattern == 0 ? palette[2] : palette[(row + column) % 2]
             } else if (row * 2 + column) % 5 == 0 {
@@ -948,7 +948,7 @@ ruins_lab_occupation_traces :: proc(building: ruins.Building) {
         offset_x := ruins.random_range(building.seed ~ 0xea71, -.65, .65)
         offset_z := ruins.random_range(building.seed ~ 0xea72, -.55, .55)
         width, depth := building.width * .58, building.depth * .54
-        stone := rl.Color{137, 128, 108, 255}
+        stone := canvas2d.Color{137, 128, 108, 255}
         if building.culture == .Minoan do stone = {119, 108, 85, 255}
         runs := [4]struct {
             x, z, width, depth: f32,
@@ -978,7 +978,7 @@ ruins_lab_occupation_traces :: proc(building: ruins.Building) {
     patch := ruins_lab_local(building, x, z)
     patch.y = building.base_y + .222
     ruins_lab_shaded_box_rotated(patch, {2.25, .06, 1.75}, building.yaw, {142, 105, 70, 255})
-    hearth_stone := building.culture == .Roman ? rl.Color{151, 139, 120, 255} : rl.Color{126, 113, 88, 255}
+    hearth_stone := building.culture == .Roman ? canvas2d.Color{151, 139, 120, 255} : canvas2d.Color{126, 113, 88, 255}
     for index in 0 ..< 6 {
         angle := f32(index) / 6 * math.PI * 2
         p := ruins_lab_local(building, x + math.cos(angle) * .56, z + math.sin(angle) * .56)
@@ -1018,7 +1018,7 @@ ruins_lab_signature_remain :: proc(building: ruins.Building) {
                 p,
                 size,
                 building.yaw,
-                tier == 0 ? rl.Color{166, 153, 132, 255} : rl.Color{195, 181, 154, 255},
+                tier == 0 ? canvas2d.Color{166, 153, 132, 255} : canvas2d.Color{195, 181, 154, 255},
             )
         }
         for seat in 0 ..< 7 {
@@ -1050,7 +1050,7 @@ ruins_lab_signature_remain :: proc(building: ruins.Building) {
                     p,
                     {.34, .38, .34},
                     building.yaw,
-                    index % 3 == 0 ? rl.Color{160, 79, 55, 255} : rl.Color{184, 101, 70, 255},
+                    index % 3 == 0 ? canvas2d.Color{160, 79, 55, 255} : canvas2d.Color{184, 101, 70, 255},
                 )
             }
         }
@@ -1066,7 +1066,7 @@ ruins_lab_signature_remain :: proc(building: ruins.Building) {
                 p,
                 {stair_width - f32(step) * .16, height, depth + .06},
                 building.yaw,
-                step % 2 == 0 ? rl.Color{181, 159, 120, 255} : rl.Color{151, 132, 101, 255},
+                step % 2 == 0 ? canvas2d.Color{181, 159, 120, 255} : canvas2d.Color{151, 132, 101, 255},
             )
         }
     case .Magazine_Pithos_Beds:
@@ -1085,7 +1085,7 @@ ruins_lab_signature_remain :: proc(building: ruins.Building) {
 }
 
 ruins_lab_building :: proc(building: ruins.Building) {
-    slab_color := rl.Color{168, 158, 128, 255}
+    slab_color := canvas2d.Color{168, 158, 128, 255}
     if building.culture == .Roman {
         slab_color = {151, 137, 118, 255}
     } else if building.culture == .Minoan {
@@ -1098,7 +1098,7 @@ ruins_lab_building :: proc(building: ruins.Building) {
     if building.culture == .Minoan do course_target = .96
     foundation_courses := max(int(math.ceil(foundation_height / course_target)), 1)
     course_height := foundation_height / f32(foundation_courses)
-    foundation_color := rl.Color{142, 132, 105, 255}
+    foundation_color := canvas2d.Color{142, 132, 105, 255}
     if building.culture == .Roman do foundation_color = {148, 137, 119, 255}
     if building.culture == .Minoan do foundation_color = {132, 117, 91, 255}
     foundation_bottom := f32(-.24)
@@ -1150,7 +1150,7 @@ ruins_lab_building :: proc(building: ruins.Building) {
     } else if building.kind == .Villa || building.kind == .Palace {
         // Villas and Minoan palaces organize rooms around an open light court.
         p := ruins_lab_local(building, 0, 0)
-        court_color := building.culture == .Minoan ? rl.Color{177, 130, 86, 255} : rl.Color{190, 178, 145, 255}
+        court_color := building.culture == .Minoan ? canvas2d.Color{177, 130, 86, 255} : canvas2d.Color{190, 178, 145, 255}
         ruins_lab_shaded_box_rotated(
             {p.x, building.base_y + .19, p.z},
             {building.width * .38, .08, building.depth * .38},
@@ -1165,7 +1165,7 @@ ruins_lab_building :: proc(building: ruins.Building) {
 }
 
 ruins_lab_pot :: proc(prop: ruins.Prop, base_y: f32) {
-    terracotta := rl.Color{164, 82, 48, 255}
+    terracotta := canvas2d.Color{164, 82, 48, 255}
     height, radius := f32(.48), f32(.31)
     top_scale := f32(.72)
     if prop.kind == .Amphora do height, radius = .72, .25
@@ -1190,7 +1190,7 @@ ruins_lab_pot :: proc(prop: ruins.Prop, base_y: f32) {
         {116, 59, 42, 255},
     )
     if prop.kind == .Pithos || prop.kind == .Dolium {
-        band_color := prop.kind == .Pithos ? rl.Color{112, 61, 43, 255} : rl.Color{132, 70, 48, 255}
+        band_color := prop.kind == .Pithos ? canvas2d.Color{112, 61, 43, 255} : canvas2d.Color{132, 70, 48, 255}
         for band in 0 ..< 2 {
             y := base_y + .17 + height * (.40 + f32(band) * .27)
             ruins_lab_shaded_vertical_prism(
@@ -1215,7 +1215,7 @@ ruins_lab_pottery_sherds :: proc(prop: ruins.Prop, base_y: f32) {
         length := ruins.random_range(prop.detail_seed ~ salt ~ 3, .16, .36) * prop.scale
         width := ruins.random_range(prop.detail_seed ~ salt ~ 4, .08, .20) * prop.scale
         p := ruins_lab_prop_local(prop, base_y, x, .19 + f32(index % 3) * .012, z)
-        color := index % 3 == 0 ? rl.Color{188, 91, 55, 255} : rl.Color{145, 70, 48, 255}
+        color := index % 3 == 0 ? canvas2d.Color{188, 91, 55, 255} : canvas2d.Color{145, 70, 48, 255}
         ruins_lab_shaded_box_rotated(
             p,
             {length, .045, width},
@@ -1241,8 +1241,8 @@ ruins_lab_prop_local :: proc(prop: ruins.Prop, base_y, x, y, z: f32) -> third_pe
 
 ruins_lab_tumbled_wall :: proc(prop: ruins.Prop, building: ruins.Building) {
     base_y := building.base_y
-    stone := rl.Color{174, 162, 133, 255}
-    pale := rl.Color{198, 185, 153, 255}
+    stone := canvas2d.Color{174, 162, 133, 255}
+    pale := canvas2d.Color{198, 185, 153, 255}
     count_base, length_base := 9, f32(3.8)
     width_low, width_high := f32(.48), f32(.92)
     if building.culture == .Roman {
@@ -1292,9 +1292,9 @@ ruins_lab_masonry_pile :: proc(prop: ruins.Prop, building: ruins.Building) {
         if building.culture == .Minoan do size_low, size_high = .50, .92
         size := ruins.random_range(prop.detail_seed ~ salt ~ 3, size_low, size_high) * prop.scale
         p := ruins_lab_prop_local(prop, base_y, x, .16 + size * .28, z)
-        stone := index % 3 == 0 ? rl.Color{204, 190, 157, 255} : rl.Color{166, 154, 126, 255}
+        stone := index % 3 == 0 ? canvas2d.Color{204, 190, 157, 255} : canvas2d.Color{166, 154, 126, 255}
         if building.culture == .Minoan {
-            stone = index % 3 == 0 ? rl.Color{185, 164, 126, 255} : rl.Color{142, 126, 99, 255}
+            stone = index % 3 == 0 ? canvas2d.Color{185, 164, 126, 255} : canvas2d.Color{142, 126, 99, 255}
         }
         ruins_lab_shaded_box_rotated(
             p,
@@ -1322,7 +1322,7 @@ ruins_lab_roof_tile_pile :: proc(prop: ruins.Prop, base_y: f32) {
             p,
             {.48 * prop.scale, .09 * prop.scale, .72 * prop.scale},
             prop.yaw + ruins.random_range(prop.detail_seed ~ salt ~ 2, -.16, .16),
-            index % 3 == 0 ? rl.Color{153, 68, 45, 255} : rl.Color{181, 86, 54, 255},
+            index % 3 == 0 ? canvas2d.Color{153, 68, 45, 255} : canvas2d.Color{181, 86, 54, 255},
         )
     }
 }
@@ -1335,7 +1335,7 @@ ruins_lab_fallen_timber :: proc(prop: ruins.Prop, base_y: f32) {
         z := (f32(index) - f32(beam_count - 1) * .5) * .34 * prop.scale
         p := ruins_lab_prop_local(prop, base_y, x, .24 + f32(index) * .055, z)
         length := ruins.random_range(prop.detail_seed ~ salt ~ 2, 3.1, 4.25) * prop.scale
-        color := index == 0 ? rl.Color{75, 58, 39, 255} : rl.Color{97, 70, 43, 255}
+        color := index == 0 ? canvas2d.Color{75, 58, 39, 255} : canvas2d.Color{97, 70, 43, 255}
         ruins_lab_shaded_box_rotated(
             p,
             {length, .22 * prop.scale, .25 * prop.scale},
@@ -1357,7 +1357,7 @@ ruins_lab_mudbrick_fall :: proc(prop: ruins.Prop, base_y: f32) {
         height := ruins.random_range(prop.detail_seed ~ salt ~ 4, .16, .34) * prop.scale
         depth := ruins.random_range(prop.detail_seed ~ salt ~ 5, .30, .58) * prop.scale
         p := ruins_lab_prop_local(prop, base_y, x, .16 + height * .5, z)
-        color := index % 3 == 0 ? rl.Color{164, 119, 76, 255} : rl.Color{143, 101, 67, 255}
+        color := index % 3 == 0 ? canvas2d.Color{164, 119, 76, 255} : canvas2d.Color{143, 101, 67, 255}
         ruins_lab_shaded_box_rotated(p, {width, height, depth}, prop.yaw + angle, color)
     }
 }
@@ -1374,7 +1374,7 @@ ruins_lab_grass_tuft :: proc(prop: ruins.Prop, base_y: f32) {
             base_y + .16 + height * .5,
             prop.position.z + math.sin(angle) * distance,
         }
-        color := index % 3 == 0 ? rl.Color{116, 119, 62, 255} : rl.Color{91, 105, 55, 255}
+        color := index % 3 == 0 ? canvas2d.Color{116, 119, 62, 255} : canvas2d.Color{91, 105, 55, 255}
         ruins_lab_shaded_box_rotated(center, {.045, height, .09}, angle, color)
     }
 }
@@ -1394,7 +1394,7 @@ ruins_lab_scrub :: proc(prop: ruins.Prop, base_y: f32) {
         angle := prop.yaw + f32(index) / 5 * math.PI * 2
         radius := ruins.random_range(prop.detail_seed ~ salt ~ 2, .18, .38) * prop.scale
         y := base_y + .17 + height * ruins.random_range(prop.detail_seed ~ salt ~ 3, .48, .88)
-        color := index % 2 == 0 ? rl.Color{86, 103, 57, 255} : rl.Color{105, 116, 63, 255}
+        color := index % 2 == 0 ? canvas2d.Color{86, 103, 57, 255} : canvas2d.Color{105, 116, 63, 255}
         ruins_lab_shaded_vertical_prism(
             {prop.position.x + math.cos(angle) * radius, y, prop.position.z + math.sin(angle) * radius},
             .22 * prop.scale,
@@ -1539,7 +1539,7 @@ ruins_lab_court :: proc(plan: ruins.Plan, court: ruins.Central_Court) {
                 z := -court.depth * .5 + cell_depth * (f32(row) + .5)
                 flag := ruins_lab_prop_local({position = p, yaw = court.yaw}, y, x, .13, z)
                 tone := ruins.random01(plan.seed ~ salt ~ 0xc048)
-                color := rl.Color{178, 169, 150, 255}
+                color := canvas2d.Color{178, 169, 150, 255}
                 if tone < .28 {
                     color = {168, 159, 142, 255}
                 } else if tone > .82 {
@@ -1642,11 +1642,11 @@ ruins_lab_enclosure :: proc(plan: ^ruins.Plan) {
             height := max(segment.height * height_factor, f32(.38))
             a := third_person.Vec3{segment.a.x + dx * t0, a_y + height * .5 + .12, segment.a.z + dz * t0}
             b := third_person.Vec3{segment.a.x + dx * t1, b_y + height * .5 + .12, segment.a.z + dz * t1}
-            color := rl.Color{171, 158, 128, 255}
+            color := canvas2d.Color{171, 158, 128, 255}
             if plan^.culture == .Roman {
-                color = chunk % 4 == 1 ? rl.Color{165, 105, 77, 255} : rl.Color{183, 169, 144, 255}
+                color = chunk % 4 == 1 ? canvas2d.Color{165, 105, 77, 255} : canvas2d.Color{183, 169, 144, 255}
             } else if plan^.culture == .Minoan {
-                color = chunk % 3 == 0 ? rl.Color{163, 143, 108, 255} : rl.Color{188, 169, 130, 255}
+                color = chunk % 3 == 0 ? canvas2d.Color{163, 143, 108, 255} : canvas2d.Color{188, 169, 130, 255}
             }
             ruins_lab_shaded_box_between(a, b, {0, 1, 0}, segment.width, height, color)
             if plan^.preservation == .Collapsed && roll < gap_chance + .16 {
@@ -1688,7 +1688,7 @@ ruins_lab_route_pavement :: proc(culture: ruins.Culture) -> roads.Pavement {
     return .Dirt
 }
 
-ruins_lab_route_surface_color :: proc(culture: ruins.Culture, surface: roads.Surface) -> rl.Color {
+ruins_lab_route_surface_color :: proc(culture: ruins.Culture, surface: roads.Surface) -> canvas2d.Color {
     if surface == .Verge {
         switch culture {
         case .Roman:
@@ -1711,16 +1711,16 @@ ruins_lab_route_surface_color :: proc(culture: ruins.Culture, surface: roads.Sur
     }
     switch culture {
     case .Roman:
-        return surface == .Junction ? rl.Color{166, 160, 143, 255} : rl.Color{184, 176, 155, 255}
+        return surface == .Junction ? canvas2d.Color{166, 160, 143, 255} : canvas2d.Color{184, 176, 155, 255}
     case .Minoan:
-        return surface == .Junction ? rl.Color{169, 136, 94, 255} : rl.Color{181, 150, 104, 255}
+        return surface == .Junction ? canvas2d.Color{169, 136, 94, 255} : canvas2d.Color{181, 150, 104, 255}
     case .Aegean:
-        return surface == .Junction ? rl.Color{181, 162, 108, 255} : rl.Color{194, 174, 120, 255}
+        return surface == .Junction ? canvas2d.Color{181, 162, 108, 255} : canvas2d.Color{194, 174, 120, 255}
     }
     return {181, 150, 104, 255}
 }
 
-ruins_lab_road_vertex :: proc(vertex: roads.Vertex, color: rl.Color) -> World_Vertex {
+ruins_lab_road_vertex :: proc(vertex: roads.Vertex, color: canvas2d.Color) -> World_Vertex {
     position := vertex.position
     position.y += .018
     return {
@@ -1770,7 +1770,7 @@ ruins_lab_route_network :: proc(plan: ^ruins.Plan) {
 
 ruins_lab_route_stairs :: proc(plan: ^ruins.Plan, route: ruins.Route_Segment) {
     if plan == nil || !ruins.route_requires_stairs(plan, route) do return
-    path_color := rl.Color{194, 174, 120, 255}
+    path_color := canvas2d.Color{194, 174, 120, 255}
     if plan^.culture == .Roman do path_color = {184, 170, 139, 255}
     if plan^.culture == .Minoan do path_color = {181, 150, 104, 255}
     elevation_change := route.b_y - route.a_y
@@ -1806,8 +1806,8 @@ ruins_lab_drainage :: proc(plan: ^ruins.Plan) {
         if length < .01 do continue
         perpendicular := ruins.Vec2{-dz / length, dx / length}
         yaw := math.atan2(dz, dx)
-        bed_color := rl.Color{112, 105, 82, 255}
-        edge_color := rl.Color{177, 164, 131, 255}
+        bed_color := canvas2d.Color{112, 105, 82, 255}
+        edge_color := canvas2d.Color{177, 164, 131, 255}
         if channel.kind == .Capped_Drain {
             bed_color, edge_color = {91, 96, 91, 255}, {181, 171, 151, 255}
         } else if channel.kind == .Plaster_Channel {
@@ -1851,7 +1851,7 @@ ruins_lab_drainage :: proc(plan: ^ruins.Plan) {
                     p,
                     {.72, .12, channel.width + .26},
                     yaw,
-                    cap % 3 == 0 ? rl.Color{197, 187, 165, 255} : rl.Color{169, 160, 143, 255},
+                    cap % 3 == 0 ? canvas2d.Color{197, 187, 165, 255} : canvas2d.Color{169, 160, 143, 255},
                 )
             }
         }
@@ -1896,16 +1896,16 @@ world_ruins_lab :: proc(_: ^Editor) {
 }
 
 ruins_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 900,
         height = 178,
     }
-    rl.DrawRectangleRounded(panel, .10, 8, {24, 27, 24, 232})
-    rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {197, 166, 105, 255})
+    canvas2d.DrawRectangleRounded(panel, .10, 8, {24, 27, 24, 232})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {197, 166, 105, 255})
     title := fmt.ctprintf("%s RUINS GENERATOR", ruins.culture_name(ruins_lab_culture))
-    rl.DrawTextEx(rl.Font{}, title, {38, 38}, 20, 1, {244, 224, 177, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, title, {38, 38}, 20, 1, {244, 224, 177, 255})
     summary := fmt.ctprintf(
         "%s / %s / %s / %s / %s FINDS   SEED %d   %d STRUCTURES   %d PROPS",
         ruins.mode_name(ruins_lab_mode),
@@ -1917,9 +1917,9 @@ ruins_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         ruins_lab_plan.building_count,
         ruins_lab_plan.prop_count,
     )
-    rl.DrawTextEx(rl.Font{}, summary, {38, 68}, 13, 1, {190, 214, 197, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 68}, 13, 1, {190, 214, 197, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         "1/2 MODE  C CULTURE  T TERRAIN  D DECAY  B SCALE  G FINDS  R SEED  F VIEW  P PROPS  V PATH",
         {38, 91},
         12,
@@ -1947,13 +1947,13 @@ ruins_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         ruins_lab_plan.precinct_count,
         collapse_degrees,
     )
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         status,
         {38, 116},
         11,
         1,
-        ruins_lab_plan.valid ? rl.Color{177, 211, 157, 255} : rl.Color{231, 127, 100, 255},
+        ruins_lab_plan.valid ? canvas2d.Color{177, 211, 157, 255} : canvas2d.Color{231, 127, 100, 255},
     )
     intact_pottery, sherd_fields, wall_falls, debris_piles, vegetation, stair_flights := 0, 0, 0, 0, 0, 0
     for prop in ruins_lab_plan.props[:ruins_lab_plan.prop_count] {
@@ -1981,7 +1981,7 @@ ruins_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         ruins.gateway_kind_name(ruins_lab_plan.gateway.kind),
         RUINS_LAB_MATERIAL_ROUGHNESS,
     )
-    rl.DrawTextEx(rl.Font{}, morphology, {38, 137}, 10, 1, {202, 189, 155, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, morphology, {38, 137}, 10, 1, {202, 189, 155, 255})
     archaeology := fmt.ctprintf(
         "%d VESSELS  %d SHERDS  %d FALLS  %d DEBRIS  %d GROWTH  %d STAIRS  %d DRAINS  %d MOVED",
         intact_pottery,
@@ -1993,7 +1993,7 @@ ruins_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         ruins_lab_plan.drainage_count,
         ruins_lab_plan.relocated_prop_count,
     )
-    rl.DrawTextEx(rl.Font{}, archaeology, {38, 156}, 10, 1, {188, 174, 143, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, archaeology, {38, 156}, 10, 1, {188, 174, 143, 255})
     _ = width
     _ = height
 }

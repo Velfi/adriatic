@@ -2,7 +2,7 @@ package main
 
 import game_input "../packages/game_input"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 CUSTOMIZATION_COLOR_COUNT :: 6
 CUSTOMIZATION_PATTERN_COUNT :: 6
@@ -15,11 +15,11 @@ CUSTOMIZATION_SCARF_START :: CUSTOMIZATION_HEADGEAR_START + CUSTOMIZATION_HEADGE
 CUSTOMIZATION_BACK_FOCUS :: CUSTOMIZATION_SCARF_START + CUSTOMIZATION_SCARF_CONTROL_COUNT
 CUSTOMIZATION_BASE_HEIGHT :: f32(620)
 
-customization_scale_y :: proc(panel: rl.Rectangle) -> f32 {
+customization_scale_y :: proc(panel: canvas2d.Rectangle) -> f32 {
     return panel.height / CUSTOMIZATION_BASE_HEIGHT
 }
 
-customization_y :: proc(panel: rl.Rectangle, offset: f32) -> f32 {
+customization_y :: proc(panel: canvas2d.Rectangle, offset: f32) -> f32 {
     return panel.y + offset * customization_scale_y(panel)
 }
 
@@ -41,7 +41,7 @@ mouse_fur_label :: proc(value: Mouse_Fur) -> cstring {
     return "CHESTNUT"
 }
 
-mouse_fur_color :: proc(value: Mouse_Fur) -> rl.Color {
+mouse_fur_color :: proc(value: Mouse_Fur) -> canvas2d.Color {
     switch value {
     case .Chestnut:
         return {132, 107, 84, 255}
@@ -107,13 +107,13 @@ mouse_headgear_label :: proc(value: Mouse_Accessory) -> cstring {
     return "NONE"
 }
 
-customization_scene_panel :: proc(width, height: i32) -> rl.Rectangle {
+customization_scene_panel :: proc(width, height: i32) -> canvas2d.Rectangle {
     panel_width := min(f32(1000), f32(width) - 32)
     panel_height := min(f32(620), f32(height) - 24)
     return {(f32(width) - panel_width) * .5, (f32(height) - panel_height) * .5, panel_width, panel_height}
 }
 
-customization_color_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
+customization_color_bounds :: proc(panel: canvas2d.Rectangle, index: int) -> canvas2d.Rectangle {
     controls_x := panel.x + panel.width * .41
     available := panel.width * .55
     gap := f32(8)
@@ -127,7 +127,7 @@ customization_color_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectan
     }
 }
 
-customization_pattern_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
+customization_pattern_bounds :: proc(panel: canvas2d.Rectangle, index: int) -> canvas2d.Rectangle {
     controls_x := panel.x + panel.width * .41
     available := panel.width * .55
     gap := f32(8)
@@ -140,7 +140,7 @@ customization_pattern_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rect
     }
 }
 
-customization_headgear_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
+customization_headgear_bounds :: proc(panel: canvas2d.Rectangle, index: int) -> canvas2d.Rectangle {
     controls_x := panel.x + panel.width * .41
     available := panel.width * .55
     gap := f32(8)
@@ -154,7 +154,7 @@ customization_headgear_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rec
     }
 }
 
-customization_scarf_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectangle {
+customization_scarf_bounds :: proc(panel: canvas2d.Rectangle, index: int) -> canvas2d.Rectangle {
     controls_x := panel.x + panel.width * .41
     available := panel.width * .55
     gap := f32(8)
@@ -167,7 +167,7 @@ customization_scarf_bounds :: proc(panel: rl.Rectangle, index: int) -> rl.Rectan
     }
 }
 
-customization_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
+customization_back_bounds :: proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
     return {
         panel.x + panel.width * .41,
         customization_y(panel, 554),
@@ -176,7 +176,7 @@ customization_back_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
     }
 }
 
-customization_preview_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
+customization_preview_bounds :: proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
     return {
         panel.x + 22,
         customization_y(panel, 92),
@@ -185,7 +185,7 @@ customization_preview_bounds :: proc(panel: rl.Rectangle) -> rl.Rectangle {
     }
 }
 
-customization_rgb_to_hsv :: proc(color: rl.Color) -> (hue, saturation, lightness: f32) {
+customization_rgb_to_hsv :: proc(color: canvas2d.Color) -> (hue, saturation, lightness: f32) {
     r, g, b := f32(color.r) / 255, f32(color.g) / 255, f32(color.b) / 255
     high := max(r, max(g, b))
     low := min(r, min(g, b))
@@ -214,7 +214,7 @@ customization_hue_channel :: proc(p, q, t: f32) -> f32 {
     return p
 }
 
-customization_hsl_to_color :: proc(hue, saturation, lightness: f32) -> rl.Color {
+customization_hsl_to_color :: proc(hue, saturation, lightness: f32) -> canvas2d.Color {
     if saturation <= .0001 {
         value := u8(clamp(lightness, 0, 1) * 255)
         return {value, value, value, 255}
@@ -363,10 +363,10 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
     )
     horizontal := 0
     vertical := 0
-    if rl.IsKeyPressed(.LEFT) || gamepad_pressed(.Dpad_Left) do horizontal = -1
-    if rl.IsKeyPressed(.RIGHT) || gamepad_pressed(.Dpad_Right) do horizontal = 1
-    if rl.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do vertical = -1
-    if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do vertical = 1
+    if canvas2d.IsKeyPressed(.LEFT) || gamepad_pressed(.Dpad_Left) do horizontal = -1
+    if canvas2d.IsKeyPressed(.RIGHT) || gamepad_pressed(.Dpad_Right) do horizontal = 1
+    if canvas2d.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do vertical = -1
+    if canvas2d.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do vertical = 1
     if horizontal == 0 do horizontal = stick_x
     if vertical == 0 do vertical = stick_y
     if horizontal != 0 &&
@@ -386,50 +386,50 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
     }
     if horizontal != 0 || vertical != 0 do customization_move_focus(editor, horizontal, vertical)
 
-    mouse := rl.GetMousePosition()
-    mouse_delta := rl.GetMouseDelta()
-    mouse_active := rl.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
-    if rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(mouse, preview) {
+    mouse := canvas2d.GetMousePosition()
+    mouse_delta := canvas2d.GetMouseDelta()
+    mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    if canvas2d.IsMouseButtonPressed(.LEFT) && canvas2d.CheckCollisionPointRec(mouse, preview) {
         editor.customization_preview_dragging = true
         editor.customization_preview_drag_x = mouse.x
     }
-    if editor.customization_preview_dragging && rl.IsMouseButtonDown(.LEFT) {
+    if editor.customization_preview_dragging && canvas2d.IsMouseButtonDown(.LEFT) {
         editor.customization_preview_yaw += (mouse.x - editor.customization_preview_drag_x) * .012
         editor.customization_preview_drag_x = mouse.x
     }
-    if rl.IsMouseButtonReleased(.LEFT) {
+    if canvas2d.IsMouseButtonReleased(.LEFT) {
         editor.customization_preview_dragging = false
         editor.customization_slider_drag = 0
     }
     pointer_focus := -1
     if mouse_active {
         for index in 0 ..< CUSTOMIZATION_COLOR_COUNT {
-            if rl.CheckCollisionPointRec(mouse, customization_color_bounds(panel, index)) {
+            if canvas2d.CheckCollisionPointRec(mouse, customization_color_bounds(panel, index)) {
                 pointer_focus = index
             }
         }
         for index in 0 ..< CUSTOMIZATION_PATTERN_COUNT {
-            if rl.CheckCollisionPointRec(mouse, customization_pattern_bounds(panel, index)) {
+            if canvas2d.CheckCollisionPointRec(mouse, customization_pattern_bounds(panel, index)) {
                 pointer_focus = CUSTOMIZATION_PATTERN_START + index
             }
         }
         for index in 0 ..< CUSTOMIZATION_HEADGEAR_COUNT {
-            if rl.CheckCollisionPointRec(mouse, customization_headgear_bounds(panel, index)) {
+            if canvas2d.CheckCollisionPointRec(mouse, customization_headgear_bounds(panel, index)) {
                 pointer_focus = CUSTOMIZATION_HEADGEAR_START + index
             }
         }
         for index in 0 ..< CUSTOMIZATION_SCARF_CONTROL_COUNT {
-            if rl.CheckCollisionPointRec(mouse, customization_scarf_bounds(panel, index)) {
+            if canvas2d.CheckCollisionPointRec(mouse, customization_scarf_bounds(panel, index)) {
                 pointer_focus = CUSTOMIZATION_SCARF_START + index
             }
         }
-        if rl.CheckCollisionPointRec(mouse, customization_back_bounds(panel)) {
+        if canvas2d.CheckCollisionPointRec(mouse, customization_back_bounds(panel)) {
             pointer_focus = CUSTOMIZATION_BACK_FOCUS
         }
         if pointer_focus >= 0 do editor.customization_focus = pointer_focus
     }
     if input_action_pressed(.Menu_Accept) do customization_activate(editor, editor.customization_focus)
-    if rl.IsMouseButtonPressed(.LEFT) && pointer_focus >= 0 {
+    if canvas2d.IsMouseButtonPressed(.LEFT) && pointer_focus >= 0 {
         if pointer_focus > CUSTOMIZATION_SCARF_START && pointer_focus < CUSTOMIZATION_BACK_FOCUS {
             component := pointer_focus - CUSTOMIZATION_SCARF_START - 1
             editor.customization_slider_drag = component + 1
@@ -437,7 +437,7 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
             customization_activate(editor, pointer_focus)
         }
     }
-    if editor.customization_slider_drag > 0 && rl.IsMouseButtonDown(.LEFT) {
+    if editor.customization_slider_drag > 0 && canvas2d.IsMouseButtonDown(.LEFT) {
         component := editor.customization_slider_drag - 1
         bounds := customization_scarf_bounds(panel, component + 1)
         track_x := bounds.x + 42
@@ -447,157 +447,157 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
     }
 }
 
-customization_card :: proc(bounds: rl.Rectangle, label: cstring, selected, focused: bool, swatch: rl.Color = {}) {
-    hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
+customization_card :: proc(bounds: canvas2d.Rectangle, label: cstring, selected, focused: bool, swatch: canvas2d.Color = {}) {
+    hovered := pause_menu_pointer_enabled && canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
     state := UI_Control_State.Resting
     if hovered do state = .Hovered
     if focused do state = .Focused
     if selected do state = .Selected
     style := ui_theme_control_style(state)
-    rl.DrawRectangleRounded(bounds, .12, 8, style.fill)
-    rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, style.border_width, style.border)
+    canvas2d.DrawRectangleRounded(bounds, .12, 8, style.fill)
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .12, 8, style.border_width, style.border)
     if selected {
-        mark := rl.Vector2{bounds.x + bounds.width - 11, bounds.y + 10}
-        rl.DrawCircleV(mark, 5, ui_theme_accent())
-        rl.DrawLineEx({mark.x - 2.5, mark.y}, {mark.x - .5, mark.y + 2}, 1.5, ui_theme_text_inverse())
-        rl.DrawLineEx({mark.x - .5, mark.y + 2}, {mark.x + 3, mark.y - 2}, 1.5, ui_theme_text_inverse())
+        mark := canvas2d.Vector2{bounds.x + bounds.width - 11, bounds.y + 10}
+        canvas2d.DrawCircleV(mark, 5, ui_theme_accent())
+        canvas2d.DrawLineEx({mark.x - 2.5, mark.y}, {mark.x - .5, mark.y + 2}, 1.5, ui_theme_text_inverse())
+        canvas2d.DrawLineEx({mark.x - .5, mark.y + 2}, {mark.x + 3, mark.y - 2}, 1.5, ui_theme_text_inverse())
     }
     text_x := bounds.x + 10
     if swatch.a > 0 {
-        rl.DrawCircleV({bounds.x + 18, bounds.y + bounds.height * .5}, 9, swatch)
+        canvas2d.DrawCircleV({bounds.x + 18, bounds.y + bounds.height * .5}, 9, swatch)
         text_x = bounds.x + 34
     }
     size := ui_measure_text(.Data, label, .2)
     ui_draw_text(.Data, label, {text_x, bounds.y + (bounds.height - size.y) * .5 + 1}, .2, style.text)
 }
 
-customization_pattern_thumbnail :: proc(bounds: rl.Rectangle, pattern: Mouse_Fur_Pattern) {
-    center := rl.Vector2{bounds.x + bounds.width - 17, bounds.y + bounds.height * .5 + 4}
-    base := rl.Color{168, 119, 82, 255}
-    pale := rl.Color{231, 211, 182, 255}
-    rl.DrawCircleV(center, 8, base)
+customization_pattern_thumbnail :: proc(bounds: canvas2d.Rectangle, pattern: Mouse_Fur_Pattern) {
+    center := canvas2d.Vector2{bounds.x + bounds.width - 17, bounds.y + bounds.height * .5 + 4}
+    base := canvas2d.Color{168, 119, 82, 255}
+    pale := canvas2d.Color{231, 211, 182, 255}
+    canvas2d.DrawCircleV(center, 8, base)
     #partial switch pattern {
     case .Pale_Belly:
-        rl.DrawCircleV({center.x, center.y + 3}, 5, pale)
+        canvas2d.DrawCircleV({center.x, center.y + 3}, 5, pale)
     case .Hooded:
-        rl.DrawCircleV({center.x, center.y - 3}, 5, {72, 62, 57, 255})
+        canvas2d.DrawCircleV({center.x, center.y - 3}, 5, {72, 62, 57, 255})
     case .Piebald:
-        rl.DrawCircleV({center.x - 2, center.y - 2}, 3.5, pale)
-        rl.DrawCircleV({center.x + 3, center.y + 3}, 2.5, pale)
+        canvas2d.DrawCircleV({center.x - 2, center.y - 2}, 3.5, pale)
+        canvas2d.DrawCircleV({center.x + 3, center.y + 3}, 2.5, pale)
     case .Dorsal_Stripe:
-        rl.DrawRectangleRounded({center.x - 1, center.y - 7, 3, 14}, .5, 3, {73, 58, 49, 255})
+        canvas2d.DrawRectangleRounded({center.x - 1, center.y - 7, 3, 14}, .5, 3, {73, 58, 49, 255})
     case .Masked:
-        rl.DrawRectangleRounded({center.x - 7, center.y - 3, 14, 6}, .5, 4, {67, 57, 52, 255})
+        canvas2d.DrawRectangleRounded({center.x - 7, center.y - 3, 14, 6}, .5, 4, {67, 57, 52, 255})
     case:
     }
 }
 
-customization_headgear_thumbnail :: proc(bounds: rl.Rectangle, accessory: Mouse_Accessory) {
-    center := rl.Vector2{bounds.x + bounds.width - 15, bounds.y + bounds.height * .5 + 3}
-    color := rl.Color{208, 177, 111, 255}
+customization_headgear_thumbnail :: proc(bounds: canvas2d.Rectangle, accessory: Mouse_Accessory) {
+    center := canvas2d.Vector2{bounds.x + bounds.width - 15, bounds.y + bounds.height * .5 + 3}
+    color := canvas2d.Color{208, 177, 111, 255}
     #partial switch accessory {
     case .None:
-        rl.DrawLineEx({center.x - 5, center.y - 5}, {center.x + 5, center.y + 5}, 2, {91, 102, 113, 255})
+        canvas2d.DrawLineEx({center.x - 5, center.y - 5}, {center.x + 5, center.y + 5}, 2, {91, 102, 113, 255})
     case .Goggles:
-        rl.DrawCircleV({center.x - 4, center.y}, 4, {132, 211, 215, 255})
-        rl.DrawCircleV({center.x - 4, center.y}, 2.5, {24, 33, 39, 255})
-        rl.DrawCircleV({center.x + 4, center.y}, 4, {132, 211, 215, 255})
-        rl.DrawCircleV({center.x + 4, center.y}, 2.5, {24, 33, 39, 255})
+        canvas2d.DrawCircleV({center.x - 4, center.y}, 4, {132, 211, 215, 255})
+        canvas2d.DrawCircleV({center.x - 4, center.y}, 2.5, {24, 33, 39, 255})
+        canvas2d.DrawCircleV({center.x + 4, center.y}, 4, {132, 211, 215, 255})
+        canvas2d.DrawCircleV({center.x + 4, center.y}, 2.5, {24, 33, 39, 255})
     case .Flower:
         for angle in 0 ..< 5 {
             radians := f32(angle) * math.PI * .4
-            rl.DrawCircleV(
+            canvas2d.DrawCircleV(
                 {center.x + math.cos(radians) * 5, center.y + math.sin(radians) * 5},
                 3,
                 {226, 126, 145, 255},
             )
         }
-        rl.DrawCircleV(center, 3, {247, 211, 83, 255})
+        canvas2d.DrawCircleV(center, 3, {247, 211, 83, 255})
     case .Acorn_Cap:
-        rl.DrawCircleV({center.x, center.y - 2}, 7, {126, 83, 42, 255})
-        rl.DrawLineEx({center.x, center.y - 8}, {center.x + 3, center.y - 12}, 2, {76, 55, 34, 255})
+        canvas2d.DrawCircleV({center.x, center.y - 2}, 7, {126, 83, 42, 255})
+        canvas2d.DrawLineEx({center.x, center.y - 8}, {center.x + 3, center.y - 12}, 2, {76, 55, 34, 255})
     case .Bottle_Cap:
-        rl.DrawRectangleRounded({center.x - 8, center.y - 5, 16, 10}, .2, 4, {187, 70, 61, 255})
-        for ridge in -2 ..= 2 do rl.DrawLineEx({center.x + f32(ridge) * 3, center.y - 4}, {center.x + f32(ridge) * 3, center.y + 4}, 1, {236, 132, 111, 255})
+        canvas2d.DrawRectangleRounded({center.x - 8, center.y - 5, 16, 10}, .2, 4, {187, 70, 61, 255})
+        for ridge in -2 ..= 2 do canvas2d.DrawLineEx({center.x + f32(ridge) * 3, center.y - 4}, {center.x + f32(ridge) * 3, center.y + 4}, 1, {236, 132, 111, 255})
     case .Paper_Boat:
-        rl.DrawRectangleRounded({center.x - 9, center.y, 18, 6}, .45, 5, {226, 221, 201, 255})
-        rl.DrawLineEx({center.x - 7, center.y}, {center.x, center.y - 8}, 3, {226, 221, 201, 255})
-        rl.DrawLineEx({center.x, center.y - 8}, {center.x + 7, center.y}, 3, {226, 221, 201, 255})
+        canvas2d.DrawRectangleRounded({center.x - 9, center.y, 18, 6}, .45, 5, {226, 221, 201, 255})
+        canvas2d.DrawLineEx({center.x - 7, center.y}, {center.x, center.y - 8}, 3, {226, 221, 201, 255})
+        canvas2d.DrawLineEx({center.x, center.y - 8}, {center.x + 7, center.y}, 3, {226, 221, 201, 255})
     case .Chef_Hat:
-        rl.DrawCircleV({center.x - 5, center.y - 4}, 5, {238, 236, 220, 255})
-        rl.DrawCircleV({center.x, center.y - 6}, 6, {238, 236, 220, 255})
-        rl.DrawCircleV({center.x + 5, center.y - 4}, 5, {238, 236, 220, 255})
-        rl.DrawRectangleRounded({center.x - 8, center.y - 3, 16, 9}, .15, 3, {238, 236, 220, 255})
+        canvas2d.DrawCircleV({center.x - 5, center.y - 4}, 5, {238, 236, 220, 255})
+        canvas2d.DrawCircleV({center.x, center.y - 6}, 6, {238, 236, 220, 255})
+        canvas2d.DrawCircleV({center.x + 5, center.y - 4}, 5, {238, 236, 220, 255})
+        canvas2d.DrawRectangleRounded({center.x - 8, center.y - 3, 16, 9}, .15, 3, {238, 236, 220, 255})
     case .Ushanka:
-        rl.DrawRectangleRounded({center.x - 8, center.y - 7, 16, 12}, .35, 5, {106, 76, 57, 255})
-        rl.DrawCircleV({center.x - 8, center.y + 2}, 4, {126, 91, 66, 255})
-        rl.DrawCircleV({center.x + 8, center.y + 2}, 4, {126, 91, 66, 255})
+        canvas2d.DrawRectangleRounded({center.x - 8, center.y - 7, 16, 12}, .35, 5, {106, 76, 57, 255})
+        canvas2d.DrawCircleV({center.x - 8, center.y + 2}, 4, {126, 91, 66, 255})
+        canvas2d.DrawCircleV({center.x + 8, center.y + 2}, 4, {126, 91, 66, 255})
     case .Beret:
-        rl.DrawCircleV({center.x, center.y - 2}, 7, {155, 66, 73, 255})
-        rl.DrawRectangleRounded({center.x - 9, center.y - 2, 18, 5}, .5, 4, {155, 66, 73, 255})
-        rl.DrawLineEx({center.x + 1, center.y - 7}, {center.x + 3, center.y - 10}, 1.5, {155, 66, 73, 255})
+        canvas2d.DrawCircleV({center.x, center.y - 2}, 7, {155, 66, 73, 255})
+        canvas2d.DrawRectangleRounded({center.x - 9, center.y - 2, 18, 5}, .5, 4, {155, 66, 73, 255})
+        canvas2d.DrawLineEx({center.x + 1, center.y - 7}, {center.x + 3, center.y - 10}, 1.5, {155, 66, 73, 255})
     case .Alpine_Hat:
-        rl.DrawRectangleRounded({center.x - 8, center.y, 16, 6}, .45, 5, {74, 124, 80, 255})
-        rl.DrawLineEx({center.x - 6, center.y}, {center.x + 2, center.y - 9}, 5, {74, 124, 80, 255})
-        rl.DrawLineEx({center.x + 2, center.y - 9}, {center.x + 7, center.y}, 5, {74, 124, 80, 255})
-        rl.DrawLineEx({center.x + 3, center.y - 5}, {center.x + 8, center.y - 11}, 1.5, {222, 91, 79, 255})
+        canvas2d.DrawRectangleRounded({center.x - 8, center.y, 16, 6}, .45, 5, {74, 124, 80, 255})
+        canvas2d.DrawLineEx({center.x - 6, center.y}, {center.x + 2, center.y - 9}, 5, {74, 124, 80, 255})
+        canvas2d.DrawLineEx({center.x + 2, center.y - 9}, {center.x + 7, center.y}, 5, {74, 124, 80, 255})
+        canvas2d.DrawLineEx({center.x + 3, center.y - 5}, {center.x + 8, center.y - 11}, 1.5, {222, 91, 79, 255})
     case .Flat_Cap:
-        rl.DrawRectangleRounded({center.x - 8, center.y - 2, 16, 8}, .35, 5, color)
-        rl.DrawCircleV({center.x - 1, center.y - 4}, 7, {113, 126, 104, 255})
-        rl.DrawRectangleRounded({center.x - 9, center.y - 4, 18, 5}, .5, 4, {113, 126, 104, 255})
+        canvas2d.DrawRectangleRounded({center.x - 8, center.y - 2, 16, 8}, .35, 5, color)
+        canvas2d.DrawCircleV({center.x - 1, center.y - 4}, 7, {113, 126, 104, 255})
+        canvas2d.DrawRectangleRounded({center.x - 9, center.y - 4, 18, 5}, .5, 4, {113, 126, 104, 255})
     case .Sailor_Hat:
-        rl.DrawRectangleRounded({center.x - 9, center.y - 1, 18, 6}, .5, 4, {241, 239, 222, 255})
-        rl.DrawRectangleRounded({center.x - 8, center.y - 2, 16, 2}, .5, 2, {38, 88, 145, 255})
-        rl.DrawRectangleRounded({center.x - 7, center.y - 5, 14, 2}, .5, 2, {38, 88, 145, 255})
-        rl.DrawCircleV({center.x, center.y - 7}, 6, {241, 239, 222, 255})
-        rl.DrawCircleV({center.x, center.y - 12}, 1.5, {38, 88, 145, 255})
+        canvas2d.DrawRectangleRounded({center.x - 9, center.y - 1, 18, 6}, .5, 4, {241, 239, 222, 255})
+        canvas2d.DrawRectangleRounded({center.x - 8, center.y - 2, 16, 2}, .5, 2, {38, 88, 145, 255})
+        canvas2d.DrawRectangleRounded({center.x - 7, center.y - 5, 14, 2}, .5, 2, {38, 88, 145, 255})
+        canvas2d.DrawCircleV({center.x, center.y - 7}, 6, {241, 239, 222, 255})
+        canvas2d.DrawCircleV({center.x, center.y - 12}, 1.5, {38, 88, 145, 255})
     }
 }
 
 customization_color_component :: proc(
-    bounds: rl.Rectangle,
+    bounds: canvas2d.Rectangle,
     label: cstring,
     value: f32,
     focused: bool,
-    color: rl.Color,
+    color: canvas2d.Color,
     enabled: bool,
 ) {
     customization_card(bounds, label, false, focused)
-    track := rl.Rectangle{bounds.x + 42, bounds.y + 16, bounds.width - 52, 10}
+    track := canvas2d.Rectangle{bounds.x + 42, bounds.y + 16, bounds.width - 52, 10}
     opacity := enabled ? u8(255) : u8(95)
-    rl.DrawRectangleRounded(track, .45, 6, ui_theme_scrim(opacity))
+    canvas2d.DrawRectangleRounded(track, .45, 6, ui_theme_scrim(opacity))
     fill := track
     fill.width *= clamp(value, 0, 1)
-    shade := rl.Color{color.r, color.g, color.b, opacity}
-    if fill.width > 0 do rl.DrawRectangleRounded(fill, .45, 6, shade)
+    shade := canvas2d.Color{color.r, color.g, color.b, opacity}
+    if fill.width > 0 do canvas2d.DrawRectangleRounded(fill, .45, 6, shade)
     handle_x := track.x + track.width * clamp(value, 0, 1)
-    rl.DrawCircleV({handle_x, track.y + track.height * .5}, 5, ui_theme_surface_elevated(opacity))
+    canvas2d.DrawCircleV({handle_x, track.y + track.height * .5}, 5, ui_theme_surface_elevated(opacity))
     if !enabled {
-        rl.DrawRectangleRounded(bounds, .12, 8, ui_theme_scrim(86))
-        if focused do rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, 2, ui_theme_focus())
+        canvas2d.DrawRectangleRounded(bounds, .12, 8, ui_theme_scrim(86))
+        if focused do canvas2d.DrawRectangleRoundedLinesEx(bounds, .12, 8, 2, ui_theme_focus())
     }
 }
 
-customization_draw_3d_preview :: proc(_: ^Editor, bounds: rl.Rectangle) {
+customization_draw_3d_preview :: proc(_: ^Editor, bounds: canvas2d.Rectangle) {
     // The world pass renders the gameplay mouse beneath this translucent frame.
     // Keeping the UI layer to chrome preserves the model's real
     // depth, lighting, animation, fur markings, and headgear geometry.
-    rl.DrawRectangleRounded(bounds, .035, 12, ui_theme_scrim(42))
-    rl.DrawRectangleRoundedLinesEx(bounds, .035, 12, 2, ui_theme_border(235))
+    canvas2d.DrawRectangleRounded(bounds, .035, 12, ui_theme_scrim(42))
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .035, 12, 2, ui_theme_border(235))
 }
 
 customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
     panel := customization_scene_panel(width, height)
-    header_panel := rl.Rectangle{panel.x, panel.y, panel.width, 108 * customization_scale_y(panel)}
-    controls_panel := rl.Rectangle {
+    header_panel := canvas2d.Rectangle{panel.x, panel.y, panel.width, 108 * customization_scale_y(panel)}
+    controls_panel := canvas2d.Rectangle {
         panel.x + panel.width * .39,
         customization_y(panel, 96),
         panel.width * .61,
         panel.height - 96 * customization_scale_y(panel),
     }
-    rl.DrawRectangleRounded(header_panel, .025, 12, ui_theme_surface())
-    rl.DrawRectangleRounded(controls_panel, .02, 10, ui_theme_surface())
-    rl.DrawRectangleRoundedLinesEx(panel, .025, 12, 1, ui_theme_border())
+    canvas2d.DrawRectangleRounded(header_panel, .025, 12, ui_theme_surface())
+    canvas2d.DrawRectangleRounded(controls_panel, .02, 10, ui_theme_surface())
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .025, 12, 1, ui_theme_border())
     pause_menu_draw_header(panel, "", "CUSTOMIZE MOUSE")
     hint: cstring = "SAVES AUTOMATICALLY  /  DRAG PREVIEW"
     if controller_prompt_active(editor) do hint = "SAVES AUTOMATICALLY  /  D-PAD + A"

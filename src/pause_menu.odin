@@ -8,7 +8,7 @@ import "core:math"
 import "core:os"
 import "core:strings"
 import sdl "vendor:sdl3"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 Pause_Screen :: enum {
     Closed,
@@ -82,16 +82,16 @@ crunchiness_render_width :: proc(render_height, viewport_width, viewport_height:
 }
 
 crunchiness_apply :: proc(value: Crunchiness) {
-    viewport_width, viewport_height := rl.GetScreenWidth(), rl.GetScreenHeight()
+    viewport_width, viewport_height := canvas2d.GetScreenWidth(), canvas2d.GetScreenHeight()
     switch value {
     case .P240:
-        rl.SetWorldRenderSize(crunchiness_render_width(240, viewport_width, viewport_height), 240)
+        canvas2d.SetWorldRenderSize(crunchiness_render_width(240, viewport_width, viewport_height), 240)
     case .P480:
-        rl.SetWorldRenderSize(crunchiness_render_width(480, viewport_width, viewport_height), 480)
+        canvas2d.SetWorldRenderSize(crunchiness_render_width(480, viewport_width, viewport_height), 480)
     case .P720:
-        rl.SetWorldRenderSize(crunchiness_render_width(720, viewport_width, viewport_height), 720)
+        canvas2d.SetWorldRenderSize(crunchiness_render_width(720, viewport_width, viewport_height), 720)
     case .Full:
-        rl.SetWorldRenderSize(0, 0)
+        canvas2d.SetWorldRenderSize(0, 0)
     }
 }
 
@@ -110,7 +110,7 @@ sound_fx_muted :: #force_inline proc(editor: ^Editor) -> bool {
 }
 
 @(no_instrumentation)
-pause_menu_panel :: #force_inline proc(width, height: i32, options: bool) -> rl.Rectangle {
+pause_menu_panel :: #force_inline proc(width, height: i32, options: bool) -> canvas2d.Rectangle {
     panel_width := min(f32(500), f32(width) - 40)
     panel_height := options ? f32(560) : f32(488)
     panel_height = min(panel_height, f32(height) - 32)
@@ -118,21 +118,21 @@ pause_menu_panel :: #force_inline proc(width, height: i32, options: bool) -> rl.
 }
 
 @(no_instrumentation)
-pause_menu_button_bounds :: #force_inline proc(panel: rl.Rectangle, row: int) -> rl.Rectangle {
+pause_menu_button_bounds :: #force_inline proc(panel: canvas2d.Rectangle, row: int) -> canvas2d.Rectangle {
     return {panel.x + 44, panel.y + 126 + f32(row) * 58, panel.width - 88, 46}
 }
 
 MAIN_MENU_BUTTON_COUNT :: 3
 
 @(no_instrumentation)
-main_menu_panel :: #force_inline proc(width, height: i32) -> rl.Rectangle {
+main_menu_panel :: #force_inline proc(width, height: i32) -> canvas2d.Rectangle {
     panel_width := min(f32(430), f32(width) - 48)
     panel_height := min(f32(360), f32(height) - 48)
     return {f32(width) - panel_width - 54, (f32(height) - panel_height) * .5, panel_width, panel_height}
 }
 
 @(no_instrumentation)
-main_menu_button_bounds :: #force_inline proc(panel: rl.Rectangle, row: int) -> rl.Rectangle {
+main_menu_button_bounds :: #force_inline proc(panel: canvas2d.Rectangle, row: int) -> canvas2d.Rectangle {
     return {panel.x + 42, panel.y + 128 + f32(row) * 62, panel.width - 84, 48}
 }
 
@@ -142,39 +142,39 @@ OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
 OPTIONS_CONTENT_HEIGHT :: f32(858)
 
 @(no_instrumentation)
-options_menu_viewport :: #force_inline proc(panel: rl.Rectangle) -> rl.Rectangle {
+options_menu_viewport :: #force_inline proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
     return {panel.x + 30, panel.y + 108, panel.width - 54, max(panel.height - 178, f32(80))}
 }
 
 @(no_instrumentation)
-options_menu_max_scroll :: #force_inline proc(panel: rl.Rectangle) -> f32 {
+options_menu_max_scroll :: #force_inline proc(panel: canvas2d.Rectangle) -> f32 {
     return max(OPTIONS_CONTENT_HEIGHT - options_menu_viewport(panel).height, f32(0))
 }
 
 @(no_instrumentation)
-options_menu_row_bounds :: #force_inline proc(panel: rl.Rectangle, row: int, scroll_y: f32 = 0) -> rl.Rectangle {
+options_menu_row_bounds :: #force_inline proc(panel: canvas2d.Rectangle, row: int, scroll_y: f32 = 0) -> canvas2d.Rectangle {
     viewport := options_menu_viewport(panel)
     return {panel.x + 40, viewport.y + 10 + f32(row) * 72 - scroll_y, panel.width - 80, 58}
 }
 
 @(no_instrumentation)
-options_menu_restore_bounds :: #force_inline proc(panel: rl.Rectangle, scroll_y: f32 = 0) -> rl.Rectangle {
+options_menu_restore_bounds :: #force_inline proc(panel: canvas2d.Rectangle, scroll_y: f32 = 0) -> canvas2d.Rectangle {
     viewport := options_menu_viewport(panel)
     return {panel.x + 44, viewport.y + 802 - scroll_y, panel.width - 88, 46}
 }
 
 @(no_instrumentation)
-options_menu_back_bounds :: #force_inline proc(panel: rl.Rectangle) -> rl.Rectangle {
+options_menu_back_bounds :: #force_inline proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
     return {panel.x + 44, panel.y + panel.height - 54, panel.width - 88, 46}
 }
 
 @(no_instrumentation)
-options_menu_scrollbar_track :: #force_inline proc(panel: rl.Rectangle) -> rl.Rectangle {
+options_menu_scrollbar_track :: #force_inline proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
     viewport := options_menu_viewport(panel)
     return {panel.x + panel.width - 19, viewport.y + 8, 4, max(viewport.height - 16, f32(16))}
 }
 
-options_menu_scrollbar_thumb :: proc(panel: rl.Rectangle, scroll_y: f32) -> rl.Rectangle {
+options_menu_scrollbar_thumb :: proc(panel: canvas2d.Rectangle, scroll_y: f32) -> canvas2d.Rectangle {
     track := options_menu_scrollbar_track(panel)
     viewport := options_menu_viewport(panel)
     maximum := options_menu_max_scroll(panel)
@@ -185,12 +185,12 @@ options_menu_scrollbar_thumb :: proc(panel: rl.Rectangle, scroll_y: f32) -> rl.R
 }
 
 @(no_instrumentation)
-options_menu_slider_track :: #force_inline proc(bounds: rl.Rectangle) -> rl.Rectangle {
+options_menu_slider_track :: #force_inline proc(bounds: canvas2d.Rectangle) -> canvas2d.Rectangle {
     return {bounds.x + 14, bounds.y + 41, bounds.width - 28, 6}
 }
 
-pause_menu_button :: proc(bounds: rl.Rectangle, label: cstring, accent: bool = false, focused: bool = false) {
-    hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
+pause_menu_button :: proc(bounds: canvas2d.Rectangle, label: cstring, accent: bool = false, focused: bool = false) {
+    hovered := pause_menu_pointer_enabled && canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
     fill := ui_theme_control()
     border := ui_theme_border()
     text := ui_theme_text()
@@ -207,8 +207,8 @@ pause_menu_button :: proc(bounds: rl.Rectangle, label: cstring, accent: bool = f
         border = ui_theme_focus()
         if !accent do fill = ui_theme_surface_elevated()
     }
-    rl.DrawRectangleRounded(bounds, .12, 8, fill)
-    rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, accent || focused ? 2 : 1, border)
+    canvas2d.DrawRectangleRounded(bounds, .12, 8, fill)
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .12, 8, accent || focused ? 2 : 1, border)
     size := ui_measure_text(.Label, label, .5)
     ui_draw_text(
         .Label,
@@ -223,7 +223,7 @@ pause_menu_open :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map do return
     editor.pause_screen = .Pause
     editor.pause_focus = 0
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     set_pointer_locked(false)
 }
 
@@ -231,7 +231,7 @@ pause_menu_resume :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.pause_screen = .Closed
     editor.controller_disconnect_notice = false
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     set_pointer_locked(editor.in_map)
 }
 
@@ -276,7 +276,7 @@ photo_mode_process_input :: proc(editor: ^Editor, delta_seconds: f32) {
         return
     }
 
-    mouse := rl.GetMouseDelta()
+    mouse := canvas2d.GetMouseDelta()
     look_x := editor.gameplay_options.invert_look_x ? -mouse.x : mouse.x
     look_y := editor.gameplay_options.invert_look_y ? -mouse.y : mouse.y
     look_x += gamepad_axis(.Right_X) * 180 * delta_seconds
@@ -296,12 +296,12 @@ photo_mode_process_input :: proc(editor: ^Editor, delta_seconds: f32) {
     }
     right := third_person.Vec3{f32(math.cos(f64(editor.photo_yaw))), 0, -f32(math.sin(f64(editor.photo_yaw)))}
     move_x, move_y, move_z := f32(0), f32(0), f32(0)
-    if rl.IsKeyDown(.D) do move_x += 1
-    if rl.IsKeyDown(.A) do move_x -= 1
-    if rl.IsKeyDown(.W) do move_z += 1
-    if rl.IsKeyDown(.S) do move_z -= 1
-    if rl.IsKeyDown(.E) do move_y += 1
-    if rl.IsKeyDown(.Q) do move_y -= 1
+    if canvas2d.IsKeyDown(.D) do move_x += 1
+    if canvas2d.IsKeyDown(.A) do move_x -= 1
+    if canvas2d.IsKeyDown(.W) do move_z += 1
+    if canvas2d.IsKeyDown(.S) do move_z -= 1
+    if canvas2d.IsKeyDown(.E) do move_y += 1
+    if canvas2d.IsKeyDown(.Q) do move_y -= 1
     move_x = stronger_axis(move_x, gamepad_axis(.Left_X))
     move_z = stronger_axis(move_z, -gamepad_axis(.Left_Y))
     if gamepad_down(.Right_Shoulder) do move_y += 1
@@ -313,13 +313,13 @@ photo_mode_process_input :: proc(editor: ^Editor, delta_seconds: f32) {
         move_y *= inverse_length
         move_z *= inverse_length
     }
-    speed := (rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)) ? f32(18) : f32(6)
+    speed := (canvas2d.IsKeyDown(.LEFT_SHIFT) || canvas2d.IsKeyDown(.RIGHT_SHIFT)) ? f32(18) : f32(6)
     editor.camera_pose.position +=
         (right * move_x + forward * move_z + third_person.Vec3{0, move_y, 0}) * speed * delta_seconds
     editor.camera_pose.target = editor.camera_pose.position + forward
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
 
-    if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.F) || gamepad_pressed(.South) {
+    if canvas2d.IsKeyPressed(.ENTER) || canvas2d.IsKeyPressed(.F) || gamepad_pressed(.South) {
         editor.photo_capture_pending = true
     }
 }
@@ -332,9 +332,9 @@ photo_mode_capture_pending :: proc(editor: ^Editor) {
     directory, directory_error := strings.concatenate({pictures, "/Adriatic"}, context.temp_allocator)
     if directory_error != nil do return
     if make_error := os.make_directory_all(directory); make_error != nil && make_error != .Exist do return
-    path := fmt.ctprintf("%s/adriatic-photo-%d.png", directory, i64(rl.GetTime() * 1000))
-    rl.TakeScreenshot(path)
-    editor.photo_capture_notice_until = rl.GetTime() + 2.5
+    path := fmt.ctprintf("%s/adriatic-photo-%d.png", directory, i64(canvas2d.GetTime() * 1000))
+    canvas2d.TakeScreenshot(path)
+    editor.photo_capture_notice_until = canvas2d.GetTime() + 2.5
 }
 
 pause_menu_return_to_editor :: proc(editor: ^Editor) {
@@ -343,19 +343,19 @@ pause_menu_return_to_editor :: proc(editor: ^Editor) {
     editor.in_map = false
     game_state_reset(editor)
     third_person.camera_set_active(&editor.cameras, .Player)
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     set_pointer_locked(false)
     _ = sdl.ShowCursor()
 }
 
-options_menu_focus_bounds :: proc(panel: rl.Rectangle, focus: int, scroll_y: f32) -> rl.Rectangle {
+options_menu_focus_bounds :: proc(panel: canvas2d.Rectangle, focus: int, scroll_y: f32) -> canvas2d.Rectangle {
     if focus >= 0 && focus < OPTIONS_ROW_COUNT do return options_menu_row_bounds(panel, focus, scroll_y)
     if focus == OPTIONS_RESTORE_FOCUS do return options_menu_restore_bounds(panel, scroll_y)
     return options_menu_back_bounds(panel)
 }
 
-options_menu_reveal_focus :: proc(editor: ^Editor, panel: rl.Rectangle) {
+options_menu_reveal_focus :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
     if editor == nil || editor.options_focus < 0 || editor.options_focus > OPTIONS_RESTORE_FOCUS do return
     viewport := options_menu_viewport(panel)
     bounds := options_menu_focus_bounds(panel, editor.options_focus, editor.options_scroll_y)
@@ -416,9 +416,9 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         }
     }
     panel := pause_menu_panel(width, height, true)
-    mouse := rl.GetMousePosition()
-    pressed := rl.IsMouseButtonPressed(.LEFT)
-    mouse_delta := rl.GetMouseDelta()
+    mouse := canvas2d.GetMousePosition()
+    pressed := canvas2d.IsMouseButtonPressed(.LEFT)
+    mouse_delta := canvas2d.GetMouseDelta()
     mouse_active := pressed || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
     viewport := options_menu_viewport(panel)
     maximum_scroll := options_menu_max_scroll(panel)
@@ -431,10 +431,10 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     )
 
     focus_direction := 0
-    if rl.IsKeyPressed(.UP) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Dpad_Up)) {
+    if canvas2d.IsKeyPressed(.UP) || (canvas2d.GamepadAvailable() && canvas2d.IsGamepadButtonPressed(.Dpad_Up)) {
         focus_direction -= 1
     }
-    if rl.IsKeyPressed(.DOWN) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Dpad_Down)) {
+    if canvas2d.IsKeyPressed(.DOWN) || (canvas2d.GamepadAvailable() && canvas2d.IsGamepadButtonPressed(.Dpad_Down)) {
         focus_direction += 1
     }
     if focus_direction == 0 do focus_direction = stick_y
@@ -444,10 +444,10 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     }
 
     adjust_direction := 0
-    if rl.IsKeyPressed(.LEFT) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Dpad_Left)) {
+    if canvas2d.IsKeyPressed(.LEFT) || (canvas2d.GamepadAvailable() && canvas2d.IsGamepadButtonPressed(.Dpad_Left)) {
         adjust_direction -= 1
     }
-    if rl.IsKeyPressed(.RIGHT) || (rl.GamepadAvailable() && rl.IsGamepadButtonPressed(.Dpad_Right)) {
+    if canvas2d.IsKeyPressed(.RIGHT) || (canvas2d.GamepadAvailable() && canvas2d.IsGamepadButtonPressed(.Dpad_Right)) {
         adjust_direction += 1
     }
     if adjust_direction == 0 do adjust_direction = stick_x
@@ -495,19 +495,19 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         }
     }
 
-    if rl.CheckCollisionPointRec(mouse, viewport) {
-        wheel := rl.GetMouseWheelMove()
+    if canvas2d.CheckCollisionPointRec(mouse, viewport) {
+        wheel := canvas2d.GetMouseWheelMove()
         if wheel != 0 do editor.options_scroll_y = clamp(editor.options_scroll_y - wheel * 42, 0, maximum_scroll)
     }
 
     scrollbar := options_menu_scrollbar_track(panel)
     thumb := options_menu_scrollbar_thumb(panel, editor.options_scroll_y)
-    if maximum_scroll > 0 && pressed && rl.CheckCollisionPointRec(mouse, thumb) {
+    if maximum_scroll > 0 && pressed && canvas2d.CheckCollisionPointRec(mouse, thumb) {
         editor.options_scroll_dragging = true
         editor.options_scroll_drag_offset = mouse.y - thumb.y
     } else if maximum_scroll > 0 &&
        pressed &&
-       rl.CheckCollisionPointRec(mouse, {scrollbar.x - 8, scrollbar.y, 20, scrollbar.height}) {
+       canvas2d.CheckCollisionPointRec(mouse, {scrollbar.x - 8, scrollbar.y, 20, scrollbar.height}) {
         thumb_height := thumb.height
         travel := max(scrollbar.height - thumb_height, f32(1))
         normalized := clamp((mouse.y - scrollbar.y - thumb_height * .5) / travel, 0, 1)
@@ -516,7 +516,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         editor.options_scroll_drag_offset = thumb_height * .5
     }
     if editor.options_scroll_dragging {
-        if rl.IsMouseButtonDown(.LEFT) {
+        if canvas2d.IsMouseButtonDown(.LEFT) {
             thumb = options_menu_scrollbar_thumb(panel, editor.options_scroll_y)
             travel := max(scrollbar.height - thumb.height, f32(1))
             normalized := clamp((mouse.y - editor.options_scroll_drag_offset - scrollbar.y) / travel, 0, 1)
@@ -526,27 +526,27 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         }
     }
 
-    content_hovered := rl.CheckCollisionPointRec(mouse, viewport)
+    content_hovered := canvas2d.CheckCollisionPointRec(mouse, viewport)
     scroll_y := editor.options_scroll_y
     if content_hovered && mouse_active {
         for index in 0 ..< OPTIONS_ROW_COUNT {
-            if rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, index, scroll_y)) {
+            if canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, index, scroll_y)) {
                 editor.options_focus = index
             }
         }
-        if rl.CheckCollisionPointRec(mouse, options_menu_restore_bounds(panel, scroll_y)) {
+        if canvas2d.CheckCollisionPointRec(mouse, options_menu_restore_bounds(panel, scroll_y)) {
             editor.options_focus = OPTIONS_RESTORE_FOCUS
         }
     }
-    if mouse_active && rl.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
+    if mouse_active && canvas2d.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
         editor.options_focus = OPTIONS_BACK_FOCUS
     }
 
     sensitivity := options_menu_row_bounds(panel, 0, scroll_y)
     track := options_menu_slider_track(sensitivity)
     if content_hovered &&
-       rl.IsMouseButtonDown(.LEFT) &&
-       rl.CheckCollisionPointRec(mouse, {track.x - 8, track.y - 12, track.width + 16, 30}) {
+       canvas2d.IsMouseButtonDown(.LEFT) &&
+       canvas2d.CheckCollisionPointRec(mouse, {track.x - 8, track.y - 12, track.width + 16, 30}) {
         editor.options_focus = 0
         normalized := clamp((mouse.x - track.x) / track.width, 0, 1)
         editor.gameplay_options.look_sensitivity = .004 + normalized * .020
@@ -554,27 +554,27 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     sound_fx := options_menu_row_bounds(panel, 1, scroll_y)
     sound_fx_track := options_menu_slider_track(sound_fx)
     if content_hovered &&
-       rl.IsMouseButtonDown(.LEFT) &&
-       rl.CheckCollisionPointRec(mouse, {sound_fx_track.x - 8, sound_fx_track.y - 12, sound_fx_track.width + 16, 30}) {
+       canvas2d.IsMouseButtonDown(.LEFT) &&
+       canvas2d.CheckCollisionPointRec(mouse, {sound_fx_track.x - 8, sound_fx_track.y - 12, sound_fx_track.width + 16, 30}) {
         editor.options_focus = 1
         editor.gameplay_options.sound_fx_level = clamp((mouse.x - sound_fx_track.x) / sound_fx_track.width, 0, 1)
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 2, scroll_y)) {
+    if content_hovered && pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 2, scroll_y)) {
         editor.options_focus = 2
         editor.gameplay_options.invert_look_x = !editor.gameplay_options.invert_look_x
         return
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 3, scroll_y)) {
+    if content_hovered && pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 3, scroll_y)) {
         editor.options_focus = 3
         editor.gameplay_options.invert_look_y = !editor.gameplay_options.invert_look_y
         return
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 4, scroll_y)) {
+    if content_hovered && pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 4, scroll_y)) {
         editor.options_focus = 4
         editor.gameplay_options.invert_flight_pitch = !editor.gameplay_options.invert_flight_pitch
         return
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 5, scroll_y)) {
+    if content_hovered && pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 5, scroll_y)) {
         editor.options_focus = 5
         editor.gameplay_options.show_hud = !editor.gameplay_options.show_hud
         return
@@ -584,13 +584,13 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     segment_width := (crunchiness.width - segment_gap * 3) / 4
     if content_hovered && pressed {
         for index in 0 ..< 4 {
-            segment := rl.Rectangle {
+            segment := canvas2d.Rectangle {
                 crunchiness.x + f32(index) * (segment_width + segment_gap),
                 crunchiness.y + 28,
                 segment_width,
                 30,
             }
-            if rl.CheckCollisionPointRec(mouse, segment) {
+            if canvas2d.CheckCollisionPointRec(mouse, segment) {
                 editor.options_focus = 6
                 editor.gameplay_options.crunchiness = Crunchiness(index)
                 crunchiness_apply(editor.gameplay_options.crunchiness)
@@ -598,7 +598,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
             }
         }
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_restore_bounds(panel, scroll_y)) {
+    if content_hovered && pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_restore_bounds(panel, scroll_y)) {
         editor.options_focus = OPTIONS_RESTORE_FOCUS
         editor.gameplay_options = gameplay_options_default()
         crunchiness_apply(editor.gameplay_options.crunchiness)
@@ -611,13 +611,13 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     dither_segment_width := (dither.width - dither_gap * 3) / 4
     if content_hovered && pressed {
         for index in 0 ..< 4 {
-            segment := rl.Rectangle {
+            segment := canvas2d.Rectangle {
                 dither.x + f32(index) * (dither_segment_width + dither_gap),
                 dither.y + 28,
                 dither_segment_width,
                 30,
             }
-            if rl.CheckCollisionPointRec(mouse, segment) {
+            if canvas2d.CheckCollisionPointRec(mouse, segment) {
                 editor.options_focus = 7
                 editor.gameplay_options.dither_mode = Dither_Mode(index)
                 dither_apply(editor)
@@ -625,25 +625,25 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
             }
         }
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 8, scroll_y)) {
+    if content_hovered && pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 8, scroll_y)) {
         editor.options_focus = 8
         editor.gameplay_options.hdr_exposure = !editor.gameplay_options.hdr_exposure
         dither_apply(editor)
         return
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 9, scroll_y)) {
+    if content_hovered && pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 9, scroll_y)) {
         editor.options_focus = 9
         editor.gameplay_options.theme_mode = editor.gameplay_options.theme_mode == .Dark ? .Light : .Dark
         ui_theme_set_mode(editor.gameplay_options.theme_mode)
         return
     }
-    if content_hovered && pressed && rl.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 10, scroll_y)) {
+    if content_hovered && pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 10, scroll_y)) {
         editor.options_focus = 10
         editor.pause_screen = .Customization
         editor.customization_focus = 0
         return
     }
-    if pressed && rl.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
+    if pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
         editor.options_focus = OPTIONS_BACK_FOCUS
         editor.pause_screen = editor.main_menu_active ? .Closed : .Pause
         editor.options_scroll_dragging = false
@@ -671,9 +671,9 @@ main_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
     }
 
     panel := main_menu_panel(width, height)
-    mouse := rl.GetMousePosition()
-    mouse_delta := rl.GetMouseDelta()
-    mouse_active := rl.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    mouse := canvas2d.GetMousePosition()
+    mouse_delta := canvas2d.GetMouseDelta()
+    mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
     focus_direction := 0
     _, stick_y := game_input.menu_steps(
         &editor.runtime_input,
@@ -681,15 +681,15 @@ main_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
         gamepad_axis(.Left_Y),
         delta_seconds,
     )
-    if rl.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do focus_direction -= 1
-    if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do focus_direction += 1
+    if canvas2d.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do focus_direction -= 1
+    if canvas2d.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do focus_direction += 1
     if focus_direction == 0 do focus_direction = stick_y
     if focus_direction != 0 {
         editor.main_menu_focus = clamp(editor.main_menu_focus + focus_direction, 0, MAIN_MENU_BUTTON_COUNT - 1)
     }
     if mouse_active {
         for index in 0 ..< MAIN_MENU_BUTTON_COUNT {
-            if rl.CheckCollisionPointRec(mouse, main_menu_button_bounds(panel, index)) {
+            if canvas2d.CheckCollisionPointRec(mouse, main_menu_button_bounds(panel, index)) {
                 editor.main_menu_focus = index
             }
         }
@@ -697,9 +697,9 @@ main_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
 
     activated := -1
     if input_action_pressed(.Menu_Accept) do activated = editor.main_menu_focus
-    if rl.IsMouseButtonPressed(.LEFT) {
+    if canvas2d.IsMouseButtonPressed(.LEFT) {
         for index in 0 ..< MAIN_MENU_BUTTON_COUNT {
-            if rl.CheckCollisionPointRec(mouse, main_menu_button_bounds(panel, index)) do activated = index
+            if canvas2d.CheckCollisionPointRec(mouse, main_menu_button_bounds(panel, index)) do activated = index
         }
     }
     switch activated {
@@ -723,7 +723,7 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         return
     }
     if !editor.in_map do return
-    if rl.GamepadAvailable() do editor.controller_disconnect_notice = false
+    if canvas2d.GamepadAvailable() do editor.controller_disconnect_notice = false
 
     if editor.pause_screen == .Closed {
         if input_action_pressed(.Journal) {
@@ -778,9 +778,9 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     }
 
     panel := pause_menu_panel(width, height, false)
-    mouse := rl.GetMousePosition()
-    mouse_delta := rl.GetMouseDelta()
-    mouse_active := rl.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    mouse := canvas2d.GetMousePosition()
+    mouse_delta := canvas2d.GetMouseDelta()
+    mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
     focus_direction := 0
     _, stick_y := game_input.menu_steps(
         &editor.runtime_input,
@@ -788,24 +788,24 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         gamepad_axis(.Left_Y),
         delta_seconds,
     )
-    if rl.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do focus_direction -= 1
-    if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do focus_direction += 1
+    if canvas2d.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do focus_direction -= 1
+    if canvas2d.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do focus_direction += 1
     if focus_direction == 0 do focus_direction = stick_y
     if focus_direction != 0 {
         editor.pause_focus = clamp(editor.pause_focus + focus_direction, 0, PAUSE_MENU_BUTTON_COUNT - 1)
     }
     if mouse_active {
         for index in 0 ..< PAUSE_MENU_BUTTON_COUNT {
-            if rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) {
+            if canvas2d.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) {
                 editor.pause_focus = index
             }
         }
     }
     activated := -1
     if input_action_pressed(.Menu_Accept) do activated = editor.pause_focus
-    if rl.IsMouseButtonPressed(.LEFT) {
+    if canvas2d.IsMouseButtonPressed(.LEFT) {
         for index in 0 ..< PAUSE_MENU_BUTTON_COUNT {
-            if rl.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) do activated = index
+            if canvas2d.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) do activated = index
         }
     }
     switch activated {
@@ -836,28 +836,28 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     }
 }
 
-pause_menu_draw_header :: proc(panel: rl.Rectangle, eyebrow, title: cstring) {
+pause_menu_draw_header :: proc(panel: canvas2d.Rectangle, eyebrow, title: cstring) {
     if eyebrow != "" {
         ui_draw_text(.Data, eyebrow, {panel.x + 40, panel.y + 28}, .6, ui_theme_accent())
     }
     title_y := panel.y + 57
     if eyebrow == "" do title_y = panel.y + 38
     ui_draw_text(.Display, title, {panel.x + 40, title_y}, .5, ui_theme_text())
-    rl.DrawLineEx({panel.x + 40, panel.y + 96}, {panel.x + panel.width - 40, panel.y + 96}, 1, ui_theme_border())
+    canvas2d.DrawLineEx({panel.x + 40, panel.y + 96}, {panel.x + panel.width - 40, panel.y + 96}, 1, ui_theme_border())
 }
 
-options_menu_draw_toggle :: proc(bounds: rl.Rectangle, label: cstring, enabled: bool, focused: bool = false) {
-    hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
+options_menu_draw_toggle :: proc(bounds: canvas2d.Rectangle, label: cstring, enabled: bool, focused: bool = false) {
+    hovered := pause_menu_pointer_enabled && canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
     fill := hovered ? ui_theme_control_hover() : ui_theme_control()
     border := hovered ? ui_theme_border_strong() : ui_theme_border()
     if focused {
         fill = ui_theme_surface_elevated()
         border = ui_theme_focus()
     }
-    rl.DrawRectangleRounded(bounds, .1, 8, fill)
-    rl.DrawRectangleRoundedLinesEx(bounds, .1, 8, focused ? 2 : 1, border)
+    canvas2d.DrawRectangleRounded(bounds, .1, 8, fill)
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .1, 8, focused ? 2 : 1, border)
     ui_draw_text(.Label, label, {bounds.x + 14, bounds.y + 18}, .4, ui_theme_text())
-    toggle := rl.Rectangle{bounds.x + bounds.width - 70, bounds.y + 14, 56, 30}
+    toggle := canvas2d.Rectangle{bounds.x + bounds.width - 70, bounds.y + 14, 56, 30}
     status: cstring = enabled ? "ON" : "OFF"
     status_size := ui_measure_text(.Data, status, .2)
     ui_draw_text(
@@ -870,28 +870,28 @@ options_menu_draw_toggle :: proc(bounds: rl.Rectangle, label: cstring, enabled: 
 
     // A soft underlay and outlined track keep the switch legible against both
     // the resting and hovered row colors.
-    rl.DrawRectangleRounded({toggle.x, toggle.y + 2, toggle.width, toggle.height}, 1, 12, ui_theme_scrim(65))
+    canvas2d.DrawRectangleRounded({toggle.x, toggle.y + 2, toggle.width, toggle.height}, 1, 12, ui_theme_scrim(65))
     track_fill := enabled ? ui_theme_positive() : ui_theme_disabled()
     track_border := enabled ? ui_theme_border_strong() : ui_theme_border()
-    rl.DrawRectangleRounded(toggle, 1, 12, track_fill)
-    rl.DrawRectangleRoundedLinesEx(toggle, 1, 12, 1, track_border)
+    canvas2d.DrawRectangleRounded(toggle, 1, 12, track_fill)
+    canvas2d.DrawRectangleRoundedLinesEx(toggle, 1, 12, 1, track_border)
 
     knob_x := enabled ? toggle.x + toggle.width - 15 : toggle.x + 15
-    knob_center := rl.Vector2{knob_x, toggle.y + toggle.height * .5}
-    rl.DrawCircleV({knob_center.x, knob_center.y + 2}, 11, ui_theme_scrim(80))
-    rl.DrawCircleV(knob_center, 11, ui_theme_surface_elevated())
-    rl.DrawCircleV(knob_center, 4, enabled ? ui_theme_positive() : ui_theme_disabled())
+    knob_center := canvas2d.Vector2{knob_x, toggle.y + toggle.height * .5}
+    canvas2d.DrawCircleV({knob_center.x, knob_center.y + 2}, 11, ui_theme_scrim(80))
+    canvas2d.DrawCircleV(knob_center, 11, ui_theme_surface_elevated())
+    canvas2d.DrawCircleV(knob_center, 4, enabled ? ui_theme_positive() : ui_theme_disabled())
 }
 
-options_menu_draw_scrollbar :: proc(panel: rl.Rectangle, scroll_y: f32) {
+options_menu_draw_scrollbar :: proc(panel: canvas2d.Rectangle, scroll_y: f32) {
     track := options_menu_scrollbar_track(panel)
     thumb := options_menu_scrollbar_thumb(panel, scroll_y)
-    rl.DrawRectangleRounded(track, 1, 6, ui_theme_control(190))
+    canvas2d.DrawRectangleRounded(track, 1, 6, ui_theme_control(190))
     thumb_color := options_menu_max_scroll(panel) > 0 ? ui_theme_border_strong() : ui_theme_disabled(150)
-    rl.DrawRectangleRounded(thumb, 1, 8, thumb_color)
+    canvas2d.DrawRectangleRounded(thumb, 1, 8, thumb_color)
 }
 
-options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
+options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
     pause_menu_draw_header(panel, "", "OPTIONS")
     navigation_hint: cstring = "ARROWS MOVE + CHANGE"
     if controller_prompt_active(editor) do navigation_hint = "D-PAD / LS MOVE + CHANGE"
@@ -905,18 +905,18 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     )
     viewport := options_menu_viewport(panel)
     scroll_y := clamp(editor.options_scroll_y, 0, options_menu_max_scroll(panel))
-    rl.BeginScissorMode(viewport)
+    canvas2d.BeginScissorMode(viewport)
 
     sensitivity := options_menu_row_bounds(panel, 0, scroll_y)
-    sensitivity_hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), sensitivity)
+    sensitivity_hovered := pause_menu_pointer_enabled && canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), sensitivity)
     sensitivity_fill := sensitivity_hovered ? ui_theme_control_hover() : ui_theme_control()
     sensitivity_border := sensitivity_hovered ? ui_theme_border_strong() : ui_theme_border()
     if editor.options_focus == 0 {
         sensitivity_fill = ui_theme_surface_elevated()
         sensitivity_border = ui_theme_focus()
     }
-    rl.DrawRectangleRounded(sensitivity, .1, 8, sensitivity_fill)
-    rl.DrawRectangleRoundedLinesEx(sensitivity, .1, 8, editor.options_focus == 0 ? 2 : 1, sensitivity_border)
+    canvas2d.DrawRectangleRounded(sensitivity, .1, 8, sensitivity_fill)
+    canvas2d.DrawRectangleRoundedLinesEx(sensitivity, .1, 8, editor.options_focus == 0 ? 2 : 1, sensitivity_border)
     ui_draw_text(.Label, "LOOK SENSITIVITY", {sensitivity.x + 14, sensitivity.y + 8}, .4, ui_theme_text())
     percent := editor.gameplay_options.look_sensitivity / .012
     value := fmt.ctprintf("%d%%", int(percent * 100 + .5))
@@ -929,28 +929,28 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         ui_theme_accent(),
     )
     track := options_menu_slider_track(sensitivity)
-    rl.DrawRectangleRounded(track, 1, 6, ui_theme_border(180))
+    canvas2d.DrawRectangleRounded(track, 1, 6, ui_theme_border(180))
     for tick in 0 ..= 4 {
         tick_x := track.x + track.width * f32(tick) / 4
-        rl.DrawLineEx({tick_x, track.y - 2}, {tick_x, track.y + track.height + 2}, 1, ui_theme_border_strong(120))
+        canvas2d.DrawLineEx({tick_x, track.y - 2}, {tick_x, track.y + track.height + 2}, 1, ui_theme_border_strong(120))
     }
     normalized := clamp((editor.gameplay_options.look_sensitivity - .004) / .020, 0, 1)
-    rl.DrawRectangleRounded({track.x, track.y, track.width * normalized, track.height}, 1, 6, ui_theme_accent())
-    knob := rl.Vector2{track.x + track.width * normalized, track.y + track.height * .5}
-    rl.DrawCircleV({knob.x, knob.y + 2}, 9, ui_theme_scrim(80))
-    rl.DrawCircleV(knob, 9, ui_theme_surface_elevated())
-    rl.DrawCircleV(knob, 3, ui_theme_accent())
+    canvas2d.DrawRectangleRounded({track.x, track.y, track.width * normalized, track.height}, 1, 6, ui_theme_accent())
+    knob := canvas2d.Vector2{track.x + track.width * normalized, track.y + track.height * .5}
+    canvas2d.DrawCircleV({knob.x, knob.y + 2}, 9, ui_theme_scrim(80))
+    canvas2d.DrawCircleV(knob, 9, ui_theme_surface_elevated())
+    canvas2d.DrawCircleV(knob, 3, ui_theme_accent())
 
     sound_fx := options_menu_row_bounds(panel, 1, scroll_y)
-    sound_fx_hovered := pause_menu_pointer_enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), sound_fx)
+    sound_fx_hovered := pause_menu_pointer_enabled && canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), sound_fx)
     sound_fx_fill := sound_fx_hovered ? ui_theme_control_hover() : ui_theme_control()
     sound_fx_border := sound_fx_hovered ? ui_theme_border_strong() : ui_theme_border()
     if editor.options_focus == 1 {
         sound_fx_fill = ui_theme_surface_elevated()
         sound_fx_border = ui_theme_focus()
     }
-    rl.DrawRectangleRounded(sound_fx, .1, 8, sound_fx_fill)
-    rl.DrawRectangleRoundedLinesEx(sound_fx, .1, 8, editor.options_focus == 1 ? 2 : 1, sound_fx_border)
+    canvas2d.DrawRectangleRounded(sound_fx, .1, 8, sound_fx_fill)
+    canvas2d.DrawRectangleRoundedLinesEx(sound_fx, .1, 8, editor.options_focus == 1 ? 2 : 1, sound_fx_border)
     ui_draw_text(.Label, "SOUND FX LEVEL", {sound_fx.x + 14, sound_fx.y + 8}, .4, ui_theme_text())
     sound_fx_value := fmt.ctprintf("%d%%", int(editor.gameplay_options.sound_fx_level * 100 + .5))
     sound_fx_value_size := ui_measure_text(.Data, sound_fx_value, .3)
@@ -962,21 +962,21 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         ui_theme_accent(),
     )
     sound_fx_track := options_menu_slider_track(sound_fx)
-    rl.DrawRectangleRounded(sound_fx_track, 1, 6, ui_theme_border(180))
+    canvas2d.DrawRectangleRounded(sound_fx_track, 1, 6, ui_theme_border(180))
     sound_fx_normalized := clamp(editor.gameplay_options.sound_fx_level, 0, 1)
-    rl.DrawRectangleRounded(
+    canvas2d.DrawRectangleRounded(
         {sound_fx_track.x, sound_fx_track.y, sound_fx_track.width * sound_fx_normalized, sound_fx_track.height},
         1,
         6,
         ui_theme_accent(),
     )
-    sound_fx_knob := rl.Vector2 {
+    sound_fx_knob := canvas2d.Vector2 {
         sound_fx_track.x + sound_fx_track.width * sound_fx_normalized,
         sound_fx_track.y + sound_fx_track.height * .5,
     }
-    rl.DrawCircleV({sound_fx_knob.x, sound_fx_knob.y + 2}, 9, ui_theme_scrim(80))
-    rl.DrawCircleV(sound_fx_knob, 9, ui_theme_surface_elevated())
-    rl.DrawCircleV(sound_fx_knob, 3, ui_theme_accent())
+    canvas2d.DrawCircleV({sound_fx_knob.x, sound_fx_knob.y + 2}, 9, ui_theme_scrim(80))
+    canvas2d.DrawCircleV(sound_fx_knob, 9, ui_theme_surface_elevated())
+    canvas2d.DrawCircleV(sound_fx_knob, 3, ui_theme_accent())
 
     options_menu_draw_toggle(
         options_menu_row_bounds(panel, 2, scroll_y),
@@ -1005,13 +1005,13 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
 
     crunchiness := options_menu_row_bounds(panel, 6, scroll_y)
     if editor.options_focus == 6 {
-        rl.DrawRectangleRounded(
+        canvas2d.DrawRectangleRounded(
             {crunchiness.x - 4, crunchiness.y - 4, crunchiness.width + 8, crunchiness.height + 8},
             .08,
             8,
             ui_theme_surface_elevated(220),
         )
-        rl.DrawRectangleRoundedLinesEx(
+        canvas2d.DrawRectangleRoundedLinesEx(
             {crunchiness.x - 4, crunchiness.y - 4, crunchiness.width + 8, crunchiness.height + 8},
             .08,
             8,
@@ -1033,13 +1033,13 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
 
     dither := options_menu_row_bounds(panel, 7, scroll_y)
     if editor.options_focus == 7 {
-        rl.DrawRectangleRounded(
+        canvas2d.DrawRectangleRounded(
             {dither.x - 4, dither.y - 4, dither.width + 8, dither.height + 8},
             .08,
             8,
             ui_theme_surface_elevated(220),
         )
-        rl.DrawRectangleRoundedLinesEx(
+        canvas2d.DrawRectangleRoundedLinesEx(
             {dither.x - 4, dither.y - 4, dither.width + 8, dither.height + 8},
             .08,
             8,
@@ -1086,9 +1086,9 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         false,
         editor.options_focus == OPTIONS_RESTORE_FOCUS,
     )
-    rl.EndScissorMode()
+    canvas2d.EndScissorMode()
     options_menu_draw_scrollbar(panel, scroll_y)
-    rl.DrawLineEx(
+    canvas2d.DrawLineEx(
         {panel.x + 30, viewport.y + viewport.height + 4},
         {panel.x + panel.width - 30, viewport.y + viewport.height + 4},
         1,
@@ -1097,28 +1097,28 @@ options_menu_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     pause_menu_button(options_menu_back_bounds(panel), "BACK", true, editor.options_focus == OPTIONS_BACK_FOCUS)
 }
 
-main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture) {
+main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.Texture) {
     if editor == nil || !editor.main_menu_active do return
     pause_menu_pointer_enabled = !controller_prompt_active(editor)
 
     if postcard.ready {
-        rl.DrawTexturePro(
+        canvas2d.DrawTexturePro(
             postcard,
             {0, 0, f32(postcard.width), f32(postcard.height)},
             {0, 0, f32(width), f32(height)},
             {255, 255, 255, 255},
         )
     } else {
-        rl.ClearBackground(ui_theme_border_strong())
+        canvas2d.ClearBackground(ui_theme_border_strong())
     }
-    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(72))
+    canvas2d.DrawRectangle(0, 0, width, height, ui_theme_scrim(72))
 
     frame_width := max(i32(8), i32(min(f32(width) / 1280, f32(height) / 720) * 10))
     frame_color := ui_theme_surface_elevated()
-    rl.DrawRectangle(0, 0, width, frame_width, frame_color)
-    rl.DrawRectangle(0, height - frame_width, width, frame_width, frame_color)
-    rl.DrawRectangle(0, 0, frame_width, height, frame_color)
-    rl.DrawRectangle(width - frame_width, 0, frame_width, height, frame_color)
+    canvas2d.DrawRectangle(0, 0, width, frame_width, frame_color)
+    canvas2d.DrawRectangle(0, height - frame_width, width, frame_width, frame_color)
+    canvas2d.DrawRectangle(0, 0, frame_width, height, frame_color)
+    canvas2d.DrawRectangle(width - frame_width, 0, frame_width, height, frame_color)
 
     if editor.pause_screen == .Customization {
         customization_scene_draw(editor, width, height)
@@ -1135,8 +1135,8 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture
 
     options := editor.pause_screen == .Options
     panel := options ? pause_menu_panel(width, height, true) : main_menu_panel(width, height)
-    rl.DrawRectangleRounded(panel, .035, 12, ui_theme_surface(245))
-    rl.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, ui_theme_border_strong(220))
+    canvas2d.DrawRectangleRounded(panel, .035, 12, ui_theme_surface(245))
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, ui_theme_border_strong(220))
     if options {
         options_menu_draw(editor, panel)
         return
@@ -1160,7 +1160,7 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture
     )
 }
 
-pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture = {}) {
+pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.Texture = {}) {
     if editor == nil || (!editor.main_menu_active && editor.pause_screen == .Closed) do return
     if editor.main_menu_active {
         main_menu_draw(editor, width, height, postcard)
@@ -1176,17 +1176,17 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
                 controller_face_label(editor, .South),
             )
         }
-        if rl.GetTime() < editor.photo_capture_notice_until {
+        if canvas2d.GetTime() < editor.photo_capture_notice_until {
             hint = "PHOTO SAVED TO PICTURES / ADRIATIC"
         }
         size := ui_measure_text(.Data, hint, .25)
-        bounds := rl.Rectangle{(f32(width) - size.x) * .5 - 16, f32(height) - 48, size.x + 32, 30}
-        rl.DrawRectangleRounded(bounds, .2, 8, ui_theme_scrim(150))
+        bounds := canvas2d.Rectangle{(f32(width) - size.x) * .5 - 16, f32(height) - 48, size.x + 32, 30}
+        canvas2d.DrawRectangleRounded(bounds, .2, 8, ui_theme_scrim(150))
         ui_draw_text(.Data, hint, {(f32(width) - size.x) * .5, f32(height) - 40}, .25, {255, 255, 255, 255})
         return
     }
     overlay_alpha: u8 = editor.pause_screen == .Customization ? 58 : 190
-    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(overlay_alpha))
+    canvas2d.DrawRectangle(0, 0, width, height, ui_theme_scrim(overlay_alpha))
 
     if editor.pause_screen == .Customization {
         customization_scene_draw(editor, width, height)
@@ -1203,8 +1203,8 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
 
     options := editor.pause_screen == .Options
     panel := pause_menu_panel(width, height, options)
-    rl.DrawRectangleRounded(panel, .035, 12, ui_theme_surface())
-    rl.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, ui_theme_border())
+    canvas2d.DrawRectangleRounded(panel, .035, 12, ui_theme_surface())
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, ui_theme_border())
 
     if options {
         options_menu_draw(editor, panel)

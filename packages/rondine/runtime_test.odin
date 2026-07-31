@@ -40,6 +40,19 @@ rondine_assisted_height_stays_in_ground_effect :: proc(t: ^testing.T) {
 }
 
 @(test)
+rondine_responds_gradually_to_crosswind :: proc(t: ^testing.T) {
+    calm := new_runtime({0, GROUND_CLEARANCE, 0})
+    windy := calm
+    for _ in 0 ..< 240 {
+        step(&calm, {}, 0, 1.0 / 120.0)
+        step(&windy, {}, 0, 1.0 / 120.0, {0, 0, 12})
+    }
+    testing.expect(t, windy.body.position.z > calm.body.position.z + 1)
+    testing.expect(t, windy.body.velocity.z > calm.body.velocity.z)
+    testing.expect(t, windy.body.velocity.z < 12)
+}
+
+@(test)
 rondine_contact_spray_peaks_before_liftoff :: proc(t: ^testing.T) {
     runtime := new_runtime({0, GROUND_CLEARANCE, 0})
     for _ in 0 ..< 300 {

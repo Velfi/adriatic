@@ -3,7 +3,7 @@ package main
 import cinematic "../packages/cinematic"
 import third_person "../packages/third_person"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 cinematic_play :: proc(editor: ^Editor, script: ^cinematic.Script) -> bool {
     if editor == nil do return false
@@ -128,7 +128,7 @@ cinematic_wipe_coverage :: proc(progress: f32) -> f32 {
     return p <= .5 ? p * 2 : (1 - p) * 2
 }
 
-cinematic_wipe_color :: proc(value: cinematic.Wipe) -> rl.Color {
+cinematic_wipe_color :: proc(value: cinematic.Wipe) -> canvas2d.Color {
     return {value.color[0], value.color[1], value.color[2], value.color[3]}
 }
 
@@ -136,20 +136,20 @@ cinematic_wipe_is_camera_composited :: proc(kind: cinematic.Wipe_Kind) -> bool {
 	return kind != .None
 }
 
-cinematic_draw_clock :: proc(width, height: i32, coverage: f32, color: rl.Color) {
+cinematic_draw_clock :: proc(width, height: i32, coverage: f32, color: canvas2d.Color) {
     if coverage <= 0 do return
-    center := rl.Vector2{f32(width) * .5, f32(height) * .5}
+    center := canvas2d.Vector2{f32(width) * .5, f32(height) * .5}
     radius := f32(math.sqrt(f64(width * width + height * height))) * .55
     segments := 72
     drawn := int(math.ceil(f64(coverage * f32(segments))))
     thickness := radius * f32(2 * math.PI) / f32(segments) + 2
     for index in 0 ..< drawn {
         angle := -math.PI * .5 + f32(index) * 2 * math.PI / f32(segments)
-        edge := rl.Vector2 {
+        edge := canvas2d.Vector2 {
             center.x + radius * f32(math.cos(f64(angle))),
             center.y + radius * f32(math.sin(f64(angle))),
         }
-        rl.DrawLineEx(center, edge, thickness, color)
+        canvas2d.DrawLineEx(center, edge, thickness, color)
     }
 }
 
@@ -167,17 +167,17 @@ cinematic_draw_wipe :: proc(editor: ^Editor, width, height: i32) {
     switch value.wipe.kind {
     case .None:
     case .Left:
-        rl.DrawRectangleRec({0, 0, w * coverage, h}, color)
+        canvas2d.DrawRectangleRec({0, 0, w * coverage, h}, color)
     case .Right:
         amount := w * coverage
-        rl.DrawRectangleRec({w - amount, 0, amount, h}, color)
+        canvas2d.DrawRectangleRec({w - amount, 0, amount, h}, color)
     case .Up:
-        rl.DrawRectangleRec({0, h * (1 - coverage), w, h * coverage}, color)
+        canvas2d.DrawRectangleRec({0, h * (1 - coverage), w, h * coverage}, color)
     case .Down:
-        rl.DrawRectangleRec({0, 0, w, h * coverage}, color)
+        canvas2d.DrawRectangleRec({0, 0, w, h * coverage}, color)
     case .Iris:
         radius := f32(math.sqrt(f64(width * width + height * height))) * .55 * coverage
-        rl.DrawCircleV({w * .5, h * .5}, radius, color)
+        canvas2d.DrawCircleV({w * .5, h * .5}, radius, color)
     case .Clockwise:
         cinematic_draw_clock(width, height, coverage, color)
     case .Checker:
@@ -190,7 +190,7 @@ cinematic_draw_wipe :: proc(editor: ^Editor, width, height: i32) {
                 cell_coverage := clamp(threshold - phase, 0, 1)
                 if cell_coverage <= 0 do continue
                 x, y := f32(column) * cell_width, f32(row) * cell_height
-                rl.DrawRectangleRec({x, y, cell_width * cell_coverage + 1, cell_height + 1}, color)
+                canvas2d.DrawRectangleRec({x, y, cell_width * cell_coverage + 1, cell_height + 1}, color)
             }
         }
     }

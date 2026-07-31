@@ -84,3 +84,69 @@ mouse_paw_rig_reset_releases_every_contact :: proc(t: ^testing.T) {
         testing.expect(t, contact.anchor == third_person.Vec3{})
     }
 }
+
+@(test)
+mouse_paw_support_anchor_follows_body_translation_and_rotation :: proc(t: ^testing.T) {
+    contact: mouse_paws.Contact
+    half_turn_sine := math.sin(f32(math.PI * .25))
+    half_turn_cosine := math.cos(f32(math.PI * .25))
+    sample := mouse_paws.Paw_Surface_Sample {
+        position = {3, 2, 4}, body = 7, body_position = {2, 2, 4},
+        body_rotation = {0, 0, 0, 1}, valid = true,
+    }
+    mouse_paws.store_support_local(&contact, sample)
+    moved := mouse_paws.support_world_position(contact, {5, 2, 6}, {0, half_turn_sine, 0, half_turn_cosine})
+    testing.expect(t, math.abs(moved.x - 5) < .001)
+    testing.expect(t, math.abs(moved.z - 5) < .001)
+}
+
+@(test)
+mouse_paw_touchdown_deforms_then_critically_recovers :: proc(t: ^testing.T) {
+    contact: mouse_paws.Contact
+    peak := mouse_paws.step_compression(&contact, true, 1.0 / 120.0)
+    testing.expect(t, peak > .5 && peak <= 1)
+    for _ in 0 ..< 120 do mouse_paws.step_compression(&contact, false, 1.0 / 120.0)
+    testing.expect(t, contact.compression < .001)
+    scale := mouse_paws.pad_scale(1)
+    testing.expect(t, math.abs(scale.x - 1.10) < .0001)
+    testing.expect(t, math.abs(scale.y - .72) < .0001)
+    testing.expect(t, math.abs(scale.z - 1.14) < .0001)
+}
+
+@(test)
+mouse_paw_toes_resolve_independently_and_bound_ledge_drape :: proc(t: ^testing.T) {
+    root := third_person.Vec3{0, 1, 0}
+    desired := third_person.Vec3{0, 1, .1}
+    high := mouse_paws.resolve_toe(root, desired, {position = {0, 4, .1}, valid = true}, .1)
+    low := mouse_paws.resolve_toe(root, desired, {position = {0, -4, .1}, valid = true}, .1)
+    hanging := mouse_paws.resolve_toe(root, desired, {}, .1)
+    testing.expect(t, math.abs(high.tip.y - 1.035) < .0001)
+    testing.expect(t, math.abs(low.tip.y - .95) < .0001)
+    testing.expect(t, !hanging.supported && hanging.tip.y < desired.y)
+}
+
+@(test)
+mouse_paw_resolved_render_reads_are_immutable :: proc(t: ^testing.T) {
+    rig: mouse_paws.Rig
+    rig.authored[0] = {socket = {1, 2, 3}, desired = {4, 5, 6}, valid = true}
+    rig.resolved[0] = {pad_position = {7, 8, 9}, pad_normal = {0, 1, 0}, valid = true}
+    before := rig
+    for _ in 0 ..< 32 {
+        _ = mouse_paws.authored_pose(&rig, 0)
+        _ = mouse_paws.resolved_pose(&rig, 0)
+    }
+    testing.expect(t, rig == before)
+}
+
+@(test)
+mouse_paw_moving_support_keeps_contact_beyond_the_old_ray :: proc(t: ^testing.T) {
+    contact := mouse_paws.Contact {
+        anchor = {}, local_anchor = {}, support_body = 9,
+        phase = .Stance,
+    }
+    moved_anchor := mouse_paws.support_world_position(contact, {2, .5, 0}, {0, 0, 0, 1})
+    contact.anchor = moved_anchor
+    result := mouse_paws.resolve(&contact, {2, .8, 0}, moved_anchor, true, .5, 0)
+    testing.expect(t, result.event == .None)
+    testing.expect(t, result.position == moved_anchor)
+}

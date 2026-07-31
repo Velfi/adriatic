@@ -6,7 +6,7 @@ import engine_sound "../packages/engine_sound"
 import story "../packages/story"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 DIALOGUE_REFERENCE_HEIGHT :: f32(720)
 DIALOGUE_REVEAL_SECONDS :: f32(.032)
@@ -16,8 +16,8 @@ DIALOGUE_CHOICE_TRANSITION_SECONDS :: f32(.16)
 DIALOGUE_FOCUS_TRANSITION_SECONDS :: f32(.14)
 
 @(no_instrumentation)
-dialogue_font :: #force_inline proc() -> rl.Font {
-    return rl.DisplayFont()
+dialogue_font :: #force_inline proc() -> canvas2d.Font {
+    return canvas2d.DisplayFont()
 }
 
 Dialogue_View_State :: struct {
@@ -42,13 +42,13 @@ dialogue_ease_out :: #force_inline proc(value: f32) -> f32 {
     return 1 - (1 - t) * (1 - t) * (1 - t)
 }
 
-dialogue_color_alpha :: #force_inline proc(color: rl.Color, opacity: f32) -> rl.Color {
+dialogue_color_alpha :: #force_inline proc(color: canvas2d.Color, opacity: f32) -> canvas2d.Color {
     result := color
     result.a = u8(clamp(f32(result.a) * clamp(opacity, 0, 1), 0, 255))
     return result
 }
 
-dialogue_color_lerp :: #force_inline proc(a, b: rl.Color, t: f32) -> rl.Color {
+dialogue_color_lerp :: #force_inline proc(a, b: canvas2d.Color, t: f32) -> canvas2d.Color {
     amount := clamp(t, 0, 1)
     return {
         u8(f32(a.r) + (f32(b.r) - f32(a.r)) * amount),
@@ -60,11 +60,11 @@ dialogue_color_lerp :: #force_inline proc(a, b: rl.Color, t: f32) -> rl.Color {
 
 Dialogue_Tv_Layout :: struct {
     scale:        f32,
-    player_card:  rl.Rectangle,
-    conversation: rl.Rectangle,
-    npc_card:     rl.Rectangle,
-    speech:       rl.Rectangle,
-    choices:      rl.Rectangle,
+    player_card:  canvas2d.Rectangle,
+    conversation: canvas2d.Rectangle,
+    npc_card:     canvas2d.Rectangle,
+    speech:       canvas2d.Rectangle,
+    choices:      canvas2d.Rectangle,
     choice_row_h: f32,
     choice_gap:   f32,
 }
@@ -90,7 +90,7 @@ dialogue_tv_layout :: proc(width, height: i32, choice_count: int = DIALOGUE_CHOI
     speech_h := 154 * scale
     choice_area_h := f32(visible_choices) * choice_row_h + f32(max(visible_choices - 1, 0)) * choice_gap
     center_h := min(58 * scale + speech_h + 12 * scale + choice_area_h + 26 * scale, height_safe)
-    center := rl.Rectangle {
+    center := canvas2d.Rectangle {
         start_x + card_w + gap,
         f32(height) - safe_y - center_h,
         center_w,
@@ -115,7 +115,7 @@ dialogue_tv_layout :: proc(width, height: i32, choice_count: int = DIALOGUE_CHOI
 
 dialogue_next_glyph_end :: proc(text: string, start: int) -> int {
     if start >= len(text) do return len(text)
-    return min(start + rl.TextNextGrapheme(text[start:]), len(text))
+    return min(start + canvas2d.TextNextGrapheme(text[start:]), len(text))
 }
 
 dialogue_voice_unit_end :: proc(text: string, start: int) -> int {
@@ -387,7 +387,7 @@ dialogue_choice_scroll_focus :: proc(editor: ^Editor, visible_rows: int) {
     editor.attendant_dialogue_view.first_choice = clamp(editor.attendant_dialogue_view.first_choice, 0, max_first)
 }
 
-dialogue_choice_bounds :: proc(layout: Dialogue_Tv_Layout, visible_row: int) -> rl.Rectangle {
+dialogue_choice_bounds :: proc(layout: Dialogue_Tv_Layout, visible_row: int) -> canvas2d.Rectangle {
     return {
         layout.choices.x,
         layout.choices.y + f32(visible_row) * (layout.choice_row_h + layout.choice_gap),
@@ -396,9 +396,9 @@ dialogue_choice_bounds :: proc(layout: Dialogue_Tv_Layout, visible_row: int) -> 
     }
 }
 
-dialogue_draw_wrapped :: proc(text: string, bounds: rl.Rectangle, size, spacing, line_height: f32, color: rl.Color) {
+dialogue_draw_wrapped :: proc(text: string, bounds: canvas2d.Rectangle, size, spacing, line_height: f32, color: canvas2d.Color) {
     if len(text) == 0 do return
-    _ = rl.DrawTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), bounds, size, spacing, line_height, color)
+    _ = canvas2d.DrawTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), bounds, size, spacing, line_height, color)
 }
 
 dialogue_word_byte :: proc(byte: u8) -> bool {
@@ -409,20 +409,20 @@ dialogue_word_byte :: proc(byte: u8) -> bool {
 // so Adriatic vocabulary can act as an unobtrusive language-learning aid.
 dialogue_draw_glossed_wrapped :: proc(
     text: string,
-    bounds: rl.Rectangle,
+    bounds: canvas2d.Rectangle,
     size, spacing, line_height: f32,
-    color: rl.Color,
-    mouse: rl.Vector2,
+    color: canvas2d.Color,
+    mouse: canvas2d.Vector2,
     centered: bool = false,
 ) -> string {
     if len(text) == 0 do return ""
-    lines := make([dynamic]rl.Text_Wrapped_Line, 0, 8, context.temp_allocator)
-    rl.LayoutTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), size, spacing, bounds.width, .Auto, &lines)
+    lines := make([dynamic]canvas2d.Text_Wrapped_Line, 0, 8, context.temp_allocator)
+    canvas2d.LayoutTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), size, spacing, bounds.width, .Auto, &lines)
     hovered_english := ""
     visible := min(len(lines), max(int(bounds.height / line_height), 0))
     first_line_y := bounds.y
     if centered && visible > 0 {
-        first_line_y = rl.TextBlockCenteredY(dialogue_font(), bounds, size, line_height, visible)
+        first_line_y = canvas2d.TextBlockCenteredY(dialogue_font(), bounds, size, line_height, visible)
     }
     for line, line_index in lines[:visible] {
         x := bounds.x
@@ -437,7 +437,7 @@ dialogue_draw_glossed_wrapped :: proc(
                 for cursor < line.end && text[cursor] != ' ' do cursor += 1
             }
             token := text[start:cursor]
-            measured := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", token), size, spacing)
+            measured := canvas2d.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", token), size, spacing)
             if !is_space && x > bounds.x && x + measured.x > bounds.x + bounds.width {
                 x = bounds.x
                 y += line_height
@@ -445,7 +445,7 @@ dialogue_draw_glossed_wrapped :: proc(
             }
             if is_space && x == bounds.x do continue
 
-            rl.DrawTextEx(dialogue_font(), fmt.ctprintf("%s", token), {x, y}, size, spacing, color)
+            canvas2d.DrawTextEx(dialogue_font(), fmt.ctprintf("%s", token), {x, y}, size, spacing, color)
             if !is_space {
                 word_start, word_end := 0, len(token)
                 for word_start < word_end && !dialogue_word_byte(token[word_start]) do word_start += 1
@@ -458,13 +458,13 @@ dialogue_draw_glossed_wrapped :: proc(
                         if word_start > 0 {
                             prefix := token[:word_start]
                             prefix_width =
-                                rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", prefix), size, spacing).x
+                                canvas2d.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", prefix), size, spacing).x
                         }
-                        word_width := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", word), size, spacing).x
-                        word_bounds := rl.Rectangle{x + prefix_width, y, word_width, line_height}
-                        hovered := rl.CheckCollisionPointRec(mouse, word_bounds)
+                        word_width := canvas2d.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", word), size, spacing).x
+                        word_bounds := canvas2d.Rectangle{x + prefix_width, y, word_width, line_height}
+                        hovered := canvas2d.CheckCollisionPointRec(mouse, word_bounds)
                         underline_color := hovered ? ui_theme_focus() : ui_theme_accent(190)
-                        rl.DrawRectangle(
+                        canvas2d.DrawRectangle(
                             i32(word_bounds.x),
                             i32(y + size + 2),
                             max(i32(word_bounds.width), 1),
@@ -481,20 +481,20 @@ dialogue_draw_glossed_wrapped :: proc(
     return hovered_english
 }
 
-dialogue_draw_glossary_tooltip :: proc(english: string, mouse: rl.Vector2, width, height: i32, scale: f32) {
+dialogue_draw_glossary_tooltip :: proc(english: string, mouse: canvas2d.Vector2, width, height: i32, scale: f32) {
     if len(english) == 0 do return
     label := fmt.ctprintf("English: %s", english)
     font_size := 20 * scale
-    measured := rl.MeasureTextEx(dialogue_font(), label, font_size, .8 * scale)
-    panel := rl.Rectangle {
+    measured := canvas2d.MeasureTextEx(dialogue_font(), label, font_size, .8 * scale)
+    panel := canvas2d.Rectangle {
         clamp(mouse.x + 14 * scale, 8 * scale, f32(width) - measured.x - 32 * scale),
         clamp(mouse.y - 48 * scale, 8 * scale, f32(height) - 42 * scale),
         measured.x + 20 * scale,
         34 * scale,
     }
-    rl.DrawRectangleRounded(panel, .22, 6, ui_theme_surface_elevated(250))
-    rl.DrawRectangleRoundedLinesEx(panel, .22, 6, 1 * scale, ui_theme_focus())
-    rl.DrawTextEx(
+    canvas2d.DrawRectangleRounded(panel, .22, 6, ui_theme_surface_elevated(250))
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .22, 6, 1 * scale, ui_theme_focus())
+    canvas2d.DrawTextEx(
         dialogue_font(),
         label,
         {panel.x + 10 * scale, panel.y + 7 * scale},
@@ -504,7 +504,7 @@ dialogue_draw_glossary_tooltip :: proc(english: string, mouse: rl.Vector2, width
     )
 }
 
-dialogue_draw_tarot_strip :: proc(editor: ^Editor, bounds: rl.Rectangle, scale: f32) {
+dialogue_draw_tarot_strip :: proc(editor: ^Editor, bounds: canvas2d.Rectangle, scale: f32) {
     if editor == nil || editor.dialogue_resident != .Zora do return
     current := dialogue.current(&editor.attendant_dialogue)
     if current == nil || current.id != "zora-reading" do return
@@ -518,7 +518,7 @@ dialogue_draw_tarot_strip :: proc(editor: ^Editor, bounds: rl.Rectangle, scale: 
     x := bounds.x + (bounds.width - total_w) * .5
     y := bounds.y + bounds.height - card_h
     for placement, index in layout.placements[:count] {
-        card := rl.Rectangle{x + f32(index) * (card_w + gap), y, card_w, card_h}
+        card := canvas2d.Rectangle{x + f32(index) * (card_w + gap), y, card_w, card_h}
         if editor.tarot_atlas.ready {
             card_id := int(placement.card)
             atlas_row, atlas_column := 0, 0
@@ -530,22 +530,22 @@ dialogue_draw_tarot_strip :: proc(editor: ^Editor, bounds: rl.Rectangle, scale: 
                 minor := card_id - 22
                 atlas_row, atlas_column = 2 + minor / 14, minor % 14
             }
-            source := rl.Rectangle{f32(atlas_column * 108), f32(atlas_row * 158), 108, 158}
+            source := canvas2d.Rectangle{f32(atlas_column * 108), f32(atlas_row * 158), 108, 158}
             if placement.orientation == .Reversed {
                 source.x += source.width
                 source.y += source.height
                 source.width = -source.width
                 source.height = -source.height
             }
-            rl.DrawTexturePro(editor.tarot_atlas, source, card, {255, 255, 255, 255})
+            canvas2d.DrawTexturePro(editor.tarot_atlas, source, card, {255, 255, 255, 255})
         } else {
-            rl.DrawRectangleRounded(card, .06, 6, ui_theme_control())
+            canvas2d.DrawRectangleRounded(card, .06, 6, ui_theme_control())
         }
-        rl.DrawRectangleRoundedLinesEx(card, .06, 6, 1 * scale, ui_theme_focus())
+        canvas2d.DrawRectangleRoundedLinesEx(card, .06, 6, 1 * scale, ui_theme_focus())
     }
 }
 
-dialogue_portrait_color :: proc(editor: ^Editor, resident: story.Resident, player: bool) -> rl.Color {
+dialogue_portrait_color :: proc(editor: ^Editor, resident: story.Resident, player: bool) -> canvas2d.Color {
     if player do return mouse_fur_color(editor.mouse_fur)
     switch resident {
     case .Marta:
@@ -578,7 +578,7 @@ dialogue_portrait_color :: proc(editor: ^Editor, resident: story.Resident, playe
 
 dialogue_draw_live_portrait :: proc(
     editor: ^Editor,
-    bounds: rl.Rectangle,
+    bounds: canvas2d.Rectangle,
     resident: story.Resident,
     player, active: bool,
     reaction: f32,
@@ -587,20 +587,20 @@ dialogue_draw_live_portrait :: proc(
     // The true mesh is rendered in the world pass beneath this chrome. Keep
     // the portrait interior untouched so its lighting and colors remain true.
     border := active ? ui_theme_focus() : ui_theme_border()
-    rl.DrawRectangleRoundedLinesEx(bounds, .06, 10, active ? 3 * scale : 1 * scale, border)
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .06, 10, active ? 3 * scale : 1 * scale, border)
     _ = reaction
     name := player ? "YOU" : story.resident_name(resident)
     name_size := 24 * scale
-    measured := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", name), name_size, 1 * scale)
-    nameplate := rl.Rectangle {
+    measured := canvas2d.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", name), name_size, 1 * scale)
+    nameplate := canvas2d.Rectangle {
         bounds.x + (bounds.width - measured.x) * .5 - 12 * scale,
         bounds.y + bounds.height - 72 * scale,
         measured.x + 24 * scale,
         42 * scale,
     }
-    rl.DrawRectangleRounded(nameplate, .35, 8, ui_theme_surface_elevated(232))
-    rl.DrawRectangleRoundedLinesEx(nameplate, .35, 8, 1 * scale, border)
-    rl.DrawTextEx(
+    canvas2d.DrawRectangleRounded(nameplate, .35, 8, ui_theme_surface_elevated(232))
+    canvas2d.DrawRectangleRoundedLinesEx(nameplate, .35, 8, 1 * scale, border)
+    canvas2d.DrawTextEx(
         dialogue_font(),
         fmt.ctprintf("%s", name),
         {bounds.x + (bounds.width - measured.x) * .5, bounds.y + bounds.height - 62 * scale},
@@ -623,9 +623,9 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     choice_progress := dialogue_ease_out(editor.attendant_dialogue_view.choice_seconds / DIALOGUE_CHOICE_TRANSITION_SECONDS)
     // A light full-frame scrim calms the scene without turning the speakers
     // into boxed portrait specimens.
-    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(u8(82 * panel_progress)))
-    rl.DrawRectangleRounded(layout.conversation, .025, 10, ui_theme_scrim(u8(226 * panel_progress)))
-    rl.DrawRectangleRoundedLinesEx(
+    canvas2d.DrawRectangle(0, 0, width, height, ui_theme_scrim(u8(82 * panel_progress)))
+    canvas2d.DrawRectangleRounded(layout.conversation, .025, 10, ui_theme_scrim(u8(226 * panel_progress)))
+    canvas2d.DrawRectangleRoundedLinesEx(
         layout.conversation,
         .025,
         10,
@@ -634,37 +634,37 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     )
     speaker := current.speaker(&conversation.ctx)
     speaker_size := 24 * scale
-    speaker_measure := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", speaker), speaker_size, 1.2 * scale)
+    speaker_measure := canvas2d.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", speaker), speaker_size, 1.2 * scale)
     speaker_tab_width := speaker_measure.x + 64 * scale
     _, resident_speaking := story.resident_from_speaker(speaker)
     speaker_tab_x := layout.conversation.x + 28 * scale
     if resident_speaking {
         speaker_tab_x = layout.conversation.x + layout.conversation.width - speaker_tab_width - 28 * scale
     }
-    speaker_tab := rl.Rectangle {
+    speaker_tab := canvas2d.Rectangle {
         speaker_tab_x,
         layout.conversation.y - 14 * scale,
         speaker_tab_width,
         46 * scale,
     }
-    rl.DrawRectangleRounded(speaker_tab, .12, 8, ui_theme_accent(u8(255 * panel_progress)))
-    rl.DrawRectangleRoundedLinesEx(speaker_tab, .12, 8, 1 * scale, ui_theme_accent_hover(u8(255 * panel_progress)))
+    canvas2d.DrawRectangleRounded(speaker_tab, .12, 8, ui_theme_accent(u8(255 * panel_progress)))
+    canvas2d.DrawRectangleRoundedLinesEx(speaker_tab, .12, 8, 1 * scale, ui_theme_accent_hover(u8(255 * panel_progress)))
     notch_center_y := speaker_tab.y + speaker_tab.height * .5
     notch_inner_x := resident_speaking ? speaker_tab.x + speaker_tab.width - 1 * scale : speaker_tab.x + 1 * scale
     notch_tip_x := notch_inner_x + (resident_speaking ? 10 * scale : -10 * scale)
-    rl.DrawLineEx(
+    canvas2d.DrawLineEx(
         {notch_inner_x, notch_center_y - 7 * scale},
         {notch_tip_x, notch_center_y},
         3 * scale,
         ui_theme_accent_hover(),
     )
-    rl.DrawLineEx(
+    canvas2d.DrawLineEx(
         {notch_tip_x, notch_center_y},
         {notch_inner_x, notch_center_y + 7 * scale},
         3 * scale,
         ui_theme_accent_hover(),
     )
-    rl.DrawTextEx(
+    canvas2d.DrawTextEx(
         dialogue_font(),
         fmt.ctprintf("%s", speaker),
         {speaker_tab.x + 32 * scale, speaker_tab.y + 10 * scale},
@@ -677,7 +677,7 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     speech_bounds := layout.speech
     current_is_tarot := current.id == "zora-reading" && editor.story_state.tarot_layout.count > 0
     if current_is_tarot do speech_bounds.height -= 108 * scale
-    mouse := rl.GetMousePosition()
+    mouse := canvas2d.GetMousePosition()
     speech_opacity := panel_progress * (presentation == .Choosing ? f32(.82) : f32(1))
     hovered_english := dialogue_draw_glossed_wrapped(
         text[:visible_end],
@@ -697,7 +697,7 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         row := choice_index - first
         bounds := dialogue_choice_bounds(layout, row)
         focused := editor.attendant_dialogue_focus == choice_index
-        hovered := rl.CheckCollisionPointRec(mouse, bounds)
+        hovered := canvas2d.CheckCollisionPointRec(mouse, bounds)
         base_state := hovered ? UI_Control_State.Hovered : UI_Control_State.Resting
         base_style := ui_theme_control_style(base_state)
         selected_style := ui_theme_control_style(.Selected)
@@ -723,12 +723,12 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
             row_opacity,
         )
         border_width := base_style.border_width + (selected_style.border_width - base_style.border_width) * focus_progress
-        rl.DrawRectangleRounded(bounds, .12, 8, fill)
-        rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, border_width * scale, border)
+        canvas2d.DrawRectangleRounded(bounds, .12, 8, fill)
+        canvas2d.DrawRectangleRoundedLinesEx(bounds, .12, 8, border_width * scale, border)
         if focused {
-            accent := rl.Rectangle{bounds.x, bounds.y + 8 * scale, 6 * scale, bounds.height - 16 * scale}
-            rl.DrawRectangleRounded(accent, .8, 6, ui_theme_text_inverse(u8(255 * row_opacity * focus_progress)))
-            rl.DrawTextEx(
+            accent := canvas2d.Rectangle{bounds.x, bounds.y + 8 * scale, 6 * scale, bounds.height - 16 * scale}
+            canvas2d.DrawRectangleRounded(accent, .8, 6, ui_theme_text_inverse(u8(255 * row_opacity * focus_progress)))
+            canvas2d.DrawTextEx(
                 dialogue_font(),
                 "›",
                 {bounds.x + 18 * scale, bounds.y + 14 * scale},
@@ -738,7 +738,7 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
             )
         }
         if response := dialogue.available_at(conversation, choice_index); response != nil {
-            text_bounds := rl.Rectangle {
+            text_bounds := canvas2d.Rectangle {
                 bounds.x + (focused ? 50 : 22) * scale,
                 bounds.y,
                 bounds.width - (focused ? 122 : 44) * scale,
@@ -759,17 +759,17 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         if focused {
             confirm: cstring = controller_prompt_active(editor) ? controller_face_label(editor, .South) : "ENTER"
             confirm_size := 16 * scale
-            confirm_measure := rl.MeasureTextEx(dialogue_font(), confirm, confirm_size, .6 * scale)
-            hint := rl.Rectangle {
+            confirm_measure := canvas2d.MeasureTextEx(dialogue_font(), confirm, confirm_size, .6 * scale)
+            hint := canvas2d.Rectangle {
                 bounds.x + bounds.width - confirm_measure.x - 24 * scale,
                 bounds.y + (bounds.height - 28 * scale) * .5,
                 confirm_measure.x + 14 * scale,
                 28 * scale,
             }
             hint_opacity := row_opacity * focus_progress
-            rl.DrawRectangleRounded(hint, .3, 6, ui_theme_scrim(u8(78 * hint_opacity)))
-            rl.DrawRectangleRoundedLinesEx(hint, .3, 6, 1 * scale, ui_theme_text_inverse(u8(190 * hint_opacity)))
-            rl.DrawTextEx(
+            canvas2d.DrawRectangleRounded(hint, .3, 6, ui_theme_scrim(u8(78 * hint_opacity)))
+            canvas2d.DrawRectangleRoundedLinesEx(hint, .3, 6, 1 * scale, ui_theme_text_inverse(u8(190 * hint_opacity)))
+            canvas2d.DrawTextEx(
                 dialogue_font(),
                 confirm,
                 {hint.x + 7 * scale, hint.y + 6 * scale},
@@ -781,8 +781,8 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     }
     if presentation == .Speaking {
         hint: cstring = controller_prompt_active(editor) ? fmt.ctprintf("%s REVEALS", controller_face_label(editor, .South)) : "ENTER REVEALS"
-        measured := rl.MeasureTextEx(dialogue_font(), hint, 16 * scale, .6 * scale)
-        rl.DrawTextEx(
+        measured := canvas2d.MeasureTextEx(dialogue_font(), hint, 16 * scale, .6 * scale)
+        canvas2d.DrawTextEx(
             dialogue_font(),
             hint,
             {layout.conversation.x + layout.conversation.width - measured.x - 24 * scale, layout.conversation.y + layout.conversation.height - 24 * scale},
@@ -792,15 +792,15 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         )
     } else if presentation == .Continuing {
         hint: cstring = controller_prompt_active(editor) ? fmt.ctprintf("%s CONTINUES", controller_face_label(editor, .South)) : "ENTER CONTINUES"
-        measured := rl.MeasureTextEx(dialogue_font(), hint, 17 * scale, .6 * scale)
-        hint_bounds := rl.Rectangle {
+        measured := canvas2d.MeasureTextEx(dialogue_font(), hint, 17 * scale, .6 * scale)
+        hint_bounds := canvas2d.Rectangle {
             layout.conversation.x + layout.conversation.width - measured.x - 38 * scale,
             layout.conversation.y + layout.conversation.height - 52 * scale,
             measured.x + 20 * scale,
             32 * scale,
         }
-        rl.DrawRectangleRounded(hint_bounds, .25, 6, ui_theme_accent(u8(220 * panel_progress)))
-        rl.DrawTextEx(
+        canvas2d.DrawRectangleRounded(hint_bounds, .25, 6, ui_theme_accent(u8(220 * panel_progress)))
+        canvas2d.DrawTextEx(
             dialogue_font(),
             hint,
             {hint_bounds.x + 10 * scale, hint_bounds.y + 7 * scale},
@@ -811,8 +811,8 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     }
     if count > visible_rows && visible_rows > 0 {
         position_label := fmt.ctprintf("%d–%d OF %d   ↑↓", first + 1, last, count)
-        measured := rl.MeasureTextEx(dialogue_font(), position_label, 16 * scale, .6 * scale)
-        rl.DrawTextEx(
+        measured := canvas2d.MeasureTextEx(dialogue_font(), position_label, 16 * scale, .6 * scale)
+        canvas2d.DrawTextEx(
             dialogue_font(),
             position_label,
             {

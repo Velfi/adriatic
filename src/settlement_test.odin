@@ -1,6 +1,7 @@
 package main
 
 import architecture "../packages/architecture"
+import cemeteries "../packages/cemeteries"
 import plants "../packages/plants"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
@@ -10,6 +11,38 @@ import "core:math"
 import "core:math/linalg"
 import "core:os"
 import "core:testing"
+
+@(test)
+settlement_cemetery_scales_with_settlement_and_preserves_regional_style :: proc(t: ^testing.T) {
+    village_width, village_depth, village_density := settlement_cemetery_dimensions(.Village)
+    city_width, city_depth, city_density := settlement_cemetery_dimensions(.City)
+    testing.expect(t, city_width > village_width)
+    testing.expect(t, city_depth > village_depth)
+    testing.expect(t, city_density > village_density)
+
+    adriatic := cemeteries.generate(17, {width = village_width, depth = village_depth, density = village_density, style = .Adriatic_Medieval})
+    aegean := cemeteries.generate(17, {width = village_width, depth = village_depth, density = village_density, style = .Classical_Aegean})
+    testing.expect(t, adriatic.valid && aegean.valid)
+    for grave in adriatic.graves[:adriatic.grave_count] do testing.expect(t, cemeteries.style_supports_marker(.Adriatic_Medieval, grave.marker))
+    for grave in aegean.graves[:aegean.grave_count] do testing.expect(t, cemeteries.style_supports_marker(.Classical_Aegean, grave.marker))
+}
+
+@(test)
+settlement_cemetery_reservation_tag_does_not_match_ordinary_foliage :: proc(t: ^testing.T) {
+    ordinary := terrain.Structure{group_id = 42, kind = .Foliage}
+    reserved := terrain.Structure{group_id = SETTLEMENT_CEMETERY_GROUP_TAG | 42, kind = .Foliage}
+    testing.expect(t, !settlement_cemetery_structure_is_reservation(ordinary))
+    testing.expect(t, settlement_cemetery_structure_is_reservation(reserved))
+}
+
+@(test)
+settlement_cemetery_outer_radius_includes_macro_cell_extent :: proc(t: ^testing.T) {
+    plan: Settlement_Plan
+    plan.request.center = {10, 20}
+    plan.macro_cells[0] = {center = {13, 24}, radius = 7}
+    plan.macro_cell_count = 1
+    testing.expect(t, math.abs(settlement_cemetery_outer_radius(&plan) - 12) < .001)
+}
 
 @(test)
 settlement_garden_plants_stay_inside_their_plots :: proc(t: ^testing.T) {

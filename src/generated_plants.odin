@@ -5,7 +5,7 @@ import plants "../packages/plants"
 import third_person "../packages/third_person"
 import "core:math"
 import "core:math/linalg"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 GENERATED_PLANT_CACHE_CAPACITY :: (SETTLEMENT_PATIO_CAPACITY * 2 + MARINA_GEOMETRY_CACHE_CAPACITY * 3) * 3
 GENERATED_PLANT_MATURITY_STEPS :: 5
@@ -162,7 +162,7 @@ generated_plant_apply_detail_floor :: #force_inline proc(detail, floor: plants.D
 world_generated_grape_leaf_3d :: proc(
     center, forward, up, right: third_person.Vec3,
     width, length: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     hero: bool = false,
 ) {
     // A grape leaf is broad enough that one diamond reads as a paper cutout.
@@ -201,7 +201,7 @@ world_generated_grape_leaf_3d :: proc(
     }
 }
 
-world_generated_leaf_hero :: proc(center, forward, up, right: third_person.Vec3, width, length: f32, color: rl.Color) {
+world_generated_leaf_hero :: proc(center, forward, up, right: third_person.Vec3, width, length: f32, color: canvas2d.Color) {
     tip := center + forward * length
     shoulder := center + forward * length * .42
     left := shoulder - right * width
@@ -224,7 +224,7 @@ world_generated_leaf_hero :: proc(center, forward, up, right: third_person.Vec3,
     world_triangle(right_point, ridge, stem_right, shade)
 }
 
-world_generated_plant_flower_hero :: proc(center: third_person.Vec3, radius, scale: f32, color: rl.Color) {
+world_generated_plant_flower_hero :: proc(center: third_person.Vec3, radius, scale: f32, color: canvas2d.Color) {
     // A close flower needs a radial silhouette. The ordinary LOD's single
     // upright prism is deliberately retained outside arm's reach.
     petal_radius := radius * scale * .62

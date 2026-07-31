@@ -3,7 +3,7 @@ package main
 import game_input "../packages/game_input"
 import vehicles "../packages/vehicles"
 import "core:fmt"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 CONTROL_HINT_TILE_SIZE :: f32(64)
 CONTROL_HINT_DRAW_SIZE :: f32(22)
@@ -37,29 +37,29 @@ Control_Hint_Entry :: struct {
 }
 
 Control_Hint_Atlases :: struct {
-    keyboard_mouse: rl.Texture,
-    generic:        rl.Texture,
-    xbox:           rl.Texture,
-    playstation:    rl.Texture,
-    nintendo:       rl.Texture,
+    keyboard_mouse: canvas2d.Texture,
+    generic:        canvas2d.Texture,
+    xbox:           canvas2d.Texture,
+    playstation:    canvas2d.Texture,
+    nintendo:       canvas2d.Texture,
 }
 
 control_hints_load :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.control_hint_atlases = {
-        keyboard_mouse = rl.LoadTexture("assets/icons/control-hints/keyboard-mouse.png"),
-        generic        = rl.LoadTexture("assets/icons/control-hints/generic.png"),
-        xbox           = rl.LoadTexture("assets/icons/control-hints/xbox.png"),
-        playstation    = rl.LoadTexture("assets/icons/control-hints/playstation.png"),
-        nintendo       = rl.LoadTexture("assets/icons/control-hints/nintendo.png"),
+        keyboard_mouse = canvas2d.LoadTexture("assets/icons/control-hints/keyboard-mouse.png"),
+        generic        = canvas2d.LoadTexture("assets/icons/control-hints/generic.png"),
+        xbox           = canvas2d.LoadTexture("assets/icons/control-hints/xbox.png"),
+        playstation    = canvas2d.LoadTexture("assets/icons/control-hints/playstation.png"),
+        nintendo       = canvas2d.LoadTexture("assets/icons/control-hints/nintendo.png"),
     }
 }
 
-control_hint_tile :: proc(x, y: f32) -> rl.Rectangle {
+control_hint_tile :: proc(x, y: f32) -> canvas2d.Rectangle {
     return {x, y, CONTROL_HINT_TILE_SIZE, CONTROL_HINT_TILE_SIZE}
 }
 
-control_hint_keyboard_source :: proc(binding: Control_Hint_Binding) -> rl.Rectangle {
+control_hint_keyboard_source :: proc(binding: Control_Hint_Binding) -> canvas2d.Rectangle {
     switch binding {
     case .Move, .Pitch, .Drive:
         return control_hint_tile(128, 832) // W
@@ -89,7 +89,7 @@ control_hint_keyboard_source :: proc(binding: Control_Hint_Binding) -> rl.Rectan
     return {}
 }
 
-control_hint_controller_texture :: proc(editor: ^Editor) -> rl.Texture {
+control_hint_controller_texture :: proc(editor: ^Editor) -> canvas2d.Texture {
     switch editor.runtime_input.controller_style {
     case .Xbox:
         return editor.control_hint_atlases.xbox
@@ -106,7 +106,7 @@ control_hint_controller_texture :: proc(editor: ^Editor) -> rl.Texture {
 control_hint_controller_source :: proc(
     style: game_input.Controller_Style,
     binding: Control_Hint_Binding,
-) -> rl.Rectangle {
+) -> canvas2d.Rectangle {
     switch style {
     case .Xbox:
         switch binding {
@@ -194,7 +194,7 @@ control_hint_controller_source :: proc(
     return {}
 }
 
-control_hint_draw_bar :: proc(editor: ^Editor, entries: []Control_Hint_Entry, position: rl.Vector2, max_width: f32) {
+control_hint_draw_bar :: proc(editor: ^Editor, entries: []Control_Hint_Entry, position: canvas2d.Vector2, max_width: f32) {
     if editor == nil do return
     controller := controller_prompt_active(editor)
     texture := editor.control_hint_atlases.keyboard_mouse
@@ -210,17 +210,17 @@ control_hint_draw_bar :: proc(editor: ^Editor, entries: []Control_Hint_Entry, po
         // Kenney's atlas metadata uses a top-left origin; canvas texture UVs
         // address rows from the bottom.
         source.y = f32(texture.height) - source.y - source.height
-        label_size := rl.MeasureTextEx(rl.Font{}, entry.label, 13, .6)
+        label_size := canvas2d.MeasureTextEx(canvas2d.Font{}, entry.label, 13, .6)
         entry_width := CONTROL_HINT_DRAW_SIZE + 4 + label_size.x
         if cursor_x + entry_width > position.x + max_width do break
-        rl.DrawTexturePro(
+        canvas2d.DrawTexturePro(
             texture,
             source,
             {cursor_x, position.y - 4, CONTROL_HINT_DRAW_SIZE, CONTROL_HINT_DRAW_SIZE},
             ui_theme_text(),
         )
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             entry.label,
             {cursor_x + CONTROL_HINT_DRAW_SIZE + 4, position.y},
             13,
@@ -282,15 +282,15 @@ control_hint_draw_gameplay_hud :: proc(editor: ^Editor, width: i32) {
     }
 
     panel_width = min(panel_width, width - 28)
-    panel := rl.Rectangle{14, 14, f32(panel_width), 58}
-    rl.DrawRectangleRounded(panel, .16, 8, ui_theme_surface(232))
-    rl.DrawRectangleRoundedLinesEx(panel, .16, 8, 1, ui_theme_border(235))
-    rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", title), {26, 23}, 17, 1, ui_theme_text())
+    panel := canvas2d.Rectangle{14, 14, f32(panel_width), 58}
+    canvas2d.DrawRectangleRounded(panel, .16, 8, ui_theme_surface(232))
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .16, 8, 1, ui_theme_border(235))
+    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", title), {26, 23}, 17, 1, ui_theme_text())
     journal_hint: cstring = "J JOURNAL"
     if controller_prompt_active(editor) {
         journal_hint = fmt.ctprintf("%s JOURNAL", controller_journal_label(editor))
     }
-    journal_size := rl.MeasureTextEx(rl.Font{}, journal_hint, 13, .6)
+    journal_size := canvas2d.MeasureTextEx(canvas2d.Font{}, journal_hint, 13, .6)
     ui_draw_text(
         .Data,
         journal_hint,

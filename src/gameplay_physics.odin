@@ -205,6 +205,7 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
         )
         if body != physics.INVALID_BODY do append(&state.static_bodies, body)
     }
+    gameplay_physics_add_settlement_cemetery(editor)
     // Patios are generated presentation objects rather than terrain
     // structures, so explicitly give their paving and major furniture a
     // physics representation.

@@ -161,7 +161,7 @@ reset :: proc(runtime: ^Runtime, sea_level: f32) {
     runtime.vehicle.exit_distance = 3.4
 }
 
-step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32) {
+step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32, wind: flight.Vec3 = {}) {
     if runtime == nil || delta_seconds <= 0 do return
     dt := min(delta_seconds, f32(.05))
     previous_drift_intensity := runtime.telemetry.drift_intensity
@@ -188,8 +188,9 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
     basis := flight.basis_from_orientation(runtime.body.orientation)
     forward := basis.forward
     right := basis.right
-    forward_speed := linalg.dot(runtime.body.velocity, forward)
-    lateral_speed := linalg.dot(runtime.body.velocity, right)
+    air_velocity := runtime.body.velocity - wind
+    forward_speed := linalg.dot(air_velocity, forward)
+    lateral_speed := linalg.dot(air_velocity, right)
     speed_fraction := clamp(math.abs(forward_speed) / runtime.tuning.maximum_speed, 0, 1)
     turn_authority := clamp((math.abs(forward_speed) - 6) / 24, 0, 1) * (1 - speed_fraction * .45)
     surface_fraction := clamp(1 - (runtime.body.position.y - sea_level - GROUND_CLEARANCE) / 1.8, 0, 1)
@@ -217,6 +218,12 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32)
     drift_grip := runtime.tuning.lateral_grip * (1 - drift_input * .78)
     runtime.body.velocity -= right * (lateral_speed * drift_grip * dt)
     runtime.body.velocity += right * (runtime.steering * drift_input * math.abs(forward_speed) * .19 * dt)
+    // The Rondine is deliberately less wind-responsive than the rotorcraft;
+    // broad fronts move it gradually while its surface handling stays heavy.
+    wind_response := clamp(dt * .22, 0, 1)
+    runtime.body.velocity.x += wind.x * wind_response
+    runtime.body.velocity.z += wind.z * wind_response
+    runtime.body.velocity.y += wind.y * dt * .18
     runtime.body.velocity *= max(f32(0), 1 - (.012 + speed_fraction * speed_fraction * .018) * dt)
 
     current_speed := linalg.length(runtime.body.velocity)

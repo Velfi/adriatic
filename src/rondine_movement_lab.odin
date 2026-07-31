@@ -6,7 +6,7 @@ import rondine_game "../packages/rondine"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 RONDINE_MOVEMENT_LAB_COUNT :: 9
 RONDINE_MOVEMENT_LAB_NAMES := [RONDINE_MOVEMENT_LAB_COUNT]string {
@@ -374,7 +374,7 @@ rondine_movement_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     panel_height := focused ? f32(82) : f32(94)
     left := f32(width) * .5 - panel_width * .5
     top := f32(height) - panel_height - 16
-    rl.DrawRectangleRounded({left, top, panel_width, panel_height}, .18, 6, {10, 25, 27, 238})
+    canvas2d.DrawRectangleRounded({left, top, panel_width, panel_height}, .18, 6, {10, 25, 27, 238})
     columns := focused ? 1 : RONDINE_MOVEMENT_LAB_COUNT
     column_width := panel_width / f32(columns)
     draw_index := 0
@@ -383,8 +383,8 @@ rondine_movement_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         x := left + column_width * (f32(draw_index) + .5)
         name := RONDINE_MOVEMENT_LAB_NAMES[index]
         name_c := fmt.ctprintf("%s", name)
-        name_size := rl.MeasureTextEx(rl.Font{}, name_c, 11, .8)
-        rl.DrawTextEx(rl.Font{}, name_c, {x - name_size.x * .5, top + 18}, 11, .8, {226, 249, 243, 255})
+        name_size := canvas2d.MeasureTextEx(canvas2d.Font{}, name_c, 11, .8)
+        canvas2d.DrawTextEx(canvas2d.Font{}, name_c, {x - name_size.x * .5, top + 18}, 11, .8, {226, 249, 243, 255})
         if focused {
             values := fmt.ctprintf(
                 "%.0fm/s A%+.1f U%.0f B%.0f W%.0f S%+.0f D%.0f C%.0f K%.0f H%.0f I%.0f R%.0f Y%.1f G%d",
@@ -403,8 +403,8 @@ rondine_movement_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
                 runtime.telemetry.height,
                 runtime.grounded ? 1 : 0,
             )
-            value_size := rl.MeasureTextEx(rl.Font{}, values, 10, .3)
-            rl.DrawTextEx(rl.Font{}, values, {x - value_size.x * .5, top + 46}, 10, .3, {213, 194, 142, 255})
+            value_size := canvas2d.MeasureTextEx(canvas2d.Font{}, values, 10, .3)
+            canvas2d.DrawTextEx(canvas2d.Font{}, values, {x - value_size.x * .5, top + 46}, 10, .3, {213, 194, 142, 255})
         } else {
             motion_values := fmt.ctprintf(
                 "%.0fm/s S%+.0f D%.0f C%.0f",
@@ -420,10 +420,10 @@ rondine_movement_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
                 runtime.telemetry.surface_impact * 100,
                 runtime.telemetry.surface_release * 100,
             )
-            motion_size := rl.MeasureTextEx(rl.Font{}, motion_values, 8, .15)
-            event_size := rl.MeasureTextEx(rl.Font{}, event_values, 8, .15)
-            rl.DrawTextEx(rl.Font{}, motion_values, {x - motion_size.x * .5, top + 43}, 8, .15, {213, 194, 142, 255})
-            rl.DrawTextEx(rl.Font{}, event_values, {x - event_size.x * .5, top + 62}, 8, .15, {183, 219, 211, 255})
+            motion_size := canvas2d.MeasureTextEx(canvas2d.Font{}, motion_values, 8, .15)
+            event_size := canvas2d.MeasureTextEx(canvas2d.Font{}, event_values, 8, .15)
+            canvas2d.DrawTextEx(canvas2d.Font{}, motion_values, {x - motion_size.x * .5, top + 43}, 8, .15, {213, 194, 142, 255})
+            canvas2d.DrawTextEx(canvas2d.Font{}, event_values, {x - event_size.x * .5, top + 62}, 8, .15, {183, 219, 211, 255})
         }
         draw_index += 1
     }

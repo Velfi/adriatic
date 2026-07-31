@@ -16,7 +16,7 @@ import "core:fmt"
 import "core:math"
 import "core:strconv"
 import sdl "vendor:sdl3"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
 
 MARKOV_MARINA_DEFAULT_SEED :: u32(0x4d415249)
@@ -909,7 +909,7 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
     // of mirroring diagonal jetties across the world Z axis.
     yaw := math.atan2(-dx, dz)
     side_x, side_z := dz / length, -dx / length
-    color := rl.Color{132, 105, 72, 255}
+    color := canvas2d.Color{132, 105, 72, 255}
     height := f32(.42)
     switch segment.kind {
     case .Quay:
@@ -959,7 +959,7 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
             {center.x, center.y + height * .5 + .025, center.z},
             {max(segment.width - .34, .45), .05, deck_length},
             yaw,
-            segment.kind == .Main_Pier ? rl.Color{178, 125, 72, 255} : rl.Color{190, 141, 84, 255},
+            segment.kind == .Main_Pier ? canvas2d.Color{178, 125, 72, 255} : canvas2d.Color{190, 141, 84, 255},
         )
         steps := max(int(length / 5), 1)
         for index in 0 ..= steps {
@@ -987,7 +987,7 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
             offset := index & 1 == 0 ? f32(-.28) : f32(.24)
             crown_x := side_x * offset
             crown_z := side_z * offset
-            shade := index % 3 == 0 ? rl.Color{151, 145, 125, 255} : rl.Color{132, 130, 116, 255}
+            shade := index % 3 == 0 ? canvas2d.Color{151, 145, 125, 255} : canvas2d.Color{132, 130, 116, 255}
             world_box_rotated(
                 {x + crown_x, center.y + height * .5 + .10, z + crown_z},
                 {segment.width * .72, .24 + f32(index & 1) * .10, max(length / f32(steps) + .35, .8)},
@@ -1084,8 +1084,8 @@ markov_marina_buoy_model :: proc(center: third_person.Vec3, style: int, occupied
     heights := [RINGS]f32{-.29, -.22, -.08, .10, .25, .33, .38}
     round_radii := [RINGS]f32{.08, .25, .34, .35, .27, .13, .04}
     pear_radii := [RINGS]f32{.07, .22, .36, .32, .22, .10, .03}
-    body := occupied ? rl.Color{232, 126, 35, 255} : rl.Color{226, 207, 137, 255}
-    band := occupied ? rl.Color{245, 226, 177, 255} : rl.Color{211, 82, 49, 255}
+    body := occupied ? canvas2d.Color{232, 126, 35, 255} : canvas2d.Color{226, 207, 137, 255}
+    band := occupied ? canvas2d.Color{245, 226, 177, 255} : canvas2d.Color{211, 82, 49, 255}
     for ring in 0 ..< RINGS - 1 {
         radius_a := style & 1 == 0 ? round_radii[ring] : pear_radii[ring]
         radius_b := style & 1 == 0 ? round_radii[ring + 1] : pear_radii[ring + 1]
@@ -1118,7 +1118,7 @@ markov_marina_buoy_model :: proc(center: third_person.Vec3, style: int, occupied
         }
     }
     // A galvanized pickup eye distinguishes the model from a generic float.
-    metal := rl.Color{106, 114, 109, 255}
+    metal := canvas2d.Color{106, 114, 109, 255}
     world_box({center.x, center.y + .47, center.z}, {.10, .20, .10}, metal)
     world_box({center.x, center.y + .58, center.z}, {.27, .07, .09}, metal)
     world_box({center.x - .10, center.y + .52, center.z}, {.07, .16, .09}, metal)
@@ -1193,7 +1193,7 @@ world_markov_marina_static_geometry :: proc(plan: ^marina.Plan, project: ^terrai
     if !plan.world_conditioned {
         extent_x := f32(marina.GRID_WIDTH) * marina.CELL_METERS * .5 + 24
         extent_z := f32(marina.GRID_HEIGHT) * marina.CELL_METERS * .5 + 28
-        water_color := rl.Color{38, 111, 139, 255}
+        water_color := canvas2d.Color{38, 111, 139, 255}
         water_cell := f32(8)
         for z := -extent_z; z < extent_z; z += water_cell {
             for x := -extent_x; x < extent_x; x += water_cell {
@@ -1227,7 +1227,7 @@ world_markov_marina_static_geometry :: proc(plan: ^marina.Plan, project: ^terrai
         for x in 0 ..< marina.GRID_WIDTH {
             if marina.cell(plan, x, z) != .Quay do continue
             p := marina.plan_world_position(plan, marina.grid_position(x, z))
-            shade := (x + z) & 1 == 0 ? rl.Color{174, 168, 151, 255} : rl.Color{164, 160, 147, 255}
+            shade := (x + z) & 1 == 0 ? canvas2d.Color{174, 168, 151, 255} : canvas2d.Color{164, 160, 147, 255}
             world_box({p.x, .52, p.z}, {marina.CELL_METERS + .08, 1.04, marina.CELL_METERS + .08}, shade)
         }
     }
@@ -1292,7 +1292,7 @@ world_markov_marina_static_geometry_cached :: proc(plan: ^marina.Plan, project: 
 }
 
 world_markov_marina_preview_tint :: proc(first: int) {
-    preview_color := world_color(rl.Color{128, 211, 166, 255})
+    preview_color := world_color(canvas2d.Color{128, 211, 166, 255})
     for index in first ..< len(world_renderer.vertices) {
         for channel in 0 ..< 3 {
             world_renderer.vertices[index].color[channel] =
@@ -1375,7 +1375,7 @@ world_shoreline_harbor_facility :: proc(editor: ^Editor, plan: ^harbor.Harbor_Pl
             if segment_length <= .01 do continue
             yaw := math.atan2(-dx, dz)
             center := third_person.Vec3{(a.x + b.x) * .5, editor.project.sea_level + .18, (a.z + b.z) * .5}
-            color := rl.Color{142, 101, 57, 255}
+            color := canvas2d.Color{142, 101, 57, 255}
             height := f32(.44)
             switch path.kind {
             case .Quay:
@@ -1427,16 +1427,16 @@ world_markov_marina :: proc(editor: ^Editor) {
 markov_marina_draw_ui :: proc(_: ^Editor, width, height: i32) {
     if shoreline_harbor_lab_active do return
     if markov_marina_breakwater_focus_active do return
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 420,
         height = markov_marina_gallery_active ? 220 : 182,
     }
-    rl.DrawRectangleRounded(panel, .12, 8, {10, 27, 37, 226})
-    rl.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, {104, 168, 184, 255})
+    canvas2d.DrawRectangleRounded(panel, .12, 8, {10, 27, 37, 226})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, {104, 168, 184, 255})
     title: cstring = markov_marina_gallery_active ? "MARINA SHORELINE GALLERY" : "MARKOV MARINA"
-    rl.DrawTextEx(rl.Font{}, title, {38, 38}, 20, 1, {245, 238, 197, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, title, {38, 38}, 20, 1, {245, 238, 197, 255})
     occupied, moorings := 0, 0
     for slip in markov_marina_plan.slips[:markov_marina_plan.slip_count] {
         if slip.occupied do occupied += 1
@@ -1500,47 +1500,47 @@ markov_marina_draw_ui :: proc(_: ^Editor, width, height: i32) {
         markov_marina_plan.slip_count,
         moorings,
     )
-    rl.DrawTextEx(rl.Font{}, label, {38, 68}, 13, 1, {208, 239, 240, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, label, {38, 68}, 13, 1, {208, 239, 240, 255})
     frontage_label := fmt.ctprintf("QUAY FRONTAGE %s", frontage_name)
-    rl.DrawTextEx(rl.Font{}, frontage_label, {38, 86}, 13, 1, {196, 215, 208, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, frontage_label, {38, 86}, 13, 1, {196, 215, 208, 255})
     spacing_label := fmt.ctprintf(
         "STRUCTURE %.0f%%   SPACING BADNESS %.3f",
         markov_marina_plan.spacing_density * 100,
         markov_marina_plan.spacing_badness_density,
     )
-    spacing_color := rl.Color{174, 220, 185, 255}
+    spacing_color := canvas2d.Color{174, 220, 185, 255}
     if markov_marina_plan.spacing_badness_density > .35 {
         spacing_color = {245, 132, 104, 255}
     }
-    rl.DrawTextEx(rl.Font{}, spacing_label, {38, 104}, 13, 1, spacing_color)
+    canvas2d.DrawTextEx(canvas2d.Font{}, spacing_label, {38, 104}, 13, 1, spacing_color)
     berth_label := fmt.ctprintf("BERTH SPACING BADNESS %.3f", markov_marina_plan.berth_spacing_badness)
-    berth_color := rl.Color{174, 220, 185, 255}
+    berth_color := canvas2d.Color{174, 220, 185, 255}
     if markov_marina_plan.berth_spacing_badness > 0 {
         berth_color = {245, 132, 104, 255}
     }
-    rl.DrawTextEx(rl.Font{}, berth_label, {38, 122}, 13, 1, berth_color)
+    canvas2d.DrawTextEx(canvas2d.Font{}, berth_label, {38, 122}, 13, 1, berth_color)
     fill_label := fmt.ctprintf(
         "LANE-FIRST FILL %.0f%% / %.0f%% TARGET",
         markov_marina_plan.fill_density * 100,
         markov_marina_plan.target_fill_density * 100,
     )
-    rl.DrawTextEx(rl.Font{}, fill_label, {38, 140}, 13, 1, {180, 207, 225, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, fill_label, {38, 140}, 13, 1, {180, 207, 225, 255})
     quality_label := fmt.ctprintf(
         "GENERATION QUALITY %.3f   TARGET ERROR %.1f%%",
         markov_marina_plan.generation_quality,
         markov_marina_plan.fill_density_error * 100,
     )
-    rl.DrawTextEx(rl.Font{}, quality_label, {38, 158}, 13, 1, {215, 194, 151, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, quality_label, {38, 158}, 13, 1, {215, 194, 151, 255})
     overlap_label := fmt.ctprintf("HULL / STRUCTURE OVERLAP %.3f", markov_marina_plan.structure_overlap_badness)
-    overlap_color := rl.Color{174, 220, 185, 255}
+    overlap_color := canvas2d.Color{174, 220, 185, 255}
     if markov_marina_plan.structure_overlap_badness > 0 {
         overlap_color = {245, 132, 104, 255}
     }
-    rl.DrawTextEx(rl.Font{}, overlap_label, {38, 176}, 13, 1, overlap_color)
+    canvas2d.DrawTextEx(canvas2d.Font{}, overlap_label, {38, 176}, 13, 1, overlap_color)
     if markov_marina_gallery_active {
-        rl.DrawTextEx(rl.Font{}, "NATURAL  /  STRAIGHT  /  WEST APRON", {38, 196}, 12, 1, {208, 239, 240, 255})
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(canvas2d.Font{}, "NATURAL  /  STRAIGHT  /  WEST APRON", {38, 196}, 12, 1, {208, 239, 240, 255})
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             "EAST APRON  /  SPLIT APRONS  /  STEPPED QUAYS",
             {38, 214},
             12,

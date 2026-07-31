@@ -109,7 +109,7 @@ reset :: proc(runtime: ^Runtime, ground_height: f32) {
     runtime.vehicle.exit_distance = 2.8
 }
 
-step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: f32) {
+step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: f32, wind: flight.Vec3 = {}) {
     if runtime == nil || delta_seconds <= 0 do return
     dt := min_f32(delta_seconds, .05)
     if runtime.crashed {
@@ -149,7 +149,7 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
             9.81 /
             max_f32(runtime.airframe.maximum_collective_force * upright * ground_effect, 1)
         throttle_target =
-            hover_throttle + (desired_vertical_speed - runtime.body.velocity.y) * runtime.tuning.vertical_speed_gain
+            hover_throttle + (desired_vertical_speed - (runtime.body.velocity.y - wind.y)) * runtime.tuning.vertical_speed_gain
     }
     runtime.throttle = approach(runtime.throttle, clamp(throttle_target, 0, 1), runtime.tuning.throttle_response * dt)
 
@@ -191,8 +191,10 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
 
     cyclic_release := 1 - max_f32(math.abs(pitch_input), math.abs(roll_input))
     horizontal_damping := clamp(runtime.tuning.horizontal_damping * cyclic_release * dt, 0, 1)
-    runtime.body.velocity.x *= 1 - horizontal_damping
-    runtime.body.velocity.z *= 1 - horizontal_damping
+    // Rotor drag damps air-relative motion, so a sustained front advects the
+    // lighter Libellula instead of behaving as camera-only shake.
+    runtime.body.velocity.x -= (runtime.body.velocity.x - wind.x) * horizontal_damping
+    runtime.body.velocity.z -= (runtime.body.velocity.z - wind.z) * horizontal_damping
 
     runtime.grounded = runtime.body.position.y <= floor
     if runtime.grounded {

@@ -5,7 +5,7 @@ import flowers "../packages/flower_mesh"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math/linalg"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 flower_generator_shape := flowers.Petal_Shape.Rounded
 flower_generator_arrangement := flowers.Arrangement.Whorled
@@ -208,40 +208,40 @@ flower_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
 }
 
 flower_generator_lab_process_input :: proc(_: ^Editor) {
-    if rl.IsKeyPressed(.LEFT) {
+    if canvas2d.IsKeyPressed(.LEFT) {
         count := int(flowers.Petal_Shape.Lanceolate) + 1
         flower_generator_shape = flowers.Petal_Shape((int(flower_generator_shape) + count - 1) % count)
         flower_generator_isolated = true
     }
-    if rl.IsKeyPressed(.RIGHT) {
+    if canvas2d.IsKeyPressed(.RIGHT) {
         count := int(flowers.Petal_Shape.Lanceolate) + 1
         flower_generator_shape = flowers.Petal_Shape((int(flower_generator_shape) + 1) % count)
         flower_generator_isolated = true
     }
-    if rl.IsKeyPressed(.A) {
+    if canvas2d.IsKeyPressed(.A) {
         flower_generator_arrangement =
             flower_generator_arrangement == .Whorled ? flowers.Arrangement.Spiral : flowers.Arrangement.Whorled
         flower_generator_isolated = true
     }
-    if rl.IsKeyPressed(.W) {
+    if canvas2d.IsKeyPressed(.W) {
         flower_generator_whorls = flower_generator_whorls == 1 ? 2 : 1
         flower_generator_isolated = true
     }
-    if rl.IsKeyPressed(.ONE) {
+    if canvas2d.IsKeyPressed(.ONE) {
         flower_generator_petals = max(1, flower_generator_petals - 1)
         flower_generator_isolated = true
     }
-    if rl.IsKeyPressed(.TWO) {
+    if canvas2d.IsKeyPressed(.TWO) {
         flower_generator_petals = min(flowers.MAX_PETALS, flower_generator_petals + 1)
         flower_generator_isolated = true
     }
-    if rl.IsKeyPressed(.G) do flower_generator_isolated = !flower_generator_isolated
-    if rl.IsKeyPressed(.L) {
+    if canvas2d.IsKeyPressed(.G) do flower_generator_isolated = !flower_generator_isolated
+    if canvas2d.IsKeyPressed(.L) {
         count := int(flowers.Lifecycle_Stage.Ripe_Fruit) + 1
         flower_generator_stage = flowers.Lifecycle_Stage((int(flower_generator_stage) + 1) % count)
         flower_generator_isolated = true
     }
-    if rl.IsKeyPressed(.F) {
+    if canvas2d.IsKeyPressed(.F) {
         flower_generator_lifecycle_gallery = !flower_generator_lifecycle_gallery
         flower_generator_isolated = false
     }
@@ -251,7 +251,7 @@ flower_generator_draw_mesh :: proc(
     config: flowers.Config,
     origin: third_person.Vec3,
     scale: f32,
-    petal_color: rl.Color,
+    petal_color: canvas2d.Color,
     stage: flowers.Lifecycle_Stage = .Bloom,
 ) {
     lifecycle := flowers.Lifecycle_Config {
@@ -261,7 +261,7 @@ flower_generator_draw_mesh :: proc(
     }
     mesh := flowers.generate_lifecycle(lifecycle)
     center_first := config.petal_count * config.whorl_count * (config.segments + 1) * 3
-    center_color := rl.Color{223, 166, 48, 255}
+    center_color := canvas2d.Color{223, 166, 48, 255}
     for first := 0; first + 2 < mesh.index_count; first += 3 {
         points: [3]third_person.Vec3
         normals: [3]third_person.Vec3
@@ -322,7 +322,7 @@ world_flower_generator_lab :: proc(_: ^Editor) {
         config.arrangement = flower_generator_arrangement
         config.petal_count = flower_generator_petals
         config.whorl_count = flower_generator_whorls
-        color := rl.Color{222, 114, 145, 255}
+        color := canvas2d.Color{222, 114, 145, 255}
         if flower_generator_stage == .Fruit_Set do color = {112, 151, 72, 255}
         if flower_generator_stage == .Immature_Fruit do color = {91, 143, 66, 255}
         if flower_generator_stage == .Ripening_Fruit do color = {183, 145, 58, 255}
@@ -341,7 +341,7 @@ world_flower_generator_lab :: proc(_: ^Editor) {
             .Ripening_Fruit,
             .Ripe_Fruit,
         }
-        colors := [8]rl.Color {
+        colors := [8]canvas2d.Color {
             {174, 91, 119, 255},
             {202, 119, 145, 255},
             {224, 160, 178, 255},
@@ -366,7 +366,7 @@ world_flower_generator_lab :: proc(_: ^Editor) {
         return
     }
     shapes := [7]flowers.Petal_Shape{.Rounded, .Pointed, .Notched, .Strap, .Ovate, .Spatulate, .Lanceolate}
-    colors := [7]rl.Color {
+    colors := [7]canvas2d.Color {
         {238, 206, 207, 255},
         {237, 188, 79, 255},
         {220, 111, 149, 255},
@@ -384,10 +384,10 @@ world_flower_generator_lab :: proc(_: ^Editor) {
 }
 
 flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
-    panel := rl.Rectangle{24, 24, 650, 118}
-    rl.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
-    rl.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
-    rl.DrawTextEx(rl.Font{}, "FLOWER MESH GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
+    panel := canvas2d.Rectangle{24, 24, 650, 118}
+    canvas2d.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "FLOWER MESH GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
     summary: cstring = "WHORLED / SPIRAL CONSTRUCTION  —  SEVEN PROCEDURAL PETAL PROFILES"
     if flower_generator_lifecycle_gallery {
         summary = "ONE ATTACHMENT FRAME  —  FOUR OPENING STAGES / FOUR FRUIT STAGES"
@@ -404,9 +404,9 @@ flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
             flower_generator_whorls == 1 ? "" : "S",
         )
     }
-    rl.DrawTextEx(rl.Font{}, summary, {38, 68}, 13, 1, {174, 207, 160, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 68}, 13, 1, {174, 207, 160, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         "LEFT/RIGHT SHAPE   1/2 PETALS   A ARRANGE   W WHORLS   L LIFECYCLE   F GALLERY",
         {38, 96},
         11,
@@ -420,9 +420,9 @@ flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
             row := index / 4
             label_x := f32(width) * label_x_fractions[index]
             label_y := f32(height) * (row == 0 ? f32(.68) : f32(.49))
-            bounds := rl.Rectangle{label_x - 5, label_y - 4, 82, 21}
-            rl.DrawRectangleRounded(bounds, .3, 6, {19, 31, 27, 210})
-            rl.DrawTextEx(rl.Font{}, label, {label_x, label_y}, 9, 1, {232, 224, 189, 255})
+            bounds := canvas2d.Rectangle{label_x - 5, label_y - 4, 82, 21}
+            canvas2d.DrawRectangleRounded(bounds, .3, 6, {19, 31, 27, 210})
+            canvas2d.DrawTextEx(canvas2d.Font{}, label, {label_x, label_y}, 9, 1, {232, 224, 189, 255})
         }
     } else if !flower_generator_isolated {
         labels := [7]cstring{"ROUNDED", "POINTED", "NOTCHED", "STRAP", "OVATE", "SPATULATE", "LANCEOLATE"}
@@ -431,9 +431,9 @@ flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
             row := index / 4
             label_x := f32(width) * label_x_fractions[index]
             label_y := f32(height) * (row == 0 ? f32(.49) : f32(.66))
-            bounds := rl.Rectangle{label_x - 5, label_y - 4, 82, 21}
-            rl.DrawRectangleRounded(bounds, .3, 6, {19, 31, 27, 210})
-            rl.DrawTextEx(rl.Font{}, label, {label_x, label_y}, 9, 1, {232, 224, 189, 255})
+            bounds := canvas2d.Rectangle{label_x - 5, label_y - 4, 82, 21}
+            canvas2d.DrawRectangleRounded(bounds, .3, 6, {19, 31, 27, 210})
+            canvas2d.DrawTextEx(canvas2d.Font{}, label, {label_x, label_y}, 9, 1, {232, 224, 189, 255})
         }
     }
 }

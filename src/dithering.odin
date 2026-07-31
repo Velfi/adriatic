@@ -6,7 +6,7 @@ import third_person "../packages/third_person"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 import render2d "zelda_engine:render2d"
 
 Dither_Mode :: dither.Mode
@@ -43,7 +43,7 @@ dither_apply :: proc(editor: ^Editor) {
     dither_reset(editor)
     // Exposure adaptation also lives in the world post pass and must remain
     // active when palette dithering is disabled.
-    rl.SetWorldPostProcessEnabled(true)
+    canvas2d.SetWorldPostProcessEnabled(true)
 }
 
 sun_exposure_smoothstep :: proc(edge0, edge1, value: f32) -> f32 {
@@ -60,7 +60,7 @@ sun_exposure_update :: proc(editor: ^Editor, pose: third_person.Camera_Pose) -> 
         state.sun_glare = 0
         return 1, 0
     }
-    sky := atmosphere.sample(&editor.atmosphere)
+    sky := atmosphere_sky(editor)
     forward := linalg.normalize0(pose.target - pose.position)
     sun := third_person.Vec3{sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2]}
     alignment := clamp(linalg.dot(forward, sun), f32(-1), f32(1))
@@ -70,7 +70,7 @@ sun_exposure_update :: proc(editor: ^Editor, pose: third_person.Camera_Pose) -> 
     target_glare := centered * above_horizon * cloud_visibility
     target_exposure := 1 - target_glare * .50
 
-    now := rl.GetTime()
+    now := canvas2d.GetTime()
     if !state.exposure_initialized {
         state.exposure_initialized = true
         state.exposure = target_exposure
@@ -139,8 +139,8 @@ dither_update_tracking :: proc(
 }
 
 dither_encode_world_post_push :: proc(destination: []u8, ctx: render2d.World_Post_Context, _: rawptr) -> bool {
-    if len(destination) < size_of(rl.Push) do return false
-    push := rl.Push{}
+    if len(destination) < size_of(canvas2d.Push) do return false
+    push := canvas2d.Push{}
     push.hatch_tone = {1, 0, 0, 0}
     editor := world_renderer.editor
     if editor != nil {

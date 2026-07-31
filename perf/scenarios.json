@@ -87,6 +87,10 @@
       "enabled": false,
       "description": "Low-altitude flight over shallow open water, exercising camera-following surface detail."
     },
+    "fog_banks": {
+      "enabled": false,
+      "description": "Deterministic storm flight through analytic fog banks and boundary shells."
+    },
     "land_flight": {
       "enabled": false,
       "description": "Deterministic moving low-altitude flight over grass-covered land."

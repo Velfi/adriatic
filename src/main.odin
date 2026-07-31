@@ -1,7 +1,7 @@
 package main
 
-import architecture "../packages/architecture"
 import air_effects "../packages/air_effects"
+import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import back "../packages/back"
 import boats "../packages/boats"
@@ -16,6 +16,7 @@ import engine_sound "../packages/engine_sound"
 import farmland "../packages/farmland"
 import flight "../packages/flight"
 import flocks "../packages/flocks"
+import fog_field "../packages/fog_field"
 import game_input "../packages/game_input"
 import harbor "../packages/harbor"
 import hot_abi "../packages/hot_abi"
@@ -33,6 +34,7 @@ import roads "../packages/roads"
 import rondine_game "../packages/rondine"
 import spray_audio "../packages/spray_audio"
 import story "../packages/story"
+import surface_weather "../packages/surface_weather"
 import tarot "../packages/tarot"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -50,12 +52,15 @@ import "core:strings"
 import "core:time"
 import timezone "core:time/timezone"
 import sdl "vendor:sdl3"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
 
 HOT_RELOAD :: #config(HOT_RELOAD, false)
 SHOW_STARTUP_MENU :: #config(SHOW_STARTUP_MENU, false)
+MAP_DEVELOPMENT_FALLBACK :: #config(MAP_DEVELOPMENT_FALLBACK, true)
 HOT_LIBRARY_ENV :: "ADRIATIC_HOT_LIBRARY"
+
+startup_failed: bool
 
 ADRIATIC_WORLD_WIDTH :: 854
 ADRIATIC_WORLD_HEIGHT :: 480
@@ -71,6 +76,31 @@ CRASH_MESSAGE_SECONDS :: f32(1.15)
 CRASH_FADE_OUT_SECONDS :: f32(.65)
 CRASH_FADE_IN_SECONDS :: f32(.85)
 PLAYER_FALL_RECOVERY_DEPTH :: f32(30)
+
+Startup_Timings :: struct {
+    started_at: time.Tick,
+    checkpoint: time.Tick,
+    config_ms:  f64,
+    window_ms:  f64,
+    audio_ms:   f64,
+    meshes_ms:  f64,
+    terrain_ms: f64,
+    map_load_ms: f64,
+    physics_ms: f64,
+    renderer_ms: f64,
+    ready_ms:   f64,
+}
+
+startup_elapsed_ms :: #force_inline proc(start, end: time.Tick) -> f64 {
+    return time.duration_seconds(time.tick_diff(start, end)) * 1000
+}
+
+startup_checkpoint :: #force_inline proc(timings: ^Startup_Timings) -> f64 {
+    now := time.tick_now()
+    elapsed_ms := startup_elapsed_ms(timings.checkpoint, now)
+    timings.checkpoint = now
+    return elapsed_ms
+}
 
 Crash_Recovery_Cause :: enum u8 {
     Crash,
@@ -360,7 +390,7 @@ Fixture :: struct {
     vehicle_paint_texture_dirty:                    bool `fixture:"-"`,
     vehicle_paint_propeller_color_dirty:            bool `fixture:"-"`,
     vehicle_paint_propeller_color_valid:            bool `fixture:"-"`,
-    vehicle_paint_propeller_color:                  rl.Color `fixture:"-"`,
+    vehicle_paint_propeller_color:                  canvas2d.Color `fixture:"-"`,
     vehicle_paint_preview_texture_dirty:            bool `fixture:"-"`,
     vehicle_paint_save_pending:                     bool `fixture:"-"`,
     vehicle_paint_save_due_at:                      f32 `fixture:"-"`,
@@ -388,7 +418,7 @@ Fixture :: struct {
     vehicle_paint_stroke_mirror_part:               vehicles.Aircraft_Mesh_Part `fixture:"-"`,
     vehicle_paint_tool_drag_active:                 bool `fixture:"-"`,
     vehicle_paint_tool_drag_start_uv:               [2]f32 `fixture:"-"`,
-    vehicle_paint_tool_drag_start_screen:           rl.Vector2 `fixture:"-"`,
+    vehicle_paint_tool_drag_start_screen:           canvas2d.Vector2 `fixture:"-"`,
     vehicle_paint_tool_drag_part:                   vehicles.Aircraft_Mesh_Part `fixture:"-"`,
     vehicle_paint_tool_drag_texels:                 [dynamic]int `fixture:"-"`,
     vehicle_paint_tool_drag_mirror_valid:           bool `fixture:"-"`,
@@ -452,7 +482,7 @@ Fixture :: struct {
     mouse_pattern:                                  Mouse_Fur_Pattern,
     mouse_headgear:                                 Mouse_Accessory,
     mouse_scarf_enabled:                            bool,
-    mouse_scarf_color:                              rl.Color,
+    mouse_scarf_color:                              canvas2d.Color,
     mouse_scarf_rotation:                           f32,
     mouse_scarf_angular_velocity:                   f32,
     mouse_mailbag_yaw_lag:                          f32 `fixture:"-"`,
@@ -468,10 +498,11 @@ Fixture :: struct {
     customization_preview_yaw:                      f32 `fixture:"-"`,
 }
 
-FIXTURE_SCHEMA_VERSION :: 10
+FIXTURE_SCHEMA_VERSION :: 13
 
 Editor :: struct {
     using fixture:                      Fixture,
+    surface_weather:                    surface_weather.Field,
     fixture_owner:                      Fixture_Migration_Result `hs:"-"`,
     mouse_emote:                        Mouse_Emote_State,
     ruin_stamp_preview:                 terrain.Structure,
@@ -553,8 +584,8 @@ Editor :: struct {
     gameplay_options:                   Gameplay_Options,
     runtime_input:                      game_input.State,
     control_hint_atlases:               Control_Hint_Atlases,
-    vehicle_paint_tool_icons:           rl.Texture,
-    tarot_atlas:                        rl.Texture,
+    vehicle_paint_tool_icons:           canvas2d.Texture,
+    tarot_atlas:                        canvas2d.Texture,
     controller_disconnect_notice:       bool,
     friendship_notice_initialized:      bool,
     friendship_notice_total:            int,
@@ -636,7 +667,7 @@ editor_spawn_into_world :: proc(editor: ^Editor) {
     if editor.pilot.mode == .Driving do camera_target = editor.pilot.vehicle.position
     editor.camera_pose = third_person.camera_pose(camera_target, editor.camera)
     editor.in_map = true
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     set_pointer_locked(true)
 }
 
@@ -818,6 +849,7 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.boat_traffic = new_world_boat_traffic(&editor.project)
     editor.ocean_traffic = boats.new_ocean_traffic()
     editor.atmosphere = atmosphere.new(0x41c10)
+    surface_weather.initialize(&editor.surface_weather, terrain.WORLD_SIZE_METERS * .5)
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
     editor.player_terrain_effects = particle_systems.new_vehicle_effects(0xa21c94d7)
     editor.wing_trails = particle_systems.new_wing_trails(0x1f123bb5)
@@ -1061,18 +1093,11 @@ terrain_redo :: proc(editor: ^Editor) {
 terrain_file_feedback :: proc(editor: ^Editor, message: cstring) {
     if editor == nil do return
     editor.terrain_file_status = message
-    editor.terrain_file_status_until = f32(rl.GetTime()) + 2
+    editor.terrain_file_status_until = f32(canvas2d.GetTime()) + 2
 }
 
 terrain_project_save :: proc(editor: ^Editor) {
-    if editor == nil do return
-    if terrain.save_project(&editor.project, TERRAIN_PROJECT_PATH) &&
-       settlement_brush_store_save(&editor.settlement_plan) {
-        editor.terrain_saved_revision = editor.project.revision
-        terrain_file_feedback(editor, "PROJECT SAVED")
-    } else {
-        terrain_file_feedback(editor, "SAVE FAILED")
-    }
+    map_editor_save(editor)
 }
 
 architecture_regenerate_all :: proc(editor: ^Editor) {
@@ -1159,31 +1184,7 @@ default_map_regeneration_step :: proc(editor: ^Editor) {
 }
 
 terrain_project_load :: proc(editor: ^Editor) {
-    if editor == nil do return
-    if terrain.load_project(&editor.project, TERRAIN_PROJECT_PATH) {
-        _ = settlement_brush_store_load(&editor.settlement_plan)
-        // Parcels are transient and deterministic. Refit all architecture to
-        // the saved roads and density instead of persisting product-specific
-        // lot data in terrain.Project.
-        architecture_regenerate_all(editor)
-        editor.project.revision += 1
-        world_terrain_invalidate_all(editor)
-        editor.structure_selected = -1
-        editor.structure_placing = false
-        editor.structure_moving = false
-        editor.architecture_painting = false
-        architecture.city_plan_destroy(&editor.architecture_preview_plan)
-        editor.architecture_dirty_bounds = {}
-        curve_reset(editor)
-        editor.structure_undo_count = 0
-        editor.structure_redo_count = 0
-        editor.terrain_undo_count = 0
-        editor.terrain_redo_count = 0
-        editor.terrain_saved_revision = editor.project.revision
-        terrain_file_feedback(editor, "PROJECT LOADED")
-    } else {
-        terrain_file_feedback(editor, "LOAD FAILED")
-    }
+    map_editor_load(editor)
 }
 
 formation_kind_name :: proc(kind: terrain.Formation_Kind) -> cstring {
@@ -1375,15 +1376,15 @@ formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cu
     if editor.authoring_tool != .Formations && editor.authoring_tool != .Foliage do return
     if editor.authoring_tool == .Foliage && editor.foliage_hedgerow_mode do return
     if !cursor_hit {
-        if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) {
+        if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) {
             editor.formation_brush_painting = false
             editor.formation_brush_group_id = 0
         }
         return
     }
-    pressed := rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT)
-    down := rl.IsMouseButtonDown(.LEFT) || rl.IsMouseButtonDown(.RIGHT)
-    erase := rl.IsMouseButtonDown(.RIGHT)
+    pressed := canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT)
+    down := canvas2d.IsMouseButtonDown(.LEFT) || canvas2d.IsMouseButtonDown(.RIGHT)
+    erase := canvas2d.IsMouseButtonDown(.RIGHT)
     if pressed {
         structure_history_push_undo(editor)
         editor.formation_brush_group_id = editor.project.next_structure_id
@@ -1410,7 +1411,8 @@ formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cu
             editor.formation_brush_last_z += direction_z * f32(stamps) * step
         }
     }
-    if editor.formation_brush_painting && (rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)) {
+    if editor.formation_brush_painting &&
+       (canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT)) {
         editor.formation_brush_painting = false
         editor.formation_brush_group_id = 0
     }
@@ -1588,7 +1590,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
     if editor == nil || editor.in_map || !editor.road_mode do return
     graph := &editor.project.road_graph
     if editor.road_drag_node >= 0 {
-        if rl.IsMouseButtonDown(.LEFT) && cursor_hit {
+        if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
             node := &graph.nodes[editor.road_drag_node]
             snapped_x := structure_editor_snap(world_x, editor)
             snapped_z := structure_editor_snap(world_z, editor)
@@ -1618,7 +1620,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
                 editor.project.revision += 1
             }
         }
-        if rl.IsMouseButtonReleased(.LEFT) {
+        if canvas2d.IsMouseButtonReleased(.LEFT) {
             dragged_node := editor.road_drag_node
             if !editor.road_drag_node_moved &&
                editor.road_drag_node_previous_selection >= 0 &&
@@ -1637,7 +1639,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
         return
     }
     if editor.road_drag_edge >= 0 {
-        if rl.IsMouseButtonDown(.LEFT) && cursor_hit {
+        if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
             edge := &graph.edges[editor.road_drag_edge]
             snapped_x := structure_editor_snap(world_x, editor)
             snapped_z := structure_editor_snap(world_z, editor)
@@ -1653,17 +1655,17 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
             }
             editor.project.revision += 1
         }
-        if rl.IsMouseButtonReleased(.LEFT) {
+        if canvas2d.IsMouseButtonReleased(.LEFT) {
             editor.road_drag_edge = -1
             editor.road_drag_handle = -1
         }
         return
     }
-    if rl.IsMouseButtonPressed(.RIGHT) {
+    if canvas2d.IsMouseButtonPressed(.RIGHT) {
         editor.road_selected_node = -1
         return
     }
-    if !cursor_hit || !rl.IsMouseButtonPressed(.LEFT) do return
+    if !cursor_hit || !canvas2d.IsMouseButtonPressed(.LEFT) do return
     edge_index, handle_index := road_handle_at(editor, world_x, world_z)
     if edge_index >= 0 {
         structure_history_push_undo(editor)
@@ -1707,11 +1709,11 @@ editor_cancel_interaction :: proc(editor: ^Editor) {
 curve_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || editor.tool != .Structure || !editor.curve_mode do return
     if !cursor_hit {
-        if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) do curve_reset(editor)
+        if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) do curve_reset(editor)
         return
     }
     cell := editor.project.levels[0].cell_size
-    if rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT) {
+    if canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT) {
         structure_history_push_undo(editor)
         // RIDGE and CLIFF are persistent palette tools. Do not derive the
         // profile from the button used to begin the stroke, or a normal
@@ -1720,7 +1722,7 @@ curve_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: 
         editor.curve_points[0] = {structure_editor_snap(world_x, editor), structure_editor_snap(world_z, editor)}
         editor.curve_drawing = true
     }
-    if editor.curve_drawing && (rl.IsMouseButtonDown(.LEFT) || rl.IsMouseButtonDown(.RIGHT)) {
+    if editor.curve_drawing && (canvas2d.IsMouseButtonDown(.LEFT) || canvas2d.IsMouseButtonDown(.RIGHT)) {
         if editor.curve_point_count < CURVE_POINT_CAPACITY {
             last := editor.curve_points[editor.curve_point_count - 1]
             x, z := structure_editor_snap(world_x, editor), structure_editor_snap(world_z, editor)
@@ -1731,7 +1733,7 @@ curve_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: 
             }
         }
     }
-    if editor.curve_drawing && (rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)) {
+    if editor.curve_drawing && (canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT)) {
         if editor.curve_point_count >= 2 {
             last_index := curve_commit(editor)
             if last_index >= 0 do editor.structure_selected = last_index
@@ -1916,7 +1918,7 @@ seed_road_grip_benchmark :: proc(editor: ^Editor) {
     _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
     if !entered do return
     editor.in_map = true
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     editor.camera = third_person.default_camera()
     editor.camera_pose = third_person.camera_pose(editor.car.position, editor.camera)
 }
@@ -1934,7 +1936,7 @@ seed_terrain_grip_benchmark :: proc(editor: ^Editor) {
     _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
     if !entered do return
     editor.in_map = true
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     editor.camera = third_person.default_camera()
     editor.camera_pose = third_person.camera_pose(editor.car.position, editor.camera)
 }
@@ -1949,7 +1951,7 @@ seed_player_benchmark :: proc(editor: ^Editor) {
     editor.postale_visible = false
     editor.libellula_visible = false
     editor.in_map = true
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     editor.camera = third_person.default_camera()
     editor.camera_pose = third_person.camera_pose(editor.player.position, editor.camera)
 }
@@ -1967,7 +1969,7 @@ seed_ocean_flight_benchmark :: proc(editor: ^Editor) {
     _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.rondine.vehicle})
     if !entered do return
     editor.in_map = true
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
     editor.camera_pose = editor.flight_camera.pose
 }
@@ -1982,7 +1984,7 @@ seed_land_flight_benchmark :: proc(editor: ^Editor) {
     _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.postale.vehicle})
     if !entered do return
     editor.in_map = true
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
 }
 
 seed_zora_benchmark :: proc(editor: ^Editor) {
@@ -2001,7 +2003,7 @@ seed_zora_benchmark :: proc(editor: ^Editor) {
     player_facing := math.atan2(player_position.x - position.x, player_position.z - position.z)
     player_place(editor, player_position, .Scene_Setup, player_facing)
     editor.in_map = true
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     inspection_pose := third_person.camera_near({position.x, position.y + .48, position.z}, {1.35, .62, 1.35})
     third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -2023,7 +2025,7 @@ seed_marta_benchmark :: proc(editor: ^Editor) {
         .Scene_Setup,
     )
     editor.in_map = true
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     inspection_pose := third_person.camera_near({attendant.x, attendant.y + .48, attendant.z}, {1.35, .62, 1.35})
     third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -2066,6 +2068,24 @@ seed_municipal_route_night_benchmark :: proc(editor: ^Editor) {
 
 capture_target_is_generated_dunes :: #force_inline proc(target: string) -> bool {
     return target == "dunes" || target == "dunes-west" || target == "dunes-blowout"
+}
+
+capture_weather_regime :: proc(target: string) -> (atmosphere.Climate_Regime, bool) {
+    switch target {
+    case "weather-maestral":
+        return .Maestral, true
+    case "weather-bura-clear":
+        return .Bura_Clear, true
+    case "weather-bura-storm":
+        return .Bura_Storm, true
+    case "weather-jugo":
+        return .Jugo, true
+    case "weather-calm-humid":
+        return .Calm_Humid, true
+    case "weather-post-front":
+        return .Post_Front, true
+    }
+    return .Maestral, false
 }
 
 configure_generated_dune_capture_camera :: proc(
@@ -2224,6 +2244,8 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         editor.benchmark_ground_grass_disabled = true
     case "ocean_flight":
         seed_ocean_flight_benchmark(editor)
+    case "fog_banks":
+        seed_ocean_flight_benchmark(editor)
     case "land_flight":
         seed_land_flight_benchmark(editor)
     case "land_flight_cold":
@@ -2259,6 +2281,7 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "grass" &&
        scenario != "grass_disabled" &&
        scenario != "ocean_flight" &&
+       scenario != "fog_banks" &&
        scenario != "land_flight" &&
        scenario != "land_flight_cold" &&
        scenario != "zora" &&
@@ -3768,7 +3791,7 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
 architecture_paint_commit :: proc(editor: ^Editor) {
     if editor == nil || !editor.architecture_painting do return
     structure_history_push_undo(editor)
-    piece := architecture_brush_current_piece(editor, rl.IsMouseButtonReleased(.RIGHT))
+    piece := architecture_brush_current_piece(editor, canvas2d.IsMouseButtonReleased(.RIGHT))
     editor.project.city_density = editor.architecture_density_preview
     if piece.erased {
         for index := editor.project.structure_count - 1; index >= 0; index -= 1 {
@@ -3873,9 +3896,9 @@ architecture_paint_stamp :: proc(editor: ^Editor, piece: Settlement_Brush_Piece,
 
 architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || !editor.architecture_paint_mode || editor.airport_stamp_mode do return
-    pressed := rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT)
-    down := rl.IsMouseButtonDown(.LEFT) || rl.IsMouseButtonDown(.RIGHT)
-    released := rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)
+    pressed := canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT)
+    down := canvas2d.IsMouseButtonDown(.LEFT) || canvas2d.IsMouseButtonDown(.RIGHT)
+    released := canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT)
     if pressed && cursor_hit {
         editor.architecture_painting = true
         editor.architecture_density_preview = editor.project.city_density
@@ -3884,7 +3907,7 @@ architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32,
         editor.architecture_last_x, editor.architecture_last_z = world_x, world_z
         editor.architecture_drag_x, editor.architecture_drag_z = world_x, world_z
         editor.architecture_brush_rotation = 0
-        architecture_paint_stamp(editor, architecture_brush_current_piece(editor, rl.IsMouseButtonDown(.RIGHT)))
+        architecture_paint_stamp(editor, architecture_brush_current_piece(editor, canvas2d.IsMouseButtonDown(.RIGHT)))
     }
     if editor.architecture_painting && down && cursor_hit && !pressed {
         editor.architecture_drag_x, editor.architecture_drag_z = world_x, world_z
@@ -3894,10 +3917,10 @@ architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32,
         }
         editor.architecture_density_preview = editor.project.city_density
         editor.architecture_dirty_bounds = {}
-        architecture_paint_stamp(editor, architecture_brush_current_piece(editor, rl.IsMouseButtonDown(.RIGHT)))
+        architecture_paint_stamp(editor, architecture_brush_current_piece(editor, canvas2d.IsMouseButtonDown(.RIGHT)))
     }
     if editor.architecture_painting && released {
-        piece := architecture_brush_current_piece(editor, rl.IsMouseButtonReleased(.RIGHT))
+        piece := architecture_brush_current_piece(editor, canvas2d.IsMouseButtonReleased(.RIGHT))
         architecture_paint_commit(editor)
         if editor.settlement_plan.brush_piece_count < len(editor.settlement_plan.brush_pieces) {
             settlement_brush_assign_component(&editor.settlement_plan, &piece)
@@ -3949,9 +3972,14 @@ airport_stamp_add :: proc(editor: ^Editor, x, z, yaw: f32) -> int {
     if editor == nil || !airport_stamp_site_valid(editor, x, z, yaw) do return -1
     marker := terrain.structure_make(x, z, 1, 1, terrain.sample_height(&editor.project, 0, x, z) - 2, 1)
     marker.group_id = AIRPORT_STAMP_GROUP
-    marker.seed = AIRPORT_STAMP_SEED
     marker.rotation = yaw
-    return terrain.add_structure(&editor.project, marker)
+    index := terrain.add_structure(&editor.project, marker)
+    if index >= 0 {
+        // add_structure assigns an identity-derived seed; restore the marker tag
+        // after insertion so airport stamps remain recognizable when persisted.
+        editor.project.structures[index].seed = AIRPORT_STAMP_SEED
+    }
+    return index
 }
 
 airport_stamp_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
@@ -3968,12 +3996,12 @@ airport_stamp_process_input :: proc(editor: ^Editor, world_x, world_z: f32, curs
     z := f32(math.round(f64(world_z / snap))) * snap
     editor.airport_preview_x, editor.airport_preview_z = x, z
     editor.airport_preview_valid = airport_stamp_site_valid(editor, x, z, editor.airport_stamp_yaw)
-    wheel := rl.GetMouseWheelMove()
+    wheel := canvas2d.GetMouseWheelMove()
     if wheel != 0 {
         editor.airport_stamp_yaw += wheel * math.PI / 12
         editor.airport_preview_valid = airport_stamp_site_valid(editor, x, z, editor.airport_stamp_yaw)
     }
-    if rl.IsMouseButtonPressed(.RIGHT) {
+    if canvas2d.IsMouseButtonPressed(.RIGHT) {
         nearest, nearest_distance := -1, f32(48 * 48)
         for structure, index in editor.project.structures[:editor.project.structure_count] {
             if !airport_structure_is_stamp(structure) do continue
@@ -3990,7 +4018,7 @@ airport_stamp_process_input :: proc(editor: ^Editor, world_x, world_z: f32, curs
         }
         return
     }
-    if !rl.IsMouseButtonPressed(.LEFT) || !editor.airport_preview_valid do return
+    if !canvas2d.IsMouseButtonPressed(.LEFT) || !editor.airport_preview_valid do return
     structure_history_push_undo(editor)
     _ = airport_stamp_add(editor, x, z, editor.airport_stamp_yaw)
     editor.project.revision += 1
@@ -4053,11 +4081,11 @@ marina_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, curso
     if !editor.marina_preview_valid && editor.marina_brush_status == .Idle || moved {
         marina_brush_refresh_preview(editor, world_x, world_z, false)
     }
-    if rl.IsMouseButtonPressed(.RIGHT) {
+    if canvas2d.IsMouseButtonPressed(.RIGHT) {
         marina_brush_refresh_preview(editor, editor.marina_preview_x, editor.marina_preview_z, true)
         return
     }
-    if !rl.IsMouseButtonPressed(.LEFT) || !editor.marina_preview_valid do return
+    if !canvas2d.IsMouseButtonPressed(.LEFT) || !editor.marina_preview_valid do return
     structure_history_push_undo(editor)
     editor.marina_authored_plan = editor.marina_preview_plan
     editor.harbor_authored_plan = editor.harbor_preview_plan
@@ -4202,13 +4230,15 @@ farm_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor
 
 farm_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || !editor.farm_paint_mode || !cursor_hit do return
-    if rl.IsMouseButtonPressed(.RIGHT) {
+    if canvas2d.IsMouseButtonPressed(.RIGHT) {
         editor.farm_preview_seed_offset += 1
         editor.farm_preview_revision = 0
         editor.farm_preview_valid = false
         return
     }
-    if !rl.IsMouseButtonPressed(.LEFT) || editor.farm_count >= FARM_INSTANCE_CAPACITY || !editor.farm_preview_valid {
+    if !canvas2d.IsMouseButtonPressed(.LEFT) ||
+       editor.farm_count >= FARM_INSTANCE_CAPACITY ||
+       !editor.farm_preview_valid {
         return
     }
     structure_history_push_undo(editor)
@@ -4277,13 +4307,13 @@ wreck_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, curso
 
 wreck_brush_process_input :: proc(editor: ^Editor, _: f32, _: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || !editor.wreck_paint_mode || !cursor_hit do return
-    if rl.IsMouseButtonPressed(.RIGHT) {
+    if canvas2d.IsMouseButtonPressed(.RIGHT) {
         editor.wreck_preview_seed_offset += 1
         editor.wreck_preview_revision = 0
         editor.wreck_preview_valid = false
         return
     }
-    if !rl.IsMouseButtonPressed(.LEFT) ||
+    if !canvas2d.IsMouseButtonPressed(.LEFT) ||
        editor.wreck_count >= WRECK_INSTANCE_CAPACITY ||
        !editor.wreck_preview_valid {
         return
@@ -4312,16 +4342,16 @@ climbing_leaf_paint_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase:
 climbing_leaf_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || !editor.climbing_leaf_paint_mode do return
     if !cursor_hit {
-        if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) do editor.climbing_leaf_painting = false
+        if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) do editor.climbing_leaf_painting = false
         return
     }
-    pressed := rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT)
-    down := rl.IsMouseButtonDown(.LEFT) || rl.IsMouseButtonDown(.RIGHT)
+    pressed := canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT)
+    down := canvas2d.IsMouseButtonDown(.LEFT) || canvas2d.IsMouseButtonDown(.RIGHT)
     if pressed {
         structure_history_push_undo(editor)
         editor.climbing_leaf_painting = true
         editor.climbing_leaf_last_x, editor.climbing_leaf_last_z = world_x, world_z
-        climbing_leaf_paint_stamp(editor, world_x, world_z, rl.IsMouseButtonDown(.RIGHT))
+        climbing_leaf_paint_stamp(editor, world_x, world_z, canvas2d.IsMouseButtonDown(.RIGHT))
     }
     if editor.climbing_leaf_painting && down && !pressed {
         dx, dz := world_x - editor.climbing_leaf_last_x, world_z - editor.climbing_leaf_last_z
@@ -4332,11 +4362,12 @@ climbing_leaf_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32
             amount := f32(stamp) / f32(stamps)
             x := editor.climbing_leaf_last_x + dx * amount
             z := editor.climbing_leaf_last_z + dz * amount
-            climbing_leaf_paint_stamp(editor, x, z, rl.IsMouseButtonDown(.RIGHT))
+            climbing_leaf_paint_stamp(editor, x, z, canvas2d.IsMouseButtonDown(.RIGHT))
         }
         editor.climbing_leaf_last_x, editor.climbing_leaf_last_z = world_x, world_z
     }
-    if editor.climbing_leaf_painting && (rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)) {
+    if editor.climbing_leaf_painting &&
+       (canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT)) {
         editor.climbing_leaf_painting = false
     }
 }
@@ -4345,29 +4376,29 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
     if editor == nil || editor.in_map || editor.tool != .Structure do return
     if imgui_captures_keyboard() do return
     cell := editor.project.levels[0].cell_size
-    if control_key_down() && rl.IsKeyPressed(.Z) {
+    if control_key_down() && canvas2d.IsKeyPressed(.Z) {
         structure_undo(editor)
         editor.structure_placing = false
         editor.structure_moving = false
         return
     }
-    if control_key_down() && rl.IsKeyPressed(.Y) {
+    if control_key_down() && canvas2d.IsKeyPressed(.Y) {
         structure_redo(editor)
         editor.structure_placing = false
         editor.structure_moving = false
         return
     }
-    if rl.IsKeyPressed(.BACKSPACE) && editor.structure_selected >= 0 && !editor.structure_placing {
+    if canvas2d.IsKeyPressed(.BACKSPACE) && editor.structure_selected >= 0 && !editor.structure_placing {
         structure_history_push_undo(editor)
         terrain.remove_structure(&editor.project, editor.structure_selected)
         editor.structure_selected = -1
     }
-    if control_key_down() && rl.IsKeyPressed(.D) && editor.structure_selected >= 0 {
+    if control_key_down() && canvas2d.IsKeyPressed(.D) && editor.structure_selected >= 0 {
         structure_history_push_undo(editor)
         index := terrain.duplicate_structure(&editor.project, editor.structure_selected, cell * 2, cell * 2)
         if index >= 0 do editor.structure_selected = index
     }
-    if rl.IsKeyPressed(.R) {
+    if canvas2d.IsKeyPressed(.R) {
         if editor.structure_placing {
             editor.structure_preview.rotation += math.PI / 12
         } else if editor.structure_selected >= 0 {
@@ -4377,14 +4408,15 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
         }
     }
     if !cursor_hit {
-        if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) {
+        if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) {
             editor.structure_placing = false
             editor.structure_moving = false
         }
         return
     }
-    if rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT) {
-        index := rl.IsMouseButtonPressed(.LEFT) ? terrain.structure_index_at(&editor.project, world_x, world_z) : -1
+    if canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT) {
+        index :=
+            canvas2d.IsMouseButtonPressed(.LEFT) ? terrain.structure_index_at(&editor.project, world_x, world_z) : -1
         if index >= 0 {
             editor.structure_selected = index
             editor.structure_moving = true
@@ -4407,7 +4439,7 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
                 editor.authoring_tool == .Foliage ? cell * 3 : cell * 12,
             )
             editor.structure_force_box = control_key_down()
-            editor.structure_cliff_mode = rl.IsMouseButtonPressed(.RIGHT)
+            editor.structure_cliff_mode = canvas2d.IsMouseButtonPressed(.RIGHT)
             editor.structure_scatter_mode = alt_key_down()
             structure_update_preview_kind(editor)
             structure_update_base(editor, &editor.structure_preview)
@@ -4435,7 +4467,7 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
         }
         structure_update_preview_kind(editor)
         structure_update_base(editor, &editor.structure_preview)
-        if rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT) {
+        if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) {
             structure_history_push_undo(editor)
             index := structure_commit_placement(editor, world_x, world_z)
             if index >= 0 do editor.structure_selected = index
@@ -4446,7 +4478,7 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
         structure.center_x = structure_editor_snap(world_x + editor.structure_grab_offset_x, editor)
         structure.center_z = structure_editor_snap(world_z + editor.structure_grab_offset_z, editor)
         structure_update_base(editor, structure)
-        if rl.IsMouseButtonReleased(.LEFT) do editor.structure_moving = false
+        if canvas2d.IsMouseButtonReleased(.LEFT) do editor.structure_moving = false
     }
 }
 
@@ -4500,7 +4532,7 @@ set_pointer_locked :: proc(locked: bool) {
     }
 }
 
-project_point :: proc(x, z, height: f32, center: rl.Vector2, scale: f32) -> rl.Vector2 {
+project_point :: proc(x, z, height: f32, center: canvas2d.Vector2, scale: f32) -> canvas2d.Vector2 {
     return {center.x + (x - z) * scale, center.y + (x + z) * scale * .46 - height * scale}
 }
 
@@ -4510,7 +4542,7 @@ Perspective_Camera :: struct {
 }
 
 Screen_Point :: struct {
-    position: rl.Vector2,
+    position: canvas2d.Vector2,
     depth:    f32,
     visible:  bool,
 }
@@ -4522,17 +4554,17 @@ shape_flight_axis :: proc(value: f32) -> f32 {
     return math.sign(value) * clamp((magnitude - dead_zone) / (1 - dead_zone), 0, 1)
 }
 
-gamepad_axis :: proc(axis: rl.Gamepad_Axis) -> f32 {
-    if !rl.GamepadAvailable() do return 0
-    return shape_flight_axis(rl.GetGamepadAxis(axis))
+gamepad_axis :: proc(axis: canvas2d.Gamepad_Axis) -> f32 {
+    if !canvas2d.GamepadAvailable() do return 0
+    return shape_flight_axis(canvas2d.GetGamepadAxis(axis))
 }
 
-gamepad_pressed :: proc(button: rl.Gamepad_Button) -> bool {
-    return rl.GamepadAvailable() && rl.IsGamepadButtonPressed(button)
+gamepad_pressed :: proc(button: canvas2d.Gamepad_Button) -> bool {
+    return canvas2d.GamepadAvailable() && canvas2d.IsGamepadButtonPressed(button)
 }
 
-gamepad_down :: proc(button: rl.Gamepad_Button) -> bool {
-    return rl.GamepadAvailable() && rl.IsGamepadButtonDown(button)
+gamepad_down :: proc(button: canvas2d.Gamepad_Button) -> bool {
+    return canvas2d.GamepadAvailable() && canvas2d.IsGamepadButtonDown(button)
 }
 
 aircraft_reset :: proc(editor: ^Editor) {
@@ -4583,23 +4615,23 @@ Input_Action :: enum {
 input_action_pressed :: proc(action: Input_Action) -> bool {
     switch action {
     case .Pause:
-        return (!shift_key_down() && rl.IsKeyPressed(.ESCAPE)) || gamepad_pressed(.Start)
+        return (!shift_key_down() && canvas2d.IsKeyPressed(.ESCAPE)) || gamepad_pressed(.Start)
     case .Journal:
-        return rl.IsKeyPressed(.J) || gamepad_pressed(.Back)
+        return canvas2d.IsKeyPressed(.J) || gamepad_pressed(.Back)
     case .Jump:
-        return rl.IsKeyPressed(.SPACE) || gamepad_pressed(.South)
+        return canvas2d.IsKeyPressed(.SPACE) || gamepad_pressed(.South)
     case .Run:
-        return rl.IsKeyPressed(.LEFT_SHIFT) || rl.IsKeyPressed(.RIGHT_SHIFT) || gamepad_pressed(.North)
+        return canvas2d.IsKeyPressed(.LEFT_SHIFT) || canvas2d.IsKeyPressed(.RIGHT_SHIFT) || gamepad_pressed(.North)
     case .Interact:
-        return rl.IsKeyPressed(.F) || gamepad_pressed(.West)
+        return canvas2d.IsKeyPressed(.F) || gamepad_pressed(.West)
     case .Camera_Reset:
-        return rl.IsKeyPressed(.C) || gamepad_pressed(.South)
+        return canvas2d.IsKeyPressed(.C) || gamepad_pressed(.South)
     case .Menu_Accept:
-        return rl.IsKeyPressed(.ENTER) || gamepad_pressed(.South)
+        return canvas2d.IsKeyPressed(.ENTER) || gamepad_pressed(.South)
     case .Menu_Cancel:
-        return (!shift_key_down() && rl.IsKeyPressed(.ESCAPE)) || gamepad_pressed(.East)
+        return (!shift_key_down() && canvas2d.IsKeyPressed(.ESCAPE)) || gamepad_pressed(.East)
     case .Handbrake:
-        return rl.IsKeyPressed(.SPACE) || gamepad_pressed(.Right_Shoulder)
+        return canvas2d.IsKeyPressed(.SPACE) || gamepad_pressed(.Right_Shoulder)
     }
     return false
 }
@@ -4607,9 +4639,9 @@ input_action_pressed :: proc(action: Input_Action) -> bool {
 input_action_down :: proc(action: Input_Action) -> bool {
     #partial switch action {
     case .Jump:
-        return rl.IsKeyDown(.SPACE) || gamepad_down(.South)
+        return canvas2d.IsKeyDown(.SPACE) || gamepad_down(.South)
     case .Handbrake:
-        return rl.IsKeyDown(.SPACE) || gamepad_down(.Right_Shoulder)
+        return canvas2d.IsKeyDown(.SPACE) || gamepad_down(.Right_Shoulder)
     case .Run:
         return shift_key_down() || gamepad_down(.North)
     }
@@ -4667,39 +4699,39 @@ controller_style_detect :: proc() -> game_input.Controller_Style {
 
 runtime_input_sample :: proc() -> game_input.Sample {
     sample := game_input.Sample {
-        now_seconds      = rl.GetTime(),
-        controller_found = rl.GamepadAvailable(),
+        now_seconds      = canvas2d.GetTime(),
+        controller_found = canvas2d.GamepadAvailable(),
     }
-    mouse_delta := rl.GetMouseDelta()
+    mouse_delta := canvas2d.GetMouseDelta()
     sample.mouse_activity =
         math.abs(mouse_delta.x) > 1.5 ||
         math.abs(mouse_delta.y) > 1.5 ||
-        math.abs(rl.GetMouseWheelMove()) > .01 ||
-        rl.IsMouseButtonPressed(.LEFT) ||
-        rl.IsMouseButtonPressed(.RIGHT) ||
-        rl.IsMouseButtonPressed(.MIDDLE)
-    for key in rl.KeyboardKey {
+        math.abs(canvas2d.GetMouseWheelMove()) > .01 ||
+        canvas2d.IsMouseButtonPressed(.LEFT) ||
+        canvas2d.IsMouseButtonPressed(.RIGHT) ||
+        canvas2d.IsMouseButtonPressed(.MIDDLE)
+    for key in canvas2d.KeyboardKey {
         if key == .COUNT do continue
-        if rl.IsKeyPressed(key) {
+        if canvas2d.IsKeyPressed(key) {
             sample.keyboard_activity = true
             break
         }
     }
     if sample.controller_found {
-        for button in rl.Gamepad_Button {
+        for button in canvas2d.Gamepad_Button {
             if button == .Count do continue
-            if rl.IsGamepadButtonDown(button) {
+            if canvas2d.IsGamepadButtonDown(button) {
                 sample.button_activity = true
                 break
             }
         }
         sample.axes = {
-            rl.GetGamepadAxis(.Left_X),
-            rl.GetGamepadAxis(.Left_Y),
-            rl.GetGamepadAxis(.Right_X),
-            rl.GetGamepadAxis(.Right_Y),
-            rl.GetGamepadAxis(.Left_Trigger),
-            rl.GetGamepadAxis(.Right_Trigger),
+            canvas2d.GetGamepadAxis(.Left_X),
+            canvas2d.GetGamepadAxis(.Left_Y),
+            canvas2d.GetGamepadAxis(.Right_X),
+            canvas2d.GetGamepadAxis(.Right_Y),
+            canvas2d.GetGamepadAxis(.Left_Trigger),
+            canvas2d.GetGamepadAxis(.Right_Trigger),
         }
     }
     return sample
@@ -4839,7 +4871,11 @@ postale_vertex_world :: #force_inline proc(
 
 active_aircraft_wing_trail_anchors :: proc(
     editor: ^Editor,
-) -> (left_tip, right_tip: third_person.Vec3, basis: flight.Basis, available: bool) {
+) -> (
+    left_tip, right_tip: third_person.Vec3,
+    basis: flight.Basis,
+    available: bool,
+) {
     if editor == nil do return
     if editor.aircraft.active == .Rondine {
         left_tip = world_rondine_local(
@@ -5001,7 +5037,8 @@ bomber_drop_integrate :: proc(
     if drop.age >= BOMBER_CHUTE_DELAY do drop.parachute_open = true
     wind := third_person.Vec3{}
     if compensate_wind {
-        wind = {editor.atmosphere.weather.wind[0], 0, editor.atmosphere.weather.wind[1]}
+        local := atmosphere_local_weather(editor, drop.position)
+        wind = {local.wind[0], local.wind[1], local.wind[2]}
     }
     if drop.parachute_open {
         horizontal_response := min(delta_seconds * 1.35, f32(1))
@@ -5236,13 +5273,8 @@ active_aircraft_airspeed :: proc(editor: ^Editor) -> f32 {
 active_aircraft_apparent_airflow_speed :: proc(editor: ^Editor) -> f32 {
     if editor == nil do return 0
     body := active_aircraft_body(editor)
-    return wind_audio.apparent_airflow_speed(
-        editor.atmosphere.weather.wind[0],
-        editor.atmosphere.weather.wind[1],
-        body.velocity.x,
-        body.velocity.z,
-        body.velocity.y,
-    )
+    wind := aircraft_local_airflow(editor, body)
+    return wind_audio.apparent_airflow_speed(wind.x, wind.z, body.velocity.x, body.velocity.z, body.velocity.y)
 }
 
 active_aircraft_grounded :: proc(editor: ^Editor) -> bool {
@@ -5259,11 +5291,137 @@ active_aircraft_crashed :: proc(editor: ^Editor) -> bool {
     return editor.postale.crashed
 }
 
+atmosphere_local_weather :: proc(editor: ^Editor, position: third_person.Vec3) -> atmosphere.Local_Weather {
+    if editor == nil do return {}
+    terrain_ctx := atmosphere_terrain_context(editor, position)
+    return atmosphere.sample_at(
+        &editor.atmosphere,
+        {position.x, position.y, position.z},
+        terrain_ctx.altitude_agl,
+        terrain_ctx,
+    )
+}
+
+atmosphere_terrain_context :: proc(editor: ^Editor, position: third_person.Vec3) -> atmosphere.Terrain_Context {
+    if editor == nil do return {}
+    sample_distance := f32(45)
+    ground := terrain.sample_height(&editor.project, 0, position.x, position.z)
+    east := terrain.sample_height(&editor.project, 0, position.x + sample_distance, position.z)
+    west := terrain.sample_height(&editor.project, 0, position.x - sample_distance, position.z)
+    north := terrain.sample_height(&editor.project, 0, position.x, position.z + sample_distance)
+    south := terrain.sample_height(&editor.project, 0, position.x, position.z - sample_distance)
+    gradient := [2]f32{(east - west) / (sample_distance * 2), (north - south) / (sample_distance * 2)}
+    land := ground > editor.project.sea_level + .1
+    directions := [8][2]f32 {
+        {1, 0},
+        {-1, 0},
+        {0, 1},
+        {0, -1},
+        {.7071068, .7071068},
+        {-.7071068, .7071068},
+        {.7071068, -.7071068},
+        {-.7071068, -.7071068},
+    }
+    coast_distance := f32(1800)
+    coast_to_sea := [2]f32{}
+    for distance := f32(160); distance <= 1440; distance += 160 {
+        found := false
+        for direction in directions {
+            height := terrain.sample_height(
+                &editor.project,
+                0,
+                position.x + direction[0] * distance,
+                position.z + direction[1] * distance,
+            )
+            sample_land := height > editor.project.sea_level + .1
+            if sample_land == land do continue
+            coast_distance = distance
+            coast_to_sea = land ? direction : -direction
+            found = true
+            break
+        }
+        if found do break
+    }
+    gradient_strength := f32(math.sqrt(f64(gradient[0] * gradient[0] + gradient[1] * gradient[1])))
+    return {
+        valid = true,
+        altitude_agl = max(position.y - ground, f32(0)),
+        terrain_height = ground,
+        terrain_gradient = gradient,
+        sea_level = editor.project.sea_level,
+        land = land,
+        coast_to_sea = coast_to_sea,
+        coast_distance = coast_distance,
+        terrain_channel = clamp(gradient_strength * 2.2, 0, 1),
+    }
+}
+
+atmosphere_sky :: proc(editor: ^Editor) -> atmosphere.Sky_State {
+    if editor == nil do return {}
+    position := editor.camera_pose.position
+    terrain_ctx := atmosphere_terrain_context(editor, position)
+    sky := atmosphere.sample(&editor.atmosphere, {position.x, position.y, position.z}, terrain_ctx)
+    if lab_scene_is_active(editor, "rainbow") {
+        // This lab deliberately authors an intermediate sun-shower rather
+        // than one of atmosphere's uniform public presets.
+        sky.weather = editor.atmosphere.weather
+    }
+    return sky
+}
+
+surface_weather_sample :: proc(editor: ^Editor, position: third_person.Vec3) -> f32 {
+    if editor == nil do return 0
+    return surface_weather.sample(&editor.surface_weather, position.x, position.z)
+}
+
+active_surface_weather_position :: proc(editor: ^Editor) -> third_person.Vec3 {
+    if editor == nil do return {}
+    if driving_aircraft(editor) do return active_aircraft_body(editor).position
+    if driving_car(editor) do return editor.car.position
+    return editor.player.position
+}
+
+surface_weather_step :: proc(editor: ^Editor, delta_seconds: f32) {
+    if editor == nil || delta_seconds <= 0 do return
+    UPDATES_PER_FRAME :: 4
+    sky := atmosphere.sample(&editor.atmosphere)
+    elapsed_per_cell := delta_seconds * f32(surface_weather.CELL_COUNT) / UPDATES_PER_FRAME
+    for _ in 0 ..< UPDATES_PER_FRAME {
+        index := editor.surface_weather.cursor % surface_weather.CELL_COUNT
+        point := surface_weather.cell_position(&editor.surface_weather, index)
+        ground := terrain.sample_height(&editor.project, 0, point.x, point.y)
+        position := third_person.Vec3{point.x, ground + .5, point.y}
+        local := atmosphere_local_weather(editor, position)
+        speed := f32(math.sqrt(f64(local.wind[0] * local.wind[0] + local.wind[2] * local.wind[2])))
+        surface_weather.step_cell(
+            &editor.surface_weather,
+            index,
+            local.precipitation,
+            sky.daylight,
+            speed,
+            local.temperature_tendency,
+            elapsed_per_cell,
+        )
+        editor.surface_weather.cursor = (index + 1) % surface_weather.CELL_COUNT
+    }
+}
+
+aircraft_local_airflow :: proc(editor: ^Editor, body: ^flight.Body_State) -> flight.Vec3 {
+    if editor == nil || body == nil do return {}
+    local := atmosphere_local_weather(editor, body.position)
+    return {local.wind[0], local.wind[1], local.wind[2]}
+}
+
 aircraft_wind_buffet :: proc(editor: ^Editor) -> f32 {
     if editor == nil || active_aircraft_grounded(editor) || active_aircraft_crashed(editor) do return 0
-    wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
-    weather_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
     body := active_aircraft_body(editor)
+    local := atmosphere.sample_at(
+        &editor.atmosphere,
+        {body.position.x, body.position.y, body.position.z},
+        body.position.y,
+    )
+    wind_x, wind_z := local.wind[0], local.wind[2]
+    weather_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
     lateral := wind_audio.apparent_lateral_direction(
         wind_x,
         wind_z,
@@ -5274,8 +5432,8 @@ aircraft_wind_buffet :: proc(editor: ^Editor) -> f32 {
     return air_effects.buffet_strength(
         weather_speed,
         lateral,
-        editor.atmosphere.weather.severity,
-        editor.atmosphere.front_seconds,
+        max(local.severity, local.gust_strength),
+        editor.atmosphere.schedule.elapsed_seconds,
     )
 }
 
@@ -5833,12 +5991,12 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
     return true
 }
 
-attendant_dialogue_panel :: proc(editor: ^Editor, width, height: i32) -> rl.Rectangle {
+attendant_dialogue_panel :: proc(editor: ^Editor, width, height: i32) -> canvas2d.Rectangle {
     choice_count := editor == nil ? 0 : dialogue.available_count(&editor.attendant_dialogue)
     return dialogue_tv_layout(width, height, choice_count).conversation
 }
 
-tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
+tarot_layout_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
     if editor == nil || editor.dialogue_resident != .Zora do return
     current := dialogue.current(&editor.attendant_dialogue)
     if current == nil || current.id != "zora-reading" do return
@@ -5853,18 +6011,18 @@ tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     board_width := f32(columns) * card_width + f32(columns - 1) * gap + 24
     rows := (layout.count + columns - 1) / columns
     board_height := f32(rows) * card_height + f32(rows - 1) * gap + 42
-    board := rl.Rectangle {
+    board := canvas2d.Rectangle {
         x      = panel.x + (panel.width - board_width) * .5,
         y      = max(f32(18), panel.y - board_height - 12),
         width  = board_width,
         height = board_height,
     }
-    rl.DrawRectangleRounded(board, .06, 8, {24, 18, 42, 244})
-    rl.DrawRectangleRoundedLinesEx(board, .06, 8, 1, {185, 145, 77, 255})
+    canvas2d.DrawRectangleRounded(board, .06, 8, {24, 18, 42, 244})
+    canvas2d.DrawRectangleRoundedLinesEx(board, .06, 8, 1, {185, 145, 77, 255})
     title := fmt.ctprintf("%s", tarot.spread_name(layout.spread))
-    title_size := rl.MeasureTextEx(rl.Font{}, title, 14, 1)
-    rl.DrawTextEx(
-        rl.Font{},
+    title_size := canvas2d.MeasureTextEx(canvas2d.Font{}, title, 14, 1)
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         title,
         {board.x + (board.width - title_size.x) * .5, board.y + 10},
         14,
@@ -5873,13 +6031,13 @@ tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
     )
     for placement, index in layout.placements[:layout.count] {
         column, row := index % columns, index / columns
-        bounds := rl.Rectangle {
+        bounds := canvas2d.Rectangle {
             x      = board.x + 12 + f32(column) * (card_width + gap),
             y      = board.y + 32 + f32(row) * (card_height + gap),
             width  = card_width,
             height = card_height,
         }
-        art_bounds := rl.Rectangle{bounds.x, bounds.y, bounds.width, art_height}
+        art_bounds := canvas2d.Rectangle{bounds.x, bounds.y, bounds.width, art_height}
         reversed := placement.orientation == .Reversed
         if editor.tarot_atlas.ready {
             card_id := int(placement.card)
@@ -5894,7 +6052,7 @@ tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
                 atlas_row = 2 + minor / 14
                 atlas_column = minor % 14
             }
-            source := rl.Rectangle {
+            source := canvas2d.Rectangle {
                 x      = f32(atlas_column * 108),
                 y      = f32(atlas_row * 158),
                 width  = 108,
@@ -5906,19 +6064,19 @@ tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
                 source.width = -source.width
                 source.height = -source.height
             }
-            rl.DrawTexturePro(editor.tarot_atlas, source, art_bounds, {255, 255, 255, 255})
+            canvas2d.DrawTexturePro(editor.tarot_atlas, source, art_bounds, {255, 255, 255, 255})
         } else {
-            rl.DrawRectangleRounded(art_bounds, .08, 6, {240, 226, 186, 255})
+            canvas2d.DrawRectangleRounded(art_bounds, .08, 6, {240, 226, 186, 255})
         }
         position_label := fmt.ctprintf("%s%s", placement.position, reversed ? " · REVERSED" : "")
         available_width := bounds.width - 8
         position_font_size := layout.count <= 3 ? f32(11) : f32(9)
-        position_measured := rl.MeasureTextEx(rl.Font{}, position_label, position_font_size, .5)
+        position_measured := canvas2d.MeasureTextEx(canvas2d.Font{}, position_label, position_font_size, .5)
         if position_measured.x > available_width {
             position_font_size *= available_width / position_measured.x
         }
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             position_label,
             {bounds.x + 4, bounds.y + art_height + 5},
             position_font_size,
@@ -5927,13 +6085,13 @@ tarot_layout_draw :: proc(editor: ^Editor, panel: rl.Rectangle) {
         )
         card_label := fmt.ctprintf("%s", tarot.card_name(placement.card))
         card_font_size := layout.count <= 3 ? f32(13) : f32(10)
-        measured := rl.MeasureTextEx(rl.Font{}, card_label, card_font_size, .5)
+        measured := canvas2d.MeasureTextEx(canvas2d.Font{}, card_label, card_font_size, .5)
         if measured.x > available_width {
             card_font_size *= available_width / measured.x
             card_font_size = max(card_font_size, layout.count <= 3 ? f32(10) : f32(8))
         }
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             card_label,
             {bounds.x + 4, bounds.y + art_height + 23},
             card_font_size,
@@ -5961,7 +6119,7 @@ marta_select_aircraft :: proc(editor: ^Editor, target: vehicles.Aircraft_Kind) {
     }
     line_position := libellula_spawn_position(editor)
     editor.postale_visible = target == .Postale
-    editor.libellula_visible = true
+    editor.libellula_visible = target == .Libellula || target == .Libellula_Mk2
     editor.postale.vehicle.locked = target != .Postale
     editor.libellula.vehicle.locked = target == .Postale
     line_ground := terrain.sample_height(&editor.project, 0, line_position.x, line_position.z)
@@ -6129,9 +6287,10 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
     layout := dialogue_tv_layout(width, height, dialogue.available_count(&editor.attendant_dialogue))
     visible_rows := dialogue_choice_visible_rows(layout)
     dialogue_choice_scroll_focus(editor, visible_rows)
-    mouse := rl.GetMousePosition()
-    mouse_delta := rl.GetMouseDelta()
-    mouse_active := rl.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    mouse := canvas2d.GetMousePosition()
+    mouse_delta := canvas2d.GetMouseDelta()
+    mouse_active :=
+        canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
 
     horizontal, vertical := game_input.menu_steps(
         &editor.runtime_input,
@@ -6140,13 +6299,13 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
         delta_seconds,
     )
     direction := 0
-    if rl.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do direction -= 1
-    if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do direction += 1
+    if canvas2d.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do direction -= 1
+    if canvas2d.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do direction += 1
     if direction == 0 do direction = vertical
     if direction == 0 do direction = horizontal
     choice_count := dialogue.available_count(&editor.attendant_dialogue)
     revealing := dialogue_view_revealing(editor)
-    wheel := rl.GetMouseWheelMove()
+    wheel := canvas2d.GetMouseWheelMove()
     if !revealing && wheel != 0 && choice_count > visible_rows {
         editor.attendant_dialogue_view.first_choice = clamp(
             editor.attendant_dialogue_view.first_choice - int(wheel),
@@ -6172,7 +6331,7 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
         first := editor.attendant_dialogue_view.first_choice
         last := min(first + visible_rows, choice_count)
         for index in first ..< last {
-            if rl.CheckCollisionPointRec(mouse, dialogue_choice_bounds(layout, index - first)) {
+            if canvas2d.CheckCollisionPointRec(mouse, dialogue_choice_bounds(layout, index - first)) {
                 editor.attendant_dialogue_focus = index
             }
         }
@@ -6194,11 +6353,11 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
         }
     }
     if input_action_pressed(.Menu_Cancel) do activated = max(choice_count - 1, 0)
-    if !revealing && rl.IsMouseButtonPressed(.LEFT) {
+    if !revealing && canvas2d.IsMouseButtonPressed(.LEFT) {
         first := editor.attendant_dialogue_view.first_choice
         last := min(first + visible_rows, choice_count)
         for index in first ..< last {
-            if rl.CheckCollisionPointRec(mouse, dialogue_choice_bounds(layout, index - first)) {
+            if canvas2d.CheckCollisionPointRec(mouse, dialogue_choice_bounds(layout, index - first)) {
                 activated = index
             }
         }
@@ -6317,7 +6476,7 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
     face_count := len(faces)
     slice.stable_sort_by(faces, proc(a, b: Projected_Aircraft_Face) -> bool { return a.depth > b.depth })
     for face in faces[:face_count] {
-        rl.DrawQuadHatched(face.a, face.b, face.c, face.c, face.color, rl.HATCH_DISABLED)
+        canvas2d.DrawQuadHatched(face.a, face.b, face.c, face.c, face.color, canvas2d.HATCH_DISABLED)
     }
     label := project_3d(
         camera,
@@ -6325,7 +6484,7 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
         width,
         height,
     )
-    if label.visible do rl.DrawTextEx(rl.Font{}, "LIBELLULA", {label.position.x - 35, label.position.y - 12}, 13, 1, {r = 255, g = 239, b = 192, a = 255})
+    if label.visible do canvas2d.DrawTextEx(canvas2d.Font{}, "LIBELLULA", {label.position.x - 35, label.position.y - 12}, 13, 1, {r = 255, g = 239, b = 192, a = 255})
 }
 
 draw_postale_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, height: i32) {
@@ -6379,18 +6538,18 @@ draw_postale_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, heig
     }
     slice.stable_sort_by(faces[:face_count], proc(a, b: Projected_Aircraft_Face) -> bool { return a.depth > b.depth })
     for face in faces[:face_count] {
-        rl.DrawQuadHatched(face.a, face.b, face.c, face.c, face.color, rl.HATCH_DISABLED)
+        canvas2d.DrawQuadHatched(face.a, face.b, face.c, face.c, face.color, canvas2d.HATCH_DISABLED)
     }
 }
 
 Projected_Aircraft_Face :: struct {
-    a, b, c: rl.Vector2,
+    a, b, c: canvas2d.Vector2,
     depth:   f32,
-    color:   rl.Color,
+    color:   canvas2d.Color,
 }
 
 @(no_instrumentation)
-aircraft_part_color :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
+aircraft_part_color :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part) -> canvas2d.Color {
     #partial switch part {
     case .Wing, .Tail, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron, .Elevator, .Rudder:
         return {r = 238, g = 207, b = 120, a = 255}
@@ -6446,8 +6605,8 @@ aircraft_propeller_blur_amount :: #force_inline proc(throttle: f32) -> f32 {
 }
 
 @(no_instrumentation)
-aircraft_postale_part_color :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part, throttle: f32) -> rl.Color {
-    color: rl.Color
+aircraft_postale_part_color :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part, throttle: f32) -> canvas2d.Color {
+    color: canvas2d.Color
     #partial switch part {
     case .Body:
         color = {
@@ -6529,7 +6688,7 @@ aircraft_postale_part_color_with_paint :: #force_inline proc(
     editor: ^Editor,
     part: vehicles.Aircraft_Mesh_Part,
     throttle: f32,
-) -> rl.Color {
+) -> canvas2d.Color {
     color := aircraft_postale_part_color(part, throttle)
     if part == .Propeller_Blur {
         painted := vehicle_paint_propeller_color(editor)
@@ -6539,7 +6698,7 @@ aircraft_postale_part_color_with_paint :: #force_inline proc(
 }
 
 @(no_instrumentation)
-color_lerp :: #force_inline proc(a, b: rl.Color, amount: f32) -> rl.Color {
+color_lerp :: #force_inline proc(a, b: canvas2d.Color, amount: f32) -> canvas2d.Color {
     t := clamp(amount, 0, 1)
     return {
         r = u8(f32(a.r) + (f32(b.r) - f32(a.r)) * t),
@@ -6549,35 +6708,35 @@ color_lerp :: #force_inline proc(a, b: rl.Color, amount: f32) -> rl.Color {
     }
 }
 
-draw_antialiased_disc :: proc(center: rl.Vector2, radius: f32, color: rl.Color) {
+draw_antialiased_disc :: proc(center: canvas2d.Vector2, radius: f32, color: canvas2d.Color) {
     feather := color
     feather.a = u8(f32(color.a) * .18)
     shoulder := color
     shoulder.a = u8(f32(color.a) * .48)
-    rl.DrawCircleHatched(center, radius + 1.25, feather, rl.HATCH_DISABLED, 96)
-    rl.DrawCircleHatched(center, radius + .55, shoulder, rl.HATCH_DISABLED, 96)
-    rl.DrawCircleHatched(center, radius, color, rl.HATCH_DISABLED, 96)
+    canvas2d.DrawCircleHatched(center, radius + 1.25, feather, canvas2d.HATCH_DISABLED, 96)
+    canvas2d.DrawCircleHatched(center, radius + .55, shoulder, canvas2d.HATCH_DISABLED, 96)
+    canvas2d.DrawCircleHatched(center, radius, color, canvas2d.HATCH_DISABLED, 96)
 }
 
-draw_antialiased_line :: proc(a, b: rl.Vector2, thickness: f32, color: rl.Color) {
+draw_antialiased_line :: proc(a, b: canvas2d.Vector2, thickness: f32, color: canvas2d.Color) {
     feather := color
     feather.a = u8(f32(color.a) * .22)
-    rl.DrawLineEx(a, b, thickness + 1.5, feather)
-    rl.DrawLineEx(a, b, thickness, color)
+    canvas2d.DrawLineEx(a, b, thickness + 1.5, feather)
+    canvas2d.DrawLineEx(a, b, thickness, color)
 }
 
-draw_instrument_text :: proc(text: cstring, position: rl.Vector2, size, spacing: f32, color: rl.Color) {
-    shadow := rl.Color {
+draw_instrument_text :: proc(text: cstring, position: canvas2d.Vector2, size, spacing: f32, color: canvas2d.Color) {
+    shadow := canvas2d.Color {
         r = 0,
         g = 7,
         b = 12,
         a = u8(235 * f32(color.a) / 255),
     }
-    rl.DrawTextEx(rl.Font{}, text, {position.x + 1.5, position.y + 1.5}, size, spacing, shadow)
-    rl.DrawTextEx(rl.Font{}, text, position, size, spacing, color)
+    canvas2d.DrawTextEx(canvas2d.Font{}, text, {position.x + 1.5, position.y + 1.5}, size, spacing, shadow)
+    canvas2d.DrawTextEx(canvas2d.Font{}, text, position, size, spacing, color)
 }
 
-draw_flight_console_panel :: proc(bounds: rl.Rectangle, corner_radius: f32, color: rl.Color) {
+draw_flight_console_panel :: proc(bounds: canvas2d.Rectangle, corner_radius: f32, color: canvas2d.Color) {
     radius := clamp(corner_radius, 0, min(bounds.width * .5, bounds.height))
     // Scan the upper quarter-arcs into horizontal subpixel lines. Unlike whole
     // discs, this keeps very large radii clipped to the upper corners and
@@ -6590,25 +6749,31 @@ draw_flight_console_panel :: proc(bounds: rl.Rectangle, corner_radius: f32, colo
         y := bounds.y + f32(row) + .5
         draw_antialiased_line({bounds.x + inset, y}, {bounds.x + bounds.width - inset, y}, 1, color)
     }
-    rl.DrawRectangle(i32(bounds.x), i32(bounds.y + radius), i32(bounds.width), i32(bounds.height - radius), color)
+    canvas2d.DrawRectangle(
+        i32(bounds.x),
+        i32(bounds.y + radius),
+        i32(bounds.width),
+        i32(bounds.height - radius),
+        color,
+    )
 
     // Trace the curved shoulder as one continuous padded coaming. The warm
     // leather edge ties the panel to the Postale's cockpit upholstery while a
     // narrow cool highlight keeps the contour readable against dark scenery.
-    coaming := rl.Color {
+    coaming := canvas2d.Color {
         r = 84,
         g = 55,
         b = 39,
         a = 255,
     }
-    edge := rl.Color {
+    edge := canvas2d.Color {
         r = 139,
         g = 115,
         b = 86,
         a = 210,
     }
-    previous_left := rl.Vector2{bounds.x + radius, bounds.y + .5}
-    previous_right := rl.Vector2{bounds.x + bounds.width - radius, bounds.y + .5}
+    previous_left := canvas2d.Vector2{bounds.x + radius, bounds.y + .5}
+    previous_right := canvas2d.Vector2{bounds.x + bounds.width - radius, bounds.y + .5}
     draw_antialiased_line(previous_left, previous_right, 4.5, coaming)
     draw_antialiased_line(previous_left, previous_right, 1.2, edge)
     for row in 1 ..< rows {
@@ -6616,8 +6781,8 @@ draw_flight_console_panel :: proc(bounds: rl.Rectangle, corner_radius: f32, colo
         horizontal := f32(math.sqrt(f64(max(radius * radius - vertical * vertical, 0))))
         inset := radius - horizontal
         y := bounds.y + f32(row) + .5
-        left := rl.Vector2{bounds.x + inset, y}
-        right := rl.Vector2{bounds.x + bounds.width - inset, y}
+        left := canvas2d.Vector2{bounds.x + inset, y}
+        right := canvas2d.Vector2{bounds.x + bounds.width - inset, y}
         draw_antialiased_line(previous_left, left, 4.5, coaming)
         draw_antialiased_line(previous_right, right, 4.5, coaming)
         draw_antialiased_line(previous_left, left, 1.1, edge)
@@ -6631,19 +6796,19 @@ draw_flight_console_panel :: proc(bounds: rl.Rectangle, corner_radius: f32, colo
         1.2,
         {r = 2, g = 8, b = 11, a = 230},
     )
-    screw := rl.Color {
+    screw := canvas2d.Color {
         r = 151,
         g = 160,
         b = 149,
         a = 230,
     }
-    screw_shadow := rl.Color {
+    screw_shadow := canvas2d.Color {
         r = 3,
         g = 9,
         b = 11,
         a = 240,
     }
-    screw_positions := [4]rl.Vector2 {
+    screw_positions := [4]canvas2d.Vector2 {
         {bounds.x + 18, bounds.y + bounds.height - 17},
         {bounds.x + bounds.width - 18, bounds.y + bounds.height - 17},
         {bounds.x + radius * .72, bounds.y + radius * .72},
@@ -6661,32 +6826,32 @@ draw_flight_console_panel :: proc(bounds: rl.Rectangle, corner_radius: f32, colo
     }
 }
 
-draw_instrument_bezel :: proc(center: rl.Vector2, radius: f32) {
-    shadow := rl.Color {
+draw_instrument_bezel :: proc(center: canvas2d.Vector2, radius: f32) {
+    shadow := canvas2d.Color {
         r = 2,
         g = 8,
         b = 11,
         a = 235,
     }
-    outer := rl.Color {
+    outer := canvas2d.Color {
         r = 42,
         g = 57,
         b = 59,
         a = 255,
     }
-    metal := rl.Color {
+    metal := canvas2d.Color {
         r = 104,
         g = 132,
         b = 132,
         a = 235,
     }
-    inner := rl.Color {
+    inner := canvas2d.Color {
         r = 19,
         g = 31,
         b = 37,
         a = 255,
     }
-    face := rl.Color {
+    face := canvas2d.Color {
         r = 9,
         g = 21,
         b = 29,
@@ -6699,8 +6864,8 @@ draw_instrument_bezel :: proc(center: rl.Vector2, radius: f32) {
     draw_antialiased_disc(center, radius, face)
 }
 
-draw_instrument_glass :: proc(center: rl.Vector2, radius: f32) {
-    reflection := rl.Color {
+draw_instrument_glass :: proc(center: canvas2d.Vector2, radius: f32) {
+    reflection := canvas2d.Color {
         r = 196,
         g = 236,
         b = 235,
@@ -6722,7 +6887,7 @@ draw_instrument_glass :: proc(center: rl.Vector2, radius: f32) {
     )
 }
 
-draw_rounded_inset :: proc(bounds: rl.Rectangle, corner_radius: f32, color: rl.Color) {
+draw_rounded_inset :: proc(bounds: canvas2d.Rectangle, corner_radius: f32, color: canvas2d.Color) {
     radius := clamp(corner_radius, 0, min(bounds.width, bounds.height) * .5)
     rows := max(1, int(math.ceil(f64(bounds.height))))
     for row in 0 ..< rows {
@@ -6735,7 +6900,7 @@ draw_rounded_inset :: proc(bounds: rl.Rectangle, corner_radius: f32, color: rl.C
             vertical := y_local - (bounds.height - radius)
             inset = radius - f32(math.sqrt(f64(max(radius * radius - vertical * vertical, 0))))
         }
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx(
             {bounds.x + inset, bounds.y + y_local},
             {bounds.x + bounds.width - inset, bounds.y + y_local},
             1.2,
@@ -6744,21 +6909,21 @@ draw_rounded_inset :: proc(bounds: rl.Rectangle, corner_radius: f32, color: rl.C
     }
 }
 
-draw_rectangular_instrument_bezel :: proc(bounds: rl.Rectangle, radius: f32) -> rl.Rectangle {
+draw_rectangular_instrument_bezel :: proc(bounds: canvas2d.Rectangle, radius: f32) -> canvas2d.Rectangle {
     draw_rounded_inset(
         {x = bounds.x + 1.5, y = bounds.y + 2, width = bounds.width, height = bounds.height},
         radius,
         {r = 2, g = 8, b = 11, a = 235},
     )
     draw_rounded_inset(bounds, radius, {r = 45, g = 60, b = 62, a = 255})
-    metal_bounds := rl.Rectangle {
+    metal_bounds := canvas2d.Rectangle {
         x      = bounds.x + 2,
         y      = bounds.y + 2,
         width  = bounds.width - 4,
         height = bounds.height - 4,
     }
     draw_rounded_inset(metal_bounds, max(radius - 2, f32(1)), {r = 104, g = 132, b = 132, a = 235})
-    face_bounds := rl.Rectangle {
+    face_bounds := canvas2d.Rectangle {
         x      = bounds.x + 4,
         y      = bounds.y + 4,
         width  = bounds.width - 8,
@@ -6769,7 +6934,7 @@ draw_rectangular_instrument_bezel :: proc(bounds: rl.Rectangle, radius: f32) -> 
 }
 
 draw_instrument_dial :: proc(
-    center: rl.Vector2,
+    center: canvas2d.Vector2,
     radius: f32,
     label: cstring,
     value, minimum, maximum: f32,
@@ -6779,13 +6944,13 @@ draw_instrument_dial :: proc(
     range_end: f32 = -1,
     reference_value: f32 = -1,
 ) {
-    mark := rl.Color {
+    mark := canvas2d.Color {
         r = 232,
         g = 247,
         b = 245,
         a = 255,
     }
-    accent := rl.Color {
+    accent := canvas2d.Color {
         r = 239,
         g = 203,
         b = 111,
@@ -6796,10 +6961,10 @@ draw_instrument_dial :: proc(
     sweep_range := f32(math.PI * 1.5)
     for tick in 0 ..= 14 {
         angle := sweep_start + f32(tick) / 14 * sweep_range
-        outer := rl.Vector2{center.x + math.cos(angle) * (radius - 7), center.y + math.sin(angle) * (radius - 7)}
+        outer := canvas2d.Vector2{center.x + math.cos(angle) * (radius - 7), center.y + math.sin(angle) * (radius - 7)}
         major := tick % 7 == 0
         inner_radius := radius - (major ? f32(18) : f32(13))
-        inner := rl.Vector2{center.x + math.cos(angle) * inner_radius, center.y + math.sin(angle) * inner_radius}
+        inner := canvas2d.Vector2{center.x + math.cos(angle) * inner_radius, center.y + math.sin(angle) * inner_radius}
         draw_antialiased_line(inner, outer, major ? f32(2.6) : f32(1.5), mark)
     }
     if reference_value >= minimum && reference_value <= maximum {
@@ -6807,11 +6972,11 @@ draw_instrument_dial :: proc(
         reference_angle := sweep_start + reference_fraction * sweep_range
         reference_outer_radius := radius - 6
         reference_inner_radius := radius - 16
-        reference_outer := rl.Vector2 {
+        reference_outer := canvas2d.Vector2 {
             center.x + math.cos(reference_angle) * reference_outer_radius,
             center.y + math.sin(reference_angle) * reference_outer_radius,
         }
-        reference_inner := rl.Vector2 {
+        reference_inner := canvas2d.Vector2 {
             center.x + math.cos(reference_angle) * reference_inner_radius,
             center.y + math.sin(reference_angle) * reference_inner_radius,
         }
@@ -6823,21 +6988,24 @@ draw_instrument_dial :: proc(
         start_fraction := clamp((range_start - minimum) / max(maximum - minimum, f32(.001)), 0, 1)
         end_fraction := clamp((range_end - minimum) / max(maximum - minimum, f32(.001)), 0, 1)
         band_radius := radius - 19
-        band_color := rl.Color {
+        band_color := canvas2d.Color {
             r = 92,
             g = 219,
             b = 213,
             a = 180,
         }
         previous_angle := sweep_start + start_fraction * sweep_range
-        previous := rl.Vector2 {
+        previous := canvas2d.Vector2 {
             center.x + math.cos(previous_angle) * band_radius,
             center.y + math.sin(previous_angle) * band_radius,
         }
         for segment in 1 ..= 14 {
             fraction := start_fraction + (end_fraction - start_fraction) * f32(segment) / 14
             angle := sweep_start + fraction * sweep_range
-            point := rl.Vector2{center.x + math.cos(angle) * band_radius, center.y + math.sin(angle) * band_radius}
+            point := canvas2d.Vector2 {
+                center.x + math.cos(angle) * band_radius,
+                center.y + math.sin(angle) * band_radius,
+            }
             draw_antialiased_line(previous, point, 2, band_color)
             previous = point
         }
@@ -6850,8 +7018,8 @@ draw_instrument_dial :: proc(
         angle := sweep_start + scale_fractions[index] * sweep_range
         anchor_radius := radius - 20
         text := fmt.ctprintf("%.0f", scale_values[index])
-        size := rl.MeasureTextEx(rl.Font{}, text, 9, 0)
-        position := rl.Vector2 {
+        size := canvas2d.MeasureTextEx(canvas2d.Font{}, text, 9, 0)
+        position := canvas2d.Vector2 {
             center.x + math.cos(angle) * anchor_radius - size.x * .5,
             center.y + math.sin(angle) * anchor_radius - size.y * .5,
         }
@@ -6860,11 +7028,11 @@ draw_instrument_dial :: proc(
     fraction := clamp((value - minimum) / max(f32(.001), maximum - minimum), 0, 1)
     needle_angle := sweep_start + fraction * sweep_range
     needle_length := radius - 23
-    needle_end := rl.Vector2 {
+    needle_end := canvas2d.Vector2 {
         center.x + math.cos(needle_angle) * needle_length,
         center.y + math.sin(needle_angle) * needle_length,
     }
-    needle_shadow := rl.Color {
+    needle_shadow := canvas2d.Color {
         r = 1,
         g = 7,
         b = 10,
@@ -6877,49 +7045,49 @@ draw_instrument_dial :: proc(
         needle_shadow,
     )
     draw_antialiased_line(center, needle_end, 3.5, accent)
-    counterweight := rl.Vector2{center.x - math.cos(needle_angle) * 10, center.y - math.sin(needle_angle) * 10}
+    counterweight := canvas2d.Vector2{center.x - math.cos(needle_angle) * 10, center.y - math.sin(needle_angle) * 10}
     draw_antialiased_line(center, counterweight, 2.4, accent)
     draw_antialiased_disc(center, 6.2, needle_shadow)
     draw_antialiased_disc(center, 4.2, accent)
-    label_size := rl.MeasureTextEx(rl.Font{}, label, 14, 1)
-    value_size := rl.MeasureTextEx(rl.Font{}, value_text, 18, 1)
+    label_size := canvas2d.MeasureTextEx(canvas2d.Font{}, label, 14, 1)
+    value_size := canvas2d.MeasureTextEx(canvas2d.Font{}, value_text, 18, 1)
     draw_instrument_text(label, {center.x - label_size.x * .5, center.y - 18}, 14, 1, mark)
     draw_instrument_text(value_text, {center.x - value_size.x * .5, center.y + value_y_offset}, 18, 1, accent)
     draw_instrument_glass(center, radius)
 }
 
-draw_attitude_indicator :: proc(center: rl.Vector2, radius, pitch, bank: f32) {
-    sky := rl.Color {
+draw_attitude_indicator :: proc(center: canvas2d.Vector2, radius, pitch, bank: f32) {
+    sky := canvas2d.Color {
         r = 35,
         g = 91,
         b = 128,
         a = 255,
     }
-    sky_horizon := rl.Color {
+    sky_horizon := canvas2d.Color {
         r = 74,
         g = 158,
         b = 184,
         a = 255,
     }
-    earth := rl.Color {
+    earth := canvas2d.Color {
         r = 91,
         g = 57,
         b = 37,
         a = 255,
     }
-    earth_horizon := rl.Color {
+    earth_horizon := canvas2d.Color {
         r = 163,
         g = 111,
         b = 62,
         a = 255,
     }
-    mark := rl.Color {
+    mark := canvas2d.Color {
         r = 240,
         g = 248,
         b = 235,
         a = 255,
     }
-    accent := rl.Color {
+    accent := canvas2d.Color {
         r = 239,
         g = 203,
         b = 111,
@@ -6938,20 +7106,20 @@ draw_attitude_indicator :: proc(center: rl.Vector2, radius, pitch, bank: f32) {
     for scan in 0 ..< scan_count {
         card_y := -inner_radius + (f32(scan) + .5) * inner_radius * 2 / f32(scan_count)
         half_chord := f32(math.sqrt(f64(max(inner_radius * inner_radius - card_y * card_y, 0))))
-        line_center := rl.Vector2{center.x + s * card_y, center.y - c * card_y}
-        left := rl.Vector2{line_center.x - c * half_chord, line_center.y - s * half_chord}
-        right := rl.Vector2{line_center.x + c * half_chord, line_center.y + s * half_chord}
+        line_center := canvas2d.Vector2{center.x + s * card_y, center.y - c * card_y}
+        left := canvas2d.Vector2{line_center.x - c * half_chord, line_center.y - s * half_chord}
+        right := canvas2d.Vector2{line_center.x + c * half_chord, line_center.y + s * half_chord}
         distance_from_horizon := clamp(math.abs(card_y - pitch_offset) / max(inner_radius * .85, f32(1)), 0, 1)
         card_color := color_lerp(earth_horizon, earth, distance_from_horizon)
         if card_y >= pitch_offset {
             card_color = color_lerp(sky_horizon, sky, distance_from_horizon)
         }
-        rl.DrawLineEx(left, right, 1.35, card_color)
+        canvas2d.DrawLineEx(left, right, 1.35, card_color)
     }
 
-    tangent := rl.Vector2{c, s}
-    normal := rl.Vector2{s, -c}
-    horizon_center := rl.Vector2{center.x + normal.x * pitch_offset, center.y + normal.y * pitch_offset}
+    tangent := canvas2d.Vector2{c, s}
+    normal := canvas2d.Vector2{s, -c}
+    horizon_center := canvas2d.Vector2{center.x + normal.x * pitch_offset, center.y + normal.y * pitch_offset}
     horizon_half := f32(math.sqrt(f64(max(inner_radius * inner_radius - pitch_offset * pitch_offset, 0))))
     draw_antialiased_line(
         {horizon_center.x - tangent.x * horizon_half, horizon_center.y - tangent.y * horizon_half},
@@ -6967,7 +7135,7 @@ draw_attitude_indicator :: proc(center: rl.Vector2, radius, pitch, bank: f32) {
         ladder_y := pitch_offset + f32(step) * ladder_spacing
         if math.abs(ladder_y) >= inner_radius - 8 do continue
         ladder_half := (step % 2 == 0 ? f32(16) : f32(10)) * scale
-        ladder_center := rl.Vector2{center.x + normal.x * ladder_y, center.y + normal.y * ladder_y}
+        ladder_center := canvas2d.Vector2{center.x + normal.x * ladder_y, center.y + normal.y * ladder_y}
         draw_antialiased_line(
             {ladder_center.x - tangent.x * ladder_half, ladder_center.y - tangent.y * ladder_half},
             {ladder_center.x + tangent.x * ladder_half, ladder_center.y + tangent.y * ladder_half},
@@ -6981,8 +7149,8 @@ draw_attitude_indicator :: proc(center: rl.Vector2, radius, pitch, bank: f32) {
     bank_marks := [5]f32{-60, -30, 0, 30, 60}
     for degrees in bank_marks {
         angle := -math.PI * .5 + degrees * math.PI / 180
-        outer := rl.Vector2{center.x + math.cos(angle) * (radius - 7), center.y + math.sin(angle) * (radius - 7)}
-        inner := rl.Vector2 {
+        outer := canvas2d.Vector2{center.x + math.cos(angle) * (radius - 7), center.y + math.sin(angle) * (radius - 7)}
+        inner := canvas2d.Vector2 {
             center.x + math.cos(angle) * (radius - (degrees == 0 ? f32(16) : f32(12))),
             center.y + math.sin(angle) * (radius - (degrees == 0 ? f32(16) : f32(12))),
         }
@@ -6991,8 +7159,8 @@ draw_attitude_indicator :: proc(center: rl.Vector2, radius, pitch, bank: f32) {
 
     // The white chevron belongs to the moving card. Against the fixed bank
     // scale it gives an immediate, mechanical read of roll direction.
-    bank_tip := rl.Vector2{center.x + normal.x * (radius - 15), center.y + normal.y * (radius - 15)}
-    bank_base := rl.Vector2{center.x + normal.x * (radius - 23), center.y + normal.y * (radius - 23)}
+    bank_tip := canvas2d.Vector2{center.x + normal.x * (radius - 15), center.y + normal.y * (radius - 15)}
+    bank_base := canvas2d.Vector2{center.x + normal.x * (radius - 23), center.y + normal.y * (radius - 23)}
     draw_antialiased_line({bank_base.x - tangent.x * 4, bank_base.y - tangent.y * 4}, bank_tip, 1.8, mark)
     draw_antialiased_line(bank_tip, {bank_base.x + tangent.x * 4, bank_base.y + tangent.y * 4}, 1.8, mark)
 
@@ -7038,16 +7206,16 @@ compass_tick_label :: proc(degrees: int) -> cstring {
     }
 }
 
-draw_heading_compass :: proc(center: rl.Vector2, width, heading_degrees: f32) {
+draw_heading_compass :: proc(center: canvas2d.Vector2, width, heading_degrees: f32) {
     height := f32(42)
-    outer := rl.Rectangle {
+    outer := canvas2d.Rectangle {
         x      = center.x - width * .5,
         y      = center.y - height * .5,
         width  = width,
         height = height,
     }
     face := draw_rectangular_instrument_bezel(outer, 8)
-    accent := rl.Color {
+    accent := canvas2d.Color {
         r = 239,
         g = 203,
         b = 111,
@@ -7067,10 +7235,10 @@ draw_heading_compass :: proc(center: rl.Vector2, width, heading_degrees: f32) {
         draw_antialiased_line({x, tick_top}, {x, face.y + 13}, major ? f32(1.8) : f32(1), {220, 239, 238, 255})
         if major {
             label := compass_tick_label(tick_heading)
-            label_size := rl.MeasureTextEx(rl.Font{}, label, 11, 1)
+            label_size := canvas2d.MeasureTextEx(canvas2d.Font{}, label, 11, 1)
             normalized := tick_heading % 360
             if normalized < 0 do normalized += 360
-            label_color := normalized % 90 == 0 ? accent : rl.Color{235, 248, 246, 255}
+            label_color := normalized % 90 == 0 ? accent : canvas2d.Color{235, 248, 246, 255}
             draw_instrument_text(label, {x - label_size.x * .5, face.y + 15}, 11, 1, label_color)
         }
     }
@@ -7091,7 +7259,7 @@ draw_heading_compass :: proc(center: rl.Vector2, width, heading_degrees: f32) {
 draw_throttle_overlay :: proc(editor: ^Editor, width, height: i32, power: f32) {
     if editor == nil do return
     normalized := clamp(power, 0, 1)
-    now := rl.GetTime()
+    now := canvas2d.GetTime()
     if !editor.flight_throttle_overlay_initialized {
         editor.flight_throttle_overlay_value = normalized
         editor.flight_throttle_overlay_changed_at = now
@@ -7114,14 +7282,14 @@ draw_throttle_overlay :: proc(editor: ^Editor, width, height: i32, power: f32) {
 
     overlay_height := min(f32(height) * .68, f32(500))
     overlay_width := f32(52)
-    outer := rl.Rectangle {
+    outer := canvas2d.Rectangle {
         x      = f32(width) - overlay_width - 22,
         y      = (f32(height) - overlay_height) * .5,
         width  = overlay_width,
         height = overlay_height,
     }
     draw_rounded_inset(outer, 15, {r = 3, g = 12, b = 18, a = u8(f32(alpha) * .72)})
-    edge := rl.Color {
+    edge := canvas2d.Color {
         r = 104,
         g = 132,
         b = 132,
@@ -7143,7 +7311,7 @@ draw_throttle_overlay :: proc(editor: ^Editor, width, height: i32, power: f32) {
     fill_color := color_lerp({r = 190, g = 132, b = 67, a = 255}, {r = 246, g = 211, b = 111, a = 255}, normalized)
     fill_color.a = alpha
     draw_antialiased_line({track_x, track_bottom}, {track_x, level_y}, 5, fill_color)
-    tick_color := rl.Color {
+    tick_color := canvas2d.Color {
         r = 190,
         g = 211,
         b = 207,
@@ -7166,9 +7334,9 @@ draw_throttle_overlay :: proc(editor: ^Editor, width, height: i32, power: f32) {
     draw_antialiased_line({track_x - 12, level_y}, {track_x + 12, level_y}, 4, fill_color)
     label: cstring = "THR"
     value := fmt.ctprintf("%.0f%%", normalized * 100)
-    label_size := rl.MeasureTextEx(rl.Font{}, label, 11, 1)
-    value_size := rl.MeasureTextEx(rl.Font{}, value, 13, 1)
-    text_color := rl.Color {
+    label_size := canvas2d.MeasureTextEx(canvas2d.Font{}, label, 11, 1)
+    value_size := canvas2d.MeasureTextEx(canvas2d.Font{}, value, 13, 1)
+    text_color := canvas2d.Color {
         r = 231,
         g = 245,
         b = 243,
@@ -7178,17 +7346,17 @@ draw_throttle_overlay :: proc(editor: ^Editor, width, height: i32, power: f32) {
     draw_instrument_text(value, {track_x - value_size.x * .5, outer.y + outer.height - 21}, 13, 1, fill_color)
 }
 
-draw_vsi_inset :: proc(center: rl.Vector2, radius, vertical_speed: f32) {
+draw_vsi_inset :: proc(center: canvas2d.Vector2, radius, vertical_speed: f32) {
     track_x := center.x + radius * .55
     track_half_height := radius * .34
-    capsule := rl.Rectangle {
+    capsule := canvas2d.Rectangle {
         x      = track_x - 10,
         y      = center.y - track_half_height - 5,
         width  = 20,
         height = track_half_height * 2 + 10,
     }
     draw_rounded_inset(capsule, 8, {r = 45, g = 60, b = 62, a = 245})
-    face := rl.Rectangle {
+    face := canvas2d.Rectangle {
         x      = capsule.x + 2,
         y      = capsule.y + 2,
         width  = capsule.width - 4,
@@ -7196,13 +7364,13 @@ draw_vsi_inset :: proc(center: rl.Vector2, radius, vertical_speed: f32) {
     }
     draw_rounded_inset(face, 6, {r = 5, g = 17, b = 24, a = 255})
 
-    track := rl.Color {
+    track := canvas2d.Color {
         r = 126,
         g = 164,
         b = 168,
         a = 210,
     }
-    climb := rl.Color {
+    climb := canvas2d.Color {
         r = 92,
         g = 219,
         b = 213,
@@ -7221,7 +7389,7 @@ draw_vsi_inset :: proc(center: rl.Vector2, radius, vertical_speed: f32) {
     // Keep the signed rate close to its pointer rather than laying a second
     // line of text across the altimeter's main scale.
     readout := fmt.ctprintf("%+.0f", vertical_speed)
-    readout_size := rl.MeasureTextEx(rl.Font{}, readout, 8, 0)
+    readout_size := canvas2d.MeasureTextEx(canvas2d.Font{}, readout, 8, 0)
     readout_y := clamp(end_y - 5, capsule.y + 5, capsule.y + capsule.height - 12)
     draw_instrument_text(readout, {capsule.x - readout_size.x - 3, readout_y}, 8, 0, climb)
 }
@@ -7231,7 +7399,7 @@ draw_rondine_instruments :: proc(editor: ^Editor, width, height: i32) {
     panel_height := f32(68)
     panel_left := f32(width) * .5 - panel_width * .5
     panel_top := f32(height) - panel_height - 14
-    panel := rl.Rectangle{panel_left, panel_top, panel_width, panel_height}
+    panel := canvas2d.Rectangle{panel_left, panel_top, panel_width, panel_height}
     draw_flight_console_panel(panel, 34, {r = 10, g = 25, b = 27, a = 238})
 
     labels := [5]cstring{"SPEED", "SKIM", "SLIP", "DRIFT", "THROTTLE"}
@@ -7254,23 +7422,37 @@ draw_rondine_instruments :: proc(editor: ^Editor, width, height: i32) {
                 {94, 130, 127, 130},
             )
         }
-        label_size := rl.MeasureTextEx(rl.Font{}, label, 9, .5)
-        value_size := rl.MeasureTextEx(rl.Font{}, values[index], 17, .5)
-        rl.DrawTextEx(rl.Font{}, label, {x - label_size.x * .5, panel_top + 12}, 9, .5, {150, 192, 187, 255})
-        rl.DrawTextEx(rl.Font{}, values[index], {x - value_size.x * .5, panel_top + 32}, 17, .5, {242, 221, 154, 255})
+        label_size := canvas2d.MeasureTextEx(canvas2d.Font{}, label, 9, .5)
+        value_size := canvas2d.MeasureTextEx(canvas2d.Font{}, values[index], 17, .5)
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
+            label,
+            {x - label_size.x * .5, panel_top + 12},
+            9,
+            .5,
+            {150, 192, 187, 255},
+        )
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
+            values[index],
+            {x - value_size.x * .5, panel_top + 32},
+            17,
+            .5,
+            {242, 221, 154, 255},
+        )
     }
 }
 
-bomber_hud_ring :: proc(center: rl.Vector2, radius, line_width: f32, color: rl.Color) {
+bomber_hud_ring :: proc(center: canvas2d.Vector2, radius, line_width: f32, color: canvas2d.Color) {
     segments :: 64
-    previous := rl.Vector2{center.x + radius, center.y}
+    previous := canvas2d.Vector2{center.x + radius, center.y}
     for segment in 1 ..= segments {
         angle := f32(segment) / f32(segments) * f32(math.PI * 2)
-        next := rl.Vector2 {
+        next := canvas2d.Vector2 {
             center.x + f32(math.cos(f64(angle))) * radius,
             center.y + f32(math.sin(f64(angle))) * radius,
         }
-        rl.DrawLineEx(previous, next, line_width, color)
+        canvas2d.DrawLineEx(previous, next, line_width, color)
         previous = next
     }
 }
@@ -7283,24 +7465,24 @@ bomber_hud_draw :: proc(editor: ^Editor, width, height: i32) {
        !editor.gameplay_options.show_hud {
         return
     }
-    center := rl.Vector2{f32(width) * .5, f32(height) * .5}
+    center := canvas2d.Vector2{f32(width) * .5, f32(height) * .5}
     radius := clamp(min(f32(width), f32(height)) * .17, f32(92), f32(155))
-    sight := rl.Color{232, 224, 170, 225}
-    shadow := rl.Color{9, 24, 25, 180}
+    sight := canvas2d.Color{232, 224, 170, 225}
+    shadow := canvas2d.Color{9, 24, 25, 180}
     bomber_hud_ring(center, radius + 1, 3, shadow)
     bomber_hud_ring(center, radius, 1.5, sight)
     bomber_hud_ring(center, radius * .42, 1.5, sight)
-    rl.DrawLineEx({center.x - radius, center.y}, {center.x - 16, center.y}, 3, shadow)
-    rl.DrawLineEx({center.x + 16, center.y}, {center.x + radius, center.y}, 3, shadow)
-    rl.DrawLineEx({center.x, center.y - radius}, {center.x, center.y - 16}, 3, shadow)
-    rl.DrawLineEx({center.x, center.y + 16}, {center.x, center.y + radius}, 3, shadow)
-    rl.DrawLineEx({center.x - radius, center.y}, {center.x - 16, center.y}, 1.5, sight)
-    rl.DrawLineEx({center.x + 16, center.y}, {center.x + radius, center.y}, 1.5, sight)
-    rl.DrawLineEx({center.x, center.y - radius}, {center.x, center.y - 16}, 1.5, sight)
-    rl.DrawLineEx({center.x, center.y + 16}, {center.x, center.y + radius}, 1.5, sight)
+    canvas2d.DrawLineEx({center.x - radius, center.y}, {center.x - 16, center.y}, 3, shadow)
+    canvas2d.DrawLineEx({center.x + 16, center.y}, {center.x + radius, center.y}, 3, shadow)
+    canvas2d.DrawLineEx({center.x, center.y - radius}, {center.x, center.y - 16}, 3, shadow)
+    canvas2d.DrawLineEx({center.x, center.y + 16}, {center.x, center.y + radius}, 3, shadow)
+    canvas2d.DrawLineEx({center.x - radius, center.y}, {center.x - 16, center.y}, 1.5, sight)
+    canvas2d.DrawLineEx({center.x + 16, center.y}, {center.x + radius, center.y}, 1.5, sight)
+    canvas2d.DrawLineEx({center.x, center.y - radius}, {center.x, center.y - 16}, 1.5, sight)
+    canvas2d.DrawLineEx({center.x, center.y + 16}, {center.x, center.y + radius}, 1.5, sight)
     ready := editor.bomber_drop_cooldown <= 0
-    ready_color := ready ? rl.Color{111, 225, 174, 245} : rl.Color{236, 190, 102, 230}
-    rl.DrawCircleV(center, ready ? f32(4.5) : f32(3.5), ready_color)
+    ready_color := ready ? canvas2d.Color{111, 225, 174, 245} : canvas2d.Color{236, 190, 102, 230}
+    canvas2d.DrawCircleV(center, ready ? f32(4.5) : f32(3.5), ready_color)
     if editor.bomber_release_flash > 0 {
         release_radius := 12 + (1 - editor.bomber_release_flash) * 34
         release_alpha := u8(clamp(editor.bomber_release_flash * 235, 0, 235))
@@ -7318,23 +7500,26 @@ bomber_hud_draw :: proc(editor: ^Editor, width, height: i32) {
     if drift_distance > .1 {
         camera := perspective_camera(bomber_camera_pose(editor), editor.flight_camera.focal_length)
         still_projection := project_3d(camera, still_air_impact, width, height)
-        correction := rl.Vector2{center.x - still_projection.position.x, center.y - still_projection.position.y}
+        correction := canvas2d.Vector2{center.x - still_projection.position.x, center.y - still_projection.position.y}
         correction_length := f32(math.sqrt_f64(f64(correction.x * correction.x + correction.y * correction.y)))
         if correction_length > .01 {
-            direction := rl.Vector2{correction.x / correction_length, correction.y / correction_length}
+            direction := canvas2d.Vector2{correction.x / correction_length, correction.y / correction_length}
             arrow_length := min(max(drift_distance * 1.15, f32(18)), radius * .72)
-            arrow_start := rl.Vector2{center.x - direction.x * arrow_length, center.y - direction.y * arrow_length}
-            arrow_end := rl.Vector2{center.x - direction.x * 9, center.y - direction.y * 9}
-            arrow_side := rl.Vector2{-direction.y, direction.x}
-            rl.DrawLineEx(arrow_start, arrow_end, 4, shadow)
-            rl.DrawLineEx(arrow_start, arrow_end, 2, {104, 210, 205, 235})
-            rl.DrawLineEx(
+            arrow_start := canvas2d.Vector2 {
+                center.x - direction.x * arrow_length,
+                center.y - direction.y * arrow_length,
+            }
+            arrow_end := canvas2d.Vector2{center.x - direction.x * 9, center.y - direction.y * 9}
+            arrow_side := canvas2d.Vector2{-direction.y, direction.x}
+            canvas2d.DrawLineEx(arrow_start, arrow_end, 4, shadow)
+            canvas2d.DrawLineEx(arrow_start, arrow_end, 2, {104, 210, 205, 235})
+            canvas2d.DrawLineEx(
                 arrow_end,
                 {arrow_end.x - direction.x * 12 + arrow_side.x * 7, arrow_end.y - direction.y * 12 + arrow_side.y * 7},
                 2,
                 {104, 210, 205, 235},
             )
-            rl.DrawLineEx(
+            canvas2d.DrawLineEx(
                 arrow_end,
                 {arrow_end.x - direction.x * 12 - arrow_side.x * 7, arrow_end.y - direction.y * 12 - arrow_side.y * 7},
                 2,
@@ -7351,19 +7536,19 @@ bomber_hud_draw :: proc(editor: ^Editor, width, height: i32) {
         drift_distance,
         distance,
     )
-    size := rl.MeasureTextEx(rl.Font{}, label, 14, .7)
-    panel := rl.Rectangle{26, center.y - radius - 52, size.x + 28, 34}
-    rl.DrawRectangleRounded(panel, .25, 8, {9, 25, 28, 220})
-    rl.DrawRectangleRoundedLinesEx(panel, .25, 8, 1, {126, 152, 136, 220})
-    rl.DrawTextEx(rl.Font{}, label, {panel.x + 14, panel.y + 9}, 14, .7, sight)
+    size := canvas2d.MeasureTextEx(canvas2d.Font{}, label, 14, .7)
+    panel := canvas2d.Rectangle{26, center.y - radius - 52, size.x + 28, 34}
+    canvas2d.DrawRectangleRounded(panel, .25, 8, {9, 25, 28, 220})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .25, 8, 1, {126, 152, 136, 220})
+    canvas2d.DrawTextEx(canvas2d.Font{}, label, {panel.x + 14, panel.y + 9}, 14, .7, sight)
 
     if tracked := bomber_pip_drop(editor); tracked != nil {
         pip := bomber_pip_layout(f32(width), f32(height))
         pip_width, pip_height := pip.width, pip.height
         pip_x, pip_y := pip.x, pip.y
-        border := rl.Rectangle{pip_x - 3, pip_y - 3, pip_width + 6, pip_height + 6}
-        rl.DrawRectangleRoundedLinesEx(border, .035, 8, 3, {8, 20, 22, 235})
-        rl.DrawRectangleRoundedLinesEx({pip_x - 1, pip_y - 1, pip_width + 2, pip_height + 2}, .035, 8, 1, sight)
+        border := canvas2d.Rectangle{pip_x - 3, pip_y - 3, pip_width + 6, pip_height + 6}
+        canvas2d.DrawRectangleRoundedLinesEx(border, .035, 8, 3, {8, 20, 22, 235})
+        canvas2d.DrawRectangleRoundedLinesEx({pip_x - 1, pip_y - 1, pip_width + 2, pip_height + 2}, .035, 8, 1, sight)
         airborne_count := 0
         for drop in editor.bomber_drops[:editor.bomber_drop_count] {
             if !drop.landed do airborne_count += 1
@@ -7382,17 +7567,22 @@ bomber_hud_draw :: proc(editor: ^Editor, width, height: i32) {
             bomber_drop_eta(editor, tracked),
             airborne_count,
         )
-        rl.DrawRectangle(i32(pip_x), i32(pip_y), i32(pip_width), 26, {8, 23, 25, 205})
-        rl.DrawTextEx(rl.Font{}, pip_label, {pip_x + 10, pip_y + 7}, 12, .6, sight)
+        canvas2d.DrawRectangle(i32(pip_x), i32(pip_y), i32(pip_width), 26, {8, 23, 25, 205})
+        canvas2d.DrawTextEx(canvas2d.Font{}, pip_label, {pip_x + 10, pip_y + 7}, 12, .6, sight)
     }
     if editor.bomber_touchdown_flash > 0 {
         touchdown_alpha := u8(clamp(editor.bomber_touchdown_flash * 255, 0, 255))
         touchdown_label := fmt.ctprintf("%s TOUCHDOWN", bomber_payload_label(editor.bomber_touchdown_kind))
-        touchdown_size := rl.MeasureTextEx(rl.Font{}, touchdown_label, 15, .7)
-        touchdown_panel := rl.Rectangle{f32(width) - touchdown_size.x - 128, 312, touchdown_size.x + 24, 32}
-        rl.DrawRectangleRounded(touchdown_panel, .22, 8, {22, 72, 61, u8(clamp(f32(touchdown_alpha) * .9, 0, 230))})
-        rl.DrawTextEx(
-            rl.Font{},
+        touchdown_size := canvas2d.MeasureTextEx(canvas2d.Font{}, touchdown_label, 15, .7)
+        touchdown_panel := canvas2d.Rectangle{f32(width) - touchdown_size.x - 128, 312, touchdown_size.x + 24, 32}
+        canvas2d.DrawRectangleRounded(
+            touchdown_panel,
+            .22,
+            8,
+            {22, 72, 61, u8(clamp(f32(touchdown_alpha) * .9, 0, 230))},
+        )
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             touchdown_label,
             {touchdown_panel.x + 12, touchdown_panel.y + 8},
             15,
@@ -7466,11 +7656,17 @@ draw_aircraft_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f
     }
     airflow_speed := active_aircraft_apparent_airflow_speed(editor)
     intensity := air_effects.streak_strength(airflow_speed)
+    // The speed overlay is composited after the 3D world, so fragment fog
+    // cannot attenuate it. Fade it with atmospheric visibility instead of
+    // drawing bright radial lanes over a fog-bank interior.
+    atmospheric_visibility :=
+        1 - clamp(editor.atmosphere.weather.haze * 2.0 + editor.atmosphere.weather.precipitation * 1.5, 0, 1)
+    intensity *= atmospheric_visibility
     if intensity <= .001 do return
 
     body := active_aircraft_body(editor)
     short_side := min(f32(width), f32(height))
-    center := rl.Vector2 {
+    center := canvas2d.Vector2 {
         x = f32(width) * .5,
         y = f32(height) * .46,
     }
@@ -7525,8 +7721,8 @@ draw_aircraft_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f
             outer_amount := f32(segment + 1) / f32(trail_segments)
             start_distance := distance + streak_length * inner_amount
             finish_distance := distance + streak_length * outer_amount
-            start := rl.Vector2{center.x + ray_x * start_distance, center.y + ray_y * start_distance}
-            finish := rl.Vector2{center.x + ray_x * finish_distance, center.y + ray_y * finish_distance}
+            start := canvas2d.Vector2{center.x + ray_x * start_distance, center.y + ray_y * start_distance}
+            finish := canvas2d.Vector2{center.x + ray_x * finish_distance, center.y + ray_y * finish_distance}
             segment_alpha := u8(clamp(f32(alpha) * (.28 + outer_amount * .72), 0, 126))
             segment_width := (.85 + intensity * 1.55) * (.70 + outer_amount * .30)
             // Speed is a warm, screen-space effect radiating from the flight
@@ -7534,13 +7730,13 @@ draw_aircraft_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f
             // one luminous streak instead of a flat UI line; wind remains
             // cool and world-aligned.
             body_alpha := u8(clamp(f32(segment_alpha) * .48, 0, 72))
-            rl.DrawLineEx(start, finish, segment_width + .9, {205, 174, 108, body_alpha})
-            rl.DrawLineEx(start, finish, max(segment_width * .42, f32(.65)), {255, 235, 181, segment_alpha})
+            canvas2d.DrawLineEx(start, finish, segment_width + .9, {205, 174, 108, body_alpha})
+            canvas2d.DrawLineEx(start, finish, max(segment_width * .42, f32(.65)), {255, 235, 181, segment_alpha})
         }
         head_distance := distance + streak_length
-        head := rl.Vector2{center.x + ray_x * head_distance, center.y + ray_y * head_distance}
+        head := canvas2d.Vector2{center.x + ray_x * head_distance, center.y + ray_y * head_distance}
         head_alpha := u8(clamp(f32(alpha) * .82, 0, 138))
-        rl.DrawCircleV(head, .7 + intensity * .72, {255, 235, 174, head_alpha})
+        canvas2d.DrawCircleV(head, .7 + intensity * .72, {255, 235, 174, head_alpha})
     }
 
 }
@@ -7578,14 +7774,14 @@ project_3d :: proc(camera: Perspective_Camera, point: third_person.Vec3, width, 
     }
 }
 
-world_under_cursor :: proc(mouse, center: rl.Vector2, scale: f32) -> (f32, f32) {
+world_under_cursor :: proc(mouse, center: canvas2d.Vector2, scale: f32) -> (f32, f32) {
     a := (mouse.x - center.x) / scale
     b := (mouse.y - center.y) / (scale * .46)
     return (a + b) * .5, (b - a) * .5
 }
 
 @(no_instrumentation)
-terrain_color_variation :: #force_inline proc(color: rl.Color, x, z: f32) -> rl.Color {
+terrain_color_variation :: #force_inline proc(color: canvas2d.Color, x, z: f32) -> canvas2d.Color {
     // Layer kilometre- and field-scale waves so whole slopes and headlands
     // develop distinct color regions. Feeding the continental field back into
     // the other phases bends their otherwise straight bands into broad,
@@ -7621,7 +7817,7 @@ dune_color_field :: #force_inline proc(x, z: f32) -> f32 {
 }
 
 @(no_instrumentation)
-dune_color_variation :: #force_inline proc(color: rl.Color, x, z: f32) -> rl.Color {
+dune_color_variation :: #force_inline proc(color: canvas2d.Color, x, z: f32) -> canvas2d.Color {
     variation := dune_color_field(x, z)
     warm := max(variation, f32(0))
     cool := max(-variation, f32(0))
@@ -7634,26 +7830,26 @@ dune_color_variation :: #force_inline proc(color: rl.Color, x, z: f32) -> rl.Col
 }
 
 @(no_instrumentation)
-terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> rl.Color {
-    water := rl.Color {
+terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> canvas2d.Color {
+    water := canvas2d.Color {
         r = 26,
         g = 80,
         b = 104,
         a = 255,
     }
-    sand := rl.Color {
+    sand := canvas2d.Color {
         r = 205,
         g = 183,
         b = 126,
         a = 255,
     }
-    soil := rl.Color {
+    soil := canvas2d.Color {
         r = 145,
         g = 101,
         b = 61,
         a = 255,
     }
-    grass := rl.Color {
+    grass := canvas2d.Color {
         r = 70,
         g = 133,
         b = 80,
@@ -7664,7 +7860,7 @@ terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> rl
         // Negative paint is a backward-compatible stabilized-sand mask used by
         // generated coastal dunes. -1 is active pale sand at any elevation;
         // values approaching zero reveal the ordinary elevation-driven cover.
-        natural: rl.Color
+        natural: canvas2d.Color
         elevation := height - sea_level
         if elevation < .9 {
             natural = color_lerp(sand, soil, clamp((elevation - .18) / .72, 0, 1))
@@ -7675,7 +7871,7 @@ terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> rl
         stabilization := clamp(painted + 1, 0, 1)
         natural_recovery := stabilization * (.55 + stabilization * .45)
         base := color_lerp(sand, natural, natural_recovery)
-        wet_sand := rl.Color{151, 139, 103, 255}
+        wet_sand := canvas2d.Color{151, 139, 103, 255}
         // Fine mottling is evaluated per fragment, but broad ecological
         // recovery stays in vertex colors so it meets ordinary terrain
         // continuously where the signed dune mask ends.
@@ -7700,26 +7896,31 @@ draw_line_3d :: proc(
     a, b: third_person.Vec3,
     width, height: i32,
     thickness: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     pa := project_3d(camera, a, width, height)
     pb := project_3d(camera, b, width, height)
-    if pa.visible && pb.visible do rl.DrawLineEx(pa.position, pb.position, thickness, color)
+    if pa.visible && pb.visible do canvas2d.DrawLineEx(pa.position, pb.position, thickness, color)
 }
 
-draw_quad_3d :: proc(camera: Perspective_Camera, a, b, c, d: third_person.Vec3, width, height: i32, color: rl.Color) {
+draw_quad_3d :: proc(
+    camera: Perspective_Camera,
+    a, b, c, d: third_person.Vec3,
+    width, height: i32,
+    color: canvas2d.Color,
+) {
     pa := project_3d(camera, a, width, height)
     pb := project_3d(camera, b, width, height)
     pc := project_3d(camera, c, width, height)
     pd := project_3d(camera, d, width, height)
     if pa.visible && pb.visible && pc.visible && pd.visible {
-        rl.DrawQuadHatched(pa.position, pb.position, pc.position, pd.position, color, rl.HATCH_DISABLED)
+        canvas2d.DrawQuadHatched(pa.position, pb.position, pc.position, pd.position, color, canvas2d.HATCH_DISABLED)
     }
 }
 
 world_under_cursor_3d :: proc(
     camera: Perspective_Camera,
-    mouse: rl.Vector2,
+    mouse: canvas2d.Vector2,
     width, height: i32,
     plane_height: f32,
 ) -> (
@@ -7753,7 +7954,7 @@ world_under_cursor_3d :: proc(
 terrain_under_cursor_3d :: proc(
     editor: ^Editor,
     camera: Perspective_Camera,
-    mouse: rl.Vector2,
+    mouse: canvas2d.Vector2,
     width, height: i32,
 ) -> (
     f32,
@@ -7814,18 +8015,18 @@ terrain_under_cursor_3d :: proc(
 
 update_editor_camera :: proc(editor: ^Editor, delta_seconds: f32) {
     if editor == nil do return
-    if editor_ui_hit(editor, rl.GetMousePosition(), rl.GetScreenWidth(), rl.GetScreenHeight()) do return
-    if rl.IsMouseButtonDown(.MIDDLE) {
-        mouse_delta := rl.GetMouseDelta()
+    if editor_ui_hit(editor, canvas2d.GetMousePosition(), canvas2d.GetScreenWidth(), canvas2d.GetScreenHeight()) do return
+    if canvas2d.IsMouseButtonDown(.MIDDLE) {
+        mouse_delta := canvas2d.GetMouseDelta()
         third_person.look(&editor.editor_camera, -mouse_delta.x, mouse_delta.y, .006)
     }
     if !imgui_captures_keyboard() {
         rotate_direction := f32(0)
-        if rl.IsKeyDown(.Q) do rotate_direction -= 1
-        if rl.IsKeyDown(.E) do rotate_direction += 1
+        if canvas2d.IsKeyDown(.Q) do rotate_direction -= 1
+        if canvas2d.IsKeyDown(.E) do rotate_direction += 1
         editor.editor_camera.yaw_radians += rotate_direction * 1.5 * delta_seconds
     }
-    wheel := rl.GetMouseWheelMove()
+    wheel := canvas2d.GetMouseWheelMove()
     if wheel != 0 && !shift_key_down() && !alt_key_down() {
         editor.editor_camera.distance = clamp(
             editor.editor_camera.distance * f32(math.pow(0.82, f64(wheel))),
@@ -7834,10 +8035,10 @@ update_editor_camera :: proc(editor: ^Editor, delta_seconds: f32) {
         )
     }
     move_x, move_z := f32(0), f32(0)
-    if rl.IsKeyDown(.D) do move_x += 1
-    if rl.IsKeyDown(.A) do move_x -= 1
-    if rl.IsKeyDown(.W) do move_z += 1
-    if rl.IsKeyDown(.S) do move_z -= 1
+    if canvas2d.IsKeyDown(.D) do move_x += 1
+    if canvas2d.IsKeyDown(.A) do move_x -= 1
+    if canvas2d.IsKeyDown(.W) do move_z += 1
+    if canvas2d.IsKeyDown(.S) do move_z -= 1
     yaw := editor.editor_camera.yaw_radians
     forward := third_person.Vec3{-math.sin(yaw), 0, -math.cos(yaw)}
     right := third_person.Vec3{math.cos(yaw), 0, -math.sin(yaw)}
@@ -7874,21 +8075,21 @@ draw_infrastructure_3d :: proc(editor: ^Editor, camera: Perspective_Camera, widt
 }
 
 draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
-    sky := atmosphere.sample(&editor.atmosphere)
-    horizon_day := rl.Color {
+    sky := atmosphere_sky(editor)
+    horizon_day := canvas2d.Color {
         r = 154,
         g = 205,
         b = 224,
         a = 255,
     }
-    horizon_night := rl.Color {
+    horizon_night := canvas2d.Color {
         r = 19,
         g = 28,
         b = 55,
         a = 255,
     }
     sky_color := color_lerp(horizon_night, horizon_day, sky.daylight)
-    storm_horizon := rl.Color {
+    storm_horizon := canvas2d.Color {
         r = 104,
         g = 122,
         b = 130,
@@ -7897,13 +8098,13 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
     sky_color = color_lerp(sky_color, storm_horizon, sky.weather.severity * .72)
     // The fallback extends the ocean beyond the finite detail mesh. Match the
     // lit water presentation so the near-plane edge never becomes visible.
-    ocean_color := rl.Color {
+    ocean_color := canvas2d.Color {
         r = 86,
         g = 146,
         b = 165,
         a = 255,
     }
-    rl.ClearBackground(ocean_color)
+    canvas2d.ClearBackground(ocean_color)
     camera := perspective_camera(editor.camera_pose)
     // Build terrain in camera-space order: far rows first give the canvas pass
     // stable painter's depth while each face is still perspective-projected.
@@ -7921,7 +8122,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
     )
     if horizon.visible {
         horizon_y := i32(clamp(horizon.position.y, 0, f32(height)))
-        rl.DrawRectangle(0, 0, width, horizon_y + 1, sky_color)
+        canvas2d.DrawRectangle(0, 0, width, horizon_y + 1, sky_color)
     }
     // Match the finest clipmap spacing. Sampling every other heightfield point
     // made nearby slopes visibly faceted and discarded half of the authored
@@ -7969,7 +8170,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                 (base_x + far_next_x) * .5,
                 (base_z + far_next_z) * .5,
             )
-            color := rl.Color {
+            color := canvas2d.Color {
                 r = u8(f32(base_color.r) * shade),
                 g = u8(f32(base_color.g) * shade),
                 b = u8(f32(base_color.b) * shade),
@@ -7978,7 +8179,14 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             average_depth := (p00.depth + p10.depth + p11.depth + p01.depth) * .25
             fog := clamp((average_depth - fog_start) / (fog_end - fog_start), 0, 1)
             color = color_lerp(color, sky_color, fog)
-            rl.DrawQuadHatched(p00.position, p10.position, p11.position, p01.position, color, rl.HATCH_DISABLED)
+            canvas2d.DrawQuadHatched(
+                p00.position,
+                p10.position,
+                p11.position,
+                p01.position,
+                color,
+                canvas2d.HATCH_DISABLED,
+            )
         }
     }
 
@@ -7987,13 +8195,13 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
     if editor.in_map && editor.pilot.mode == .On_Foot {
         // A compact articulated silhouette grounds the character in the 3D world.
         p := editor.player.position
-        body := rl.Color {
+        body := canvas2d.Color {
             r = 42,
             g = 213,
             b = 201,
             a = 255,
         }
-        skin := rl.Color {
+        skin := canvas2d.Color {
             r = 247,
             g = 221,
             b = 167,
@@ -8068,16 +8276,16 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             }
         }
         panel_width = min(panel_width, width - 28)
-        rl.DrawRectangle(14, 14, panel_width, 72, {r = 8, g = 28, b = 45, a = 210})
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawRectangle(14, 14, panel_width, 72, {r = 8, g = 28, b = 45, a = 210})
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             flying ? fmt.ctprintf("%s FLIGHT", vehicles.aircraft_kind_name(editor.aircraft.active)) : (in_car ? "DRIVING" : "ON FOOT"),
             {26, 25},
             19,
             1,
             {r = 211, g = 250, b = 242, a = 255},
         )
-        rl.DrawTextEx(rl.Font{}, help_text, {26, 49}, 13, 1, {r = 183, g = 219, b = 221, a = 255})
+        canvas2d.DrawTextEx(canvas2d.Font{}, help_text, {26, 49}, 13, 1, {r = 183, g = 219, b = 221, a = 255})
         if flying {
             aircraft_body := active_aircraft_body(editor)
             ground := postale_game.drivable_surface_height(
@@ -8091,14 +8299,21 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                 active_aircraft_airspeed(editor),
                 altitude,
             )
-            rl.DrawTextEx(rl.Font{}, fmt.ctprintf("%s", hud), {26, 68}, 13, 1, {r = 236, g = 239, b = 190, a = 255})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                fmt.ctprintf("%s", hud),
+                {26, 68},
+                13,
+                1,
+                {r = 236, g = 239, b = 190, a = 255},
+            )
             draw_flight_instruments(editor, width, height, altitude)
             crashed := editor.aircraft.active != .Postale ? editor.libellula.crashed : editor.postale.crashed
             if editor.aircraft.active == .Postale &&
                editor.postale.landing_feedback_seconds > 0 &&
                editor.postale.last_landing.outcome != .None {
                 landing := editor.postale.last_landing
-                color := rl.Color{92, 219, 213, 255}
+                color := canvas2d.Color{92, 219, 213, 255}
                 if landing.outcome == .Landed do color = {239, 203, 111, 255}
                 if landing.outcome == .Hard_Landing do color = {255, 151, 83, 255}
                 label := postale_game.landing_outcome_label(landing.outcome)
@@ -8108,16 +8323,16 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                     landing.impact_force / 1000,
                     editor.postale.structural_damage * 100,
                 )
-                label_size := rl.MeasureTextEx(rl.Font{}, label, 22, 1)
-                detail_size := rl.MeasureTextEx(rl.Font{}, detail, 13, 1)
-                rl.DrawTextEx(rl.Font{}, label, {f32(width) * .5 - label_size.x * .5, 28}, 22, 1, color)
-                rl.DrawTextEx(rl.Font{}, detail, {f32(width) * .5 - detail_size.x * .5, 54}, 13, 1, color)
+                label_size := canvas2d.MeasureTextEx(canvas2d.Font{}, label, 22, 1)
+                detail_size := canvas2d.MeasureTextEx(canvas2d.Font{}, detail, 13, 1)
+                canvas2d.DrawTextEx(canvas2d.Font{}, label, {f32(width) * .5 - label_size.x * .5, 28}, 22, 1, color)
+                canvas2d.DrawTextEx(canvas2d.Font{}, detail, {f32(width) * .5 - detail_size.x * .5, 54}, 13, 1, color)
             }
             if crashed {
-                rl.DrawRectangle(width / 2 - 155, height / 2 - 35, 310, 70, {r = 71, g = 18, b = 20, a = 225})
+                canvas2d.DrawRectangle(width / 2 - 155, height / 2 - 35, 310, 70, {r = 71, g = 18, b = 20, a = 225})
                 reset_key: cstring = controller_prompt_active(editor) ? controller_face_label(editor, .North) : "R"
-                rl.DrawTextEx(
-                    rl.Font{},
+                canvas2d.DrawTextEx(
+                    canvas2d.Font{},
                     fmt.ctprintf(
                         "%s CRASHED — PRESS %s TO RESET",
                         vehicles.aircraft_kind_name(editor.aircraft.active),
@@ -8129,8 +8344,8 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                     {r = 255, g = 221, b = 195, a = 255},
                 )
             } else if editor.aircraft.active == .Postale && editor.postale.telemetry.is_stalling {
-                rl.DrawTextEx(
-                    rl.Font{},
+                canvas2d.DrawTextEx(
+                    canvas2d.Font{},
                     "STALL",
                     {f32(width / 2 - 28), 28},
                     22,
@@ -8142,13 +8357,13 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             delta := (editor.player.position - editor.postale.vehicle.position)
             if linalg.dot(delta, delta) <=
                editor.postale.vehicle.interaction_radius * editor.postale.vehicle.interaction_radius {
-                rl.DrawRectangle(width / 2 - 116, height - 92, 232, 42, {r = 8, g = 28, b = 45, a = 220})
+                canvas2d.DrawRectangle(width / 2 - 116, height - 92, 232, 42, {r = 8, g = 28, b = 45, a = 220})
                 entry_prompt: cstring = "PRESS F TO ENTER POSTALE"
                 if controller_prompt_active(editor) {
                     entry_prompt = fmt.ctprintf("PRESS %s TO ENTER POSTALE", controller_face_label(editor, .West))
                 }
-                rl.DrawTextEx(
-                    rl.Font{},
+                canvas2d.DrawTextEx(
+                    canvas2d.Font{},
                     entry_prompt,
                     {f32(width / 2 - 99), f32(height - 77)},
                     15,
@@ -8160,7 +8375,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
     } else {
         world_x, world_z, hit := world_under_cursor_3d(
             camera,
-            rl.GetMousePosition(),
+            canvas2d.GetMousePosition(),
             width,
             height,
             terrain.DEFAULT_ISLAND_HEIGHT,
@@ -8180,12 +8395,12 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
                         ),
                     ),
                 )
-                rl.DrawCircleV(brush_center.position, brush_radius, {r = 230, g = 244, b = 218, a = 55})
+                canvas2d.DrawCircleV(brush_center.position, brush_radius, {r = 230, g = 244, b = 218, a = 55})
             }
         }
-        rl.DrawRectangle(14, 14, 520, 42, {r = 8, g = 28, b = 45, a = 210})
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawRectangle(14, 14, 520, 42, {r = 8, g = 28, b = 45, a = 210})
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             "WASD pan  Q/E rotate  Middle orbit  Wheel zoom  Shift+wheel strength  Left/Right brush",
             {26, 29},
             12,
@@ -8203,8 +8418,8 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
         weather_label,
         editor.atmosphere.paused ? " PAUSED" : "",
     )
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf("%s", clock),
         {f32(width) - 545, 18},
         13,
@@ -8214,19 +8429,19 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
 }
 
 draw_infinite_ocean :: proc(width, height: i32, time: f32) {
-    rl.ClearBackground({r = 14, g = 54, b = 79, a = 255})
+    canvas2d.ClearBackground({r = 14, g = 54, b = 79, a = 255})
     for row in 0 ..< 24 {
         y := f32(row) * f32(height) / 23
         phase := f32(math.sin(f64(time * .9 + f32(row) * .73)))
-        rl.DrawLineEx({0, y}, {f32(width), y + phase * 3}, 1, {r = 35, g = 102, b = 128, a = 110})
+        canvas2d.DrawLineEx({0, y}, {f32(width), y + phase * 3}, 1, {r = 35, g = 102, b = 128, a = 110})
     }
 }
 
-editor_palette_bounds :: proc() -> rl.Rectangle {
+editor_palette_bounds :: proc() -> canvas2d.Rectangle {
     return {x = 20, y = 116, width = 830, height = 38}
 }
 
-editor_palette_button_bounds :: proc(index: int) -> rl.Rectangle {
+editor_palette_button_bounds :: proc(index: int) -> canvas2d.Rectangle {
     palette := editor_palette_bounds()
     gap := f32(5)
     button_width := (palette.width - gap * 8) / 9
@@ -8260,16 +8475,16 @@ editor_palette_architecture_mode :: proc(index: int) -> bool { return index == 6
 editor_palette_climbing_leaves_mode :: proc(index: int) -> bool { return index == 7 }
 editor_palette_road_mode :: proc(index: int) -> bool { return index == 8 }
 
-editor_palette_index :: proc(position: rl.Vector2) -> int {
+editor_palette_index :: proc(position: canvas2d.Vector2) -> int {
     for index in 0 ..< 9 {
-        if rl.CheckCollisionPointRec(position, editor_palette_button_bounds(index)) do return index
+        if canvas2d.CheckCollisionPointRec(position, editor_palette_button_bounds(index)) do return index
     }
     return -1
 }
 
 draw_editor_palette :: proc(editor: ^Editor) {
     palette := editor_palette_bounds()
-    rl.DrawRectangleRounded(palette, .16, 8, {r = 8, g = 28, b = 45, a = 242})
+    canvas2d.DrawRectangleRounded(palette, .16, 8, {r = 8, g = 28, b = 45, a = 242})
     labels := [?]cstring {
         "SCULPT [Q]",
         "SMOOTH [E]",
@@ -8297,8 +8512,8 @@ draw_editor_palette :: proc(editor: ^Editor) {
                             !editor.architecture_paint_mode &&
                             !editor.climbing_leaf_paint_mode &&
                             !editor.road_mode))
-        hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), button)
-        fill: rl.Color = {
+        hovered := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), button)
+        fill: canvas2d.Color = {
             r = 18,
             g = 53,
             b = 67,
@@ -8316,7 +8531,7 @@ draw_editor_palette :: proc(editor: ^Editor) {
             b = 129,
             a = 255,
         }
-        border: rl.Color = {
+        border: canvas2d.Color = {
             r = 86,
             g = 153,
             b = 158,
@@ -8328,8 +8543,8 @@ draw_editor_palette :: proc(editor: ^Editor) {
             b = 242,
             a = 255,
         }
-        rl.DrawRectangleRounded(button, .14, 8, fill)
-        rl.DrawRectangleRoundedLinesEx(button, .14, 8, selected ? 2 : 1, border)
+        canvas2d.DrawRectangleRounded(button, .14, 8, fill)
+        canvas2d.DrawRectangleRoundedLinesEx(button, .14, 8, selected ? 2 : 1, border)
         text_width := ui_measure_text(.Label, labels[index], 1).x
         ui_draw_text(
             .Label,
@@ -8341,22 +8556,22 @@ draw_editor_palette :: proc(editor: ^Editor) {
     }
 }
 
-spawn_button_bounds :: proc() -> rl.Rectangle { return {x = 20, y = 164, width = 170, height = 34} }
+spawn_button_bounds :: proc() -> canvas2d.Rectangle { return {x = 20, y = 164, width = 170, height = 34} }
 
-editor_overlay_hit :: proc(position: rl.Vector2, width, height: i32) -> bool {
+editor_overlay_hit :: proc(position: canvas2d.Vector2, width, height: i32) -> bool {
     // These regions are drawn above the viewport and must be treated as UI even
     // when they contain only status text. Otherwise a press on the HUD can
     // begin a terrain stroke through the transparent parts of the overlay.
-    if rl.CheckCollisionPointRec(position, {x = 14, y = 14, width = 826, height = 96}) do return true
-    if rl.CheckCollisionPointRec(position, {x = f32(width) - 560, y = 14, width = 546, height = 40}) do return true
-    if rl.CheckCollisionPointRec(position, {x = 20, y = 210, width = 830, height = 30}) do return true
+    if canvas2d.CheckCollisionPointRec(position, {x = 14, y = 14, width = 826, height = 96}) do return true
+    if canvas2d.CheckCollisionPointRec(position, {x = f32(width) - 560, y = 14, width = 546, height = 40}) do return true
+    if canvas2d.CheckCollisionPointRec(position, {x = 20, y = 210, width = 830, height = 30}) do return true
     return false
 }
 
 draw_spawn_button :: proc() {
     bounds := spawn_button_bounds()
-    hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds)
-    fill := rl.Color {
+    hovered := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
+    fill := canvas2d.Color {
         r = 43,
         g = 112,
         b = 119,
@@ -8368,8 +8583,8 @@ draw_spawn_button :: proc() {
         b = 150,
         a = 255,
     }
-    rl.DrawRectangleRounded(bounds, .18, 8, fill)
-    rl.DrawRectangleRoundedLinesEx(bounds, .18, 8, 1, {r = 176, g = 239, b = 230, a = 255})
+    canvas2d.DrawRectangleRounded(bounds, .18, 8, fill)
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .18, 8, 1, {r = 176, g = 239, b = 230, a = 255})
     ui_draw_text(.Body, "ENTER WORLD", {bounds.x + 28, bounds.y + 9}, 1, {r = 245, g = 255, b = 247, a = 255})
 }
 
@@ -8430,7 +8645,7 @@ draw_editor_context :: proc(editor: ^Editor) {
         )
     }
     if message == "" do return
-    rl.DrawRectangleRounded({20, 210, 830, 30}, .14, 8, {r = 8, g = 28, b = 45, a = 230})
+    canvas2d.DrawRectangleRounded({20, 210, 830, 30}, .14, 8, {r = 8, g = 28, b = 45, a = 230})
     ui_draw_text(.Data, fmt.ctprintf("%s", message), {30, 219}, 1, {r = 255, g = 244, b = 190, a = 255})
 }
 
@@ -8580,14 +8795,14 @@ crash_recovery_draw :: proc(editor: ^Editor, width, height: i32) {
         fade = 1 - clamp(editor.crash_recovery_seconds / CRASH_FADE_IN_SECONDS, 0, 1)
     }
     if fade > 0 {
-        rl.DrawRectangle(0, 0, width, height, {5, 8, 12, u8(clamp(fade * 255, 0, 255))})
+        canvas2d.DrawRectangle(0, 0, width, height, {5, 8, 12, u8(clamp(fade * 255, 0, 255))})
     }
     if editor.crash_recovery_phase == .Message || editor.crash_recovery_phase == .Fade_Out {
         label: cstring = editor.crash_recovery_cause == .Tumble ? "YOU TOOK A TUMBLE" : "YOU CRASHED"
-        size := rl.MeasureTextEx(rl.Font{}, label, 34, 2)
+        size := canvas2d.MeasureTextEx(canvas2d.Font{}, label, 34, 2)
         text_alpha := u8(clamp((1 - fade) * 255, 0, 255))
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             label,
             {f32(width) * .5 - size.x * .5, f32(height) * .5 - size.y * .5},
             34,
@@ -8992,11 +9207,11 @@ vehicle_entry_prompt :: proc(editor: ^Editor) -> cstring {
 
 vehicle_showcase_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
     if editor == nil do return
-    if rl.IsMouseButtonDown(.MIDDLE) {
-        mouse_delta := rl.GetMouseDelta()
+    if canvas2d.IsMouseButtonDown(.MIDDLE) {
+        mouse_delta := canvas2d.GetMouseDelta()
         third_person.look(&editor.camera, -mouse_delta.x, mouse_delta.y, .006)
     }
-    editor.camera.distance = clamp(editor.camera.distance - rl.GetMouseWheelMove() * .7, 2.5, 30)
+    editor.camera.distance = clamp(editor.camera.distance - canvas2d.GetMouseWheelMove() * .7, 2.5, 30)
     target := third_person.Vec3{0, editor.camera.height, 0}
     if editor.vehicle_showcase_target == "rondine" {
         position := editor.rondine.body.position
@@ -9013,7 +9228,7 @@ editor_camera_pose :: proc() -> third_person.Camera_Pose {
 draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     // The depth-tested world pass has already drawn the game/editor scene.
     // Canvas commands from here onward are deliberately UI-only.
-    rl.ClearBackground({r = 104, g = 154, b = 181, a = 255})
+    canvas2d.ClearBackground({r = 104, g = 154, b = 181, a = 255})
     if editor.pause_screen == .Customization do return
     if editor.pause_screen == .Photo do return
     if editor.vehicle_paint_scene {
@@ -9046,8 +9261,15 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
             dialogue_tv_draw(editor, width, height)
         } else if editor.gameplay_options.show_hud {
             if prompt := vehicle_entry_prompt(editor); prompt != nil {
-                rl.DrawRectangle(width / 2 - 116, height - 92, 232, 42, {8, 28, 45, 220})
-                rl.DrawTextEx(rl.Font{}, prompt, {f32(width / 2 - 99), f32(height - 77)}, 15, 1, {245, 239, 192, 255})
+                canvas2d.DrawRectangle(width / 2 - 116, height - 92, 232, 42, {8, 28, 45, 220})
+                canvas2d.DrawTextEx(
+                    canvas2d.Font{},
+                    prompt,
+                    {f32(width / 2 - 99), f32(height - 77)},
+                    15,
+                    1,
+                    {245, 239, 192, 255},
+                )
             }
         }
     }
@@ -9150,25 +9372,30 @@ loading_postcard_local_hour :: proc() -> int {
     return int(local_datetime.hour)
 }
 
-draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: cstring, postcard: rl.Texture = {}) {
+draw_startup_loading_screen :: proc(
+    width, height: i32,
+    progress: f32,
+    message: cstring,
+    postcard: canvas2d.Texture = {},
+) {
     w, h := f32(width), f32(height)
-    center := rl.Vector2{w * .5, h * .5}
+    center := canvas2d.Vector2{w * .5, h * .5}
     scale := min(w / 1280, h / 720)
     ui_scale := max(scale, f32(.85))
-    animation_time := f32(rl.GetTime())
+    animation_time := f32(canvas2d.GetTime())
     normalized_progress := clamp(progress, 0, 1)
     horizon := h * .52
-    sun := rl.Vector2{center.x + 178 * scale, horizon - 112 * scale}
+    sun := canvas2d.Vector2{center.x + 178 * scale, horizon - 112 * scale}
     title: cstring = "ADRIATIC"
     greeting: cstring = "GREETINGS FROM"
     title_font_size := max(48 * scale, f32(32))
     greeting_font_size := max(14 * scale, f32(11))
     message_font_size := max(14 * scale, f32(13))
-    title_size := rl.MeasureTextEx(rl.Font{}, title, title_font_size, 7 * scale)
-    greeting_size := rl.MeasureTextEx(rl.Font{}, greeting, greeting_font_size, 3 * scale)
-    message_size := rl.MeasureTextEx(rl.Font{}, message, message_font_size, 1)
+    title_size := canvas2d.MeasureTextEx(canvas2d.Font{}, title, title_font_size, 7 * scale)
+    greeting_size := canvas2d.MeasureTextEx(canvas2d.Font{}, greeting, greeting_font_size, 3 * scale)
+    message_size := canvas2d.MeasureTextEx(canvas2d.Font{}, message, message_font_size, 1)
     track_width := min(w - 96, 420 * ui_scale)
-    track := rl.Rectangle {
+    track := canvas2d.Rectangle {
         x      = center.x - track_width * .5,
         y      = h - 72 * ui_scale,
         width  = track_width,
@@ -9176,8 +9403,8 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
     }
 
     if postcard.ready {
-        rl.BeginDrawing()
-        rl.DrawTexturePro(
+        canvas2d.BeginDrawing()
+        canvas2d.DrawTexturePro(
             postcard,
             {0, 0, f32(postcard.width), f32(postcard.height)},
             {0, 0, w, h},
@@ -9193,7 +9420,7 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
                 430 * scale +
                 f32((ripple * 149) % 710) * scale +
                 math.sin(animation_time * .8 + f32(ripple)) * 7 * scale
-            rl.DrawLineEx(
+            canvas2d.DrawLineEx(
                 {ripple_x, ripple_y},
                 {ripple_x + (25 + f32(ripple % 3) * 11) * scale, ripple_y},
                 max(1, scale),
@@ -9203,18 +9430,18 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
 
         boat_x := center.x - 390 * scale + normalized_progress * 245 * scale
         boat_y := h * .73 + math.sin(animation_time * 1.7) * 2.5 * scale
-        rl.DrawLineEx({boat_x, boat_y - 42 * scale}, {boat_x, boat_y + 2 * scale}, 2 * scale, {54, 42, 36, 255})
+        canvas2d.DrawLineEx({boat_x, boat_y - 42 * scale}, {boat_x, boat_y + 2 * scale}, 2 * scale, {54, 42, 36, 255})
         for sail_row in 0 ..< 9 {
             sail_y := boat_y - (38 - f32(sail_row) * 4) * scale
             sail_width := (2 + f32(sail_row) * 2.1) * scale
-            rl.DrawLineEx(
+            canvas2d.DrawLineEx(
                 {boat_x + 2 * scale, sail_y},
                 {boat_x + 2 * scale + sail_width, sail_y},
                 3.5 * scale,
                 {244, 224, 177, 245},
             )
         }
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx(
             {boat_x - 16 * scale, boat_y + 4 * scale},
             {boat_x + 22 * scale, boat_y + 4 * scale},
             7 * scale,
@@ -9223,7 +9450,7 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
         for wake in 0 ..< 3 {
             wake_y := boat_y + (11 + f32(wake) * 6) * scale
             wake_half_width := (16 + f32(wake) * 9) * scale
-            rl.DrawLineEx(
+            canvas2d.DrawLineEx(
                 {boat_x - wake_half_width, wake_y},
                 {boat_x + wake_half_width, wake_y},
                 max(1, scale),
@@ -9231,47 +9458,47 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
             )
         }
 
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             greeting,
             {center.x - greeting_size.x * .5, 55 * ui_scale},
             greeting_font_size,
             3 * scale,
             {246, 222, 172, 230},
         )
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             title,
             {center.x - title_size.x * .5 + 2 * scale, 77 * ui_scale + 2 * scale},
             title_font_size,
             7 * scale,
             {154, 58, 49, 210},
         )
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             title,
             {center.x - title_size.x * .5, 76 * ui_scale},
             title_font_size,
             7 * scale,
             {248, 239, 203, 255},
         )
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             message,
             {center.x - message_size.x * .5, track.y - 29 * ui_scale},
             message_font_size,
             1,
             {226, 226, 204, 255},
         )
-        rl.DrawRectangleRounded(track, 1, 8, {5, 24, 34, 220})
+        canvas2d.DrawRectangleRounded(track, 1, 8, {5, 24, 34, 220})
         if normalized_progress > 0 {
             fill := track
             fill.width *= normalized_progress
-            rl.DrawRectangleRounded(fill, 1, 8, {241, 188, 93, 255})
+            canvas2d.DrawRectangleRounded(fill, 1, 8, {241, 188, 93, 255})
             if fill.width > 24 * scale {
                 glint_phase := math.sin(animation_time * 1.1) * .5 + .5
                 glint_x := fill.x + 8 * scale + (fill.width - 16 * scale) * glint_phase
-                rl.DrawLineEx(
+                canvas2d.DrawLineEx(
                     {glint_x, fill.y + scale},
                     {glint_x, fill.y + fill.height - scale},
                     2 * scale,
@@ -9281,12 +9508,12 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
         }
 
         frame_width := max(10 * scale, f32(8))
-        frame_color := rl.Color{238, 221, 181, 255}
-        rl.DrawRectangle(0, 0, width, i32(frame_width), frame_color)
-        rl.DrawRectangle(0, height - i32(frame_width), width, i32(frame_width), frame_color)
-        rl.DrawRectangle(0, 0, i32(frame_width), height, frame_color)
-        rl.DrawRectangle(width - i32(frame_width), 0, i32(frame_width), height, frame_color)
-        rl.DrawRectangleRoundedLinesEx(
+        frame_color := canvas2d.Color{238, 221, 181, 255}
+        canvas2d.DrawRectangle(0, 0, width, i32(frame_width), frame_color)
+        canvas2d.DrawRectangle(0, height - i32(frame_width), width, i32(frame_width), frame_color)
+        canvas2d.DrawRectangle(0, 0, i32(frame_width), height, frame_color)
+        canvas2d.DrawRectangle(width - i32(frame_width), 0, i32(frame_width), height, frame_color)
+        canvas2d.DrawRectangleRoundedLinesEx(
             {frame_width, frame_width, w - frame_width * 2, h - frame_width * 2},
             .01,
             2,
@@ -9294,14 +9521,14 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
             {104, 59, 49, 180},
         )
         live_capture_poll()
-        rl.EndDrawing()
+        canvas2d.EndDrawing()
         return
     }
 
-    rl.BeginDrawing()
+    canvas2d.BeginDrawing()
 
     // A painted dawn built only from first-frame-safe primitives.
-    sky_colors := [8]rl.Color {
+    sky_colors := [8]canvas2d.Color {
         {8, 27, 43, 255},
         {10, 37, 54, 255},
         {15, 49, 64, 255},
@@ -9313,41 +9540,41 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
     }
     sky_band_height := horizon / f32(len(sky_colors))
     for color, band in sky_colors {
-        rl.DrawRectangle(0, i32(f32(band) * sky_band_height), width, i32(sky_band_height + 2), color)
+        canvas2d.DrawRectangle(0, i32(f32(band) * sky_band_height), width, i32(sky_band_height + 2), color)
     }
 
     sun_pulse := 1 + math.sin(animation_time * 1.4) * .035
-    rl.DrawCircleV(sun, 52 * scale * sun_pulse, {239, 174, 93, 24})
-    rl.DrawCircleV(sun, 37 * scale * sun_pulse, {245, 188, 99, 45})
-    rl.DrawCircleV(sun, 21 * scale, {255, 213, 135, 255})
+    canvas2d.DrawCircleV(sun, 52 * scale * sun_pulse, {239, 174, 93, 24})
+    canvas2d.DrawCircleV(sun, 37 * scale * sun_pulse, {245, 188, 99, 45})
+    canvas2d.DrawCircleV(sun, 21 * scale, {255, 213, 135, 255})
 
-    cloud_color := rl.Color{227, 214, 184, 72}
-    rl.DrawCircleV({center.x - 310 * scale, horizon - 176 * scale}, 18 * scale, cloud_color)
-    rl.DrawCircleV({center.x - 286 * scale, horizon - 181 * scale}, 25 * scale, cloud_color)
-    rl.DrawCircleV({center.x - 257 * scale, horizon - 174 * scale}, 17 * scale, cloud_color)
-    rl.DrawRectangle(
+    cloud_color := canvas2d.Color{227, 214, 184, 72}
+    canvas2d.DrawCircleV({center.x - 310 * scale, horizon - 176 * scale}, 18 * scale, cloud_color)
+    canvas2d.DrawCircleV({center.x - 286 * scale, horizon - 181 * scale}, 25 * scale, cloud_color)
+    canvas2d.DrawCircleV({center.x - 257 * scale, horizon - 174 * scale}, 17 * scale, cloud_color)
+    canvas2d.DrawRectangle(
         i32(center.x - 326 * scale),
         i32(horizon - 180 * scale),
         i32(88 * scale),
         i32(20 * scale),
         cloud_color,
     )
-    bird_color := rl.Color{12, 43, 56, 150}
+    bird_color := canvas2d.Color{12, 43, 56, 150}
     for bird in 0 ..< 3 {
         bx := center.x - 58 * scale + f32(bird) * 37 * scale
         by := horizon - (142 + f32(bird % 2) * 11) * scale + math.sin(animation_time * 1.1 + f32(bird)) * 2.5 * scale
-        rl.DrawLineEx({bx - 7 * scale, by}, {bx, by + 3 * scale}, 1.4 * scale, bird_color)
-        rl.DrawLineEx({bx, by + 3 * scale}, {bx + 7 * scale, by - scale}, 1.4 * scale, bird_color)
+        canvas2d.DrawLineEx({bx - 7 * scale, by}, {bx, by + 3 * scale}, 1.4 * scale, bird_color)
+        canvas2d.DrawLineEx({bx, by + 3 * scale}, {bx + 7 * scale, by - scale}, 1.4 * scale, bird_color)
     }
 
     // Distant land is drawn before the sea, leaving only its soft ridgeline.
-    distant_island := rl.Color{29, 68, 70, 255}
-    rl.DrawCircleV({center.x - 350 * scale, horizon + 34 * scale}, 92 * scale, distant_island)
-    rl.DrawCircleV({center.x - 245 * scale, horizon + 55 * scale}, 118 * scale, distant_island)
-    rl.DrawCircleV({center.x + 410 * scale, horizon + 43 * scale}, 104 * scale, distant_island)
-    rl.DrawCircleV({center.x + 512 * scale, horizon + 62 * scale}, 128 * scale, distant_island)
+    distant_island := canvas2d.Color{29, 68, 70, 255}
+    canvas2d.DrawCircleV({center.x - 350 * scale, horizon + 34 * scale}, 92 * scale, distant_island)
+    canvas2d.DrawCircleV({center.x - 245 * scale, horizon + 55 * scale}, 118 * scale, distant_island)
+    canvas2d.DrawCircleV({center.x + 410 * scale, horizon + 43 * scale}, 104 * scale, distant_island)
+    canvas2d.DrawCircleV({center.x + 512 * scale, horizon + 62 * scale}, 128 * scale, distant_island)
 
-    sea_colors := [5]rl.Color {
+    sea_colors := [5]canvas2d.Color {
         {25, 88, 96, 255},
         {20, 78, 89, 255},
         {15, 65, 80, 255},
@@ -9356,13 +9583,13 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
     }
     sea_band_height := (h - horizon) / f32(len(sea_colors))
     for color, band in sea_colors {
-        rl.DrawRectangle(0, i32(horizon + f32(band) * sea_band_height), width, i32(sea_band_height + 2), color)
+        canvas2d.DrawRectangle(0, i32(horizon + f32(band) * sea_band_height), width, i32(sea_band_height + 2), color)
     }
     for reflection in 0 ..< 8 {
         reflection_width := (18 + f32(reflection) * 7) * scale
         reflection_y := horizon + (12 + f32(reflection) * 17) * scale
         reflection_drift := math.sin(animation_time * 1.8 + f32(reflection) * .8) * 5 * scale
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx(
             {sun.x - reflection_width * .5 + f32(reflection % 2) * 8 * scale + reflection_drift, reflection_y},
             {sun.x + reflection_width * .5 + reflection_drift, reflection_y},
             max(1, 1.8 * scale),
@@ -9376,7 +9603,7 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
             530 * scale +
             f32((wave * 137) % 780) * scale +
             math.sin(animation_time * .9 + f32(wave)) * 8 * scale
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx(
             {wave_x, wave_y},
             {wave_x + (28 + f32(wave % 3) * 12) * scale, wave_y},
             max(1, scale),
@@ -9386,20 +9613,20 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
 
     // A close island village gives the screen a recognizable coastal identity.
     island_y := horizon + 52 * scale
-    island_color := rl.Color{12, 45, 52, 255}
-    rl.DrawCircleV({center.x - 118 * scale, island_y + 70 * scale}, 124 * scale, island_color)
-    rl.DrawCircleV({center.x + 12 * scale, island_y + 83 * scale}, 148 * scale, island_color)
-    rl.DrawCircleV({center.x + 148 * scale, island_y + 76 * scale}, 130 * scale, island_color)
+    island_color := canvas2d.Color{12, 45, 52, 255}
+    canvas2d.DrawCircleV({center.x - 118 * scale, island_y + 70 * scale}, 124 * scale, island_color)
+    canvas2d.DrawCircleV({center.x + 12 * scale, island_y + 83 * scale}, 148 * scale, island_color)
+    canvas2d.DrawCircleV({center.x + 148 * scale, island_y + 76 * scale}, 130 * scale, island_color)
 
     // Sparse terrace marks break the foreground into cultivated slopes while
     // retaining the bold silhouette of the screen-print layer.
-    terrace_color := rl.Color{45, 91, 76, 175}
+    terrace_color := canvas2d.Color{45, 91, 76, 175}
     terrace_specs := [5][3]f32{{-154, 32, 86}, {-86, 66, 128}, {48, 40, 104}, {72, 82, 142}, {-36, 112, 92}}
     for terrace in terrace_specs {
         terrace_x := center.x + terrace[0] * scale
         terrace_y := island_y + terrace[1] * scale
         terrace_width := terrace[2] * scale
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx(
             {terrace_x - terrace_width * .5, terrace_y},
             {terrace_x + terrace_width * .5, terrace_y},
             max(1, 1.4 * scale),
@@ -9407,20 +9634,20 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
         )
     }
 
-    house_color := rl.Color{229, 212, 171, 255}
-    roof_color := rl.Color{168, 74, 54, 255}
-    window_dark := rl.Color{22, 62, 67, 255}
+    house_color := canvas2d.Color{229, 212, 171, 255}
+    roof_color := canvas2d.Color{168, 74, 54, 255}
+    window_dark := canvas2d.Color{22, 62, 67, 255}
 
     // Cypress spires break up the roofline and make the settlement read as
     // Mediterranean at postcard scale.
-    cypress_color := rl.Color{18, 63, 58, 255}
+    cypress_color := canvas2d.Color{18, 63, 58, 255}
     cypress_positions := [5]f32{-172, -70, 44, 132, 202}
     for offset, tree in cypress_positions {
         tree_x := center.x + offset * scale
         tree_base_y := island_y - (2 + f32(tree % 3) * 6) * scale
         tree_height := (28 + f32((tree * 7) % 13)) * scale
-        rl.DrawLineEx({tree_x, tree_base_y}, {tree_x, tree_base_y - tree_height}, 7 * scale, cypress_color)
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx({tree_x, tree_base_y}, {tree_x, tree_base_y - tree_height}, 7 * scale, cypress_color)
+        canvas2d.DrawLineEx(
             {tree_x, tree_base_y - tree_height * .72},
             {tree_x, tree_base_y - tree_height},
             3 * scale,
@@ -9430,13 +9657,13 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
 
     // Two compact bougainvillea clusters introduce the saturated postcard ink
     // accent without turning the quiet village into visual noise.
-    bougainvillea_centers := [2]rl.Vector2 {
+    bougainvillea_centers := [2]canvas2d.Vector2 {
         {center.x - 185 * scale, island_y - 28 * scale},
         {center.x + 129 * scale, island_y - 47 * scale},
     }
     for cluster, cluster_index in bougainvillea_centers {
         sway := math.sin(animation_time * 1.3 + f32(cluster_index) * 1.7) * 1.2 * scale
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx(
             {cluster.x, cluster.y + 18 * scale},
             {cluster.x + sway, cluster.y - 8 * scale},
             2 * scale,
@@ -9445,8 +9672,8 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
         for blossom in 0 ..< 11 {
             blossom_x := cluster.x + (f32((blossom * 11) % 27) - 13) * scale + sway * f32(blossom % 2)
             blossom_y := cluster.y + (f32((blossom * 7) % 25) - 12) * scale
-            blossom_color := blossom % 3 == 0 ? rl.Color{232, 87, 112, 245} : rl.Color{190, 52, 91, 235}
-            rl.DrawCircleV({blossom_x, blossom_y}, (3.5 + f32(blossom % 2) * 1.2) * scale, blossom_color)
+            blossom_color := blossom % 3 == 0 ? canvas2d.Color{232, 87, 112, 245} : canvas2d.Color{190, 52, 91, 235}
+            canvas2d.DrawCircleV({blossom_x, blossom_y}, (3.5 + f32(blossom % 2) * 1.2) * scale, blossom_color)
         }
     }
 
@@ -9456,21 +9683,27 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
         house_y := island_y - (12 * scale + rise)
         house_width := (34 + f32(house % 3) * 5) * scale
         house_height := (32 + f32((house + 1) % 3) * 8) * scale
-        rl.DrawRectangle(i32(house_x), i32(house_y - house_height), i32(house_width), i32(house_height), house_color)
-        rl.DrawLineEx(
+        canvas2d.DrawRectangle(
+            i32(house_x),
+            i32(house_y - house_height),
+            i32(house_width),
+            i32(house_height),
+            house_color,
+        )
+        canvas2d.DrawLineEx(
             {house_x - 3 * scale, house_y - house_height},
             {house_x + house_width * .5, house_y - house_height - 10 * scale},
             5 * scale,
             roof_color,
         )
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx(
             {house_x + house_width * .5, house_y - house_height - 10 * scale},
             {house_x + house_width + 3 * scale, house_y - house_height},
             5 * scale,
             roof_color,
         )
-        window_color := normalized_progress >= f32(house + 1) / 8 ? rl.Color{246, 190, 91, 255} : window_dark
-        rl.DrawRectangle(
+        window_color := normalized_progress >= f32(house + 1) / 8 ? canvas2d.Color{246, 190, 91, 255} : window_dark
+        canvas2d.DrawRectangle(
             i32(house_x + house_width * .5 - 3 * scale),
             i32(house_y - house_height * .55),
             i32(6 * scale),
@@ -9483,46 +9716,46 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
     // harbor lighthouse.
     campanile_x := center.x + 54 * scale
     campanile_base_y := island_y - 28 * scale
-    rl.DrawRectangle(
+    canvas2d.DrawRectangle(
         i32(campanile_x),
         i32(campanile_base_y - 55 * scale),
         i32(22 * scale),
         i32(55 * scale),
         {220, 202, 161, 255},
     )
-    rl.DrawLineEx(
+    canvas2d.DrawLineEx(
         {campanile_x - 3 * scale, campanile_base_y - 55 * scale},
         {campanile_x + 11 * scale, campanile_base_y - 67 * scale},
         5 * scale,
         roof_color,
     )
-    rl.DrawLineEx(
+    canvas2d.DrawLineEx(
         {campanile_x + 11 * scale, campanile_base_y - 67 * scale},
         {campanile_x + 25 * scale, campanile_base_y - 55 * scale},
         5 * scale,
         roof_color,
     )
-    rl.DrawCircleV({campanile_x + 11 * scale, campanile_base_y - 43 * scale}, 4 * scale, window_dark)
+    canvas2d.DrawCircleV({campanile_x + 11 * scale, campanile_base_y - 43 * scale}, 4 * scale, window_dark)
 
     lighthouse_x := center.x + 223 * scale
     lighthouse_base_y := island_y - 22 * scale
-    rl.DrawRectangle(
+    canvas2d.DrawRectangle(
         i32(lighthouse_x),
         i32(lighthouse_base_y - 69 * scale),
         i32(18 * scale),
         i32(69 * scale),
         {236, 220, 181, 255},
     )
-    rl.DrawRectangle(
+    canvas2d.DrawRectangle(
         i32(lighthouse_x - 4 * scale),
         i32(lighthouse_base_y - 75 * scale),
         i32(26 * scale),
         i32(8 * scale),
         roof_color,
     )
-    rl.DrawCircleV({lighthouse_x + 9 * scale, lighthouse_base_y - 71 * scale}, 4 * scale, {255, 211, 116, 255})
+    canvas2d.DrawCircleV({lighthouse_x + 9 * scale, lighthouse_base_y - 71 * scale}, 4 * scale, {255, 211, 116, 255})
     beam_alpha := u8(18 + (math.sin(animation_time * 1.2) * .5 + .5) * 18)
-    rl.DrawLineEx(
+    canvas2d.DrawLineEx(
         {lighthouse_x + 12 * scale, lighthouse_base_y - 71 * scale},
         {lighthouse_x + 116 * scale, lighthouse_base_y - 88 * scale},
         9 * scale,
@@ -9532,18 +9765,18 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
     // The boat crosses the bay as work completes; the picture itself progresses.
     boat_x := center.x - 390 * scale + normalized_progress * 245 * scale
     boat_y := horizon + 88 * scale + math.sin(animation_time * 1.7) * 2.5 * scale
-    rl.DrawLineEx({boat_x, boat_y - 42 * scale}, {boat_x, boat_y + 2 * scale}, 2 * scale, {66, 49, 40, 255})
+    canvas2d.DrawLineEx({boat_x, boat_y - 42 * scale}, {boat_x, boat_y + 2 * scale}, 2 * scale, {66, 49, 40, 255})
     for sail_row in 0 ..< 9 {
         sail_y := boat_y - (38 - f32(sail_row) * 4) * scale
         sail_width := (2 + f32(sail_row) * 2.1) * scale
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx(
             {boat_x + 2 * scale, sail_y},
             {boat_x + 2 * scale + sail_width, sail_y},
             3.5 * scale,
             {241, 229, 201, 240},
         )
     }
-    rl.DrawLineEx(
+    canvas2d.DrawLineEx(
         {boat_x - 16 * scale, boat_y + 4 * scale},
         {boat_x + 22 * scale, boat_y + 4 * scale},
         7 * scale,
@@ -9552,7 +9785,7 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
     for wake in 0 ..< 3 {
         wake_y := boat_y + (11 + f32(wake) * 6) * scale
         wake_half_width := (16 + f32(wake) * 9) * scale
-        rl.DrawLineEx(
+        canvas2d.DrawLineEx(
             {boat_x - wake_half_width, wake_y},
             {boat_x + wake_half_width, wake_y},
             max(1, scale),
@@ -9564,10 +9797,10 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
     // floating against an abstract silhouette.
     quay_x := center.x - 246 * scale
     quay_y := horizon + 111 * scale
-    rl.DrawLineEx({quay_x, quay_y}, {quay_x + 78 * scale, quay_y}, 7 * scale, {101, 70, 53, 255})
+    canvas2d.DrawLineEx({quay_x, quay_y}, {quay_x + 78 * scale, quay_y}, 7 * scale, {101, 70, 53, 255})
     for post in 0 ..< 3 {
         post_x := quay_x + f32(post) * 37 * scale
-        rl.DrawLineEx({post_x, quay_y - 4 * scale}, {post_x, quay_y + 13 * scale}, 3 * scale, {76, 55, 46, 255})
+        canvas2d.DrawLineEx({post_x, quay_y - 4 * scale}, {post_x, quay_y + 13 * scale}, 3 * scale, {76, 55, 46, 255})
     }
 
     // Sparse, fixed flecks soften the digital bands into a lightly weathered
@@ -9575,53 +9808,53 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
     for fleck in 0 ..< 72 {
         fleck_x := f32((fleck * 197 + 83) % max(int(width) - 28, 1) + 14)
         fleck_y := f32((fleck * 109 + 47) % max(int(height) - 28, 1) + 14)
-        fleck_color := fleck % 3 == 0 ? rl.Color{244, 224, 184, 16} : rl.Color{5, 29, 38, 12}
-        rl.DrawCircleV({fleck_x, fleck_y}, max(.55, scale * .7), fleck_color)
+        fleck_color := fleck % 3 == 0 ? canvas2d.Color{244, 224, 184, 16} : canvas2d.Color{5, 29, 38, 12}
+        canvas2d.DrawCircleV({fleck_x, fleck_y}, max(.55, scale * .7), fleck_color)
     }
 
     // Slightly offset ink layers mimic imperfect registration on a vintage
     // postcard, while the cream frame keeps the image feeling printed.
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         greeting,
         {center.x - greeting_size.x * .5, 55 * ui_scale},
         greeting_font_size,
         3 * scale,
         {246, 222, 172, 230},
     )
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         title,
         {center.x - title_size.x * .5 + 2 * scale, 77 * ui_scale + 2 * scale},
         title_font_size,
         7 * scale,
         {154, 58, 49, 210},
     )
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         title,
         {center.x - title_size.x * .5, 76 * ui_scale},
         title_font_size,
         7 * scale,
         {248, 239, 203, 255},
     )
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         message,
         {center.x - message_size.x * .5, track.y - 29 * ui_scale},
         message_font_size,
         1,
         {194, 221, 215, 255},
     )
-    rl.DrawRectangleRounded(track, 1, 8, {5, 24, 34, 210})
+    canvas2d.DrawRectangleRounded(track, 1, 8, {5, 24, 34, 210})
     if normalized_progress > 0 {
         fill := track
         fill.width *= normalized_progress
-        rl.DrawRectangleRounded(fill, 1, 8, {241, 188, 93, 255})
+        canvas2d.DrawRectangleRounded(fill, 1, 8, {241, 188, 93, 255})
         if fill.width > 24 * scale {
             glint_phase := math.sin(animation_time * 1.1) * .5 + .5
             glint_x := fill.x + 8 * scale + (fill.width - 16 * scale) * glint_phase
-            rl.DrawLineEx(
+            canvas2d.DrawLineEx(
                 {glint_x, fill.y + scale},
                 {glint_x, fill.y + fill.height - scale},
                 2 * scale,
@@ -9631,12 +9864,12 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
     }
 
     frame_width := max(10 * scale, f32(8))
-    frame_color := rl.Color{238, 221, 181, 255}
-    rl.DrawRectangle(0, 0, width, i32(frame_width), frame_color)
-    rl.DrawRectangle(0, height - i32(frame_width), width, i32(frame_width), frame_color)
-    rl.DrawRectangle(0, 0, i32(frame_width), height, frame_color)
-    rl.DrawRectangle(width - i32(frame_width), 0, i32(frame_width), height, frame_color)
-    rl.DrawRectangleRoundedLinesEx(
+    frame_color := canvas2d.Color{238, 221, 181, 255}
+    canvas2d.DrawRectangle(0, 0, width, i32(frame_width), frame_color)
+    canvas2d.DrawRectangle(0, height - i32(frame_width), width, i32(frame_width), frame_color)
+    canvas2d.DrawRectangle(0, 0, i32(frame_width), height, frame_color)
+    canvas2d.DrawRectangle(width - i32(frame_width), 0, i32(frame_width), height, frame_color)
+    canvas2d.DrawRectangleRoundedLinesEx(
         {frame_width, frame_width, w - frame_width * 2, h - frame_width * 2},
         .01,
         2,
@@ -9644,7 +9877,7 @@ draw_startup_loading_screen :: proc(width, height: i32, progress: f32, message: 
         {104, 59, 49, 180},
     )
     live_capture_poll()
-    rl.EndDrawing()
+    canvas2d.EndDrawing()
 }
 
 Hot_State_File_Header :: struct {
@@ -9755,7 +9988,17 @@ adriatic_run :: proc(
     persistent_canvas_state: rawptr,
     args: []string = os.args,
     request: ^Capture_Request = nil,
+    startup_started_at: time.Tick = {},
 ) -> hot_abi.Run_Result {
+    startup_failed = false
+    effective_startup_started_at := startup_started_at
+    if effective_startup_started_at == (time.Tick{}) {
+        effective_startup_started_at = time.tick_now()
+    }
+    startup_timings := Startup_Timings{
+        started_at = effective_startup_started_at,
+        checkpoint = effective_startup_started_at,
+    }
     tracking: back.Tracking_Allocator
     back.tracking_allocator_init(&tracking, context.allocator)
     defer back.tracking_allocator_destroy(&tracking)
@@ -9763,8 +10006,8 @@ adriatic_run :: proc(
     defer back.tracking_allocator_print_results(&tracking)
 
     first_start := persistent_canvas_state == nil
-    rl.SetPersistentState(persistent_canvas_state)
-    assert(rl.SetRendererDescriptor(ADRIATIC_RENDERER_DESCRIPTOR))
+    canvas2d.SetPersistentState(persistent_canvas_state)
+    assert(canvas2d.SetRendererDescriptor(ADRIATIC_RENDERER_DESCRIPTOR))
     benchmark_requested := len(args) >= 2 && args[1] == "--benchmark"
     if benchmark_requested && len(args) < 9 {
         fmt.eprintln(
@@ -9793,6 +10036,8 @@ adriatic_run :: proc(
     loading_preview_mode := len(args) >= 3 && args[1] == "--loading-preview"
     loading_preview_output := loading_preview_mode ? args[2] : ""
     loading_lab_mode := len(args) >= 3 && args[1] == "--lab" && args[2] == "loading-screen"
+    requested_map_path := ""
+    if len(args) >= 3 && args[1] == "--map" do requested_map_path = args[2]
     benchmark_scenario := benchmark_mode ? args[2] : ""
     benchmark_warmup, benchmark_frames := 0, 0
     benchmark_window_width, benchmark_window_height := 1280, 720
@@ -9811,7 +10056,7 @@ adriatic_run :: proc(
         parsed, ok = strconv.parse_int(args[8])
         if ok do benchmark_world_height = parsed == 0 ? 0 : clamp(int(parsed), 180, 4320)
     }
-    flags := rl.ConfigFlags{.WINDOW_RESIZABLE}
+    flags := canvas2d.ConfigFlags{.WINDOW_RESIZABLE}
     if !benchmark_mode do flags += {.VSYNC_HINT}
     capture_kind := request != nil ? request.kind : Capture_Kind.None
     if request == nil && len(args) >= 3 do capture_kind = capture_kind_from_arg(args[1])
@@ -9865,6 +10110,7 @@ adriatic_run :: proc(
     if capture_kind == .Shadow_Lab do capture_lab_name = "shadow"
     if capture_kind == .Screen_Pops_Lab do capture_lab_name = "screen-pops"
     if capture_wildflower_lab_mode do capture_lab_name = "wildflower"
+    if capture_kind == .Rainbow_Lab do capture_lab_name = "rainbow"
     if capture_kind == .Boat_Lab do capture_lab_name = "boat"
     if capture_kind == .Boid_Lab do capture_lab_name = "boid"
     if capture_kind == .Car do capture_lab_name = "car"
@@ -9875,7 +10121,11 @@ adriatic_run :: proc(
     if capture_kind == .Leaf_Generator_Lab do capture_lab_name = "leaf-generator"
     if capture_kind == .Flower_Generator_Lab do capture_lab_name = "flower-generator"
     if capture_kind == .Fountain_Generator_Lab do capture_lab_name = "fountain-generator"
+    if capture_kind == .Cemetery_Generator_Lab do capture_lab_name = "cemetery-generator"
+    if capture_kind == .Estuary_Delta_Lab do capture_lab_name = "estuary-delta"
+    if capture_kind == .Rocky_Beach_Lab do capture_lab_name = "coastal-ecology"
     if capture_kind == .Windmill_Generator_Lab do capture_lab_name = "windmill-generator"
+    if capture_kind == .Hero_Building_Lab do capture_lab_name = "hero-building"
     if capture_kind == .Lighthouse_Lab do capture_lab_name = "lighthouse"
     if capture_kind == .Mouse_Gait_Lab do capture_lab_name = "mouse-gait"
     if capture_kind == .Mouse_Theater do capture_lab_name = "mouse-theater"
@@ -9891,6 +10141,7 @@ adriatic_run :: proc(
         capture_wildflower_lab_mode ||
         capture_markov_town_mode ||
         capture_kind == .Screen_Pops_Lab ||
+        capture_kind == .Rainbow_Lab ||
         capture_kind == .Shadow_Lab ||
         capture_kind == .Boat_Lab ||
         capture_kind == .Boid_Lab ||
@@ -9901,7 +10152,11 @@ adriatic_run :: proc(
         capture_kind == .Leaf_Generator_Lab ||
         capture_kind == .Flower_Generator_Lab ||
         capture_kind == .Fountain_Generator_Lab ||
+        capture_kind == .Cemetery_Generator_Lab ||
+        capture_kind == .Estuary_Delta_Lab ||
+        capture_kind == .Rocky_Beach_Lab ||
         capture_kind == .Windmill_Generator_Lab ||
+        capture_kind == .Hero_Building_Lab ||
         capture_kind == .Lighthouse_Lab ||
         capture_kind == .Mouse_Gait_Lab ||
         capture_kind == .Mouse_Theater ||
@@ -9924,8 +10179,8 @@ adriatic_run :: proc(
     capture_player_mode := capture_kind == .Map && capture_target != ""
     if capture_mode do flags += {.WINDOW_NOT_FOCUSABLE}
     if loading_preview_mode do flags += {.WINDOW_NOT_FOCUSABLE}
-    rl.SetConfigFlags(flags)
-    rl.SetWorldRenderSize(
+    canvas2d.SetConfigFlags(flags)
+    canvas2d.SetWorldRenderSize(
         u32(
             benchmark_mode ? benchmark_world_width : instrument_duration_seconds > 0 ? instrument_world_width : ADRIATIC_WORLD_WIDTH,
         ),
@@ -9948,8 +10203,9 @@ adriatic_run :: proc(
     // Explicit CLI dimensions take precedence over mode and target presets.
     if request != nil && request.window_width > 0 do initial_width = i32(request.window_width)
     if request != nil && request.window_height > 0 do initial_height = i32(request.window_height)
-    _ = rl.SetBodyFontPath("assets/fonts/NotoSans-Regular.ttf")
-    _ = rl.SetDisplayFontPath("assets/fonts/NotoSerif-Regular.ttf")
+    startup_timings.config_ms = startup_checkpoint(&startup_timings)
+    _ = canvas2d.SetBodyFontPath("assets/fonts/NotoSans-Regular.ttf")
+    _ = canvas2d.SetDisplayFontPath("assets/fonts/NotoSerif-Regular.ttf")
     unicode_fallbacks := [?]cstring {
         "assets/fonts/fallback/NotoSansArabic-Regular.ttf",
         "assets/fonts/fallback/NotoSansHebrew-Regular.ttf",
@@ -9972,12 +10228,13 @@ adriatic_run :: proc(
         "assets/fonts/fallback/NotoEmoji-Regular.ttf",
     }
     for path in unicode_fallbacks {
-        _ = rl.AddBodyFontFallbackPath(path)
-        _ = rl.AddDisplayFontFallbackPath(path)
+        _ = canvas2d.AddBodyFontFallbackPath(path)
+        _ = canvas2d.AddDisplayFontFallbackPath(path)
     }
-    rl.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring")
+    canvas2d.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring")
+    startup_timings.window_ms = startup_checkpoint(&startup_timings)
     show_loading_screen := SHOW_STARTUP_MENU && first_start && !capture_mode && !benchmark_mode
-    postcard: rl.Texture
+    postcard: canvas2d.Texture
     if loading_lab_mode || loading_preview_mode || show_loading_screen {
         postcard_period := loading_postcard_period_for_hour(loading_postcard_local_hour())
         period_override := ""
@@ -9994,21 +10251,21 @@ adriatic_run :: proc(
             }
         }
         draw_startup_loading_screen(initial_width, initial_height, .02, "Opening the harbor...")
-        postcard = rl.LoadTexture(loading_postcard_path(postcard_period))
+        postcard = canvas2d.LoadTexture(loading_postcard_path(postcard_period))
         if !postcard.ready do fmt.eprintln("loading postcard texture failed; using procedural fallback")
     }
     if loading_lab_mode {
-        defer rl.CloseWindow()
-        for !rl.WindowShouldClose() {
+        defer canvas2d.CloseWindow()
+        for !canvas2d.WindowShouldClose() {
             draw_startup_loading_screen(initial_width, initial_height, .62, "Wish you were here...", postcard)
         }
         return .Quit
     }
     if loading_preview_mode {
-        defer rl.CloseWindow()
+        defer canvas2d.CloseWindow()
         for preview_frame in 0 ..< 33 {
             draw_startup_loading_screen(initial_width, initial_height, .62, "Raising the islands...", postcard)
-            if preview_frame == 2 do rl.TakeScreenshot(fmt.ctprintf("%s", loading_preview_output))
+            if preview_frame == 2 do canvas2d.TakeScreenshot(fmt.ctprintf("%s", loading_preview_output))
         }
         return .Quit
     }
@@ -10016,7 +10273,7 @@ adriatic_run :: proc(
         draw_startup_loading_screen(initial_width, initial_height, .04, "Opening the harbor...", postcard)
     }
     reload_requested := false
-    defer if !reload_requested do rl.DestroyPersistentState()
+    defer if !reload_requested do canvas2d.DestroyPersistentState()
     wind_sound: wind_audio.Runtime
     wind_audio_ready := !capture_mode && !benchmark_mode
     if wind_audio_ready do wind_sound.synth = wind_audio.new_synth()
@@ -10034,6 +10291,7 @@ adriatic_run :: proc(
     defer fixture_migration_result_dispose(&editor.fixture_owner)
     defer attendant_dialogue_definition_release(editor)
     defer structure_storage_destroy(editor)
+    defer lab_scene_destroy_active(editor)
     defer dio.flame_graph_destroy(&editor.flame_graph)
     defer garden_lab_destroy_lsystem()
     defer plant_generator_destroy()
@@ -10056,6 +10314,7 @@ adriatic_run :: proc(
         editor.engine_audio.stream != nil ? sdl.GetAudioStreamGain(editor.engine_audio.stream) : 0,
         sdl.GetError(),
     )
+    startup_timings.audio_ms = startup_checkpoint(&startup_timings)
     ambient_mix := Ambient_Audio_Mix{&wind_sound, &ocean_sound, &spray_sound}
     if engine_audio_ready {
         editor.engine_audio.aux_mix = ambient_audio_mix
@@ -10081,6 +10340,7 @@ adriatic_run :: proc(
     editor.car_base_mesh = vehicles.simple_car_mesh()
     defer free(editor.car_base_mesh)
     vehicles.mesh_generate_smooth_normals(editor.car_base_mesh)
+    startup_timings.meshes_ms = startup_checkpoint(&startup_timings)
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .42, "Preparing aircraft and boats...", postcard)
     }
@@ -10090,17 +10350,52 @@ adriatic_run :: proc(
         vehicles.LIBELLULA_MESH_TRIANGLE_CAPACITY,
     )
     defer delete(editor.libellula_projected_faces)
-    terrain.init_project(&editor.project)
-    editor.terrain_revision = 1
-    if !capture_mode &&
-       !interactive_lab_mode &&
-       (!benchmark_mode ||
-               benchmark_scenario == "editor" ||
-               benchmark_scenario == "terrain_edit" ||
-               benchmark_scenario == "formation_edit") {
-        seed_default_island_marinas(editor)
-        seed_default_island_towns(editor)
+    map_path := requested_map_path != "" ? requested_map_path : DEFAULT_MAP_ARTIFACT_PATH
+    map_source := "generated"
+    map_load_started_at := time.tick_now()
+    use_baked_map := !capture_mode && !interactive_lab_mode && !benchmark_mode
+    map_loaded := false
+    if use_baked_map {
+        artifact, map_error, map_read := map_artifact_read(map_path)
+        if map_read {
+            apply_error: Map_Artifact_Error
+            apply_error, map_loaded = map_artifact_apply(editor, artifact)
+            map_artifact_destroy(artifact)
+            if !map_loaded do map_error = apply_error
+            if map_loaded do map_source = "baked"
+        }
+        if !map_loaded {
+            fmt.eprintf(
+                "map load failed: path=%s error=%v %s; bake with: build/dev/adriatic map bake %s\n",
+                map_path,
+                map_error.kind,
+                map_error.message,
+                map_path,
+            )
+            map_artifact_error_dispose(&map_error)
+            if !MAP_DEVELOPMENT_FALLBACK {
+                fmt.eprintln("release startup requires a valid baked map")
+                startup_failed = true
+                return .Quit
+            }
+        }
     }
+    if !map_loaded {
+        terrain.init_project(&editor.project)
+        editor.terrain_revision = 1
+        editor.default_map_regeneration_seeds = terrain.DEFAULT_ISLAND_SEEDS
+        if !capture_mode &&
+           !interactive_lab_mode &&
+           (!benchmark_mode ||
+                   benchmark_scenario == "editor" ||
+                   benchmark_scenario == "terrain_edit" ||
+                   benchmark_scenario == "formation_edit") {
+            seed_default_island_marinas(editor)
+            seed_default_island_towns(editor)
+        }
+    }
+    startup_timings.map_load_ms = startup_elapsed_ms(map_load_started_at, time.tick_now())
+    startup_timings.terrain_ms = startup_checkpoint(&startup_timings)
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .62, "Raising the islands...", postcard)
     }
@@ -10140,6 +10435,13 @@ adriatic_run :: proc(
     mailbag_pouch_asset_init(editor)
     editor.greek_placement_mode = false
     editor.atmosphere = atmosphere.new(0x41c10)
+    surface_weather.initialize(&editor.surface_weather, terrain.WORLD_SIZE_METERS * .5)
+    if regime, weather_capture := capture_weather_regime(capture_target); weather_capture {
+        atmosphere.set_weather_override(&editor.atmosphere, .Automatic)
+        atmosphere.set_climate_regime(&editor.atmosphere, regime)
+        editor.atmosphere.weather = atmosphere.regime_weather(regime)
+        editor.atmosphere.paused = true
+    }
     editor.boat_traffic = new_world_boat_traffic(&editor.project)
     editor.ocean_traffic = boats.new_ocean_traffic()
     editor.vehicle_effects = particle_systems.new_vehicle_effects(0x72b7e4a1)
@@ -10182,11 +10484,11 @@ adriatic_run :: proc(
     dither_apply(editor)
     ui_theme_set_mode(editor.gameplay_options.theme_mode)
     editor.runtime_input = game_input.default_state()
-    editor.vehicle_paint_tool_icons = rl.LoadTexture("assets/icons/control-hints/keyboard-mouse.png")
+    editor.vehicle_paint_tool_icons = canvas2d.LoadTexture("assets/icons/control-hints/keyboard-mouse.png")
     if !editor.vehicle_paint_tool_icons.ready {
         fmt.eprintln("vehicle paint tool icon atlas failed to load")
     }
-    editor.tarot_atlas = rl.LoadTexture("assets/textures/ui/tarot-atlas-v4.png")
+    editor.tarot_atlas = canvas2d.LoadTexture("assets/textures/ui/tarot-atlas-v4.png")
     if !editor.tarot_atlas.ready {
         fmt.eprintln("tarot card atlas failed to load")
     }
@@ -10229,6 +10531,7 @@ adriatic_run :: proc(
         fmt.eprintln("adriatic could not create the shared gameplay physics world")
     }
     car_physics_create(editor)
+    startup_timings.physics_ms = startup_checkpoint(&startup_timings)
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .78, "Setting the world in motion...", postcard)
     }
@@ -10283,7 +10586,7 @@ adriatic_run :: proc(
                capture_target == "dialogue-warm" ||
                capture_target == "dialogue-discreet" {
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, .Niko) {
                     _ = dialogue.choose(&editor.attendant_dialogue, 0)
@@ -10385,6 +10688,8 @@ adriatic_run :: proc(
         preset := atmosphere.Weather_Preset.Clear
         minutes := f32(12 * 60)
         #partial switch capture_kind {
+        case .Sky_Sunrise:
+            minutes = 6 * 60
         case .Sky_Sunset:
             minutes = 18 * 60
         case .Sky_Storm:
@@ -10410,6 +10715,35 @@ adriatic_run :: proc(
             editor.atmosphere.weather.cloud_cover = 0
         }
         editor.atmosphere.paused = true
+    }
+    fog_capture :=
+        (capture_kind == .Map || capture_kind == .Flight) &&
+        (capture_target == "fog-approach" ||
+                capture_target == "fog-boundary" ||
+                capture_target == "fog-inside" ||
+                capture_target == "fog-above")
+    if fog_capture {
+        atmosphere.set_world_minutes(&editor.atmosphere, 10 * 60 + 20)
+        atmosphere.set_weather_override(&editor.atmosphere, .Storm)
+        editor.atmosphere.weather = atmosphere.weather_for(.Storm)
+        editor.atmosphere.front_seconds = 31.25
+        editor.atmosphere.paused = true
+        half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+        field := fog_field.generate(
+            editor.atmosphere.seed,
+            editor.atmosphere.front_seconds,
+            editor.atmosphere.weather,
+            {{-half_extent, -half_extent}, {half_extent, half_extent}},
+            editor.atmosphere.climate.current,
+        )
+        bank := field.banks[0]
+        center := third_person.Vec3{bank.center.x, bank.top_altitude * .42, bank.center.y}
+        offset := third_person.Vec3{bank.axis.x * bank.radii.x, 0, bank.axis.y * bank.radii.x}
+        camera_position := center + offset * 1.75 + third_person.Vec3{0, 70, 0}
+        if capture_target == "fog-boundary" do camera_position = center + offset * 1.02 + third_person.Vec3{0, 20, 0}
+        if capture_target == "fog-inside" do camera_position = center + third_person.Vec3{0, 8, 0}
+        if capture_target == "fog-above" do camera_position = center + third_person.Vec3{0, bank.top_altitude + 180, 0}
+        editor.camera_pose = third_person.camera_look_at(camera_position, center)
     }
     if capture_foliage_motion_mode {
         atmosphere.set_world_minutes(&editor.atmosphere, 9 * 60 + 30)
@@ -10492,6 +10826,10 @@ adriatic_run :: proc(
         if benchmark_scenario == "municipal_route_night_storm" {
             benchmark_weather = .Storm
         }
+        if benchmark_scenario == "fog_banks" {
+            benchmark_weather = .Storm
+            editor.atmosphere.front_seconds = 31.25
+        }
         atmosphere.set_weather_override(&editor.atmosphere, benchmark_weather)
         editor.atmosphere.weather = atmosphere.weather_for(benchmark_weather)
         editor.atmosphere.paused = true
@@ -10509,6 +10847,7 @@ adriatic_run :: proc(
         }
     }
     world_renderer_attach(editor)
+    startup_timings.renderer_ms = startup_checkpoint(&startup_timings)
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .92, "Lighting the coast...", postcard)
     }
@@ -10539,13 +10878,34 @@ adriatic_run :: proc(
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.capture_world_only = true
         }
+        if fog_capture {
+            half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+            field := fog_field.generate(
+                editor.atmosphere.seed,
+                editor.atmosphere.front_seconds,
+                editor.atmosphere.weather,
+                {{-half_extent, -half_extent}, {half_extent, half_extent}},
+                editor.atmosphere.climate.current,
+            )
+            bank := field.banks[0]
+            center := third_person.Vec3{bank.center.x, bank.top_altitude * .42, bank.center.y}
+            offset := third_person.Vec3{bank.axis.x * bank.radii.x, 0, bank.axis.y * bank.radii.x}
+            eye := center + offset * 1.75 + third_person.Vec3{0, 70, 0}
+            if capture_target == "fog-boundary" do eye = center + offset * 1.02 + third_person.Vec3{0, 20, 0}
+            if capture_target == "fog-inside" do eye = center + third_person.Vec3{0, 8, 0}
+            if capture_target == "fog-above" do eye = center + third_person.Vec3{0, bank.top_altitude + 180, 0}
+            editor.camera_pose = third_person.camera_look_at(eye, center)
+            third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+            third_person.camera_set_active(&editor.cameras, .Inspection)
+            editor.capture_world_only = true
+        }
         if capture_sky_mode &&
            (capture_target == "sun" ||
                    capture_target == "sun-air" ||
                    capture_target == "sun-away" ||
                    capture_target == "moon" ||
                    capture_target == "stars") {
-            sky_capture := atmosphere.sample(&editor.atmosphere)
+            sky_capture := atmosphere_sky(editor)
             // Observer elevation materially changes the required reflecting
             // slopes, so retain matched on-foot and airborne verification
             // views instead of tuning the BRDF to either camera.
@@ -10626,7 +10986,7 @@ adriatic_run :: proc(
         }
         editor.pilot.position = editor.player.position
         editor.in_map = true
-        editor.map_time = f32(rl.GetTime())
+        editor.map_time = f32(canvas2d.GetTime())
         if capture_flight_mode {
             capture_vehicle := &editor.postale.vehicle
             rondine_capture :=
@@ -10758,11 +11118,81 @@ adriatic_run :: proc(
                     editor.postale.was_grounded = false
                     editor.postale.throttle = .82
                 }
-                atmosphere.set_weather_override(&editor.atmosphere, .Windy)
-                editor.atmosphere.weather = atmosphere.weather_for(.Windy)
+                if fog_capture {
+                    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+                    field := fog_field.generate(
+                        editor.atmosphere.seed,
+                        editor.atmosphere.front_seconds,
+                        editor.atmosphere.weather,
+                        {{-half_extent, -half_extent}, {half_extent, half_extent}},
+                        editor.atmosphere.climate.current,
+                    )
+                    bank := field.banks[0]
+                    forward := flight.Vec3{-bank.axis.x, 0, -bank.axis.y}
+                    radial := f32(1.45)
+                    if capture_target == "fog-boundary" do radial = .98
+                    if capture_target == "fog-inside" do radial = 0
+                    altitude := bank.base_altitude + (bank.top_altitude - bank.base_altitude) * .45
+                    if capture_target == "fog-above" {
+                        radial = 2.2
+                        altitude = bank.top_altitude + 250
+                    }
+                    editor.postale.body.position = {
+                        bank.center.x + bank.axis.x * bank.radii.x * radial,
+                        altitude,
+                        bank.center.y + bank.axis.y * bank.radii.x * radial,
+                    }
+                    editor.postale.body.orientation = flight.orientation_from_forward_and_up(forward, {0, 1, 0})
+                    editor.postale.body.velocity = forward * 58
+                    editor.postale.grounded = false
+                    editor.postale.was_grounded = false
+                    editor.postale.throttle = .82
+                    editor.pilot.position = editor.postale.body.position
+                }
+                if capture_target == "storm-front" {
+                    atmosphere.set_weather_override(&editor.atmosphere, .Automatic)
+                    atmosphere.trigger_front(&editor.atmosphere)
+                    front := &editor.atmosphere.schedule.front
+                    front.intensity = 1
+                    front.gustiness = 1
+                    front.rainfall = 1
+                    front.visibility_loss = .9
+                    front.cell_phase = f32(math.PI) / 3.4
+                    duration := front.end_seconds - front.start_seconds
+                    editor.atmosphere.schedule.elapsed_seconds = front.start_seconds + duration * .5
+                    body := active_aircraft_body(editor)
+                    age := editor.atmosphere.schedule.elapsed_seconds - front.start_seconds
+                    front.origin = {
+                        body.position.x - front.direction[0] * front.speed * age,
+                        body.position.z - front.direction[1] * front.speed * age,
+                    }
+                    local := atmosphere.sample_at(
+                        &editor.atmosphere,
+                        {body.position.x, body.position.y, body.position.z},
+                        body.position.y,
+                    )
+                    editor.atmosphere.weather = {
+                        local.cloud_cover,
+                        local.precipitation,
+                        local.haze,
+                        local.severity,
+                        {local.wind[0], local.wind[2]},
+                    }
+                } else if !fog_capture {
+                    atmosphere.set_weather_override(&editor.atmosphere, .Windy)
+                    editor.atmosphere.weather = atmosphere.weather_for(.Windy)
+                }
                 editor.atmosphere.paused = true
                 chase_camera.reset(&editor.flight_camera, aircraft_camera_target(editor))
                 editor.camera_pose = editor.flight_camera.pose
+                if fog_capture && capture_target == "fog-above" {
+                    // The chase camera deliberately favors the horizon. Use
+                    // the aircraft's established downward observation view so
+                    // this target frames both the crown and clear water beyond
+                    // the bank edge while remaining an in-flight capture.
+                    editor.bomber_mode = true
+                    editor.camera_pose = bomber_camera_pose(editor)
+                }
                 if capture_target == "bomber" {
                     editor.bomber_mode = true
                     editor.bomber_payload_kind = .Mail
@@ -10895,7 +11325,7 @@ adriatic_run :: proc(
                capture_target == "gerta-dialogue" ||
                capture_target == "gerta-dialogue-magneto" {
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
             }
             inspection_pose := third_person.camera_near(
@@ -11096,7 +11526,7 @@ adriatic_run :: proc(
                     editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
                 }
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, .Zora) {
                     if capture_target == "zora-recall" {
@@ -11130,7 +11560,7 @@ adriatic_run :: proc(
                 }
                 editor.story_state.tarot_readings = 0
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, .Zora) {
                     dialogue_view_complete_reveal(editor)
@@ -11153,7 +11583,7 @@ adriatic_run :: proc(
                     editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
                 }
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if story.begin_post_delivery(&editor.story_state) && open_story_dialogue(editor, .Lena) {
                     _ = dialogue.choose(&editor.attendant_dialogue, 0)
@@ -11181,7 +11611,7 @@ adriatic_run :: proc(
                     if !story.complete_delivery(&editor.story_state, recipient) do break
                 }
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if story.begin_post_delivery(&editor.story_state) && open_story_dialogue(editor, .Toma) {
                     _ = dialogue.choose(&editor.attendant_dialogue, 0)
@@ -11210,7 +11640,7 @@ adriatic_run :: proc(
                     editor.story_state.repeat_deliveries = 1
                 }
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, resident) {
                     _ = dialogue.choose(&editor.attendant_dialogue, 0)
@@ -11236,7 +11666,7 @@ adriatic_run :: proc(
                 editor.story_state.romance = .Together
                 editor.story_state.repeat_deliveries = 2
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, .Bojan) {
                     _ = dialogue.choose(&editor.attendant_dialogue, 0)
@@ -11260,7 +11690,7 @@ adriatic_run :: proc(
                 }
                 editor.story_state.repair = .Crash_Reported
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, .Bojan) {
                     _ = dialogue.choose(&editor.attendant_dialogue, 0)
@@ -11289,7 +11719,7 @@ adriatic_run :: proc(
                 _ = story.diagnose_crash(&editor.story_state)
                 _ = story.apply_wing_patch(&editor.story_state)
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, .Bojan) {
                     _ = dialogue.choose(&editor.attendant_dialogue, 0)
@@ -11316,7 +11746,7 @@ adriatic_run :: proc(
                 editor.story_state.clinic_visits =
                     capture_target == "anica-repeat" ? 2 : capture_target == "petar-repeat" ? 4 : 3
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, resident) {
                     dialogue_view_complete_reveal(editor)
@@ -11337,7 +11767,7 @@ adriatic_run :: proc(
                     editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
                 }
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, resident) {
                     _ = dialogue.choose(&editor.attendant_dialogue, 0)
@@ -11364,7 +11794,7 @@ adriatic_run :: proc(
                     editor.pilot.facing_yaw_radians = editor.player.facing_yaw_radians
                 }
                 editor.in_map = true
-                editor.map_time = f32(rl.GetTime())
+                editor.map_time = f32(canvas2d.GetTime())
                 editor.player.grounded = true
                 if open_story_dialogue(editor, resident) {
                     _ = dialogue.choose(&editor.attendant_dialogue, 0)
@@ -11908,11 +12338,13 @@ adriatic_run :: proc(
         editor.pause_screen = .Closed
         set_pointer_locked(false)
     }
+    startup_timings.ready_ms = startup_checkpoint(&startup_timings)
+    startup_timings_emitted := false
     benchmark_samples: [4096]f64
     benchmark_sample_count := 0
-    instrument_started_at := rl.GetTime()
+    instrument_started_at := canvas2d.GetTime()
     capture_frame :=
-        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
     if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
     selector_capture_pose: third_person.Camera_Pose
     selector_capture_pose_set := false
@@ -11951,11 +12383,11 @@ adriatic_run :: proc(
         cinematic_export_time = 0
     }
     frame := 0
-    for !rl.WindowShouldClose() && !editor.quit_requested {
+    for !canvas2d.WindowShouldClose() && !editor.quit_requested {
         gameplay_physics_begin_frame(editor)
         dio.flame_graph_begin_frame(&editor.flame_graph)
-        benchmark_frame_start := rl.GetTime()
-        frame_now := rl.GetTime()
+        benchmark_frame_start := canvas2d.GetTime()
+        frame_now := canvas2d.GetTime()
         frame_delta := frame == 0 ? f32(0) : min(f32(frame_now - editor.last_frame_time), f32(.1))
         if cinematic_export_active {
             frame_delta = 1 / f32(max(request.sequence_fps, 1))
@@ -11968,7 +12400,7 @@ adriatic_run :: proc(
         editor.map_time = f32(frame_now)
         driving := editor.pilot.mode == .Driving
         dialogue_was_open := editor.attendant_dialogue_open
-        width, height := rl.GetScreenWidth(), rl.GetScreenHeight()
+        width, height := canvas2d.GetScreenWidth(), canvas2d.GetScreenHeight()
         // A resized window changes the user's aspect ratio. Reapplying the
         // selected vertical-resolution preset keeps the world target in step.
         crunchiness_apply(editor.gameplay_options.crunchiness)
@@ -11989,6 +12421,22 @@ adriatic_run :: proc(
         simulation_delta := was_paused || pause_menu_is_open(editor) ? f32(0) : frame_delta
         friendship_notice_step(editor, simulation_delta)
         atmosphere.step(&editor.atmosphere, simulation_delta)
+        surface_weather_step(editor, simulation_delta)
+        if lab_scene_is_active(editor, "rainbow") {
+            // The rainbow lab intentionally authors a sun-shower between the
+            // built-in presets. Keep that state authoritative instead of
+            // replacing it with the uniform Storm override sampled below.
+            rainbow_lab_apply_weather(editor)
+        } else {
+            observer_weather := atmosphere_local_weather(editor, editor.camera_pose.position)
+            editor.atmosphere.weather = {
+                observer_weather.cloud_cover,
+                observer_weather.precipitation,
+                observer_weather.haze,
+                observer_weather.severity,
+                {observer_weather.wind[0], observer_weather.wind[2]},
+            }
+        }
         boats.step(&editor.boat_traffic, simulation_delta, editor.atmosphere.world_minutes)
         boats.ocean_traffic_step(&editor.ocean_traffic, simulation_delta)
         world_flocks_step(editor, simulation_delta)
@@ -12069,26 +12517,26 @@ adriatic_run :: proc(
             )
         }
         if spray_audio_ready {
-            spray_active := editor.vehicle_paint_scene && f32(rl.GetTime()) < editor.vehicle_paint_sound_until
+            spray_active := editor.vehicle_paint_scene && f32(canvas2d.GetTime()) < editor.vehicle_paint_sound_until
             spray_intensity := .45 + f32(editor.vehicle_paint_brush_radius) / 40 * .55
             spray_pan := f32(0)
-            screen_width := rl.GetScreenWidth()
+            screen_width := canvas2d.GetScreenWidth()
             if screen_width > 0 {
-                spray_pan = clamp(rl.GetMousePosition().x / f32(screen_width) * 2 - 1, -1, 1)
+                spray_pan = clamp(canvas2d.GetMousePosition().x / f32(screen_width) * 2 - 1, -1, 1)
             }
             spray_audio.update(&spray_sound, spray_active, spray_intensity, spray_pan, sound_fx_muted(editor))
         }
         if !pause_menu_is_open(editor) && editor.active_lab_scene != "" {
             _ = lab_scene_process_input(editor)
         } else if !pause_menu_is_open(editor) {
-            if rl.IsKeyPressed(.P) do editor.atmosphere.paused = !editor.atmosphere.paused
-            if rl.IsKeyDown(.LEFT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes - frame_delta * 180)
-            if rl.IsKeyDown(.RIGHT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes + frame_delta * 180)
+            if canvas2d.IsKeyPressed(.P) do editor.atmosphere.paused = !editor.atmosphere.paused
+            if canvas2d.IsKeyDown(.LEFT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes - frame_delta * 180)
+            if canvas2d.IsKeyDown(.RIGHT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes + frame_delta * 180)
             if !town_mouse_wheel_mounted {
-                if rl.IsKeyPressed(.FOUR) do atmosphere.set_weather_override(&editor.atmosphere, .Automatic)
-                if rl.IsKeyPressed(.ONE) do atmosphere.set_weather_override(&editor.atmosphere, .Clear)
-                if rl.IsKeyPressed(.TWO) do atmosphere.set_weather_override(&editor.atmosphere, .Windy)
-                if rl.IsKeyPressed(.THREE) do atmosphere.set_weather_override(&editor.atmosphere, .Storm)
+                if canvas2d.IsKeyPressed(.FOUR) do atmosphere.set_weather_override(&editor.atmosphere, .Automatic)
+                if canvas2d.IsKeyPressed(.ONE) do atmosphere.set_weather_override(&editor.atmosphere, .Clear)
+                if canvas2d.IsKeyPressed(.TWO) do atmosphere.set_weather_override(&editor.atmosphere, .Windy)
+                if canvas2d.IsKeyPressed(.THREE) do atmosphere.set_weather_override(&editor.atmosphere, .Storm)
             }
         }
         if !pause_menu_is_open(editor) && editor_debug_toggle_pressed(editor) {
@@ -12096,33 +12544,39 @@ adriatic_run :: proc(
         }
         if !editor.in_map && !pause_menu_is_open(editor) do editor_ui_process_input(editor, width, height)
         if !editor.in_map && !pause_menu_is_open(editor) {
-            if !imgui_captures_keyboard() && rl.IsKeyPressed(.ESCAPE) do editor_cancel_interaction(editor)
+            if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.ESCAPE) do editor_cancel_interaction(editor)
             if !imgui_captures_keyboard() {
-                if rl.IsKeyPressed(.T) do authoring_select_tool(editor, .Paint)
-                if rl.IsKeyPressed(.B) do authoring_select_tool(editor, .Formations)
-                if rl.IsKeyPressed(.H) do authoring_select_tool(editor, .Foliage)
-                if !control_key_down() && rl.IsKeyPressed(.Z) do authoring_select_tool(editor, .Ridge)
-                if !control_key_down() && rl.IsKeyPressed(.C) do authoring_select_tool(editor, .Cliff)
-                if !control_key_down() && rl.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
-                if !control_key_down() && rl.IsKeyPressed(.J) do authoring_select_tool(editor, .Marina)
-                if !control_key_down() && !editor.road_mode && rl.IsKeyPressed(.K) {
+                if canvas2d.IsKeyPressed(.T) do authoring_select_tool(editor, .Paint)
+                if canvas2d.IsKeyPressed(.B) do authoring_select_tool(editor, .Formations)
+                if canvas2d.IsKeyPressed(.H) do authoring_select_tool(editor, .Foliage)
+                if !control_key_down() && canvas2d.IsKeyPressed(.Z) do authoring_select_tool(editor, .Ridge)
+                if !control_key_down() && canvas2d.IsKeyPressed(.C) do authoring_select_tool(editor, .Cliff)
+                if !control_key_down() && canvas2d.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
+                if !control_key_down() && canvas2d.IsKeyPressed(.J) do authoring_select_tool(editor, .Marina)
+                if !control_key_down() && !editor.road_mode && canvas2d.IsKeyPressed(.K) {
                     authoring_select_tool(editor, .Farm)
                 }
-                if !control_key_down() && rl.IsKeyPressed(.V) do authoring_select_tool(editor, .Wreck)
-                if !control_key_down() && rl.IsKeyPressed(.L) do authoring_select_tool(editor, .ClimbingLeaves)
-                if rl.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)
-                if !control_key_down() && rl.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
+                if !control_key_down() && canvas2d.IsKeyPressed(.V) do authoring_select_tool(editor, .Wreck)
+                if !control_key_down() && canvas2d.IsKeyPressed(.L) do authoring_select_tool(editor, .ClimbingLeaves)
+                if canvas2d.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)
+                if !control_key_down() && canvas2d.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
             }
-            if !imgui_captures_keyboard() && rl.IsKeyPressed(.F) do editor_focus_terrain(editor)
-            if !imgui_captures_keyboard() && control_key_down() && rl.IsKeyPressed(.S) do fixture_editor_save(editor)
-            if !imgui_captures_keyboard() && control_key_down() && rl.IsKeyPressed(.O) do fixture_editor_restore(editor)
-            if !imgui_captures_keyboard() && editor.tool != .Structure && control_key_down() && rl.IsKeyPressed(.Z) {
+            if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.F) do editor_focus_terrain(editor)
+            if !imgui_captures_keyboard() && control_key_down() && canvas2d.IsKeyPressed(.S) do map_editor_save(editor)
+            if !imgui_captures_keyboard() && control_key_down() && canvas2d.IsKeyPressed(.O) do map_editor_load(editor)
+            if !imgui_captures_keyboard() &&
+               editor.tool != .Structure &&
+               control_key_down() &&
+               canvas2d.IsKeyPressed(.Z) {
                 terrain_undo(editor)
             }
-            if !imgui_captures_keyboard() && editor.tool != .Structure && control_key_down() && rl.IsKeyPressed(.Y) {
+            if !imgui_captures_keyboard() &&
+               editor.tool != .Structure &&
+               control_key_down() &&
+               canvas2d.IsKeyPressed(.Y) {
                 terrain_redo(editor)
             }
-            if !imgui_captures_keyboard() && editor.road_mode && control_key_down() && rl.IsKeyPressed(.Z) {
+            if !imgui_captures_keyboard() && editor.road_mode && control_key_down() && canvas2d.IsKeyPressed(.Z) {
                 structure_undo(editor)
                 editor.road_drag_node = -1
                 editor.road_drag_node_previous_selection = -1
@@ -12130,7 +12584,7 @@ adriatic_run :: proc(
                 editor.road_drag_edge = -1
                 editor.road_drag_handle = -1
             }
-            if !imgui_captures_keyboard() && editor.road_mode && control_key_down() && rl.IsKeyPressed(.Y) {
+            if !imgui_captures_keyboard() && editor.road_mode && control_key_down() && canvas2d.IsKeyPressed(.Y) {
                 structure_redo(editor)
                 editor.road_drag_node = -1
                 editor.road_drag_node_previous_selection = -1
@@ -12141,30 +12595,30 @@ adriatic_run :: proc(
             if !imgui_captures_keyboard() &&
                (editor.marina_paint_mode || editor.farm_paint_mode || editor.wreck_paint_mode) &&
                control_key_down() &&
-               rl.IsKeyPressed(.Z) {
+               canvas2d.IsKeyPressed(.Z) {
                 structure_undo(editor)
             }
             if !imgui_captures_keyboard() &&
                (editor.marina_paint_mode || editor.farm_paint_mode || editor.wreck_paint_mode) &&
                control_key_down() &&
-               rl.IsKeyPressed(.Y) {
+               canvas2d.IsKeyPressed(.Y) {
                 structure_redo(editor)
             }
-            if !imgui_captures_keyboard() && editor.authoring_tool == .Formations && rl.IsKeyPressed(.V) {
+            if !imgui_captures_keyboard() && editor.authoring_tool == .Formations && canvas2d.IsKeyPressed(.V) {
                 structure_cycle_kind(editor)
             }
-            if !imgui_captures_keyboard() && editor.authoring_tool == .Formations && rl.IsKeyPressed(.X) {
+            if !imgui_captures_keyboard() && editor.authoring_tool == .Formations && canvas2d.IsKeyPressed(.X) {
                 editor.structure_auto_kind = true
             }
-            if !imgui_captures_keyboard() && editor.road_mode && rl.IsKeyPressed(.BACKSPACE) {
+            if !imgui_captures_keyboard() && editor.road_mode && canvas2d.IsKeyPressed(.BACKSPACE) {
                 road_delete_selected(editor)
             }
-            if !imgui_captures_keyboard() && editor.road_mode && rl.IsKeyPressed(.K) {
+            if !imgui_captures_keyboard() && editor.road_mode && canvas2d.IsKeyPressed(.K) {
                 road_cycle_pavement(editor)
             }
-            viewport_ui_hit := editor_ui_hit(editor, rl.GetMousePosition(), width, height)
+            viewport_ui_hit := editor_ui_hit(editor, canvas2d.GetMousePosition(), width, height)
             update_editor_camera(editor, min(frame_delta, f32(.05)))
-            viewport_wheel := viewport_ui_hit ? f32(0) : rl.GetMouseWheelMove()
+            viewport_wheel := viewport_ui_hit ? f32(0) : canvas2d.GetMouseWheelMove()
             if editor.road_mode {
                 wheel := viewport_wheel
                 if shift_key_down() && editor.road_selected_node >= 0 {
@@ -12251,8 +12705,8 @@ adriatic_run :: proc(
             focal_length = editor.flight_camera.focal_length
         }
         editor_view_camera := perspective_camera(editor.camera_pose, focal_length)
-        world_mouse, world_mouse_inside := rl.GetWorldMousePosition()
-        world_render_width, world_render_height := rl.GetWorldRenderSize()
+        world_mouse, world_mouse_inside := canvas2d.GetWorldMousePosition()
+        world_render_width, world_render_height := canvas2d.GetWorldRenderSize()
         world_x, world_z, cursor_hit := terrain_under_cursor_3d(
             editor,
             editor_view_camera,
@@ -12261,7 +12715,7 @@ adriatic_run :: proc(
             world_render_height,
         )
         cursor_hit = cursor_hit && world_mouse_inside
-        ui_hit := editor_ui_hit(editor, rl.GetMousePosition(), width, height)
+        ui_hit := editor_ui_hit(editor, canvas2d.GetMousePosition(), width, height)
         editor.cursor_world_x = world_x
         editor.cursor_world_z = world_z
         editor.cursor_hit = cursor_hit && !ui_hit && !editor.in_map
@@ -12300,7 +12754,7 @@ adriatic_run :: proc(
         crash_slide_speed := f32(0)
         crash_surface := engine_sound.Crash_Surface.Dirt
         crash_profile := engine_sound.Crash_Profile.Car
-        crash_wetness := clamp(editor.atmosphere.weather.precipitation, 0, 1)
+        crash_wetness := surface_weather_sample(editor, active_surface_weather_position(editor))
         crash_obliqueness := f32(0)
         crash_pan := f32(0)
         footstep_triggered := false
@@ -12324,20 +12778,20 @@ adriatic_run :: proc(
                 // orbit camera on the first frame.
                 if !capture_mode do vehicle_showcase_camera_step(editor, min(delta_seconds, .05))
             } else {
-                mouse_delta := rl.GetMouseDelta()
+                mouse_delta := canvas2d.GetMouseDelta()
                 look_scale := editor.gameplay_options.look_sensitivity / .012
                 look_x := editor.gameplay_options.invert_look_x ? -mouse_delta.x : mouse_delta.x
                 look_y := editor.gameplay_options.invert_look_y ? -mouse_delta.y : mouse_delta.y
                 flying := driving_aircraft(editor)
                 in_car := driving_car(editor)
                 if flying {
-                    if rl.IsKeyPressed(.B) || gamepad_pressed(.Dpad_Down) {
+                    if canvas2d.IsKeyPressed(.B) || gamepad_pressed(.Dpad_Down) {
                         editor.bomber_mode = !editor.bomber_mode
                     }
-                    if editor.bomber_mode && (rl.IsKeyPressed(.X) || gamepad_pressed(.Dpad_Left)) {
+                    if editor.bomber_mode && (canvas2d.IsKeyPressed(.X) || gamepad_pressed(.Dpad_Left)) {
                         bomber_drop_release(editor)
                     }
-                    if editor.bomber_mode && (rl.IsKeyPressed(.V) || gamepad_pressed(.Dpad_Right)) {
+                    if editor.bomber_mode && (canvas2d.IsKeyPressed(.V) || gamepad_pressed(.Dpad_Right)) {
                         bomber_payload_cycle(editor)
                     }
                     if !editor.bomber_mode {
@@ -12353,16 +12807,16 @@ adriatic_run :: proc(
                         }
                     }
                     control := postale_game.Control {
-                        throttle_up   = rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT),
+                        throttle_up   = canvas2d.IsKeyDown(.LEFT_SHIFT) || canvas2d.IsKeyDown(.RIGHT_SHIFT),
                         throttle_down = control_key_down(),
                     }
-                    if rl.IsKeyDown(.S) do control.pitch += 1
-                    if rl.IsKeyDown(.W) do control.pitch -= 1
-                    if rl.IsKeyDown(.D) do control.roll += 1
-                    if rl.IsKeyDown(.A) do control.roll -= 1
-                    if rl.IsKeyDown(.E) do control.yaw += 1
-                    if rl.IsKeyDown(.Q) do control.yaw -= 1
-                    if rl.GamepadAvailable() {
+                    if canvas2d.IsKeyDown(.S) do control.pitch += 1
+                    if canvas2d.IsKeyDown(.W) do control.pitch -= 1
+                    if canvas2d.IsKeyDown(.D) do control.roll += 1
+                    if canvas2d.IsKeyDown(.A) do control.roll -= 1
+                    if canvas2d.IsKeyDown(.E) do control.yaw += 1
+                    if canvas2d.IsKeyDown(.Q) do control.yaw -= 1
+                    if canvas2d.GamepadAvailable() {
                         control.pitch = stronger_axis(control.pitch, gamepad_axis(.Left_Y))
                         control.roll = stronger_axis(control.roll, gamepad_axis(.Left_X))
                         if gamepad_down(.Right_Shoulder) do control.yaw += 1
@@ -12402,6 +12856,7 @@ adriatic_run :: proc(
                             ground,
                         )
                         if editor.aircraft.active == .Rondine {
+                            local_wind := aircraft_local_airflow(editor, body)
                             rondine_game.step(
                                 &editor.rondine,
                                 {
@@ -12413,6 +12868,7 @@ adriatic_run :: proc(
                                 },
                                 editor.project.sea_level,
                                 f32(AIRCRAFT_FIXED_STEP),
+                                local_wind,
                             )
                             if !rondine_footprint_is_clear_water(
                                    editor,
@@ -12423,6 +12879,7 @@ adriatic_run :: proc(
                                 rondine_game.crash(&editor.rondine)
                             }
                         } else if editor.aircraft.active != .Postale {
+                            local_wind := aircraft_local_airflow(editor, body)
                             libellula_game.step(
                                 &editor.libellula,
                                 {
@@ -12434,14 +12891,16 @@ adriatic_run :: proc(
                                 },
                                 ground,
                                 f32(AIRCRAFT_FIXED_STEP),
+                                local_wind,
                             )
                         } else {
+                            local_wind := aircraft_local_airflow(editor, body)
                             ground_result := postale_game.step(
                                 &editor.postale,
                                 control,
                                 ground,
                                 f32(AIRCRAFT_FIXED_STEP),
-                                {wind_x, 0, wind_z},
+                                local_wind,
                             )
                             wheels_on_land := terrain_height >= editor.project.sea_level
                             if ground_result.touched_down && wheels_on_land {
@@ -12482,12 +12941,11 @@ adriatic_run :: proc(
                         }
                         editor.aircraft_fixed_accumulator -= AIRCRAFT_FIXED_STEP
                     }
-                    left_tip, right_tip, trail_basis, wing_trails_available :=
-                        active_aircraft_wing_trail_anchors(editor)
+                    left_tip, right_tip, trail_basis, wing_trails_available := active_aircraft_wing_trail_anchors(
+                        editor,
+                    )
                     wing_trails_emitting :=
-                        wing_trails_available &&
-                        !active_aircraft_grounded(editor) &&
-                        !active_aircraft_crashed(editor)
+                        wing_trails_available && !active_aircraft_grounded(editor) && !active_aircraft_crashed(editor)
                     if !wing_trails_emitting && editor.wing_trails.count > 0 {
                         // Keep previously emitted vapor advancing after a
                         // vehicle switch, touchdown, or crash, but feed zero
@@ -12497,7 +12955,14 @@ adriatic_run :: proc(
                         trail_basis = flight.basis_from_orientation(body.orientation)
                     }
                     if wing_trails_emitting || editor.wing_trails.count > 0 {
-                        trail_airspeed := wing_trails_emitting ? active_aircraft_apparent_airflow_speed(editor) : f32(0)
+                        body := active_aircraft_body(editor)
+                        trail_airspeed :=
+                            wing_trails_emitting ? active_aircraft_apparent_airflow_speed(editor) : f32(0)
+                        trail_local := atmosphere.sample_at(
+                            &editor.atmosphere,
+                            {body.position.x, body.position.y, body.position.z},
+                            body.position.y,
+                        )
                         particle_systems.step_wing_trails(
                             &editor.wing_trails,
                             min(delta_seconds, .05),
@@ -12505,11 +12970,7 @@ adriatic_run :: proc(
                             particle_systems.Vec3{right_tip.x, right_tip.y, right_tip.z},
                             particle_systems.Vec3{trail_basis.forward.x, trail_basis.forward.y, trail_basis.forward.z},
                             particle_systems.Vec3{trail_basis.up.x, trail_basis.up.y, trail_basis.up.z},
-                            particle_systems.Vec3 {
-                                editor.atmosphere.weather.wind[0],
-                                0,
-                                editor.atmosphere.weather.wind[1],
-                            },
+                            particle_systems.Vec3{trail_local.wind[0], trail_local.wind[1], trail_local.wind[2]},
                             trail_airspeed,
                         )
                     }
@@ -12552,11 +13013,11 @@ adriatic_run :: proc(
                         }
                     } else {
                         throttle, steering := f32(0), f32(0)
-                        if rl.IsKeyDown(.W) || rl.IsKeyDown(.UP) do throttle += 1
-                        if rl.IsKeyDown(.S) || rl.IsKeyDown(.DOWN) do throttle -= 1
-                        if rl.IsKeyDown(.A) || rl.IsKeyDown(.LEFT) do steering -= 1
-                        if rl.IsKeyDown(.D) || rl.IsKeyDown(.RIGHT) do steering += 1
-                        if rl.GamepadAvailable() {
+                        if canvas2d.IsKeyDown(.W) || canvas2d.IsKeyDown(.UP) do throttle += 1
+                        if canvas2d.IsKeyDown(.S) || canvas2d.IsKeyDown(.DOWN) do throttle -= 1
+                        if canvas2d.IsKeyDown(.A) || canvas2d.IsKeyDown(.LEFT) do steering -= 1
+                        if canvas2d.IsKeyDown(.D) || canvas2d.IsKeyDown(.RIGHT) do steering += 1
+                        if canvas2d.GamepadAvailable() {
                             throttle += max(gamepad_axis(.Right_Trigger), f32(0))
                             throttle -= max(gamepad_axis(.Left_Trigger), f32(0))
                             steering = stronger_axis(steering, gamepad_axis(.Left_X))
@@ -12676,15 +13137,15 @@ adriatic_run :: proc(
                         controller_zoom :=
                             (gamepad_axis(.Left_Trigger) - gamepad_axis(.Right_Trigger)) * 4 * delta_seconds
                         editor.camera.distance = clamp(
-                            editor.camera.distance - rl.GetMouseWheelMove() * .5 + controller_zoom,
+                            editor.camera.distance - canvas2d.GetMouseWheelMove() * .5 + controller_zoom,
                             3,
                             12,
                         )
                         move_x, move_y := f32(0), f32(0)
-                        if rl.IsKeyDown(.D) do move_x += 1
-                        if rl.IsKeyDown(.A) do move_x -= 1
-                        if rl.IsKeyDown(.W) do move_y += 1
-                        if rl.IsKeyDown(.S) do move_y -= 1
+                        if canvas2d.IsKeyDown(.D) do move_x += 1
+                        if canvas2d.IsKeyDown(.A) do move_x -= 1
+                        if canvas2d.IsKeyDown(.W) do move_y += 1
+                        if canvas2d.IsKeyDown(.S) do move_y -= 1
                         move_x = stronger_axis(move_x, gamepad_axis(.Left_X))
                         move_y = stronger_axis(move_y, -gamepad_axis(.Left_Y))
                         input := third_person.Input {
@@ -12731,12 +13192,12 @@ adriatic_run :: proc(
                         mouse_emote_update(
                             &editor.mouse_emote,
                             {
-                                movement_intent  = movement_intent,
+                                movement_intent = movement_intent,
                                 horizontal_speed = player_horizontal_speed_before,
-                                grounded         = editor.player.grounded,
+                                grounded = editor.player.grounded,
                                 player_controlled = editor.pilot.mode == .On_Foot,
                                 incompatible_pose = town_mouse_wheel_mounted,
-                                paused            = pause_menu_is_open(editor),
+                                paused = pause_menu_is_open(editor),
                             },
                             frame_seconds,
                         )
@@ -12934,7 +13395,9 @@ adriatic_run :: proc(
                 }
             }
         }
+        mouse_gait_lab_physics_step(editor, simulation_delta)
         gameplay_physics_step_world(editor, simulation_delta)
+        player_paws_step(editor, simulation_delta)
         if editor.in_map && !editor.vehicle_showcase_scene && !editor.vehicle_paint_scene {
             trailer_ground := terrain.sample_height(
                 &editor.project,
@@ -13011,11 +13474,11 @@ adriatic_run :: proc(
             editor.benchmark_ground_grass_disabled = false
         }
         if !editor.in_map && editor.tool != .Structure && cursor_hit && !ui_hit {
-            if rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT) {
+            if canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT) {
                 terrain_history_push_undo(editor)
             }
             stroke_strength := editor.strength * min(frame_delta, f32(.05)) * 4
-            if rl.IsMouseButtonDown(.LEFT) {
+            if canvas2d.IsMouseButtonDown(.LEFT) {
                 terrain.apply_stroke_with_hardness(
                     &editor.project,
                     editor.tool,
@@ -13028,7 +13491,7 @@ adriatic_run :: proc(
                 )
                 world_terrain_changed(editor, world_x, world_z, editor.radius)
             }
-            if rl.IsMouseButtonDown(.RIGHT) {
+            if canvas2d.IsMouseButtonDown(.RIGHT) {
                 terrain.apply_stroke_with_hardness(
                     &editor.project,
                     editor.tool,
@@ -13130,12 +13593,12 @@ adriatic_run :: proc(
             if selector_capture_pose_set do third_person.camera_set_active(&editor.cameras, capture_camera_slot)
             capture_camera_overridden = true
         }
-        rl.BeginDrawing()
+        canvas2d.BeginDrawing()
         if editor.default_map_regeneration_active {
             progress, message := default_map_regeneration_progress(editor)
             draw_startup_loading_screen(width, height, progress, message, postcard)
         } else {
-            draw_terrain(editor, width, height, f32(rl.GetTime()))
+            draw_terrain(editor, width, height, f32(canvas2d.GetTime()))
             pause_menu_draw(editor, width, height, postcard)
             cinematic_draw_wipe(editor, width, height)
             crash_recovery_draw(editor, width, height)
@@ -13144,7 +13607,37 @@ adriatic_run :: proc(
         live_capture_poll()
         live_control_poll(editor)
         mouse_emote_enforce_player_priority(editor)
-        rl.EndDrawing()
+        canvas2d.EndDrawing()
+        if !startup_timings_emitted {
+            first_frame_end := time.tick_now()
+            first_frame_ms := startup_elapsed_ms(startup_timings.checkpoint, first_frame_end)
+            total_ms := startup_elapsed_ms(startup_timings.started_at, first_frame_end)
+            startup_kind := first_start ? "cold" : "reload"
+            startup_mode :=
+                benchmark_mode ? "benchmark" :
+                capture_mode ? "capture" :
+                interactive_lab_mode ? "lab" : "game"
+            fmt.eprintf(
+                "startup total=%.1fms config=%.1fms window=%.1fms audio=%.1fms meshes=%.1fms terrain=%.1fms map_load=%.1fms physics=%.1fms renderer=%.1fms ready=%.1fms first_frame=%.1fms kind=%s mode=%s map=%s map_version=%d map_source=%s\n",
+                total_ms,
+                startup_timings.config_ms,
+                startup_timings.window_ms,
+                startup_timings.audio_ms,
+                startup_timings.meshes_ms,
+                startup_timings.terrain_ms,
+                startup_timings.map_load_ms,
+                startup_timings.physics_ms,
+                startup_timings.renderer_ms,
+                startup_timings.ready_ms,
+                first_frame_ms,
+                startup_kind,
+                startup_mode,
+                map_path,
+                MAP_ARTIFACT_FORMAT_VERSION,
+                map_source,
+            )
+            startup_timings_emitted = true
+        }
         default_map_regeneration_step(editor)
         // World rendering is submitted during EndDrawing, so keep the capture
         // pose installed until after that submission has consumed it.
@@ -13153,7 +13646,7 @@ adriatic_run :: proc(
             third_person.camera_set_pose(&editor.cameras, capture_camera_slot, capture_camera_slot_original)
             if selector_capture_pose_set do third_person.camera_set_active(&editor.cameras, capture_camera_active_original)
         }
-        gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()
+        gpu_frame_ms, gpu_frame_available := canvas2d.GetGpuFrameTimeMs()
         dio.flame_graph_set_frame_metrics(&editor.flame_graph, 0, 0, f32(gpu_frame_ms), gpu_frame_available)
         dio.flame_graph_end_frame(&editor.flame_graph)
         if interpolate_aircraft {
@@ -13241,7 +13734,7 @@ adriatic_run :: proc(
             }
         }
         wheel_slip_controls := engine_sound.Slip_Controls{}
-        tire_wetness := clamp(editor.atmosphere.weather.precipitation, 0, 1)
+        tire_wetness := surface_weather_sample(editor, active_surface_weather_position(editor))
         tire_surface := particle_systems.Dust_Surface.Grass
         postale_wheels_on_land := false
         if driving_aircraft(editor) && editor.aircraft.active == .Postale && editor.postale.grounded {
@@ -13351,7 +13844,7 @@ adriatic_run :: proc(
         }
         editor.landing_wheel_squeal = max(0, editor.landing_wheel_squeal - simulation_delta * 1.65)
         if benchmark_mode && frame >= benchmark_warmup {
-            benchmark_samples[benchmark_sample_count] = rl.GetTime() - benchmark_frame_start
+            benchmark_samples[benchmark_sample_count] = canvas2d.GetTime() - benchmark_frame_start
             benchmark_sample_count += 1
             if benchmark_sample_count >= benchmark_frames {
                 benchmark_report(
@@ -13369,19 +13862,19 @@ adriatic_run :: proc(
         // to settle; frame two only showed the first few links as a short nub.
         if capture_mode && request != nil && request.sequence_frames > 0 {
             if sequence_frame_index < request.sequence_frames && frame >= capture_frame {
-                rl.TakeScreenshot(fmt.ctprintf("%s/frame-%06d.png", capture_output, sequence_frame_index))
+                canvas2d.TakeScreenshot(fmt.ctprintf("%s/frame-%06d.png", capture_output, sequence_frame_index))
                 sequence_last_capture_frame = frame
                 sequence_frame_index += 1
             }
         } else if capture_mode && request != nil && request.turntable_frames > 0 {
             next_capture_frame := capture_frame + turntable_frame_index * turntable_capture_stride
             if turntable_frame_index < request.turntable_frames && frame == next_capture_frame {
-                rl.TakeScreenshot(fmt.ctprintf("%s/frame-%03d.png", capture_output, turntable_frame_index))
+                canvas2d.TakeScreenshot(fmt.ctprintf("%s/frame-%03d.png", capture_output, turntable_frame_index))
                 turntable_last_capture_frame = frame
                 turntable_frame_index += 1
             }
         } else if capture_mode && frame == capture_frame {
-            rl.TakeScreenshot(fmt.ctprintf("%s", capture_output))
+            canvas2d.TakeScreenshot(fmt.ctprintf("%s", capture_output))
         }
         // Vulkan screenshot readback completes asynchronously; retain several
         // presented frames after the request so capture mode always writes its PNG.
@@ -13404,7 +13897,8 @@ adriatic_run :: proc(
            frame >= max(32, capture_frame + 12) {
             break
         }
-        if instrument_duration_seconds > 0 && rl.GetTime() - instrument_started_at >= instrument_duration_seconds {
+        if instrument_duration_seconds > 0 &&
+           canvas2d.GetTime() - instrument_started_at >= instrument_duration_seconds {
             editor.quit_requested = true
         }
         if HOT_RELOAD && hot_reload_requested(hot_library_path, hot_library_mtime) {
@@ -13432,26 +13926,28 @@ run :: proc(persistent_canvas_state: rawptr) -> hot_abi.Run_Result {
 
 @(export)
 canvas_state :: proc() -> rawptr {
-    return rl.PersistentState()
+    return canvas2d.PersistentState()
 }
 
 @(export)
 canvas_state_abi_version :: proc() -> u64 {
-    return rl.State_Abi_Version()
+    return canvas2d.State_Abi_Version()
 }
 
 @(export)
 close_canvas :: proc() {
-    rl.DestroyPersistentState()
+    canvas2d.DestroyPersistentState()
 }
 
 when !HOT_RELOAD {
     main :: proc() {
+        startup_started_at := time.tick_now()
         handled, success := adriatic_cli(os.args)
         if handled {
             if !success do os.exit(1)
             return
         }
-        _ = adriatic_run(nil)
+        _ = adriatic_run(nil, startup_started_at = startup_started_at)
+        if startup_failed do os.exit(1)
     }
 }

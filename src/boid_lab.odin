@@ -5,7 +5,7 @@ import flocks "../packages/flocks"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 boid_lab_system: flocks.System
 boid_lab_paused: bool
@@ -109,29 +109,29 @@ boid_lab_set_overview_camera :: proc(editor: ^Editor) {
 }
 
 boid_lab_process_input :: proc(editor: ^Editor) {
-    if rl.IsKeyPressed(.SPACE) do boid_lab_paused = !boid_lab_paused
-    if rl.IsKeyPressed(.R) do boid_lab_reset()
-    if rl.IsKeyPressed(.V) do boid_lab_show_vectors = !boid_lab_show_vectors
-    if rl.IsKeyPressed(.W) {
+    if canvas2d.IsKeyPressed(.SPACE) do boid_lab_paused = !boid_lab_paused
+    if canvas2d.IsKeyPressed(.R) do boid_lab_reset()
+    if canvas2d.IsKeyPressed(.V) do boid_lab_show_vectors = !boid_lab_show_vectors
+    if canvas2d.IsKeyPressed(.W) {
         boid_lab_wind_index = (boid_lab_wind_index + 1) % len(BOID_LAB_WINDS)
     }
-    if rl.IsKeyPressed(.C) {
+    if canvas2d.IsKeyPressed(.C) {
         boid_lab_follow = !boid_lab_follow
         if !boid_lab_follow do boid_lab_set_overview_camera(editor)
     }
-    if rl.IsKeyPressed(.N) && boid_lab_system.boid_count > 0 {
+    if canvas2d.IsKeyPressed(.N) && boid_lab_system.boid_count > 0 {
         boid_lab_follow_index = (boid_lab_follow_index + 1) % boid_lab_system.boid_count
         boid_lab_follow = true
     }
-    if rl.IsKeyPressed(.ONE) {
+    if canvas2d.IsKeyPressed(.ONE) {
         boid_lab_mode = 1
         boid_lab_reset()
     }
-    if rl.IsKeyPressed(.TWO) {
+    if canvas2d.IsKeyPressed(.TWO) {
         boid_lab_mode = 2
         boid_lab_reset()
     }
-    if rl.IsKeyPressed(.THREE) {
+    if canvas2d.IsKeyPressed(.THREE) {
         boid_lab_mode = 0
         boid_lab_reset()
     }
@@ -157,13 +157,13 @@ boid_lab_update_camera :: proc(editor: ^Editor) {
 
 world_boid_lab_water :: proc() {
     extent := f32(90)
-    color := rl.Color{38, 99, 127, 255}
+    color := canvas2d.Color{38, 99, 127, 255}
     world_water_quad({-extent, 0, -extent}, {-extent, 0, extent}, {extent, 0, extent}, {extent, 0, -extent}, color)
 }
 
 world_boid_lab_anchor :: proc(anchor: flocks.Anchor) {
     base := third_person.Vec3{anchor.position.x, .12, anchor.position.z}
-    color := anchor.kind == .Harbor ? rl.Color{238, 183, 91, 255} : rl.Color{91, 220, 205, 255}
+    color := anchor.kind == .Harbor ? canvas2d.Color{238, 183, 91, 255} : canvas2d.Color{91, 220, 205, 255}
     world_tube_between(base, base + third_person.Vec3{0, .55, 0}, {0, 0, 1}, 2.2, 1.7, color)
     for segment in 0 ..< 32 {
         a := f32(segment) / 32 * math.PI * 2
@@ -197,15 +197,15 @@ world_boid_lab :: proc(editor: ^Editor) {
 }
 
 boid_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 490,
         height = 181,
     }
-    rl.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
-    rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
-    rl.DrawTextEx(rl.Font{}, "BOID FLOCK LAB", {38, 38}, 20, 1, {245, 238, 197, 255})
+    canvas2d.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "BOID FLOCK LAB", {38, 38}, 20, 1, {245, 238, 197, 255})
     status := fmt.ctprintf(
         "%d BIRDS   %d FLOCKS   WIND %s%s",
         boid_lab_system.boid_count,
@@ -213,12 +213,12 @@ boid_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         BOID_LAB_WIND_NAMES[boid_lab_wind_index],
         boid_lab_paused ? "   PAUSED" : boid_lab_follow ? "   FOLLOW" : "",
     )
-    rl.DrawTextEx(rl.Font{}, status, {38, 72}, 14, 1, {208, 239, 240, 255})
-    rl.DrawTextEx(rl.Font{}, "1 harbor   2 fishing   3 both   W wind", {38, 103}, 13, 1, {171, 201, 207, 255})
-    rl.DrawTextEx(rl.Font{}, "SPACE pause   R reset   V velocity vectors", {38, 127}, 13, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, status, {38, 72}, 14, 1, {208, 239, 240, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "1 harbor   2 fishing   3 both   W wind", {38, 103}, 13, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "SPACE pause   R reset   V velocity vectors", {38, 127}, 13, 1, {171, 201, 207, 255})
     camera_status := fmt.ctprintf("C follow / overview   N next boid   tracking %d", boid_lab_follow_index + 1)
-    rl.DrawTextEx(rl.Font{}, camera_status, {38, 151}, 13, 1, {171, 201, 207, 255})
-    rl.DrawTextEx(rl.Font{}, "Gold: harbor anchor   Cyan: fishing anchor", {38, 175}, 12, 1, {214, 192, 139, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, camera_status, {38, 151}, 13, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "Gold: harbor anchor   Cyan: fishing anchor", {38, 175}, 12, 1, {214, 192, 139, 255})
     _ = width
     _ = height
 }

@@ -420,12 +420,17 @@ cypress_generated_cluster_size :: proc(detail: Detail_Level, maturity: f32, seed
     if detail == .Far do return 1
     if detail == .Medium do return 2
 
-    desired := 1 + clamp((maturity - .18) / .52, f32(0), f32(1)) * 5
+    // Keep individual nodes from becoming dense rosettes. Near-detail
+    // cypresses add a second anchor along each lateral segment below, so four
+    // wrapped sprays per node produce better continuous coverage than six
+    // sprays concentrated at fewer points while remaining inside the shared
+    // attachment budget.
+    desired := 1 + clamp((maturity - .18) / .52, f32(0), f32(1)) * 3
     whole := int(math.floor(desired))
     fraction := desired - f32(whole)
     hash := (seed * 0x9e3779b97f4a7c15 + u64(index + 1) * 0xbf58476d1ce4e5b9) ~ (u64(index + 17) * 0x94d049bb133111eb)
     if f32(hash % 10_000) < fraction * 10_000 do whole += 1
-    return clamp(whole, 1, 6)
+    return clamp(whole, 1, 4)
 }
 
 support_hash :: proc(support: Support_Surface) -> u64 {
@@ -879,10 +884,10 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
         // Represent overlapping scale-leaf sprays rather than individual
         // microscopic scales; the latter disappear at ordinary game-camera
         // distances and expose the procedural scaffold.
-        // Cypress sprays are short, overlapping fans. A broader footprint
-        // closes gaps around each shoot while the shorter axis prevents the
-        // crown edge from reading as a ring of individual needles.
-        traits = {.Cypress_Spray, .070, .034, 0, .012, .005}
+        // Favor slim shoot-following fans over broad pads. The longer axis
+        // bridges neighboring anchors, while the reduced width prevents the
+        // crown from resolving into stacked rounded topiary lobes.
+        traits = {.Cypress_Spray, .078, .032, 0, .013, .0045}
     case .Grapevine:
         traits = {.Grapevine, .18, .16, .05, .016, .008}
     case .Fig:
@@ -1936,10 +1941,12 @@ cypress_skeleton :: proc(
         apex_start := .34 + clamp((maturity - .28) / .42, f32(0), f32(1)) * .38
         apex_progress := clamp((progress - apex_start) / (1 - apex_start), f32(0), f32(1))
         taper *= 1 - apex_progress * apex_progress * .58
-        tier_fullness := 1 + olive_random_signed(&random) * .08
+        // Whole intervals breathe in and out slightly, producing the subtle
+        // uneven outline of a living crown rather than a lathed green pole.
+        tier_fullness := 1 + olive_random_signed(&random) * .12
         pair_lengths: [4]f32
         for &pair_length in pair_lengths {
-            pair_length = 1 + olive_random_signed(&random) * .045
+            pair_length = 1 + olive_random_signed(&random) * .08
         }
         pair_angles: [4]f32
         for &pair_angle in pair_angles {
@@ -1955,17 +1962,23 @@ cypress_skeleton :: proc(
         }
         pair_retractions: [4]f32
         for &pair_retraction, pair_index in pair_retractions {
-            // Distribute the four opposite pairs over the upper part of the
-            // preceding leader segment. Each pair keeps one exact origin and
-            // remains balanced, while the crown loses its stacked horizontal
-            // shelves. Stratification guarantees useful separation; a small
-            // jitter prevents a second perfectly regular four-step pattern.
-            pair_retraction = .025 + f32(pair_index) * .040 + olive_random_signed(&random) * .007
+            // Italian cypress does not carry eight branches from one visible
+            // collar. Distribute the four opposite pairs through most of the
+            // preceding leader interval so adjacent tiers interleave into one
+            // continuous column. Each pair still shares an exact origin and
+            // remains radially balanced; the small jitter avoids replacing a
+            // whorl lattice with four equally spaced horizontal ranks.
+            pair_retraction = .06 + f32(pair_index) * .12 + olive_random_signed(&random) * .014
         }
         for branch_index in 0 ..< 8 {
             azimuth := tier_phase + f32(branch_index) * math.PI * 2 / 8 + pair_angles[branch_index % 4]
             radial := lsystem.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
-            local_spread := spread_angle + pair_spreads[branch_index % 4]
+            lower_crown_weight := 1 - clamp(progress / .32, f32(0), f32(1))
+            // Lower limbs open a little farther from the leader, giving the
+            // tree a grounded shoulder before it settles into the familiar
+            // narrow column. Upper shoots retain their strongly ascending
+            // habit rather than turning the whole crown conical.
+            local_spread := spread_angle + pair_spreads[branch_index % 4] + lower_crown_weight * .06
             direction := linalg.normalize0(
                 radial * math.sin(local_spread) + lsystem.Vec3{0, math.cos(local_spread), 0},
             )
@@ -1975,9 +1988,12 @@ cypress_skeleton :: proc(
             // above a bulbous lower third. The explicit apex envelope still
             // closes the final tiers into a narrow tip.
             branch_envelope_length := math.sqrt(max(segment_length * step, f32(0)))
-            basal_progress := clamp(progress / .28, f32(0), f32(1))
+            basal_progress := clamp(progress / .48, f32(0), f32(1))
             basal_smooth := basal_progress * basal_progress * (3 - 2 * basal_progress)
-            basal_envelope := .86 + basal_smooth * .14
+            // A real mature cypress carries its heaviest body in the lower
+            // third. Earlier values suppressed exactly those first whorls,
+            // leaving a bottle-brush trunk beneath a top-heavy column.
+            basal_envelope := 1.28 - basal_smooth * .10
             branch_length :=
                 branch_envelope_length * basal_envelope * taper * tier_fullness * pair_lengths[branch_index % 4]
             // Keep every upper whorl beneath the remaining leader. The
@@ -1989,7 +2005,17 @@ cypress_skeleton :: proc(
             }
             branch_length = min(branch_length, remaining_leader_length * .40)
             branch_mid := local_branch_origin + direction * branch_length
-            branch_tip := branch_mid + direction * branch_length * .78
+            // Cypress scaffold limbs open away from the trunk, then their
+            // outer sprays turn sharply upward. Keeping both segments on one
+            // diagonal made every nominal tier taper back to the leader and
+            // expand again, producing the stacked-bead silhouette visible in
+            // captures. The upright second segment holds foliage at the
+            // crown envelope and lets neighboring tiers overlap vertically.
+            tip_spread := local_spread * .42
+            tip_direction := linalg.normalize0(
+                radial * math.sin(tip_spread) + lsystem.Vec3{0, math.cos(tip_spread), 0},
+            )
+            branch_tip := branch_mid + tip_direction * branch_length * .78
             branch_radius := max(radius_end * .42, f32(.008))
             append(
                 &result.plant.segments,
@@ -2013,7 +2039,7 @@ cypress_skeleton :: proc(
             append(
                 &result.plant.leaves,
                 lsystem.Leaf{position = branch_mid, forward = direction, up = up, depth = 1},
-                lsystem.Leaf{position = branch_tip, forward = direction, up = up, depth = 1},
+                lsystem.Leaf{position = branch_tip, forward = tip_direction, up = up, depth = 1},
             )
         }
     }
@@ -2060,11 +2086,11 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     } else if config.species == .Almond {
         interpreted = almond_skeleton(config.seed, maturity, iterations)
     } else if config.species == .Italian_Cypress {
-        // Grow toward fifteen mature whorls continuously after establishment.
+        // Grow toward eighteen mature branch intervals continuously after establishment.
         // Ceil exposes one emerging tier at a time, while the skeleton's
         // geometric-series normalization interpolates its height within that
         // interval instead of jumping five complete tiers per grammar step.
-        reference_tier_count := clamp((maturity - .10) / .90, f32(0), f32(1)) * 15
+        reference_tier_count := clamp((maturity - .10) / .90, f32(0), f32(1)) * 18
         tier_count := int(math.ceil(reference_tier_count))
         if config.detail == .Medium && tier_count > 5 do tier_count -= 1
         // Far spends its fixed budget on eleven silhouette-critical whorls.
@@ -2140,7 +2166,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         // than occurring only at terminal buds. The skeleton already emits
         // end anchors, so place the additional density between nodes instead
         // of stacking duplicate cards into blunt pom-poms.
-        for segment in interpreted.plant.segments {
+        for segment, segment_index in interpreted.plant.segments {
             direction := linalg.normalize0(segment.end - segment.start)
             append(
                 &interpreted.plant.leaves,
@@ -2151,6 +2177,46 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
                     depth = segment.depth,
                 },
             )
+            if segment.depth == 1 && config.detail == .Near {
+                // One midpoint alone leaves long lateral shoots as separated
+                // tufts. A second staggered anchor distributes scale-leaf
+                // sprays along the shoot, closing the woody gaps without
+                // widening the cypress's deliberately narrow silhouette.
+                append(
+                    &interpreted.plant.leaves,
+                    lsystem.Leaf {
+                        position = segment.start + (segment.end - segment.start) * .78,
+                        forward = direction,
+                        up = {1, 0, 0},
+                        depth = segment.depth,
+                    },
+                )
+                // Cypress skeleton order is one leader followed by sixteen
+                // lateral segments per branch interval. Derive the stable
+                // interval rather than normalizing against current height;
+                // the latter changes during growth and can make established
+                // foliage disappear when a new top interval is added.
+                branch_interval := segment_index / 17
+                relative_interval := f32(branch_interval) / 18
+                lower_density := clamp((.46 - relative_interval) / .40, f32(0), f32(1))
+                density_hash := (config.seed + 1) * 0x9e3779b97f4a7c15 ~ u64(segment_index + 23) * 0xbf58476d1ce4e5b9
+                density_hash = (density_hash ~ (density_hash >> 29)) * 0x94d049bb133111eb
+                if f32(density_hash % 10_000) < lower_density * 10_000 {
+                    // The lower crown carries more overlapping secondary
+                    // spray than the upper spire. Fade these anchors out
+                    // independently through mid-crown: a hard shared height
+                    // cutoff creates a conspicuous horizontal foliage shelf.
+                    append(
+                        &interpreted.plant.leaves,
+                        lsystem.Leaf {
+                            position = segment.start + (segment.end - segment.start) * .28,
+                            forward = direction,
+                            up = {1, 0, 0},
+                            depth = segment.depth,
+                        },
+                    )
+                }
+            }
             if segment.depth == 0 && config.detail != .Far {
                 // Two staggered leader anchors keep the inner column clothed
                 // without doubling the terminal tuft at each tier.

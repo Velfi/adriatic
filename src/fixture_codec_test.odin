@@ -221,6 +221,30 @@ when ODIN_TEST {
         source.atmosphere.seed = 0x41544d4f
         source.atmosphere.world_minutes = f32(1234.5)
         source.atmosphere.override = .Windy
+        source.atmosphere.schedule = {
+            initialized = true,
+            rng_state = 0x46524e54,
+            elapsed_seconds = 412.5,
+            next_event_seconds = 901.25,
+            event_serial = 7,
+            front = {
+                active = true,
+                event_id = 7,
+                seed = 0x53544f52,
+                start_seconds = 400,
+                end_seconds = 1000,
+                origin = {-2400, 1750},
+                direction = {.8, -.6},
+                speed = 14.25,
+                width = 2300,
+                intensity = .86,
+                gustiness = .71,
+                rainfall = .92,
+                visibility_loss = .64,
+                cell_scale = 880,
+                cell_phase = 1.75,
+            },
+        }
         source.vehicle_effects.seed = 0x56454658
         source.vehicle_effects.dust_count = 1
         source.vehicle_effects.dust[0].seed = 0x1234
@@ -667,6 +691,7 @@ when ODIN_TEST {
             testing.expect(t, decoded.story_state.delivery.subject == "delivery-subject-marker")
             testing.expect(t, decoded.story_state.resident_action_seen == source.story_state.resident_action_seen)
             testing.expect(t, decoded.atmosphere.world_minutes == source.atmosphere.world_minutes)
+            testing.expect(t, decoded.atmosphere.schedule == source.atmosphere.schedule)
             testing.expect(t, decoded.vehicle_effects.seed == source.vehicle_effects.seed)
             testing.expect(t, decoded.tweak.atmosphere.world_minutes == source.tweak.atmosphere.world_minutes)
             testing.expect(t, decoded.mouse_fur == .Silver)

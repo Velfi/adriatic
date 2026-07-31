@@ -3,6 +3,7 @@ package main
 import atmosphere "../packages/atmosphere"
 import dio "../packages/dio"
 import flight "../packages/flight"
+import fog_field "../packages/fog_field"
 import im "../packages/imgui"
 import mouse_tail "../packages/mouse_tail"
 import postale_game "../packages/postale"
@@ -615,7 +616,7 @@ tweak_draw_terrain :: proc(editor: ^Editor) {
         }
     }
     if tweak_section("Project file") {
-        im.Text("File: %s", TERRAIN_PROJECT_PATH)
+        im.Text("File: %s", EDITOR_MAP_ARTIFACT_PATH)
         if im.Button("Save project") do terrain_project_save(editor)
         im.SameLine()
         if im.Button("Load project") {
@@ -650,12 +651,69 @@ tweak_draw_atmosphere :: proc(editor: ^Editor) {
     if im.RadioButton("Windy", a.override == .Windy) do a.override = .Windy
     im.SameLine()
     if im.RadioButton("Storm", a.override == .Storm) do a.override = .Storm
+    im.SeparatorText("Adriatic climate")
+    im.Text(
+        "Current %s  next %s  season %.1f%%",
+        atmosphere.regime_name(a.climate.current),
+        atmosphere.regime_name(a.climate.next),
+        atmosphere.season_phase(a) * 100,
+    )
+    if im.RadioButton("Maestral", a.climate.current == .Maestral) do atmosphere.set_climate_regime(a, .Maestral)
+    im.SameLine()
+    if im.RadioButton("Bura clear", a.climate.current == .Bura_Clear) do atmosphere.set_climate_regime(a, .Bura_Clear)
+    im.SameLine()
+    if im.RadioButton("Bura storm", a.climate.current == .Bura_Storm) do atmosphere.set_climate_regime(a, .Bura_Storm)
+    if im.RadioButton("Jugo", a.climate.current == .Jugo) do atmosphere.set_climate_regime(a, .Jugo)
+    im.SameLine()
+    if im.RadioButton("Calm humid", a.climate.current == .Calm_Humid) do atmosphere.set_climate_regime(a, .Calm_Humid)
+    im.SameLine()
+    if im.RadioButton("Post front", a.climate.current == .Post_Front) do atmosphere.set_climate_regime(a, .Post_Front)
+    im.SeparatorText("Front schedule")
+    im.Text("Schedule: %s", a.override == .Automatic ? "RUNNING" : "PAUSED BY OVERRIDE")
+    im.Text("Clock %.1f s  next/event %.1f s", a.schedule.elapsed_seconds, atmosphere.front_seconds_until_next(a))
+    if a.schedule.front.active {
+        front := &a.schedule.front
+        im.Text(
+            "Front %u  progress %.1f%%  heading %.2f, %.2f",
+            front.event_id,
+            atmosphere.front_progress(a) * 100,
+            front.direction[0],
+            front.direction[1],
+        )
+        im.Text("Width %.0f m  speed %.2f m/s  intensity %.2f", front.width, front.speed, front.intensity)
+    } else {
+        im.TextUnformatted("No active front")
+    }
+    if im.Button("Trigger deterministic front now") do atmosphere.trigger_front(a)
     im.SeparatorText("Current weather")
     tweak_drag_f32("Cloud cover", &a.weather.cloud_cover, 0, 1, .01)
     tweak_drag_f32("Precipitation", &a.weather.precipitation, 0, 1, .01)
     tweak_drag_f32("Haze", &a.weather.haze, 0, 1, .01)
     tweak_drag_f32("Severity", &a.weather.severity, 0, 1, .01)
     im.DragFloat2("Wind", &a.weather.wind, .05, -100, 100, "%.2f", im.SliderFlags_AlwaysClamp)
+    im.SeparatorText("Procedural fog banks")
+    im.Checkbox("Fog enabled", &fog_debug_enabled)
+    im.Checkbox("Fog shells", &fog_debug_shells)
+    im.SliderFloat("Fog density", &fog_debug_density_multiplier, 0, 2, "%.2f", im.SliderFlags_AlwaysClamp)
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    field := fog_field.generate(
+        a.seed,
+        a.front_seconds,
+        a.weather,
+        {{-half_extent, -half_extent}, {half_extent, half_extent}},
+        a.climate.current,
+    )
+    for bank, index in field.banks {
+        im.Text(
+            "Bank %d: center %.0f, %.0f  radii %.0f, %.0f  top %.0f",
+            index + 1,
+            bank.center.x,
+            bank.center.y,
+            bank.radii.x,
+            bank.radii.y,
+            bank.top_altitude,
+        )
+    }
 }
 
 tweak_draw_time_of_day :: proc(editor: ^Editor) {

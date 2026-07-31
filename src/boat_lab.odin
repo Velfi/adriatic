@@ -5,7 +5,7 @@ import boats "../packages/boats"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 BOAT_LAB_CLASSES := [5]boats.Class{.Motor, .Sail, .Fishing, .Tug, .Dinghy}
 
@@ -84,7 +84,7 @@ world_boat_lab_water :: proc() {
     extent := f32(700)
     divisions := 20
     cell := extent * 2 / f32(divisions)
-    color := rl.Color{42, 105, 135, 255}
+    color := canvas2d.Color{42, 105, 135, 255}
     for z_index in 0 ..< divisions {
         z0 := -extent + f32(z_index) * cell
         z1 := z0 + cell
@@ -108,25 +108,25 @@ world_boat_lab :: proc(editor: ^Editor) {
 }
 
 boat_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 410,
         height = 224,
     }
-    rl.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
-    rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
-    rl.DrawTextEx(rl.Font{}, "NPC BOAT LAB", {38, 38}, 20, 1, {245, 238, 197, 255})
+    canvas2d.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "NPC BOAT LAB", {38, 38}, 20, 1, {245, 238, 197, 255})
     for class, index in BOAT_LAB_CLASSES {
         spec := boats.specifications(class)
         label := fmt.ctprintf("%s   %.2f m x %.2f m", boats.class_name(class), spec.length, spec.beam)
-        rl.DrawTextEx(
-            rl.Font{},
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             label,
             {38, 70 + f32(index) * 21},
             13,
             1,
-            index >= 3 ? rl.Color{247, 189, 115, 255} : rl.Color{208, 239, 240, 255},
+            index >= 3 ? canvas2d.Color{247, 189, 115, 255} : canvas2d.Color{208, 239, 240, 255},
         )
     }
     ocean_classes := [2]boats.Ocean_Class{.Product_Tanker, .Cruise_Ship}
@@ -134,7 +134,7 @@ boat_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         spec := boats.ocean_specifications(class)
         name := class == .Product_Tanker ? "PRODUCT TANKER" : "CRUISE SHIP"
         label := fmt.ctprintf("%s   %.2f m x %.2f m", name, spec.length, spec.beam)
-        rl.DrawTextEx(rl.Font{}, label, {38, 175 + f32(index) * 21}, 13, 1, {247, 189, 115, 255})
+        canvas2d.DrawTextEx(canvas2d.Font{}, label, {38, 175 + f32(index) * 21}, 13, 1, {247, 189, 115, 255})
     }
     _ = editor
     _ = width

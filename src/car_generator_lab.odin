@@ -6,7 +6,7 @@ import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 CAR_GENERATOR_LAB_KINDS := [5]cars.Kind{.Sedan, .Coupe, .Pickup, .Delivery, .Woody}
 car_generator_lab_seed: u32 = 1947
@@ -77,13 +77,13 @@ car_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 
 car_generator_lab_process_input :: proc(editor: ^Editor) {
     if editor == nil do return
-    if rl.IsKeyPressed(.G) do car_generator_lab_select(editor, -1)
-    if rl.IsKeyPressed(.R) do car_generator_lab_seed += 1
-    if rl.IsKeyPressed(.ONE) do car_generator_lab_select(editor, 0)
-    if rl.IsKeyPressed(.TWO) do car_generator_lab_select(editor, 1)
-    if rl.IsKeyPressed(.THREE) do car_generator_lab_select(editor, 2)
-    if rl.IsKeyPressed(.FOUR) do car_generator_lab_select(editor, 3)
-    if rl.IsKeyPressed(.W) do car_generator_lab_select(editor, 4)
+    if canvas2d.IsKeyPressed(.G) do car_generator_lab_select(editor, -1)
+    if canvas2d.IsKeyPressed(.R) do car_generator_lab_seed += 1
+    if canvas2d.IsKeyPressed(.ONE) do car_generator_lab_select(editor, 0)
+    if canvas2d.IsKeyPressed(.TWO) do car_generator_lab_select(editor, 1)
+    if canvas2d.IsKeyPressed(.THREE) do car_generator_lab_select(editor, 2)
+    if canvas2d.IsKeyPressed(.FOUR) do car_generator_lab_select(editor, 3)
+    if canvas2d.IsKeyPressed(.W) do car_generator_lab_select(editor, 4)
 }
 
 car_generator_lab_local :: proc(origin: third_person.Vec3, yaw, x, y, z: f32) -> third_person.Vec3 {
@@ -95,7 +95,7 @@ car_generator_lab_box :: proc(
     origin: third_person.Vec3,
     yaw: f32,
     x, y, z, width, height, length: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     // car_generator_lab_local and world_box_rotated use the same positive-yaw
     // convention.  Negating here skewed every chrome bar away from the body.
@@ -109,7 +109,7 @@ car_generator_lab_tapered :: proc(
     origin: third_person.Vec3,
     yaw: f32,
     x, bottom_y, z, bottom_width, bottom_length, top_width, top_length, height: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     bottom_half_w, bottom_half_l := bottom_width * .5, bottom_length * .5
     top_half_w, top_half_l := top_width * .5, top_length * .5
@@ -135,7 +135,7 @@ car_generator_lab_tapered :: proc(
     world_quad(p[0], p[1], p[2], p[3], color)
 }
 
-car_generator_lab_colors :: proc(palette: cars.Palette) -> (body, accent, timber: rl.Color) {
+car_generator_lab_colors :: proc(palette: cars.Palette) -> (body, accent, timber: canvas2d.Color) {
     switch palette {
     case .Sage:
         return {113, 139, 113, 255}, {224, 213, 177, 255}, {132, 91, 53, 255}
@@ -155,10 +155,10 @@ car_generator_lab_generated_mesh :: proc(
     plan: cars.Plan,
     origin: third_person.Vec3,
     yaw: f32,
-    body, accent, timber: rl.Color,
+    body, accent, timber: canvas2d.Color,
 ) {
     generated := cars.mesh(plan)
-    glass := rl.Color{65, 105, 114, 255}
+    glass := canvas2d.Color{65, 105, 114, 255}
     for first := 0; first + 2 < generated.index_count; first += 3 {
         source_a := generated.vertices[generated.indices[first + 0]]
         source_b := generated.vertices[generated.indices[first + 1]]
@@ -213,8 +213,8 @@ car_generator_lab_generated_mesh :: proc(
 
 car_generator_lab_car :: proc(plan: cars.Plan, origin: third_person.Vec3, yaw: f32) {
     body, accent, timber := car_generator_lab_colors(plan.palette)
-    dark := rl.Color{34, 38, 36, 255}
-    chrome := rl.Color{194, 194, 177, 255}
+    dark := canvas2d.Color{34, 38, 36, 255}
+    chrome := canvas2d.Color{194, 194, 177, 255}
     wheel_z := plan.wheelbase * .5
     sides := [2]f32{-1, 1}
     axles := [2]f32{-wheel_z, wheel_z}
@@ -299,18 +299,18 @@ world_car_generator_lab :: proc(_: ^Editor) {
 }
 
 car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 510,
         height = 205,
     }
-    rl.DrawRectangleRounded(panel, .10, 8, {20, 28, 29, 230})
-    rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {196, 167, 106, 255})
-    rl.DrawTextEx(rl.Font{}, "EUROPEAN CAR GENERATOR", {38, 38}, 20, 1, {247, 226, 176, 255})
-    rl.DrawTextEx(rl.Font{}, "COMPACT CIVILIAN MOTORING / 1938–1949", {38, 65}, 12, 1, {171, 204, 198, 255})
+    canvas2d.DrawRectangleRounded(panel, .10, 8, {20, 28, 29, 230})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {196, 167, 106, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "EUROPEAN CAR GENERATOR", {38, 38}, 20, 1, {247, 226, 176, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "COMPACT CIVILIAN MOTORING / 1938–1949", {38, 65}, 12, 1, {171, 204, 198, 255})
     controls := fmt.ctprintf("G GALLERY   1–4 / W INSPECT   R NEXT SEED   #%d", car_generator_lab_seed)
-    rl.DrawTextEx(rl.Font{}, controls, {38, 82}, 11, 1, {196, 167, 106, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, controls, {38, 82}, 11, 1, {196, 167, 106, 255})
     for kind, index in CAR_GENERATOR_LAB_KINDS {
         plan := cars.generate(kind, car_generator_lab_seed + u32(index) * 31)
         topology := cars.mesh(plan)
@@ -323,8 +323,8 @@ car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
             topology.vertex_count,
             topology.index_count,
         )
-        color := index == car_generator_lab_selected ? rl.Color{247, 205, 121, 255} : rl.Color{224, 219, 197, 255}
-        rl.DrawTextEx(rl.Font{}, label, {38, 107 + f32(index) * 15}, 12, 1, color)
+        color := index == car_generator_lab_selected ? canvas2d.Color{247, 205, 121, 255} : canvas2d.Color{224, 219, 197, 255}
+        canvas2d.DrawTextEx(canvas2d.Font{}, label, {38, 107 + f32(index) * 15}, 12, 1, color)
     }
     _ = width
     _ = height

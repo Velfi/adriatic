@@ -1,6 +1,6 @@
 package main
 
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 import render2d "zelda_engine:render2d"
 
 ADRIATIC_RENDERER_DESCRIPTOR := render2d.Renderer_Descriptor {
@@ -9,7 +9,7 @@ ADRIATIC_RENDERER_DESCRIPTOR := render2d.Renderer_Descriptor {
         fragment = {"assets/shaders/canvas.frag", .Fragment, "main", "shaders/canvas.frag"},
         post_vertex = {"assets/shaders/canvas-post.vert", .Vertex, "main", "shaders/canvas-post.vert"},
         post_fragment = {"assets/shaders/canvas-post.frag", .Fragment, "main", "shaders/canvas-post.frag"},
-        push_constant_size = size_of(rl.Push),
+        push_constant_size = size_of(canvas2d.Push),
         post_process_enabled = true,
     },
     user_data = &world_renderer,

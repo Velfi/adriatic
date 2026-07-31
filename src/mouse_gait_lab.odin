@@ -6,19 +6,20 @@ import particle_systems "../packages/particles"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
+import physics "zelda_engine:physics"
 
 MOUSE_GAIT_LAB_SPEEDS := [5]f32{2.6, 6.4, 9.0, 9.8, 11.2}
 MOUSE_GAIT_LAB_NAMES := [5]string{"WALK", "TROT", "TROT / GALLOP", "GALLOP", "FULL BOUND"}
 MOUSE_GAIT_LAB_TARGET_NAMES := [5]string{"walk", "trot", "transition", "gallop", "bound"}
-MOUSE_GAIT_LAB_COLORS := [5]rl.Color {
+MOUSE_GAIT_LAB_COLORS := [5]canvas2d.Color {
     {213, 190, 151, 255},
     {169, 91, 55, 255},
     {139, 145, 151, 255},
     {132, 107, 84, 255},
     {226, 224, 216, 255},
 }
-MOUSE_GAIT_PATH_COLORS := [4]rl.Color {
+MOUSE_GAIT_PATH_COLORS := [4]canvas2d.Color {
     {64, 224, 238, 255}, // left fore
     {255, 158, 64, 255}, // right fore
     {236, 82, 190, 255}, // left hind
@@ -33,9 +34,38 @@ mouse_gait_lab_oblique: bool
 mouse_gait_lab_show_paths: bool
 mouse_gait_lab_stop_spray: bool
 mouse_gait_lab_scurry: bool
+mouse_gait_lab_surface_course: bool
+mouse_gait_lab_moving_platform: physics.Body_ID
+mouse_gait_lab_course_world: physics.World
+mouse_gait_lab_course_bodies: [6]physics.Body_ID
+mouse_gait_lab_course_body_count: int
+mouse_gait_lab_course_feature: int
+mouse_gait_lab_course_actor_position: third_person.Vec3
+
+mouse_gait_lab_course_clear :: proc(editor: ^Editor) {
+    if editor != nil && editor.gameplay_physics.world != nil &&
+       editor.gameplay_physics.world == mouse_gait_lab_course_world {
+        for body in mouse_gait_lab_course_bodies[:mouse_gait_lab_course_body_count] {
+            if body != physics.INVALID_BODY do physics.remove_body(editor.gameplay_physics.world, body)
+        }
+    }
+    mouse_gait_lab_course_world = nil
+    mouse_gait_lab_course_bodies = {}
+    mouse_gait_lab_course_body_count = 0
+    mouse_gait_lab_moving_platform = physics.INVALID_BODY
+    mouse_gait_lab_course_actor_position = {}
+}
+
+mouse_gait_lab_course_register :: proc(world: physics.World, body: physics.Body_ID) {
+    if body == physics.INVALID_BODY || mouse_gait_lab_course_body_count >= len(mouse_gait_lab_course_bodies) do return
+    mouse_gait_lab_course_world = world
+    mouse_gait_lab_course_bodies[mouse_gait_lab_course_body_count] = body
+    mouse_gait_lab_course_body_count += 1
+}
 
 mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
+    mouse_gait_lab_course_clear(editor)
     mouse_gait_lab_frozen = false
     mouse_gait_lab_phase = 0
     mouse_gait_lab_focus_lane = -1
@@ -43,6 +73,25 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     mouse_gait_lab_show_paths = false
     mouse_gait_lab_stop_spray = target == "stop-spray"
     mouse_gait_lab_scurry = target == "scurry"
+    mouse_gait_lab_surface_course = false
+    mouse_gait_lab_course_feature = 2
+    course_side_targets := [5]string {
+        "surface-flat-side", "surface-ramp-side", "surface-steps-side", "surface-ledge-side", "surface-platform-side",
+    }
+    course_oblique_targets := [5]string {
+        "surface-flat-oblique", "surface-ramp-oblique", "surface-steps-oblique", "surface-ledge-oblique", "surface-platform-oblique",
+    }
+    for feature in 0 ..< 5 {
+        if target == course_side_targets[feature] || target == course_oblique_targets[feature] {
+            mouse_gait_lab_surface_course = true
+            mouse_gait_lab_course_feature = feature
+            mouse_gait_lab_oblique = target == course_oblique_targets[feature]
+        }
+    }
+    if target == "surface-course-side" || target == "surface-course-oblique" {
+        mouse_gait_lab_surface_course = true
+        mouse_gait_lab_oblique = target == "surface-course-oblique"
+    }
     if mouse_gait_lab_stop_spray {
         mouse_gait_lab_frozen = true
         mouse_gait_lab_phase = .625
@@ -113,6 +162,48 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     editor.atmosphere.weather = atmosphere.weather_for(.Clear)
     editor.atmosphere.paused = true
     editor.player_terrain_effects = particle_systems.new_vehicle_effects(0xa21c94d7)
+    if mouse_gait_lab_surface_course {
+        mouse_gait_lab_focus_lane = 1
+        if editor.gameplay_physics.world != nil || gameplay_physics_create(editor) {
+            state := &editor.gameplay_physics
+            ramp_angle := f32(12 * math.PI / 180)
+            course := [5]physics.Body_ID {
+                physics.add_box_layered(state.world, {1.15, .12, .7}, {-2.4, .12, 0}, rotation = {0, 0, math.sin(ramp_angle * .5), math.cos(ramp_angle * .5)}),
+                physics.add_box_layered(state.world, {.32, .10, .7}, {-.72, .10, 0}),
+                physics.add_box_layered(state.world, {.32, .20, .7}, {-.08, .20, 0}),
+                physics.add_box_layered(state.world, {.32, .30, .7}, {.56, .30, 0}),
+                physics.add_box_layered(state.world, {.75, .34, .7}, {1.72, .34, 0}),
+            }
+            for body in course {
+                mouse_gait_lab_course_register(state.world, body)
+            }
+            mouse_gait_lab_moving_platform = physics.add_box_layered(
+                state.world, {.72, .12, .7}, {3.55, .36, 0}, motion = .Kinematic, layer = .Moving,
+            )
+            mouse_gait_lab_course_register(state.world, mouse_gait_lab_moving_platform)
+        }
+        course_positions := [5]third_person.Vec3 {
+            {-4.25, 0, 0}, {-2.4, .22, 0}, {-.72, .20, 0}, {1.72, .68, 0}, {3.55, .48, 0},
+        }
+        course_position := course_positions[mouse_gait_lab_course_feature]
+        mouse_gait_lab_course_actor_position = course_position
+        player_place(editor, course_position, .Scene_Setup, -math.PI * .5)
+        editor.player.running = true
+        editor.player.grounded = true
+        editor.player_gait_weight = 1
+        editor.player_stride_phase = math.PI * 1.72
+        editor.player.velocity = {}
+        editor.camera_pose = third_person.camera_look_at(
+            {course_position.x + 1.0, course_position.y + 1.8, 4.6},
+            {course_position.x, course_position.y + .25, 0},
+        )
+        if mouse_gait_lab_oblique {
+            editor.camera_pose = third_person.camera_look_at(
+                {course_position.x + 3.4, course_position.y + 2.2, 3.6},
+                {course_position.x, course_position.y + .25, 0},
+            )
+        }
+    }
     if mouse_gait_lab_stop_spray {
         contact := particle_systems.Vehicle_Contact {
             position = {-.62, .01, 0},
@@ -233,12 +324,38 @@ world_mouse_gait_paw_paths :: proc(editor: ^Editor, speed, lane_z, rotation: f32
 
 world_mouse_gait_lab :: proc(editor: ^Editor) {
     if editor == nil do return
+    if mouse_gait_lab_surface_course {
+        ramp_angle := f32(12 * math.PI / 180)
+        world_box_rotated({-4.25, -.08, 0}, {1.4, .16, 1.4}, 0, {171, 174, 161, 255})
+        for slice in 0 ..< 12 {
+            x := -3.5 + (f32(slice) + .5) * .19
+            height := .04 + (x + 3.5) * math.tan(ramp_angle)
+            world_box_rotated({x, height * .5, 0}, {.20, height, 1.4}, 0, {154, 158, 149, 255})
+        }
+        world_box_rotated({-.72, .10, 0}, {.64, .20, 1.4}, 0, {139, 145, 151, 255})
+        world_box_rotated({-.08, .20, 0}, {.64, .40, 1.4}, 0, {139, 145, 151, 255})
+        world_box_rotated({.56, .30, 0}, {.64, .60, 1.4}, 0, {139, 145, 151, 255})
+        world_box_rotated({1.72, .34, 0}, {1.50, .68, 1.4}, 0, {132, 107, 84, 255})
+        platform_y := .36 + math.sin(editor.map_time * 1.7) * .18
+        world_box_rotated({3.55, platform_y, 0}, {1.44, .24, 1.4}, 0, {169, 91, 55, 255})
+        // Keep the inspection actor near the optical center. The former flat-
+        // ground placement at x=-4.25 fell outside the authored camera's
+        // horizontal frustum even though the course itself remained visible.
+        world_mouse_model(editor, {
+            position = mouse_gait_lab_course_actor_position,
+            rotation = editor.player.facing_yaw_radians,
+            fur = Mouse_Fur(1), pattern = .Solid, grounded = true,
+            player_controlled = true, track_paw_plants = true,
+            gait_preview = true, gait_speed = 2.6, gait_phase = math.PI * 1.72,
+        })
+        return
+    }
     track_length := f32(12)
     track_start := -track_length * .5
     for lane in 0 ..< len(MOUSE_GAIT_LAB_SPEEDS) {
         if mouse_gait_lab_focus_lane >= 0 && lane != mouse_gait_lab_focus_lane do continue
         z := mouse_gait_lab_focus_lane >= 0 ? f32(0) : -4 + f32(lane) * 2
-        lane_color := lane % 2 == 0 ? rl.Color{171, 174, 161, 255} : rl.Color{151, 158, 151, 255}
+        lane_color := lane % 2 == 0 ? canvas2d.Color{171, 174, 161, 255} : canvas2d.Color{151, 158, 151, 255}
         if mouse_gait_lab_scurry do lane_color = {143, 111, 83, 255}
         world_box_rotated({0, -.08, z}, {track_length + 1, .16, 1.62}, 0, lane_color)
 
@@ -264,7 +381,7 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
                 {marker_x, .012, z},
                 {.055, .025, 1.42},
                 0,
-                lane % 2 == 0 ? rl.Color{111, 121, 119, 255} : rl.Color{103, 115, 113, 255},
+                lane % 2 == 0 ? canvas2d.Color{111, 121, 119, 255} : canvas2d.Color{103, 115, 113, 255},
             )
         }
         if mouse_gait_lab_focus_lane >= 0 && mouse_gait_lab_show_paths {
@@ -294,28 +411,28 @@ mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     if focused {
         panel_height = mouse_gait_lab_show_paths ? f32(118) : f32(92)
     }
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 430,
         height = panel_height,
     }
-    rl.DrawRectangleRounded(panel, .08, 8, {12, 24, 30, 232})
-    rl.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {116, 174, 183, 255})
+    canvas2d.DrawRectangleRounded(panel, .08, 8, {12, 24, 30, 232})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {116, 174, 183, 255})
     title: cstring = "MOUSE GAIT COMPARISON"
     if mouse_gait_lab_stop_spray do title = "SUDDEN STOP / TERRAIN SPRAY"
     if mouse_gait_lab_scurry do title = "SCURRY / PAW SCRABBLE"
-    rl.DrawTextEx(rl.Font{}, title, {38, 38}, 20, 1, {245, 238, 197, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, title, {38, 38}, 20, 1, {245, 238, 197, 255})
     if mouse_gait_lab_frozen && !mouse_gait_lab_stop_spray && !mouse_gait_lab_scurry {
         phase_label := fmt.ctprintf("FROZEN STRIDE PHASE %.0f%%", mouse_gait_lab_phase * 100)
-        rl.DrawTextEx(rl.Font{}, phase_label, {244, 42}, 12, 1, {184, 211, 218, 255})
+        canvas2d.DrawTextEx(canvas2d.Font{}, phase_label, {244, 42}, 12, 1, {184, 211, 218, 255})
     }
     if focused && mouse_gait_lab_show_paths {
         for path_name, index in MOUSE_GAIT_PATH_NAMES {
             legend_x := 38 + f32(index) * 72
-            rl.DrawRectangle(i32(legend_x), 116, 12, 4, MOUSE_GAIT_PATH_COLORS[index])
-            rl.DrawTextEx(
-                rl.Font{},
+            canvas2d.DrawRectangle(i32(legend_x), 116, 12, 4, MOUSE_GAIT_PATH_COLORS[index])
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
                 fmt.ctprintf("%s PATH", path_name),
                 {legend_x + 17, 110},
                 11,
@@ -336,7 +453,7 @@ mouse_gait_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
             gait.bound * 100,
         )
         label_y := focused ? f32(72) : 72 + f32(lane) * 23
-        rl.DrawTextEx(rl.Font{}, label, {38, label_y}, 13, 1, MOUSE_GAIT_LAB_COLORS[lane])
+        canvas2d.DrawTextEx(canvas2d.Font{}, label, {38, label_y}, 13, 1, MOUSE_GAIT_LAB_COLORS[lane])
     }
     _ = width
     _ = height

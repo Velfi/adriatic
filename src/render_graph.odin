@@ -4,11 +4,11 @@ import atmosphere "../packages/atmosphere"
 import render_graph "../packages/render_graph"
 import terrain "../packages/terrain"
 import vk "vendor:vulkan"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
 
 Render_Graph_Context :: struct {
-    pass:                     ^rl.World_Pass_Context,
+    pass:                     ^canvas2d.World_Pass_Context,
     buffer:                   ^engine.Vk_Buffer,
     static_vertex_buffer:     ^engine.Vk_Buffer,
     static_index_buffer:      ^engine.Vk_Buffer,
@@ -146,7 +146,8 @@ render_graph_foliage :: proc(user_data: rawptr) {
        len(world_renderer.terrain_particle_vertices) <= 0 &&
        len(world_renderer.bougainvillea_instances) <= 0 &&
        len(world_renderer.grass_instances) <= 0 &&
-       len(world_renderer.wildflower_instances) <= 0 {
+       len(world_renderer.wildflower_instances) <= 0 &&
+       len(world_renderer.marsh_instances) <= 0 {
         return
     }
     cmd := ctx.pass.frame.command_buffer
@@ -266,6 +267,22 @@ render_graph_foliage :: proc(user_data: rawptr) {
             nil,
         )
         vk.CmdDraw(cmd, 6, u32(len(world_renderer.wildflower_instances)), 0, u32(len(world_renderer.grass_instances)))
+    }
+    if len(world_renderer.marsh_instances) > 0 {
+        vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.grass_pipelines[ctx.pipeline_index])
+        vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.grass_instance_buffer.handle, &ctx.offset)
+        vk.CmdBindDescriptorSets(
+            cmd,
+            .GRAPHICS,
+            world_renderer.foliage_layout,
+            0,
+            1,
+            &world_renderer.marsh_descriptor,
+            0,
+            nil,
+        )
+        first := len(world_renderer.grass_instances) + len(world_renderer.wildflower_instances)
+        vk.CmdDraw(cmd, 6, u32(len(world_renderer.marsh_instances)), 0, u32(first))
     }
     render_graph_stage_end(ctx)
 }
@@ -440,8 +457,8 @@ world_bomber_pip_render :: proc(ctx: ^Render_Graph_Context) {
 
     framebuffer_width := f32(ctx.pass.framebuffer_extent.width)
     framebuffer_height := f32(ctx.pass.framebuffer_extent.height)
-    logical_width := max(f32(rl.GetScreenWidth()), f32(1))
-    logical_height := max(f32(rl.GetScreenHeight()), f32(1))
+    logical_width := max(f32(canvas2d.GetScreenWidth()), f32(1))
+    logical_height := max(f32(canvas2d.GetScreenHeight()), f32(1))
     scale_x := framebuffer_width / logical_width
     scale_y := framebuffer_height / logical_height
     logical_rect := bomber_pip_layout(logical_width, logical_height)
@@ -480,7 +497,7 @@ world_bomber_pip_render :: proc(ctx: ^Render_Graph_Context) {
 
     pose := editor.bomber_pip_valid ? editor.bomber_pip_pose : bomber_pip_camera_pose(editor, tracked)
     camera := perspective_camera(pose, 1.55)
-    sky := atmosphere.sample(&editor.atmosphere)
+    sky := atmosphere_sky(editor)
     ctx.world_push.camera_position = {
         camera.position.x,
         camera.position.y,

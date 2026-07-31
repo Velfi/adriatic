@@ -5,11 +5,13 @@ import farmland "../packages/farmland"
 import flight "../packages/flight"
 import game_input "../packages/game_input"
 import story "../packages/story"
+import surface_weather "../packages/surface_weather"
 import tarot "../packages/tarot"
+import terrain "../packages/terrain"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:mem"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 Fixture_Editor_Load_Error_Kind :: enum {
     None,
@@ -376,6 +378,7 @@ fixture_editor_stage_destroy :: proc(stage: ^Editor, paint_allocator: mem.Alloca
 }
 
 fixture_editor_reset_runtime :: proc(editor: ^Editor) {
+    surface_weather.initialize(&editor.surface_weather, terrain.WORLD_SIZE_METERS * .5)
     editor.structure_placing = false
     editor.structure_moving = false
     editor.formation_brush_painting = false
@@ -437,7 +440,7 @@ fixture_editor_reset_runtime :: proc(editor: ^Editor) {
     if editor.libellula_mk2_visual_mesh.vertices != nil {
         vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
     }
-    if rl.PersistentState() != nil {
+    if canvas2d.PersistentState() != nil {
         dither_apply(editor)
     } else {
         dither_reset(editor)

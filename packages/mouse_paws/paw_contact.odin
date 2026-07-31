@@ -4,6 +4,39 @@ import third_person "../third_person"
 import "core:math"
 
 PAW_COUNT :: 4
+TOE_COUNT :: 3
+
+// A transient result supplied by gameplay physics. It deliberately contains
+// no allocator-owned data and lives only in the player presentation rig.
+Paw_Surface_Sample :: struct {
+    position:       third_person.Vec3,
+    normal:         third_person.Vec3,
+    body:           u32,
+    body_position:  third_person.Vec3,
+    body_rotation:  [4]f32,
+    valid:          bool,
+}
+
+Resolved_Toe_Pose :: struct {
+    root, tip: third_person.Vec3,
+    supported: bool,
+}
+
+Resolved_Paw_Pose :: struct {
+    limb_root:    third_person.Vec3,
+    pad_position: third_person.Vec3,
+    pad_normal:   third_person.Vec3,
+    toes:         [TOE_COUNT]Resolved_Toe_Pose,
+    compression:  f32,
+    valid:        bool,
+}
+
+Authored_Paw_Pose :: struct {
+    socket, desired: third_person.Vec3,
+    maximum_reach:   f32,
+    stance:          bool,
+    valid:           bool,
+}
 
 Contact_Phase :: enum u8 {
     Swing,
@@ -21,12 +54,19 @@ Contact_Event :: enum u8 {
 
 Contact :: struct {
     anchor:            third_person.Vec3,
+    local_anchor:      third_person.Vec3,
+    local_normal:      third_person.Vec3,
+    support_body:      u32,
     plant_yaw_radians: f32,
+    compression:       f32,
+    compression_velocity: f32,
     phase:             Contact_Phase,
 }
 
 Rig :: struct {
     contacts: [PAW_COUNT]Contact,
+    authored: [PAW_COUNT]Authored_Paw_Pose,
+    resolved: [PAW_COUNT]Resolved_Paw_Pose,
 }
 
 Resolve_Result :: struct {
@@ -58,6 +98,95 @@ default_config :: proc() -> Config { return DEFAULT_CONFIG }
 reset :: proc(rig: ^Rig) {
     if rig == nil do return
     rig^ = {}
+}
+
+authored_pose :: proc(rig: ^Rig, index: int) -> Authored_Paw_Pose {
+    if rig == nil || index < 0 || index >= PAW_COUNT do return {}
+    return rig.authored[index]
+}
+
+resolved_pose :: proc(rig: ^Rig, index: int) -> Resolved_Paw_Pose {
+    if rig == nil || index < 0 || index >= PAW_COUNT do return {}
+    return rig.resolved[index]
+}
+
+quat_conjugate_rotate :: proc(q: [4]f32, value: third_person.Vec3) -> third_person.Vec3 {
+    // Unit-quaternion inverse rotation, expanded to keep this package free of
+    // renderer or physics-world dependencies.
+    tx := 2 * (q.y * value.z - q.z * value.y)
+    ty := 2 * (q.z * value.x - q.x * value.z)
+    tz := 2 * (q.x * value.y - q.y * value.x)
+    return {
+        value.x - q.w * tx + (q.y * tz - q.z * ty),
+        value.y - q.w * ty + (q.z * tx - q.x * tz),
+        value.z - q.w * tz + (q.x * ty - q.y * tx),
+    }
+}
+
+quat_rotate :: proc(q: [4]f32, value: third_person.Vec3) -> third_person.Vec3 {
+    tx := 2 * (q.y * value.z - q.z * value.y)
+    ty := 2 * (q.z * value.x - q.x * value.z)
+    tz := 2 * (q.x * value.y - q.y * value.x)
+    return {
+        value.x + q.w * tx + (q.y * tz - q.z * ty),
+        value.y + q.w * ty + (q.z * tx - q.x * tz),
+        value.z + q.w * tz + (q.x * ty - q.y * tx),
+    }
+}
+
+store_support_local :: proc(contact: ^Contact, sample: Paw_Surface_Sample) {
+    if contact == nil || !sample.valid do return
+    contact.support_body = sample.body
+    contact.local_anchor = quat_conjugate_rotate(sample.body_rotation, sample.position - sample.body_position)
+    contact.local_normal = quat_conjugate_rotate(sample.body_rotation, sample.normal)
+}
+
+support_world_position :: proc(contact: Contact, body_position: third_person.Vec3, body_rotation: [4]f32) -> third_person.Vec3 {
+    return body_position + quat_rotate(body_rotation, contact.local_anchor)
+}
+
+support_world_normal :: proc(contact: Contact, body_rotation: [4]f32) -> third_person.Vec3 {
+    return quat_rotate(body_rotation, contact.local_normal)
+}
+
+step_compression :: proc(contact: ^Contact, touchdown: bool, delta_seconds: f32) -> f32 {
+    if contact == nil do return 0
+    if touchdown {
+        contact.compression = max(contact.compression, f32(.72))
+        contact.compression_velocity = max(contact.compression_velocity, f32(5.5))
+    }
+    target := f32(0)
+    dt := clamp(delta_seconds, f32(0), f32(.05))
+    // Exact critically-damped spring integration at 18 rad/s. Touchdown is
+    // intentionally restrained by the same spring instead of snapping flat.
+    omega := f32(18)
+    displacement := contact.compression - target
+    decay := f32(math.exp(f64(-omega * dt)))
+    next_displacement := (displacement + (contact.compression_velocity + omega * displacement) * dt) * decay
+    contact.compression_velocity =
+        (contact.compression_velocity - omega * (contact.compression_velocity + omega * displacement) * dt) * decay
+    contact.compression = clamp(target + next_displacement, 0, 1)
+    return contact.compression
+}
+
+pad_scale :: proc(compression: f32) -> third_person.Vec3 {
+    amount := clamp(compression, 0, 1)
+    return {1 + amount * .10, 1 - amount * .28, 1 + amount * .14}
+}
+
+resolve_toe :: proc(
+    root, desired: third_person.Vec3,
+    sample: Paw_Surface_Sample,
+    toe_length: f32,
+) -> Resolved_Toe_Pose {
+    result := Resolved_Toe_Pose{root = root, tip = desired}
+    if !sample.valid {
+        result.tip.y -= max(toe_length, f32(0)) * .28
+        return result
+    }
+    result.supported = true
+    result.tip.y = root.y + clamp(sample.position.y + .008 - root.y, -toe_length * .5, toe_length * .35)
+    return result
 }
 
 release :: proc(contact: ^Contact, desired: third_person.Vec3) -> Resolve_Result {

@@ -73,6 +73,16 @@ public:
     }
 };
 
+class LayerMaskFilter final : public ObjectLayerFilter {
+public:
+    explicit LayerMaskFilter(uint16_t mask) : mMask(mask) {}
+    bool ShouldCollide(ObjectLayer layer) const override {
+        return layer < LAYER_COUNT && (mMask & (uint16_t(1) << layer)) != 0;
+    }
+private:
+    uint16_t mMask;
+};
+
 struct World {
     struct ContactEvent {
         uint32_t body_a, body_b;
@@ -717,7 +727,7 @@ bool zelda_physics_soft_strand_set_points(
 
 bool zelda_physics_world_cast_ray(World *world, const float *origin, const float *direction,
                                   float max_distance, uint32_t *out_body, float *out_fraction,
-                                  float *out_position) {
+                                  float *out_position, float *out_normal) {
     if (!world || !origin || !direction || max_distance <= 0) return false;
     RRayCast ray(position(origin), vector(direction).Normalized() * max_distance);
     RayCastResult hit;
@@ -728,13 +738,19 @@ bool zelda_physics_world_cast_ray(World *world, const float *origin, const float
         RVec3 p = ray.GetPointOnRay(hit.mFraction);
         out_position[0] = float(p.GetX()); out_position[1] = float(p.GetY()); out_position[2] = float(p.GetZ());
     }
+    if (out_normal) {
+        BodyLockRead lock(world->system.GetBodyLockInterface(), hit.mBodyID);
+        if (!lock.Succeeded()) return false;
+        Vec3 n = lock.GetBody().GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, ray.GetPointOnRay(hit.mFraction));
+        out_normal[0] = n.GetX(); out_normal[1] = n.GetY(); out_normal[2] = n.GetZ();
+    }
     return true;
 }
 
 bool zelda_physics_world_cast_ray_layer(
     World *world, const float *origin, const float *direction,
     float max_distance, uint16_t query_layer, uint32_t *out_body,
-    float *out_fraction, float *out_position) {
+    float *out_fraction, float *out_position, float *out_normal) {
     if (!world || !origin || !direction || max_distance <= 0 ||
         query_layer >= LAYER_COUNT) return false;
     RRayCast ray(position(origin), vector(direction).Normalized() * max_distance);
@@ -752,6 +768,38 @@ bool zelda_physics_world_cast_ray_layer(
         out_position[0] = float(p.GetX());
         out_position[1] = float(p.GetY());
         out_position[2] = float(p.GetZ());
+    }
+    if (out_normal) {
+        BodyLockRead lock(world->system.GetBodyLockInterface(), hit.mBodyID);
+        if (!lock.Succeeded()) return false;
+        Vec3 n = lock.GetBody().GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, ray.GetPointOnRay(hit.mFraction));
+        out_normal[0] = n.GetX(); out_normal[1] = n.GetY(); out_normal[2] = n.GetZ();
+    }
+    return true;
+}
+
+bool zelda_physics_world_cast_ray_filtered(
+    World *world, const float *origin, const float *direction, float max_distance,
+    uint16_t layer_mask, uint32_t ignored_body, uint32_t *out_body,
+    float *out_fraction, float *out_position, float *out_normal) {
+    if (!world || !origin || !direction || max_distance <= 0 || layer_mask == 0) return false;
+    RRayCast ray(position(origin), vector(direction).Normalized() * max_distance);
+    RayCastResult hit;
+    LayerMaskFilter layer_filter(layer_mask);
+    IgnoreSingleBodyFilter body_filter(body_id(ignored_body));
+    if (!world->system.GetNarrowPhaseQuery().CastRay(
+            ray, hit, {}, layer_filter, body_filter)) return false;
+    if (out_body) *out_body = hit.mBodyID.GetIndexAndSequenceNumber();
+    if (out_fraction) *out_fraction = hit.mFraction;
+    RVec3 p = ray.GetPointOnRay(hit.mFraction);
+    if (out_position) {
+        out_position[0] = float(p.GetX()); out_position[1] = float(p.GetY()); out_position[2] = float(p.GetZ());
+    }
+    if (out_normal) {
+        BodyLockRead lock(world->system.GetBodyLockInterface(), hit.mBodyID);
+        if (!lock.Succeeded()) return false;
+        Vec3 n = lock.GetBody().GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, p);
+        out_normal[0] = n.GetX(); out_normal[1] = n.GetY(); out_normal[2] = n.GetZ();
     }
     return true;
 }

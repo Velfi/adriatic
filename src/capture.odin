@@ -28,6 +28,7 @@ Capture_Kind :: enum {
     Grass_Wind,
     Screen_Pops_Lab,
     Wildflower_Lab,
+    Rainbow_Lab,
     Shadow_Lab,
     Boat_Lab,
     Boid_Lab,
@@ -38,7 +39,11 @@ Capture_Kind :: enum {
     Leaf_Generator_Lab,
     Flower_Generator_Lab,
     Fountain_Generator_Lab,
+    Cemetery_Generator_Lab,
+    Estuary_Delta_Lab,
+    Rocky_Beach_Lab,
     Windmill_Generator_Lab,
+    Hero_Building_Lab,
     Lighthouse_Lab,
     Mouse_Gait_Lab,
     Mouse_Theater,
@@ -56,6 +61,7 @@ Capture_Kind :: enum {
     Narrow,
     Compact,
     Sky_Noon,
+    Sky_Sunrise,
     Sky_Sunset,
     Sky_Storm,
     Sky_Night,
@@ -107,7 +113,7 @@ Capture_Request :: struct {
 cinematic_export_active: bool
 cinematic_export_time: f32
 
-CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night}
+CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunrise, .Sky_Sunset, .Sky_Storm, .Sky_Night}
 CAPTURE_BOAT_LAB_TARGETS := [?]string{"dinghy", "tanker", "cruise"}
 CAPTURE_FOLIAGE_FOREST_KINDS :: bit_set[Capture_Kind] {
     .Foliage_Forest,
@@ -183,6 +189,7 @@ CAPTURE_CAR_TARGETS := [?]string {
     "dirt",
 }
 CAPTURE_SKY_TARGETS := [?]string{"sun", "sun-air", "sun-away", "moon", "stars"}
+CAPTURE_RAINBOW_TARGETS := [?]string{"shower", "dry", "double"}
 CAPTURE_STORY_MEETING_TARGETS := [?]string {
     "wipe-left",
     "wipe-right",
@@ -281,6 +288,25 @@ CAPTURE_FLOWER_GENERATOR_TARGETS := [?]string {
     "ripe",
 }
 CAPTURE_FOUNTAIN_GENERATOR_TARGETS := [?]string{"tiered", "bowl", "courtyard"}
+CAPTURE_CEMETERY_GENERATOR_TARGETS := [?]string {
+    "mediterranean",
+    "adriatic-medieval",
+    "classical-aegean",
+    "churchyard",
+    "memorial-garden",
+    "obelisk",
+    "cross",
+    "stele",
+    "shrine",
+    "markers",
+    "markers-adriatic",
+    "markers-aegean",
+    "markers-churchyard",
+    "markers-garden",
+    "dense",
+    "sparse",
+    "large",
+}
 CAPTURE_WINDMILL_GENERATOR_TARGETS := [?]string {
     "adriatic",
     "adriatic-alt",
@@ -294,6 +320,22 @@ CAPTURE_WINDMILL_GENERATOR_TARGETS := [?]string {
     "aegean-storm",
     "aegean-ten",
     "aegean-twelve",
+}
+CAPTURE_HERO_BUILDING_TARGETS := [?]string {
+    "post-office",
+    "compact",
+    "grand",
+    "clock",
+    "mailboxes",
+    "airport",
+    "airport-compact",
+    "airport-grand",
+    "clinic",
+    "clinic-split",
+    "clinic-side",
+    "clinic-twin",
+    "clinic-compact",
+    "clinic-grand",
 }
 CAPTURE_EDITOR_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout"}
 CAPTURE_MAP_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout"}
@@ -334,13 +376,19 @@ capture_targets :: proc(kind: Capture_Kind) -> []string {
         return CAPTURE_FLOWER_GENERATOR_TARGETS[:]
     case .Fountain_Generator_Lab:
         return CAPTURE_FOUNTAIN_GENERATOR_TARGETS[:]
+    case .Cemetery_Generator_Lab:
+        return CAPTURE_CEMETERY_GENERATOR_TARGETS[:]
     case .Windmill_Generator_Lab:
         return CAPTURE_WINDMILL_GENERATOR_TARGETS[:]
+    case .Hero_Building_Lab:
+        return CAPTURE_HERO_BUILDING_TARGETS[:]
     case .Lighthouse_Lab:
         return CAPTURE_LIGHTHOUSE_TARGETS[:]
+    case .Rainbow_Lab:
+        return CAPTURE_RAINBOW_TARGETS[:]
     case .Boat_Lab:
         return CAPTURE_BOAT_LAB_TARGETS[:]
-    case .Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night:
+    case .Sky_Noon, .Sky_Sunrise, .Sky_Sunset, .Sky_Storm, .Sky_Night:
         return CAPTURE_SKY_TARGETS[:]
     }
     return nil
@@ -400,6 +448,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Screen_Pops_Lab, true
     case "wildflower-lab":
         return .Wildflower_Lab, true
+    case "rainbow-lab":
+        return .Rainbow_Lab, true
     case "shadow-lab":
         return .Shadow_Lab, true
     case "boat-lab":
@@ -426,8 +476,22 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Flower_Generator_Lab, true
     case "fountain-generator", "fountain-generator-lab":
         return .Fountain_Generator_Lab, true
+    case "cemetery-generator", "cemetery-generator-lab", "graveyard-generator", "graveyard-generator-lab":
+        return .Cemetery_Generator_Lab, true
+    case "estuary-delta", "estuary-delta-lab":
+        return .Estuary_Delta_Lab, true
+    case "coastal-ecology",
+         "coastal-ecology-lab",
+         "coast-generator",
+         "rocky-beach",
+         "rocky-beach-lab",
+         "tidepool",
+         "tidepool-lab":
+        return .Rocky_Beach_Lab, true
     case "windmill-generator", "windmill-generator-lab":
         return .Windmill_Generator_Lab, true
+    case "hero-building", "hero-building-lab", "post-office-generator", "post-office-generator-lab":
+        return .Hero_Building_Lab, true
     case "lighthouse-lab":
         return .Lighthouse_Lab, true
     case "mouse-gait-lab":
@@ -462,6 +526,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Compact, true
     case "sky-noon":
         return .Sky_Noon, true
+    case "sky-sunrise":
+        return .Sky_Sunrise, true
     case "sky-sunset":
         return .Sky_Sunset, true
     case "sky-storm":

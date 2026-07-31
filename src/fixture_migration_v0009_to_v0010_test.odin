@@ -23,7 +23,7 @@ when ODIN_TEST {
         if !encoded do return
         defer delete(payload)
         result, migration_error, migrated := fixture_migration_run_with_registry(
-            payload, 9, 10, fixture_migration_production_registry(), runtime.default_allocator(),
+            payload, 9, FIXTURE_SCHEMA_VERSION, fixture_migration_production_registry(), runtime.default_allocator(),
         )
         defer fixture_migration_error_dispose(&migration_error)
         defer fixture_migration_result_dispose(&result)
@@ -32,7 +32,7 @@ when ODIN_TEST {
         testing.expect(t, result.fixture.player_mail.received == [3]bool{})
         testing.expect(t, result.fixture.player_mail.read == [3]bool{})
         registry := fixture_migration_production_registry()
-        testing.expect(t, len(registry.steps) == 9)
+        testing.expect(t, len(registry.steps) == FIXTURE_SCHEMA_VERSION - 1)
         testing.expect(t, registry.steps[8].wrapper == fixture_migration_step_v0009_to_v0010)
     }
 }

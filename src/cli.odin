@@ -1,6 +1,7 @@
 package main
 
 import architecture "../packages/architecture"
+import terrain "../packages/terrain"
 import "core:fmt"
 import "core:math"
 import "core:os"
@@ -14,6 +15,9 @@ adriatic_cli_usage :: proc() {
     fmt.println("  adriatic --shadow-lab")
     fmt.println("  adriatic --lab <name> [target]")
     fmt.println("  adriatic fixture-upgrade [--dry-run] <file-or-directory>")
+    fmt.println("  adriatic map bake <output.adriatic-map> [--seed <west,east>]")
+    fmt.println("  adriatic map validate <map.adriatic-map>")
+    fmt.println("  adriatic map import <legacy.terrain> <output.adriatic-map>")
     fmt.println("  adriatic dialogue-preview <output.wav> [preset] [text] [formant-shift] [base-pitch] [expression]")
     fmt.println(
         "  adriatic cinematic-export <mode> <output.mp4> [--audio track.wav] [--duration seconds] [--fps 1–60]",
@@ -56,14 +60,125 @@ adriatic_cli_usage :: proc() {
     fmt.println("  foliage-forest-golden, foliage-forest-wind-a, foliage-forest-wind-b")
     fmt.println("  foliage-forest-low-wind-a, foliage-forest-low-wind-b, foliage-stress")
     fmt.println(
-        "  grass-wind, screen-pops, wildflower-lab, shadow-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, fountain-generator, windmill-generator, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
+        "  grass-wind, screen-pops, wildflower-lab, rainbow-lab, shadow-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, fountain-generator, cemetery-generator, estuary-delta, windmill-generator, hero-building, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
     )
     fmt.println("  markov-city, markov-town, markov-village, aegean-city, aegean-town, aegean-village")
-    fmt.println("  narrow, compact, sky-noon, sky-sunset, sky-storm, sky-night, player-*")
+    fmt.println("  narrow, compact, sky-noon, sky-sunrise, sky-sunset, sky-storm, sky-night, player-*")
+    fmt.println(
+        "  weather-maestral, weather-bura-clear, weather-bura-storm, weather-jugo, weather-calm-humid, weather-post-front",
+    )
     fmt.println("")
     fmt.println("labs:")
     fmt.println("  loading-screen")
     for definition in LAB_SCENES do fmt.printf("  %s\n", definition.name)
+}
+
+adriatic_cli_map :: proc(args: []string) -> bool {
+    if len(args) < 4 {
+        adriatic_cli_usage()
+        return false
+    }
+    command := args[2]
+    if command == "validate" {
+        if len(args) != 4 {
+            fmt.eprintln("adriatic map validate expects exactly one path")
+            return false
+        }
+        artifact, error, valid := map_artifact_read(args[3])
+        defer map_artifact_error_dispose(&error)
+        if !valid {
+            fmt.eprintf("map validate: %s failed: %v %s\n", args[3], error.kind, error.message)
+            return false
+        }
+        defer map_artifact_destroy(artifact)
+        fmt.printf(
+            "map validate: %s format=%d generator=%d structures=%d\n",
+            args[3],
+            MAP_ARTIFACT_FORMAT_VERSION,
+            artifact.generator_version,
+            artifact.project.structure_count,
+        )
+        return true
+    }
+    if command == "bake" {
+        seeds := terrain.DEFAULT_ISLAND_SEEDS
+        if len(args) > 4 {
+            if len(args) != 6 || args[4] != "--seed" {
+                fmt.eprintln("adriatic map bake accepts only --seed <west,east>")
+                return false
+            }
+            values := strings.split(args[5], ",", context.temp_allocator)
+            if len(values) != len(seeds) {
+                fmt.eprintf("adriatic map bake expects %d comma-separated seeds\n", len(seeds))
+                return false
+            }
+            for value, index in values {
+                parsed, ok := strconv.parse_int(value)
+                if !ok || parsed <= 0 || parsed > 0xffffffff {
+                    fmt.eprintf("adriatic map bake has invalid seed: %s\n", value)
+                    return false
+                }
+                seeds[index] = u32(parsed)
+            }
+        }
+        parent := os.dir(args[3])
+        if parent != "." {
+            if directory_error := os.make_directory_all(parent); directory_error != nil && directory_error != .Exist {
+                fmt.eprintf("map bake: cannot create %s: %v\n", parent, directory_error)
+                return false
+            }
+        }
+        fmt.printf("map bake: generating %s\n", args[3])
+        artifact, generate_error, generated := map_artifact_generate(seeds)
+        defer map_artifact_error_dispose(&generate_error)
+        if !generated {
+            fmt.eprintf("map bake: generation failed: %v %s\n", generate_error.kind, generate_error.message)
+            return false
+        }
+        defer map_artifact_destroy(artifact)
+        write_error, written := map_artifact_write(artifact, args[3])
+        defer map_artifact_error_dispose(&write_error)
+        if !written {
+            fmt.eprintf("map bake: write failed: %v %s\n", write_error.kind, write_error.message)
+            return false
+        }
+        fmt.printf("map bake: wrote %s\n", args[3])
+        return true
+    }
+    if command == "import" {
+        if len(args) != 5 {
+            fmt.eprintln("adriatic map import expects a legacy terrain path and output path")
+            return false
+        }
+        editor := new(Editor)
+        defer {
+            structure_storage_destroy(editor)
+            free(editor)
+        }
+        if !terrain.load_project(&editor.project, args[3]) {
+            fmt.eprintf("map import: cannot load legacy terrain %s\n", args[3])
+            return false
+        }
+        settlement_path, settlement_path_error := filepath.join(
+            []string{os.dir(args[3]), SETTLEMENT_BRUSH_STORE_PATH},
+            context.temp_allocator,
+        )
+        if settlement_path_error == nil do _ = settlement_brush_store_load(&editor.settlement_plan, settlement_path)
+        artifact, capture_error, captured := map_artifact_capture(editor)
+        defer map_artifact_error_dispose(&capture_error)
+        if !captured do return false
+        defer map_artifact_destroy(artifact)
+        write_error, written := map_artifact_write(artifact, args[4])
+        defer map_artifact_error_dispose(&write_error)
+        if !written {
+            fmt.eprintf("map import: write failed: %v %s\n", write_error.kind, write_error.message)
+            return false
+        }
+        fmt.printf("map import: wrote %s\n", args[4])
+        return true
+    }
+    fmt.eprintf("adriatic: unknown map command: %s\n", command)
+    return false
 }
 
 adriatic_cli_child :: proc(command: []string) -> bool {
@@ -167,6 +282,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         return true, true
     }
     if args[1] == "fixture-upgrade" do return true, adriatic_cli_fixture_upgrade(args)
+    if args[1] == "map" do return true, adriatic_cli_map(args)
     if args[1] == "dialogue-preview" do return true, dialogue_voice_preview_cli(args)
     if args[1] == "cinematic-export" do return true, cinematic_export_cli(args)
     if args[1] != "capture" do return false, true
@@ -357,18 +473,30 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 emote_target, emote_target_set = parsed, true
             case "--emote-headgear":
                 switch value {
-                case "none": emote_headgear = .None
-                case "goggles": emote_headgear = .Goggles
-                case "flower": emote_headgear = .Flower
-                case "acorn-cap": emote_headgear = .Acorn_Cap
-                case "bottle-cap": emote_headgear = .Bottle_Cap
-                case "paper-boat": emote_headgear = .Paper_Boat
-                case "chef-hat": emote_headgear = .Chef_Hat
-                case "ushanka": emote_headgear = .Ushanka
-                case "beret": emote_headgear = .Beret
-                case "alpine-hat": emote_headgear = .Alpine_Hat
-                case "flat-cap": emote_headgear = .Flat_Cap
-                case "sailor-hat": emote_headgear = .Sailor_Hat
+                case "none":
+                    emote_headgear = .None
+                case "goggles":
+                    emote_headgear = .Goggles
+                case "flower":
+                    emote_headgear = .Flower
+                case "acorn-cap":
+                    emote_headgear = .Acorn_Cap
+                case "bottle-cap":
+                    emote_headgear = .Bottle_Cap
+                case "paper-boat":
+                    emote_headgear = .Paper_Boat
+                case "chef-hat":
+                    emote_headgear = .Chef_Hat
+                case "ushanka":
+                    emote_headgear = .Ushanka
+                case "beret":
+                    emote_headgear = .Beret
+                case "alpine-hat":
+                    emote_headgear = .Alpine_Hat
+                case "flat-cap":
+                    emote_headgear = .Flat_Cap
+                case "sailor-hat":
+                    emote_headgear = .Sailor_Hat
                 case:
                     fmt.eprintf("adriatic: unknown mouse headgear: %s\n", value)
                     return true, false
@@ -447,8 +575,14 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         return true, false
     }
     if emote_name == "" &&
-       (emote_time_set || emote_target_set || emote_seed != 0 || emote_handedness == .Left ||
-        emote_headgear_set || emote_scarf_set || emote_mailbag_set || emote_ground_normal_set) {
+       (emote_time_set ||
+               emote_target_set ||
+               emote_seed != 0 ||
+               emote_handedness == .Left ||
+               emote_headgear_set ||
+               emote_scarf_set ||
+               emote_mailbag_set ||
+               emote_ground_normal_set) {
         fmt.eprintln("adriatic: emote time, hand, seed, and target require --emote")
         return true, false
     }
@@ -516,42 +650,42 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         }
     }
     request := Capture_Request {
-        kind                  = kind,
-        output_path           = output,
-        target                = target,
-        window_width          = window_width,
-        window_height         = window_height,
-        settle_frames         = settle_frames,
-        camera_eye            = camera_eye,
-        camera_look_at        = camera_look_at,
-        camera_eye_set        = camera_eye_set,
-        camera_look_at_set    = camera_look_at_set,
-        camera_orbit_degrees  = camera_orbit,
-        camera_orbit_set      = camera_orbit_set,
-        camera_distance       = camera_distance,
-        camera_distance_set   = camera_distance_set,
-        camera_offset         = camera_offset,
-        camera_offset_set     = camera_offset_set,
-        turntable_frames      = turntable_frames,
-        selector              = selector,
-        selector_filters      = selector_filters,
-        selector_filter_count = selector_filter_count,
-        selector_pick         = selector_pick,
-        presentation          = presentation,
-        emote_name            = emote_name,
-        emote_time            = emote_time,
-        emote_time_set        = emote_time_set,
-        emote_handedness      = emote_handedness,
-        emote_seed            = emote_seed,
-        emote_target          = emote_target,
-        emote_target_set      = emote_target_set,
-        emote_headgear        = emote_headgear,
-        emote_headgear_set    = emote_headgear_set,
-        emote_scarf           = emote_scarf,
-        emote_scarf_set       = emote_scarf_set,
-        emote_mailbag         = emote_mailbag,
-        emote_mailbag_set     = emote_mailbag_set,
-        emote_ground_normal   = emote_ground_normal,
+        kind                    = kind,
+        output_path             = output,
+        target                  = target,
+        window_width            = window_width,
+        window_height           = window_height,
+        settle_frames           = settle_frames,
+        camera_eye              = camera_eye,
+        camera_look_at          = camera_look_at,
+        camera_eye_set          = camera_eye_set,
+        camera_look_at_set      = camera_look_at_set,
+        camera_orbit_degrees    = camera_orbit,
+        camera_orbit_set        = camera_orbit_set,
+        camera_distance         = camera_distance,
+        camera_distance_set     = camera_distance_set,
+        camera_offset           = camera_offset,
+        camera_offset_set       = camera_offset_set,
+        turntable_frames        = turntable_frames,
+        selector                = selector,
+        selector_filters        = selector_filters,
+        selector_filter_count   = selector_filter_count,
+        selector_pick           = selector_pick,
+        presentation            = presentation,
+        emote_name              = emote_name,
+        emote_time              = emote_time,
+        emote_time_set          = emote_time_set,
+        emote_handedness        = emote_handedness,
+        emote_seed              = emote_seed,
+        emote_target            = emote_target,
+        emote_target_set        = emote_target_set,
+        emote_headgear          = emote_headgear,
+        emote_headgear_set      = emote_headgear_set,
+        emote_scarf             = emote_scarf,
+        emote_scarf_set         = emote_scarf_set,
+        emote_mailbag           = emote_mailbag,
+        emote_mailbag_set       = emote_mailbag_set,
+        emote_ground_normal     = emote_ground_normal,
         emote_ground_normal_set = emote_ground_normal_set,
     }
     _ = adriatic_run(nil, request = &request)

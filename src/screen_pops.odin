@@ -2,7 +2,7 @@ package main
 
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 // Screen pops are short-lived, screen-space words. A call to screen_pops_say
 // splits a message into particles, emits copies from all four screen edges,
@@ -36,8 +36,8 @@ Screen_Pop_Sprite :: enum u8 {
 }
 
 Screen_Pop_Style :: struct {
-    color:       rl.Color,
-    accent:      rl.Color,
+    color:       canvas2d.Color,
+    accent:      canvas2d.Color,
     lifetime:    f32,
     start_scale: f32,
     end_scale:   f32,
@@ -57,15 +57,15 @@ SCREEN_POP_DEFAULT_STYLE :: Screen_Pop_Style {
 
 Screen_Pop_Particle :: struct {
     text:        [SCREEN_POP_TEXT_CAP]u8,
-    position:    rl.Vector2,
-    velocity:    rl.Vector2,
+    position:    canvas2d.Vector2,
+    velocity:    canvas2d.Vector2,
     age:         f32,
     lifetime:    f32,
     scale:       f32,
     start_scale: f32,
     end_scale:   f32,
-    color:       rl.Color,
-    accent:      rl.Color,
+    color:       canvas2d.Color,
+    accent:      canvas2d.Color,
     push:        f32,
     edge:        Screen_Pop_Edge,
     seed:        u32,
@@ -76,7 +76,7 @@ Screen_Pop_Particle :: struct {
 
 Screen_Pop_System :: struct {
     particles: [SCREEN_POP_CAP]Screen_Pop_Particle,
-    atlas:     rl.Texture,
+    atlas:     canvas2d.Texture,
     cursor:    int,
     rng:       u32,
     last_time: f64,
@@ -97,7 +97,7 @@ screen_pops_reset :: proc(system: ^Screen_Pop_System, seed: u32 = 0x50_0F_F5) {
 screen_pops_load_atlas :: proc(system: ^Screen_Pop_System, path: string = SCREEN_POP_ATLAS_PATH) -> bool {
     if system == nil do return false
     if system.atlas.ready do return true
-    system.atlas = rl.LoadTexture(path)
+    system.atlas = canvas2d.LoadTexture(path)
     return system.atlas.ready
 }
 
@@ -231,13 +231,13 @@ screen_pop_smoothstep :: proc(value: f32) -> f32 {
     return t * t * (3 - 2 * t)
 }
 
-screen_pop_bounds :: proc(particle: ^Screen_Pop_Particle) -> rl.Rectangle {
+screen_pop_bounds :: proc(particle: ^Screen_Pop_Particle) -> canvas2d.Rectangle {
     if particle.sprite != .None {
         size := 104 * particle.scale
         return {particle.position.x - size * .5, particle.position.y - size * .5, size, size}
     }
     font_size := 20 * particle.scale
-    size := rl.MeasureTextEx(rl.Font{}, cstring(&particle.text[0]), font_size, particle.scale)
+    size := canvas2d.MeasureTextEx(canvas2d.Font{}, cstring(&particle.text[0]), font_size, particle.scale)
     padding := 5 * particle.scale
     return {
         particle.position.x - size.x * .5 - padding,
@@ -247,7 +247,7 @@ screen_pop_bounds :: proc(particle: ^Screen_Pop_Particle) -> rl.Rectangle {
     }
 }
 
-screen_pop_atlas_source :: proc(texture: rl.Texture, sprite: Screen_Pop_Sprite) -> rl.Rectangle {
+screen_pop_atlas_source :: proc(texture: canvas2d.Texture, sprite: Screen_Pop_Sprite) -> canvas2d.Rectangle {
     atlas_index := int(sprite) - 1
     if sprite == .Sparkles do atlas_index = 8
     tile_width := f32(texture.width) / SCREEN_POP_ATLAS_COLUMNS
@@ -273,14 +273,14 @@ screen_pops_collide :: proc(system: ^Screen_Pop_System, dt: f32) {
             overlap_y := min(a_bounds.y + a_bounds.height, b_bounds.y + b_bounds.height) - max(a_bounds.y, b_bounds.y)
             if overlap_x <= 0 || overlap_y <= 0 do continue
 
-            delta := rl.Vector2{b.position.x - a.position.x, b.position.y - a.position.y}
+            delta := canvas2d.Vector2{b.position.x - a.position.x, b.position.y - a.position.y}
             distance := math.sqrt(delta.x * delta.x + delta.y * delta.y)
             if distance < .01 {
                 angle := f32((a.seed ~ b.seed) & 255) / 255 * math.TAU
                 delta = {math.cos(angle), math.sin(angle)}
                 distance = 1
             }
-            normal := rl.Vector2{delta.x / distance, delta.y / distance}
+            normal := canvas2d.Vector2{delta.x / distance, delta.y / distance}
             pressure := min(overlap_x, overlap_y) * (a.push + b.push) * .5 * dt
             a.velocity.x -= normal.x * pressure
             a.velocity.y -= normal.y * pressure
@@ -294,7 +294,7 @@ screen_pops_update :: proc(system: ^Screen_Pop_System, width, height: i32, dt: f
     if system == nil do return
     step := math.clamp(dt, f32(0), f32(.05))
     screen_pops_collide(system, step)
-    center := rl.Vector2{f32(width) * .5, f32(height) * .5}
+    center := canvas2d.Vector2{f32(width) * .5, f32(height) * .5}
     for &particle in system.particles {
         if !particle.active do continue
         particle.age += step
@@ -306,7 +306,7 @@ screen_pops_update :: proc(system: ^Screen_Pop_System, width, height: i32, dt: f
         progress := math.clamp(particle.age / particle.lifetime, f32(0), f32(1))
         growth := screen_pop_smoothstep(progress)
         particle.scale = particle.start_scale + (particle.end_scale - particle.start_scale) * growth
-        toward_center := rl.Vector2{center.x - particle.position.x, center.y - particle.position.y}
+        toward_center := canvas2d.Vector2{center.x - particle.position.x, center.y - particle.position.y}
         particle.velocity.x += toward_center.x * step * .34
         particle.velocity.y += toward_center.y * step * .34
         damping := math.pow(f32(.58), step)
@@ -325,7 +325,7 @@ screen_pops_update :: proc(system: ^Screen_Pop_System, width, height: i32, dt: f
     }
 }
 
-screen_pop_with_alpha :: proc(color: rl.Color, alpha: f32) -> rl.Color {
+screen_pop_with_alpha :: proc(color: canvas2d.Color, alpha: f32) -> canvas2d.Color {
     result := color
     result.a = u8(math.clamp(alpha, f32(0), f32(1)) * 255)
     return result
@@ -342,7 +342,7 @@ screen_pops_draw :: proc(system: ^Screen_Pop_System) {
             if system.atlas.ready {
                 size := radius * 3.2
                 sparkle_tint := screen_pop_with_alpha(particle.accent, 1 - t)
-                rl.DrawTexturePro(
+                canvas2d.DrawTexturePro(
                     system.atlas,
                     screen_pop_atlas_source(system.atlas, .Sparkles),
                     {particle.position.x - size * .5, particle.position.y - size * .5, size, size},
@@ -350,11 +350,11 @@ screen_pops_draw :: proc(system: ^Screen_Pop_System) {
                 )
                 continue
             }
-            rl.DrawCircleV(particle.position, radius, color)
+            canvas2d.DrawCircleV(particle.position, radius, color)
             for ray in 0 ..< 6 {
                 angle := f32(ray) / 6 * math.TAU + f32(particle.seed & 31) * .03
                 inner := radius * .55
-                rl.DrawLineEx(
+                canvas2d.DrawLineEx(
                     {particle.position.x + math.cos(angle) * inner, particle.position.y + math.sin(angle) * inner},
                     {particle.position.x + math.cos(angle) * radius, particle.position.y + math.sin(angle) * radius},
                     2,
@@ -366,7 +366,7 @@ screen_pops_draw :: proc(system: ^Screen_Pop_System) {
 
         if particle.sprite != .None && system.atlas.ready {
             bounds := screen_pop_bounds(&particle)
-            rl.DrawTexturePro(
+            canvas2d.DrawTexturePro(
                 system.atlas,
                 screen_pop_atlas_source(system.atlas, particle.sprite),
                 bounds,
@@ -378,21 +378,21 @@ screen_pops_draw :: proc(system: ^Screen_Pop_System) {
         bounds := screen_pop_bounds(&particle)
         font_size := 20 * particle.scale
         shadow := screen_pop_with_alpha({5, 8, 14, 255}, .72)
-        position := rl.Vector2{bounds.x + 5 * particle.scale, bounds.y + 5 * particle.scale}
-        rl.DrawTextEx(
-            rl.Font{},
+        position := canvas2d.Vector2{bounds.x + 5 * particle.scale, bounds.y + 5 * particle.scale}
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
             cstring(&particle.text[0]),
             {position.x + 2, position.y + 3},
             font_size,
             particle.scale,
             shadow,
         )
-        rl.DrawTextEx(rl.Font{}, cstring(&particle.text[0]), position, font_size, particle.scale, particle.color)
+        canvas2d.DrawTextEx(canvas2d.Font{}, cstring(&particle.text[0]), position, font_size, particle.scale, particle.color)
     }
 }
 
 screen_pops_tick_and_draw :: proc(system: ^Screen_Pop_System, width, height: i32) {
-    now := rl.GetTime()
+    now := canvas2d.GetTime()
     if system.last_time == 0 do system.last_time = now
     dt := f32(now - system.last_time)
     system.last_time = now
@@ -407,7 +407,7 @@ screen_pops_lab_style := SCREEN_POP_DEFAULT_STYLE
 screen_pops_lab_count := 7
 screen_pops_lab_dragging := -1
 SCREEN_POPS_LAB_PHRASES := [?]string{"SPECIAL DELIVERY", "THE WIND IS CHANGING", "MIND THE GULLS", "POST HAS ARRIVED"}
-SCREEN_POPS_LAB_COLORS := [?]rl.Color {
+SCREEN_POPS_LAB_COLORS := [?]canvas2d.Color {
     {255, 241, 196, 255},
     {255, 126, 103, 255},
     {255, 196, 54, 255},
@@ -417,11 +417,11 @@ SCREEN_POPS_LAB_COLORS := [?]rl.Color {
 }
 SCREEN_POPS_LAB_SLIDER_COUNT :: 6
 
-screen_pops_lab_panel :: proc(height: i32) -> rl.Rectangle {
+screen_pops_lab_panel :: proc(height: i32) -> canvas2d.Rectangle {
     return {18, 18, 286, min(f32(height - 36), f32(666))}
 }
 
-screen_pops_lab_slider_bounds :: proc(index: int) -> rl.Rectangle {
+screen_pops_lab_slider_bounds :: proc(index: int) -> canvas2d.Rectangle {
     return {42, 132 + f32(index) * 43, 220, 20}
 }
 
@@ -461,11 +461,11 @@ screen_pops_lab_set_slider :: proc(index: int, normalized: f32) {
     }
 }
 
-screen_pops_lab_color_bounds :: proc(row, column: int) -> rl.Rectangle {
+screen_pops_lab_color_bounds :: proc(row, column: int) -> canvas2d.Rectangle {
     return {42 + f32(column) * 37, 422 + f32(row) * 64, 28, 28}
 }
 
-screen_pops_lab_sprite_bounds :: proc(index: int) -> rl.Rectangle {
+screen_pops_lab_sprite_bounds :: proc(index: int) -> canvas2d.Rectangle {
     column := index % 4
     row := index / 4
     return {42 + f32(column) * 54, 548 + f32(row) * 42, 48, 32}
@@ -515,62 +515,62 @@ screen_pops_lab_configure :: proc(_: ^Editor, target: string) -> bool {
     if target == "wind" do screen_pops_lab_phrase = 1
     if target == "gulls" do screen_pops_lab_phrase = 2
     if target == "post" do screen_pops_lab_phrase = 3
-    screen_pops_lab_emit_atlas(max(rl.GetScreenWidth(), 640), max(rl.GetScreenHeight(), 360))
+    screen_pops_lab_emit_atlas(max(canvas2d.GetScreenWidth(), 640), max(canvas2d.GetScreenHeight(), 360))
     return true
 }
 
 screen_pops_lab_process_input :: proc(editor: ^Editor) {
-    mouse := rl.GetMousePosition()
-    pressed := rl.IsMouseButtonPressed(.LEFT)
-    panel := screen_pops_lab_panel(rl.GetScreenHeight())
+    mouse := canvas2d.GetMousePosition()
+    pressed := canvas2d.IsMouseButtonPressed(.LEFT)
+    panel := screen_pops_lab_panel(canvas2d.GetScreenHeight())
     if pressed {
         for index in 0 ..< SCREEN_POPS_LAB_SLIDER_COUNT {
             bounds := screen_pops_lab_slider_bounds(index)
-            hit := rl.Rectangle{bounds.x, bounds.y - 7, bounds.width, bounds.height + 14}
-            if rl.CheckCollisionPointRec(mouse, hit) {
+            hit := canvas2d.Rectangle{bounds.x, bounds.y - 7, bounds.width, bounds.height + 14}
+            if canvas2d.CheckCollisionPointRec(mouse, hit) {
                 screen_pops_lab_dragging = index
                 screen_pops_lab_set_slider(index, (mouse.x - bounds.x) / bounds.width)
                 break
             }
         }
         for color, color_index in SCREEN_POPS_LAB_COLORS {
-            if rl.CheckCollisionPointRec(mouse, screen_pops_lab_color_bounds(0, color_index)) {
+            if canvas2d.CheckCollisionPointRec(mouse, screen_pops_lab_color_bounds(0, color_index)) {
                 screen_pops_lab_style.color = color
             }
-            if rl.CheckCollisionPointRec(mouse, screen_pops_lab_color_bounds(1, color_index)) {
+            if canvas2d.CheckCollisionPointRec(mouse, screen_pops_lab_color_bounds(1, color_index)) {
                 screen_pops_lab_style.accent = color
             }
         }
         for sprite_value in int(Screen_Pop_Sprite.Nice) ..< int(Screen_Pop_Sprite.Sparkles) {
             index := sprite_value - int(Screen_Pop_Sprite.Nice)
-            if rl.CheckCollisionPointRec(mouse, screen_pops_lab_sprite_bounds(index)) {
+            if canvas2d.CheckCollisionPointRec(mouse, screen_pops_lab_sprite_bounds(index)) {
                 screen_pops_lab_sprite = Screen_Pop_Sprite(sprite_value)
             }
         }
     }
-    if rl.IsMouseButtonDown(.LEFT) && screen_pops_lab_dragging >= 0 {
+    if canvas2d.IsMouseButtonDown(.LEFT) && screen_pops_lab_dragging >= 0 {
         bounds := screen_pops_lab_slider_bounds(screen_pops_lab_dragging)
         screen_pops_lab_set_slider(screen_pops_lab_dragging, (mouse.x - bounds.x) / bounds.width)
     }
-    if rl.IsMouseButtonReleased(.LEFT) do screen_pops_lab_dragging = -1
+    if canvas2d.IsMouseButtonReleased(.LEFT) do screen_pops_lab_dragging = -1
 
-    if rl.IsKeyPressed(.SPACE) || (pressed && !rl.CheckCollisionPointRec(mouse, panel)) {
-        screen_pops_lab_emit_sprite(rl.GetScreenWidth(), rl.GetScreenHeight())
+    if canvas2d.IsKeyPressed(.SPACE) || (pressed && !canvas2d.CheckCollisionPointRec(mouse, panel)) {
+        screen_pops_lab_emit_sprite(canvas2d.GetScreenWidth(), canvas2d.GetScreenHeight())
     }
-    if rl.IsKeyPressed(.T) {
-        screen_pops_lab_emit(rl.GetScreenWidth(), rl.GetScreenHeight())
+    if canvas2d.IsKeyPressed(.T) {
+        screen_pops_lab_emit(canvas2d.GetScreenWidth(), canvas2d.GetScreenHeight())
     }
-    if rl.IsKeyPressed(.R) {
+    if canvas2d.IsKeyPressed(.R) {
         screen_pops_reset(&screen_pops_lab)
-        screen_pops_lab_emit_atlas(rl.GetScreenWidth(), rl.GetScreenHeight())
+        screen_pops_lab_emit_atlas(canvas2d.GetScreenWidth(), canvas2d.GetScreenHeight())
     }
-    if rl.IsKeyPressed(.ESCAPE) do lab_scene_exit_to_main_menu(editor)
+    if canvas2d.IsKeyPressed(.ESCAPE) do lab_scene_exit_to_main_menu(editor)
 }
 
 screen_pops_lab_draw_controls :: proc(height: i32) {
     panel := screen_pops_lab_panel(height)
-    rl.DrawRectangleRounded(panel, .04, 8, {7, 14, 23, 252})
-    rl.DrawRectangleRoundedLinesEx(panel, .04, 8, 1, {82, 111, 119, 255})
+    canvas2d.DrawRectangleRounded(panel, .04, 8, {7, 14, 23, 252})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .04, 8, 1, {82, 111, 119, 255})
     ui_draw_text(.Label, "SCREEN POPS LAB", {42, 36}, .45, {255, 207, 116, 255})
     ui_draw_text(.Data, "SPACE / CLICK  POP    T  TEXT    R  ALL", {42, 67}, .12, {160, 192, 196, 255})
     ui_draw_text(.Data, "ESC  EXIT", {42, 89}, .12, {160, 192, 196, 255})
@@ -595,10 +595,10 @@ screen_pops_lab_draw_controls :: proc(height: i32) {
             .12,
             {255, 224, 164, 255},
         )
-        rl.DrawRectangleRounded({bounds.x, bounds.y + 4, bounds.width, 7}, 1, 4, {42, 59, 67, 255})
+        canvas2d.DrawRectangleRounded({bounds.x, bounds.y + 4, bounds.width, 7}, 1, 4, {42, 59, 67, 255})
         normalized := screen_pops_lab_slider_value(index)
-        rl.DrawRectangleRounded({bounds.x, bounds.y + 4, bounds.width * normalized, 7}, 1, 4, {102, 186, 178, 255})
-        rl.DrawCircleV({bounds.x + bounds.width * normalized, bounds.y + 7.5}, 7, {224, 239, 224, 255})
+        canvas2d.DrawRectangleRounded({bounds.x, bounds.y + 4, bounds.width * normalized, 7}, 1, 4, {102, 186, 178, 255})
+        canvas2d.DrawCircleV({bounds.x + bounds.width * normalized, bounds.y + 7.5}, 7, {224, 239, 224, 255})
     }
 
     ui_draw_text(.Data, "SPRITE TINT", {42, 398}, .12, {183, 201, 204, 255})
@@ -608,14 +608,14 @@ screen_pops_lab_draw_controls :: proc(height: i32) {
             bounds := screen_pops_lab_color_bounds(row, color_index)
             selected := row == 0 ? screen_pops_lab_style.color == color : screen_pops_lab_style.accent == color
             if selected {
-                rl.DrawRectangleRounded(
+                canvas2d.DrawRectangleRounded(
                     {bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6},
                     .25,
                     5,
                     {239, 239, 218, 255},
                 )
             }
-            rl.DrawRectangleRounded(bounds, .25, 5, color)
+            canvas2d.DrawRectangleRounded(bounds, .25, 5, color)
         }
     }
 
@@ -625,17 +625,17 @@ screen_pops_lab_draw_controls :: proc(height: i32) {
         bounds := screen_pops_lab_sprite_bounds(index)
         sprite := Screen_Pop_Sprite(int(Screen_Pop_Sprite.Nice) + index)
         selected := sprite == screen_pops_lab_sprite
-        fill := selected ? rl.Color{97, 179, 171, 255} : rl.Color{29, 47, 56, 255}
-        if rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds) {
-            fill = selected ? rl.Color{118, 208, 198, 255} : rl.Color{42, 64, 74, 255}
+        fill := selected ? canvas2d.Color{97, 179, 171, 255} : canvas2d.Color{29, 47, 56, 255}
+        if canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds) {
+            fill = selected ? canvas2d.Color{118, 208, 198, 255} : canvas2d.Color{42, 64, 74, 255}
         }
-        rl.DrawRectangleRounded(bounds, .2, 5, fill)
-        rl.DrawRectangleRoundedLinesEx(
+        canvas2d.DrawRectangleRounded(bounds, .2, 5, fill)
+        canvas2d.DrawRectangleRoundedLinesEx(
             bounds,
             .2,
             5,
             1,
-            selected ? rl.Color{231, 241, 217, 255} : rl.Color{75, 101, 108, 255},
+            selected ? canvas2d.Color{231, 241, 217, 255} : canvas2d.Color{75, 101, 108, 255},
         )
         size := ui_measure_text(.Data, label, .08)
         ui_draw_text(.Data, label, {bounds.x + (bounds.width - size.x) * .5, bounds.y + 8}, .08, {235, 239, 224, 255})
@@ -643,11 +643,11 @@ screen_pops_lab_draw_controls :: proc(height: i32) {
 }
 
 screen_pops_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    rl.DrawRectangle(0, 0, width, height / 2, {8, 17, 29, 255})
-    rl.DrawRectangle(0, height / 2, width, height - height / 2, {24, 42, 51, 255})
+    canvas2d.DrawRectangle(0, 0, width, height / 2, {8, 17, 29, 255})
+    canvas2d.DrawRectangle(0, height / 2, width, height - height / 2, {24, 42, 51, 255})
     for ring in 0 ..< 5 {
         radius := f32(70 + ring * 74)
-        rl.DrawCircleV({f32(width) * .5, f32(height) * .5}, radius, {76, 116, 126, u8(10 - ring)})
+        canvas2d.DrawCircleV({f32(width) * .5, f32(height) * .5}, radius, {76, 116, 126, u8(10 - ring)})
     }
     screen_pops_tick_and_draw(&screen_pops_lab, width, height)
     screen_pops_lab_draw_controls(height)

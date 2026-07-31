@@ -6,7 +6,7 @@ import third_person "../packages/third_person"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 SHADOW_LAB_COLLECTION_COUNT :: 5
 SHADOW_LAB_LIGHTING_COUNT :: 5
@@ -76,12 +76,12 @@ shadow_lab_configure :: proc(editor: ^Editor) {
 }
 
 shadow_lab_process_input :: proc(editor: ^Editor) {
-    if rl.IsKeyPressed(.TAB) {
+    if canvas2d.IsKeyPressed(.TAB) {
         direction := shift_key_down() ? -1 : 1
         editor.shadow_lab_collection =
             (editor.shadow_lab_collection + direction + SHADOW_LAB_COLLECTION_COUNT) % SHADOW_LAB_COLLECTION_COUNT
     }
-    if rl.IsKeyPressed(.L) {
+    if canvas2d.IsKeyPressed(.L) {
         direction := shift_key_down() ? -1 : 1
         editor.shadow_lab_lighting =
             (editor.shadow_lab_lighting + direction + SHADOW_LAB_LIGHTING_COUNT) % SHADOW_LAB_LIGHTING_COUNT
@@ -120,11 +120,11 @@ world_shadow_lab_shadow_only :: proc(editor: ^Editor, structure: terrain.Structu
 }
 
 world_shadow_lab_playground :: proc(editor: ^Editor) {
-    timber: rl.Color = {126, 77, 45, 255}
-    timber_light: rl.Color = {177, 112, 62, 255}
-    metal: rl.Color = {73, 126, 139, 255}
-    yellow: rl.Color = {225, 177, 63, 255}
-    slide: rl.Color = {184, 77, 62, 255}
+    timber: canvas2d.Color = {126, 77, 45, 255}
+    timber_light: canvas2d.Color = {177, 112, 62, 255}
+    metal: canvas2d.Color = {73, 126, 139, 255}
+    yellow: canvas2d.Color = {225, 177, 63, 255}
+    slide: canvas2d.Color = {184, 77, 62, 255}
     forward := third_person.Vec3{0, 0, 1}
 
     // Four tall posts and two decks produce strong contact shadows and many
@@ -301,17 +301,17 @@ world_shadow_lab :: proc(editor: ^Editor) {
 }
 
 shadow_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         x      = 22,
         y      = 22,
         width  = 390,
         height = 140,
     }
-    rl.DrawRectangleRounded(panel, .10, 8, {12, 25, 31, 226})
-    rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {122, 163, 164, 255})
-    rl.DrawTextEx(rl.Font{}, "SHADOW TESTING LAB", {38, 38}, 19, 1, {245, 239, 192, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawRectangleRounded(panel, .10, 8, {12, 25, 31, 226})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {122, 163, 164, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "SHADOW TESTING LAB", {38, 38}, 19, 1, {245, 239, 192, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf(
             "TAB  COLLECTION  %d/%d  %s",
             editor.shadow_lab_collection + 1,
@@ -323,8 +323,8 @@ shadow_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         1,
         {211, 250, 242, 255},
     )
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf(
             "L    LIGHTING    %d/%d  %s",
             editor.shadow_lab_lighting + 1,
@@ -336,9 +336,9 @@ shadow_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         1,
         {211, 250, 242, 255},
     )
-    rl.DrawTextEx(rl.Font{}, "Hold SHIFT to cycle backward", {38, 118}, 11, 1, {164, 190, 190, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(canvas2d.Font{}, "Hold SHIFT to cycle backward", {38, 118}, 11, 1, {164, 190, 190, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         fmt.ctprintf("%d triangles", len(world_renderer.vertices) / 3),
         {38, 136},
         11,

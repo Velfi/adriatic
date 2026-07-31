@@ -3,7 +3,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 LIVE_CAPTURE_REQUEST_ENV :: "ADRIATIC_LIVE_CAPTURE_REQUEST"
 LIVE_CAPTURE_DEFAULT_REQUEST_PATH :: "build/live-capture.request"
@@ -24,6 +24,6 @@ live_capture_poll :: proc() {
         _ = os.remove(request_path)
         return
     }
-    rl.TakeScreenshot(fmt.ctprintf("%s", target_path))
+    canvas2d.TakeScreenshot(fmt.ctprintf("%s", target_path))
     _ = os.remove(request_path)
 }

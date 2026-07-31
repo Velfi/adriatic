@@ -454,7 +454,7 @@ Material evidence:
   `dialogue_resident` meaningless by itself;
 - main menu and console are process-session UI, not a level-designer
   playground;
-- `map_time` is assigned from `rl.GetTime()` on every frame.
+- `map_time` is assigned from `canvas2d.GetTime()` on every frame.
 
 Verification after the rebase:
 
@@ -1162,7 +1162,7 @@ playground state.
     - `customization_preview_yaw`.
 
 12. Add `fixture:"-"` to `map_time`. It is a presentation clock assigned from
-    `rl.GetTime()` every frame, not reproducible saved state.
+    `canvas2d.GetTime()` every frame, not reproducible saved state.
 13. Deliberately retain these new persisted groups; do not reclassify them
     merely because they came from the rebase:
 

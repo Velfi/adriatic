@@ -5,7 +5,7 @@ import quest "../packages/quest"
 import story "../packages/story"
 import "core:fmt"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 Quest_Log_Tab :: enum {
     Active,
@@ -16,19 +16,19 @@ QUEST_LOG_MAX_ITEMS :: quest.MAX_NODES
 QUEST_LOG_ROW_HEIGHT :: f32(58)
 
 Quest_Log_Layout :: struct {
-    panel:        rl.Rectangle,
-    header:       rl.Rectangle,
-    tabs:         rl.Rectangle,
-    list:         rl.Rectangle,
-    detail:       rl.Rectangle,
-    track_button: rl.Rectangle,
+    panel:        canvas2d.Rectangle,
+    header:       canvas2d.Rectangle,
+    tabs:         canvas2d.Rectangle,
+    list:         canvas2d.Rectangle,
+    detail:       canvas2d.Rectangle,
+    track_button: canvas2d.Rectangle,
 }
 
 quest_log_layout :: proc(width, height: i32) -> Quest_Log_Layout {
     margin := f32(16)
     panel_width := min(f32(width) - margin * 2, f32(1100))
     panel_height := min(f32(height) - margin * 2, f32(650))
-    panel := rl.Rectangle {
+    panel := canvas2d.Rectangle {
         (f32(width) - panel_width) * .5,
         (f32(height) - panel_height) * .5,
         panel_width,
@@ -39,15 +39,15 @@ quest_log_layout :: proc(width, height: i32) -> Quest_Log_Layout {
     content_y := panel.y + header_height
     content_height := panel.height - header_height - 24
     left_width := clamp(panel.width * .39, 260, 410)
-    tabs := rl.Rectangle{panel.x + 24, content_y, left_width, 42}
-    list := rl.Rectangle{tabs.x, tabs.y + tabs.height + 10, left_width, max(content_height - 52, f32(80))}
-    detail := rl.Rectangle {
+    tabs := canvas2d.Rectangle{panel.x + 24, content_y, left_width, 42}
+    list := canvas2d.Rectangle{tabs.x, tabs.y + tabs.height + 10, left_width, max(content_height - 52, f32(80))}
+    detail := canvas2d.Rectangle {
         list.x + list.width + gap,
         content_y,
         panel.x + panel.width - 24 - (list.x + list.width + gap),
         content_height,
     }
-    track_button := rl.Rectangle{detail.x + 24, detail.y + detail.height - 58, max(detail.width - 48, f32(80)), 40}
+    track_button := canvas2d.Rectangle{detail.x + 24, detail.y + detail.height - 58, max(detail.width - 48, f32(80)), 40}
     return {
         panel = panel,
         header = {panel.x, panel.y, panel.width, header_height},
@@ -58,12 +58,12 @@ quest_log_layout :: proc(width, height: i32) -> Quest_Log_Layout {
     }
 }
 
-quest_log_tab_bounds :: proc(layout: Quest_Log_Layout, tab: Quest_Log_Tab) -> rl.Rectangle {
+quest_log_tab_bounds :: proc(layout: Quest_Log_Layout, tab: Quest_Log_Tab) -> canvas2d.Rectangle {
     width := (layout.tabs.width - 8) * .5
     return {layout.tabs.x + f32(int(tab)) * (width + 8), layout.tabs.y, width, layout.tabs.height}
 }
 
-quest_log_row_bounds :: proc(layout: Quest_Log_Layout, visible_row: int) -> rl.Rectangle {
+quest_log_row_bounds :: proc(layout: Quest_Log_Layout, visible_row: int) -> canvas2d.Rectangle {
     return {
         layout.list.x,
         layout.list.y + f32(visible_row) * QUEST_LOG_ROW_HEIGHT,
@@ -160,7 +160,7 @@ quest_log_open :: proc(editor: ^Editor) {
     editor.quest_log_tab = .Active
     editor.quest_log_focus = 0
     editor.quest_log_scroll = 0
-    editor.map_time = f32(rl.GetTime())
+    editor.map_time = f32(canvas2d.GetTime())
     game_input.reset_menu_repeat(&editor.runtime_input)
     set_pointer_locked(false)
 }
@@ -201,8 +201,8 @@ quest_log_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
         gamepad_axis(.Left_Y),
         delta_seconds,
     )
-    if rl.IsKeyPressed(.LEFT) || gamepad_pressed(.Dpad_Left) do horizontal = -1
-    if rl.IsKeyPressed(.RIGHT) || gamepad_pressed(.Dpad_Right) do horizontal = 1
+    if canvas2d.IsKeyPressed(.LEFT) || gamepad_pressed(.Dpad_Left) do horizontal = -1
+    if canvas2d.IsKeyPressed(.RIGHT) || gamepad_pressed(.Dpad_Right) do horizontal = 1
     if horizontal != 0 {
         editor.quest_log_tab = horizontal < 0 ? .Active : .Completed
         editor.quest_log_focus = 0
@@ -210,19 +210,19 @@ quest_log_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
         count = quest_log_collect(editor, editor.quest_log_tab, &items)
         quest_log_clamp_focus(editor, count, visible_rows)
     }
-    if rl.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do vertical = -1
-    if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do vertical = 1
+    if canvas2d.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do vertical = -1
+    if canvas2d.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do vertical = 1
     if vertical != 0 {
         editor.quest_log_focus += vertical
         quest_log_clamp_focus(editor, count, visible_rows)
     }
 
-    mouse := rl.GetMousePosition()
-    mouse_delta := rl.GetMouseDelta()
-    mouse_active := rl.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
-    if rl.IsMouseButtonPressed(.LEFT) {
+    mouse := canvas2d.GetMousePosition()
+    mouse_delta := canvas2d.GetMouseDelta()
+    mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    if canvas2d.IsMouseButtonPressed(.LEFT) {
         for tab in Quest_Log_Tab {
-            if rl.CheckCollisionPointRec(mouse, quest_log_tab_bounds(layout, tab)) {
+            if canvas2d.CheckCollisionPointRec(mouse, quest_log_tab_bounds(layout, tab)) {
                 editor.quest_log_tab = tab
                 editor.quest_log_focus = 0
                 editor.quest_log_scroll = 0
@@ -230,8 +230,8 @@ quest_log_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
             }
         }
     }
-    if count > 0 && rl.CheckCollisionPointRec(mouse, layout.list) {
-        wheel := rl.GetMouseWheelMove()
+    if count > 0 && canvas2d.CheckCollisionPointRec(mouse, layout.list) {
+        wheel := canvas2d.GetMouseWheelMove()
         if wheel != 0 {
             editor.quest_log_scroll = clamp(editor.quest_log_scroll - int(wheel), 0, max(count - visible_rows, 0))
             editor.quest_log_focus = clamp(
@@ -242,7 +242,7 @@ quest_log_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
         }
         if mouse_active {
             for row in 0 ..< min(visible_rows, count - editor.quest_log_scroll) {
-                if rl.CheckCollisionPointRec(mouse, quest_log_row_bounds(layout, row)) {
+                if canvas2d.CheckCollisionPointRec(mouse, quest_log_row_bounds(layout, row)) {
                     editor.quest_log_focus = editor.quest_log_scroll + row
                 }
             }
@@ -253,10 +253,10 @@ quest_log_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
     if input_action_pressed(.Menu_Accept) && editor.quest_log_tab == .Active && selected != quest.no_node {
         quest_log_toggle_tracking(editor, selected)
     }
-    if rl.IsMouseButtonPressed(.LEFT) &&
+    if canvas2d.IsMouseButtonPressed(.LEFT) &&
        editor.quest_log_tab == .Active &&
        selected != quest.no_node &&
-       rl.CheckCollisionPointRec(mouse, layout.track_button) {
+       canvas2d.CheckCollisionPointRec(mouse, layout.track_button) {
         quest_log_toggle_tracking(editor, selected)
     }
 }
@@ -264,8 +264,8 @@ quest_log_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
 quest_log_draw_tab :: proc(layout: Quest_Log_Layout, tab: Quest_Log_Tab, selected: bool) {
     bounds := quest_log_tab_bounds(layout, tab)
     style := ui_theme_control_style(selected ? .Selected : .Resting)
-    rl.DrawRectangleRounded(bounds, .16, 8, style.fill)
-    rl.DrawRectangleRoundedLinesEx(bounds, .16, 8, style.border_width, style.border)
+    canvas2d.DrawRectangleRounded(bounds, .16, 8, style.fill)
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .16, 8, style.border_width, style.border)
     label: cstring = tab == .Active ? "ACTIVE" : "COMPLETED"
     size := ui_measure_text(.Label, label, .35)
     ui_draw_text(.Label, label, {bounds.x + (bounds.width - size.x) * .5, bounds.y + 13}, .35, style.text)
@@ -274,9 +274,9 @@ quest_log_draw_tab :: proc(layout: Quest_Log_Layout, tab: Quest_Log_Tab, selecte
 quest_log_draw :: proc(editor: ^Editor, width, height: i32) {
     if editor == nil do return
     layout := quest_log_layout(width, height)
-    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(210))
-    rl.DrawRectangleRounded(layout.panel, .025, 12, ui_theme_surface())
-    rl.DrawRectangleRoundedLinesEx(layout.panel, .025, 12, 2, ui_theme_border_strong())
+    canvas2d.DrawRectangle(0, 0, width, height, ui_theme_scrim(210))
+    canvas2d.DrawRectangleRounded(layout.panel, .025, 12, ui_theme_surface())
+    canvas2d.DrawRectangleRoundedLinesEx(layout.panel, .025, 12, 2, ui_theme_border_strong())
 
     ui_draw_text(.Data, "COURIER'S", {layout.panel.x + 28, layout.panel.y + 20}, .45, ui_theme_accent())
     ui_draw_text(.Display, "LEDGER", {layout.panel.x + 28, layout.panel.y + 44}, .55, ui_theme_text())
@@ -319,7 +319,7 @@ quest_log_draw :: proc(editor: ^Editor, width, height: i32) {
         .35,
         ui_theme_accent(),
     )
-    rl.DrawLineEx(
+    canvas2d.DrawLineEx(
         {layout.panel.x + 24, layout.panel.y + layout.header.height - 10},
         {layout.panel.x + layout.panel.width - 24, layout.panel.y + layout.header.height - 10},
         1,
@@ -337,7 +337,7 @@ quest_log_draw :: proc(editor: ^Editor, width, height: i32) {
         empty: cstring = editor.quest_log_tab == .Active ? "No errands waiting" : "No deliveries recorded yet"
         ui_draw_text(.Body, empty, {layout.list.x + 18, layout.list.y + 28}, .2, ui_theme_text_muted())
     } else {
-        rl.BeginScissorMode(layout.list)
+        canvas2d.BeginScissorMode(layout.list)
         for row in 0 ..< min(visible_rows, count - editor.quest_log_scroll) {
             index := editor.quest_log_scroll + row
             id := items[index]
@@ -348,8 +348,8 @@ quest_log_draw :: proc(editor: ^Editor, width, height: i32) {
             tracked := id == editor.tracked_quest_node
             state := focused ? UI_Control_State.Focused : (tracked ? UI_Control_State.Selected : .Resting)
             style := ui_theme_control_style(state)
-            rl.DrawRectangleRounded(bounds, .1, 8, style.fill)
-            rl.DrawRectangleRoundedLinesEx(bounds, .1, 8, style.border_width, style.border)
+            canvas2d.DrawRectangleRounded(bounds, .1, 8, style.fill)
+            canvas2d.DrawRectangleRoundedLinesEx(bounds, .1, 8, style.border_width, style.border)
             title := fmt.ctprintf("%s", node.title)
             ui_draw_text(.Label, title, {bounds.x + 14, bounds.y + 10}, .25, style.text)
             meta := fmt.ctprintf("%s", node.location)
@@ -368,11 +368,11 @@ quest_log_draw :: proc(editor: ^Editor, width, height: i32) {
                 focused ? ui_theme_text_muted() : style.text,
             )
         }
-        rl.EndScissorMode()
+        canvas2d.EndScissorMode()
     }
 
-    rl.DrawRectangleRounded(layout.detail, .025, 10, ui_theme_surface_elevated())
-    rl.DrawRectangleRoundedLinesEx(layout.detail, .025, 10, 1, ui_theme_border())
+    canvas2d.DrawRectangleRounded(layout.detail, .025, 10, ui_theme_surface_elevated())
+    canvas2d.DrawRectangleRoundedLinesEx(layout.detail, .025, 10, 1, ui_theme_border())
     if count > 0 {
         id := items[editor.quest_log_focus]
         node := quest.find_node(&editor.story_quest_catalog.definition, id)
@@ -447,9 +447,9 @@ quest_tracking_hud_draw :: proc(editor: ^Editor, width: i32) {
     node := quest.find_node(&editor.story_quest_catalog.definition, editor.tracked_quest_node)
     if node == nil do return
     panel_width := min(f32(390), f32(width) - 28)
-    panel := rl.Rectangle{14, 82, panel_width, 76}
-    rl.DrawRectangleRounded(panel, .12, 8, ui_theme_surface(236))
-    rl.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, ui_theme_border())
+    panel := canvas2d.Rectangle{14, 82, panel_width, 76}
+    canvas2d.DrawRectangleRounded(panel, .12, 8, ui_theme_surface(236))
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .12, 8, 1, ui_theme_border())
     ui_draw_text(.Data, "TRACKED ERRAND", {panel.x + 14, panel.y + 10}, .22, ui_theme_accent())
     ui_draw_text(.Label, fmt.ctprintf("%s", node.title), {panel.x + 14, panel.y + 32}, .22, ui_theme_text())
     ui_draw_text(.Data, fmt.ctprintf("%s", node.location), {panel.x + 14, panel.y + 54}, .16, ui_theme_text_muted())
@@ -508,10 +508,10 @@ friendship_notice_draw :: proc(editor: ^Editor, width: i32) {
     panel_height := f32(68)
     resting_y := f32(24)
     y := resting_y - (1 - visibility) * 22
-    panel := rl.Rectangle{(f32(width) - panel_width) * .5, y, panel_width, panel_height}
+    panel := canvas2d.Rectangle{(f32(width) - panel_width) * .5, y, panel_width, panel_height}
 
-    rl.DrawRectangleRounded(panel, .22, 10, ui_theme_surface(u8(f32(alpha) * .94)))
-    rl.DrawRectangleRoundedLinesEx(panel, .22, 10, 2, ui_theme_accent(alpha))
+    canvas2d.DrawRectangleRounded(panel, .22, 10, ui_theme_surface(u8(f32(alpha) * .94)))
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .22, 10, 2, ui_theme_accent(alpha))
 
     reward := fmt.ctprintf("+%d FRIENDSHIP", editor.friendship_notice_delta)
     reward_size := ui_measure_text(.Label, reward, .3)

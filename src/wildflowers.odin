@@ -97,7 +97,8 @@ flowering_tree_wind_shedding :: proc(
     found: bool,
 ) {
     if editor == nil do return
-    wind := editor.atmosphere.weather.wind
+    local := atmosphere_local_weather(editor, observer)
+    wind := [2]f32{local.wind[0], local.wind[2]}
     wind_speed := f32(math.sqrt(f64(wind[0] * wind[0] + wind[1] * wind[1])))
     // Clear weather remains quiet. The windy preset just crosses the onset,
     // while storms drive a sustained shower rather than an abrupt burst.
@@ -148,7 +149,8 @@ wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
     if !wildflowers_renderable_at(editor, origin.x, origin.z, circulation_plan) {
         flower_density = 0
     }
-    wind := editor.atmosphere.weather.wind
+    local := atmosphere_local_weather(editor, origin)
+    wind := [2]f32{local.wind[0], local.wind[2]}
     petal_origin := third_person.Vec3{origin.x, ground_height, origin.z}
     petal_motion := motion
     petal_intensity := disturbance * flower_density

@@ -37,6 +37,35 @@ Lab_Scene_Request :: struct {
 
 LAB_SCENES := [?]Lab_Scene_Definition {
     {
+        name = "coastal-ecology",
+        configure = rocky_beach_lab_configure,
+        world_overlay = world_rocky_beach_lab,
+        process_input = rocky_beach_lab_process_input,
+        draw_ui = rocky_beach_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = false,
+        replace_world = false,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = false,
+    },
+    {
+        name = "estuary-delta",
+        configure = estuary_delta_lab_configure,
+        world_overlay = world_estuary_delta_lab,
+        process_input = estuary_delta_lab_process_input,
+        draw_ui = estuary_delta_lab_draw_ui,
+        exit = estuary_delta_lab_exit,
+        isolate_content = true,
+        enter_gameplay = false,
+        replace_world = false,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = false,
+    },
+    {
         name = "material",
         configure = material_lab_configure,
         world_overlay = world_material_lab,
@@ -109,6 +138,21 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         world_overlay = world_dunes_lab,
         process_input = dunes_lab_process_input,
         draw_ui = dunes_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = false,
+        replace_world = false,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = false,
+    },
+    {
+        name = "spring-river",
+        configure = spring_river_lab_configure,
+        world_overlay = world_spring_river_lab,
+        process_input = spring_river_lab_process_input,
+        draw_ui = spring_river_lab_draw_ui,
+        exit = spring_river_lab_exit,
         isolate_content = true,
         enter_gameplay = false,
         replace_world = false,
@@ -228,6 +272,20 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         process_input = settlement_lab_process_input,
         draw_ui = settlement_lab_draw_ui,
         isolate_content = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = true,
+    },
+    {
+        name = "rainbow",
+        configure = rainbow_lab_configure,
+        world_overlay = world_rainbow_lab,
+        process_input = rainbow_lab_process_input,
+        draw_ui = rainbow_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
         suppress_hud = true,
         suppress_infrastructure = true,
         suppress_procedural_circulation = true,
@@ -406,9 +464,35 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         suppress_procedural_circulation = true,
     },
     {
+        name = "cemetery-generator",
+        configure = cemetery_lab_configure,
+        world_overlay = world_cemetery_generator_lab,
+        process_input = cemetery_lab_process_input,
+        draw_ui = cemetery_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
+    {
         name = "windmill-generator",
         configure = windmill_lab_configure,
         world_overlay = world_windmill_generator_lab,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
+    {
+        name = "hero-building",
+        configure = hero_lab_configure,
+        world_overlay = world_hero_building_lab,
+        process_input = hero_lab_process_input,
+        draw_ui = hero_lab_draw_ui,
         isolate_content = true,
         enter_gameplay = true,
         replace_world = true,
@@ -531,6 +615,13 @@ lab_scene_exit_to_main_menu :: proc(editor: ^Editor) {
     editor.main_menu_focus = 0
     third_person.camera_set_active(&editor.cameras, .Player)
     set_pointer_locked(false)
+}
+
+lab_scene_destroy_active :: proc(editor: ^Editor) {
+    if editor == nil || editor.active_lab_scene == "" do return
+    definition := lab_scene_find(editor.active_lab_scene)
+    if definition != nil && definition.exit != nil do definition.exit(editor)
+    editor.active_lab_scene = ""
 }
 
 lab_scene_is_active :: proc(editor: ^Editor, name: string) -> bool {

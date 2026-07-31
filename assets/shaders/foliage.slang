@@ -23,6 +23,13 @@ struct DynamicShadow {
     DynamicShadowCascade cascades[3];
     float4 settings;
     float4 origin;
+    float4 fog_bank_a[4];
+    float4 fog_bank_b[4];
+    float4 fog_bank_c[4];
+    float4 fog_previous_a[4];
+    float4 fog_previous_b[4];
+    float4 fog_previous_c[4];
+    float4 fog_settings;
 };
 [[vk::binding(0, 1)]] ConstantBuffer<DynamicShadow> dynamic_shadow;
 [[vk::binding(1, 1)]] Texture2D<float> dynamic_shadow_map_0;
@@ -59,6 +66,32 @@ float3 srgb_to_linear(float3 color) {
     return float3(srgb_channel_to_linear(color.r),
                   srgb_channel_to_linear(color.g),
                   srgb_channel_to_linear(color.b));
+}
+
+float fog_bank_density(float3 p, float4 a, float4 b, float4 c) {
+    float2 offset = p.xz - a.xy;
+    float2 axis = normalize(b.xy + float2(.00001, 0));
+    float2 local = float2(dot(offset, axis), dot(offset, float2(-axis.y, axis.x)));
+    float radial = length(local / max(a.zw, float2(1, 1)));
+    return (1.0 - smoothstep(1.0 - clamp(c.x, .01, .95), 1.0, radial)) *
+        smoothstep(b.z, b.z + 28.0, p.y) *
+        (1.0 - smoothstep(lerp(b.z, b.w, .62), b.w, p.y)) * c.y;
+}
+
+float combined_fog(VertexOutput input) {
+    float distance_fog = saturate((input.depth - push.projection.z) /
+                                  max(push.projection.w - push.projection.z, .001));
+    float altitude_clear = smoothstep(180.0, 500.0, push.camera_position.y);
+    distance_fog *= lerp(1.0, .20, altitude_clear);
+    float3 midpoint = (push.camera_position.xyz + input.world_position) * .5;
+    float density = 0.0;
+    [unroll] for (uint i = 0; i < 4; ++i) {
+        float old_density = fog_bank_density(midpoint, dynamic_shadow.fog_previous_a[i], dynamic_shadow.fog_previous_b[i], dynamic_shadow.fog_previous_c[i]);
+        float new_density = fog_bank_density(midpoint, dynamic_shadow.fog_bank_a[i], dynamic_shadow.fog_bank_b[i], dynamic_shadow.fog_bank_c[i]);
+        density = max(density, lerp(old_density, new_density, dynamic_shadow.fog_settings.y));
+    }
+    float bank_fog = 1.0 - exp(-density * dynamic_shadow.fog_settings.x * min(max(input.depth, 0.0), 4500.0) * .0032);
+    return 1.0 - (1.0 - distance_fog) * (1.0 - bank_fog);
 }
 
 float3 apply_environment_light(float3 color) {
@@ -512,8 +545,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         texel.a
     );
     if (coverage < .01) discard;
-    float fog = saturate((input.depth - push.projection.z) /
-                         max(push.projection.w - push.projection.z, .001));
+    float fog = combined_fog(input);
     // Use the painted atlas as a value-and-alpha mask. Its original yellow
     // highlights and teal shadows become luminance, then inherit the exact
     // upper-canopy tint supplied by the parent foliage blob.

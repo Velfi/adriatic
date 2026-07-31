@@ -1,7 +1,7 @@
 package main
 
-import architecture "../packages/architecture"
 import air_effects "../packages/air_effects"
+import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import boats "../packages/boats"
 import buildings "../packages/buildings"
@@ -9,7 +9,9 @@ import cinematic "../packages/cinematic"
 import circulation "../packages/circulation"
 import dio "../packages/dio"
 import flight "../packages/flight"
+import fog_field "../packages/fog_field"
 import fountains "../packages/fountains"
+import hero "../packages/hero_buildings"
 import islands "../packages/islands"
 import mouse_gait "../packages/mouse_gait"
 import mouse_kinematics "../packages/mouse_kinematics"
@@ -31,7 +33,7 @@ import "core:mem"
 import "core:slice"
 import "core:testing"
 import vk "vendor:vulkan"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
 import gltf "zelda_engine:gltf"
 import render3d "zelda_engine:render3d"
@@ -192,6 +194,7 @@ FOLIAGE_VERTEX_INITIAL_CAPACITY :: 24_000
 BOUGAINVILLEA_VERTEX_INITIAL_CAPACITY :: 48_000
 GRASS_INSTANCE_INITIAL_CAPACITY :: 18_000
 WILDFLOWER_INSTANCE_INITIAL_CAPACITY :: 4_000
+MARSH_INSTANCE_INITIAL_CAPACITY :: 18_000
 WING_TRAIL_VERTEX_CAPACITY :: particles.MAX_WING_TRAIL_PARTICLES * 8
 WING_TRAIL_INDEX_CAPACITY :: (particles.MAX_WING_TRAIL_PARTICLES - 2) * 8 * 6 + 8 * 6
 SHADOW_VERTEX_INITIAL_CAPACITY :: 180_000
@@ -217,6 +220,11 @@ WORLD_FLIGHT_NEAR_CLIP :: f32(.5)
 WORLD_EDITOR_NEAR_CLIP :: f32(100)
 WORLD_FOG_START :: f32(4500)
 WORLD_FOG_END :: f32(11000)
+
+// Runtime-only authoring controls. These deliberately live outside Fixture.
+fog_debug_enabled := true
+fog_debug_shells := true
+fog_debug_density_multiplier := f32(1)
 
 Structure_LOD :: enum u8 {
     Near,
@@ -433,7 +441,7 @@ structure_lod_for :: proc(
         ) *
         .5
     near_plane := editor.in_map && driving_aircraft(editor) ? WORLD_FLIGHT_NEAR_CLIP : WORLD_PLAY_NEAR_CLIP
-    diameter := structure_lod_projected_diameter(camera, center, radius, f32(rl.GetScreenHeight()), near_plane)
+    diameter := structure_lod_projected_diameter(camera, center, radius, f32(canvas2d.GetScreenHeight()), near_plane)
     return structure_lod_select(diameter, previous, force_near)
 }
 
@@ -623,6 +631,7 @@ World_Material_Kind :: enum u32 {
     Car_Paint,
     Material_Lab,
     Settlement_Material,
+    Fog_Shell,
 }
 
 // Stable semantic surface IDs shared by settlement generators. Keep existing
@@ -654,6 +663,8 @@ Settlement_Material :: enum u8 {
     Teal_Counter_Tile,
     Counter_Grout,
     Counter_Worktop_Laminate,
+    Postal_Enamel_Red,
+    Postal_Sorting_Wood,
 }
 
 Car_Paint_Finish :: enum u8 {
@@ -924,11 +935,13 @@ World_Renderer :: struct {
     bougainvillea_descriptor:                     vk.DescriptorSet,
     grass_descriptor:                             vk.DescriptorSet,
     wildflower_descriptor:                        vk.DescriptorSet,
+    marsh_descriptor:                             vk.DescriptorSet,
     terrain_particle_descriptor:                  vk.DescriptorSet,
     foliage_atlas:                                resources.Image,
     bougainvillea_atlas:                          resources.Image,
     grass_atlas:                                  resources.Image,
     wildflower_atlas:                             resources.Image,
+    marsh_atlas:                                  resources.Image,
     terrain_particle_atlas:                       resources.Image,
     vehicle_paint_atlas:                          resources.Image,
     soda_cap_logo:                                resources.Image,
@@ -970,6 +983,7 @@ World_Renderer :: struct {
     bougainvillea_instances:                      [dynamic]Bougainvillea_Instance,
     grass_instances:                              [dynamic]Grass_Instance,
     wildflower_instances:                         [dynamic]Grass_Instance,
+    marsh_instances:                              [dynamic]Grass_Instance,
     terrain_particle_vertices:                    [dynamic]Foliage_Vertex,
     instance_vertices:                            [dynamic]World_Vertex,
     instance_indices:                             [dynamic]u32,
@@ -1188,7 +1202,10 @@ world_frame_geometry_buffers_ensure :: proc(frame: int) -> bool {
     ) {
         return false
     }
-    grass_count := len(world_renderer.grass_instances) + len(world_renderer.wildflower_instances)
+    grass_count :=
+        len(world_renderer.grass_instances) +
+        len(world_renderer.wildflower_instances) +
+        len(world_renderer.marsh_instances)
     if !world_host_buffer_ensure(
         ctx,
         &world_renderer.grass_instance[frame],
@@ -1277,7 +1294,7 @@ world_instances_flatten :: proc() {
 }
 
 @(no_instrumentation)
-world_color :: #force_inline proc(color: rl.Color) -> [4]f32 {
+world_color :: #force_inline proc(color: canvas2d.Color) -> [4]f32 {
     return {f32(color.r) / 255, f32(color.g) / 255, f32(color.b) / 255, f32(color.a) / 255}
 }
 
@@ -1293,7 +1310,7 @@ world_linear_to_srgb_channel :: proc(value: f32) -> f32 {
     return 1.055 * f32(math.pow(f64(clamped), 1.0 / 2.4)) - .055
 }
 
-world_gltf_material_color :: proc(tint: rl.Color, factor: [4]f32, alpha: u8) -> [4]f32 {
+world_gltf_material_color :: proc(tint: canvas2d.Color, factor: [4]f32, alpha: u8) -> [4]f32 {
     // glTF factors are linear while palette tints are authored as sRGB. Return
     // sRGB here because world.slang performs the shared vertex-color decode.
     return {
@@ -1304,8 +1321,8 @@ world_gltf_material_color :: proc(tint: rl.Color, factor: [4]f32, alpha: u8) -> 
     }
 }
 
-world_sky_horizon_color :: proc(sky: atmosphere.Sky_State) -> rl.Color {
-    horizon := rl.Color{184, 209, 209, 255}
+world_sky_horizon_color :: proc(sky: atmosphere.Sky_State) -> canvas2d.Color {
+    horizon := canvas2d.Color{184, 209, 209, 255}
     storm := clamp(sky.weather.severity * .68 + sky.weather.precipitation * .52, 0, 1)
     storm_horizon := color_lerp({92, 110, 117, 255}, {112, 125, 128, 255}, sky.weather.haze * .55)
     horizon = color_lerp(horizon, storm_horizon, storm * .82)
@@ -1334,8 +1351,8 @@ world_sphere_in_view :: proc(editor: ^Editor, center: third_person.Vec3, radius:
     if editor == nil do return false
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     camera := perspective_camera(editor.camera_pose, focal_length)
-    width := max(rl.GetScreenWidth(), 1)
-    height := max(rl.GetScreenHeight(), 1)
+    width := max(canvas2d.GetScreenWidth(), 1)
+    height := max(canvas2d.GetScreenHeight(), 1)
     visible := static_sphere_in_frustum(
         camera,
         center,
@@ -1391,17 +1408,21 @@ world_scene_moonlight :: proc(sky: atmosphere.Sky_State) -> f32 {
 }
 
 @(no_instrumentation)
-world_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
+world_vertex :: #force_inline proc(point: third_person.Vec3, color: canvas2d.Color) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .BRDF, {0, 1, 0}, {0, .9}, {}}
 }
 
 @(no_instrumentation)
-world_water_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
+world_water_vertex :: #force_inline proc(point: third_person.Vec3, color: canvas2d.Color) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Water, {0, 1, 0}, {}, {}}
 }
 
 @(no_instrumentation)
-world_ocean_vertex :: #force_inline proc(editor: ^Editor, point: third_person.Vec3, color: rl.Color) -> World_Vertex {
+world_ocean_vertex :: #force_inline proc(
+    editor: ^Editor,
+    point: third_person.Vec3,
+    color: canvas2d.Color,
+) -> World_Vertex {
     vertex := world_water_vertex(point, color)
     // Ocean shading receives the actual heightfield elevation above sea level.
     // Interpolation across the local ocean grid turns that signal into a
@@ -1457,14 +1478,14 @@ world_ocean_vertex :: #force_inline proc(editor: ^Editor, point: third_person.Ve
 }
 
 @(no_instrumentation)
-world_fountain_water_vertex :: #force_inline proc(point: third_person.Vec3, color: rl.Color) -> World_Vertex {
+world_fountain_water_vertex :: #force_inline proc(point: third_person.Vec3, color: canvas2d.Color) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Fountain_Water, {0, 1, 0}, {}, {}}
 }
 
 @(no_instrumentation)
 world_foliage_vertex :: #force_inline proc(
     point: third_person.Vec3,
-    color: rl.Color,
+    color: canvas2d.Color,
     normal: third_person.Vec3,
 ) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Foliage, {normal.x, normal.y, normal.z}, {}, {}}
@@ -1473,19 +1494,23 @@ world_foliage_vertex :: #force_inline proc(
 @(no_instrumentation)
 world_eye_vertex :: #force_inline proc(
     point: third_person.Vec3,
-    color: rl.Color,
+    color: canvas2d.Color,
     normal: third_person.Vec3,
 ) -> World_Vertex {
     return {{point.x, point.y, point.z}, world_color(color), .Eye, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
 @(no_instrumentation)
-world_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color) {
+world_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: canvas2d.Color) {
     world_triangle_material(a, b, c, color, .BRDF)
 }
 
 @(no_instrumentation)
-world_triangle_material :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color, kind: World_Material_Kind) {
+world_triangle_material :: #force_inline proc(
+    a, b, c: third_person.Vec3,
+    color: canvas2d.Color,
+    kind: World_Material_Kind,
+) {
     vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     for &vertex in vertices {
@@ -1507,14 +1532,14 @@ world_triangle_material :: #force_inline proc(a, b, c: third_person.Vec3, color:
 world_triangle_smooth_lit :: #force_inline proc(
     a, b, c: third_person.Vec3,
     normal_a, normal_b, normal_c: third_person.Vec3,
-    color_a, color_b, color_c: rl.Color,
+    color_a, color_b, color_c: canvas2d.Color,
     roughness: f32 = .9,
     material_kind: World_Material_Kind = .BRDF,
     car_paint_finish: Car_Paint_Finish = .Opaque,
 ) {
     points := [3]third_person.Vec3{a, b, c}
     normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
-    colors := [3]rl.Color{color_a, color_b, color_c}
+    colors := [3]canvas2d.Color{color_a, color_b, color_c}
     vertices: [3]World_Vertex
     for index in 0 ..< 3 {
         vertices[index] = world_vertex(points[index], colors[index])
@@ -1529,7 +1554,7 @@ world_triangle_smooth_lit :: #force_inline proc(
 @(no_instrumentation)
 world_aircraft_triangle :: #force_inline proc(
     a, b, c: third_person.Vec3,
-    color: rl.Color,
+    color: canvas2d.Color,
     uv_a, uv_b, uv_c: [2]f32,
     paint_layer: f32,
     paintable := true,
@@ -1552,7 +1577,7 @@ world_aircraft_triangle :: #force_inline proc(
 world_aircraft_triangle_smooth :: #force_inline proc(
     a, b, c: third_person.Vec3,
     normal_a, normal_b, normal_c: third_person.Vec3,
-    color: rl.Color,
+    color: canvas2d.Color,
     uv_a, uv_b, uv_c: [2]f32,
     paint_layer: f32,
     paintable := true,
@@ -1572,7 +1597,7 @@ world_aircraft_triangle_smooth :: #force_inline proc(
 }
 
 @(no_instrumentation)
-world_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
+world_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: canvas2d.Color) {
     vertices := [3]World_Vertex{world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c)}
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     for &vertex in vertices {
@@ -1602,7 +1627,7 @@ world_greek_asset_vertex :: proc(
 @(no_instrumentation)
 world_triangle_foliage :: #force_inline proc(
     a, b, c: third_person.Vec3,
-    color_a, color_b, color_c: rl.Color,
+    color_a, color_b, color_c: canvas2d.Color,
     normal_a, normal_b, normal_c: third_person.Vec3,
     material_kind: World_Material_Kind = .Foliage,
 ) {
@@ -1616,13 +1641,17 @@ world_triangle_foliage :: #force_inline proc(
 }
 
 @(no_instrumentation)
-world_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
+world_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: canvas2d.Color) {
     world_triangle(a, b, c, color)
     world_triangle(a, c, d, color)
 }
 
 @(no_instrumentation)
-world_quad_material :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color, kind: World_Material_Kind) {
+world_quad_material :: #force_inline proc(
+    a, b, c, d: third_person.Vec3,
+    color: canvas2d.Color,
+    kind: World_Material_Kind,
+) {
     vertices := [6]World_Vertex {
         world_vertex(a, color),
         world_vertex(b, color),
@@ -1649,8 +1678,9 @@ world_settlement_material_quad :: #force_inline proc(
     a, b, c, d: third_person.Vec3,
     material: Settlement_Material,
     uv_width, uv_height: f32,
+    uv_origin: [2]f32 = {},
 ) {
-    white := rl.Color{255, 255, 255, 255}
+    white := canvas2d.Color{255, 255, 255, 255}
     vertices := [6]World_Vertex {
         world_vertex(a, white),
         world_vertex(b, white),
@@ -1659,7 +1689,9 @@ world_settlement_material_quad :: #force_inline proc(
         world_vertex(c, white),
         world_vertex(d, white),
     }
-    uvs := [6][2]f32{{0, uv_height}, {uv_width, uv_height}, {uv_width, 0}, {0, uv_height}, {uv_width, 0}, {0, 0}}
+    u0, v0 := uv_origin.x, uv_origin.y
+    u1, v1 := u0 + uv_width, v0 + uv_height
+    uvs := [6][2]f32{{u0, v1}, {u1, v1}, {u1, v0}, {u0, v1}, {u1, v0}, {u0, v0}}
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     for &vertex, index in vertices {
         vertex.kind = .Settlement_Material
@@ -1674,7 +1706,7 @@ world_settlement_material_quad :: #force_inline proc(
 world_ellipse_material_uv :: proc(
     center: third_person.Vec3,
     radius_x, radius_z, rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     kind: World_Material_Kind,
     slope_x: f32 = 0,
     slope_z: f32 = 0,
@@ -1728,7 +1760,12 @@ world_ellipse_material_uv :: proc(
     }
 }
 
-world_disc_material_uv :: proc(center: third_person.Vec3, radius: f32, color: rl.Color, kind: World_Material_Kind) {
+world_disc_material_uv :: proc(
+    center: third_person.Vec3,
+    radius: f32,
+    color: canvas2d.Color,
+    kind: World_Material_Kind,
+) {
     world_ellipse_material_uv(center, radius, radius, 0, color, kind)
 }
 
@@ -1736,7 +1773,7 @@ world_billboard_material_uv :: proc(
     editor: ^Editor,
     center: third_person.Vec3,
     width, height: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     kind: World_Material_Kind,
     late_submit: bool = false,
 ) {
@@ -1798,7 +1835,7 @@ world_municipal_light_pool :: proc(
     rotation: f32 = 0,
     alpha: u8 = 62,
     directionality: f32 = 0,
-    pool_color: rl.Color = {255, 210, 145, 255},
+    pool_color: canvas2d.Color = {255, 210, 145, 255},
     surface_editor: ^Editor = nil,
     late_submit: bool = false,
 ) {
@@ -1832,7 +1869,7 @@ world_municipal_light_pool :: proc(
     }
 }
 
-world_quad_colored :: proc(a, b, c, d: third_person.Vec3, color_a, color_b, color_c, color_d: rl.Color) {
+world_quad_colored :: proc(a, b, c, d: third_person.Vec3, color_a, color_b, color_c, color_d: canvas2d.Color) {
     world_triangle_colored(a, b, c, color_a, color_b, color_c)
     world_triangle_colored(a, c, d, color_a, color_c, color_d)
 }
@@ -1841,7 +1878,7 @@ world_quad_colored :: proc(a, b, c, d: third_person.Vec3, color_a, color_b, colo
 world_quad_colored_smooth_lit :: #force_inline proc(
     a, b, c, d: third_person.Vec3,
     normal_a, normal_b, normal_c, normal_d: third_person.Vec3,
-    color_a, color_b, color_c, color_d: rl.Color,
+    color_a, color_b, color_c, color_d: canvas2d.Color,
     roughness: f32 = .9,
 ) {
     world_triangle_smooth_lit(a, b, c, normal_a, normal_b, normal_c, color_a, color_b, color_c, roughness)
@@ -1849,7 +1886,7 @@ world_quad_colored_smooth_lit :: #force_inline proc(
 }
 
 @(no_instrumentation)
-world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color) {
+world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: canvas2d.Color) {
     append(
         &world_renderer.vertices,
         world_water_vertex(a, color),
@@ -1862,7 +1899,7 @@ world_water_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.
 }
 
 @(no_instrumentation)
-world_ocean_quad :: #force_inline proc(editor: ^Editor, a, b, c, d: third_person.Vec3, color: rl.Color) {
+world_ocean_quad :: #force_inline proc(editor: ^Editor, a, b, c, d: third_person.Vec3, color: canvas2d.Color) {
     append(
         &world_renderer.vertices,
         world_ocean_vertex(editor, a, color),
@@ -1875,7 +1912,10 @@ world_ocean_quad :: #force_inline proc(editor: ^Editor, a, b, c, d: third_person
 }
 
 @(no_instrumentation)
-world_water_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
+world_water_triangle_colored :: #force_inline proc(
+    a, b, c: third_person.Vec3,
+    color_a, color_b, color_c: canvas2d.Color,
+) {
     append(
         &world_renderer.vertices,
         world_water_vertex(a, color_a),
@@ -1887,7 +1927,7 @@ world_water_triangle_colored :: #force_inline proc(a, b, c: third_person.Vec3, c
 @(no_instrumentation)
 world_fountain_water_triangle_colored :: #force_inline proc(
     a, b, c: third_person.Vec3,
-    color_a, color_b, color_c: rl.Color,
+    color_a, color_b, color_c: canvas2d.Color,
 ) {
     append(
         &world_renderer.vertices,
@@ -1898,7 +1938,7 @@ world_fountain_water_triangle_colored :: #force_inline proc(
 }
 
 @(no_instrumentation)
-world_boat_part_color :: proc(class: boats.Class, part: boats.Part) -> rl.Color {
+world_boat_part_color :: proc(class: boats.Class, part: boats.Part) -> canvas2d.Color {
     switch part {
     case .Hull:
         switch class {
@@ -1916,7 +1956,7 @@ world_boat_part_color :: proc(class: boats.Class, part: boats.Part) -> rl.Color 
     case .Deck:
         return {214, 199, 166, 255}
     case .Cabin:
-        return class == .Tug ? rl.Color{235, 205, 119, 255} : rl.Color{225, 224, 205, 255}
+        return class == .Tug ? canvas2d.Color{235, 205, 119, 255} : canvas2d.Color{225, 224, 205, 255}
     case .Glass:
         return {67, 115, 133, 255}
     case .Metal:
@@ -1924,7 +1964,7 @@ world_boat_part_color :: proc(class: boats.Class, part: boats.Part) -> rl.Color 
     case .Sail:
         return {241, 233, 205, 255}
     case .Accent:
-        return class == .Sail ? rl.Color{189, 74, 51, 255} : rl.Color{204, 119, 50, 255}
+        return class == .Sail ? canvas2d.Color{189, 74, 51, 255} : canvas2d.Color{204, 119, 50, 255}
     case .Tire:
         return {35, 39, 38, 255}
     }
@@ -1942,7 +1982,7 @@ world_boat_point :: #force_inline proc(
 }
 
 @(no_instrumentation)
-world_boat_triangle :: proc(a, b, c: third_person.Vec3, color: rl.Color, part: boats.Part) {
+world_boat_triangle :: proc(a, b, c: third_person.Vec3, color: canvas2d.Color, part: boats.Part) {
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     metallic := part == .Metal ? f32(.62) : f32(0)
     roughness := part == .Glass ? f32(.24) : f32(.78)
@@ -2006,7 +2046,7 @@ world_npc_boats :: proc(editor: ^Editor) {
     }
 }
 
-world_ocean_ship_part_color :: proc(class: boats.Ocean_Class, part: boats.Part) -> rl.Color {
+world_ocean_ship_part_color :: proc(class: boats.Ocean_Class, part: boats.Part) -> canvas2d.Color {
     if class == .Product_Tanker {
         #partial switch part {
         case .Hull:
@@ -2081,7 +2121,7 @@ world_ocean_ship_wake :: proc(editor: ^Editor) {
         shoulder_width := sample.width * (.035 + fade * .028)
         segment_length := sample.width * .20
         alpha := u8(clamp(178 * sample.strength * fade * fade, 0, 178))
-        foam := rl.Color{218, 241, 236, alpha}
+        foam := canvas2d.Color{218, 241, 236, alpha}
         world_boat_wake_quad(
             sample.position + right * spread,
             sample.direction,
@@ -2115,7 +2155,7 @@ world_boat_wake_quad :: proc(
     center: boats.Vec2,
     direction: boats.Vec2,
     half_width, half_length: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     y: f32,
 ) {
     right := boats.Vec2{-direction.y, direction.x}
@@ -2146,7 +2186,7 @@ world_boat_wakes :: proc(editor: ^Editor) {
                 continue
             }
             alpha := u8(clamp(92 * sample.strength * fade * fade, 0, 92))
-            foam := rl.Color{210, 237, 232, alpha}
+            foam := canvas2d.Color{210, 237, 232, alpha}
             port := sample.position + right * arm_offset
             starboard := sample.position - right * arm_offset
             world_boat_wake_quad(port, sample.direction, arm_width, arm_length, foam, y)
@@ -2184,7 +2224,7 @@ road_world_point :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex) ->
 }
 
 @(no_instrumentation)
-road_surface_color :: #force_inline proc(surface: roads.Surface, pavement: roads.Pavement) -> rl.Color {
+road_surface_color :: #force_inline proc(surface: roads.Surface, pavement: roads.Pavement) -> canvas2d.Color {
     if surface == .Verge {
         // Outer verge vertices are transparent and interpolate into the opaque
         // shoulder, revealing terrain through a soft, pavement-aware tint.
@@ -2217,7 +2257,7 @@ road_surface_color :: #force_inline proc(surface: roads.Surface, pavement: roads
     }
     switch pavement {
     case .Asphalt:
-        return surface == .Junction ? rl.Color{86, 92, 86, 255} : rl.Color{91, 97, 90, 255}
+        return surface == .Junction ? canvas2d.Color{86, 92, 86, 255} : canvas2d.Color{91, 97, 90, 255}
     case .Gravel:
         return {158, 143, 111, 255}
     case .Cobblestone:
@@ -2230,7 +2270,7 @@ road_surface_color :: #force_inline proc(surface: roads.Surface, pavement: roads
     return {91, 97, 90, 255}
 }
 
-world_road_editor_link :: proc(a, b: roads.Vec3, width: f32, color: rl.Color) {
+world_road_editor_link :: proc(a, b: roads.Vec3, width: f32, color: canvas2d.Color) {
     dx, dz := b.x - a.x, b.z - a.z
     length := f32(math.sqrt(f64(dx * dx + dz * dz)))
     if length <= .001 do return
@@ -2246,7 +2286,7 @@ world_road_editor_link :: proc(a, b: roads.Vec3, width: f32, color: rl.Color) {
 }
 
 @(no_instrumentation)
-world_road_vertex :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex, color: rl.Color) -> World_Vertex {
+world_road_vertex :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex, color: canvas2d.Color) -> World_Vertex {
     point := road_world_point(editor, vertex)
     // Road UV and pavement live in the normal channel because the dedicated
     // road pass reconstructs its geometric normal. Half-width and a junction
@@ -2267,7 +2307,7 @@ world_road_triangle_colored :: #force_inline proc(
     editor: ^Editor,
     destination: ^[dynamic]World_Vertex,
     a, b, c: roads.Vertex,
-    color_a, color_b, color_c: rl.Color,
+    color_a, color_b, color_c: canvas2d.Color,
 ) {
     // Step splines use discrete terrain-fitted solids below rather than the
     // road baker's continuous ribbon.
@@ -2313,7 +2353,7 @@ world_spline_steps :: proc(editor: ^Editor, graph: ^roads.Graph) {
             length := f32(math.sqrt(f64(dx * dx + dz * dz)))
             if length <= .001 do continue
             yaw := f32(math.atan2(f64(-dx), f64(dz)))
-            color := rl.Color{174, 158, 126, 255}
+            color := canvas2d.Color{174, 158, 126, 255}
             if tread % 4 == 1 do color = {165, 149, 119, 255}
             world_box_rotated({pm.x, bottom + height * .5, pm.z}, {width, height, length + .04}, yaw, color)
         }
@@ -2411,7 +2451,7 @@ world_roads :: proc(editor: ^Editor) {
     if editor.in_map || !editor.road_mode || editor.capture_world_only do return
     for node, index in graph.nodes[:graph.node_count] {
         selected := index == editor.road_selected_node
-        color: rl.Color = selected ? {244, 216, 103, 255} : {101, 226, 203, 255}
+        color: canvas2d.Color = selected ? {244, 216, 103, 255} : {101, 226, 203, 255}
         size := selected ? f32(4.5) : f32(3.2)
         if !world_sphere_in_view(editor, {node.position.x, node.position.y + 1.3, node.position.z}, size, 1) {
             continue
@@ -2479,7 +2519,7 @@ world_ocean :: proc(editor: ^Editor) {
         // pale, clipmap-shaped shelf outline.
         ocean_y = editor.project.sea_level - 1.9
     }
-    color := rl.Color{48, 112, 142, 255}
+    color := canvas2d.Color{48, 112, 142, 255}
     for z_index in 0 ..< divisions {
         z0 := center_z - extent + f32(z_index) * cell
         z1 := z0 + cell
@@ -2567,7 +2607,7 @@ world_ocean :: proc(editor: ^Editor) {
     }
 }
 
-world_box :: proc(center, size: third_person.Vec3, color: rl.Color) {
+world_box :: proc(center, size: third_person.Vec3, color: canvas2d.Color) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
     p := [8]third_person.Vec3 {
         {center.x - x, center.y - y, center.z - z},
@@ -2593,7 +2633,7 @@ clipmap_vertex_color :: #force_inline proc(
     level: int,
     x, z, height, transition_weight: f32,
 ) -> (
-    rl.Color,
+    canvas2d.Color,
     f32,
     third_person.Vec3,
 ) {
@@ -2618,8 +2658,8 @@ clipmap_vertex_color :: #force_inline proc(
     shade := clamp(.48 + max(linalg.dot(normal, light), 0) * .52, .42, 1.05)
     fragment_dune_lighting := painted < 0
     base := terrain_color(max(height, editor.project.sea_level + .12), painted, editor.project.sea_level, x, z)
-    limestone := terrain_color_variation(rl.Color{222, 216, 188, 255}, x * .73, z * .73)
-    ground_lit := rl.Color {
+    limestone := terrain_color_variation(canvas2d.Color{222, 216, 188, 255}, x * .73, z * .73)
+    ground_lit := canvas2d.Color {
         u8(clamp(f32(base.r) * (fragment_dune_lighting ? f32(1) : shade), 0, 255)),
         u8(clamp(f32(base.g) * (fragment_dune_lighting ? f32(1) : shade), 0, 255)),
         u8(clamp(f32(base.b) * (fragment_dune_lighting ? f32(1) : shade), 0, 255)),
@@ -2629,7 +2669,7 @@ clipmap_vertex_color :: #force_inline proc(
     // from the key light; crushing it to the soil lighting floor makes the
     // same warm hue read as mud.
     limestone_shade := max(shade, f32(.68))
-    limestone_lit := rl.Color {
+    limestone_lit := canvas2d.Color {
         u8(clamp(f32(limestone.r) * limestone_shade, 0, 255)),
         u8(clamp(f32(limestone.g) * limestone_shade, 0, 255)),
         u8(clamp(f32(limestone.b) * limestone_shade, 0, 255)),
@@ -3195,7 +3235,7 @@ world_runway_papi :: proc(
         offset := (f32(light_index) - 1.5) * 1.65
         light_z := papi_center_z + offset
         world_box({papi_x, runway_y + .18, light_z}, {.92, .34, .72}, {45, 48, 46, 255})
-        lamp_color := light_index < white_count ? rl.Color{255, 247, 213, 255} : rl.Color{255, 42, 31, 255}
+        lamp_color := light_index < white_count ? canvas2d.Color{255, 247, 213, 255} : canvas2d.Color{255, 42, 31, 255}
         if approach_distance <= 1 {
             lamp_color = {67, 29, 25, 255}
         }
@@ -3239,7 +3279,7 @@ world_infrastructure :: proc(editor: ^Editor) {
 }
 
 @(no_instrumentation)
-formation_face_color :: #force_inline proc(base: rl.Color, angle: f32, layer: int) -> rl.Color {
+formation_face_color :: #force_inline proc(base: canvas2d.Color, angle: f32, layer: int) -> canvas2d.Color {
     light := math.cos(angle) * -.45 + math.sin(angle) * -.30
     if base.r > 175 && base.g > 165 && base.b > 135 {
         // Adriatic limestone is pale and cool, with stronger facet separation
@@ -3277,7 +3317,7 @@ world_land_surface_sample :: #force_inline proc(
     return {x, z, terrain.sample_height(&editor.project, 0, x, z)}
 }
 
-world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, rotation: f32, color: rl.Color) {
+world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, rotation: f32, color: canvas2d.Color) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
     p: [8]third_person.Vec3
     local := [8][3]f32 {
@@ -3340,7 +3380,7 @@ world_box_rotated_material :: proc(
     center: third_person.Vec3,
     size: third_person.Vec3,
     rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     kind: World_Material_Kind,
 ) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
@@ -3368,7 +3408,7 @@ world_box_rotated_material :: proc(
 }
 
 @(no_instrumentation)
-world_quad_lit :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color, metallic, roughness: f32) {
+world_quad_lit :: #force_inline proc(a, b, c, d: third_person.Vec3, color: canvas2d.Color, metallic, roughness: f32) {
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     vertices := [6]World_Vertex {
         world_vertex(a, color),
@@ -3392,7 +3432,7 @@ world_metal_box_rotated :: proc(
     center: third_person.Vec3,
     size: third_person.Vec3,
     rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     metallic: f32 = .68,
     roughness: f32 = .48,
 ) {
@@ -3421,7 +3461,11 @@ world_metal_box_rotated :: proc(
 }
 
 @(no_instrumentation)
-world_quad_emissive_fixture :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color, fixture_kind: f32) {
+world_quad_emissive_fixture :: #force_inline proc(
+    a, b, c, d: third_person.Vec3,
+    color: canvas2d.Color,
+    fixture_kind: f32,
+) {
     vertices := [6]World_Vertex {
         world_vertex(a, color),
         world_vertex(b, color),
@@ -3443,7 +3487,7 @@ world_emissive_fixture_box :: proc(
     center: third_person.Vec3,
     size: third_person.Vec3,
     rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     fixture_kind: f32,
 ) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
@@ -3473,7 +3517,7 @@ world_emissive_fixture_box :: proc(
 world_glass_panel :: proc(
     center: third_person.Vec3,
     width, height, rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     interior_light: f32 = 0,
 ) {
     half_width, half_height := width * .5, height * .5
@@ -3508,7 +3552,7 @@ world_architecture_window_interior :: proc(
     row, column: int,
     storefront: bool = false,
 ) -> (
-    rl.Color,
+    canvas2d.Color,
     f32,
 ) {
     key := structure.seed ~ u32(row * 0x45d9f3b) ~ u32(column * 0x119de1f3) ~ u32(face) * u32(0x9e3779b9)
@@ -3532,7 +3576,7 @@ world_architecture_window_interior :: proc(
 world_land_surface_rotated :: proc(
     editor: ^Editor,
     center_x, center_z, width, length, rotation, lift: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     if editor == nil || width <= 0 || length <= 0 do return
     columns := max(1, int(math.ceil(f64(width / 2))))
@@ -3607,6 +3651,7 @@ world_settlement_material_land_surface_rotated :: proc(
                 material,
                 x1 - x0,
                 z1 - z0,
+                {x0 + width * .5, z0 + length * .5},
             )
         }
     }
@@ -3620,7 +3665,7 @@ world_land_surface_tapered :: proc(
     editor: ^Editor,
     endpoint_x, endpoint_z, inward_x, inward_z: f32,
     run, inner_width, outer_width, lift: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     if editor == nil || run <= .01 || inner_width <= 0 || outer_width <= 0 do return
     direction_length := f32(math.sqrt(f64(inward_x * inward_x + inward_z * inward_z)))
@@ -3650,7 +3695,7 @@ world_land_surface_tapered :: proc(
     )
 }
 
-world_land_surface_disc :: proc(editor: ^Editor, center_x, center_z, radius, lift: f32, color: rl.Color) {
+world_land_surface_disc :: proc(editor: ^Editor, center_x, center_z, radius, lift: f32, color: canvas2d.Color) {
     if editor == nil || radius <= 0 do return
     segment_count := max(12, int(math.ceil(f64(radius * 10))))
     center_height := terrain.sample_height(&editor.project, 0, center_x, center_z)
@@ -3673,7 +3718,11 @@ world_land_surface_disc :: proc(editor: ^Editor, center_x, center_z, radius, lif
     }
 }
 
-world_architecture_face_color :: proc(base: rl.Color, normal_x, normal_z: f32, top: bool = false) -> rl.Color {
+world_architecture_face_color :: proc(
+    base: canvas2d.Color,
+    normal_x, normal_z: f32,
+    top: bool = false,
+) -> canvas2d.Color {
     // A restrained baked key keeps the plain-color architecture readable
     // without fighting the authored stucco palette or the dynamic sky.
     shade := top ? f32(1.015) : clamp(.955 + normal_x * -.035 + normal_z * -.025, f32(.90), f32(1.01))
@@ -3686,7 +3735,7 @@ world_architecture_face_color :: proc(base: rl.Color, normal_x, normal_z: f32, t
 }
 
 @(no_instrumentation)
-world_architecture_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: rl.Color, material: f32) {
+world_architecture_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, color: canvas2d.Color, material: f32) {
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     vertices := [6]World_Vertex {
         world_vertex(a, color),
@@ -3705,7 +3754,11 @@ world_architecture_quad :: #force_inline proc(a, b, c, d: third_person.Vec3, col
 }
 
 @(no_instrumentation)
-world_architecture_triangle :: #force_inline proc(a, b, c: third_person.Vec3, color: rl.Color, material: f32 = 0) {
+world_architecture_triangle :: #force_inline proc(
+    a, b, c: third_person.Vec3,
+    color: canvas2d.Color,
+    material: f32 = 0,
+) {
     normal := linalg.normalize0(linalg.cross(b - a, c - a))
     vertices := [3]World_Vertex{world_vertex(a, color), world_vertex(b, color), world_vertex(c, color)}
     for &vertex in vertices {
@@ -3720,7 +3773,7 @@ world_architecture_box_rotated :: proc(
     center: third_person.Vec3,
     size: third_person.Vec3,
     rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     material: f32 = 0,
 ) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
@@ -3758,7 +3811,7 @@ world_architecture_box_rotated :: proc(
 world_tapered_box_rotated :: proc(
     center: third_person.Vec3,
     height, bottom_width, bottom_depth, top_width, top_depth, rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     half_height := height * .5
     local := [8][3]f32 {
@@ -3784,7 +3837,11 @@ world_tapered_box_rotated :: proc(
     world_quad(p[0], p[1], p[5], p[4], color)
 }
 
-world_vertical_prism :: proc(center: third_person.Vec3, radius_x, radius_z, height, rotation: f32, color: rl.Color) {
+world_vertical_prism :: proc(
+    center: third_person.Vec3,
+    radius_x, radius_z, height, rotation: f32,
+    color: canvas2d.Color,
+) {
     SEGMENTS :: 8
     bottom, top: [SEGMENTS]third_person.Vec3
     half_height := height * .5
@@ -3806,10 +3863,43 @@ world_vertical_prism :: proc(center: third_person.Vec3, radius_x, radius_z, heig
     }
 }
 
+world_surface_paw_pad :: proc(
+    center, normal: third_person.Vec3,
+    radius_x, radius_z, height, rotation, compression: f32,
+    color: canvas2d.Color,
+) {
+    up := linalg.normalize0(normal)
+    if linalg.dot(up, up) < .5 do up = {0, 1, 0}
+    forward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
+    forward -= up * linalg.dot(forward, up)
+    forward = linalg.normalize0(forward)
+    if linalg.dot(forward, forward) < .5 do forward = {0, 0, 1}
+    right := linalg.normalize0(linalg.cross(up, forward))
+    scale := mouse_paws.pad_scale(compression)
+    scaled_radius_x := radius_x * scale.x
+    scaled_height := height * scale.y
+    scaled_radius_z := radius_z * scale.z
+    SEGMENTS :: 10
+    bottom, top: [SEGMENTS]third_person.Vec3
+    half_height := scaled_height * .5
+    for segment in 0 ..< SEGMENTS {
+        angle := (f32(segment) + .5) * math.PI * 2 / f32(SEGMENTS)
+        radial := right * (math.cos(angle) * scaled_radius_x) + forward * (math.sin(angle) * scaled_radius_z)
+        bottom[segment] = center + radial - up * half_height
+        top[segment] = center + radial + up * half_height
+    }
+    for segment in 0 ..< SEGMENTS {
+        next := (segment + 1) % SEGMENTS
+        world_quad(bottom[segment], top[segment], top[next], bottom[next], color)
+        world_triangle(center - up * half_height, bottom[segment], bottom[next], color)
+        world_triangle(center + up * half_height, top[next], top[segment], color)
+    }
+}
+
 world_vertical_disc_rotated :: proc(
     center: third_person.Vec3,
     radius_x, radius_y, depth, rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     material_kind: World_Material_Kind = .BRDF,
 ) {
     SEGMENTS :: 12
@@ -3839,7 +3929,7 @@ world_vertical_disc_rotated :: proc(
 world_ellipsoid_rotated :: proc(
     center: third_person.Vec3,
     radius_x, radius_y, radius_z, rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     material_kind: World_Material_Kind = .Eye,
 ) {
     LATITUDE_SEGMENTS :: 6
@@ -3910,7 +4000,7 @@ world_ellipsoid_rotated :: proc(
 world_ellipsoid_matte_oriented :: proc(
     center: third_person.Vec3,
     radius_x, radius_y, radius_z, rotation, roll: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     LATITUDE_SEGMENTS :: 6
     LONGITUDE_SEGMENTS :: 10
@@ -3947,7 +4037,7 @@ world_ellipsoid_matte_oriented :: proc(
 world_ellipsoid_matte_rotated :: proc(
     center: third_person.Vec3,
     radius_x, radius_y, radius_z, rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     world_ellipsoid_matte_oriented(center, radius_x, radius_y, radius_z, rotation, 0, color)
 }
@@ -3955,7 +4045,7 @@ world_ellipsoid_matte_rotated :: proc(
 // One closed, connected shell for the bottle-cap hat. The alternating outer
 // radius is part of the hull itself, so the crimped edge no longer depends on
 // detached blocks. UVs drive the pressed-metal finish in the world shader.
-world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: rl.Color) {
+world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: canvas2d.Color) {
     // Forty-two vertices give the perimeter twenty-one crown-cap teeth.
     SEGMENTS :: 42
     RING_COUNT :: 7
@@ -4030,7 +4120,7 @@ world_bottle_cap_hull :: proc(center: third_person.Vec3, rotation: f32, color: r
 // A single connected felt shell for the Tyrolean hat. Its radial profile
 // travels from the closed underside, around the brim, and continuously up the
 // tapered crown; every visible felt contour therefore belongs to one hull.
-world_alpine_hat_hull :: proc(center: third_person.Vec3, rotation: f32, felt_dark, felt, felt_light: rl.Color) {
+world_alpine_hat_hull :: proc(center: third_person.Vec3, rotation: f32, felt_dark, felt, felt_light: canvas2d.Color) {
     SEGMENTS :: 14
     RING_COUNT :: 7
     heights := [RING_COUNT]f32{-.045, -.020, .010, .045, .135, .205, .225}
@@ -4038,7 +4128,7 @@ world_alpine_hat_hull :: proc(center: third_person.Vec3, rotation: f32, felt_dar
     radii_z := [RING_COUNT]f32{.215, .235, .190, .180, .150, .112, .080}
     offsets_x := [RING_COUNT]f32{0, 0, 0, 0, -.010, -.030, -.040}
     offsets_z := [RING_COUNT]f32{0, .010, 0, -.005, -.010, 0, .012}
-    colors := [RING_COUNT]rl.Color{felt_dark, felt_dark, felt, felt, felt, felt_light, felt_light}
+    colors := [RING_COUNT]canvas2d.Color{felt_dark, felt_dark, felt, felt, felt, felt_light, felt_light}
     rings: [RING_COUNT][SEGMENTS]third_person.Vec3
     for ring_index in 0 ..< RING_COUNT {
         for segment in 0 ..< SEGMENTS {
@@ -4103,7 +4193,7 @@ world_alpine_hat_hull :: proc(center: third_person.Vec3, rotation: f32, felt_dar
 world_flat_cap_hull :: proc(
     center: third_person.Vec3,
     rotation: f32,
-    tweed_dark, tweed, tweed_front, tweed_light: rl.Color,
+    tweed_dark, tweed, tweed_front, tweed_light: canvas2d.Color,
 ) {
     SEGMENTS :: 18
     RING_COUNT :: 7
@@ -4112,10 +4202,10 @@ world_flat_cap_hull :: proc(
     radii_z := [RING_COUNT]f32{.150, .205, .205, .205, .200, .160, .090}
     offsets_z := [RING_COUNT]f32{-.020, .090, .090, -.025, -.045, -.055, -.060}
     front_drop := [RING_COUNT]f32{0, .002, .004, .010, .024, .034, .025}
-    colors := [RING_COUNT]rl.Color{tweed_dark, tweed_dark, tweed_front, tweed_front, tweed, tweed, tweed_light}
+    colors := [RING_COUNT]canvas2d.Color{tweed_dark, tweed_dark, tweed_front, tweed_front, tweed, tweed, tweed_light}
 
     rings: [RING_COUNT][SEGMENTS]third_person.Vec3
-    vertex_colors: [RING_COUNT][SEGMENTS]rl.Color
+    vertex_colors: [RING_COUNT][SEGMENTS]canvas2d.Color
     for ring_index in 0 ..< RING_COUNT {
         for segment in 0 ..< SEGMENTS {
             angle := f32(segment) * math.PI * 2 / f32(SEGMENTS)
@@ -4182,7 +4272,7 @@ world_flat_cap_hull :: proc(
 // fitted underside, around the upturned bucket brim, and inward over the crown.
 // UVs follow that profile so the shader's stripes and weave remain attached to
 // the fabric instead of being represented by stacked geometry.
-world_sailor_hat_hull :: proc(center: third_person.Vec3, rotation: f32, color: rl.Color) {
+world_sailor_hat_hull :: proc(center: third_person.Vec3, rotation: f32, color: canvas2d.Color) {
     SEGMENTS :: 24
     RING_COUNT :: 8
     heights := [RING_COUNT]f32{-.050, -.036, .020, .052, .036, .112, .174, .192}
@@ -4269,7 +4359,7 @@ world_sailor_hat_hull :: proc(center: third_person.Vec3, rotation: f32, color: r
 
 // A closed, pointed feather vane. The outline supplies the taper and swept
 // tip; shallow extrusion keeps it readable from both front and profile views.
-world_alpine_feather_hull :: proc(center: third_person.Vec3, rotation: f32, feather, feather_light: rl.Color) {
+world_alpine_feather_hull :: proc(center: third_person.Vec3, rotation: f32, feather, feather_light: canvas2d.Color) {
     POINT_COUNT :: 8
     outline := [POINT_COUNT][2]f32 {
         {-.060, -.160},
@@ -4302,7 +4392,7 @@ world_alpine_feather_hull :: proc(center: third_person.Vec3, rotation: f32, feat
 world_tapered_disc_depth_rotated :: proc(
     center: third_person.Vec3,
     back_radius_x, back_radius_y, front_radius_x, front_radius_y, depth, rotation: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     SEGMENTS :: 12
     back, front: [SEGMENTS]third_person.Vec3
@@ -4339,7 +4429,7 @@ world_tapered_disc_depth_rotated :: proc(
     }
 }
 
-world_tube_between :: proc(a, b, forward: third_person.Vec3, radius_x, radius_z: f32, color: rl.Color) {
+world_tube_between :: proc(a, b, forward: third_person.Vec3, radius_x, radius_z: f32, color: canvas2d.Color) {
     SEGMENTS :: 8
     delta := third_person.Vec3{b.x - a.x, b.y - a.y, b.z - a.z}
     length := linalg.length(delta)
@@ -4391,7 +4481,7 @@ world_tube_between :: proc(a, b, forward: third_person.Vec3, radius_x, radius_z:
 world_mouse_limb_hull :: proc(
     points: []third_person.Vec3,
     radii: []f32,
-    colors: []rl.Color,
+    colors: []canvas2d.Color,
     forward: third_person.Vec3,
     cap_root := true,
 ) {
@@ -4531,7 +4621,7 @@ world_mouse_limb_hull :: proc(
     }
 }
 
-world_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, color: rl.Color) {
+world_box_between :: proc(a, b, forward: third_person.Vec3, width, depth: f32, color: canvas2d.Color) {
     delta := third_person.Vec3{b.x - a.x, b.y - a.y, b.z - a.z}
     length := linalg.length(delta)
     if length <= .0001 do return
@@ -4685,7 +4775,7 @@ world_architecture_tile_slope :: proc(
 
             tone := architecture.architecture_roof_tile_tone(pattern_seed, course, segment)
             tile_bytes := architecture.architecture_roof_tile_color(palette_seed, tone)
-            tile := rl.Color{tile_bytes[0], tile_bytes[1], tile_bytes[2], tile_bytes[3]}
+            tile := canvas2d.Color{tile_bytes[0], tile_bytes[1], tile_bytes[2], tile_bytes[3]}
             if reverse_winding {
                 world_quad(inner_a, next_a, next_b, inner_b, tile)
             } else {
@@ -4702,7 +4792,7 @@ world_architecture_tile_slope :: proc(
     roll_radius := clamp(slope_length * .008, f32(.055), f32(.095))
     roll_relief := .12 + roll_radius * .55
     roll_bytes := architecture.architecture_roof_tile_color(palette_seed, 2)
-    roll_color := rl.Color{roll_bytes[0], roll_bytes[1], roll_bytes[2], roll_bytes[3]}
+    roll_color := canvas2d.Color{roll_bytes[0], roll_bytes[1], roll_bytes[2], roll_bytes[3]}
     // Face-edge seams already receive fascia or hip caps; adding a roll there
     // doubles the geometry and produces a bright outline around the roof.
     for boundary in 1 ..< segments {
@@ -4739,14 +4829,14 @@ world_architecture_roof_cap_run :: proc(
         cap_b := linalg.lerp(a, b, end_t)
         tone := architecture.architecture_roof_tile_tone(pattern_seed, 0, cap_index)
         cap_bytes := architecture.architecture_roof_tile_color(palette_seed, tone)
-        cap_color := rl.Color{cap_bytes[0], cap_bytes[1], cap_bytes[2], cap_bytes[3]}
+        cap_color := canvas2d.Color{cap_bytes[0], cap_bytes[1], cap_bytes[2], cap_bytes[3]}
         world_tube_between(cap_a, cap_b, {0, 1, 0}, radius, radius, cap_color)
     }
 }
 
 world_architecture_pyramid_cap :: proc(
     center_x, center_z, base_y, width, depth, rotation, tip_height: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     front_left_x, front_left_z := world_rotate_xz(center_x, center_z, -width * .5, -depth * .5, rotation)
     front_right_x, front_right_z := world_rotate_xz(center_x, center_z, width * .5, -depth * .5, rotation)
@@ -4785,10 +4875,10 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
     hip_roof := ceremonial_roof || roof_style == .Hip
     if !ceremonial_roof && roof_style == .Parapet {
         is_aegean := identity.region == .Aegean
-        roof_color := rl.Color{229, 226, 211, 255}
-        deck_color := rl.Color{207, 210, 199, 255}
-        coping_color := rl.Color{242, 240, 226, 255}
-        chimney_color := rl.Color{221, 218, 203, 255}
+        roof_color := canvas2d.Color{229, 226, 211, 255}
+        deck_color := canvas2d.Color{207, 210, 199, 255}
+        coping_color := canvas2d.Color{242, 240, 226, 255}
+        chimney_color := canvas2d.Color{221, 218, 203, 255}
         chimney_width := clamp(structure.width * .06, f32(.82), f32(1.15))
         chimney_height := f32(1.25)
         if !is_aegean {
@@ -5062,11 +5152,11 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
         wall_left_back_z + (wall_right_back_z - wall_left_back_z) * .5,
     }
     roof_bytes := architecture.architecture_roof_color(structure.seed, landmark)
-    terracotta := rl.Color{roof_bytes[0], roof_bytes[1], roof_bytes[2], roof_bytes[3]}
+    terracotta := canvas2d.Color{roof_bytes[0], roof_bytes[1], roof_bytes[2], roof_bytes[3]}
     // The ridge follows the building depth. Gable roofs continue the left and
     // right walls to their ridge apexes; hip roofs close the front and rear
     // ends against the shortened ridge.
-    wall := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
+    wall := canvas2d.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     if gable_roof {
         // Wind each end cap toward the outside of the building. The previous
         // inward-facing order let back-face culling erase the gable viewed
@@ -5151,7 +5241,7 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
         // plausible route off the roof. They stay near-only because their
         // narrow silhouette aliases before the rest of the roof reaches
         // medium LOD.
-        gutter_color := rl.Color{91, 88, 76, 255}
+        gutter_color := canvas2d.Color{91, 88, 76, 255}
         gutter_radius := f32(.075)
         for side in -1 ..= 1 {
             if side == 0 do continue
@@ -5463,7 +5553,7 @@ world_architecture_roof :: proc(structure: terrain.Structure, landmark: bool, lo
 world_architecture_face_openings :: proc(
     structure: terrain.Structure,
     layout: ^architecture.Opening_Layout,
-    window, trim: rl.Color,
+    window, trim: canvas2d.Color,
 ) {
     if layout == nil do return
     identity := architecture.architecture_resolve_legacy_identity(structure)
@@ -5500,7 +5590,7 @@ world_architecture_face_openings :: proc(
         }
         wx, wz := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
         color :=
-            opening.kind == .Vent ? rl.Color{62, 69, 66, 255} : (opening.kind == .Service_Door ? rl.Color{83, 70, 60, 255} : window)
+            opening.kind == .Vent ? canvas2d.Color{62, 69, 66, 255} : (opening.kind == .Service_Door ? canvas2d.Color{83, 70, 60, 255} : window)
         world_box_rotated(
             {wx, structure.base_y + opening_y, wz},
             {opening_width, opening_height, .22},
@@ -5527,7 +5617,7 @@ world_architecture_face_openings :: proc(
                 structure.rotation,
             )
             glass_tone := int((structure.seed + u32(opening.row * 11) + u32(opening.face) * 7) % 3)
-            glass := rl.Color{53, 77, 81, 255}
+            glass := canvas2d.Color{53, 77, 81, 255}
             if glass_tone == 1 {
                 glass = {59, 84, 87, 255}
             } else if glass_tone == 2 {
@@ -5611,8 +5701,8 @@ world_architecture_balcony :: proc(
         slab_center_z,
         structure.rotation,
     )
-    slab_color := rl.Color{196, 151, 103, 255}
-    iron := warm_iron ? rl.Color{83, 68, 62, 255} : rl.Color{102, 76, 63, 255}
+    slab_color := canvas2d.Color{196, 151, 103, 255}
+    iron := warm_iron ? canvas2d.Color{83, 68, 62, 255} : canvas2d.Color{102, 76, 63, 255}
     world_box_rotated(
         {slab_x, slab_center_y, slab_z},
         {balcony_width, slab_height, balcony_depth},
@@ -5776,7 +5866,7 @@ world_architecture_mass :: proc(
     landmark := structure.height > 60 || settlement_structure_is_landmark(structure) || buildings.is_landmark(identity)
     facade_style := architecture.facade_style_for_seed(structure.seed)
     roof_style := world_architecture_roof_style(structure)
-    stone := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
+    stone := canvas2d.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     ground_stone := formation_face_color(stone, f32((structure.seed >> 10) & 3) * .10 - .15, 0)
     // The masonry base and stucco upper storeys are separate, disjoint hulls.
     // Previously a slightly enlarged masonry box covered the lower portion of
@@ -5823,7 +5913,7 @@ world_architecture_mass :: proc(
         1,
     )
     damp_course :=
-        facade_style == 2 ? rl.Color{92, 113, 110, 255} : facade_style == 3 ? rl.Color{139, 107, 83, 255} : formation_face_color(plinth, math.PI, 0)
+        facade_style == 2 ? canvas2d.Color{92, 113, 110, 255} : facade_style == 3 ? canvas2d.Color{139, 107, 83, 255} : formation_face_color(plinth, math.PI, 0)
     world_architecture_box_rotated(
         {structure.center_x, structure.base_y + plinth_height + .06, structure.center_z},
         {structure.width + .22, .12, structure.depth + .22},
@@ -5943,7 +6033,7 @@ world_architecture_mass :: proc(
                 patch_color,
             )
         }
-        gravel := rl.Color{136, 126, 108, 255}
+        gravel := canvas2d.Color{136, 126, 108, 255}
         gravel_x, gravel_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -5998,7 +6088,7 @@ world_architecture_mass :: proc(
     }
     world_architecture_roof(structure, landmark, lod)
     if lod == .Medium {
-        window := facade_style == 2 ? rl.Color{42, 74, 82, 255} : rl.Color{48, 62, 64, 255}
+        window := facade_style == 2 ? canvas2d.Color{42, 74, 82, 255} : canvas2d.Color{48, 62, 64, 255}
         rows := architecture.facade_floor_count(structure.height)
         if opening_layout != nil {
             for opening in opening_layout.openings[:opening_layout.count] {
@@ -6022,8 +6112,8 @@ world_architecture_mass :: proc(
                 )
                 // Even at medium LOD, split the opening into glazed panes so
                 // it reads as a window rather than a black square.
-                glass := facade_style == 2 ? rl.Color{55, 94, 104, 255} : rl.Color{57, 80, 83, 255}
-                frame := facade_style == 2 ? rl.Color{170, 181, 166, 255} : rl.Color{174, 158, 134, 255}
+                glass := facade_style == 2 ? canvas2d.Color{55, 94, 104, 255} : canvas2d.Color{57, 80, 83, 255}
+                frame := facade_style == 2 ? canvas2d.Color{170, 181, 166, 255} : canvas2d.Color{174, 158, 134, 255}
                 glass_x, glass_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
@@ -6111,15 +6201,15 @@ world_architecture_mass :: proc(
             }
         }
         face_trim :=
-            facade_style == 2 ? rl.Color{166, 171, 151, 255} : (facade_style == 1 ? rl.Color{205, 190, 157, 255} : rl.Color{190, 166, 128, 255})
+            facade_style == 2 ? canvas2d.Color{166, 171, 151, 255} : (facade_style == 1 ? canvas2d.Color{205, 190, 157, 255} : canvas2d.Color{190, 166, 128, 255})
         world_architecture_face_openings(structure, opening_layout, window, face_trim)
         return
     }
     // Dark inset windows and red shutters give the generated blocks a readable
     // Adriatic façade even at the editor's wide camera distance.
-    window := facade_style == 2 ? rl.Color{42, 74, 82, 255} : rl.Color{48, 62, 64, 255}
+    window := facade_style == 2 ? canvas2d.Color{42, 74, 82, 255} : canvas2d.Color{48, 62, 64, 255}
     shutter :=
-        facade_style == 2 ? rl.Color{43, 102, 126, 255} : facade_style == 3 ? rl.Color{236, 218, 179, 255} : rl.Color{167, 61, 53, 255}
+        facade_style == 2 ? canvas2d.Color{43, 102, 126, 255} : facade_style == 3 ? canvas2d.Color{236, 218, 179, 255} : canvas2d.Color{167, 61, 53, 255}
     if has_entrance && habitable {
         door_x, door_z := world_rotate_xz(
             structure.center_x,
@@ -6129,7 +6219,7 @@ world_architecture_mass :: proc(
             structure.rotation,
         )
         door :=
-            facade_style == 2 ? rl.Color{54, 91, 99, 255} : facade_style == 3 ? rl.Color{109, 75, 57, 255} : rl.Color{92, 66, 57, 255}
+            facade_style == 2 ? canvas2d.Color{54, 91, 99, 255} : facade_style == 3 ? canvas2d.Color{109, 75, 57, 255} : canvas2d.Color{92, 66, 57, 255}
         if (structure.seed >> 11) & 3 == 1 {
             door = {72, 104, 101, 255}
         } else if (structure.seed >> 11) & 3 == 2 {
@@ -6145,7 +6235,7 @@ world_architecture_mass :: proc(
         }
         door_center_y := structure.base_y + door_center_local_y
         world_box_rotated({door_x, door_center_y, door_z}, {door_width, door_height, .24}, structure.rotation, door)
-        panel_color := mixed_use ? rl.Color{58, 99, 96, 255} : formation_face_color(door, math.PI, 0)
+        panel_color := mixed_use ? canvas2d.Color{58, 99, 96, 255} : formation_face_color(door, math.PI, 0)
         if mixed_use {
             glass_door_x, glass_door_z := world_rotate_xz(
                 structure.center_x,
@@ -6166,7 +6256,7 @@ world_architecture_mass :: proc(
             // emissive slab directly behind the glass made the entrance read
             // as a cream solid leaf; this dark recessed vestibule lets the
             // warm interior light live in the glass instead.
-            door_recess := color_lerp(rl.Color{31, 51, 52, 255}, door_interior, .18)
+            door_recess := color_lerp(canvas2d.Color{31, 51, 52, 255}, door_interior, .18)
             world_box_rotated(
                 {door_backing_x, door_center_y + .08, door_backing_z},
                 {door_width * .84, door_height * .86, .025},
@@ -6189,7 +6279,7 @@ world_architecture_mass :: proc(
                 // display bays. Retaining more blue-green glass at night
                 // keeps this central leaf transparent instead of becoming a
                 // flat luminous slab.
-                color_lerp(rl.Color{34, 69, 74, 255}, door_interior, .18),
+                color_lerp(canvas2d.Color{34, 69, 74, 255}, door_interior, .18),
                 door_interior_light * .40,
             )
             door_reflection_x, door_reflection_z := world_rotate_xz(
@@ -6268,7 +6358,7 @@ world_architecture_mass :: proc(
                 structure.rotation,
             )
             mat_color :=
-                structure.seed % 3 == 0 ? rl.Color{72, 91, 86, 255} : structure.seed % 3 == 1 ? rl.Color{108, 68, 58, 255} : rl.Color{91, 73, 103, 255}
+                structure.seed % 3 == 0 ? canvas2d.Color{72, 91, 86, 255} : structure.seed % 3 == 1 ? canvas2d.Color{108, 68, 58, 255} : canvas2d.Color{91, 73, 103, 255}
             world_box_rotated(
                 {mat_x, structure.base_y + .035, mat_z},
                 {door_width * .82, .07, .70},
@@ -6400,9 +6490,9 @@ world_architecture_mass :: proc(
                 {190, 171, 139, 255},
             )
         }
-        surround := facade_style == 2 ? rl.Color{166, 171, 151, 255} : rl.Color{190, 166, 128, 255}
+        surround := facade_style == 2 ? canvas2d.Color{166, 171, 151, 255} : canvas2d.Color{190, 166, 128, 255}
         if (structure.seed >> 19) & 1 != 0 {
-            surround = facade_style == 2 ? rl.Color{178, 181, 158, 255} : rl.Color{205, 181, 143, 255}
+            surround = facade_style == 2 ? canvas2d.Color{178, 181, 158, 255} : canvas2d.Color{205, 181, 143, 255}
         }
         if mixed_use do surround = {75, 91, 87, 255}
         frame_width: f32 = mixed_use ? .08 : .12
@@ -6476,9 +6566,9 @@ world_architecture_mass :: proc(
             structure.rotation,
         )
         step_color :=
-            facade_style == 2 ? rl.Color{103, 130, 125, 255} : facade_style == 3 ? rl.Color{178, 127, 88, 255} : rl.Color{178, 127, 88, 255}
+            facade_style == 2 ? canvas2d.Color{103, 130, 125, 255} : facade_style == 3 ? canvas2d.Color{178, 127, 88, 255} : canvas2d.Color{178, 127, 88, 255}
         if (structure.seed >> 13) & 1 != 0 {
-            step_color = facade_style == 2 ? rl.Color{121, 137, 126, 255} : rl.Color{157, 137, 108, 255}
+            step_color = facade_style == 2 ? canvas2d.Color{121, 137, 126, 255} : canvas2d.Color{157, 137, 108, 255}
         }
         world_box_rotated(
             {step_x, structure.base_y + step_height * .5, step_z},
@@ -6509,7 +6599,7 @@ world_architecture_mass :: proc(
             )
             paver_tone := paver % 2 == 0 ? step_color : formation_face_color(step_color, math.PI, 0)
             if (structure.seed >> 14) & 1 != 0 && paver == 1 {
-                paver_tone = facade_style == 2 ? rl.Color{116, 126, 116, 255} : rl.Color{149, 119, 91, 255}
+                paver_tone = facade_style == 2 ? canvas2d.Color{116, 126, 116, 255} : canvas2d.Color{149, 119, 91, 255}
             }
             world_box_rotated(
                 {paver_x, structure.base_y + .035, paver_z},
@@ -6559,7 +6649,7 @@ world_architecture_mass :: proc(
                     {pot_x, structure.base_y + pot_height + .18, pot_z},
                     {.48, .34, .48},
                     structure.rotation,
-                    pot_side < 0 ? rl.Color{79, 124, 73, 255} : rl.Color{97, 139, 77, 255},
+                    pot_side < 0 ? canvas2d.Color{79, 124, 73, 255} : canvas2d.Color{97, 139, 77, 255},
                 )
             }
         }
@@ -6653,7 +6743,7 @@ world_architecture_mass :: proc(
                 {mat_x, structure.base_y + .075, mat_z},
                 {door_width * .78, .04, .48},
                 structure.rotation,
-                facade_style == 2 ? rl.Color{72, 103, 105, 255} : rl.Color{116, 73, 54, 255},
+                facade_style == 2 ? canvas2d.Color{72, 103, 105, 255} : canvas2d.Color{116, 73, 54, 255},
             )
         }
         for curb_side in -1 ..= 1 {
@@ -6839,7 +6929,7 @@ world_architecture_mass :: proc(
             // Shop canvas comes from a small sun-faded coastal palette. Keep
             // two colors per awning so stripes, checks, and the loose fringe
             // read as dyed cloth rather than extra pieces of architecture.
-            awning_color, stripe_color := rl.Color{}, rl.Color{}
+            awning_color, stripe_color := canvas2d.Color{}, canvas2d.Color{}
             switch structure.seed % 6 {
             case 0:
                 awning_color, stripe_color = {177, 73, 58, 255}, {231, 203, 157, 255}
@@ -7189,7 +7279,7 @@ world_architecture_mass :: proc(
                     structure.rotation,
                 )
                 sign_width := storefront ? min(awning_width * .38, f32(5.2)) : f32(1.15)
-                sign_frame := rl.Color{91, 119, 117, 255}
+                sign_frame := canvas2d.Color{91, 119, 117, 255}
                 if storefront {
                     if identity.archetype == .Mixed_Use_Dwelling {
                         switch storefront_business_kind {
@@ -7204,7 +7294,7 @@ world_architecture_mass :: proc(
                         }
                     } else {
                         sign_frame =
-                            structure.seed % 3 == 0 ? rl.Color{108, 75, 58, 255} : structure.seed % 3 == 1 ? rl.Color{63, 88, 87, 255} : rl.Color{113, 69, 64, 255}
+                            structure.seed % 3 == 0 ? canvas2d.Color{108, 75, 58, 255} : structure.seed % 3 == 1 ? canvas2d.Color{63, 88, 87, 255} : canvas2d.Color{113, 69, 64, 255}
                     }
                 }
                 sign_height := storefront ? f32(.90) : f32(.54)
@@ -7216,7 +7306,7 @@ world_architecture_mass :: proc(
                 )
                 if storefront {
                     inset_x, inset_z := world_rotate_xz(sign_x, sign_z, 0, .065, structure.rotation)
-                    sign_inset := rl.Color{61, 89, 85, 255}
+                    sign_inset := canvas2d.Color{61, 89, 85, 255}
                     if identity.archetype == .Mixed_Use_Dwelling {
                         switch storefront_business_kind {
                         case 0:
@@ -7230,7 +7320,7 @@ world_architecture_mass :: proc(
                         }
                     } else {
                         sign_inset =
-                            structure.seed % 3 == 0 ? rl.Color{61, 89, 85, 255} : structure.seed % 3 == 1 ? rl.Color{171, 91, 65, 255} : rl.Color{193, 148, 72, 255}
+                            structure.seed % 3 == 0 ? canvas2d.Color{61, 89, 85, 255} : structure.seed % 3 == 1 ? canvas2d.Color{171, 91, 65, 255} : canvas2d.Color{193, 148, 72, 255}
                     }
                     world_box_rotated(
                         {inset_x, sign_y, inset_z},
@@ -7239,7 +7329,7 @@ world_architecture_mass :: proc(
                         sign_inset,
                     )
                     business_kind := storefront_business_kind
-                    glyph_color := rl.Color{220, 185, 112, 255}
+                    glyph_color := canvas2d.Color{220, 185, 112, 255}
                     switch business_kind {
                     case 0:
                         // Three large vessel silhouettes: a tall amphora-like
@@ -7366,9 +7456,9 @@ world_architecture_mass :: proc(
                     blade_y := structure.base_y + step_height + door_height + 2.12
                     world_box_rotated({blade_x, blade_y, blade_z}, {.13, .92, 1.05}, structure.rotation, sign_frame)
                     blade_inset :=
-                        structure.seed % 3 == 0 ? rl.Color{61, 89, 85, 255} : structure.seed % 3 == 1 ? rl.Color{171, 91, 65, 255} : rl.Color{193, 148, 72, 255}
+                        structure.seed % 3 == 0 ? canvas2d.Color{61, 89, 85, 255} : structure.seed % 3 == 1 ? canvas2d.Color{171, 91, 65, 255} : canvas2d.Color{193, 148, 72, 255}
                     blade_business_kind := int((structure.seed >> 6) % 4)
-                    blade_glyph := rl.Color{227, 190, 111, 255}
+                    blade_glyph := canvas2d.Color{227, 190, 111, 255}
                     for face_side in -1 ..= 1 {
                         if face_side == 0 do continue
                         face_f := f32(face_side)
@@ -7553,7 +7643,7 @@ world_architecture_mass :: proc(
                 structure.rotation,
             )
             side_yaw := structure.rotation + side_f * math.PI * .5
-            side_door_color := facade_style == 2 ? rl.Color{74, 104, 105, 255} : rl.Color{67, 91, 91, 255}
+            side_door_color := facade_style == 2 ? canvas2d.Color{74, 104, 105, 255} : canvas2d.Color{67, 91, 91, 255}
             world_box_rotated({side_x, side_y, side_z}, {1.65, 3.05, .20}, side_yaw, side_door_color)
             // Four shallow panels and a real lever distinguish the private
             // upstairs entrance from a blank service door. Keep the relief
@@ -7656,7 +7746,8 @@ world_architecture_mass :: proc(
                 if project != nil {
                     paver_ground = terrain.sample_height(project, 0, paver_x, paver_z)
                 }
-                paver_color := path_paver % 2 == 0 ? rl.Color{184, 171, 143, 255} : rl.Color{166, 153, 128, 255}
+                paver_color :=
+                    path_paver % 2 == 0 ? canvas2d.Color{184, 171, 143, 255} : canvas2d.Color{166, 153, 128, 255}
                 world_box_rotated(
                     {paver_x, paver_ground + .045, paver_z},
                     {1.48, .09, path_paver_length},
@@ -7675,7 +7766,7 @@ world_architecture_mass :: proc(
                 {canopy_x, structure.base_y + 3.48, canopy_z},
                 {2.20, .16, .82},
                 side_yaw,
-                facade_style == 2 ? rl.Color{105, 143, 151, 255} : rl.Color{178, 103, 72, 255},
+                facade_style == 2 ? canvas2d.Color{105, 143, 151, 255} : canvas2d.Color{178, 103, 72, 255},
             )
             // A compact stair-step glyph on the canopy fascia identifies this
             // as access to upper dwellings, not a secondary shop entrance.
@@ -7917,7 +8008,7 @@ world_architecture_mass :: proc(
                     structure.rotation,
                 )
                 glass_tone := int((structure.seed + u32(column * 17)) % 3)
-                glass := rl.Color{48, 72, 78, 255}
+                glass := canvas2d.Color{48, 72, 78, 255}
                 if facade_style == 2 {
                     if glass_tone == 0 {
                         glass = {54, 94, 105, 255}
@@ -8002,7 +8093,8 @@ world_architecture_mass :: proc(
                     interior_light,
                 )
                 if (structure.seed + u32(row * 11 + column)) % 4 == 0 {
-                    curtain := facade_style == 2 ? rl.Color{205, 197, 170, 255} : rl.Color{190, 169, 145, 255}
+                    curtain :=
+                        facade_style == 2 ? canvas2d.Color{205, 197, 170, 255} : canvas2d.Color{190, 169, 145, 255}
                     for curtain_side in -1 ..= 1 {
                         if curtain_side == 0 do continue
                         curtain_x, curtain_z := world_rotate_xz(
@@ -8020,7 +8112,7 @@ world_architecture_mass :: proc(
                         )
                     }
                 }
-                mullion := facade_style == 2 ? rl.Color{183, 192, 174, 255} : rl.Color{177, 163, 137, 255}
+                mullion := facade_style == 2 ? canvas2d.Color{183, 192, 174, 255} : canvas2d.Color{177, 163, 137, 255}
                 world_box_rotated(
                     {glass_x, y, glass_z},
                     {.065, window_height * .82, .055},
@@ -8052,7 +8144,7 @@ world_architecture_mass :: proc(
                     local_z + .18,
                     structure.rotation,
                 )
-                sill := facade_style == 2 ? rl.Color{166, 171, 151, 255} : rl.Color{190, 166, 128, 255}
+                sill := facade_style == 2 ? canvas2d.Color{166, 171, 151, 255} : canvas2d.Color{190, 166, 128, 255}
                 world_box_rotated(
                     {sill_x, y - window_height * .5 - .11, sill_z},
                     {window_width + .38, .10, .30},
@@ -8074,7 +8166,7 @@ world_architecture_mass :: proc(
                         {bulkhead_x, structure.base_y + .18, bulkhead_z},
                         {window_width + .30, .34, .12},
                         structure.rotation,
-                        facade_style == 2 ? rl.Color{54, 83, 82, 255} : rl.Color{91, 66, 54, 255},
+                        facade_style == 2 ? canvas2d.Color{54, 83, 82, 255} : canvas2d.Color{91, 66, 54, 255},
                     )
                     bulkhead_cap_x, bulkhead_cap_z := world_rotate_xz(
                         structure.center_x,
@@ -8116,7 +8208,7 @@ world_architecture_mass :: proc(
                     // Stagger the two bays so they read as one curated shop
                     // display rather than mirrored procedural shelving.
                     rear_shelf_y := structure.base_y + 1.50 + f32(column % 2) * .18
-                    rear_wood := facade_style == 2 ? rl.Color{78, 93, 84, 255} : rl.Color{103, 75, 55, 255}
+                    rear_wood := facade_style == 2 ? canvas2d.Color{78, 93, 84, 255} : canvas2d.Color{103, 75, 55, 255}
                     world_box_rotated(
                         {rear_shelf_x, rear_shelf_y, rear_shelf_z},
                         {window_width * .62, .075, .045},
@@ -8152,7 +8244,8 @@ world_architecture_mass :: proc(
                         )
                         switch merchandise_kind {
                         case 0:
-                            rear_color := rear_item < 0 ? rl.Color{152, 94, 59, 255} : rl.Color{86, 117, 111, 255}
+                            rear_color :=
+                                rear_item < 0 ? canvas2d.Color{152, 94, 59, 255} : canvas2d.Color{86, 117, 111, 255}
                             world_tapered_box_rotated(
                                 {rear_item_x, rear_shelf_y + .18, rear_item_z},
                                 .34,
@@ -8178,7 +8271,7 @@ world_architecture_mass :: proc(
                                     .065,
                                     .035,
                                     structure.rotation,
-                                    produce == 0 ? rl.Color{179, 83, 57, 255} : rl.Color{177, 139, 65, 255},
+                                    produce == 0 ? canvas2d.Color{179, 83, 57, 255} : canvas2d.Color{177, 139, 65, 255},
                                     .BRDF,
                                 )
                             }
@@ -8188,7 +8281,7 @@ world_architecture_mass :: proc(
                                     {rear_item_x, rear_shelf_y + .055 + f32(folded) * .075, rear_item_z},
                                     {.29 - f32(folded) * .025, .065, .04},
                                     structure.rotation,
-                                    folded == 0 ? rl.Color{78, 117, 122, 255} : rl.Color{170, 105, 82, 255},
+                                    folded == 0 ? canvas2d.Color{78, 117, 122, 255} : canvas2d.Color{170, 105, 82, 255},
                                 )
                             }
                         case:
@@ -8204,7 +8297,7 @@ world_architecture_mass :: proc(
                                     {spine_x, rear_shelf_y + .14, spine_z},
                                     {.045, .28 + f32(spine + 1) * .025, .04},
                                     structure.rotation,
-                                    spine < 0 ? rl.Color{103, 67, 58, 255} : spine == 0 ? rl.Color{69, 99, 100, 255} : rl.Color{155, 116, 62, 255},
+                                    spine < 0 ? canvas2d.Color{103, 67, 58, 255} : spine == 0 ? canvas2d.Color{69, 99, 100, 255} : canvas2d.Color{155, 116, 62, 255},
                                 )
                             }
                         }
@@ -8240,7 +8333,7 @@ world_architecture_mass :: proc(
                             structure.rotation,
                         )
                         display_color :=
-                            display < 0 ? rl.Color{190, 126, 72, 255} : display > 0 ? rl.Color{111, 142, 105, 255} : rl.Color{202, 180, 119, 255}
+                            display < 0 ? canvas2d.Color{190, 126, 72, 255} : display > 0 ? canvas2d.Color{111, 142, 105, 255} : canvas2d.Color{202, 180, 119, 255}
                         switch merchandise_kind {
                         case 0:
                             // Tapered ceramic vessels with a contrasting lip.
@@ -8279,7 +8372,7 @@ world_architecture_mass :: proc(
                                     structure.rotation,
                                 )
                                 fruit_color :=
-                                    fruit == 0 ? rl.Color{203, 83, 57, 255} : fruit < 0 ? rl.Color{218, 154, 60, 255} : rl.Color{112, 151, 73, 255}
+                                    fruit == 0 ? canvas2d.Color{203, 83, 57, 255} : fruit < 0 ? canvas2d.Color{218, 154, 60, 255} : canvas2d.Color{112, 151, 73, 255}
                                 world_ellipsoid_rotated(
                                     {
                                         fruit_x,
@@ -8299,7 +8392,7 @@ world_architecture_mass :: proc(
                             fold_count := display == 0 ? 5 : 3
                             for fold in 0 ..< fold_count {
                                 fold_color :=
-                                    fold == 0 ? display_color : fold == 1 ? rl.Color{218, 190, 139, 255} : rl.Color{79, 119, 126, 255}
+                                    fold == 0 ? display_color : fold == 1 ? canvas2d.Color{218, 190, 139, 255} : canvas2d.Color{79, 119, 126, 255}
                                 world_box_rotated(
                                     {display_x, shelf_y + .065 + f32(fold) * .095, display_z},
                                     {(display == 0 ? f32(.64) : f32(.40)) - f32(fold) * .035, .085, .10},
@@ -8320,7 +8413,7 @@ world_architecture_mass :: proc(
                                     structure.rotation,
                                 )
                                 book_color :=
-                                    book_index % 3 == 0 ? rl.Color{119, 73, 61, 255} : book_index % 3 == 1 ? rl.Color{71, 108, 111, 255} : rl.Color{182, 139, 67, 255}
+                                    book_index % 3 == 0 ? canvas2d.Color{119, 73, 61, 255} : book_index % 3 == 1 ? canvas2d.Color{71, 108, 111, 255} : canvas2d.Color{182, 139, 67, 255}
                                 world_box_rotated(
                                     {book_x, shelf_y + .18 + f32(book_index % 3) * .025, book_z},
                                     {.070, .34 + f32(book_index % 3) * .05, .08},
@@ -8380,7 +8473,7 @@ world_architecture_mass :: proc(
                         {apron_x, y - window_height * .34, apron_z},
                         {window_width * .88, window_height * .24, .08},
                         structure.rotation,
-                        facade_style == 2 ? rl.Color{92, 119, 118, 255} : rl.Color{142, 103, 75, 255},
+                        facade_style == 2 ? canvas2d.Color{92, 119, 118, 255} : canvas2d.Color{142, 103, 75, 255},
                     )
                 }
                 world_box_rotated(
@@ -8391,7 +8484,7 @@ world_architecture_mass :: proc(
                 )
             }
             if !landmark && (facade_style == 0 || facade_style == 1) {
-                trim := facade_style == 1 ? rl.Color{205, 190, 157, 255} : rl.Color{190, 166, 128, 255}
+                trim := facade_style == 1 ? canvas2d.Color{205, 190, 157, 255} : canvas2d.Color{190, 166, 128, 255}
                 trim_width := window_width + .40
                 trim_z := local_z + .045
                 trim_x, trim_world_z := world_rotate_xz(
@@ -8445,7 +8538,7 @@ world_architecture_mass :: proc(
                 // upper railing missing.
                 guard_width := window_width + .48
                 guard_z := local_z + .40
-                guard_color := facade_style == 2 ? rl.Color{64, 82, 83, 255} : rl.Color{83, 68, 62, 255}
+                guard_color := facade_style == 2 ? canvas2d.Color{64, 82, 83, 255} : canvas2d.Color{83, 68, 62, 255}
                 guard_height: f32 = .09
                 guard_center_above_sill: f32 = 1.04
                 post_width: f32 = .055
@@ -8497,7 +8590,8 @@ world_architecture_mass :: proc(
                     if !mixed_use_apartment_window {
                         companion_width := window_width + .42
                         companion_z := local_z + .37
-                        companion_color := facade_style == 2 ? rl.Color{64, 82, 83, 255} : rl.Color{83, 68, 62, 255}
+                        companion_color :=
+                            facade_style == 2 ? canvas2d.Color{64, 82, 83, 255} : canvas2d.Color{83, 68, 62, 255}
                         companion_x, companion_world_z := world_rotate_xz(
                             structure.center_x,
                             structure.center_z,
@@ -8628,7 +8722,7 @@ world_architecture_mass :: proc(
         }
     }
     face_trim :=
-        facade_style == 2 ? rl.Color{166, 171, 151, 255} : (facade_style == 1 ? rl.Color{205, 190, 157, 255} : rl.Color{190, 166, 128, 255})
+        facade_style == 2 ? canvas2d.Color{166, 171, 151, 255} : (facade_style == 1 ? canvas2d.Color{205, 190, 157, 255} : canvas2d.Color{190, 166, 128, 255})
     world_architecture_face_openings(structure, opening_layout, window, face_trim)
     // Climbing foliage is authored exclusively through the density brush;
     // keep the legacy always-on planter vine disabled so it cannot overlap
@@ -8743,9 +8837,10 @@ world_architecture_mass :: proc(
         if valid {
             attic_y := structure.base_y + structure.height + rise * center_fraction
             frame_width := clamp(min(attic_width, attic_height) * .10, f32(.09), f32(.15))
-            frame_color := identity.region == .Aegean ? rl.Color{237, 232, 210, 255} : rl.Color{190, 166, 128, 255}
+            frame_color :=
+                identity.region == .Aegean ? canvas2d.Color{237, 232, 210, 255} : canvas2d.Color{190, 166, 128, 255}
             mullion_color := formation_face_color(frame_color, math.PI, 0)
-            pane_color := facade_style == 2 ? rl.Color{59, 96, 105, 255} : rl.Color{55, 78, 82, 255}
+            pane_color := facade_style == 2 ? canvas2d.Color{59, 96, 105, 255} : canvas2d.Color{55, 78, 82, 255}
             for gable_end in -1 ..= 1 {
                 if gable_end == 0 do continue
                 local_z := f32(gable_end) * (structure.depth * .58 + .12)
@@ -8840,8 +8935,8 @@ world_architecture_mixed_use_service_door :: proc(
 ) {
     door_x, door_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
     yaw := structure.rotation + yaw_offset
-    door_color := (structure.seed & 1) == 0 ? rl.Color{68, 98, 97, 255} : rl.Color{111, 72, 58, 255}
-    frame_color := rl.Color{192, 174, 139, 255}
+    door_color := (structure.seed & 1) == 0 ? canvas2d.Color{68, 98, 97, 255} : canvas2d.Color{111, 72, 58, 255}
+    frame_color := canvas2d.Color{192, 174, 139, 255}
     world_box_rotated({door_x, structure.base_y + 1.48, door_z}, {1.42, 2.78, .18}, yaw, door_color)
     for jamb in -1 ..= 1 {
         if jamb == 0 do continue
@@ -9017,7 +9112,7 @@ world_architecture_lighthouse_beam :: proc(editor: ^Editor, structure: terrain.S
     night_strength := clamp((.38 - world_renderer.scene_daylight) / .38, 0, 1)
     if night_strength <= .001 do return
 
-    elapsed := f32(rl.GetTime())
+    elapsed := f32(canvas2d.GetTime())
     angle := world_lighthouse_beam_angle(structure, elapsed)
     forward_x, forward_z := math.sin(angle), math.cos(angle)
     right_x, right_z := forward_z, -forward_x
@@ -9069,12 +9164,12 @@ world_architecture_lighthouse_beam :: proc(editor: ^Editor, structure: terrain.S
         middle_center.y,
         middle_center.z + right_z * middle_half_width,
     }
-    warm_near := rl.Color{255, 241, 190, u8(42 * night_strength)}
-    warm_middle := rl.Color{255, 232, 155, u8(14 * night_strength)}
-    warm_far := rl.Color{255, 221, 130, u8(2 * night_strength)}
-    core_near := rl.Color{255, 249, 215, u8(58 * night_strength)}
-    core_middle := rl.Color{255, 239, 180, u8(20 * night_strength)}
-    clear_far := rl.Color{255, 229, 151, 0}
+    warm_near := canvas2d.Color{255, 241, 190, u8(42 * night_strength)}
+    warm_middle := canvas2d.Color{255, 232, 155, u8(14 * night_strength)}
+    warm_far := canvas2d.Color{255, 221, 130, u8(2 * night_strength)}
+    core_near := canvas2d.Color{255, 249, 215, u8(58 * night_strength)}
+    core_middle := canvas2d.Color{255, 239, 180, u8(20 * night_strength)}
+    clear_far := canvas2d.Color{255, 229, 151, 0}
 
     // Layered crossed sheets produce a bright optical core inside a broad,
     // soft atmospheric volume. The middle ring prevents a single linear fade
@@ -9182,13 +9277,13 @@ world_architecture_lighthouse :: proc(structure: terrain.Structure, lod: Structu
     tower_height := max(structure.height, f32(14))
     base_radius := clamp(min(structure.width, structure.depth) * .36, f32(2.4), f32(5.2))
     shaft_top := base_y + tower_height
-    masonry := rl.Color{224, 218, 194, 255}
+    masonry := canvas2d.Color{224, 218, 194, 255}
     if architecture.architecture_resolve_legacy_identity(structure).region == .Aegean {
         masonry = {235, 232, 216, 255}
     }
-    band := (structure.seed & 1) == 0 ? rl.Color{151, 57, 42, 255} : rl.Color{63, 91, 101, 255}
-    dark_metal := rl.Color{49, 55, 54, 255}
-    beacon := rl.Color{255, 226, 139, 255}
+    band := (structure.seed & 1) == 0 ? canvas2d.Color{151, 57, 42, 255} : canvas2d.Color{63, 91, 101, 255}
+    dark_metal := canvas2d.Color{49, 55, 54, 255}
+    beacon := canvas2d.Color{255, 226, 139, 255}
 
     // Slightly narrowing stacked drums make the silhouette read as a tapered
     // stone tower while reusing the renderer's deterministic octagonal tube.
@@ -9237,7 +9332,7 @@ world_architecture_lighthouse :: proc(structure: terrain.Structure, lod: Structu
     pane_half_angle := f32(math.PI / 8)
     pane_center_radius := lantern_radius * math.cos(pane_half_angle)
     pane_width := lantern_radius * 2 * math.sin(pane_half_angle) * 1.015
-    pane_interior := rl.Color{246, 211, 150, 255}
+    pane_interior := canvas2d.Color{246, 211, 150, 255}
     for pane in 0 ..< 8 {
         pane_angle := (f32(pane) + .5) * math.PI * .25
         pane_x := structure.center_x + math.cos(pane_angle) * pane_center_radius
@@ -9339,12 +9434,102 @@ world_architecture_lighthouse :: proc(structure: terrain.Structure, lod: Structu
     }
 }
 
+world_hero_civic_box :: proc(
+    structure: terrain.Structure,
+    plan: ^hero.Plan,
+    local_center, size: third_person.Vec3,
+    material: Settlement_Material,
+) {
+    x, z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        local_center.x,
+        local_center.z,
+        structure.rotation,
+    )
+    world_settlement_material_box_rotated(
+        {x, structure.base_y + local_center.y, z},
+        size,
+        structure.rotation,
+        material,
+    )
+}
+
+world_architecture_hero_civic :: proc(
+    structure: terrain.Structure,
+    kind: hero.Kind,
+    lod: Structure_LOD = .Near,
+) {
+    config := hero.defaults(kind)
+    config.frontage = structure.width
+    config.depth = structure.depth
+    plan := hero.generate(structure.seed, config)
+    if !plan.valid do return
+
+    // The settlement owns placement and foundation seating; the hero plan
+    // owns the recognizable open civic arcade, roof monitor, and bay rhythm.
+    world_hero_civic_box(structure, &plan, {0, .04, 0}, {plan.frontage + 1.4, .08, plan.depth + 1.2}, .Arcade_Terrazzo)
+    roof_y := plan.arcade_height + plan.roof_height * .5
+    world_hero_civic_box(
+        structure,
+        &plan,
+        {0, roof_y, 0},
+        {plan.frontage + plan.roof_overhang * 2, plan.roof_height, plan.depth + plan.roof_overhang * 2},
+        .Standing_Seam_Roof,
+    )
+    monitor_spacing := plan.monitor_count == 2 ? plan.monitor_width * .72 : f32(0)
+    for monitor in 0 ..< plan.monitor_count {
+        monitor_x := plan.monitor_offset_x
+        if plan.monitor_count == 2 do monitor_x += (f32(monitor) - .5) * monitor_spacing
+        world_hero_civic_box(
+            structure,
+            &plan,
+            {monitor_x, plan.arcade_height + plan.roof_height + plan.monitor_height * .5, -plan.depth * .12},
+            {plan.monitor_width / f32(plan.monitor_count), plan.monitor_height, plan.monitor_depth},
+            .Monitor_Tinted_Glass,
+        )
+    }
+    for bay in 0 ..= plan.bay_count {
+        x := -plan.frontage * .5 + f32(bay) * plan.bay_width
+        for side in -1 ..= 1 {
+            if side == 0 do continue
+            world_hero_civic_box(
+                structure,
+                &plan,
+                {x, plan.arcade_height * .5, f32(side) * (plan.depth * .5 - plan.pier_depth * .5)},
+                {plan.pier_width * .78, plan.arcade_height, plan.pier_depth * .82},
+                .Pale_Adriatic_Limestone,
+            )
+        }
+    }
+    if lod == .Far do return
+    sign_x, sign_z := world_rotate_xz(
+        structure.center_x,
+        structure.center_z,
+        0,
+        plan.depth * .5 + .16,
+        structure.rotation,
+    )
+    sign_kind := kind == .Clinic ? Business_Sign_Kind.Clinica : Business_Sign_Kind.Post
+    world_business_sign(
+        {sign_x, structure.base_y + plan.arcade_height - .62, sign_z},
+        structure.rotation,
+        sign_kind,
+        1.82,
+    )
+}
+
 world_architecture_oriented :: proc(
     structure: terrain.Structure,
     project: ^terrain.Project,
     lod: Structure_LOD = .Near,
 ) {
     identity := architecture.architecture_resolve_legacy_identity(structure)
+    if identity.archetype == .Post_Office || identity.archetype == .Clinic {
+        kind := identity.archetype == .Clinic ? hero.Kind.Clinic : hero.Kind.Post_Office
+        world_architecture_hero_civic(structure, kind, lod)
+        return
+    }
     if identity.archetype == .Lighthouse {
         world_architecture_lighthouse(structure, lod)
         return
@@ -9459,7 +9644,7 @@ world_architecture :: proc(structure: terrain.Structure, project: ^terrain.Proje
     world_architecture_oriented(world_architecture_entrance_oriented(structure), project, lod)
 }
 
-world_architecture_alley_color :: proc(alley: architecture.City_Alley, preview, stair: bool) -> rl.Color {
+world_architecture_alley_color :: proc(alley: architecture.City_Alley, preview, stair: bool) -> canvas2d.Color {
     if preview do return {176, 161, 128, 150}
     if stair do return {139, 126, 103, 255}
     switch settlement_access_surface(alley) {
@@ -9777,7 +9962,7 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
                 top := step_y + .12
                 bottom := min(min(ground_before, ground_after), step_y) - .04
                 tread_height := max(top - bottom, f32(.12))
-                tread_color := rl.Color{139, 126, 103, 255}
+                tread_color := canvas2d.Color{139, 126, 103, 255}
                 if step_index % 4 == 1 do tread_color = {132, 119, 97, 255}
                 world_box_rotated(
                     {point[0], bottom + tread_height * .5, point[1]},
@@ -9832,8 +10017,8 @@ world_architecture_lamps :: proc(editor: ^Editor, plan: ^architecture.City_Plan)
         // Blue-green painted iron stays subdued without lunar fill, but has
         // enough authored value for full-moon ambient to describe the post
         // and lantern cage instead of leaving the same black silhouette.
-        metal := rl.Color{82, 91, 87, 255}
-        glass := rl.Color{246, 211, 146, 255}
+        metal := canvas2d.Color{82, 91, 87, 255}
+        glass := canvas2d.Color{246, 211, 146, 255}
         camera_position := editor.camera_pose.position
         camera_dx, camera_dz := lamp.x - camera_position.x, lamp.z - camera_position.z
         far_fixture := camera_dx * camera_dx + camera_dz * camera_dz > 55 * 55
@@ -9902,7 +10087,7 @@ world_architecture_lamps :: proc(editor: ^Editor, plan: ^architecture.City_Plan)
     }
 }
 
-world_structure_frame :: proc(structure: terrain.Structure, y: f32, color: rl.Color) {
+world_structure_frame :: proc(structure: terrain.Structure, y: f32, color: canvas2d.Color) {
     thickness := max(f32(.08), min(structure.width, structure.depth) * .035)
     left_x, left_z := world_rotate_xz(
         structure.center_x,
@@ -9969,10 +10154,10 @@ world_radial_formation :: proc(
     // resolving as hard triangular prisms in eye-level architectural views.
     segments := lod == .Near ? 12 : lod == .Medium ? 8 : 5
     layer_count := lod == .Near ? 4 : lod == .Medium ? 3 : 2
-    color := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
+    color := canvas2d.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     vertices: [4][12]third_person.Vec3
     normals: [4][12]third_person.Vec3
-    colors: [4][12]rl.Color
+    colors: [4][12]canvas2d.Color
     sampled_radii: [4]f32
     sampled_heights: [4]f32
     for layer in 0 ..< layer_count {
@@ -10191,7 +10376,7 @@ world_small_rock_templates_init :: proc() {
 world_small_faceted_rock :: proc(structure: terrain.Structure) {
     world_small_rock_templates_init()
     template := &small_rock_templates[int(structure.seed % SMALL_ROCK_VARIATION_COUNT)]
-    base_color := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
+    base_color := canvas2d.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     radius_x := structure.width * .5 * template.footprint_x
     radius_z := structure.depth * .5 * template.footprint_z
     rock_height := structure.height * template.height_scale
@@ -10254,7 +10439,7 @@ world_small_faceted_rock :: proc(structure: terrain.Structure) {
         side_normal[side] = linalg.normalize0([3]f32{normal_x, .22, normal_z})
     }
     tone := f32(int(structure.seed & 7) - 3) * 1.7
-    rock_color := rl.Color {
+    rock_color := canvas2d.Color {
         r = u8(clamp(f32(base_color.r) + tone, 0, 255)),
         g = u8(clamp(f32(base_color.g) + tone * .65, 0, 255)),
         b = u8(clamp(f32(base_color.b) - tone * .30, 0, 255)),
@@ -10356,7 +10541,7 @@ world_formation_sea_vegetation_band :: proc(
 
     // Larger sea stacks support a broader fringe, while the height cap keeps
     // small, tall spires from turning green all the way up their faces.
-    color := rl.Color{76, 105, 73, 255}
+    color := canvas2d.Color{76, 105, 73, 255}
     if structure.kind == .Cliff {
         band := structure
         band.width += .035
@@ -10417,7 +10602,7 @@ world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project 
             {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
             {structure.width, structure.height, structure.depth},
             structure.rotation,
-            rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]},
+            canvas2d.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]},
         )
     case .Rock:
         if max(structure.width, structure.depth, structure.height) <= 5 && lod != .Far {
@@ -10440,6 +10625,7 @@ world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project 
         world_cliff_formation(stone, lod)
         world_formation_foliage(stone, lod)
     case .Foliage:
+        if settlement_cemetery_structure_is_reservation(structure) do return
         world_foliage_formation(structure, terrain.BASE_CELL_SIZE, lod)
     case .Architecture:
         world_architecture(structure, project, lod)
@@ -10681,7 +10867,7 @@ world_curve_preview :: proc(editor: ^Editor) {
 
 world_cliff_formation :: proc(structure: terrain.Structure, lod: Structure_LOD = .Near) {
     segments := lod == .Near ? 6 : lod == .Medium ? 4 : 2
-    color := rl.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
+    color := canvas2d.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
     front_bottom: [7]third_person.Vec3
     front_top: [7]third_person.Vec3
     back_top: [7]third_person.Vec3
@@ -10750,7 +10936,7 @@ world_foliage_card :: proc(
     center: third_person.Vec3,
     width, height: f32,
     tile: int,
-    color: rl.Color,
+    color: canvas2d.Color,
     mirror: bool,
     flip_vertical := false,
 ) {
@@ -11014,7 +11200,7 @@ world_window_flower_bunch_billboard :: proc(
 }
 
 @(no_instrumentation)
-world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: int, color: rl.Color) {
+world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: int, color: canvas2d.Color) {
     append(
         &world_renderer.grass_instances,
         Grass_Instance {
@@ -11039,6 +11225,22 @@ world_wildflower_card :: proc(center: third_person.Vec3, width, height: f32, til
     )
 }
 
+world_marsh_card :: proc(center: third_person.Vec3, width, height: f32, tile: int) {
+    palette := [4]canvas2d.Color{{78, 120, 85, 245}, {104, 132, 72, 245}, {139, 126, 70, 245}, {91, 118, 94, 245}}
+    normalized_tile := ((tile % 16) + 16) % 16
+    append(
+        &world_renderer.marsh_instances,
+        Grass_Instance {
+            center = {center.x, center.y, center.z},
+            size   = {width, height},
+            tile   = u32(normalized_tile),
+            // Use the atlas for silhouette/detail while keeping tidal plants
+            // inside a coherent blue-green, olive, and straw palette.
+            color  = world_color(palette[normalized_tile % len(palette)]),
+        },
+    )
+}
+
 world_wildflower_lab :: proc() {
     // A self-contained meadow makes atlas, scale, density, and wind regressions
     // visible without inheriting any gameplay-world state.
@@ -11054,8 +11256,8 @@ world_wildflower_lab :: proc() {
             if wind_streak_hash(seed, 3) > edge do continue
             height := .48 + wind_streak_hash(seed, 4) * .55
             grass_color := color_lerp(
-                rl.Color{48, 113, 72, 255},
-                rl.Color{91, 137, 69, 255},
+                canvas2d.Color{48, 113, 72, 255},
+                canvas2d.Color{91, 137, 69, 255},
                 wind_streak_hash(seed, 5),
             )
             world_grass_card(
@@ -11080,7 +11282,7 @@ world_wildflower_lab :: proc() {
 }
 
 @(no_instrumentation)
-world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Color {
+world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> canvas2d.Color {
     // Six broad Adriatic vegetation families: cypress, laurel, sunlit olive,
     // myrtle, silver olive, and warm Mediterranean scrub. Keeping each family
     // coherent from root pocket to crown gives the world postcard-scale color
@@ -11089,7 +11291,7 @@ world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Col
     palette := ((variation % FOLIAGE_PALETTE_COUNT) + FOLIAGE_PALETTE_COUNT) % FOLIAGE_PALETTE_COUNT
     switch ring {
     case 0:
-        colors := [6]rl.Color {
+        colors := [6]canvas2d.Color {
             {31, 65, 55, 255},
             {47, 76, 42, 255},
             {62, 76, 39, 255},
@@ -11102,7 +11304,7 @@ world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Col
         // A deliberately cool, low-value shoulder remains visible in the
         // narrow gaps between overlapping lobes, acting as painted contact
         // shadow without another texture lookup or render pass.
-        colors := [6]rl.Color {
+        colors := [6]canvas2d.Color {
             {43, 84, 68, 255},
             {62, 96, 48, 255},
             {81, 99, 48, 255},
@@ -11116,7 +11318,7 @@ world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Col
         // Broad value grouping belongs to the continuous foliage shader;
         // large per-ring jumps expose the triangulated construction as bright
         // ribbons when a tree is viewed near eye level.
-        colors := [6]rl.Color {
+        colors := [6]canvas2d.Color {
             {61, 111, 88, 255},
             {90, 129, 62, 255},
             {129, 145, 65, 255},
@@ -11126,7 +11328,7 @@ world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Col
         }
         return colors[palette]
     case 3:
-        colors := [6]rl.Color {
+        colors := [6]canvas2d.Color {
             {66, 119, 94, 255},
             {96, 139, 67, 255},
             {143, 158, 71, 255},
@@ -11136,7 +11338,7 @@ world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Col
         }
         return colors[palette]
     case 4:
-        colors := [6]rl.Color {
+        colors := [6]canvas2d.Color {
             {75, 130, 99, 255},
             {103, 150, 70, 255},
             {158, 171, 74, 255},
@@ -11146,7 +11348,7 @@ world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Col
         }
         return colors[palette]
     case 5:
-        colors := [6]rl.Color {
+        colors := [6]canvas2d.Color {
             {83, 140, 104, 255},
             {110, 160, 72, 255},
             {172, 182, 75, 255},
@@ -11156,7 +11358,7 @@ world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Col
         }
         return colors[palette]
     case 6:
-        colors := [6]rl.Color {
+        colors := [6]canvas2d.Color {
             {92, 151, 107, 255},
             {119, 171, 75, 255},
             {187, 195, 78, 255},
@@ -11170,7 +11372,7 @@ world_foliage_vertex_color :: #force_inline proc(ring, variation: int) -> rl.Col
 }
 
 @(no_instrumentation)
-world_foliage_clump_color :: #force_inline proc(ring, variation: int, clump: f32) -> rl.Color {
+world_foliage_clump_color :: #force_inline proc(ring, variation: int, clump: f32) -> canvas2d.Color {
     // Extend the ring palette with a clump-aligned temperature and value shift.
     // Troughs between the rounded bunches sink into a cooler, lower-value
     // pocket -- soft painted ambient occlusion in the crevices -- while the
@@ -11183,11 +11385,11 @@ world_foliage_clump_color :: #force_inline proc(ring, variation: int, clump: f32
         // Deeper occlusion on the lower shoulders, where overlapping boughs
         // trap shade; the upper crown plane keeps only a faint recess.
         pocket_amount := clamp(-clump, 0, 1) * (.42 - f32(ring) * .035)
-        pocket := rl.Color{u8(f32(base.r) * .70), u8(f32(base.g) * .81), u8(f32(base.b) * .90), base.a}
+        pocket := canvas2d.Color{u8(f32(base.r) * .70), u8(f32(base.g) * .81), u8(f32(base.b) * .90), base.a}
         return color_lerp(base, pocket, clamp(pocket_amount, 0, 1))
     }
     crest_amount := clamp(clump, 0, 1) * .22
-    crest := rl.Color {
+    crest := canvas2d.Color {
         u8(min(f32(base.r) * 1.15, 255.0)),
         u8(min(f32(base.g) * 1.08, 255.0)),
         u8(f32(base.b) * .93),
@@ -11229,8 +11431,8 @@ world_foliage_trunk :: proc(x, z, base_y, height, radius: f32, seed: u32) {
         base[segment] = rings[0][segment]
         top[segment] = rings[TRUNK_RINGS - 1][segment]
     }
-    bark_light := [TRUNK_RINGS - 1]rl.Color{{91, 72, 52, 255}, {97, 76, 54, 255}, {103, 80, 55, 255}}
-    bark_shadow := [TRUNK_RINGS - 1]rl.Color{{62, 55, 46, 255}, {66, 58, 47, 255}, {71, 61, 48, 255}}
+    bark_light := [TRUNK_RINGS - 1]canvas2d.Color{{91, 72, 52, 255}, {97, 76, 54, 255}, {103, 80, 55, 255}}
+    bark_shadow := [TRUNK_RINGS - 1]canvas2d.Color{{62, 55, 46, 255}, {66, 58, 47, 255}, {71, 61, 48, 255}}
     // Neighboring patches should not all expose the same orange-brown posts.
     // Three restrained bark families give the woodland warm oak, cool
     // gray-bark, and muted umber notes while keeping every trunk subordinate
@@ -11243,8 +11445,8 @@ world_foliage_trunk :: proc(x, z, base_y, height, radius: f32, seed: u32) {
         bark_light = {{102, 69, 49, 255}, {109, 73, 51, 255}, {116, 78, 53, 255}}
         bark_shadow = {{68, 52, 43, 255}, {73, 55, 44, 255}, {78, 58, 45, 255}}
     }
-    moss_light := [TRUNK_RINGS - 1]rl.Color{{91, 94, 53, 255}, {94, 96, 55, 255}, {96, 98, 57, 255}}
-    moss_shadow := [TRUNK_RINGS - 1]rl.Color{{59, 67, 45, 255}, {62, 69, 46, 255}, {65, 71, 47, 255}}
+    moss_light := [TRUNK_RINGS - 1]canvas2d.Color{{91, 94, 53, 255}, {94, 96, 55, 255}, {96, 98, 57, 255}}
+    moss_shadow := [TRUNK_RINGS - 1]canvas2d.Color{{59, 67, 45, 255}, {62, 69, 46, 255}, {65, 71, 47, 255}}
     for ring in 0 ..< TRUNK_RINGS - 1 {
         for segment in 0 ..< SEGMENTS {
             next := (segment + 1) % SEGMENTS
@@ -11303,7 +11505,7 @@ world_foliage_trunk :: proc(x, z, base_y, height, radius: f32, seed: u32) {
                             1,
                         ))
         upper_outset := upper_radius * 1.018
-        stroke_color := rl.Color{52, 49, 42, 220}
+        stroke_color := canvas2d.Color{52, 49, 42, 220}
         if stroke == 1 do stroke_color = {64, 76, 49, 205}
         world_quad(
             {
@@ -11371,8 +11573,8 @@ world_foliage_trunk :: proc(x, z, base_y, height, radius: f32, seed: u32) {
             z + direction_z * radius + side_z * root_half_width,
         }
         tip := third_person.Vec3{x + direction_x * root_reach, base_y + .025, z + direction_z * root_reach}
-        root_light := rl.Color{91, 71, 52, 255}
-        root_shadow := rl.Color{62, 54, 46, 255}
+        root_light := canvas2d.Color{91, 71, 52, 255}
+        root_shadow := canvas2d.Color{62, 54, 46, 255}
         if bark_family == 1 {
             root_light = {87, 76, 61, 255}
             root_shadow = {59, 57, 51, 255}
@@ -11421,7 +11623,7 @@ world_foliage_trunk :: proc(x, z, base_y, height, radius: f32, seed: u32) {
         }
         start_half_width := radius * .58
         finish_half_width := radius * .28
-        limb_color := rl.Color{80, 64, 49, 255}
+        limb_color := canvas2d.Color{80, 64, 49, 255}
         if bark_family == 1 do limb_color = {76, 69, 57, 255}
         if bark_family == 2 do limb_color = {88, 60, 46, 255}
         if limb % 2 == 1 {
@@ -11463,7 +11665,7 @@ world_foliage_understory_tuft :: proc(x, z, base_y, width, height: f32, seed: u3
         left := third_person.Vec3{x - side_x * spread, base_y + .08, z - side_z * spread}
         right := third_person.Vec3{x + side_x * spread, base_y + .08, z + side_z * spread}
         tip := third_person.Vec3{x + direction_x * lean, base_y + blade_height, z + direction_z * lean}
-        color := rl.Color{46, 91, 60, 255}
+        color := canvas2d.Color{46, 91, 60, 255}
         if frond % 3 == 1 do color = {58, 108, 64, 255}
         if frond % 3 == 2 do color = {39, 80, 59, 255}
         tip_color := color
@@ -11585,9 +11787,9 @@ world_foliage_ground_rosette :: proc(x, z, base_y, width, height: f32, seed: u32
             z + direction_z * reach * .50 + side_z * half_width,
         }
         tip := third_person.Vec3{x + direction_x * reach, base_y + lift * .38, z + direction_z * reach}
-        root_color := rl.Color{38, 77, 53, 255}
-        leaf_color := rl.Color{61, 111, 66, 255}
-        tip_color := rl.Color{70, 118, 68, 255}
+        root_color := canvas2d.Color{38, 77, 53, 255}
+        leaf_color := canvas2d.Color{61, 111, 66, 255}
+        tip_color := canvas2d.Color{70, 118, 68, 255}
         if leaf % 3 == 1 {
             root_color = {43, 81, 48, 255}
             leaf_color = {72, 119, 62, 255}
@@ -11632,7 +11834,7 @@ world_foliage_ground_dapple :: proc(x, z, base_y, width, depth, rotation: f32, s
     // Painted woodland floors need readable pools of bounced canopy light.
     // Keep the irregular edge fully transparent, but lift the center enough
     // to separate fern and trunk silhouettes from one uniform green plane.
-    center_color := rl.Color{184, 166, 86, 101}
+    center_color := canvas2d.Color{184, 166, 86, 101}
     if seed % 3 == 1 do center_color = {143, 154, 83, 92}
     if seed % 3 == 2 do center_color = {197, 172, 91, 98}
     edge_color := center_color
@@ -12835,11 +13037,11 @@ world_formation_foliage :: proc(structure: terrain.Structure, lod: Structure_LOD
 
 @(no_instrumentation)
 world_architecture_cypress_surface_color :: #force_inline proc(
-    base: rl.Color,
+    base: canvas2d.Color,
     angle, progress: f32,
     ring: int,
     seed: u32,
-) -> rl.Color {
+) -> canvas2d.Color {
     color := formation_face_color(base, angle, ring)
     // Long correlated waves imply upright sprays and the cool recesses between
     // them. A quieter cross-wave keeps those strokes from becoming stripes.
@@ -12872,7 +13074,7 @@ world_architecture_cypress_crown :: proc(x, z, base_y: f32, seed: u32) {
     // breaking the unmistakable columnar outline.
     ring_height := [RINGS]f32{0, .075, .15, .24, .33, .42, .51, .60, .69, .77, .85, .92, .975}
     ring_radius := [RINGS]f32{.72, .96, 1, .94, .96, .84, .86, .72, .70, .57, .45, .28, .105}
-    ring_color := [RINGS]rl.Color {
+    ring_color := [RINGS]canvas2d.Color {
         {30, 68, 43, 255},
         {31, 72, 44, 255},
         {33, 76, 46, 255},
@@ -12931,7 +13133,7 @@ world_architecture_cypress_crown :: proc(x, z, base_y: f32, seed: u32) {
     // Close the low skirt around a shallow raised center. Eye-level views
     // otherwise look into an empty crown and expose the trunk as a square peg.
     skirt_center := third_person.Vec3{x, base_y + 1.55, z}
-    skirt_center_color := rl.Color{20, 50, 34, 255}
+    skirt_center_color := canvas2d.Color{20, 50, 34, 255}
     for segment in 0 ..< SEGMENTS {
         next := (segment + 1) % SEGMENTS
         angle_here := f32(segment) * math.PI * 2 / SEGMENTS
@@ -13045,7 +13247,7 @@ world_architecture_olive :: proc(x, z, base_y: f32, seed: u32) {
     _ = trunk
 }
 
-world_laundry_web_segment :: proc(a, b: third_person.Vec3, color: rl.Color) {
+world_laundry_web_segment :: proc(a, b: third_person.Vec3, color: canvas2d.Color) {
     dx := b.x - a.x
     dy := b.y - a.y
     dz := b.z - a.z
@@ -13118,7 +13320,7 @@ world_laundry_catenary_slope :: proc(t, sag, span_length: f32) -> f32 {
 world_laundry_cloth :: proc(
     top: third_person.Vec3,
     tangent_x, tangent_y, tangent_z, width, height, drift: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     // Hang each item as a thin, slightly skewed panel instead of a solid box.
     // The skew and uneven hem keep the span from reading as a row of signs.
@@ -13154,7 +13356,12 @@ world_architecture_laundry_webbing_uncached :: proc(editor: ^Editor) {
     structures := editor.project.structures[:editor.project.structure_count]
     building_spans := world_renderer.structure_building_spans[:len(structures)]
     for &span in building_spans do span = 0
-    cloth_colors := [4]rl.Color{{235, 224, 188, 255}, {112, 157, 171, 255}, {191, 94, 72, 255}, {205, 157, 177, 255}}
+    cloth_colors := [4]canvas2d.Color {
+        {235, 224, 188, 255},
+        {112, 157, 171, 255},
+        {191, 94, 72, 255},
+        {205, 157, 177, 255},
+    }
     for first, first_index in structures {
         if first.kind != .Architecture || first.height > 52 do continue
         if building_spans[first_index] >= 2 do continue
@@ -13278,9 +13485,9 @@ world_architecture_laundry_webbing_uncached :: proc(editor: ^Editor) {
                 // outstretched arms reaching the line. One endpoint per few
                 // spans keeps the town inhabited without making mannequins a
                 // repeated façade motif.
-                worker_body := rl.Color{74, 67, 61, 255}
+                worker_body := canvas2d.Color{74, 67, 61, 255}
                 worker_shirt :=
-                    (first.seed + second.seed) % 2 == 0 ? rl.Color{132, 104, 79, 255} : rl.Color{77, 109, 119, 255}
+                    (first.seed + second.seed) % 2 == 0 ? canvas2d.Color{132, 104, 79, 255} : canvas2d.Color{77, 109, 119, 255}
                 world_box_rotated({start.x, line_y - .72, start.z}, {.32, .92, .24}, 0, worker_shirt)
                 world_box_rotated({start.x, line_y - 1.25, start.z}, {.36, .36, .36}, 0, {91, 69, 53, 255})
                 world_box_rotated(
@@ -13395,7 +13602,7 @@ world_architecture_grass_height_scale :: proc(footprints: []Architecture_Grass_F
 
 world_architecture_municipal_lamp_fixture :: proc(editor: ^Editor, center_x, center_z, rotation: f32) {
     base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
-    metal := rl.Color{82, 91, 87, 255}
+    metal := canvas2d.Color{82, 91, 87, 255}
     world_box_rotated({center_x, base_y + .14, center_z}, {.46, .28, .46}, rotation, {91, 91, 79, 255})
     world_metal_box_rotated({center_x, base_y + 2.25, center_z}, {.13, 4.35, .13}, rotation, metal)
 
@@ -13490,9 +13697,9 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
     center_z := (min_z + max_z) * .5
     road_span := max(max_x - min_x + 36, 160)
     plan := editor_circulation_plan(editor)
-    road := rl.Color{117, 119, 110, 255}
-    shoulder := rl.Color{177, 164, 135, 255}
-    path_color := rl.Color{194, 184, 157, 255}
+    road := canvas2d.Color{117, 119, 110, 255}
+    shoulder := canvas2d.Color{177, 164, 135, 255}
+    path_color := canvas2d.Color{194, 184, 157, 255}
     if len(world_renderer.architecture_street_area_cache) < plan.count {
         resize(&world_renderer.architecture_street_area_cache, plan.count)
     }
@@ -13575,10 +13782,14 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                 plaza := plazas.generate(seed, area.width, area.length)
                 for piece, piece_index in plaza.paving[:plaza.paving_count] {
                     piece_x, piece_z := world_rotate_xz(area.center_x, area.center_z, piece.x, piece.z, area.rotation)
-                    color := rl.Color{184, 177, 158, 255}
+                    color := canvas2d.Color{184, 177, 158, 255}
                     if piece.kind == .Border do color = {116, 111, 103, 255}
                     if piece.kind == .Mosaic || piece.kind == .Inlay {
-                        mosaic_palette := [3]rl.Color{{77, 112, 119, 255}, {174, 91, 67, 255}, {211, 190, 135, 255}}
+                        mosaic_palette := [3]canvas2d.Color {
+                            {77, 112, 119, 255},
+                            {174, 91, 67, 255},
+                            {211, 190, 135, 255},
+                        }
                         color = mosaic_palette[piece.tone]
                     }
                     // Mosaic bars deliberately cross one another. Giving every
@@ -14060,7 +14271,7 @@ world_settlement_gardens :: proc(editor: ^Editor) {
                     .72 + f32((mixed >> 8) & 31) / 100,
                 )
             } else {
-                palette := [4]rl.Color {
+                palette := [4]canvas2d.Color {
                     {72, 119, 57, 255},
                     {103, 137, 65, 255},
                     {185, 91, 105, 255},
@@ -14078,7 +14289,7 @@ world_structures :: proc(editor: ^Editor) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_structures")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil do return
-    sky := atmosphere.sample(&editor.atmosphere)
+    sky := atmosphere_sky(editor)
     world_architecture_streets(editor, sky.sun_direction, sky.weather.cloud_cover)
     hovered_index := -1
     if editor.tool == .Structure &&
@@ -14093,8 +14304,8 @@ world_structures :: proc(editor: ^Editor) {
     // made any camera translation trigger unnecessary global work.
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
-    screen_width := max(rl.GetScreenWidth(), 1)
-    screen_height := max(rl.GetScreenHeight(), 1)
+    screen_width := max(canvas2d.GetScreenWidth(), 1)
+    screen_height := max(canvas2d.GetScreenHeight(), 1)
     aspect := f32(screen_width) / f32(screen_height)
     near_plane := world_camera_near_clip(editor)
     stats := &world_renderer.static_visibility
@@ -14130,6 +14341,7 @@ world_structures :: proc(editor: ^Editor) {
     for ordered in world_renderer.structure_visibility_order {
         index := ordered.index
         structure := editor.project.structures[index]
+        if settlement_cemetery_structure_is_reservation(structure) do continue
         force_visible := index == selected_index || index == hovered_index
         if editor.architecture_painting &&
            structure.kind == .Architecture &&
@@ -14258,7 +14470,7 @@ world_city_density_overlay :: proc(editor: ^Editor) {
     cell := terrain.BASE_CELL_SIZE
     half := f32(terrain.RING_RESOLUTION - 1) * .5
     camera := perspective_camera(editor.camera_pose)
-    width, height := max(rl.GetScreenWidth(), 1), max(rl.GetScreenHeight(), 1)
+    width, height := max(canvas2d.GetScreenWidth(), 1), max(canvas2d.GetScreenHeight(), 1)
     aspect := f32(width) / f32(height)
     near_plane := world_camera_near_clip(editor)
     world_overlay_chunk_bounds_sync(editor)
@@ -14602,11 +14814,11 @@ world_climbing_leaf_vine :: proc(
     if structure.kind == .Architecture && render_root {
         root := vine_points[0]
         if planter_rooted {
-            pottery := plant_seed % 2 == 0 ? rl.Color{177, 92, 57, 255} : rl.Color{156, 79, 53, 255}
-            foot_color := plant_seed % 2 == 0 ? rl.Color{139, 70, 47, 255} : rl.Color{124, 62, 44, 255}
+            pottery := plant_seed % 2 == 0 ? canvas2d.Color{177, 92, 57, 255} : canvas2d.Color{156, 79, 53, 255}
+            foot_color := plant_seed % 2 == 0 ? canvas2d.Color{139, 70, 47, 255} : canvas2d.Color{124, 62, 44, 255}
             if mixed_use_planter {
-                pottery = plant_seed % 2 == 0 ? rl.Color{196, 105, 65, 255} : rl.Color{181, 91, 59, 255}
-                foot_color = plant_seed % 2 == 0 ? rl.Color{157, 77, 49, 255} : rl.Color{145, 69, 46, 255}
+                pottery = plant_seed % 2 == 0 ? canvas2d.Color{196, 105, 65, 255} : canvas2d.Color{181, 91, 59, 255}
+                foot_color = plant_seed % 2 == 0 ? canvas2d.Color{157, 77, 49, 255} : canvas2d.Color{145, 69, 46, 255}
             }
             pottery_lip := formation_face_color(pottery, .35, 0)
             // A tapered body, proud rim, and visible soil plane read as an
@@ -14712,7 +14924,7 @@ world_climbing_leaf_vine :: proc(
             // palette-matched scatter ties the distant flower crown back to
             // its planter or soil pocket without becoming a litter decal.
             palette_color := architecture.bougainvillea_bract_color(architecture.bougainvillea_palette(plant_seed))
-            bract_color := rl.Color{palette_color[0], palette_color[1], palette_color[2], palette_color[3]}
+            bract_color := canvas2d.Color{palette_color[0], palette_color[1], palette_color[2], palette_color[3]}
             base_radius := planter_rooted ? .46 * root_scale : .20 * root_scale
             for fallen in 0 ..< fallen_count {
                 angle := f32(plant_seed % 29) * .31 + f32(fallen) * 2.399963
@@ -14748,7 +14960,7 @@ world_climbing_leaf_vine :: proc(
             }
         }
     }
-    woody_color := rl.Color{62, 108, 55, 255}
+    woody_color := canvas2d.Color{62, 108, 55, 255}
     woody_base_radius := f32(.055)
     woody_tip_radius := f32(.040)
     if structure.kind == .Architecture {
@@ -15200,7 +15412,7 @@ world_climbing_leaf_vine :: proc(
         // continue past the opening, but branch/lobe geometry is omitted when
         // it would materially obscure the architectural opening.
         if opening_badness > .72 do continue
-        branch_color := rl.Color{62, 108, 55, 255}
+        branch_color := canvas2d.Color{62, 108, 55, 255}
         branch_base_radius := f32(.036)
         branch_tip_radius := f32(.032)
         if structure.kind == .Architecture {
@@ -15625,7 +15837,7 @@ world_climbing_leaf_vine :: proc(
             }
             accent_width := (.22 + f32(leaf_accent % 2) * .04) * crown_scale
             accent_height := .10 * crown_scale
-            accent_color := leaf_accent == 1 ? rl.Color{93, 151, 70, 255} : rl.Color{76, 135, 65, 255}
+            accent_color := leaf_accent == 1 ? canvas2d.Color{93, 151, 70, 255} : canvas2d.Color{76, 135, 65, 255}
             if structure.kind == .Architecture {
                 world_tapered_disc_depth_rotated(
                     accent_center,
@@ -15679,7 +15891,7 @@ world_climbing_leaf_vine :: proc(
                     tangent.z * f32(math.cos(f64(petal_angle))) * petal_radius +
                     average_normal.z * (.20 + f32(petal % 2) * .05),
                 }
-                bloom_color := rl.Color{238, 121, 151, 255}
+                bloom_color := canvas2d.Color{238, 121, 151, 255}
                 switch flower_palette {
                 case 0:
                     if petal % 3 == 0 {
@@ -15762,7 +15974,7 @@ world_climbing_leaf_vine :: proc(
             }
         }
         node_width := max(f32(.18), min(structure.width * .04, f32(.32)))
-        node_color := leaf_index % 2 == 0 ? rl.Color{63, 117, 62, 255} : rl.Color{78, 136, 70, 255}
+        node_color := leaf_index % 2 == 0 ? canvas2d.Color{63, 117, 62, 255} : canvas2d.Color{78, 136, 70, 255}
         if structure.kind == .Architecture {
             world_tapered_disc_depth_rotated(
                 branch_end,
@@ -15887,7 +16099,7 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
             trellis_z,
             growth_structure.rotation,
         )
-        trellis_color := rl.Color{78, 101, 76, 255}
+        trellis_color := canvas2d.Color{78, 101, 76, 255}
         trellis_rail_width := f32(.028)
         trellis_height := min(growth_structure.height * .40, f32(6.40))
         trellis_center_y := growth_structure.base_y + .55 + trellis_height * .5
@@ -16138,7 +16350,7 @@ world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
     cell := terrain.BASE_CELL_SIZE
     half := f32(terrain.RING_RESOLUTION - 1) * .5
     camera := perspective_camera(editor.camera_pose)
-    width, height := max(rl.GetScreenWidth(), 1), max(rl.GetScreenHeight(), 1)
+    width, height := max(canvas2d.GetScreenWidth(), 1), max(canvas2d.GetScreenHeight(), 1)
     aspect := f32(width) / f32(height)
     near_plane := world_camera_near_clip(editor)
     world_overlay_chunk_bounds_sync(editor)
@@ -16221,8 +16433,8 @@ world_aircraft_in_view :: proc(editor: ^Editor, position: flight.Vec3, radius: f
     if editor == nil do return false
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     camera := perspective_camera(editor.camera_pose, focal_length)
-    width := max(rl.GetScreenWidth(), 1)
-    height := max(rl.GetScreenHeight(), 1)
+    width := max(canvas2d.GetScreenWidth(), 1)
+    height := max(canvas2d.GetScreenHeight(), 1)
     return static_sphere_in_frustum(
         camera,
         {position.x, position.y, position.z},
@@ -16266,7 +16478,7 @@ world_rondine_local :: #force_inline proc(editor: ^Editor, p: [3]f32) -> third_p
 world_rondine_box :: proc(
     editor: ^Editor,
     center, size: [3]f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     material_kind: World_Material_Kind = .BRDF,
 ) {
     x, y, z := size[0] * .5, size[1] * .5, size[2] * .5
@@ -16290,7 +16502,7 @@ world_rondine_box :: proc(
     world_quad_material(w[0], w[1], w[5], w[4], color, material_kind)
 }
 
-world_rondine_hull :: proc(editor: ^Editor, deck, side, keel: rl.Color) {
+world_rondine_hull :: proc(editor: ^Editor, deck, side, keel: canvas2d.Color) {
     // A long, high bow and a tucked fore-keel make the monohull read as a
     // swallow's small head flowing into a pale breast, not a blunt speedboat.
     bow := world_rondine_local(editor, {0, .5, -5.72})
@@ -16333,7 +16545,7 @@ world_rondine_hull :: proc(editor: ^Editor, deck, side, keel: rl.Color) {
     world_quad_material(stern_l, stern_keel_l, stern_keel_r, stern_r, side, .Car_Paint)
 }
 
-world_rondine_propeller_blade :: proc(editor: ^Editor, center_x, angle, z: f32, color: rl.Color) {
+world_rondine_propeller_blade :: proc(editor: ^Editor, center_x, angle, z: f32, color: canvas2d.Color) {
     c, s := math.cos(angle), math.sin(angle)
     half_length, half_width := f32(1.08), f32(.075)
     direction := [2]f32{c * half_length, s * half_length}
@@ -16366,8 +16578,8 @@ world_rondine_propeller_blur :: proc(editor: ^Editor, center_x, phase, strength:
     segments :: 16
     radius := f32(1.13)
     alpha := u8(clamp(18 + strength * 42, 0, 68))
-    center_color := rl.Color{78, 87, 85, alpha}
-    edge_color := rl.Color{92, 105, 101, 0}
+    center_color := canvas2d.Color{78, 87, 85, alpha}
+    edge_color := canvas2d.Color{92, 105, 101, 0}
     for segment in 0 ..< segments {
         angle_a := phase + f32(segment) / segments * math.PI * 2
         angle_b := phase + f32(segment + 1) / segments * math.PI * 2
@@ -16384,7 +16596,7 @@ world_rondine_propeller_blur :: proc(editor: ^Editor, center_x, phase, strength:
     }
 }
 
-world_rondine_propeller :: proc(editor: ^Editor, center_x, phase: f32, color: rl.Color) {
+world_rondine_propeller :: proc(editor: ^Editor, center_x, phase: f32, color: canvas2d.Color) {
     rotation := editor.rondine.propeller_turns * math.PI * 2 + phase
     world_rondine_propeller_blade(editor, center_x, rotation, 2.08, color)
     world_rondine_propeller_blade(editor, center_x, rotation + math.PI * .5, 2.09, color)
@@ -16393,7 +16605,7 @@ world_rondine_propeller :: proc(editor: ^Editor, center_x, phase: f32, color: rl
     world_rondine_box(editor, {center_x, .52, 2.13}, {.36, .36, .28}, {205, 193, 153, 255})
 }
 
-world_rondine_tail_fin :: proc(editor: ^Editor, color, edge: rl.Color) {
+world_rondine_tail_fin :: proc(editor: ^Editor, color, edge: canvas2d.Color) {
     // Keep directional stability without competing with the namesake fork:
     // this is a low, aft-swept dorsal feather rather than a conventional
     // upright airplane tail.
@@ -16409,7 +16621,7 @@ world_rondine_tail_fin :: proc(editor: ^Editor, color, edge: rl.Color) {
     world_quad(base_rear_l, base_rear_r, peak_r, peak_l, edge)
 }
 
-world_rondine_nacelle :: proc(editor: ^Editor, center_x: f32, top, side, intake: rl.Color) {
+world_rondine_nacelle :: proc(editor: ^Editor, center_x: f32, top, side, intake: canvas2d.Color) {
     front_z, rear_z := f32(-.62), f32(1.88)
     front_half_x, rear_half_x := f32(.39), f32(.25)
     front_low, front_high := f32(.28), f32(1.04)
@@ -16438,12 +16650,12 @@ world_rondine :: proc(editor: ^Editor) {
        (!editor.vehicle_showcase_scene && !world_aircraft_in_view(editor, editor.rondine.body.position, 16)) {
         return
     }
-    cream := rl.Color{231, 216, 171, 255}
-    red := rl.Color{174, 54, 42, 255}
-    dark := rl.Color{41, 48, 51, 255}
-    cockpit := rl.Color{24, 31, 34, 255}
-    leather := rl.Color{113, 61, 43, 255}
-    glass := rl.Color{116, 181, 194, 190}
+    cream := canvas2d.Color{231, 216, 171, 255}
+    red := canvas2d.Color{174, 54, 42, 255}
+    dark := canvas2d.Color{41, 48, 51, 255}
+    cockpit := canvas2d.Color{24, 31, 34, 255}
+    leather := canvas2d.Color{113, 61, 43, 255}
+    glass := canvas2d.Color{116, 181, 194, 190}
 
     // Low planing hull, broad gull wing and twin pusher booms. The silhouette
     // is deliberately legible from the long, low chase camera used at speed.
@@ -16524,7 +16736,7 @@ world_rondine :: proc(editor: ^Editor) {
     wing_r_root_aft_low := world_rondine_local(editor, {1.18, .29, 1.18})
     wing_r_aft_low := world_rondine_local(editor, {6.55, .51, 1.58})
     wing_r_tip_low := world_rondine_local(editor, {8.9, .64, .92})
-    wing_under := rl.Color{124, 42, 36, 255}
+    wing_under := canvas2d.Color{124, 42, 36, 255}
     world_quad(wing_l_tip, wing_l_aft, wing_l_root_aft, wing_l_root, red)
     world_quad(wing_r_root, wing_r_root_aft, wing_r_aft, wing_r_tip, red)
     wing_l_tip_inner := world_rondine_local(editor, {-7.55, .75, .7})
@@ -16696,7 +16908,7 @@ world_rondine_spray_streak :: proc(
     camera: Perspective_Camera,
     position, direction: third_person.Vec3,
     size: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     direction_length := f32(
         math.sqrt(f64(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)),
@@ -16724,13 +16936,13 @@ world_rondine_spray_streak :: proc(
     half_width := width_axis * (size * .34)
     tail := position - unit_direction * (size * .55)
     tip := position + unit_direction * (size * 2.4)
-    clear := rl.Color{color.r, color.g, color.b, 0}
+    clear := canvas2d.Color{color.r, color.g, color.b, 0}
     world_triangle_colored(tail - half_width, tail + half_width, tip, clear, clear, color)
 }
 
 world_rondine_triangle_colored :: proc(
     a, b, c: third_person.Vec3,
-    color_a, color_b, color_c: rl.Color,
+    color_a, color_b, color_c: canvas2d.Color,
     mirrored: bool,
 ) {
     if mirrored {
@@ -16740,19 +16952,24 @@ world_rondine_triangle_colored :: proc(
     }
 }
 
-world_rondine_triangle_double_sided :: proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: rl.Color) {
+world_rondine_triangle_double_sided :: proc(a, b, c: third_person.Vec3, color_a, color_b, color_c: canvas2d.Color) {
     world_triangle_colored(a, b, c, color_a, color_b, color_c)
     world_triangle_colored(a, c, b, color_a, color_c, color_b)
 }
 
-world_rondine_spray_bead :: proc(camera: Perspective_Camera, position: third_person.Vec3, size: f32, color: rl.Color) {
+world_rondine_spray_bead :: proc(
+    camera: Perspective_Camera,
+    position: third_person.Vec3,
+    size: f32,
+    color: canvas2d.Color,
+) {
     if color.a <= 1 || size <= .001 do return
     // Four fading triangles make a tiny camera-facing droplet head. Keeping
     // the center opaque and every outer point transparent preserves the
     // faceted procedural language while avoiding a hard diamond silhouette.
     horizontal := camera.right * size
     vertical := camera.up * (size * 1.18)
-    clear := rl.Color{color.r, color.g, color.b, 0}
+    clear := canvas2d.Color{color.r, color.g, color.b, 0}
     top := position + vertical
     right := position + horizontal
     bottom := position - vertical
@@ -16766,7 +16983,7 @@ world_rondine_spray_bead :: proc(camera: Perspective_Camera, position: third_per
 world_rondine_surface_chip :: proc(
     position, tangent, radial: third_person.Vec3,
     half_length, half_width: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     double_sided := false,
 ) {
     tangent_axis := tangent
@@ -16796,7 +17013,7 @@ world_rondine_surface_chip :: proc(
         // stable fallback for degenerate or accidentally parallel inputs.
         radial_axis = {-tangent_axis.z, 0, tangent_axis.x}
     }
-    clear := rl.Color{color.r, color.g, color.b, 0}
+    clear := canvas2d.Color{color.r, color.g, color.b, 0}
     leading := position + tangent_axis * half_length
     trailing := position - tangent_axis * half_length
     outer := position + radial_axis * half_width
@@ -16891,7 +17108,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         if surface_impact > .06 {
             impact_visibility := f32(math.sqrt(f64(surface_impact)))
             slap_alpha := u8(clamp(218 * impact_visibility, 0, 224))
-            slap_color := rl.Color{234, 253, 247, slap_alpha}
+            slap_color := canvas2d.Color{234, 253, 247, slap_alpha}
             // The main bar crosses the hull beam and expands with impact
             // energy. Its transparent tips keep it from becoming a hard white
             // plank while supplying the large-scale pressure beat that the
@@ -16940,7 +17157,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     contact_back * (.14 + surface_impact * .18) +
                     third_person.Vec3{0, .20 + variation * .42, 0}
                 impact_alpha := u8(clamp((156 + variation * 78) * surface_impact, 0, 228))
-                impact_color := rl.Color{234, 253, 247, impact_alpha}
+                impact_color := canvas2d.Color{234, 253, 247, impact_alpha}
                 world_rondine_spray_streak(
                     camera,
                     position,
@@ -16970,9 +17187,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 crest := root + (tail - root) * (.42 + variation * .10)
                 crest.y += .08 + chine_strength * .24 + variation * .07
                 chine_alpha := u8(clamp((102 + variation * 62) * chine_strength, 0, 164))
-                chine_foam := rl.Color{226, 250, 244, chine_alpha}
-                chine_mist := rl.Color{143, 216, 223, u8(f32(chine_alpha) * .42)}
-                chine_clear := rl.Color{chine_foam.r, chine_foam.g, chine_foam.b, 0}
+                chine_foam := canvas2d.Color{226, 250, 244, chine_alpha}
+                chine_mist := canvas2d.Color{143, 216, 223, u8(f32(chine_alpha) * .42)}
+                chine_clear := canvas2d.Color{chine_foam.r, chine_foam.g, chine_foam.b, 0}
                 world_rondine_triangle_colored(root, tail, crest, chine_foam, chine_clear, chine_mist, side == 1)
                 whisker_direction :=
                     contact_back * (.72 + variation * .22) +
@@ -16998,8 +17215,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 contact_right * (side_sign * (.40 + contact_strength * 1.15))
             crest.y += .40 + contact_strength * 2.40
             alpha := u8(clamp(158 + contact_strength * 105, 0, 244))
-            foam := rl.Color{226, 249, 243, alpha}
-            mist := rl.Color{147, 220, 226, u8(f32(alpha) * .52)}
+            foam := canvas2d.Color{226, 249, 243, alpha}
+            mist := canvas2d.Color{147, 220, 226, u8(f32(alpha) * .52)}
             world_rondine_triangle_colored(root, inner, crest, foam, foam, mist, side == 1)
         }
 
@@ -17023,9 +17240,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             shoulder_crest += contact_right * (carve_loaded_side * (.12 + carve_shoulder_strength * .10))
             shoulder_crest.y += .32 + carve_shoulder_strength * .92
             shoulder_alpha := u8(clamp((116 + carve_shoulder_strength * 62) * shoulder_visibility, 0, 158))
-            shoulder_foam := rl.Color{224, 249, 244, shoulder_alpha}
-            shoulder_mist := rl.Color{166, 226, 230, u8(f32(shoulder_alpha) * .54)}
-            shoulder_clear := rl.Color{shoulder_foam.r, shoulder_foam.g, shoulder_foam.b, 0}
+            shoulder_foam := canvas2d.Color{224, 249, 244, shoulder_alpha}
+            shoulder_mist := canvas2d.Color{166, 226, 230, u8(f32(shoulder_alpha) * .54)}
+            shoulder_clear := canvas2d.Color{shoulder_foam.r, shoulder_foam.g, shoulder_foam.b, 0}
             world_rondine_triangle_double_sided(
                 shoulder_root,
                 shoulder_foot,
@@ -17099,9 +17316,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 upper_start.y += .35 + start_hump * (1.05 + crown_strength * 2.35)
                 upper_end.y += .35 + end_hump * (1.05 + crown_strength * 2.35)
                 curtain_alpha := u8(clamp((142 + start_hump * 76 - panel_f * 4) * crown_visibility, 0, 210))
-                curtain_foam := rl.Color{224, 250, 244, curtain_alpha}
-                curtain_mist := rl.Color{164, 226, 230, u8(f32(curtain_alpha) * .52)}
-                curtain_clear := rl.Color{curtain_foam.r, curtain_foam.g, curtain_foam.b, 0}
+                curtain_foam := canvas2d.Color{224, 250, 244, curtain_alpha}
+                curtain_mist := canvas2d.Color{164, 226, 230, u8(f32(curtain_alpha) * .52)}
+                curtain_clear := canvas2d.Color{curtain_foam.r, curtain_foam.g, curtain_foam.b, 0}
                 world_rondine_triangle_double_sided(
                     lower_start,
                     lower_end,
@@ -17140,9 +17357,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 crest += contact_right * (loaded_side * (.18 + prong_f * .12))
                 crest.y += .85 + crown_strength * (2.65 - prong_f * .25)
                 crown_alpha := u8(clamp((228 - prong_f * 22) * crown_visibility, 0, 228))
-                crown_foam := rl.Color{229, 251, 245, crown_alpha}
-                crown_mist := rl.Color{190, 235, 234, u8(f32(crown_alpha) * .78)}
-                crown_clear := rl.Color{crown_foam.r, crown_foam.g, crown_foam.b, 0}
+                crown_foam := canvas2d.Color{229, 251, 245, crown_alpha}
+                crown_mist := canvas2d.Color{190, 235, 234, u8(f32(crown_alpha) * .78)}
+                crown_clear := canvas2d.Color{crown_foam.r, crown_foam.g, crown_foam.b, 0}
                 world_rondine_triangle_colored(root, foot, crest, crown_foam, crown_clear, crown_mist, crown_mirrored)
                 crown_tip := crest + contact_right * (loaded_side * (.22 + prong_f * .16))
                 crown_tip.y -= .12 + prong_f * .05
@@ -17173,7 +17390,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     contact_right * (loaded_side * (.42 + needle_f * .46 + variation * .24)) +
                     third_person.Vec3{0, .34 + needle_f * .16 + variation * .34, 0}
                 needle_alpha := u8(clamp((145 + variation * 70) * crown_visibility, 0, 215))
-                needle_color := rl.Color{232, 253, 247, needle_alpha}
+                needle_color := canvas2d.Color{232, 253, 247, needle_alpha}
                 world_rondine_spray_streak(
                     camera,
                     position,
@@ -17202,7 +17419,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     contact_right * (loaded_side * (.42 + crown_progress * .55)) +
                     third_person.Vec3{0, .38 + crown_hump * .62 + variation * .28, 0}
                 splash_alpha := u8(clamp((178 + variation * 66) * crown_visibility, 0, 232))
-                splash_color := rl.Color{235, 254, 248, splash_alpha}
+                splash_color := canvas2d.Color{235, 254, 248, splash_alpha}
                 world_rondine_spray_streak(
                     camera,
                     splash_position,
@@ -17234,7 +17451,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                         contact_right * (loaded_side * (.16 + ray_f * .74 + variation * .12)) +
                         third_person.Vec3{0, .24 + ray_f * .34 + variation * .18, 0}
                     kick_alpha := u8(clamp((168 + variation * 62) * drift_kick, 0, 225))
-                    kick_color := rl.Color{235, 254, 248, kick_alpha}
+                    kick_color := canvas2d.Color{235, 254, 248, kick_alpha}
                     world_rondine_spray_streak(
                         camera,
                         position,
@@ -17268,7 +17485,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                         contact_right * (-side_sign * (.44 + ray_f * .30 + variation * .12)) +
                         third_person.Vec3{0, .34 + ray_f * .20 + variation * .18, 0}
                     hookup_alpha := u8(clamp((150 + variation * 62) * hookup_kick, 0, 210))
-                    hookup_color := rl.Color{232, 253, 247, hookup_alpha}
+                    hookup_color := canvas2d.Color{232, 253, 247, hookup_alpha}
                     world_rondine_spray_streak(
                         camera,
                         position,
@@ -17297,7 +17514,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     contact_right * (loaded_side * (.58 + cut_f * .26 + variation * .16)) +
                     third_person.Vec3{0, .08 + cut_f * .045 + variation * .07, 0}
                 cut_alpha := u8(clamp((126 + variation * 68) * countersteer, 0, 194))
-                cut_color := rl.Color{229, 252, 246, cut_alpha}
+                cut_color := canvas2d.Color{229, 252, 246, cut_alpha}
                 world_rondine_spray_streak(
                     camera,
                     position,
@@ -17313,7 +17530,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // correction readable from chase and inspection cameras alike.
             counter_visibility := f32(math.sqrt(f64(countersteer)))
             brace_alpha := u8(clamp(198 * counter_visibility, 0, 202))
-            brace_color := rl.Color{233, 253, 247, brace_alpha}
+            brace_color := canvas2d.Color{233, 253, 247, brace_alpha}
             brace_tangent := contact_right * (-loaded_side * .92) + contact_back * .24
             brace_radial := contact_back + contact_right * (loaded_side * .14)
             for brace in 0 ..< 2 {
@@ -17348,9 +17565,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             catch_crest += contact_right * (catch_side * (.13 + countersteer * .12))
             catch_crest.y += .42 + counter_visibility * 1.38
             catch_alpha := u8(clamp((168 + countersteer * 72) * counter_visibility, 0, 184))
-            catch_foam := rl.Color{228, 251, 245, catch_alpha}
-            catch_mist := rl.Color{176, 231, 232, u8(f32(catch_alpha) * .56)}
-            catch_clear := rl.Color{catch_foam.r, catch_foam.g, catch_foam.b, 0}
+            catch_foam := canvas2d.Color{228, 251, 245, catch_alpha}
+            catch_mist := canvas2d.Color{176, 231, 232, u8(f32(catch_alpha) * .56)}
+            catch_clear := canvas2d.Color{catch_foam.r, catch_foam.g, catch_foam.b, 0}
             world_rondine_triangle_double_sided(
                 catch_root,
                 catch_foot,
@@ -17418,9 +17635,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             tip_sheet_crest += contact_right * (side_sign * (.48 + tip_strength * .48))
             tip_sheet_crest.y += .58 + tip_strength * 1.80
             tip_sheet_alpha := u8(clamp(205 * tip_visibility, 0, 214))
-            tip_sheet_foam := rl.Color{226, 251, 245, tip_sheet_alpha}
-            tip_sheet_mist := rl.Color{148, 220, 227, u8(f32(tip_sheet_alpha) * .48)}
-            tip_sheet_clear := rl.Color{tip_sheet_foam.r, tip_sheet_foam.g, tip_sheet_foam.b, 0}
+            tip_sheet_foam := canvas2d.Color{226, 251, 245, tip_sheet_alpha}
+            tip_sheet_mist := canvas2d.Color{148, 220, 227, u8(f32(tip_sheet_alpha) * .48)}
+            tip_sheet_clear := canvas2d.Color{tip_sheet_foam.r, tip_sheet_foam.g, tip_sheet_foam.b, 0}
             for tip_panel in 0 ..< 3 {
                 panel_start := f32(tip_panel) / 3
                 panel_end := f32(tip_panel + 1) / 3
@@ -17462,7 +17679,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     contact_right * (side_sign * (.20 + rake_f * .24 + variation * .16)) +
                     third_person.Vec3{0, .24 + rake_f * .18 + variation * .24, 0}
                 rake_alpha := u8(clamp((154 + variation * 64 - rake_f * 18) * tip_visibility, 0, 212))
-                rake_color := rl.Color{233, 253, 247, rake_alpha}
+                rake_color := canvas2d.Color{233, 253, 247, rake_alpha}
                 world_rondine_spray_streak(
                     camera,
                     position,
@@ -17527,9 +17744,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 crest.y += .25 + propwash_strength * 1.20 * outside
                 edge := foot + contact_right * (side_sign * (.22 + propwash_strength * .38) * outside)
                 prop_alpha := u8(clamp(172 * propwash_strength * outside, 0, 214))
-                prop_foam := rl.Color{224, 249, 243, prop_alpha}
-                prop_mist := rl.Color{143, 217, 224, u8(f32(prop_alpha) * .48)}
-                prop_clear := rl.Color{prop_foam.r, prop_foam.g, prop_foam.b, 0}
+                prop_foam := canvas2d.Color{224, 249, 243, prop_alpha}
+                prop_mist := canvas2d.Color{143, 217, 224, u8(f32(prop_alpha) * .48)}
+                prop_clear := canvas2d.Color{prop_foam.r, prop_foam.g, prop_foam.b, 0}
                 world_rondine_triangle_colored(root, foot, crest, prop_foam, prop_foam, prop_mist, side == 1)
                 world_rondine_triangle_colored(foot, edge, crest, prop_foam, prop_clear, prop_mist, side == 1)
 
@@ -17539,7 +17756,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 // rearward rather than appearing as a static point under the
                 // wing.
                 bite_alpha := u8(clamp(172 * propwash_strength * outside, 0, 205))
-                bite_color := rl.Color{229, 252, 246, bite_alpha}
+                bite_color := canvas2d.Color{229, 252, 246, bite_alpha}
                 for bite in 0 ..< 2 {
                     bite_f := f32(bite)
                     bite_position :=
@@ -17585,7 +17802,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                         contact_right * (side_sign * (.68 + filament_f * .38 + variation * .26 + prop_phase * .12)) +
                         third_person.Vec3{0, .36 + filament_f * .22 + variation * .34 + prop_phase * .10, 0}
                     filament_alpha := u8(clamp((105 + variation * 62) * propwash_strength * outside, 0, 195))
-                    filament_color := rl.Color{229, 252, 246, filament_alpha}
+                    filament_color := canvas2d.Color{229, 252, 246, filament_alpha}
                     world_rondine_spray_streak(
                         camera,
                         filament_position,
@@ -17740,8 +17957,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         power_crown := power_base + power_back * 4.40 + power_right * (power_side * (3.25 + power_visibility * 1.10))
         power_crown.y += 1.50 + power_visibility * 2.80
         power_alpha := u8(clamp(206 * power_visibility, 0, 218))
-        power_foam := rl.Color{232, 254, 248, power_alpha}
-        power_mist := rl.Color{135, 211, 222, u8(f32(power_alpha) * .40)}
+        power_foam := canvas2d.Color{232, 254, 248, power_alpha}
+        power_mist := canvas2d.Color{135, 211, 222, u8(f32(power_alpha) * .40)}
         for power_panel in 0 ..< 4 {
             panel_start := f32(power_panel) / 4
             panel_end := f32(power_panel + 1) / 4
@@ -17751,7 +17968,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             panel_end_hump := f32(math.sin(f64(panel_end * math.PI)))
             panel_upper_start := panel_lower_start + (power_crown - panel_lower_start) * (panel_start_hump * .92)
             panel_upper_end := panel_lower_end + (power_crown - panel_lower_end) * (panel_end_hump * .92)
-            panel_lower_clear := rl.Color{power_foam.r, power_foam.g, power_foam.b, u8(f32(power_alpha) * .32)}
+            panel_lower_clear := canvas2d.Color{power_foam.r, power_foam.g, power_foam.b, u8(f32(power_alpha) * .32)}
             world_rondine_triangle_double_sided(
                 panel_lower_start,
                 panel_lower_end,
@@ -17776,7 +17993,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             rib_tip := rib_root + power_right * (power_side * (.72 + power_visibility * .30))
             rib_tip.y += .30 + power_visibility * (.54 - rib_f * .08)
             rib_width := power_back * (.11 + rib_f * .018)
-            rib_color := rl.Color{229, 253, 247, u8(f32(power_alpha) * (.82 - rib_f * .17))}
+            rib_color := canvas2d.Color{229, 253, 247, u8(f32(power_alpha) * (.82 - rib_f * .17))}
             world_rondine_triangle_double_sided(
                 rib_root - rib_width,
                 rib_root + rib_width,
@@ -17903,8 +18120,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         sheet_tip := flick_base + flick_back * 3.72 + flick_right * (flick_side * (1.72 + flick_visibility * .42))
         sheet_tip.y += .42 + flick_visibility * .72
         sheet_alpha := u8(clamp(182 * flick_visibility, 0, 196))
-        sheet_foam := rl.Color{229, 252, 246, sheet_alpha}
-        sheet_mist := rl.Color{145, 218, 225, u8(f32(sheet_alpha) * .48)}
+        sheet_foam := canvas2d.Color{229, 252, 246, sheet_alpha}
+        sheet_mist := canvas2d.Color{145, 218, 225, u8(f32(sheet_alpha) * .48)}
         world_rondine_triangle_double_sided(
             sheet_root,
             sheet_inner,
@@ -17962,8 +18179,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             crest := root + live_back * (2.85 * outside) + live_right * (side_sign * .72 * outside)
             crest.y += .70 + live_strength * 1.40
             alpha := u8(clamp(48 + 154 * live_strength * outside, 0, 205))
-            foam := rl.Color{228, 251, 245, alpha}
-            mist := rl.Color{151, 224, 228, u8(f32(alpha) * .64)}
+            foam := canvas2d.Color{228, 251, 245, alpha}
+            mist := canvas2d.Color{151, 224, 228, u8(f32(alpha) * .64)}
             world_rondine_triangle_colored(root, inner, crest, foam, foam, mist, side == 1)
             world_rondine_triangle_colored(root, crest, outer, foam, mist, {foam.r, foam.g, foam.b, 0}, side == 1)
         }
@@ -17987,8 +18204,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             left := center - live_right * half_width
             right := center + live_right * half_width
             boil_alpha := u8(clamp((158 + variation * 82) * live_strength, 0, 224))
-            boil_foam := rl.Color{228, 251, 245, boil_alpha}
-            boil_clear := rl.Color{151, 220, 225, 0}
+            boil_foam := canvas2d.Color{228, 251, 245, boil_alpha}
+            boil_clear := canvas2d.Color{151, 220, 225, 0}
             world_triangle_colored(front, right, rear, boil_clear, boil_foam, boil_clear)
             world_triangle_colored(front, rear, left, boil_clear, boil_clear, boil_foam)
         }
@@ -18066,7 +18283,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     trough_right * (bubble_side * (.08 + bubble_variation * .15))
                 bubble_position.y += .026
                 bubble_alpha := u8(clamp((92 + bubble_variation * 74) * trough_aeration_strength, 0, 158))
-                bubble_color := rl.Color{224, 249, 244, bubble_alpha}
+                bubble_color := canvas2d.Color{224, 249, 244, bubble_alpha}
                 world_rondine_surface_chip(
                     bubble_position,
                     trough_segment + trough_right * (bubble_side * .18),
@@ -18118,25 +18335,25 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // values for live spray, shards, and individual impact flecks.
             older_aeration := clamp(older_fade_linear * 1.35, 0, 1)
             newer_aeration := clamp(newer_fade_linear * 1.35, 0, 1)
-            older_foam := rl.Color {
+            older_foam := canvas2d.Color {
                 u8(166 + older_aeration * 62),
                 u8(221 + older_aeration * 29),
                 u8(226 + older_aeration * 19),
                 older_alpha,
             }
-            newer_foam := rl.Color {
+            newer_foam := canvas2d.Color {
                 u8(166 + newer_aeration * 62),
                 u8(221 + newer_aeration * 29),
                 u8(226 + newer_aeration * 19),
                 newer_alpha,
             }
-            older_clear := rl.Color {
+            older_clear := canvas2d.Color {
                 u8(142 + older_aeration * 20),
                 u8(208 + older_aeration * 18),
                 u8(218 + older_aeration * 8),
                 u8(f32(older_alpha) * .42),
             }
-            newer_clear := rl.Color {
+            newer_clear := canvas2d.Color {
                 u8(142 + newer_aeration * 20),
                 u8(208 + newer_aeration * 18),
                 u8(218 + newer_aeration * 8),
@@ -18147,10 +18364,20 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // A continuous translucent under-ribbon carries the main foam
             // mass. Bright packets still articulate churn on top, but their
             // triangular gaps no longer define the entire silhouette.
-            older_band_base := rl.Color{older_foam.r, older_foam.g, older_foam.b, u8(f32(older_foam.a) * .44)}
-            newer_band_base := rl.Color{newer_foam.r, newer_foam.g, newer_foam.b, u8(f32(newer_foam.a) * .44)}
-            older_band_clear := rl.Color{older_clear.r, older_clear.g, older_clear.b, u8(f32(older_clear.a) * .72)}
-            newer_band_clear := rl.Color{newer_clear.r, newer_clear.g, newer_clear.b, u8(f32(newer_clear.a) * .72)}
+            older_band_base := canvas2d.Color{older_foam.r, older_foam.g, older_foam.b, u8(f32(older_foam.a) * .44)}
+            newer_band_base := canvas2d.Color{newer_foam.r, newer_foam.g, newer_foam.b, u8(f32(newer_foam.a) * .44)}
+            older_band_clear := canvas2d.Color {
+                older_clear.r,
+                older_clear.g,
+                older_clear.b,
+                u8(f32(older_clear.a) * .72),
+            }
+            newer_band_clear := canvas2d.Color {
+                newer_clear.r,
+                newer_clear.g,
+                newer_clear.b,
+                u8(f32(newer_clear.a) * .72),
+            }
             world_rondine_triangle_colored(
                 older_inner,
                 newer_inner,
@@ -18188,14 +18415,14 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 packet_end_outer := older_band_outer + (newer_band_outer - older_band_outer) * (1 - packet_inset)
                 packet_mid_inner := (packet_start_inner + packet_end_inner) * .5
                 packet_mid_outer := (packet_start_outer + packet_end_outer) * .5
-                packet_tip_clear := rl.Color{older_foam.r, older_foam.g, older_foam.b, 0}
-                packet_mid_foam := rl.Color {
+                packet_tip_clear := canvas2d.Color{older_foam.r, older_foam.g, older_foam.b, 0}
+                packet_mid_foam := canvas2d.Color {
                     u8((u16(older_foam.r) + u16(newer_foam.r)) / 2),
                     u8((u16(older_foam.g) + u16(newer_foam.g)) / 2),
                     u8((u16(older_foam.b) + u16(newer_foam.b)) / 2),
                     u8((u16(older_foam.a) + u16(newer_foam.a)) / 2),
                 }
-                packet_mid_clear := rl.Color {
+                packet_mid_clear := canvas2d.Color {
                     u8((u16(older_clear.r) + u16(newer_clear.r)) / 2),
                     u8((u16(older_clear.g) + u16(newer_clear.g)) / 2),
                     u8((u16(older_clear.b) + u16(newer_clear.b)) / 2),
@@ -18245,8 +18472,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             // triangle in the low chase camera.
             older_rim_inner := older_outer + (older_inner - older_outer) * .11
             newer_rim_inner := newer_outer + (newer_inner - newer_outer) * .11
-            older_rim := rl.Color{177, 232, 233, u8(f32(older_alpha) * .24)}
-            newer_rim := rl.Color{177, 232, 233, u8(f32(newer_alpha) * .24)}
+            older_rim := canvas2d.Color{177, 232, 233, u8(f32(older_alpha) * .24)}
+            newer_rim := canvas2d.Color{177, 232, 233, u8(f32(newer_alpha) * .24)}
             rim_packet :=
                 world_rondine_wake_hash(older.serial, pressure_role, 7) % 7 < (pressure_role == 1 ? u32(6) : u32(5))
             if rim_packet {
@@ -18296,7 +18523,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     direction := segment_direction * .36 + outward
                     variation := f32((seed >> 20) % 29) / 28
                     fleck_alpha := u8(clamp((112 + variation * 72) * fleck_strength, 0, 174))
-                    fleck_color := rl.Color{229, 252, 246, fleck_alpha}
+                    fleck_color := canvas2d.Color{229, 252, 246, fleck_alpha}
                     world_rondine_spray_streak(camera, position, direction, .055 + variation * .075, fleck_color)
                 }
             }
@@ -18315,8 +18542,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 breaker_root.y += .022
                 breaker_tip.y += .026
                 breaker_alpha := u8(clamp(145 * breaker_strength, 0, 160))
-                breaker_foam := rl.Color{225, 249, 243, breaker_alpha}
-                breaker_clear := rl.Color{151, 220, 225, 0}
+                breaker_foam := canvas2d.Color{225, 249, 243, breaker_alpha}
+                breaker_clear := canvas2d.Color{151, 220, 225, 0}
                 world_rondine_triangle_colored(
                     older_band_outer,
                     newer_band_outer,
@@ -18349,8 +18576,8 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 crest := along + older_right * (side_sign * (.22 + older.age * .18))
                 crest.y += .38 + shard_strength * 1.70
                 shard_alpha := u8(clamp(150 * shard_strength, 0, 190))
-                shard_foam := rl.Color{221, 248, 242, shard_alpha}
-                shard_mist := rl.Color{137, 215, 223, u8(f32(shard_alpha) * .5)}
+                shard_foam := canvas2d.Color{221, 248, 242, shard_alpha}
+                shard_mist := canvas2d.Color{137, 215, 223, u8(f32(shard_alpha) * .5)}
                 world_rondine_triangle_colored(
                     older_outer,
                     newer_outer,
@@ -18399,7 +18626,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     claw_forward * (.16 + claw_variation * .20)
                 claw_radial := claw_forward - older_right * (side_sign * (.10 + claw_variation * .12))
                 claw_alpha := u8(clamp((132 + claw_variation * 52) * claw_strength, 0, 188))
-                claw_color := rl.Color{226, 250, 244, claw_alpha}
+                claw_color := canvas2d.Color{226, 250, 244, claw_alpha}
                 for tooth in 0 ..< 2 {
                     tooth_f := f32(tooth)
                     tooth_position :=
@@ -18439,7 +18666,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 older_right * (skip_loaded_side * (.24 + skip_variation * .22))
             skip_radial := older_right * skip_loaded_side - skip_forward * (.12 + skip_variation * .12)
             skip_alpha := u8(clamp((142 + skip_variation * 54) * outboard_skip_strength, 0, 190))
-            skip_color := rl.Color{228, 251, 245, skip_alpha}
+            skip_color := canvas2d.Color{228, 251, 245, skip_alpha}
             world_rondine_surface_chip(
                 skip_center,
                 skip_tangent,
@@ -18489,7 +18716,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 tangent := (older_right * -sine + older_forward * cosine) * unloaded_sign
                 position := curl_center + radial * curl_radius
                 tick_alpha := u8(clamp((112 + (2 - tick_f) * 24 + curl_variation * 35) * curl_strength, 0, 178))
-                tick_color := rl.Color{229, 252, 246, tick_alpha}
+                tick_color := canvas2d.Color{229, 252, 246, tick_alpha}
                 world_rondine_spray_streak(
                     camera,
                     position,
@@ -18511,7 +18738,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             stitch_center.y += .034
             stitch_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
             stitch_alpha := u8(clamp(176 * sampled_countersteer, 0, 184))
-            stitch_color := rl.Color{225, 250, 244, stitch_alpha}
+            stitch_color := canvas2d.Color{225, 250, 244, stitch_alpha}
             for stitch_side in 0 ..< 2 {
                 side_sign := stitch_side == 0 ? f32(-1) : f32(1)
                 position := stitch_center + older_right * (side_sign * (.13 + sampled_countersteer * .08))
@@ -18600,9 +18827,9 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 58,
             ),
         )
-        older_trough := rl.Color{28, 109, 139, older_trough_alpha}
-        newer_trough := rl.Color{28, 109, 139, newer_trough_alpha}
-        trough_clear := rl.Color{28, 109, 139, 0}
+        older_trough := canvas2d.Color{28, 109, 139, older_trough_alpha}
+        newer_trough := canvas2d.Color{28, 109, 139, newer_trough_alpha}
+        trough_clear := canvas2d.Color{28, 109, 139, 0}
         world_rondine_triangle_colored(
             older_trough_left,
             newer_trough_left,
@@ -18735,13 +18962,13 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             newer_right_edge := newer_center + newer_right * newer_width
             churn_alpha := u8(clamp(178 * churn_strength, 0, 188))
             churn_aeration := clamp((older_fade_linear + newer_fade_linear) * .68, 0, 1)
-            churn_foam := rl.Color {
+            churn_foam := canvas2d.Color {
                 u8(174 + churn_aeration * 52),
                 u8(225 + churn_aeration * 24),
                 u8(229 + churn_aeration * 14),
                 churn_alpha,
             }
-            churn_clear := rl.Color {
+            churn_clear := canvas2d.Color {
                 u8(145 + churn_aeration * 12),
                 u8(210 + churn_aeration * 11),
                 u8(219 + churn_aeration * 6),
@@ -18792,7 +19019,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             pulse_forward := third_person.Vec3{older.forward.x, 0, older.forward.z}
             pulse_visibility := f32(math.sqrt(f64(planing_pulse)))
             pulse_alpha := u8(clamp(208 * pulse_visibility, 0, 208))
-            pulse_color := rl.Color{224, 250, 244, pulse_alpha}
+            pulse_color := canvas2d.Color{224, 250, 244, pulse_alpha}
             pulse_width := .64 + older.age * .38 + planing_pulse * .24
             for side in 0 ..< 2 {
                 side_sign := side == 0 ? f32(-1) : f32(1)
@@ -18829,7 +19056,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     older_right * (side_sign * (2.10 + older.age * .16 + track_variation * .12))
                 track_center.y += .036
                 track_alpha := u8(clamp((126 + track_variation * 42) * prop_track_visibility, 0, 158))
-                track_color := rl.Color{220, 248, 243, track_alpha}
+                track_color := canvas2d.Color{220, 248, 243, track_alpha}
                 first_tangent := prop_track_forward * .72 + older_right * (side_sign * .42)
                 first_radial := older_right * side_sign - prop_track_forward * .18
                 second_tangent := prop_track_forward * .66 - older_right * (side_sign * .38)
@@ -18877,7 +19104,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             carve_center.y += .036
             carve_visibility := f32(math.sqrt(f64(carve_pulse)))
             carve_alpha := u8(clamp(184 * carve_visibility, 0, 188))
-            carve_color := rl.Color{227, 251, 245, carve_alpha}
+            carve_color := canvas2d.Color{227, 251, 245, carve_alpha}
             for scallop in 0 ..< 3 {
                 scallop_f := f32(scallop)
                 arc := scallop_f - 1
@@ -18986,7 +19213,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             spoke_radius := radius * (.84 + variation * .32)
             position := center + radial * spoke_radius
             scar_alpha := u8(clamp((176 + variation * 68) * scar_visibility, 0, 232))
-            scar_color := rl.Color{229, 252, 246, scar_alpha}
+            scar_color := canvas2d.Color{229, 252, 246, scar_alpha}
             fragment_length := .24 + sample.age * .15 + variation * .17
             fragment_width := .055 + scar_visibility * .058 + variation * .032
             world_rondine_surface_chip(
@@ -19007,7 +19234,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         loaded_sign := sample.slip < 0 ? f32(-1) : f32(1)
         back := -forward
         gouge_alpha := u8(clamp(214 * scar_visibility, 0, 224))
-        gouge_color := rl.Color{233, 253, 247, gouge_alpha}
+        gouge_color := canvas2d.Color{233, 253, 247, gouge_alpha}
         for gouge in 0 ..< 3 {
             gouge_f := f32(gouge)
             gouge_position :=
@@ -19049,7 +19276,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 bead_alpha := u8(
                     clamp((136 + variation * 78) * scar_visibility * bead_life * event_bead_distance_fade, 0, 210),
                 )
-                bead_color := rl.Color{232, 253, 247, bead_alpha}
+                bead_color := canvas2d.Color{232, 253, 247, bead_alpha}
                 bead_streak_size := .070 + variation * .090
                 world_rondine_spray_streak(camera, bead_position, bead_direction, bead_streak_size, bead_color)
                 world_rondine_spray_bead(
@@ -19089,7 +19316,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             tangent := right * -sine + forward * (cosine * .58)
             position := center + radial * radius * (.88 + variation * .24)
             ring_alpha := u8(clamp((174 + variation * 70) * ring_visibility, 0, 224))
-            ring_color := rl.Color{228, 251, 245, ring_alpha}
+            ring_color := canvas2d.Color{228, 251, 245, ring_alpha}
             fragment_length := .22 + sample.age * .15 + variation * .13
             fragment_width := .052 + ring_visibility * .042 + variation * .028
             world_rondine_surface_chip(
@@ -19107,7 +19334,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             if spoke % 2 == 0 {
                 inner_position := center + radial * radius * (.48 + variation * .08)
                 rebound_alpha := u8(f32(ring_alpha) * .48)
-                rebound_color := rl.Color{210, 242, 239, rebound_alpha}
+                rebound_color := canvas2d.Color{210, 242, 239, rebound_alpha}
                 world_rondine_surface_chip(
                     inner_position,
                     tangent,
@@ -19125,7 +19352,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // and directional while making touchdown unmistakable beneath the
         // aircraft during its strongest frames.
         slap_alpha := u8(clamp(218 * ring_visibility, 0, 226))
-        slap_color := rl.Color{234, 253, 247, slap_alpha}
+        slap_color := canvas2d.Color{234, 253, 247, slap_alpha}
         for slap in 0 ..< 2 {
             slap_f := f32(slap)
             slap_position := center + forward * ((slap_f - .5) * (.20 + sample.age * .42))
@@ -19161,7 +19388,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                 bead_alpha := u8(
                     clamp((142 + variation * 74) * ring_visibility * bead_life * event_bead_distance_fade, 0, 214),
                 )
-                bead_color := rl.Color{232, 253, 247, bead_alpha}
+                bead_color := canvas2d.Color{232, 253, 247, bead_alpha}
                 bead_streak_size := .075 + variation * .085
                 world_rondine_spray_streak(camera, bead_position, bead_direction, bead_streak_size, bead_color)
                 world_rondine_spray_bead(
@@ -19195,7 +19422,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // A broad suction knuckle is the large beat; it quickly fades into
         // the narrower paired quill marks behind it.
         knuckle_alpha := u8(clamp(188 * release_visibility, 0, 202))
-        knuckle_color := rl.Color{225, 250, 244, knuckle_alpha}
+        knuckle_color := canvas2d.Color{225, 250, 244, knuckle_alpha}
         world_rondine_surface_chip(
             center + back * (.12 + sample.age * .22),
             right,
@@ -19265,7 +19492,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                         205,
                     ),
                 )
-                bead_color := rl.Color{232, 253, 247, bead_alpha}
+                bead_color := canvas2d.Color{232, 253, 247, bead_alpha}
                 bead_streak_size := .060 + variation * .070
                 world_rondine_spray_streak(camera, bead_position, bead_direction, bead_streak_size, bead_color)
                 world_rondine_spray_bead(
@@ -19302,7 +19529,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             position := center + right * (side_sign * (.42 + serial_variation * .18)) + back * (serial_variation * .10)
             direction := back * (.22 + serial_variation * .13) - right * (side_sign * (.72 + stitch_strength * .30))
             stitch_alpha := u8(clamp((136 + serial_variation * 52) * stitch_strength, 0, 194))
-            stitch_color := rl.Color{228, 252, 246, stitch_alpha}
+            stitch_color := canvas2d.Color{228, 252, 246, stitch_alpha}
             world_rondine_spray_streak(
                 camera,
                 position,
@@ -19317,7 +19544,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // this is a single short V whose spacing collapses rearward, clearly
         // communicating that lateral grip has rejoined.
         zipper_alpha := u8(clamp(204 * stitch_visibility, 0, 210))
-        zipper_color := rl.Color{232, 253, 247, zipper_alpha}
+        zipper_color := canvas2d.Color{232, 253, 247, zipper_alpha}
         for tooth in 0 ..< 3 {
             tooth_f := f32(tooth)
             lateral_width := .48 - tooth_f * .13
@@ -19346,7 +19573,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
         // fronts meet. The soft-edged surface chips keep this planted on the
         // water instead of reading as another airborne spray fan.
         collar_alpha := u8(clamp(112 * stitch_visibility, 0, 138))
-        collar_color := rl.Color{211, 247, 241, collar_alpha}
+        collar_color := canvas2d.Color{211, 247, 241, collar_alpha}
         for side in 0 ..< 2 {
             side_sign := side == 0 ? f32(-1) : f32(1)
             collar_position := center + back * (.33 + serial_variation * .08) + right * (side_sign * .34)
@@ -19363,7 +19590,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
             )
         }
         knot_alpha := u8(clamp(174 * stitch_visibility, 0, 192))
-        knot_color := rl.Color{236, 255, 249, knot_alpha}
+        knot_color := canvas2d.Color{236, 255, 249, knot_alpha}
         knot_position := center + back * .66
         knot_position.y += .018
         world_rondine_surface_chip(
@@ -19416,7 +19643,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                             202,
                         ),
                     )
-                    bead_color := rl.Color{232, 253, 247, bead_alpha}
+                    bead_color := canvas2d.Color{232, 253, 247, bead_alpha}
                     bead_streak_size := .065 + variation * .075
                     world_rondine_spray_streak(camera, bead_position, bead_direction, bead_streak_size, bead_color)
                     world_rondine_spray_bead(
@@ -19489,7 +19716,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     back * rear_speed +
                     third_person.Vec3{0, launch_height - 2.9 * flight_age, 0}
                 opacity := clamp(life / max_life, 0, 1) * sample_camera_fade * droplet_distance_fade
-                droplet_color := rl.Color{224, 250, 245, u8((165 + variation * 68) * opacity)}
+                droplet_color := canvas2d.Color{224, 250, 245, u8((165 + variation * 68) * opacity)}
                 // One heavier bead per loaded-side burst supplies a readable
                 // medium-small accent; the rest remain fine tapered needles.
                 bead_scale := pressure_role == 1 && droplet == 0 ? f32(1.55) : f32(1)
@@ -19512,7 +19739,7 @@ world_rondine_wake_fans :: proc(editor: ^Editor) {
                     impact_age := age - landing_time
                     impact_life := clamp(1 - impact_age / .20, 0, 1)
                     impact_alpha := u8(128 * opacity * impact_life)
-                    impact_color := rl.Color{220, 248, 243, impact_alpha}
+                    impact_color := canvas2d.Color{220, 248, 243, impact_alpha}
                     impact_outward := right * side_sign + back * (.18 + variation * .18)
                     impact_cross := back - right * (side_sign * (.24 + variation * .16))
                     world_rondine_spray_streak(camera, position, impact_outward, .18 + variation * .09, impact_color)
@@ -19777,7 +20004,7 @@ world_car_pilot :: proc(editor: ^Editor) {
 }
 
 @(no_instrumentation)
-car_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
+car_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> canvas2d.Color {
     if part == .Body {
         // A restrained petrol teal keeps the tiny roadster colorful against
         // Mediterranean roads without competing with the mouse's face and
@@ -19792,13 +20019,13 @@ car_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraft_Me
     if part == .Tail_Light {
         braking :=
             editor != nil && (editor.car_drive.handbrake_amount > .15 || editor.car_drive.acceleration_feedback < -.12)
-        return braking ? rl.Color{255, 68, 55, 255} : rl.Color{145, 35, 34, 255}
+        return braking ? canvas2d.Color{255, 68, 55, 255} : canvas2d.Color{145, 35, 34, 255}
     }
     return aircraft_part_color(part)
 }
 
 @(no_instrumentation)
-trailer_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> rl.Color {
+trailer_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part) -> canvas2d.Color {
     color := car_part_color(editor, part)
     if part == .Tail_Light {
         braking := editor.car_drive.handbrake_amount > .15 || editor.car_drive.acceleration_feedback < -.12
@@ -19920,8 +20147,8 @@ world_car_cockpit :: proc(editor: ^Editor, car_transform: World_Vehicle_Transfor
     column := world_vehicle_vertex_world(car_transform, column_local)
     center := world_vehicle_vertex_world(car_transform, wheel_center)
     forward := linalg.normalize0(center - column)
-    leather := rl.Color{48, 39, 34, 255}
-    spoke := rl.Color{104, 83, 65, 255}
+    leather := canvas2d.Color{48, 39, 34, 255}
+    spoke := canvas2d.Color{104, 83, 65, 255}
     world_tube_between(column, center, forward, .035, .035, spoke)
     SEGMENTS :: 12
     ring: [SEGMENTS]third_person.Vec3
@@ -20157,7 +20384,7 @@ mouse_body_profile_skin :: proc(
 Mouse_Skin_Vertex :: struct {
     bind_position: third_person.Vec3,
     groups:        [2]Mouse_Vertex_Group,
-    color:         rl.Color,
+    color:         canvas2d.Color,
 }
 
 @(no_instrumentation)
@@ -20235,7 +20462,7 @@ world_mouse_skinned_hull :: proc(
     origin: third_person.Vec3,
     rotation: f32,
     skeleton: ^[5]Mouse_Bone_Pose,
-    fur, fur_dark, fur_light: rl.Color,
+    fur, fur_dark, fur_light: canvas2d.Color,
     pattern: Mouse_Fur_Pattern,
     breath: f32,
     softness: ^Mouse_Body_Softness_State = nil,
@@ -20330,7 +20557,7 @@ world_mouse_skinned_hull :: proc(
     emit_triangle :: proc(
         a, b, c: third_person.Vec3,
         normal_a, normal_b, normal_c: third_person.Vec3,
-        color_a, color_b, color_c: rl.Color,
+        color_a, color_b, color_c: canvas2d.Color,
     ) {
         output := [3]World_Vertex{world_vertex(a, color_a), world_vertex(b, color_b), world_vertex(c, color_c)}
         input_normals := [3]third_person.Vec3{normal_a, normal_b, normal_c}
@@ -20546,7 +20773,7 @@ world_mouse_mailbag_surface_ribbon :: proc(
     points: []third_person.Vec3,
     normals: []third_person.Vec3,
     half_width: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     MAX_SAMPLES :: 32
     if len(points) < 2 || len(normals) != len(points) || len(points) > MAX_SAMPLES do return
@@ -20658,10 +20885,10 @@ world_mouse_mailbag_imported_pouch :: proc(
 
 world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation: f32, skeleton: ^[5]Mouse_Bone_Pose) {
     if editor == nil || skeleton == nil || !editor.mailbag_pouch_asset.ready do return
-    canvas_dark := rl.Color{91, 57, 31, 255}
-    leather := rl.Color{67, 39, 27, 255}
-    brass := rl.Color{176, 126, 51, 255}
-    harness_edge := rl.Color{126, 79, 42, 255}
+    canvas_dark := canvas2d.Color{91, 57, 31, 255}
+    leather := canvas2d.Color{67, 39, 27, 255}
+    brass := canvas2d.Color{176, 126, 51, 255}
+    harness_edge := canvas2d.Color{126, 79, 42, 255}
     harness_design := MOUSE_POSTAL_HARNESS
     harness_clearance := harness_design.fur_clearance
     saddle_clearance := harness_design.saddle_clearance
@@ -20927,7 +21154,7 @@ world_mouse_ear :: proc(
     rotation: f32,
     center: third_person.Vec3,
     side, twitch, yaw_offset, roll: f32,
-    rim_color, inner_color: rl.Color,
+    rim_color, inner_color: canvas2d.Color,
 ) {
     SEGMENTS :: 16
     // Mouse pinnae face laterally.  A shallow yaw made them disappear into
@@ -21245,10 +21472,10 @@ Mouse_Fur_Pattern :: enum {
 // first limb ring prevents the appendage from beginning at a hard color seam.
 mouse_limb_socket_color :: proc(
     pattern: Mouse_Fur_Pattern,
-    fur, fur_dark, fur_light: rl.Color,
+    fur, fur_dark, fur_light: canvas2d.Color,
     side: f32,
     hind: bool,
-) -> rl.Color {
+) -> canvas2d.Color {
     marking := color_lerp(fur_light, {247, 239, 218, 255}, .72)
     switch pattern {
     case .Pale_Belly:
@@ -21279,7 +21506,7 @@ Mouse_Model :: struct {
     fur:                Mouse_Fur,
     pattern:            Mouse_Fur_Pattern,
     scarf_enabled:      bool,
-    scarf_color:        rl.Color,
+    scarf_color:        canvas2d.Color,
     mailbag_enabled:    bool,
     preview:            bool,
     player_controlled:  bool,
@@ -21481,9 +21708,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         return {world_x, origin.y + y, world_z}
     }
 
-    fur: rl.Color
-    fur_dark: rl.Color
-    fur_light: rl.Color
+    fur: canvas2d.Color
+    fur_dark: canvas2d.Color
+    fur_light: canvas2d.Color
     switch model.fur {
     case .Chestnut:
         fur, fur_dark, fur_light = {132, 107, 84, 255}, {91, 70, 57, 255}, {184, 164, 139, 255}
@@ -21498,17 +21725,21 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     case .White:
         fur, fur_dark, fur_light = {226, 224, 216, 255}, {157, 154, 150, 255}, {249, 246, 233, 255}
     }
-    ear: rl.Color = {188, 126, 123, 255}
-    paw: rl.Color = {201, 146, 139, 255}
-    features: rl.Color = {35, 32, 30, 255}
-    nose: rl.Color = {161, 102, 101, 255}
-    tooth: rl.Color = {232, 222, 189, 255}
-    leather: rl.Color = {91, 55, 38, 255}
-    leather_dark: rl.Color = {58, 38, 31, 255}
-    brass: rl.Color = {204, 157, 72, 255}
-    goggle_glass: rl.Color = {78, 157, 169, 255}
+    ear: canvas2d.Color = {188, 126, 123, 255}
+    paw: canvas2d.Color = {201, 146, 139, 255}
+    features: canvas2d.Color = {35, 32, 30, 255}
+    nose: canvas2d.Color = {161, 102, 101, 255}
+    tooth: canvas2d.Color = {232, 222, 189, 255}
+    leather: canvas2d.Color = {91, 55, 38, 255}
+    leather_dark: canvas2d.Color = {58, 38, 31, 255}
+    brass: canvas2d.Color = {204, 157, 72, 255}
+    goggle_glass: canvas2d.Color = {78, 157, 169, 255}
     model_forward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
-    emote_pose := Mouse_Emote_Pose{breathing_weight = 1, blink_weight = 1, idle_weight = 1}
+    emote_pose := Mouse_Emote_Pose {
+        breathing_weight = 1,
+        blink_weight     = 1,
+        idle_weight      = 1,
+    }
     if model.player_controlled do emote_pose = mouse_emote_pose(&editor.mouse_emote)
     animation := &editor.tweak.player_animation
     turn_pose :=
@@ -21637,7 +21868,11 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     if model.player_controlled && editor.capture_player_blink_pose do blink_weight = 1
     sniff := math.sin(editor.map_time * 5.4) * .008 * (1 - run_weight) * emote_pose.idle_weight
     breathing :=
-        math.sin(editor.map_time * 1.65) * .018 * (1 - run_weight) * (1 - airborne_weight) * emote_pose.breathing_weight
+        math.sin(editor.map_time * 1.65) *
+        .018 *
+        (1 - run_weight) *
+        (1 - airborne_weight) *
+        emote_pose.breathing_weight
     head_sway := math.sin(stride_phase) * .012 * run_weight
     ear_twitch :=
         math.sin(idle_phase * 1.7) * .006 * (1 - run_weight) * emote_pose.idle_weight +
@@ -21789,7 +22024,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 side_motion +
                 ear_height_stagger -
                 airborne_weight * .018 +
-                ear_x * math.sin(body_roll) * .65 + ear_pose.position.y * ear_pose_weight,
+                ear_x * math.sin(body_roll) * .65 +
+                ear_pose.position.y * ear_pose_weight,
                 head_z + .045 + ear_depth_stagger - airborne_weight * .018 + ear_pose.position.z * ear_pose_weight,
             },
             side,
@@ -22022,7 +22258,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
         stem_top := local_point(p, rotation, flower_center_x, flower_center_y, flower_center_z)
         world_box_between(stem_bottom, stem_top, model_forward, .018, .012, {70, 123, 72, 255})
-        petal_color: rl.Color = {238, 111, 137, 255}
+        petal_color: canvas2d.Color = {238, 111, 137, 255}
         for petal_index in 0 ..< 5 {
             petal_angle := f32(petal_index) * math.PI * 2 / 5 + math.PI * .5
             petal_across := math.cos(petal_angle) * .052
@@ -22057,8 +22293,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         crown_x := head_sway + head_turn_x
         crown_y := head_y + .135
         crown_z := head_z + .105
-        shell := rl.Color{105, 69, 39, 255}
-        shell_dark := rl.Color{67, 43, 27, 255}
+        shell := canvas2d.Color{105, 69, 39, 255}
+        shell_dark := canvas2d.Color{67, 43, 27, 255}
         // Keep the fitted edge inside the crown silhouette. A broad lower
         // flange reads as a brim; an acorn cup instead pinches gently around
         // the head and swells into a taller woody dome.
@@ -22086,12 +22322,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         crown_x := head_sway + head_turn_x
         crown_y := head_y + .205
         crown_z := head_z + .105
-        cap := rl.Color{184, 39, 45, 255}
+        cap := canvas2d.Color{184, 39, 45, 255}
         world_bottle_cap_hull(local_point(p, rotation, crown_x, crown_y - .013, crown_z), rotation, cap)
     } else if model.accessory == .Paper_Boat {
-        paper := rl.Color{232, 224, 198, 255}
-        paper_shadow := rl.Color{190, 180, 157, 255}
-        paper_light := rl.Color{248, 241, 216, 255}
+        paper := canvas2d.Color{232, 224, 198, 255}
+        paper_shadow := canvas2d.Color{190, 180, 157, 255}
+        paper_light := canvas2d.Color{248, 241, 216, 255}
         crown_x := head_sway + head_turn_x
         crown_y := head_y + .220
         crown_z := head_z + .105
@@ -22144,9 +22380,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             paper_shadow,
         )
     } else if model.accessory == .Chef_Hat {
-        cloth := rl.Color{226, 224, 211, 255}
-        cloth_shadow := rl.Color{174, 174, 168, 255}
-        cloth_light := rl.Color{244, 241, 224, 255}
+        cloth := canvas2d.Color{226, 224, 211, 255}
+        cloth_shadow := canvas2d.Color{174, 174, 168, 255}
+        cloth_light := canvas2d.Color{244, 241, 224, 255}
         crown_x := head_sway + head_turn_x
         crown_z := head_z + .085
         // The double band hugs the skull and visually anchors the toque.
@@ -22194,11 +22430,11 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         crown_x := head_sway + head_turn_x
         crown_y := head_y + .150
         crown_z := head_z + .075
-        wool := rl.Color{101, 72, 55, 255}
-        wool_dark := rl.Color{58, 41, 34, 255}
-        fur_trim := rl.Color{181, 153, 119, 255}
-        fur_shadow := rl.Color{137, 111, 86, 255}
-        ushanka_fur_light := rl.Color{207, 184, 149, 255}
+        wool := canvas2d.Color{101, 72, 55, 255}
+        wool_dark := canvas2d.Color{58, 41, 34, 255}
+        fur_trim := canvas2d.Color{181, 153, 119, 255}
+        fur_shadow := canvas2d.Color{137, 111, 86, 255}
+        ushanka_fur_light := canvas2d.Color{207, 184, 149, 255}
 
         // One radial hull replaces the former capped side-to-side extrusion.
         // Five horizontal rings round the crown in every camera direction.
@@ -22275,7 +22511,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         for segment in 0 ..< SEGMENTS {
             next := (segment + 1) % SEGMENTS
             top_color := front_weights[segment] > .25 ? wool : wool_dark
-            world_triangle(crown_top, hull[0][segment], hull[0][next], top_color)
+            // Angle increases from +X toward +Z, so the top fan must visit
+            // the next rim vertex first to keep its outward face CCW.
+            world_triangle(crown_top, hull[0][next], hull[0][segment], top_color)
         }
         for ring in 0 ..< RINGS - 1 {
             for segment in 0 ..< SEGMENTS {
@@ -22311,7 +22549,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         hull_bottom := local_point(p, rotation, crown_x, crown_y - .058, crown_z)
         for segment in 0 ..< SEGMENTS {
             next := (segment + 1) % SEGMENTS
-            world_triangle(hull_bottom, hull[RINGS - 1][next], hull[RINGS - 1][segment], wool_dark)
+            // The underside uses the opposite rim order from the top fan so
+            // its outward (downward) face remains CCW as well.
+            world_triangle(hull_bottom, hull[RINGS - 1][segment], hull[RINGS - 1][next], wool_dark)
         }
     } else if model.accessory == .Beret {
         // Seat the band on the rear crown of the skull, just behind the ears.
@@ -22321,10 +22561,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         crown_x := head_sway + head_turn_x - .020
         crown_y := head_y + .195
         crown_z := head_z + .015
-        felt := rl.Color{133, 38, 49, 255}
-        felt_fold := rl.Color{112, 31, 43, 255}
-        felt_dark := rl.Color{77, 26, 35, 255}
-        felt_light := rl.Color{178, 64, 70, 255}
+        felt := canvas2d.Color{133, 38, 49, 255}
+        felt_fold := canvas2d.Color{112, 31, 43, 255}
+        felt_dark := canvas2d.Color{77, 26, 35, 255}
+        felt_light := canvas2d.Color{178, 64, 70, 255}
         // Preserve the deliberate jaunty cock while inheriting most of the
         // animated head roll, so the band stays planted through turns and
         // uneven-ground poses instead of remaining level in world space.
@@ -22389,13 +22629,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // whole assembly above the ears.
         crown_y := head_y + .155
         crown_z := head_z + .070
-        felt := rl.Color{67, 105, 71, 255}
-        felt_dark := rl.Color{38, 69, 48, 255}
-        felt_light := rl.Color{91, 125, 86, 255}
-        band := rl.Color{103, 61, 39, 255}
-        band_light := rl.Color{143, 91, 54, 255}
-        feather := rl.Color{190, 58, 43, 255}
-        feather_light := rl.Color{224, 86, 54, 255}
+        felt := canvas2d.Color{67, 105, 71, 255}
+        felt_dark := canvas2d.Color{38, 69, 48, 255}
+        felt_light := canvas2d.Color{91, 125, 86, 255}
+        band := canvas2d.Color{103, 61, 39, 255}
+        band_light := canvas2d.Color{143, 91, 54, 255}
+        feather := canvas2d.Color{190, 58, 43, 255}
+        feather_light := canvas2d.Color{224, 86, 54, 255}
 
         // Brim, crown, shoulder, and top are one continuous closed felt shell.
         // The profile contracts and shifts rearward as it rises, producing the
@@ -22451,10 +22691,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         crown_x := head_sway + head_turn_x
         crown_y := head_y + .155
         crown_z := head_z + .070
-        tweed := rl.Color{118, 103, 82, 255}
-        tweed_dark := rl.Color{62, 54, 46, 255}
-        tweed_light := rl.Color{137, 120, 94, 255}
-        tweed_front := rl.Color{126, 110, 87, 255}
+        tweed := canvas2d.Color{118, 103, 82, 255}
+        tweed_dark := canvas2d.Color{62, 54, 46, 255}
+        tweed_light := canvas2d.Color{137, 120, 94, 255}
+        tweed_front := canvas2d.Color{126, 110, 87, 255}
 
         world_flat_cap_hull(
             local_point(p, rotation, crown_x, crown_y, crown_z),
@@ -22468,7 +22708,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         crown_x := head_sway + head_turn_x
         crown_y := head_y + .145
         crown_z := head_z + .065
-        canvas := rl.Color{242, 239, 221, 255}
+        canvas := canvas2d.Color{242, 239, 221, 255}
         world_sailor_hat_hull(local_point(p, rotation, crown_x, crown_y, crown_z), rotation, canvas)
     }
 
@@ -22514,7 +22754,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         collar_rear_local, collar_front_local: [SCARF_COLLAR_SEGMENTS]third_person.Vec3
         collar_rear, collar_front: [SCARF_COLLAR_SEGMENTS]third_person.Vec3
         collar_rear_normal, collar_front_normal: [SCARF_COLLAR_SEGMENTS]third_person.Vec3
-        collar_color: [SCARF_COLLAR_SEGMENTS]rl.Color
+        collar_color: [SCARF_COLLAR_SEGMENTS]canvas2d.Color
         for segment in 0 ..< SCARF_COLLAR_SEGMENTS {
             angle := f32(segment) * math.PI * 2 / f32(SCARF_COLLAR_SEGMENTS) + scarf_rotation
             ring_x := math.cos(angle) * (SCARF_NECK_RADIUS_X + SCARF_SURFACE_CLEARANCE)
@@ -22576,7 +22816,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             SCARF_BODY_CLEARANCE :: f32(.030)
             tail_center, tail_left, tail_right: [SCARF_TAIL_POINTS]third_person.Vec3
             tail_normal: [SCARF_TAIL_POINTS]third_person.Vec3
-            tail_color: [SCARF_TAIL_POINTS]rl.Color
+            tail_color: [SCARF_TAIL_POINTS]canvas2d.Color
             for point_index in 0 ..< SCARF_TAIL_POINTS {
                 amount := f32(point_index) / f32(SCARF_TAIL_POINTS - 1)
                 eased := amount * amount * (3 - 2 * amount)
@@ -22827,6 +23067,12 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         fore_planted :=
             model.grounded &&
             (fore_emote_weight > .5 ? fore_emote.planted : posted_weight < .5 && (!fore_locomoting || front_motion.lift < .025))
+        fore_authored := mouse_paws.authored_pose(&editor.player_paws, side_index * 2)
+        if model.track_paw_plants && fore_authored.valid {
+            fore_shoulder = fore_authored.socket
+            fore_paw = fore_authored.desired
+            fore_planted = fore_authored.stance
+        }
         // Mouse forearms are approximately as long as, or slightly longer
         // than, the humerus. Keep the complete chain compact so the proximal
         // limb remains tucked inside the chest silhouette instead of reading
@@ -22835,29 +23081,20 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         FORE_LOWER_LENGTH :: f32(.235)
         fore_minimum_reach := math.abs(FORE_UPPER_LENGTH - FORE_LOWER_LENGTH) + .0001
         fore_maximum_reach := FORE_UPPER_LENGTH + FORE_LOWER_LENGTH - .0001
-        if model.grounded {
+        fore_resolved := mouse_paws.resolved_pose(&editor.player_paws, side_index * 2)
+        if model.grounded && !(model.track_paw_plants && fore_resolved.valid) {
             fore_paw = mouse_ground_contact(editor, fore_paw, .024, fore_planted)
             mouse_clamp_ground_contact_reach(fore_shoulder, &fore_paw, fore_maximum_reach)
-        } else {
+        } else if !(model.track_paw_plants && fore_resolved.valid) {
             mouse_clamp_endpoint_reach(fore_shoulder, &fore_paw, fore_minimum_reach, fore_maximum_reach)
         }
-        if model.track_paw_plants {
-            fore_contact := mouse_paws.resolve(
-                &editor.player_paws.contacts[side_index * 2],
-                fore_shoulder,
-                fore_paw,
-                fore_planted,
-                fore_maximum_reach,
-                rotation,
-            )
-            fore_paw = fore_contact.position
+        if model.track_paw_plants && fore_resolved.valid {
+            fore_shoulder = fore_resolved.limb_root
+            fore_paw = fore_resolved.pad_position
         }
-        if model.grounded {
+        if model.grounded && !(model.track_paw_plants && fore_resolved.valid) {
             fore_paw = mouse_ground_contact(editor, fore_paw, .024, fore_planted)
             mouse_clamp_ground_contact_reach(fore_shoulder, &fore_paw, fore_maximum_reach)
-            if model.track_paw_plants && fore_planted {
-                editor.player_paws.contacts[side_index * 2].anchor = fore_paw
-            }
         }
         fore_elbow = mouse_kinematics.solve_two_bone(
             fore_shoulder,
@@ -22885,7 +23122,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         fore_points := [4]third_person.Vec3{fore_shoulder, fore_elbow, fore_wrist, fore_paw}
         fore_radii := [4]f32{.044, .035, .024, .017}
         fore_socket_color := mouse_limb_socket_color(model.pattern, fur, fur_dark, fur_light, side_f, false)
-        fore_colors := [4]rl.Color{fore_socket_color, fur_dark, paw, paw}
+        fore_colors := [4]canvas2d.Color{fore_socket_color, fur_dark, paw, paw}
         // A compact shoulder bulb overlaps both the skinned chest and the
         // capped limb root. A flat cap alone cannot cover the wedge that
         // opens between those independently posed surfaces at deep flexion.
@@ -22895,7 +23132,20 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         world_mouse_limb_hull(fore_points[:], fore_radii[:], fore_colors[:], model_forward)
         // Paws are low pads lying in the ground plane. The former vertical
         // discs presented their extrusion as a rectangular bar in profile.
-        world_vertical_prism(fore_paw, .044, .041, .030, rotation, paw)
+        if model.track_paw_plants && fore_resolved.valid {
+            world_surface_paw_pad(
+                fore_paw,
+                fore_resolved.pad_normal,
+                .044,
+                .041,
+                .030,
+                rotation,
+                fore_resolved.compression,
+                paw,
+            )
+        } else {
+            world_vertical_prism(fore_paw, .044, .041, .030, rotation, paw)
+        }
         for digit in 0 ..< 3 {
             digit_tip := local_point(
                 fore_paw,
@@ -22904,10 +23154,18 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 -.036 * (1 - run_weight) - .006 * run_weight,
                 .018 * (1 - run_weight) + .064 * run_weight,
             )
-            if model.grounded {
+            if model.track_paw_plants && fore_resolved.valid {
+                digit_tip = fore_resolved.toes[digit].tip
+            } else if model.grounded {
                 digit_tip = mouse_ground_contact(editor, digit_tip, .008, fore_planted)
             }
-            world_tube_between(fore_paw, digit_tip, model_forward, .008, .008, paw)
+            if model.track_paw_plants && fore_resolved.valid {
+                digit_root := fore_resolved.toes[digit].root
+                world_tube_between(fore_paw, digit_root, model_forward, .008, .008, paw)
+                world_tube_between(digit_root, digit_tip, model_forward, .008, .008, paw)
+            } else {
+                world_tube_between(fore_paw, digit_tip, model_forward, .008, .008, paw)
+            }
         }
 
         hind_cycle := rear_cycle
@@ -22962,28 +23220,24 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // authored hind-foot shift stretches back toward the last locomotion
         // contact cached in world space.
         hind_planted :=
-            model.grounded &&
-            (hind_emote_weight > .5 ? hind_emote.planted : hind_lift < .003 && posted_weight < .5)
+            model.grounded && (hind_emote_weight > .5 ? hind_emote.planted : hind_lift < .003 && posted_weight < .5)
+        hind_authored := mouse_paws.authored_pose(&editor.player_paws, side_index * 2 + 1)
+        if model.track_paw_plants && hind_authored.valid {
+            hind_hip = hind_authored.socket
+            hind_paw = hind_authored.desired
+            hind_planted = hind_authored.stance
+        }
         // Preserve the authored .74 total reach while using mouse-like
         // proportions: a tibia longer than the femur and a long, but not
         // dominant, hock-to-paw segment.
         HIND_LENGTHS :: [3]f32{.220, .270, .250}
-        if model.track_paw_plants {
-            hind_contact := mouse_paws.resolve(
-                &editor.player_paws.contacts[side_index * 2 + 1],
-                hind_hip,
-                hind_paw,
-                hind_planted,
-                HIND_LENGTHS[0] + HIND_LENGTHS[1] + HIND_LENGTHS[2],
-                rotation,
-            )
-            hind_paw = hind_contact.position
+        hind_resolved := mouse_paws.resolved_pose(&editor.player_paws, side_index * 2 + 1)
+        if model.track_paw_plants && hind_resolved.valid {
+            hind_hip = hind_resolved.limb_root
+            hind_paw = hind_resolved.pad_position
         }
-        if model.grounded {
+        if model.grounded && !(model.track_paw_plants && hind_resolved.valid) {
             hind_paw = mouse_ground_contact(editor, hind_paw, .024, hind_planted)
-            if model.track_paw_plants && hind_planted {
-                editor.player_paws.contacts[side_index * 2 + 1].anchor = hind_paw
-            }
         }
         hind_chain := [4]third_person.Vec3{hind_hip, hind_knee, hind_hock, hind_paw}
         mouse_constrain_hind_chain(&hind_chain, HIND_LENGTHS, model_forward)
@@ -23005,7 +23259,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             hind_points := [3]third_person.Vec3{hind_hip, hind_knee, hind_hock}
             hind_radii := [3]f32{.065, .052, .041}
             hind_socket_color := mouse_limb_socket_color(model.pattern, fur, fur_dark, fur_light, side_f, true)
-            hind_colors := [3]rl.Color{hind_socket_color, fur, fur_dark}
+            hind_colors := [3]canvas2d.Color{hind_socket_color, fur, fur_dark}
             world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward, false)
         } else {
             hind_ankle := third_person.Vec3 {
@@ -23016,15 +23270,36 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             hind_points := [5]third_person.Vec3{hind_hip, hind_knee, hind_hock, hind_ankle, hind_paw}
             hind_radii := [5]f32{.065, .052, .041, .030, .022}
             hind_socket_color := mouse_limb_socket_color(model.pattern, fur, fur_dark, fur_light, side_f, true)
-            hind_colors := [5]rl.Color{hind_socket_color, fur, fur_dark, paw, paw}
+            hind_colors := [5]canvas2d.Color{hind_socket_color, fur, fur_dark, paw, paw}
             world_mouse_limb_hull(hind_points[:], hind_radii[:], hind_colors[:], model_forward, false)
-            world_vertical_prism(hind_paw, .058, .058, .032, rotation, paw)
+            if model.track_paw_plants && hind_resolved.valid {
+                world_surface_paw_pad(
+                    hind_paw,
+                    hind_resolved.pad_normal,
+                    .058,
+                    .058,
+                    .032,
+                    rotation,
+                    hind_resolved.compression,
+                    paw,
+                )
+            } else {
+                world_vertical_prism(hind_paw, .058, .058, .032, rotation, paw)
+            }
             for digit in 0 ..< 3 {
                 digit_tip := local_point(hind_paw, rotation, side_f * (f32(digit) - 1) * .017, -.008, .092)
-                if model.grounded {
+                if model.track_paw_plants && hind_resolved.valid {
+                    digit_tip = hind_resolved.toes[digit].tip
+                } else if model.grounded {
                     digit_tip = mouse_ground_contact(editor, digit_tip, .009, hind_planted)
                 }
-                world_tube_between(hind_paw, digit_tip, model_forward, .009, .009, paw)
+                if model.track_paw_plants && hind_resolved.valid {
+                    digit_root := hind_resolved.toes[digit].root
+                    world_tube_between(hind_paw, digit_root, model_forward, .009, .009, paw)
+                    world_tube_between(digit_root, digit_tip, model_forward, .009, .009, paw)
+                } else {
+                    world_tube_between(hind_paw, digit_tip, model_forward, .009, .009, paw)
+                }
             }
         }
     }
@@ -23037,7 +23312,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     if model.player_controlled && !model.hide_tail && editor.player_tail.initialized {
         tail_points: [mouse_tail.POINT_COUNT]third_person.Vec3
         tail_radii: [mouse_tail.POINT_COUNT]f32
-        tail_colors: [mouse_tail.POINT_COUNT]rl.Color
+        tail_colors: [mouse_tail.POINT_COUNT]canvas2d.Color
         for point, tail_index in editor.player_tail.points {
             weight := f32(tail_index) / f32(len(editor.player_tail.points) - 1)
             tail_points[tail_index] = point.position
@@ -23096,7 +23371,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     } else if !model.hide_tail {
         tail_points: [9]third_person.Vec3
         tail_radii: [9]f32
-        tail_colors: [9]rl.Color
+        tail_colors: [9]canvas2d.Color
         tail_bind_root := third_person.Vec3{0, .28, -.78}
         tail_posed_root := mouse_skin_vertex(
             {bind_position = tail_bind_root, groups = {{.Pelvis, 1}, {.Spine, 0}}},
@@ -23282,8 +23557,8 @@ world_business_sign :: proc(center: third_person.Vec3, rotation: f32, kind: Busi
     depth := f32(.075)
     segments := 24
     outward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
-    rim := rl.Color{55, 49, 43, 255}
-    backing := rl.Color{83, 70, 56, 255}
+    rim := canvas2d.Color{55, 49, 43, 255}
+    backing := canvas2d.Color{83, 70, 56, 255}
     for segment in 0 ..< segments {
         angle_0 := f32(segment) / f32(segments) * 2 * math.PI
         angle_1 := f32(segment + 1) / f32(segments) * 2 * math.PI
@@ -23454,6 +23729,12 @@ world_attendant_kiosk_at :: proc(
     // main approach and made the sign read as an unexplained cylinder.
     sign_x, sign_z := world_rotate_xz(p.x, p.z, 0, -1.98, rotation)
     world_business_sign({sign_x, ground + 4.50, sign_z}, rotation + math.PI, .Aerodromo, 1.75)
+
+    // A real wind-reading instrument belongs on the open airfield side of
+    // each terminal. Its six articulated bands follow the same authoritative
+    // weather vector used by aircraft, foliage, clouds, and water.
+    windsock_x, windsock_z := world_rotate_xz(p.x, p.z, 16.8, 14.2, rotation)
+    world_procedural_windsock(editor, {windsock_x, ground, windsock_z}, (p.x + p.z) * .017)
 
     // A circular check-in counter makes reception an island within the open
     // arcade rather than a second roofed building. Overlapping tangent facets
@@ -23686,10 +23967,10 @@ world_mouse_interaction_indicator :: proc(editor: ^Editor, mouse_position: third
 
     // Crossed slabs keep the punctuation legible from every approach without
     // requiring a screen-space overlay or a camera-facing render path.
-    bob := f32(math.sin(rl.GetTime() * 3.2)) * .055
+    bob := f32(math.sin(canvas2d.GetTime() * 3.2)) * .055
     center := third_person.Vec3{mouse_position.x, mouse_position.y + 1.18 + bob, mouse_position.z}
-    gold := rl.Color{247, 191, 54, 255}
-    shadow := rl.Color{91, 57, 29, 255}
+    gold := canvas2d.Color{247, 191, 54, 255}
+    shadow := canvas2d.Color{91, 57, 29, 255}
 
     rotations := [2]f32{0, math.PI * .5}
     for rotation in rotations {
@@ -23711,7 +23992,7 @@ Town_Mouse :: struct {
     fur:          Mouse_Fur,
     pattern:      Mouse_Fur_Pattern,
     scarf:        bool,
-    scarf_color:  rl.Color,
+    scarf_color:  canvas2d.Color,
 }
 
 story_resident_town_slot :: proc(resident: story.Resident) -> (island_index, resident_index: int, ok: bool) {
@@ -23893,7 +24174,7 @@ world_settlement_inhabitants :: proc(editor: ^Editor) {
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || editor.settlement_plan.inhabitant_count <= 0 do return
     animated := 0
-    elapsed := f32(rl.GetTime())
+    elapsed := f32(canvas2d.GetTime())
     camera := [2]f32{editor.camera_pose.position.x, editor.camera_pose.position.z}
     for inhabitant, inhabitant_index in editor.settlement_plan.inhabitants[:editor.settlement_plan.inhabitant_count] {
         if inhabitant.home_activity < 0 || inhabitant.home_activity >= editor.settlement_plan.activity_point_count {
@@ -23939,7 +24220,7 @@ world_settlement_inhabitants :: proc(editor: ^Editor) {
         ground := terrain.sample_height(&editor.project, 0, point[0], point[1])
         if ground <= editor.project.sea_level + .35 do continue
         if !world_sphere_in_view(editor, {point[0], ground + .6, point[1]}, 1, 2) do continue
-        tint := inhabitant.worker ? rl.Color{83, 103, 111, 210} : rl.Color{104, 86, 70, 205}
+        tint := inhabitant.worker ? canvas2d.Color{83, 103, 111, 210} : canvas2d.Color{104, 86, 70, 205}
         world_box_rotated({point[0], ground + .43, point[1]}, {.28, .66, .23}, 0, tint)
         world_box_rotated({point[0], ground + .85, point[1]}, {.32, .30, .30}, 0, tint)
     }
@@ -23953,9 +24234,9 @@ world_story_meeting :: proc(editor: ^Editor) {
 
     // A temporary quay awning gives the meeting a readable landmark without
     // requiring a hand-authored coordinate or a new asset.
-    blue := rl.Color{53, 103, 151, 255}
-    pale := rl.Color{219, 230, 220, 255}
-    timber := rl.Color{91, 63, 41, 255}
+    blue := canvas2d.Color{53, 103, 151, 255}
+    pale := canvas2d.Color{219, 230, 220, 255}
+    timber := canvas2d.Color{91, 63, 41, 255}
     canopy_y := max(niko.y, iva.y) + 1.72
     world_box_rotated({center.x, canopy_y, center.z}, {2.55, .12, 1.38}, rotation, blue)
     for stripe in -2 ..= 2 {
@@ -24036,8 +24317,8 @@ world_town_mice :: proc(editor: ^Editor) {
 
     focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
     view_camera := perspective_camera(editor.camera_pose, focal_length)
-    screen_width := max(rl.GetScreenWidth(), 1)
-    screen_height := max(rl.GetScreenHeight(), 1)
+    screen_width := max(canvas2d.GetScreenWidth(), 1)
+    screen_height := max(canvas2d.GetScreenHeight(), 1)
     aspect := f32(screen_width) / f32(screen_height)
     near_plane := world_camera_near_clip(editor)
     residents := [8]Town_Mouse {
@@ -24183,7 +24464,7 @@ world_town_mice :: proc(editor: ^Editor) {
                 fur = is_toma ? Mouse_Fur.Chestnut : Mouse_Fur.Cream,
                 pattern = is_toma ? Mouse_Fur_Pattern.Hooded : Mouse_Fur_Pattern.Piebald,
                 scarf_enabled = true,
-                scarf_color = is_toma ? rl.Color{45, 73, 104, 255} : rl.Color{154, 54, 52, 255},
+                scarf_color = is_toma ? canvas2d.Color{45, 73, 104, 255} : canvas2d.Color{154, 54, 52, 255},
                 grounded = true,
             },
             1,
@@ -24255,14 +24536,14 @@ world_lighthouse_keeper_model :: proc(
             fur = west_keeper ? Mouse_Fur.Soot : Mouse_Fur.Silver,
             pattern = .Pale_Belly,
             scarf_enabled = true,
-            scarf_color = west_keeper ? rl.Color{218, 151, 43, 255} : rl.Color{184, 62, 48, 255},
+            scarf_color = west_keeper ? canvas2d.Color{218, 151, 43, 255} : canvas2d.Color{184, 62, 48, 255},
             grounded = grounded,
         },
         scale,
     )
 }
 
-world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: rl.Color) {
+world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: canvas2d.Color) {
     if editor == nil do return
     segments := 48
     center := third_person.Vec3{x, terrain.sample_height(&editor.project, 0, x, z) + height_offset, z}
@@ -24278,7 +24559,7 @@ world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, colo
     }
 }
 
-world_settlement_brush_segment :: proc(editor: ^Editor, a, b: [2]f32, color: rl.Color) {
+world_settlement_brush_segment :: proc(editor: ^Editor, a, b: [2]f32, color: canvas2d.Color) {
     delta := b - a
     length := linalg.length(delta)
     if editor == nil || length <= .001 do return
@@ -24347,7 +24628,7 @@ world_settlement_brush_outline :: proc(editor: ^Editor) {
         a_local, b_local := local_points[index], local_points[next]
         a := piece.center + [2]f32{a_local[0] * cosine - a_local[1] * sine, a_local[0] * sine + a_local[1] * cosine}
         b := piece.center + [2]f32{b_local[0] * cosine - b_local[1] * sine, b_local[0] * sine + b_local[1] * cosine}
-        color := rl.Color{116, 226, 191, 190}
+        color := canvas2d.Color{116, 226, 191, 190}
         if !settlement_brush_point_developable(&editor.project, (a + b) * .5, SETTLEMENT_TOWN.max_slope) {
             color = {229, 105, 90, 205}
         }
@@ -24374,7 +24655,7 @@ world_brush :: proc(editor: ^Editor) {
     // brush preview from both the pointer and the applied stroke.
     if !editor.cursor_hit do return
     x, z := editor.cursor_world_x, editor.cursor_world_z
-    color: rl.Color = {230, 244, 218, 76}
+    color: canvas2d.Color = {230, 244, 218, 76}
     radius, hardness := editor.radius, editor.hardness
     switch editor.tool {
     case .Raise:
@@ -24388,19 +24669,20 @@ world_brush :: proc(editor: ^Editor) {
         radius = settlement_brush_preset_span(editor.architecture_brush_preset) * .5
         hardness = editor.architecture_brush_hardness
         if editor.marina_paint_mode {
-            color = editor.marina_preview_valid ? rl.Color{128, 211, 166, 92} : rl.Color{218, 105, 86, 104}
+            color = editor.marina_preview_valid ? canvas2d.Color{128, 211, 166, 92} : canvas2d.Color{218, 105, 86, 104}
             radius = editor.marina_brush_radius
             hardness = .72
         } else if editor.farm_paint_mode {
-            color = editor.farm_preview_valid ? rl.Color{153, 174, 76, 92} : rl.Color{218, 105, 86, 104}
+            color = editor.farm_preview_valid ? canvas2d.Color{153, 174, 76, 92} : canvas2d.Color{218, 105, 86, 104}
             radius = editor.farm_brush_radius
             hardness = .68
         } else if editor.wreck_paint_mode {
-            color = editor.wreck_preview_valid ? rl.Color{92, 137, 151, 92} : rl.Color{218, 105, 86, 104}
+            color = editor.wreck_preview_valid ? canvas2d.Color{92, 137, 151, 92} : canvas2d.Color{218, 105, 86, 104}
             radius = editor.wreck_brush_size * .55
             hardness = .68
         } else if formation_brush {
-            color = editor.authoring_tool == .Foliage ? rl.Color{105, 176, 92, 96} : rl.Color{172, 126, 84, 96}
+            color =
+                editor.authoring_tool == .Foliage ? canvas2d.Color{105, 176, 92, 96} : canvas2d.Color{172, 126, 84, 96}
             radius = editor.formation_brush_radius
             hardness = editor.formation_brush_hardness
         } else if editor.climbing_leaf_paint_mode {
@@ -24409,7 +24691,7 @@ world_brush :: proc(editor: ^Editor) {
             hardness = editor.climbing_leaf_brush_hardness
         }
     }
-    if rl.IsMouseButtonDown(.RIGHT) do color = {245, 126, 112, 108}
+    if canvas2d.IsMouseButtonDown(.RIGHT) do color = {245, 126, 112, 108}
     if editor.architecture_paint_mode {
         world_settlement_brush_outline(editor)
         return
@@ -24561,9 +24843,9 @@ ground_grass_chunk_build :: proc(
         variation := wind_streak_hash(seed_index, 4)
         elevation := max(height_at - editor.project.sea_level, f32(0))
         altitude := clamp((elevation - 2.4) / 28, f32(0), f32(1))
-        low := rl.Color{49, 112, 78, 255}
-        middle := rl.Color{75, 137, 68, 255}
-        high := rl.Color{139, 145, 70, 255}
+        low := canvas2d.Color{49, 112, 78, 255}
+        middle := canvas2d.Color{75, 137, 68, 255}
+        high := canvas2d.Color{139, 145, 70, 255}
         color := color_lerp(middle, high, (altitude - .52) / .48)
         if altitude < .52 do color = color_lerp(low, middle, altitude / .52)
         temperature_field :=
@@ -24798,6 +25080,7 @@ world_build :: proc(editor: ^Editor) {
     clear(&world_renderer.bougainvillea_instances)
     clear(&world_renderer.grass_instances)
     clear(&world_renderer.wildflower_instances)
+    clear(&world_renderer.marsh_instances)
     clear(&world_renderer.terrain_particle_vertices)
     world_renderer.structure_lod_counts = {}
     world_renderer.structure_lod_world_vertices = 0
@@ -24808,7 +25091,7 @@ world_build :: proc(editor: ^Editor) {
     world_renderer.dynamic_caster_count = 0
     world_renderer.late_transparent_first = 0
     world_renderer.late_transparent_count = 0
-    world_renderer.scene_daylight = atmosphere.sample(&editor.atmosphere).daylight
+    world_renderer.scene_daylight = atmosphere_sky(editor).daylight
     if editor.pause_screen == .Customization {
         // The customization screen gets a purpose-built miniature world pass.
         // It uses the exact gameplay model and materials, rather than maintaining
@@ -24892,6 +25175,7 @@ world_build :: proc(editor: ^Editor) {
     world_town_mice(editor)
     world_settlement_inhabitants(editor)
     world_settlement_patios(editor)
+    world_settlement_cemetery(editor)
     world_authored_farmland(editor)
     world_authored_wrecks(editor)
     lab_scene_draw_world_overlay(editor)
@@ -24910,6 +25194,7 @@ world_build :: proc(editor: ^Editor) {
     world_wing_trails(editor)
     world_rondine_wake_fans(editor)
     world_wind_streaks(editor)
+    world_fog_shells(editor)
     // Keep transparent municipal pools contiguous at the end of the existing
     // world buffer. The render graph submits this range only after roads and
     // foliage have established receiver depth.
@@ -24926,7 +25211,7 @@ world_bomber_drops :: proc(editor: ^Editor) {
         // bounded payloads, retaining them is cheaper and more reliable than
         // culling solely against the primary view.
         if drop.landed && !world_sphere_in_view(editor, drop.position, f32(2.5)) do continue
-        payload_color := rl.Color{218, 187, 124, 255}
+        payload_color := canvas2d.Color{218, 187, 124, 255}
         payload_size := third_person.Vec3{.55, .34, .44}
         switch drop.kind {
         case .Mail:
@@ -24948,11 +25233,11 @@ world_bomber_drops :: proc(editor: ^Editor) {
         }
         if !drop.parachute_open || drop.landed do continue
         canopy_center := third_person.Vec3{drop.position.x, drop.position.y + 1.75, drop.position.z}
-        canopy_color := rl.Color{235, 218, 166, 255}
+        canopy_color := canvas2d.Color{235, 218, 166, 255}
         if drop.kind == .Mail do canopy_color = {224, 108, 90, 255}
         if drop.kind == .Supplies do canopy_color = {102, 151, 125, 255}
         world_ellipsoid_rotated(canopy_center, 1.18, .28, 1.18, 0, canopy_color)
-        cord_color := rl.Color{222, 213, 183, 255}
+        cord_color := canvas2d.Color{222, 213, 183, 255}
         anchors := [4]third_person.Vec3 {
             {canopy_center.x - .82, canopy_center.y - .05, canopy_center.z},
             {canopy_center.x + .82, canopy_center.y - .05, canopy_center.z},
@@ -24970,7 +25255,7 @@ world_petal_particles :: proc(editor: ^Editor) {
         editor.camera_pose,
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
-    palette := [5]rl.Color {
+    palette := [5]canvas2d.Color {
         {246, 201, 70, 235},
         {242, 121, 151, 235},
         {199, 151, 229, 225},
@@ -25004,7 +25289,7 @@ customization_preview_camera_pose :: proc() -> third_person.Camera_Pose {
 world_vehicle_particle :: proc(
     camera: Perspective_Camera,
     particle: particles.Vehicle_Particle,
-    color: rl.Color,
+    color: canvas2d.Color,
     opacity_override: f32 = -1,
 ) {
     fade := clamp(particle.life / particle.max_life, 0, 1)
@@ -25034,7 +25319,7 @@ world_vehicle_particle :: proc(
     p := third_person.Vec3{particle.position.x, particle.position.y, particle.position.z}
     opacity := opacity_override < 0 ? fade : clamp(opacity_override, 0, 1)
     alpha := u8(f32(color.a) * opacity)
-    shade := rl.Color{color.r, color.g, color.b, alpha}
+    shade := canvas2d.Color{color.r, color.g, color.b, alpha}
     world_quad(
         {p.x - right.x - up.x, p.y - right.y - up.y, p.z - right.z - up.z},
         {p.x + right.x - up.x, p.y + right.y - up.y, p.z + right.z - up.z},
@@ -25161,7 +25446,7 @@ world_wing_trails :: proc(editor: ^Editor) {
             // keep the trail from reading as a rigid glowing cable.
             radius := particle.size * (.68 + age * 1.05)
             opacity := fade * f32(math.sqrt(f64(fade)))
-            color := rl.Color{205, 239, 236, u8(clamp(opacity * 112, 0, 112))}
+            color := canvas2d.Color{205, 239, 236, u8(clamp(opacity * 112, 0, 112))}
             for ring_side in 0 ..< 8 {
                 angle := f32(ring_side) * math.PI * 2 / 8
                 radial := third_person.Vec3 {
@@ -25218,9 +25503,7 @@ wind_streak_hash :: proc(index, salt: int) -> f32 {
 }
 
 @(no_instrumentation)
-wind_streak_camera_distance :: proc(
-    camera, start, finish: third_person.Vec3,
-) -> f32 {
+wind_streak_camera_distance :: proc(camera, start, finish: third_person.Vec3) -> f32 {
     segment := finish - start
     length_squared := linalg.dot(segment, segment)
     if length_squared <= .000001 do return linalg.length(camera - start)
@@ -25277,10 +25560,7 @@ world_wind_streaks :: proc(editor: ^Editor) {
             body.position.y + vertical,
             body.position.z + direction_z * along + side_z * lateral,
         }
-        streak_length :=
-            (1.4 + wind_speed * .58) *
-            (.62 + wind_streak_hash(index, 5) * .58) *
-            (.84 + gust * .18)
+        streak_length := (1.4 + wind_speed * .58) * (.62 + wind_streak_hash(index, 5) * .58) * (.84 + gust * .18)
         center_camera_distance := linalg.length(
             editor.camera_pose.position - third_person.Vec3{center.x, center.y, center.z},
         )
@@ -25319,10 +25599,7 @@ world_wind_streaks :: proc(editor: ^Editor) {
         // angles, and its winding can face away from the back-face culled pass.
         ribbon_right := linalg.normalize0(linalg.cross(to_camera, line_direction)) * width
         vertices := [6]World_Vertex {
-            world_vertex(
-                {tail.x, tail.y, tail.z},
-                {137, 218, 235, tail_alpha},
-            ),
+            world_vertex({tail.x, tail.y, tail.z}, {137, 218, 235, tail_alpha}),
             world_vertex(
                 {center.x - ribbon_right.x, center.y - ribbon_right.y, center.z - ribbon_right.z},
                 {178, 235, 246, alpha},
@@ -25331,18 +25608,12 @@ world_wind_streaks :: proc(editor: ^Editor) {
                 {center.x + ribbon_right.x, center.y + ribbon_right.y, center.z + ribbon_right.z},
                 {178, 235, 246, alpha},
             ),
-            world_vertex(
-                {tail.x, tail.y, tail.z},
-                {137, 218, 235, tail_alpha},
-            ),
+            world_vertex({tail.x, tail.y, tail.z}, {137, 218, 235, tail_alpha}),
             world_vertex(
                 {center.x + ribbon_right.x, center.y + ribbon_right.y, center.z + ribbon_right.z},
                 {178, 235, 246, alpha},
             ),
-            world_vertex(
-                {tail.x, tail.y, tail.z},
-                {137, 218, 235, tail_alpha},
-            ),
+            world_vertex({tail.x, tail.y, tail.z}, {137, 218, 235, tail_alpha}),
         }
         append(
             &world_renderer.late_transparent_vertices,
@@ -25350,6 +25621,79 @@ world_wind_streaks :: proc(editor: ^Editor) {
             // Cool blue distinguishes wind moving through world space from
             // the warm radial speed lines drawn in the flight overlay.
         )
+    }
+}
+
+world_fog_shell_bank :: proc(editor: ^Editor, bank: fog_field.Fog_Bank, weight, global_density: f32) {
+    alpha_scale := clamp(weight * global_density * bank.peak_density, 0, 1)
+    if alpha_scale <= .01 do return
+    camera := editor.camera_pose.position
+    camera_density := fog_field.sample_bank(bank, {camera.x, camera.y, camera.z})
+    altitude_fade := 1 - clamp((camera.y - bank.top_altitude - 80) / 240, 0, 1)
+    alpha_scale *= (1 - camera_density * .86) * altitude_fade
+    if alpha_scale <= .01 do return
+    SEGMENTS :: 48
+    BANDS :: 3
+    side := fog_field.Vec2{-bank.axis.y, bank.axis.x}
+    for band in 0 ..< BANDS {
+        y0 := bank.base_altitude + (bank.top_altitude - bank.base_altitude) * f32(band) / BANDS
+        y1 := bank.base_altitude + (bank.top_altitude - bank.base_altitude) * f32(band + 1) / BANDS
+        band_fade := band == BANDS - 1 ? f32(.55) : f32(1)
+        alpha := u8(clamp(38 * alpha_scale * band_fade, 0, 52))
+        for segment in 0 ..< SEGMENTS {
+            angle0 := f32(segment) / SEGMENTS * 2 * f32(math.PI)
+            angle1 := f32(segment + 1) / SEGMENTS * 2 * f32(math.PI)
+            c0, s0 := f32(math.cos(f64(angle0))), f32(math.sin(f64(angle0)))
+            c1, s1 := f32(math.cos(f64(angle1))), f32(math.sin(f64(angle1)))
+            x0 := bank.center.x + bank.axis.x * c0 * bank.radii.x + side.x * s0 * bank.radii.y
+            z0 := bank.center.y + bank.axis.y * c0 * bank.radii.x + side.y * s0 * bank.radii.y
+            x1 := bank.center.x + bank.axis.x * c1 * bank.radii.x + side.x * s1 * bank.radii.y
+            z1 := bank.center.y + bank.axis.y * c1 * bank.radii.x + side.y * s1 * bank.radii.y
+            top0, top1 := y1, y1
+            if band == BANDS - 1 {
+                crown0 := .72 + .28 * (.5 + .5 * f32(math.sin(f64(angle0 * 3.0 + bank.axis.x * 5.7))))
+                crown1 := .72 + .28 * (.5 + .5 * f32(math.sin(f64(angle1 * 3.0 + bank.axis.x * 5.7))))
+                top0 = bank.base_altitude + (bank.top_altitude - bank.base_altitude) * crown0
+                top1 = bank.base_altitude + (bank.top_altitude - bank.base_altitude) * crown1
+            }
+            vertices := [6]World_Vertex {
+                world_vertex({x0, y0, z0}, {190, 208, 210, 0}),
+                world_vertex({x1, y0, z1}, {190, 208, 210, 0}),
+                world_vertex({x1, top1, z1}, {198, 214, 215, alpha}),
+                world_vertex({x0, y0, z0}, {190, 208, 210, 0}),
+                world_vertex({x1, top1, z1}, {198, 214, 215, alpha}),
+                world_vertex({x0, top0, z0}, {198, 214, 215, alpha}),
+            }
+            bottom_v, top_v := f32(band) / BANDS, f32(band + 1) / BANDS
+            vertices[0].uv = {f32(segment) / SEGMENTS, bottom_v}
+            vertices[1].uv = {f32(segment + 1) / SEGMENTS, bottom_v}
+            vertices[2].uv = {f32(segment + 1) / SEGMENTS, top_v}
+            vertices[3].uv = {f32(segment) / SEGMENTS, bottom_v}
+            vertices[4].uv = {f32(segment + 1) / SEGMENTS, top_v}
+            vertices[5].uv = {f32(segment) / SEGMENTS, top_v}
+            for &vertex in vertices do vertex.kind = .Fog_Shell
+            append(&world_renderer.late_transparent_vertices, ..vertices[:])
+            // The camera may approach an ellipse from either side, and the
+            // transparent world pipeline retains back-face culling.
+            reverse := [6]World_Vertex{vertices[0], vertices[2], vertices[1], vertices[3], vertices[5], vertices[4]}
+            append(&world_renderer.late_transparent_vertices, ..reverse[:])
+        }
+    }
+}
+
+world_fog_shells :: proc(editor: ^Editor) {
+    if editor == nil || !editor.in_map || !fog_debug_enabled || !fog_debug_shells do return
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    field := fog_field.generate(
+        editor.atmosphere.seed,
+        editor.atmosphere.front_seconds,
+        editor.atmosphere.weather,
+        {{-half_extent, -half_extent}, {half_extent, half_extent}},
+        editor.atmosphere.climate.current,
+    )
+    for index in 0 ..< fog_field.MAX_BANKS {
+        if field.blend < 1 do world_fog_shell_bank(editor, field.previous_banks[index], 1 - field.blend, field.global_density)
+        world_fog_shell_bank(editor, field.banks[index], field.blend, field.global_density)
     }
 }
 
@@ -25885,12 +26229,12 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         "foliage descriptor set layout",
     )
     foliage_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = 5},
-        {type = .SAMPLER, descriptorCount = 5},
+        {type = .SAMPLED_IMAGE, descriptorCount = 6},
+        {type = .SAMPLER, descriptorCount = 6},
     }
     foliage_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-        maxSets       = 5,
+        maxSets       = 6,
         poolSizeCount = 2,
         pPoolSizes    = raw_data(foliage_pool_sizes[:]),
     }
@@ -25904,18 +26248,19 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         auto_cast world_renderer.foliage_descriptor_pool,
         "foliage descriptor pool",
     )
-    foliage_layouts := [5]vk.DescriptorSetLayout {
+    foliage_layouts := [6]vk.DescriptorSetLayout {
+        world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
         world_renderer.foliage_descriptor_layout,
     }
-    foliage_descriptors: [5]vk.DescriptorSet
+    foliage_descriptors: [6]vk.DescriptorSet
     foliage_allocate := vk.DescriptorSetAllocateInfo {
         sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
         descriptorPool     = world_renderer.foliage_descriptor_pool,
-        descriptorSetCount = 5,
+        descriptorSetCount = 6,
         pSetLayouts        = raw_data(foliage_layouts[:]),
     }
     if vk.AllocateDescriptorSets(ctx.device, &foliage_allocate, raw_data(foliage_descriptors[:])) != .SUCCESS {
@@ -25925,7 +26270,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.bougainvillea_descriptor = foliage_descriptors[1]
     world_renderer.grass_descriptor = foliage_descriptors[2]
     world_renderer.wildflower_descriptor = foliage_descriptors[3]
-    world_renderer.terrain_particle_descriptor = foliage_descriptors[4]
+    world_renderer.marsh_descriptor = foliage_descriptors[4]
+    world_renderer.terrain_particle_descriptor = foliage_descriptors[5]
     engine.vk_set_debug_name(
         ctx,
         .DESCRIPTOR_SET,
@@ -25945,6 +26291,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         auto_cast world_renderer.wildflower_descriptor,
         "wildflower descriptor set",
     )
+    engine.vk_set_debug_name(ctx, .DESCRIPTOR_SET, auto_cast world_renderer.marsh_descriptor, "marsh descriptor set")
     engine.vk_set_debug_name(
         ctx,
         .DESCRIPTOR_SET,
@@ -25992,6 +26339,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     ) {
         return false
     }
+    if !resources.texture_load_file(
+        ctx,
+        "assets/textures/foliage/marsh-tidal-rushes-atlas.png",
+        &world_renderer.marsh_atlas,
+        {address_mode = .CLAMP_TO_EDGE},
+    ) {
+        return false
+    }
     foliage_image_info := vk.DescriptorImageInfo {
         imageView   = world_renderer.foliage_atlas.view,
         imageLayout = .SHADER_READ_ONLY_OPTIMAL,
@@ -26020,6 +26375,13 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     wildflower_sampler_info := vk.DescriptorImageInfo {
         sampler = world_renderer.wildflower_atlas.sampler,
     }
+    marsh_image_info := vk.DescriptorImageInfo {
+        imageView   = world_renderer.marsh_atlas.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    marsh_sampler_info := vk.DescriptorImageInfo {
+        sampler = world_renderer.marsh_atlas.sampler,
+    }
     terrain_particle_image_info := vk.DescriptorImageInfo {
         imageView   = world_renderer.terrain_particle_atlas.view,
         imageLayout = .SHADER_READ_ONLY_OPTIMAL,
@@ -26027,7 +26389,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     terrain_particle_sampler_info := vk.DescriptorImageInfo {
         sampler = world_renderer.terrain_particle_atlas.sampler,
     }
-    foliage_writes := [10]vk.WriteDescriptorSet {
+    foliage_writes := [12]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
             dstSet = world_renderer.foliage_descriptor,
@@ -26094,6 +26456,22 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         },
         {
             sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.marsh_descriptor,
+            dstBinding = 0,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &marsh_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = world_renderer.marsh_descriptor,
+            dstBinding = 1,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &marsh_sampler_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
             dstSet = world_renderer.terrain_particle_descriptor,
             dstBinding = 0,
             descriptorCount = 1,
@@ -26109,7 +26487,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             pImageInfo = &terrain_particle_sampler_info,
         },
     }
-    vk.UpdateDescriptorSets(ctx.device, 10, raw_data(foliage_writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(ctx.device, 12, raw_data(foliage_writes[:]), 0, nil)
     foliage_layout_info := li
     foliage_layout_info.setLayoutCount = 1
     foliage_set_layouts := [2]vk.DescriptorSetLayout {
@@ -26627,7 +27005,10 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         if !world_host_buffer_create(
             ctx,
             vk.DeviceSize(
-                (GRASS_INSTANCE_INITIAL_CAPACITY + WILDFLOWER_INSTANCE_INITIAL_CAPACITY) * size_of(Grass_Instance),
+                (GRASS_INSTANCE_INITIAL_CAPACITY +
+                    WILDFLOWER_INSTANCE_INITIAL_CAPACITY +
+                    MARSH_INSTANCE_INITIAL_CAPACITY) *
+                size_of(Grass_Instance),
             ),
             {.VERTEX_BUFFER},
             &buffer,
@@ -26703,6 +27084,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.bougainvillea_instances = make([dynamic]Bougainvillea_Instance, 0, 2_000)
     world_renderer.grass_instances = make([dynamic]Grass_Instance, 0, GRASS_INSTANCE_INITIAL_CAPACITY)
     world_renderer.wildflower_instances = make([dynamic]Grass_Instance, 0, WILDFLOWER_INSTANCE_INITIAL_CAPACITY)
+    world_renderer.marsh_instances = make([dynamic]Grass_Instance, 0, MARSH_INSTANCE_INITIAL_CAPACITY)
     world_renderer.terrain_particle_vertices = make([dynamic]Foliage_Vertex, 0, 1_536)
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
     world_renderer.wing_trail_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
@@ -26714,7 +27096,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     return true
 }
 
-world_pre_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
+world_pre_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
     editor := world_renderer.editor
     if editor == nil do return
@@ -26847,7 +27229,7 @@ dialogue_portrait_world_push :: proc(editor: ^Editor, aspect: f32, player: bool)
     camera_offset := third_person.Vec3{player ? f32(-.03) : f32(.03), .10, -1.62}
     pose := third_person.camera_near(target, camera_offset)
     camera := perspective_camera(pose, 1.72)
-    sky := atmosphere.sample(&editor.atmosphere)
+    sky := atmosphere_sky(editor)
     return {
         camera_position = {camera.position.x, camera.position.y, camera.position.z, .04},
         camera_right = {camera.right.x, camera.right.y, camera.right.z, 12},
@@ -26867,7 +27249,7 @@ dialogue_portrait_backdrop :: proc(aspect: f32) {
     half_height := f32(1.55)
     half_width := half_height * max(aspect, f32(.1))
     z := f32(.38)
-    color := rl.Color{18, 15, 12, 176}
+    color := canvas2d.Color{18, 15, 12, 176}
     a := third_person.Vec3{-half_width, -.35, z}
     b := third_person.Vec3{-half_width, -.35 + half_height * 2, z}
     c := third_person.Vec3{half_width, -.35 + half_height * 2, z}
@@ -26877,7 +27259,7 @@ dialogue_portrait_backdrop :: proc(aspect: f32) {
 }
 
 dialogue_portrait_render :: proc(
-    pass: ^rl.World_Pass_Context,
+    pass: ^canvas2d.World_Pass_Context,
     buffer: ^engine.Vk_Buffer,
     pipeline_index: int,
     editor: ^Editor,
@@ -26886,7 +27268,7 @@ dialogue_portrait_render :: proc(
     logical_w, logical_h := pass.logical_extent[0], pass.logical_extent[1]
     if logical_w <= 0 || logical_h <= 0 do return
     layout := dialogue_tv_layout(logical_w, logical_h)
-    cards := [2]rl.Rectangle{layout.player_card, layout.npc_card}
+    cards := [2]canvas2d.Rectangle{layout.player_card, layout.npc_card}
     players := [2]bool{true, false}
     main_count := len(world_renderer.vertices)
     model_firsts, model_counts: [2]int
@@ -26992,7 +27374,7 @@ dialogue_portrait_render :: proc(
     resize(&world_renderer.vertices, main_count)
 }
 
-world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
+world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized do return
     editor := world_renderer.editor
     if editor == nil do return
@@ -27070,8 +27452,10 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
     }
     if len(world_renderer.terrain_particle_vertices) > 0 {
         destination := cast(rawptr)(cast(uintptr)foliage_buffer.mapped +
-            uintptr((len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)) *
-                size_of(Foliage_Vertex)))
+            uintptr(
+                (len(world_renderer.foliage_vertices) + len(world_renderer.bougainvillea_vertices)) *
+                size_of(Foliage_Vertex),
+            ))
         mem.copy_non_overlapping(
             destination,
             raw_data(world_renderer.terrain_particle_vertices[:]),
@@ -27099,6 +27483,16 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             destination,
             raw_data(world_renderer.wildflower_instances[:]),
             len(world_renderer.wildflower_instances) * size_of(Grass_Instance),
+        )
+    }
+    if len(world_renderer.marsh_instances) > 0 {
+        first := len(world_renderer.grass_instances) + len(world_renderer.wildflower_instances)
+        destination := cast(rawptr)(cast(uintptr)grass_instance_buffer.mapped +
+            uintptr(first * size_of(Grass_Instance)))
+        mem.copy_non_overlapping(
+            destination,
+            raw_data(world_renderer.marsh_instances[:]),
+            len(world_renderer.marsh_instances) * size_of(Grass_Instance),
         )
     }
     if len(world_renderer.instance_vertices) > 0 {
@@ -27156,7 +27550,11 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         focal_length = max(editor.cinematic_focal_length, f32(.01))
     }
     camera := perspective_camera(render_camera_pose, focal_length)
-    sky := atmosphere.sample(&editor.atmosphere)
+    sky := atmosphere_sky(editor)
+    sky_front := atmosphere.sky_front_field(
+        &editor.atmosphere,
+        {camera.position.x, camera.position.y, camera.position.z},
+    )
     fog := world_sky_horizon_color(sky)
     world_push := World_Push {
         camera_position = {camera.position.x, camera.position.y, camera.position.z, world_camera_near_clip(editor)},
@@ -27190,7 +27588,7 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             f32(pass.framebuffer_extent.width) / f32(max(pass.framebuffer_extent.height, 1)),
         },
         camera_up      = {camera.up.x, camera.up.y, camera.up.z, camera.focal_length},
-        camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
+        camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, sky_front.signed_distance_widths},
         sun_direction  = {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], f32(sky.cloud_seed)},
         moon_direction = {sky.moon_direction[0], sky.moon_direction[1], sky.moon_direction[2], sky.moon_illumination},
         time_light     = {sky.world_minutes, sky.cloud_time_seconds, sky.daylight, sky.twilight},
@@ -27200,7 +27598,12 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
             sky.weather.cloud_cover,
             sky.weather.precipitation,
         },
-        haze_severity  = {sky.weather.haze, sky.weather.severity, sky.world_days, 0},
+        haze_severity  = {
+            sky.weather.haze,
+            sky.weather.severity,
+            sky.world_days,
+            sky_front.active ? sky_front.horizon_ray_widths : f32(-1),
+        },
     }
     offset := vk.DeviceSize(0)
     graph_context := Render_Graph_Context {
@@ -27292,9 +27695,9 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
 
 world_renderer_attach :: proc(editor: ^Editor) {
     world_renderer.editor = editor
-    rl.SetWorldPrePass(world_pre_pass)
-    rl.SetWorldPass(world_pass)
-    rl.SetUIPass(imgui_ui_pass)
+    canvas2d.SetWorldPrePass(world_pre_pass)
+    canvas2d.SetWorldPass(world_pass)
+    canvas2d.SetUIPass(imgui_ui_pass)
 }
 
 world_renderer_destroy :: proc() {
@@ -27344,6 +27747,7 @@ world_renderer_destroy :: proc() {
     resources.image_destroy(&world_renderer.bougainvillea_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.grass_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.wildflower_atlas, world_renderer.ctx)
+    resources.image_destroy(&world_renderer.marsh_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.terrain_particle_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.vehicle_paint_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.soda_cap_logo, world_renderer.ctx)
@@ -27390,6 +27794,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.bougainvillea_instances)
     delete(world_renderer.grass_instances)
     delete(world_renderer.wildflower_instances)
+    delete(world_renderer.marsh_instances)
     delete(world_renderer.terrain_particle_vertices)
     world_instance_meshes_clear()
     delete(world_renderer.instance_vertices)

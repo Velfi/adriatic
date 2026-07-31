@@ -11,7 +11,7 @@ import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 Garden_Style :: enum u8 {
     Courtyard,
@@ -35,7 +35,7 @@ Garden_Plant :: struct {
     position: third_person.Vec3,
     kind:     Garden_Plant_Kind,
     scale:    f32,
-    color:    rl.Color,
+    color:    canvas2d.Color,
 }
 
 Garden_Plan :: struct {
@@ -75,13 +75,13 @@ garden_lab_branch_instance_meshes: [13][4]int
 garden_lab_leaf_instance_meshes: [13][4]int
 garden_lab_flower_instance_meshes: [4]int
 
-GARDEN_SOIL := rl.Color{91, 66, 43, 255}
-GARDEN_STONE := rl.Color{202, 192, 165, 255}
-GARDEN_STONE_DARK := rl.Color{139, 133, 116, 255}
-GARDEN_LEAF := rl.Color{61, 105, 55, 255}
-GARDEN_LEAF_LIGHT := rl.Color{93, 135, 67, 255}
-GARDEN_CYPRESS := rl.Color{38, 78, 52, 255}
-GARDEN_TERRACOTTA := rl.Color{171, 83, 48, 255}
+GARDEN_SOIL := canvas2d.Color{91, 66, 43, 255}
+GARDEN_STONE := canvas2d.Color{202, 192, 165, 255}
+GARDEN_STONE_DARK := canvas2d.Color{139, 133, 116, 255}
+GARDEN_LEAF := canvas2d.Color{61, 105, 55, 255}
+GARDEN_LEAF_LIGHT := canvas2d.Color{93, 135, 67, 255}
+GARDEN_CYPRESS := canvas2d.Color{38, 78, 52, 255}
+GARDEN_TERRACOTTA := canvas2d.Color{171, 83, 48, 255}
 
 garden_hash :: proc(value: u32) -> u32 {
     result := value
@@ -184,7 +184,7 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
         for index in 0 ..< 24 {
             angle := f32(index) / 24 * math.PI * 2
             radius := 3.05 + (garden_random01(seed, index, 23) - .5) * .32
-            palette := [3]rl.Color{{201, 76, 68, 255}, {237, 188, 71, 255}, {202, 116, 163, 255}}
+            palette := [3]canvas2d.Color{{201, 76, 68, 255}, {237, 188, 71, 255}, {202, 116, 163, 255}}
             garden_add_plant(
                 &plan,
                 {
@@ -210,7 +210,7 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
             stagger := bed % 2 == 0 ? f32(0) : f32(.18)
             x := -6.6 + f32(slot) * (13.2 / 14) + stagger
             z := -4.5 + f32(bed) * 3
-            color := bed % 2 == 0 ? GARDEN_LEAF_LIGHT : rl.Color{82, 119, 64, 255}
+            color := bed % 2 == 0 ? GARDEN_LEAF_LIGHT : canvas2d.Color{82, 119, 64, 255}
             garden_add_plant(&plan, {{x, 0, z}, .Herb, .7 + garden_random01(seed, index) * .45, color})
         }
         for index in 0 ..< 2 {
@@ -266,7 +266,7 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
             // Preserve a loose S-shaped walking route through the meadow.
             path_x := math.sin(z * .34) * 1.5
             if abs(x - path_x) < 1.15 do continue
-            palette := [4]rl.Color {
+            palette := [4]canvas2d.Color {
                 {220, 178, 61, 255},
                 {188, 82, 105, 255},
                 {224, 220, 184, 255},
@@ -719,19 +719,19 @@ garden_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 
 garden_lab_process_input :: proc(_: ^Editor) {
     changed := false
-    if rl.IsKeyPressed(.R) {
+    if canvas2d.IsKeyPressed(.R) {
         garden_lab_seed += 1
         changed = true
     }
-    if rl.IsKeyPressed(.ONE) {
+    if canvas2d.IsKeyPressed(.ONE) {
         garden_lab_style = .Courtyard
         changed = true
     }
-    if rl.IsKeyPressed(.TWO) {
+    if canvas2d.IsKeyPressed(.TWO) {
         garden_lab_style = .Kitchen
         changed = true
     }
-    if rl.IsKeyPressed(.THREE) {
+    if canvas2d.IsKeyPressed(.THREE) {
         garden_lab_style = .Wild
         changed = true
     }
@@ -881,7 +881,7 @@ garden_crown_segment_intersection :: proc(
 garden_draw_leaf_plane :: proc(
     center, normal, horizontal, vertical: third_person.Vec3,
     width, height: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
 ) {
     right := horizontal * (width * .5)
     up := vertical * (height * .5)
@@ -892,7 +892,7 @@ garden_draw_leaf_plane :: proc(
     world_triangle_foliage(d, c, a, color, color, color, -normal, -normal, -normal)
 }
 
-garden_draw_hull_leaf :: proc(center, normal: third_person.Vec3, width, height: f32, color: rl.Color) {
+garden_draw_hull_leaf :: proc(center, normal: third_person.Vec3, width, height: f32, color: canvas2d.Color) {
     tangent := linalg.normalize0(linalg.cross(normal, third_person.Vec3{0, 1, 0}))
     if linalg.dot(tangent, tangent) < .1 {
         tangent = linalg.normalize0(linalg.cross(normal, third_person.Vec3{1, 0, 0}))
@@ -909,7 +909,7 @@ garden_draw_hull_leaf :: proc(center, normal: third_person.Vec3, width, height: 
 
 garden_mesh_instance :: proc(
     x_axis, y_axis, z_axis, translation: third_person.Vec3,
-    color: rl.Color,
+    color: canvas2d.Color,
     normal_override: third_person.Vec3 = {},
     override_normal: bool = false,
 ) -> World_Mesh_Instance {
@@ -1001,7 +1001,7 @@ garden_draw_generated_leaf :: proc(
     yaw: f32,
     mesh: ^leaf_mesh.Mesh,
     scale: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     cache_kind: int = -1,
     variant: int = -1,
 ) {
@@ -1062,7 +1062,7 @@ garden_draw_generated_leaf :: proc(
 garden_draw_attachment_flower :: proc(
     position: third_person.Vec3,
     scale: f32,
-    color: rl.Color,
+    color: canvas2d.Color,
     stage: plants.Attachment_Stage = .Bloom,
 ) {
     stage_index := 3
@@ -1093,7 +1093,7 @@ garden_draw_lsystem_plant :: proc(plant: Garden_Plant, cache_kind: int) {
     if !garden_lab_lsystem_ready[cache_kind][variant] do return
     generated := &garden_lab_lsystem_plants[cache_kind][variant].plant
     yaw := garden_random01(garden_lab_seed, variant, location_hash) * math.PI * 2
-    wood := rl.Color{103, 70, 43, 255}
+    wood := canvas2d.Color{103, 70, 43, 255}
     scale := plant.scale * garden_species_display_scale(cache_kind)
     if garden_lab_branch_mesh_ready[cache_kind][variant] {
         mesh := &garden_lab_branch_meshes[cache_kind][variant]
@@ -1116,7 +1116,7 @@ garden_draw_lsystem_plant :: proc(plant: Garden_Plant, cache_kind: int) {
         surface, hull_normal := garden_crown_surface(plant, cache_kind, candidate)
         position := garden_crown_contains(plant, cache_kind, candidate) ? candidate : surface
         if leaf.kind == .Fruit {
-            fruit_color := rl.Color{171, 62, 52, 255}
+            fruit_color := canvas2d.Color{171, 62, 52, 255}
             switch cache_kind {
             case 1:
                 fruit_color = {226, 157, 43, 255}
@@ -1171,7 +1171,7 @@ garden_draw_lsystem_plant :: proc(plant: Garden_Plant, cache_kind: int) {
             continue
         }
         if leaf.kind == .Flower {
-            flower_color := rl.Color{242, 224, 190, 255}
+            flower_color := canvas2d.Color{242, 224, 190, 255}
             switch cache_kind {
             case 2:
                 flower_color = {226, 121, 157, 255}
@@ -1222,9 +1222,9 @@ garden_draw_lsystem_plant :: proc(plant: Garden_Plant, cache_kind: int) {
         if leaf.kind != .Leaf do continue
         color := leaf_index % 7 == 0 ? GARDEN_LEAF_LIGHT : plant.color
         if cache_kind == 0 {
-            color = leaf_index % 5 == 0 ? rl.Color{67, 111, 76, 255} : rl.Color{42, 86, 58, 255}
+            color = leaf_index % 5 == 0 ? canvas2d.Color{67, 111, 76, 255} : canvas2d.Color{42, 86, 58, 255}
         } else if cache_kind == 12 {
-            color = leaf_index % 5 == 0 ? rl.Color{83, 126, 72, 255} : rl.Color{61, 106, 61, 255}
+            color = leaf_index % 5 == 0 ? canvas2d.Color{83, 126, 72, 255} : canvas2d.Color{61, 106, 61, 255}
         }
         // An L token is a foliage attachment site. At garden overview
         // distance, render its botanical mesh as a small species cluster so
@@ -1295,7 +1295,7 @@ garden_draw_plant :: proc(plant: Garden_Plant) {
             meadow := plant
             location_hash := u32(abs(plant.position.x * 59 + plant.position.z * 83))
             cache_kind := 4 + int(garden_hash(garden_lab_seed + location_hash) % 3)
-            meadow_colors := [3]rl.Color{{76, 105, 82, 255}, {68, 108, 62, 255}, {101, 124, 91, 255}}
+            meadow_colors := [3]canvas2d.Color{{76, 105, 82, 255}, {68, 108, 62, 255}, {101, 124, 91, 255}}
             meadow_scales := [3]f32{.74, .66, .68}
             meadow.color = meadow_colors[cache_kind - 4]
             meadow.scale *= meadow_scales[cache_kind - 4]
@@ -1308,7 +1308,7 @@ garden_draw_plant :: proc(plant: Garden_Plant) {
         bed := clamp(int((plant.position.z + 4.5) / 3 + .5), 0, 3)
         cache_kind := 3 + bed
         scales := [4]f32{.8, .88, .85, .86}
-        colors := [4]rl.Color{{64, 105, 72, 255}, {76, 105, 82, 255}, {68, 108, 62, 255}, {101, 124, 91, 255}}
+        colors := [4]canvas2d.Color{{64, 105, 72, 255}, {76, 105, 82, 255}, {68, 108, 62, 255}, {101, 124, 91, 255}}
         herb.scale *= scales[bed]
         herb.color = colors[bed]
         garden_draw_lsystem_plant(herb, cache_kind)
@@ -1324,7 +1324,7 @@ garden_draw_plant :: proc(plant: Garden_Plant) {
 }
 
 garden_draw_potting_bench :: proc(center: third_person.Vec3) {
-    timber := rl.Color{126, 82, 47, 255}
+    timber := canvas2d.Color{126, 82, 47, 255}
     world_box({center.x, center.y + .82, center.z}, {3.4, .16, .8}, timber)
     world_box({center.x, center.y + 1.72, center.z + .34}, {3.4, 1.65, .14}, {151, 101, 59, 255})
     for x in ([2]f32{-1.42, 1.42}) {
@@ -1337,7 +1337,7 @@ garden_draw_potting_bench :: proc(center: third_person.Vec3) {
 }
 
 garden_draw_bench :: proc(center: third_person.Vec3) {
-    timber := rl.Color{137, 91, 50, 255}
+    timber := canvas2d.Color{137, 91, 50, 255}
     for z in ([3]f32{-.28, 0, .28}) {
         world_box({center.x, center.y + .48, center.z + z}, {2.8, .13, .22}, timber)
     }
@@ -1347,7 +1347,7 @@ garden_draw_bench :: proc(center: third_person.Vec3) {
 }
 
 garden_draw_garden_arch :: proc(center: third_person.Vec3) {
-    iron := rl.Color{58, 74, 62, 255}
+    iron := canvas2d.Color{58, 74, 62, 255}
     for x in ([2]f32{-1.55, 1.55}) {
         world_box({center.x + x, center.y + 1.75, center.z}, {.16, 3.5, .16}, iron)
     }
@@ -1356,7 +1356,7 @@ garden_draw_garden_arch :: proc(center: third_person.Vec3) {
 
 garden_draw_arch_climber :: proc(center: third_person.Vec3) {
     if !garden_lab_arch_ready do return
-    wood := rl.Color{102, 71, 48, 255}
+    wood := canvas2d.Color{102, 71, 48, 255}
     if garden_lab_arch_branch_ready {
         mesh := &garden_lab_arch_branch_mesh
         for first := 0; first + 2 < len(mesh.indices); first += 3 {
@@ -1393,7 +1393,7 @@ garden_draw_arch_climber :: proc(center: third_person.Vec3) {
             // the bracts share its support frame instead of substituting a
             // synthetic foliage block.
             normal := linalg.normalize0(third_person.Vec3{attachment.up[0], attachment.up[1], attachment.up[2]})
-            bract_palette := [3]rl.Color{{220, 53, 133, 255}, {237, 72, 145, 255}, {196, 46, 122, 255}}
+            bract_palette := [3]canvas2d.Color{{220, 53, 133, 255}, {237, 72, 145, 255}, {196, 46, 122, 255}}
             for bract in 0 ..< 3 {
                 garden_draw_generated_leaf(
                     position,
@@ -1430,7 +1430,7 @@ garden_draw_arch_climber :: proc(center: third_person.Vec3) {
 }
 
 garden_draw_kitchen_trellis :: proc(center: third_person.Vec3) {
-    iron := rl.Color{72, 76, 61, 255}
+    iron := canvas2d.Color{72, 76, 61, 255}
     for x in ([2]f32{-2.9, 2.9}) {
         world_box({center.x + x, center.y + 1.32, center.z}, {.12, 2.64, .12}, iron)
     }
@@ -1442,7 +1442,7 @@ garden_draw_kitchen_trellis :: proc(center: third_person.Vec3) {
 
 garden_draw_kitchen_vine :: proc(center: third_person.Vec3) {
     if !garden_lab_kitchen_vine_ready do return
-    wood := rl.Color{99, 66, 46, 255}
+    wood := canvas2d.Color{99, 66, 46, 255}
     if garden_lab_kitchen_vine_branch_ready {
         mesh := &garden_lab_kitchen_vine_branch_mesh
         for first := 0; first + 2 < len(mesh.indices); first += 3 {
@@ -1473,7 +1473,7 @@ garden_draw_kitchen_vine :: proc(center: third_person.Vec3) {
     for attachment, attachment_index in garden_lab_kitchen_vine.plant.attachments {
         position := center + third_person.Vec3{attachment.position[0], attachment.position[1], attachment.position[2]}
         if attachment.kind == .Fruit {
-            grape := plant_generator_stage_color(rl.Color{87, 54, 112, 255}, attachment.stage)
+            grape := plant_generator_stage_color(canvas2d.Color{87, 54, 112, 255}, attachment.stage)
             stage_scale: f32 = 1
             #partial switch attachment.stage {
             case .Fruit_Set:
@@ -1514,7 +1514,7 @@ garden_draw_kitchen_vine :: proc(center: third_person.Vec3) {
             0,
             &garden_lab_kitchen_vine_leaf_meshes[int(attachment.variant)],
             2.5,
-            rl.Color{66, 111, 55, 255},
+            canvas2d.Color{66, 111, 55, 255},
         )
     }
 }
@@ -1632,7 +1632,7 @@ world_garden_lab :: proc(_: ^Editor) {
                 path_distance := abs(x - path_x) - 1.15
                 edge_height := clamp(.66 + path_distance * .16, f32(.66), f32(1.12))
                 height := (.28 + garden_random01(garden_lab_seed, index, 109) * .34) * edge_height
-                color := rl.Color {
+                color := canvas2d.Color {
                     u8(58 + garden_random01(garden_lab_seed, index, 113) * 24),
                     u8(105 + garden_random01(garden_lab_seed, index, 127) * 29),
                     u8(55 + garden_random01(garden_lab_seed, index, 131) * 18),
@@ -1647,18 +1647,18 @@ world_garden_lab :: proc(_: ^Editor) {
 }
 
 garden_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
-    panel := rl.Rectangle{24, 24, 430, 142}
-    rl.DrawRectangleRounded(panel, .16, 8, {19, 31, 27, 226})
-    rl.DrawRectangleRoundedLinesEx(panel, .16, 8, 1, {111, 146, 111, 255})
-    rl.DrawTextEx(rl.Font{}, "GARDEN GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
+    panel := canvas2d.Rectangle{24, 24, 430, 142}
+    canvas2d.DrawRectangleRounded(panel, .16, 8, {19, 31, 27, 226})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .16, 8, 1, {111, 146, 111, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "GARDEN GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
     summary := fmt.ctprintf(
         "%s  /  SEED %d  /  %d PLANTS",
         garden_style_name(garden_lab_style),
         garden_lab_seed,
         garden_lab_plan.plant_count,
     )
-    rl.DrawTextEx(rl.Font{}, summary, {38, 65}, 13, 1, {174, 207, 160, 255})
-    rl.DrawTextEx(rl.Font{}, "1 COURTYARD   2 KITCHEN   3 WILD   R REGENERATE", {38, 91}, 11, 1, {184, 191, 174, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 65}, 13, 1, {174, 207, 160, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "1 COURTYARD   2 KITCHEN   3 WILD   R REGENERATE", {38, 91}, 11, 1, {184, 191, 174, 255})
     species_summary: cstring
     switch garden_lab_style {
     case .Courtyard:
@@ -1668,12 +1668,12 @@ garden_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
     case .Wild:
         species_summary = "STONE PINE / OLIVE / MAQUIS / LAVENDER / THYME / SAGE"
     }
-    rl.DrawTextEx(rl.Font{}, species_summary, {38, 110}, 10, 1, {174, 207, 160, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, species_summary, {38, 110}, 10, 1, {174, 207, 160, 255})
     mesh_summary := fmt.ctprintf(
         "SDF-CLIPPED GROWTH + HULL NORMALS  /  MESHOPT %d -> %d",
         garden_lab_mesh_source_vertices,
         garden_lab_mesh_optimized_vertices,
     )
-    rl.DrawTextEx(rl.Font{}, mesh_summary, {38, 128}, 10, 1, {139, 181, 173, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, mesh_summary, {38, 128}, 10, 1, {139, 181, 173, 255})
     _ = width
 }

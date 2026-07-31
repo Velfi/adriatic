@@ -525,6 +525,14 @@ dense_evergreens_generate_continuous_foliage_architecture :: proc(t: ^testing.T)
     crown_width := max(width, depth)
     testing.expect(t, crown_width / height > .06)
     testing.expect(t, crown_width / height < .42)
+    leaf_count := 0
+    for attachment in cypress.plant.attachments {
+        if attachment.kind == .Leaf do leaf_count += 1
+    }
+    // Scale-leaf sprays should sheath the lateral shoots rather than collect
+    // into sparse terminal tufts. This ratio includes the leader, so it stays
+    // conservative while guarding the mature crown's foliage coverage.
+    testing.expect(t, leaf_count >= len(cypress.plant.segments) * 11)
 }
 
 @(test)
@@ -855,7 +863,9 @@ mature_cypress_crown_width_changes_smoothly_across_seeds :: proc(t: ^testing.T) 
                 testing.expect(t, ratio <= 1.42)
             }
         }
-        testing.expect(t, maximum_radius / minimum_radius < 1.55)
+        // The deliberately fuller lower third may be appreciably broader
+        // than the upper column, but should remain recognizably fastigiate.
+        testing.expect(t, maximum_radius / minimum_radius < 2.60)
         testing.expect(t, band_radii[1] >= band_radii[2] * .55)
     }
 }
@@ -901,7 +911,10 @@ cypress_whorls_vary_their_gaps_while_opposite_pairs_remain_balanced :: proc(t: ^
         }
         testing.expect(t, maximum_adjacent_dot - minimum_adjacent_dot > .015)
         testing.expect(t, maximum_elevation - minimum_elevation > .004)
-        testing.expect(t, maximum_origin_height - minimum_origin_height > .025)
+        // A realistic cypress interleaves each nominal whorl through most of
+        // a leader interval. A shallow spread recreates visible stacked
+        // collars even when azimuths vary.
+        testing.expect(t, maximum_origin_height - minimum_origin_height > .12)
         plants.destroy(&result)
     }
 }
@@ -1028,7 +1041,7 @@ cypress_basal_sprays_bridge_the_root_flare_across_growth_stages :: proc(t: ^test
 }
 
 @(test)
-cypress_growth_adds_at_most_one_whorl_per_maturity_step :: proc(t: ^testing.T) {
+cypress_growth_adds_at_most_two_branch_intervals_per_maturity_step :: proc(t: ^testing.T) {
     previous_height, previous_attachments := f32(0), 0
     previous_segments := 0
     for sample in 4 ..= 20 {
@@ -1044,7 +1057,7 @@ cypress_growth_adds_at_most_one_whorl_per_maturity_step :: proc(t: ^testing.T) {
             testing.expect(t, height >= previous_height)
             testing.expect(t, height / previous_height <= 1.40)
             testing.expect(t, segment_count >= previous_segments)
-            testing.expect(t, segment_count - previous_segments <= 17)
+            testing.expect(t, segment_count - previous_segments <= 34)
             testing.expect(t, attachment_count >= previous_attachments)
             testing.expect(t, f32(attachment_count) / f32(previous_attachments) <= 2.10)
         }

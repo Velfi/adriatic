@@ -3,24 +3,24 @@ package main
 import fountains "../packages/fountains"
 import third_person "../packages/third_person"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
-FOUNTAIN_STONE := rl.Color{178, 169, 148, 255}
-FOUNTAIN_STONE_DARK := rl.Color{112, 107, 98, 255}
-FOUNTAIN_STONE_LIGHT := rl.Color{197, 187, 161, 255}
-FOUNTAIN_BRONZE := rl.Color{157, 121, 66, 255}
-FOUNTAIN_BRONZE_DARK := rl.Color{88, 70, 46, 255}
-FOUNTAIN_VERDIGRIS := rl.Color{86, 124, 106, 255}
-FOUNTAIN_WATER := rl.Color{55, 138, 163, 210}
-FOUNTAIN_SPRAY := rl.Color{178, 224, 232, 190}
-FOUNTAIN_FOAM := rl.Color{188, 226, 232, 185}
-FOUNTAIN_MIST := rl.Color{207, 235, 239, 155}
+FOUNTAIN_STONE := canvas2d.Color{178, 169, 148, 255}
+FOUNTAIN_STONE_DARK := canvas2d.Color{112, 107, 98, 255}
+FOUNTAIN_STONE_LIGHT := canvas2d.Color{197, 187, 161, 255}
+FOUNTAIN_BRONZE := canvas2d.Color{157, 121, 66, 255}
+FOUNTAIN_BRONZE_DARK := canvas2d.Color{88, 70, 46, 255}
+FOUNTAIN_VERDIGRIS := canvas2d.Color{86, 124, 106, 255}
+FOUNTAIN_WATER := canvas2d.Color{55, 138, 163, 210}
+FOUNTAIN_SPRAY := canvas2d.Color{178, 224, 232, 190}
+FOUNTAIN_FOAM := canvas2d.Color{188, 226, 232, 185}
+FOUNTAIN_MIST := canvas2d.Color{207, 235, 239, 155}
 
 fountain_fraction :: #force_inline proc(value: f32) -> f32 {
     return value - f32(math.floor(f64(value)))
 }
 
-fountain_stone_variant :: #force_inline proc(seed: u32) -> rl.Color {
+fountain_stone_variant :: #force_inline proc(seed: u32) -> canvas2d.Color {
     switch fountains.mix(seed) & 3 {
     case 0:
         return {168, 160, 142, 255}
@@ -33,7 +33,7 @@ fountain_stone_variant :: #force_inline proc(seed: u32) -> rl.Color {
     }
 }
 
-fountain_wet_stone_variant :: #force_inline proc(seed: u32) -> rl.Color {
+fountain_wet_stone_variant :: #force_inline proc(seed: u32) -> canvas2d.Color {
     switch fountains.mix(seed) & 3 {
     case 0:
         return {91, 111, 104, 255}
@@ -46,7 +46,7 @@ fountain_wet_stone_variant :: #force_inline proc(seed: u32) -> rl.Color {
     }
 }
 
-fountain_nozzle_color :: #force_inline proc(seed: u32) -> rl.Color {
+fountain_nozzle_color :: #force_inline proc(seed: u32) -> canvas2d.Color {
     mixed := fountains.mix(seed)
     if mixed & 7 == 0 do return FOUNTAIN_VERDIGRIS
     if mixed & 3 == 0 do return FOUNTAIN_BRONZE_DARK
@@ -69,7 +69,7 @@ world_fountain_upper_tier_water_y :: #force_inline proc(plan: ^fountains.Plan, o
     return world_fountain_upper_tier_y(plan, origin_y) + .092
 }
 
-world_fountain_ripple :: proc(center: third_person.Vec3, radius, width: f32, color: rl.Color, seed: u32) {
+world_fountain_ripple :: proc(center: third_person.Vec3, radius, width: f32, color: canvas2d.Color, seed: u32) {
     SEGMENTS :: 20
     for segment in 0 ..< SEGMENTS {
         mixed := fountains.mix(seed ~ u32(segment + 1) * 0x9e3779b9)
@@ -289,7 +289,7 @@ world_fountain_water_disc :: proc(
     center: third_person.Vec3,
     radius, rotation: f32,
     segments: int,
-    center_color, edge_color: rl.Color,
+    center_color, edge_color: canvas2d.Color,
 ) {
     if radius <= 0 || segments < 3 do return
     for segment in 0 ..< segments {
@@ -520,8 +520,8 @@ world_fountain_structure :: proc(plan: ^fountains.Plan, origin: third_person.Vec
         )
     }
 
-    center_water := plan.style == .Bowl ? rl.Color{98, 188, 202, 230} : rl.Color{77, 177, 205, 230}
-    edge_water := plan.style == .Courtyard ? rl.Color{73, 170, 186, 225} : rl.Color{49, 139, 174, 225}
+    center_water := plan.style == .Bowl ? canvas2d.Color{98, 188, 202, 230} : canvas2d.Color{77, 177, 205, 230}
+    edge_water := plan.style == .Courtyard ? canvas2d.Color{73, 170, 186, 225} : canvas2d.Color{49, 139, 174, 225}
     world_fountain_water_disc(
         {origin.x, water_y, origin.z},
         inner_radius - .12,
@@ -701,7 +701,7 @@ world_fountain_effects :: proc(plan: ^fountains.Plan, origin: third_person.Vec3,
     if plan == nil || !plan.valid do return
 
     water_y := origin.y + plan.water_level
-    elapsed := f32(rl.GetTime())
+    elapsed := f32(canvas2d.GetTime())
     world_fountain_tier_cascades(plan, origin, rotation, elapsed)
     // More samples and a taper give streams a continuous ballistic silhouette
     // instead of three rigid pipe sections.

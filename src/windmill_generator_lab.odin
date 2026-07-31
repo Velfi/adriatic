@@ -13,6 +13,7 @@ windmill_lab_rpm := f32(3.5)
 windmill_lab_heading := f32(0)
 windmill_lab_weather := atmosphere.Weather_Preset.Windy
 windmill_lab_rotor_angle := f32(0)
+windmill_lab_rotor_heading := f32(0)
 windmill_lab_last_time := f32(0)
 windmill_lab_rotor_initialized := false
 
@@ -35,6 +36,7 @@ windmill_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     windmill_lab_heading = 0
     windmill_lab_weather = .Windy
     windmill_lab_rotor_angle = 0
+    windmill_lab_rotor_heading = windmill_lab_heading
     windmill_lab_last_time = 0
     windmill_lab_rotor_initialized = false
     switch target {
@@ -134,11 +136,11 @@ windmill_lab_tower :: proc(plan: ^windmills.Plan) {
     }
 
     door := plan.region == .Aegean ? canvas.Color{57, 75, 78, 255} : canvas.Color{78, 52, 34, 255}
-    forward := third_person.Vec3{math.sin(plan.heading), 0, math.cos(plan.heading)}
+    forward := third_person.Vec3{math.sin(plan.entrance_heading), 0, math.cos(plan.entrance_heading)}
     world_box_rotated(
         forward * (plan.base_radius + .03) + third_person.Vec3{0, plan.door_height * .5, 0},
         {plan.door_width, plan.door_height, .18},
-        plan.heading,
+        plan.entrance_heading,
         door,
     )
     window_frame := plan.region == .Aegean ? canvas.Color{73, 100, 106, 255} : canvas.Color{91, 78, 61, 255}
@@ -232,16 +234,25 @@ world_windmill_generator_lab :: proc(editor: ^Editor) {
     config.rpm = windmill_lab_rpm
     config.heading = windmill_lab_heading
     plan := windmills.generate(windmill_lab_seed, config)
+    animated_plan := plan
     if !windmill_lab_rotor_initialized {
         windmill_lab_last_time = editor.map_time
+        windmill_lab_rotor_heading = plan.heading
         windmill_lab_rotor_initialized = true
     } else {
         delta := clamp(editor.map_time - windmill_lab_last_time, f32(0), f32(.1))
         windmill_lab_last_time = editor.map_time
-        local_rpm := windmills.rotor_rpm_for_wind(&plan, editor.atmosphere.weather.wind)
+        target_heading := windmills.rotor_heading_for_wind(windmill_lab_rotor_heading, editor.atmosphere.weather.wind)
+        windmill_lab_rotor_heading = windmills.approach_heading(
+            windmill_lab_rotor_heading,
+            target_heading,
+            delta * .55,
+        )
+        animated_plan.heading = windmill_lab_rotor_heading
+        local_rpm := windmills.rotor_rpm_for_wind(&animated_plan, editor.atmosphere.weather.wind)
         windmill_lab_rotor_angle += delta * local_rpm * math.PI * 2 / 60
     }
     windmill_lab_site(&plan)
     windmill_lab_tower(&plan)
-    windmill_lab_sails_draw(&plan, windmill_lab_rotor_angle)
+    windmill_lab_sails_draw(&animated_plan, windmill_lab_rotor_angle)
 }

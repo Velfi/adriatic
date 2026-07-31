@@ -166,6 +166,15 @@ The executable is now a clipmap terrain lab. It edits a five-level height and
 material hierarchy over an infinite ocean plane: sculpt, smooth, and paint the
 island with the mouse while the colored rings show the nested terrain levels.
 
+The deterministic spring and river generator in `packages/spring_river` builds
+a downhill centerline, emergence pool, growing discharge, channel width and
+depth, and reusable bed/bank samples. Its typed mouth handoff drives the
+estuary/delta generator's inlet, sea level, branching, mouth width, sediment,
+relief, and tide; the lab displays the continuous source-to-sea system. Inspect it with
+`build/dev/adriatic --lab spring-river`; the optional targets `brook`, `river`,
+or a numeric seed select useful starting conditions. In the lab, Left/Right
+changes the seed, R rerolls, A/D changes meander, and Up/Down changes flow.
+
 ## Spline road networks
 
 `packages/roads` defines a renderer-independent 3D road graph. Nodes carry
@@ -239,6 +248,20 @@ camera to a currently placed NPC. Names are case-insensitive; both `Vesna` and
 ```json
 {"name":"npc_focus","arguments":{"name":"Zora"}}
 ```
+
+Adriatic loads its shipped world from a versioned baked map. Regenerate and
+validate that artifact explicitly when procedural map output changes:
+
+```sh
+build/dev/adriatic map bake assets/maps/default.adriatic-map
+build/dev/adriatic map validate assets/maps/default.adriatic-map
+build/dev/adriatic --map path/to/custom.adriatic-map
+```
+
+Editor Save/Load uses `adriatic.adriatic-map`. Import an old split terrain
+project with `build/dev/adriatic map import adriatic.terrain output.adriatic-map`.
+Development builds fall back to generation when the shipped map is unavailable;
+release builds require a valid current baked map.
 
 The executable owns capture commands:
 

@@ -94,7 +94,7 @@ when ODIN_TEST {
         )
 
         registry := fixture_migration_production_registry()
-        testing.expect(t, len(registry.steps) == 9)
+        testing.expect(t, len(registry.steps) == FIXTURE_SCHEMA_VERSION - 1)
         testing.expect(t, registry.steps[4].from_version == 5)
         testing.expect(t, registry.steps[4].to_version == 6)
         testing.expect(t, registry.steps[4].wrapper == fixture_migration_step_v0005_to_v0006)

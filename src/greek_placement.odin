@@ -4,7 +4,7 @@ import architecture "../packages/architecture"
 import ruins "../packages/ruins"
 import terrain "../packages/terrain"
 import "core:math"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 // Frozen bounds for validating legacy Fixture data. No live GLB catalog exists.
 GREEK_ASSET_CAPACITY :: 8
@@ -66,12 +66,12 @@ ruin_stamp_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cursor
 
 ruin_stamp_process_input :: proc(editor: ^Editor, cursor_hit: bool) {
     if editor == nil || !editor.greek_placement_mode || editor.in_map || !cursor_hit do return
-    if rl.IsMouseButtonPressed(.RIGHT) {
+    if canvas2d.IsMouseButtonPressed(.RIGHT) {
         editor.ruin_stamp_seed_offset += 1
         editor.ruin_stamp_preview_valid = false
         return
     }
-    if !rl.IsMouseButtonPressed(.LEFT) || !editor.ruin_stamp_preview_valid do return
+    if !canvas2d.IsMouseButtonPressed(.LEFT) || !editor.ruin_stamp_preview_valid do return
     structure_history_push_undo(editor)
     if index := terrain.add_structure(&editor.project, editor.ruin_stamp_preview); index >= 0 {
         // add_structure assigns an identity-derived default seed. Restore the

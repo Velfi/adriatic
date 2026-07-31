@@ -6,7 +6,7 @@ import story "../packages/story"
 import "core:fmt"
 import "core:math"
 import sdl "vendor:sdl3"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 PLAYER_MAIL_ROW_HEIGHT :: f32(62)
 
@@ -38,17 +38,17 @@ player_mail_collect :: proc(editor: ^Editor) -> int {
         collected += 1
     }
     editor.player_mail_last_collected = collected
-    if collected > 0 do editor.player_mail_notice_until = rl.GetTime() + 4
+    if collected > 0 do editor.player_mail_notice_until = canvas2d.GetTime() + 4
     return collected
 }
 
 player_mail_notice_draw :: proc(editor: ^Editor, width: i32) {
-    if editor == nil || editor.player_mail_last_collected <= 0 || rl.GetTime() >= editor.player_mail_notice_until do return
+    if editor == nil || editor.player_mail_last_collected <= 0 || canvas2d.GetTime() >= editor.player_mail_notice_until do return
     text: cstring = editor.player_mail_last_collected == 1 ? "1 LETTER COLLECTED" : fmt.ctprintf("%d LETTERS COLLECTED", editor.player_mail_last_collected)
     size := ui_measure_text(.Label, text, .25)
-    bounds := rl.Rectangle{(f32(width) - size.x) * .5 - 18, 22, size.x + 36, 42}
-    rl.DrawRectangleRounded(bounds, .18, 8, ui_theme_surface(242))
-    rl.DrawRectangleRoundedLinesEx(bounds, .18, 8, 1, ui_theme_border_strong())
+    bounds := canvas2d.Rectangle{(f32(width) - size.x) * .5 - 18, 22, size.x + 36, 42}
+    canvas2d.DrawRectangleRounded(bounds, .18, 8, ui_theme_surface(242))
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .18, 8, 1, ui_theme_border_strong())
     ui_draw_text(.Label, text, {bounds.x + 18, bounds.y + 12}, .25, ui_theme_accent())
 }
 
@@ -80,8 +80,8 @@ player_mail_process_input :: proc(editor: ^Editor, delta_seconds: f32) {
     ids: [player_mail.LETTER_COUNT]player_mail.Letter_ID
     count := player_mail_received_ids(editor, &ids)
     _, vertical := game_input.menu_steps(&editor.runtime_input, gamepad_axis(.Left_X), gamepad_axis(.Left_Y), delta_seconds)
-    if rl.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do vertical = -1
-    if rl.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do vertical = 1
+    if canvas2d.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do vertical = -1
+    if canvas2d.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do vertical = 1
     if count > 0 && vertical != 0 {
         editor.player_mail_focus = clamp(editor.player_mail_focus + vertical, 0, count - 1)
         _ = player_mail.mark_read(&editor.player_mail, ids[editor.player_mail_focus])
@@ -92,12 +92,12 @@ player_mail_process_input :: proc(editor: ^Editor, delta_seconds: f32) {
 }
 
 player_mail_draw :: proc(editor: ^Editor, width, height: i32) {
-    panel := rl.Rectangle{40, 32, f32(width) - 80, f32(height) - 64}
-    list := rl.Rectangle{panel.x + 24, panel.y + 100, min(f32(330), panel.width * .36), panel.height - 142}
-    detail := rl.Rectangle{list.x + list.width + 18, list.y, panel.x + panel.width - list.x - list.width - 42, list.height}
-    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(210))
-    rl.DrawRectangleRounded(panel, .025, 12, ui_theme_surface())
-    rl.DrawRectangleRoundedLinesEx(panel, .025, 12, 2, ui_theme_border_strong())
+    panel := canvas2d.Rectangle{40, 32, f32(width) - 80, f32(height) - 64}
+    list := canvas2d.Rectangle{panel.x + 24, panel.y + 100, min(f32(330), panel.width * .36), panel.height - 142}
+    detail := canvas2d.Rectangle{list.x + list.width + 18, list.y, panel.x + panel.width - list.x - list.width - 42, list.height}
+    canvas2d.DrawRectangle(0, 0, width, height, ui_theme_scrim(210))
+    canvas2d.DrawRectangleRounded(panel, .025, 12, ui_theme_surface())
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .025, 12, 2, ui_theme_border_strong())
     ui_draw_text(.Data, "COURIER'S", {panel.x + 28, panel.y + 20}, .45, ui_theme_accent())
     ui_draw_text(.Display, "LETTERS", {panel.x + 28, panel.y + 44}, .55, ui_theme_text())
     unread := player_mail.unread_count(&editor.player_mail)
@@ -111,19 +111,19 @@ player_mail_draw :: proc(editor: ^Editor, width, height: i32) {
         editor.player_mail_focus = clamp(editor.player_mail_focus, 0, count - 1)
         for id, row in ids[:count] {
             definition := player_mail.definition(id)
-            bounds := rl.Rectangle{list.x, list.y + f32(row) * PLAYER_MAIL_ROW_HEIGHT, list.width, PLAYER_MAIL_ROW_HEIGHT - 6}
+            bounds := canvas2d.Rectangle{list.x, list.y + f32(row) * PLAYER_MAIL_ROW_HEIGHT, list.width, PLAYER_MAIL_ROW_HEIGHT - 6}
             focused := row == editor.player_mail_focus
             style := ui_theme_control_style(focused ? .Focused : .Resting)
-            rl.DrawRectangleRounded(bounds, .1, 8, style.fill)
-            rl.DrawRectangleRoundedLinesEx(bounds, .1, 8, style.border_width, style.border)
+            canvas2d.DrawRectangleRounded(bounds, .1, 8, style.fill)
+            canvas2d.DrawRectangleRoundedLinesEx(bounds, .1, 8, style.border_width, style.border)
             marker: cstring = editor.player_mail.read[int(id)] ? "" : "NEW"
             ui_draw_text(.Label, fmt.ctprintf("%s", definition.subject), {bounds.x + 12, bounds.y + 9}, .2, style.text)
             ui_draw_text(.Data, fmt.ctprintf("%s  %s", definition.sender, marker), {bounds.x + 12, bounds.y + 34}, .14, ui_theme_text_muted())
         }
         selected := ids[editor.player_mail_focus]
         definition := player_mail.definition(selected)
-        rl.DrawRectangleRounded(detail, .025, 10, ui_theme_surface_elevated())
-        rl.DrawRectangleRoundedLinesEx(detail, .025, 10, 1, ui_theme_border())
+        canvas2d.DrawRectangleRounded(detail, .025, 10, ui_theme_surface_elevated())
+        canvas2d.DrawRectangleRoundedLinesEx(detail, .025, 10, 1, ui_theme_border())
         ui_draw_text(.Data, fmt.ctprintf("FROM %s", definition.sender), {detail.x + 24, detail.y + 24}, .25, ui_theme_accent())
         dialogue_draw_wrapped(definition.subject, {detail.x + 24, detail.y + 52, detail.width - 48, 70}, 28, 1, 34, ui_theme_text())
         dialogue_draw_wrapped(definition.body, {detail.x + 24, detail.y + 128, detail.width - 48, detail.height - 154}, 20, .7, 28, ui_theme_text())

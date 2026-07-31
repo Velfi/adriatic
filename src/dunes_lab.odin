@@ -6,7 +6,7 @@ import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 DUNES_LAB_DEFAULT_SEED :: u32(0x44554e45)
 DUNES_LAB_LENGTH :: f32(430)
@@ -172,31 +172,31 @@ dunes_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 
 dunes_lab_process_input :: proc(editor: ^Editor) {
     changed := false
-    if rl.IsKeyPressed(.LEFT) {
+    if canvas2d.IsKeyPressed(.LEFT) {
         dunes_lab_seed -= 1
         changed = true
     }
-    if rl.IsKeyPressed(.RIGHT) {
+    if canvas2d.IsKeyPressed(.RIGHT) {
         dunes_lab_seed += 1
         changed = true
     }
-    if rl.IsKeyPressed(.R) {
+    if canvas2d.IsKeyPressed(.R) {
         dunes_lab_seed = dunes.hash(dunes_lab_seed + 0x9e3779b9)
         changed = true
     }
-    if rl.IsKeyPressed(.A) {
+    if canvas2d.IsKeyPressed(.A) {
         dunes_lab_wind_angle = max(f32(-.62), dunes_lab_wind_angle - .08)
         changed = true
     }
-    if rl.IsKeyPressed(.D) {
+    if canvas2d.IsKeyPressed(.D) {
         dunes_lab_wind_angle = min(f32(.62), dunes_lab_wind_angle + .08)
         changed = true
     }
-    if rl.IsKeyPressed(.G) {
+    if canvas2d.IsKeyPressed(.G) {
         dunes_lab_vegetation = max(f32(0), dunes_lab_vegetation - .1)
         changed = true
     }
-    if rl.IsKeyPressed(.H) {
+    if canvas2d.IsKeyPressed(.H) {
         dunes_lab_vegetation = min(f32(1), dunes_lab_vegetation + .1)
         changed = true
     }
@@ -211,7 +211,7 @@ world_dunes_lab :: proc(editor: ^Editor) {
         x := candidate.position[0]
         z := candidate.position[1] + dunes_lab_coast_curve(x)
         ground := terrain.sample_height(&editor.project, 0, x, z)
-        color := rl.Color {
+        color := canvas2d.Color {
             u8(92 + candidate.tint * 20),
             u8(119 + candidate.tint * 25),
             u8(55 + candidate.tint * 13),
@@ -228,10 +228,10 @@ world_dunes_lab :: proc(editor: ^Editor) {
 }
 
 dunes_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
-    panel := rl.Rectangle{24, 24, 610, 166}
-    rl.DrawRectangleRounded(panel, .10, 8, {28, 31, 23, 232})
-    rl.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {159, 147, 92, 255})
-    rl.DrawTextEx(rl.Font{}, "COASTAL DUNE ECOLOGY LAB", {40, 40}, 19, 1, {242, 227, 183, 255})
+    panel := canvas2d.Rectangle{24, 24, 610, 166}
+    canvas2d.DrawRectangleRounded(panel, .10, 8, {28, 31, 23, 232})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {159, 147, 92, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "COASTAL DUNE ECOLOGY LAB", {40, 40}, 19, 1, {242, 227, 183, 255})
     status := fmt.ctprintf(
         "SEED %08X  /  %d RIDGES  /  PEAK %.1fm  /  %d GRASS CARDS",
         dunes_lab_seed,
@@ -239,7 +239,7 @@ dunes_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
         dunes_lab_diagnostics.maximum_height,
         dunes_lab_diagnostics.grass_cards,
     )
-    rl.DrawTextEx(rl.Font{}, status, {40, 70}, 12, 1, {210, 204, 166, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, status, {40, 70}, 12, 1, {210, 204, 166, 255})
     bare_percent, stable_percent := f32(0), f32(0)
     if dunes_lab_diagnostics.sampled > 0 {
         bare_percent = f32(dunes_lab_diagnostics.bare) / f32(dunes_lab_diagnostics.sampled) * 100
@@ -252,17 +252,17 @@ dunes_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
         bare_percent,
         stable_percent,
     )
-    rl.DrawTextEx(rl.Font{}, ecology, {40, 95}, 12, 1, {184, 205, 156, 255})
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(canvas2d.Font{}, ecology, {40, 95}, 12, 1, {184, 205, 156, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         "LEFT/RIGHT SEED   R REROLL   A/D WIND   G/H GRASS",
         {40, 126},
         11,
         1,
         {191, 190, 164, 255},
     )
-    rl.DrawTextEx(
-        rl.Font{},
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
         "BEACH  >  ACTIVE SLIP FACES  >  PATCHY CRESTS  >  STABILIZED DUNES",
         {40, 151},
         10,

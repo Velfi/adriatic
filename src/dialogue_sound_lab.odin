@@ -2,7 +2,7 @@ package main
 
 import engine_sound "../packages/engine_sound"
 import "core:fmt"
-import rl "zelda_engine:canvas2d"
+import canvas2d "zelda_engine:canvas2d"
 
 DIALOGUE_SOUND_LAB_TEXT_CAPACITY :: 4096
 
@@ -56,14 +56,14 @@ dialogue_sound_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         expression    = .78,
         formant_shift = 0,
         dragging      = -1,
-        last_time     = rl.GetTime(),
+        last_time     = canvas2d.GetTime(),
     }
     dialogue_sound_lab_set_text(
         "Along the harbor wall, every small sound carried: rope against cedar, water under stone, and the soft knock of boats coming home.",
     )
     engine_sound.dialogue_voice_stop(&editor.engine_audio)
     editor.engine_audio.dialogue_voice.unit_blend = dialogue_sound_lab.unit_blend
-    _ = rl.StartTextInput()
+    _ = canvas2d.StartTextInput()
     set_pointer_locked(false)
     if target == "autoplay" do dialogue_sound_lab_play(editor)
     return true
@@ -73,7 +73,7 @@ dialogue_sound_lab_exit :: proc(editor: ^Editor) {
     if editor != nil do engine_sound.dialogue_voice_stop(&editor.engine_audio)
     dialogue_sound_lab.playing = false
     dialogue_sound_lab.dragging = -1
-    _ = rl.StopTextInput()
+    _ = canvas2d.StopTextInput()
 }
 
 dialogue_sound_lab_play :: proc(editor: ^Editor) {
@@ -112,7 +112,7 @@ dialogue_sound_lab_backspace :: proc() {
 dialogue_sound_lab_controls :: proc(
     width, height: i32,
 ) -> (
-    panel, editor_bounds, play_bounds, stop_bounds: rl.Rectangle,
+    panel, editor_bounds, play_bounds, stop_bounds: canvas2d.Rectangle,
     slider_x, slider_y, slider_w: f32,
 ) {
     panel_w := min(f32(width) - 64, f32(980))
@@ -219,39 +219,39 @@ dialogue_sound_lab_tick :: proc(editor: ^Editor, delta_seconds: f32) {
 
 dialogue_sound_lab_process_input :: proc(editor: ^Editor) {
     if editor == nil do return
-    now := rl.GetTime()
+    now := canvas2d.GetTime()
     delta := f32(clamp(now - dialogue_sound_lab.last_time, f64(0), f64(.05)))
     dialogue_sound_lab.last_time = now
     dialogue_sound_lab_tick(editor, delta)
     editor.engine_audio.dialogue_voice.unit_blend = dialogue_sound_lab.unit_blend
 
     panel, editor_bounds, play_bounds, stop_bounds, slider_x, slider_y, slider_w := dialogue_sound_lab_controls(
-        rl.GetScreenWidth(),
-        rl.GetScreenHeight(),
+        canvas2d.GetScreenWidth(),
+        canvas2d.GetScreenHeight(),
     )
     _ = panel
-    _ = rl.SetTextInputArea(editor_bounds, dialogue_sound_lab.text_length)
+    _ = canvas2d.SetTextInputArea(editor_bounds, dialogue_sound_lab.text_length)
     if !dialogue_sound_lab.playing {
-        dialogue_sound_lab_append(rl.GetTextInput())
-        if rl.IsKeyPressed(.BACKSPACE) do dialogue_sound_lab_backspace()
-        if rl.IsKeyPressed(.ENTER) do dialogue_sound_lab_append("\n")
+        dialogue_sound_lab_append(canvas2d.GetTextInput())
+        if canvas2d.IsKeyPressed(.BACKSPACE) do dialogue_sound_lab_backspace()
+        if canvas2d.IsKeyPressed(.ENTER) do dialogue_sound_lab_append("\n")
     }
 
-    mouse := rl.GetMousePosition()
-    pressed := rl.IsMouseButtonPressed(.LEFT)
-    if pressed && rl.CheckCollisionPointRec(mouse, play_bounds) do dialogue_sound_lab_play(editor)
-    if pressed && rl.CheckCollisionPointRec(mouse, stop_bounds) do dialogue_sound_lab_stop(editor)
+    mouse := canvas2d.GetMousePosition()
+    pressed := canvas2d.IsMouseButtonPressed(.LEFT)
+    if pressed && canvas2d.CheckCollisionPointRec(mouse, play_bounds) do dialogue_sound_lab_play(editor)
+    if pressed && canvas2d.CheckCollisionPointRec(mouse, stop_bounds) do dialogue_sound_lab_stop(editor)
     if pressed {
         preset_gap := f32(10)
         preset_w := (editor_bounds.width - preset_gap * 3) / 4
         for _, index in dialogue_sound_lab_presets {
-            bounds := rl.Rectangle {
+            bounds := canvas2d.Rectangle {
                 editor_bounds.x + f32(index) * (preset_w + preset_gap),
                 editor_bounds.y + editor_bounds.height + 8,
                 preset_w,
                 28,
             }
-            if rl.CheckCollisionPointRec(mouse, bounds) {
+            if canvas2d.CheckCollisionPointRec(mouse, bounds) {
                 dialogue_sound_lab.profile = dialogue_sound_lab_presets[index]
                 dialogue_sound_lab.preset = index
                 break
@@ -261,43 +261,43 @@ dialogue_sound_lab_process_input :: proc(editor: ^Editor) {
 
     if pressed {
         for index in 0 ..< DIALOGUE_SOUND_LAB_SLIDER_COUNT {
-            bounds := rl.Rectangle{slider_x, slider_y + f32(index) * 31 - 8, slider_w, 28}
-            if rl.CheckCollisionPointRec(mouse, bounds) {
+            bounds := canvas2d.Rectangle{slider_x, slider_y + f32(index) * 31 - 8, slider_w, 28}
+            if canvas2d.CheckCollisionPointRec(mouse, bounds) {
                 dialogue_sound_lab.dragging = index
                 dialogue_sound_lab_set_slider(index, (mouse.x - slider_x) / slider_w)
                 break
             }
         }
     }
-    if rl.IsMouseButtonDown(.LEFT) && dialogue_sound_lab.dragging >= 0 {
+    if canvas2d.IsMouseButtonDown(.LEFT) && dialogue_sound_lab.dragging >= 0 {
         dialogue_sound_lab_set_slider(dialogue_sound_lab.dragging, (mouse.x - slider_x) / slider_w)
     }
-    if rl.IsMouseButtonReleased(.LEFT) do dialogue_sound_lab.dragging = -1
+    if canvas2d.IsMouseButtonReleased(.LEFT) do dialogue_sound_lab.dragging = -1
 
-    if rl.IsKeyPressed(.ESCAPE) {
+    if canvas2d.IsKeyPressed(.ESCAPE) {
         lab_scene_exit_to_main_menu(editor)
     }
 }
 
-dialogue_sound_lab_button :: proc(bounds: rl.Rectangle, label: cstring, active: bool) {
-    fill := active ? rl.Color{30, 112, 108, 255} : rl.Color{25, 43, 50, 255}
-    if rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds) {
-        fill = active ? rl.Color{38, 137, 131, 255} : rl.Color{36, 58, 66, 255}
+dialogue_sound_lab_button :: proc(bounds: canvas2d.Rectangle, label: cstring, active: bool) {
+    fill := active ? canvas2d.Color{30, 112, 108, 255} : canvas2d.Color{25, 43, 50, 255}
+    if canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds) {
+        fill = active ? canvas2d.Color{38, 137, 131, 255} : canvas2d.Color{36, 58, 66, 255}
     }
-    rl.DrawRectangleRounded(bounds, .18, 7, fill)
-    rl.DrawRectangleRoundedLinesEx(bounds, .18, 7, 1, {104, 211, 199, 255})
+    canvas2d.DrawRectangleRounded(bounds, .18, 7, fill)
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .18, 7, 1, {104, 211, 199, 255})
     size := ui_measure_text(.Label, label, .4)
     ui_draw_text(.Label, label, {bounds.x + (bounds.width - size.x) * .5, bounds.y + 11}, .4, {231, 244, 241, 255})
 }
 
 dialogue_sound_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    rl.DrawRectangle(0, 0, width, height, {7, 15, 20, 255})
+    canvas2d.DrawRectangle(0, 0, width, height, {7, 15, 20, 255})
     panel, editor_bounds, play_bounds, stop_bounds, slider_x, slider_y, slider_w := dialogue_sound_lab_controls(
         width,
         height,
     )
-    rl.DrawRectangleRounded(panel, .035, 10, {12, 27, 34, 255})
-    rl.DrawRectangleRoundedLinesEx(panel, .035, 10, 1, {70, 113, 120, 255})
+    canvas2d.DrawRectangleRounded(panel, .035, 10, {12, 27, 34, 255})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .035, 10, 1, {70, 113, 120, 255})
     ui_draw_text(.Label, "DIALOGUE SOUND LAB", {panel.x + 34, panel.y + 28}, .65, {116, 226, 211, 255})
     ui_draw_text(
         .Data,
@@ -307,8 +307,8 @@ dialogue_sound_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         {139, 163, 169, 255},
     )
 
-    rl.DrawRectangleRounded(editor_bounds, .035, 6, {7, 17, 22, 255})
-    rl.DrawRectangleRoundedLinesEx(editor_bounds, .035, 6, 1, {60, 91, 99, 255})
+    canvas2d.DrawRectangleRounded(editor_bounds, .035, 6, {7, 17, 22, 255})
+    canvas2d.DrawRectangleRoundedLinesEx(editor_bounds, .035, 6, 1, {60, 91, 99, 255})
     text := dialogue_sound_lab_text()
     visible := dialogue_sound_lab.playing ? text[:dialogue_sound_lab.cursor] : text
     dialogue_draw_wrapped(
@@ -319,8 +319,8 @@ dialogue_sound_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         31,
         {224, 233, 232, 255},
     )
-    if !dialogue_sound_lab.playing && int(rl.GetTime() * 2) % 2 == 0 {
-        rl.DrawRectangle(
+    if !dialogue_sound_lab.playing && int(canvas2d.GetTime() * 2) % 2 == 0 {
+        canvas2d.DrawRectangle(
             i32(editor_bounds.x + 18),
             i32(editor_bounds.y + editor_bounds.height - 15),
             14,
@@ -332,24 +332,24 @@ dialogue_sound_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     preset_gap := f32(10)
     preset_w := (editor_bounds.width - preset_gap * 3) / 4
     for name, index in dialogue_sound_lab_preset_names {
-        bounds := rl.Rectangle {
+        bounds := canvas2d.Rectangle {
             editor_bounds.x + f32(index) * (preset_w + preset_gap),
             editor_bounds.y + editor_bounds.height + 8,
             preset_w,
             28,
         }
         selected := dialogue_sound_lab.preset == index
-        fill := selected ? rl.Color{40, 105, 101, 255} : rl.Color{20, 40, 47, 255}
-        if rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds) {
-            fill = selected ? rl.Color{48, 126, 120, 255} : rl.Color{30, 56, 63, 255}
+        fill := selected ? canvas2d.Color{40, 105, 101, 255} : canvas2d.Color{20, 40, 47, 255}
+        if canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds) {
+            fill = selected ? canvas2d.Color{48, 126, 120, 255} : canvas2d.Color{30, 56, 63, 255}
         }
-        rl.DrawRectangleRounded(bounds, .18, 6, fill)
-        rl.DrawRectangleRoundedLinesEx(
+        canvas2d.DrawRectangleRounded(bounds, .18, 6, fill)
+        canvas2d.DrawRectangleRoundedLinesEx(
             bounds,
             .18,
             6,
             1,
-            selected ? rl.Color{142, 231, 217, 255} : rl.Color{60, 91, 99, 255},
+            selected ? canvas2d.Color{142, 231, 217, 255} : canvas2d.Color{60, 91, 99, 255},
         )
         size := ui_measure_text(.Label, name, .28)
         ui_draw_text(.Label, name, {bounds.x + (bounds.width - size.x) * .5, bounds.y + 8}, .28, {210, 229, 226, 255})
@@ -370,10 +370,10 @@ dialogue_sound_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         value, low, high := dialogue_sound_lab_slider_value(index)
         y := slider_y + f32(index) * 31
         ui_draw_text(.Label, name, {panel.x + 34, y - 7}, .32, {183, 199, 202, 255})
-        rl.DrawRectangleRounded({slider_x, y, slider_w, 8}, 1, 4, {43, 65, 71, 255})
+        canvas2d.DrawRectangleRounded({slider_x, y, slider_w, 8}, 1, 4, {43, 65, 71, 255})
         normalized := (value - low) / (high - low)
-        rl.DrawRectangleRounded({slider_x, y, slider_w * normalized, 8}, 1, 4, {77, 182, 171, 255})
-        rl.DrawCircleV({slider_x + slider_w * normalized, y + 4}, 8, {170, 235, 225, 255})
+        canvas2d.DrawRectangleRounded({slider_x, y, slider_w * normalized, 8}, 1, 4, {77, 182, 171, 255})
+        canvas2d.DrawCircleV({slider_x + slider_w * normalized, y + 4}, 8, {170, 235, 225, 255})
         value_label :=
             index < 2 ? fmt.ctprintf("%.0f Hz", value) : (index == 4 ? fmt.ctprintf("%.3f", value) : (index == 6 ? fmt.ctprintf("%.0f char/s", value) : (index == 8 ? fmt.ctprintf("%+.1f st", value) : fmt.ctprintf("%.2f", value))))
         ui_draw_text(.Data, value_label, {slider_x + slider_w - 64, y - 23}, .22, {149, 173, 177, 255})
