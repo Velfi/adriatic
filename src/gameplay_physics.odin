@@ -271,6 +271,106 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
             if planter != physics.INVALID_BODY do append(&state.static_bodies, planter)
         }
     }
+    // Airport terminals are procedural presentation landmarks, so their open
+    // arcade and central kiosk need matching explicit physics bodies. Keep the
+    // bays free: only the piers and solid kiosk furniture block the character.
+    airport_positions := make([dynamic]third_person.Vec3, context.temp_allocator)
+    append(&airport_positions, editor.attendant_position, editor.gerta_position)
+    airport_rotations := make([dynamic]f32, context.temp_allocator)
+    append(&airport_rotations, -f32(math.PI) * .5, f32(math.PI) * .5)
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if airport_structure_is_stamp(structure) {
+            append(&airport_positions, third_person.Vec3{structure.center_x, structure.base_y, structure.center_z})
+            append(&airport_rotations, structure.rotation)
+        }
+    }
+    for airport, airport_index in airport_positions {
+        ground := terrain.sample_height(&editor.project, 0, airport.x, airport.z)
+        rotation := airport_rotations[airport_index]
+        collider_index := 0
+
+        for side in ([2]f32{-1, 1}) {
+            for bay in -3 ..= 3 {
+                x, z := world_rotate_xz(airport.x, airport.z, f32(bay) * 4.25, 5.8 + side * 7.4, rotation)
+                body := gameplay_physics_add_static_box(
+                    state,
+                    {.31, 2.35, .36},
+                    {x, ground + 2.35, z},
+                    rotation,
+                    u64(0x2d00_0000) | (u64(airport_index & 0xff) << 16) | u64(collider_index & 0xffff),
+                )
+                if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+                collider_index += 1
+            }
+            for end in ([2]f32{-1, 1}) {
+                x, z := world_rotate_xz(airport.x, airport.z, end * 13.1, 5.8 + side * 7.4, rotation)
+                body := gameplay_physics_add_static_box(
+                    state,
+                    {.36, 2.35, .36},
+                    {x, ground + 2.35, z},
+                    rotation,
+                    u64(0x2d00_0000) | (u64(airport_index & 0xff) << 16) | u64(collider_index & 0xffff),
+                )
+                if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+                collider_index += 1
+            }
+        }
+
+        COUNTER_SEGMENTS :: 16
+        counter_radius := f32(1.65)
+        for segment in 0 ..< COUNTER_SEGMENTS {
+            angle := f32(segment) * math.PI * 2 / f32(COUNTER_SEGMENTS)
+            local_x := math.cos(angle) * counter_radius
+            local_z := AIRPORT_ARCADE_CENTER_Z + math.sin(angle) * counter_radius
+            x, z := world_rotate_xz(airport.x, airport.z, local_x, local_z, rotation)
+            body := gameplay_physics_add_static_box(
+                state,
+                {.38, .525, .29},
+                {x, ground + .955, z},
+                rotation + angle + math.PI * .5,
+                u64(0x2d00_0000) | (u64(airport_index & 0xff) << 16) | u64(collider_index & 0xffff),
+            )
+            if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+            collider_index += 1
+        }
+
+        scale_x, scale_z := world_rotate_xz(airport.x, airport.z, 3.15, AIRPORT_ARCADE_CENTER_Z - .10, rotation)
+        scale_body := gameplay_physics_add_static_box(
+            state,
+            {.78, .92, .68},
+            {scale_x, ground + .92, scale_z},
+            rotation,
+            u64(0x2d00_0000) | (u64(airport_index & 0xff) << 16) | u64(collider_index & 0xffff),
+        )
+        if scale_body != physics.INVALID_BODY do append(&state.static_bodies, scale_body)
+        collider_index += 1
+
+        for side in ([2]f32{-1, 1}) {
+            x, z := world_rotate_xz(airport.x, airport.z, side * 8.25, 6.05, rotation)
+            body := gameplay_physics_add_static_box(
+                state,
+                {2.1, .82, .85},
+                {x, ground + .94, z},
+                rotation,
+                u64(0x2d00_0000) | (u64(airport_index & 0xff) << 16) | u64(collider_index & 0xffff),
+            )
+            if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+            collider_index += 1
+        }
+        planter_offsets := [4][2]f32{{-11.45, 5.8}, {11.45, 5.8}, {-11.45, 11.35}, {11.45, 11.35}}
+        for offset in planter_offsets {
+            x, z := world_rotate_xz(airport.x, airport.z, offset.x, offset.y, rotation)
+            body := gameplay_physics_add_static_box(
+                state,
+                {.62, .72, .62},
+                {x, ground + .84, z},
+                rotation,
+                u64(0x2d00_0000) | (u64(airport_index & 0xff) << 16) | u64(collider_index & 0xffff),
+            )
+            if body != physics.INVALID_BODY do append(&state.static_bodies, body)
+            collider_index += 1
+        }
+    }
     for &plan, marina_index in editor.default_harbors[:editor.default_marina_count] {
         if !plan.valid do continue
         for path, path_index in plan.structures[:plan.structure_count] {

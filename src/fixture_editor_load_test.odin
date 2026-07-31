@@ -41,16 +41,19 @@ when ODIN_TEST {
         terrain.init_project(&source.project)
         source.project.revision = 707
         source.project.sea_level = 3
-        append(&source.project.structures, terrain.Structure {
-            id       = 81,
-            center_x = 4,
-            center_z = -7,
-            width    = 5,
-            depth    = 6,
-            base_y   = 1,
-            height   = 4,
-            kind     = .Rock,
-        })
+        append(
+            &source.project.structures,
+            terrain.Structure {
+                id = 81,
+                center_x = 4,
+                center_z = -7,
+                width = 5,
+                depth = 6,
+                base_y = 1,
+                height = 4,
+                kind = .Rock,
+            },
+        )
         source.project.structure_count = 1
         source.authoring_tool = .Marina
         source.structure_selected = 0

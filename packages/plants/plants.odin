@@ -1170,9 +1170,7 @@ pelargonium_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Resu
                 lsystem.Leaf {
                     position = next,
                     forward  = linalg.normalize0(
-                        // Lift the blade toward the viewer instead of laying
-                        // every broad leaf into a nearly edge-on horizontal
-                        lsystem.Vec3{math.cos(leaf_azimuth), .52, math.sin(leaf_azimuth)},// shelf at ordinary patio camera height.
+                        lsystem.Vec3{math.cos(leaf_azimuth), .52, math.sin(leaf_azimuth)}, // Lift the blade toward the viewer instead of laying// every broad leaf into a nearly edge-on horizontal// shelf at ordinary patio camera height.
                     ),
                     up       = {0, 1, 0},
                     depth    = 0,

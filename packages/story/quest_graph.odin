@@ -100,8 +100,14 @@ init_quest_catalog :: proc(catalog: ^Quest_Catalog) {
     catalog.acceptance_successors = {meeting}
     catalog.meeting_successors = {post}
     catalog.post_successors = {post}
-    catalog.friendometer_successors =
-        {magneto_out, post, weather_reading, clinic_medicine, clinic_linens, clinic_water}
+    catalog.friendometer_successors = {
+        magneto_out,
+        post,
+        weather_reading,
+        clinic_medicine,
+        clinic_linens,
+        clinic_water,
+    }
 
     catalog.magneto_back_requirements = {{node = magneto_out}}
     catalog.first_letter_requirements = {{node = magneto_out}}
@@ -369,15 +375,8 @@ ensure_quest_progress :: proc(state: ^State) -> bool {
     // Version-seven saves predate Dr Mirna's introduction. Let them keep the
     // campaign starts they already had instead of making the new prologue a
     // retroactive gate.
-    if legacy_definition ||
-       legacy_romance != .Unintroduced ||
-       legacy_repair != .Not_Seen ||
-       legacy_repeats > 0 {
-        _ = quest.publish(
-            &state.quest,
-            &catalog.definition,
-            {kind = .Talk, key = "friendometer", target = "mirna"},
-        )
+    if legacy_definition || legacy_romance != .Unintroduced || legacy_repair != .Not_Seen || legacy_repeats > 0 {
+        _ = quest.publish(&state.quest, &catalog.definition, {kind = .Talk, key = "friendometer", target = "mirna"})
     }
 
     // Saves which had already begun either story branch have necessarily

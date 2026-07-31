@@ -44,10 +44,10 @@ Ocean_Agent :: struct {
 }
 
 Ocean_Traffic :: struct {
-    agent:             Ocean_Agent,
-    next_class:        Ocean_Class,
+    agent:              Ocean_Agent,
+    next_class:         Ocean_Class,
     seconds_until_ship: f32,
-    passages:          u32,
+    passages:           u32,
 }
 
 OCEAN_ROUTE_HALF_EXTENT :: f32(4600)
@@ -55,10 +55,7 @@ OCEAN_WAKE_CAPACITY :: 96
 
 new_ocean_traffic :: proc() -> Ocean_Traffic {
     // Let the player settle into the world before the first distant passage.
-    return {
-        next_class         = .Product_Tanker,
-        seconds_until_ship = 90,
-    }
+    return {next_class = .Product_Tanker, seconds_until_ship = 90}
 }
 
 ocean_traffic_step :: proc(traffic: ^Ocean_Traffic, delta_seconds: f32) {
@@ -88,8 +85,7 @@ ocean_traffic_step :: proc(traffic: ^Ocean_Traffic, delta_seconds: f32) {
 
     traffic.agent.active = false
     traffic.passages += 1
-    traffic.next_class =
-        traffic.agent.class == .Product_Tanker ? .Cruise_Ship : .Product_Tanker
+    traffic.next_class = traffic.agent.class == .Product_Tanker ? .Cruise_Ship : .Product_Tanker
     // A deterministic 4–7 minute clear horizon separates passages.
     traffic.seconds_until_ship = 240 + f32(traffic.passages % 4) * 60
 }
@@ -130,11 +126,7 @@ ocean_wake_step :: proc(agent: ^Ocean_Agent, distance_travelled, dt: f32) {
 ocean_tanker_mesh :: proc() -> Mesh {
     result: Mesh
     spec := ocean_specifications(.Product_Tanker)
-    hull(
-        &result,
-        {spec.length, spec.beam, spec.draft, spec.height, spec.cruise_speed_mps, 65_200_000, 15_720},
-        6.60,
-    )
+    hull(&result, {spec.length, spec.beam, spec.draft, spec.height, spec.cruise_speed_mps, 65_200_000, 15_720}, 6.60)
     // Low cargo deck, raised pipelines, aft accommodation, bridge, and funnel.
     box(&result, {0, 7.0, -8}, {35.0, .55, 118.0}, .Deck)
     box(&result, {0, 8.0, -78}, {26.0, 1.2, 18.0}, .Deck)
@@ -158,11 +150,7 @@ ocean_tanker_mesh :: proc() -> Mesh {
 ocean_cruise_mesh :: proc() -> Mesh {
     result: Mesh
     spec := ocean_specifications(.Cruise_Ship)
-    hull(
-        &result,
-        {spec.length, spec.beam, spec.draft, spec.height, spec.cruise_speed_mps, 93_500_000, 72_000},
-        7.8,
-    )
+    hull(&result, {spec.length, spec.beam, spec.draft, spec.height, spec.cruise_speed_mps, 93_500_000, 72_000}, 7.8)
     // The stepped hotel block stops short of the bow and stern, preserving
     // the recognizable long forecastle and terraced aft silhouette.
     box(&result, {0, 16.0, 5}, {28.5, 16.0, 224.0}, .Cabin)

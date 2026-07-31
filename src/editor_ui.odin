@@ -129,6 +129,8 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.architecture_dirty_bounds = {}
     editor.architecture_node_mode = false
     editor.architecture_paint_mode = false
+    editor.airport_stamp_mode = false
+    editor.airport_preview_valid = false
     editor.marina_paint_mode = false
     editor.marina_preview_valid = false
     editor.farm_paint_mode = false
@@ -397,6 +399,9 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Cliff:
         return "Draw a freehand cliff. Wheel zooms; Shift adjusts width and height."
     case .Building:
+        if editor.airport_stamp_mode {
+            return "Left stamps an airport; right removes one. Wheel rotates the terminal."
+        }
         return "Choose a shape and preset, then drag to orient it. Left adds; right erases."
     case .Marina:
         return "Left places a complete shoreline-oriented marina; right removes it."
@@ -615,6 +620,21 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     case .Building:
         bounds := editor_ui_slider_bounds(layout, row)
         half := (bounds.width - 6) * .5
+        ui_draw_text(.Label, "MODE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "CITY BRUSH", !editor.airport_stamp_mode)
+        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 24, half, 30}, "AIRPORT", editor.airport_stamp_mode)
+        row += 1
+        if editor.airport_stamp_mode {
+            bounds = editor_ui_slider_bounds(layout, row)
+            ui_draw_text(.Label, "FOOTPRINT", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+            ui_draw_text(.Data, "42 x 30 m", {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
+            label: cstring = editor.airport_preview_valid ? "CLICK TO PLACE AIRPORT" : "SITE MUST BE DRY LAND"
+            color := editor.airport_preview_valid ? rl.Color{134, 224, 216, 255} : rl.Color{224, 126, 108, 255}
+            ui_draw_text(.Data, label, {bounds.x, bounds.y + 38}, .4, color)
+            break
+        }
+        bounds = editor_ui_slider_bounds(layout, row)
+        half = (bounds.width - 6) * .5
         ui_draw_text(.Label, "SHAPE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
         editor_ui_panel_button(
             {bounds.x, bounds.y + 24, half, 30},
@@ -1071,6 +1091,18 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
     case .Building:
         bounds := editor_ui_slider_bounds(layout, row)
         half := (bounds.width - 6) * .5
+        if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, half, 30}) {
+            editor.airport_stamp_mode = false
+            editor.airport_preview_valid = false
+        } else if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 24, half, 30}) {
+            editor.airport_stamp_mode = true
+            editor.architecture_painting = false
+            architecture.city_plan_destroy(&editor.architecture_preview_plan)
+        }
+        row += 1
+        if editor.airport_stamp_mode do break
+        bounds = editor_ui_slider_bounds(layout, row)
+        half = (bounds.width - 6) * .5
         if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, half, 30}) {
             editor.architecture_brush_shape = .Square
         } else if pressed && rl.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 24, half, 30}) {

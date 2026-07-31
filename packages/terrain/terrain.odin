@@ -140,10 +140,8 @@ default_island_feature_seed :: #force_inline proc(island_index: int, salt: u32) 
 // strips across the mathematical island center. Offsets are deterministically
 // derived from the island seed, kept well inside the generated core, and
 // remain axis-aligned because the Postale's initial ground heading is -X.
-default_runway_center :: proc(sign: f32) -> (x, z: f32) {
+default_runway_center_for_seed :: proc(sign: f32, seed: u32) -> (x, z: f32) {
     center_x, center_z := default_island_center(sign)
-    island_index := sign < 0 ? 0 : 1
-    seed := island_index == 0 ? DEFAULT_ISLAND_SEEDS[0] : DEFAULT_ISLAND_SEEDS[1]
     unit := proc(value: u32) -> f32 {
         return f32(islands.hash(value) & 0xffff) / 65535 * 2 - 1
     }
@@ -151,6 +149,12 @@ default_runway_center :: proc(sign: f32) -> (x, z: f32) {
     // enough seeded cross-island variation to follow each silhouette.
     inward := -sign
     return center_x + inward * 54 + unit(seed ~ 0x52554e58) * 46, center_z + inward * 28 + unit(seed ~ 0x52554e5a) * 62
+}
+
+default_runway_center :: proc(sign: f32) -> (x, z: f32) {
+    island_index := sign < 0 ? 0 : 1
+    seeds := DEFAULT_ISLAND_SEEDS
+    return default_runway_center_for_seed(sign, seeds[island_index])
 }
 
 // Keep the island's three arrival anchors in one compact, walkable district.
@@ -234,14 +238,41 @@ default_town_center_for_project :: proc(
 // The airport forecourt sits just inland of the active threshold, directly on
 // the town approach. Keeping this shared with road generation and gameplay
 // placement prevents the terminal from drifting away from its access road.
-default_airport_center :: #force_inline proc(sign: f32) -> (x, z: f32) {
-    center_x, center_z := default_runway_center(sign)
+default_airport_center_for_seed :: proc(sign: f32, seed: u32) -> (x, z: f32) {
+    center_x, center_z := default_runway_center_for_seed(sign, seed)
     half_extent := f32(WORLD_SIZE_METERS * .5)
     runway_threshold_x := center_x - sign * half_extent * DEFAULT_RUNWAY_HALF_LENGTH
     town_x, town_z := default_town_center(sign)
     approach_amount := f32(.18)
     return runway_threshold_x + (town_x - runway_threshold_x) * approach_amount,
         center_z + (town_z - center_z) * approach_amount
+}
+
+default_airport_center :: proc(sign: f32) -> (x, z: f32) {
+    island_index := sign < 0 ? 0 : 1
+    seeds := DEFAULT_ISLAND_SEEDS
+    return default_airport_center_for_seed(sign, seeds[island_index])
+}
+
+// Carry the town approach past the airport rather than through its open
+// arcade. Two parallel-offset waypoints form a short bypass with enough
+// clearance for the terminal footprint, road shoulder, and planted apron.
+default_airport_road_bypass_for_seed :: proc(sign: f32, seed: u32) -> (before_x, before_z, after_x, after_z: f32) {
+    center_x, center_z := default_runway_center_for_seed(sign, seed)
+    half_extent := f32(WORLD_SIZE_METERS * .5)
+    threshold_x := center_x - sign * half_extent * DEFAULT_RUNWAY_HALF_LENGTH
+    town_x, town_z := default_town_center(sign)
+    airport_x, airport_z := default_airport_center_for_seed(sign, seed)
+    direction := linalg.normalize0([2]f32{town_x - threshold_x, town_z - center_z})
+    normal := [2]f32{-direction[1], direction[0]}
+    // Keep both islands' bypasses on the same visual side of their mirrored
+    // terminals instead of allowing route direction to flip the offset.
+    if normal[1] * sign < 0 do normal = -normal
+    along := f32(27)
+    clearance := f32(23)
+    before := [2]f32{airport_x, airport_z} - direction * along + normal * clearance
+    after := [2]f32{airport_x, airport_z} + direction * along + normal * clearance
+    return before[0], before[1], after[0], after[1]
 }
 
 default_marina_direction :: #force_inline proc(sign: f32) -> (x, z: f32) {
@@ -743,17 +774,18 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
     return project_migrate_v3(project, cast(^Project_V3)raw_data(data[header_size:]))
 }
 
-add_default_runways :: proc(project: ^Project) -> bool {
+add_default_runways_seeded :: proc(project: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]u32) -> bool {
     if project == nil ||
-       project.road_graph.node_count + len(DEFAULT_ISLAND_SIGNS) * 4 > roads.MAX_NODES ||
-       project.road_graph.edge_count + len(DEFAULT_ISLAND_SIGNS) * 3 > roads.MAX_EDGES {
+       project.road_graph.node_count + len(DEFAULT_ISLAND_SIGNS) * 5 > roads.MAX_NODES ||
+       project.road_graph.edge_count + len(DEFAULT_ISLAND_SIGNS) * 4 > roads.MAX_EDGES {
         return false
     }
     half_extent := f32(WORLD_SIZE_METERS * .5)
     runway_half_length := half_extent * DEFAULT_RUNWAY_HALF_LENGTH
     runway_width := half_extent * DEFAULT_RUNWAY_HALF_WIDTH * 2
-    for sign in DEFAULT_ISLAND_SIGNS {
-        center_x, center_z := default_runway_center(sign)
+    for sign, island_index in DEFAULT_ISLAND_SIGNS {
+        seed := seeds[island_index]
+        center_x, center_z := default_runway_center_for_seed(sign, seed)
         runway_height := sample_height(project, 0, center_x, center_z)
         from := roads.add_node(&project.road_graph, {center_x - runway_half_length, runway_height, center_z}, 0)
         to := roads.add_node(&project.road_graph, {center_x + runway_half_length, runway_height, center_z}, 0)
@@ -765,18 +797,26 @@ add_default_runways :: proc(project: ^Project) -> bool {
         town_x, town_z := default_town_center_for_project(project, sign)
         town_y := sample_height(project, 0, town_x, town_z)
         town := roads.add_node(&project.road_graph, {town_x, town_y, town_z}, 7)
-        airport_x, airport_z := default_airport_center(sign)
-        airport_y := sample_height(project, 0, airport_x, airport_z)
-        airport := roads.add_node(&project.road_graph, {airport_x, airport_y, airport_z}, 8)
+        before_x, before_z, after_x, after_z := default_airport_road_bypass_for_seed(sign, seed)
+        before_y := sample_height(project, 0, before_x, before_z)
+        after_y := sample_height(project, 0, after_x, after_z)
+        before := roads.add_node(&project.road_graph, {before_x, before_y, before_z}, 8)
+        after := roads.add_node(&project.road_graph, {after_x, after_y, after_z}, 8)
         inward_threshold := sign < 0 ? to : from
         if town < 0 ||
-           airport < 0 ||
-           roads.add_straight_edge(&project.road_graph, inward_threshold, airport, 8, 2, .Asphalt, .85) < 0 ||
-           roads.add_straight_edge(&project.road_graph, airport, town, 7, 1.5, .Asphalt, .85) < 0 {
+           before < 0 ||
+           after < 0 ||
+           roads.add_straight_edge(&project.road_graph, inward_threshold, before, 8, 2, .Asphalt, .85) < 0 ||
+           roads.add_straight_edge(&project.road_graph, before, after, 8, 2, .Asphalt, .85) < 0 ||
+           roads.add_straight_edge(&project.road_graph, after, town, 7, 1.5, .Asphalt, .85) < 0 {
             return false
         }
     }
     return true
+}
+
+add_default_runways :: proc(project: ^Project) -> bool {
+    return add_default_runways_seeded(project, DEFAULT_ISLAND_SEEDS)
 }
 
 terrain_erode_default_level :: proc(data: ^Clipmap_Level, scratch: []f32, half_extent: f32, iterations: int = 2) {
@@ -878,7 +918,7 @@ init_project_seeded :: proc(result: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]
         }
         terrain_erode_default_level(data, erosion_scratch, authored_half_extent)
     }
-    _ = add_default_runways(result)
+    _ = add_default_runways_seeded(result, seeds)
     refresh_derived_overlaps(result)
 }
 
@@ -1100,6 +1140,12 @@ duplicate_structure :: proc(project: ^Project, index: int, offset_x, offset_z: f
 new_project :: proc() -> ^Project {
     result := new(Project)
     init_project(result)
+    return result
+}
+
+new_project_seeded :: proc(seeds: [len(DEFAULT_ISLAND_SEEDS)]u32) -> ^Project {
+    result := new(Project)
+    init_project_seeded(result, seeds)
     return result
 }
 

@@ -12,13 +12,18 @@ import "core:strings"
 import sdl "vendor:sdl3"
 import rl "zelda_engine:canvas2d"
 
-MATERIAL_LAB_CAPACITY :: 32
+MATERIAL_LAB_CAPACITY :: 4096
+MATERIAL_LAB_LEGACY_CAPACITY :: 32
 MATERIAL_LAB_NAME_CAPACITY :: 48
-MATERIAL_LAB_VERSION :: u32(2)
+MATERIAL_LAB_TAGS_CAPACITY :: 96
+MATERIAL_LAB_VERSION :: u32(4)
+MATERIAL_LAB_PREVIOUS_VERSION :: u32(3)
+MATERIAL_LAB_LEGACY_VERSION :: u32(2)
 MATERIAL_LAB_MAGIC :: [8]u8{'A', 'D', 'R', 'M', 'A', 'T', 'L', 'B'}
 MATERIAL_LAB_SLIDER_COUNT :: 5
 MATERIAL_LAB_MAP_COUNT :: 4
 MATERIAL_LAB_PATH_CAPACITY :: 256
+MATERIAL_LAB_SEARCH_CAPACITY :: 48
 
 Material_Lab_Map_Kind :: enum u8 {
     Albedo,
@@ -37,6 +42,17 @@ Material_Lab_Map_Path :: struct {
 Material_Lab_Material :: struct {
     name:        [MATERIAL_LAB_NAME_CAPACITY]u8,
     name_length: u8,
+    tags:        [MATERIAL_LAB_TAGS_CAPACITY]u8,
+    tags_length: u8,
+    color:       [3]u8,
+    metallic:    f32,
+    roughness:   f32,
+    maps:        [MATERIAL_LAB_MAP_COUNT]Material_Lab_Map_Path,
+}
+
+Material_Lab_Previous_Material :: struct {
+    name:        [MATERIAL_LAB_NAME_CAPACITY]u8,
+    name_length: u8,
     color:       [3]u8,
     metallic:    f32,
     roughness:   f32,
@@ -45,34 +61,62 @@ Material_Lab_Material :: struct {
 
 Material_Lab_Library :: struct {
     count:     u32,
-    materials: [MATERIAL_LAB_CAPACITY]Material_Lab_Material,
+    materials: []Material_Lab_Material,
 }
 
-Material_Lab_File :: struct {
+Material_Lab_File_Header :: struct {
     magic:    [8]u8,
     version:  u32,
-    library:  Material_Lab_Library,
+    count:    u32,
+    checksum: u64,
+}
+
+Material_Lab_Legacy_Library :: struct {
+    count:     u32,
+    materials: [MATERIAL_LAB_LEGACY_CAPACITY]Material_Lab_Previous_Material,
+}
+
+Material_Lab_Legacy_File :: struct {
+    magic:    [8]u8,
+    version:  u32,
+    library:  Material_Lab_Legacy_Library,
     checksum: u64,
 }
 
 Material_Lab_State :: struct {
-    library:      Material_Lab_Library,
-    selected:     int,
-    dragging:     int,
-    name_editing: bool,
-    dirty:        bool,
-    status:       cstring,
-    status_until: f64,
-    loaded_maps:  [MATERIAL_LAB_MAP_COUNT]^image.Image,
-    loaded_index: int,
-    map_revision: u64,
-    orbit_yaw:     f32,
-    orbit_pitch:   f32,
-    orbit_distance: f32,
-    lighting_minutes: f32,
+    library:                 Material_Lab_Library,
+    selected:                int,
+    dragging:                int,
+    name_editing:            bool,
+    tags_editing:            bool,
+    dirty:                   bool,
+    status:                  cstring,
+    status_until:            f64,
+    loaded_maps:             [MATERIAL_LAB_MAP_COUNT]^image.Image,
+    loaded_index:            int,
+    map_revision:            u64,
+    orbit_yaw:               f32,
+    orbit_pitch:             f32,
+    orbit_distance:          f32,
+    lighting_minutes:        f32,
+    list_scroll_y:           f32,
+    list_scroll_dragging:    bool,
+    list_scroll_drag_offset: f32,
+    search:                  [MATERIAL_LAB_SEARCH_CAPACITY]u8,
+    search_length:           u8,
+    search_editing:          bool,
 }
 
 material_lab: Material_Lab_State
+
+material_lab_ensure_library :: proc() -> bool {
+    if len(material_lab.library.materials) >= MATERIAL_LAB_CAPACITY do return true
+    material_lab.library.materials = make([]Material_Lab_Material, MATERIAL_LAB_CAPACITY, context.allocator)
+    if material_lab_load() do return true
+    material_lab_defaults(&material_lab.library)
+    material_lab.dirty = true
+    return true
+}
 
 material_lab_name :: proc(material: ^Material_Lab_Material) -> string {
     if material == nil do return ""
@@ -84,6 +128,104 @@ material_lab_set_name :: proc(material: ^Material_Lab_Material, name: string) {
     material.name = {}
     material.name_length = u8(min(len(name), len(material.name)))
     copy(material.name[:material.name_length], transmute([]u8)name[:material.name_length])
+}
+
+material_lab_tags :: proc(material: ^Material_Lab_Material) -> string {
+    if material == nil do return ""
+    return string(material.tags[:min(int(material.tags_length), len(material.tags))])
+}
+
+material_lab_set_tags :: proc(material: ^Material_Lab_Material, tags: string) {
+    if material == nil do return
+    material.tags = {}
+    material.tags_length = u8(min(len(tags), len(material.tags)))
+    copy(material.tags[:material.tags_length], transmute([]u8)tags[:material.tags_length])
+}
+
+material_lab_suggested_tags :: proc(material: ^Material_Lab_Material) -> string {
+    name := material_lab_name(material)
+    switch name {
+    case "Warm plaster":
+        return "plaster, wall, warm, matte, architectural"
+    case "Aged bronze":
+        return "metal, bronze, aged, patina"
+    case "Glazed ceramic":
+        return "ceramic, glazed, tile, glossy"
+    case "Brushed aluminum":
+        return "metal, aluminum, brushed, silver"
+    case "Oxide red paint":
+        return "paint, red, oxide, coated"
+    case "Grass":
+        return "grass, vegetation, ground, organic, green"
+    case "Pale Adriatic Limestone":
+        return "stone, limestone, pale, adriatic, masonry"
+    case "Sun-Washed Stucco":
+        return "stucco, plaster, sun-washed, wall, exterior"
+    case "Arcade Terrazzo":
+        return "terrazzo, stone, arcade, floor, aggregate"
+    case "Exterior Forecourt Paving":
+        return "paving, exterior, stone, forecourt, ground"
+    case "Standing-Seam Roof":
+        return "roof, metal, standing-seam, exterior"
+    case "Monitor Tinted Glass":
+        return "glass, tinted, window, transparent"
+    case "Anodized Glazing Frame":
+        return "metal, aluminum, anodized, frame, window"
+    case "Teal Counter Tile":
+        return "tile, ceramic, teal, counter, glossy"
+    case "Counter Grout":
+        return "grout, mortar, counter, matte"
+    case "Counter Worktop Laminate":
+        return "laminate, worktop, counter, wood"
+    case "Counter Toe-Kick":
+        return "metal, counter, toe-kick, dark"
+    case "Painted Steel":
+        return "metal, steel, painted, coated"
+    case "Dark Hardware":
+        return "metal, hardware, dark, fixture"
+    case "Bench Slatted Hardwood":
+        return "wood, hardwood, bench, slatted, furniture"
+    case "Fired Terracotta":
+        return "terracotta, ceramic, fired, red, masonry"
+    case "Moist Planter Soil":
+        return "soil, earth, moist, planter, organic"
+    case "Airport Asphalt":
+        return "asphalt, airport, runway, road, ground"
+    case "Pale Concrete Curb":
+        return "concrete, curb, pale, road, masonry"
+    case "Drainage Grate":
+        return "metal, grate, drainage, road, hardware"
+    case "Road Marking White":
+        return "paint, road, marking, white, traffic"
+    case "Road Marking Ochre":
+        return "paint, road, marking, ochre, traffic"
+    case "Aged Brass Details":
+        return "metal, brass, aged, detail, patina"
+    case "Aerodromo Enamel Face":
+        return "enamel, sign, aerodromo, white, glossy"
+    case "Aerodromo Enamel Rim":
+        return "enamel, sign, aerodromo, red, metal"
+    case "Exposed Salted Limestone":
+        return "stone, limestone, salted, exposed, masonry"
+    case "Foot-Polished Terrazzo":
+        return "terrazzo, stone, polished, floor, aggregate"
+    }
+    if material != nil && material.metallic > .5 do return "metal, material"
+    return "surface, material"
+}
+
+material_lab_tag_untagged_materials :: proc() -> int {
+    tagged := 0
+    for index in 0 ..< int(material_lab.library.count) {
+        material := &material_lab.library.materials[index]
+        suggested := material_lab_suggested_tags(material)
+        existing := material_lab_tags(material)
+        if existing != "" && existing != "surface, material" && existing != "metal, material" do continue
+        if existing == suggested do continue
+        material_lab_set_tags(material, suggested)
+        tagged += 1
+    }
+    return tagged
 }
 
 material_lab_map_path :: proc(material: ^Material_Lab_Material, kind: Material_Lab_Map_Kind) -> string {
@@ -177,8 +319,7 @@ material_lab_make :: proc(name: string, color: [3]u8, metallic, roughness: f32) 
     return result
 }
 
-material_lab_defaults :: proc() -> Material_Lab_Library {
-    result: Material_Lab_Library
+material_lab_defaults :: proc(result: ^Material_Lab_Library) {
     defaults := [?]Material_Lab_Material {
         material_lab_make("Warm plaster", {214, 194, 157}, 0, .88),
         material_lab_make("Aged bronze", {125, 91, 51}, .82, .38),
@@ -186,16 +327,61 @@ material_lab_defaults :: proc() -> Material_Lab_Library {
         material_lab_make("Brushed aluminum", {174, 181, 180}, .92, .29),
         material_lab_make("Oxide red paint", {151, 53, 39}, .08, .57),
     }
+    if result == nil || len(result.materials) < len(defaults) do return
+    result.count = 0
+    mem.zero_slice(result.materials)
     result.count = u32(len(defaults))
     for material, index in defaults do result.materials[index] = material
-    return result
 }
 
-material_lab_checksum :: proc(library: ^Material_Lab_Library) -> u64 {
-    bytes := mem.slice_ptr(cast([^]u8)library, size_of(library^))
+material_lab_checksum_bytes :: proc(bytes: []u8) -> u64 {
     hash: u64 = 14695981039346656037
     for byte in bytes do hash = (hash ~ u64(byte)) * 1099511628211
     return hash
+}
+
+material_lab_material_bytes :: proc(materials: []Material_Lab_Material) -> []u8 {
+    if len(materials) == 0 do return nil
+    return mem.slice_ptr(cast([^]u8)raw_data(materials), len(materials) * size_of(Material_Lab_Material))
+}
+
+material_lab_legacy_checksum :: proc(library: ^Material_Lab_Legacy_Library) -> u64 {
+    return material_lab_checksum_bytes(mem.slice_ptr(cast([^]u8)library, size_of(library^)))
+}
+
+material_lab_material_valid :: proc(material: ^Material_Lab_Material) -> bool {
+    return(
+        material != nil &&
+        int(material.name_length) <= len(material.name) &&
+        int(material.tags_length) <= len(material.tags) &&
+        material.metallic >= 0 &&
+        material.metallic <= 1 &&
+        material.roughness >= .04 &&
+        material.roughness <= 1 \
+    )
+}
+
+material_lab_previous_material_valid :: proc(material: ^Material_Lab_Previous_Material) -> bool {
+    return(
+        material != nil &&
+        int(material.name_length) <= len(material.name) &&
+        material.metallic >= 0 &&
+        material.metallic <= 1 &&
+        material.roughness >= .04 &&
+        material.roughness <= 1 \
+    )
+}
+
+material_lab_upgrade_previous_material :: proc(material: ^Material_Lab_Previous_Material) -> Material_Lab_Material {
+    result: Material_Lab_Material
+    if material == nil do return result
+    result.name = material.name
+    result.name_length = material.name_length
+    result.color = material.color
+    result.metallic = material.metallic
+    result.roughness = material.roughness
+    result.maps = material.maps
+    return result
 }
 
 material_lab_save_directory :: proc(allocator := context.allocator) -> (string, bool) {
@@ -213,14 +399,24 @@ material_lab_save_path :: proc(allocator := context.allocator) -> (string, bool)
 }
 
 material_lab_save_to_path :: proc(library: ^Material_Lab_Library, path: string) -> bool {
-    if library == nil || path == "" do return false
-    file_data := Material_Lab_File {
-        magic   = MATERIAL_LAB_MAGIC,
-        version = MATERIAL_LAB_VERSION,
-        library = library^,
+    if library == nil ||
+       path == "" ||
+       library.count > u32(len(library.materials)) ||
+       library.count > MATERIAL_LAB_CAPACITY {
+        return false
     }
-    file_data.checksum = material_lab_checksum(&file_data.library)
-    bytes := mem.slice_ptr(cast([^]u8)&file_data, size_of(file_data))
+    materials := library.materials[:int(library.count)]
+    material_bytes := material_lab_material_bytes(materials)
+    header := Material_Lab_File_Header {
+        magic    = MATERIAL_LAB_MAGIC,
+        version  = MATERIAL_LAB_VERSION,
+        count    = library.count,
+        checksum = material_lab_checksum_bytes(material_bytes),
+    }
+    header_size := size_of(Material_Lab_File_Header)
+    bytes := make([]u8, header_size + len(material_bytes), context.temp_allocator)
+    copy(bytes[:header_size], mem.slice_ptr(cast([^]u8)&header, header_size))
+    copy(bytes[header_size:], material_bytes)
     temporary, temporary_err := strings.concatenate({path, ".tmp"}, context.temp_allocator)
     if temporary_err != nil do return false
     file, create_err := os.create(temporary)
@@ -238,27 +434,59 @@ material_lab_save_to_path :: proc(library: ^Material_Lab_Library, path: string) 
 }
 
 material_lab_load_from_path :: proc(library: ^Material_Lab_Library, path: string) -> bool {
-    if library == nil || path == "" do return false
+    if library == nil || len(library.materials) < MATERIAL_LAB_CAPACITY || path == "" do return false
     bytes, err := os.read_entire_file(path, context.temp_allocator)
-    if err != nil || len(bytes) != size_of(Material_Lab_File) do return false
-    file_data := cast(^Material_Lab_File)raw_data(bytes)
-    if file_data.magic != MATERIAL_LAB_MAGIC ||
-       file_data.version != MATERIAL_LAB_VERSION ||
-       file_data.library.count > MATERIAL_LAB_CAPACITY ||
-       material_lab_checksum(&file_data.library) != file_data.checksum {
-        return false
-    }
-    for index in 0 ..< int(file_data.library.count) {
-        material := &file_data.library.materials[index]
-        if int(material.name_length) > len(material.name) ||
-           material.metallic < 0 ||
-           material.metallic > 1 ||
-           material.roughness < .04 ||
-           material.roughness > 1 {
-            return false
+    if err != nil do return false
+    if len(bytes) >= size_of(Material_Lab_File_Header) {
+        header := cast(^Material_Lab_File_Header)raw_data(bytes)
+        payload := bytes[size_of(Material_Lab_File_Header):]
+        if header.magic == MATERIAL_LAB_MAGIC && header.version == MATERIAL_LAB_VERSION {
+            if header.count > MATERIAL_LAB_CAPACITY ||
+               len(payload) != int(header.count) * size_of(Material_Lab_Material) ||
+               material_lab_checksum_bytes(payload) != header.checksum {
+                return false
+            }
+            materials := mem.slice_ptr(cast([^]Material_Lab_Material)raw_data(payload), int(header.count))
+            for index in 0 ..< len(materials) {
+                if !material_lab_material_valid(&materials[index]) do return false
+            }
+            mem.zero_slice(library.materials)
+            copy(library.materials[:int(header.count)], materials)
+            library.count = header.count
+            return true
+        }
+        if header.magic == MATERIAL_LAB_MAGIC && header.version == MATERIAL_LAB_PREVIOUS_VERSION {
+            if header.count > MATERIAL_LAB_CAPACITY ||
+               len(payload) != int(header.count) * size_of(Material_Lab_Previous_Material) ||
+               material_lab_checksum_bytes(payload) != header.checksum {
+                return false
+            }
+            materials := mem.slice_ptr(cast([^]Material_Lab_Previous_Material)raw_data(payload), int(header.count))
+            mem.zero_slice(library.materials)
+            for index in 0 ..< len(materials) {
+                if !material_lab_previous_material_valid(&materials[index]) do return false
+                library.materials[index] = material_lab_upgrade_previous_material(&materials[index])
+            }
+            library.count = header.count
+            return true
         }
     }
-    library^ = file_data.library
+    if len(bytes) != size_of(Material_Lab_Legacy_File) do return false
+    legacy := cast(^Material_Lab_Legacy_File)raw_data(bytes)
+    if legacy.magic != MATERIAL_LAB_MAGIC ||
+       legacy.version != MATERIAL_LAB_LEGACY_VERSION ||
+       legacy.library.count > MATERIAL_LAB_LEGACY_CAPACITY ||
+       material_lab_legacy_checksum(&legacy.library) != legacy.checksum {
+        return false
+    }
+    mem.zero_slice(library.materials)
+    library.count = legacy.library.count
+    for index in 0 ..< int(legacy.library.count) {
+        if !material_lab_previous_material_valid(&legacy.library.materials[index]) {
+            return false
+        }
+        library.materials[index] = material_lab_upgrade_previous_material(&legacy.library.materials[index])
+    }
     return true
 }
 
@@ -292,9 +520,9 @@ material_lab_update_camera :: proc(editor: ^Editor) {
     editor.camera_pose = third_person.camera_pose(
         third_person.Vec3{0, 1.25, 0},
         {
-            yaw_radians   = material_lab.orbit_yaw,
+            yaw_radians = material_lab.orbit_yaw,
             pitch_radians = material_lab.orbit_pitch,
-            distance      = material_lab.orbit_distance,
+            distance = material_lab.orbit_distance,
         },
     )
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
@@ -306,21 +534,37 @@ material_lab_lighting_bounds :: proc(width: i32) -> rl.Rectangle {
 
 material_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
     if editor == nil do return false
+    materials := material_lab.library.materials
     material_lab = {
-        selected     = 0,
-        dragging     = -1,
-        loaded_index = -1,
-        orbit_yaw = -.66,
-        orbit_pitch = .24,
-        orbit_distance = 9.2,
+        selected         = 0,
+        dragging         = -1,
+        loaded_index     = -1,
+        orbit_yaw        = -.66,
+        orbit_pitch      = .24,
+        orbit_distance   = 9.2,
         lighting_minutes = 10 * 60 + 20,
     }
+    if len(materials) >= MATERIAL_LAB_CAPACITY {
+        material_lab.library.materials = materials
+    }
+    _ = material_lab_ensure_library()
     if !material_lab_load() {
-        material_lab.library = material_lab_defaults()
+        material_lab_defaults(&material_lab.library)
         material_lab.dirty = true
         material_lab_status("STARTER LIBRARY")
     } else {
-        material_lab_status("LIBRARY LOADED")
+        tagged := material_lab_tag_untagged_materials()
+        if tagged > 0 {
+            if material_lab_save() {
+                material_lab.dirty = false
+                material_lab_status("MATERIALS TAGGED")
+            } else {
+                material_lab.dirty = true
+                material_lab_status("TAGS NEED SAVE")
+            }
+        } else {
+            material_lab_status("LIBRARY LOADED")
+        }
     }
     editor.in_map = true
     editor.capture_world_only = true
@@ -418,19 +662,155 @@ material_lab_backspace_name :: proc() {
     material_lab.dirty = true
 }
 
+material_lab_append_tags :: proc(text: string) {
+    material := material_lab_current()
+    if material == nil || text == "" do return
+    remaining := len(material.tags) - int(material.tags_length)
+    count := min(remaining, len(text))
+    if count <= 0 do return
+    copy(material.tags[material.tags_length:], transmute([]u8)text[:count])
+    material.tags_length += u8(count)
+    material_lab.dirty = true
+}
+
+material_lab_backspace_tags :: proc() {
+    material := material_lab_current()
+    if material == nil || material.tags_length == 0 do return
+    material.tags_length -= 1
+    for material.tags_length > 0 && (material.tags[material.tags_length] & 0xc0) == 0x80 {
+        material.tags_length -= 1
+    }
+    material.tags[material.tags_length] = 0
+    material_lab.dirty = true
+}
+
 material_lab_layout :: proc(
     width, height: i32,
 ) -> (
-    panel, list, name_box: rl.Rectangle,
+    panel, list, search_box, name_box, tags_box: rl.Rectangle,
     slider_x, slider_y, slider_w: f32,
 ) {
     panel = {22, 22, min(f32(width) - 44, f32(560)), min(f32(height) - 44, f32(610))}
-    list = {panel.x + 20, panel.y + 84, 190, panel.height - 164}
+    search_box = {panel.x + 20, panel.y + 84, 190, 34}
+    list = {panel.x + 20, panel.y + 124, 190, panel.height - 204}
     name_box = {panel.x + 230, panel.y + 84, panel.width - 250, 38}
+    tags_box = {panel.x + 230, panel.y + 130, panel.width - 250, 28}
     slider_x = panel.x + 310
-    slider_y = panel.y + 166
+    slider_y = panel.y + 184
     slider_w = panel.width - 340
     return
+}
+
+material_lab_search_text :: proc() -> string {
+    return string(material_lab.search[:min(int(material_lab.search_length), len(material_lab.search))])
+}
+
+material_lab_search_matches :: proc(name: string) -> bool {
+    query := material_lab_search_text()
+    if query == "" do return true
+    if len(query) > len(name) do return false
+    for start in 0 ..= len(name) - len(query) {
+        matches := true
+        for offset in 0 ..< len(query) {
+            name_byte := name[start + offset]
+            query_byte := query[offset]
+            if name_byte >= 'A' && name_byte <= 'Z' do name_byte += 'a' - 'A'
+            if query_byte >= 'A' && query_byte <= 'Z' do query_byte += 'a' - 'A'
+            if name_byte != query_byte {
+                matches = false
+                break
+            }
+        }
+        if matches do return true
+    }
+    return false
+}
+
+material_lab_material_matches_search :: proc(material: ^Material_Lab_Material) -> bool {
+    return(
+        material_lab_search_matches(material_lab_name(material)) ||
+        material_lab_search_matches(material_lab_tags(material)) \
+    )
+}
+
+material_lab_filtered_count :: proc() -> int {
+    count := 0
+    for index in 0 ..< int(material_lab.library.count) {
+        if material_lab_material_matches_search(&material_lab.library.materials[index]) do count += 1
+    }
+    return count
+}
+
+material_lab_filtered_index :: proc(filtered_row: int) -> int {
+    row := 0
+    for index in 0 ..< int(material_lab.library.count) {
+        if !material_lab_material_matches_search(&material_lab.library.materials[index]) do continue
+        if row == filtered_row do return index
+        row += 1
+    }
+    return -1
+}
+
+material_lab_selected_filtered_row :: proc() -> int {
+    row := 0
+    for index in 0 ..< int(material_lab.library.count) {
+        if !material_lab_material_matches_search(&material_lab.library.materials[index]) do continue
+        if index == material_lab.selected do return row
+        row += 1
+    }
+    return -1
+}
+
+material_lab_search_append :: proc(text: string) {
+    available := len(material_lab.search) - int(material_lab.search_length)
+    count := min(len(text), available)
+    if count <= 0 do return
+    copy(material_lab.search[material_lab.search_length:], transmute([]u8)text[:count])
+    material_lab.search_length += u8(count)
+    material_lab.list_scroll_y = 0
+}
+
+material_lab_search_backspace :: proc() {
+    if material_lab.search_length == 0 do return
+    material_lab.search_length -= 1
+    for material_lab.search_length > 0 && (material_lab.search[material_lab.search_length] & 0xc0) == 0x80 {
+        material_lab.search_length -= 1
+    }
+    material_lab.search[material_lab.search_length] = 0
+    material_lab.list_scroll_y = 0
+}
+
+material_lab_list_max_scroll :: proc(list: rl.Rectangle) -> f32 {
+    content_height := f32(material_lab_filtered_count()) * 34 + 6
+    return max(content_height - list.height, 0)
+}
+
+material_lab_list_scrollbar_track :: proc(list: rl.Rectangle) -> rl.Rectangle {
+    return {list.x + list.width - 8, list.y + 5, 4, list.height - 10}
+}
+
+material_lab_list_scrollbar_thumb :: proc(list: rl.Rectangle) -> rl.Rectangle {
+    track := material_lab_list_scrollbar_track(list)
+    content_height := max(f32(material_lab_filtered_count()) * 34 + 6, list.height)
+    thumb_height := max(track.height * list.height / content_height, f32(28))
+    travel := max(track.height - thumb_height, f32(1))
+    maximum := material_lab_list_max_scroll(list)
+    normalized := maximum > 0 ? clamp(material_lab.list_scroll_y / maximum, 0, 1) : f32(0)
+    return {track.x - 3, track.y + travel * normalized, track.width + 6, thumb_height}
+}
+
+material_lab_list_reveal_selected :: proc(list: rl.Rectangle) {
+    filtered_row := material_lab_selected_filtered_row()
+    if filtered_row < 0 do return
+    row_height := f32(34)
+    row_top := f32(filtered_row) * row_height
+    row_bottom := row_top + row_height
+    if row_top < material_lab.list_scroll_y {
+        material_lab.list_scroll_y = row_top
+    } else if row_bottom > material_lab.list_scroll_y + list.height {
+        material_lab.list_scroll_y = row_bottom - list.height
+    }
+    material_lab.list_scroll_y = clamp(material_lab.list_scroll_y, 0, material_lab_list_max_scroll(list))
 }
 
 material_lab_slider_value :: proc(index: int) -> f32 {
@@ -473,13 +853,12 @@ material_lab_set_slider :: proc(index: int, normalized: f32) {
 material_lab_process_input :: proc(editor: ^Editor) {
     if editor == nil do return
     width, height := rl.GetScreenWidth(), rl.GetScreenHeight()
-    panel, list, name_box, slider_x, slider_y, slider_w := material_lab_layout(width, height)
+    panel, list, search_box, name_box, tags_box, slider_x, slider_y, slider_w := material_lab_layout(width, height)
     _ = panel
     mouse := rl.GetMousePosition()
     pressed := rl.IsMouseButtonPressed(.LEFT)
     lighting_bounds := material_lab_lighting_bounds(width)
-    viewport_input := !rl.CheckCollisionPointRec(mouse, panel) &&
-                      !rl.CheckCollisionPointRec(mouse, lighting_bounds)
+    viewport_input := !rl.CheckCollisionPointRec(mouse, panel) && !rl.CheckCollisionPointRec(mouse, lighting_bounds)
 
     if viewport_input && rl.IsMouseButtonDown(.RIGHT) {
         mouse_delta := rl.GetMouseDelta()
@@ -488,26 +867,23 @@ material_lab_process_input :: proc(editor: ^Editor) {
         material_lab_update_camera(editor)
     }
     wheel := rl.GetMouseWheelMove()
-    if viewport_input && math.abs(wheel) > .01 {
+    if rl.CheckCollisionPointRec(mouse, list) && math.abs(wheel) > .01 {
+        material_lab.list_scroll_y = clamp(
+            material_lab.list_scroll_y - wheel * 42,
+            0,
+            material_lab_list_max_scroll(list),
+        )
+    } else if viewport_input && math.abs(wheel) > .01 {
         if shift_key_down() {
             material_lab.lighting_minutes += wheel * 30
             atmosphere.set_world_minutes(&editor.atmosphere, material_lab.lighting_minutes)
         } else {
-            material_lab.orbit_distance = clamp(
-                material_lab.orbit_distance * f32(math.pow(.86, f64(wheel))),
-                3.4,
-                18,
-            )
+            material_lab.orbit_distance = clamp(material_lab.orbit_distance * f32(math.pow(.86, f64(wheel))), 3.4, 18)
             material_lab_update_camera(editor)
         }
     }
 
-    lighting_track := rl.Rectangle {
-        lighting_bounds.x + 14,
-        lighting_bounds.y + 35,
-        lighting_bounds.width - 28,
-        12,
-    }
+    lighting_track := rl.Rectangle{lighting_bounds.x + 14, lighting_bounds.y + 35, lighting_bounds.width - 28, 12}
     if rl.IsMouseButtonDown(.LEFT) && rl.CheckCollisionPointRec(mouse, lighting_bounds) {
         normalized := clamp((mouse.x - lighting_track.x) / lighting_track.width, 0, 1)
         // Keep the useful daylight arc on one slider, from sunrise through sunset.
@@ -515,7 +891,20 @@ material_lab_process_input :: proc(editor: ^Editor) {
         atmosphere.set_world_minutes(&editor.atmosphere, material_lab.lighting_minutes)
     }
 
-    if material_lab.name_editing {
+    if material_lab.search_editing {
+        _ = rl.SetTextInputArea(search_box, int(material_lab.search_length))
+        material_lab_search_append(rl.GetTextInput())
+        if rl.IsKeyPressed(.BACKSPACE) do material_lab_search_backspace()
+        if rl.IsKeyPressed(.ENTER) do material_lab.search_editing = false
+    } else if material_lab.tags_editing {
+        material := material_lab_current()
+        if material != nil {
+            _ = rl.SetTextInputArea(tags_box, int(material.tags_length))
+            material_lab_append_tags(rl.GetTextInput())
+            if rl.IsKeyPressed(.BACKSPACE) do material_lab_backspace_tags()
+            if rl.IsKeyPressed(.ENTER) do material_lab.tags_editing = false
+        }
+    } else if material_lab.name_editing {
         _ = rl.SetTextInputArea(name_box, int(material_lab_current().name_length))
         material_lab_append_name(rl.GetTextInput())
         if rl.IsKeyPressed(.BACKSPACE) do material_lab_backspace_name()
@@ -523,15 +912,60 @@ material_lab_process_input :: proc(editor: ^Editor) {
     }
 
     row_height := f32(34)
-    if pressed && rl.CheckCollisionPointRec(mouse, list) {
-        index := int((mouse.y - list.y) / row_height)
+    list_rows := list
+    if material_lab_list_max_scroll(list) > 0 do list_rows.width -= 16
+    if pressed && rl.CheckCollisionPointRec(mouse, list_rows) {
+        filtered_row := int((mouse.y - list.y + material_lab.list_scroll_y) / row_height)
+        index := material_lab_filtered_index(filtered_row)
         if index >= 0 && index < int(material_lab.library.count) {
             material_lab.selected = index
             material_lab.name_editing = false
+            material_lab.tags_editing = false
             material_lab_maps_load()
         }
     }
-    if pressed && rl.CheckCollisionPointRec(mouse, name_box) do material_lab.name_editing = true
+
+    maximum_scroll := material_lab_list_max_scroll(list)
+    material_lab.list_scroll_y = clamp(material_lab.list_scroll_y, 0, maximum_scroll)
+    scrollbar := material_lab_list_scrollbar_track(list)
+    thumb := material_lab_list_scrollbar_thumb(list)
+    if maximum_scroll > 0 && pressed && rl.CheckCollisionPointRec(mouse, thumb) {
+        material_lab.list_scroll_dragging = true
+        material_lab.list_scroll_drag_offset = mouse.y - thumb.y
+    } else if maximum_scroll > 0 &&
+       pressed &&
+       rl.CheckCollisionPointRec(mouse, {scrollbar.x - 8, scrollbar.y, 20, scrollbar.height}) {
+        travel := max(scrollbar.height - thumb.height, f32(1))
+        normalized := clamp((mouse.y - scrollbar.y - thumb.height * .5) / travel, 0, 1)
+        material_lab.list_scroll_y = normalized * maximum_scroll
+        material_lab.list_scroll_dragging = true
+        material_lab.list_scroll_drag_offset = thumb.height * .5
+    }
+    if material_lab.list_scroll_dragging {
+        if rl.IsMouseButtonDown(.LEFT) {
+            thumb = material_lab_list_scrollbar_thumb(list)
+            travel := max(scrollbar.height - thumb.height, f32(1))
+            normalized := clamp((mouse.y - material_lab.list_scroll_drag_offset - scrollbar.y) / travel, 0, 1)
+            material_lab.list_scroll_y = normalized * maximum_scroll
+        } else {
+            material_lab.list_scroll_dragging = false
+        }
+    }
+    if pressed && rl.CheckCollisionPointRec(mouse, search_box) {
+        material_lab.search_editing = true
+        material_lab.name_editing = false
+        material_lab.tags_editing = false
+    }
+    if pressed && rl.CheckCollisionPointRec(mouse, name_box) {
+        material_lab.name_editing = true
+        material_lab.search_editing = false
+        material_lab.tags_editing = false
+    }
+    if pressed && rl.CheckCollisionPointRec(mouse, tags_box) {
+        material_lab.tags_editing = true
+        material_lab.name_editing = false
+        material_lab.search_editing = false
+    }
 
     buttons_y := panel.y + panel.height - 58
     new_button := rl.Rectangle{panel.x + 20, buttons_y, 82, 34}
@@ -542,11 +976,18 @@ material_lab_process_input :: proc(editor: ^Editor) {
     if pressed && rl.CheckCollisionPointRec(mouse, new_button) do material_lab_add(false)
     if pressed && rl.CheckCollisionPointRec(mouse, duplicate_button) do material_lab_add(true)
     if pressed && rl.CheckCollisionPointRec(mouse, delete_button) do material_lab_delete()
+    if pressed &&
+       (rl.CheckCollisionPointRec(mouse, new_button) ||
+               rl.CheckCollisionPointRec(mouse, duplicate_button) ||
+               rl.CheckCollisionPointRec(mouse, delete_button)) {
+        material_lab_list_reveal_selected(list)
+    }
     if pressed && rl.CheckCollisionPointRec(mouse, revert_button) {
         if material_lab_load() {
             material_lab.selected = min(material_lab.selected, int(material_lab.library.count) - 1)
             material_lab.dirty = false
             material_lab_maps_load()
+            material_lab_list_reveal_selected(list)
             material_lab_status("CHANGES REVERTED")
         } else {
             material_lab_status("NO SAVED LIBRARY")
@@ -576,7 +1017,11 @@ material_lab_process_input :: proc(editor: ^Editor) {
     }
     if rl.IsMouseButtonReleased(.LEFT) do material_lab.dragging = -1
     if rl.IsKeyPressed(.ESCAPE) {
-        if material_lab.name_editing {
+        if material_lab.search_editing {
+            material_lab.search_editing = false
+        } else if material_lab.tags_editing {
+            material_lab.tags_editing = false
+        } else if material_lab.name_editing {
             material_lab.name_editing = false
         } else {
             lab_scene_exit_to_main_menu(editor)
@@ -688,7 +1133,7 @@ material_lab_button :: proc(bounds: rl.Rectangle, label: cstring, accent: bool =
 }
 
 material_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
-    panel, list, name_box, slider_x, slider_y, slider_w := material_lab_layout(width, height)
+    panel, list, search_box, name_box, tags_box, slider_x, slider_y, slider_w := material_lab_layout(width, height)
     rl.DrawRectangleRounded(panel, .045, 10, {15, 23, 24, 242})
     rl.DrawRectangleRoundedLinesEx(panel, .045, 10, 1, {143, 119, 75, 255})
     lighting_bounds := material_lab_lighting_bounds(width)
@@ -725,10 +1170,46 @@ material_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         {150, 169, 164, 255},
     )
 
+    rl.DrawRectangleRounded(search_box, .14, 6, {8, 15, 16, 255})
+    rl.DrawRectangleRoundedLinesEx(
+        search_box,
+        .14,
+        6,
+        1,
+        material_lab.search_editing ? rl.Color{240, 194, 111, 255} : rl.Color{74, 93, 91, 255},
+    )
+    search_text := material_lab_search_text()
+    search_label :=
+        search_text == "" ? "SEARCH MATERIALS" : fmt.ctprintf("%s%s", search_text, material_lab.search_editing && int(rl.GetTime() * 2) % 2 == 0 ? "_" : "")
+    search_text_size := ui_measure_text(.Data, search_label, .18)
+    search_text_x := search_box.x + 10
+    if material_lab.search_editing && search_text_size.x > search_box.width - 20 {
+        search_text_x -= search_text_size.x - (search_box.width - 20)
+    }
+    rl.BeginScissorMode({search_box.x + 2, search_box.y + 2, search_box.width - 4, search_box.height - 4})
+    ui_draw_text(
+        .Data,
+        search_label,
+        {search_text_x, search_box.y + 10},
+        .18,
+        search_text == "" ? rl.Color{104, 121, 118, 255} : rl.Color{232, 229, 211, 255},
+    )
+    rl.EndScissorMode()
+
     rl.DrawRectangleRounded(list, .035, 6, {9, 15, 16, 255})
     row_height := f32(34)
+    rl.BeginScissorMode(list)
+    filtered_row := 0
     for index in 0 ..< int(material_lab.library.count) {
-        bounds := rl.Rectangle{list.x + 4, list.y + f32(index) * row_height + 3, list.width - 8, row_height - 5}
+        if !material_lab_material_matches_search(&material_lab.library.materials[index]) do continue
+        bounds := rl.Rectangle {
+            list.x + 4,
+            list.y + f32(filtered_row) * row_height + 3 - material_lab.list_scroll_y,
+            list.width - 16,
+            row_height - 5,
+        }
+        filtered_row += 1
+        if bounds.y + bounds.height < list.y || bounds.y > list.y + list.height do continue
         selected := material_lab.selected == index
         if selected || rl.CheckCollisionPointRec(rl.GetMousePosition(), bounds) {
             rl.DrawRectangleRounded(bounds, .16, 5, selected ? rl.Color{87, 66, 36, 255} : rl.Color{28, 38, 38, 255})
@@ -743,6 +1224,21 @@ material_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
             selected ? rl.Color{247, 218, 157, 255} : rl.Color{198, 207, 200, 255},
         )
     }
+    if filtered_row == 0 {
+        ui_draw_text(.Data, "NO MATCHES", {list.x + 12, list.y + 14}, .18, {104, 121, 118, 255})
+    }
+    rl.EndScissorMode()
+    if material_lab_list_max_scroll(list) > 0 {
+        track := material_lab_list_scrollbar_track(list)
+        thumb := material_lab_list_scrollbar_thumb(list)
+        rl.DrawRectangleRounded(track, 1, 4, {42, 53, 52, 255})
+        rl.DrawRectangleRounded(
+            thumb,
+            1,
+            5,
+            material_lab.list_scroll_dragging ? rl.Color{240, 194, 111, 255} : rl.Color{111, 130, 126, 255},
+        )
+    }
 
     rl.DrawRectangleRounded(name_box, .14, 6, {8, 15, 16, 255})
     rl.DrawRectangleRoundedLinesEx(
@@ -753,13 +1249,41 @@ material_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         material_lab.name_editing ? rl.Color{240, 194, 111, 255} : rl.Color{74, 93, 91, 255},
     )
     name := material_lab_current() == nil ? "" : material_lab_name(material_lab_current())
-    ui_draw_text(
-        .Label,
-        fmt.ctprintf("%s%s", name, material_lab.name_editing && int(rl.GetTime() * 2) % 2 == 0 ? "_" : ""),
-        {name_box.x + 12, name_box.y + 12},
-        .31,
-        {232, 229, 211, 255},
+    name_label := fmt.ctprintf("%s%s", name, material_lab.name_editing && int(rl.GetTime() * 2) % 2 == 0 ? "_" : "")
+    name_text_size := ui_measure_text(.Label, name_label, .31)
+    name_text_x := name_box.x + 12
+    if material_lab.name_editing && name_text_size.x > name_box.width - 24 {
+        name_text_x -= name_text_size.x - (name_box.width - 24)
+    }
+    rl.BeginScissorMode({name_box.x + 2, name_box.y + 2, name_box.width - 4, name_box.height - 4})
+    ui_draw_text(.Label, name_label, {name_text_x, name_box.y + 12}, .31, {232, 229, 211, 255})
+    rl.EndScissorMode()
+
+    rl.DrawRectangleRounded(tags_box, .14, 6, {8, 15, 16, 255})
+    rl.DrawRectangleRoundedLinesEx(
+        tags_box,
+        .14,
+        6,
+        1,
+        material_lab.tags_editing ? rl.Color{240, 194, 111, 255} : rl.Color{74, 93, 91, 255},
     )
+    tags := material_lab_tags(material_lab_current())
+    tags_label :=
+        tags == "" ? "TAGS: add comma-separated tags" : fmt.ctprintf("TAGS: %s%s", tags, material_lab.tags_editing && int(rl.GetTime() * 2) % 2 == 0 ? "_" : "")
+    tags_text_size := ui_measure_text(.Data, tags_label, .15)
+    tags_text_x := tags_box.x + 10
+    if material_lab.tags_editing && tags_text_size.x > tags_box.width - 20 {
+        tags_text_x -= tags_text_size.x - (tags_box.width - 20)
+    }
+    rl.BeginScissorMode({tags_box.x + 2, tags_box.y + 2, tags_box.width - 4, tags_box.height - 4})
+    ui_draw_text(
+        .Data,
+        tags_label,
+        {tags_text_x, tags_box.y + 8},
+        .15,
+        tags == "" ? rl.Color{104, 121, 118, 255} : rl.Color{198, 207, 200, 255},
+    )
+    rl.EndScissorMode()
 
     labels := [?]cstring{"RED", "GREEN", "BLUE", "METALLIC", "ROUGHNESS"}
     colors := [?]rl.Color {

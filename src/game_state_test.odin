@@ -6,6 +6,7 @@ import marina "../packages/marina"
 import story "../packages/story"
 import terrain "../packages/terrain"
 import vehicles "../packages/vehicles"
+import "core:math"
 import "core:testing"
 import sdl "vendor:sdl3"
 
@@ -361,6 +362,22 @@ when ODIN_TEST {
     }
 
     @(test)
+    airport_stamp_adds_a_persistent_oriented_terminal_marker :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        terrain.init_project(&editor.project)
+        defer terrain.destroy_project(&editor.project)
+        x, z := terrain.default_town_center_for_project(&editor.project, 1)
+        yaw := f32(math.PI) * .25
+        testing.expect(t, airport_stamp_site_valid(editor, x, z, yaw))
+        index := airport_stamp_add(editor, x, z, yaw)
+        testing.expect(t, index >= 0)
+        marker := editor.project.structures[index]
+        testing.expect(t, airport_structure_is_stamp(marker))
+        testing.expect_value(t, marker.rotation, yaw)
+    }
+
+    @(test)
     generated_world_places_complete_named_resident_roster :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
@@ -368,8 +385,7 @@ when ODIN_TEST {
         defer terrain.destroy_project(&editor.project)
         seed_default_island_towns(editor)
 
-        residents :=
-            [10]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
+        residents := [10]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
         for resident in residents {
             position, found := world_story_resident_position(editor, resident)
             testing.expect(t, found)

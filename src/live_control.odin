@@ -23,10 +23,14 @@ live_control_path :: proc(environment, fallback: string) -> string {
 
 live_control_npc_position :: proc(editor: ^Editor, name: string) -> (third_person.Vec3, string, bool) {
     if strings.equal_fold(name, "Marta") {
-        return editor.attendant_position + third_person.Vec3{0, MARTA_STOOL_HEIGHT, 0}, "Marta", true
+        return airport_service_position(editor.attendant_position) + third_person.Vec3{0, MARTA_STOOL_HEIGHT, 0},
+            "Marta",
+            true
     }
     if strings.equal_fold(name, "Gerta") {
-        return editor.gerta_position + third_person.Vec3{0, MARTA_STOOL_HEIGHT, 0}, "Gerta", true
+        return airport_service_position(editor.gerta_position) + third_person.Vec3{0, MARTA_STOOL_HEIGHT, 0},
+            "Gerta",
+            true
     }
     residents := [10]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
     for resident in residents {
@@ -79,9 +83,9 @@ live_control_business_position :: proc(editor: ^Editor, name: string) -> (third_
     } else if strings.equal_fold(requested, "Aerodromo") ||
        strings.equal_fold(requested, "West Aerodromo") ||
        strings.equal_fold(requested, "West airfield") {
-        return editor.attendant_position, "West Aerodromo", true
+        return airport_service_position(editor.attendant_position), "West Aerodromo", true
     } else if strings.equal_fold(requested, "East Aerodromo") || strings.equal_fold(requested, "East airfield") {
-        return editor.gerta_position, "East Aerodromo", true
+        return airport_service_position(editor.gerta_position), "East Aerodromo", true
     } else {
         return {}, "", false
     }
@@ -280,6 +284,7 @@ live_control_poll :: proc(editor: ^Editor) {
     } else if command == "audio_status" {
         response = live_control_audio_status_response(editor, request_id)
     } else if command == "material_list" {
+        _ = material_lab_ensure_library()
         names := strings.builder_make(context.temp_allocator)
         for index in 0 ..< int(material_lab.library.count) {
             if index > 0 do strings.write_string(&names, ",")
@@ -292,6 +297,7 @@ live_control_poll :: proc(editor: ^Editor) {
             strings.to_string(names),
         )
     } else if command == "material_attach_map" {
+        _ = material_lab_ensure_library()
         fields := strings.split(arguments, "\t", context.temp_allocator)
         if len(fields) != 3 {
             response = fmt.aprintf(
@@ -314,6 +320,7 @@ live_control_poll :: proc(editor: ^Editor) {
             )
         }
     } else if command == "material_create" {
+        _ = material_lab_ensure_library()
         fields := strings.split(arguments, "\t", context.temp_allocator)
         red, green, blue: int
         metallic, roughness: f32

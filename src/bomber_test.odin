@@ -4,11 +4,7 @@ import "core:testing"
 
 @(test)
 bomber_pip_tracks_newest_airborne_drop :: proc(t: ^testing.T) {
-    drops := [3]Bomber_Drop {
-        {seed = 3},
-        {seed = 9},
-        {seed = 6},
-    }
+    drops := [3]Bomber_Drop{{seed = 3}, {seed = 9}, {seed = 6}}
 
     tracked := bomber_pip_drop_from(drops[:])
     testing.expect(t, tracked == &drops[1])

@@ -577,12 +577,15 @@ ensure_record :: proc(b: ^Builder, package_id, name, type_path: string) -> strin
                         b.type_states[key] = 3
                         return "invalid"
                     }
-                    append(&record.fields, Field_Record {
-                        name     = field_name.name,
-                        tag      = tag,
-                        type     = field_type_name,
-                        is_using = bool_int(.Using in field.flags) != 0,
-                    })
+                    append(
+                        &record.fields,
+                        Field_Record {
+                            name = field_name.name,
+                            tag = tag,
+                            type = field_type_name,
+                            is_using = bool_int(.Using in field.flags) != 0,
+                        },
+                    )
                 }
             }
         }
@@ -647,10 +650,7 @@ ensure_record :: proc(b: ^Builder, package_id, name, type_path: string) -> strin
                 b.type_states[key] = 3
                 return "invalid"
             }
-            append(&record.fields, Field_Record {
-                name = fmt.tprintf("variant%d", index),
-                type = variant_type,
-            })
+            append(&record.fields, Field_Record{name = fmt.tprintf("variant%d", index), type = variant_type})
         }
     case ^ast.Distinct_Type:
         record.kind = "distinct"
@@ -969,12 +969,10 @@ type_repr :: proc(b: ^Builder, package_id: string, expr: ^ast.Expr, type_path: s
                     name := name_expr.derived_expr.(^ast.Ident) or_continue
                     field_type := type_repr(b, package_id, field.type, fmt.tprintf("%s.%s", type_path, name.name))
                     if field_type == "invalid" do return "invalid"
-                    append(&anonymous.fields, Field_Record {
-                        name     = name.name,
-                        tag      = tag,
-                        type     = field_type,
-                        is_using = .Using in field.flags,
-                    })
+                    append(
+                        &anonymous.fields,
+                        Field_Record{name = name.name, tag = tag, type = field_type, is_using = .Using in field.flags},
+                    )
                 }
             }
             anonymous.complete = true
@@ -1000,10 +998,7 @@ type_repr :: proc(b: ^Builder, package_id: string, expr: ^ast.Expr, type_path: s
             for variant, index in node.variants {
                 variant_type := type_repr(b, package_id, variant, fmt.tprintf("%s.variant%d", type_path, index))
                 if variant_type == "invalid" do return "invalid"
-                append(&anonymous.fields, Field_Record {
-                    name = fmt.tprintf("variant%d", index),
-                    type = variant_type,
-                })
+                append(&anonymous.fields, Field_Record{name = fmt.tprintf("variant%d", index), type = variant_type})
             }
             anonymous.complete = true
         case ^ast.Enum_Type:

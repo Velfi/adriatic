@@ -1,7 +1,7 @@
 package main
 
-import render_graph "../packages/render_graph"
 import atmosphere "../packages/atmosphere"
+import render_graph "../packages/render_graph"
 import terrain "../packages/terrain"
 import vk "vendor:vulkan"
 import rl "zelda_engine:canvas2d"
@@ -428,14 +428,8 @@ world_bomber_pip_render :: proc(ctx: ^Render_Graph_Context) {
     pip_width := logical_rect.width * scale_x
     pip_height := logical_rect.height * scale_y
     rect := vk.Rect2D {
-        offset = {
-            i32(max(logical_rect.x * scale_x, f32(0))),
-            i32(max(logical_rect.y * scale_y, f32(0))),
-        },
-        extent = {
-            u32(max(pip_width, f32(1))),
-            u32(max(pip_height, f32(1))),
-        },
+        offset = {i32(max(logical_rect.x * scale_x, f32(0))), i32(max(logical_rect.y * scale_y, f32(0)))},
+        extent = {u32(max(pip_width, f32(1))), u32(max(pip_height, f32(1)))},
     }
     if u32(rect.offset.x) + rect.extent.width > ctx.pass.framebuffer_extent.width {
         rect.extent.width = ctx.pass.framebuffer_extent.width - u32(rect.offset.x)
@@ -448,16 +442,16 @@ world_bomber_pip_render :: proc(ctx: ^Render_Graph_Context) {
         clearValue = {depthStencil = {depth = 1}},
     }
     clear_rect := vk.ClearRect {
-        rect = rect,
+        rect           = rect,
         baseArrayLayer = 0,
-        layerCount = 1,
+        layerCount     = 1,
     }
     vk.CmdClearAttachments(ctx.pass.frame.command_buffer, 1, &clear_attachment, 1, &clear_rect)
     viewport := vk.Viewport {
-        x = f32(rect.offset.x),
-        y = f32(rect.offset.y),
-        width = f32(rect.extent.width),
-        height = f32(rect.extent.height),
+        x        = f32(rect.offset.x),
+        y        = f32(rect.offset.y),
+        width    = f32(rect.extent.width),
+        height   = f32(rect.extent.height),
         minDepth = 0,
         maxDepth = 1,
     }
@@ -499,12 +493,14 @@ world_bomber_pip_render :: proc(ctx: ^Render_Graph_Context) {
     _ = render_graph.execute(&world_render_graph, ctx)
 
     full_viewport := vk.Viewport {
-        width = framebuffer_width,
-        height = framebuffer_height,
+        width    = framebuffer_width,
+        height   = framebuffer_height,
         minDepth = 0,
         maxDepth = 1,
     }
-    full_scissor := vk.Rect2D{extent = ctx.pass.framebuffer_extent}
+    full_scissor := vk.Rect2D {
+        extent = ctx.pass.framebuffer_extent,
+    }
     vk.CmdSetViewport(ctx.pass.frame.command_buffer, 0, 1, &full_viewport)
     vk.CmdSetScissor(ctx.pass.frame.command_buffer, 0, 1, &full_scissor)
 }

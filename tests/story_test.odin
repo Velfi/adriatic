@@ -31,10 +31,7 @@ complete_airfield_intro :: proc(t: ^testing.T, state: ^story.State) {
 receive_friendometer :: proc(t: ^testing.T, state: ^story.State) {
     testing.expect(t, story.ensure_quest_progress(state))
     if story.has_friendometer(state) do return
-    update, published := story.publish_quest_event(
-        state,
-        {kind = .Talk, key = "friendometer", target = "mirna"},
-    )
+    update, published := story.publish_quest_event(state, {kind = .Talk, key = "friendometer", target = "mirna"})
     testing.expect(t, published && update.completed_count == 1)
     testing.expect(t, story.has_friendometer(state))
 }
@@ -89,8 +86,20 @@ speaker_labels_resolve_to_the_active_resident :: proc(t: ^testing.T) {
         "LENA · POSTMASTER",
         "DR MIRNA",
     }
-    expected :=
-        [?]story.Resident{.Marta, .Gerta, .Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
+    expected := [?]story.Resident {
+        .Marta,
+        .Gerta,
+        .Niko,
+        .Iva,
+        .Bojan,
+        .Zora,
+        .Vesna,
+        .Petar,
+        .Anica,
+        .Toma,
+        .Lena,
+        .Mirna,
+    }
     for label, index in labels {
         resident, found := story.resident_from_speaker(label)
         testing.expect(t, found && resident == expected[index])
@@ -106,18 +115,12 @@ friendometer_is_the_only_opening_quest_and_unlocks_the_islands :: proc(t: ^testi
     catalog: story.Quest_Catalog
     story.init_quest_catalog(&catalog)
 
-    testing.expect(
-        t,
-        quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Friendometer)) == .Active,
-    )
+    testing.expect(t, quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Friendometer)) == .Active)
     testing.expect(
         t,
         quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Magneto_Westbound)) == .Locked,
     )
-    testing.expect(
-        t,
-        quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Post_Route)) == .Locked,
-    )
+    testing.expect(t, quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Post_Route)) == .Locked)
 
     dialogue_catalog: story.Catalog
     story.init_catalog(&dialogue_catalog)
@@ -134,10 +137,7 @@ friendometer_is_the_only_opening_quest_and_unlocks_the_islands :: proc(t: ^testi
         t,
         quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Magneto_Westbound)) == .Available,
     )
-    testing.expect(
-        t,
-        quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Post_Route)) == .Active,
-    )
+    testing.expect(t, quest.status(&state.quest, &catalog.definition, story.quest_node_id(.Post_Route)) == .Active)
 }
 
 @(test)
@@ -165,19 +165,13 @@ island_post_is_always_available_and_alternates_between_islands :: proc(t: ^testi
     testing.expect(t, state.delivery.kind == .Repeat_Eastbound)
     testing.expect(t, state.delivery.origin == .West && state.delivery.destination == .East)
     complete_current_delivery(t, &state, .Lena)
-    testing.expect(
-        t,
-        state.repeat_deliveries == 1 && state.stamps_earned == 1 && state.friendship_points == 1,
-    )
+    testing.expect(t, state.repeat_deliveries == 1 && state.stamps_earned == 1 && state.friendship_points == 1)
 
     testing.expect(t, story.begin_post_delivery(&state))
     testing.expect(t, state.delivery.kind == .Repeat_Westbound)
     testing.expect(t, state.delivery.origin == .East && state.delivery.destination == .West)
     complete_current_delivery(t, &state, .Toma)
-    testing.expect(
-        t,
-        state.repeat_deliveries == 2 && state.stamps_earned == 2 && state.friendship_points == 2,
-    )
+    testing.expect(t, state.repeat_deliveries == 2 && state.stamps_earned == 2 && state.friendship_points == 2)
 
     // The independent postal route does not consume or advance the authored
     // correspondence storyline.
@@ -1291,11 +1285,7 @@ two_island_quest_graph_projects_to_legacy_story_stages :: proc(t: ^testing.T) {
     testing.expect(t, legacy.airfield_errand == .Not_Offered)
     testing.expect(t, !quest.is_presented(&graph_state, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
 
-    _ = quest.publish(
-        &graph_state,
-        &catalog.definition,
-        {kind = .Talk, key = "friendometer", target = "mirna"},
-    )
+    _ = quest.publish(&graph_state, &catalog.definition, {kind = .Talk, key = "friendometer", target = "mirna"})
     testing.expect(t, quest.accept(&graph_state, &catalog.definition, story.quest_node_id(.Magneto_Westbound)))
     _ = quest.publish(&graph_state, &catalog.definition, {kind = .Deliver, key = "broken-magneto", target = "gerta"})
     testing.expect(t, quest.accept(&graph_state, &catalog.definition, story.quest_node_id(.Crash_Reported)))

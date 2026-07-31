@@ -182,6 +182,10 @@ Fixture :: struct {
     architecture_brush_preset:                      Settlement_Brush_Preset,
     architecture_brush_strength:                    f32,
     architecture_brush_hardness:                    f32,
+    airport_stamp_mode:                             bool `fixture:"-"`,
+    airport_preview_valid:                          bool `fixture:"-"`,
+    airport_preview_x, airport_preview_z:           f32 `fixture:"-"`,
+    airport_stamp_yaw:                              f32 `fixture:"-"`,
     marina_paint_mode:                              bool,
     marina_authored:                                bool,
     marina_authored_plan:                           marina.Plan,
@@ -221,13 +225,13 @@ Fixture :: struct {
     wreck_preview_x, wreck_preview_z:               f32 `fixture:"-"`,
     wreck_preview_revision:                         u64 `fixture:"-"`,
     wreck_preview_seed_offset:                      u32 `fixture:"-"`,
-    default_marinas:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan `hs:"-" fixture:"-"`,
-    default_harbors:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]harbor.Harbor_Plan `hs:"-" fixture:"-"`,
+    default_marinas:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan `hs:"-"`,
+    default_harbors:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]harbor.Harbor_Plan `hs:"-"`,
     default_harbor_interventions:                   [len(
         terrain.DEFAULT_ISLAND_SIGNS,
     )]harbor.Harbor_Intervention `hs:"-" fixture:"-"`,
-    default_marina_islands:                         [len(terrain.DEFAULT_ISLAND_SIGNS)]story.Island `hs:"-" fixture:"-"`,
-    default_marina_count:                           int `hs:"-" fixture:"-"`,
+    default_marina_islands:                         [len(terrain.DEFAULT_ISLAND_SIGNS)]story.Island `hs:"-"`,
+    default_marina_count:                           int `hs:"-"`,
     climbing_leaf_paint_mode:                       bool,
     climbing_leaf_painting:                         bool `fixture:"-"`,
     climbing_leaf_last_x, climbing_leaf_last_z:     f32 `fixture:"-"`,
@@ -435,7 +439,7 @@ Fixture :: struct {
     default_map_regeneration_active:                bool `hs:"-" fixture:"-"`,
     default_map_regeneration_loading_ready:         bool `hs:"-" fixture:"-"`,
     default_map_regeneration_stage:                 Default_Map_Regeneration_Stage `hs:"-" fixture:"-"`,
-    default_map_regeneration_seeds:                 [len(terrain.DEFAULT_ISLAND_SEEDS)]u32 `hs:"-" fixture:"-"`,
+    default_map_regeneration_seeds:                 [len(terrain.DEFAULT_ISLAND_SEEDS)]u32 `hs:"-"`,
     pause_screen:                                   Pause_Screen `fixture:"-"`,
     dither_state:                                   Dither_State `fixture:"-"`,
     mouse_fur:                                      Mouse_Fur,
@@ -458,7 +462,7 @@ Fixture :: struct {
     customization_preview_yaw:                      f32 `fixture:"-"`,
 }
 
-FIXTURE_SCHEMA_VERSION :: 8
+FIXTURE_SCHEMA_VERSION :: 9
 
 Editor :: struct {
     using fixture:                      Fixture,
@@ -1070,8 +1074,7 @@ architecture_regenerate_all :: proc(editor: ^Editor) {
 
 regenerate_default_map :: proc(editor: ^Editor) {
     if editor == nil do return
-    editor.default_map_regeneration_seeds =
-        terrain.next_default_island_seeds(editor.default_map_regeneration_seeds)
+    editor.default_map_regeneration_seeds = terrain.next_default_island_seeds(editor.default_map_regeneration_seeds)
     editor.default_map_regeneration_stage = .Terrain
     editor.default_map_regeneration_loading_ready = false
     editor.default_map_regeneration_active = true
@@ -1114,6 +1117,24 @@ default_map_regeneration_step :: proc(editor: ^Editor) {
         seed_default_island_towns_seeded(editor, editor.default_map_regeneration_seeds)
         editor.default_map_regeneration_stage = .Finalize
     case .Finalize:
+        west_airport_x, west_airport_z := terrain.default_airport_center_for_seed(
+            -1,
+            editor.default_map_regeneration_seeds[0],
+        )
+        east_airport_x, east_airport_z := terrain.default_airport_center_for_seed(
+            1,
+            editor.default_map_regeneration_seeds[1],
+        )
+        editor.attendant_position = {
+            east_airport_x,
+            terrain.sample_height(&editor.project, 0, east_airport_x, east_airport_z),
+            east_airport_z,
+        }
+        editor.gerta_position = {
+            west_airport_x,
+            terrain.sample_height(&editor.project, 0, west_airport_x, west_airport_z),
+            west_airport_z,
+        }
         world_renderer_fixture_invalidate(editor)
         gameplay_physics_rebuild_structures(editor)
         editor.default_map_regeneration_active = false
@@ -1979,7 +2000,7 @@ seed_marta_benchmark :: proc(editor: ^Editor) {
     editor.camera_target_lock = false
     editor.postale_visible = false
     editor.libellula_visible = false
-    attendant := editor.attendant_position
+    attendant := airport_service_position(editor.attendant_position)
     player_place(
         editor,
         {attendant.x + 20, terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z), attendant.z},
@@ -2811,10 +2832,7 @@ seed_city_capture :: proc(editor: ^Editor) {
     editor.structure_selected = -1
 }
 
-seed_default_island_towns_seeded :: proc(
-    editor: ^Editor,
-    island_seeds: [len(terrain.DEFAULT_ISLAND_SEEDS)]u32,
-) {
+seed_default_island_towns_seeded :: proc(editor: ^Editor, island_seeds: [len(terrain.DEFAULT_ISLAND_SEEDS)]u32) {
     if editor == nil do return
     architecture.city_plan_destroy(&editor.architecture_city_plan)
     editor.settlement_plan.patio_count = 0
@@ -3121,10 +3139,7 @@ default_marina_find_access_route :: proc(
     return Settlement_Route{}, false
 }
 
-seed_default_island_marinas_seeded :: proc(
-    editor: ^Editor,
-    island_seeds: [len(terrain.DEFAULT_ISLAND_SEEDS)]u32,
-) {
+seed_default_island_marinas_seeded :: proc(editor: ^Editor, island_seeds: [len(terrain.DEFAULT_ISLAND_SEEDS)]u32) {
     if editor == nil do return
     editor.default_marina_count = 0
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
@@ -3841,7 +3856,7 @@ architecture_paint_stamp :: proc(editor: ^Editor, piece: Settlement_Brush_Piece,
 }
 
 architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
-    if editor == nil || editor.in_map || !editor.architecture_paint_mode do return
+    if editor == nil || editor.in_map || !editor.architecture_paint_mode || editor.airport_stamp_mode do return
     pressed := rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonPressed(.RIGHT)
     down := rl.IsMouseButtonDown(.LEFT) || rl.IsMouseButtonDown(.RIGHT)
     released := rl.IsMouseButtonReleased(.LEFT) || rl.IsMouseButtonReleased(.RIGHT)
@@ -3890,6 +3905,79 @@ architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32,
             fmt.println("settlement brush:", settlement_program_report(&editor.settlement_plan))
         }
     }
+}
+
+AIRPORT_STAMP_SEED :: u32(0x41525054)
+AIRPORT_STAMP_GROUP :: u64(0x414952504f5254)
+
+airport_structure_is_stamp :: #force_inline proc(structure: terrain.Structure) -> bool {
+    return structure.seed == AIRPORT_STAMP_SEED && structure.group_id == AIRPORT_STAMP_GROUP
+}
+
+airport_stamp_site_valid :: proc(editor: ^Editor, x, z, yaw: f32) -> bool {
+    if editor == nil do return false
+    cosine, sine := math.cos(yaw), math.sin(yaw)
+    for local_z in ([3]f32{-15, 0, 15}) {
+        for local_x in ([3]f32{-21, 0, 21}) {
+            sample_x := x + local_x * cosine - local_z * sine
+            sample_z := z + local_x * sine + local_z * cosine
+            if terrain.sample_height(&editor.project, 0, sample_x, sample_z) <= editor.project.sea_level + .35 {
+                return false
+            }
+        }
+    }
+    return true
+}
+
+airport_stamp_add :: proc(editor: ^Editor, x, z, yaw: f32) -> int {
+    if editor == nil || !airport_stamp_site_valid(editor, x, z, yaw) do return -1
+    marker := terrain.structure_make(x, z, 1, 1, terrain.sample_height(&editor.project, 0, x, z) - 2, 1)
+    marker.group_id = AIRPORT_STAMP_GROUP
+    marker.seed = AIRPORT_STAMP_SEED
+    marker.rotation = yaw
+    return terrain.add_structure(&editor.project, marker)
+}
+
+airport_stamp_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
+    if editor == nil || editor.in_map || !editor.airport_stamp_mode {
+        if editor != nil do editor.airport_preview_valid = false
+        return
+    }
+    if !cursor_hit {
+        editor.airport_preview_valid = false
+        return
+    }
+    snap := f32(4)
+    x := f32(math.round(f64(world_x / snap))) * snap
+    z := f32(math.round(f64(world_z / snap))) * snap
+    editor.airport_preview_x, editor.airport_preview_z = x, z
+    editor.airport_preview_valid = airport_stamp_site_valid(editor, x, z, editor.airport_stamp_yaw)
+    wheel := rl.GetMouseWheelMove()
+    if wheel != 0 {
+        editor.airport_stamp_yaw += wheel * math.PI / 12
+        editor.airport_preview_valid = airport_stamp_site_valid(editor, x, z, editor.airport_stamp_yaw)
+    }
+    if rl.IsMouseButtonPressed(.RIGHT) {
+        nearest, nearest_distance := -1, f32(48 * 48)
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            if !airport_structure_is_stamp(structure) do continue
+            dx, dz := structure.center_x - x, structure.center_z - z
+            distance := dx * dx + dz * dz
+            if distance < nearest_distance {
+                nearest, nearest_distance = index, distance
+            }
+        }
+        if nearest >= 0 {
+            structure_history_push_undo(editor)
+            _ = terrain.remove_structure(&editor.project, nearest)
+            editor.project.revision += 1
+        }
+        return
+    }
+    if !rl.IsMouseButtonPressed(.LEFT) || !editor.airport_preview_valid do return
+    structure_history_push_undo(editor)
+    _ = airport_stamp_add(editor, x, z, editor.airport_stamp_yaw)
+    editor.project.revision += 1
 }
 
 marina_brush_refresh_preview :: proc(editor: ^Editor, world_x, world_z: f32, reroll: bool) {
@@ -4799,12 +4887,7 @@ bomber_pip_layout :: proc(width, height: f32) -> Bomber_Pip_Layout {
         pip_height = max(height - top - 12, f32(1))
         pip_width = pip_height * 16 / 9
     }
-    return {
-        x = max(width - pip_width - margin, f32(0)),
-        y = top,
-        width = pip_width,
-        height = pip_height,
-    }
+    return {x = max(width - pip_width - margin, f32(0)), y = top, width = pip_width, height = pip_height}
 }
 
 Bomber_Payload_Kind :: enum {
@@ -4838,15 +4921,11 @@ bomber_payload_label :: proc(kind: Bomber_Payload_Kind) -> cstring {
 
 bomber_payload_cycle :: proc(editor: ^Editor) {
     if editor == nil do return
-    editor.bomber_payload_kind =
-        cast(Bomber_Payload_Kind)((int(editor.bomber_payload_kind) + 1) % len(Bomber_Payload_Kind))
+    editor.bomber_payload_kind = cast(Bomber_Payload_Kind)((int(editor.bomber_payload_kind) + 1) %
+        len(Bomber_Payload_Kind))
 }
 
-bomber_drop_initial_state :: proc(
-    body: flight.Body_State,
-    kind: Bomber_Payload_Kind,
-    seed: u32,
-) -> Bomber_Drop {
+bomber_drop_initial_state :: proc(body: flight.Body_State, kind: Bomber_Payload_Kind, seed: u32) -> Bomber_Drop {
     basis := flight.basis_from_orientation(body.orientation)
     return {
         position = {
@@ -4870,11 +4949,7 @@ bomber_drop_integrate :: proc(
     if drop.age >= BOMBER_CHUTE_DELAY do drop.parachute_open = true
     wind := third_person.Vec3{}
     if compensate_wind {
-        wind = {
-            editor.atmosphere.weather.wind[0],
-            0,
-            editor.atmosphere.weather.wind[1],
-        }
+        wind = {editor.atmosphere.weather.wind[0], 0, editor.atmosphere.weather.wind[1]}
     }
     if drop.parachute_open {
         horizontal_response := min(delta_seconds * 1.35, f32(1))
@@ -4889,12 +4964,7 @@ bomber_drop_integrate :: proc(
         terrain.sample_height(&editor.project, 0, drop.position.x, drop.position.z),
         editor.project.sea_level,
     )
-    surface = terrain.structure_collision_surface_height(
-        &editor.project,
-        drop.position.x,
-        drop.position.z,
-        surface,
-    )
+    surface = terrain.structure_collision_surface_height(&editor.project, drop.position.x, drop.position.z, surface)
     if drop.position.y > surface + .18 do return false
     drop.position.y = surface + .18
     drop.velocity = {}
@@ -5026,12 +5096,7 @@ bomber_pip_update :: proc(editor: ^Editor, delta_seconds: f32) {
         editor.bomber_pip_handoff_seconds = .45
     }
     sharpness := editor.bomber_pip_handoff_seconds > 0 ? f32(4.5) : f32(10)
-    editor.bomber_pip_pose = third_person.follow_camera(
-        editor.bomber_pip_pose,
-        desired,
-        sharpness,
-        delta_seconds,
-    )
+    editor.bomber_pip_pose = third_person.follow_camera(editor.bomber_pip_pose, desired, sharpness, delta_seconds)
     editor.bomber_pip_handoff_seconds = max(editor.bomber_pip_handoff_seconds - delta_seconds, f32(0))
 }
 
@@ -6040,7 +6105,10 @@ libellula_attendant_near :: proc(editor: ^Editor) -> bool {
 
 nearest_service_attendant :: proc(editor: ^Editor) -> (resident: story.Resident, distance_squared: f32, found: bool) {
     if editor == nil || editor.pilot.mode != .On_Foot || !editor.libellula_visible do return {}, 0, false
-    positions := [2]third_person.Vec3{editor.attendant_position, editor.gerta_position}
+    positions := [2]third_person.Vec3 {
+        airport_service_position(editor.attendant_position),
+        airport_service_position(editor.gerta_position),
+    }
     residents := [2]story.Resident{.Marta, .Gerta}
     best_distance := f32(2.25 * 2.25)
     for position, index in positions {
@@ -6063,18 +6131,7 @@ nearest_story_resident :: proc(
 ) {
     if editor == nil || editor.pilot.mode != .On_Foot do return {}, 0, false
     best_distance := f32(2.25 * 2.25)
-    candidates := [10]story.Resident {
-        .Niko,
-        .Iva,
-        .Bojan,
-        .Zora,
-        .Vesna,
-        .Petar,
-        .Anica,
-        .Toma,
-        .Lena,
-        .Mirna,
-    }
+    candidates := [10]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
     for candidate in candidates {
         if require_action && !story.resident_has_action(&editor.story_state, candidate) do continue
         position, placed := world_story_resident_position(editor, candidate)
@@ -7152,39 +7209,25 @@ bomber_hud_draw :: proc(editor: ^Editor, width, height: i32) {
     if drift_distance > .1 {
         camera := perspective_camera(bomber_camera_pose(editor), editor.flight_camera.focal_length)
         still_projection := project_3d(camera, still_air_impact, width, height)
-        correction := rl.Vector2 {
-            center.x - still_projection.position.x,
-            center.y - still_projection.position.y,
-        }
-        correction_length := f32(
-            math.sqrt_f64(f64(correction.x * correction.x + correction.y * correction.y)),
-        )
+        correction := rl.Vector2{center.x - still_projection.position.x, center.y - still_projection.position.y}
+        correction_length := f32(math.sqrt_f64(f64(correction.x * correction.x + correction.y * correction.y)))
         if correction_length > .01 {
             direction := rl.Vector2{correction.x / correction_length, correction.y / correction_length}
             arrow_length := min(max(drift_distance * 1.15, f32(18)), radius * .72)
-            arrow_start := rl.Vector2 {
-                center.x - direction.x * arrow_length,
-                center.y - direction.y * arrow_length,
-            }
+            arrow_start := rl.Vector2{center.x - direction.x * arrow_length, center.y - direction.y * arrow_length}
             arrow_end := rl.Vector2{center.x - direction.x * 9, center.y - direction.y * 9}
             arrow_side := rl.Vector2{-direction.y, direction.x}
             rl.DrawLineEx(arrow_start, arrow_end, 4, shadow)
             rl.DrawLineEx(arrow_start, arrow_end, 2, {104, 210, 205, 235})
             rl.DrawLineEx(
                 arrow_end,
-                {
-                    arrow_end.x - direction.x * 12 + arrow_side.x * 7,
-                    arrow_end.y - direction.y * 12 + arrow_side.y * 7,
-                },
+                {arrow_end.x - direction.x * 12 + arrow_side.x * 7, arrow_end.y - direction.y * 12 + arrow_side.y * 7},
                 2,
                 {104, 210, 205, 235},
             )
             rl.DrawLineEx(
                 arrow_end,
-                {
-                    arrow_end.x - direction.x * 12 - arrow_side.x * 7,
-                    arrow_end.y - direction.y * 12 - arrow_side.y * 7,
-                },
+                {arrow_end.x - direction.x * 12 - arrow_side.x * 7, arrow_end.y - direction.y * 12 - arrow_side.y * 7},
                 2,
                 {104, 210, 205, 235},
             )
@@ -7211,13 +7254,7 @@ bomber_hud_draw :: proc(editor: ^Editor, width, height: i32) {
         pip_x, pip_y := pip.x, pip.y
         border := rl.Rectangle{pip_x - 3, pip_y - 3, pip_width + 6, pip_height + 6}
         rl.DrawRectangleRoundedLinesEx(border, .035, 8, 3, {8, 20, 22, 235})
-        rl.DrawRectangleRoundedLinesEx(
-            {pip_x - 1, pip_y - 1, pip_width + 2, pip_height + 2},
-            .035,
-            8,
-            1,
-            sight,
-        )
+        rl.DrawRectangleRoundedLinesEx({pip_x - 1, pip_y - 1, pip_width + 2, pip_height + 2}, .035, 8, 1, sight)
         airborne_count := 0
         for drop in editor.bomber_drops[:editor.bomber_drop_count] {
             if !drop.landed do airborne_count += 1
@@ -7227,43 +7264,24 @@ bomber_hud_draw :: proc(editor: ^Editor, width, height: i32) {
             bomber_payload_label(tracked.kind),
             max(
                 tracked.position.y -
-                    max(
-                        terrain.sample_height(&editor.project, 0, tracked.position.x, tracked.position.z),
-                        editor.project.sea_level,
-                    ),
+                max(
+                    terrain.sample_height(&editor.project, 0, tracked.position.x, tracked.position.z),
+                    editor.project.sea_level,
+                ),
                 f32(0),
             ),
             bomber_drop_eta(editor, tracked),
             airborne_count,
         )
-        rl.DrawRectangle(
-            i32(pip_x),
-            i32(pip_y),
-            i32(pip_width),
-            26,
-            {8, 23, 25, 205},
-        )
+        rl.DrawRectangle(i32(pip_x), i32(pip_y), i32(pip_width), 26, {8, 23, 25, 205})
         rl.DrawTextEx(rl.Font{}, pip_label, {pip_x + 10, pip_y + 7}, 12, .6, sight)
     }
     if editor.bomber_touchdown_flash > 0 {
         touchdown_alpha := u8(clamp(editor.bomber_touchdown_flash * 255, 0, 255))
-        touchdown_label := fmt.ctprintf(
-            "%s TOUCHDOWN",
-            bomber_payload_label(editor.bomber_touchdown_kind),
-        )
+        touchdown_label := fmt.ctprintf("%s TOUCHDOWN", bomber_payload_label(editor.bomber_touchdown_kind))
         touchdown_size := rl.MeasureTextEx(rl.Font{}, touchdown_label, 15, .7)
-        touchdown_panel := rl.Rectangle {
-            f32(width) - touchdown_size.x - 128,
-            312,
-            touchdown_size.x + 24,
-            32,
-        }
-        rl.DrawRectangleRounded(
-            touchdown_panel,
-            .22,
-            8,
-            {22, 72, 61, u8(clamp(f32(touchdown_alpha) * .9, 0, 230))},
-        )
+        touchdown_panel := rl.Rectangle{f32(width) - touchdown_size.x - 128, 312, touchdown_size.x + 24, 32}
+        rl.DrawRectangleRounded(touchdown_panel, .22, 8, {22, 72, 61, u8(clamp(f32(touchdown_alpha) * .9, 0, 230))})
         rl.DrawTextEx(
             rl.Font{},
             touchdown_label,
@@ -9732,6 +9750,7 @@ adriatic_run :: proc(
     if capture_kind == .Fountain_Generator_Lab do capture_lab_name = "fountain-generator"
     if capture_kind == .Lighthouse_Lab do capture_lab_name = "lighthouse"
     if capture_kind == .Mouse_Gait_Lab do capture_lab_name = "mouse-gait"
+    if capture_kind == .Mouse_Theater do capture_lab_name = "mouse-theater"
     if capture_kind == .Rondine_Movement_Lab do capture_lab_name = "rondine-movement"
     if capture_kind == .Markov_Wreck do capture_lab_name = "markov-wreck"
     if capture_kind == .Markov_Marina do capture_lab_name = "markov-marina"
@@ -9756,6 +9775,7 @@ adriatic_run :: proc(
         capture_kind == .Fountain_Generator_Lab ||
         capture_kind == .Lighthouse_Lab ||
         capture_kind == .Mouse_Gait_Lab ||
+        capture_kind == .Mouse_Theater ||
         capture_kind == .Rondine_Movement_Lab ||
         capture_kind == .Markov_Wreck ||
         capture_kind == .Markov_Marina ||
@@ -10457,6 +10477,25 @@ adriatic_run :: proc(
             editor.camera_pose = inspection_pose
             editor.capture_world_only = true
         }
+        if capture_kind == .Map && capture_target == "airport" {
+            airport := editor.attendant_position
+            airport_sign := airport.x >= 0 ? f32(1) : f32(-1)
+            airport_rotation := airport_sign > 0 ? -f32(math.PI) * .5 : f32(math.PI) * .5
+            eye_x, eye_z := world_rotate_xz(airport.x, airport.z, -18, -23, airport_rotation)
+            target_x, target_z := world_rotate_xz(airport.x, airport.z, 0, 4.5, airport_rotation)
+            inspection_pose := third_person.camera_look_at(
+                {eye_x, terrain.sample_height(&editor.project, 0, eye_x, eye_z) + 8.5, eye_z},
+                {target_x, terrain.sample_height(&editor.project, 0, target_x, target_z) + 2.6, target_z},
+            )
+            player_place(editor, {eye_x, terrain.sample_height(&editor.project, 0, eye_x, eye_z), eye_z}, .Scene_Setup)
+            editor.postale_visible = false
+            editor.libellula_visible = true
+            editor.rondine_visible = false
+            third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
+            third_person.camera_set_active(&editor.cameras, .Inspection)
+            editor.camera_pose = inspection_pose
+            editor.capture_world_only = true
+        }
         editor.pilot.position = editor.player.position
         editor.in_map = true
         editor.map_time = f32(rl.GetTime())
@@ -10674,7 +10713,8 @@ adriatic_run :: proc(
                 capture_target == "gerta" ||
                 capture_target == "gerta-dialogue" ||
                 capture_target == "gerta-dialogue-magneto"
-            attendant := gerta_capture ? editor.gerta_position : editor.attendant_position
+            attendant_anchor := gerta_capture ? editor.gerta_position : editor.attendant_position
+            attendant := airport_service_position(attendant_anchor)
             editor.player.position = {
                 attendant.x + 20,
                 terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z),
@@ -11455,8 +11495,7 @@ adriatic_run :: proc(
         car_orbit_degrees := 0
         car_orbit_view := false
         car_orbit_prefix := "car-orbit-"
-        if len(target) > len(car_orbit_prefix) &&
-           target[:len(car_orbit_prefix)] == car_orbit_prefix {
+        if len(target) > len(car_orbit_prefix) && target[:len(car_orbit_prefix)] == car_orbit_prefix {
             parsed, ok := strconv.parse_int(target[len(car_orbit_prefix):])
             if ok && parsed >= 0 && parsed < 360 {
                 car_orbit_degrees = parsed
@@ -11710,11 +11749,19 @@ adriatic_run :: proc(
     benchmark_sample_count := 0
     instrument_started_at := rl.GetTime()
     capture_frame :=
-        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
     if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
     turntable_frame_index := 0
     turntable_capture_stride := 12
     turntable_last_capture_frame := capture_frame
+    sequence_frame_index := 0
+    sequence_last_capture_frame := capture_frame
+    cinematic_export_active = request != nil && request.sequence_frames > 0
+    cinematic_export_time = 0
+    defer {
+        cinematic_export_active = false
+        cinematic_export_time = 0
+    }
     frame := 0
     for !rl.WindowShouldClose() && !editor.quit_requested {
         gameplay_physics_begin_frame(editor)
@@ -11722,6 +11769,11 @@ adriatic_run :: proc(
         benchmark_frame_start := rl.GetTime()
         frame_now := rl.GetTime()
         frame_delta := frame == 0 ? f32(0) : min(f32(frame_now - editor.last_frame_time), f32(.1))
+        if cinematic_export_active {
+            frame_delta = 1 / f32(max(request.sequence_fps, 1))
+            cinematic_export_time =
+                f32(max(frame - capture_frame, 0)) / f32(max(request.sequence_fps, 1))
+        }
         editor.last_frame_time = frame_now
         // map_time drives low-frequency presentation animation. Keep it
         // separate from the f64 clock used for simulation deltas: subtracting
@@ -12035,6 +12087,7 @@ adriatic_run :: proc(
             editor.cursor_material = terrain.sample_material(&editor.project, 0, world_x, world_z)
         }
         architecture_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        airport_stamp_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         marina_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         farm_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
         farm_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
@@ -12074,6 +12127,7 @@ adriatic_run :: proc(
         footstep_slide := f32(0)
         crash_recovery_update(editor, simulation_delta)
         if editor.in_map &&
+           editor.active_lab_scene == "" &&
            !pause_menu_is_open(editor) &&
            !capture_car_mode &&
            !cinematic_is_playing(editor) &&
@@ -12786,10 +12840,7 @@ adriatic_run :: proc(
                 horizontal := f32(math.sqrt(f64(delta.x * delta.x + delta.z * delta.z)))
                 pitch := math.atan2(delta.y, horizontal)
                 if request.turntable_frames > 0 {
-                    yaw +=
-                        f32(turntable_frame_index) /
-                            f32(request.turntable_frames) *
-                            f32(math.PI * 2)
+                    yaw += f32(turntable_frame_index) / f32(request.turntable_frames) * f32(math.PI * 2)
                 }
                 if request.camera_orbit_set {
                     degrees_to_radians := f32(math.PI / 180)
@@ -12834,11 +12885,7 @@ adriatic_run :: proc(
         // pose installed until after that submission has consumed it.
         if capture_camera_overridden {
             editor.camera_pose = capture_camera_original
-            third_person.camera_set_pose(
-                &editor.cameras,
-                capture_camera_slot,
-                capture_camera_original,
-            )
+            third_person.camera_set_pose(&editor.cameras, capture_camera_slot, capture_camera_original)
         }
         gpu_frame_ms, gpu_frame_available := rl.GetGpuFrameTimeMs()
         dio.flame_graph_set_frame_metrics(&editor.flame_graph, 0, 0, f32(gpu_frame_ms), gpu_frame_available)
@@ -13054,14 +13101,18 @@ adriatic_run :: proc(
         }
         // Player captures wait long enough for the Verlet tail and pose blends
         // to settle; frame two only showed the first few links as a short nub.
-        if capture_mode && request != nil && request.turntable_frames > 0 {
-            next_capture_frame :=
-                capture_frame + turntable_frame_index * turntable_capture_stride
-            if turntable_frame_index < request.turntable_frames &&
-               frame == next_capture_frame {
+        if capture_mode && request != nil && request.sequence_frames > 0 {
+            if sequence_frame_index < request.sequence_frames && frame >= capture_frame {
                 rl.TakeScreenshot(
-                    fmt.ctprintf("%s/frame-%03d.png", capture_output, turntable_frame_index),
+                    fmt.ctprintf("%s/frame-%06d.png", capture_output, sequence_frame_index),
                 )
+                sequence_last_capture_frame = frame
+                sequence_frame_index += 1
+            }
+        } else if capture_mode && request != nil && request.turntable_frames > 0 {
+            next_capture_frame := capture_frame + turntable_frame_index * turntable_capture_stride
+            if turntable_frame_index < request.turntable_frames && frame == next_capture_frame {
+                rl.TakeScreenshot(fmt.ctprintf("%s/frame-%03d.png", capture_output, turntable_frame_index))
                 turntable_last_capture_frame = frame
                 turntable_frame_index += 1
             }
@@ -13072,13 +13123,20 @@ adriatic_run :: proc(
         // presented frames after the request so capture mode always writes its PNG.
         if capture_mode &&
            request != nil &&
+           request.sequence_frames > 0 &&
+           sequence_frame_index >= request.sequence_frames &&
+           frame >= sequence_last_capture_frame + 1 {
+            break
+        }
+        if capture_mode &&
+           request != nil &&
            request.turntable_frames > 0 &&
            turntable_frame_index >= request.turntable_frames &&
            frame >= turntable_last_capture_frame + 12 {
             break
         }
         if capture_mode &&
-           (request == nil || request.turntable_frames == 0) &&
+           (request == nil || (request.turntable_frames == 0 && request.sequence_frames == 0)) &&
            frame >= max(32, capture_frame + 12) {
             break
         }

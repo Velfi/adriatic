@@ -77,11 +77,7 @@ simple_car_solid_mesh_retains_period_detail_parts :: proc(t: ^testing.T) {
 
 @(test)
 simple_car_trailer_variants_are_optimized_and_indexed :: proc(t: ^testing.T) {
-    variants := [3][3]bool {
-        {false, false, false},
-        {false, true, false},
-        {true, false, true},
-    }
+    variants := [3][3]bool{{false, false, false}, {false, true, false}, {true, false, true}}
     triangle_counts: [3]int
     mesh: ^vehicles.Aircraft_Mesh
     for variant, index in variants {

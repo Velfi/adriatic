@@ -501,8 +501,8 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
             }
         }
     }
-    testing.expect(t, project.road_graph.node_count == 8)
-    testing.expect(t, project.road_graph.edge_count == 6)
+    testing.expect(t, project.road_graph.node_count == 10)
+    testing.expect(t, project.road_graph.edge_count == 8)
     runway_edges := 0
     arrival_edges := 0
     for edge in project.road_graph.edges[:project.road_graph.edge_count] {
@@ -524,19 +524,20 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
         }
     }
     testing.expect_value(t, runway_edges, len(terrain.DEFAULT_ISLAND_SIGNS))
-    testing.expect_value(t, arrival_edges, len(terrain.DEFAULT_ISLAND_SIGNS) * 2)
+    testing.expect_value(t, arrival_edges, len(terrain.DEFAULT_ISLAND_SIGNS) * 3)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         airport_x, airport_z := terrain.default_airport_center(sign)
-        connected_edges := 0
-        for edge in project.road_graph.edges[:project.road_graph.edge_count] {
-            from := project.road_graph.nodes[edge.from].position
-            to := project.road_graph.nodes[edge.to].position
-            if (math.abs(from.x - airport_x) < .001 && math.abs(from.z - airport_z) < .001) ||
-               (math.abs(to.x - airport_x) < .001 && math.abs(to.z - airport_z) < .001) {
-                connected_edges += 1
-            }
-        }
-        testing.expect_value(t, connected_edges, 2)
+        island_index := sign < 0 ? 0 : 1
+        seeds := terrain.DEFAULT_ISLAND_SEEDS
+        before_x, before_z, after_x, after_z := terrain.default_airport_road_bypass_for_seed(sign, seeds[island_index])
+        before_distance := math.sqrt(
+            (before_x - airport_x) * (before_x - airport_x) + (before_z - airport_z) * (before_z - airport_z),
+        )
+        after_distance := math.sqrt(
+            (after_x - airport_x) * (after_x - airport_x) + (after_z - airport_z) * (after_z - airport_z),
+        )
+        testing.expect(t, before_distance > 23)
+        testing.expect(t, after_distance > 23)
     }
 }
 
@@ -551,6 +552,32 @@ default_runway_sites_are_seeded_and_bounded_inside_islands :: proc(t: ^testing.T
         testing.expect(t, math.abs(offset_x) + math.abs(offset_z) > 1)
         testing.expect(t, math.abs(offset_x) < half_extent * terrain.DEFAULT_ISLAND_RADIUS * .2)
         testing.expect(t, math.abs(offset_z) < half_extent * terrain.DEFAULT_ISLAND_RADIUS * .2)
+    }
+}
+
+@(test)
+regenerated_islands_connect_airports_at_the_regenerated_seeded_sites :: proc(t: ^testing.T) {
+    seeds := terrain.next_default_island_seeds(terrain.DEFAULT_ISLAND_SEEDS)
+    project := terrain.new_project_seeded(seeds)
+    defer terrain.free_project(project)
+    testing.expect_value(t, project.road_graph.node_count, 10)
+    testing.expect_value(t, project.road_graph.edge_count, 8)
+    for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
+        airport_x, airport_z := terrain.default_airport_center_for_seed(sign, seeds[island_index])
+        before_x, before_z, after_x, after_z := terrain.default_airport_road_bypass_for_seed(sign, seeds[island_index])
+        bypass_nodes := 0
+        for edge in project.road_graph.edges[:project.road_graph.edge_count] {
+            from := project.road_graph.nodes[edge.from].position
+            to := project.road_graph.nodes[edge.to].position
+            if (math.abs(from.x - before_x) < .001 && math.abs(from.z - before_z) < .001) ||
+               (math.abs(to.x - before_x) < .001 && math.abs(to.z - before_z) < .001) ||
+               (math.abs(from.x - after_x) < .001 && math.abs(from.z - after_z) < .001) ||
+               (math.abs(to.x - after_x) < .001 && math.abs(to.z - after_z) < .001) {
+                bypass_nodes += 1
+            }
+        }
+        testing.expect_value(t, bypass_nodes, 3)
+        testing.expect(t, terrain.sample_height(project, 0, airport_x, airport_z) > project.sea_level)
     }
 }
 

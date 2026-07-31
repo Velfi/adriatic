@@ -1090,11 +1090,10 @@ portable_parse_type_table :: proc(
             portable_reader_fail(&reader, .Invalid_Metadata, "$table", "unknown type kind")
             return types, reader.error, false
         }
-        _, append_error := append(&types, Portable_Type {
-            kind   = Portable_Kind(kind_byte),
-            width  = width,
-            signed = signed_byte != 0,
-        })
+        _, append_error := append(
+            &types,
+            Portable_Type{kind = Portable_Kind(kind_byte), width = width, signed = signed_byte != 0},
+        )
         if append_error != nil {
             return types,
                 portable_error(.Limit_Exceeded, reader.cursor, "$table", "type metadata allocation failed"),

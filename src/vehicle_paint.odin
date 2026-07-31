@@ -336,23 +336,17 @@ vehicle_paint_history_entries_clear :: proc(entries: ^[dynamic]Vehicle_Paint_His
     clear(entries)
 }
 
-vehicle_paint_history_try_init :: proc(
-    editor: ^Editor,
-    allocator := context.allocator,
-) -> bool {
+vehicle_paint_history_try_init :: proc(editor: ^Editor, allocator := context.allocator) -> bool {
     if editor == nil || allocator.procedure == nil do return false
     ok := false
     defer if !ok do vehicle_paint_history_destroy(editor, allocator)
 
     allocation_error: mem.Allocator_Error
-    editor.vehicle_paint_open_pixels, allocation_error =
-        make([]u8, VEHICLE_PAINT_TEXTURE_BYTE_COUNT, allocator)
+    editor.vehicle_paint_open_pixels, allocation_error = make([]u8, VEHICLE_PAINT_TEXTURE_BYTE_COUNT, allocator)
     if allocation_error != nil do return false
-    editor.vehicle_paint_tool_drag_texels, allocation_error =
-        make([dynamic]int, 0, 4096, allocator)
+    editor.vehicle_paint_tool_drag_texels, allocation_error = make([dynamic]int, 0, 4096, allocator)
     if allocation_error != nil do return false
-    editor.vehicle_paint_tool_drag_mirror_texels, allocation_error =
-        make([dynamic]int, 0, 4096, allocator)
+    editor.vehicle_paint_tool_drag_mirror_texels, allocation_error = make([dynamic]int, 0, 4096, allocator)
     if allocation_error != nil do return false
     for layer in 0 ..< VEHICLE_PAINT_AIRCRAFT_COUNT {
         editor.vehicle_paint_undo[layer], allocation_error = make(

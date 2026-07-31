@@ -304,8 +304,11 @@ quest_log_draw :: proc(editor: ^Editor, width, height: i32) {
                 editor.story_state.bonus_stamps,
             )
         } else {
-            stamps =
-                fmt.ctprintf("%d STAMPS · %d MERIT", editor.story_state.stamps_earned, editor.story_state.bonus_stamps)
+            stamps = fmt.ctprintf(
+                "%d STAMPS · %d MERIT",
+                editor.story_state.stamps_earned,
+                editor.story_state.bonus_stamps,
+            )
         }
     }
     stamp_size := ui_measure_text(.Data, stamps, .35)
@@ -470,8 +473,10 @@ friendship_notice_step :: proc(editor: ^Editor, delta_seconds: f32) {
         editor.friendship_notice_total = total
         editor.friendship_notice_age = 0
     } else {
-        editor.friendship_notice_age =
-            min(editor.friendship_notice_age + max(delta_seconds, f32(0)), FRIENDSHIP_NOTICE_DURATION)
+        editor.friendship_notice_age = min(
+            editor.friendship_notice_age + max(delta_seconds, f32(0)),
+            FRIENDSHIP_NOTICE_DURATION,
+        )
     }
 }
 
@@ -496,8 +501,7 @@ friendship_notice_draw :: proc(editor: ^Editor, width: i32) {
     if age < FRIENDSHIP_NOTICE_ENTER {
         visibility = friendship_notice_ease(age / FRIENDSHIP_NOTICE_ENTER)
     } else if age > FRIENDSHIP_NOTICE_DURATION - FRIENDSHIP_NOTICE_EXIT {
-        visibility =
-            clamp((FRIENDSHIP_NOTICE_DURATION - age) / FRIENDSHIP_NOTICE_EXIT, f32(0), f32(1))
+        visibility = clamp((FRIENDSHIP_NOTICE_DURATION - age) / FRIENDSHIP_NOTICE_EXIT, f32(0), f32(1))
     }
     alpha := u8(clamp(visibility * 255, f32(0), f32(255)))
     panel_width := min(f32(310), f32(width) - 28)

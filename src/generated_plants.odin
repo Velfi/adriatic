@@ -197,22 +197,11 @@ world_generated_grape_leaf_3d :: proc(
         // closest tier adds the raised vein that is large enough to read at
         // arm's length. This makes Hero visually distinct without adding a
         // serialized plant-detail tier or duplicating cached skeletons.
-        world_tube_between(
-            center,
-            tip,
-            forward,
-            max(width * .032, f32(.003)),
-            max(width * .014, f32(.0015)),
-            shade,
-        )
+        world_tube_between(center, tip, forward, max(width * .032, f32(.003)), max(width * .014, f32(.0015)), shade)
     }
 }
 
-world_generated_leaf_hero :: proc(
-    center, forward, up, right: third_person.Vec3,
-    width, length: f32,
-    color: rl.Color,
-) {
+world_generated_leaf_hero :: proc(center, forward, up, right: third_person.Vec3, width, length: f32, color: rl.Color) {
     tip := center + forward * length
     shoulder := center + forward * length * .42
     left := shoulder - right * width

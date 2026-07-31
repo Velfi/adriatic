@@ -254,7 +254,13 @@ search_matches :: proc(rule: ^Rule, x, y, z: int, state: []u8, m: [3]int) -> boo
     return true
 }
 
-search_applied :: proc(rule: ^Rule, x, y, z: int, state: []u8, m: [3]int, allocator := context.temp_allocator) -> []u8 {
+search_applied :: proc(
+    rule: ^Rule,
+    x, y, z: int,
+    state: []u8,
+    m: [3]int,
+    allocator := context.temp_allocator,
+) -> []u8 {
     result := make([]u8, len(state), allocator)
     copy(result, state)
 
@@ -323,9 +329,7 @@ max_positive_index :: proc(amounts: []int) -> int {
 }
 
 is_inside :: proc(px, py, pz: int, rule: ^Rule, x, y, z: int) -> bool {
-    return x <= px && px < x + rule.im.x &&
-        y <= py && py < y + rule.im.y &&
-        z <= pz && pz < z + rule.im.z
+    return x <= px && px < x + rule.im.x && y <= py && py < y + rule.im.y && z <= pz && pz < z + rule.im.z
 }
 
 tiles_overlap :: proc(r0: ^Rule, i0: int, r1: ^Rule, i1: int, m: [3]int) -> bool {

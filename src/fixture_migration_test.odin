@@ -624,8 +624,8 @@ when ODIN_TEST {
         fixture_migration_test_expect_rejected(
             t,
             payload,
-            8,
-            8,
+            FIXTURE_SCHEMA_VERSION,
+            FIXTURE_SCHEMA_VERSION,
             fixture_migration_production_registry(),
             .Tentative_Decode,
         )
@@ -633,7 +633,7 @@ when ODIN_TEST {
             t,
             payload,
             1,
-            8,
+            FIXTURE_SCHEMA_VERSION,
             fixture_migration_production_registry(),
             .Tentative_Decode,
         )

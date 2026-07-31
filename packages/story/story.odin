@@ -1313,10 +1313,7 @@ mirna_friendometer_text :: proc(_: ^dialogue.Context) -> string {
 mirna_friendometer_accept :: proc(ctx: ^dialogue.Context) {
     state := state_from_context(ctx)
     if state == nil do return
-    _, _ = publish_quest_event(
-        state,
-        {kind = .Talk, key = "friendometer", target = "mirna"},
-    )
+    _, _ = publish_quest_event(state, {kind = .Talk, key = "friendometer", target = "mirna"})
 }
 
 mirna_friendometer_practical_close :: proc(_: ^dialogue.Context) -> string {

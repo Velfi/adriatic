@@ -12,15 +12,15 @@ import engine "zelda_engine:engine"
 IMGUI_DESCRIPTOR_COUNT :: 1000
 
 Imgui_State :: struct {
-    ctx:             ^im.Context,
-    io:              ^im.IO,
-    device:          vk.Device,
-    descriptor_pool: vk.DescriptorPool,
-    color_format:    vk.Format,
-    last_time:       f64,
+    ctx:               ^im.Context,
+    io:                ^im.IO,
+    device:            vk.Device,
+    descriptor_pool:   vk.DescriptorPool,
+    color_format:      vk.Format,
+    last_time:         f64,
     text_input_active: bool,
-    show_demo:       bool,
-    initialized:     bool,
+    show_demo:         bool,
+    initialized:       bool,
 }
 
 imgui: Imgui_State

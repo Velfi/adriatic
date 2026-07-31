@@ -5,6 +5,7 @@ import fixture_file "../packages/fixture_file"
 import fixture_v0001 "../packages/fixture_history/v0001"
 import flight "../packages/flight"
 import hs "../packages/hs"
+import story "../packages/story"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
@@ -111,6 +112,15 @@ when ODIN_TEST {
         source.marina_authored_plan.seed = 0x4d415249
         source.marina_authored_plan.layout_seed = 0x12345678
         source.marina_authored_plan.valid = true
+        source.default_map_regeneration_seeds = {0x10203040, 0x50607080}
+        source.default_marina_count = 1
+        source.default_marina_islands[0] = story.Island.East
+        source.default_marinas[0].seed = 0x4d415249
+        source.default_marinas[0].layout_seed = 0x13579bdf
+        source.default_marinas[0].valid = true
+        source.default_harbors[0].seed = 0x48415242
+        source.default_harbors[0].generation_version = 2
+        source.default_harbors[0].valid = true
         source.farms[0].origin_x = f32(101)
         source.farms[0].origin_z = f32(-202)
         source.farms[0].yaw = f32(.35)
@@ -626,6 +636,15 @@ when ODIN_TEST {
             testing.expect(t, decoded.architecture_brush_shape == source.architecture_brush_shape)
             testing.expect(t, decoded.architecture_brush_preset == source.architecture_brush_preset)
             testing.expect(t, decoded.marina_authored_plan.seed == source.marina_authored_plan.seed)
+            testing.expect_value(t, decoded.default_map_regeneration_seeds, source.default_map_regeneration_seeds)
+            testing.expect(t, decoded.default_marina_count == 1)
+            testing.expect(t, decoded.default_marina_islands[0] == story.Island.East)
+            testing.expect(t, decoded.default_marinas[0].seed == source.default_marinas[0].seed)
+            testing.expect(t, decoded.default_marinas[0].layout_seed == source.default_marinas[0].layout_seed)
+            testing.expect(t, decoded.default_marinas[0].valid)
+            testing.expect(t, decoded.default_harbors[0].seed == source.default_harbors[0].seed)
+            testing.expect(t, decoded.default_harbors[0].generation_version == 2)
+            testing.expect(t, decoded.default_harbors[0].valid)
             testing.expect(t, decoded.farm_count == 1)
             testing.expect(t, decoded.farms[0].origin_x == source.farms[0].origin_x)
             testing.expect(t, decoded.farms[0].scale_x == source.farms[0].scale_x)

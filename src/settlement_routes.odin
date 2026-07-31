@@ -16,9 +16,9 @@ Settlement_Route :: struct {
 }
 
 Settlement_Route_Construction_Cost :: struct {
-    cut:        f32,
-    fill:       f32,
-    cross_slope:f32,
+    cut:         f32,
+    fill:        f32,
+    cross_slope: f32,
 }
 
 // Estimate the graded footprint rather than looking only at centerline slope.
@@ -748,7 +748,11 @@ settlement_route_find :: proc(
                 outgoing := [2]f32{world_x - current_x, world_z - current_z}
                 incoming_length, outgoing_length := linalg.length(incoming), linalg.length(outgoing)
                 if incoming_length > .01 && outgoing_length > .01 {
-                    cosine := clamp(linalg.dot(incoming, outgoing) / (incoming_length * outgoing_length), f32(-1), f32(1))
+                    cosine := clamp(
+                        linalg.dot(incoming, outgoing) / (incoming_length * outgoing_length),
+                        f32(-1),
+                        f32(1),
+                    )
                     if cosine < -.15 do continue
                     curvature_cost = (1 - cosine) * (1 - cosine) * 12
                 }
@@ -761,12 +765,11 @@ settlement_route_find :: proc(
             )
             excess_grade := max(grade - preferred_grade, f32(0))
             terrain_cost :=
-                distance_cost *
-                (1 + grade * grade_weight + excess_grade * grade_weight * 4 + curvature_cost) +
+                distance_cost * (1 + grade * grade_weight + excess_grade * grade_weight * 4 + curvature_cost) +
                 (construction.cut * 1.35 +
-                    construction.fill +
-                    construction.cross_slope * step_length * roadbed_half_width) *
-                earthwork_weight
+                        construction.fill +
+                        construction.cross_slope * step_length * roadbed_half_width) *
+                    earthwork_weight
             candidate := costs[current] + terrain_cost
             if candidate >= costs[neighbor] do continue
             costs[neighbor] = candidate

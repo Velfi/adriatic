@@ -45,13 +45,13 @@ when ODIN_TEST {
             testing.expect(
                 t,
                 result.fixture.story_state.resident_action_seen[story.Resident(index)] ==
-                    historical.story_state.resident_action_seen[historical_resident],
+                historical.story_state.resident_action_seen[historical_resident],
             )
         }
         testing.expect(t, result.fixture.story_state.resident_action_seen[.Mirna] == 0)
 
         registry := fixture_migration_production_registry()
-        testing.expect(t, len(registry.steps) == 7)
+        testing.expect(t, len(registry.steps) == 8)
         testing.expect(t, registry.steps[6].from_version == 7)
         testing.expect(t, registry.steps[6].to_version == 8)
         testing.expect(t, registry.steps[6].wrapper == fixture_migration_step_v0007_to_v0008)

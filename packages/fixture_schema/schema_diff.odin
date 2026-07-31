@@ -1393,13 +1393,10 @@ schema_diff_copy_history_record :: proc(
             schema_diff_record_dispose(target, allocator)
             return false
         }
-        appended, append_error := append_elem(&target.fields, Schema_Diff_Field {
-            name     = name,
-            tag      = tag,
-            type     = type_name,
-            is_using = field.is_using,
-            line     = field.line,
-        })
+        appended, append_error := append_elem(
+            &target.fields,
+            Schema_Diff_Field{name = name, tag = tag, type = type_name, is_using = field.is_using, line = field.line},
+        )
         if append_error != nil || appended != 1 {
             delete(name, allocator)
             delete(tag, allocator)
@@ -1667,15 +1664,18 @@ schema_diff_append_change :: proc(
         schema_diff_fail(error, .Out_Of_Memory, 0, path, "cannot own schema change", report.allocator)
         return false
     }
-    appended, append_error := append_elem(&report.changes, Schema_Diff_Change {
-        id     = owned_id,
-        kind   = kind,
-        class  = class,
-        policy = policy,
-        path   = owned_path,
-        before = owned_before,
-        after  = owned_after,
-    })
+    appended, append_error := append_elem(
+        &report.changes,
+        Schema_Diff_Change {
+            id = owned_id,
+            kind = kind,
+            class = class,
+            policy = policy,
+            path = owned_path,
+            before = owned_before,
+            after = owned_after,
+        },
+    )
     if append_error != nil || appended != 1 {
         delete(owned_id, report.allocator)
         delete(owned_path, report.allocator)

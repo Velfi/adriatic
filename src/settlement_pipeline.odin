@@ -4116,10 +4116,7 @@ settlement_access_building_attachment :: proc(
     return
 }
 
-settlement_access_graph_distance :: proc(
-    city_plan: ^architecture.City_Plan,
-    start, finish: [2]f32,
-) -> f32 {
+settlement_access_graph_distance :: proc(city_plan: ^architecture.City_Plan, start, finish: [2]f32) -> f32 {
     if city_plan == nil || city_plan.alley_count <= 0 do return 1e30
     capacity :: SETTLEMENT_SITE_CAPACITY * 8
     count := min(city_plan.alley_count, capacity)
@@ -4144,8 +4141,7 @@ settlement_access_graph_distance :: proc(
         closed[current] = true
         alley := city_plan.alleys[current]
         endpoints := [2][2]f32{{alley.start_x, alley.start_z}, {alley.end_x, alley.end_z}}
-        if settlement_alley_point_near(finish, endpoints[0]) ||
-           settlement_alley_point_near(finish, endpoints[1]) {
+        if settlement_alley_point_near(finish, endpoints[0]) || settlement_alley_point_near(finish, endpoints[1]) {
             return costs[current]
         }
         for neighbor in 0 ..< count {
@@ -4198,10 +4194,7 @@ settlement_access_promote_circulation_links :: proc(
         source_index := sample_index % city_plan.count
         offset := 1 + (seed_offset + source_index * 7 + sample_index * 11) % (city_plan.count - 1)
         destination_index := (source_index + offset) % city_plan.count
-        source, source_found := settlement_access_building_attachment(
-            city_plan,
-            city_plan.structures[source_index],
-        )
+        source, source_found := settlement_access_building_attachment(city_plan, city_plan.structures[source_index])
         destination, destination_found := settlement_access_building_attachment(
             city_plan,
             city_plan.structures[destination_index],
@@ -4211,15 +4204,7 @@ settlement_access_promote_circulation_links :: proc(
         if direct_distance < 5 || direct_distance > 34 do continue
         existing_distance := settlement_access_graph_distance(city_plan, source, destination)
         if existing_distance < direct_distance * 1.45 do continue
-        path := settlement_access_path_find(
-            project,
-            city_plan,
-            source,
-            destination,
-            -1,
-            .9,
-            true,
-        )
+        path := settlement_access_path_find(project, city_plan, source, destination, -1, .9, true)
         if path.count < 2 do continue
         path_length := f32(0)
         for point_index in 0 ..< path.count - 1 {
@@ -4285,8 +4270,7 @@ settlement_access_accumulate_building_journey :: proc(
         closed[current] = true
         alley := city_plan.alleys[current]
         endpoints := [2][2]f32{{alley.start_x, alley.start_z}, {alley.end_x, alley.end_z}}
-        if settlement_alley_point_near(finish, endpoints[0]) ||
-           settlement_alley_point_near(finish, endpoints[1]) {
+        if settlement_alley_point_near(finish, endpoints[0]) || settlement_alley_point_near(finish, endpoints[1]) {
             target = current
             break
         }
@@ -4626,27 +4610,15 @@ settlement_access_seed_public_network :: proc(
         first_index := (seed_offset + sample_index * 7) % city_plan.count
         second_offset := 1 + (seed_offset + sample_index * 11) % (city_plan.count - 1)
         second_index := (first_index + second_offset) % city_plan.count
-        first := [2]f32 {
-            city_plan.structures[first_index].center_x,
-            city_plan.structures[first_index].center_z,
-        }
-        second := [2]f32 {
-            city_plan.structures[second_index].center_x,
-            city_plan.structures[second_index].center_z,
-        }
+        first := [2]f32{city_plan.structures[first_index].center_x, city_plan.structures[first_index].center_z}
+        second := [2]f32{city_plan.structures[second_index].center_x, city_plan.structures[second_index].center_z}
         separation := second - first
         separation_length := linalg.length(separation)
         if separation_length < 10 || separation_length > 45 do continue
         normal := [2]f32{-separation[1], separation[0]} / separation_length
         jitter_sign := sample_index & 1 == 0 ? f32(1) : f32(-1)
         candidate := (first + second) * .5 + normal * jitter_sign * min(separation_length * .08, f32(2.5))
-        if !settlement_access_segment_clear(
-            city_plan,
-            candidate,
-            candidate + [2]f32{.05, 0},
-            .9,
-            -1,
-        ) {
+        if !settlement_access_segment_clear(city_plan, candidate, candidate + [2]f32{.05, 0}, .9, -1) {
             continue
         }
         duplicate := false
@@ -4667,8 +4639,10 @@ settlement_access_seed_public_network :: proc(
     root_point, root_goal: [2]f32
     root_distance := f32(1e30)
     for waypoint, waypoint_index in waypoints[:waypoint_count] {
-        origin, _, route_normal, route_width, route_shoulder, distance, _, found :=
-            settlement_nearest_route_frame(plan, waypoint)
+        origin, _, route_normal, route_width, route_shoulder, distance, _, found := settlement_nearest_route_frame(
+            plan,
+            waypoint,
+        )
         if !found || distance >= root_distance do continue
         side_sign := linalg.dot(waypoint - origin, route_normal) < 0 ? f32(-1) : f32(1)
         root_index = waypoint_index
@@ -4677,15 +4651,7 @@ settlement_access_seed_public_network :: proc(
         root_distance = distance
     }
     if root_index < 0 do return
-    root_path := settlement_access_path_find(
-        project,
-        city_plan,
-        root_point,
-        root_goal,
-        -1,
-        .9,
-        true,
-    )
+    root_path := settlement_access_path_find(project, city_plan, root_point, root_goal, -1, .9, true)
     if root_path.count < 2 do return
     settlement_access_append_public_path(city_plan, root_path, true)
     for point in root_path.points[:root_path.count] {
@@ -4707,15 +4673,7 @@ settlement_access_seed_public_network :: proc(
             }
         }
         if goal_distance < 5 || goal_distance > 34 do continue
-        path := settlement_access_path_find(
-            project,
-            city_plan,
-            waypoint,
-            goal,
-            -1,
-            .9,
-            true,
-        )
+        path := settlement_access_path_find(project, city_plan, waypoint, goal, -1, .9, true)
         if path.count < 2 do continue
         settlement_access_append_public_path(city_plan, path)
         for point in path.points[:path.count - 1] {

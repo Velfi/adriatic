@@ -1269,11 +1269,7 @@ world_markov_marina_static_geometry :: proc(plan: ^marina.Plan, project: ^terrai
     }
 }
 
-world_markov_marina_static_geometry_cached :: proc(
-    plan: ^marina.Plan,
-    project: ^terrain.Project,
-    cache_slot: int,
-) {
+world_markov_marina_static_geometry_cached :: proc(plan: ^marina.Plan, project: ^terrain.Project, cache_slot: int) {
     if cache_slot < 0 || cache_slot >= MARINA_GEOMETRY_CACHE_CAPACITY {
         world_markov_marina_static_geometry(plan, project)
         return

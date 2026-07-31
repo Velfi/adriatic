@@ -180,14 +180,34 @@ patio_lounge_chair :: proc(center: third_person.Vec3, yaw: f32, color: rl.Color)
 
 patio_bench :: proc(center: third_person.Vec3, yaw: f32) {
     for z in ([3]f32{-.43, 0, .43}) {
-        world_box_rotated(patio_local_point(center, 0, .58, z, yaw), {4.2, .16, .32}, yaw, PATIO_WOOD_LIGHT)
+        world_settlement_material_box_rotated(
+            patio_local_point(center, 0, .58, z, yaw),
+            {4.2, .16, .32},
+            yaw,
+            .Bench_Slatted_Hardwood,
+        )
     }
     for z in ([3]f32{.44, .76, 1.08}) {
-        world_box_rotated(patio_local_point(center, 0, .75 + z * .68, .51, yaw), {4.2, .24, .13}, yaw, PATIO_WOOD)
+        world_settlement_material_box_rotated(
+            patio_local_point(center, 0, .75 + z * .68, .51, yaw),
+            {4.2, .24, .13},
+            yaw,
+            .Bench_Slatted_Hardwood,
+        )
     }
     for x in ([2]f32{-1.65, 1.65}) {
-        world_box_rotated(patio_local_point(center, x, .52, .43, yaw), {.14, 1.04, .14}, yaw, PATIO_METAL)
-        world_box_rotated(patio_local_point(center, x, .31, -.35, yaw), {.14, .62, .14}, yaw, PATIO_METAL)
+        world_settlement_material_box_rotated(
+            patio_local_point(center, x, .52, .43, yaw),
+            {.14, 1.04, .14},
+            yaw,
+            .Painted_Steel,
+        )
+        world_settlement_material_box_rotated(
+            patio_local_point(center, x, .31, -.35, yaw),
+            {.14, .62, .14},
+            yaw,
+            .Painted_Steel,
+        )
     }
 }
 
@@ -208,8 +228,18 @@ patio_umbrella :: proc(center: third_person.Vec3, radius: f32, color_a, color_b:
 }
 
 patio_planter :: proc(center: third_person.Vec3, simple_foliage: bool = true) {
-    world_vertical_prism({center.x, center.y + .38, center.z}, .62, .62, .76, math.PI / 8, {167, 85, 52, 255})
-    world_vertical_prism({center.x, center.y + .79, center.z}, .52, .52, .10, math.PI / 8, {75, 55, 40, 255})
+    world_settlement_material_box_rotated(
+        {center.x, center.y + .38, center.z},
+        {1.18, .76, 1.18},
+        math.PI / 4,
+        .Fired_Terracotta,
+    )
+    world_settlement_material_box_rotated(
+        {center.x, center.y + .79, center.z},
+        {.98, .10, .98},
+        math.PI / 4,
+        .Moist_Planter_Soil,
+    )
     if !simple_foliage do return
     for offset in ([5][2]f32{{0, 0}, {-.3, .1}, {.3, .08}, {-.12, -.26}, {.18, -.22}}) {
         world_vertical_prism(

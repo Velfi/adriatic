@@ -2498,12 +2498,7 @@ settlement_access_shared_house_trunks_widen_by_demand :: proc(t: ^testing.T) {
 settlement_access_building_journeys_promote_cross_town_passages :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    segments := [4][2][2]f32 {
-        {{-12, 8}, {-6, 8}},
-        {{-6, 8}, {6, 8}},
-        {{6, 8}, {12, 8}},
-        {{0, 8}, {0, 0}},
-    }
+    segments := [4][2][2]f32{{{-12, 8}, {-6, 8}}, {{-6, 8}, {6, 8}}, {{6, 8}, {12, 8}}, {{0, 8}, {0, 0}}}
     for segment in segments {
         append(
             &city.alleys,

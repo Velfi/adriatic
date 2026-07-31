@@ -109,6 +109,7 @@ static const uint MATERIAL_PETAL = 19;
 static const uint MATERIAL_FOUNTAIN_WATER = 20;
 static const uint MATERIAL_CAR_PAINT = 21;
 static const uint MATERIAL_MATERIAL_LAB = 22;
+static const uint MATERIAL_SETTLEMENT = 23;
 
 float3 shade_grass_wind_sheen(VertexOutput input, float3 color) {
     float grass = smoothstep(.18, .82, input.material.x);
@@ -465,6 +466,63 @@ float3 shade_brdf(BrdfMaterial material, float3 normal, float3 world_position) {
     return saturate(diffuse + f0 * specular_strength);
 }
 
+float3 shade_cinematic_spotlight(VertexOutput input) {
+    float spotlight_intensity = max(push.camera_up.w, 0.0);
+    if (spotlight_intensity <= 0.0) return 0.0;
+    const float3 spotlight_position = float3(0.0, 11.52, -2.0);
+    float3 to_light = spotlight_position - input.world_position;
+    float light_distance_squared = max(dot(to_light, to_light), .001);
+    float3 light_direction = to_light * rsqrt(light_distance_squared);
+    float footprint_radius = max(push.camera_forward.w, .001);
+    float footprint_distance =
+        length(input.world_position.xz - spotlight_position.xz);
+    float cone =
+        1.0 - smoothstep(
+            footprint_radius * .50,
+            footprint_radius,
+            footprint_distance
+        );
+    float range_attenuation =
+        1.0 / (1.0 + light_distance_squared * .018);
+    float local_direct =
+        saturate(dot(normalize(input.normal), light_direction));
+    float local_energy =
+        spotlight_intensity * cone * range_attenuation;
+    float3 spotlight_color = float3(1.0, .73, .40);
+    float3 diffuse =
+        input.color.rgb * spotlight_color * local_direct * local_energy;
+
+    float3 view_direction =
+        normalize(push.camera_position.xyz - input.world_position);
+    float3 half_direction =
+        normalize(light_direction + view_direction);
+    float specular =
+        pow(saturate(dot(normalize(input.normal), half_direction)), 24.0) *
+        local_direct * local_energy * .16;
+    return diffuse + spotlight_color * specular;
+}
+
+float3 shade_cinematic_limelights(VertexOutput input) {
+    if (push.camera_up.w <= 0.0) return 0.0;
+    float3 normal = normalize(input.normal);
+    float3 result = 0.0;
+    const float3 lime_color = float3(.48, 1.0, .31);
+    [unroll]
+    for (int lamp = 0; lamp < 9; ++lamp) {
+        float3 position =
+            float3(-5.2 + float(lamp) * 1.30, .91, -.18);
+        float3 to_light = position - input.world_position;
+        float distance_squared = max(dot(to_light, to_light), .001);
+        float3 light_direction = to_light * rsqrt(distance_squared);
+        float direct = saturate(dot(normal, light_direction));
+        float attenuation = 1.0 / (1.0 + distance_squared * .085);
+        result +=
+            input.color.rgb * lime_color *
+            direct * attenuation * .34;
+    }
+    return result;
+}
+
 // Palette-authored surfaces intentionally carry their own value grouping, but
 // they still need to inhabit the current environment. At night, reduce their
 // luminance and chroma, suppress long wavelengths, and add a restrained lunar
@@ -578,6 +636,68 @@ float3 shade_material_lab(VertexOutput input) {
     material.metallic = saturate(specular);
     material.roughness = clamp(roughness, .02, 1.0);
     return shade_brdf(material, normal, input.world_position);
+}
+
+float3 shade_settlement_material(VertexOutput input) {
+    uint id = (uint)round(input.material.x);
+    float3 color = float3(.72, .70, .64);
+    float metallic = 0.0;
+    float roughness = .72;
+
+    // These IDs mirror Settlement_Material. Generated geometry stores only the
+    // compact semantic ID; thousands of surfaces share this one shader path.
+    if (id == 0) { color = float3(.78, .75, .66); roughness = .78; }
+    else if (id == 1) { color = float3(.91, .84, .68); roughness = .88; }
+    else if (id == 2) { color = float3(.71, .66, .55); roughness = .48; }
+    else if (id == 3) { color = float3(.17, .21, .21); metallic = .38; roughness = .46; }
+    else if (id == 4) { color = float3(.22, .31, .34); metallic = .72; roughness = .31; }
+    else if (id == 5) { color = float3(.07, .08, .08); metallic = .55; roughness = .36; }
+    else if (id == 6) { color = float3(.31, .16, .075); roughness = .55; }
+    else if (id == 7) { color = float3(.62, .23, .12); roughness = .82; }
+    else if (id == 8) { color = float3(.105, .065, .035); roughness = .97; }
+    else if (id == 9) { color = float3(.075, .082, .080); roughness = .93; }
+    else if (id == 10) { color = float3(.67, .65, .59); roughness = .86; }
+    else if (id == 11) { color = float3(.11, .13, .13); metallic = .76; roughness = .57; }
+    else if (id == 12) { color = float3(.88, .88, .80); roughness = .68; }
+    else if (id == 13) { color = float3(.76, .55, .12); roughness = .71; }
+    else if (id == 14) { color = float3(.53, .34, .12); metallic = .86; roughness = .28; }
+    else if (id == 15) { color = float3(.82, .76, .57); metallic = .28; roughness = .34; }
+    else if (id == 16) { color = float3(.57, .075, .045); metallic = .22; roughness = .29; }
+    else if (id == 17) { color = float3(.64, .61, .53); roughness = .94; }
+    else if (id == 18) { color = float3(.60, .56, .47); roughness = .30; }
+    else if (id == 19) { color = float3(.62, .57, .45); roughness = .78; }
+    else if (id == 20) { color = float3(.16, .24, .25); metallic = .63; roughness = .39; }
+    else if (id == 21) { color = float3(.075, .20, .23); metallic = .08; roughness = .16; }
+    else if (id == 22) { color = float3(.20, .24, .24); metallic = .82; roughness = .25; }
+    else if (id == 23) { color = float3(.055, .36, .35); roughness = .25; }
+    else if (id == 24) { color = float3(.71, .70, .64); roughness = .91; }
+    else if (id == 25) { color = float3(.28, .32, .30); roughness = .34; }
+
+    float2 uv = input.uv;
+    float grain = value_noise(floor(uv * 24.0) + id * 11.7) - .5;
+    color *= 1.0 + grain * ((id == 1 || id == 8 || id == 9 || id == 17) ? .15 : .055);
+    if (id == 0 || id == 17) {
+        float joints = min(frac(uv.x * .42), frac(uv.y * .42));
+        color *= lerp(.70, 1.0, smoothstep(.025, .065, joints));
+    } else if (id == 2 || id == 18 || id == 19) {
+        float chips = value_noise(floor(uv * 13.0));
+        color = lerp(color * .68, color * 1.16, smoothstep(.35, .72, chips));
+    } else if (id == 6) {
+        color *= .82 + .18 * smoothstep(.08, .20, abs(frac(uv.y * 5.0) - .5));
+    } else if (id == 11) {
+        color *= .64 + .36 * smoothstep(.12, .25, abs(frac(uv.x * 5.0) - .5));
+    } else if (id == 20) {
+        color *= .76 + .24 * smoothstep(.05, .16, abs(frac(uv.x * .72) - .5));
+    } else if (id == 23) {
+        float2 grout = min(frac(uv * 3.2), 1.0 - frac(uv * 3.2));
+        color = lerp(float3(.55, .55, .50), color, smoothstep(.025, .055, min(grout.x, grout.y)));
+    }
+
+    BrdfMaterial material;
+    material.base_color = srgb_to_linear(saturate(color)) * input.color.rgb;
+    material.metallic = metallic;
+    material.roughness = roughness;
+    return shade_brdf(material, input.normal, input.world_position);
 }
 
 float3 shade_car_paint_coat(
@@ -2010,6 +2130,9 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         case MATERIAL_MATERIAL_LAB:
             base = shade_material_lab(input);
             break;
+        case MATERIAL_SETTLEMENT:
+            base = shade_settlement_material(input);
+            break;
         case MATERIAL_EYE:
             base = shade_eye(input);
             break;
@@ -2206,6 +2329,24 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         } else {
             base = environment_lit;
         }
+    }
+    if (input.kind == MATERIAL_BRDF ||
+        input.kind == MATERIAL_EYE ||
+        input.kind == MATERIAL_ACORN ||
+        input.kind == MATERIAL_BOTTLE_CAP ||
+        input.kind == MATERIAL_SAILOR_HAT ||
+        input.kind == MATERIAL_VEHICLE ||
+        input.kind == MATERIAL_CAR_PAINT ||
+        input.kind == MATERIAL_MATERIAL_LAB ||
+        input.kind == MATERIAL_SETTLEMENT) {
+        // Local light is added after night adaptation: the environment should
+        // darken unlit surfaces, not erase illumination arriving from a nearby
+        // theatrical source.
+        base = saturate(
+            base +
+            shade_cinematic_spotlight(input) +
+            shade_cinematic_limelights(input)
+        );
     }
     return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), output_alpha);
 }

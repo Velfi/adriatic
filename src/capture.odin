@@ -40,6 +40,7 @@ Capture_Kind :: enum {
     Fountain_Generator_Lab,
     Lighthouse_Lab,
     Mouse_Gait_Lab,
+    Mouse_Theater,
     Rondine_Movement_Lab,
     Markov_Wreck,
     Markov_Farmland,
@@ -77,7 +78,12 @@ Capture_Request :: struct {
     camera_offset:        [3]f32,
     camera_offset_set:    bool,
     turntable_frames:     int,
+    sequence_frames:      int,
+    sequence_fps:         int,
 }
+
+cinematic_export_active: bool
+cinematic_export_time: f32
 
 CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunset, .Sky_Storm, .Sky_Night}
 CAPTURE_BOAT_LAB_TARGETS := [?]string{"dinghy", "tanker", "cruise"}
@@ -375,6 +381,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Lighthouse_Lab, true
     case "mouse-gait-lab":
         return .Mouse_Gait_Lab, true
+    case "mouse-theater":
+        return .Mouse_Theater, true
     case "rondine-movement-lab":
         return .Rondine_Movement_Lab, true
     case "markov-wreck":

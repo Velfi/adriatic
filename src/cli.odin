@@ -15,6 +15,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  adriatic --lab <name> [target]")
     fmt.println("  adriatic fixture-upgrade [--dry-run] <file-or-directory>")
     fmt.println("  adriatic dialogue-preview <output.wav> [preset] [text] [formant-shift] [base-pitch] [expression]")
+    fmt.println("  adriatic cinematic-export <mode> <output.mp4> [--audio track.wav] [--duration seconds] [--fps 1–60]")
     fmt.println("  adriatic capture <mode> <output.png> [target]")
     fmt.println("  adriatic capture <mode> --output <output.png> [options]")
     fmt.println("    --target <name>       capture-specific target")
@@ -38,7 +39,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  foliage-forest-golden, foliage-forest-wind-a, foliage-forest-wind-b")
     fmt.println("  foliage-forest-low-wind-a, foliage-forest-low-wind-b, foliage-stress")
     fmt.println(
-        "  grass-wind, screen-pops, wildflower-lab, shadow-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, lighthouse-lab, mouse-gait-lab, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
+        "  grass-wind, screen-pops, wildflower-lab, shadow-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
     )
     fmt.println("  markov-city, markov-town, markov-village, aegean-city, aegean-town, aegean-village")
     fmt.println("  narrow, compact, sky-noon, sky-sunset, sky-storm, sky-night, player-*")
@@ -150,6 +151,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     }
     if args[1] == "fixture-upgrade" do return true, adriatic_cli_fixture_upgrade(args)
     if args[1] == "dialogue-preview" do return true, dialogue_voice_preview_cli(args)
+    if args[1] == "cinematic-export" do return true, cinematic_export_cli(args)
     if args[1] != "capture" do return false, true
     if len(args) < 3 {
         adriatic_cli_usage()
@@ -306,8 +308,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         fmt.eprintln("adriatic: --camera-eye and --camera-look-at must be provided together")
         return true, false
     }
-    if camera_eye_set &&
-       (camera_orbit_set || camera_distance_set || camera_offset_set || turntable_frames > 0) {
+    if camera_eye_set && (camera_orbit_set || camera_distance_set || camera_offset_set || turntable_frames > 0) {
         fmt.eprintln(
             "adriatic: explicit --camera-eye/--camera-look-at cannot be combined with relative camera or turntable options",
         )

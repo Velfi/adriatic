@@ -476,6 +476,38 @@ World_Material_Kind :: enum u32 {
     Fountain_Water,
     Car_Paint,
     Material_Lab,
+    Settlement_Material,
+}
+
+// Stable semantic surface IDs shared by settlement generators. Keep existing
+// values fixed: generated geometry and shaders exchange these compact IDs.
+Settlement_Material :: enum u8 {
+    Pale_Adriatic_Limestone,
+    Sun_Washed_Stucco,
+    Arcade_Terrazzo,
+    Counter_Toe_Kick,
+    Painted_Steel,
+    Dark_Hardware,
+    Bench_Slatted_Hardwood,
+    Fired_Terracotta,
+    Moist_Planter_Soil,
+    Airport_Asphalt,
+    Pale_Concrete_Curb,
+    Drainage_Grate,
+    Road_Marking_White,
+    Road_Marking_Ochre,
+    Aged_Brass_Details,
+    Aerodromo_Enamel_Face,
+    Aerodromo_Enamel_Rim,
+    Exposed_Salted_Limestone,
+    Foot_Polished_Terrazzo,
+    Exterior_Forecourt_Paving,
+    Standing_Seam_Roof,
+    Monitor_Tinted_Glass,
+    Anodized_Glazing_Frame,
+    Teal_Counter_Tile,
+    Counter_Grout,
+    Counter_Worktop_Laminate,
 }
 
 Car_Paint_Finish :: enum u8 {
@@ -1560,6 +1592,32 @@ world_quad_material :: #force_inline proc(a, b, c, d: third_person.Vec3, color: 
 }
 
 @(no_instrumentation)
+world_settlement_material_quad :: #force_inline proc(
+    a, b, c, d: third_person.Vec3,
+    material: Settlement_Material,
+    uv_width, uv_height: f32,
+) {
+    white := rl.Color{255, 255, 255, 255}
+    vertices := [6]World_Vertex {
+        world_vertex(a, white),
+        world_vertex(b, white),
+        world_vertex(c, white),
+        world_vertex(a, white),
+        world_vertex(c, white),
+        world_vertex(d, white),
+    }
+    uvs := [6][2]f32{{0, uv_height}, {uv_width, uv_height}, {uv_width, 0}, {0, uv_height}, {uv_width, 0}, {0, 0}}
+    normal := linalg.normalize0(linalg.cross(b - a, c - a))
+    for &vertex, index in vertices {
+        vertex.kind = .Settlement_Material
+        vertex.normal = {normal.x, normal.y, normal.z}
+        vertex.material = {f32(material), 0}
+        vertex.uv = uvs[index]
+    }
+    append(&world_renderer.vertices, ..vertices[:])
+}
+
+@(no_instrumentation)
 world_ellipse_material_uv :: proc(
     center: third_person.Vec3,
     radius_x, radius_z, rotation: f32,
@@ -1971,8 +2029,22 @@ world_ocean_ship_wake :: proc(editor: ^Editor) {
         segment_length := sample.width * .20
         alpha := u8(clamp(178 * sample.strength * fade * fade, 0, 178))
         foam := rl.Color{218, 241, 236, alpha}
-        world_boat_wake_quad(sample.position + right * spread, sample.direction, shoulder_width, segment_length, foam, y)
-        world_boat_wake_quad(sample.position - right * spread, sample.direction, shoulder_width, segment_length, foam, y)
+        world_boat_wake_quad(
+            sample.position + right * spread,
+            sample.direction,
+            shoulder_width,
+            segment_length,
+            foam,
+            y,
+        )
+        world_boat_wake_quad(
+            sample.position - right * spread,
+            sample.direction,
+            shoulder_width,
+            segment_length,
+            foam,
+            y,
+        )
         center_width := sample.width * (.11 + fade * .10)
         center_alpha := u8(f32(alpha) * (agent.class == .Product_Tanker ? f32(.56) : f32(.42)))
         world_boat_wake_quad(
@@ -3177,6 +3249,40 @@ world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, ro
     world_quad(p[0], p[1], p[5], p[4], color)
 }
 
+world_settlement_material_box_rotated :: proc(
+    center: third_person.Vec3,
+    size: third_person.Vec3,
+    rotation: f32,
+    material: Settlement_Material,
+) {
+    x, y, z := size.x * .5, size.y * .5, size.z * .5
+    p: [8]third_person.Vec3
+    local := [8][3]f32 {
+        {-x, -y, -z},
+        {x, -y, -z},
+        {x, y, -z},
+        {-x, y, -z},
+        {-x, -y, z},
+        {x, -y, z},
+        {x, y, z},
+        {-x, y, z},
+    }
+    for index in 0 ..< 8 {
+        world_x, world_z := world_rotate_xz(center.x, center.z, local[index][0], local[index][2], rotation)
+        p[index] = {world_x, center.y + local[index][1], world_z}
+    }
+    world_settlement_material_quad(p[0], p[3], p[2], p[1], material, size.x, size.y)
+    world_settlement_material_quad(p[4], p[5], p[6], p[7], material, size.x, size.y)
+    world_settlement_material_quad(p[0], p[4], p[7], p[3], material, size.z, size.y)
+    world_settlement_material_quad(p[1], p[2], p[6], p[5], material, size.z, size.y)
+    world_settlement_material_quad(p[3], p[7], p[6], p[2], material, size.x, size.z)
+    world_settlement_material_quad(p[0], p[1], p[5], p[4], material, size.x, size.z)
+}
+
+// Compatibility names keep the airport generator readable while new
+// settlement systems use the shared helpers directly.
+world_airport_box_rotated :: world_settlement_material_box_rotated
+
 world_box_rotated_material :: proc(
     center: third_person.Vec3,
     size: third_person.Vec3,
@@ -3418,6 +3524,42 @@ world_land_surface_rotated :: proc(
         previous, current = current, previous
     }
 }
+
+world_settlement_material_land_surface_rotated :: proc(
+    editor: ^Editor,
+    center_x, center_z, width, length, rotation, lift: f32,
+    material: Settlement_Material,
+) {
+    if editor == nil || width <= 0 || length <= 0 do return
+    columns := max(1, int(math.ceil(f64(width / 2))))
+    rows := max(1, int(math.ceil(f64(length / 2))))
+    land_threshold := editor.project.sea_level + .04
+    cosine, sine := math.cos(rotation), math.sin(rotation)
+    for row in 0 ..< rows {
+        z0 := -length * .5 + length * f32(row) / f32(rows)
+        z1 := -length * .5 + length * f32(row + 1) / f32(rows)
+        for column in 0 ..< columns {
+            x0 := -width * .5 + width * f32(column) / f32(columns)
+            x1 := -width * .5 + width * f32(column + 1) / f32(columns)
+            p00 := world_land_surface_sample(editor, center_x, center_z, x0, z0, cosine, sine)
+            p01 := world_land_surface_sample(editor, center_x, center_z, x0, z1, cosine, sine)
+            p11 := world_land_surface_sample(editor, center_x, center_z, x1, z1, cosine, sine)
+            p10 := world_land_surface_sample(editor, center_x, center_z, x1, z0, cosine, sine)
+            if min(min(p00.height, p01.height), min(p11.height, p10.height)) <= land_threshold do continue
+            world_settlement_material_quad(
+                {p00.x, p00.height + lift, p00.z},
+                {p01.x, p01.height + lift, p01.z},
+                {p11.x, p11.height + lift, p11.z},
+                {p10.x, p10.height + lift, p10.z},
+                material,
+                x1 - x0,
+                z1 - z0,
+            )
+        }
+    }
+}
+
+world_airport_land_surface_rotated :: world_settlement_material_land_surface_rotated
 
 // A short terrain-following trapezoid connects a broad pedestrian/service
 // route to the road edge without the blunt rectangular mouth of the main run.
@@ -13155,6 +13297,26 @@ world_architecture_grass_footprints :: proc(
             Architecture_Grass_Footprint{center_x = airport.x, center_z = airport.z, half_width = 8, half_depth = 22},
         )
     }
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if !airport_structure_is_stamp(structure) do continue
+        append(
+            &footprints,
+            Architecture_Grass_Footprint {
+                center_x = structure.center_x,
+                center_z = structure.center_z,
+                half_width = 20,
+                half_depth = 15,
+                rotation = structure.rotation,
+            },
+            Architecture_Grass_Footprint {
+                center_x = structure.center_x,
+                center_z = structure.center_z,
+                half_width = 8,
+                half_depth = 22,
+                rotation = structure.rotation,
+            },
+        )
+    }
     return footprints
 }
 
@@ -21324,9 +21486,17 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         ),
     )
     if model.gait_preview {
-        run_weight = 1
         stride_phase = model.gait_phase
         horizontal_speed = model.gait_speed
+        // Preview actors must be allowed to settle into the idle pose. Forcing
+        // full locomotion at zero or near-zero speed makes their planted paws
+        // cycle in place and is especially visible during slow stage blocking.
+        preview_motion := clamp(
+            horizontal_speed / max(animation.walk_full_speed * .16, f32(.18)),
+            0,
+            1,
+        )
+        run_weight = preview_motion * preview_motion * (3 - 2 * preview_motion)
     }
     gait := mouse_gait_weights(animation, horizontal_speed, airborne_weight)
     walk_weight, trot_weight, bound_weight := gait.walk, gait.trot, gait.bound
@@ -22881,6 +23051,18 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             }
         }
     }
+    // Mouse primitives historically inherited the generic unshaded material,
+    // which prevented fur, paws, clothing, and accessories from responding to
+    // local or directional lights. Preserve explicitly authored specialist
+    // materials (eyes, caps, signs, and so on), but give ordinary mouse
+    // surfaces the shared matte BRDF.
+    for index in first_vertex ..< len(world_renderer.vertices) {
+        vertex := &world_renderer.vertices[index]
+        if vertex.kind == .Unshaded {
+            vertex.kind = .BRDF
+            vertex.material = {0, .82}
+        }
+    }
 }
 
 world_character :: proc(editor: ^Editor) {
@@ -23035,83 +23217,285 @@ world_business_sign_for_resident :: proc(editor: ^Editor, resident: story.Reside
     world_business_sign({x, position.y + 2.44, z}, rotation, kind)
 }
 
+AIRPORT_ARCADE_CENTER_Z :: f32(5.8)
+
+airport_service_position :: proc(anchor: third_person.Vec3) -> third_person.Vec3 {
+    sign := anchor.x >= 0 ? f32(1) : f32(-1)
+    rotation := sign > 0 ? -f32(math.PI) * .5 : f32(math.PI) * .5
+    x, z := world_rotate_xz(anchor.x, anchor.z, 0, AIRPORT_ARCADE_CENTER_Z, rotation)
+    return {x, anchor.y, z}
+}
+
 world_attendant_kiosk :: proc(editor: ^Editor) {
-    if !editor.in_map do return
+    if editor == nil do return
     if world_sphere_in_view(editor, editor.attendant_position + third_person.Vec3{0, 4, 0}, 24, 8) {
         world_attendant_kiosk_at(editor, editor.attendant_position)
     }
     if world_sphere_in_view(editor, editor.gerta_position + third_person.Vec3{0, 4, 0}, 24, 8) {
         world_attendant_kiosk_at(editor, editor.gerta_position)
     }
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if !airport_structure_is_stamp(structure) do continue
+        position := third_person.Vec3{structure.center_x, structure.base_y, structure.center_z}
+        if world_sphere_in_view(editor, position + third_person.Vec3{0, 4, 0}, 24, 8) {
+            world_attendant_kiosk_at(editor, position, structure.rotation, true)
+        }
+    }
+    if editor.airport_stamp_mode && editor.airport_preview_valid {
+        position := third_person.Vec3 {
+            editor.airport_preview_x,
+            terrain.sample_height(&editor.project, 0, editor.airport_preview_x, editor.airport_preview_z),
+            editor.airport_preview_z,
+        }
+        world_attendant_kiosk_at(editor, position, editor.airport_stamp_yaw, true)
+    }
 }
 
-world_attendant_kiosk_at :: proc(editor: ^Editor, p: third_person.Vec3) {
+world_attendant_kiosk_at :: proc(
+    editor: ^Editor,
+    p: third_person.Vec3,
+    authored_rotation: f32 = 0,
+    use_authored_rotation: bool = false,
+) {
     ground := terrain.sample_height(&editor.project, 0, p.x, p.z)
     sign := p.x >= 0 ? f32(1) : f32(-1)
-    rotation := sign > 0 ? -f32(math.PI) * .5 : f32(math.PI) * .5
-    stone := rl.Color{211, 202, 178, 255}
-    cream := rl.Color{239, 229, 201, 255}
-    red := rl.Color{174, 55, 45, 255}
-    roof := rl.Color{55, 72, 76, 255}
-    glass := rl.Color{83, 137, 154, 255}
-    timber := rl.Color{92, 61, 38, 255}
-
+    rotation := use_authored_rotation ? authored_rotation : (sign > 0 ? -f32(math.PI) * .5 : f32(math.PI) * .5)
     // A broad forecourt meets the asphalt access-road node at reception.
-    world_land_surface_rotated(editor, p.x, p.z, 42, 30, rotation, .10, {181, 169, 137, 255})
+    world_airport_land_surface_rotated(editor, p.x, p.z, 42, 30, rotation, .10, .Exterior_Forecourt_Paving)
     forecourt_x, forecourt_z := world_rotate_xz(p.x, p.z, 0, -17, rotation)
-    world_land_surface_rotated(editor, forecourt_x, forecourt_z, 15, 20, rotation, .11, {194, 183, 153, 255})
-
-    // Full island airport: central passenger hall, two service wings, glazed
-    // frontage, deep canopy, and a compact operations tower.
-    hall_x, hall_z := world_rotate_xz(p.x, p.z, 0, 5.5, rotation)
-    world_box_rotated({hall_x, ground + 2.5, hall_z}, {18, 5, 12}, rotation, cream)
-    left_x, left_z := world_rotate_xz(p.x, p.z, -13, 7, rotation)
-    right_x, right_z := world_rotate_xz(p.x, p.z, 13, 7, rotation)
-    world_box_rotated({left_x, ground + 1.9, left_z}, {8, 3.8, 15}, rotation, stone)
-    world_box_rotated({right_x, ground + 1.9, right_z}, {8, 3.8, 15}, rotation, stone)
-    world_box_rotated({hall_x, ground + 5.12, hall_z}, {19, .24, 13}, rotation, roof)
-    world_box_rotated({left_x, ground + 3.92, left_z}, {8.6, .20, 15.6}, rotation, roof)
-    world_box_rotated({right_x, ground + 3.92, right_z}, {8.6, .20, 15.6}, rotation, roof)
-
-    for bay in -3 ..= 3 {
-        window_x, window_z := world_rotate_xz(p.x, p.z, f32(bay) * 2.15, -.56, rotation)
-        world_box_rotated({window_x, ground + 2.62, window_z}, {1.55, 2.35, .12}, rotation, glass)
+    world_airport_land_surface_rotated(editor, forecourt_x, forecourt_z, 15, 20, rotation, .11, .Airport_Asphalt)
+    // Painted centerline and drainage hardware make the road/forecourt
+    // transition legible and exercise the civil material family.
+    world_airport_box_rotated(
+        {forecourt_x, ground + .135, forecourt_z},
+        {.16, .025, 13.0},
+        rotation,
+        .Road_Marking_Ochre,
+    )
+    for stripe in -2 ..= 2 {
+        stripe_x, stripe_z := world_rotate_xz(forecourt_x, forecourt_z, 0, f32(stripe) * 2.5, rotation)
+        world_airport_box_rotated({stripe_x, ground + .14, stripe_z}, {5.8, .018, .16}, rotation, .Road_Marking_White)
     }
-    door_x, door_z := world_rotate_xz(p.x, p.z, 0, -.64, rotation)
-    world_box_rotated({door_x, ground + 1.35, door_z}, {2.15, 2.7, .15}, rotation, timber)
-    canopy_x, canopy_z := world_rotate_xz(p.x, p.z, 0, -2.8, rotation)
-    world_box_rotated({canopy_x, ground + 3.55, canopy_z}, {15.5, .22, 4.8}, rotation, red)
-    world_business_sign({hall_x, ground + 5.85, hall_z}, rotation, .Aerodromo, 2.3)
+    drain_x, drain_z := world_rotate_xz(forecourt_x, forecourt_z, 5.4, 0, rotation)
+    world_airport_box_rotated({drain_x, ground + .145, drain_z}, {1.5, .035, .55}, rotation, .Drainage_Grate)
+    curb_sides := [2]f32{-1, 1}
+    for side in curb_sides {
+        curb_x, curb_z := world_rotate_xz(forecourt_x, forecourt_z, side * 7.35, 0, rotation)
+        world_airport_box_rotated({curb_x, ground + .20, curb_z}, {.30, .18, 19.5}, rotation, .Pale_Concrete_Curb)
+    }
 
-    tower_x, tower_z := world_rotate_xz(p.x, p.z, 11.5, 9, rotation)
-    world_box_rotated({tower_x, ground + 6.2, tower_z}, {4.2, 8.4, 4.2}, rotation, cream)
-    world_box_rotated({tower_x, ground + 10.65, tower_z}, {5.6, 1.35, 5.6}, rotation, glass)
-    world_box_rotated({tower_x, ground + 11.45, tower_z}, {6.2, .22, 6.2}, rotation, roof)
+    // An open passenger arcade replaces the enclosed terminal. Paired piers
+    // and high lintels define each bay while keeping clear views and walking
+    // routes through the building from the forecourt to the airfield.
+    arcade_x, arcade_z := world_rotate_xz(p.x, p.z, 0, AIRPORT_ARCADE_CENTER_Z, rotation)
+    world_airport_land_surface_rotated(editor, arcade_x, arcade_z, 30, 18, rotation, .12, .Arcade_Terrazzo)
+    world_airport_land_surface_rotated(editor, arcade_x, arcade_z, 5.2, 5.2, rotation, .135, .Foot_Polished_Terrazzo)
+    arcade_sides := [2]f32{-1, 1}
+    for side in arcade_sides {
+        for bay in -3 ..= 3 {
+            pier_x, pier_z := world_rotate_xz(p.x, p.z, f32(bay) * 4.25, 5.8 + side * 7.4, rotation)
+            world_airport_box_rotated(
+                {pier_x, ground + 2.35, pier_z},
+                {.62, 4.7, .72},
+                rotation,
+                .Pale_Adriatic_Limestone,
+            )
+        }
+        rail_x, rail_z := world_rotate_xz(p.x, p.z, 0, 5.8 + side * 7.4, rotation)
+        world_airport_box_rotated({rail_x, ground + 4.48, rail_z}, {26.1, .48, .78}, rotation, .Sun_Washed_Stucco)
+        world_airport_box_rotated({rail_x, ground + 4.80, rail_z}, {27.0, .18, 1.02}, rotation, .Aerodromo_Enamel_Rim)
+    }
 
-    // Reception counter and stool remain at the interaction point inside the
-    // entrance hall so existing dialogue and interaction behavior is retained.
-    counter_x, counter_z := world_rotate_xz(p.x, p.z, 0, .45, rotation)
-    world_box_rotated({counter_x, ground + .92, counter_z}, {3.4, 1.05, .52}, rotation, timber)
+    // Broad end frames brace the arcade without closing it off.
+    for end in arcade_sides {
+        for side in arcade_sides {
+            pier_x, pier_z := world_rotate_xz(p.x, p.z, end * 13.1, 5.8 + side * 7.4, rotation)
+            world_airport_box_rotated(
+                {pier_x, ground + 2.35, pier_z},
+                {.72, 4.7, .72},
+                rotation,
+                .Exposed_Salted_Limestone,
+            )
+        }
+        lintel_x, lintel_z := world_rotate_xz(p.x, p.z, end * 13.1, 5.8, rotation)
+        world_airport_box_rotated(
+            {lintel_x, ground + 4.48, lintel_z},
+            {.78, .48, 15.5},
+            rotation,
+            .Pale_Adriatic_Limestone,
+        )
+    }
+    world_airport_box_rotated({arcade_x, ground + 5.05, arcade_z}, {27.6, .24, 16.2}, rotation, .Standing_Seam_Roof)
 
-    stool := rl.Color{126, 82, 47, 255}
-    world_box_rotated({p.x, ground + MARTA_STOOL_HEIGHT - .06, p.z}, {.62, .12, .54}, rotation, stool)
+    // A raised monitor admits light along the full concourse and gives the
+    // low, open building an airport silhouette without a separate tower.
+    world_airport_box_rotated({arcade_x, ground + 5.42, arcade_z}, {17.2, .66, 5.2}, rotation, .Monitor_Tinted_Glass)
+    world_airport_box_rotated({arcade_x, ground + 5.42, arcade_z}, {17.5, .10, 5.5}, rotation, .Anodized_Glazing_Frame)
+    world_airport_box_rotated({arcade_x, ground + 5.82, arcade_z}, {18.0, .18, 6.0}, rotation, .Standing_Seam_Roof)
+    // Face the plaque toward the forecourt and seat it on the front arcade
+    // beam. The former roofline placement exposed its dark rear edge from the
+    // main approach and made the sign read as an unexplained cylinder.
+    sign_x, sign_z := world_rotate_xz(p.x, p.z, 0, -1.98, rotation)
+    world_business_sign({sign_x, ground + 4.50, sign_z}, rotation + math.PI, .Aerodromo, 1.75)
+
+    // A circular check-in counter makes reception an island within the open
+    // arcade rather than a second roofed building. Overlapping tangent facets
+    // make the ring read continuously while preserving the attendant's
+    // existing interaction point at its center.
+    COUNTER_SEGMENTS :: 16
+    counter_radius := f32(1.65)
+    for segment in 0 ..< COUNTER_SEGMENTS {
+        angle := f32(segment) * math.PI * 2 / f32(COUNTER_SEGMENTS)
+        local_x := math.cos(angle) * counter_radius
+        local_z := AIRPORT_ARCADE_CENTER_Z + math.sin(angle) * counter_radius
+        segment_x, segment_z := world_rotate_xz(p.x, p.z, local_x, local_z, rotation)
+        tangent_rotation := rotation + angle + math.PI * .5
+        world_airport_box_rotated(
+            {segment_x, ground + .92, segment_z},
+            {.76, 1.05, .58},
+            tangent_rotation,
+            .Teal_Counter_Tile,
+        )
+        if segment & 3 == 0 {
+            world_airport_box_rotated(
+                {segment_x, ground + .94, segment_z},
+                {.025, .90, .595},
+                tangent_rotation,
+                .Counter_Grout,
+            )
+        }
+        world_airport_box_rotated(
+            {segment_x, ground + .41, segment_z},
+            {.77, .12, .60},
+            tangent_rotation,
+            .Counter_Toe_Kick,
+        )
+        world_airport_box_rotated(
+            {segment_x, ground + 1.48, segment_z},
+            {.82, .10, .76},
+            tangent_rotation,
+            .Counter_Worktop_Laminate,
+        )
+    }
+
+    // Arrange working pieces along the forecourt arc: ticket ledger, document
+    // tray, service bell, and a compact inward-facing timetable screen.
+    ledger_x, ledger_z := world_rotate_xz(p.x, p.z, -.82, AIRPORT_ARCADE_CENTER_Z - 1.44, rotation)
+    world_airport_box_rotated({ledger_x, ground + 1.56, ledger_z}, {1.15, .06, .72}, rotation, .Painted_Steel)
+    world_airport_box_rotated({ledger_x, ground + 1.595, ledger_z}, {.88, .018, .54}, rotation, .Aerodromo_Enamel_Face)
+    tray_x, tray_z := world_rotate_xz(p.x, p.z, .18, AIRPORT_ARCADE_CENTER_Z - 1.62, rotation)
+    world_airport_box_rotated({tray_x, ground + 1.59, tray_z}, {1.25, .14, .72}, rotation, .Aerodromo_Enamel_Rim)
+    world_airport_box_rotated({tray_x, ground + 1.68, tray_z}, {1.05, .05, .52}, rotation, .Aerodromo_Enamel_Face)
+    bell_x, bell_z := world_rotate_xz(p.x, p.z, 1.02, AIRPORT_ARCADE_CENTER_Z - 1.25, rotation)
+    world_airport_box_rotated({bell_x, ground + 1.635, bell_z}, {.30, .035, .30}, rotation, .Aged_Brass_Details)
+    world_vertical_prism({bell_x, ground + 1.63, bell_z}, .18, .18, .22, math.PI / 8, {203, 160, 63, 255})
+    screen_x, screen_z := world_rotate_xz(p.x, p.z, -1.28, AIRPORT_ARCADE_CENTER_Z + .12, rotation)
+    world_airport_box_rotated(
+        {screen_x, ground + 1.92, screen_z},
+        {1.05, .72, .16},
+        rotation + math.PI * .5,
+        .Dark_Hardware,
+    )
+    screen_face_x, screen_face_z := world_rotate_xz(p.x, p.z, -1.185, AIRPORT_ARCADE_CENTER_Z + .12, rotation)
+    world_airport_box_rotated(
+        {screen_face_x, ground + 1.92, screen_face_z},
+        {.82, .48, .025},
+        rotation + math.PI * .5,
+        .Monitor_Tinted_Glass,
+    )
+
+    // A freestanding mechanical baggage scale completes the passenger side of
+    // the counter. Its platform sits beside—not in front of—the service point.
+    scale_local_x, scale_local_z := f32(3.15), AIRPORT_ARCADE_CENTER_Z - .30
+    scale_x, scale_z := world_rotate_xz(p.x, p.z, scale_local_x, scale_local_z, rotation)
+    world_airport_box_rotated({scale_x, ground + .18, scale_z}, {1.55, .18, 1.35}, rotation, .Painted_Steel)
+    column_x, column_z := world_rotate_xz(p.x, p.z, scale_local_x, scale_local_z - .42, rotation)
+    world_airport_box_rotated({column_x, ground + .92, column_z}, {.22, 1.45, .22}, rotation, .Dark_Hardware)
+    world_airport_box_rotated({column_x, ground + 1.58, column_z}, {1.08, .78, .34}, rotation, .Painted_Steel)
+    dial_x, dial_z := world_rotate_xz(p.x, p.z, scale_local_x, scale_local_z - .235, rotation)
+    world_airport_box_rotated({dial_x, ground + 1.58, dial_z}, {.82, .54, .025}, rotation, .Aerodromo_Enamel_Face)
+    needle_x, needle_z := world_rotate_xz(p.x, p.z, scale_local_x, scale_local_z - .225, rotation)
+    world_airport_box_rotated({needle_x, ground + 1.56, needle_z}, {.055, .30, .030}, rotation, .Aerodromo_Enamel_Rim)
+
+    // Waiting benches face the forecourt on either side of the kiosk. Their
+    // flanking planters soften the long arcade without narrowing its central
+    // route or blocking any of the open structural bays.
+    for side in arcade_sides {
+        bench_x, bench_z := world_rotate_xz(p.x, p.z, side * 8.25, 5.8, rotation)
+        for slat in -2 ..= 2 {
+            slat_z := f32(slat) * .16
+            seat_x, seat_z := world_rotate_xz(bench_x, bench_z, 0, slat_z, rotation)
+            world_airport_box_rotated(
+                {seat_x, ground + .74, seat_z},
+                {3.2, .11, .13},
+                rotation,
+                .Bench_Slatted_Hardwood,
+            )
+            back_x, back_z := world_rotate_xz(bench_x, bench_z, 0, .34, rotation)
+            world_airport_box_rotated(
+                {back_x, ground + 1.08 + f32(slat) * .14, back_z},
+                {3.2, .11, .13},
+                rotation,
+                .Bench_Slatted_Hardwood,
+            )
+        }
+        for leg_side in arcade_sides {
+            leg_x, leg_z := world_rotate_xz(bench_x, bench_z, leg_side * 1.22, 0, rotation)
+            world_airport_box_rotated({leg_x, ground + .43, leg_z}, {.12, .58, .52}, rotation, .Painted_Steel)
+        }
+    }
+    planter_offsets := [4][2]f32{{-11.45, 5.8}, {11.45, 5.8}, {-11.45, 11.35}, {11.45, 11.35}}
+    for offset, planter_index in planter_offsets {
+        planter_x, planter_z := world_rotate_xz(p.x, p.z, offset.x, offset.y, rotation)
+        planter_base := third_person.Vec3{planter_x, ground + .12, planter_z}
+        world_airport_box_rotated(
+            {planter_base.x, ground + .50, planter_base.z},
+            {1.25, .76, 1.25},
+            rotation,
+            .Fired_Terracotta,
+        )
+        world_airport_box_rotated(
+            {planter_base.x, ground + .90, planter_base.z},
+            {1.02, .035, 1.02},
+            rotation,
+            .Moist_Planter_Soil,
+        )
+        _ = world_generated_plant(
+            planter_index & 1 == 0 ? plants.Species.Oleander : plants.Species.Lavender,
+            u64(0xa17c_ade0) ~ u64(planter_index) ~ (sign > 0 ? u64(0x100) : u64(0x200)),
+            {planter_x, ground + .96, planter_z},
+            planter_index < 2 ? f32(.70) : f32(.82),
+            rotation + f32(planter_index) * math.PI * .5,
+            detail_floor = .Medium,
+            maturity = .82,
+        )
+    }
+
+    service_position := airport_service_position(p)
+    world_airport_box_rotated(
+        {service_position.x, ground + MARTA_STOOL_HEIGHT - .06, service_position.z},
+        {.62, .12, .54},
+        rotation,
+        .Bench_Slatted_Hardwood,
+    )
     stool_leg_offsets := [4][2]f32{{-.23, -.19}, {-.23, .19}, {.23, -.19}, {.23, .19}}
     for offset in stool_leg_offsets {
-        leg_x, leg_z := world_rotate_xz(p.x, p.z, offset.x, offset.y, rotation)
-        world_box_rotated({leg_x, ground + .295, leg_z}, {.10, .27, .10}, rotation, timber)
+        leg_x, leg_z := world_rotate_xz(p.x, p.z, offset.x, AIRPORT_ARCADE_CENTER_Z + offset.y, rotation)
+        world_airport_box_rotated({leg_x, ground + .295, leg_z}, {.10, .27, .10}, rotation, .Painted_Steel)
     }
 }
 
 world_marta :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
-    if !world_sphere_in_view(editor, editor.attendant_position + third_person.Vec3{0, 1.2, 0}, 2, 4) do return
+    service_position := airport_service_position(editor.attendant_position)
+    if !world_sphere_in_view(editor, service_position + third_person.Vec3{0, 1.2, 0}, 2, 4) do return
     delta := third_person.Vec3 {
-        editor.player.position.x - editor.attendant_position.x,
+        editor.player.position.x - service_position.x,
         0,
-        editor.player.position.z - editor.attendant_position.z,
+        editor.player.position.z - service_position.z,
     }
     facing := math.atan2(-delta.x, -delta.z)
-    position := editor.attendant_position
+    position := service_position
     position.y += MARTA_STOOL_HEIGHT
     world_mouse_model(
         editor,
@@ -23151,14 +23535,15 @@ world_marin :: proc(editor: ^Editor) {
 
 world_gerta :: proc(editor: ^Editor) {
     if !editor.in_map || !editor.libellula_visible do return
-    if !world_sphere_in_view(editor, editor.gerta_position + third_person.Vec3{0, 1.2, 0}, 2, 4) do return
+    service_position := airport_service_position(editor.gerta_position)
+    if !world_sphere_in_view(editor, service_position + third_person.Vec3{0, 1.2, 0}, 2, 4) do return
     delta := third_person.Vec3 {
-        editor.player.position.x - editor.gerta_position.x,
+        editor.player.position.x - service_position.x,
         0,
-        editor.player.position.z - editor.gerta_position.z,
+        editor.player.position.z - service_position.z,
     }
     facing := math.atan2(-delta.x, -delta.z)
-    position := editor.gerta_position
+    position := service_position
     position.y += MARTA_STOOL_HEIGHT
     world_mouse_model(
         editor,
@@ -26528,6 +26913,8 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH : (editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35)
     if editor.cinematic_playback.script != nil {
         focal_length = max(editor.cinematic_focal_length, f32(.01))
+    } else if editor.active_lab_scene == "mouse-theater" {
+        focal_length = max(editor.cinematic_focal_length, f32(.01))
     }
     camera := perspective_camera(render_camera_pose, focal_length)
     sky := atmosphere.sample(&editor.atmosphere)
@@ -26546,6 +26933,14 @@ world_pass :: proc(pass: ^rl.World_Pass_Context, _: rawptr) {
         fog_color       = world_color(fog),
         water           = {sky.cloud_time_seconds, sky.weather.severity, sky.weather.wind[0], sky.weather.wind[1]},
         sun             = world_scene_sun(editor, sky),
+    }
+    if lab_scene_is_active(editor, "mouse-theater") {
+        // The two otherwise-unused camera vector components carry intensity
+        // and footprint radius without growing the 128-byte push-constant
+        // block. The theater instrument has a fixed rig position in the shader
+        // so water/weather inputs remain valid for its emissive floor pool.
+        world_push.camera_up[3] = 2.35
+        world_push.camera_forward[3] = 3.05
     }
     world_push.fog_color[3] = world_scene_moonlight(sky)
     sky_push := Sky_Push {
