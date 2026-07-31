@@ -161,6 +161,15 @@ CAPTURE_CAR_TARGETS := [?]string {
     "dirt",
 }
 CAPTURE_SKY_TARGETS := [?]string{"sun", "sun-air", "sun-away", "moon", "stars"}
+CAPTURE_STORY_MEETING_TARGETS := [?]string {
+    "wipe-left",
+    "wipe-right",
+    "wipe-up",
+    "wipe-down",
+    "wipe-iris",
+    "wipe-clockwise",
+    "wipe-checker",
+}
 CAPTURE_MOUSE_GAIT_TARGETS := [?]string{"stop-spray"}
 CAPTURE_PATIO_TARGETS := [?]string{"coastal", "courtyard", "evening"}
 CAPTURE_GARDEN_TARGETS := [?]string{"courtyard", "kitchen", "wild", "alternate"}
@@ -271,6 +280,8 @@ capture_targets :: proc(kind: Capture_Kind) -> []string {
         return CAPTURE_MAP_TARGETS[:]
     case .Building:
         return CAPTURE_BUILDING_TARGETS[:]
+    case .Story_Meeting:
+        return CAPTURE_STORY_MEETING_TARGETS[:]
     case .Flight:
         return CAPTURE_FLIGHT_TARGETS[:]
     case .Car:

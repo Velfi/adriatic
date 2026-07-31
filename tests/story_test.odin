@@ -129,7 +129,10 @@ friendometer_is_the_only_opening_quest_and_unlocks_the_islands :: proc(t: ^testi
         {data = rawptr(&state), location_id = "east_island", resident_index = int(story.Resident.Mirna)},
     )
     testing.expect(t, opened)
-    testing.expect(t, dialogue.available_at(&conversation, 0).text == "What's a Friendometer?")
+    testing.expect(
+        t,
+        dialogue.available_at(&conversation, 0).text == "What do my pockets have to do with science?",
+    )
     testing.expect(t, dialogue.choose(&conversation, 0))
     testing.expect(t, dialogue.choose(&conversation, 0))
     testing.expect(t, story.has_friendometer(&state))

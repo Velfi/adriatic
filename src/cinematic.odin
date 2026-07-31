@@ -19,6 +19,55 @@ cinematic_is_playing :: proc(editor: ^Editor) -> bool {
     return editor != nil && editor.cinematic_playback.playing
 }
 
+cinematic_wipe_capture_play :: proc(editor: ^Editor, target_name: string) -> bool {
+    if editor == nil do return false
+    kind: cinematic.Wipe_Kind
+    switch target_name {
+    case "wipe-left":
+        kind = .Left
+    case "wipe-right":
+        kind = .Right
+    case "wipe-up":
+        kind = .Up
+    case "wipe-down":
+        kind = .Down
+    case "wipe-iris":
+        kind = .Iris
+	case "wipe-clockwise":
+		kind = .Clockwise
+	case "wipe-checker":
+        kind = .Checker
+    case:
+        return false
+    }
+
+    niko, iva, center, rotation, found := world_story_meeting_pose(editor)
+    if !found do return false
+    side := third_person.Vec3{math.cos(rotation), 0, math.sin(rotation)}
+    outward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
+    look := third_person.Vec3{(niko.x + iva.x) * .5, max(niko.y, iva.y) + .72, (niko.z + iva.z) * .5}
+    from := cinematic.camera(
+        {center.x + outward.x * 3.15 + side.x * 1.55, center.y + 2.05, center.z + outward.z * 3.15 + side.z * 1.55},
+        {look.x, look.y, look.z},
+        1.38,
+    )
+    to := cinematic.camera(
+        {center.x + outward.x * 2.05 - side.x * 1.05, center.y + 1.42, center.z + outward.z * 2.05 - side.z * 1.05},
+        {look.x, look.y, look.z},
+        1.62,
+    )
+	editor.story_cinematic_shots = {
+		cinematic.hold("wipe-outgoing", 1, from, cinematic.wipe(kind, 1.2)),
+		cinematic.hold("wipe-incoming", 1, to),
+		{},
+	}
+    editor.story_cinematic_script = {
+        id    = target_name,
+        shots = editor.story_cinematic_shots[:2],
+    }
+    return cinematic_play(editor, &editor.story_cinematic_script)
+}
+
 story_meeting_cinematic_play :: proc(editor: ^Editor) -> bool {
     if editor == nil || editor.story_state.romance != .Meeting do return false
     niko, iva, center, rotation, found := world_story_meeting_pose(editor)
@@ -83,6 +132,10 @@ cinematic_wipe_color :: proc(value: cinematic.Wipe) -> rl.Color {
     return {value.color[0], value.color[1], value.color[2], value.color[3]}
 }
 
+cinematic_wipe_is_camera_composited :: proc(kind: cinematic.Wipe_Kind) -> bool {
+	return kind != .None
+}
+
 cinematic_draw_clock :: proc(width, height: i32, coverage: f32, color: rl.Color) {
     if coverage <= 0 do return
     center := rl.Vector2{f32(width) * .5, f32(height) * .5}
@@ -104,6 +157,8 @@ cinematic_draw_wipe :: proc(editor: ^Editor, width, height: i32) {
     if editor == nil || editor.cinematic_playback.script == nil do return
     value := cinematic.sample(&editor.cinematic_playback)
     if value.wipe.kind == .None do return
+	// Adriatic's Vulkan world pass composites every authored wipe shot-over-shot.
+	if cinematic_wipe_is_camera_composited(value.wipe.kind) do return
     coverage := cinematic_wipe_coverage(value.wipe_progress)
     if coverage <= 0 do return
     color := cinematic_wipe_color(value.wipe)
@@ -125,13 +180,6 @@ cinematic_draw_wipe :: proc(editor: ^Editor, width, height: i32) {
         rl.DrawCircleV({w * .5, h * .5}, radius, color)
     case .Clockwise:
         cinematic_draw_clock(width, height, coverage, color)
-    case .Blinds:
-        blind_count := 12
-        blind_height := h / f32(blind_count)
-        for index in 0 ..< blind_count {
-            y := f32(index) * blind_height
-            rl.DrawRectangleRec({0, y, w * coverage, blind_height + 1}, color)
-        }
     case .Checker:
         columns, rows := 12, 8
         cell_width, cell_height := w / f32(columns), h / f32(rows)

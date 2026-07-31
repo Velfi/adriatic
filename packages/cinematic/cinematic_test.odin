@@ -20,12 +20,16 @@ playback_samples_camera_and_crosses_cut_under_wipe :: proc(t: ^testing.T) {
     testing.expect(t, covered.shot_index == 0)
     testing.expect(t, covered.wipe.kind == .Left)
     testing.expect(t, covered.wipe_progress > 0 && covered.wipe_progress < .5)
+    testing.expect(t, covered.camera_from.position[0] != covered.camera_to.position[0])
+    testing.expect(t, covered.camera_to.position[0] == 10)
 
     step(&playback, .25)
     cut := sample(&playback)
     testing.expect(t, cut.shot_index == 1)
     testing.expect(t, cut.wipe_progress == .5)
     testing.expect(t, cut.camera.position[0] == 10)
+    testing.expect(t, cut.camera_from.position[0] == 0)
+    testing.expect(t, cut.camera_to.position[0] == 10)
 
     step(&playback, .25)
     reveal := sample(&playback)

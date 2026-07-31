@@ -108,8 +108,10 @@ chooses or clears another.
 `packages/cinematic` provides renderer-independent shot scripting and
 deterministic playback. Shots animate position, target, and focal length with
 linear, smooth, or smoother easing, and may cut through left, right, up, down,
-iris, clockwise, blinds, or checker wipes. `src/cinematic.odin` adapts camera
-samples to the game and draws transitions above the fully composed frame.
+iris, clockwise, or checker wipes. Every wipe composites the outgoing
+and incoming camera views directly in the Vulkan world pass. `src/cinematic.odin`
+adapts camera samples to the game and retains the canvas implementation as a
+fallback for renderers without camera compositing.
 
 ```odin
 shots := [?]cinematic.Shot {

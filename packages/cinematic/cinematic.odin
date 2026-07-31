@@ -3,9 +3,9 @@ package cinematic
 // Renderer-independent cinematic scripting and deterministic playback.
 //
 // Scripts are borrowed slices: authored Shot storage must outlive Playback.
-// A shot owns a camera move and may end in a wipe. The cut to the next shot
-// happens while the wipe is fully covered, so callers never need two rendered
-// scenes or an off-screen render target.
+// A shot owns a camera move and may end in a wipe. Sample exposes both camera
+// views during the transition so renderers can composite them directly; a
+// renderer may instead hide the cut with a colored mask.
 
 Vec3 :: [3]f32
 
@@ -23,7 +23,6 @@ Wipe_Kind :: enum {
     Down,
     Iris,
     Clockwise,
-    Blinds,
     Checker,
 }
 
@@ -66,6 +65,12 @@ Playback :: struct {
 
 Sample :: struct {
     camera:        Camera,
+    // During a wipe these are the two independently renderable views. A
+    // renderer can draw camera_from first, then draw camera_to through a mask
+    // driven by wipe_progress. Renderers without that facility may keep using
+    // camera and cover the cut with the wipe color.
+    camera_from:   Camera,
+    camera_to:     Camera,
     shot_id:       string,
     shot_index:    int,
     shot_progress: f32,
@@ -213,15 +218,23 @@ sample :: proc(playback: ^Playback) -> Sample {
     progress := shot.duration <= 0 ? f32(1) : clamp(playback.shot_time / shot.duration, 0, 1)
     result = {
         camera        = lerp_camera(shot.camera_from, shot.camera_to, ease_value(shot.ease, progress)),
+        camera_from   = lerp_camera(shot.camera_from, shot.camera_to, ease_value(shot.ease, progress)),
+        camera_to     = lerp_camera(shot.camera_from, shot.camera_to, ease_value(shot.ease, progress)),
         shot_id       = shot.id,
         shot_index    = index,
         shot_progress = progress,
         playing       = playback.playing,
     }
     result.wipe, result.wipe_progress = outgoing_wipe(playback)
+    if result.wipe.kind != .None && index + 1 < len(playback.script.shots) {
+        result.camera_from = result.camera
+        result.camera_to = playback.script.shots[index + 1].camera_from
+    }
     incoming, incoming_progress := incoming_wipe(playback)
     if incoming.kind != .None {
         result.wipe, result.wipe_progress = incoming, incoming_progress
+        result.camera_from = playback.script.shots[index - 1].camera_to
+        result.camera_to = result.camera
     }
     return result
 }

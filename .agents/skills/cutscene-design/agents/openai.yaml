@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cutscene Design"
+  short_description: "Design cinematic scenes for Adriatic"
+  default_prompt: "Use $cutscene-design to design an implementation-ready Adriatic cutscene with dialogue, camera movement, pacing, and transitions."

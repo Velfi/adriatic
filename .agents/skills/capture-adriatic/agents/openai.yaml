@@ -1,0 +1,4 @@
+interface:
+  display_name: "Capture Adriatic"
+  short_description: "Capture Adriatic images, GIFs, and videos"
+  default_prompt: "Use $capture-adriatic to capture an Adriatic scene as an image, GIF, or video and show me the result."

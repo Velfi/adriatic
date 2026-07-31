@@ -1296,17 +1296,17 @@ has_friendometer_context :: proc(ctx: ^dialogue.Context) -> bool {
 mirna_text :: proc(ctx: ^dialogue.Context) -> string {
     if has_friendometer(state_from_context(ctx)) {
         return(
-            "Ah, il mio field researcher! La Friendometer registra ancora? Bene. Ricorda: scalar non significa simple—solo misurabile, con abbastanza wires." \
+            "Ah, field researcher of mine! Friendometer, does it still to you record? Good. One scalar we have; causation, regrettably, still refuses." \
         )
     }
     return(
-        "Finalmente! Un soggetto ambulante, socialmente mobile, und quasi certamente non magnetico. Vieni dentro—la scienza locale ha bisogno di tasche." \
+        "Finally! To me has arrived walking subject, socially movable and, almost certain am, not magnetic. Inside come—local science pockets of yours requires." \
     )
 }
 
 mirna_friendometer_text :: proc(_: ^dialogue.Context) -> string {
     return(
-        "Ho quantificato friendship in un valore scalar: una unità per ogni atto positivo osservabile. Questa è la Friendometer—rame, vetro, tre springs, et zero superstizione certificata." \
+        "Friendship have I into scalar value put: for every observable positive act, one unit. This here is Friendometer—copper, glass, three springs, and superstition in it, certified, none." \
     )
 }
 
@@ -1318,13 +1318,7 @@ mirna_friendometer_accept :: proc(ctx: ^dialogue.Context) {
 
 mirna_friendometer_practical_close :: proc(_: ^dialogue.Context) -> string {
     return(
-        "Perfetto. Fai qualcosa di kind, l'ago sale; fai niente, abbiamo un control group. Vai—parla, aiuta, porta cose asciutte." \
-    )
-}
-
-mirna_friendometer_skeptical_close :: proc(_: ^dialogue.Context) -> string {
-    return(
-        "Excellent skepticism! È già peer review. Porta la Friendometer comunque; se friendship rifiuta il scalar, pubblicheremo un grafico più grande." \
+        "Perfect. Something kind do, upward goes needle; nothing do, and control group have we. Go—with people speak, to them help, and dry carry what dry must remain." \
     )
 }
 
@@ -1332,7 +1326,7 @@ mirna_results_text :: proc(ctx: ^dialogue.Context) -> string {
     state := state_from_context(ctx)
     total := state == nil ? 0 : state.friendship_points
     return fmt.tprintf(
-        "Current result: %d. Non è un giudizio morale—è una misura di positive acts che il mio apparatus ha visto. Continua il field work.",
+        "Result current: %d. Moral judgment this is not—measure it is of positive acts which apparatus of mine has seen. With field work continue.",
         total,
     )
 }
@@ -2497,7 +2491,7 @@ init_catalog :: proc(catalog: ^Catalog) {
     }
 
     catalog.mirna_choices = {
-        dialogue.choice("What's a Friendometer?", 1, needs_friendometer),
+        dialogue.choice("What do my pockets have to do with science?", 1, needs_friendometer),
         dialogue.choice("How are the results looking?", 3, has_friendometer_context),
         dialogue.choice("I'll leave you to your research."),
     }

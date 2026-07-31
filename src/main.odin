@@ -11771,8 +11771,8 @@ adriatic_run :: proc(
         frame_delta := frame == 0 ? f32(0) : min(f32(frame_now - editor.last_frame_time), f32(.1))
         if cinematic_export_active {
             frame_delta = 1 / f32(max(request.sequence_fps, 1))
-            cinematic_export_time =
-                f32(max(frame - capture_frame, 0)) / f32(max(request.sequence_fps, 1))
+			cinematic_export_time =
+				f32(max(frame - capture_frame, 0)) / f32(max(request.sequence_fps, 1))
         }
         editor.last_frame_time = frame_now
         // map_time drives low-frequency presentation animation. Keep it
@@ -12807,6 +12807,15 @@ adriatic_run :: proc(
             }
         }
         saved_aircraft_body: flight.Body_State
+        if capture_story_meeting_mode &&
+           frame == capture_frame &&
+           len(capture_target) > 5 &&
+           capture_target[:5] == "wipe-" {
+            if !cinematic_wipe_capture_play(editor, capture_target) {
+                fmt.eprintf("story meeting capture could not start transition %s\n", capture_target)
+                return .Quit
+            }
+        }
         cinematic_update(editor, simulation_delta)
         bomber_drop_step(editor, min(simulation_delta, f32(.05)))
         bomber_pip_update(editor, min(simulation_delta, f32(.05)))
@@ -13103,9 +13112,9 @@ adriatic_run :: proc(
         // to settle; frame two only showed the first few links as a short nub.
         if capture_mode && request != nil && request.sequence_frames > 0 {
             if sequence_frame_index < request.sequence_frames && frame >= capture_frame {
-                rl.TakeScreenshot(
-                    fmt.ctprintf("%s/frame-%06d.png", capture_output, sequence_frame_index),
-                )
+				rl.TakeScreenshot(
+					fmt.ctprintf("%s/frame-%06d.png", capture_output, sequence_frame_index),
+				)
                 sequence_last_capture_frame = frame
                 sequence_frame_index += 1
             }
