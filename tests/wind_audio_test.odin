@@ -108,6 +108,33 @@ wind_airflow_combines_weather_and_motion_without_exceeding_unity :: proc(t: ^tes
 }
 
 @(test)
+apparent_airflow_audio_spans_flight_speed_and_respects_tailwind_cancellation :: proc(t: ^testing.T) {
+    testing.expect(t, wind_audio.apparent_airflow_strength(0, 0) == 0)
+    testing.expect(t, wind_audio.apparent_airflow_strength(12, 0) < .2)
+    testing.expect(t, wind_audio.apparent_airflow_strength(30, 0) > .5)
+    testing.expect(t, wind_audio.apparent_airflow_strength(52, 0) == 1)
+
+    stationary_weather := wind_audio.apparent_airflow_strength(10, 10)
+    matching_tailwind := wind_audio.apparent_airflow_strength(0, 10)
+    partial_tailwind := wind_audio.apparent_airflow_strength(2, 10)
+    headwind := wind_audio.apparent_airflow_strength(22, 10)
+    testing.expect(t, matching_tailwind == 0)
+    testing.expect(t, partial_tailwind < stationary_weather)
+    testing.expect(t, headwind > stationary_weather)
+}
+
+@(test)
+wind_audio_update_accepts_clamped_apparent_strength :: proc(t: ^testing.T) {
+    runtime := wind_audio.Runtime{synth = wind_audio.new_synth(0x41505041)}
+    wind_audio.update(&runtime, 12, 0, direction = -.4, strength_override = .37)
+    testing.expect(t, runtime.synth.target_strength == .37)
+    testing.expect(t, runtime.synth.target_direction == -.4)
+
+    wind_audio.update(&runtime, 0, 0, strength_override = 2)
+    testing.expect(t, runtime.synth.target_strength == 1)
+}
+
+@(test)
 wind_direction_projects_onto_listener_right_axis :: proc(t: ^testing.T) {
     testing.expect(t, wind_audio.wind_lateral_direction(1, 0, 0) == 1)
     testing.expect(t, wind_audio.wind_lateral_direction(-1, 0, 0) == -1)
@@ -136,6 +163,14 @@ apparent_airflow_speed_distinguishes_headwind_and_tailwind :: proc(t: ^testing.T
     testing.expect(t, tailwind == 2)
     testing.expect(t, matching_tailwind == 0)
     testing.expect(t, wind_audio.airflow_strength(headwind, 0) > wind_audio.airflow_strength(tailwind, 0))
+}
+
+@(test)
+apparent_airflow_speed_includes_vertical_motion :: proc(t: ^testing.T) {
+    level := wind_audio.apparent_airflow_speed(0, 0, 24, 0)
+    climbing := wind_audio.apparent_airflow_speed(0, 0, 24, 0, 18)
+    testing.expect(t, climbing > level)
+    testing.expect(t, math.abs(f64(climbing) - 30) < 0.001)
 }
 
 @(test)

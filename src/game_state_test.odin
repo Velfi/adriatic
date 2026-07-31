@@ -237,6 +237,7 @@ when ODIN_TEST {
         defer free(editor)
         terrain.init_project(&editor.project)
         spawn := runway_spawn_position(editor)
+        _ = mouse_emote_start(&editor.mouse_emote, .Synthetic_Test)
         player_place(editor, spawn, .Startup, .75)
 
         testing.expect_value(t, editor.player.position, spawn)
@@ -246,6 +247,7 @@ when ODIN_TEST {
         testing.expect_value(t, editor.pilot.mode, vehicles.Occupancy_Mode.On_Foot)
         testing.expect_value(t, editor.player_placement_reason, Player_Placement_Reason.Startup)
         testing.expect_value(t, editor.player_placement_revision, u64(1))
+        testing.expect_value(t, editor.mouse_emote.action, Mouse_Emote.None)
 
         // This is the lifecycle guard that catches the original bug: a scene
         // position differing from the cached physics position must be

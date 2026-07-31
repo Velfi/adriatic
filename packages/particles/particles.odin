@@ -1,5 +1,6 @@
 package particles
 
+import air_effects "../air_effects"
 import "core:math"
 
 MAX_CPU_PARTICLES :: 384
@@ -140,6 +141,10 @@ active_count :: proc(system: ^Cpu_System) -> int { return system.count }
 new_vehicle_effects :: proc(seed: u32) -> Vehicle_Effects { return {seed = seed} }
 
 new_wing_trails :: proc(seed: u32) -> Wing_Trails { return {seed = seed} }
+
+wing_trail_lifetime_scale :: proc(airspeed: f32) -> f32 {
+    return 1 - air_effects.eased_range(airspeed, 55, 90) * .35
+}
 
 new_petal_effects :: proc(seed: u32) -> Petal_Effects { return {seed = seed} }
 
@@ -386,7 +391,9 @@ step_wing_trails :: proc(
 ) {
     dt := clamp(delta_seconds, 0, .05)
     wind_speed := f32(math.sqrt(f64(wind.x * wind.x + wind.z * wind.z)))
-    strength := clamp((airspeed - 12) / 34, 0, 1) * (1 + wind_speed * .025)
+    // `airspeed` is already relative airflow. Raw weather magnitude must not
+    // re-strengthen vapor after a matching tailwind has cancelled that flow.
+    strength := air_effects.vapor_strength(airspeed)
     trails.spawn += dt * strength * 72
     trails_curve := wind.x * forward.z - wind.z * forward.x
     trails_right := Vec3 {
@@ -399,14 +406,16 @@ step_wing_trails :: proc(
             if trails.count >= MAX_WING_TRAIL_PARTICLES do break
             tip := side == 0 ? left_tip : right_tip
             jitter := next_random(&trails.seed) - .5
-            life := .55 + next_random(&trails.seed) * (.55 + wind_speed * .02)
+            life :=
+                (.55 + next_random(&trails.seed) * (.55 + wind_speed * .02)) *
+                wing_trail_lifetime_scale(airspeed)
             particle := &trails.particles[trails.count]
             particle^ = {
                 position = {tip.x, tip.y, tip.z},
                 velocity = {
-                    -forward.x * (airspeed * (.22 + jitter * .025)) + wind.x * .18,
-                    -forward.y * (airspeed * .22) + wind.y * .18 + up.y * jitter * .08,
-                    -forward.z * (airspeed * (.22 + jitter * .025)) + wind.z * .18,
+                    -forward.x * (airspeed * (.19 + jitter * .022)) + wind.x * .18,
+                    -forward.y * (airspeed * .19) + wind.y * .18 + up.y * jitter * .08,
+                    -forward.z * (airspeed * (.19 + jitter * .022)) + wind.z * .18,
                 },
                 life     = life,
                 max_life = life,

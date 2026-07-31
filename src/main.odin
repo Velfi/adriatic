@@ -1,6 +1,7 @@
 package main
 
 import architecture "../packages/architecture"
+import air_effects "../packages/air_effects"
 import atmosphere "../packages/atmosphere"
 import back "../packages/back"
 import boats "../packages/boats"
@@ -25,6 +26,7 @@ import mouse_paws "../packages/mouse_paws"
 import mouse_tail "../packages/mouse_tail"
 import ocean_audio "../packages/ocean_audio"
 import particle_systems "../packages/particles"
+import player_mail "../packages/player_mail"
 import postale_game "../packages/postale"
 import quest "../packages/quest"
 import roads "../packages/roads"
@@ -416,6 +418,7 @@ Fixture :: struct {
     attendant_dialogue_vehicle_choice_count:        int `fixture:"-"`,
     gerta_position:                                 third_person.Vec3,
     story_state:                                    story.State,
+    player_mail:                                    player_mail.State,
     story_catalog:                                  story.Catalog `fixture:"-"`,
     story_quest_catalog:                            story.Quest_Catalog `fixture:"-"`,
     tracked_quest_node:                             quest.Node_ID,
@@ -424,6 +427,9 @@ Fixture :: struct {
     quest_log_tab:                                  Quest_Log_Tab `fixture:"-"`,
     quest_log_focus:                                int `fixture:"-"`,
     quest_log_scroll:                               int `fixture:"-"`,
+    player_mail_focus:                              int `fixture:"-"`,
+    player_mail_last_collected:                     int `fixture:"-"`,
+    player_mail_notice_until:                       f64 `fixture:"-"`,
     dialogue_resident:                              story.Resident `fixture:"-"`,
     camera_target_lock:                             bool `fixture:"-"`,
     flight_control:                                 postale_game.Control `fixture:"-"`,
@@ -462,11 +468,12 @@ Fixture :: struct {
     customization_preview_yaw:                      f32 `fixture:"-"`,
 }
 
-FIXTURE_SCHEMA_VERSION :: 9
+FIXTURE_SCHEMA_VERSION :: 10
 
 Editor :: struct {
     using fixture:                      Fixture,
     fixture_owner:                      Fixture_Migration_Result `hs:"-"`,
+    mouse_emote:                        Mouse_Emote_State,
     ruin_stamp_preview:                 terrain.Structure,
     ruin_stamp_preview_valid:           bool,
     ruin_stamp_seed_offset:             u32,
@@ -487,6 +494,7 @@ Editor :: struct {
     capture_player_fall_pose:           bool,
     capture_player_blink_pose:          bool,
     capture_player_posted_pose:         bool,
+    capture_player_mailbag_hidden:      bool,
     capture_bougainvillea_seed_enabled: bool,
     capture_bougainvillea_structure_id: u64,
     capture_bougainvillea_seed:         u32,
@@ -728,6 +736,7 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.mouse_mailbag_vertical_lag = 0
     editor.mouse_mailbag_vertical_velocity = 0
     editor.player_paws = {}
+    mouse_emote_reset(&editor.mouse_emote)
 
     editor.camera = third_person.default_camera()
     editor.cameras = {}
@@ -773,6 +782,7 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.car_trailer_yaw = editor.car.yaw_radians
 
     editor.story_state = {}
+    editor.player_mail = {}
     story.init_quest_catalog(&editor.story_quest_catalog)
     _ = story.ensure_quest_progress(&editor.story_state)
     editor.tracked_quest_node = quest.no_node
@@ -781,6 +791,9 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.quest_log_tab = .Active
     editor.quest_log_focus = 0
     editor.quest_log_scroll = 0
+    editor.player_mail_focus = 0
+    editor.player_mail_last_collected = 0
+    editor.player_mail_notice_until = 0
     editor.friendship_notice_initialized = true
     editor.friendship_notice_total = editor.story_state.friendship_points
     editor.friendship_notice_delta = 0
@@ -4796,6 +4809,9 @@ LIBELLULA_PRESENTATION_SCALE :: f32(.72)
 POSTALE_WING_TRAIL_LOCAL_X :: f32(4.96)
 POSTALE_WING_TRAIL_LOCAL_Y :: f32(.08 + 4.96 * .045)
 POSTALE_WING_TRAIL_LOCAL_Z :: f32(-.39)
+RONDINE_WING_TRAIL_LOCAL_X :: f32(8.72)
+RONDINE_WING_TRAIL_LOCAL_Y :: f32(.72)
+RONDINE_WING_TRAIL_LOCAL_Z :: f32(1.22)
 
 @(no_instrumentation)
 postale_vertex_world :: #force_inline proc(
@@ -4821,6 +4837,39 @@ postale_vertex_world :: #force_inline proc(
     }
 }
 
+active_aircraft_wing_trail_anchors :: proc(
+    editor: ^Editor,
+) -> (left_tip, right_tip: third_person.Vec3, basis: flight.Basis, available: bool) {
+    if editor == nil do return
+    if editor.aircraft.active == .Rondine {
+        left_tip = world_rondine_local(
+            editor,
+            {-RONDINE_WING_TRAIL_LOCAL_X, RONDINE_WING_TRAIL_LOCAL_Y, RONDINE_WING_TRAIL_LOCAL_Z},
+        )
+        right_tip = world_rondine_local(
+            editor,
+            {RONDINE_WING_TRAIL_LOCAL_X, RONDINE_WING_TRAIL_LOCAL_Y, RONDINE_WING_TRAIL_LOCAL_Z},
+        )
+        basis = world_rondine_presentation_basis(editor)
+        available = true
+        return
+    }
+    if editor.aircraft.active != .Postale do return
+    left_tip = postale_vertex_world(
+        &editor.postale,
+        {-POSTALE_WING_TRAIL_LOCAL_X, POSTALE_WING_TRAIL_LOCAL_Y, POSTALE_WING_TRAIL_LOCAL_Z},
+        POSTALE_PRESENTATION_SCALE,
+    )
+    right_tip = postale_vertex_world(
+        &editor.postale,
+        {POSTALE_WING_TRAIL_LOCAL_X, POSTALE_WING_TRAIL_LOCAL_Y, POSTALE_WING_TRAIL_LOCAL_Z},
+        POSTALE_PRESENTATION_SCALE,
+    )
+    basis = flight.basis_from_orientation(editor.postale.body.orientation)
+    available = true
+    return
+}
+
 @(no_instrumentation)
 postale_normal_world :: #force_inline proc(runtime: ^postale_game.Runtime, normal: [3]f32) -> third_person.Vec3 {
     basis := flight.basis_from_orientation(runtime.body.orientation)
@@ -4838,7 +4887,7 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
         return {
             position = body.position,
             basis = basis,
-            airspeed = editor.rondine.telemetry.speed,
+            airspeed = active_aircraft_apparent_airflow_speed(editor),
             roll_input = editor.flight_control.roll,
             grounded = editor.rondine.grounded,
             follow_distance = 15.5,
@@ -4850,7 +4899,7 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
         return {
             position = body.position,
             basis = basis,
-            airspeed = linalg.length(body.velocity),
+            airspeed = active_aircraft_apparent_airflow_speed(editor),
             roll_input = editor.flight_control.roll,
             grounded = editor.libellula.grounded,
             fixed_framing = true,
@@ -4859,7 +4908,7 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
     return {
         position        = body.position,
         basis           = basis,
-        airspeed        = postale_game.selected_airspeed(&editor.postale),
+        airspeed        = active_aircraft_apparent_airflow_speed(editor),
         roll_input      = editor.flight_control.roll,
         grounded        = editor.postale.grounded,
         // The Postale's broad parasol wing needs a low, long-lens-like rear
@@ -5182,6 +5231,52 @@ active_aircraft_airspeed :: proc(editor: ^Editor) -> f32 {
     if editor != nil && editor.aircraft.active != .Postale do return linalg.length(editor.libellula.body.velocity)
     if editor == nil do return 0
     return postale_game.selected_airspeed(&editor.postale)
+}
+
+active_aircraft_apparent_airflow_speed :: proc(editor: ^Editor) -> f32 {
+    if editor == nil do return 0
+    body := active_aircraft_body(editor)
+    return wind_audio.apparent_airflow_speed(
+        editor.atmosphere.weather.wind[0],
+        editor.atmosphere.weather.wind[1],
+        body.velocity.x,
+        body.velocity.z,
+        body.velocity.y,
+    )
+}
+
+active_aircraft_grounded :: proc(editor: ^Editor) -> bool {
+    if editor == nil do return true
+    if editor.aircraft.active == .Rondine do return editor.rondine.grounded
+    if editor.aircraft.active != .Postale do return editor.libellula.grounded
+    return editor.postale.grounded
+}
+
+active_aircraft_crashed :: proc(editor: ^Editor) -> bool {
+    if editor == nil do return true
+    if editor.aircraft.active == .Rondine do return editor.rondine.crashed
+    if editor.aircraft.active != .Postale do return editor.libellula.crashed
+    return editor.postale.crashed
+}
+
+aircraft_wind_buffet :: proc(editor: ^Editor) -> f32 {
+    if editor == nil || active_aircraft_grounded(editor) || active_aircraft_crashed(editor) do return 0
+    wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
+    weather_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
+    body := active_aircraft_body(editor)
+    lateral := wind_audio.apparent_lateral_direction(
+        wind_x,
+        wind_z,
+        body.velocity.x,
+        body.velocity.z,
+        editor.camera.yaw_radians,
+    )
+    return air_effects.buffet_strength(
+        weather_speed,
+        lateral,
+        editor.atmosphere.weather.severity,
+        editor.atmosphere.front_seconds,
+    )
 }
 
 postale_flyby_shake :: proc(editor: ^Editor) -> f32 {
@@ -5687,6 +5782,9 @@ attendant_dialogue_definition_release :: proc(editor: ^Editor) {
 
 open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
     if editor == nil || resident == .Marta || resident == .Gerta do return false
+    if resident == .Toma || resident == .Lena {
+        _ = player_mail_collect(editor)
+    }
     attendant_dialogue_definition_release(editor)
     definition: ^dialogue.Definition
     switch resident {
@@ -6047,8 +6145,9 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
     if direction == 0 do direction = vertical
     if direction == 0 do direction = horizontal
     choice_count := dialogue.available_count(&editor.attendant_dialogue)
+    revealing := dialogue_view_revealing(editor)
     wheel := rl.GetMouseWheelMove()
-    if wheel != 0 && choice_count > visible_rows {
+    if !revealing && wheel != 0 && choice_count > visible_rows {
         editor.attendant_dialogue_view.first_choice = clamp(
             editor.attendant_dialogue_view.first_choice - int(wheel),
             0,
@@ -6060,7 +6159,7 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
             min(editor.attendant_dialogue_view.first_choice + visible_rows - 1, choice_count - 1),
         )
     }
-    if direction != 0 {
+    if !revealing && direction != 0 {
         editor.attendant_dialogue_focus = clamp(
             editor.attendant_dialogue_focus + direction,
             0,
@@ -6069,7 +6168,7 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
         dialogue_choice_scroll_focus(editor, visible_rows)
     }
 
-    if mouse_active {
+    if !revealing && mouse_active {
         first := editor.attendant_dialogue_view.first_choice
         last := min(first + visible_rows, choice_count)
         for index in first ..< last {
@@ -6082,14 +6181,20 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
     activated := -1
     accept_pressed := input_action_pressed(.Menu_Accept)
     if accept_pressed {
-        if dialogue_view_revealing(editor) {
+        if revealing {
             dialogue_view_complete_reveal(editor)
+        } else if choice_count == 0 {
+            if current := dialogue.current(&editor.attendant_dialogue); current != nil {
+                remaining := max(current.auto_delay - editor.attendant_dialogue.elapsed, 0)
+                _ = dialogue.update(&editor.attendant_dialogue, remaining)
+                if editor.attendant_dialogue.ended do attendant_dialogue_close(editor)
+            }
         } else {
             activated = editor.attendant_dialogue_focus
         }
     }
     if input_action_pressed(.Menu_Cancel) do activated = max(choice_count - 1, 0)
-    if rl.IsMouseButtonPressed(.LEFT) {
+    if !revealing && rl.IsMouseButtonPressed(.LEFT) {
         first := editor.attendant_dialogue_view.first_choice
         last := min(first + visible_rows, choice_count)
         for index in first ..< last {
@@ -6136,7 +6241,8 @@ nearest_story_resident :: proc(
     best_distance := f32(2.25 * 2.25)
     candidates := [10]story.Resident{.Niko, .Iva, .Bojan, .Zora, .Vesna, .Petar, .Anica, .Toma, .Lena, .Mirna}
     for candidate in candidates {
-        if require_action && !story.resident_has_action(&editor.story_state, candidate) do continue
+        postal := candidate == .Toma || candidate == .Lena
+        if require_action && !postal && !story.resident_has_action(&editor.story_state, candidate) do continue
         position, placed := world_story_resident_position(editor, candidate)
         if !placed do continue
         delta := editor.player.position - position
@@ -7350,25 +7456,47 @@ draw_flight_instruments :: proc(editor: ^Editor, width, height: i32, altitude: f
     draw_throttle_overlay(editor, width, height, active_aircraft_throttle(editor))
 }
 
-draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f32) {
+draw_aircraft_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f32) {
     if editor == nil ||
        !editor.in_map ||
        !driving_aircraft(editor) ||
-       editor.aircraft.active != .Postale ||
-       editor.postale.grounded ||
-       editor.postale.crashed {
+       active_aircraft_grounded(editor) ||
+       active_aircraft_crashed(editor) {
         return
     }
-    intensity := clamp((postale_game.selected_airspeed(&editor.postale) - 34) / 34, 0, 1)
+    airflow_speed := active_aircraft_apparent_airflow_speed(editor)
+    intensity := air_effects.streak_strength(airflow_speed)
     if intensity <= .001 do return
 
-    center := rl.Vector2 {
-        x = f32(width) * .5 - editor.flight_control.roll * 34,
-        y = f32(height) * .46 + editor.flight_control.pitch * 22,
-    }
+    body := active_aircraft_body(editor)
     short_side := min(f32(width), f32(height))
+    center := rl.Vector2 {
+        x = f32(width) * .5,
+        y = f32(height) * .46,
+    }
+    air_forward := third_person.Vec3 {
+        body.velocity.x - editor.atmosphere.weather.wind[0],
+        body.velocity.y,
+        body.velocity.z - editor.atmosphere.weather.wind[1],
+    }
+    if linalg.length(air_forward) > 1 {
+        air_forward = linalg.normalize0(air_forward)
+        projected := project_3d(
+            perspective_camera(editor.camera_pose, editor.flight_camera.focal_length),
+            flight_to_world(body.position) + air_forward * 120,
+            width,
+            height,
+        )
+        if projected.visible {
+            // Clamp only the pathological edge cases. Normal flight retains
+            // the exact air-relative direction, including slip and climb.
+            center.x = clamp(projected.position.x, f32(width) * .25, f32(width) * .75)
+            center.y = clamp(projected.position.y, f32(height) * .20, f32(height) * .68)
+        }
+    }
     long_side := max(f32(width), f32(height))
-    for index in 0 ..< 58 {
+    streak_count := air_effects.screen_streak_count(airflow_speed)
+    for index in 0 ..< streak_count {
         seed := f32(index) * 2.399963
         speed_variation := .72 + f32(math.sin(f64(seed * 2.17))) * .18
         // Keep screen-space travel below the point where repeated radial lanes
@@ -7402,8 +7530,12 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
             segment_alpha := u8(clamp(f32(alpha) * (.28 + outer_amount * .72), 0, 126))
             segment_width := (.85 + intensity * 1.55) * (.70 + outer_amount * .30)
             // Speed is a warm, screen-space effect radiating from the flight
-            // vanishing point. Wind remains cool and world-aligned.
-            rl.DrawLineEx(start, finish, segment_width, {244, 213, 142, segment_alpha})
+            // vanishing point. A dim amber body and narrow ivory core read as
+            // one luminous streak instead of a flat UI line; wind remains
+            // cool and world-aligned.
+            body_alpha := u8(clamp(f32(segment_alpha) * .48, 0, 72))
+            rl.DrawLineEx(start, finish, segment_width + .9, {205, 174, 108, body_alpha})
+            rl.DrawLineEx(start, finish, max(segment_width * .42, f32(.65)), {255, 235, 181, segment_alpha})
         }
         head_distance := distance + streak_length
         head := rl.Vector2{center.x + ray_x * head_distance, center.y + ray_y * head_distance}
@@ -7411,16 +7543,6 @@ draw_postale_speed_effects :: proc(editor: ^Editor, width, height: i32, time: f3
         rl.DrawCircleV(head, .7 + intensity * .72, {255, 235, 174, head_alpha})
     }
 
-    // A quiet edge wash sells peripheral blur without obscuring the aircraft or
-    // instruments. Its stepped bands avoid requiring a post-process shader.
-    for band in 0 ..< 5 {
-        inset := i32(band * 7)
-        alpha := u8((5 - band) * int(3 + intensity * 3))
-        rl.DrawRectangle(inset, inset, width - inset * 2, 3, {225, 194, 126, alpha})
-        rl.DrawRectangle(inset, height - inset - 3, width - inset * 2, 3, {225, 194, 126, alpha})
-        rl.DrawRectangle(inset, inset, 3, height - inset * 2, {225, 194, 126, alpha})
-        rl.DrawRectangle(width - inset - 3, inset, 3, height - inset * 2, {225, 194, 126, alpha})
-    }
 }
 
 @(no_instrumentation)
@@ -8905,10 +9027,11 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
         return
     }
     if lab_scene_draw_ui(editor, width, height) do return
-    draw_postale_speed_effects(editor, width, height, time)
+    draw_aircraft_speed_effects(editor, width, height, time)
     control_hint_draw_gameplay_hud(editor, width)
     bomber_hud_draw(editor, width, height)
     quest_tracking_hud_draw(editor, width)
+    player_mail_notice_draw(editor, width)
     if editor.in_map {
         flying := driving_aircraft(editor)
         if flying && editor.gameplay_options.show_hud {
@@ -10681,6 +10804,41 @@ adriatic_run :: proc(
             third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = inspection_pose
+            if request != nil && request.emote_name != "" {
+                emote, emote_ok := mouse_emote_from_name(request.emote_name)
+                if emote_ok {
+                    emote_target := Mouse_Emote_Target{}
+                    if request.emote_target_set {
+                        emote_target = {
+                            position    = {request.emote_target[0], request.emote_target[1], request.emote_target[2]},
+                            valid       = true,
+                            world_space = true,
+                        }
+                    }
+                    _ = mouse_emote_start(
+                        &editor.mouse_emote,
+                        emote,
+                        request.emote_handedness,
+                        emote_target,
+                        request.emote_seed,
+                    )
+                    editor.mouse_emote.frozen = true
+                    editor.mouse_emote.scrub_enabled = true
+                    editor.mouse_emote.scrub_normalized = request.emote_time_set ? request.emote_time : f32(.5)
+                    editor.mouse_emote.normalized_time = editor.mouse_emote.scrub_normalized
+                    editor.mouse_emote.blend_weight = 1
+                    if request.emote_headgear_set do editor.mouse_headgear = request.emote_headgear
+                    if request.emote_scarf_set do editor.mouse_scarf_enabled = request.emote_scarf
+                    if request.emote_mailbag_set do editor.capture_player_mailbag_hidden = !request.emote_mailbag
+                    if request.emote_ground_normal_set {
+                        editor.player.ground_normal = {
+                            request.emote_ground_normal[0],
+                            request.emote_ground_normal[1],
+                            request.emote_ground_normal[2],
+                        }
+                    }
+                }
+            }
         }
         if !capture_vehicle_showcase_mode && capture_target == "postale" {
             editor.camera_target_lock = true
@@ -11839,11 +11997,12 @@ adriatic_run :: proc(
         wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
         wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
         listener_yaw := editor.in_map ? editor.camera.yaw_radians : editor.editor_camera.yaw_radians
-        listener_velocity_x, listener_velocity_z := f32(0), f32(0)
+        listener_velocity_x, listener_velocity_y, listener_velocity_z := f32(0), f32(0), f32(0)
         if editor.in_map {
             if driving_aircraft(editor) {
                 listener_body := active_aircraft_body(editor)
-                listener_velocity_x, listener_velocity_z = listener_body.velocity.x, listener_body.velocity.z
+                listener_velocity_x, listener_velocity_y, listener_velocity_z =
+                    listener_body.velocity.x, listener_body.velocity.y, listener_body.velocity.z
             } else if driving_car(editor) {
                 listener_velocity_x, listener_velocity_z =
                     editor.car_drive.velocity.x * .35, editor.car_drive.velocity.z * .35
@@ -11857,6 +12016,7 @@ adriatic_run :: proc(
             wind_z,
             listener_velocity_x,
             listener_velocity_z,
+            listener_velocity_y,
         )
         wind_direction := wind_audio.apparent_lateral_direction(
             wind_x,
@@ -11868,12 +12028,13 @@ adriatic_run :: proc(
         if wind_audio_ready {
             wind_audio.update(
                 &wind_sound,
-                apparent_airflow_speed,
+                wind_speed,
                 0,
                 editor.atmosphere.weather.precipitation,
                 editor.atmosphere.weather.severity,
                 wind_direction,
                 sound_fx_muted(editor),
+                wind_audio.apparent_airflow_strength(apparent_airflow_speed, wind_speed),
             )
         }
         if ocean_audio_ready {
@@ -12321,31 +12482,35 @@ adriatic_run :: proc(
                         }
                         editor.aircraft_fixed_accumulator -= AIRCRAFT_FIXED_STEP
                     }
-                    if editor.aircraft.active == .Postale {
-                        basis := flight.basis_from_orientation(editor.postale.body.orientation)
-                        left_tip := postale_vertex_world(
-                            &editor.postale,
-                            {-POSTALE_WING_TRAIL_LOCAL_X, POSTALE_WING_TRAIL_LOCAL_Y, POSTALE_WING_TRAIL_LOCAL_Z},
-                            POSTALE_PRESENTATION_SCALE,
-                        )
-                        right_tip := postale_vertex_world(
-                            &editor.postale,
-                            {POSTALE_WING_TRAIL_LOCAL_X, POSTALE_WING_TRAIL_LOCAL_Y, POSTALE_WING_TRAIL_LOCAL_Z},
-                            POSTALE_PRESENTATION_SCALE,
-                        )
+                    left_tip, right_tip, trail_basis, wing_trails_available :=
+                        active_aircraft_wing_trail_anchors(editor)
+                    wing_trails_emitting :=
+                        wing_trails_available &&
+                        !active_aircraft_grounded(editor) &&
+                        !active_aircraft_crashed(editor)
+                    if !wing_trails_emitting && editor.wing_trails.count > 0 {
+                        // Keep previously emitted vapor advancing after a
+                        // vehicle switch, touchdown, or crash, but feed zero
+                        // airflow so no new fixed-wing trails can spawn.
+                        body := active_aircraft_body(editor)
+                        left_tip, right_tip = flight_to_world(body.position), flight_to_world(body.position)
+                        trail_basis = flight.basis_from_orientation(body.orientation)
+                    }
+                    if wing_trails_emitting || editor.wing_trails.count > 0 {
+                        trail_airspeed := wing_trails_emitting ? active_aircraft_apparent_airflow_speed(editor) : f32(0)
                         particle_systems.step_wing_trails(
                             &editor.wing_trails,
                             min(delta_seconds, .05),
                             particle_systems.Vec3{left_tip.x, left_tip.y, left_tip.z},
                             particle_systems.Vec3{right_tip.x, right_tip.y, right_tip.z},
-                            particle_systems.Vec3{basis.forward.x, basis.forward.y, basis.forward.z},
-                            particle_systems.Vec3{basis.up.x, basis.up.y, basis.up.z},
+                            particle_systems.Vec3{trail_basis.forward.x, trail_basis.forward.y, trail_basis.forward.z},
+                            particle_systems.Vec3{trail_basis.up.x, trail_basis.up.y, trail_basis.up.z},
                             particle_systems.Vec3 {
                                 editor.atmosphere.weather.wind[0],
                                 0,
                                 editor.atmosphere.weather.wind[1],
                             },
-                            postale_game.selected_airspeed(&editor.postale),
+                            trail_airspeed,
                         )
                     }
                     vehicles.sync_driver(&editor.pilot)
@@ -12368,6 +12533,7 @@ adriatic_run :: proc(
                         aircraft_camera_target(editor),
                         min(delta_seconds, .05),
                         max(postale_flyby_shake(editor), rondine_drift_shake(editor)),
+                        aircraft_wind_buffet(editor),
                     )
                     editor.camera_pose = editor.flight_camera.pose
                     if editor.bomber_mode {
@@ -12561,6 +12727,19 @@ adriatic_run :: proc(
                                 crash_recovery_begin(editor, editor.player.position, .Tumble)
                             }
                         }
+                        movement_intent := clamp(f32(math.sqrt(f64(move_x * move_x + move_y * move_y))), 0, 1)
+                        mouse_emote_update(
+                            &editor.mouse_emote,
+                            {
+                                movement_intent  = movement_intent,
+                                horizontal_speed = player_horizontal_speed_before,
+                                grounded         = editor.player.grounded,
+                                player_controlled = editor.pilot.mode == .On_Foot,
+                                incompatible_pose = town_mouse_wheel_mounted,
+                                paused            = pause_menu_is_open(editor),
+                            },
+                            frame_seconds,
+                        )
                         player_animation_update(editor, frame_seconds)
                         player_horizontal_speed := f32(
                             math.sqrt(
@@ -12580,7 +12759,6 @@ adriatic_run :: proc(
                             0,
                             empty_player_contacts,
                         )
-                        movement_intent := clamp(f32(math.sqrt(f64(move_x * move_x + move_y * move_y))), 0, 1)
                         scrabble_strength :=
                             clamp((movement_intent - .70) / .30, 0, 1) *
                             clamp((2.2 - player_horizontal_speed) / 1.7, 0, 1)
@@ -12965,6 +13143,7 @@ adriatic_run :: proc(
         }
         live_capture_poll()
         live_control_poll(editor)
+        mouse_emote_enforce_player_priority(editor)
         rl.EndDrawing()
         default_map_regeneration_step(editor)
         // World rendering is submitted during EndDrawing, so keep the capture

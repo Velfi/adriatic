@@ -1,6 +1,7 @@
 package main
 
 import game_input "../packages/game_input"
+import player_mail "../packages/player_mail"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
@@ -13,13 +14,14 @@ Pause_Screen :: enum {
     Closed,
     Pause,
     Journal,
+    Mail,
     Options,
     Customization,
     Photo,
 }
 
 pause_menu_pointer_enabled := true
-PAUSE_MENU_BUTTON_COUNT :: 5
+PAUSE_MENU_BUTTON_COUNT :: 6
 
 Gameplay_Options :: struct {
     look_sensitivity:    f32,
@@ -742,6 +744,14 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         quest_log_process_input(editor, width, height, delta_seconds)
         return
     }
+    if editor.pause_screen == .Mail {
+        if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
+            editor.pause_screen = .Pause
+            return
+        }
+        player_mail_process_input(editor, delta_seconds)
+        return
+    }
     if editor.pause_screen == .Photo {
         photo_mode_process_input(editor, delta_seconds)
         return
@@ -802,11 +812,13 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     case 0:
         pause_menu_resume(editor)
     case 1:
-        photo_mode_open(editor)
+        player_mail_open(editor)
     case 2:
+        photo_mode_open(editor)
+    case 3:
         editor.pause_screen = .Options
         editor.options_focus = 0
-    case 3:
+    case 4:
         if editor.vehicle_paint_scene {
             if vehicle_paint_close(editor) do editor.pause_screen = .Closed
         } else if markov_wreck_return_from_flight(editor) {
@@ -815,7 +827,7 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         } else {
             pause_menu_return_to_editor(editor)
         }
-    case 4:
+    case 5:
         if editor.vehicle_paint_scene {
             if vehicle_paint_discard(editor) do editor.pause_screen = .Closed
         } else {
@@ -1116,6 +1128,10 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Texture
         quest_log_draw(editor, width, height)
         return
     }
+    if editor.pause_screen == .Mail {
+        player_mail_draw(editor, width, height)
+        return
+    }
 
     options := editor.pause_screen == .Options
     panel := options ? pause_menu_panel(width, height, true) : main_menu_panel(width, height)
@@ -1180,6 +1196,10 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
         quest_log_draw(editor, width, height)
         return
     }
+    if editor.pause_screen == .Mail {
+        player_mail_draw(editor, width, height)
+        return
+    }
 
     options := editor.pause_screen == .Options
     panel := pause_menu_panel(width, height, options)
@@ -1199,8 +1219,11 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
         pause_menu_draw_header(panel, "", "PAUSED")
     }
     pause_menu_button(pause_menu_button_bounds(panel, 0), "RESUME", true, editor.pause_focus == 0)
-    pause_menu_button(pause_menu_button_bounds(panel, 1), "PHOTO MODE", false, editor.pause_focus == 1)
-    pause_menu_button(pause_menu_button_bounds(panel, 2), "OPTIONS", false, editor.pause_focus == 2)
+    unread := player_mail.unread_count(&editor.player_mail)
+    mail_label: cstring = unread > 0 ? fmt.ctprintf("LETTERS · %d NEW", unread) : "LETTERS"
+    pause_menu_button(pause_menu_button_bounds(panel, 1), mail_label, false, editor.pause_focus == 1)
+    pause_menu_button(pause_menu_button_bounds(panel, 2), "PHOTO MODE", false, editor.pause_focus == 2)
+    pause_menu_button(pause_menu_button_bounds(panel, 3), "OPTIONS", false, editor.pause_focus == 3)
     return_label: cstring = "RETURN TO EDITOR"
     if editor.vehicle_paint_scene {
         return_label = "SAVE AND EXIT"
@@ -1208,8 +1231,8 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: rl.Textur
         return_label = "RETURN TO WRECK LAB"
     }
     quit_label: cstring = editor.vehicle_paint_scene ? "DISCARD AND EXIT" : "QUIT TO DESKTOP"
-    pause_menu_button(pause_menu_button_bounds(panel, 3), return_label, false, editor.pause_focus == 3)
-    pause_menu_button(pause_menu_button_bounds(panel, 4), quit_label, false, editor.pause_focus == 4)
+    pause_menu_button(pause_menu_button_bounds(panel, 4), return_label, false, editor.pause_focus == 4)
+    pause_menu_button(pause_menu_button_bounds(panel, 5), quit_label, false, editor.pause_focus == 5)
     hint: cstring
     if editor.controller_disconnect_notice {
         hint = "Reconnect the controller or continue with keyboard and mouse"

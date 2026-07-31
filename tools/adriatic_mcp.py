@@ -100,6 +100,48 @@ def selector_arguments(arguments: dict[str, object]) -> tuple[object, ...]:
 
 TOOLS = [
     {
+        "name": "mouse_emote_start",
+        "title": "Start Mouse Emote",
+        "description": "Start or replace a deterministic mouse emote in the running game.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": [
+                    "wave", "cheer", "bow", "point", "shrug", "sniff", "curious-head-tilt",
+                    "surprised-recoil", "sit", "groom", "pick-up-hold", "sleep", "synthetic-test",
+                ]},
+                "handedness": {"type": "string", "enum": ["left", "right"], "default": "right"},
+                "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295, "default": 0},
+                "loops": {"type": "integer", "minimum": 0, "maximum": 1000, "default": 0},
+                "target": {
+                    "type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                    "description": "Optional world-space x, y, z attention target.",
+                },
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "mouse_emote_control",
+        "title": "Control Mouse Emote",
+        "description": "Freeze playback or scrub the active mouse emote to a normalized time.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "frozen": {"type": "boolean", "default": False},
+                "scrub": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "mouse_emote_cancel",
+        "title": "Cancel Mouse Emote",
+        "description": "Blend the active mouse emote back to the procedural gameplay pose.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
         "name": "regenerate_islands",
         "title": "Regenerate Both Default Islands",
         "description": "Replace the running authored world with freshly generated west and east default islands, towns, roads, and marinas.",
@@ -284,6 +326,7 @@ def handle(message: dict[str, object]) -> None:
             "audio_status", "npc_focus", "business_focus", "terrain_brush_get", "terrain_brush_set",
             "material_list", "material_create", "material_attach_map", "regenerate_islands",
             "selector_query", "selector_focus",
+            "mouse_emote_start", "mouse_emote_control", "mouse_emote_cancel",
         }:
             reply(request_id, error={"code": -32602, "message": "unknown tool"})
             return
@@ -296,6 +339,43 @@ def handle(message: dict[str, object]) -> None:
                 if arguments:
                     raise ValueError("regenerate_islands takes no arguments")
                 result = live_control("regenerate_islands", timeout=120)
+            elif tool_name == "mouse_emote_start":
+                allowed = {"action", "handedness", "seed", "loops", "target"}
+                action = arguments.get("action")
+                if set(arguments) - allowed or not isinstance(action, str):
+                    raise ValueError("mouse_emote_start requires an action and known optional settings")
+                handedness = arguments.get("handedness", "right")
+                seed = arguments.get("seed", 0)
+                loops = arguments.get("loops", 0)
+                target = arguments.get("target")
+                if handedness not in {"left", "right"}:
+                    raise ValueError("handedness must be left or right")
+                if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 0xFFFFFFFF:
+                    raise ValueError("seed must be an unsigned 32-bit integer")
+                if isinstance(loops, bool) or not isinstance(loops, int) or not 0 <= loops <= 1000:
+                    raise ValueError("loops must be between 0 and 1000")
+                target_fields: tuple[object, object, object] = ("-", "-", "-")
+                if target is not None:
+                    if not isinstance(target, list) or len(target) != 3 or any(
+                        isinstance(value, bool) or not isinstance(value, (int, float)) for value in target
+                    ):
+                        raise ValueError("target must contain three numbers")
+                    target_fields = tuple(target)
+                result = live_control("emote_start", action, handedness, seed, loops, *target_fields)
+            elif tool_name == "mouse_emote_control":
+                if set(arguments) - {"frozen", "scrub"}:
+                    raise ValueError("mouse_emote_control received unknown settings")
+                frozen = arguments.get("frozen", False)
+                scrub = arguments.get("scrub")
+                if not isinstance(frozen, bool):
+                    raise ValueError("frozen must be a boolean")
+                if scrub is not None and (isinstance(scrub, bool) or not isinstance(scrub, (int, float)) or not 0 <= scrub <= 1):
+                    raise ValueError("scrub must be null or between 0 and 1")
+                result = live_control("emote_control", str(frozen).lower(), "-" if scrub is None else scrub)
+            elif tool_name == "mouse_emote_cancel":
+                if arguments:
+                    raise ValueError("mouse_emote_cancel takes no arguments")
+                result = live_control("emote_cancel")
             elif tool_name == "audio_status":
                 if arguments:
                     raise ValueError("audio_status takes no arguments")

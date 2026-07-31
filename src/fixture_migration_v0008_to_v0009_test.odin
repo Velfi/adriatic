@@ -27,7 +27,7 @@ when ODIN_TEST {
         result, migration_error, migrated := fixture_migration_run_with_registry(
             payload,
             8,
-            9,
+            10,
             fixture_migration_production_registry(),
             runtime.default_allocator(),
         )
@@ -42,7 +42,7 @@ when ODIN_TEST {
         testing.expect(t, !result.fixture.default_harbors[0].valid)
 
         registry := fixture_migration_production_registry()
-        testing.expect(t, len(registry.steps) == 8)
+        testing.expect(t, len(registry.steps) == 9)
         testing.expect(t, registry.steps[7].from_version == 8)
         testing.expect(t, registry.steps[7].to_version == 9)
         testing.expect(t, registry.steps[7].wrapper == fixture_migration_step_v0008_to_v0009)

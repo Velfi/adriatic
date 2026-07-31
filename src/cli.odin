@@ -36,6 +36,15 @@ adriatic_cli_usage :: proc() {
     fmt.println("    --where <key=value>   filter selected subjects; repeat up to 8 times")
     fmt.println("    --pick <first|n>      choose a deterministic match when the selector is ambiguous")
     fmt.println("    --presentation <name> fit, portrait, profile, overhead, or authored")
+    fmt.println("    --emote <name>        pose the player with a named mouse emote")
+    fmt.println("    --emote-time <0..1>   freeze the emote at normalized time (default 0.5)")
+    fmt.println("    --emote-hand <side>   left or right (default right)")
+    fmt.println("    --emote-seed <n>      deterministic unsigned variation seed")
+    fmt.println("    --emote-target <x,y,z> optional world-space attention target")
+    fmt.println("    --emote-headgear <name> override mouse headgear for the capture matrix")
+    fmt.println("    --emote-scarf <on|off> override scarf visibility")
+    fmt.println("    --emote-mailbag <on|off> override mailbag visibility")
+    fmt.println("    --emote-ground-normal <x,y,z> test the pose on a normalized mild slope")
     fmt.println("    --list-targets        list registered targets for this mode")
     fmt.println("    building targets: <ordinal>, ground-<ordinal>, cypress, mouse-town")
     fmt.println("  adriatic capture bougainvillea [output-directory] [seed ...]")
@@ -187,6 +196,19 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     selector, selector_pick, presentation := "", "", "fit"
     selector_filters: [CAPTURE_SELECTOR_FILTER_CAPACITY]string
     selector_filter_count := 0
+    emote_name := ""
+    emote_time: f32
+    emote_time_set := false
+    emote_handedness := Mouse_Emote_Handedness.Right
+    emote_seed: u32
+    emote_target: [3]f32
+    emote_target_set := false
+    emote_headgear := Mouse_Accessory.None
+    emote_headgear_set := false
+    emote_scarf, emote_scarf_set := false, false
+    emote_mailbag, emote_mailbag_set := true, false
+    emote_ground_normal: [3]f32
+    emote_ground_normal_set := false
     positional_count := 0
     index := 3
     for index < len(args) {
@@ -214,7 +236,16 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
            argument == "--select" ||
            argument == "--where" ||
            argument == "--pick" ||
-           argument == "--presentation" {
+           argument == "--presentation" ||
+           argument == "--emote" ||
+           argument == "--emote-time" ||
+           argument == "--emote-hand" ||
+           argument == "--emote-seed" ||
+           argument == "--emote-target" ||
+           argument == "--emote-headgear" ||
+           argument == "--emote-scarf" ||
+           argument == "--emote-mailbag" ||
+           argument == "--emote-ground-normal" {
             if index + 1 >= len(args) {
                 fmt.eprintf("adriatic: %s requires a value\n", argument)
                 return true, false
@@ -294,6 +325,82 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 selector_pick = value
             case "--presentation":
                 presentation = value
+            case "--emote":
+                if _, ok := mouse_emote_from_name(value); !ok || value == "none" {
+                    fmt.eprintf("adriatic: unknown emote: %s\n", value)
+                    return true, false
+                }
+                emote_name = value
+            case "--emote-time":
+                parsed, ok := strconv.parse_f32(value)
+                if !ok || math.is_nan(parsed) || math.is_inf(parsed) || parsed < 0 || parsed > 1 {
+                    fmt.eprintf("adriatic: --emote-time must be from 0 to 1, got %s\n", value)
+                    return true, false
+                }
+                emote_time, emote_time_set = parsed, true
+            case "--emote-hand":
+                if value != "left" && value != "right" {
+                    fmt.eprintf("adriatic: --emote-hand must be left or right, got %s\n", value)
+                    return true, false
+                }
+                emote_handedness = value == "left" ? Mouse_Emote_Handedness.Left : Mouse_Emote_Handedness.Right
+            case "--emote-seed":
+                parsed, ok := strconv.parse_int(value)
+                if !ok || parsed < 0 || parsed > 0xffffffff {
+                    fmt.eprintf("adriatic: --emote-seed must be an unsigned 32-bit integer, got %s\n", value)
+                    return true, false
+                }
+                emote_seed = u32(parsed)
+            case "--emote-target":
+                parsed, ok := adriatic_cli_parse_f32_components(argument, value, 3)
+                if !ok do return true, false
+                emote_target, emote_target_set = parsed, true
+            case "--emote-headgear":
+                switch value {
+                case "none": emote_headgear = .None
+                case "goggles": emote_headgear = .Goggles
+                case "flower": emote_headgear = .Flower
+                case "acorn-cap": emote_headgear = .Acorn_Cap
+                case "bottle-cap": emote_headgear = .Bottle_Cap
+                case "paper-boat": emote_headgear = .Paper_Boat
+                case "chef-hat": emote_headgear = .Chef_Hat
+                case "ushanka": emote_headgear = .Ushanka
+                case "beret": emote_headgear = .Beret
+                case "alpine-hat": emote_headgear = .Alpine_Hat
+                case "flat-cap": emote_headgear = .Flat_Cap
+                case "sailor-hat": emote_headgear = .Sailor_Hat
+                case:
+                    fmt.eprintf("adriatic: unknown mouse headgear: %s\n", value)
+                    return true, false
+                }
+                emote_headgear_set = true
+            case "--emote-scarf":
+                if value != "on" && value != "off" {
+                    fmt.eprintf("adriatic: --emote-scarf must be on or off, got %s\n", value)
+                    return true, false
+                }
+                emote_scarf, emote_scarf_set = value == "on", true
+            case "--emote-mailbag":
+                if value != "on" && value != "off" {
+                    fmt.eprintf("adriatic: --emote-mailbag must be on or off, got %s\n", value)
+                    return true, false
+                }
+                emote_mailbag, emote_mailbag_set = value == "on", true
+            case "--emote-ground-normal":
+                parsed, ok := adriatic_cli_parse_f32_components(argument, value, 3)
+                if !ok do return true, false
+                length_squared := parsed[0] * parsed[0] + parsed[1] * parsed[1] + parsed[2] * parsed[2]
+                if length_squared < .0001 || parsed[1] <= 0 {
+                    fmt.eprintln("adriatic: --emote-ground-normal must be a nonzero upward vector")
+                    return true, false
+                }
+                inverse_length := 1 / f32(math.sqrt(f64(length_squared)))
+                emote_ground_normal = {
+                    parsed[0] * inverse_length,
+                    parsed[1] * inverse_length,
+                    parsed[2] * inverse_length,
+                }
+                emote_ground_normal_set = true
             }
             index += 2
             continue
@@ -339,6 +446,13 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         fmt.eprintln("adriatic: --where, --pick, and --presentation require --select")
         return true, false
     }
+    if emote_name == "" &&
+       (emote_time_set || emote_target_set || emote_seed != 0 || emote_handedness == .Left ||
+        emote_headgear_set || emote_scarf_set || emote_mailbag_set || emote_ground_normal_set) {
+        fmt.eprintln("adriatic: emote time, hand, seed, and target require --emote")
+        return true, false
+    }
+    if emote_name != "" && target == "" do target = "player-three-quarter"
     if selector != "" {
         _, selector_error, selector_ok := capture_selector_parse(
             selector,
@@ -424,6 +538,21 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         selector_filter_count = selector_filter_count,
         selector_pick         = selector_pick,
         presentation          = presentation,
+        emote_name            = emote_name,
+        emote_time            = emote_time,
+        emote_time_set        = emote_time_set,
+        emote_handedness      = emote_handedness,
+        emote_seed            = emote_seed,
+        emote_target          = emote_target,
+        emote_target_set      = emote_target_set,
+        emote_headgear        = emote_headgear,
+        emote_headgear_set    = emote_headgear_set,
+        emote_scarf           = emote_scarf,
+        emote_scarf_set       = emote_scarf_set,
+        emote_mailbag         = emote_mailbag,
+        emote_mailbag_set     = emote_mailbag_set,
+        emote_ground_normal   = emote_ground_normal,
+        emote_ground_normal_set = emote_ground_normal_set,
     }
     _ = adriatic_run(nil, request = &request)
     if request.selector_failed do return true, false

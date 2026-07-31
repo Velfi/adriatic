@@ -298,6 +298,79 @@ live_control_audio_status_response :: proc(editor: ^Editor, request_id: string) 
     )
 }
 
+live_control_emote_start_response :: proc(editor: ^Editor, request_id, arguments: string) -> string {
+    fields := strings.split(arguments, "\t", context.temp_allocator)
+    if len(fields) != 7 {
+        return fmt.aprintf(
+            `{{"ok":false,"id":"%s","error":"expected action, handedness, seed, loop count, and target x/y/z"}}`,
+            request_id,
+        )
+    }
+    action, action_ok := mouse_emote_from_name(fields[0])
+    handedness := Mouse_Emote_Handedness.Right
+    handedness_ok := fields[1] == "left" || fields[1] == "right"
+    if fields[1] == "left" do handedness = .Left
+    seed, seed_ok := strconv.parse_int(fields[2])
+    loop_count, loop_ok := strconv.parse_int(fields[3])
+    target := Mouse_Emote_Target{}
+    target_ok := fields[4] == "-" && fields[5] == "-" && fields[6] == "-"
+    if !target_ok {
+        x, x_ok := strconv.parse_f32(fields[4])
+        y, y_ok := strconv.parse_f32(fields[5])
+        z, z_ok := strconv.parse_f32(fields[6])
+        target_ok = x_ok && y_ok && z_ok
+        if target_ok do target = {position = {x, y, z}, valid = true, world_space = true}
+    }
+    if !action_ok || action == .None || !handedness_ok || !seed_ok || seed < 0 || seed > 0xffffffff ||
+       !loop_ok || loop_count < 0 || loop_count > 1000 || !target_ok {
+        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"invalid emote settings"}}`, request_id)
+    }
+    _ = mouse_emote_start(
+        &editor.mouse_emote,
+        action,
+        handedness,
+        target,
+        u32(seed),
+        u32(loop_count),
+    )
+    return fmt.aprintf(
+        `{{"ok":true,"id":"%s","action":"%s","handedness":"%s","seed":%d,"loops":%d}}`,
+        request_id,
+        mouse_emote_name(action),
+        fields[1],
+        seed,
+        loop_count,
+    )
+}
+
+live_control_emote_control_response :: proc(editor: ^Editor, request_id, arguments: string) -> string {
+    fields := strings.split(arguments, "\t", context.temp_allocator)
+    if len(fields) != 2 || (fields[0] != "true" && fields[0] != "false") {
+        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"expected frozen boolean and scrub time or -"}}`, request_id)
+    }
+    scrub_ok := fields[1] == "-"
+    scrub: f32
+    if !scrub_ok do scrub, scrub_ok = strconv.parse_f32(fields[1])
+    if !scrub_ok || (fields[1] != "-" && (scrub < 0 || scrub > 1)) {
+        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"scrub time must be - or 0..1"}}`, request_id)
+    }
+    editor.mouse_emote.frozen = fields[0] == "true"
+    editor.mouse_emote.scrub_enabled = fields[1] != "-"
+    if editor.mouse_emote.scrub_enabled {
+        editor.mouse_emote.scrub_normalized = scrub
+        editor.mouse_emote.normalized_time = scrub
+        editor.mouse_emote.blend_weight = 1
+    }
+    return fmt.aprintf(
+        `{{"ok":true,"id":"%s","action":"%s","frozen":%v,"scrub":%.3f,"scrub_enabled":%v}}`,
+        request_id,
+        mouse_emote_name(editor.mouse_emote.action),
+        editor.mouse_emote.frozen,
+        editor.mouse_emote.scrub_normalized,
+        editor.mouse_emote.scrub_enabled,
+    )
+}
+
 live_control_poll :: proc(editor: ^Editor) {
     request_path := live_control_path(LIVE_CONTROL_REQUEST_ENV, LIVE_CONTROL_DEFAULT_REQUEST_PATH)
     if !os.exists(request_path) do return
@@ -319,6 +392,7 @@ live_control_poll :: proc(editor: ^Editor) {
        payload == "material_list" ||
        payload == "material_save" ||
        payload == "regenerate_islands" ||
+       payload == "emote_cancel" ||
        payload == "rondine_stage" ||
        payload == "gameplay" {
         command, arguments = payload, ""
@@ -371,6 +445,17 @@ live_control_poll :: proc(editor: ^Editor) {
         response = live_control_terrain_brush_response(editor, request_id)
     } else if command == "audio_status" {
         response = live_control_audio_status_response(editor, request_id)
+    } else if command == "emote_start" {
+        response = live_control_emote_start_response(editor, request_id, arguments)
+    } else if command == "emote_control" {
+        response = live_control_emote_control_response(editor, request_id, arguments)
+    } else if command == "emote_cancel" {
+        if arguments != "" {
+            response = fmt.aprintf(`{{"ok":false,"id":"%s","error":"emote_cancel takes no arguments"}}`, request_id)
+        } else {
+            mouse_emote_cancel(&editor.mouse_emote)
+            response = fmt.aprintf(`{{"ok":true,"id":"%s","message":"Mouse emote cancelled"}}`, request_id)
+        }
     } else if command == "selector_focus" {
         response = live_control_selector_focus_response(editor, request_id, arguments)
     } else if command == "selector_query" {

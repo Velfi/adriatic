@@ -1,6 +1,7 @@
 package tests
 
 import chase_camera "../packages/chase_camera"
+import air_effects "../packages/air_effects"
 import flight "../packages/flight"
 import "core:math"
 import "core:testing"
@@ -72,6 +73,56 @@ aircraft_chase_camera_speed_fov_has_quiet_cruise_and_strong_top_end :: proc(t: ^
     testing.expect(t, chase_camera.desired_fov(30) < 74)
     testing.expect(t, chase_camera.desired_fov(58) > 82)
     testing.expect(t, chase_camera.desired_fov(100) == 84)
+}
+
+@(test)
+air_effect_layers_stage_from_lens_to_vapor_to_streaks :: proc(t: ^testing.T) {
+    testing.expect(t, air_effects.lens_strength(12) > 0)
+    testing.expect(t, air_effects.vapor_strength(12) == 0)
+    testing.expect(t, air_effects.streak_strength(29) == 0)
+    testing.expect(t, air_effects.vapor_strength(30) > air_effects.streak_strength(30))
+    testing.expect(t, air_effects.lens_strength(50) > air_effects.vapor_strength(30))
+    testing.expect(t, air_effects.vapor_strength(50) == 1)
+    testing.expect(t, air_effects.streak_strength(68) == 1)
+}
+
+@(test)
+airflow_streak_density_ramps_with_strength :: proc(t: ^testing.T) {
+    testing.expect(t, air_effects.screen_streak_count(30) == 0)
+    testing.expect(t, air_effects.screen_streak_count(31) >= 12)
+    testing.expect(t, air_effects.screen_streak_count(50) > air_effects.screen_streak_count(31))
+    testing.expect(t, air_effects.screen_streak_count(68) == 58)
+    testing.expect(t, air_effects.world_wind_streak_count(1) == 0)
+    testing.expect(t, air_effects.world_wind_streak_count(2) >= 10)
+    testing.expect(t, air_effects.world_wind_streak_count(9) == 44)
+}
+
+@(test)
+wind_buffet_has_calm_gusts_and_crosswind_exposure :: proc(t: ^testing.T) {
+    testing.expect(t, air_effects.buffet_strength(0, 0, 0, 0) == 0)
+    minimum, maximum := f32(1), f32(0)
+    for index in 0 ..< 64 {
+        value := air_effects.buffet_strength(16, 0, .8, f32(index) * .25)
+        minimum = min(minimum, value)
+        maximum = max(maximum, value)
+    }
+    testing.expect(t, maximum > minimum * 1.5)
+    testing.expect(t, maximum <= .38)
+    phase := f32(2.75)
+    headwind := air_effects.buffet_strength(12, 0, .5, phase)
+    crosswind := air_effects.buffet_strength(12, 1, .5, phase)
+    testing.expect(t, crosswind > headwind)
+}
+
+@(test)
+wind_buffet_moves_camera_without_reusing_flyby_vibration :: proc(t: ^testing.T) {
+    target := chase_camera.Target{basis = flight.identity_basis()}
+    pose := chase_camera.desired_pose(target, 0, 0)
+    calm := chase_camera.buffet_pose(pose, target, 1.7, 0)
+    gust := chase_camera.buffet_pose(pose, target, 1.7, .3)
+    testing.expect(t, calm == pose)
+    testing.expect(t, gust.position != pose.position)
+    testing.expect(t, gust.target != pose.target)
 }
 
 @(test)

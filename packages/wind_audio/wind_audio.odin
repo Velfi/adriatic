@@ -1,5 +1,6 @@
 package wind_audio
 
+import air_effects "../air_effects"
 import "core:c"
 import "core:math"
 import sdl "vendor:sdl3"
@@ -131,6 +132,19 @@ airflow_strength :: proc(weather_speed, motion_speed: f32) -> f32 {
     return 1 - (1 - weather) * (1 - motion)
 }
 
+apparent_airflow_strength :: proc(apparent_speed, weather_speed: f32) -> f32 {
+    apparent := max(apparent_speed, f32(0))
+    weather := max(weather_speed, f32(0))
+    // Motion spans the flight envelope instead of saturating at the weather
+    // scale. Real weather remains prominent for a stationary listener, but is
+    // attenuated when a matching tailwind cancels apparent flow.
+    motion_strength := air_effects.eased_range(apparent, 2, 52)
+    weather_strength := clamp((weather - .5) / 12, 0, 1)
+    weather_contact := weather <= .001 ? f32(0) : clamp(apparent / weather, 0, 1)
+    effective_weather := weather_strength * weather_contact
+    return 1 - (1 - motion_strength) * (1 - effective_weather)
+}
+
 wind_lateral_direction :: proc(wind_x, wind_z, listener_yaw: f32) -> f32 {
     speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
     if speed < .001 do return 0
@@ -147,10 +161,17 @@ apparent_lateral_direction :: proc(
     return wind_lateral_direction(wind_x - listener_velocity_x, wind_z - listener_velocity_z, listener_yaw)
 }
 
-apparent_airflow_speed :: proc(wind_x, wind_z, listener_velocity_x, listener_velocity_z: f32) -> f32 {
+apparent_airflow_speed :: proc(
+    wind_x, wind_z, listener_velocity_x, listener_velocity_z: f32,
+    listener_velocity_y: f32 = 0,
+) -> f32 {
     relative_x := wind_x - listener_velocity_x
     relative_z := wind_z - listener_velocity_z
-    return f32(math.sqrt(f64(relative_x * relative_x + relative_z * relative_z)))
+    return f32(math.sqrt(f64(
+        relative_x * relative_x +
+        listener_velocity_y * listener_velocity_y +
+        relative_z * relative_z,
+    )))
 }
 
 next_noise :: proc "contextless" (synth: ^Synth) -> f32 {
@@ -492,9 +513,10 @@ update :: proc(
     storm_severity: f32 = 0,
     direction: f32 = 0,
     muted: bool = false,
+    strength_override: f32 = -1,
 ) {
     if runtime == nil do return
-    strength := airflow_strength(weather_speed, motion_speed)
+    strength := strength_override >= 0 ? clamp(strength_override, 0, 1) : airflow_strength(weather_speed, motion_speed)
     rain := clamp(precipitation, 0, 1)
     storm := clamp(storm_severity, 0, 1)
     if runtime.stream == nil {

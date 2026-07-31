@@ -139,7 +139,7 @@ fixture_migration_step_v0001_to_v0002 :: proc(
     return step_error
 }
 
-fixture_migration_production_steps: [8]Fixture_Migration_Step = {
+fixture_migration_production_steps: [9]Fixture_Migration_Step = {
     {
         from_version = FIXTURE_MIGRATION_V0001_TO_V0002_FROM_VERSION,
         to_version = FIXTURE_MIGRATION_V0001_TO_V0002_TO_VERSION,
@@ -187,6 +187,12 @@ fixture_migration_production_steps: [8]Fixture_Migration_Step = {
         to_version = FIXTURE_MIGRATION_V0008_TO_V0009_TO_VERSION,
         wrapper = fixture_migration_step_v0008_to_v0009,
         change_id = "field-add:adriatic:src.Fixture.default_map_regeneration_seeds",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0009_TO_V0010_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0009_TO_V0010_TO_VERSION,
+        wrapper = fixture_migration_step_v0009_to_v0010,
+        change_id = "field-add:adriatic:src.Fixture.player_mail",
     },
 }
 

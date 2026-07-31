@@ -109,6 +109,18 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
     // is a weight-shift bias rather than a canned tail pose.
     counterbalance := turn_pose * editor.tweak.player_animation.tail_counterbalance
     backward = {sine - model_right.x * counterbalance, 0, -cosine - model_right.z * counterbalance}
+    emote_tail := mouse_emote_pose(&editor.mouse_emote).tail
+    emote_weight := clamp(emote_tail.weight, 0, 1)
+    if emote_weight > 0 {
+        local := emote_tail.local_direction
+        desired := third_person.Vec3 {
+            local.x * cosine - local.z * sine,
+            local.y,
+            local.x * sine + local.z * cosine,
+        }
+        backward = backward * (1 - emote_weight) + desired * emote_weight
+        root.y += emote_tail.lift * emote_weight * .35
+    }
     return
 }
 

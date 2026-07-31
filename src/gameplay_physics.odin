@@ -71,6 +71,7 @@ player_place :: proc(
     editor.player_gait_weight = 0
     editor.player_airborne_weight = 0
     editor.player_animation_previous_speed = 0
+    mouse_emote_reset(&editor.mouse_emote)
     editor.player_body_softness = {}
     editor.player_stop_spray_speed = 0
     editor.player_placement_reason = reason

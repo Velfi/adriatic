@@ -11,6 +11,9 @@ import rl "zelda_engine:canvas2d"
 DIALOGUE_REFERENCE_HEIGHT :: f32(720)
 DIALOGUE_REVEAL_SECONDS :: f32(.032)
 DIALOGUE_CHOICE_VISIBLE_MAX :: 4
+DIALOGUE_PANEL_TRANSITION_SECONDS :: f32(.18)
+DIALOGUE_CHOICE_TRANSITION_SECONDS :: f32(.16)
+DIALOGUE_FOCUS_TRANSITION_SECONDS :: f32(.14)
 
 @(no_instrumentation)
 dialogue_font :: #force_inline proc() -> rl.Font {
@@ -24,6 +27,35 @@ Dialogue_View_State :: struct {
     first_choice:     int,
     reaction_seconds: f32,
     previous_focus:   int,
+    panel_seconds:    f32,
+    choice_seconds:   f32,
+}
+
+Dialogue_Presentation_State :: enum {
+    Speaking,
+    Choosing,
+    Continuing,
+}
+
+dialogue_ease_out :: #force_inline proc(value: f32) -> f32 {
+    t := clamp(value, 0, 1)
+    return 1 - (1 - t) * (1 - t) * (1 - t)
+}
+
+dialogue_color_alpha :: #force_inline proc(color: rl.Color, opacity: f32) -> rl.Color {
+    result := color
+    result.a = u8(clamp(f32(result.a) * clamp(opacity, 0, 1), 0, 255))
+    return result
+}
+
+dialogue_color_lerp :: #force_inline proc(a, b: rl.Color, t: f32) -> rl.Color {
+    amount := clamp(t, 0, 1)
+    return {
+        u8(f32(a.r) + (f32(b.r) - f32(a.r)) * amount),
+        u8(f32(a.g) + (f32(b.g) - f32(a.g)) * amount),
+        u8(f32(a.b) + (f32(b.b) - f32(a.b)) * amount),
+        u8(f32(a.a) + (f32(b.a) - f32(a.a)) * amount),
+    }
 }
 
 Dialogue_Tv_Layout :: struct {
@@ -52,7 +84,7 @@ dialogue_tv_layout :: proc(width, height: i32, choice_count: int = DIALOGUE_CHOI
     total_w := card_w * 2 + center_w + gap * 2
     start_x := (f32(width) - total_w) * .5
     height_safe := max(f32(height) - safe_y * 2, 620 * scale)
-    visible_choices := clamp(choice_count, 1, DIALOGUE_CHOICE_VISIBLE_MAX)
+    visible_choices := clamp(choice_count, 0, DIALOGUE_CHOICE_VISIBLE_MAX)
     choice_row_h := 62 * scale
     choice_gap := 8 * scale
     speech_h := 154 * scale
@@ -276,6 +308,7 @@ dialogue_view_update :: proc(editor: ^Editor, delta_seconds: f32) {
     if current == nil do return
     text := current.text(&conversation.ctx)
     view.reaction_seconds = max(view.reaction_seconds - max(delta_seconds, 0), 0)
+    view.panel_seconds += max(delta_seconds, 0)
     if view.previous_focus != editor.attendant_dialogue_focus {
         view.previous_focus = editor.attendant_dialogue_focus
         view.reaction_seconds = .22
@@ -303,6 +336,17 @@ dialogue_view_update :: proc(editor: ^Editor, delta_seconds: f32) {
             engine_sound.dialogue_voice_phrase_boundary(&editor.engine_audio)
         }
     }
+    if view.revealed_bytes >= len(text) && dialogue.available_count(conversation) > 0 {
+        view.choice_seconds += max(delta_seconds, 0)
+    } else {
+        view.choice_seconds = 0
+    }
+}
+
+dialogue_presentation_state :: proc(editor: ^Editor) -> Dialogue_Presentation_State {
+    if dialogue_view_revealing(editor) do return .Speaking
+    if editor != nil && dialogue.available_count(&editor.attendant_dialogue) > 0 do return .Choosing
+    return .Continuing
 }
 
 dialogue_view_revealing :: proc(editor: ^Editor) -> bool {
@@ -324,11 +368,15 @@ dialogue_view_complete_reveal :: proc(editor: ^Editor) {
 
 dialogue_choice_visible_rows :: proc(layout: Dialogue_Tv_Layout) -> int {
     stride := layout.choice_row_h + layout.choice_gap
-    return max(min(int((layout.choices.height + layout.choice_gap) / stride), DIALOGUE_CHOICE_VISIBLE_MAX), 1)
+    return max(min(int((layout.choices.height + layout.choice_gap) / stride), DIALOGUE_CHOICE_VISIBLE_MAX), 0)
 }
 
 dialogue_choice_scroll_focus :: proc(editor: ^Editor, visible_rows: int) {
     if editor == nil do return
+    if visible_rows <= 0 {
+        editor.attendant_dialogue_view.first_choice = 0
+        return
+    }
     count := dialogue.available_count(&editor.attendant_dialogue)
     max_first := max(count - visible_rows, 0)
     if editor.attendant_dialogue_focus < editor.attendant_dialogue_view.first_choice {
@@ -570,29 +618,59 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     count := dialogue.available_count(conversation)
     layout := dialogue_tv_layout(width, height, count)
     scale := layout.scale
+    presentation := dialogue_presentation_state(editor)
+    panel_progress := dialogue_ease_out(editor.attendant_dialogue_view.panel_seconds / DIALOGUE_PANEL_TRANSITION_SECONDS)
+    choice_progress := dialogue_ease_out(editor.attendant_dialogue_view.choice_seconds / DIALOGUE_CHOICE_TRANSITION_SECONDS)
     // A light full-frame scrim calms the scene without turning the speakers
     // into boxed portrait specimens.
-    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(82))
-    rl.DrawRectangleRounded(layout.conversation, .025, 10, ui_theme_scrim(226))
-    rl.DrawRectangleRoundedLinesEx(layout.conversation, .025, 10, 1 * scale, ui_theme_border())
+    rl.DrawRectangle(0, 0, width, height, ui_theme_scrim(u8(82 * panel_progress)))
+    rl.DrawRectangleRounded(layout.conversation, .025, 10, ui_theme_scrim(u8(226 * panel_progress)))
+    rl.DrawRectangleRoundedLinesEx(
+        layout.conversation,
+        .025,
+        10,
+        1 * scale,
+        ui_theme_border(u8(255 * panel_progress)),
+    )
     speaker := current.speaker(&conversation.ctx)
     speaker_size := 24 * scale
     speaker_measure := rl.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", speaker), speaker_size, 1.2 * scale)
+    speaker_tab_width := speaker_measure.x + 64 * scale
+    _, resident_speaking := story.resident_from_speaker(speaker)
+    speaker_tab_x := layout.conversation.x + 28 * scale
+    if resident_speaking {
+        speaker_tab_x = layout.conversation.x + layout.conversation.width - speaker_tab_width - 28 * scale
+    }
     speaker_tab := rl.Rectangle {
-        layout.conversation.x + 28 * scale,
+        speaker_tab_x,
         layout.conversation.y - 14 * scale,
-        speaker_measure.x + 64 * scale,
+        speaker_tab_width,
         46 * scale,
     }
-    rl.DrawRectangleRounded(speaker_tab, .12, 8, ui_theme_accent())
-    rl.DrawRectangleRoundedLinesEx(speaker_tab, .12, 8, 1 * scale, ui_theme_accent_hover())
+    rl.DrawRectangleRounded(speaker_tab, .12, 8, ui_theme_accent(u8(255 * panel_progress)))
+    rl.DrawRectangleRoundedLinesEx(speaker_tab, .12, 8, 1 * scale, ui_theme_accent_hover(u8(255 * panel_progress)))
+    notch_center_y := speaker_tab.y + speaker_tab.height * .5
+    notch_inner_x := resident_speaking ? speaker_tab.x + speaker_tab.width - 1 * scale : speaker_tab.x + 1 * scale
+    notch_tip_x := notch_inner_x + (resident_speaking ? 10 * scale : -10 * scale)
+    rl.DrawLineEx(
+        {notch_inner_x, notch_center_y - 7 * scale},
+        {notch_tip_x, notch_center_y},
+        3 * scale,
+        ui_theme_accent_hover(),
+    )
+    rl.DrawLineEx(
+        {notch_tip_x, notch_center_y},
+        {notch_inner_x, notch_center_y + 7 * scale},
+        3 * scale,
+        ui_theme_accent_hover(),
+    )
     rl.DrawTextEx(
         dialogue_font(),
         fmt.ctprintf("%s", speaker),
         {speaker_tab.x + 32 * scale, speaker_tab.y + 10 * scale},
         speaker_size,
         1.2 * scale,
-        ui_theme_text_inverse(),
+        ui_theme_text_inverse(u8(255 * panel_progress)),
     )
     text := current.text(&conversation.ctx)
     visible_end := clamp(editor.attendant_dialogue_view.revealed_bytes, 0, len(text))
@@ -600,13 +678,14 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     current_is_tarot := current.id == "zora-reading" && editor.story_state.tarot_layout.count > 0
     if current_is_tarot do speech_bounds.height -= 108 * scale
     mouse := rl.GetMousePosition()
+    speech_opacity := panel_progress * (presentation == .Choosing ? f32(.82) : f32(1))
     hovered_english := dialogue_draw_glossed_wrapped(
         text[:visible_end],
         speech_bounds,
         29 * scale,
         1 * scale,
         39 * scale,
-        ui_theme_text_inverse(),
+        ui_theme_text_inverse(u8(255 * speech_opacity)),
         mouse,
     )
     dialogue_draw_tarot_strip(editor, layout.speech, scale)
@@ -619,22 +698,43 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         bounds := dialogue_choice_bounds(layout, row)
         focused := editor.attendant_dialogue_focus == choice_index
         hovered := rl.CheckCollisionPointRec(mouse, bounds)
-        state := UI_Control_State.Resting
-        if hovered do state = .Hovered
-        if focused do state = .Selected
-        style := ui_theme_control_style(state)
-        rl.DrawRectangleRounded(bounds, .12, 8, style.fill)
-        rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, style.border_width * scale, style.border)
+        base_state := hovered ? UI_Control_State.Hovered : UI_Control_State.Resting
+        base_style := ui_theme_control_style(base_state)
+        selected_style := ui_theme_control_style(.Selected)
+        focus_progress := f32(0)
+        if focused {
+            focus_progress = dialogue_ease_out(
+                (DIALOGUE_FOCUS_TRANSITION_SECONDS - min(editor.attendant_dialogue_view.reaction_seconds, DIALOGUE_FOCUS_TRANSITION_SECONDS)) /
+                    DIALOGUE_FOCUS_TRANSITION_SECONDS,
+            )
+            if editor.attendant_dialogue_view.reaction_seconds <= 0 do focus_progress = 1
+        }
+        row_opacity := panel_progress * choice_progress
+        fill := dialogue_color_alpha(
+            dialogue_color_lerp(base_style.fill, selected_style.fill, focus_progress),
+            row_opacity,
+        )
+        border := dialogue_color_alpha(
+            dialogue_color_lerp(base_style.border, selected_style.border, focus_progress),
+            row_opacity,
+        )
+        text_color := dialogue_color_alpha(
+            dialogue_color_lerp(base_style.text, selected_style.text, focus_progress),
+            row_opacity,
+        )
+        border_width := base_style.border_width + (selected_style.border_width - base_style.border_width) * focus_progress
+        rl.DrawRectangleRounded(bounds, .12, 8, fill)
+        rl.DrawRectangleRoundedLinesEx(bounds, .12, 8, border_width * scale, border)
         if focused {
             accent := rl.Rectangle{bounds.x, bounds.y + 8 * scale, 6 * scale, bounds.height - 16 * scale}
-            rl.DrawRectangleRounded(accent, .8, 6, ui_theme_text_inverse())
+            rl.DrawRectangleRounded(accent, .8, 6, ui_theme_text_inverse(u8(255 * row_opacity * focus_progress)))
             rl.DrawTextEx(
                 dialogue_font(),
                 "›",
                 {bounds.x + 18 * scale, bounds.y + 14 * scale},
                 30 * scale,
                 .8 * scale,
-                style.text,
+                text_color,
             )
         }
         if response := dialogue.available_at(conversation, choice_index); response != nil {
@@ -650,7 +750,7 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
                 26 * scale,
                 .9 * scale,
                 33 * scale,
-                style.text,
+                text_color,
                 mouse,
                 true,
             )
@@ -666,39 +766,62 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
                 confirm_measure.x + 14 * scale,
                 28 * scale,
             }
-            rl.DrawRectangleRounded(hint, .3, 6, ui_theme_scrim(78))
-            rl.DrawRectangleRoundedLinesEx(hint, .3, 6, 1 * scale, ui_theme_text_inverse(190))
+            hint_opacity := row_opacity * focus_progress
+            rl.DrawRectangleRounded(hint, .3, 6, ui_theme_scrim(u8(78 * hint_opacity)))
+            rl.DrawRectangleRoundedLinesEx(hint, .3, 6, 1 * scale, ui_theme_text_inverse(u8(190 * hint_opacity)))
             rl.DrawTextEx(
                 dialogue_font(),
                 confirm,
                 {hint.x + 7 * scale, hint.y + 6 * scale},
                 confirm_size,
                 .6 * scale,
-                ui_theme_text_inverse(),
+                ui_theme_text_inverse(u8(255 * hint_opacity)),
             )
         }
     }
-    if first > 0 {
+    if presentation == .Speaking {
+        hint: cstring = controller_prompt_active(editor) ? fmt.ctprintf("%s REVEALS", controller_face_label(editor, .South)) : "ENTER REVEALS"
+        measured := rl.MeasureTextEx(dialogue_font(), hint, 16 * scale, .6 * scale)
         rl.DrawTextEx(
             dialogue_font(),
-            "MORE ABOVE",
-            {layout.choices.x + layout.choices.width - 158 * scale, layout.choices.y - 28 * scale},
-            20 * scale,
+            hint,
+            {layout.conversation.x + layout.conversation.width - measured.x - 24 * scale, layout.conversation.y + layout.conversation.height - 24 * scale},
+            16 * scale,
             .6 * scale,
-            ui_theme_text_muted(),
+            ui_theme_text_inverse(u8(180 * panel_progress)),
+        )
+    } else if presentation == .Continuing {
+        hint: cstring = controller_prompt_active(editor) ? fmt.ctprintf("%s CONTINUES", controller_face_label(editor, .South)) : "ENTER CONTINUES"
+        measured := rl.MeasureTextEx(dialogue_font(), hint, 17 * scale, .6 * scale)
+        hint_bounds := rl.Rectangle {
+            layout.conversation.x + layout.conversation.width - measured.x - 38 * scale,
+            layout.conversation.y + layout.conversation.height - 52 * scale,
+            measured.x + 20 * scale,
+            32 * scale,
+        }
+        rl.DrawRectangleRounded(hint_bounds, .25, 6, ui_theme_accent(u8(220 * panel_progress)))
+        rl.DrawTextEx(
+            dialogue_font(),
+            hint,
+            {hint_bounds.x + 10 * scale, hint_bounds.y + 7 * scale},
+            17 * scale,
+            .6 * scale,
+            ui_theme_text_inverse(u8(255 * panel_progress)),
         )
     }
-    if last < count {
+    if count > visible_rows && visible_rows > 0 {
+        position_label := fmt.ctprintf("%d–%d OF %d   ↑↓", first + 1, last, count)
+        measured := rl.MeasureTextEx(dialogue_font(), position_label, 16 * scale, .6 * scale)
         rl.DrawTextEx(
             dialogue_font(),
-            "MORE BELOW",
+            position_label,
             {
-                layout.choices.x + layout.choices.width - 158 * scale,
-                layout.choices.y + f32(visible_rows) * (layout.choice_row_h + layout.choice_gap) - 2 * scale,
+                layout.conversation.x + layout.conversation.width - measured.x - 24 * scale,
+                layout.conversation.y + layout.conversation.height - 22 * scale,
             },
-            20 * scale,
+            16 * scale,
             .6 * scale,
-            ui_theme_text_muted(),
+            ui_theme_text_muted(u8(220 * panel_progress * choice_progress)),
         )
     }
     dialogue_draw_glossary_tooltip(hovered_english, mouse, width, height, scale)

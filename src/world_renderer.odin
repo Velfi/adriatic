@@ -1,6 +1,7 @@
 package main
 
 import architecture "../packages/architecture"
+import air_effects "../packages/air_effects"
 import atmosphere "../packages/atmosphere"
 import boats "../packages/boats"
 import buildings "../packages/buildings"
@@ -19984,6 +19985,7 @@ Mouse_Bone_Pose :: struct {
     bind_position: third_person.Vec3,
     position:      third_person.Vec3,
     pitch:         f32,
+    yaw:           f32,
     roll:          f32,
 }
 
@@ -20176,11 +20178,14 @@ mouse_skin_vertex :: #force_inline proc(
         pitch_cosine, pitch_sine := math.cos(bone.pitch), math.sin(bone.pitch)
         pitched_y := relative.y * pitch_cosine - relative.z * pitch_sine
         pitched_z := relative.y * pitch_sine + relative.z * pitch_cosine
+        yaw_cosine, yaw_sine := math.cos(bone.yaw), math.sin(bone.yaw)
+        yawed_x := relative.x * yaw_cosine + pitched_z * yaw_sine
+        yawed_z := -relative.x * yaw_sine + pitched_z * yaw_cosine
         roll_cosine, roll_sine := math.cos(bone.roll), math.sin(bone.roll)
         transformed := third_person.Vec3 {
-            bone.position.x + relative.x * roll_cosine - pitched_y * roll_sine,
-            bone.position.y + relative.x * roll_sine + pitched_y * roll_cosine,
-            bone.position.z + pitched_z,
+            bone.position.x + yawed_x * roll_cosine - pitched_y * roll_sine,
+            bone.position.y + yawed_x * roll_sine + pitched_y * roll_cosine,
+            bone.position.z + yawed_z,
         }
         skinned.x += transformed.x * group.weight
         skinned.y += transformed.y * group.weight
@@ -20905,27 +20910,30 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
 @(no_instrumentation)
 mouse_ear_world_point :: #force_inline proc(
     origin, center: third_person.Vec3,
-    rotation, yaw, x, y, z: f32,
+    rotation, yaw, roll, x, y, z: f32,
 ) -> third_person.Vec3 {
+    roll_cosine, roll_sine := math.cos(roll), math.sin(roll)
+    rolled_x := x * roll_cosine - y * roll_sine
+    rolled_y := x * roll_sine + y * roll_cosine
     cosine, sine := math.cos(yaw), math.sin(yaw)
-    local_x := center.x + x * cosine + z * sine
-    local_z := center.z - x * sine + z * cosine - y * .20
+    local_x := center.x + rolled_x * cosine + z * sine
+    local_z := center.z - rolled_x * sine + z * cosine - rolled_y * .20
     world_x, world_z := world_rotate_xz(origin.x, origin.z, local_x, local_z, rotation)
-    return {world_x, origin.y + center.y + y, world_z}
+    return {world_x, origin.y + center.y + rolled_y, world_z}
 }
 
 world_mouse_ear :: proc(
     origin: third_person.Vec3,
     rotation: f32,
     center: third_person.Vec3,
-    side, twitch: f32,
+    side, twitch, yaw_offset, roll: f32,
     rim_color, inner_color: rl.Color,
 ) {
     SEGMENTS :: 16
     // Mouse pinnae face laterally.  A shallow yaw made them disappear into
     // edge-on slivers in the gameplay side view; this angle preserves their
     // broad oval silhouette while still separating the bilateral pair.
-    yaw := side * (1.02 + twitch * 5)
+    yaw := side * (1.02 + twitch * 5) + yaw_offset
     outer_back, outer_front, inner_rim: [SEGMENTS]third_person.Vec3
     for segment in 0 ..< SEGMENTS {
         angle := f32(segment) * math.PI * 2 / f32(SEGMENTS)
@@ -20935,15 +20943,15 @@ world_mouse_ear :: proc(
         outer_y := sine * .108
         inner_x := cosine * .069 * root_taper
         inner_y := .006 + sine * .073
-        outer_back[segment] = mouse_ear_world_point(origin, center, rotation, yaw, outer_x, outer_y, -.034)
-        outer_front[segment] = mouse_ear_world_point(origin, center, rotation, yaw, outer_x, outer_y, .034)
-        inner_rim[segment] = mouse_ear_world_point(origin, center, rotation, yaw, inner_x, inner_y, .036)
+        outer_back[segment] = mouse_ear_world_point(origin, center, rotation, yaw, roll, outer_x, outer_y, -.034)
+        outer_front[segment] = mouse_ear_world_point(origin, center, rotation, yaw, roll, outer_x, outer_y, .034)
+        inner_rim[segment] = mouse_ear_world_point(origin, center, rotation, yaw, roll, inner_x, inner_y, .036)
     }
 
-    back_center := mouse_ear_world_point(origin, center, rotation, yaw, 0, 0, -.034)
+    back_center := mouse_ear_world_point(origin, center, rotation, yaw, roll, 0, 0, -.034)
     // Recessing the pink center behind its inner rim gives the pinna a shallow
     // bowl instead of reading as a sticker laid over a flat disc.
-    cup_center := mouse_ear_world_point(origin, center, rotation, yaw, 0, .008, .014)
+    cup_center := mouse_ear_world_point(origin, center, rotation, yaw, roll, 0, .008, .014)
     // Thin mouse ears transmit some of their pink tone even from behind. This
     // keeps the far pinna recognizable instead of reducing it to a dark fur
     // bump when its cup faces away from the camera.
@@ -21500,6 +21508,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     brass: rl.Color = {204, 157, 72, 255}
     goggle_glass: rl.Color = {78, 157, 169, 255}
     model_forward := third_person.Vec3{-math.sin(rotation), 0, math.cos(rotation)}
+    emote_pose := Mouse_Emote_Pose{breathing_weight = 1, blink_weight = 1, idle_weight = 1}
+    if model.player_controlled do emote_pose = mouse_emote_pose(&editor.mouse_emote)
     animation := &editor.tweak.player_animation
     turn_pose :=
         model.player_controlled ? clamp(editor.player_turn_pose, -1, 1) : (model.driving_pose ? clamp(model.drive_steering, -1, 1) : f32(0))
@@ -21618,17 +21628,21 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 math.abs(math.sin(stride_phase * 2)) * mouse_gait.vertical_bob_scale(gait) +
                 bound_aerial_lift) *
             run_weight +
-        math.sin(idle_phase) * .006 * (1 - run_weight) +
+        math.sin(idle_phase) * .006 * (1 - run_weight) * emote_pose.idle_weight +
         animation.run_body_lift * run_weight * (1 - airborne_weight)
     body_bob -= scurry_compression
     blink_period := f32(4.6)
     blink_time := editor.map_time - f32(math.floor(f64(editor.map_time / blink_period))) * blink_period
-    blink_weight := clamp(1 - math.abs(blink_time - .10) / .10, 0, 1)
+    blink_weight := clamp(1 - math.abs(blink_time - .10) / .10, 0, 1) * emote_pose.blink_weight
     if model.player_controlled && editor.capture_player_blink_pose do blink_weight = 1
-    sniff := math.sin(editor.map_time * 5.4) * .008 * (1 - run_weight)
-    breathing := math.sin(editor.map_time * 1.65) * .018 * (1 - run_weight) * (1 - airborne_weight)
+    sniff := math.sin(editor.map_time * 5.4) * .008 * (1 - run_weight) * emote_pose.idle_weight
+    breathing :=
+        math.sin(editor.map_time * 1.65) * .018 * (1 - run_weight) * (1 - airborne_weight) * emote_pose.breathing_weight
     head_sway := math.sin(stride_phase) * .012 * run_weight
-    ear_twitch := math.sin(idle_phase * 1.7) * .006 * (1 - run_weight) + math.abs(bound) * .008 + blink_weight * .009
+    ear_twitch :=
+        math.sin(idle_phase * 1.7) * .006 * (1 - run_weight) * emote_pose.idle_weight +
+        math.abs(bound) * .008 +
+        blink_weight * .009
 
     // One connected hull runs from rump to nose. Its rings carry named,
     // normalized vertex groups and are skinned by this five-bone mouse rig.
@@ -21742,14 +21756,24 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         skeleton[3].position.y += .030
         skeleton[3].position.z -= .065
     }
+    for bone_offset, bone_index in emote_pose.bones {
+        weight := clamp(bone_offset.weight, 0, 1)
+        skeleton[bone_index].position += bone_offset.position * weight
+        skeleton[bone_index].position.y += emote_pose.body_height - emote_pose.body_compression
+        skeleton[bone_index].pitch += bone_offset.pitch * weight
+        skeleton[bone_index].yaw += bone_offset.yaw * weight
+        skeleton[bone_index].roll += bone_offset.roll * weight
+    }
     softness := model.player_controlled ? &editor.player_body_softness : nil
     world_mouse_skinned_hull(p, rotation, &skeleton, fur, fur_dark, fur_light, model.pattern, breathing, softness)
     if model.mailbag_enabled do world_mouse_mailbag(editor, p, rotation, &skeleton)
 
     ear_offsets := [2]f32{-.125, .125}
-    for ear_x in ear_offsets {
+    for ear_x, ear_index in ear_offsets {
         side := ear_x / .125
         side_motion := ear_twitch * side
+        ear_pose := emote_pose.ears[ear_index]
+        ear_pose_weight := clamp(ear_pose.weight, 0, 1)
         // Keep the bilateral ears subtly asymmetric without pulling the far
         // pinna forward through the head silhouette in a true profile.
         ear_swivel := math.sin(idle_phase * 1.18 + side * 1.05) * .010 * (1 - run_weight)
@@ -21759,17 +21783,19 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             p,
             rotation,
             {
-                ear_x + head_sway + head_turn_x,
+                ear_x + head_sway + head_turn_x + ear_pose.position.x * ear_pose_weight,
                 head_y +
                 .145 +
                 side_motion +
                 ear_height_stagger -
                 airborne_weight * .018 +
-                ear_x * math.sin(body_roll) * .65,
-                head_z + .045 + ear_depth_stagger - airborne_weight * .018,
+                ear_x * math.sin(body_roll) * .65 + ear_pose.position.y * ear_pose_weight,
+                head_z + .045 + ear_depth_stagger - airborne_weight * .018 + ear_pose.position.z * ear_pose_weight,
             },
             side,
             side_motion,
+            ear_pose.yaw * ear_pose_weight,
+            ear_pose.roll * ear_pose_weight,
             fur_dark,
             ear,
         )
@@ -22758,6 +22784,11 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             idle_groom * side_f * .55 +
             brake_pose * .12 -
             posted_weight * .095
+        fore_emote := emote_pose.paws[side_index * 2]
+        fore_emote_weight := clamp(fore_emote.weight, 0, 1)
+        fore_paw_x += fore_emote.local_offset.x * fore_emote_weight
+        fore_paw_y += fore_emote.local_offset.y * fore_emote_weight
+        fore_paw_z += fore_emote.local_offset.z * fore_emote_weight
         fore_paw := local_point(p, rotation, fore_paw_x, fore_paw_y, fore_paw_z)
         if model.driving_pose {
             // Preserve the anatomical shoulder sockets computed above and
@@ -22793,7 +22824,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // zero; using front_lift here incorrectly pins both forepaws even
         // while one side's underlying gait is already in recovery.
         fore_locomoting := horizontal_speed > .08 || run_weight > .03
-        fore_planted := model.grounded && posted_weight < .5 && (!fore_locomoting || front_motion.lift < .025)
+        fore_planted :=
+            model.grounded &&
+            (fore_emote_weight > .5 ? fore_emote.planted : posted_weight < .5 && (!fore_locomoting || front_motion.lift < .025))
         // Mouse forearms are approximately as long as, or slightly longer
         // than, the humerus. Keep the complete chain compact so the proximal
         // limb remains tucked inside the chest silhouette instead of reading
@@ -22910,6 +22943,11 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // balancing it on two vertical hocks.
         hind_paw_z :=
             -.16 + hind_cycle * run_weight + side_f * .018 * run_weight + brake_pose * .15 + posted_weight * .08
+        hind_emote := emote_pose.paws[side_index * 2 + 1]
+        hind_emote_weight := clamp(hind_emote.weight, 0, 1)
+        hind_paw_x += hind_emote.local_offset.x * hind_emote_weight
+        hind_paw_y += hind_emote.local_offset.y * hind_emote_weight
+        hind_paw_z += hind_emote.local_offset.z * hind_emote_weight
         hind_paw := local_point(p, rotation, hind_paw_x, hind_paw_y, hind_paw_z)
         if model.driving_pose {
             // Fold the rear legs into the bucket seat. Keeping the hock behind
@@ -22923,7 +22961,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // Release both pairs while rising into the posted pose. Otherwise the
         // authored hind-foot shift stretches back toward the last locomotion
         // contact cached in world space.
-        hind_planted := model.grounded && hind_lift < .003 && posted_weight < .5
+        hind_planted :=
+            model.grounded &&
+            (hind_emote_weight > .5 ? hind_emote.planted : hind_lift < .003 && posted_weight < .5)
         // Preserve the authored .74 total reach while using mouse-like
         // proportions: a tibia longer than the femur and a long, but not
         // dominant, hock-to-paw segment.
@@ -23001,6 +23041,13 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         for point, tail_index in editor.player_tail.points {
             weight := f32(tail_index) / f32(len(editor.player_tail.points) - 1)
             tail_points[tail_index] = point.position
+            tail_pose_weight := clamp(emote_pose.tail.weight, 0, 1)
+            local_side := emote_pose.tail.curl * math.sin(weight * math.PI) * tail_pose_weight
+            tail_points[tail_index].x += math.cos(rotation) * local_side * weight
+            tail_points[tail_index].z += math.sin(rotation) * local_side * weight
+            tail_points[tail_index].y +=
+                (emote_pose.tail.lift * math.sin(weight * math.PI) + emote_pose.tail.tip * weight * weight) *
+                tail_pose_weight
             // Preserve a readable sub-pixel-safe tip at gameplay distance.
             // The physical taper remains pronounced, but no longer vanishes
             // between low-poly radial facets when the tail lies on pavement.
@@ -23148,7 +23195,7 @@ world_character :: proc(editor: ^Editor) {
             pattern = editor.mouse_pattern,
             scarf_enabled = editor.mouse_scarf_enabled,
             scarf_color = editor.mouse_scarf_color,
-            mailbag_enabled = true,
+            mailbag_enabled = !editor.capture_player_mailbag_hidden,
             player_controlled = true,
             track_paw_plants = true,
             grounded = editor.player.grounded,
@@ -24142,7 +24189,8 @@ world_town_mice :: proc(editor: ^Editor) {
             1,
             TOWN_MOUSE_CACHE_COUNT - 4 + postal_index,
         )
-        if story.resident_has_unseen_action(&editor.story_state, postal_resident) {
+        if story.resident_has_unseen_action(&editor.story_state, postal_resident) ||
+           player_mail_available_count(editor) > 0 {
             world_mouse_interaction_indicator(editor, position)
         }
     }
@@ -25084,6 +25132,17 @@ world_wing_trails :: proc(editor: ^Editor) {
         ring_count := 0
         for particle in editor.wing_trails.particles[:editor.wing_trails.count] {
             if int(particle.side) != side do continue
+            // Sparse deterministic breaks keep long, fast trails from
+            // becoming rigid continuous rails. Preserve the bright new root
+            // briefly so vapor still appears attached to each wingtip.
+            age_fraction := 1 - clamp(particle.life / particle.max_life, 0, 1)
+            breakup_band := int(age_fraction * 32)
+            broken := age_fraction > .12 && breakup_band % 6 == 4 + side
+            if broken {
+                first_ring = len(world_renderer.wing_trail_vertices)
+                ring_count = 0
+                continue
+            }
             if !world_sphere_in_view(
                 editor,
                 {particle.position.x, particle.position.y, particle.position.z},
@@ -25102,7 +25161,7 @@ world_wing_trails :: proc(editor: ^Editor) {
             // keep the trail from reading as a rigid glowing cable.
             radius := particle.size * (.68 + age * 1.05)
             opacity := fade * f32(math.sqrt(f64(fade)))
-            color := rl.Color{205, 239, 236, u8(clamp(opacity * 132, 0, 132))}
+            color := rl.Color{205, 239, 236, u8(clamp(opacity * 112, 0, 112))}
             for ring_side in 0 ..< 8 {
                 angle := f32(ring_side) * math.PI * 2 / 8
                 radial := third_person.Vec3 {
@@ -25158,18 +25217,49 @@ wind_streak_hash :: proc(index, salt: int) -> f32 {
     return f32(value - math.floor(value))
 }
 
+@(no_instrumentation)
+wind_streak_camera_distance :: proc(
+    camera, start, finish: third_person.Vec3,
+) -> f32 {
+    segment := finish - start
+    length_squared := linalg.dot(segment, segment)
+    if length_squared <= .000001 do return linalg.length(camera - start)
+    amount := clamp(linalg.dot(camera - start, segment) / length_squared, 0, 1)
+    closest := start + segment * amount
+    return linalg.length(camera - closest)
+}
+
+@(no_instrumentation)
+wind_streak_perspective_length :: proc(authored_length, camera_distance: f32) -> f32 {
+    // Roughly cap a ribbon to an eight-degree angular span. This preserves
+    // distant authored lengths while preventing nearby streams from becoming
+    // screen-crossing rails under perspective projection.
+    return min(max(authored_length, f32(0)), max(camera_distance * .14, f32(.9)))
+}
+
+@(test)
+wind_streak_camera_distance_uses_whole_segment :: proc(t: ^testing.T) {
+    camera := third_person.Vec3{0, 0, 0}
+    testing.expect(t, wind_streak_camera_distance(camera, {-5, 0, 0}, {5, 0, 0}) == 0)
+    testing.expect(t, wind_streak_camera_distance(camera, {3, 0, 0}, {7, 0, 0}) == 3)
+    testing.expect(t, wind_streak_camera_distance(camera, {0, 4, 0}, {0, 4, 0}) == 4)
+    testing.expect(t, math.abs(wind_streak_perspective_length(8, 10) - 1.4) < .0001)
+    testing.expect(t, wind_streak_perspective_length(4, 100) == 4)
+}
+
 world_wind_streaks :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map || !driving_aircraft(editor) do return
     wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
     wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
-    strength := clamp((wind_speed - 1) / 8, 0, 1)
+    strength := air_effects.eased_range(wind_speed, 1, 9)
     if strength <= .001 do return
 
     body := active_aircraft_body(editor)
     direction_x, direction_z := wind_x / wind_speed, wind_z / wind_speed
     side_x, side_z := -direction_z, direction_x
     time := editor.map_time
-    for index in 0 ..< 44 {
+    streak_count := air_effects.world_wind_streak_count(wind_speed)
+    for index in 0 ..< streak_count {
         speed_variation := .72 + wind_streak_hash(index, 1) * .56
         gust_phase := time * .72 + wind_streak_hash(index, 6) * math.PI * 2
         gust := .75 + (.5 + .5 * f32(math.sin(f64(gust_phase)))) * .25
@@ -25191,6 +25281,10 @@ world_wind_streaks :: proc(editor: ^Editor) {
             (1.4 + wind_speed * .58) *
             (.62 + wind_streak_hash(index, 5) * .58) *
             (.84 + gust * .18)
+        center_camera_distance := linalg.length(
+            editor.camera_pose.position - third_person.Vec3{center.x, center.y, center.z},
+        )
+        streak_length = wind_streak_perspective_length(streak_length, center_camera_distance)
         tail := particles.Vec3 {
             center.x - direction_x * streak_length,
             center.y,
@@ -25207,7 +25301,12 @@ world_wind_streaks :: proc(editor: ^Editor) {
         if !world_sphere_in_view(editor, streak_center, streak_length * .5 + .15, 3) do continue
         camera_offset := editor.camera_pose.position - streak_center
         camera_distance := linalg.length(camera_offset)
-        near_fade := clamp((camera_distance - 4) / 6, 0, 1)
+        closest_camera_distance := wind_streak_camera_distance(
+            editor.camera_pose.position,
+            {tail.x, tail.y, tail.z},
+            {center.x, center.y, center.z},
+        )
+        near_fade := clamp((closest_camera_distance - 4) / 6, 0, 1)
         near_fade = near_fade * near_fade * (3 - 2 * near_fade)
         fade := math.sin(phase * math.PI)
         alpha := u8(clamp((28 + strength * 104) * fade * (.70 + gust * .30) * near_fade, 0, 132))
@@ -26743,7 +26842,9 @@ world_dialogue_portrait_model_cached :: proc(editor: ^Editor, model: Mouse_Model
 
 dialogue_portrait_world_push :: proc(editor: ^Editor, aspect: f32, player: bool) -> World_Push {
     target := third_person.Vec3{0, .62, 0}
-    camera_offset := third_person.Vec3{player ? f32(-.10) : f32(.10), .10, -1.42}
+    // Keep the expressive edge bias without letting ears, paws, or whiskers
+    // touch the narrow portrait viewport at the reference aspect ratio.
+    camera_offset := third_person.Vec3{player ? f32(-.03) : f32(.03), .10, -1.62}
     pose := third_person.camera_near(target, camera_offset)
     camera := perspective_camera(pose, 1.72)
     sky := atmosphere.sample(&editor.atmosphere)

@@ -1,5 +1,6 @@
 package chase_camera
 
+import air_effects "../air_effects"
 import flight "../flight"
 import third_person "../third_person"
 import "core:math"
@@ -53,7 +54,13 @@ look :: proc(state: ^State, mouse_x, mouse_y: f32) {
     state.orbit_pitch = clamp(state.orbit_pitch - mouse_y * .0025, -.75, .75)
 }
 
-step :: proc(state: ^State, target: Target, delta_seconds: f32, flyby_shake: f32 = 0) {
+step :: proc(
+    state: ^State,
+    target: Target,
+    delta_seconds: f32,
+    flyby_shake: f32 = 0,
+    wind_buffet: f32 = 0,
+) {
     if state == nil do return
     desired := desired_pose(target, state.orbit_yaw, state.orbit_pitch)
     if !state.initialized || distance_squared(state.base_pose.position, desired.position) > 50 * 50 {
@@ -89,6 +96,7 @@ step :: proc(state: ^State, target: Target, delta_seconds: f32, flyby_shake: f32
     )
     state.shake_phase = wrap_angle(state.shake_phase + delta_seconds * (16 + target.airspeed * .42))
     state.pose = shake_pose(state.base_pose, target, state.shake_phase, state.shake_intensity)
+    state.pose = buffet_pose(state.pose, target, state.shake_phase * .07, wind_buffet)
 }
 
 // Diagnostic/direct follow path: derive the rendered camera from exactly the
@@ -115,6 +123,25 @@ shake_pose :: proc(pose: third_person.Camera_Pose, target: Target, phase, intens
     result := pose
     result.position = result.position + to_third_person(position_offset)
     result.target = result.target + to_third_person(target_offset)
+    return result
+}
+
+buffet_pose :: proc(pose: third_person.Camera_Pose, target: Target, phase, intensity: f32) -> third_person.Camera_Pose {
+    amount := clamp(intensity, 0, 1)
+    if amount <= .001 do return pose
+    // Wind should feel like a low-frequency displacement, not the sharp,
+    // quadratic vibration used for close flybys. Two incommensurate waves
+    // keep the sway organic while remaining deterministic across captures.
+    amplitude := amount * .28
+    side :=
+        f32(math.sin(f64(phase * 1.13 + .4))) * amplitude * .78 +
+        f32(math.sin(f64(phase * 2.37 + 2.1))) * amplitude * .22
+    lift :=
+        f32(math.sin(f64(phase * 1.61 + 1.2))) * amplitude * .42 +
+        f32(math.sin(f64(phase * .71 + 2.8))) * amplitude * .16
+    result := pose
+    result.position = result.position + to_third_person(target.basis.right * side + target.basis.up * lift)
+    result.target = result.target + to_third_person(target.basis.right * (side * .18) + target.basis.up * (lift * .12))
     return result
 }
 
@@ -173,7 +200,7 @@ desired_fov :: proc(airspeed: f32) -> f32 {
     // Preserve a composed, relatively long-lens view at ordinary cruise, then
     // open the periphery decisively once the aircraft is genuinely fast. The
     // eased ramp avoids making every small throttle change feel like a zoom.
-    speed := smooth_step(clamp((airspeed - 10) / 58, 0, 1))
+    speed := air_effects.lens_strength(airspeed)
     return scalar_lerp(68, 84, speed)
 }
 
