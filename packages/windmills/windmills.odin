@@ -1,5 +1,7 @@
 package windmills
 
+import "core:math"
+
 MAX_SAILS :: 12
 
 Region :: enum u8 {
@@ -161,4 +163,18 @@ validate :: proc(plan: ^Plan) -> bool {
     if plan.rpm < 0 || plan.rpm > 12 do return false
     if plan.heading < -3.141592654 || plan.heading > 3.141592654 do return false
     return true
+}
+
+// The roof heading points along the rotor shaft. Only airflow through the
+// rotor plane drives it; a crosswind contributes no torque. The configured
+// RPM is the rated mechanical speed reached at eight world wind units.
+rotor_rpm_for_wind :: proc(plan: ^Plan, wind: [2]f32) -> f32 {
+    if plan == nil || plan.rpm <= 0 do return 0
+    forward_x := f32(math.sin(f64(plan.heading)))
+    forward_z := f32(math.cos(f64(plan.heading)))
+    through_rotor := wind[0] * forward_x + wind[1] * forward_z
+    if abs(through_rotor) < .35 do return 0
+    response := clamp(abs(through_rotor) / 8, f32(0), f32(1))
+    direction := through_rotor < 0 ? f32(-1) : f32(1)
+    return plan.rpm * response * direction
 }

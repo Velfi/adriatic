@@ -1,5 +1,6 @@
 package windmills
 
+import "core:math"
 import "core:testing"
 
 @(test)
@@ -103,4 +104,23 @@ heading_is_preserved_and_bounded :: proc(t: ^testing.T) {
     plan = generate(31, oriented)
     testing.expect_value(t, plan.heading, f32(3.141592654))
     testing.expect(t, plan.valid)
+}
+
+@(test)
+rotor_speed_tracks_wind_through_its_plane :: proc(t: ^testing.T) {
+    plan := generate(31, defaults(.Adriatic))
+    testing.expect_value(t, rotor_rpm_for_wind(&plan, {0, 0}), f32(0))
+    testing.expect_value(t, rotor_rpm_for_wind(&plan, {8, 0}), f32(0))
+    testing.expect_value(t, rotor_rpm_for_wind(&plan, {0, 4}), plan.rpm * .5)
+    testing.expect_value(t, rotor_rpm_for_wind(&plan, {0, 12}), plan.rpm)
+    testing.expect_value(t, rotor_rpm_for_wind(&plan, {0, -4}), plan.rpm * -.5)
+}
+
+@(test)
+rotor_wind_projection_follows_generated_heading :: proc(t: ^testing.T) {
+    oriented := defaults(.Aegean)
+    oriented.heading = math.PI / 2
+    plan := generate(8, oriented)
+    testing.expect_value(t, rotor_rpm_for_wind(&plan, {4, 0}), plan.rpm * .5)
+    testing.expect(t, abs(rotor_rpm_for_wind(&plan, {0, 4})) < .0001)
 }

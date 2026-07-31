@@ -285,9 +285,13 @@ CAPTURE_WINDMILL_GENERATOR_TARGETS := [?]string {
     "adriatic",
     "adriatic-alt",
     "adriatic-crosswind",
+    "adriatic-calm",
+    "adriatic-storm",
     "aegean",
     "aegean-alt",
     "aegean-crosswind",
+    "aegean-calm",
+    "aegean-storm",
     "aegean-ten",
     "aegean-twelve",
 }

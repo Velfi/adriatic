@@ -11,6 +11,10 @@ windmill_lab_region := windmills.Region.Adriatic
 windmill_lab_aegean_sails := 12
 windmill_lab_rpm := f32(3.5)
 windmill_lab_heading := f32(0)
+windmill_lab_weather := atmosphere.Weather_Preset.Windy
+windmill_lab_rotor_angle := f32(0)
+windmill_lab_last_time := f32(0)
+windmill_lab_rotor_initialized := false
 
 windmill_lab_configure_camera :: proc(editor: ^Editor) {
     if windmill_lab_region == .Aegean {
@@ -29,12 +33,20 @@ windmill_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     windmill_lab_aegean_sails = 12
     windmill_lab_rpm = 3.5
     windmill_lab_heading = 0
+    windmill_lab_weather = .Windy
+    windmill_lab_rotor_angle = 0
+    windmill_lab_last_time = 0
+    windmill_lab_rotor_initialized = false
     switch target {
     case "", "adriatic", "stone", "eight-sail":
     case "adriatic-alt":
         windmill_lab_seed = 0xA31A71C
     case "adriatic-crosswind":
         windmill_lab_heading = .62
+    case "adriatic-calm":
+        windmill_lab_weather = .Clear
+    case "adriatic-storm":
+        windmill_lab_weather = .Storm
     case "aegean", "whitewashed", "aegean-twelve":
         windmill_lab_region = .Aegean
     case "aegean-alt":
@@ -43,6 +55,12 @@ windmill_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     case "aegean-crosswind":
         windmill_lab_region = .Aegean
         windmill_lab_heading = .28
+    case "aegean-calm":
+        windmill_lab_region = .Aegean
+        windmill_lab_weather = .Clear
+    case "aegean-storm":
+        windmill_lab_region = .Aegean
+        windmill_lab_weather = .Storm
     case "aegean-ten":
         windmill_lab_region = .Aegean
         windmill_lab_aegean_sails = 10
@@ -56,8 +74,8 @@ windmill_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     editor.rondine_visible = false
     editor.project.sea_level = -20
     atmosphere.set_world_minutes(&editor.atmosphere, 16 * 60 + 35)
-    atmosphere.set_weather_override(&editor.atmosphere, .Clear)
-    editor.atmosphere.weather = atmosphere.weather_for(.Clear)
+    atmosphere.set_weather_override(&editor.atmosphere, windmill_lab_weather)
+    editor.atmosphere.weather = atmosphere.weather_for(windmill_lab_weather)
     editor.atmosphere.paused = true
     windmill_lab_configure_camera(editor)
     return true
@@ -133,12 +151,12 @@ windmill_lab_tower :: proc(plan: ^windmills.Plan) {
     }
 }
 
-windmill_lab_sails_draw :: proc(plan: ^windmills.Plan, time: f32) {
+windmill_lab_sails_draw :: proc(plan: ^windmills.Plan, rotor_angle: f32) {
     right := third_person.Vec3{math.cos(plan.heading), 0, -math.sin(plan.heading)}
     forward := third_person.Vec3{math.sin(plan.heading), 0, math.cos(plan.heading)}
     hub_center := forward * (plan.top_radius + .40) + third_person.Vec3{0, plan.hub_height, 0}
     angle_offset := plan.phase
-    angle_offset += time * plan.rpm * math.PI * 2 / 60
+    angle_offset += rotor_angle
     timber := plan.region == .Aegean ? canvas.Color{91, 59, 34, 255} : canvas.Color{78, 57, 39, 255}
     sailcloth := plan.region == .Aegean ? canvas.Color{232, 222, 190, 242} : canvas.Color{205, 193, 157, 242}
     for index in 0 ..< plan.sail_count {
@@ -214,7 +232,16 @@ world_windmill_generator_lab :: proc(editor: ^Editor) {
     config.rpm = windmill_lab_rpm
     config.heading = windmill_lab_heading
     plan := windmills.generate(windmill_lab_seed, config)
+    if !windmill_lab_rotor_initialized {
+        windmill_lab_last_time = editor.map_time
+        windmill_lab_rotor_initialized = true
+    } else {
+        delta := clamp(editor.map_time - windmill_lab_last_time, f32(0), f32(.1))
+        windmill_lab_last_time = editor.map_time
+        local_rpm := windmills.rotor_rpm_for_wind(&plan, editor.atmosphere.weather.wind)
+        windmill_lab_rotor_angle += delta * local_rpm * math.PI * 2 / 60
+    }
     windmill_lab_site(&plan)
     windmill_lab_tower(&plan)
-    windmill_lab_sails_draw(&plan, editor.map_time)
+    windmill_lab_sails_draw(&plan, windmill_lab_rotor_angle)
 }
