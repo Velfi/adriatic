@@ -30,6 +30,7 @@ Capture_Kind :: enum {
     Wildflower_Lab,
     Rainbow_Lab,
     Shadow_Lab,
+    Rock_Lab,
     Boat_Lab,
     Boid_Lab,
     Car_Generator_Lab,
@@ -337,7 +338,7 @@ CAPTURE_HERO_BUILDING_TARGETS := [?]string {
     "clinic-compact",
     "clinic-grand",
 }
-CAPTURE_EDITOR_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout"}
+CAPTURE_EDITOR_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout", "rock-tool"}
 CAPTURE_MAP_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout"}
 CAPTURE_LIGHTHOUSE_TARGETS := [?]string {
     "adriatic",
@@ -452,6 +453,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Rainbow_Lab, true
     case "shadow-lab":
         return .Shadow_Lab, true
+    case "rock-lab":
+        return .Rock_Lab, true
     case "boat-lab":
         return .Boat_Lab, true
     case "boid-lab":

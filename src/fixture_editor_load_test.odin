@@ -18,6 +18,7 @@ when ODIN_TEST {
         gameplay_options:        Gameplay_Options,
         control_hint_texture:    int,
         paint_icon_texture:      int,
+        authoring_tool_texture:  int,
         tarot_texture:           int,
         postale_base_vertices:   int,
         libellula_base_vertices: int,
@@ -184,6 +185,7 @@ when ODIN_TEST {
             gameplay_options = editor.gameplay_options,
             control_hint_texture = editor.control_hint_atlases.keyboard_mouse.id,
             paint_icon_texture = editor.vehicle_paint_tool_icons.id,
+            authoring_tool_texture = editor.authoring_tool_atlas.id,
             tarot_texture = editor.tarot_atlas.id,
             postale_base_vertices = editor.postale_base_mesh.vertex_count,
             libellula_base_vertices = editor.libellula_base_mesh.vertex_count,
@@ -197,6 +199,7 @@ when ODIN_TEST {
             editor.gameplay_options == snapshot.gameplay_options &&
             editor.control_hint_atlases.keyboard_mouse.id == snapshot.control_hint_texture &&
             editor.vehicle_paint_tool_icons.id == snapshot.paint_icon_texture &&
+            editor.authoring_tool_atlas.id == snapshot.authoring_tool_texture &&
             editor.tarot_atlas.id == snapshot.tarot_texture &&
             editor.postale_base_mesh.vertex_count == snapshot.postale_base_vertices &&
             editor.libellula_base_mesh.vertex_count == snapshot.libellula_base_vertices &&
@@ -214,6 +217,7 @@ when ODIN_TEST {
         editor.gameplay_options.look_sensitivity = .031
         editor.control_hint_atlases.keyboard_mouse.id = 0x111
         editor.vehicle_paint_tool_icons.id = 0x222
+        editor.authoring_tool_atlas.id = 0x2aa
         editor.tarot_atlas.id = 0x333
         editor.postale_base_mesh = new(vehicles.Aircraft_Mesh)
         editor.car_base_mesh = new(vehicles.Aircraft_Mesh)

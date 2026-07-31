@@ -191,6 +191,7 @@ calculate_forces :: proc(
     mass: f32,
     airframe: Airframe,
     drag_multiplier, flap: f32,
+    ground_distance: f32 = -1,
 ) -> (
     Forces,
     Telemetry,
@@ -213,6 +214,7 @@ calculate_forces :: proc(
     velocity_direction := linalg.normalize0(air_velocity)
     parasitic := drag_force_at_speed(speed, airframe) * drag_multiplier * (1 + flap * .34)
     induced := pressure * airframe.wing_area * airframe.induced_drag_factor * cl * cl * drag_multiplier
+    induced *= ground_effect_induced_drag_scale(ground_distance, airframe.wing_area)
     lateral_speed := linalg.dot(
         air_velocity,
         basis.right,
@@ -233,6 +235,18 @@ calculate_forces :: proc(
     }
 }
 
+// Ground effect weakens wingtip vortices near a surface, reducing induced drag.
+// Airframes do not currently author span, so use a representative fixed-wing
+// aspect ratio to derive it from wing area. A negative distance means that the
+// caller has no ground sample and preserves the out-of-ground-effect result.
+ground_effect_induced_drag_scale :: proc(ground_distance, wing_area: f32) -> f32 {
+    if ground_distance < 0 do return 1
+    estimated_span := f32(math.sqrt(f64(max_f32(wing_area, .01) * 7.5)))
+    height_ratio := 16 * max_f32(ground_distance, 0) / max_f32(estimated_span, .01)
+    ratio_squared := height_ratio * height_ratio
+    return ratio_squared / (1 + ratio_squared)
+}
+
 assistance_scale :: proc(control: f32) -> f32 {t := clamp((math.abs(control) - .35) / .45, 0, 1)
     return 1 - t * t * (3 - 2 * t)}
 
@@ -243,6 +257,7 @@ step :: proc(
     runtime: Runtime,
     wind: Vec3,
     delta_seconds: f32,
+    ground_distance: f32 = -1,
 ) -> Telemetry {
     if state == nil || delta_seconds <= 0 do return {}
     command :=
@@ -258,6 +273,7 @@ step :: proc(
         airframe,
         max_f32(runtime.drag_multiplier, .1),
         flap,
+        ground_distance,
     )
     thrust_per_engine := propeller_thrust(
         airframe.rated_power_per_engine_kw * 1000,

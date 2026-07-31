@@ -58,6 +58,7 @@ import physics "zelda_engine:physics"
 HOT_RELOAD :: #config(HOT_RELOAD, false)
 SHOW_STARTUP_MENU :: #config(SHOW_STARTUP_MENU, false)
 MAP_DEVELOPMENT_FALLBACK :: #config(MAP_DEVELOPMENT_FALLBACK, true)
+LIBELLULA_MK1_ENABLED :: #config(LIBELLULA_MK1_ENABLED, false)
 HOT_LIBRARY_ENV :: "ADRIATIC_HOT_LIBRARY"
 
 startup_failed: bool
@@ -78,17 +79,17 @@ CRASH_FADE_IN_SECONDS :: f32(.85)
 PLAYER_FALL_RECOVERY_DEPTH :: f32(30)
 
 Startup_Timings :: struct {
-    started_at: time.Tick,
-    checkpoint: time.Tick,
-    config_ms:  f64,
-    window_ms:  f64,
-    audio_ms:   f64,
-    meshes_ms:  f64,
-    terrain_ms: f64,
+    started_at:  time.Tick,
+    checkpoint:  time.Tick,
+    config_ms:   f64,
+    window_ms:   f64,
+    audio_ms:    f64,
+    meshes_ms:   f64,
+    terrain_ms:  f64,
     map_load_ms: f64,
-    physics_ms: f64,
+    physics_ms:  f64,
     renderer_ms: f64,
-    ready_ms:   f64,
+    ready_ms:    f64,
 }
 
 startup_elapsed_ms :: #force_inline proc(start, end: time.Tick) -> f64 {
@@ -199,6 +200,8 @@ Fixture :: struct {
     formation_brush_radius:                         f32,
     formation_brush_strength:                       f32,
     formation_brush_hardness:                       f32,
+    rock_placement_mode:                            bool `fixture:"-"`,
+    rock_material_variant:                          int `fixture:"-"`,
     foliage_hedgerow_mode:                          bool,
     architecture_node_mode:                         bool,
     architecture_paint_mode:                        bool,
@@ -284,6 +287,7 @@ Fixture :: struct {
     curve_cliff_mode:                               bool,
     curve_width:                                    f32,
     curve_height:                                   f32,
+    cliff_elevation_mode:                           terrain.Cliff_Elevation_Mode,
     road_mode:                                      bool,
     road_selected_node:                             int,
     road_drag_node:                                 int `fixture:"-"`,
@@ -498,7 +502,7 @@ Fixture :: struct {
     customization_preview_yaw:                      f32 `fixture:"-"`,
 }
 
-FIXTURE_SCHEMA_VERSION :: 13
+FIXTURE_SCHEMA_VERSION :: 14
 
 Editor :: struct {
     using fixture:                      Fixture,
@@ -513,6 +517,8 @@ Editor :: struct {
     ocean_traffic:                      boats.Ocean_Traffic,
     main_menu_active:                   bool,
     main_menu_focus:                    int,
+    world_select_focus:                 int,
+    world_select_weather:               bool,
     console:                            Game_Console,
     flame_graph:                        dio.Flame_Graph,
     capture_world_only:                 bool,
@@ -585,6 +591,7 @@ Editor :: struct {
     runtime_input:                      game_input.State,
     control_hint_atlases:               Control_Hint_Atlases,
     vehicle_paint_tool_icons:           canvas2d.Texture,
+    authoring_tool_atlas:               canvas2d.Texture,
     tarot_atlas:                        canvas2d.Texture,
     controller_disconnect_notice:       bool,
     friendship_notice_initialized:      bool,
@@ -788,7 +795,9 @@ game_state_reset :: proc(editor: ^Editor) {
     editor.rondine = rondine_game.new_runtime(rondine_spawn_position(editor))
     editor.aircraft = {}
     vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
-    vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
+    when LIBELLULA_MK1_ENABLED {
+        vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
+    }
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula_Mk2, "Libellula Mk2", &editor.libellula.vehicle, false)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Rondine, "Rondine", &editor.rondine.vehicle, false)
     editor.postale_visible = true
@@ -1303,7 +1312,21 @@ structure_commit_placement :: proc(editor: ^Editor, end_x, end_z: f32) -> int {
 
 formation_brush_is_target :: proc(editor: ^Editor, kind: terrain.Formation_Kind) -> bool {
     if editor.authoring_tool == .Foliage do return kind == .Foliage
+    if editor.rock_placement_mode do return kind == .Rock
     return kind != .Foliage && kind != .Architecture
+}
+
+rock_tool_color :: proc(editor: ^Editor) -> [4]u8 {
+    if editor != nil {
+        switch clamp(editor.rock_material_variant, 0, 2) {
+        case 1:
+            return {112, 116, 113, 254}
+        case 2:
+            return {61, 65, 66, 254}
+        case 0:
+        }
+    }
+    return {176, 164, 133, 254}
 }
 
 formation_brush_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: bool) {
@@ -1352,6 +1375,9 @@ formation_brush_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: boo
         structure.base_y = terrain.sample_height(&editor.project, 0, x, z)
         if editor.authoring_tool == .Foliage {
             structure.kind = .Foliage
+        } else if editor.rock_placement_mode {
+            structure.kind = .Rock
+            structure.color = rock_tool_color(editor)
         } else if editor.structure_auto_kind {
             structure.kind = terrain.formation_kind_for_gesture(width, depth, height)
         } else {
@@ -1469,6 +1495,21 @@ curve_commit :: proc(editor: ^Editor) -> int {
     segment.group_id = group_id
     last_index = terrain.add_structure(&editor.project, segment)
     return last_index
+}
+
+cliff_commit :: proc(editor: ^Editor) -> bool {
+    if editor == nil || editor.curve_point_count < 2 do return false
+    points: [CURVE_POINT_CAPACITY]terrain.Cliff_Point
+    for point, index in editor.curve_points[:editor.curve_point_count] {
+        points[index] = {point.x, point.z}
+    }
+    return terrain.apply_cliff_stroke(
+        &editor.project,
+        points[:editor.curve_point_count],
+        editor.curve_width,
+        editor.curve_height,
+        editor.cliff_elevation_mode,
+    )
 }
 
 curve_reset :: proc(editor: ^Editor) {
@@ -1714,7 +1755,6 @@ curve_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: 
     }
     cell := editor.project.levels[0].cell_size
     if canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT) {
-        structure_history_push_undo(editor)
         // RIDGE and CLIFF are persistent palette tools. Do not derive the
         // profile from the button used to begin the stroke, or a normal
         // left-click immediately turns the selected CLIFF tool into RIDGE.
@@ -1735,8 +1775,18 @@ curve_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: 
     }
     if editor.curve_drawing && (canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT)) {
         if editor.curve_point_count >= 2 {
-            last_index := curve_commit(editor)
-            if last_index >= 0 do editor.structure_selected = last_index
+            if editor.curve_cliff_mode {
+                terrain_history_push_undo(editor)
+                if cliff_commit(editor) {
+                    world_terrain_invalidate_all(editor)
+                } else if editor.terrain_undo_count > 0 {
+                    editor.terrain_undo_count -= 1
+                }
+            } else {
+                structure_history_push_undo(editor)
+                last_index := curve_commit(editor)
+                if last_index >= 0 do editor.structure_selected = last_index
+            }
         }
         curve_reset(editor)
     }
@@ -9995,7 +10045,7 @@ adriatic_run :: proc(
     if effective_startup_started_at == (time.Tick{}) {
         effective_startup_started_at = time.tick_now()
     }
-    startup_timings := Startup_Timings{
+    startup_timings := Startup_Timings {
         started_at = effective_startup_started_at,
         checkpoint = effective_startup_started_at,
     }
@@ -10108,6 +10158,7 @@ adriatic_run :: proc(
         capture_lab_name = "aegean-village"
     }
     if capture_kind == .Shadow_Lab do capture_lab_name = "shadow"
+    if capture_kind == .Rock_Lab do capture_lab_name = "rock"
     if capture_kind == .Screen_Pops_Lab do capture_lab_name = "screen-pops"
     if capture_wildflower_lab_mode do capture_lab_name = "wildflower"
     if capture_kind == .Rainbow_Lab do capture_lab_name = "rainbow"
@@ -10143,6 +10194,7 @@ adriatic_run :: proc(
         capture_kind == .Screen_Pops_Lab ||
         capture_kind == .Rainbow_Lab ||
         capture_kind == .Shadow_Lab ||
+        capture_kind == .Rock_Lab ||
         capture_kind == .Boat_Lab ||
         capture_kind == .Boid_Lab ||
         capture_kind == .Car_Generator_Lab ||
@@ -10288,6 +10340,8 @@ adriatic_run :: proc(
     }
     editor := new(Editor)
     defer free(editor)
+    cliff_rock_assets_init()
+    defer cliff_rock_assets_destroy()
     defer fixture_migration_result_dispose(&editor.fixture_owner)
     defer attendant_dialogue_definition_release(editor)
     defer structure_storage_destroy(editor)
@@ -10322,24 +10376,73 @@ adriatic_run :: proc(
     }
     vehicle_paint_history_init(editor)
     defer fixture_editor_paint_history_destroy(editor)
-    vehicles.libellula_mesh_init(&editor.libellula_visual_mesh)
-    defer vehicles.libellula_mesh_destroy(&editor.libellula_visual_mesh)
+    when LIBELLULA_MK1_ENABLED {
+        vehicles.libellula_mesh_init(&editor.libellula_visual_mesh)
+        defer vehicles.libellula_mesh_destroy(&editor.libellula_visual_mesh)
+    }
     vehicles.libellula_mesh_init(&editor.libellula_mk2_visual_mesh)
     defer vehicles.libellula_mesh_destroy(&editor.libellula_mk2_visual_mesh)
-    vehicles.libellula_mesh_init(&editor.libellula_base_mesh)
-    defer vehicles.libellula_mesh_destroy(&editor.libellula_base_mesh)
+    when LIBELLULA_MK1_ENABLED {
+        vehicles.libellula_mesh_init(&editor.libellula_base_mesh)
+        defer vehicles.libellula_mesh_destroy(&editor.libellula_base_mesh)
+    }
     vehicles.libellula_mesh_init(&editor.libellula_mk2_base_mesh)
     defer vehicles.libellula_mesh_destroy(&editor.libellula_mk2_base_mesh)
-    vehicles.libellula_mesh_build(&editor.libellula_base_mesh)
-    vehicles.libellula_mk2_mesh_build(&editor.libellula_mk2_base_mesh)
-    vehicles.libellula_mesh_copy(&editor.libellula_visual_mesh, &editor.libellula_base_mesh)
+    when LIBELLULA_MK1_ENABLED {
+        vehicles.libellula_mesh_build(&editor.libellula_base_mesh)
+        vehicles.libellula_mesh_copy(&editor.libellula_visual_mesh, &editor.libellula_base_mesh)
+    }
+    mk2_mesh_cache_path, mk2_mesh_cache_path_ok := vehicle_mesh_cache_path(context.temp_allocator)
+    mk2_mesh_cache_hit :=
+        mk2_mesh_cache_path_ok && vehicle_mesh_cache_load(&editor.libellula_mk2_base_mesh, mk2_mesh_cache_path)
+    if !mk2_mesh_cache_hit {
+        vehicles.libellula_mk2_mesh_build(&editor.libellula_mk2_base_mesh)
+        if mk2_mesh_cache_path_ok {
+            _ = vehicle_mesh_cache_store(&editor.libellula_mk2_base_mesh, mk2_mesh_cache_path)
+        }
+    }
+    fmt.eprintf("vehicle mesh cache: libellula-mk2 source=%s\n", mk2_mesh_cache_hit ? "disk" : "generated")
     vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
-    editor.postale_base_mesh = vehicles.postale_mesh()
+    editor.postale_base_mesh = new(vehicles.Aircraft_Mesh)
     defer free(editor.postale_base_mesh)
-    vehicles.mesh_generate_smooth_normals(editor.postale_base_mesh)
-    editor.car_base_mesh = vehicles.simple_car_mesh()
+    postale_cache_path, postale_cache_path_ok := aircraft_mesh_cache_path(
+        "postale",
+        POSTALE_MESH_CACHE_VERSION,
+        context.temp_allocator,
+    )
+    postale_cache_hit :=
+        postale_cache_path_ok &&
+        aircraft_mesh_cache_load(editor.postale_base_mesh, postale_cache_path, POSTALE_MESH_CACHE_VERSION)
+    if !postale_cache_hit {
+        free(editor.postale_base_mesh)
+        editor.postale_base_mesh = vehicles.postale_mesh()
+        vehicles.mesh_generate_smooth_normals(editor.postale_base_mesh)
+        if postale_cache_path_ok {
+            _ = aircraft_mesh_cache_store(editor.postale_base_mesh, postale_cache_path, POSTALE_MESH_CACHE_VERSION)
+        }
+    }
+    editor.car_base_mesh = new(vehicles.Aircraft_Mesh)
     defer free(editor.car_base_mesh)
-    vehicles.mesh_generate_smooth_normals(editor.car_base_mesh)
+    car_cache_path, car_cache_path_ok := aircraft_mesh_cache_path(
+        "car",
+        CAR_MESH_CACHE_VERSION,
+        context.temp_allocator,
+    )
+    car_cache_hit :=
+        car_cache_path_ok && aircraft_mesh_cache_load(editor.car_base_mesh, car_cache_path, CAR_MESH_CACHE_VERSION)
+    if !car_cache_hit {
+        free(editor.car_base_mesh)
+        editor.car_base_mesh = vehicles.simple_car_mesh()
+        vehicles.mesh_generate_smooth_normals(editor.car_base_mesh)
+        if car_cache_path_ok {
+            _ = aircraft_mesh_cache_store(editor.car_base_mesh, car_cache_path, CAR_MESH_CACHE_VERSION)
+        }
+    }
+    fmt.eprintf(
+        "vehicle mesh cache: postale=%s car=%s\n",
+        postale_cache_hit ? "disk" : "generated",
+        car_cache_hit ? "disk" : "generated",
+    )
     startup_timings.meshes_ms = startup_checkpoint(&startup_timings)
     if show_loading_screen {
         draw_startup_loading_screen(initial_width, initial_height, .42, "Preparing aircraft and boats...", postcard)
@@ -10488,6 +10591,10 @@ adriatic_run :: proc(
     if !editor.vehicle_paint_tool_icons.ready {
         fmt.eprintln("vehicle paint tool icon atlas failed to load")
     }
+    editor.authoring_tool_atlas = canvas2d.LoadTexture("assets/textures/ui/authoring-tools-atlas.png")
+    if !editor.authoring_tool_atlas.ready {
+        fmt.eprintln("authoring tool icon atlas failed to load")
+    }
     editor.tarot_atlas = canvas2d.LoadTexture("assets/textures/ui/tarot-atlas-v4.png")
     if !editor.tarot_atlas.ready {
         fmt.eprintln("tarot card atlas failed to load")
@@ -10509,7 +10616,9 @@ adriatic_run :: proc(
     editor.attendant_position = attendant_spawn_position(editor, editor.libellula.vehicle.position)
     editor.gerta_position = gerta_spawn_position(editor)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
-    vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
+    when LIBELLULA_MK1_ENABLED {
+        vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula, "Libellula", &editor.libellula.vehicle, false)
+    }
     vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula_Mk2, "Libellula Mk2", &editor.libellula.vehicle, false)
     vehicles.aircraft_fleet_add(&editor.aircraft, .Rondine, "Rondine", &editor.rondine.vehicle, false)
     editor.postale_visible = true
@@ -10623,6 +10732,24 @@ adriatic_run :: proc(
         }
         if !capture_foliage_stress_mode && !capture_foliage_forest_mode && !capture_story_meeting_mode {
             editor.editor_camera.distance = 260
+            editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+        }
+        if capture_editor_mode && capture_target == "rock-tool" {
+            authoring_select_rock_tool(editor)
+            editor.formation_brush_radius = 36
+            editor.formation_brush_strength = .58
+            editor.formation_brush_hardness = .72
+            center_x, center_z := editor.editor_focus.x, editor.editor_focus.z
+            _ = capture_add_formation(editor, center_x - 12, center_z, 18, 14, 16, .Rock)
+            _ = capture_add_formation(editor, center_x + 8, center_z + 3, 14, 19, 22, .Rock)
+            _ = capture_add_formation(editor, center_x + 23, center_z - 5, 24, 15, 11, .Rock)
+            for structure_index := editor.project.structure_count - 3;
+                structure_index < editor.project.structure_count;
+                structure_index += 1 {
+                if structure_index >= 0 do editor.project.structures[structure_index].color = rock_tool_color(editor)
+            }
+            editor.editor_focus.y = terrain.sample_height(&editor.project, 0, center_x, center_z) + 7
+            editor.editor_camera.distance = 62
             editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
         }
         if capture_editor_mode && capture_target_is_generated_dunes(capture_target) {
@@ -12344,7 +12471,7 @@ adriatic_run :: proc(
     benchmark_sample_count := 0
     instrument_started_at := canvas2d.GetTime()
     capture_frame :=
-        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Rock_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
     if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
     selector_capture_pose: third_person.Camera_Pose
     selector_capture_pose_set := false
@@ -12604,10 +12731,16 @@ adriatic_run :: proc(
                canvas2d.IsKeyPressed(.Y) {
                 structure_redo(editor)
             }
-            if !imgui_captures_keyboard() && editor.authoring_tool == .Formations && canvas2d.IsKeyPressed(.V) {
+            if !imgui_captures_keyboard() &&
+               editor.authoring_tool == .Formations &&
+               !editor.rock_placement_mode &&
+               canvas2d.IsKeyPressed(.V) {
                 structure_cycle_kind(editor)
             }
-            if !imgui_captures_keyboard() && editor.authoring_tool == .Formations && canvas2d.IsKeyPressed(.X) {
+            if !imgui_captures_keyboard() &&
+               editor.authoring_tool == .Formations &&
+               !editor.rock_placement_mode &&
+               canvas2d.IsKeyPressed(.X) {
                 editor.structure_auto_kind = true
             }
             if !imgui_captures_keyboard() && editor.road_mode && canvas2d.IsKeyPressed(.BACKSPACE) {
@@ -13614,9 +13747,7 @@ adriatic_run :: proc(
             total_ms := startup_elapsed_ms(startup_timings.started_at, first_frame_end)
             startup_kind := first_start ? "cold" : "reload"
             startup_mode :=
-                benchmark_mode ? "benchmark" :
-                capture_mode ? "capture" :
-                interactive_lab_mode ? "lab" : "game"
+                benchmark_mode ? "benchmark" : capture_mode ? "capture" : interactive_lab_mode ? "lab" : "game"
             fmt.eprintf(
                 "startup total=%.1fms config=%.1fms window=%.1fms audio=%.1fms meshes=%.1fms terrain=%.1fms map_load=%.1fms physics=%.1fms renderer=%.1fms ready=%.1fms first_frame=%.1fms kind=%s mode=%s map=%s map_version=%d map_source=%s\n",
                 total_ms,

@@ -44,7 +44,7 @@ when ODIN_TEST {
         testing.expect(t, result.fixture.atmosphere.schedule.next_event_seconds >= 60 * 60)
         testing.expect(t, result.fixture.atmosphere.schedule.next_event_seconds <= 120 * 60)
         testing.expect(t, result.fixture.tweak.atmosphere.schedule.initialized)
-        testing.expect(t, len(production.steps) == 12)
+        testing.expect(t, len(production.steps) == FIXTURE_SCHEMA_VERSION - 1)
         testing.expect(t, production.steps[9].wrapper == fixture_migration_step_v0010_to_v0011)
         testing.expect(t, production.steps[10].wrapper == fixture_migration_step_v0011_to_v0012)
         testing.expect(t, production.steps[11].wrapper == fixture_migration_step_v0012_to_v0013)

@@ -861,11 +861,69 @@ formation_kinds_cycle_without_skipping :: proc(t: ^testing.T) {
     kind = terrain.formation_kind_next(kind)
     testing.expect(t, kind == .Ridge)
     kind = terrain.formation_kind_next(kind)
-    testing.expect(t, kind == .Cliff)
-    kind = terrain.formation_kind_next(kind)
     testing.expect(t, kind == .Foliage)
     kind = terrain.formation_kind_next(kind)
     testing.expect(t, kind == .Box)
+}
+
+@(test)
+cliff_stroke_raises_the_left_side_and_reverse_flips_it :: proc(t: ^testing.T) {
+    forward := terrain.new_project()
+    reverse := terrain.new_project()
+    defer terrain.free_project(forward)
+    defer terrain.free_project(reverse)
+    points := [2]terrain.Cliff_Point{{-40, 0}, {40, 0}}
+    reversed := [2]terrain.Cliff_Point{{40, 0}, {-40, 0}}
+    forward_high_before := terrain.sample_height(forward, 0, 0, 4)
+    forward_low_before := terrain.sample_height(forward, 0, 0, -4)
+    reverse_north_before := terrain.sample_height(reverse, 0, 0, 4)
+    testing.expect(t, terrain.apply_cliff_stroke(forward, points[:], 20, 8, .Raise))
+    testing.expect(t, terrain.apply_cliff_stroke(reverse, reversed[:], 20, 8, .Raise))
+    testing.expect(t, terrain.sample_height(forward, 0, 0, 4) > forward_high_before + 4)
+    testing.expect(t, math.abs(terrain.sample_height(forward, 0, 0, -4) - forward_low_before) < .01)
+    testing.expect(t, math.abs(terrain.sample_height(reverse, 0, 0, 4) - reverse_north_before) < .01)
+}
+
+@(test)
+cliff_elevation_modes_and_width_preserve_unaffected_terrain :: proc(t: ^testing.T) {
+    lower := terrain.new_project()
+    split := terrain.new_project()
+    defer terrain.free_project(lower)
+    defer terrain.free_project(split)
+    points := [2]terrain.Cliff_Point{{-40, 0}, {40, 0}}
+    lower_high := terrain.sample_height(lower, 0, 0, 4)
+    lower_low := terrain.sample_height(lower, 0, 0, -4)
+    outside := terrain.sample_height(lower, 0, 0, 30)
+    split_high := terrain.sample_height(split, 0, 0, 4)
+    split_low := terrain.sample_height(split, 0, 0, -4)
+    testing.expect(t, terrain.apply_cliff_stroke(lower, points[:], 20, 8, .Lower))
+    testing.expect(t, terrain.apply_cliff_stroke(split, points[:], 20, 8, .Split))
+    testing.expect(t, math.abs(terrain.sample_height(lower, 0, 0, 4) - lower_high) < .01)
+    testing.expect(t, terrain.sample_height(lower, 0, 0, -4) < lower_low - 4)
+    testing.expect(t, math.abs(terrain.sample_height(lower, 0, 0, 30) - outside) < .01)
+    testing.expect(t, terrain.sample_height(split, 0, 0, 4) > split_high + 2)
+    testing.expect(t, terrain.sample_height(split, 0, 0, -4) < split_low - 2)
+}
+
+@(test)
+legacy_cliff_cleanup_is_stable :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer free(project)
+    defer delete(project.structures)
+    project.next_structure_id = 1
+    first := terrain.structure_make(0, 0, 1, 1, 0, 1)
+    first.kind = .Rock
+    cliff := terrain.structure_make(1, 0, 1, 1, 0, 1)
+    cliff.kind = .Cliff
+    last := terrain.structure_make(2, 0, 1, 1, 0, 1)
+    last.kind = .Foliage
+    _ = terrain.add_structure(project, first)
+    _ = terrain.add_structure(project, cliff)
+    _ = terrain.add_structure(project, last)
+    testing.expect_value(t, terrain.remove_legacy_cliffs(project), 1)
+    testing.expect_value(t, project.structure_count, 2)
+    testing.expect(t, project.structures[0].kind == .Rock)
+    testing.expect(t, project.structures[1].kind == .Foliage)
 }
 
 @(test)

@@ -264,6 +264,24 @@ postale_normalized_seam_rejects_nil_and_invalid_delta_without_mutation :: proc(t
 }
 
 @(test)
+postale_parked_aircraft_stays_planted_in_strong_crosswind :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime({0, postale.GROUND_CLEARANCE, 0})
+    orientation_before := runtime.body.orientation
+
+    for _ in 0 ..< 600 {
+        postale.step(&runtime, {}, 0, 1.0 / 60.0, {18, 0, 0})
+    }
+
+    testing.expect(t, runtime.grounded)
+    basis_before := flight.basis_from_orientation(orientation_before)
+    basis_after := flight.basis_from_orientation(runtime.body.orientation)
+    testing.expect(t, linalg.dot(basis_before.forward, basis_after.forward) > .9999)
+    testing.expect(t, linalg.dot(basis_before.up, basis_after.up) > .9999)
+    testing.expect(t, math.abs(runtime.body.position.x) < .1)
+    testing.expect(t, math.abs(runtime.body.position.z) < .1)
+}
+
+@(test)
 postale_selected_airspeed_follows_active_model :: proc(t: ^testing.T) {
     runtime := postale.new_runtime({})
     runtime.telemetry.airspeed = 37
@@ -504,6 +522,20 @@ postale_landing_intent_requires_a_stable_sustained_approach :: proc(t: ^testing.
         postale.update_landing_intent(&runtime, 0, 1.0 / 60.0)
     }
     testing.expect(t, runtime.landing_intent)
+}
+
+@(test)
+postale_landing_intent_uses_air_relative_approach_speed :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE + 12, 0})
+    runtime.grounded = false
+    runtime.was_grounded = false
+    runtime.throttle = .3
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    runtime.body.velocity = basis.forward * 20 + flight.Vec3{0, -1.2, 0}
+    headwind := basis.forward * -8
+
+    testing.expect(t, !postale.landing_intent_candidate(&runtime, 0))
+    testing.expect(t, postale.landing_intent_candidate(&runtime, 0, headwind))
 }
 
 @(test)

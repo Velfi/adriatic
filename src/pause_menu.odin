@@ -12,6 +12,7 @@ import canvas2d "zelda_engine:canvas2d"
 
 Pause_Screen :: enum {
     Closed,
+    World_Select,
     Pause,
     Journal,
     Mail,
@@ -123,6 +124,10 @@ pause_menu_button_bounds :: #force_inline proc(panel: canvas2d.Rectangle, row: i
 }
 
 MAIN_MENU_BUTTON_COUNT :: 3
+WORLD_SELECT_FOCUS_COUNT :: 3
+WORLD_SELECT_MAP_FOCUS :: 0
+WORLD_SELECT_WEATHER_FOCUS :: 1
+WORLD_SELECT_START_FOCUS :: 2
 
 @(no_instrumentation)
 main_menu_panel :: #force_inline proc(width, height: i32) -> canvas2d.Rectangle {
@@ -134,6 +139,28 @@ main_menu_panel :: #force_inline proc(width, height: i32) -> canvas2d.Rectangle 
 @(no_instrumentation)
 main_menu_button_bounds :: #force_inline proc(panel: canvas2d.Rectangle, row: int) -> canvas2d.Rectangle {
     return {panel.x + 42, panel.y + 128 + f32(row) * 62, panel.width - 84, 48}
+}
+
+@(no_instrumentation)
+world_select_panel :: #force_inline proc(width, height: i32) -> canvas2d.Rectangle {
+    panel_width := min(f32(820), f32(width) - 48)
+    panel_height := min(f32(590), f32(height) - 48)
+    return {(f32(width) - panel_width) * .5, (f32(height) - panel_height) * .5, panel_width, panel_height}
+}
+
+@(no_instrumentation)
+world_select_map_bounds :: #force_inline proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
+    return {panel.x + 34, panel.y + 112, panel.width - 68, panel.height - 238}
+}
+
+@(no_instrumentation)
+world_select_weather_bounds :: #force_inline proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
+    return {panel.x + 34, panel.y + panel.height - 108, 236, 44}
+}
+
+@(no_instrumentation)
+world_select_start_bounds :: #force_inline proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
+    return {panel.x + panel.width - 254, panel.y + panel.height - 108, 220, 44}
 }
 
 OPTIONS_ROW_COUNT :: 11
@@ -652,6 +679,10 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
 
 main_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     if editor == nil || !editor.main_menu_active do return
+    if editor.pause_screen == .World_Select {
+        world_select_process_input(editor, width, height, delta_seconds)
+        return
+    }
     if editor.pause_screen == .Customization {
         if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
             editor.pause_screen = .Options
@@ -704,15 +735,65 @@ main_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
     }
     switch activated {
     case 0:
-        editor.main_menu_active = false
-        editor.pause_screen = .Closed
-        editor_spawn_into_world(editor)
+        editor.pause_screen = .World_Select
+        editor.world_select_focus = WORLD_SELECT_MAP_FOCUS
     case 1:
         editor.pause_screen = .Options
         editor.options_focus = 0
         editor.options_scroll_y = 0
     case 2:
         editor.quit_requested = true
+    }
+}
+
+world_select_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
+    if editor == nil do return
+    if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
+        editor.pause_screen = .Closed
+        editor.main_menu_focus = 0
+        return
+    }
+
+    panel := world_select_panel(width, height)
+    map_bounds := world_select_map_bounds(panel)
+    weather_bounds := world_select_weather_bounds(panel)
+    start_bounds := world_select_start_bounds(panel)
+    _, stick_y := game_input.menu_steps(
+        &editor.runtime_input,
+        gamepad_axis(.Left_X),
+        gamepad_axis(.Left_Y),
+        delta_seconds,
+    )
+    direction := 0
+    if canvas2d.IsKeyPressed(.UP) || canvas2d.IsKeyPressed(.LEFT) || gamepad_pressed(.Dpad_Up) || gamepad_pressed(.Dpad_Left) do direction -= 1
+    if canvas2d.IsKeyPressed(.DOWN) || canvas2d.IsKeyPressed(.RIGHT) || gamepad_pressed(.Dpad_Down) || gamepad_pressed(.Dpad_Right) do direction += 1
+    if direction == 0 do direction = stick_y
+    if direction != 0 {
+        editor.world_select_focus = clamp(editor.world_select_focus + direction, 0, WORLD_SELECT_FOCUS_COUNT - 1)
+    }
+
+    mouse := canvas2d.GetMousePosition()
+    mouse_delta := canvas2d.GetMouseDelta()
+    mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    if mouse_active {
+        if canvas2d.CheckCollisionPointRec(mouse, map_bounds) do editor.world_select_focus = WORLD_SELECT_MAP_FOCUS
+        if canvas2d.CheckCollisionPointRec(mouse, weather_bounds) do editor.world_select_focus = WORLD_SELECT_WEATHER_FOCUS
+        if canvas2d.CheckCollisionPointRec(mouse, start_bounds) do editor.world_select_focus = WORLD_SELECT_START_FOCUS
+    }
+
+    activated := input_action_pressed(.Menu_Accept)
+    if canvas2d.IsMouseButtonPressed(.LEFT) {
+        activated = canvas2d.CheckCollisionPointRec(mouse, map_bounds) ||
+                    canvas2d.CheckCollisionPointRec(mouse, weather_bounds) ||
+                    canvas2d.CheckCollisionPointRec(mouse, start_bounds)
+    }
+    if !activated do return
+    if editor.world_select_focus == WORLD_SELECT_WEATHER_FOCUS {
+        editor.world_select_weather = !editor.world_select_weather
+    } else if editor.world_select_focus == WORLD_SELECT_START_FOCUS {
+        editor.main_menu_active = false
+        editor.pause_screen = .Closed
+        editor_spawn_into_world(editor)
     }
 }
 
@@ -1132,6 +1213,10 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.T
         player_mail_draw(editor, width, height)
         return
     }
+    if editor.pause_screen == .World_Select {
+        world_select_draw(editor, width, height)
+        return
+    }
 
     options := editor.pause_screen == .Options
     panel := options ? pause_menu_panel(width, height, true) : main_menu_panel(width, height)
@@ -1158,6 +1243,61 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.T
         .2,
         ui_theme_text_muted(),
     )
+}
+
+world_select_draw :: proc(editor: ^Editor, width, height: i32) {
+    panel := world_select_panel(width, height)
+    canvas2d.DrawRectangleRounded(panel, .035, 12, ui_theme_surface(248))
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, ui_theme_border_strong(220))
+    pause_menu_draw_header(panel, "CHOOSE YOUR ROUTE", "WORLD MAP")
+
+    map_bounds := world_select_map_bounds(panel)
+    map_focused := editor.world_select_focus == WORLD_SELECT_MAP_FOCUS
+    canvas2d.DrawRectangleRounded(map_bounds, .025, 12, canvas2d.Color{35, 93, 112, 255})
+    canvas2d.DrawRectangleRoundedLinesEx(map_bounds, .025, 12, map_focused ? 3 : 1, map_focused ? ui_theme_focus() : ui_theme_border_strong())
+
+    // A compact chart-like silhouette: two inhabited islands and their sea lane.
+    west := canvas2d.Rectangle{map_bounds.x + map_bounds.width * .15, map_bounds.y + map_bounds.height * .24, map_bounds.width * .25, map_bounds.height * .52}
+    east := canvas2d.Rectangle{map_bounds.x + map_bounds.width * .61, map_bounds.y + map_bounds.height * .17, map_bounds.width * .22, map_bounds.height * .58}
+    land := canvas2d.Color{207, 192, 132, 255}
+    canvas2d.DrawRectangleRounded(west, .48, 20, land)
+    canvas2d.DrawRectangleRounded(east, .48, 20, land)
+    canvas2d.DrawLineEx(
+        {west.x + west.width, west.y + west.height * .58},
+        {east.x, east.y + east.height * .53},
+        3,
+        canvas2d.Color{242, 226, 173, 190},
+    )
+
+    if editor.world_select_weather {
+        rain := canvas2d.Color{158, 210, 225, 210}
+        for index in 0 ..< 9 {
+            x := map_bounds.x + 48 + f32(index) * (map_bounds.width - 96) / 8
+            y := map_bounds.y + 38 + f32((index * 37) % 83)
+            canvas2d.DrawCircleV({x, y}, 18 + f32(index % 3) * 5, canvas2d.Color{228, 235, 235, 105})
+            canvas2d.DrawLineEx({x - 9, y + 25}, {x - 15, y + 39}, 2, rain)
+            canvas2d.DrawLineEx({x + 7, y + 25}, {x + 1, y + 39}, 2, rain)
+        }
+        ui_draw_text(.Data, "LIVE WEATHER", {map_bounds.x + 16, map_bounds.y + 14}, .22, {245, 250, 250, 235})
+    }
+
+    canvas2d.DrawCircleV({west.x + west.width * .58, west.y + west.height * .52}, 8, ui_theme_accent())
+    canvas2d.DrawCircleV({west.x + west.width * .58, west.y + west.height * .52}, 3, ui_theme_text_inverse())
+    ui_draw_text(.Label, "ADRIATIC", {map_bounds.x + 18, map_bounds.y + map_bounds.height - 35}, .34, {255, 255, 255, 255})
+    ui_draw_text(.Data, "WEST ISLAND  /  EAST ISLAND", {map_bounds.x + map_bounds.width - 236, map_bounds.y + map_bounds.height - 29}, .18, {225, 239, 241, 230})
+
+    weather_bounds := world_select_weather_bounds(panel)
+    weather_focused := editor.world_select_focus == WORLD_SELECT_WEATHER_FOCUS
+    pause_menu_button(weather_bounds, editor.world_select_weather ? "WEATHER  ON" : "WEATHER  OFF", false, weather_focused)
+    start_bounds := world_select_start_bounds(panel)
+    pause_menu_button(start_bounds, "ENTER ADRIATIC", true, editor.world_select_focus == WORLD_SELECT_START_FOCUS)
+
+    hint: cstring = "ARROWS SELECT  |  ENTER CONFIRMS  |  ESC BACK"
+    if controller_prompt_active(editor) {
+        hint = fmt.ctprintf("D-PAD / LS SELECTS  |  %s CONFIRMS  |  START BACK", controller_face_label(editor, .South))
+    }
+    size := ui_measure_text(.Data, hint, .2)
+    ui_draw_text(.Data, hint, {panel.x + (panel.width - size.x) * .5, panel.y + panel.height - 24}, .2, ui_theme_text_muted())
 }
 
 pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.Texture = {}) {

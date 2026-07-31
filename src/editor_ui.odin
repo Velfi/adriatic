@@ -29,11 +29,31 @@ Authoring_Tool :: enum {
 // GreekAssets remains as a frozen enum value for historical Fixture decoding,
 // but is no longer part of the live editor tool palette.
 AUTHORING_TOOL_COUNT :: 14
+AUTHORING_TOOL_PALETTE_COUNT :: AUTHORING_TOOL_COUNT + 1
+AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_COUNT]Authoring_Tool {
+    .Sculpt,
+    .Smooth,
+    .Paint,
+    .Ridge,
+    .Cliff,
+    .Roads,
+    .Formations,
+    .Foliage,
+    .ClimbingLeaves,
+    .Building,
+    .Farm,
+    .Marina,
+    .Wreck,
+    .GreekAssets,
+}
 EDITOR_UI_TOP_HEIGHT :: f32(54)
 EDITOR_UI_RAIL_WIDTH :: f32(184)
 EDITOR_UI_INSPECTOR_WIDTH :: f32(292)
 EDITOR_UI_GUTTER :: f32(12)
 EDITOR_UI_BUTTON_TEXT_Y_OFFSET :: f32(3)
+EDITOR_UI_TOOL_COLUMNS :: 3
+EDITOR_UI_TOOL_BUTTON_SIZE :: f32(48)
+EDITOR_UI_TOOL_BUTTON_GAP :: f32(6)
 
 Editor_UI_State :: struct {
     left_collapsed:      bool,
@@ -141,6 +161,7 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.climbing_leaf_painting = false
     editor.formation_brush_painting = false
     editor.formation_brush_group_id = 0
+    editor.rock_placement_mode = false
     editor.greek_placement_mode = false
     editor.road_mode = false
     editor.curve_mode = false
@@ -197,6 +218,14 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.structure_moving = false
 }
 
+authoring_select_rock_tool :: proc(editor: ^Editor) {
+    if editor == nil do return
+    authoring_select_tool(editor, .Formations)
+    editor.rock_placement_mode = true
+    editor.structure_auto_kind = false
+    editor.structure_kind = .Rock
+}
+
 editor_ui_layout :: proc(editor: ^Editor, width, height: i32) -> Editor_UI_Layout {
     w, h := f32(width), f32(height)
     left_allowed := width >= 800
@@ -230,7 +259,47 @@ editor_ui_layout :: proc(editor: ^Editor, width, height: i32) -> Editor_UI_Layou
 
 @(no_instrumentation)
 editor_ui_tool_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> canvas2d.Rectangle {
-    return {layout.left.x + 10, layout.left.y + 50 + f32(index) * 39, layout.left.width - 20, 35}
+    column := index % EDITOR_UI_TOOL_COLUMNS
+    row := index / EDITOR_UI_TOOL_COLUMNS
+    return {
+        layout.left.x + 10 + f32(column) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
+        layout.left.y + 50 + f32(row) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
+        EDITOR_UI_TOOL_BUTTON_SIZE,
+        EDITOR_UI_TOOL_BUTTON_SIZE,
+    }
+}
+
+editor_ui_draw_tool_icon :: proc(editor: ^Editor, atlas_index: int, bounds: canvas2d.Rectangle, tint: canvas2d.Color) {
+    if editor == nil || !editor.authoring_tool_atlas.ready do return
+    atlas_columns := f32(4)
+    atlas_rows := f32(4)
+    cell_width := f32(editor.authoring_tool_atlas.width) / atlas_columns
+    cell_height := f32(editor.authoring_tool_atlas.height) / atlas_rows
+    source := canvas2d.Rectangle {
+        f32(atlas_index % 4) * cell_width,
+        f32(atlas_index / 4) * cell_height,
+        cell_width,
+        cell_height,
+    }
+    icon_padding := f32(5)
+    destination := canvas2d.Rectangle {
+        bounds.x + icon_padding,
+        bounds.y + icon_padding,
+        bounds.width - icon_padding * 2,
+        bounds.height - icon_padding * 2,
+    }
+    canvas2d.DrawTexturePro(editor.authoring_tool_atlas, source, destination, tint)
+}
+
+editor_ui_draw_tooltip :: proc(bounds: canvas2d.Rectangle, tool: Authoring_Tool) {
+    name := authoring_tool_name(tool)
+    shortcut := authoring_tool_shortcut(tool)
+    label: cstring = shortcut == "" ? name : fmt.ctprintf("%s  [%s]", name, shortcut)
+    size := ui_measure_text(.Label, label, .5)
+    tooltip := canvas2d.Rectangle{bounds.x + bounds.width + 8, bounds.y + 7, size.x + 20, 30}
+    canvas2d.DrawRectangleRounded(tooltip, .14, 5, {17, 20, 24, 252})
+    canvas2d.DrawRectangleRoundedLinesEx(tooltip, .14, 5, 1, {89, 101, 114, 255})
+    ui_draw_text(.Label, label, {tooltip.x + 10, tooltip.y + 8}, .5, {235, 239, 243, 255})
 }
 
 @(no_instrumentation)
@@ -243,7 +312,12 @@ editor_ui_spawn_bounds :: #force_inline proc(layout: Editor_UI_Layout) -> canvas
     return {layout.left.x + 10, layout.left.y + layout.left.height - 46, layout.left.width - 20, 36}
 }
 
-editor_ui_panel_button :: proc(bounds: canvas2d.Rectangle, label: cstring, selected: bool = false, enabled: bool = true) {
+editor_ui_panel_button :: proc(
+    bounds: canvas2d.Rectangle,
+    label: cstring,
+    selected: bool = false,
+    enabled: bool = true,
+) {
     hovered := enabled && canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
     fill := canvas2d.Color{35, 39, 46, 246}
     border := canvas2d.Color{73, 81, 92, 255}
@@ -287,7 +361,12 @@ editor_ui_slider_bounds :: #force_inline proc(layout: Editor_UI_Layout, row: int
     return {layout.inspector.x + 14, layout.inspector.y + 82 + f32(row) * 48, layout.inspector.width - 28, 42}
 }
 
-editor_ui_slider_draw :: proc(bounds: canvas2d.Rectangle, label: cstring, value, minimum, maximum: f32, decimals: int = 1) {
+editor_ui_slider_draw :: proc(
+    bounds: canvas2d.Rectangle,
+    label: cstring,
+    value, minimum, maximum: f32,
+    decimals: int = 1,
+) {
     normalized := clamp((value - minimum) / max(maximum - minimum, f32(.0001)), 0, 1)
     value_text: cstring
     if decimals <= 0 {
@@ -302,7 +381,12 @@ editor_ui_slider_draw :: proc(bounds: canvas2d.Rectangle, label: cstring, value,
     ui_draw_text(.Data, value_text, {bounds.x + bounds.width - value_size.x, bounds.y}, .5, {134, 224, 216, 255})
     track := canvas2d.Rectangle{bounds.x, bounds.y + 27, bounds.width, 6}
     canvas2d.DrawRectangleRounded(track, 1, 4, {50, 56, 64, 255})
-    canvas2d.DrawRectangleRounded({track.x, track.y, track.width * normalized, track.height}, 1, 4, {60, 164, 157, 255})
+    canvas2d.DrawRectangleRounded(
+        {track.x, track.y, track.width * normalized, track.height},
+        1,
+        4,
+        {60, 164, 157, 255},
+    )
     canvas2d.DrawCircleV({track.x + track.width * normalized, track.y + 3}, 6, {221, 238, 237, 255})
 }
 
@@ -356,6 +440,7 @@ editor_ui_small_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, in
 
 editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor == nil do return ""
+    if editor.rock_placement_mode do return "Left spawns rocks; right erases rocks. Drag to build clusters; adjust density in the inspector."
     if editor.marina_paint_mode {
         switch editor.marina_brush_status {
         case .Preview:
@@ -399,7 +484,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Ridge:
         return "Draw a freehand ridge. Wheel zooms; Shift adjusts width and height."
     case .Cliff:
-        return "Draw a freehand cliff. Wheel zooms; Shift adjusts width and height."
+        return "Draw a terrain cliff; the left side of the stroke is high. Reverse direction to flip it."
     case .Building:
         if editor.airport_stamp_mode {
             return "Left stamps an airport; right removes one. Wheel rotates the terminal."
@@ -430,26 +515,37 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     canvas2d.DrawRectangleRoundedLinesEx(layout.left, .025, 6, 1, {62, 69, 78, 255})
     ui_draw_text(.Heading, "TOOLS", {layout.left.x + 12, layout.left.y + 14}, .5, {235, 239, 243, 255})
     editor_ui_panel_button({layout.left.x + layout.left.width - 39, layout.left.y + 10, 29, 28}, "<<")
-    for index in 0 ..< AUTHORING_TOOL_COUNT {
-        tool := Authoring_Tool(index)
+    hovered_tool := -1
+    for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
         bounds := editor_ui_tool_bounds(layout, index)
-        selected := editor.authoring_tool == tool
+        rock_tool := index == AUTHORING_TOOL_COUNT
+        tool := rock_tool ? Authoring_Tool.Formations : AUTHORING_TOOL_DISPLAY_ORDER[index]
+        selected :=
+            rock_tool ? editor.rock_placement_mode : editor.authoring_tool == tool && !(tool == .Formations && editor.rock_placement_mode)
         hovered := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
         fill := selected ? canvas2d.Color{35, 91, 94, 255} : canvas2d.Color{35, 39, 46, 246}
         if hovered && !selected do fill = {48, 55, 64, 250}
         border := selected ? canvas2d.Color{82, 207, 198, 255} : canvas2d.Color{66, 74, 84, 255}
         canvas2d.DrawRectangleRounded(bounds, .10, 6, fill)
         canvas2d.DrawRectangleRoundedLinesEx(bounds, .10, 6, selected ? 2 : 1, border)
-        ui_draw_text(.Label, authoring_tool_name(tool), {bounds.x + 12, bounds.y + 12}, .2, {235, 239, 243, 255})
-        shortcut := authoring_tool_shortcut(tool)
-        shortcut_size := ui_measure_text(.Data, shortcut, 0)
-        ui_draw_text(
-            .Data,
-            shortcut,
-            {bounds.x + bounds.width - shortcut_size.x - 10, bounds.y + 12},
-            0,
-            {139, 149, 160, 255},
-        )
+        icon_tint := selected ? canvas2d.Color{255, 255, 255, 255} : canvas2d.Color{225, 231, 235, 255}
+        editor_ui_draw_tool_icon(editor, rock_tool ? int(Authoring_Tool.Formations) : int(tool), bounds, icon_tint)
+        if hovered do hovered_tool = index
+    }
+    if hovered_tool >= 0 {
+        if hovered_tool == AUTHORING_TOOL_COUNT {
+            bounds := editor_ui_tool_bounds(layout, hovered_tool)
+            size := ui_measure_text(.Label, "ROCKS", .5)
+            tooltip := canvas2d.Rectangle{bounds.x + bounds.width + 8, bounds.y + 7, size.x + 20, 30}
+            canvas2d.DrawRectangleRounded(tooltip, .14, 5, {17, 20, 24, 252})
+            canvas2d.DrawRectangleRoundedLinesEx(tooltip, .14, 5, 1, {89, 101, 114, 255})
+            ui_draw_text(.Label, "ROCKS", {tooltip.x + 10, tooltip.y + 8}, .5, {235, 239, 243, 255})
+        } else {
+            editor_ui_draw_tooltip(
+                editor_ui_tool_bounds(layout, hovered_tool),
+                AUTHORING_TOOL_DISPLAY_ORDER[hovered_tool],
+            )
+        }
     }
     editor_ui_panel_button(editor_ui_focus_bounds(layout), "FOCUS  [F]")
     editor_ui_panel_button(editor_ui_spawn_bounds(layout), "ENTER WORLD")
@@ -465,7 +561,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     canvas2d.DrawRectangleRoundedLinesEx(panel, .025, 6, 1, {62, 69, 78, 255})
     ui_draw_text(
         .Heading,
-        authoring_tool_name(editor.authoring_tool),
+        editor.rock_placement_mode ? "ROCKS" : authoring_tool_name(editor.authoring_tool),
         {panel.x + 14, panel.y + 14},
         .5,
         {235, 239, 243, 255},
@@ -491,18 +587,37 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         row += 1
     case .Formations:
         bounds := editor_ui_slider_bounds(layout, row)
-        profile := editor.structure_auto_kind ? "AUTOMATIC" : formation_kind_name(editor.structure_kind)
+        profile :=
+            editor.rock_placement_mode ? "ROCK" : editor.structure_auto_kind ? "AUTOMATIC" : formation_kind_name(editor.structure_kind)
         ui_draw_text(.Label, "PROFILE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
         profile_size := ui_measure_text(.Data, profile, .5)
         ui_draw_text(.Data, profile, {bounds.x + bounds.width - profile_size.x, bounds.y}, .5, {134, 224, 216, 255})
         half := (bounds.width - 6) * .5
-        editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "AUTO", editor.structure_auto_kind)
-        editor_ui_panel_button(
-            {bounds.x + half + 6, bounds.y + 24, half, 30},
-            "CYCLE  [V]",
-            !editor.structure_auto_kind,
-        )
-        row += 2
+        if !editor.rock_placement_mode {
+            editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "AUTO", editor.structure_auto_kind)
+            editor_ui_panel_button(
+                {bounds.x + half + 6, bounds.y + 24, half, 30},
+                "CYCLE  [V]",
+                !editor.structure_auto_kind,
+            )
+            row += 2
+        } else {
+            ui_draw_text(.Data, "SMOOTH SHADED · VARIANTS", {bounds.x, bounds.y + 28}, .32, {139, 149, 160, 255})
+            row += 1
+            material_bounds := editor_ui_slider_bounds(layout, row)
+            gap := f32(5)
+            third := (material_bounds.width - gap * 2) / 3
+            ui_draw_text(.Label, "MATERIAL", {material_bounds.x, material_bounds.y}, .5, {209, 215, 222, 255})
+            labels := [3]cstring{"PALE", "GRAY", "DARK"}
+            for variant in 0 ..< 3 {
+                editor_ui_panel_button(
+                    {material_bounds.x + f32(variant) * (third + gap), material_bounds.y + 24, third, 30},
+                    labels[variant],
+                    editor.rock_material_variant == variant,
+                )
+            }
+            row += 1
+        }
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
             "RADIUS (m)",
@@ -542,7 +657,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         } else {
             ui_draw_text(
                 .Data,
-                "DRAG TO PLACE FORMATIONS",
+                editor.rock_placement_mode ? "DRAG TO SPAWN ROCKS" : "DRAG TO PLACE FORMATIONS",
                 {panel.x + 14, panel.y + 82 + f32(row) * 48},
                 .4,
                 {139, 149, 160, 255},
@@ -610,6 +725,28 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             1,
         )
         row += 1
+        if editor.authoring_tool == .Cliff {
+            bounds := editor_ui_slider_bounds(layout, row)
+            gap := f32(5)
+            button_width := (bounds.width - gap * 2) / 3
+            ui_draw_text(.Label, "ELEVATION", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+            editor_ui_panel_button(
+                {bounds.x, bounds.y + 24, button_width, 30},
+                "RAISE",
+                editor.cliff_elevation_mode == .Raise,
+            )
+            editor_ui_panel_button(
+                {bounds.x + button_width + gap, bounds.y + 24, button_width, 30},
+                "LOWER",
+                editor.cliff_elevation_mode == .Lower,
+            )
+            editor_ui_panel_button(
+                {bounds.x + (button_width + gap) * 2, bounds.y + 24, button_width, 30},
+                "SPLIT",
+                editor.cliff_elevation_mode == .Split,
+            )
+            row += 1
+        }
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
             "HEIGHT (m)",
@@ -631,7 +768,8 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             ui_draw_text(.Label, "FOOTPRINT", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
             ui_draw_text(.Data, "42 x 30 m", {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
             label: cstring = editor.airport_preview_valid ? "CLICK TO PLACE AIRPORT" : "SITE MUST BE DRY LAND"
-            color := editor.airport_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
+            color :=
+                editor.airport_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
             ui_draw_text(.Data, label, {bounds.x, bounds.y + 38}, .4, color)
             break
         }
@@ -702,7 +840,8 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         ui_draw_text(.Data, "108 x 84 m", {bounds.x + 104, bounds.y}, .5, {134, 224, 216, 255})
         preview_label: cstring =
             editor.marina_preview_valid ? "CLICK TO PLACE CURRENT MARINA" : "NO SUITABLE CANDIDATE"
-        preview_color := editor.marina_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
+        preview_color :=
+            editor.marina_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
         ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)
         score_color := canvas2d.Color{231, 150, 126, 255}
         if editor.marina_brush_suitability >= MARINA_BRUSH_MINIMUM_SUITABILITY {
@@ -743,7 +882,8 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         )
         preview_label: cstring =
             editor.wreck_preview_valid ? "CLICK TO PLACE CURRENT WRECK" : "MOVE AWAY FROM ANOTHER WRECK"
-        preview_color := editor.wreck_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
+        preview_color :=
+            editor.wreck_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
         ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)
         if editor.wreck_preview_valid {
             ui_draw_text(.Data, "RIGHT CLICK TO REROLL", {bounds.x, bounds.y + 66}, .4, {134, 224, 216, 255})
@@ -770,7 +910,8 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             {134, 224, 216, 255},
         )
         preview_label: cstring = editor.farm_preview_valid ? "CLICK TO PLACE BEST CANDIDATE" : "NO SUITABLE CANDIDATE"
-        preview_color := editor.farm_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
+        preview_color :=
+            editor.farm_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
         ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)
         if editor.farm_preview_valid {
             ui_draw_text(
@@ -966,9 +1107,13 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
                 editor.editor_ui.left_collapsed = true
                 return
             }
-            for index in 0 ..< AUTHORING_TOOL_COUNT {
+            for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
                 if canvas2d.CheckCollisionPointRec(mouse, editor_ui_tool_bounds(layout, index)) {
-                    authoring_select_tool(editor, Authoring_Tool(index))
+                    if index == AUTHORING_TOOL_COUNT {
+                        authoring_select_rock_tool(editor)
+                    } else {
+                        authoring_select_tool(editor, AUTHORING_TOOL_DISPLAY_ORDER[index])
+                    }
                     return
                 }
             }
@@ -985,7 +1130,12 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             return
         }
         if layout.inspector_visible {
-            collapse := canvas2d.Rectangle{layout.inspector.x + layout.inspector.width - 39, layout.inspector.y + 10, 29, 28}
+            collapse := canvas2d.Rectangle {
+                layout.inspector.x + layout.inspector.width - 39,
+                layout.inspector.y + 10,
+                29,
+                28,
+            }
             if canvas2d.CheckCollisionPointRec(mouse, collapse) {
                 editor.editor_ui.inspector_collapsed = true
                 return
@@ -1008,13 +1158,33 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         row += 1
     case .Formations:
         bounds := editor_ui_slider_bounds(layout, row)
-        half := (bounds.width - 6) * .5
-        if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, half, 30}) {
-            editor.structure_auto_kind = true
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 24, half, 30}) {
-            structure_cycle_kind(editor)
+        if !editor.rock_placement_mode {
+            half := (bounds.width - 6) * .5
+            if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, half, 30}) {
+                editor.structure_auto_kind = true
+            } else if pressed &&
+               canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 24, half, 30}) {
+                structure_cycle_kind(editor)
+            }
+            row += 2
+        } else {
+            row += 1
+            material_bounds := editor_ui_slider_bounds(layout, row)
+            gap := f32(5)
+            third := (material_bounds.width - gap * 2) / 3
+            if pressed {
+                for variant in 0 ..< 3 {
+                    variant_bounds := canvas2d.Rectangle {
+                        material_bounds.x + f32(variant) * (third + gap),
+                        material_bounds.y + 24,
+                        third,
+                        30,
+                    }
+                    if canvas2d.CheckCollisionPointRec(mouse, variant_bounds) do editor.rock_material_variant = variant
+                }
+            }
+            row += 1
         }
-        row += 2
         _ = editor_ui_slider_input(
             editor,
             layout,
@@ -1069,6 +1239,27 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             terrain.BASE_CELL_SIZE,
         )
         row += 1
+        if editor.authoring_tool == .Cliff {
+            bounds := editor_ui_slider_bounds(layout, row)
+            gap := f32(5)
+            button_width := (bounds.width - gap * 2) / 3
+            if pressed {
+                if canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, button_width, 30}) {
+                    editor.cliff_elevation_mode = .Raise
+                } else if canvas2d.CheckCollisionPointRec(
+                    mouse,
+                    {bounds.x + button_width + gap, bounds.y + 24, button_width, 30},
+                ) {
+                    editor.cliff_elevation_mode = .Lower
+                } else if canvas2d.CheckCollisionPointRec(
+                    mouse,
+                    {bounds.x + (button_width + gap) * 2, bounds.y + 24, button_width, 30},
+                ) {
+                    editor.cliff_elevation_mode = .Split
+                }
+            }
+            row += 1
+        }
         _ = editor_ui_slider_input(
             editor,
             layout,
@@ -1111,7 +1302,8 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             editor.architecture_brush_preset = .Small
         } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + third + 6, bounds.y + 24, third, 30}) {
             editor.architecture_brush_preset = .Medium
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}) {
+        } else if pressed &&
+           canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}) {
             editor.architecture_brush_preset = .Large
         }
         row += 1

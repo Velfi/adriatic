@@ -118,6 +118,7 @@ static const uint MATERIAL_CAR_PAINT = 21;
 static const uint MATERIAL_MATERIAL_LAB = 22;
 static const uint MATERIAL_SETTLEMENT = 23;
 static const uint MATERIAL_FOG_SHELL = 24;
+static const uint MATERIAL_ROCK = 25;
 
 float fog_bank_density(float3 p, float4 a, float4 b, float4 c) {
     float2 offset = p.xz - a.xy;
@@ -685,6 +686,41 @@ float3 shade_material_lab(VertexOutput input) {
     material.metallic = saturate(specular);
     material.roughness = clamp(roughness, .02, 1.0);
     return shade_brdf(material, normal, input.world_position);
+}
+
+float3 shade_rock(VertexOutput input) {
+    float4 albedo = material_lab_albedo.Sample(material_lab_albedo_sampler, input.uv);
+    float roughness_map = material_lab_roughness.Sample(material_lab_roughness_sampler, input.uv).r;
+    float3 map_normal = material_lab_normal.Sample(material_lab_normal_sampler, input.uv).xyz * 2.0 - 1.0;
+    float3 geometric_normal = normalize(input.normal);
+    float3 tangent = float3(-geometric_normal.z, 0.0, geometric_normal.x);
+    tangent = dot(tangent, tangent) < .01 ? float3(1.0, 0.0, 0.0) : normalize(tangent);
+    float3 bitangent = normalize(cross(geometric_normal, tangent));
+    float3 mapped_normal = normalize(
+        tangent * map_normal.x * .55 +
+        bitangent * map_normal.y * .55 +
+        geometric_normal * max(map_normal.z, .25)
+    );
+
+    float texture_mix = saturate(input.color.a);
+    float3 base_color = lerp(input.color.rgb, albedo.rgb * input.color.rgb, texture_mix);
+    float3 view_direction = normalize(push.camera_position.xyz - input.world_position);
+
+    // Normal derivatives spike where a pixel quad crosses a faceted mesh edge.
+    // The view term keeps silhouettes readable as the camera moves. Strength
+    // zero bypasses both effects, making dynamic edge shading truly optional.
+    float crease_metric = length(ddx(geometric_normal)) + length(ddy(geometric_normal));
+    float crease = smoothstep(.035, .28, crease_metric);
+    float rim = pow(1.0 - saturate(dot(mapped_normal, view_direction)), 2.0);
+    float edge = saturate((crease * 1.1 + rim * .65) * max(input.material.x, 0.0));
+    float3 warm_edge = base_color * 1.25 + float3(.045, .036, .018);
+    base_color = lerp(base_color, warm_edge, edge * .88);
+
+    BrdfMaterial material;
+    material.base_color = base_color;
+    material.metallic = 0.0;
+    material.roughness = clamp(lerp(input.material.y, roughness_map, texture_mix), .18, 1.0);
+    return shade_brdf(material, mapped_normal, input.world_position);
 }
 
 float3 shade_settlement_material(VertexOutput input) {
@@ -2230,6 +2266,10 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             break;
         case MATERIAL_MATERIAL_LAB:
             base = shade_material_lab(input);
+            break;
+        case MATERIAL_ROCK:
+            base = shade_rock(input);
+            output_alpha = 1.0;
             break;
         case MATERIAL_SETTLEMENT:
             base = shade_settlement_material(input);

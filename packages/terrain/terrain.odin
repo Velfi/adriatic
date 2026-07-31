@@ -445,6 +445,16 @@ Formation_Kind :: enum {
     Ruins,
 }
 
+Cliff_Elevation_Mode :: enum {
+    Raise,
+    Lower,
+    Split,
+}
+
+Cliff_Point :: struct {
+    x, z: f32,
+}
+
 LEGACY_STRUCTURE_CAPACITY :: 256
 CITY_DENSITY_SAMPLES :: SAMPLES_PER_LEVEL
 PROJECT_FILE_MAGIC :: [8]u8{'A', 'D', 'R', 'T', 'E', 'R', 'R', '7'}
@@ -600,6 +610,7 @@ project_file_magic_is :: proc(header: ^Project_File_Header, magic: [8]u8) -> boo
 
 project_replace :: proc(project, loaded: ^Project) {
     if project == nil || loaded == nil do return
+    _ = remove_legacy_cliffs(loaded)
     for &structure in loaded.structures[:loaded.structure_count] {
         // Structures are solid world geometry. Older projects inherited the
         // translucent editor swatch alpha (220), which made their terrain
@@ -609,6 +620,131 @@ project_replace :: proc(project, loaded: ^Project) {
     delete(project.structures)
     project^ = loaded^
     loaded.structures = nil
+}
+
+remove_legacy_cliffs :: proc(project: ^Project) -> int {
+    if project == nil || project.structure_count <= 0 do return 0
+    write_index := 0
+    for structure in project.structures[:project.structure_count] {
+        // Cliff formations were replaced by authored heightmap cliffs. Drop
+        // their legacy mesh records on every supported project load.
+        if structure.kind == .Cliff do continue
+        project.structures[write_index] = structure
+        write_index += 1
+    }
+    removed := project.structure_count - write_index
+    project.structure_count = write_index
+    resize(&project.structures, write_index)
+    if removed > 0 do project.revision += 1
+    return removed
+}
+
+apply_cliff_stroke :: proc(
+    project: ^Project,
+    points: []Cliff_Point,
+    width, height: f32,
+    mode: Cliff_Elevation_Mode,
+) -> bool {
+    if project == nil || len(points) < 2 || width <= 0 || height <= 0 do return false
+    min_world_x, max_world_x := points[0].x, points[0].x
+    min_world_z, max_world_z := points[0].z, points[0].z
+    has_segment := false
+    for index in 0 ..< len(points) - 1 {
+        dx, dz := points[index + 1].x - points[index].x, points[index + 1].z - points[index].z
+        if dx * dx + dz * dz > .0001 do has_segment = true
+    }
+    if !has_segment do return false
+    for point in points[1:] {
+        min_world_x = min(min_world_x, point.x)
+        max_world_x = max(max_world_x, point.x)
+        min_world_z = min(min_world_z, point.z)
+        max_world_z = max(max_world_z, point.z)
+    }
+    authored_level := CLIPMAP_LEVELS - 1
+    for level in 0 ..< CLIPMAP_LEVELS {
+        if level_contains_bounds(
+            &project.levels[level],
+            min_world_x - width,
+            min_world_z - width,
+            max_world_x + width,
+            max_world_z + width,
+        ) {
+            authored_level = level
+            break
+        }
+    }
+    data := &project.levels[authored_level]
+    effective_width := max(width, data.cell_size * 1.5)
+    face_half_width := max(data.cell_size * .5, effective_width * .04)
+    min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
+        data,
+        min_world_x - effective_width,
+        min_world_z - effective_width,
+        max_world_x + effective_width,
+        max_world_z + effective_width,
+    )
+    if !overlaps do return false
+    changed := false
+    for z in min_z ..= max_z {
+        sample_z := data.origin_z + f32(z) * data.cell_size
+        for x in min_x ..= max_x {
+            sample_x := data.origin_x + f32(x) * data.cell_size
+            nearest_distance_squared := f32(3.402823e38)
+            nearest_signed_distance := f32(0)
+            for segment in 0 ..< len(points) - 1 {
+                start, end := points[segment], points[segment + 1]
+                segment_x, segment_z := end.x - start.x, end.z - start.z
+                length_squared := segment_x * segment_x + segment_z * segment_z
+                if length_squared <= .0001 do continue
+                t := clamp(((sample_x - start.x) * segment_x + (sample_z - start.z) * segment_z) / length_squared, 0, 1)
+                closest_x, closest_z := start.x + segment_x * t, start.z + segment_z * t
+                offset_x, offset_z := sample_x - closest_x, sample_z - closest_z
+                distance_squared := offset_x * offset_x + offset_z * offset_z
+                if distance_squared >= nearest_distance_squared do continue
+                nearest_distance_squared = distance_squared
+                distance := f32(math.sqrt(f64(distance_squared)))
+                cross := segment_x * (sample_z - start.z) - segment_z * (sample_x - start.x)
+                nearest_signed_distance = cross >= 0 ? distance : -distance
+            }
+            distance := math.abs(nearest_signed_distance)
+            if distance > effective_width do continue
+            outer := clamp((effective_width - distance) / max(effective_width - face_half_width, data.cell_size), 0, 1)
+            outer = outer * outer * (3 - 2 * outer)
+            side := clamp(nearest_signed_distance / face_half_width, -1, 1)
+            side = side * .5 + .5
+            offset: f32
+            switch mode {
+            case .Raise:
+                offset = height * side
+            case .Lower:
+                offset = -height * (1 - side)
+            case .Split:
+                offset = height * (side - .5)
+            }
+            index := sample_index(x, z)
+            // Each sample is written once and the operation never samples a
+            // neighboring edited height, so this remains the immutable
+            // pre-stroke value regardless of traversal order.
+            next := data.heights[index] + offset * outer
+            if next != data.heights[index] {
+                data.heights[index] = next
+                changed = true
+            }
+        }
+    }
+    if !changed do return false
+    refresh_derived_overlaps(project)
+    for &structure in project.structures[:project.structure_count] {
+        if structure.center_x < min_world_x - effective_width ||
+           structure.center_x > max_world_x + effective_width ||
+           structure.center_z < min_world_z - effective_width ||
+           structure.center_z > max_world_z + effective_width {
+            continue
+        }
+        structure.base_y = sample_height(project, 0, structure.center_x, structure.center_z)
+    }
+    project.revision += 1
+    return true
 }
 
 structure_migrate_v5 :: proc(source: Structure_V5) -> Structure {
@@ -1115,7 +1251,7 @@ formation_kind_next :: proc(kind: Formation_Kind) -> Formation_Kind {
     case .Mountain:
         return .Ridge
     case .Ridge:
-        return .Cliff
+        return .Foliage
     case .Cliff:
         return .Foliage
     case .Foliage:

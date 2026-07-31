@@ -139,7 +139,7 @@ fixture_migration_step_v0001_to_v0002 :: proc(
     return step_error
 }
 
-fixture_migration_production_steps: [12]Fixture_Migration_Step = {
+fixture_migration_production_steps: [13]Fixture_Migration_Step = {
     {
         from_version = FIXTURE_MIGRATION_V0001_TO_V0002_FROM_VERSION,
         to_version = FIXTURE_MIGRATION_V0001_TO_V0002_TO_VERSION,
@@ -211,6 +211,12 @@ fixture_migration_production_steps: [12]Fixture_Migration_Step = {
         to_version = FIXTURE_MIGRATION_V0012_TO_V0013_TO_VERSION,
         wrapper = fixture_migration_step_v0012_to_v0013,
         change_id = "enum-add:adriatic:packages/buildings.Archetype.Clinic",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0013_TO_V0014_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0013_TO_V0014_TO_VERSION,
+        wrapper = fixture_migration_step_v0013_to_v0014,
+        change_id = "field-add:adriatic:src.Fixture.cliff_elevation_mode",
     },
 }
 

@@ -3,6 +3,7 @@ package tests
 import flight "../packages/flight"
 import libellula "../packages/libellula"
 import "core:math"
+import "core:math/linalg"
 import "core:testing"
 
 @(test)
@@ -12,6 +13,22 @@ fixed_wing_aerodynamics :: proc(t: ^testing.T) {
     testing.expect(t, telemetry.airspeed == 40)
     testing.expect(t, forces.parasitic_drag.z > 0)
     testing.expect(t, !telemetry.is_stalling)
+}
+
+@(test)
+fixed_wing_ground_effect_reduces_induced_drag_near_surface :: proc(t: ^testing.T) {
+    airframe := flight.default_airframe()
+    mass := airframe.maximum_gross_mass_kg
+    air_velocity := flight.Vec3{0, 0, -40}
+    basis := flight.identity_basis()
+    free_air, _ := flight.calculate_forces(air_velocity, basis, mass, airframe, 1, 0)
+    near_ground, _ := flight.calculate_forces(air_velocity, basis, mass, airframe, 1, 0, .5)
+    on_ground, _ := flight.calculate_forces(air_velocity, basis, mass, airframe, 1, 0, 0)
+
+    free_air_drag := linalg.length(free_air.induced_drag)
+    testing.expect(t, linalg.length(near_ground.induced_drag) < free_air_drag)
+    testing.expect(t, linalg.length(on_ground.induced_drag) == 0)
+    testing.expect(t, near_ground.lift == free_air.lift)
 }
 
 @(test)

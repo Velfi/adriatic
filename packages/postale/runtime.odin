@@ -210,14 +210,19 @@ reset :: proc(runtime: ^Runtime, ground_height: f32) {
     runtime.crashed = false
 }
 
-landing_intent_candidate :: proc(runtime: ^Runtime, ground_height: f32) -> bool {
+landing_intent_candidate :: proc(
+    runtime: ^Runtime,
+    ground_height: f32,
+    wind: flight.Vec3 = {},
+) -> bool {
     if runtime == nil || runtime.grounded || runtime.crashed do return false
     height_agl := runtime.body.position.y - ground_height - runtime.tuning.ground_clearance
     if height_agl <= 0 || height_agl > LANDING_INTENT_HEIGHT do return false
     if runtime.body.velocity.y >= -.15 do return false
     if runtime.throttle > runtime.tuning.flap_auto_throttle do return false
 
-    airspeed := linalg.length(runtime.body.velocity)
+    air_velocity := runtime.body.velocity - wind
+    airspeed := linalg.length(air_velocity)
     stall_speed := flight.effective_stall_speed(runtime.airframe.mass_kg, runtime.airframe)
     if airspeed < stall_speed * 1.05 || airspeed > max_f32(runtime.tuning.flap_auto_speed, stall_speed * 1.75) {
         return false
@@ -229,7 +234,7 @@ landing_intent_candidate :: proc(runtime: ^Runtime, ground_height: f32) -> bool 
     // tests even when they briefly pass through the landing altitude band.
     pitch_radians := math.asin(clamp(basis.forward.y, -1, 1))
     if math.abs(pitch_radians) > .4363323 do return false
-    local_velocity := flight.world_to_local(basis, runtime.body.velocity)
+    local_velocity := flight.world_to_local(basis, air_velocity)
     if local_velocity.z <= 0 || local_velocity.z < airspeed * .72 do return false
     local_rate := flight.world_to_local(basis, runtime.body.angular_velocity_world)
     if math.abs(local_rate.x) > .6 || math.abs(local_rate.y) > .6 || math.abs(local_rate.z) > .6 {
@@ -238,7 +243,11 @@ landing_intent_candidate :: proc(runtime: ^Runtime, ground_height: f32) -> bool 
     return true
 }
 
-update_landing_intent :: proc(runtime: ^Runtime, ground_height, delta_seconds: f32) {
+update_landing_intent :: proc(
+    runtime: ^Runtime,
+    ground_height, delta_seconds: f32,
+    wind: flight.Vec3 = {},
+) {
     if runtime == nil || delta_seconds <= 0 do return
     dt := min_f32(delta_seconds, .05)
     // A takeoff roll or go-around must retract landing configuration promptly;
@@ -248,7 +257,7 @@ update_landing_intent :: proc(runtime: ^Runtime, ground_height, delta_seconds: f
         runtime.landing_intent = false
         return
     }
-    if landing_intent_candidate(runtime, ground_height) {
+    if landing_intent_candidate(runtime, ground_height, wind) {
         runtime.landing_intent_seconds = min_f32(LANDING_INTENT_CONFIRM_SECONDS, runtime.landing_intent_seconds + dt)
     } else {
         release_rate := LANDING_INTENT_CONFIRM_SECONDS / LANDING_INTENT_RELEASE_SECONDS
@@ -262,6 +271,7 @@ step_airborne_model :: proc(
     command: flight.Control_Command,
     delta_seconds: f32,
     wind: flight.Vec3 = {},
+    ground_distance: f32 = -1,
 ) {
     if runtime == nil || delta_seconds <= 0 do return
     modifiers := flight.model_modifiers_from_runtime(runtime.flight_runtime)
@@ -274,6 +284,7 @@ step_airborne_model :: proc(
             runtime.flight_runtime,
             wind,
             delta_seconds,
+            ground_distance,
         )
     case .Ace_Arcade:
         runtime.ace_telemetry = flight.ace_step(
@@ -328,8 +339,18 @@ step_normalized_command :: proc(
     runtime.flap_fraction = command.flap_fraction
 
     runtime.was_grounded = runtime.grounded
+    ground_orientation := runtime.body.orientation
+    ground_horizontal_speed := f32(math.sqrt(f64(
+        runtime.body.velocity.x * runtime.body.velocity.x +
+        runtime.body.velocity.z * runtime.body.velocity.z,
+    )))
+    ground_was_settled := runtime.grounded && ground_horizontal_speed < .25 && command.throttle <= .01
     vertical_before := runtime.body.velocity.y
-    step_airborne_model(runtime, command, dt, wind)
+    ground_distance := max_f32(
+        0,
+        runtime.body.position.y - ground_height - runtime.tuning.ground_clearance,
+    )
+    step_airborne_model(runtime, command, dt, wind, ground_distance)
 
     result := resolve_ground_contact(runtime, ground_height, vertical_before, dt)
     brake_target := runtime.grounded && ground_brake_requested ? f32(1) : f32(0)
@@ -339,6 +360,14 @@ step_normalized_command :: proc(
     brake_response := brake_target > runtime.ground_brake_amount ? f32(8) : f32(5)
     runtime.ground_brake_amount = approach(runtime.ground_brake_amount, brake_target, dt * brake_response)
     if runtime.grounded {
+        if runtime.was_grounded {
+            // The aerodynamic solver owns attitude in flight, but tires and
+            // landing gear constrain a settled aircraft's pitch and bank.
+            // Restore the pre-step ground attitude before applying the finite
+            // wheel forces below so a parked Postale cannot accumulate wind-
+            // driven rotation one frame at a time.
+            runtime.body.orientation = ground_orientation
+        }
         if runtime.was_grounded {
             runtime.grounded_time += dt
         } else {
@@ -363,6 +392,14 @@ step_normalized_command :: proc(
             ground_basis.forward * forward_speed +
             ground_basis.right * lateral_speed +
             flight.Vec3{0, vertical_speed, 0}
+        if ground_was_settled {
+            // Static tire friction holds a parked aircraft against weather.
+            // Once propulsion or an existing ground roll breaks that static
+            // contact, the finite coast and lateral-friction model takes over.
+            runtime.body.velocity.x = 0
+            runtime.body.velocity.z = 0
+            runtime.body.angular_velocity_world = {}
+        }
         runtime.body.angular_velocity_world.x *= max_f32(0, 1 - dt * 8)
         runtime.body.angular_velocity_world.z *= max_f32(0, 1 - dt * 8)
         // Positive yaw input is pilot-right. Around world-up, however, the
@@ -415,12 +452,12 @@ step :: proc(
         runtime.tuning.yaw_rate_decrease,
         dt,
     )
-    update_landing_intent(runtime, ground_height, dt)
+    update_landing_intent(runtime, ground_height, dt, wind)
     flap_target: f32
     if runtime.grounded {
         flap_target = 1
         if runtime.throttle > .55 do flap_target = TAKEOFF_FLAP_FRACTION
-    } else if (runtime.landing_intent || landing_intent_candidate(runtime, ground_height)) &&
+    } else if (runtime.landing_intent || landing_intent_candidate(runtime, ground_height, wind)) &&
        speed < runtime.tuning.flap_auto_speed {
         // Preserve the Postale's low-speed landing configuration, but only
         // after the motion itself looks like an approach. Low-speed aerobatics
@@ -431,7 +468,11 @@ step :: proc(
 
     if runtime.grounded {
         ground_basis := flight.basis_from_orientation(runtime.body.orientation)
-        forward_speed := math.abs(linalg.dot(runtime.body.velocity, ground_basis.forward))
+        // Rotation is an aerodynamic threshold, so measure the flow over the
+        // wing rather than wheel speed. A headwind should let the pilot rotate
+        // sooner, while a tailwind should require a longer ground roll.
+        air_velocity := runtime.body.velocity - wind
+        forward_airspeed := math.abs(linalg.dot(air_velocity, ground_basis.forward))
         rotation_speed :=
             flight.effective_stall_speed(runtime.airframe.mass_kg, runtime.airframe, runtime.flap_fraction) *
             runtime.tuning.takeoff_speed_scale
@@ -440,7 +481,11 @@ step :: proc(
             0,
             1,
         )
-        speed_fraction := clamp((forward_speed - rotation_speed * .9) / max_f32(rotation_speed * .1, .01), 0, 1)
+        speed_fraction := clamp(
+            (forward_airspeed - rotation_speed * .9) / max_f32(rotation_speed * .1, .01),
+            0,
+            1,
+        )
         ground_pitch_target := f32(0)
         if runtime.throttle > runtime.tuning.takeoff_throttle {
             ground_pitch_target = MAX_GROUND_PITCH_RADIANS * rotation_fraction * speed_fraction

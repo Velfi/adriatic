@@ -2,6 +2,7 @@ package rondine
 
 import flight "../flight"
 import "core:math"
+import "core:math/linalg"
 import "core:testing"
 
 @(test)
@@ -50,6 +51,22 @@ rondine_responds_gradually_to_crosswind :: proc(t: ^testing.T) {
     testing.expect(t, windy.body.position.z > calm.body.position.z + 1)
     testing.expect(t, windy.body.velocity.z > calm.body.velocity.z)
     testing.expect(t, windy.body.velocity.z < 12)
+}
+
+@(test)
+rondine_speed_cap_and_telemetry_are_air_relative :: proc(t: ^testing.T) {
+    runtime := new_runtime({0, GROUND_CLEARANCE + 10, 0})
+    runtime.grounded = false
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    wind := basis.forward * 18
+    runtime.body.velocity = wind + basis.forward * (runtime.tuning.maximum_speed + 20)
+
+    step(&runtime, {}, 0, 1.0 / 120.0, wind)
+
+    air_velocity := runtime.body.velocity - wind
+    testing.expect(t, linalg.length(air_velocity) <= runtime.tuning.maximum_speed + .01)
+    testing.expect(t, runtime.telemetry.speed <= runtime.tuning.maximum_speed + .01)
+    testing.expect(t, linalg.length(runtime.body.velocity) > runtime.telemetry.speed + 10)
 }
 
 @(test)

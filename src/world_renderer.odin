@@ -632,6 +632,7 @@ World_Material_Kind :: enum u32 {
     Material_Lab,
     Settlement_Material,
     Fog_Shell,
+    Rock,
 }
 
 // Stable semantic surface IDs shared by settlement generators. Keep existing
@@ -9440,13 +9441,7 @@ world_hero_civic_box :: proc(
     local_center, size: third_person.Vec3,
     material: Settlement_Material,
 ) {
-    x, z := world_rotate_xz(
-        structure.center_x,
-        structure.center_z,
-        local_center.x,
-        local_center.z,
-        structure.rotation,
-    )
+    x, z := world_rotate_xz(structure.center_x, structure.center_z, local_center.x, local_center.z, structure.rotation)
     world_settlement_material_box_rotated(
         {x, structure.base_y + local_center.y, z},
         size,
@@ -9455,11 +9450,7 @@ world_hero_civic_box :: proc(
     )
 }
 
-world_architecture_hero_civic :: proc(
-    structure: terrain.Structure,
-    kind: hero.Kind,
-    lod: Structure_LOD = .Near,
-) {
+world_architecture_hero_civic :: proc(structure: terrain.Structure, kind: hero.Kind, lod: Structure_LOD = .Near) {
     config := hero.defaults(kind)
     config.frontage = structure.width
     config.depth = structure.depth
@@ -10527,6 +10518,68 @@ world_small_faceted_rock :: proc(structure: terrain.Structure) {
     }
 }
 
+world_cliff_rock_asset_point :: proc(
+    structure: terrain.Structure,
+    mesh: ^gltf.Glb_Mesh,
+    vertex: gltf.Vec3,
+) -> third_person.Vec3 {
+    span_x := max(mesh.max.x - mesh.min.x, f32(.001))
+    span_y := max(mesh.max.y - mesh.min.y, f32(.001))
+    span_z := max(mesh.max.z - mesh.min.z, f32(.001))
+    local_x := (vertex.x - (mesh.min.x + mesh.max.x) * .5) * structure.width / span_x
+    local_y := (vertex.y - mesh.min.y) * structure.height / span_y
+    local_z := (vertex.z - (mesh.min.z + mesh.max.z) * .5) * structure.depth / span_z
+    world_x, world_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
+    return {world_x, structure.base_y + local_y, world_z}
+}
+
+world_cliff_rock_asset_normal :: proc(
+    structure: terrain.Structure,
+    mesh: ^gltf.Glb_Mesh,
+    vertex: gltf.Vec3,
+) -> third_person.Vec3 {
+    center_x := (mesh.min.x + mesh.max.x) * .5
+    center_y := (mesh.min.y + mesh.max.y) * .5
+    center_z := (mesh.min.z + mesh.max.z) * .5
+    span_x := max(mesh.max.x - mesh.min.x, f32(.001))
+    span_y := max(mesh.max.y - mesh.min.y, f32(.001))
+    span_z := max(mesh.max.z - mesh.min.z, f32(.001))
+    normal := linalg.normalize0(
+        [3]f32{(vertex.x - center_x) / span_x, (vertex.y - center_y) / span_y, (vertex.z - center_z) / span_z},
+    )
+    x, z := world_rotate_xz(0, 0, normal.x, normal.z, structure.rotation)
+    return linalg.normalize0([3]f32{x, normal.y, z})
+}
+
+world_cliff_rock_asset :: proc(structure: terrain.Structure) -> bool {
+    asset_index := int(structure.seed % CLIFF_ROCK_ASSET_COUNT)
+    if !cliff_rock_assets.ready[asset_index] do return false
+    mesh := &cliff_rock_assets.meshes[asset_index]
+    color := canvas2d.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]}
+    for primitive in mesh.primitives {
+        end := min(primitive.first + primitive.count, len(mesh.indices))
+        for index := primitive.first; index + 2 < end; index += 3 {
+            for corner in 0 ..< 3 {
+                vertex_index := mesh.indices[index + corner]
+                if vertex_index >= u32(len(mesh.vertices)) do continue
+                source := mesh.vertices[vertex_index]
+                point := world_cliff_rock_asset_point(structure, mesh, source)
+                normal := world_cliff_rock_asset_normal(structure, mesh, source)
+                vertex := world_vertex(point, color)
+                vertex.kind = .Rock
+                vertex.normal = {normal.x, normal.y, normal.z}
+                vertex.material = {1.05, .86}
+                if vertex_index < u32(len(mesh.texcoords)) {
+                    uv := mesh.texcoords[vertex_index]
+                    vertex.uv = {uv.x, uv.y}
+                }
+                append(&world_renderer.vertices, vertex)
+            }
+        }
+    }
+    return true
+}
+
 @(no_instrumentation)
 world_formation_sea_vegetation_band :: proc(
     structure: terrain.Structure,
@@ -10605,7 +10658,9 @@ world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project 
             canvas2d.Color{structure.color[0], structure.color[1], structure.color[2], structure.color[3]},
         )
     case .Rock:
-        if max(structure.width, structure.depth, structure.height) <= 5 && lod != .Far {
+        if structure.color[3] == 254 && world_cliff_rock_asset(structure) {
+            // Authored cliff-rock kit instance.
+        } else if max(structure.width, structure.depth, structure.height) <= 5 && lod != .Far {
             world_small_faceted_rock(structure)
         } else {
             world_radial_formation(structure, {1, .94, .62, .20}, {0, .24, .58, .88}, 1, .96, lod)
@@ -10858,6 +10913,30 @@ world_structure_preview_cluster :: proc(editor: ^Editor) {
 world_curve_preview :: proc(editor: ^Editor) {
     if editor == nil || !editor.curve_drawing || editor.curve_point_count < 2 do return
     for index in 0 ..< editor.curve_point_count - 1 {
+        if editor.curve_cliff_mode {
+            start, end := editor.curve_points[index], editor.curve_points[index + 1]
+            dx, dz := end.x - start.x, end.z - start.z
+            length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            if length <= .001 do continue
+            // A filled ribbon on the directed left side makes the eventual
+            // high side legible without previewing obsolete cliff geometry.
+            left_x, left_z := -dz / length, dx / length
+            marker_width := min(editor.curve_width * .35, editor.project.levels[0].cell_size * 2)
+            a_y := terrain.sample_height(&editor.project, 0, start.x, start.z) + .10
+            b_y := terrain.sample_height(&editor.project, 0, end.x, end.z) + .10
+            c_x, c_z := end.x + left_x * marker_width, end.z + left_z * marker_width
+            d_x, d_z := start.x + left_x * marker_width, start.z + left_z * marker_width
+            c_y := terrain.sample_height(&editor.project, 0, c_x, c_z) + .10
+            d_y := terrain.sample_height(&editor.project, 0, d_x, d_z) + .10
+            world_quad(
+                {start.x, a_y, start.z},
+                {end.x, b_y, end.z},
+                {c_x, c_y, c_z},
+                {d_x, d_y, d_z},
+                {82, 207, 198, 180},
+            )
+            continue
+        }
         preview := curve_segment_structure(editor, editor.curve_points[index], editor.curve_points[index + 1])
         preview.color = {168, 239, 220, 255}
         world_formation(preview)

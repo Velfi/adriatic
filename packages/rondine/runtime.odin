@@ -226,9 +226,11 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32,
     runtime.body.velocity.y += wind.y * dt * .18
     runtime.body.velocity *= max(f32(0), 1 - (.012 + speed_fraction * speed_fraction * .018) * dt)
 
-    current_speed := linalg.length(runtime.body.velocity)
-    if current_speed > runtime.tuning.maximum_speed {
-        runtime.body.velocity *= runtime.tuning.maximum_speed / current_speed
+    air_velocity = runtime.body.velocity - wind
+    current_airspeed := linalg.length(air_velocity)
+    if current_airspeed > runtime.tuning.maximum_speed {
+        air_velocity *= runtime.tuning.maximum_speed / current_airspeed
+        runtime.body.velocity = wind + air_velocity
     }
 
     height := runtime.body.position.y - sea_level - GROUND_CLEARANCE
@@ -267,8 +269,9 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32,
         }
     }
 
-    forward_speed = linalg.dot(runtime.body.velocity, basis.forward)
-    lateral_speed = linalg.dot(runtime.body.velocity, basis.right)
+    air_velocity = runtime.body.velocity - wind
+    forward_speed = linalg.dot(air_velocity, basis.forward)
+    lateral_speed = linalg.dot(air_velocity, basis.right)
     longitudinal_acceleration := (forward_speed - previous_forward_speed) / dt
     surge_target :=
         clamp((longitudinal_acceleration - 1.2) / 6.8, 0, 1) *
@@ -314,7 +317,7 @@ step :: proc(runtime: ^Runtime, control: Control, sea_level, delta_seconds: f32,
     if drift_intensity < .18 do runtime.kick_marker_armed = true
     runtime.body.angular_velocity_world = {0, yaw_delta / dt, 0}
     runtime.telemetry = {
-        speed            = linalg.length(runtime.body.velocity),
+        speed            = linalg.length(air_velocity),
         forward_speed    = forward_speed,
         lateral_speed    = lateral_speed,
         acceleration     = longitudinal_acceleration,
@@ -356,7 +359,9 @@ crash :: proc(runtime: ^Runtime) {
 maybe_spawn_wake :: proc(runtime: ^Runtime, dt: f32) {
     strength := runtime.telemetry.wake_intensity
     if strength <= .02 do return
-    runtime.wake_distance += runtime.telemetry.speed * dt
+    // Wake samples occupy world space, so spacing follows distance over the
+    // surface even though flight telemetry reports speed through the air.
+    runtime.wake_distance += linalg.length(runtime.body.velocity) * dt
     spacing := f32(1.25)
     if runtime.wake_distance < spacing do return
     horizontal_speed := f32(

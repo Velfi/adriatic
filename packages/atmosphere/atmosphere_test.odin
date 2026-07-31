@@ -5,6 +5,22 @@ import "core:math"
 
 when ODIN_TEST {
     @(test)
+    authored_weather_winds_are_distinct_but_flyable :: proc(t: ^testing.T) {
+        clear := weather_for(.Clear).wind
+        windy := weather_for(.Windy).wind
+        storm := weather_for(.Storm).wind
+        clear_speed := f32(math.sqrt(f64(clear[0] * clear[0] + clear[1] * clear[1])))
+        windy_speed := f32(math.sqrt(f64(windy[0] * windy[0] + windy[1] * windy[1])))
+        storm_speed := f32(math.sqrt(f64(storm[0] * storm[0] + storm[1] * storm[1])))
+        bura := regime_weather(.Bura_Storm).wind
+        bura_speed := f32(math.sqrt(f64(bura[0] * bura[0] + bura[1] * bura[1])))
+
+        testing.expect(t, clear_speed < windy_speed && windy_speed < storm_speed)
+        testing.expect(t, storm_speed < 13)
+        testing.expect(t, bura_speed < 13)
+    }
+
+    @(test)
     front_schedule_is_seeded_rare_and_bounded :: proc(t: ^testing.T) {
         a := new(0x41544d4f)
         b := new(0x41544d4f)

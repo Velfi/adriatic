@@ -156,9 +156,9 @@ new :: proc(seed: u32) -> Atmosphere {
 weather_for :: #force_inline proc(preset: Weather_Preset) -> Weather_State {
     switch preset {
     case .Windy:
-        return {.56, .07, .17, .30, {8, -4}}
+        return {.56, .07, .17, .30, {6, -3}}
     case .Storm:
-        return {.92, .88, .70, .92, {14, -9}}
+        return {.92, .88, .70, .92, {10, -6.5}}
     case .Automatic, .Clear:
         return {.16, 0, .05, .04, {2, 1}}
     }
@@ -190,17 +190,17 @@ random_range :: proc(state: ^u32, minimum, maximum: f32) -> f32 {
 regime_weather :: proc(regime: Climate_Regime) -> Weather_State {
     switch regime {
     case .Maestral:
-        return {.24, .01, .08, .14, {6.5, -4.8}}
+        return {.24, .01, .08, .14, {4.5, -3.2}}
     case .Bura_Clear:
-        return {.12, 0, .025, .48, {-12.5, -10.0}}
+        return {.12, 0, .025, .48, {-8, -6.5}}
     case .Bura_Storm:
-        return {.76, .52, .40, .82, {-15.0, -11.5}}
+        return {.76, .52, .40, .82, {-10, -7.5}}
     case .Jugo:
-        return {.82, .58, .58, .68, {-8.5, 7.5}}
+        return {.82, .58, .58, .68, {-6, 5}}
     case .Calm_Humid:
         return {.46, .03, .42, .10, {.8, .4}}
     case .Post_Front:
-        return {.38, .12, .16, .30, {7.0, -5.0}}
+        return {.38, .12, .16, .30, {5, -3.5}}
     }
     return weather_for(.Clear)
 }
@@ -450,7 +450,7 @@ sample_at :: proc(
     gust_wave := .5 + .5 * f32(math.sin(f64(gust_phase)))
     gust := exposure * front.gustiness * smoothstep(.18, .88, gust_wave)
     cross_x, cross_z := -front.direction[1], front.direction[0]
-    wind_speed := 5 + exposure * 12 + gust * 5
+    wind_speed := 4 + exposure * 8 + gust * 3
     vertical := exposure * (f32(math.sin(f64(gust_phase * .47 + cell_wave * 4))) * 2.6 - cell_wave * 1.35)
     altitude_fade := 1 - smoothstep(900, 2600, altitude)
     vertical *= .35 + altitude_fade * .65

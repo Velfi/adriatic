@@ -9,6 +9,30 @@ import "core:mem"
 import "core:testing"
 
 when ODIN_TEST {
+    @(test)
+    fixture_migration_v0013_to_v0014_initializes_cliff_tool_and_removes_meshes :: proc(t: ^testing.T) {
+        fixture := new(Fixture)
+        defer free(fixture)
+        defer delete(fixture.project.structures)
+        resize(&fixture.project.structures, 3)
+        fixture.project.structure_count = 3
+        fixture.project.structures[0].kind = .Rock
+        fixture.project.structures[0].id = 10
+        fixture.project.structures[1].kind = .Cliff
+        fixture.project.structures[1].id = 11
+        fixture.project.structures[2].kind = .Foliage
+        fixture.project.structures[2].id = 12
+        fixture.structure_selected = 2
+
+        fixture_v0014_initialize_cliff_tool(fixture)
+
+        testing.expect(t, fixture.cliff_elevation_mode == .Raise)
+        testing.expect_value(t, fixture.project.structure_count, 2)
+        testing.expect_value(t, fixture.project.structures[0].id, u64(10))
+        testing.expect_value(t, fixture.project.structures[1].id, u64(12))
+        testing.expect_value(t, fixture.structure_selected, 1)
+    }
+
     fixture_migration_test_current_payload :: proc(t: ^testing.T) -> ([]byte, bool) {
         source := fixture_codec_test_source()
         defer fixture_codec_test_destroy_source(source)
