@@ -141,6 +141,61 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     float severity = sky.haze_severity.y;
     float world_days = sky.haze_severity.z;
     float elevation = max(ray.y, 0.0);
+    // "Red sky at night" is the dry, western afterglow around sunset rather
+    // than a uniform orange ring. Keep the window tied to solar elevation,
+    // then use clock time only to reject the matching dawn configuration.
+    float evening = smoothstep(15.5 * 60.0, 17.0 * 60.0, world_minutes) *
+                    (1.0 - smoothstep(20.5 * 60.0, 22.0 * 60.0, world_minutes));
+    float sunset_altitude = smoothstep(-.20, .055, sun_dir.y) *
+                            (1.0 - smoothstep(.055, .24, sun_dir.y));
+    float dry_air = (1.0 - smoothstep(.10, .62, precipitation)) *
+                    (1.0 - smoothstep(.42, .88, severity));
+    float aerosol = lerp(.48, 1.0, smoothstep(.025, .38, haze));
+    float broken_clouds = 1.0 +
+        smoothstep(.08, .34, cloud_cover) * (1.0 - smoothstep(.62, .90, cloud_cover)) * .55;
+    float red_sky = evening * sunset_altitude * dry_air * aerosol;
+    float sunward_horizon = pow(saturate(
+        dot(normalize(ray.xz + float2(.0001, 0)), normalize(sun_dir.xz + float2(.0001, 0))) * .5 + .5
+    ), 3.2) * (1.0 - smoothstep(.015, .48, elevation));
+    float storm_seed = frac(sky.sun_direction.w * .000013);
+    float wind_length = length(wind);
+    float2 wind_direction = wind_length > .05 ? wind / wind_length : float2(1, 0);
+    float storm_bearing = dot(normalize(ray.xz + float2(.0001, 0)), wind_direction);
+
+    // Reconstruct the active analytic front across the dome. The CPU passes
+    // the camera's signed distance from the front in front-width units and
+    // the number of widths covered by a horizon ray. This keeps sky weather
+    // geographically aligned with the same moving band sampled by gameplay.
+    if (sky.haze_severity.w > 0.0) {
+        float front_coordinate = sky.camera_forward.w +
+            dot(ray.xz, wind_direction) * sky.haze_severity.w;
+        float boundary_warp = sin(
+            dot(ray.xz, float2(-wind_direction.y, wind_direction.x)) * 9.0 +
+            cloud_seconds * .0017 + storm_seed * 21.0
+        ) * .12;
+        front_coordinate += boundary_warp;
+        // Give the front a long atmospheric shoulder. Cloud and haze arrive
+        // first, while the denser rain core remains farther inside the band;
+        // this avoids a visible clear/storm seam across the dome.
+        float directional_front = smoothstep(-1.05, -.15, front_coordinate) *
+                                  (1.0 - smoothstep(.15, 1.05, front_coordinate));
+        float embedded_cell = .82 + .18 * smoothstep(
+            .22,
+            .78,
+            fbm3(float3(ray.xz * 4.8, storm_seed * 17.0 + cloud_seconds * .0004))
+        );
+        directional_front *= embedded_cell;
+        float rain_core = directional_front * smoothstep(.12, .88, directional_front);
+        float haze_shoulder = smoothstep(.02, .82, directional_front);
+        float background_cloud = min(cloud_cover, .42);
+        float background_haze = min(haze, .24);
+        float background_severity = min(severity, .18);
+        cloud_cover = lerp(background_cloud, max(cloud_cover, .94), directional_front);
+        precipitation = lerp(0.0, max(precipitation, .88), rain_core);
+        haze = lerp(background_haze, max(haze, .68), haze_shoulder);
+        severity = lerp(background_severity, max(severity, .92),
+                        directional_front * directional_front);
+    }
 
     const float3 zenith_color = float3(.115, .35, .56);
     const float3 upper_color = float3(.27, .54, .70);
@@ -162,6 +217,18 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
         haze * (1.0 - smoothstep(.08, .62, elevation)) * .55
     );
     color = lerp(color, storm_sky, storm * .82);
+    // A front does not darken the dome uniformly. Broad, wind-aligned shelf
+    // structure makes one horizon visibly more threatening while leaving a
+    // weaker shoulder behind the aircraft.
+    float shelf_noise = fbm3(float3(
+        ray.x * 2.7 + wind_direction.x * cloud_seconds * .00022,
+        ray.z * 2.7 + wind_direction.y * cloud_seconds * .00022,
+        storm_seed * 29.0
+    ));
+    float shelf_horizon = (1.0 - smoothstep(.04, .34, elevation)) *
+                          smoothstep(.31, .68, shelf_noise + storm_bearing * .16);
+    float3 shelf_color = lerp(float3(.29, .35, .37), float3(.105, .16, .20), severity);
+    color = lerp(color, shelf_color, shelf_horizon * storm * .72);
     float3 night_sky = lerp(
         night_horizon,
         night_zenith,
@@ -170,6 +237,53 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     color = lerp(night_sky, color, daylight);
     color += float3(.34, .16, .08) *
              twilight * (1.0 - smoothstep(0.0, .42, elevation));
+    color += float3(.52, .105, .025) * red_sky * sunward_horizon * broken_clouds;
+    color += float3(.18, .025, .012) * red_sky *
+             pow(sunward_horizon, 2.0) * (1.0 - daylight) * .55;
+
+    // Rainbows are view-dependent, not objects suspended at a fixed point in
+    // the world.  The primary bow lies on a ~42 degree cone around the
+    // antisolar direction.  Use the live sun vector and precipitation so the
+    // bow moves with the light and vanishes when either sunlight or rain is
+    // absent.  A broad rain-cell mask keeps clear portions of the sky from
+    // receiving a perfectly uniform, diagram-like ring.
+    float3 antisolar = -sun_dir;
+    float bow_angle = acos(clamp(dot(ray, antisolar), -1.0, 1.0));
+    float rain_cell = fbm3(float3(
+        ray.x * 2.15 + wind_direction.x * cloud_seconds * .00016,
+        ray.z * 2.15 + wind_direction.y * cloud_seconds * .00016,
+        storm_seed * 41.0 + 9.0
+    ));
+    float rain_available = smoothstep(.08, .62, precipitation) *
+                           smoothstep(.24, .72, rain_cell + precipitation * .34);
+    float direct_sun = smoothstep(.015, .16, sun_dir.y) * daylight *
+                       (1.0 - saturate(cloud_cover * .68 + severity * .18));
+    float bow_visibility = rain_available * direct_sun *
+                           smoothstep(-.015, .035, ray.y);
+
+    // The angular ordering follows water-droplet dispersion: violet is on the
+    // inner edge and red on the outer edge.  Overlapping soft bands avoid the
+    // hard neon stripes of a purely illustrative rainbow.
+    const float DEG = 0.01745329252;
+    float3 rainbow = float3(0, 0, 0);
+    rainbow += float3(.50, .16, .72) * exp(-pow((bow_angle - 40.55 * DEG) / (.34 * DEG), 2.0));
+    rainbow += float3(.16, .31, .92) * exp(-pow((bow_angle - 40.92 * DEG) / (.35 * DEG), 2.0));
+    rainbow += float3(.10, .70, .78) * exp(-pow((bow_angle - 41.28 * DEG) / (.36 * DEG), 2.0));
+    rainbow += float3(.18, .82, .32) * exp(-pow((bow_angle - 41.64 * DEG) / (.38 * DEG), 2.0));
+    rainbow += float3(.96, .75, .12) * exp(-pow((bow_angle - 42.00 * DEG) / (.39 * DEG), 2.0));
+    rainbow += float3(1.00, .37, .08) * exp(-pow((bow_angle - 42.36 * DEG) / (.40 * DEG), 2.0));
+    rainbow += float3(.92, .08, .055) * exp(-pow((bow_angle - 42.74 * DEG) / (.41 * DEG), 2.0));
+    color += rainbow * bow_visibility * .34;
+
+    // A restrained secondary bow sits farther from the antisolar point with
+    // reversed color order, as expected after a second internal reflection.
+    float3 secondary = float3(0, 0, 0);
+    secondary += float3(.90, .09, .06) * exp(-pow((bow_angle - 50.7 * DEG) / (.48 * DEG), 2.0));
+    secondary += float3(.94, .72, .13) * exp(-pow((bow_angle - 51.3 * DEG) / (.48 * DEG), 2.0));
+    secondary += float3(.16, .75, .34) * exp(-pow((bow_angle - 51.9 * DEG) / (.48 * DEG), 2.0));
+    secondary += float3(.14, .32, .88) * exp(-pow((bow_angle - 52.5 * DEG) / (.48 * DEG), 2.0));
+    secondary += float3(.48, .15, .68) * exp(-pow((bow_angle - 53.1 * DEG) / (.48 * DEG), 2.0));
+    color += secondary * bow_visibility * smoothstep(.52, .92, precipitation) * .16;
 
     // At Adriatic latitude, the celestial pole sits about 43 degrees above
     // the northern horizon. Stars advance by one extra rotation per tropical
@@ -259,10 +373,10 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
 
     // Fronts change density and palette without replacing the cloud field.
     float2 drift = wind * cloud_seconds * .000125;
-    float seed = frac(sky.sun_direction.w * .000013);
+    float seed = storm_seed;
     float3 seed_offset = float3(seed * 31.7, seed * 17.3, seed * 43.1);
-    float tower_field = fbm3(ray * 3.1 + float3(drift.x, 0, drift.y) + seed_offset);
-    float cloud_top = .11 + smoothstep(.34, .72, tower_field) * .37;
+    float tower_field = fbm3(ray * lerp(3.1, 2.35, storm) + float3(drift.x, 0, drift.y) + seed_offset);
+    float cloud_top = .11 + smoothstep(.34, .72, tower_field) * lerp(.37, .55, storm);
     float3 cloud_uv = ray * 7.2 +
         float3(elevation * 5.3, -elevation * 10.5, elevation * 3.1);
     cloud_uv.xz += drift;
@@ -270,7 +384,8 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     float body_field = fbm3(cloud_uv) +
         fbm3(ray * 13.4 + float3(-4,8,2.7) * elevation +
              float3(drift.x,0,drift.y)) * .18;
-    float base = smoothstep(.002, .048, elevation);
+    float storm_base = lerp(.048, .018, storm);
+    float base = smoothstep(.002, storm_base, elevation);
     float top = 1.0 - smoothstep(cloud_top - .045, cloud_top + .025, elevation);
     float threshold = lerp(.55, .41, cloud_cover);
     float bank = .5 + .5 * sin(ray.x * 10.7 + ray.z * 6.2 + cloud_seconds * .0015 + seed * 8.0);
@@ -292,12 +407,55 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     float3 cloud_shadow = lerp(float3(.52,.63,.68), float3(.25,.32,.35), storm);
     float3 cloud_body = lerp(float3(.84,.88,.86), float3(.49,.55,.56), storm);
     float3 cloud_light = lerp(float3(1.0,.93,.78), float3(.69,.72,.70), storm);
+    float sunset_cloud_light = red_sky * sunward_horizon *
+        smoothstep(.08, .42, cloud_cover) * (1.0 - smoothstep(.76, .96, cloud_cover));
+    cloud_light = lerp(cloud_light, float3(1.0, .31, .105), sunset_cloud_light * .82);
+    cloud_body = lerp(cloud_body, float3(.72, .20, .12), sunset_cloud_light * .36);
     float light_region = smoothstep(.47, .69, broad + crown * .22 + sunward * .24);
     float3 cloud = lerp(cloud_body, cloud_light, light_region * .72);
     cloud = lerp(cloud, cloud_shadow, underside * lerp(.24, .62, storm));
+    // Stacked scud beneath the main deck gives severe weather depth instead
+    // of reading as the clear cloud field with a darker palette.
+    float scud_field = fbm3(
+        ray * 11.7 + float3(drift.x * 1.8, -cloud_seconds * .00028, drift.y * 1.8) +
+        seed_offset * 1.9
+    );
+    float scud_height = smoothstep(.015, .17, elevation) * (1.0 - smoothstep(.17, .31, elevation));
+    float scud = smoothstep(.54, .72, scud_field + shelf_horizon * .15) *
+                 scud_height * storm;
+    cloud = lerp(cloud, cloud_shadow * .72, scud * .78);
+    density = saturate(density + scud * .58);
     cloud = lerp(cloud * float3(.09, .14, .24), cloud, daylight);
     density = saturate(density * lerp(.76, 1.24, overcast));
     color = lerp(color, cloud, density * lerp(.32, .68, overcast));
+
+    // Rain shafts hang below the shelf as broad translucent curtains. Their
+    // streaking is directional and low-frequency so it remains stable during
+    // flight rather than sparkling like screen noise.
+    float rain_column = fbm3(float3(
+        ray.x * 18.0 + drift.x * 2.4,
+        ray.z * 18.0 + drift.y * 2.4,
+        floor(cloud_seconds * .18) * .07 + seed * 41.0
+    ));
+    float rain_horizon = (1.0 - smoothstep(.015, .27, elevation)) *
+                         smoothstep(.42, .72, rain_column + shelf_horizon * .24);
+    float rain_curtain = rain_horizon * precipitation * smoothstep(.34, .72, severity);
+    float3 rain_color = lerp(float3(.31, .39, .42), float3(.12, .19, .23), severity);
+    color = lerp(color, rain_color, rain_curtain * .58);
+
+    // Rare deterministic double flashes illuminate cloud volume, never a
+    // full-screen white frame. The narrow timing keeps lightning surprising
+    // while the spatial lobe makes it feel embedded in one cell.
+    float flash_cycle = frac(cloud_seconds / 13.7 + seed * 7.3);
+    float flash = (1.0 - smoothstep(.010, .026, abs(flash_cycle - .035))) +
+                  (1.0 - smoothstep(.008, .020, abs(flash_cycle - .082))) * .46;
+    float lightning_gate = smoothstep(.76, .96, severity) * smoothstep(.58, .9, precipitation);
+    float lightning_azimuth = frac(seed * 19.7 + floor(cloud_seconds / 13.7) * .618) * 6.28318530718;
+    float3 lightning_direction = normalize(float3(cos(lightning_azimuth), .16, sin(lightning_azimuth)));
+    float lightning_lobe = pow(saturate(dot(ray, lightning_direction) * .5 + .5), 18.0) *
+                           smoothstep(.015, .42, elevation);
+    color += float3(.55, .63, .66) * flash * lightning_gate * lightning_lobe *
+             (density * .8 + shelf_horizon * .55);
     // Alpha is a world-pass classification channel. The sky is rendered first
     // and remains alpha-zero so the palette post-process can leave this smooth
     // gradient alone while opaque world geometry overwrites it with alpha one.
