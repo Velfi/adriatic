@@ -28,6 +28,9 @@ adriatic_cli_usage :: proc() {
     fmt.println("    --width <pixels>      window width (320–7680)")
     fmt.println("    --height <pixels>     window height (240–4320)")
     fmt.println("    --settle-frames <n>   frame to capture (0–4096)")
+    fmt.println("    --style <name>        standard or dither")
+    fmt.println("    --dither <pattern>    bayer, blue, or matriax8; selects dither style")
+    fmt.println("    --photo-filter <name> deterministic Photo Mode filter preset")
     fmt.println("    --camera-eye <x,y,z>  explicit camera position")
     fmt.println("    --camera-look-at <x,y,z> explicit camera target")
     fmt.println("    --camera-orbit <yaw,pitch> adjust authored camera in degrees")
@@ -302,6 +305,10 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     target := ""
     window_width, window_height := 0, 0
     settle_frames := -1
+    visual_style := Visual_Style.Standard
+    dither_mode := Dither_Mode.Off
+    photo_filter_mode := Photo_Filter_Mode.Off
+    photo_filter_enabled := false
     turntable_frames := 0
     camera_eye, camera_look_at, camera_offset: [3]f32
     camera_orbit: [2]f32
@@ -343,6 +350,9 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
            argument == "--width" ||
            argument == "--height" ||
            argument == "--settle-frames" ||
+           argument == "--style" ||
+           argument == "--photo-filter" ||
+           argument == "--dither" ||
            argument == "--camera-eye" ||
            argument == "--camera-look-at" ||
            argument == "--camera-orbit" ||
@@ -392,6 +402,34 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 0, 4096)
                 if !ok do return true, false
                 settle_frames = parsed
+            case "--style":
+                switch value {
+                case "standard": visual_style = .Standard
+                case "dither":
+                    visual_style = .Dither
+                    if dither_mode == .Off do dither_mode = .Bayer
+                case:
+                    fmt.eprintf("adriatic: --style must be standard or dither, got %s\n", value)
+                    return true, false
+                }
+            case "--photo-filter":
+                parsed_mode, parsed := photo_filter_mode_parse(value)
+                if !parsed {
+                    fmt.eprintf("adriatic: unknown --photo-filter preset %s\n", value)
+                    return true, false
+                }
+                photo_filter_mode = parsed_mode
+                photo_filter_enabled = parsed_mode != .Off
+            case "--dither":
+                visual_style = .Dither
+                switch value {
+                case "bayer": dither_mode = .Bayer
+                case "blue": dither_mode = .Blue_Noise
+                case "matriax8": dither_mode = .Matriax_8
+                case:
+                    fmt.eprintf("adriatic: --dither must be bayer, blue, or matriax8, got %s\n", value)
+                    return true, false
+                }
             case "--camera-eye":
                 parsed, ok := adriatic_cli_parse_f32_components(argument, value, 3)
                 if !ok do return true, false
@@ -656,6 +694,10 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         window_width            = window_width,
         window_height           = window_height,
         settle_frames           = settle_frames,
+        visual_style            = visual_style,
+        dither_mode             = dither_mode,
+        photo_filter_mode       = photo_filter_mode,
+        photo_filter_enabled    = photo_filter_enabled,
         camera_eye              = camera_eye,
         camera_look_at          = camera_look_at,
         camera_eye_set          = camera_eye_set,

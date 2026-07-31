@@ -599,9 +599,25 @@ DrawIcon :: proc(index: int, destination: Rectangle, color := Color{255, 255, 25
 }
 
 LoadTexture :: proc(path: string) -> Texture {
-    if !state.initialized || state.texture_count >= MAX_TEXTURES do return {}
-    id := state.texture_count
-    if !resources.texture_load_file(&state.ctx, path, &state.textures[id]) do return {}
+    if !state.initialized {
+        fmt.eprintln("canvas texture load before initialization: ", path)
+        return {}
+    }
+    loaded: resources.Image
+    // Startup can load many large atlases before the frame temp arena resets.
+    // Decode through the general allocator so image.destroy releases each
+    // source image immediately after its GPU upload.
+    if !resources.texture_load_file(&state.ctx, path, &loaded, allocator = context.allocator) {
+        fmt.eprintln("canvas texture upload failed: ", path)
+        return {}
+    }
+    id, slot_ready := texture_slot_append()
+    if !slot_ready {
+        fmt.eprintln("canvas texture descriptor allocation failed: ", path)
+        resources.image_destroy(&loaded, &state.ctx)
+        return {}
+    }
+    state.textures[id] = loaded
     texture := &state.textures[id]
     ii := vk.DescriptorImageInfo {
         imageView   = texture.view,
@@ -613,7 +629,7 @@ LoadTexture :: proc(path: string) -> Texture {
     writes := [2]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = state.descriptors[id],
+            dstSet = state.texture_descriptors[id],
             dstBinding = 0,
             descriptorCount = 1,
             descriptorType = .SAMPLED_IMAGE,
@@ -621,7 +637,7 @@ LoadTexture :: proc(path: string) -> Texture {
         },
         {
             sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = state.descriptors[id],
+            dstSet = state.texture_descriptors[id],
             dstBinding = 1,
             descriptorCount = 1,
             descriptorType = .SAMPLER,
@@ -629,14 +645,19 @@ LoadTexture :: proc(path: string) -> Texture {
         },
     }
     vk.UpdateDescriptorSets(state.ctx.device, 2, raw_data(writes[:]), 0, nil)
-    state.texture_count += 1
     return {id = id, width = int(texture.width), height = int(texture.height), ready = true}
 }
 
 CreateDynamicTextureRGBA :: proc(width, height: int, pixels: []u8) -> Texture {
-    if !state.initialized || state.texture_count >= MAX_TEXTURES || width <= 0 || height <= 0 do return {}
-    id := state.texture_count
-    if !resources.texture_upload_rgba8(&state.ctx, pixels, width, height, &state.textures[id], {address_mode = .CLAMP_TO_EDGE, linear_color = true}) do return {}
+    if (!state.initialized && !state.backend_initializing) || width <= 0 || height <= 0 do return {}
+    loaded: resources.Image
+    if !resources.texture_upload_rgba8(&state.ctx, pixels, width, height, &loaded, {address_mode = .CLAMP_TO_EDGE, linear_color = true}) do return {}
+    id, slot_ready := texture_slot_append()
+    if !slot_ready {
+        resources.image_destroy(&loaded, &state.ctx)
+        return {}
+    }
+    state.textures[id] = loaded
     texture := &state.textures[id]
     ii := vk.DescriptorImageInfo {
         imageView   = texture.view,
@@ -648,7 +669,7 @@ CreateDynamicTextureRGBA :: proc(width, height: int, pixels: []u8) -> Texture {
     writes := [2]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = state.descriptors[id],
+            dstSet = state.texture_descriptors[id],
             dstBinding = 0,
             descriptorCount = 1,
             descriptorType = .SAMPLED_IMAGE,
@@ -656,7 +677,7 @@ CreateDynamicTextureRGBA :: proc(width, height: int, pixels: []u8) -> Texture {
         },
         {
             sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = state.descriptors[id],
+            dstSet = state.texture_descriptors[id],
             dstBinding = 1,
             descriptorCount = 1,
             descriptorType = .SAMPLER,
@@ -669,7 +690,6 @@ CreateDynamicTextureRGBA :: proc(width, height: int, pixels: []u8) -> Texture {
     copy(state.dynamic_pixels[id][:], pixels[:byte_count])
     state.dynamic_bytes_per_pixel[id] = 4
     for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT { if !engine.vk_create_host_buffer(&state.ctx, vk.DeviceSize(byte_count), {.TRANSFER_SRC}, &state.dynamic_staging[id][frame]) do return {} }
-    state.texture_count += 1
     return {id = id, width = width, height = height, ready = true}
 }
 
@@ -684,30 +704,36 @@ UpdateDynamicTextureRGBA :: proc(texture: Texture, pixels: []u8) -> bool {
 }
 
 create_dynamic_texture_r8 :: proc(width, height: int, pixels: []u8) -> Texture {
-    if state == nil || state.texture_count >= MAX_TEXTURES ||
+    if state == nil || (!state.initialized && !state.backend_initializing) ||
        width <= 0 || height <= 0 || len(pixels) < width * height {
         return {}
     }
-    id := state.texture_count
+    loaded: resources.Image
     if !resources.texture_upload_r8(
         &state.ctx,
         pixels,
         width,
         height,
-        &state.textures[id],
+        &loaded,
     ) {
         return {}
     }
+    id, slot_ready := texture_slot_append()
+    if !slot_ready {
+        resources.image_destroy(&loaded, &state.ctx)
+        return {}
+    }
+    state.textures[id] = loaded
     texture := &state.textures[id]
     ii := vk.DescriptorImageInfo{imageView = texture.view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
     si := vk.DescriptorImageInfo{sampler = texture.sampler}
     writes := [2]vk.WriteDescriptorSet {
         {
-            sType = .WRITE_DESCRIPTOR_SET, dstSet = state.descriptors[id], dstBinding = 0,
+            sType = .WRITE_DESCRIPTOR_SET, dstSet = state.texture_descriptors[id], dstBinding = 0,
             descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &ii,
         },
         {
-            sType = .WRITE_DESCRIPTOR_SET, dstSet = state.descriptors[id], dstBinding = 1,
+            sType = .WRITE_DESCRIPTOR_SET, dstSet = state.texture_descriptors[id], dstBinding = 1,
             descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &si,
         },
     }
@@ -726,7 +752,6 @@ create_dynamic_texture_r8 :: proc(width, height: int, pixels: []u8) -> Texture {
             return {}
         }
     }
-    state.texture_count += 1
     return {id = id, width = width, height = height, ready = true}
 }
 
@@ -847,6 +872,23 @@ ensure_depth_attachment :: proc() -> bool {
     resources.image_destroy(&state.depth, &state.ctx)
     created := resources.depth_create(&state.ctx, extent.width, extent.height, &state.depth)
     state.depth_initialized = false
+    state.depth_sample_ready = false
+    if created {
+        sampler_info := vk.SamplerCreateInfo {
+            sType = .SAMPLER_CREATE_INFO,
+            magFilter = .NEAREST,
+            minFilter = .NEAREST,
+            addressModeU = .CLAMP_TO_EDGE,
+            addressModeV = .CLAMP_TO_EDGE,
+            addressModeW = .CLAMP_TO_EDGE,
+            maxLod = 0,
+        }
+        if vk.CreateSampler(state.ctx.device, &sampler_info, nil, &state.depth.sampler) != .SUCCESS {
+            resources.image_destroy(&state.depth, &state.ctx)
+            return false
+        }
+        engine.vk_set_debug_name(&state.ctx, .SAMPLER, auto_cast state.depth.sampler, "canvas world depth sampler")
+    }
     return created
 }
 
@@ -895,10 +937,21 @@ ensure_world_scene :: proc() -> bool {
     sampler := vk.DescriptorImageInfo {
         sampler = state.world_scene.sampler,
     }
-    writes := [2]vk.WriteDescriptorSet {
+    depth_image_info := vk.DescriptorImageInfo {
+        imageView = state.depth.view,
+        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+    }
+    depth_sampler := vk.DescriptorImageInfo {sampler = state.depth.sampler}
+    aux0_id := clamp(state.world_post_aux_texture_ids[0], 0, max(state.texture_count - 1, 0))
+    aux1_id := clamp(state.world_post_aux_texture_ids[1], 0, max(state.texture_count - 1, 0))
+    aux0_image := vk.DescriptorImageInfo {imageView = state.textures[aux0_id].view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    aux0_sampler := vk.DescriptorImageInfo {sampler = state.textures[aux0_id].sampler}
+    aux1_image := vk.DescriptorImageInfo {imageView = state.textures[aux1_id].view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    aux1_sampler := vk.DescriptorImageInfo {sampler = state.textures[aux1_id].sampler}
+    writes := [8]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = state.descriptors[MAX_TEXTURES - 2],
+            dstSet = state.post_descriptors[WORLD_POST_SCENE_DESCRIPTOR],
             dstBinding = 0,
             descriptorCount = 1,
             descriptorType = .SAMPLED_IMAGE,
@@ -906,15 +959,91 @@ ensure_world_scene :: proc() -> bool {
         },
         {
             sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = state.descriptors[MAX_TEXTURES - 2],
+            dstSet = state.post_descriptors[WORLD_POST_SCENE_DESCRIPTOR],
             dstBinding = 1,
             descriptorCount = 1,
             descriptorType = .SAMPLER,
             pImageInfo = &sampler,
         },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = state.post_descriptors[WORLD_POST_SCENE_DESCRIPTOR],
+            dstBinding = 2,
+            descriptorCount = 1,
+            descriptorType = .SAMPLED_IMAGE,
+            pImageInfo = &depth_image_info,
+        },
+        {
+            sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = state.post_descriptors[WORLD_POST_SCENE_DESCRIPTOR],
+            dstBinding = 3,
+            descriptorCount = 1,
+            descriptorType = .SAMPLER,
+            pImageInfo = &depth_sampler,
+        },
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_SCENE_DESCRIPTOR], dstBinding = 4, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &aux0_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_SCENE_DESCRIPTOR], dstBinding = 5, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &aux0_sampler},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_SCENE_DESCRIPTOR], dstBinding = 6, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &aux1_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_SCENE_DESCRIPTOR], dstBinding = 7, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &aux1_sampler},
     }
-    vk.UpdateDescriptorSets(state.ctx.device, 2, raw_data(writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(state.ctx.device, 8, raw_data(writes[:]), 0, nil)
+    update_world_post_descriptor(WORLD_POST_SCENE_DESCRIPTOR, &state.world_scene, &state.world_scene)
     return true
+}
+
+world_post_resolution_extent :: proc(source: vk.Extent2D, resolution: World_Post_Resolution) -> vk.Extent2D {
+    divisor: u32 = 1
+    if resolution == .Half do divisor = 2
+    if resolution == .Quarter do divisor = 4
+    return {max(source.width / divisor, 1), max(source.height / divisor, 1)}
+}
+
+ensure_world_post_ping :: proc(index: int, extent: vk.Extent2D) -> bool {
+    target := &state.world_post_ping[index]
+    if target.width == extent.width && target.height == extent.height && target.view != vk.ImageView(0) do return true
+    _ = vk.DeviceWaitIdle(state.ctx.device)
+    resources.image_destroy(target, &state.ctx)
+    state.world_post_ping_sample_ready[index] = false
+    name := index == 0 ? "canvas world post ping 0" : "canvas world post ping 1"
+    if !resources.image_create(&state.ctx, extent.width, extent.height, state.ctx.swapchain_format, {.COLOR_ATTACHMENT, .SAMPLED}, {.COLOR}, {._1}, target, name) do return false
+    sampler_info := vk.SamplerCreateInfo{sType = .SAMPLER_CREATE_INFO, magFilter = .LINEAR, minFilter = .LINEAR, addressModeU = .CLAMP_TO_EDGE, addressModeV = .CLAMP_TO_EDGE, addressModeW = .CLAMP_TO_EDGE, maxLod = 0}
+    if vk.CreateSampler(state.ctx.device, &sampler_info, nil, &target.sampler) != .SUCCESS {
+        resources.image_destroy(target, &state.ctx)
+        return false
+    }
+    sampler_name := index == 0 ? "canvas world post ping sampler 0" : "canvas world post ping sampler 1"
+    engine.vk_set_debug_name(&state.ctx, .SAMPLER, auto_cast target.sampler, sampler_name)
+    return true
+}
+
+update_world_post_descriptor :: proc(descriptor_index: int, source: ^resources.Image, original: ^resources.Image = nil) {
+    original_image_source := original
+    if original_image_source == nil do original_image_source = source
+    source_image := vk.DescriptorImageInfo{imageView = source.view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    source_sampler := vk.DescriptorImageInfo{sampler = source.sampler}
+    depth_image := vk.DescriptorImageInfo{imageView = state.depth.view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    depth_sampler := vk.DescriptorImageInfo{sampler = state.depth.sampler}
+    aux0_id := clamp(state.world_post_aux_texture_ids[0], 0, max(state.texture_count - 1, 0))
+    aux1_id := clamp(state.world_post_aux_texture_ids[1], 0, max(state.texture_count - 1, 0))
+    aux0_image := vk.DescriptorImageInfo{imageView = state.textures[aux0_id].view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    aux0_sampler := vk.DescriptorImageInfo{sampler = state.textures[aux0_id].sampler}
+    aux1_image := vk.DescriptorImageInfo{imageView = state.textures[aux1_id].view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    aux1_sampler := vk.DescriptorImageInfo{sampler = state.textures[aux1_id].sampler}
+    original_image := vk.DescriptorImageInfo{imageView = original_image_source.view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    original_sampler := vk.DescriptorImageInfo{sampler = original_image_source.sampler}
+    writes := [10]vk.WriteDescriptorSet{
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 0, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &source_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 1, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &source_sampler},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 2, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &depth_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 3, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &depth_sampler},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 4, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &aux0_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 5, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &aux0_sampler},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 6, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &aux1_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 7, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &aux1_sampler},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 8, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &original_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 9, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &original_sampler},
+    }
+    vk.UpdateDescriptorSets(state.ctx.device, 10, raw_data(writes[:]), 0, nil)
 }
 
 ensure_hdr_scene :: proc() -> bool {
@@ -942,10 +1071,18 @@ ensure_hdr_scene :: proc() -> bool {
     si := vk.DescriptorImageInfo {
         sampler = state.hdr_scene.sampler,
     }
-    writes := [2]vk.WriteDescriptorSet {
+    depth_image_info := vk.DescriptorImageInfo {imageView = state.depth.view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    depth_sampler := vk.DescriptorImageInfo {sampler = state.depth.sampler}
+    aux0_id := clamp(state.world_post_aux_texture_ids[0], 0, max(state.texture_count - 1, 0))
+    aux1_id := clamp(state.world_post_aux_texture_ids[1], 0, max(state.texture_count - 1, 0))
+    aux0_image := vk.DescriptorImageInfo {imageView = state.textures[aux0_id].view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    aux0_sampler := vk.DescriptorImageInfo {sampler = state.textures[aux0_id].sampler}
+    aux1_image := vk.DescriptorImageInfo {imageView = state.textures[aux1_id].view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    aux1_sampler := vk.DescriptorImageInfo {sampler = state.textures[aux1_id].sampler}
+    writes := [8]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = state.descriptors[MAX_TEXTURES - 1],
+            dstSet = state.post_descriptors[WORLD_POST_HDR_DESCRIPTOR],
             dstBinding = 0,
             descriptorCount = 1,
             descriptorType = .SAMPLED_IMAGE,
@@ -953,13 +1090,20 @@ ensure_hdr_scene :: proc() -> bool {
         },
         {
             sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = state.descriptors[MAX_TEXTURES - 1],
+            dstSet = state.post_descriptors[WORLD_POST_HDR_DESCRIPTOR],
             dstBinding = 1,
             descriptorCount = 1,
             descriptorType = .SAMPLER,
             pImageInfo = &si,
         },
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_HDR_DESCRIPTOR], dstBinding = 2, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &depth_image_info},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_HDR_DESCRIPTOR], dstBinding = 3, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &depth_sampler},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_HDR_DESCRIPTOR], dstBinding = 4, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &aux0_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_HDR_DESCRIPTOR], dstBinding = 5, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &aux0_sampler},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_HDR_DESCRIPTOR], dstBinding = 6, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &aux1_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[WORLD_POST_HDR_DESCRIPTOR], dstBinding = 7, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &aux1_sampler},
     }
-    vk.UpdateDescriptorSets(state.ctx.device, 2, raw_data(writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(state.ctx.device, 8, raw_data(writes[:]), 0, nil)
+    update_world_post_descriptor(WORLD_POST_HDR_DESCRIPTOR, &state.hdr_scene, &state.hdr_scene)
     return true
 }

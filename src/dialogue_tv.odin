@@ -3,6 +3,7 @@ package main
 import dialogue "../packages/dialogue"
 import dialogue_glossary "../packages/dialogue_glossary"
 import engine_sound "../packages/engine_sound"
+import game_input "../packages/game_input"
 import story "../packages/story"
 import "core:fmt"
 import "core:math"
@@ -21,14 +22,17 @@ dialogue_font :: #force_inline proc() -> canvas2d.Font {
 }
 
 Dialogue_View_State :: struct {
-    revision:         u64,
-    revealed_bytes:   int,
-    reveal_timer:     f32,
-    first_choice:     int,
-    reaction_seconds: f32,
-    previous_focus:   int,
-    panel_seconds:    f32,
-    choice_seconds:   f32,
+    revision:           u64,
+    revealed_bytes:     int,
+    reveal_timer:       f32,
+    first_choice:       int,
+    first_speech_line:  int,
+    speech_line_count:  int,
+    speech_scroll_axis: game_input.Axis_Repeater,
+    reaction_seconds:   f32,
+    previous_focus:     int,
+    panel_seconds:      f32,
+    choice_seconds:     f32,
 }
 
 Dialogue_Presentation_State :: enum {
@@ -90,12 +94,7 @@ dialogue_tv_layout :: proc(width, height: i32, choice_count: int = DIALOGUE_CHOI
     speech_h := 154 * scale
     choice_area_h := f32(visible_choices) * choice_row_h + f32(max(visible_choices - 1, 0)) * choice_gap
     center_h := min(58 * scale + speech_h + 12 * scale + choice_area_h + 26 * scale, height_safe)
-    center := canvas2d.Rectangle {
-        start_x + card_w + gap,
-        f32(height) - safe_y - center_h,
-        center_w,
-        center_h,
-    }
+    center := canvas2d.Rectangle{start_x + card_w + gap, f32(height) - safe_y - center_h, center_w, center_h}
     return {
         scale = scale,
         player_card = {start_x, safe_y, card_w, height_safe},
@@ -396,9 +395,22 @@ dialogue_choice_bounds :: proc(layout: Dialogue_Tv_Layout, visible_row: int) -> 
     }
 }
 
-dialogue_draw_wrapped :: proc(text: string, bounds: canvas2d.Rectangle, size, spacing, line_height: f32, color: canvas2d.Color) {
+dialogue_draw_wrapped :: proc(
+    text: string,
+    bounds: canvas2d.Rectangle,
+    size, spacing, line_height: f32,
+    color: canvas2d.Color,
+) {
     if len(text) == 0 do return
-    _ = canvas2d.DrawTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), bounds, size, spacing, line_height, color)
+    _ = canvas2d.DrawTextWrappedEx(
+        dialogue_font(),
+        fmt.ctprintf("%s", text),
+        bounds,
+        size,
+        spacing,
+        line_height,
+        color,
+    )
 }
 
 dialogue_word_byte :: proc(byte: u8) -> bool {
@@ -414,19 +426,22 @@ dialogue_draw_glossed_wrapped :: proc(
     color: canvas2d.Color,
     mouse: canvas2d.Vector2,
     centered: bool = false,
+    first_line: int = 0,
 ) -> string {
     if len(text) == 0 do return ""
     lines := make([dynamic]canvas2d.Text_Wrapped_Line, 0, 8, context.temp_allocator)
     canvas2d.LayoutTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), size, spacing, bounds.width, .Auto, &lines)
     hovered_english := ""
-    visible := min(len(lines), max(int(bounds.height / line_height), 0))
+    visible_capacity := max(int(bounds.height / line_height), 0)
+    clamped_first_line := clamp(first_line, 0, max(len(lines) - visible_capacity, 0))
+    visible := min(len(lines) - clamped_first_line, visible_capacity)
     first_line_y := bounds.y
     if centered && visible > 0 {
         first_line_y = canvas2d.TextBlockCenteredY(dialogue_font(), bounds, size, line_height, visible)
     }
-    for line, line_index in lines[:visible] {
+    for line, line_index in lines[clamped_first_line:clamped_first_line + visible] {
         x := bounds.x
-        y := first_line_y + f32(line_index) * line_height
+        y := first_line_y + f32(line_index - clamped_first_line) * line_height
         cursor := line.start
         for cursor < line.end {
             start := cursor
@@ -460,7 +475,8 @@ dialogue_draw_glossed_wrapped :: proc(
                             prefix_width =
                                 canvas2d.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", prefix), size, spacing).x
                         }
-                        word_width := canvas2d.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", word), size, spacing).x
+                        word_width :=
+                            canvas2d.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", word), size, spacing).x
                         word_bounds := canvas2d.Rectangle{x + prefix_width, y, word_width, line_height}
                         hovered := canvas2d.CheckCollisionPointRec(mouse, word_bounds)
                         underline_color := hovered ? ui_theme_focus() : ui_theme_accent(190)
@@ -479,6 +495,24 @@ dialogue_draw_glossed_wrapped :: proc(
         }
     }
     return hovered_english
+}
+
+dialogue_wrapped_line_count :: proc(text: string, bounds: canvas2d.Rectangle, size, spacing: f32) -> int {
+    if len(text) == 0 do return 0
+    lines := make([dynamic]canvas2d.Text_Wrapped_Line, 0, 8, context.temp_allocator)
+    canvas2d.LayoutTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), size, spacing, bounds.width, .Auto, &lines)
+    return len(lines)
+}
+
+dialogue_speech_scroll_sync :: proc(editor: ^Editor, line_count, visible_lines: int) {
+    if editor == nil do return
+    view := &editor.attendant_dialogue_view
+    old_max := max(view.speech_line_count - visible_lines, 0)
+    new_max := max(line_count - visible_lines, 0)
+    // Follow the typewriter reveal while the reader remains at the bottom.
+    if view.first_speech_line >= old_max do view.first_speech_line = new_max
+    view.first_speech_line = clamp(view.first_speech_line, 0, new_max)
+    view.speech_line_count = line_count
 }
 
 dialogue_draw_glossary_tooltip :: proc(english: string, mouse: canvas2d.Vector2, width, height: i32, scale: f32) {
@@ -619,8 +653,12 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     layout := dialogue_tv_layout(width, height, count)
     scale := layout.scale
     presentation := dialogue_presentation_state(editor)
-    panel_progress := dialogue_ease_out(editor.attendant_dialogue_view.panel_seconds / DIALOGUE_PANEL_TRANSITION_SECONDS)
-    choice_progress := dialogue_ease_out(editor.attendant_dialogue_view.choice_seconds / DIALOGUE_CHOICE_TRANSITION_SECONDS)
+    panel_progress := dialogue_ease_out(
+        editor.attendant_dialogue_view.panel_seconds / DIALOGUE_PANEL_TRANSITION_SECONDS,
+    )
+    choice_progress := dialogue_ease_out(
+        editor.attendant_dialogue_view.choice_seconds / DIALOGUE_CHOICE_TRANSITION_SECONDS,
+    )
     // A light full-frame scrim calms the scene without turning the speakers
     // into boxed portrait specimens.
     canvas2d.DrawRectangle(0, 0, width, height, ui_theme_scrim(u8(82 * panel_progress)))
@@ -641,14 +679,15 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     if resident_speaking {
         speaker_tab_x = layout.conversation.x + layout.conversation.width - speaker_tab_width - 28 * scale
     }
-    speaker_tab := canvas2d.Rectangle {
-        speaker_tab_x,
-        layout.conversation.y - 14 * scale,
-        speaker_tab_width,
-        46 * scale,
-    }
+    speaker_tab := canvas2d.Rectangle{speaker_tab_x, layout.conversation.y - 14 * scale, speaker_tab_width, 46 * scale}
     canvas2d.DrawRectangleRounded(speaker_tab, .12, 8, ui_theme_accent(u8(255 * panel_progress)))
-    canvas2d.DrawRectangleRoundedLinesEx(speaker_tab, .12, 8, 1 * scale, ui_theme_accent_hover(u8(255 * panel_progress)))
+    canvas2d.DrawRectangleRoundedLinesEx(
+        speaker_tab,
+        .12,
+        8,
+        1 * scale,
+        ui_theme_accent_hover(u8(255 * panel_progress)),
+    )
     notch_center_y := speaker_tab.y + speaker_tab.height * .5
     notch_inner_x := resident_speaking ? speaker_tab.x + speaker_tab.width - 1 * scale : speaker_tab.x + 1 * scale
     notch_tip_x := notch_inner_x + (resident_speaking ? 10 * scale : -10 * scale)
@@ -679,15 +718,45 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     if current_is_tarot do speech_bounds.height -= 108 * scale
     mouse := canvas2d.GetMousePosition()
     speech_opacity := panel_progress * (presentation == .Choosing ? f32(.82) : f32(1))
+    speech_size := 29 * scale
+    speech_spacing := 1 * scale
+    speech_line_height := 39 * scale
+    speech_line_count := dialogue_wrapped_line_count(text[:visible_end], speech_bounds, speech_size, speech_spacing)
+    speech_visible_lines := max(int(speech_bounds.height / speech_line_height), 0)
+    if speech_line_count > speech_visible_lines {
+        speech_bounds.width -= 14 * scale
+        speech_line_count = dialogue_wrapped_line_count(text[:visible_end], speech_bounds, speech_size, speech_spacing)
+    }
+    dialogue_speech_scroll_sync(editor, speech_line_count, speech_visible_lines)
+    speech_max_first := max(speech_line_count - speech_visible_lines, 0)
     hovered_english := dialogue_draw_glossed_wrapped(
         text[:visible_end],
         speech_bounds,
-        29 * scale,
-        1 * scale,
-        39 * scale,
+        speech_size,
+        speech_spacing,
+        speech_line_height,
         ui_theme_text_inverse(u8(255 * speech_opacity)),
         mouse,
+        first_line = editor.attendant_dialogue_view.first_speech_line,
     )
+    if speech_max_first > 0 {
+        track := canvas2d.Rectangle {
+            layout.speech.x + layout.speech.width - 5 * scale,
+            speech_bounds.y,
+            3 * scale,
+            speech_bounds.height,
+        }
+        thumb_h := max(track.height * f32(speech_visible_lines) / f32(speech_line_count), 18 * scale)
+        travel := max(track.height - thumb_h, 0)
+        thumb_y := track.y + travel * f32(editor.attendant_dialogue_view.first_speech_line) / f32(speech_max_first)
+        canvas2d.DrawRectangleRounded(track, 1, 4, ui_theme_border(u8(100 * speech_opacity)))
+        canvas2d.DrawRectangleRounded(
+            {track.x, thumb_y, track.width, thumb_h},
+            1,
+            4,
+            ui_theme_text_inverse(u8(210 * speech_opacity)),
+        )
+    }
     dialogue_draw_tarot_strip(editor, layout.speech, scale)
     visible_rows := dialogue_choice_visible_rows(layout)
     dialogue_choice_scroll_focus(editor, visible_rows)
@@ -704,8 +773,9 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         focus_progress := f32(0)
         if focused {
             focus_progress = dialogue_ease_out(
-                (DIALOGUE_FOCUS_TRANSITION_SECONDS - min(editor.attendant_dialogue_view.reaction_seconds, DIALOGUE_FOCUS_TRANSITION_SECONDS)) /
-                    DIALOGUE_FOCUS_TRANSITION_SECONDS,
+                (DIALOGUE_FOCUS_TRANSITION_SECONDS -
+                    min(editor.attendant_dialogue_view.reaction_seconds, DIALOGUE_FOCUS_TRANSITION_SECONDS)) /
+                DIALOGUE_FOCUS_TRANSITION_SECONDS,
             )
             if editor.attendant_dialogue_view.reaction_seconds <= 0 do focus_progress = 1
         }
@@ -722,7 +792,8 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
             dialogue_color_lerp(base_style.text, selected_style.text, focus_progress),
             row_opacity,
         )
-        border_width := base_style.border_width + (selected_style.border_width - base_style.border_width) * focus_progress
+        border_width :=
+            base_style.border_width + (selected_style.border_width - base_style.border_width) * focus_progress
         canvas2d.DrawRectangleRounded(bounds, .12, 8, fill)
         canvas2d.DrawRectangleRoundedLinesEx(bounds, .12, 8, border_width * scale, border)
         if focused {
@@ -780,18 +851,23 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         }
     }
     if presentation == .Speaking {
-        hint: cstring = controller_prompt_active(editor) ? fmt.ctprintf("%s REVEALS", controller_face_label(editor, .South)) : "ENTER REVEALS"
+        hint: cstring =
+            controller_prompt_active(editor) ? fmt.ctprintf("%s REVEALS", controller_face_label(editor, .South)) : "ENTER REVEALS"
         measured := canvas2d.MeasureTextEx(dialogue_font(), hint, 16 * scale, .6 * scale)
         canvas2d.DrawTextEx(
             dialogue_font(),
             hint,
-            {layout.conversation.x + layout.conversation.width - measured.x - 24 * scale, layout.conversation.y + layout.conversation.height - 24 * scale},
+            {
+                layout.conversation.x + layout.conversation.width - measured.x - 24 * scale,
+                layout.conversation.y + layout.conversation.height - 24 * scale,
+            },
             16 * scale,
             .6 * scale,
             ui_theme_text_inverse(u8(180 * panel_progress)),
         )
     } else if presentation == .Continuing {
-        hint: cstring = controller_prompt_active(editor) ? fmt.ctprintf("%s CONTINUES", controller_face_label(editor, .South)) : "ENTER CONTINUES"
+        hint: cstring =
+            controller_prompt_active(editor) ? fmt.ctprintf("%s CONTINUES", controller_face_label(editor, .South)) : "ENTER CONTINUES"
         measured := canvas2d.MeasureTextEx(dialogue_font(), hint, 17 * scale, .6 * scale)
         hint_bounds := canvas2d.Rectangle {
             layout.conversation.x + layout.conversation.width - measured.x - 38 * scale,

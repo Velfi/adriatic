@@ -79,8 +79,10 @@ float fog_bank_density(float3 p, float4 a, float4 b, float4 c) {
 }
 
 float combined_fog(VertexOutput input) {
-    float distance_fog = saturate((input.depth - push.projection.z) /
-                                  max(push.projection.w - push.projection.z, .001));
+    float fog_start = abs(push.projection.z);
+    float fog_end = push.projection.w;
+    float distance_fog = saturate((input.depth - fog_start) /
+                                  max(fog_end - fog_start, .001));
     float altitude_clear = smoothstep(180.0, 500.0, push.camera_position.y);
     distance_fog *= lerp(1.0, .20, altitude_clear);
     float3 midpoint = (push.camera_position.xyz + input.world_position) * .5;

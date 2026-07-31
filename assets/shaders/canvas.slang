@@ -13,6 +13,14 @@ struct Push {
 [[vk::push_constant]] ConstantBuffer<Push> push;
 [[vk::binding(0, 0)]] Texture2D<float4> ui_texture;
 [[vk::binding(1, 0)]] SamplerState ui_sampler;
+[[vk::binding(2, 0)]] Texture2D<float> world_depth;
+[[vk::binding(3, 0)]] SamplerState world_depth_sampler;
+[[vk::binding(4, 0)]] Texture2D<float4> post_aux_pattern;
+[[vk::binding(5, 0)]] SamplerState post_aux_pattern_sampler;
+[[vk::binding(6, 0)]] Texture2D<float4> post_aux_lut;
+[[vk::binding(7, 0)]] SamplerState post_aux_lut_sampler;
+[[vk::binding(8, 0)]] Texture2D<float4> post_original_scene;
+[[vk::binding(9, 0)]] SamplerState post_original_scene_sampler;
 
 struct VertexInput {
     float2 position : POSITION;
@@ -167,6 +175,20 @@ float3 linear_to_oklab(float3 color) {
     );
 }
 
+float3 oklab_to_linear(float3 color) {
+    float l_root = color.x + 0.3963377774 * color.y + 0.2158037573 * color.z;
+    float m_root = color.x - 0.1055613458 * color.y - 0.0638541728 * color.z;
+    float s_root = color.x - 0.0894841775 * color.y - 1.2914855480 * color.z;
+    float l = l_root * l_root * l_root;
+    float m = m_root * m_root * m_root;
+    float s = s_root * s_root * s_root;
+    return float3(
+         4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    );
+}
+
 float3 palette_linear(int mode, int index) {
     return mode == 3 ? MATRIAX8C_PALETTE_LINEAR[index] : ADRIATIC_PALETTE_LINEAR[index];
 }
@@ -206,6 +228,301 @@ float dither_threshold(int mode, int2 pixel) {
     return (float(BAYER_8[index]) + 0.5) / 64.0;
 }
 
+// Photo-mode painting filters are clean-room implementations inspired by the
+// effect families in jhaakma/joy-of-painting. They intentionally share one
+// bounded, texture-free pass so every control remains cheap and deterministic.
+float photo_luma(float3 color) {
+    return dot(color, float3(.2126, .7152, .0722));
+}
+
+float photo_hash(float2 pixel) {
+    return frac(sin(dot(pixel, float2(12.9898, 78.233))) * 43758.5453);
+}
+
+float3 photo_sample(float2 uv, float2 offset, float2 texel, float exposure) {
+    return ui_texture.Sample(ui_sampler, saturate(uv + offset * texel)).rgb * exposure;
+}
+
+float3 photo_rgb_to_hsl(float3 color) {
+    float maximum = max(color.r, max(color.g, color.b));
+    float minimum = min(color.r, min(color.g, color.b));
+    float chroma = maximum - minimum;
+    float hue = 0.0;
+    if (chroma > 1e-5) {
+        if (maximum == color.r) hue = frac((color.g - color.b) / chroma / 6.0);
+        else if (maximum == color.g) hue = ((color.b - color.r) / chroma + 2.0) / 6.0;
+        else hue = ((color.r - color.g) / chroma + 4.0) / 6.0;
+    }
+    float lightness = (maximum + minimum) * .5;
+    float saturation = chroma / max(1.0 - abs(2.0 * lightness - 1.0), 1e-5);
+    return float3(hue, saturation, lightness);
+}
+
+float3 photo_hsl_to_rgb(float3 hsl) {
+    float chroma = (1.0 - abs(2.0 * hsl.z - 1.0)) * hsl.y;
+    float sector = hsl.x * 6.0;
+    float x = chroma * (1.0 - abs(fmod(sector, 2.0) - 1.0));
+    float3 rgb = sector < 1.0 ? float3(chroma, x, 0) : sector < 2.0 ? float3(x, chroma, 0) : sector < 3.0 ? float3(0, chroma, x) : sector < 4.0 ? float3(0, x, chroma) : sector < 5.0 ? float3(x, 0, chroma) : float3(chroma, 0, x);
+    return rgb + (hsl.z - chroma * .5);
+}
+
+float3 photo_kuwahara(float2 uv, float2 texel, float exposure, int radius) {
+    float3 best_mean = ui_texture.Sample(ui_sampler, uv).rgb * exposure;
+    float best_variance = 1e9;
+    [unroll]
+    for (int quadrant = 0; quadrant < 4; ++quadrant) {
+        float3 sum = 0;
+        float sum_luma = 0;
+        float sum_luma_squared = 0;
+        float count = 0;
+        [unroll]
+        for (int y = 0; y <= 5; ++y) {
+            [unroll]
+            for (int x = 0; x <= 5; ++x) {
+                if (x > radius || y > radius) continue;
+                float2 sign_offset = float2((quadrant & 1) == 0 ? -x : x, (quadrant & 2) == 0 ? -y : y);
+                float3 sample_color = ui_texture.Sample(ui_sampler, saturate(uv + sign_offset * texel)).rgb * exposure;
+                float sample_luma = photo_luma(sample_color);
+                sum += sample_color;
+                sum_luma += sample_luma;
+                sum_luma_squared += sample_luma * sample_luma;
+                count += 1;
+            }
+        }
+        float3 mean = sum / max(count, 1.0);
+        float mean_luma = sum_luma / max(count, 1.0);
+        float variance = sum_luma_squared / max(count, 1.0) - mean_luma * mean_luma;
+        if (variance < best_variance) {
+            best_variance = variance;
+            best_mean = mean;
+        }
+    }
+    return best_mean;
+}
+
+float photo_media(int tile, float2 uv, float scale) {
+    int column = tile % 3;
+    int row = tile / 3;
+    float2 local = frac(uv * scale);
+    float2 atlas_uv = float2((float(column) + local.x) / 3.0,
+                             (float(row) + local.y) / 3.0 * .8333333);
+    return post_aux_pattern.Sample(post_aux_pattern_sampler, atlas_uv).r;
+}
+
+float3 photo_lut_slice(int grade, float3 color, int blue_slice) {
+    int grade_x = grade % 3;
+    int grade_y = grade / 3;
+    int slice_x = blue_slice % 8;
+    int slice_y = blue_slice / 8;
+    float2 cube_uv = (float2(slice_x, slice_y) * 8.0 + saturate(color.rg) * 7.0 + .5) / 64.0;
+    float2 atlas_uv = (float2(grade_x, grade_y) + cube_uv) / 3.0;
+    return post_aux_lut.Sample(post_aux_lut_sampler, atlas_uv).rgb;
+}
+
+float3 photo_lut_grade(int grade, float3 color) {
+    float blue = saturate(color.b) * 63.0;
+    int lower = int(floor(blue));
+    int upper = min(lower + 1, 63);
+    return lerp(photo_lut_slice(grade, color, lower), photo_lut_slice(grade, color, upper), frac(blue));
+}
+
+float3 photo_adjust_oklab(float3 linear_color, float saturation, float contrast, float brightness) {
+    float3 color = linear_to_oklab(max(linear_color, 0.0));
+    color.x = (color.x - .5) * contrast + .5 + brightness;
+    color.yz *= saturation;
+    return color;
+}
+
+float3 photo_quantize_oklab(float3 color, float levels) {
+    float steps = max(levels - 1.0, 1.0);
+    // Oklab lightness is [0, 1]. Its opponent axes cover the visible sRGB
+    // gamut comfortably within [-.4, .4]. Quantize all three perceptual axes.
+    float3 normalized = float3(
+        saturate(color.x),
+        saturate(color.y / .8 + .5),
+        saturate(color.z / .8 + .5)
+    );
+    normalized = floor(normalized * steps + .5) / steps;
+    return float3(normalized.x, (normalized.y - .5) * .8, (normalized.z - .5) * .8);
+}
+
+float3 photo_quantization_error_oklab(
+    float3 linear_color,
+    float levels,
+    float saturation,
+    float contrast,
+    float brightness
+) {
+    float3 adjusted = photo_adjust_oklab(linear_color, saturation, contrast, brightness);
+    return adjusted - photo_quantize_oklab(adjusted, levels);
+}
+
+float3 photo_filter(float3 source, float2 uv, float2 texel, float exposure, int mode) {
+    float intensity = saturate(push.hatch_offset.y);
+    float radius = saturate(push.hatch_offset.z);
+    float detail = saturate(push.hatch_offset.w);
+    float saturation = max(push.hatch_angles.x, 0.0);
+    float contrast = max(push.hatch_angles.y, 0.0);
+    float brightness = push.hatch_angles.z;
+    float grain = saturate(push.hatch_angles.w);
+    float vignette = saturate(push.hatch_levels.x);
+    float distortion = saturate(push.hatch_levels.y);
+    float2 pixel = uv / max(texel, 1e-6);
+    float noise = photo_hash(floor(pixel * (1.0 - radius * .75))) - .5;
+    float perlin = photo_media(0, uv, lerp(1.5, 6.0, radius)) - .5;
+    float animation_time = push.hatch_shape.w;
+    float animated_x = perlin + sin(uv.y * 17.0 + animation_time * 1.7) * .18;
+    float animated_y = (photo_media(0, uv.yx + animation_time * .007, lerp(1.5, 6.0, radius)) - .5) + cos(uv.x * 19.0 - animation_time * 1.3) * .18;
+    float2 warped_uv = saturate(uv + float2(animated_x, animated_y) * distortion * texel * 12.0);
+    float spread = 1.0 + radius * 7.0;
+    float3 center = photo_sample(warped_uv, float2(0, 0), texel, exposure);
+    float3 north = photo_sample(warped_uv, float2(0, -spread), texel, exposure);
+    float3 south = photo_sample(warped_uv, float2(0, spread), texel, exposure);
+    float3 west = photo_sample(warped_uv, float2(-spread, 0), texel, exposure);
+    float3 east = photo_sample(warped_uv, float2(spread, 0), texel, exposure);
+    float3 blur = (center * 4.0 + north + south + west + east) / 8.0;
+    float3 result = center;
+    float3 original_scene = post_original_scene.Sample(post_original_scene_sampler, uv).rgb * exposure;
+    float luma = photo_luma(center);
+    float depth = world_depth.Sample(world_depth_sampler, uv);
+    float near_clip = max(push.hatch_tone.z, .001);
+    float far_clip = max(push.hatch_tone.w, near_clip + .01);
+    float view_depth = near_clip * far_clip / max(far_clip - depth * (far_clip - near_clip), .001);
+    float depth_unit = saturate(log(max(view_depth / near_clip, 1.0)) / log(far_clip / near_clip));
+
+    if (mode == 1) { // Oil: edge-preserving blocks with warm pigment response.
+        float3 painterly = blur;
+        float pigment = smoothstep(.05, .95, photo_luma(painterly));
+        painterly *= lerp(float3(.94, .97, 1.04), float3(1.07, 1.01, .91), pigment * detail);
+        result = lerp(painterly, center, detail * .35);
+    } else if (mode == 2) { // Watercolor: translucent wash and pooled edges.
+        float edge = length(center - blur);
+        float3 wash = lerp(blur, center, .22 + detail * .35);
+        wash = lerp(photo_luma(wash).xxx, wash, .75 + saturation * .25);
+        result = wash * (1.04 - saturate(edge * 3.0) * .16) + perlin * grain * .06;
+    } else if (mode == 3) { // Pastel: lifted pigment over fine paper grain.
+        result = lerp(blur, center, .55 + detail * .35);
+        result = pow(max(result, 0.0), .82);
+        result += (photo_media(5, uv, 2.0 + radius * 5.0) - .5) * (.05 + grain * .12);
+        result = lerp(photo_luma(result).xxx, result, 1.12);
+    } else if (mode == 4) { // Charcoal paper division.
+        float edge = saturate(length(center - blur) * (5.0 + detail * 12.0));
+        float paper = (photo_media(2, uv, 1.0 + radius * 4.0) - .5) * grain * .5;
+        result = saturate((center + .1) / max(.35 - paper + edge * .2, .08));
+    } else if (mode == 5) { // Ink brightness/contrast treatment.
+        result = center * contrast + brightness;
+    } else if (mode == 6) { // Cross-hatch.
+        float scale = lerp(3.0, 11.0, radius);
+        float hatch_level = photo_media(3, uv, max(1.0, 13.0 / scale));
+        float ink = smoothstep(luma - .18, luma + .18, hatch_level);
+        result = lerp(center, center * ink, .45 + detail * .55);
+    } else if (mode == 7) { // Kuwahara.
+        result = photo_kuwahara(warped_uv, texel, exposure, 1 + int(round(radius * 4.0)));
+    } else if (mode == 8) { // Hue/luminance quantization.
+        float3 hsl = photo_rgb_to_hsl(saturate(center));
+        float hue_levels = floor(4.0 + detail * 20.0);
+        float saturation_levels = floor(2.0 + saturation * 6.0);
+        float lightness_levels = floor(3.0 + detail * 13.0);
+        hsl = floor(hsl * float3(hue_levels, saturation_levels, lightness_levels) + .5) / float3(hue_levels, saturation_levels, lightness_levels);
+        result = photo_hsl_to_rgb(hsl);
+    } else if (mode == 9) { // Black and white threshold.
+        result = step(lerp(.25, .75, radius), luma).xxx;
+    } else if (mode == 10) { // Greyscale.
+        result = luma.xxx;
+    } else if (mode == 11) { // Sharpen.
+        result = center + (center - blur) * (1.0 + detail * 3.0);
+    } else if (mode == 12) { // Mottled canvas.
+        float mottle = photo_media(6, uv, 1.0 + radius * 4.0);
+        result = center * lerp(.76, 1.18, mottle * (.35 + grain * .65));
+    } else if (mode == 13) { // Distortion.
+        result = center;
+    } else if (mode == 14) { // Vignette (also available as a shared control).
+        result = center;
+        vignette = max(vignette, intensity);
+    } else if (mode == 15) { // Adjuster: color correction with hue rotation.
+        float angle = radius * 6.2831853;
+        float3 axis = normalize(float3(1, 1, 1));
+        result = center * cos(angle) + cross(axis, center) * sin(angle) + axis * dot(axis, center) * (1 - cos(angle));
+    } else if (mode == 16) { // Mixed media composite.
+        float edge = saturate(length(center - blur) * (7.0 + detail * 12.0));
+        float hatch = step(.52, frac((pixel.x + pixel.y) / lerp(4.0, 12.0, radius)));
+        float3 wash = lerp(blur, center, .3);
+        result = wash * lerp(1.0, hatch, edge * .7) + noise * grain * .06;
+    } else if (mode == 17) { // Depth of field.
+        float focus = radius;
+        float coc = saturate(abs(depth_unit - focus) / max(detail * .25, .005));
+        result = lerp(original_scene, center, coc);
+    } else if (mode == 18) { // Color fog.
+        float fog = smoothstep(radius, min(radius + detail, 1.0), depth_unit);
+        float3 fog_color = lerp(float3(.30, .42, .55), float3(.88, .72, .52), saturation * .5);
+        result = lerp(center, fog_color, fog * intensity);
+    } else if (mode == 19) { // Monochrome fog.
+        float fog = smoothstep(radius, min(radius + detail, 1.0), depth_unit);
+        float fog_value = brightness * .5 + .5;
+        result = lerp(center, fog_value.xxx, fog * intensity);
+    } else if (mode == 20) { // Trilinearly sampled 8x8x8 LUT atlas.
+        int grade = int(floor(radius * 8.999));
+        result = photo_lut_grade(grade, saturate(center));
+    } else if (mode == 21) { // Depth and color outline.
+        float depth_n = world_depth.Sample(world_depth_sampler, saturate(uv + float2(0, -spread) * texel));
+        float depth_s = world_depth.Sample(world_depth_sampler, saturate(uv + float2(0, spread) * texel));
+        float depth_w = world_depth.Sample(world_depth_sampler, saturate(uv + float2(-spread, 0) * texel));
+        float depth_e = world_depth.Sample(world_depth_sampler, saturate(uv + float2(spread, 0) * texel));
+        float depth_edge = abs(depth_e - depth_w) + abs(depth_s - depth_n);
+        float color_edge = length(center - blur);
+        float line = saturate((depth_edge * 120.0 + color_edge * 5.0 - detail * .25) * 4.0);
+        result = center * (1.0 - line * contrast);
+    } else if (mode == 22) { // Watercolor splash breakup.
+        float cell = photo_media(7, uv, 1.0 + radius * 3.0);
+        float splash = smoothstep(.28, .72, cell + (luma - .5) * detail);
+        result = lerp(blur, center, splash) + (cell - .5) * grain * .12;
+    } else if (mode == 23) { // Canvas window.
+        float2 centered = abs(uv * 2.0 - 1.0);
+        float aspect = lerp(.55, 1.45, detail);
+        float frame = max(centered.x * aspect, centered.y / aspect);
+        float mask = 1.0 - smoothstep(radius, min(radius + .02 + grain * .08, 1.0), frame);
+        result = center * mask;
+    } else if (mode == 24) { // Floyd-Steinberg error diffusion.
+        float levels = floor(2.0 + radius * 14.0);
+        float3 dither_center = photo_sample(uv, float2(0, 0), texel, exposure);
+        float3 adjusted = photo_adjust_oklab(dither_center, saturation, contrast, brightness);
+
+        // Fragment invocations cannot carry mutable error between pixels, so
+        // reconstruct the incoming error from the four already-visited source
+        // neighbours. This preserves the Floyd-Steinberg 7/3/5/1 kernel while
+        // remaining deterministic and parallel on the GPU.
+        bool reverse = distortion > .5 && (int(floor(pixel.y)) & 1) != 0;
+        float direction = reverse ? 1.0 : -1.0;
+        float3 side = photo_sample(uv, float2(direction, 0), texel, exposure);
+        float3 upper_far = photo_sample(uv, float2(-direction, -1), texel, exposure);
+        float3 upper = photo_sample(uv, float2(0, -1), texel, exposure);
+        float3 upper_near = photo_sample(uv, float2(direction, -1), texel, exposure);
+        float3 incoming =
+            photo_quantization_error_oklab(side, levels, saturation, contrast, brightness) * (7.0 / 16.0) +
+            photo_quantization_error_oklab(upper_far, levels, saturation, contrast, brightness) * (3.0 / 16.0) +
+            photo_quantization_error_oklab(upper, levels, saturation, contrast, brightness) * (5.0 / 16.0) +
+            photo_quantization_error_oklab(upper_near, levels, saturation, contrast, brightness) * (1.0 / 16.0);
+        adjusted += incoming * detail;
+        adjusted.x += noise * grain / max(levels - 1.0, 1.0);
+        result = max(oklab_to_linear(photo_quantize_oklab(adjusted, levels)), 0.0);
+
+        float2 centered_uv = uv * 2.0 - 1.0;
+        float vignette_mask = smoothstep(1.15, .25, dot(centered_uv, centered_uv));
+        result *= lerp(1.0, vignette_mask, vignette);
+        return lerp(source, max(result, 0.0), intensity);
+    }
+
+    float adjusted_luma = photo_luma(result);
+    result = lerp(adjusted_luma.xxx, result, saturation);
+    result = (result - .5) * contrast + .5 + brightness;
+    if (mode != 3 && mode != 4 && mode != 12) result += noise * grain * .025;
+    float2 centered_uv = uv * 2.0 - 1.0;
+    float vignette_mask = smoothstep(1.15, .25, dot(centered_uv, centered_uv));
+    result *= lerp(1.0, vignette_mask, vignette);
+    if (mode == 17) return lerp(original_scene, max(result, 0.0), intensity);
+    return lerp(source, max(result, 0.0), intensity);
+}
+
 [shader("vertex")]
 PostOutput post_vertex(uint vertex_id : SV_VertexID) {
     PostOutput output;
@@ -221,6 +538,25 @@ float4 post_fragment(PostOutput input) : SV_Target {
     float4 source = ui_texture.Sample(ui_sampler, input.uv);
     float exposure = max(push.hatch_tone.x, .001);
     float sun_glare = saturate(push.hatch_tone.y);
+    int photo_mode = int(round(push.hatch_offset.x));
+    if (photo_mode > 0) {
+        float2 texel_size = 1.0 / max(push.viewport.zw, float2(1.0, 1.0));
+        int pass_index = int(round(push.hatch_levels.z));
+        int pass_count = max(int(round(push.hatch_levels.w)), 1);
+        if (pass_count > 1 && pass_index < pass_count - 1) {
+            float spread = .75 + saturate(push.hatch_offset.z) * (photo_mode == 17 ? 6.0 : 2.0);
+            float2 axis = pass_index == 0 ? float2(spread, 0) : float2(0, spread);
+            float3 a = ui_texture.Sample(ui_sampler, saturate(input.uv - axis * texel_size)).rgb;
+            float3 b = source.rgb;
+            float3 c = ui_texture.Sample(ui_sampler, saturate(input.uv + axis * texel_size)).rgb;
+            return float4((a + b * 2.0 + c) * .25, source.a);
+        }
+        source.rgb *= exposure;
+        float3 warm_veil = float3(.62, .39, .19);
+        source.rgb = lerp(source.rgb, warm_veil, sun_glare * .075);
+        source.rgb = photo_filter(source.rgb, input.uv, texel_size, exposure, photo_mode);
+        return source;
+    }
     source.rgb *= exposure;
     // Looking into the Sun lowers retinal/camera exposure while forward
     // scattering lifts the black floor slightly. Keep this restrained and
@@ -228,10 +564,11 @@ float4 post_fragment(PostOutput input) : SV_Target {
     float3 warm_veil = float3(.62, .39, .19);
     source.rgb = lerp(source.rgb, warm_veil, sun_glare * .075);
     int mode = int(round(push.texture_hatch.x));
+    int visual_style = int(round(push.texture_hatch.w));
     // The world pass preserves alpha as a cheap classification channel: sky is
     // alpha-zero, while world geometry is opaque. Keep the smooth sky gradient
     // out of palette quantization; dithering remains active for the world.
-    if (mode <= 0 || source.a < .5) return source;
+    if (visual_style != 1 || mode <= 0 || source.a < .5) return source;
 
     float3 target = linear_to_oklab(max(source.rgb, 0.0));
     int palette_count = mode == 3 ? 8 : 16;

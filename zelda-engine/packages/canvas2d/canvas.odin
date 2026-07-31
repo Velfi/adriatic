@@ -268,7 +268,28 @@ FONT_LOGICAL_CELL_H :: 64
 FONT_ROWS :: (FONT_COUNT + FONT_FALLBACK_COUNT + FONT_COLUMNS - 1) / FONT_COLUMNS
 ICON_COLUMNS :: 6
 ICON_ROWS :: 6
-MAX_TEXTURES :: 16
+UI_DESCRIPTOR_POOL_PAGE_SIZE :: 128
+WORLD_POST_MAX_PASSES :: 8
+WORLD_POST_DESCRIPTOR_COUNT :: 4
+WORLD_POST_PING_DESCRIPTOR_BASE :: 0
+WORLD_POST_SCENE_DESCRIPTOR :: 2
+WORLD_POST_HDR_DESCRIPTOR :: 3
+
+Ui_Descriptor_Pool_Page :: struct {
+    pool:      vk.DescriptorPool,
+    allocated: int,
+}
+
+World_Post_Resolution :: enum u8 {
+    Full,
+    Half,
+    Quarter,
+}
+
+World_Post_Pass_Request :: struct {
+    resolution: World_Post_Resolution,
+    parameters: [4]f32,
+}
 GLYPH_ATLAS_PAGE_COUNT :: 4
 GLYPH_ATLAS_PAGE_SIZE :: 2048
 GLYPH_ATLAS_PADDING :: 2
@@ -306,6 +327,7 @@ Glyph_Cache_Entry :: struct {
 State :: struct {
     renderer_descriptor:                       render2d.Renderer_Descriptor,
     config_flags:                              ConfigFlags,
+    backend_initializing:                      bool,
     window:                                    ^sdl.Window,
     text_input:                                [TEXT_INPUT_CAPACITY]u8,
     text_input_length:                         int,
@@ -315,12 +337,13 @@ State :: struct {
     text_composition_selection_length:         int,
     platform_window:                           render2d.SDL_Window_Runtime,
     ctx:                                       engine.Vk_Context,
-    textures:                                  [MAX_TEXTURES]resources.Image,
-    dynamic_staging:                           [MAX_TEXTURES][engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-    dynamic_pixels:                            [MAX_TEXTURES][dynamic]u8,
-    dynamic_pending:                           [MAX_TEXTURES]bool,
-    dynamic_bytes_per_pixel:                   [MAX_TEXTURES]int,
-    dynamic_dirty:                             [MAX_TEXTURES]Rectangle,
+    textures:                                  [dynamic]resources.Image,
+    texture_descriptors:                       [dynamic]vk.DescriptorSet,
+    dynamic_staging:                           [dynamic][engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    dynamic_pixels:                            [dynamic][dynamic]u8,
+    dynamic_pending:                           [dynamic]bool,
+    dynamic_bytes_per_pixel:                   [dynamic]int,
+    dynamic_dirty:                             [dynamic]Rectangle,
     glyph_pages:                               [GLYPH_ATLAS_PAGE_COUNT]Texture,
     glyph_entries:                             [GLYPH_CACHE_SLOT_COUNT]Glyph_Cache_Entry,
     glyph_lookup:                              map[Glyph_Cache_Key]int,
@@ -330,10 +353,16 @@ State :: struct {
     glyph_cache_failures:                      u64,
     depth:                                     resources.Image,
     depth_initialized:                         bool,
+    depth_sample_ready:                        bool,
     world_scene:                               resources.Image,
     world_render_width, world_render_height:   u32,
     world_post_process_enabled:                bool,
     world_scene_sample_ready:                  bool,
+    world_post_aux_texture_ids:                [2]int,
+    world_post_passes:                         [WORLD_POST_MAX_PASSES]World_Post_Pass_Request,
+    world_post_pass_count:                     int,
+    world_post_ping:                           [2]resources.Image,
+    world_post_ping_sample_ready:              [2]bool,
     texture_count:                             int,
     texture_width, texture_height:             int,
     icon_y, icon_width, icon_height:           int,
@@ -342,10 +371,13 @@ State :: struct {
     font_metrics_em:                           [2]Font_Metrics,
     font_atlas_width, font_atlas_height:       int,
     font_advance_em:                           [2][FONT_COUNT]f32,
-    descriptor_layout:                         vk.DescriptorSetLayout,
-    descriptor_pool:                           vk.DescriptorPool,
-    descriptors:                               [MAX_TEXTURES]vk.DescriptorSet,
-    pipeline_layout:                           vk.PipelineLayout,
+    ui_descriptor_layout:                      vk.DescriptorSetLayout,
+    ui_descriptor_pool_pages:                  [dynamic]Ui_Descriptor_Pool_Page,
+    post_descriptor_layout:                    vk.DescriptorSetLayout,
+    post_descriptor_pool:                      vk.DescriptorPool,
+    post_descriptors:                          [WORLD_POST_DESCRIPTOR_COUNT]vk.DescriptorSet,
+    ui_pipeline_layout:                        vk.PipelineLayout,
+    post_pipeline_layout:                      vk.PipelineLayout,
     pipeline:                                  vk.Pipeline,
     hdr_pipeline, post_pipeline:               vk.Pipeline,
     hdr_scene:                                 resources.Image,
@@ -432,4 +464,21 @@ SetWorldRenderSize :: proc(width, height: u32) {
 // define the effect and encode its push constants through Renderer_Descriptor.
 SetWorldPostProcessEnabled :: proc(enabled: bool) {
     state.world_post_process_enabled = enabled
+}
+
+// SetWorldPostAuxTextures provides two consumer-defined sampled inputs to the
+// product post shader. Their meaning remains entirely consumer-owned.
+SetWorldPostAuxTextures :: proc(first, second: Texture) {
+    if state == nil do return
+    state.world_post_aux_texture_ids = {first.id, second.id}
+    state.world_scene_sample_ready = false
+    state.world_scene.width = 0
+}
+
+// SetWorldPostPassPlan requests an ordered, fixed-capacity chain. An empty
+// plan preserves the legacy direct world-post resolve.
+SetWorldPostPassPlan :: proc(requests: []World_Post_Pass_Request) {
+    if state == nil do return
+    state.world_post_pass_count = min(len(requests), WORLD_POST_MAX_PASSES)
+    for index in 0 ..< state.world_post_pass_count do state.world_post_passes[index] = requests[index]
 }

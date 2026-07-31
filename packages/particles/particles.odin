@@ -5,7 +5,7 @@ import "core:math"
 
 MAX_CPU_PARTICLES :: 384
 MAX_DUST_PARTICLES :: 256
-MAX_WING_TRAIL_PARTICLES :: 192
+MAX_WING_TRAIL_PARTICLES :: 576
 MAX_PETAL_PARTICLES :: 192
 
 Vec3 :: struct {
@@ -402,13 +402,16 @@ step_wing_trails :: proc(
         forward.x * up.y - forward.y * up.x,
     }
     for trails.spawn >= 1 {
+        // Wingtip vapor is a paired effect. If only one slot remains, defer
+        // the spawn instead of letting the left side permanently starve the
+        // right side once the fixed particle pool reaches steady state.
+        if trails.count + 2 > MAX_WING_TRAIL_PARTICLES do break
+        pair_life :=
+            (.55 + next_random(&trails.seed) * (.55 + wind_speed * .02)) *
+            wing_trail_lifetime_scale(airspeed)
         for side in 0 ..< 2 {
-            if trails.count >= MAX_WING_TRAIL_PARTICLES do break
             tip := side == 0 ? left_tip : right_tip
             jitter := next_random(&trails.seed) - .5
-            life :=
-                (.55 + next_random(&trails.seed) * (.55 + wind_speed * .02)) *
-                wing_trail_lifetime_scale(airspeed)
             particle := &trails.particles[trails.count]
             particle^ = {
                 position = {tip.x, tip.y, tip.z},
@@ -417,8 +420,8 @@ step_wing_trails :: proc(
                     -forward.y * (airspeed * .19) + wind.y * .18 + up.y * jitter * .08,
                     -forward.z * (airspeed * (.19 + jitter * .022)) + wind.z * .18,
                 },
-                life     = life,
-                max_life = life,
+                life     = pair_life,
+                max_life = pair_life,
                 size     = .012 + strength * .020 + wind_speed * .0008,
                 seed     = trails.seed,
                 side     = u8(side),

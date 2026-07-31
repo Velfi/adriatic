@@ -422,8 +422,17 @@ Fixture :: struct {
     vehicle_paint_stroke_mirror_part:               vehicles.Aircraft_Mesh_Part `fixture:"-"`,
     vehicle_paint_tool_drag_active:                 bool `fixture:"-"`,
     vehicle_paint_tool_drag_start_uv:               [2]f32 `fixture:"-"`,
+    vehicle_paint_tool_drag_start_position:         [3]f32 `fixture:"-"`,
+    vehicle_paint_tool_drag_start_normal:           [3]f32 `fixture:"-"`,
     vehicle_paint_tool_drag_start_screen:           canvas2d.Vector2 `fixture:"-"`,
     vehicle_paint_tool_drag_part:                   vehicles.Aircraft_Mesh_Part `fixture:"-"`,
+    vehicle_paint_tool_drag_component:              int `fixture:"-"`,
+    vehicle_paint_scope_component:                  bool `fixture:"-"`,
+    vehicle_paint_selection_texels:                 []u8 `fixture:"-"`,
+    vehicle_paint_selection_active:                 bool `fixture:"-"`,
+    vehicle_paint_selection_level:                  int `fixture:"-"`,
+    vehicle_paint_selection_last_click_at:          f32 `fixture:"-"`,
+    vehicle_paint_selection_next_sweep_at:          f32 `fixture:"-"`,
     vehicle_paint_tool_drag_texels:                 [dynamic]int `fixture:"-"`,
     vehicle_paint_tool_drag_mirror_valid:           bool `fixture:"-"`,
     vehicle_paint_tool_drag_mirror_start_uv:        [2]f32 `fixture:"-"`,
@@ -502,7 +511,7 @@ Fixture :: struct {
     customization_preview_yaw:                      f32 `fixture:"-"`,
 }
 
-FIXTURE_SCHEMA_VERSION :: 14
+FIXTURE_SCHEMA_VERSION :: 15
 
 Editor :: struct {
     using fixture:                      Fixture,
@@ -593,6 +602,8 @@ Editor :: struct {
     vehicle_paint_tool_icons:           canvas2d.Texture,
     authoring_tool_atlas:               canvas2d.Texture,
     tarot_atlas:                        canvas2d.Texture,
+    photo_filter_media_atlas:           canvas2d.Texture,
+    photo_filter_lut_atlas:             canvas2d.Texture,
     controller_disconnect_notice:       bool,
     friendship_notice_initialized:      bool,
     friendship_notice_total:            int,
@@ -606,6 +617,7 @@ Editor :: struct {
     photo_pitch:                        f32,
     photo_capture_pending:              bool,
     photo_capture_notice_until:         f64,
+    photo_filter:                       Photo_Filter_Settings,
     options_focus:                      int,
     options_scroll_y:                   f32,
     options_scroll_dragging:            bool,
@@ -6356,7 +6368,52 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
     choice_count := dialogue.available_count(&editor.attendant_dialogue)
     revealing := dialogue_view_revealing(editor)
     wheel := canvas2d.GetMouseWheelMove()
-    if !revealing && wheel != 0 && choice_count > visible_rows {
+    speech_current := dialogue.current(&editor.attendant_dialogue)
+    speech_bounds := layout.speech
+    if speech_current != nil && speech_current.id == "zora-reading" && editor.story_state.tarot_layout.count > 0 {
+        speech_bounds.height -= 108 * layout.scale
+    }
+    speech_text := speech_current != nil ? speech_current.text(&editor.attendant_dialogue.ctx) : ""
+    speech_visible_end := clamp(editor.attendant_dialogue_view.revealed_bytes, 0, len(speech_text))
+    speech_line_height := 39 * layout.scale
+    speech_visible_lines := max(int(speech_bounds.height / speech_line_height), 0)
+    speech_line_count := dialogue_wrapped_line_count(
+        speech_text[:speech_visible_end],
+        speech_bounds,
+        29 * layout.scale,
+        1 * layout.scale,
+    )
+    if speech_line_count > speech_visible_lines {
+        speech_bounds.width -= 14 * layout.scale
+        speech_line_count = dialogue_wrapped_line_count(
+            speech_text[:speech_visible_end],
+            speech_bounds,
+            29 * layout.scale,
+            1 * layout.scale,
+        )
+    }
+    dialogue_speech_scroll_sync(editor, speech_line_count, speech_visible_lines)
+    speech_max_first := max(speech_line_count - speech_visible_lines, 0)
+    stick_scroll := game_input.axis_repeat_step(
+        &editor.attendant_dialogue_view.speech_scroll_axis,
+        gamepad_axis(.Right_Y),
+        delta_seconds,
+    )
+    if speech_max_first > 0 && stick_scroll != 0 {
+        editor.attendant_dialogue_view.first_speech_line = clamp(
+            editor.attendant_dialogue_view.first_speech_line + stick_scroll,
+            0,
+            speech_max_first,
+        )
+    }
+    wheel_over_speech := wheel != 0 && canvas2d.CheckCollisionPointRec(mouse, speech_bounds) && speech_max_first > 0
+    if wheel_over_speech {
+        editor.attendant_dialogue_view.first_speech_line = clamp(
+            editor.attendant_dialogue_view.first_speech_line - int(wheel),
+            0,
+            speech_max_first,
+        )
+    } else if !revealing && wheel != 0 && choice_count > visible_rows {
         editor.attendant_dialogue_view.first_choice = clamp(
             editor.attendant_dialogue_view.first_choice - int(wheel),
             0,
@@ -6601,7 +6658,7 @@ Projected_Aircraft_Face :: struct {
 @(no_instrumentation)
 aircraft_part_color :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part) -> canvas2d.Color {
     #partial switch part {
-    case .Wing, .Tail, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron, .Elevator, .Rudder:
+    case .Wing, .Wing_Root_Fillet, .Tail, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron, .Elevator, .Rudder:
         return {r = 238, g = 207, b = 120, a = 255}
     case .Glass:
         return {r = 142, g = 207, b = 220, a = 255}
@@ -6665,7 +6722,7 @@ aircraft_postale_part_color :: #force_inline proc(part: vehicles.Aircraft_Mesh_P
             b = 76,
             a = 255,
         }
-    case .Wing, .Tail, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron, .Elevator, .Rudder:
+    case .Wing, .Wing_Root_Fillet, .Tail, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron, .Elevator, .Rudder:
         color = {
             r = 222,
             g = 197,
@@ -10556,13 +10613,32 @@ adriatic_run :: proc(
     editor.tweak_panel_visible = false
     editor.gameplay_options = gameplay_options_default()
     if capture_mode {
+        if request != nil {
+            editor.gameplay_options.visual_style = request.visual_style
+            editor.gameplay_options.dither_mode = request.dither_mode
+            photo_filter_defaults(&editor.photo_filter)
+            editor.photo_filter.mode = request.photo_filter_mode
+            photo_filter_load_active(&editor.photo_filter)
+            photo_filter_capture_enabled = request.photo_filter_enabled
+        }
+        // Preserve the existing environment hook for capture automation.
+        capture_style := os.get_env("ADRIATIC_CAPTURE_STYLE", context.temp_allocator)
+        switch capture_style {
+        case "dither":
+            visual_style_set(editor, .Dither)
+        case "standard":
+            visual_style_set(editor, .Standard)
+        }
         capture_dither := os.get_env("ADRIATIC_CAPTURE_DITHER", context.temp_allocator)
         switch capture_dither {
         case "bayer":
+            editor.gameplay_options.visual_style = .Dither
             editor.gameplay_options.dither_mode = .Bayer
         case "blue":
+            editor.gameplay_options.visual_style = .Dither
             editor.gameplay_options.dither_mode = .Blue_Noise
         case "matriax8":
+            editor.gameplay_options.visual_style = .Dither
             editor.gameplay_options.dither_mode = .Matriax_8
         }
     }
@@ -10598,6 +10674,13 @@ adriatic_run :: proc(
     editor.tarot_atlas = canvas2d.LoadTexture("assets/textures/ui/tarot-atlas-v4.png")
     if !editor.tarot_atlas.ready {
         fmt.eprintln("tarot card atlas failed to load")
+    }
+    editor.photo_filter_media_atlas = canvas2d.LoadTexture("assets/textures/photo_filters/clean-room-media-atlas.png")
+    editor.photo_filter_lut_atlas = canvas2d.LoadTexture("assets/textures/photo_filters/clean-room-lut-atlas.png")
+    if editor.photo_filter_media_atlas.ready && editor.photo_filter_lut_atlas.ready {
+        canvas2d.SetWorldPostAuxTextures(editor.photo_filter_media_atlas, editor.photo_filter_lut_atlas)
+    } else {
+        fmt.eprintln("photo filter auxiliary atlases failed to load")
     }
     control_hints_load(editor)
     _ = vehicle_paint_load(editor)

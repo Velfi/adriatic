@@ -10,7 +10,7 @@ import "core:strings"
 
 VEHICLE_MESH_CACHE_MAGIC :: [8]u8{'A', 'D', 'R', 'M', 'E', 'S', 'H', 0}
 VEHICLE_MESH_CACHE_VERSION :: u32(1)
-POSTALE_MESH_CACHE_VERSION :: u32(1)
+POSTALE_MESH_CACHE_VERSION :: u32(3)
 CAR_MESH_CACHE_VERSION :: u32(1)
 
 Vehicle_Mesh_Cache_Header :: struct {

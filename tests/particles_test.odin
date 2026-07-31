@@ -112,3 +112,26 @@ wing_trails_curve_with_crosswind :: proc(t: ^testing.T) {
     }
     testing.expect(t, trails.particles[0].position.x > initial_x)
 }
+
+@(test)
+wing_trails_remain_paired_at_particle_capacity :: proc(t: ^testing.T) {
+    trails := particle_systems.new_wing_trails(0x50414952)
+    left := particle_systems.Vec3{-1, 2, 0}
+    right := particle_systems.Vec3{1, 2, 0}
+    forward := particle_systems.Vec3{0, 0, 1}
+    up := particle_systems.Vec3{0, 1, 0}
+
+    for _ in 0 ..< 240 {
+        particle_systems.step_wing_trails(&trails, .05, left, right, forward, up, {}, 46)
+    }
+
+    left_count, right_count := 0, 0
+    for particle in trails.particles[:trails.count] {
+        if particle.side == 0 {
+            left_count += 1
+        } else if particle.side == 1 {
+            right_count += 1
+        }
+    }
+    testing.expect(t, left_count == right_count)
+}

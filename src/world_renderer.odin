@@ -20295,6 +20295,111 @@ Mouse_Bone_Pose :: struct {
     roll:          f32,
 }
 
+// Pose channels are authored as absolute mouse-local pivots. Keep those
+// pivots connected after all locomotion and emote contributions have been
+// composed: an invalid or over-large channel offset must not tear a child
+// joint away from the rest of the rig and fling its weighted vertices out of
+// the body. Compression remains unconstrained so crouches and squash poses
+// retain their authored silhouette.
+mouse_skeleton_keep_joints_connected :: proc(skeleton: ^[5]Mouse_Bone_Pose) {
+    if skeleton == nil do return
+    authored := skeleton^
+    for child_index in 1 ..< len(skeleton) {
+        child := &skeleton[child_index]
+        parent_index := int(child.parent)
+        if parent_index < 0 || parent_index >= child_index do continue
+        parent := &skeleton[parent_index]
+        authored_child := authored[child_index]
+        authored_parent := authored[parent_index]
+        bind_offset := authored_child.bind_position - authored_parent.bind_position
+        pitch_cosine, pitch_sine := math.cos(authored_parent.pitch), math.sin(authored_parent.pitch)
+        pitched_y := bind_offset.y * pitch_cosine - bind_offset.z * pitch_sine
+        pitched_z := bind_offset.y * pitch_sine + bind_offset.z * pitch_cosine
+        yaw_cosine, yaw_sine := math.cos(authored_parent.yaw), math.sin(authored_parent.yaw)
+        yawed_x := bind_offset.x * yaw_cosine + pitched_z * yaw_sine
+        yawed_z := -bind_offset.x * yaw_sine + pitched_z * yaw_cosine
+        roll_cosine, roll_sine := math.cos(authored_parent.roll), math.sin(authored_parent.roll)
+        inherited_bind_offset := third_person.Vec3 {
+            yawed_x * roll_cosine - pitched_y * roll_sine,
+            yawed_x * roll_sine + pitched_y * roll_cosine,
+            yawed_z,
+        }
+        // Positions are authored in mouse space. Preserve the child's local
+        // translation contribution while carrying its bind pivot through the
+        // evaluated parent transform.
+        child_local_translation :=
+            (authored_child.position - authored_child.bind_position) -
+            (authored_parent.position - authored_parent.bind_position)
+        child.position = parent.position + inherited_bind_offset + child_local_translation
+        bind_length := linalg.length(child.bind_position - parent.bind_position)
+        posed_offset := child.position - parent.position
+        if math.is_nan(posed_offset.x) || math.is_inf(posed_offset.x) ||
+           math.is_nan(posed_offset.y) || math.is_inf(posed_offset.y) ||
+           math.is_nan(posed_offset.z) || math.is_inf(posed_offset.z) {
+            child.position = parent.position + child.bind_position - parent.bind_position
+            continue
+        }
+        posed_length := linalg.length(posed_offset)
+        maximum_length := bind_length * 1.4
+        if posed_length > maximum_length && posed_length > .0001 {
+            child.position = parent.position + posed_offset * (maximum_length / posed_length)
+        }
+    }
+}
+
+when ODIN_TEST {
+    @(test)
+    mouse_skeleton_keeps_escaped_child_joint_connected :: proc(t: ^testing.T) {
+        skeleton := [5]Mouse_Bone_Pose {
+            {parent = -1, bind_position = {0, 0, 0}, position = {1, 2, 3}},
+            {parent = 0, bind_position = {0, 0, .2}, position = {1, 2, 30}},
+            {parent = 1, bind_position = {0, 0, .4}, position = {1, 2, 30.2}},
+            {},
+            {},
+        }
+        mouse_skeleton_keep_joints_connected(&skeleton)
+        maximum := f32(.2 * 1.4)
+        testing.expect(t, linalg.length(skeleton[1].position - skeleton[0].position) <= maximum + .0001)
+        testing.expect(t, linalg.length(skeleton[2].position - skeleton[1].position) <= maximum + .0001)
+    }
+
+    @(test)
+    mouse_skeleton_preserves_connected_authored_joint :: proc(t: ^testing.T) {
+        skeleton := [5]Mouse_Bone_Pose {
+            {parent = -1, bind_position = {0, 0, 0}, position = {1, 2, 3}},
+            {parent = 0, bind_position = {0, 0, .2}, position = {1.05, 2.04, 3.21}},
+            {},
+            {},
+            {},
+        }
+        authored := skeleton[1].position
+        mouse_skeleton_keep_joints_connected(&skeleton)
+        testing.expect_value(t, skeleton[1].position, authored)
+    }
+
+    @(test)
+    mouse_skeleton_child_pivot_inherits_parent_rotation :: proc(t: ^testing.T) {
+        skeleton := [5]Mouse_Bone_Pose {
+            {parent = -1, roll = math.PI * .5},
+            {parent = 0, bind_position = {.2, 0, 0}, position = {.2, 0, 0}},
+            {},
+            {},
+            {},
+        }
+        mouse_skeleton_keep_joints_connected(&skeleton)
+        testing.expect(t, math.abs(skeleton[1].position.x) < .0001)
+        testing.expect(t, math.abs(skeleton[1].position.y - .2) < .0001)
+    }
+
+    @(test)
+    mouse_ground_reach_never_leaves_an_impossible_endpoint :: proc(t: ^testing.T) {
+        root := third_person.Vec3{1, 2, 3}
+        target := third_person.Vec3{8, 9, 10}
+        mouse_clamp_ground_contact_reach(root, &target, .47)
+        testing.expect(t, linalg.length(target - root) <= .4701)
+    }
+}
+
 MOUSE_BODY_RING_COUNT :: 11
 MOUSE_BODY_SEGMENT_COUNT :: 12
 
@@ -21462,9 +21567,12 @@ mouse_clamp_ground_contact_reach :: proc(root: third_person.Vec3, target: ^third
     if target == nil do return
     dy := target.y - root.y
     if math.abs(dy) >= maximum_reach {
-        // Keep the terrain height authoritative even when the vertical span
-        // alone exhausts the chain.
+        // A target beyond the vertical reach cannot remain a ground contact:
+        // the analytic solve would clamp its internal triangle while leaving
+        // the rendered paw at the impossible endpoint, visibly splitting the
+        // limb. Preserve direction and keep the complete endpoint reachable.
         target.x = root.x
+        target.y = root.y + math.sign(dy) * maximum_reach
         target.z = root.z
         return
     }
@@ -21604,8 +21712,32 @@ Mouse_Model :: struct {
 // world_mouse_model builds geometry in a yaw-only frame because ordinary mice
 // stay aligned to world up. Aircraft occupants need one additional parent
 // transform: recover each emitted vertex's yaw-local coordinates, then place
-// it in the aircraft's full right/up/forward basis so pitch and roll are
-// inherited together with translation and heading.
+// it in the aircraft's full -right/up/forward presentation basis so pitch and
+// roll are inherited together with translation and heading. The mouse and
+// aircraft face opposite directions in their authored local frames, so both
+// horizontal axes must flip: that is a proper 180-degree rotation around up.
+// Flipping only forward reflects the mesh and reverses its triangle winding.
+world_aircraft_occupant_vector :: #force_inline proc(
+    basis: flight.Basis,
+    local_x, local_y, local_z: f32,
+) -> third_person.Vec3 {
+    return {
+        -basis.right.x * local_x + basis.up.x * local_y + basis.forward.x * local_z,
+        -basis.right.y * local_x + basis.up.y * local_y + basis.forward.y * local_z,
+        -basis.right.z * local_x + basis.up.z * local_y + basis.forward.z * local_z,
+    }
+}
+
+when ODIN_TEST {
+    @(test)
+    aircraft_occupant_parent_faces_forward_and_preserves_handedness :: proc(t: ^testing.T) {
+        basis := flight.identity_basis()
+        testing.expect_value(t, world_aircraft_occupant_vector(basis, 1, 0, 0), third_person.Vec3{-1, 0, 0})
+        testing.expect_value(t, world_aircraft_occupant_vector(basis, 0, 1, 0), third_person.Vec3{0, 1, 0})
+        testing.expect_value(t, world_aircraft_occupant_vector(basis, 0, 0, 1), basis.forward)
+    }
+}
+
 world_mouse_model_parented :: proc(editor: ^Editor, model: Mouse_Model, basis: flight.Basis) {
     first_vertex := len(world_renderer.vertices)
     world_mouse_model(editor, model)
@@ -21623,21 +21755,19 @@ world_mouse_model_parented :: proc(editor: ^Editor, model: Mouse_Model, basis: f
         local_x := delta.x * yaw_right.x + delta.z * yaw_right.z
         local_y := delta.y
         local_z := delta.x * yaw_forward.x + delta.z * yaw_forward.z
+        parented_position := world_aircraft_occupant_vector(basis, local_x, local_y, local_z)
         vertex.position = {
-            origin.x + basis.right.x * local_x + basis.up.x * local_y + basis.forward.x * local_z,
-            origin.y + basis.right.y * local_x + basis.up.y * local_y + basis.forward.y * local_z,
-            origin.z + basis.right.z * local_x + basis.up.z * local_y + basis.forward.z * local_z,
+            origin.x + parented_position.x,
+            origin.y + parented_position.y,
+            origin.z + parented_position.z,
         }
 
         normal := third_person.Vec3{vertex.normal[0], vertex.normal[1], vertex.normal[2]}
         normal_x := normal.x * yaw_right.x + normal.z * yaw_right.z
         normal_y := normal.y
         normal_z := normal.x * yaw_forward.x + normal.z * yaw_forward.z
-        vertex.normal = {
-            basis.right.x * normal_x + basis.up.x * normal_y + basis.forward.x * normal_z,
-            basis.right.y * normal_x + basis.up.y * normal_y + basis.forward.y * normal_z,
-            basis.right.z * normal_x + basis.up.z * normal_y + basis.forward.z * normal_z,
-        }
+        parented_normal := world_aircraft_occupant_vector(basis, normal_x, normal_y, normal_z)
+        vertex.normal = {parented_normal.x, parented_normal.y, parented_normal.z}
     }
 }
 
@@ -22077,6 +22207,22 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         skeleton[bone_index].pitch += bone_offset.pitch * weight
         skeleton[bone_index].yaw += bone_offset.yaw * weight
         skeleton[bone_index].roll += bone_offset.roll * weight
+    }
+    mouse_skeleton_keep_joints_connected(&skeleton)
+    if model.player_controlled {
+        tail_attachment_bind := third_person.Vec3{0, .28, -.78}
+        tail_attachment_local := mouse_skin_vertex(
+            {bind_position = tail_attachment_bind, groups = {{.Pelvis, 1}, {.Spine, 0}}},
+            &skeleton,
+        )
+        editor.player_tail.evaluated_attachment = local_point(
+            p,
+            rotation,
+            tail_attachment_local.x,
+            tail_attachment_local.y,
+            tail_attachment_local.z,
+        )
+        editor.player_tail.attachment_valid = true
     }
     softness := model.player_controlled ? &editor.player_body_softness : nil
     world_mouse_skinned_hull(p, rotation, &skeleton, fur, fur_dark, fur_light, model.pattern, breathing, softness)
@@ -23065,6 +23211,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
         posed_fore_socket += mouse_body_softness_sample(softness, fore_socket_bind)
         fore_shoulder := local_point(p, rotation, posed_fore_socket.x, posed_fore_socket.y, posed_fore_socket.z)
+        if model.player_controlled && model.track_paw_plants {
+            mouse_paws.set_evaluated_socket(&editor.player_paws, side_index * 2, fore_shoulder)
+        }
         fore_elbow := local_point(
             p,
             rotation,
@@ -23148,7 +23297,6 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             (fore_emote_weight > .5 ? fore_emote.planted : posted_weight < .5 && (!fore_locomoting || front_motion.lift < .025))
         fore_authored := mouse_paws.authored_pose(&editor.player_paws, side_index * 2)
         if model.track_paw_plants && fore_authored.valid {
-            fore_shoulder = fore_authored.socket
             fore_paw = fore_authored.desired
             fore_planted = fore_authored.stance
         }
@@ -23168,8 +23316,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             mouse_clamp_endpoint_reach(fore_shoulder, &fore_paw, fore_minimum_reach, fore_maximum_reach)
         }
         if model.track_paw_plants && fore_resolved.valid {
-            fore_shoulder = fore_resolved.limb_root
             fore_paw = fore_resolved.pad_position
+            mouse_clamp_endpoint_reach(fore_shoulder, &fore_paw, fore_minimum_reach, fore_maximum_reach)
         }
         if model.grounded && !(model.track_paw_plants && fore_resolved.valid) {
             fore_paw = mouse_ground_contact(editor, fore_paw, .024, fore_planted)
@@ -23234,12 +23382,14 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 .018 * (1 - run_weight) + .064 * run_weight,
             )
             if model.track_paw_plants && fore_resolved.valid {
-                digit_tip = fore_resolved.toes[digit].tip
+                contact_correction := fore_paw - fore_resolved.pad_position
+                digit_tip = fore_resolved.toes[digit].tip + contact_correction
             } else if model.grounded {
                 digit_tip = mouse_ground_contact(editor, digit_tip, .008, fore_planted)
             }
             if model.track_paw_plants && fore_resolved.valid {
-                digit_root := fore_resolved.toes[digit].root
+                contact_correction := fore_paw - fore_resolved.pad_position
+                digit_root := fore_resolved.toes[digit].root + contact_correction
                 world_tube_between(fore_paw, digit_root, model_forward, .008, .008, paw)
                 world_tube_between(digit_root, digit_tip, model_forward, .008, .008, paw)
             } else {
@@ -23256,6 +23406,9 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         )
         posed_hind_socket += mouse_body_softness_sample(softness, hind_socket_bind)
         hind_hip := local_point(p, rotation, posed_hind_socket.x, posed_hind_socket.y, posed_hind_socket.z)
+        if model.player_controlled && model.track_paw_plants {
+            mouse_paws.set_evaluated_socket(&editor.player_paws, side_index * 2 + 1, hind_hip)
+        }
         // The hind leg needs both a forward knee and a rear hock. Collapsing
         // those joints into one segment hides the entire chain inside the
         // haunch in side views and makes the paw appear disconnected.
@@ -23302,7 +23455,6 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             model.grounded && (hind_emote_weight > .5 ? hind_emote.planted : hind_lift < .003 && posted_weight < .5)
         hind_authored := mouse_paws.authored_pose(&editor.player_paws, side_index * 2 + 1)
         if model.track_paw_plants && hind_authored.valid {
-            hind_hip = hind_authored.socket
             hind_paw = hind_authored.desired
             hind_planted = hind_authored.stance
         }
@@ -23312,7 +23464,6 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         HIND_LENGTHS :: [3]f32{.220, .270, .250}
         hind_resolved := mouse_paws.resolved_pose(&editor.player_paws, side_index * 2 + 1)
         if model.track_paw_plants && hind_resolved.valid {
-            hind_hip = hind_resolved.limb_root
             hind_paw = hind_resolved.pad_position
         }
         if model.grounded && !(model.track_paw_plants && hind_resolved.valid) {
@@ -23368,12 +23519,14 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             for digit in 0 ..< 3 {
                 digit_tip := local_point(hind_paw, rotation, side_f * (f32(digit) - 1) * .017, -.008, .092)
                 if model.track_paw_plants && hind_resolved.valid {
-                    digit_tip = hind_resolved.toes[digit].tip
+                    contact_correction := hind_paw - hind_resolved.pad_position
+                    digit_tip = hind_resolved.toes[digit].tip + contact_correction
                 } else if model.grounded {
                     digit_tip = mouse_ground_contact(editor, digit_tip, .009, hind_planted)
                 }
                 if model.track_paw_plants && hind_resolved.valid {
-                    digit_root := hind_resolved.toes[digit].root
+                    contact_correction := hind_paw - hind_resolved.pad_position
+                    digit_root := hind_resolved.toes[digit].root + contact_correction
                     world_tube_between(hind_paw, digit_root, model_forward, .009, .009, paw)
                     world_tube_between(digit_root, digit_tip, model_forward, .009, .009, paw)
                 } else {
@@ -23583,6 +23736,7 @@ world_postale_pilot :: proc(editor: ^Editor) {
             grounded = false,
             hide_tail = true,
             hide_hind_feet = true,
+            driving_pose = true,
         },
         basis,
     )
@@ -25357,7 +25511,12 @@ world_petal_particles :: proc(editor: ^Editor) {
             size     = particle.size,
             seed     = particle.seed,
         }
-        world_vehicle_particle(camera, display, palette[int(particle.seed % u32(len(palette)))])
+        world_vehicle_particle(
+            camera,
+            display,
+            palette[int(particle.seed % u32(len(palette)))],
+            -1,
+        )
     }
 }
 
@@ -25692,7 +25851,10 @@ world_wind_streaks :: proc(editor: ^Editor) {
                 {center.x + ribbon_right.x, center.y + ribbon_right.y, center.z + ribbon_right.z},
                 {178, 235, 246, alpha},
             ),
-            world_vertex({tail.x, tail.y, tail.z}, {137, 218, 235, tail_alpha}),
+            world_vertex(
+                {center.x - ribbon_right.x, center.y - ribbon_right.y, center.z - ribbon_right.z},
+                {178, 235, 246, alpha},
+            ),
         }
         append(
             &world_renderer.late_transparent_vertices,

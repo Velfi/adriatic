@@ -64,9 +64,11 @@ Contact :: struct {
 }
 
 Rig :: struct {
-    contacts: [PAW_COUNT]Contact,
-    authored: [PAW_COUNT]Authored_Paw_Pose,
-    resolved: [PAW_COUNT]Resolved_Paw_Pose,
+    contacts:               [PAW_COUNT]Contact,
+    authored:               [PAW_COUNT]Authored_Paw_Pose,
+    resolved:               [PAW_COUNT]Resolved_Paw_Pose,
+    evaluated_sockets:      [PAW_COUNT]third_person.Vec3,
+    evaluated_socket_valid: [PAW_COUNT]bool,
 }
 
 Resolve_Result :: struct {
@@ -108,6 +110,17 @@ authored_pose :: proc(rig: ^Rig, index: int) -> Authored_Paw_Pose {
 resolved_pose :: proc(rig: ^Rig, index: int) -> Resolved_Paw_Pose {
     if rig == nil || index < 0 || index >= PAW_COUNT do return {}
     return rig.resolved[index]
+}
+
+set_evaluated_socket :: proc(rig: ^Rig, index: int, socket: third_person.Vec3) {
+    if rig == nil || index < 0 || index >= PAW_COUNT do return
+    rig.evaluated_sockets[index] = socket
+    rig.evaluated_socket_valid[index] = true
+}
+
+evaluated_socket :: proc(rig: ^Rig, index: int) -> (third_person.Vec3, bool) {
+    if rig == nil || index < 0 || index >= PAW_COUNT || !rig.evaluated_socket_valid[index] do return {}, false
+    return rig.evaluated_sockets[index], true
 }
 
 quat_conjugate_rotate :: proc(q: [4]f32, value: third_person.Vec3) -> third_person.Vec3 {

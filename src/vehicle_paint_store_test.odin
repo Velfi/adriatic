@@ -499,4 +499,110 @@ when ODIN_TEST {
             testing.expect(t, enabled == (index == 1))
         }
     }
+
+    @(test)
+    vehicle_paint_classifies_exterior_panels_and_control_groups :: proc(t: ^testing.T) {
+        // Authored red metal is used for structural exterior panels and must
+        // accept the player's livery. Non-paint materials remain protected.
+        testing.expect(t, vehicle_paint_part_is_paintable(.Red_Paint))
+        testing.expect(t, !vehicle_paint_part_is_paintable(.Wheel))
+        testing.expect(t, !vehicle_paint_part_is_paintable(.Glass))
+        testing.expect(t, !vehicle_paint_part_is_paintable(.Propeller_Blur))
+        testing.expect(t, !vehicle_paint_part_is_paintable(.Marking))
+        testing.expect(t, !vehicle_paint_part_is_paintable(.Strap))
+
+        wing_parts := [5]vehicles.Aircraft_Mesh_Part {
+            .Wing,
+            .Left_Flap,
+            .Right_Flap,
+            .Left_Aileron,
+            .Right_Aileron,
+        }
+        for part in wing_parts do testing.expect_value(t, vehicle_paint_component_for_part(part), 1)
+
+        rotor_parts := [6]vehicles.Aircraft_Mesh_Part {
+            .Left_Rotor,
+            .Right_Rotor,
+            .Rear_Rotor,
+            .Mk2_Rear_Rotor,
+            .Rotor_Blade,
+            .Rotor_Tip,
+        }
+        for part in rotor_parts do testing.expect_value(t, vehicle_paint_component_for_part(part), 3)
+        testing.expect_value(t, vehicle_paint_component_for_part(.Lift_Frame), 4)
+    }
+
+    @(test)
+    vehicle_paint_postale_exposes_all_structural_components :: proc(t: ^testing.T) {
+        mesh := vehicles.postale_mesh()
+        defer free(mesh)
+
+        found: [5]bool
+        protected_markings := 0
+        for triangle in mesh.triangles[:mesh.triangle_count] {
+            a := mesh.vertices[triangle.a]
+            b := mesh.vertices[triangle.b]
+            c := mesh.vertices[triangle.c]
+            // Paint ownership reads the first corner, so mixed-part triangles
+            // would silently make some visible faces unreachable.
+            testing.expect(t, a.part == b.part && a.part == c.part)
+            if vehicle_paint_part_is_paintable(a.part) {
+                found[vehicle_paint_component_for_part(a.part)] = true
+            } else if a.part == .Marking {
+                protected_markings += 1
+            }
+        }
+        for component_present in found do testing.expect(t, component_present)
+        // The cowling livery band remains authored/protected, while wheel
+        // hubs and covers are no longer hidden behind the Marking tag.
+        testing.expect(t, protected_markings > 0)
+    }
+
+    @(test)
+    vehicle_paint_fill_and_gradient_scopes_distinguish_face_angle_from_component :: proc(t: ^testing.T) {
+        up := [3]f32{0, 1, 0}
+        shallow := [3]f32{0, .94, .342}
+        steep := [3]f32{0, .5, .866}
+
+        testing.expect(t, vehicle_paint_scope_matches(.Wing, .Wing, shallow, up, 1, false))
+        testing.expect(t, !vehicle_paint_scope_matches(.Wing, .Wing, steep, up, 1, false))
+        testing.expect(t, !vehicle_paint_scope_matches(.Left_Flap, .Wing, up, up, 1, false))
+
+        // Component scope crosses mesh-part and face-angle boundaries, but
+        // never leaks from the wing assembly into another semantic component.
+        testing.expect(t, vehicle_paint_scope_matches(.Left_Flap, .Wing, steep, up, 1, true))
+        testing.expect(t, vehicle_paint_scope_matches(.Right_Aileron, .Wing, steep, up, 1, true))
+        testing.expect(t, !vehicle_paint_scope_matches(.Body, .Wing, up, up, 1, true))
+        testing.expect(t, !vehicle_paint_scope_matches(.Glass, .Wing, up, up, 1, true))
+    }
+
+    @(test)
+    vehicle_paint_direct_mask_gates_paint_and_supports_clear_invert :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        editor.vehicle_paint_component_mask = {true, true, true, true, true}
+        editor.vehicle_paint_selection_texels = make([]u8, VEHICLE_PAINT_TEXTURE_WIDTH * VEHICLE_PAINT_TEXTURE_HEIGHT)
+        defer delete(editor.vehicle_paint_selection_texels)
+        owner := u8(vehicles.Aircraft_Mesh_Part.Body) + 1
+        selected_texel := 12 * VEHICLE_PAINT_TEXTURE_WIDTH + 12
+        blocked_texel := 12 * VEHICLE_PAINT_TEXTURE_WIDTH + 13
+        editor.vehicle_paint_texel_part[selected_texel] = owner
+        editor.vehicle_paint_texel_part[blocked_texel] = owner
+        editor.vehicle_paint_selection_texels[selected_texel] = 1
+        editor.vehicle_paint_selection_active = true
+
+        color := canvas2d.Color{210, 44, 30, 255}
+        vehicle_paint_bucket(editor, .Body, {}, color)
+        pixels := vehicle_paint_pixels(editor)
+        testing.expect_value(t, pixels[selected_texel * 4], color.r)
+        testing.expect_value(t, pixels[blocked_texel * 4 + 3], u8(0))
+
+        vehicle_paint_selection_invert(editor)
+        testing.expect_value(t, editor.vehicle_paint_selection_texels[selected_texel], u8(0))
+        testing.expect_value(t, editor.vehicle_paint_selection_texels[blocked_texel], u8(1))
+        vehicle_paint_selection_clear(editor)
+        testing.expect(t, !editor.vehicle_paint_selection_active)
+        testing.expect(t, vehicle_paint_texel_selected(editor, selected_texel))
+        testing.expect(t, vehicle_paint_texel_selected(editor, blocked_texel))
+    }
 }

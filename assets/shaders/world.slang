@@ -146,8 +146,12 @@ float local_fog_density(float3 p) {
 }
 
 float combined_fog(VertexOutput input) {
-    float distance_fog = saturate((input.depth - push.projection.z) /
-                                  max(push.projection.w - push.projection.z, .001));
+    float fog_start = abs(push.projection.z);
+    // Keep distinct depth planes without laying a grey veil across the whole
+    // scene. LOVE used haze as separation behind luminous detail fragments.
+    float fog_end = push.projection.w;
+    float distance_fog = saturate((input.depth - fog_start) /
+                                  max(fog_end - fog_start, .001));
     // Legacy horizon haze is a near-surface layer. Without altitude thinning
     // it saturates every sea ray from above and hides the local bank shape.
     float altitude_clear = smoothstep(180.0, 500.0, push.camera_position.y);
@@ -2490,5 +2494,11 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         );
     }
     if (input.kind == MATERIAL_FOG_SHELL && output_alpha <= .005) discard;
-    return float4(lerp(base, srgb_to_linear(push.fog_color.rgb), fog), output_alpha);
+    float3 resolved = lerp(base, srgb_to_linear(push.fog_color.rgb), fog);
+    if (push.projection.z < 0.0) {
+        float luminance = dot(resolved, float3(.2126, .7152, .0722));
+        resolved = lerp(luminance.xxx, resolved, .82);
+        resolved = lerp(resolved, floor(resolved * 15.0 + .5) / 15.0, .42);
+    }
+    return float4(resolved, output_alpha);
 }

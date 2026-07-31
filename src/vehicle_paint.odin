@@ -166,6 +166,7 @@ vehicle_paint_settings_initialize :: proc(editor: ^Editor) {
 vehicle_paint_open :: proc(editor: ^Editor) {
     if editor == nil do return
     vehicle_paint_settings_initialize(editor)
+    vehicle_paint_selection_clear(editor)
     copy(editor.vehicle_paint_open_pixels, vehicle_paint_pixels(editor))
     editor.vehicle_paint_scene = true
     editor.vehicle_showcase_scene = true
@@ -241,13 +242,22 @@ vehicle_paint_open :: proc(editor: ^Editor) {
 
 vehicle_paint_component_for_part :: proc(part: vehicles.Aircraft_Mesh_Part) -> int {
     #partial switch part {
-    case .Wing, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron:
+    case .Wing, .Wing_Root_Fillet, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron:
         return 1
     case .Tail, .Elevator, .Rudder:
         return 2
-    case .Engine, .Propeller, .Left_Propeller, .Right_Propeller:
+    case .Engine,
+         .Propeller,
+         .Left_Propeller,
+         .Right_Propeller,
+         .Left_Rotor,
+         .Right_Rotor,
+         .Rear_Rotor,
+         .Mk2_Rear_Rotor,
+         .Rotor_Blade,
+         .Rotor_Tip:
         return 3
-    case .Float, .Frame, .Carriage, .Wheel:
+    case .Float, .Frame, .Lift_Frame, .Carriage, .Wheel:
         return 4
     }
     return 0
@@ -262,13 +272,14 @@ vehicle_paint_component_names :: proc(editor: ^Editor) -> [5]string {
 
 @(no_instrumentation)
 vehicle_paint_part_is_paintable :: #force_inline proc(part: vehicles.Aircraft_Mesh_Part) -> bool {
-    // Rubber and glass keep their authored materials instead of accepting the
-    // vehicle paint atlas.
+    // Rubber, glass, decals and flexible rigging keep their authored
+    // materials. Red_Paint is an authored base material used by real exterior
+    // panels, not a decal; excluding it leaves large holes in the paintable
+    // fuselage and frame.
     return(
         part != .Wheel &&
         part != .Glass &&
         part != .Propeller_Blur &&
-        part != .Red_Paint &&
         part != .Marking &&
         part != .Strap \
     )
@@ -348,6 +359,12 @@ vehicle_paint_history_try_init :: proc(editor: ^Editor, allocator := context.all
     if allocation_error != nil do return false
     editor.vehicle_paint_tool_drag_mirror_texels, allocation_error = make([dynamic]int, 0, 4096, allocator)
     if allocation_error != nil do return false
+    editor.vehicle_paint_selection_texels, allocation_error = make(
+        []u8,
+        VEHICLE_PAINT_TEXTURE_WIDTH * VEHICLE_PAINT_TEXTURE_HEIGHT,
+        allocator,
+    )
+    if allocation_error != nil do return false
     for layer in 0 ..< VEHICLE_PAINT_AIRCRAFT_COUNT {
         editor.vehicle_paint_undo[layer], allocation_error = make(
             [dynamic]Vehicle_Paint_History_Entry,
@@ -378,6 +395,7 @@ vehicle_paint_history_destroy :: proc(editor: ^Editor, slice_allocator := contex
     delete(editor.vehicle_paint_open_pixels, slice_allocator)
     delete(editor.vehicle_paint_tool_drag_texels)
     delete(editor.vehicle_paint_tool_drag_mirror_texels)
+    delete(editor.vehicle_paint_selection_texels, slice_allocator)
     for layer in 0 ..< VEHICLE_PAINT_AIRCRAFT_COUNT {
         vehicle_paint_history_entries_clear(&editor.vehicle_paint_undo[layer])
         vehicle_paint_history_entries_clear(&editor.vehicle_paint_redo[layer])
@@ -387,6 +405,7 @@ vehicle_paint_history_destroy :: proc(editor: ^Editor, slice_allocator := contex
     editor.vehicle_paint_open_pixels = nil
     editor.vehicle_paint_tool_drag_texels = nil
     editor.vehicle_paint_tool_drag_mirror_texels = nil
+    editor.vehicle_paint_selection_texels = nil
     editor.vehicle_paint_undo = {}
     editor.vehicle_paint_redo = {}
     editor.vehicle_paint_postale_mesh = nil
@@ -549,6 +568,111 @@ vehicle_paint_build_texel_parts :: proc(editor: ^Editor, mesh: ^$Mesh) {
     }
 }
 
+@(no_instrumentation)
+vehicle_paint_texel_selected :: #force_inline proc(editor: ^Editor, texel: int) -> bool {
+    return editor == nil ||
+           !editor.vehicle_paint_selection_active ||
+           editor.vehicle_paint_selection_texels == nil ||
+           (texel >= 0 && texel < len(editor.vehicle_paint_selection_texels) && editor.vehicle_paint_selection_texels[texel] != 0)
+}
+
+vehicle_paint_selection_clear :: proc(editor: ^Editor) {
+    if editor == nil || editor.vehicle_paint_selection_texels == nil do return
+    mem.zero_slice(editor.vehicle_paint_selection_texels)
+    editor.vehicle_paint_selection_active = false
+}
+
+vehicle_paint_selection_select_all :: proc(editor: ^Editor) {
+    if editor == nil || editor.vehicle_paint_selection_texels == nil do return
+    for owner, texel in editor.vehicle_paint_texel_part {
+        if owner == 0 do continue
+        part := vehicles.Aircraft_Mesh_Part(owner - 1)
+        editor.vehicle_paint_selection_texels[texel] =
+            vehicle_paint_part_is_paintable(part) &&
+            editor.vehicle_paint_component_mask[vehicle_paint_component_for_part(part)] ? 1 : 0
+    }
+    editor.vehicle_paint_selection_active = true
+}
+
+vehicle_paint_selection_invert :: proc(editor: ^Editor) {
+    if editor == nil || editor.vehicle_paint_selection_texels == nil do return
+    for owner, texel in editor.vehicle_paint_texel_part {
+        if owner == 0 do continue
+        part := vehicles.Aircraft_Mesh_Part(owner - 1)
+        selectable := vehicle_paint_part_is_paintable(part) &&
+                      editor.vehicle_paint_component_mask[vehicle_paint_component_for_part(part)]
+        editor.vehicle_paint_selection_texels[texel] =
+            selectable && editor.vehicle_paint_selection_texels[texel] == 0 ? 1 : 0
+    }
+    editor.vehicle_paint_selection_active = true
+}
+
+vehicle_paint_selection_preview :: proc(editor: ^Editor) {
+    if editor == nil do return
+    vehicle_paint_preview_clear(editor)
+    if !editor.vehicle_paint_selection_active do return
+    for selected, texel in editor.vehicle_paint_selection_texels {
+        if selected != 0 do vehicle_paint_preview_set(editor, texel, {72, 210, 184, 255}, 72)
+    }
+}
+
+vehicle_paint_selection_apply_mesh :: proc(
+    editor: ^Editor,
+    mesh: ^$Mesh,
+    start_part: vehicles.Aircraft_Mesh_Part,
+    start_normal: [3]f32,
+    level: int,
+    selected: bool,
+) {
+    if editor == nil || mesh == nil || editor.vehicle_paint_selection_texels == nil do return
+    component := vehicle_paint_component_for_part(start_part)
+    for triangle in mesh.triangles[:mesh.triangle_count] {
+        a := mesh.vertices[triangle.a]
+        b := mesh.vertices[triangle.b]
+        c := mesh.vertices[triangle.c]
+        if !vehicle_paint_part_is_paintable(a.part) do continue
+        normal := vehicle_paint_face_normal(a.position, b.position, c.position)
+        matches := a.part == start_part && vehicle_paint_dot3(normal, start_normal) >= .819152
+        if level == 1 do matches = a.part == start_part
+        if level >= 2 do matches = vehicle_paint_component_for_part(a.part) == component
+        if !matches do continue
+        min_x := clamp(int(math.floor(f64(min(a.uv[0], b.uv[0], c.uv[0]) * VEHICLE_PAINT_TEXTURE_WIDTH))), 0, VEHICLE_PAINT_TEXTURE_WIDTH - 1)
+        max_x := clamp(int(math.ceil(f64(max(a.uv[0], b.uv[0], c.uv[0]) * VEHICLE_PAINT_TEXTURE_WIDTH))), 0, VEHICLE_PAINT_TEXTURE_WIDTH - 1)
+        min_y := clamp(int(math.floor(f64(min(a.uv[1], b.uv[1], c.uv[1]) * VEHICLE_PAINT_TEXTURE_HEIGHT))), 0, VEHICLE_PAINT_TEXTURE_HEIGHT - 1)
+        max_y := clamp(int(math.ceil(f64(max(a.uv[1], b.uv[1], c.uv[1]) * VEHICLE_PAINT_TEXTURE_HEIGHT))), 0, VEHICLE_PAINT_TEXTURE_HEIGHT - 1)
+        uv_a := canvas2d.Vector2{a.uv[0] * VEHICLE_PAINT_TEXTURE_WIDTH, a.uv[1] * VEHICLE_PAINT_TEXTURE_HEIGHT}
+        uv_b := canvas2d.Vector2{b.uv[0] * VEHICLE_PAINT_TEXTURE_WIDTH, b.uv[1] * VEHICLE_PAINT_TEXTURE_HEIGHT}
+        uv_c := canvas2d.Vector2{c.uv[0] * VEHICLE_PAINT_TEXTURE_WIDTH, c.uv[1] * VEHICLE_PAINT_TEXTURE_HEIGHT}
+        owner := u8(a.part) + 1
+        for y in min_y ..= max_y {
+            for x in min_x ..= max_x {
+                texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
+                if editor.vehicle_paint_texel_part[texel] == owner &&
+                   vehicle_paint_texel_overlaps_triangle(uv_a, uv_b, uv_c, {f32(x) + .5, f32(y) + .5}) {
+                    editor.vehicle_paint_selection_texels[texel] = selected ? 1 : 0
+                }
+            }
+        }
+    }
+    editor.vehicle_paint_selection_active = true
+}
+
+vehicle_paint_selection_apply_active_mesh :: proc(
+    editor: ^Editor,
+    part: vehicles.Aircraft_Mesh_Part,
+    normal: [3]f32,
+    level: int,
+    selected: bool,
+) {
+    if editor.aircraft.active == .Postale {
+        vehicle_paint_selection_apply_mesh(editor, editor.vehicle_paint_postale_mesh, part, normal, level, selected)
+    } else if editor.aircraft.active == .Libellula_Mk2 {
+        vehicle_paint_selection_apply_mesh(editor, &editor.libellula_mk2_visual_mesh, part, normal, level, selected)
+    } else {
+        vehicle_paint_selection_apply_mesh(editor, &editor.libellula_visual_mesh, part, normal, level, selected)
+    }
+}
+
 // Conservatively rasterize UV ownership. Testing only the texel center leaves an
 // unpaintable half-texel border around every island, which is especially visible
 // along narrow and diagonal aircraft edges.
@@ -654,7 +778,7 @@ vehicle_paint_shade_texture :: proc(
             // that edge; strength intentionally does not create in-between hues.
             if vehicle_paint_brush_coverage(distance, editor.vehicle_paint_brush_hardness) < .5 do continue
             texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
-            if editor.vehicle_paint_texel_part[texel] != owner do continue
+            if editor.vehicle_paint_texel_part[texel] != owner || !vehicle_paint_texel_selected(editor, texel) do continue
             index := texel * 4
             before := [4]u8{pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]}
             if shade, ok := vehicle_paint_shade_step(before, base, lighter); ok {
@@ -682,7 +806,8 @@ vehicle_paint_stamp_texture :: proc(editor: ^Editor, part: vehicles.Aircraft_Mes
             dx, dy := x - center_x, y - center_y
             distance := f32(math.sqrt(f64(dx * dx + dy * dy))) / f32(radius)
             if distance > 1 do continue
-            if editor.vehicle_paint_texel_part[y * VEHICLE_PAINT_TEXTURE_WIDTH + x] != u8(part) + 1 do continue
+            texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
+            if editor.vehicle_paint_texel_part[texel] != u8(part) + 1 || !vehicle_paint_texel_selected(editor, texel) do continue
             coverage := vehicle_paint_brush_coverage(distance, editor.vehicle_paint_brush_hardness)
             strength := clamp(editor.vehicle_paint_brush_strength, 0, 1)
             alpha := u8(clamp(coverage * strength * 255, 0, 255))
@@ -805,7 +930,7 @@ vehicle_paint_bucket :: proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part,
     if editor == nil do return
     pixels := vehicle_paint_pixels(editor)
     for owner, texel in editor.vehicle_paint_texel_part {
-        if owner == 0 do continue
+        if owner == 0 || !vehicle_paint_texel_selected(editor, texel) do continue
         owned_part := vehicles.Aircraft_Mesh_Part(owner - 1)
         component := vehicle_paint_component_for_part(owned_part)
         if !editor.vehicle_paint_component_mask[component] do continue
@@ -833,7 +958,7 @@ vehicle_paint_shape :: proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part, 
                 continue
             }
             texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
-            if editor.vehicle_paint_texel_part[texel] == owner {
+            if editor.vehicle_paint_texel_part[texel] == owner && vehicle_paint_texel_selected(editor, texel) {
                 vehicle_paint_set_texel(pixels, texel, color)
             }
         }
@@ -888,7 +1013,7 @@ vehicle_paint_preview_rebuild :: proc(
         for y in max(0, center_y - radius) ..= min(VEHICLE_PAINT_TEXTURE_HEIGHT - 1, center_y + radius) {
             for x in max(0, center_x - radius) ..= min(VEHICLE_PAINT_TEXTURE_WIDTH - 1, center_x + radius) {
                 texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
-                if editor.vehicle_paint_texel_part[texel] != owner do continue
+                if editor.vehicle_paint_texel_part[texel] != owner || !vehicle_paint_texel_selected(editor, texel) do continue
                 dx, dy := x - center_x, y - center_y
                 distance := f32(math.sqrt(f64(dx * dx + dy * dy))) / f32(radius)
                 coverage := vehicle_paint_brush_coverage(distance, editor.vehicle_paint_brush_hardness)
@@ -901,7 +1026,7 @@ vehicle_paint_preview_rebuild :: proc(
         for y in max(0, center_y - radius) ..= min(VEHICLE_PAINT_TEXTURE_HEIGHT - 1, center_y + radius) {
             for x in max(0, center_x - radius) ..= min(VEHICLE_PAINT_TEXTURE_WIDTH - 1, center_x + radius) {
                 texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
-                if editor.vehicle_paint_texel_part[texel] != owner do continue
+                if editor.vehicle_paint_texel_part[texel] != owner || !vehicle_paint_texel_selected(editor, texel) do continue
                 if vehicle_paint_shape_contains(
                     editor.vehicle_paint_shape_kind,
                     f32(x - center_x),
@@ -919,7 +1044,7 @@ vehicle_paint_preview_rebuild :: proc(
         rotation_cos := f32(math.cos(f64(radians)))
         rotation_sin := f32(math.sin(f64(radians)))
         for owned, texel in editor.vehicle_paint_texel_part {
-            if owned == 0 do continue
+            if owned == 0 || !vehicle_paint_texel_selected(editor, texel) do continue
             owned_part := vehicles.Aircraft_Mesh_Part(owned - 1)
             component := vehicle_paint_component_for_part(owned_part)
             if !editor.vehicle_paint_component_mask[component] do continue
@@ -956,7 +1081,7 @@ vehicle_paint_blend :: proc(editor: ^Editor, part: vehicles.Aircraft_Mesh_Part, 
             distance := f32(math.sqrt(f64(dx * dx + dy * dy)))
             if distance > f32(radius) do continue
             texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
-            if editor.vehicle_paint_texel_part[texel] != owner do continue
+            if editor.vehicle_paint_texel_part[texel] != owner || !vehicle_paint_texel_selected(editor, texel) do continue
             sum: [4]int
             count := 0
             for sample_y in max(0, y - 1) ..= min(VEHICLE_PAINT_TEXTURE_HEIGHT - 1, y + 1) {
@@ -1011,10 +1136,154 @@ vehicle_paint_gradient_texels :: proc(
             u8(f32(primary.b) + (f32(secondary.b) - f32(primary.b)) * t),
             255,
         }
-        vehicle_paint_set_texel(pixels, texel, color)
+        if vehicle_paint_texel_selected(editor, texel) do vehicle_paint_set_texel(pixels, texel, color)
     }
     vehicle_paint_mark_texture_dirty(editor)
     editor.vehicle_paint_save_pending = true
+}
+
+vehicle_paint_scope_matches :: proc(
+    part, start_part: vehicles.Aircraft_Mesh_Part,
+    normal, start_normal: [3]f32,
+    component: int,
+    component_scope: bool,
+) -> bool {
+    if !vehicle_paint_part_is_paintable(part) do return false
+    if component_scope do return vehicle_paint_component_for_part(part) == component
+    return part == start_part && vehicle_paint_dot3(normal, start_normal) >= .819152
+}
+
+vehicle_paint_apply_3d_scope :: proc(
+    editor: ^Editor,
+    mesh: ^$Mesh,
+    component: int,
+    start_part: vehicles.Aircraft_Mesh_Part,
+    start_normal: [3]f32,
+    component_scope: bool,
+    start_position, end_position: [3]f32,
+    primary, secondary: canvas2d.Color,
+    gradient: bool,
+) {
+    if editor == nil || mesh == nil || component < 0 || component >= len(editor.vehicle_paint_component_mask) do return
+    direction := end_position - start_position
+    length_squared := vehicle_paint_dot3(direction, direction)
+    if gradient && length_squared < .000001 do return
+    pixels := vehicle_paint_pixels(editor)
+    for triangle in mesh.triangles[:mesh.triangle_count] {
+        a := mesh.vertices[triangle.a]
+        b := mesh.vertices[triangle.b]
+        c := mesh.vertices[triangle.c]
+        normal := vehicle_paint_face_normal(a.position, b.position, c.position)
+        if !vehicle_paint_scope_matches(a.part, start_part, normal, start_normal, component, component_scope) {
+            continue
+        }
+        min_x := clamp(
+            int(math.floor(f64(min(a.uv[0], b.uv[0], c.uv[0]) * VEHICLE_PAINT_TEXTURE_WIDTH))),
+            0,
+            VEHICLE_PAINT_TEXTURE_WIDTH - 1,
+        )
+        max_x := clamp(
+            int(math.ceil(f64(max(a.uv[0], b.uv[0], c.uv[0]) * VEHICLE_PAINT_TEXTURE_WIDTH))),
+            0,
+            VEHICLE_PAINT_TEXTURE_WIDTH - 1,
+        )
+        min_y := clamp(
+            int(math.floor(f64(min(a.uv[1], b.uv[1], c.uv[1]) * VEHICLE_PAINT_TEXTURE_HEIGHT))),
+            0,
+            VEHICLE_PAINT_TEXTURE_HEIGHT - 1,
+        )
+        max_y := clamp(
+            int(math.ceil(f64(max(a.uv[1], b.uv[1], c.uv[1]) * VEHICLE_PAINT_TEXTURE_HEIGHT))),
+            0,
+            VEHICLE_PAINT_TEXTURE_HEIGHT - 1,
+        )
+        uv_a := canvas2d.Vector2{a.uv[0] * VEHICLE_PAINT_TEXTURE_WIDTH, a.uv[1] * VEHICLE_PAINT_TEXTURE_HEIGHT}
+        uv_b := canvas2d.Vector2{b.uv[0] * VEHICLE_PAINT_TEXTURE_WIDTH, b.uv[1] * VEHICLE_PAINT_TEXTURE_HEIGHT}
+        uv_c := canvas2d.Vector2{c.uv[0] * VEHICLE_PAINT_TEXTURE_WIDTH, c.uv[1] * VEHICLE_PAINT_TEXTURE_HEIGHT}
+        denominator := vehicle_paint_edge(uv_a, uv_b, uv_c)
+        if math.abs(denominator) <= .0001 do continue
+        owner := u8(a.part) + 1
+        for y in min_y ..= max_y {
+            for x in min_x ..= max_x {
+                texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
+                if editor.vehicle_paint_texel_part[texel] != owner || !vehicle_paint_texel_selected(editor, texel) do continue
+                sample := canvas2d.Vector2{f32(x) + .5, f32(y) + .5}
+                weight_a := vehicle_paint_edge(uv_b, uv_c, sample) / denominator
+                weight_b := vehicle_paint_edge(uv_c, uv_a, sample) / denominator
+                weight_c := 1 - weight_a - weight_b
+                position := a.position * weight_a + b.position * weight_b + c.position * weight_c
+                t: f32
+                if gradient {
+                    t = clamp(vehicle_paint_dot3(position - start_position, direction) / length_squared, 0, 1)
+                }
+                color := canvas2d.Color {
+                    u8(f32(primary.r) + (f32(secondary.r) - f32(primary.r)) * t),
+                    u8(f32(primary.g) + (f32(secondary.g) - f32(primary.g)) * t),
+                    u8(f32(primary.b) + (f32(secondary.b) - f32(primary.b)) * t),
+                    255,
+                }
+                vehicle_paint_set_texel(pixels, texel, color)
+            }
+        }
+    }
+    vehicle_paint_mark_texture_dirty(editor)
+    editor.vehicle_paint_save_pending = true
+}
+
+vehicle_paint_apply_active_3d_scope :: proc(
+    editor: ^Editor,
+    component: int,
+    start_part: vehicles.Aircraft_Mesh_Part,
+    start_normal: [3]f32,
+    component_scope: bool,
+    start_position, end_position: [3]f32,
+    primary, secondary: canvas2d.Color,
+    gradient: bool,
+) {
+    if editor == nil do return
+    if editor.aircraft.active == .Postale {
+        vehicle_paint_apply_3d_scope(
+            editor,
+            editor.vehicle_paint_postale_mesh,
+            component,
+            start_part,
+            start_normal,
+            component_scope,
+            start_position,
+            end_position,
+            primary,
+            secondary,
+            gradient,
+        )
+    } else if editor.aircraft.active == .Libellula_Mk2 {
+        vehicle_paint_apply_3d_scope(
+            editor,
+            &editor.libellula_mk2_visual_mesh,
+            component,
+            start_part,
+            start_normal,
+            component_scope,
+            start_position,
+            end_position,
+            primary,
+            secondary,
+            gradient,
+        )
+    } else {
+        vehicle_paint_apply_3d_scope(
+            editor,
+            &editor.libellula_visual_mesh,
+            component,
+            start_part,
+            start_normal,
+            component_scope,
+            start_position,
+            end_position,
+            primary,
+            secondary,
+            gradient,
+        )
+    }
 }
 
 vehicle_paint_gradient :: proc(
@@ -1040,7 +1309,7 @@ vehicle_paint_pattern :: proc(
     rotation_cos := f32(math.cos(f64(radians)))
     rotation_sin := f32(math.sin(f64(radians)))
     for owner, texel in editor.vehicle_paint_texel_part {
-        if owner == 0 do continue
+        if owner == 0 || !vehicle_paint_texel_selected(editor, texel) do continue
         owned_part := vehicles.Aircraft_Mesh_Part(owner - 1)
         component := vehicle_paint_component_for_part(owned_part)
         if !editor.vehicle_paint_component_mask[component] do continue
@@ -1154,10 +1423,17 @@ vehicle_paint_shape_active :: proc(editor: ^Editor) -> bool {
     return editor != nil && editor.vehicle_paint_tool == .Shape && !editor.vehicle_paint_erase
 }
 
+vehicle_paint_scope_active :: proc(editor: ^Editor) -> bool {
+    return editor != nil &&
+           (editor.vehicle_paint_tool == .Bucket || editor.vehicle_paint_tool == .Gradient) &&
+           !editor.vehicle_paint_erase
+}
+
 vehicle_paint_panel_bounds :: proc(editor: ^Editor) -> canvas2d.Rectangle {
     height: f32 = 618
     if vehicle_paint_pattern_active(editor) do height = 700
     if vehicle_paint_shape_active(editor) do height = 686
+    if vehicle_paint_scope_active(editor) do height += 38
     return {8, 10, 304, height}
 }
 
@@ -1189,6 +1465,10 @@ vehicle_paint_shape_control_bounds :: proc(index: int) -> canvas2d.Rectangle {
     return {18 + f32(index) * 68, 414, 62, 22}
 }
 
+vehicle_paint_scope_bounds :: proc(index: int) -> canvas2d.Rectangle {
+    return {18 + f32(index) * 142, 376, 134, 30}
+}
+
 vehicle_paint_brush_slider_bounds :: proc(index: int) -> canvas2d.Rectangle {
     return {326, 22 + f32(index) * 42, 210, 34}
 }
@@ -1210,6 +1490,7 @@ vehicle_paint_brush_slider_update :: proc(editor: ^Editor, index: int, mouse_x: 
 vehicle_paint_parts_top :: proc(editor: ^Editor) -> f32 {
     if vehicle_paint_pattern_active(editor) do return 470
     if vehicle_paint_shape_active(editor) do return 450
+    if vehicle_paint_scope_active(editor) do return 420
     return 382
 }
 
@@ -1328,7 +1609,7 @@ vehicle_paint_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
         editor.vehicle_paint_yaw -= stick_x * delta_seconds * 2.4
         editor.vehicle_paint_pitch = clamp(editor.vehicle_paint_pitch - stick_y * delta_seconds * 1.8, -.18, .85)
     }
-    if canvas2d.IsMouseButtonDown(.RIGHT) ||
+    if (!canvas2d.IsKeyDown(.M) && canvas2d.IsMouseButtonDown(.RIGHT)) ||
        canvas2d.IsMouseButtonDown(.MIDDLE) ||
        (editor.vehicle_paint_orbit_drag_active && canvas2d.IsMouseButtonDown(.LEFT)) {
         editor.vehicle_paint_yaw -= mouse.x * .008
@@ -1342,7 +1623,9 @@ vehicle_paint_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
     if canvas2d.IsKeyDown(.X) do editor.vehicle_paint_distance = min(editor.vehicle_paint_distance + delta_seconds * 2.4, f32(9.5))
     wheel_delta := canvas2d.GetMouseWheelMoveV()
     wheel := wheel_delta.y
-    if control_key_down() && math.abs(wheel) > .01 {
+    if canvas2d.IsKeyDown(.M) {
+        // Mask mode owns the wheel for Surface/Assembly/Component scope.
+    } else if control_key_down() && math.abs(wheel) > .01 {
         editor.vehicle_paint_brush_strength = clamp(editor.vehicle_paint_brush_strength + wheel * .05, .05, 1)
     } else if (vehicle_paint_pattern_active(editor) || vehicle_paint_shape_active(editor)) &&
        alt_key_down() &&
@@ -1824,7 +2107,7 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
             }
         }
     }
-    hit, hover_position, _, hover_part, hover_uv := vehicle_paint_projected_hit(editor, width, height, mouse)
+    hit, hover_position, hover_normal, hover_part, hover_uv := vehicle_paint_projected_hit(editor, width, height, mouse)
     editor.vehicle_paint_hover_uv = hover_uv
     editor.vehicle_paint_hover_component = vehicle_paint_component_for_part(hover_part)
     editor.vehicle_paint_hover_hit =
@@ -1843,6 +2126,58 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
         mirror_hit =
             vehicle_paint_part_is_paintable(mirror_part) &&
             editor.vehicle_paint_component_mask[vehicle_paint_component_for_part(mirror_part)]
+    }
+    mask_mode := canvas2d.IsKeyDown(.M)
+    if mask_mode {
+        now := f32(canvas2d.GetTime())
+        wheel := canvas2d.GetMouseWheelMove()
+        if math.abs(wheel) > .01 {
+            editor.vehicle_paint_selection_level = clamp(
+                editor.vehicle_paint_selection_level + (wheel > 0 ? 1 : -1),
+                0,
+                2,
+            )
+            vehicle_paint_sound_pulse(editor, .06)
+        }
+        if control_key_down() && canvas2d.IsKeyPressed(.A) {
+            vehicle_paint_selection_select_all(editor)
+            vehicle_paint_sound_pulse(editor, .14)
+        }
+        if canvas2d.IsKeyPressed(.F) {
+            vehicle_paint_selection_invert(editor)
+            vehicle_paint_sound_pulse(editor, .14)
+        }
+        if editor.vehicle_paint_panel_visible && canvas2d.CheckCollisionPointRec(mouse, vehicle_paint_panel_bounds(editor)) {
+            vehicle_paint_selection_preview(editor)
+            return
+        }
+        add_down := canvas2d.IsMouseButtonDown(.LEFT)
+        subtract_down := canvas2d.IsMouseButtonDown(.RIGHT)
+        click := canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT)
+        if click && !hit {
+            vehicle_paint_selection_clear(editor)
+            vehicle_paint_sound_pulse(editor, .08)
+        } else if editor.vehicle_paint_hover_hit && (add_down || subtract_down) &&
+                  (click || now >= editor.vehicle_paint_selection_next_sweep_at) {
+            if canvas2d.IsMouseButtonPressed(.LEFT) {
+                if now - editor.vehicle_paint_selection_last_click_at <= .30 {
+                    editor.vehicle_paint_selection_level = min(editor.vehicle_paint_selection_level + 1, 2)
+                }
+                editor.vehicle_paint_selection_last_click_at = now
+            }
+            level := editor.vehicle_paint_selection_level
+            if shift_key_down() do level = 2
+            vehicle_paint_selection_apply_active_mesh(editor, hover_part, hover_normal, level, add_down)
+            if control_key_down() && mirror_hit {
+                mirror_normal := hover_normal
+                mirror_normal[0] = -mirror_normal[0]
+                vehicle_paint_selection_apply_active_mesh(editor, mirror_part, mirror_normal, level, add_down)
+            }
+            editor.vehicle_paint_selection_next_sweep_at = now + .06
+            vehicle_paint_sound_pulse(editor, .06)
+        }
+        vehicle_paint_selection_preview(editor)
+        return
     }
     if canvas2d.IsMouseButtonPressed(.LEFT) &&
        !hit &&
@@ -1896,6 +2231,14 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
             }
         }
         if editor.vehicle_paint_panel_visible && paint_pressed && canvas2d.IsMouseButtonPressed(.LEFT) {
+            if vehicle_paint_scope_active(editor) {
+                for index in 0 ..< 2 {
+                    if canvas2d.CheckCollisionPointRec(mouse, vehicle_paint_scope_bounds(index)) {
+                        editor.vehicle_paint_scope_component = index == 1
+                        return
+                    }
+                }
+            }
             if editor.vehicle_paint_tool == .Shape {
                 for index in 0 ..< len(VEHICLE_PAINT_SHAPE_NAMES) {
                     if canvas2d.CheckCollisionPointRec(mouse, vehicle_paint_shape_bounds(index)) {
@@ -2002,8 +2345,36 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
             case .Bucket:
                 if paint_pressed {
                     vehicle_paint_history_capture(editor)
-                    vehicle_paint_bucket(editor, hover_part, hover_uv, primary)
-                    if mirror_hit do vehicle_paint_bucket(editor, mirror_part, mirror_uv, primary)
+                    vehicle_paint_apply_active_3d_scope(
+                        editor,
+                        editor.vehicle_paint_hover_component,
+                        hover_part,
+                        hover_normal,
+                        editor.vehicle_paint_scope_component,
+                        hover_position,
+                        hover_position,
+                        primary,
+                        primary,
+                        false,
+                    )
+                    if mirror_hit && !editor.vehicle_paint_scope_component {
+                        mirror_normal := hover_normal
+                        mirror_normal[0] = -mirror_normal[0]
+                        mirror_position := hover_position
+                        mirror_position[0] = -mirror_position[0]
+                        vehicle_paint_apply_active_3d_scope(
+                            editor,
+                            vehicle_paint_component_for_part(mirror_part),
+                            mirror_part,
+                            mirror_normal,
+                            false,
+                            mirror_position,
+                            mirror_position,
+                            primary,
+                            primary,
+                            false,
+                        )
+                    }
                     if vehicle_paint_history_commit(editor) do vehicle_paint_schedule_save(editor)
                     vehicle_paint_sound_pulse(editor, .14)
                 }
@@ -2030,11 +2401,16 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                     vehicle_paint_history_capture(editor)
                     editor.vehicle_paint_tool_drag_active = true
                     editor.vehicle_paint_tool_drag_start_uv = hover_uv
+                    editor.vehicle_paint_tool_drag_start_position = hover_position
+                    editor.vehicle_paint_tool_drag_start_normal = hover_normal
                     editor.vehicle_paint_tool_drag_start_screen = mouse
                     editor.vehicle_paint_tool_drag_part = hover_part
+                    editor.vehicle_paint_tool_drag_component = editor.vehicle_paint_hover_component
                     clear(&editor.vehicle_paint_tool_drag_texels)
-                    drag_texels := vehicle_paint_connected_texels(editor, hover_part, hover_uv, false)
-                    append(&editor.vehicle_paint_tool_drag_texels, ..drag_texels[:])
+                    if editor.vehicle_paint_tool == .Strip {
+                        drag_texels := vehicle_paint_connected_texels(editor, hover_part, hover_uv, false)
+                        append(&editor.vehicle_paint_tool_drag_texels, ..drag_texels[:])
+                    }
                     editor.vehicle_paint_tool_drag_mirror_valid = mirror_hit
                     editor.vehicle_paint_tool_drag_mirror_start_uv = mirror_uv
                     editor.vehicle_paint_tool_drag_mirror_part = mirror_part
@@ -2045,18 +2421,45 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                     }
                     editor.vehicle_paint_component = editor.vehicle_paint_hover_component
                 }
-                if editor.vehicle_paint_tool_drag_active && editor.vehicle_paint_tool_drag_part == hover_part {
+                if editor.vehicle_paint_tool_drag_active &&
+                   editor.vehicle_paint_tool_drag_component == editor.vehicle_paint_hover_component {
                     vehicle_paint_sound_pulse(editor)
                     copy(vehicle_paint_pixels(editor), editor.vehicle_paint_history_pixels[:])
                     if editor.vehicle_paint_tool == .Gradient {
-                        vehicle_paint_gradient_texels(
+                        vehicle_paint_apply_active_3d_scope(
                             editor,
-                            editor.vehicle_paint_tool_drag_texels[:],
-                            editor.vehicle_paint_tool_drag_start_uv,
-                            hover_uv,
+                            editor.vehicle_paint_tool_drag_component,
+                            editor.vehicle_paint_tool_drag_part,
+                            editor.vehicle_paint_tool_drag_start_normal,
+                            editor.vehicle_paint_scope_component,
+                            editor.vehicle_paint_tool_drag_start_position,
+                            hover_position,
                             primary,
                             secondary,
+                            true,
                         )
+                        if editor.vehicle_paint_symmetry && !editor.vehicle_paint_scope_component {
+                            mirror_start_position := editor.vehicle_paint_tool_drag_start_position
+                            mirror_start_position[0] = -mirror_start_position[0]
+                            mirror_end_position := hover_position
+                            mirror_end_position[0] = -mirror_end_position[0]
+                            mirror_start_normal := editor.vehicle_paint_tool_drag_start_normal
+                            mirror_start_normal[0] = -mirror_start_normal[0]
+                            vehicle_paint_apply_active_3d_scope(
+                                editor,
+                                vehicle_paint_component_for_part(
+                                    vehicle_paint_mirror_part(editor.vehicle_paint_tool_drag_part),
+                                ),
+                                vehicle_paint_mirror_part(editor.vehicle_paint_tool_drag_part),
+                                mirror_start_normal,
+                                false,
+                                mirror_start_position,
+                                mirror_end_position,
+                                primary,
+                                secondary,
+                                true,
+                            )
+                        }
                     } else {
                         vehicle_paint_strip_texels(
                             editor,
@@ -2066,7 +2469,8 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                             primary,
                         )
                     }
-                    if editor.vehicle_paint_tool_drag_mirror_valid &&
+                    if editor.vehicle_paint_tool == .Strip &&
+                       editor.vehicle_paint_tool_drag_mirror_valid &&
                        mirror_hit &&
                        editor.vehicle_paint_tool_drag_mirror_part == mirror_part {
                         if editor.vehicle_paint_tool == .Gradient {
@@ -2447,6 +2851,18 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
                 canvas2d.DrawTextEx(canvas2d.Font{}, label, {bounds.x + 5, bounds.y + 6}, 10, 1, {236, 243, 224, 255})
             }
         }
+        if vehicle_paint_scope_active(editor) {
+            scope_labels := [2]cstring{"FACE ANGLE", "COMPONENT"}
+            for label, index in scope_labels {
+                bounds := vehicle_paint_scope_bounds(index)
+                selected := editor.vehicle_paint_scope_component == (index == 1)
+                fill := selected ? canvas2d.Color{46, 104, 94, 245} : canvas2d.Color{29, 61, 65, 225}
+                border := selected ? canvas2d.Color{255, 245, 193, 255} : canvas2d.Color{91, 143, 139, 255}
+                canvas2d.DrawRectangleRounded(bounds, .12, 5, fill)
+                canvas2d.DrawRectangleRoundedLinesEx(bounds, .12, 5, selected ? 2 : 1, border)
+                canvas2d.DrawTextEx(canvas2d.Font{}, label, {bounds.x + 12, bounds.y + 8}, 13, 1, {236, 243, 224, 255})
+            }
+        }
         component_names := vehicle_paint_component_names(editor)
         parts_top := vehicle_paint_parts_top(editor)
         canvas2d.DrawTextEx(canvas2d.Font{}, "PAINTABLE PARTS", {18, parts_top}, 16, 1, {255, 245, 193, 255})
@@ -2584,6 +3000,8 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
         cursor_radius := f32(8 + editor.vehicle_paint_brush_radius / 2)
         cursor_color :=
             editor.vehicle_paint_hover_hit ? palette[editor.vehicle_paint_color] : canvas2d.Color{158, 166, 165, 255}
+        mask_mode := canvas2d.IsKeyDown(.M)
+        if mask_mode do cursor_color = {72, 210, 184, 255}
         if editor.vehicle_paint_erase do cursor_color = {255, 226, 174, 255}
         if alt_key_down() && editor.vehicle_paint_hover_hit do cursor_color = {255, 245, 193, 255}
         canvas2d.DrawCircleV(cursor, cursor_radius + 2, {20, 35, 39, 180})
@@ -2630,6 +3048,11 @@ vehicle_paint_draw :: proc(editor: ^Editor, width, height: i32) {
             if editor.vehicle_paint_symmetry && !alt_key_down() {
                 cursor_label = fmt.ctprintf("%s  SYM", cursor_label)
             }
+        }
+        if mask_mode {
+            mask_labels := [3]cstring{"MASK SURFACE", "MASK ASSEMBLY", "MASK COMPONENT"}
+            cursor_label = mask_labels[clamp(editor.vehicle_paint_selection_level, 0, 2)]
+            if canvas2d.IsMouseButtonDown(.RIGHT) do cursor_label = "REMOVE FROM MASK"
         }
         canvas2d.DrawTextEx(canvas2d.Font{}, cursor_label, {cursor.x + cursor_radius + 10, cursor.y + 8}, 11, 1, cursor_color)
         if editor.vehicle_paint_tool_drag_active {

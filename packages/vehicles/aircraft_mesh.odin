@@ -47,6 +47,7 @@ Aircraft_Mesh_Part :: enum u8 {
     Rotor_Tip,
     Marking,
     Lift_Frame,
+    Wing_Root_Fillet,
 }
 
 Mesh_Animation_Group :: enum u8 {
@@ -189,6 +190,8 @@ aircraft_mesh_part_uses_smooth_normals :: #force_inline proc(part: Aircraft_Mesh
          .Right_Aileron,
          .Elevator,
          .Rudder:
+        return true
+    case .Wing_Root_Fillet:
         return true
     }
     return false
@@ -653,7 +656,10 @@ add_wheel :: proc(mesh: ^Aircraft_Mesh, center: [3]f32, radius, thickness: f32) 
         {.56 * thickness, radius * .28, 0, radius * .28},
     }
     first = mesh.vertex_count
-    add_ring_mesh(mesh, hub[:], 10, .Marking)
+    // The hub is exposed metal, not a protected livery marking. Keep it in
+    // the gear component so the paint editor can address it independently
+    // from the rubber tire.
+    add_ring_mesh(mesh, hub[:], 10, .Frame)
     rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
     for index in first ..< mesh.vertex_count {
         mesh.vertices[index].position += center
@@ -935,25 +941,37 @@ add_postale_hull :: proc(mesh: ^Aircraft_Mesh) {
         {0, screen_low_y, screen_low_z},
         .Glass,
     )
-    add_strut(mesh, {-.49, screen_low_y, screen_low_z}, {-.20, screen_high_y, screen_high_z}, .035, .Frame)
-    add_strut(mesh, {-.20, screen_high_y, screen_high_z}, {0, screen_high_y + .05, screen_high_z}, .035, .Frame)
-    add_strut(mesh, {0, screen_high_y + .05, screen_high_z}, {.20, screen_high_y, screen_high_z}, .035, .Frame)
-    add_strut(mesh, {.20, screen_high_y, screen_high_z}, {.49, screen_low_y, screen_low_z}, .035, .Frame)
-    add_strut(mesh, {-.49, screen_low_y, screen_low_z}, {.49, screen_low_y, screen_low_z}, .04, .Frame)
+    // These are fuselage-mounted windshield mullions. Using Frame here puts
+    // them in Postale's Gear paint component along with the undercarriage.
+    add_strut(mesh, {-.49, screen_low_y, screen_low_z}, {-.20, screen_high_y, screen_high_z}, .035, .Body)
+    add_strut(mesh, {-.20, screen_high_y, screen_high_z}, {0, screen_high_y + .05, screen_high_z}, .035, .Body)
+    add_strut(mesh, {0, screen_high_y + .05, screen_high_z}, {.20, screen_high_y, screen_high_z}, .035, .Body)
+    add_strut(mesh, {.20, screen_high_y, screen_high_z}, {.49, screen_low_y, screen_low_z}, .035, .Body)
+    add_strut(mesh, {-.49, screen_low_y, screen_low_z}, {.49, screen_low_y, screen_low_z}, .04, .Body)
 }
 
 postale_mesh :: proc() -> ^Aircraft_Mesh {
     mesh := new(Aircraft_Mesh)
-    left_wing := [5]Mesh_Section {
+    left_outer_wing := [4]Mesh_Section {
         {-4.96, -.48, -.39, .025},
         {-4.86, -.82, -.10, .045},
         {-4.55, -1.12, .14, .07},
-        {-2.05, -1.42, .39, .12},
-        {-.52, -1.48, .43, .15},
+        {-3.25, -1.276, .30, .096},
     }
-    right_wing := [5]Mesh_Section {
-        {.52, -1.48, .43, .15},
-        {2.05, -1.42, .39, .12},
+    left_forward_wing := [3]Mesh_Section {
+        {-3.25, -1.276, .08, .096},
+        {-1.90, -1.426, .10, .123},
+        {-.72, -1.472, .10, .146},
+    }
+    left_root_wing := [2]Mesh_Section{{-.72, -1.472, .42, .146}, {-.52, -1.48, .43, .15}}
+    right_root_wing := [2]Mesh_Section{{.52, -1.48, .43, .15}, {.72, -1.472, .42, .146}}
+    right_forward_wing := [3]Mesh_Section {
+        {.72, -1.472, .10, .146},
+        {1.90, -1.426, .10, .123},
+        {3.25, -1.276, .08, .096},
+    }
+    right_outer_wing := [4]Mesh_Section {
+        {3.25, -1.276, .30, .096},
         {4.55, -1.12, .14, .07},
         {4.86, -.82, -.10, .045},
         {4.96, -.48, -.39, .025},
@@ -981,16 +999,21 @@ postale_mesh :: proc() -> ^Aircraft_Mesh {
     POSTALE_WING_Y :: f32(.08)
     wing_first := mesh.vertex_count
     // The roots terminate at the fuselage skin; there is no center slab
-    // running through the cockpit.
-    add_section_mesh(mesh, left_wing[:], POSTALE_WING_Y, .Wing)
-    add_section_mesh(mesh, right_wing[:], POSTALE_WING_Y, .Wing)
+    // running through the cockpit. The flap bays likewise stop at the hinge
+    // line instead of retaining a full-chord wing beneath the moving flaps.
+    add_section_mesh(mesh, left_outer_wing[:], POSTALE_WING_Y, .Wing)
+    add_section_mesh(mesh, left_forward_wing[:], POSTALE_WING_Y, .Wing)
+    add_section_mesh(mesh, left_root_wing[:], POSTALE_WING_Y, .Wing)
+    add_section_mesh(mesh, right_root_wing[:], POSTALE_WING_Y, .Wing)
+    add_section_mesh(mesh, right_forward_wing[:], POSTALE_WING_Y, .Wing)
+    add_section_mesh(mesh, right_outer_wing[:], POSTALE_WING_Y, .Wing)
     for index in wing_first ..< mesh.vertex_count {
         mesh.vertices[index].position[1] += abs(mesh.vertices[index].position[0]) * .045
     }
     left_root_fillet := [3]Mesh_Section{{-1.10, -1.05, .20, .04}, {-.76, -1.25, .28, .12}, {-.52, -.90, .10, .20}}
     right_root_fillet := [3]Mesh_Section{{.52, -.90, .10, .20}, {.76, -1.25, .28, .12}, {1.10, -1.05, .20, .04}}
-    add_section_mesh(mesh, left_root_fillet[:], .17, .Body)
-    add_section_mesh(mesh, right_root_fillet[:], .17, .Body)
+    add_section_mesh(mesh, left_root_fillet[:], .17, .Wing_Root_Fillet)
+    add_section_mesh(mesh, right_root_fillet[:], .17, .Wing_Root_Fillet)
     add_section_mesh(mesh, tail[:], .55, .Tail)
     add_profile_prism(mesh, fin[:], .065, .Tail)
     left_flap := [3]Mesh_Section{{-3.25, .08, .30, .045}, {-1.90, .10, .40, .05}, {-.72, .10, .42, .055}}
@@ -1043,7 +1066,9 @@ postale_mesh :: proc() -> ^Aircraft_Mesh {
     }
     for center in wheel_cover_centers {
         first := mesh.vertex_count
-        add_ring_mesh(mesh, wheel_cover[:], 12, .Marking)
+        // Wheel covers are formed metal and belong to Gear; Marking is
+        // reserved for the protected cowling livery band.
+        add_ring_mesh(mesh, wheel_cover[:], 12, .Frame)
         rotate_new_vertices_y(mesh, first, {0, 0, 0}, math.PI * .5)
         translate_new_vertices(mesh, first, center)
     }

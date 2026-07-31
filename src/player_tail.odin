@@ -87,15 +87,30 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
         .36 - run_weight * .010 + body_bob - bound * .018 - brake_compression * .48 - posted_weight * .015
     pelvis_z := -.48 - spine_extension * .070 * run_weight + brake_pose * .035
     pelvis_pitch := bound * .075 + slope_pitch * .65 - posted_weight * .05 + scurry_lean * .45
+    pelvis_yaw: f32
     pelvis_roll := body_roll * .82 - scurry_support_roll * .22
+    emote_pose := mouse_emote_pose(&editor.mouse_emote)
+    pelvis_emote := emote_pose.bones[0]
+    pelvis_emote_weight := clamp(pelvis_emote.weight, 0, 1)
+    pelvis_x += pelvis_emote.position.x * pelvis_emote_weight
+    pelvis_y +=
+        pelvis_emote.position.y * pelvis_emote_weight +
+        emote_pose.body_height - emote_pose.body_compression
+    pelvis_z += pelvis_emote.position.z * pelvis_emote_weight
+    pelvis_pitch += pelvis_emote.pitch * pelvis_emote_weight
+    pelvis_yaw += pelvis_emote.yaw * pelvis_emote_weight
+    pelvis_roll += pelvis_emote.roll * pelvis_emote_weight
     socket_relative := third_person.Vec3{0, -.12, -.30}
     pitch_cosine, pitch_sine := math.cos(pelvis_pitch), math.sin(pelvis_pitch)
     pitched_y := socket_relative.y * pitch_cosine - socket_relative.z * pitch_sine
     pitched_z := socket_relative.y * pitch_sine + socket_relative.z * pitch_cosine
+    yaw_cosine, yaw_sine := math.cos(pelvis_yaw), math.sin(pelvis_yaw)
+    yawed_x := socket_relative.x * yaw_cosine + pitched_z * yaw_sine
+    yawed_z := -socket_relative.x * yaw_sine + pitched_z * yaw_cosine
     roll_cosine, roll_sine := math.cos(pelvis_roll), math.sin(pelvis_roll)
-    local_x := pelvis_x + socket_relative.x * roll_cosine - pitched_y * roll_sine
-    local_y := pelvis_y + socket_relative.x * roll_sine + pitched_y * roll_cosine
-    local_z := pelvis_z + pitched_z
+    local_x := pelvis_x + yawed_x * roll_cosine - pitched_y * roll_sine
+    local_y := pelvis_y + yawed_x * roll_sine + pitched_y * roll_cosine
+    local_z := pelvis_z + yawed_z
     root = {
         editor.player.position.x + local_x * cosine - local_z * sine,
         editor.player.position.y +
@@ -109,7 +124,12 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
     // is a weight-shift bias rather than a canned tail pose.
     counterbalance := turn_pose * editor.tweak.player_animation.tail_counterbalance
     backward = {sine - model_right.x * counterbalance, 0, -cosine - model_right.z * counterbalance}
-    emote_tail := mouse_emote_pose(&editor.mouse_emote).tail
+    // Rendering evaluates the complete hierarchy, including authored emote
+    // channels and joint constraints. Consume that attachment on the next
+    // simulation step so the physical tail cannot drift from a separately
+    // reconstructed pelvis pose.
+    if editor.player_tail.attachment_valid do root = editor.player_tail.evaluated_attachment
+    emote_tail := emote_pose.tail
     emote_weight := clamp(emote_tail.weight, 0, 1)
     if emote_weight > 0 {
         local := emote_tail.local_direction

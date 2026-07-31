@@ -420,7 +420,7 @@ quest_log_draw :: proc(editor: ^Editor, width, height: i32) {
     hint: cstring = "J closes  |  ARROWS select  |  ENTER tracks"
     if controller_prompt_active(editor) {
         hint = fmt.ctprintf(
-            "%s closes  |  D-PAD / LS selects  |  %s tracks",
+            "LB / RB map  |  %s closes  |  D-PAD / LS selects  |  %s tracks",
             controller_journal_label(editor),
             controller_face_label(editor, .South),
         )

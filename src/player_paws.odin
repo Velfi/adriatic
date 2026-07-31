@@ -1,6 +1,7 @@
 package main
 
 import mouse_paws "../packages/mouse_paws"
+import mouse_gait "../packages/mouse_gait"
 import third_person "../packages/third_person"
 import "core:math"
 import "core:math/linalg"
@@ -51,15 +52,40 @@ player_paws_step :: proc(editor: ^Editor, delta_seconds: f32) {
     // remain attached to the rendered shoulders and hips.
     yaw := math.PI - editor.player.facing_yaw_radians
     cosine, sine := math.cos(yaw), math.sin(yaw)
+    animation := &editor.tweak.player_animation
+    horizontal_speed := f32(math.sqrt(f64(
+        editor.player.velocity.x * editor.player.velocity.x +
+        editor.player.velocity.z * editor.player.velocity.z,
+    )))
+    gait := mouse_gait_weights(animation, horizontal_speed, editor.player_airborne_weight)
+    run_weight := editor.player_gait_weight
+    scurry_weight := clamp(editor.player_scurry_weight, 0, 1)
     for paw_index in 0 ..< mouse_paws.PAW_COUNT {
         side := paw_index < 2 ? f32(-1) : f32(1)
         fore := paw_index % 2 == 0
-        phase_offset := fore ? (side < 0 ? f32(0) : math.PI) : (side < 0 ? math.PI : f32(0))
-        cycle := math.mod(editor.player_stride_phase + phase_offset, math.TAU)
-        stance := cycle < math.PI * 1.18
+        left_side := side < 0
+        walk_offset := fore ? (left_side ? f32(0) : f32(.50)) : (left_side ? f32(.25) : f32(.75))
+        trot_offset := fore ? (left_side ? f32(0) : f32(.50)) : (left_side ? f32(.50) : f32(0))
+        bilateral_lag := side * mouse_gait.bound_bilateral_lag(gait.bound)
+        bound_offset := fore ? mouse_gait.BOUND_PHASE_OFFSET + bilateral_lag : .50 + mouse_gait.BOUND_PHASE_OFFSET - bilateral_lag
+        motion := mouse_gait.blend_scaled(
+            editor.player_stride_phase,
+            walk_offset,
+            trot_offset,
+            bound_offset,
+            gait,
+            fore ? f32(.68) : f32(.76),
+            fore ? f32(.56) : f32(.60),
+            fore ? f32(.34) : f32(.36),
+            animation.stride_radians_per_meter,
+            animation.trot_stride_radians_per_meter,
+            animation.bound_stride_radians_per_meter,
+        )
+        stance := motion.lift < .025 && editor.player_posted_weight < .5
         local_x := side * (fore ? f32(.105) : f32(.195))
         local_z := fore ? f32(.235) : f32(-.16)
-        local_z += math.sin(cycle) * (fore ? f32(.11) : f32(.14)) * editor.player_gait_weight
+        reach := motion.reach * run_weight * (1 + scurry_weight * (fore ? f32(.16) : f32(.24)))
+        local_z += reach + side * (fore ? f32(.014) : f32(.018)) * run_weight
         desired := third_person.Vec3 {
             editor.player.position.x + local_x * cosine - local_z * sine,
             editor.player.position.y + .06,
@@ -102,6 +128,9 @@ player_paws_step :: proc(editor: ^Editor, delta_seconds: f32) {
             editor.player.position.y + (fore ? f32(.31) : f32(.30)),
             editor.player.position.z + socket_local_x * sine + socket_local_z * cosine,
         }
+        if evaluated, evaluated_valid := mouse_paws.evaluated_socket(rig, paw_index); evaluated_valid {
+            socket = evaluated
+        }
         rig.authored[paw_index] = {
             socket = socket, desired = desired, maximum_reach = maximum_reach,
             stance = stance, valid = true,
@@ -131,6 +160,17 @@ player_paws_step :: proc(editor: ^Editor, delta_seconds: f32) {
             pad_normal   = pose_sample.normal,
             compression  = compression,
             valid        = true,
+        }
+        // Replants and support changes can move the physical contact by a
+        // visible distance in one fixed step. Keep contact ownership exact,
+        // but ease the presentation pose toward it so the pad and digits move
+        // as one coherent unit instead of popping between anchors.
+        previous_pose := rig.resolved[paw_index]
+        if previous_pose.valid {
+            blend := 1 - f32(math.exp(f64(-max(delta_seconds, f32(0)) * 30)))
+            pose.pad_position += (previous_pose.pad_position - pose.pad_position) * (1 - blend)
+            blended_normal := previous_pose.pad_normal + (pose.pad_normal - previous_pose.pad_normal) * blend
+            if linalg.dot(blended_normal, blended_normal) > .0001 do pose.pad_normal = linalg.normalize0(blended_normal)
         }
         toe_length := fore ? f32(.064) : f32(.092)
         toe_spread := fore ? f32(.013) : f32(.017)

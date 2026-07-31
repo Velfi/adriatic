@@ -5,7 +5,7 @@ import "core:os"
 import "core:strings"
 
 MOUSE_PREFERENCE_MAGIC :: [8]u8{'A', 'D', 'R', 'M', 'O', 'U', 'S', 'E'}
-MOUSE_PREFERENCE_VERSION :: u32(3)
+MOUSE_PREFERENCE_VERSION :: u32(4)
 
 Mouse_Preference_Payload :: struct {
     fur:                 u8,
@@ -20,6 +20,7 @@ Mouse_Preference_Payload :: struct {
     invert_flight_pitch: bool,
     show_hud:            bool,
     crunchiness:         u8,
+    visual_style:        u8,
     dither_mode:         u8,
     hdr_exposure:        bool,
     theme_mode:          u8,
@@ -80,6 +81,44 @@ Mouse_Preference_File_V2 :: struct {
     checksum: u64,
 }
 
+Mouse_Preference_Payload_V3 :: struct {
+    fur:                 u8,
+    pattern:             u8,
+    headgear:            u8,
+    scarf_enabled:       bool,
+    scarf_color:         [4]u8,
+    look_sensitivity:    f32,
+    sound_fx_level:      f32,
+    invert_look_x:       bool,
+    invert_look_y:       bool,
+    invert_flight_pitch: bool,
+    show_hud:            bool,
+    crunchiness:         u8,
+    dither_mode:         u8,
+    hdr_exposure:        bool,
+    theme_mode:          u8,
+}
+
+Mouse_Preference_File_V3 :: struct {
+    magic:    [8]u8,
+    version:  u32,
+    payload:  Mouse_Preference_Payload_V3,
+    checksum: u64,
+}
+
+mouse_preference_checksum_v3 :: proc(payload: ^Mouse_Preference_Payload_V3) -> u64 {
+    bytes := mem.slice_ptr(cast([^]u8)payload, size_of(payload^))
+    hash: u64 = 14695981039346656037
+    for byte in bytes {
+        hash = (hash ~ u64(byte)) * 1099511628211
+    }
+    return hash
+}
+
+mouse_preference_legacy_style :: proc(mode: Dither_Mode) -> Visual_Style {
+    return mode == .Off ? .Standard : .Dither
+}
+
 mouse_preference_checksum_v2 :: proc(payload: ^Mouse_Preference_Payload_V2) -> u64 {
     bytes := mem.slice_ptr(cast([^]u8)payload, size_of(payload^))
     hash: u64 = 14695981039346656037
@@ -117,6 +156,7 @@ mouse_preference_payload :: proc(editor: ^Editor) -> Mouse_Preference_Payload {
         invert_flight_pitch = editor.gameplay_options.invert_flight_pitch,
         show_hud = editor.gameplay_options.show_hud,
         crunchiness = u8(editor.gameplay_options.crunchiness),
+        visual_style = u8(editor.gameplay_options.visual_style),
         dither_mode = u8(editor.gameplay_options.dither_mode),
         hdr_exposure = editor.gameplay_options.hdr_exposure,
         theme_mode = u8(editor.gameplay_options.theme_mode),
@@ -222,6 +262,47 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
             invert_flight_pitch = payload.invert_flight_pitch,
             show_hud            = payload.show_hud,
             crunchiness         = Crunchiness(payload.crunchiness),
+            visual_style        = mouse_preference_legacy_style(Dither_Mode(payload.dither_mode)),
+            dither_mode         = Dither_Mode(payload.dither_mode),
+            hdr_exposure        = payload.hdr_exposure,
+            theme_mode          = UI_Theme_Mode(payload.theme_mode),
+        }
+        return true
+    }
+    if len(bytes) == size_of(Mouse_Preference_File_V3) {
+        file_data := cast(^Mouse_Preference_File_V3)raw_data(bytes)
+        payload := &file_data.payload
+        if file_data.magic != MOUSE_PREFERENCE_MAGIC ||
+           file_data.version != 3 ||
+           file_data.checksum != mouse_preference_checksum_v3(payload) ||
+           int(payload.fur) >= CUSTOMIZATION_COLOR_COUNT ||
+           int(payload.pattern) >= CUSTOMIZATION_PATTERN_COUNT ||
+           int(payload.headgear) >= CUSTOMIZATION_HEADGEAR_COUNT ||
+           payload.look_sensitivity < .004 ||
+           payload.look_sensitivity > .024 ||
+           payload.sound_fx_level < 0 ||
+           payload.sound_fx_level > 1 ||
+           int(payload.crunchiness) > int(Crunchiness.Full) ||
+           int(payload.dither_mode) > int(Dither_Mode.Matriax_8) ||
+           int(payload.theme_mode) > int(UI_Theme_Mode.Dark) {
+            return false
+        }
+        editor.mouse_fur = Mouse_Fur(payload.fur)
+        editor.mouse_pattern = Mouse_Fur_Pattern(payload.pattern)
+        editor.mouse_headgear = Mouse_Accessory(payload.headgear)
+        editor.mouse_scarf_enabled = payload.scarf_enabled
+        editor.mouse_scarf_color = {
+            payload.scarf_color[0], payload.scarf_color[1], payload.scarf_color[2], payload.scarf_color[3],
+        }
+        editor.gameplay_options = {
+            look_sensitivity    = payload.look_sensitivity,
+            sound_fx_level      = payload.sound_fx_level,
+            invert_look_x       = payload.invert_look_x,
+            invert_look_y       = payload.invert_look_y,
+            invert_flight_pitch = payload.invert_flight_pitch,
+            show_hud            = payload.show_hud,
+            crunchiness         = Crunchiness(payload.crunchiness),
+            visual_style        = mouse_preference_legacy_style(Dither_Mode(payload.dither_mode)),
             dither_mode         = Dither_Mode(payload.dither_mode),
             hdr_exposure        = payload.hdr_exposure,
             theme_mode          = UI_Theme_Mode(payload.theme_mode),
@@ -242,7 +323,11 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
        payload.sound_fx_level < 0 ||
        payload.sound_fx_level > 1 ||
        int(payload.crunchiness) > int(Crunchiness.Full) ||
+       // Value 2 was the removed Painterly style. Accept it for v4 backward
+       // compatibility and restore it as Standard below.
+       int(payload.visual_style) > 2 ||
        int(payload.dither_mode) > int(Dither_Mode.Matriax_8) ||
+       (Visual_Style(payload.visual_style) == .Dither && payload.dither_mode == u8(Dither_Mode.Off)) ||
        int(payload.theme_mode) > int(UI_Theme_Mode.Dark) {
         return false
     }
@@ -264,6 +349,7 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
         invert_flight_pitch = payload.invert_flight_pitch,
         show_hud            = payload.show_hud,
         crunchiness         = Crunchiness(payload.crunchiness),
+        visual_style        = payload.visual_style == 2 ? .Standard : Visual_Style(payload.visual_style),
         dither_mode         = Dither_Mode(payload.dither_mode),
         hdr_exposure        = payload.hdr_exposure,
         theme_mode          = UI_Theme_Mode(payload.theme_mode),
